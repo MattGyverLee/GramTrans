@@ -36,6 +36,7 @@ Things we might want to transfer:
 13. Slots  
 14. Templates\*  
     1. Add affixes to slots
+15. Stems? 
 
 Choosing to transfer some of the things above will automatically mean including other things. E.g. transferring templates might mean we transfer the affixes in that template. Transferring affixes might mean including all the features and classes associated.
 
@@ -95,3 +96,12 @@ Architecture
   * PyQT interface  
   * Preview Mode and Move Mode  
   * Overwrite in V1, Merge in V2 
+
+
+### Phase 3
+
+Copying Stems
+Filtering:
+  "interesting" stems containing Items 1-14
+  Date range (by date or since branching)
+  Filtered Chooser

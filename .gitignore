@@ -1,0 +1,102 @@
+# ---------------------------------------------------------------------------
+# Python
+# ---------------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Distribution / packaging
+.Python
+build/
+dist/
+*.egg-info/
+*.egg
+MANIFEST
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+.python-version
+
+# ---------------------------------------------------------------------------
+# Tooling caches
+# ---------------------------------------------------------------------------
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.tox/
+.coverage
+.coverage.*
+htmlcov/
+*.cover
+.hypothesis/
+
+# ---------------------------------------------------------------------------
+# IDE / editors
+# ---------------------------------------------------------------------------
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# ---------------------------------------------------------------------------
+# OS / temp
+# ---------------------------------------------------------------------------
+*.tmp
+*.bak
+*.log
+
+# ---------------------------------------------------------------------------
+# Claude / Spec-Kit local state
+# ---------------------------------------------------------------------------
+# `.claude/skills/...` is shared; `.claude/settings.local.json` and per-user
+# logs are not.
+.claude/settings.local.json
+.claude/logs/
+.claude/state/
+.claude/scheduled_tasks.lock
+.claude/scheduled_tasks/
+
+# ---------------------------------------------------------------------------
+# FLEx project files
+# ---------------------------------------------------------------------------
+# Per-project lock files (Windows-only, FLEx creates them on open).
+*.fwdata.lock
+# If a developer accidentally drops a live FW project tree into the repo,
+# don't track the data files. (The canonical fixtures are the .fwbackup
+# files in backups/, which are intentionally tracked — see below.)
+*.fwdata
+*.fwdata.bak
+ChorusNotes/
+# Mongo / FLEx temporary working dirs
+WritingSystemStore/
+Temp/
+
+# ---------------------------------------------------------------------------
+# Integration-test artefacts
+# ---------------------------------------------------------------------------
+# Snapshot JSONs ARE tracked (they're the constitution's pre/post Import
+# Residue artifacts — see Development-Workflow gate in
+# .specify/memory/constitution.md). If you want to regenerate locally
+# without polluting git, you can git-ignore individual ones — but the
+# spike_close_post.json baseline stays committed.
+# tests/integration/_snapshots/local_*.json
+
+# ---------------------------------------------------------------------------
+# Backups
+# ---------------------------------------------------------------------------
+# The two .fwbackup files in backups/ are kept on purpose: they're the
+# canonical fixtures for T015 (the restore-before-each-run helper). They're
+# ~8 MB total — small enough to live in git. If your fork wants them out,
+# uncomment:
+# backups/*.fwbackup
+
+# Anything else dropped into backups/ during local experimentation:
+backups/*.tmp
+backups/scratch/

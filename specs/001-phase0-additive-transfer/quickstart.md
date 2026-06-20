@@ -10,30 +10,39 @@ in `tasks.md` and the implementation phase.
 ## Prerequisites
 
 - A working FlexTools installation that can host Python modules.
-- flexlibs1 and the LibLCM .NET bridge available to FlexTools (the constitution's
-  Principle II runtime stack).
+- The **patched MattGyverLee/flexlibs2 fork** installed into the FlexTools Python
+  environment (constitution v5.0.0 Principle II — direct runtime dependency; see
+  [../../CLAUDE.md](../../CLAUDE.md) for the patches and install steps). The LibLCM
+  .NET bridge is NOT required for this repo; the LibLCM-direct implementation is a
+  separate sibling repository per Principle IV.
 - PyQt available to the FlexTools Python environment.
-- The `tests/fixtures/toy_source/` and `tests/fixtures/empty_target/` FLEx project
-  copies (these will be created during implementation; not committed here).
-- The `gramtrans` package installed into the FlexTools modules directory per the
-  host's convention (see research.md R3 for the entry-point shape).
+- **Live test projects (canonical Ejagham pair)**:
+  - `Ejagham Mini` at `C:\ProgramData\SIL\FieldWorks\Projects\Ejagham Mini` — the
+    canonical toy source. Pointed to by `tests/fixtures/toy_source/README.md`.
+  - `Ejagham Full GT-Test` at `C:\ProgramData\SIL\FieldWorks\Projects\Ejagham Full GT-Test`
+    — the throwaway target, freshly restored from
+    `D:\Github\_Projects\_LEX\GramTrans\backups\Ejagham Full.fwbackup` before each run
+    via the `tests/fixtures/copy_target.py` helper (tasks T015).
+- The `gramtrans` package's `gramtrans.py` (entry) + `Lib/` (helpers) installed into
+  the FlexTools modules directory per the FLExTrans convention (see research.md R3).
 
 ## Setup
 
-1. Open `tests/fixtures/toy_source/` in FlexTools. This is the source per
-   Clarification Q2 (the host's open project).
+1. Open `Ejagham Mini` in FlexTools (the live project; see Prerequisites). This is
+   the source per Clarification Q2 (the host's open project).
 2. Verify that the GramTrans module appears in FlexTools' module list.
-3. Make a fresh copy of `tests/fixtures/empty_target/` to use as the target for this
-   run. (Each scenario below assumes a fresh empty target so writes don't pollute
-   the fixture.)
+3. Restore a fresh `Ejagham Full GT-Test` target via the
+   `tests/fixtures/copy_target.py` helper (which runs `FieldWorks.exe -restore` of
+   `Ejagham Full.fwbackup` into `Ejagham Full GT-Test`). Each scenario below
+   assumes a freshly-restored target so writes don't pollute prior runs.
 4. Take a snapshot of the target's pre-run state (object count per class, GUID list
    if helpful). Required for SC-004 verification.
 
 ## Scenario A — Full transfer (validates User Story 1, SC-001, SC-002, SC-003)
 
 1. Launch GramTrans from the FlexTools module list.
-2. **Confirm:** the main window shows "Source: ToySource" (the host's open project).
-3. In the target picker, select the fresh copy of `empty_target/`. Confirm Run is
+2. **Confirm:** the main window shows "Source: Ejagham Mini" (the host's open project).
+3. In the target picker, select the fresh copy of a freshly-restored `Ejagham Full GT-Test`. Confirm Run is
    still disabled (no Selection yet).
 4. Toggle on all grammar piece categories.
 5. Leave the "Include dependency closure" toggle ON (default per FR-013).
@@ -52,7 +61,7 @@ in `tasks.md` and the implementation phase.
 12. Open the target in FLEx (after Move completes). Verify:
     - Newly added objects exist with source GUIDs preserved (R6).
     - Each object's Import Residue field contains a tag of the form
-      `GT|GT-YYYYMMDD-HHMMSS|ToySource|<iso-timestamp>` (E5 / Q5).
+      `GT|GT-YYYYMMDD-HHMMSS|Ejagham Mini|<iso-timestamp>` (E5 / Q5).
     - No GOLD object was modified (FR-022).
     - Every cross-reference resolves (SC-003 — zero dangling refs).
 13. Compare the target's pre-run snapshot against post-run state for objects that
@@ -60,7 +69,7 @@ in `tasks.md` and the implementation phase.
 
 ## Scenario B — Affix-only with closure pull-in (validates US3, FR-005, FR-007/Q4)
 
-1. Launch with a fresh `empty_target/` copy.
+1. Launch with a freshly-restored `Ejagham Full GT-Test`.
 2. Toggle ON only "Affixes". Leave closure toggle ON.
 3. Open the affix tree picker. **Confirm:** tree shows `Template → Slot → Affix`
    hierarchy, with an "Unbound" branch at the top level (Q4).
@@ -77,7 +86,7 @@ in `tasks.md` and the implementation phase.
 
 ## Scenario C — Preview produces no writes (validates SC-006, Principle III)
 
-1. Launch with a fresh `empty_target/` copy.
+1. Launch with a freshly-restored `Ejagham Full GT-Test`.
 2. Take a target snapshot.
 3. Select any category, complete WS mapping, click **Preview** only — do NOT click
    Move.
@@ -87,14 +96,14 @@ in `tasks.md` and the implementation phase.
 
 ## Scenario D — Refuse same source and target (validates FR-019, Edge Case)
 
-1. Launch GramTrans against `toy_source/`.
-2. In the target picker, attempt to select `toy_source/` itself.
+1. Launch GramTrans against `Ejagham Mini` (source).
+2. In the target picker, attempt to select `Ejagham Mini` itself.
 3. **Confirm:** the module refuses with a clear error and does not advance to the
    main run flow. No write occurred.
 
 ## Scenario E — Refuse incomplete WS mapping (validates FR-011 / Q3)
 
-1. Launch with a fresh `empty_target/` copy.
+1. Launch with a freshly-restored `Ejagham Full GT-Test`.
 2. Select any category whose items reference more than one WS.
 3. Click **Preview**.
 4. In the WS mapping dialog, leave at least one source WS unmapped. Try to confirm.
@@ -102,7 +111,7 @@ in `tasks.md` and the implementation phase.
 
 ## Scenario F — Skip on unresolved closure with closure-off (validates FR-013)
 
-1. Launch with a fresh `empty_target/` copy.
+1. Launch with a freshly-restored `Ejagham Full GT-Test`.
 2. Toggle ON only "Affixes". Toggle OFF the closure toggle.
 3. Select an affix whose dependencies (inflection feature, class) are not also
    selected directly.

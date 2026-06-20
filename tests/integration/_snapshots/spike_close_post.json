@@ -1,0 +1,72 @@
+{
+  "context": {
+    "source_project_name": "Ejagham Mini",
+    "target_project_name": "Ejagham Full GT-Test",
+    "run_id": "GT-20260619-222958",
+    "mode": "MOVE"
+  },
+  "created_objects": 6,
+  "residue_tagged_objects": 6,
+  "verifications": [
+    {
+      "kind": "POS",
+      "guid": "86ff66f6-0774-407a-a0dc-3eeaf873daf7",
+      "name": "Verb",
+      "found": true,
+      "tag_parsed": true,
+      "run_id": "GT-20260619-222958",
+      "matches_expected_run_id": true,
+      "source_project": "Ejagham Mini"
+    },
+    {
+      "kind": "TEMPLATE",
+      "guid": "821a96d6-5ea9-4656-a47e-4e9ff360e2d1",
+      "name": "(template)",
+      "found": true,
+      "tag_parsed": true,
+      "run_id": "GT-20260619-222958",
+      "matches_expected_run_id": true,
+      "source_project": "Ejagham Mini"
+    },
+    {
+      "kind": "SLOT",
+      "guid": "3865c061-ce0d-4c02-ba66-7eebe855ccd8",
+      "name": "SbjAgr",
+      "found": true,
+      "tag_parsed": true,
+      "run_id": "GT-20260619-222958",
+      "matches_expected_run_id": true,
+      "source_project": "Ejagham Mini"
+    },
+    {
+      "kind": "SLOT",
+      "guid": "d0466208-aecf-4df1-bc22-85dbc198dd48",
+      "name": "Neg/Mood",
+      "found": true,
+      "tag_parsed": true,
+      "run_id": "GT-20260619-222958",
+      "matches_expected_run_id": true,
+      "source_project": "Ejagham Mini"
+    },
+    {
+      "kind": "SLOT",
+      "guid": "31a13541-9338-41ad-821f-0ee01f485ba9",
+      "name": "Repetative",
+      "found": true,
+      "tag_parsed": true,
+      "run_id": "GT-20260619-222958",
+      "matches_expected_run_id": true,
+      "source_project": "Ejagham Mini"
+    },
+    {
+      "kind": "SLOT",
+      "guid": "647b87b9-c2b1-4ef6-b076-52390d3a8d91",
+      "name": "VSuffix",
+      "found": true,
+      "tag_parsed": true,
+      "run_id": "GT-20260619-222958",
+      "matches_expected_run_id": true,
+      "source_project": "Ejagham Mini"
+    }
+  ]
+}

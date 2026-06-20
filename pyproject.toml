@@ -1,0 +1,62 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "gramtrans"
+version = "0.1.0.dev0"
+description = "Additive grammar-piece transfer between FieldWorks Language Explorer (FLEx) projects. Phase 0 module."
+readme = "README.md"
+requires-python = ">=3.8"
+authors = [{ name = "GramTrans contributors" }]
+license = { text = "MIT" }
+dependencies = [
+    # flexlibs2 (direct runtime dep per constitution v5.0.0 Principle II).
+    # CLAUDE.md documents that this is consumed from the patched MattGyverLee
+    # fork; pip install -e D:/Github/_Projects/_LEX/flexlibs2 before installing
+    # this package. The LibLCM-direct implementation lives in a separate
+    # post-Phase-2 sibling repository (constitution Principle IV) — not here.
+    "flexlibs2>=2.0",
+    "PyQt5>=5.15",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7",
+    "ruff>=0.4",
+    "black>=24",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/gramtrans"]
+
+[tool.hatch.build.targets.sdist]
+include = ["src/gramtrans", "README.md", "pyproject.toml"]
+
+# ---------------------------------------------------------------------------
+# T003: lint/format
+# ---------------------------------------------------------------------------
+
+[tool.ruff]
+line-length = 100
+target-version = "py38"
+extend-exclude = ["tests/fixtures"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM"]
+ignore = []
+
+[tool.black]
+line-length = 100
+target-version = ["py38"]
+extend-exclude = "tests/fixtures"
+
+# ---------------------------------------------------------------------------
+# T004: pytest
+# ---------------------------------------------------------------------------
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "integration: requires the FlexTools host + a live LCM project pair (use `-m 'not integration'` to skip)",
+]

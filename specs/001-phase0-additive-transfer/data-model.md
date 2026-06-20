@@ -6,20 +6,22 @@
 
 This document captures the in-module data model — the Python-level structures the
 engine passes around. It is **not** the LCM data model; LCM object shapes are
-governed by FieldWorks and are accessed through the flavor adapters.
+governed by FieldWorks and are accessed via direct flexlibs2 imports per
+constitution v5.0.0 Principle II (no flavor-adapter contract in this repo).
 
 Conventions:
 - Frozen dataclasses unless mutation is intrinsic.
 - Identifiers favor `str` GUIDs (LCM's GUID type → str at the module boundary).
-- `flavor` annotations on field comments indicate which flavor reads/writes that
-  field at runtime, not which flavor *owns* the dataclass.
+- There is no `Flavor` enum in v5.0.0: every action in this repo is flexlibs2
+  by construction; the Phase 3 LibLCM-fork sibling repo defines its own runtime
+  type if needed.
 
 ---
 
 ## E1. RunContext
 
-The run-scope state captured once at module launch. Built by `ui/main_window.py` once
-the source is detected and the target picked.
+The run-scope state captured once at module launch. Built by `Lib/ui/main_window.py`
+once the source is detected and the target picked.
 
 | Field | Type | Notes |
 |-------|------|-------|
@@ -38,7 +40,7 @@ Invariants:
 
 ## E2. Selection
 
-The user's category and per-item choices, captured in `core/selection.py`.
+The user's category and per-item choices, captured in `Lib/selection.py`.
 
 | Field | Type | Notes |
 |-------|------|-------|
@@ -63,7 +65,7 @@ Invariants:
 ## E3. WSMapping
 
 The user's writing-system mapping (Clarification Q3, FR-011). Built in
-`ui/ws_mapping_dialog.py`, validated in `core/ws_mapping.py`.
+`Lib/ui/ws_mapping_dialog.py`, validated in `Lib/ws_mapping.py`.
 
 | Field | Type | Notes |
 |-------|------|-------|
@@ -88,7 +90,7 @@ Invariants:
 
 ## E4. RunPlan
 
-The immutable plan produced by `core/preview.py`. Move Mode consumes this; nothing
+The immutable plan produced by `Lib/preview.py`. Move Mode consumes this; nothing
 else does. Preview Mode is "compute, display, return without mutating target".
 
 | Field | Type | Notes |
@@ -112,7 +114,6 @@ Invariants:
 | `category` | `GrammarCategory` | Category of this action. |
 | `source_guid` | `str` | GUID of the source piece. |
 | `intended_target_guid` | `str` | Same as `source_guid` unless `identity_remap` says otherwise. |
-| `flavor` | `Flavor` enum | `FLEXLIBS1` or `LIBLCM` — which adapter executes this action (per R1 table). |
 | `summary` | `str` | Human-readable one-line summary for the Preview UI. |
 | `pulled_in_by` | `tuple[str, ...]` | Source GUIDs that caused this action via closure (empty for user-selected items). |
 
@@ -144,14 +145,21 @@ The structured tag (Q5, FR-010) written to every newly added target object.
 | `source_project_name` | `str` | From `RunContext.source_project_name`. |
 | `timestamp` | ISO-8601 `str` | From `RunContext.started_at`. |
 
-Serialization (`core/residue.py`):
+Serialization (`Lib/residue.py`):
 
 ```text
 GT|<run_id>|<source_project_name>|<timestamp>
 ```
 
-Parser (`parse(s: str) -> ImportResidueTag | None`) is required so future Phase 1 /
-Phase 2 code can read tags written by Phase 0 unchanged.
+Carrier (per FR-010, see [research.md R7](research.md#r7-import-residue-tag-location)):
+- **Carrier A** — written directly into the LCM `LiftResidue` field on object
+  classes that expose it (Lex-related + `IMoForm`, `IMoMorphSynAnalysis`).
+- **Carrier B** — appended to the `Description` multistring with the line prefix
+  `[GT-Tag]: ` for grammar-piece classes that lack `LiftResidue`.
+
+Parser (`parse(s: str) -> ImportResidueTag | None`) accepts both forms: it scans
+for the line that starts with `[GT-Tag]: GT|` (Carrier B) and falls back to
+treating the entire string as a Carrier A tag if no marker line is found.
 
 Invariants:
 - `prefix == "GT"` (so Phase 1/2 can detect "this came from GramTrans" with a single
@@ -162,7 +170,7 @@ Invariants:
 
 ## E6. RunReport
 
-Output of a Preview or Move run. Drives `ui/stats_panel.py` (FR-017).
+Output of a Preview or Move run. Drives `Lib/ui/stats_panel.py` (FR-017).
 
 | Field | Type | Notes |
 |-------|------|-------|

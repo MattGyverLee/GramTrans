@@ -83,4 +83,4 @@ deterministic JSON form. The shape:
 ```
 
 Field ordering MUST be stable so snapshot diffs are meaningful. Helper:
-`RunReport.to_snapshot_json()` lives in `core/report.py`.
+`RunReport.to_snapshot_json()` lives in `Lib/report.py`.

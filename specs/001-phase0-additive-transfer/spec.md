@@ -4,7 +4,7 @@
 
 **Created**: 2026-06-15
 
-**Status**: Draft
+**Status**: In Implementation (Layer 1+2 validation spike complete per STATUS.md; reconciled with constitution v5.0.0 on 2026-06-19)
 
 **Input**: Project description: "Transfer FLEx Grammar Module — first deliverable, scoped to
 Phase 0 (Additive) per constitution Principle IV. A FlexTools-compatible module that copies
@@ -189,7 +189,11 @@ not transferred unless they were pulled in as dependencies of the selected affix
 **Module Shape**
 
 - **FR-001**: The deliverable MUST be a FlexTools-compatible module that runs inside a
-  standard FlexTools host.
+  standard FlexTools host. Specifically, the module follows the **FLExTrans module
+  convention**: a single entry file (`src/gramtrans/gramtrans.py`) exposing a
+  module-level `docs = {...}` metadata dict and a `MainFunction(project, report,
+  modifyAllowed)` callable, with helpers under a sibling `Lib/` directory loaded via
+  `site.addsitedir(r"Lib")`. The `FlexToolsModuleClass` wrapper is NOT required.
 - **FR-002**: The module MUST present a main window inside the FlexTools window with
   controls for: per-category selection toggles, an auto-selection toggle that controls
   whether the dependency closure is implicitly included for selected items, a target
@@ -228,12 +232,25 @@ not transferred unless they were pulled in as dependencies of the selected affix
   NOT be modified, replaced, or deleted by this module.
 - **FR-009**: Duplicates resulting from adding a source object whose GUID or fingerprint
   already exists in the target are explicitly permitted in Phase 0.
-- **FR-010**: Every object added by the module MUST be tagged in Import Residue with a
-  **structured tag** carrying at minimum: a run ID of the form
+- **FR-010**: Every object added by the module MUST be tagged with a **structured
+  per-object residue tag** carrying at minimum: a run ID of the form
   `GT-YYYYMMDD-HHMMSS`, the source project's name, and an ISO-8601 timestamp of the
-  run. The tag format MUST allow the user to distinguish, in the target, items from
-  one run versus another, and the same tag schema MUST be reusable unchanged by
-  Phase 1 (overwrite) and Phase 2 (interactive merge).
+  run. The carrier depends on whether the LCM class exposes a residue field:
+  - **Carrier A — LCM residue field**: for classes that have `LiftResidue`
+    (`ILexEntry`, `ILexSense`, `IMoForm`, `IMoMorphSynAnalysis`, and other
+    Lex-related interfaces), the tag is the value of that field.
+  - **Carrier B — Description-append**: for grammar-piece classes that lack a residue
+    field (`IPartOfSpeech`, `IMoInflAffixTemplate`, `IMoInflAffixSlot`,
+    `IFsClosedFeature`, `IFsComplexFeature`, `IMoInflClass`, `IMoStemName`,
+    `IMoCompoundRule`, `IMoAdhocProhibGr`, etc.), the tag is appended to the
+    inherited `Description` multistring on its own line with the prefix
+    `[GT-Tag]: ` and an empty-line separator from preceding prose. The append is
+    non-destructive: existing Description content is preserved exactly.
+
+  The tag format MUST allow the user to distinguish, in the target, items from one
+  run versus another, and the same tag schema MUST be reusable unchanged by
+  Phase 1 (overwrite) and Phase 2 (interactive merge). A parser MUST be able to
+  recover the tag from either carrier.
 - **FR-011**: Before any transfer writes occur, the module MUST present a
   writing-system mapping step in which the user manually maps each source writing
   system (both vernacular and analysis) 1:1 to a writing system in the target. The
@@ -300,7 +317,10 @@ not transferred unless they were pulled in as dependencies of the selected affix
   functional in the target.
 - **Import Residue Tag**: The structured marker applied to every newly added target
   object. Carries a run ID (`GT-YYYYMMDD-HHMMSS`), the source project's name, and an
-  ISO-8601 timestamp, so per-run audit is possible. Same schema is reusable by
+  ISO-8601 timestamp, so per-run audit is possible. The carrier is the LCM
+  `LiftResidue` field on classes that expose it (Lex-related interfaces +
+  `IMoForm`, `IMoMorphSynAnalysis`), and a non-destructive `Description`-append with
+  the `[GT-Tag]:` line prefix on classes that don't. Same schema is reusable by
   Phase 1 and Phase 2 unchanged.
 - **Run Report**: The statistics produced at the end of a run. Per category it contains
   added count, skipped count, and a skip list with reasons.
@@ -344,10 +364,13 @@ not transferred unless they were pulled in as dependencies of the selected affix
   open in the same FLEx instance, running against the same FLEx / LCM / flexlibs
   versions — same-version compatibility between source and target is a precondition
   guaranteed by the host environment, not something the module verifies at runtime.
-- **API surface (informational)**: Implementation is permitted to use either of the two
-  co-equal flavors declared in constitution Principle II (flexlibs1 and LibLCM), and
-  must not depend on flexlibs2. This is reiterated here as scope context; the choice of
-  which flavor implements which operation is a planning concern, not a spec concern.
+- **API surface (informational)**: Per constitution v5.0.0 Principle II, Phase 0 imports
+  flexlibs2 **directly** (no flavor-adapter contract in this repo). The runtime depends
+  on the patched MattGyverLee/flexlibs2 fork carrying the `WritingSystems` enumeration
+  fix and the new `ApplySyncableProperties` method. The LibLCM-direct implementation is
+  a **separate post-Phase-2 sibling repository**, not an in-tree deliverable. flexlibs1
+  is not used (superseded by v4.0.0). This is reiterated here as scope context; the
+  per-operation surface choice is a planning concern, not a spec concern.
 - **Preview default**: Preview Mode is the default execution mode (Constitution
   Principle III). Move Mode is opt-in per run.
 - **Undo expectations**: Move Mode aims to be undoable via the FLEx undo stack where the

@@ -31,11 +31,15 @@
 
 ## Notes
 
-- The spec mentions flexlibs1, LibLCM, and FLExToolsMCP by name in the Assumptions
-  section. These are NOT implementation prescriptions for the module — they are scope
-  boundaries derived from constitution Principle II (which two API flavors are in
-  scope, and the non-normative role of the MCP). They are tagged "informational" /
-  "scope context" precisely so a planner cannot misread them as a tech-stack directive.
+- The spec mentions flexlibs2 (the only runtime API flavor in this repo, consumed as
+  the patched MattGyverLee fork), LibLCM (out of scope — the LibLCM-direct
+  implementation lives in a separate post-Phase-2 sibling repository per constitution
+  v5.0.0 Principle IV), and FLExToolsMCP (non-normative author-side assistant) by
+  name in the Assumptions section. These are NOT implementation prescriptions —
+  they are scope boundaries derived from constitution Principle II. They are tagged
+  "informational" / "scope context" precisely so a planner cannot misread them as
+  a tech-stack directive. Historical references to flexlibs1 in older artifacts
+  are read as historical context only; flexlibs1 is not used.
 - "GOLD", "Import Residue", "APR", "writing system", "allomorph", "slot", "template" are
   FLEx/LCM domain terms (the project's ubiquitous language), not implementation details.
 - Phase 1 (overwrite) and Phase 2 (interactive merge) are explicitly deferred to
