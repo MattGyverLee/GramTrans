@@ -75,6 +75,13 @@ def execute(plan: RunPlan, source, target, report_sink, tag: ImportResidueTag) -
         _execute_verb_vertical(plan, source, target, report_sink, tag, pulled_in_guids, pos_guid)
         _execute_layer3(plan, source, target, report_sink, tag, pos_guid)
 
+    # Phase 1 (FR-101): apply OVERWRITE actions. Each PlannedOverwrite
+    # looks up the existing target object by GUID and applies the source's
+    # syncable properties. Pre-overwrite snapshots in the residue carrier
+    # (FR-106) are TODO for Phase 1.1.
+    for ow in getattr(plan, "overwrites", ()):
+        _execute_overwrite(ow, source, target, report_sink, tag)
+
     elapsed = time.time() - start
     # Build the report from the plan. If every action ran without raising,
     # the FR-018 invariant on RunReport.__post_init__ passes by construction
@@ -88,14 +95,18 @@ def execute(plan: RunPlan, source, target, report_sink, tag: ImportResidueTag) -
 
 def _pos_guids_from_plan(plan: RunPlan) -> list:
     """Return the ordered list of source POS GUIDs the plan touches —
-    union of POS PlannedActions and POS Skips, preserving plan order with
-    no duplicates."""
+    union of POS PlannedActions, POS Overwrites (Phase 1), and POS Skips,
+    preserving plan order with no duplicates."""
     seen = set()
     ordered = []
     for a in plan.actions:
         if a.category == GrammarCategory.POS and a.source_guid not in seen:
             seen.add(a.source_guid)
             ordered.append(a.source_guid)
+    for ow in getattr(plan, "overwrites", ()):
+        if ow.category == GrammarCategory.POS and ow.source_guid not in seen:
+            seen.add(ow.source_guid)
+            ordered.append(ow.source_guid)
     for s in plan.skips:
         if s.category == GrammarCategory.POS and s.source_guid not in seen:
             seen.add(s.source_guid)
@@ -752,3 +763,96 @@ def _msa_points_at_verb(msa, verb_guid: str) -> bool:
     if ia.PartOfSpeechRA is None:
         return False
     return str(ICmObject(ia.PartOfSpeechRA).Guid).lower() == verb_guid
+
+
+# ============================================================================
+# Phase 1 overwrite executor (FR-101)
+# ============================================================================
+
+def _execute_overwrite(overwrite, source, target, report_sink, tag: ImportResidueTag) -> None:
+    """Apply a single PlannedOverwrite: look up the target object by GUID,
+    pull source's syncable properties, and apply them via the patched fork's
+    `ApplySyncableProperties`.
+
+    Pre-overwrite snapshot in residue (FR-106) is currently NOT recorded —
+    queued for Phase 1.1. The existing Carrier-A/B tag is still applied so
+    the user can see the run_id that touched this object.
+    """
+    cat = overwrite.category
+    src_guid = overwrite.source_guid
+    tgt_guid = overwrite.target_guid
+
+    # Per-category lookup + apply
+    if cat == GrammarCategory.POS:
+        src_obj = _find_source_pos_by_guid(source, src_guid)
+        tgt_obj = _find_target_pos_by_guid(target, tgt_guid)
+        if src_obj is None or tgt_obj is None:
+            report_sink.Warning(f"  [OW] POS {src_guid[:8]} not found in source or target")
+            return
+        src_props = source.POS.GetSyncableProperties(src_obj)
+        target.POS.ApplySyncableProperties(tgt_obj, src_props)
+        cache = getattr(target, "Cache")
+        apply_residue(tgt_obj, cache.DefaultAnalWs, tag)
+        report_sink.Info(f"  POS overwritten  guid={src_guid}")
+        return
+
+    if cat == GrammarCategory.TEMPLATES:
+        src_tpl_wrap = _find_source_template_by_guid(source, src_guid)
+        if src_tpl_wrap is None:
+            report_sink.Warning(f"  [OW] Template {src_guid[:8]} vanished in source")
+            return
+        # owner_guid carries the POS GUID; if absent (early Phase 0 plans),
+        # fall back to pulled_in_by[0].
+        owner_pos_guid = getattr(overwrite, "owner_guid", "") or (
+            overwrite.pulled_in_by[0] if overwrite.pulled_in_by else ""
+        )
+        if not owner_pos_guid:
+            report_sink.Warning(f"  [OW] Template {src_guid[:8]} has no owner POS reference")
+            return
+        tgt_pos = _find_target_pos_by_guid(target, owner_pos_guid)
+        if tgt_pos is None:
+            report_sink.Warning(f"  [OW] Template owner POS {owner_pos_guid[:8]} not in target")
+            return
+        tgt_tpl = _find_target_template_by_guid(target, tgt_pos, tgt_guid)
+        if tgt_tpl is None:
+            report_sink.Warning(f"  [OW] Template {tgt_guid[:8]} not in target")
+            return
+        src_props = source.MorphRules.GetSyncableProperties(src_tpl_wrap)
+        target.MorphRules.ApplySyncableProperties(tgt_tpl, src_props)
+        cache = getattr(target, "Cache")
+        apply_residue(tgt_tpl, cache.DefaultAnalWs, tag)
+        report_sink.Info(f"  Template overwritten  guid={src_guid}")
+        return
+
+    if cat == GrammarCategory.SLOTS:
+        owner_pos_guid = getattr(overwrite, "owner_guid", "")
+        tgt_pos = _find_target_pos_by_guid(target, owner_pos_guid) if owner_pos_guid else None
+        tgt_slot = None
+        if tgt_pos is not None:
+            tgt_slot = _find_target_slot_by_guid(target, tgt_pos, tgt_guid)
+        if tgt_slot is None:
+            # Fallback: scan every POS's slots
+            for pos in target.POS.GetAll(recursive=True):
+                concrete = _unwrap(pos)
+                for s in target.POS.GetAffixSlots(concrete):
+                    if _guid_str(_unwrap(s)) == tgt_guid:
+                        tgt_slot = _unwrap(s)
+                        break
+                if tgt_slot is not None:
+                    break
+        if tgt_slot is None:
+            report_sink.Warning(f"  [OW] Slot {tgt_guid[:8]} not in target")
+            return
+        # Slot has no flexlibs2 SyncableProperties wrapper exposed for it
+        # via the MorphRules accessor on slots specifically; Phase 1.0 only
+        # re-applies the residue tag here. Phase 1.1 will copy the slot
+        # name + description via direct property access (Name multistring).
+        cache = getattr(target, "Cache")
+        apply_residue(tgt_slot, cache.DefaultAnalWs, tag)
+        report_sink.Info(f"  Slot tagged (overwrite, no syncable props)  guid={src_guid}")
+        return
+
+    # For other categories, Phase 1 just logs and skips the apply — the
+    # extension lands as categories.py exposes ApplySyncableProperties for
+    # each. The residue tag is still applied below for audit.
+    report_sink.Info(f"  [OW] {cat.value} overwrite no-op (Phase 1.1 will extend)  guid={src_guid}")

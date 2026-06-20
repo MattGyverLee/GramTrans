@@ -54,27 +54,40 @@ def _build_from_plan(cls, plan: RunPlan, mode: RunMode,
     """
     per_category: dict = {}
 
-    for action in plan.actions:
-        cat = action.category
+    def _bucket(cat):
         if cat not in per_category:
-            per_category[cat] = {"added": 0, "skipped": 0, "closure_pulled_in": 0}
-        per_category[cat]["added"] += 1
+            per_category[cat] = {
+                "added": 0, "skipped": 0, "closure_pulled_in": 0, "overwritten": 0,
+            }
+        return per_category[cat]
+
+    for action in plan.actions:
+        b = _bucket(action.category)
+        b["added"] += 1
         if action.pulled_in_by:
-            per_category[cat]["closure_pulled_in"] += 1
+            b["closure_pulled_in"] += 1
 
     skips_list: list = []
     for skip in plan.skips:
-        cat = skip.category
-        if cat not in per_category:
-            per_category[cat] = {"added": 0, "skipped": 0, "closure_pulled_in": 0}
-        per_category[cat]["skipped"] += 1
+        b = _bucket(skip.category)
+        b["skipped"] += 1
         skips_list.append(skip)
+
+    # Phase 1 (FR-110): count overwrites per category. Tolerate plans
+    # produced before Phase 1 (no `overwrites` attribute) by falling back
+    # to an empty tuple.
+    for ow in getattr(plan, "overwrites", ()):
+        b = _bucket(ow.category)
+        b["overwritten"] += 1
+        if getattr(ow, "pulled_in_by", ()):
+            b["closure_pulled_in"] += 1
 
     per_category_final = {
         cat: CategoryReport(
             added=counts["added"],
             skipped=counts["skipped"],
             closure_pulled_in=counts["closure_pulled_in"],
+            overwritten=counts["overwritten"],
         )
         for cat, counts in per_category.items()
     }
@@ -116,6 +129,7 @@ def _to_snapshot_json(self) -> str:
                 "added": self.per_category[cat].added,
                 "skipped": self.per_category[cat].skipped,
                 "closure_pulled_in": self.per_category[cat].closure_pulled_in,
+                "overwritten": getattr(self.per_category[cat], "overwritten", 0),
             }
             for cat in ordered_cats
         },
@@ -164,16 +178,23 @@ def render_text_summary(report: RunReport) -> Iterable[str]:
     yield f"  Target: {report.context.target_project_name!r}"
     total_added = 0
     total_skipped = 0
+    total_overwritten = 0
     for cat in sorted(report.per_category.keys(), key=lambda c: c.value):
         r = report.per_category[cat]
         total_added += r.added
         total_skipped += r.skipped
+        ow = getattr(r, "overwritten", 0)
+        total_overwritten += ow
         suffix = (
             f"  added={r.added}  skipped={r.skipped}"
+            + (f"  overwritten={ow}" if ow else "")
             + (f"  pulled_in={r.closure_pulled_in}" if r.closure_pulled_in else "")
         )
         yield f"  {cat.value:18s}{suffix}"
-    yield f"  {'TOTAL':18s}  added={total_added}  skipped={total_skipped}"
+    yield (
+        f"  {'TOTAL':18s}  added={total_added}  skipped={total_skipped}"
+        + (f"  overwritten={total_overwritten}" if total_overwritten else "")
+    )
     if report.skips:
         yield "  Skips:"
         for s in report.skips:

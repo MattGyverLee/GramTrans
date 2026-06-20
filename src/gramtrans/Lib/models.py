@@ -111,6 +111,8 @@ class Selection:
     affix_picks: frozenset = field(default_factory=frozenset)  # frozenset[str]
     template_picks: frozenset = field(default_factory=frozenset)  # frozenset[str]
     pos_picks: frozenset = field(default_factory=frozenset)  # frozenset[str] — POS GUIDs
+    enable_overwrite: bool = False  # Phase 1 (FR-101/FR-108): when True,
+    # already-present-by-GUID items become PlannedOverwrites instead of skips.
 
     def __post_init__(self) -> None:
         if self.affix_picks and self.categories.get(GrammarCategory.AFFIXES) is not True:
@@ -176,11 +178,36 @@ class WSMapping:
 
 @dataclass(frozen=True)
 class PlannedAction:
+    """ADD — create a brand-new object in target with the source's GUID
+    preserved (where possible).  Phase 0's primary action verb."""
     category: GrammarCategory
     source_guid: str
     intended_target_guid: str
     summary: str
     pulled_in_by: tuple = ()  # tuple[str, ...] of source GUIDs
+
+
+@dataclass(frozen=True)
+class PlannedOverwrite:
+    """OVERWRITE — target already has an object matching the source; update
+    its syncable properties from source.  Phase 1 (FR-101 onward).
+
+    `match_via` records which strategy yielded this overwrite
+    ("guid" | "identity_remap" | "fingerprint"). Phase 2 may inspect it to
+    apply different conflict-resolution policy per-match-type.
+
+    `owner_guid` is the parent reference the executor needs to scope its
+    lookup (e.g. for a Slot overwrite, owner_guid is the template's GUID;
+    for a Template overwrite, it's the owning POS's GUID). Empty for
+    top-level objects (POS, PhEnvironment).
+    """
+    category: GrammarCategory
+    source_guid: str
+    target_guid: str  # the existing target GUID (may differ from source for fingerprint matches)
+    summary: str
+    match_via: str = "guid"  # "guid" | "identity_remap" | "fingerprint"
+    pulled_in_by: tuple = ()
+    owner_guid: str = ""  # parent reference for the executor's lookup
 
 
 @dataclass(frozen=True)
@@ -203,6 +230,7 @@ class RunPlan:
     actions: tuple = ()  # tuple[PlannedAction, ...]
     skips: tuple = ()  # tuple[Skip, ...]
     identity_remap: dict = field(default_factory=dict)  # str -> str
+    overwrites: tuple = ()  # tuple[PlannedOverwrite, ...] — Phase 1 (FR-101)
 
     def category_count(self, category: GrammarCategory) -> int:
         return sum(1 for a in self.actions if a.category == category)
@@ -217,6 +245,7 @@ class CategoryReport:
     added: int = 0
     skipped: int = 0
     closure_pulled_in: int = 0
+    overwritten: int = 0  # Phase 1 (FR-110)
 
 
 @dataclass(frozen=True)

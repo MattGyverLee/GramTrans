@@ -13,12 +13,13 @@ this builder with the full FR-004 category set.
 """
 from __future__ import annotations
 
-from typing import Iterable, List, Tuple
+from typing import Iterable, List, Optional, Tuple
 
 if __package__:
     from .models import (
         GrammarCategory,
         PlannedAction,
+        PlannedOverwrite,
         RunContext,
         RunPlan,
         Selection,
@@ -30,6 +31,7 @@ else:
     from models import (
         GrammarCategory,
         PlannedAction,
+        PlannedOverwrite,
         RunContext,
         RunPlan,
         Selection,
@@ -64,6 +66,7 @@ def build_run_plan(
     """
     actions: List[PlannedAction] = []
     skips: List[Skip] = []
+    overwrites: List[PlannedOverwrite] = []
     identity_remap: dict = {}
 
     # Walk every selected POS (or all top-level POSes when categories[POS]
@@ -71,8 +74,8 @@ def build_run_plan(
     # POS → Template → Slots → LexEntries(MSA-points-at-POS) → Senses → MSAs
     # → Allomorphs → PhEnvironments.
     for src_pos in _select_source_poses(source, selection):
-        _plan_pos_closure(source, target, src_pos, selection, actions, skips)
-        _plan_layer3_for_pos(source, target, src_pos, selection, actions, skips)
+        _plan_pos_closure(source, target, src_pos, selection, actions, skips, overwrites)
+        _plan_layer3_for_pos(source, target, src_pos, selection, actions, skips, overwrites)
 
     return RunPlan(
         context=context,
@@ -81,12 +84,54 @@ def build_run_plan(
         actions=tuple(actions),
         skips=tuple(skips),
         identity_remap=identity_remap,
+        overwrites=tuple(overwrites),
     )
 
 
 # ============================================================================
 # Verb-vertical plan walk (mirrors STATUS.md Layer 1+2)
 # ============================================================================
+
+def _emit_present_outcome(
+    category: GrammarCategory,
+    src_guid: str,
+    target_guid: str,
+    summary: str,
+    skip_detail: str,
+    selection: Selection,
+    skips: List[Skip],
+    overwrites: Optional[List[PlannedOverwrite]],
+    *,
+    pulled_in_by: tuple = (),
+    match_via: str = "guid",
+    owner_guid: str = "",
+) -> None:
+    """Phase 0/1 dispatcher for "target already has source GUID":
+
+    - Phase 0 (`selection.enable_overwrite=False`, default): emit
+      `Skip(ALREADY_PRESENT_BY_GUID)` per FR-009.
+    - Phase 1 (`selection.enable_overwrite=True`, per FR-108): emit
+      `PlannedOverwrite` instead so the executor updates the existing
+      target object's syncable properties from source.
+    """
+    if selection.enable_overwrite and overwrites is not None:
+        overwrites.append(PlannedOverwrite(
+            category=category,
+            source_guid=src_guid,
+            target_guid=target_guid,
+            summary=summary,
+            match_via=match_via,
+            pulled_in_by=pulled_in_by,
+            owner_guid=owner_guid,
+        ))
+    else:
+        skips.append(Skip(
+            category=category,
+            source_guid=src_guid,
+            reason=SkipReason.ALREADY_PRESENT_BY_GUID,
+            detail=skip_detail,
+        ))
+
 
 def _select_source_poses(source, selection: Selection) -> List:
     """Return the list of source POS objects whose closure should be walked.
@@ -133,10 +178,13 @@ def _plan_pos_closure(
     selection: Selection,
     actions: List[PlannedAction],
     skips: List[Skip],
+    overwrites: List[PlannedOverwrite],
 ) -> None:
     """POS → Template → Slot walk for a single source POS. Mirrors the
     pre-multi-POS `_plan_verb_vertical` but parameterized on the POS."""
-    _plan_verb_vertical_inner(source, target, src_pos, selection, actions, skips)
+    _plan_verb_vertical_inner(
+        source, target, src_pos, selection, actions, skips, overwrites,
+    )
 
 
 def _plan_layer3_for_pos(
@@ -146,10 +194,13 @@ def _plan_layer3_for_pos(
     selection: Selection,
     actions: List[PlannedAction],
     skips: List[Skip],
+    overwrites: List[PlannedOverwrite],
 ) -> None:
     """Layer 3 (LexEntry / Sense / MSA / Allomorph / PhEnvironment) walk for
     affix entries whose IMoInflAffMsa.PartOfSpeechRA points at `src_pos`."""
-    _plan_layer3_verb_affixes_inner(source, target, src_pos, selection, actions, skips)
+    _plan_layer3_verb_affixes_inner(
+        source, target, src_pos, selection, actions, skips, overwrites,
+    )
 
 
 def _plan_verb_vertical_inner(
@@ -159,6 +210,7 @@ def _plan_verb_vertical_inner(
     selection: Selection,
     actions: List[PlannedAction],
     skips: List[Skip],
+    overwrites: Optional[List[PlannedOverwrite]] = None,
 ) -> None:
     """POS+Template+Slot closure for a single source POS.
 
@@ -195,12 +247,16 @@ def _plan_verb_vertical_inner(
     pos_wanted = pos_on or (closure_on and (tpl_on or slots_on))
     if pos_wanted:
         if _target_has_pos_guid(target, src_verb_guid):
-            skips.append(Skip(
-                category=GrammarCategory.POS,
-                source_guid=src_verb_guid,
-                reason=SkipReason.ALREADY_PRESENT_BY_GUID,
-                detail="POS 'Verb' already present in target by GUID",
-            ))
+            _emit_present_outcome(
+                GrammarCategory.POS,
+                src_guid=src_verb_guid,
+                target_guid=src_verb_guid,
+                summary=f"POS already present (guid {src_verb_guid[:8]}…)",
+                skip_detail="POS 'Verb' already present in target by GUID",
+                selection=selection,
+                skips=skips,
+                overwrites=overwrites,
+            )
         else:
             actions.append(PlannedAction(
                 category=GrammarCategory.POS,
@@ -248,11 +304,11 @@ def _plan_verb_vertical_inner(
                     # Skip the slot layer for this template too — there's
                     # nothing to attach them to.
                     continue
-            _emit_template(target, src_verb_guid, tpl_guid, tpl_on, actions, skips)
+            _emit_template(target, src_verb_guid, tpl_guid, tpl_on, actions, skips, selection, overwrites)
         elif closure_on:
             # Pulled in via closure from POS or slots being on.
             if pos_on or slots_on:
-                _emit_template(target, src_verb_guid, tpl_guid, False, actions, skips)
+                _emit_template(target, src_verb_guid, tpl_guid, False, actions, skips, selection, overwrites)
             else:
                 continue
         else:
@@ -277,12 +333,18 @@ def _plan_verb_vertical_inner(
                 slot_guid = _guid_str(slot)
                 slot_name = _slot_name(slot)
                 if _target_has_slot_guid(target, src_verb_guid, slot_guid):
-                    skips.append(Skip(
-                        category=GrammarCategory.SLOTS,
-                        source_guid=slot_guid,
-                        reason=SkipReason.ALREADY_PRESENT_BY_GUID,
-                        detail=f"Slot {slot_name!r} ({kind_label}) already present by GUID",
-                    ))
+                    _emit_present_outcome(
+                        GrammarCategory.SLOTS,
+                        src_guid=slot_guid,
+                        target_guid=slot_guid,
+                        summary=f"Slot {slot_name!r} ({kind_label}) already present",
+                        skip_detail=f"Slot {slot_name!r} ({kind_label}) already present by GUID",
+                        selection=selection,
+                        skips=skips,
+                        overwrites=overwrites,
+                        pulled_in_by=() if slots_on else (tpl_guid,),
+                        owner_guid=src_verb_guid,  # POS owner; slots live under POS.AffixSlotsOC
+                    )
                 else:
                     actions.append(PlannedAction(
                         category=GrammarCategory.SLOTS,
@@ -300,6 +362,7 @@ def _plan_layer3_verb_affixes_inner(
     selection: Selection,
     actions: List[PlannedAction],
     skips: List[Skip],
+    overwrites: Optional[List[PlannedOverwrite]] = None,
 ) -> None:
     """Walk Layer 3 for a single source POS: every source LexEntry whose
     Sense's MSA is an IMoInflAffMsa pointing at this POS. Each yields
@@ -479,15 +542,23 @@ def _emit_template(target,
                    tpl_guid: str,
                    user_selected: bool,
                    actions: List[PlannedAction],
-                   skips: List[Skip]) -> None:
-    """Emit Add or Skip-by-GUID for a single template."""
+                   skips: List[Skip],
+                   selection: Selection,
+                   overwrites: Optional[List[PlannedOverwrite]]) -> None:
+    """Emit Add or Skip-by-GUID (Phase 0) / Overwrite (Phase 1) for a template."""
     if _target_has_template_guid(target, owner_pos_guid, tpl_guid):
-        skips.append(Skip(
-            category=GrammarCategory.TEMPLATES,
-            source_guid=tpl_guid,
-            reason=SkipReason.ALREADY_PRESENT_BY_GUID,
-            detail="Template already present in target by GUID",
-        ))
+        _emit_present_outcome(
+            GrammarCategory.TEMPLATES,
+            src_guid=tpl_guid,
+            target_guid=tpl_guid,
+            summary=f"Affix template already present (guid {tpl_guid[:8]}…)",
+            skip_detail="Template already present in target by GUID",
+            selection=selection,
+            skips=skips,
+            overwrites=overwrites,
+            pulled_in_by=() if user_selected else (owner_pos_guid,),
+            owner_guid=owner_pos_guid,
+        )
     else:
         actions.append(PlannedAction(
             category=GrammarCategory.TEMPLATES,
