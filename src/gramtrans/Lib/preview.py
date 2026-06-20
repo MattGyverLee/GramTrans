@@ -484,10 +484,29 @@ def _plan_layer3_verb_affixes_inner(
                     pulled_in_by=(entry_guid,),
                     owner_guid=entry_guid,
                 ))
-            # MSAs and Allomorphs continue as adds (their GUIDs were
-            # re-assigned in Phase 0 via factory.Create() without Guid;
-            # fingerprint matching for them is Phase 1.2).
-            for _msa, msa_guid, sense_guid in msa_actions:
+            # Phase 1.2 (FR-104): MSAs and Allomorphs are matched by
+            # fingerprint against the target entry's existing MSAs and
+            # allomorphs. Their GUIDs were re-assigned in Phase 0, so
+            # direct GUID lookup fails — but the fingerprint
+            # (class+pos+slots for MSA; lexeme_form+morphtype for
+            # allomorph) is stable across runs because every piece of
+            # information in it is GUID-preserved (entry, slot, morphtype).
+            tgt_entry = target_entry_index[entry_guid]
+            msa_match_via, _msa_overwrite_pairs, _msa_add_list = _match_msas_by_fingerprint(
+                target, tgt_entry, msa_actions, entry_guid,
+            )
+            for src_msa, msa_guid, sense_guid in _msa_overwrite_pairs:
+                tgt_msa_guid = msa_match_via[msa_guid]
+                overwrites.append(PlannedOverwrite(
+                    category=GrammarCategory.MSA,
+                    source_guid=msa_guid,
+                    target_guid=tgt_msa_guid,
+                    summary=f"InflAffMsa for {entry_hw!r}",
+                    match_via="fingerprint",
+                    pulled_in_by=(sense_guid,),
+                    owner_guid=entry_guid,
+                ))
+            for _src_msa, msa_guid, sense_guid in _msa_add_list:
                 actions.append(PlannedAction(
                     category=GrammarCategory.MSA,
                     source_guid=msa_guid,
@@ -495,10 +514,22 @@ def _plan_layer3_verb_affixes_inner(
                     summary=f"InflAffMsa for {entry_hw!r}",
                     pulled_in_by=(sense_guid,),
                 ))
-            # Allomorphs handled in the loop below.
-            for allo in source.Allomorphs.GetAll(entry):
-                allo_obj = _unwrap(allo)
-                allo_guid = _guid_str(allo_obj)
+            # Allomorphs: same pattern with default-vernacular WS handle.
+            allo_match_via, _allo_overwrite_list, _allo_add_list = _match_allomorphs_by_fingerprint(
+                source, target, tgt_entry, entry, entry_guid,
+            )
+            for src_allo, allo_guid in _allo_overwrite_list:
+                tgt_allo_guid = allo_match_via[allo_guid]
+                overwrites.append(PlannedOverwrite(
+                    category=GrammarCategory.ALLOMORPH,
+                    source_guid=allo_guid,
+                    target_guid=tgt_allo_guid,
+                    summary=f"Allomorph of {entry_hw!r}",
+                    match_via="fingerprint",
+                    pulled_in_by=(entry_guid,),
+                    owner_guid=entry_guid,
+                ))
+            for _src_allo, allo_guid in _allo_add_list:
                 actions.append(PlannedAction(
                     category=GrammarCategory.ALLOMORPH,
                     source_guid=allo_guid,
@@ -506,6 +537,12 @@ def _plan_layer3_verb_affixes_inner(
                     summary=f"Allomorph of {entry_hw!r}",
                     pulled_in_by=(entry_guid,),
                 ))
+            # Phone-environments: scoped to the entry, independent of MSA/Allomorph
+            # overwrite outcome. Each source allomorph may reference one or more
+            # environments; same target-presence check as Phase 0.
+            for allo in source.Allomorphs.GetAll(entry):
+                allo_obj = _unwrap(allo)
+                allo_guid = _guid_str(allo_obj)
                 envs = source.Allomorphs.GetPhoneEnv(allo)
                 if envs is None:
                     continue
@@ -621,6 +658,123 @@ def _lex_sense_msa(sense):
 def _classname_of(obj):
     from SIL.LCModel import ICmObject
     return ICmObject(obj).ClassName
+
+
+def _match_msas_by_fingerprint(target, tgt_entry, msa_actions, entry_guid: str):
+    """Match source MSAs against target MSAs on the same entry by fingerprint
+    (FR-104). Returns:
+
+    - `match_via`: dict[source_msa_guid → target_msa_guid] for matched pairs
+    - `overwrite_pairs`: list of (src_msa, msa_guid, sense_guid) to overwrite
+    - `add_list`: list of (src_msa, msa_guid, sense_guid) that found no match
+
+    The fingerprint per FR-104 is (category, owner_entry_guid, "MoInflAffMsa",
+    pos_guid, frozenset(slot_guids)). Built independently for source and target.
+    """
+    from SIL.LCModel import ILexEntry, ICmObject
+
+    # Compute target-side fingerprints → target msa guid map.
+    target_fp_to_guid = {}
+    try:
+        for tmsa in ILexEntry(tgt_entry).MorphoSyntaxAnalysesOC:
+            if _classname_of(tmsa) != "MoInflAffMsa":
+                continue
+            fp = _msa_fingerprint(tmsa, entry_guid)
+            target_fp_to_guid[fp] = str(ICmObject(tmsa).Guid).lower()
+    except (AttributeError, TypeError):
+        pass
+
+    match_via = {}
+    overwrite_pairs = []
+    add_list = []
+    for src_msa, msa_guid, sense_guid in msa_actions:
+        fp = _msa_fingerprint(src_msa, entry_guid)
+        tgt_msa_guid = target_fp_to_guid.get(fp)
+        if tgt_msa_guid is not None:
+            match_via[msa_guid] = tgt_msa_guid
+            overwrite_pairs.append((src_msa, msa_guid, sense_guid))
+        else:
+            add_list.append((src_msa, msa_guid, sense_guid))
+    return match_via, overwrite_pairs, add_list
+
+
+def _msa_fingerprint(msa, owner_entry_guid: str):
+    """Inline fingerprint for MSA matching — avoids the matcher.py
+    indirection so the planner can operate on flexlibs2 wrappers
+    transparently."""
+    from SIL.LCModel import IMoInflAffMsa, ICmObject
+    ia = IMoInflAffMsa(_unwrap(msa))
+    pos_guid = ""
+    if ia.PartOfSpeechRA is not None:
+        pos_guid = str(ICmObject(ia.PartOfSpeechRA).Guid).lower()
+    slot_guids = frozenset(str(ICmObject(sl).Guid).lower() for sl in ia.SlotsRC)
+    return (GrammarCategory.MSA, owner_entry_guid.lower(), "MoInflAffMsa", pos_guid, slot_guids)
+
+
+def _match_allomorphs_by_fingerprint(source, target, tgt_entry, src_entry, entry_guid: str):
+    """Match source allomorphs against target allomorphs on the same entry
+    by fingerprint (FR-104). Returns the same shape as _match_msas_by_fingerprint.
+
+    Fingerprint per FR-104:
+    (category, owner_entry_guid, lexeme_form_text, morph_type_guid).
+    """
+    from SIL.LCModel import ICmObject
+    cache = getattr(target, "Cache", None)
+    ws_handle = None
+    try:
+        if cache is not None:
+            ws_handle = cache.DefaultVernWs
+    except AttributeError:
+        ws_handle = None
+
+    # Target-side fingerprints
+    target_fp_to_guid = {}
+    try:
+        for tallo in target.Allomorphs.GetAll(tgt_entry):
+            tallo_obj = _unwrap(tallo)
+            fp = _allomorph_fingerprint(tallo_obj, entry_guid, ws_handle)
+            target_fp_to_guid[fp] = str(ICmObject(tallo_obj).Guid).lower()
+    except (AttributeError, TypeError):
+        pass
+
+    match_via = {}
+    overwrite_list = []
+    add_list = []
+    src_ws_handle = None
+    try:
+        src_cache = getattr(source, "Cache", None)
+        if src_cache is not None:
+            src_ws_handle = src_cache.DefaultVernWs
+    except AttributeError:
+        src_ws_handle = None
+    for sallo in source.Allomorphs.GetAll(src_entry):
+        sallo_obj = _unwrap(sallo)
+        allo_guid = _guid_str(sallo_obj)
+        fp = _allomorph_fingerprint(sallo_obj, entry_guid, src_ws_handle)
+        tgt_allo_guid = target_fp_to_guid.get(fp)
+        if tgt_allo_guid is not None:
+            match_via[allo_guid] = tgt_allo_guid
+            overwrite_list.append((sallo_obj, allo_guid))
+        else:
+            add_list.append((sallo_obj, allo_guid))
+    return match_via, overwrite_list, add_list
+
+
+def _allomorph_fingerprint(allo, owner_entry_guid: str, ws_handle):
+    """Inline allomorph fingerprint per FR-104."""
+    from SIL.LCModel import IMoAffixAllomorph, ICmObject
+    ia = IMoAffixAllomorph(allo)
+    morph_type_guid = ""
+    if ia.MorphTypeRA is not None:
+        morph_type_guid = str(ICmObject(ia.MorphTypeRA).Guid).lower()
+    lexeme_form_text = ""
+    if ws_handle is not None:
+        try:
+            ts_string = ia.Form.get_String(ws_handle)
+            lexeme_form_text = (ts_string.Text or "") if ts_string is not None else ""
+        except (AttributeError, TypeError):
+            lexeme_form_text = ""
+    return (GrammarCategory.ALLOMORPH, owner_entry_guid.lower(), lexeme_form_text, morph_type_guid)
 
 
 def _msa_points_at_verb(msa, verb_guid: str) -> bool:

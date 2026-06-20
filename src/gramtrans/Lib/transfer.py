@@ -924,7 +924,110 @@ def _execute_overwrite(overwrite, source, target, report_sink, tag: ImportResidu
         report_sink.Info(f"  LexSense overwritten  guid={src_guid}")
         return
 
+    if cat == GrammarCategory.MSA:
+        from SIL.LCModel import ICmObject, ILexEntry, IMoInflAffMsa
+        owner_entry_guid = getattr(overwrite, "owner_guid", "")
+        if not owner_entry_guid:
+            report_sink.Warning(f"  [OW] MSA {src_guid[:8]} has no owner entry reference")
+            return
+        # Locate target entry, then the target MSA on its MorphoSyntaxAnalysesOC.
+        tgt_entry = None
+        for te in target.LexEntry.GetAll():
+            if str(ICmObject(_unwrap(te)).Guid).lower() == owner_entry_guid:
+                tgt_entry = _unwrap(te)
+                break
+        if tgt_entry is None:
+            report_sink.Warning(f"  [OW] MSA owner entry {owner_entry_guid[:8]} not in target")
+            return
+        tgt_msa = None
+        for tmsa in ILexEntry(tgt_entry).MorphoSyntaxAnalysesOC:
+            if str(ICmObject(tmsa).Guid).lower() == tgt_guid:
+                tgt_msa = tmsa
+                break
+        if tgt_msa is None:
+            report_sink.Warning(f"  [OW] Target MSA {tgt_guid[:8]} not found")
+            return
+        # Re-sync SlotsRC (slot membership may have shifted). Source MSA
+        # lookup mirrors the planner's: find source entry, then matching MSA.
+        src_entry = None
+        for se in source.LexEntry.GetAll():
+            if str(ICmObject(_unwrap(se)).Guid).lower() == owner_entry_guid:
+                src_entry = _unwrap(se)
+                break
+        src_msa = None
+        if src_entry is not None:
+            for smsa in ILexEntry(src_entry).MorphoSyntaxAnalysesOC:
+                if str(ICmObject(smsa).Guid).lower() == src_guid:
+                    src_msa = smsa
+                    break
+        if src_msa is not None:
+            src_ia = IMoInflAffMsa(src_msa)
+            new_ia = IMoInflAffMsa(tgt_msa)
+            # Build target slot index for the owner POS once
+            from SIL.LCModel import IPartOfSpeech
+            pos_obj = src_ia.PartOfSpeechRA
+            if pos_obj is not None:
+                pos_guid = str(ICmObject(pos_obj).Guid).lower()
+                tgt_pos = _find_target_pos_by_guid(target, pos_guid)
+                if tgt_pos is not None:
+                    target_slots_by_guid = {}
+                    for sl in target.POS.GetAffixSlots(tgt_pos):
+                        target_slots_by_guid[_guid_str(_unwrap(sl))] = _unwrap(sl)
+                    # Clear + re-add the slot refs from source
+                    new_ia.SlotsRC.Clear()
+                    for src_slot in src_ia.SlotsRC:
+                        src_slot_guid = str(ICmObject(src_slot).Guid).lower()
+                        tgt_slot = target_slots_by_guid.get(src_slot_guid)
+                        if tgt_slot is not None:
+                            new_ia.SlotsRC.Add(tgt_slot)
+        cache = getattr(target, "Cache")
+        apply_residue(tgt_msa, cache.DefaultAnalWs, tag)
+        report_sink.Info(f"  IMoInflAffMsa overwritten  src={src_guid[:8]}  tgt={tgt_guid[:8]}")
+        return
+
+    if cat == GrammarCategory.ALLOMORPH:
+        from SIL.LCModel import ICmObject, IMoAffixAllomorph
+        owner_entry_guid = getattr(overwrite, "owner_guid", "")
+        if not owner_entry_guid:
+            report_sink.Warning(f"  [OW] Allomorph {src_guid[:8]} has no owner entry reference")
+            return
+        tgt_entry = None
+        for te in target.LexEntry.GetAll():
+            if str(ICmObject(_unwrap(te)).Guid).lower() == owner_entry_guid:
+                tgt_entry = _unwrap(te)
+                break
+        if tgt_entry is None:
+            report_sink.Warning(f"  [OW] Allomorph owner entry {owner_entry_guid[:8]} not in target")
+            return
+        tgt_allo = None
+        for tallo in target.Allomorphs.GetAll(tgt_entry):
+            if _guid_str(_unwrap(tallo)) == tgt_guid:
+                tgt_allo = _unwrap(tallo)
+                break
+        if tgt_allo is None:
+            report_sink.Warning(f"  [OW] Target allomorph {tgt_guid[:8]} not found")
+            return
+        # Source-side lookup for ApplySyncableProperties
+        src_entry = None
+        for se in source.LexEntry.GetAll():
+            if str(ICmObject(_unwrap(se)).Guid).lower() == owner_entry_guid:
+                src_entry = _unwrap(se)
+                break
+        src_allo = None
+        if src_entry is not None:
+            for sallo in source.Allomorphs.GetAll(src_entry):
+                if _guid_str(_unwrap(sallo)) == src_guid:
+                    src_allo = _unwrap(sallo)
+                    break
+        if src_allo is not None:
+            src_props = source.Allomorphs.GetSyncableProperties(src_allo)
+            target.Allomorphs.ApplySyncableProperties(tgt_allo, src_props)
+        cache = getattr(target, "Cache")
+        apply_residue(tgt_allo, cache.DefaultAnalWs, tag)
+        report_sink.Info(f"  IMoAffixAllomorph overwritten  src={src_guid[:8]}  tgt={tgt_guid[:8]}")
+        return
+
     # For other categories, Phase 1 just logs and skips the apply — the
     # extension lands as categories.py exposes ApplySyncableProperties for
     # each. The residue tag is still applied below for audit.
-    report_sink.Info(f"  [OW] {cat.value} overwrite no-op (Phase 1.2 will extend)  guid={src_guid}")
+    report_sink.Info(f"  [OW] {cat.value} overwrite no-op (Phase 1.3 will extend)  guid={src_guid}")
