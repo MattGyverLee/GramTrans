@@ -23,6 +23,7 @@ if __package__:
         RunPlan,
         RunReport,
         Skip,
+        SkipReason,
     )
 else:
     from models import (
@@ -33,6 +34,7 @@ else:
         RunPlan,
         RunReport,
         Skip,
+        SkipReason,
     )
 
 
@@ -43,7 +45,8 @@ else:
 # models.py so models.py stays free of JSON / serialization concerns.
 
 def _build_from_plan(cls, plan: RunPlan, mode: RunMode,
-                     wall_clock_seconds: float = 0.0) -> RunReport:
+                     wall_clock_seconds: float = 0.0,
+                     extra_skips=()) -> RunReport:
     """Build a finalized RunReport from a RunPlan.
 
     Iterates plan.actions to accumulate per-category added/closure_pulled_in
@@ -58,6 +61,8 @@ def _build_from_plan(cls, plan: RunPlan, mode: RunMode,
         if cat not in per_category:
             per_category[cat] = {
                 "added": 0, "skipped": 0, "closure_pulled_in": 0, "overwritten": 0,
+                "interactive_resolved": 0, "interactive_skipped": 0,
+                "ws_mapped": 0, "ws_created": 0, "ws_skipped": 0,
             }
         return per_category[cat]
 
@@ -82,12 +87,28 @@ def _build_from_plan(cls, plan: RunPlan, mode: RunMode,
         if getattr(ow, "pulled_in_by", ()):
             b["closure_pulled_in"] += 1
 
+    # Phase 2 (T030): account for INTERACTIVE_SKIP records emitted by
+    # _apply_merge_decisions during execute().  These are not in
+    # plan.skips (the plan was built before any user input) so they
+    # flow in via the `extra_skips` parameter.
+    for skip in extra_skips:
+        b = _bucket(skip.category)
+        b["skipped"] += 1
+        skips_list.append(skip)
+        if skip.reason == SkipReason.INTERACTIVE_SKIP:
+            b["interactive_skipped"] += 1
+
     per_category_final = {
         cat: CategoryReport(
             added=counts["added"],
             skipped=counts["skipped"],
             closure_pulled_in=counts["closure_pulled_in"],
             overwritten=counts["overwritten"],
+            interactive_resolved=counts["interactive_resolved"],
+            interactive_skipped=counts["interactive_skipped"],
+            ws_mapped=counts["ws_mapped"],
+            ws_created=counts["ws_created"],
+            ws_skipped=counts["ws_skipped"],
         )
         for cat, counts in per_category.items()
     }

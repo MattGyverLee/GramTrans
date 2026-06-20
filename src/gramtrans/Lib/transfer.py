@@ -19,6 +19,9 @@ from typing import Iterable
 if __package__:
     from .models import (
         GrammarCategory,
+        MergeDecision,
+        MergeDecisionLog,
+        MergeResolution,
         PlannedAction,
         RunMode,
         RunPlan,
@@ -27,10 +30,14 @@ if __package__:
         SkipReason,
     )
     from .residue import ImportResidueTag, apply_residue, apply_carrier_b
+    from .conflict import _deterministic_merge, _MergeNotEligible
     from . import report as _report_module  # registers RunReport.build_from_plan
 else:
     from models import (
         GrammarCategory,
+        MergeDecision,
+        MergeDecisionLog,
+        MergeResolution,
         PlannedAction,
         RunMode,
         RunPlan,
@@ -39,6 +46,7 @@ else:
         SkipReason,
     )
     from residue import ImportResidueTag, apply_residue, apply_carrier_b
+    from conflict import _deterministic_merge, _MergeNotEligible
     import report as _report_module  # registers RunReport.build_from_plan
 
 
@@ -46,12 +54,19 @@ else:
 # Public API
 # ============================================================================
 
-def execute(plan: RunPlan, source, target, report_sink, tag: ImportResidueTag) -> RunReport:
+def execute(plan: RunPlan, source, target, report_sink, tag: ImportResidueTag,
+            interactive_session=None) -> RunReport:
     """Apply `plan.actions` to `target` and return a finalized RunReport.
 
     `report_sink` is the FlexTools-style report object exposing
     `.Info(msg)` / `.Warning(msg)` / `.Error(msg)` / `.Blank()`. We mirror
     the spike's diagnostic logging there.
+
+    `interactive_session` (Phase 2, optional): an InteractiveSession with
+    user-resolved MergeDecisionLogs.  When supplied, each overwrite
+    branch consults `session.merge_decisions_by_guid[target_guid]` and
+    applies the decisions via `_apply_merge_decisions` before writing.
+    When None, behaviour is bit-identical to Phase 1 (FR-109 source-wins).
 
     PRECONDITION (UI-enforced per contracts/module-ui.md): the caller has
     already verified that the plan was produced from the current selection.
@@ -79,14 +94,22 @@ def execute(plan: RunPlan, source, target, report_sink, tag: ImportResidueTag) -
     # looks up the existing target object by GUID and applies the source's
     # syncable properties. Pre-overwrite snapshots in the residue carrier
     # (FR-106) are TODO for Phase 1.1.
+    extra_skips = []
     for ow in getattr(plan, "overwrites", ()):
-        _execute_overwrite(ow, source, target, report_sink, tag)
+        extra_skips.extend(
+            _execute_overwrite(ow, source, target, report_sink, tag, interactive_session)
+            or []
+        )
 
     elapsed = time.time() - start
     # Build the report from the plan. If every action ran without raising,
     # the FR-018 invariant on RunReport.__post_init__ passes by construction
     # (every PlannedAction → +1 added, every plan.Skip → +1 skipped).
-    return RunReport.build_from_plan(plan, RunMode.MOVE, wall_clock_seconds=elapsed)
+    return RunReport.build_from_plan(
+        plan, RunMode.MOVE,
+        wall_clock_seconds=elapsed,
+        extra_skips=tuple(extra_skips),
+    )
 
 
 # ============================================================================
@@ -293,6 +316,67 @@ def _create_slot_with_guid(target, owner_pos, src_guid: str, slot_name: str, tag
 
 def _filter(actions, category: GrammarCategory) -> Iterable[PlannedAction]:
     return (a for a in actions if a.category == category)
+
+
+def _apply_merge_decisions(src_props, decisions, tgt_pre_props, run_id, category, target_guid):
+    """Phase 2 (FR-202..205) -- filter `src_props` per user resolutions.
+
+    Per research.md R3, decisions are applied as a dict-filter pass that
+    mirrors `_dedupe_custom_fields`:
+
+    - TAKE_SOURCE: leave src_props[k] unchanged (Phase 1 default).
+    - KEEP_TARGET: drop src_props[k] entirely (target's value survives).
+    - MERGE: replace src_props[k] with _deterministic_merge(tgt, src).
+      On scalar values (_MergeNotEligible), fall back to TAKE_SOURCE +
+      log a warning via the returned Skip-but-not-really mechanism
+      (caller renders it via report_sink).
+    - SKIP: drop src_props[k] AND emit Skip(INTERACTIVE_SKIP).
+    - EDIT_CUSTOM: replace src_props[k] with decision.custom_value.
+
+    Args:
+        src_props: dict of source's syncable properties.
+        decisions: iterable of MergeDecision.
+        tgt_pre_props: dict of target's pre-overwrite values.
+        run_id: GT-YYYYMMDD-HHMMSS for the merge separator.
+        category: GrammarCategory for any Skip records emitted.
+        target_guid: target object's GUID for Skip records.
+
+    Returns:
+        (filtered_src_props, skip_records: list[Skip])
+    """
+    if not isinstance(src_props, dict):
+        return src_props, []
+    out = dict(src_props)
+    skips = []
+    for d in decisions:
+        k = d.field_name
+        if d.resolution == MergeResolution.TAKE_SOURCE:
+            continue  # default; src_props[k] already wins
+        if d.resolution == MergeResolution.KEEP_TARGET:
+            out.pop(k, None)
+            continue
+        if d.resolution == MergeResolution.MERGE:
+            left = tgt_pre_props.get(k) if isinstance(tgt_pre_props, dict) else None
+            right = out.get(k)
+            try:
+                out[k] = _deterministic_merge(left, right, run_id)
+            except _MergeNotEligible:
+                # Scalar -- silently fall back to TAKE_SOURCE per R4.
+                pass
+            continue
+        if d.resolution == MergeResolution.SKIP:
+            out.pop(k, None)
+            skips.append(Skip(
+                category=category,
+                source_guid=target_guid,
+                reason=SkipReason.INTERACTIVE_SKIP,
+                detail=f"User skipped field {k!r} on {target_guid[:8]}",
+            ))
+            continue
+        if d.resolution == MergeResolution.EDIT_CUSTOM:
+            out[k] = d.custom_value
+            continue
+    return out, skips
 
 
 def _dedupe_custom_fields(src_props, tgt_pre_props):
@@ -799,7 +883,37 @@ def _msa_points_at_verb(msa, verb_guid: str) -> bool:
 # Phase 1 overwrite executor (FR-101)
 # ============================================================================
 
-def _execute_overwrite(overwrite, source, target, report_sink, tag: ImportResidueTag) -> None:
+def _resolve_decisions_for(overwrite, interactive_session):
+    """Look up the MergeDecisionLog for this overwrite's target_guid in the
+    session, or return None if there's no session / no log for this object.
+    """
+    if interactive_session is None:
+        return None
+    return interactive_session.merge_decisions_by_guid.get(overwrite.target_guid)
+
+
+def _resolve_and_tag(src_props, tgt_pre_props, tag, log, category, target_guid, run_id):
+    """Apply MergeDecisionLog (if any) to src_props and stamp the tag with
+    `with_merge_log(log)` when a log is present.
+
+    Returns (filtered_src_props, tagged_tag, skip_records).
+    """
+    if log is None:
+        return src_props, tag.with_snapshot(tgt_pre_props), []
+    filtered, skips = _apply_merge_decisions(
+        src_props=src_props,
+        decisions=log.decisions,
+        tgt_pre_props=tgt_pre_props,
+        run_id=run_id,
+        category=category,
+        target_guid=target_guid,
+    )
+    tagged = tag.with_snapshot(tgt_pre_props).with_merge_log(log)
+    return filtered, tagged, skips
+
+
+def _execute_overwrite(overwrite, source, target, report_sink, tag: ImportResidueTag,
+                       interactive_session=None):
     """Apply a single PlannedOverwrite: look up the target object by GUID,
     pull source's syncable properties, and apply them via the patched fork's
     `ApplySyncableProperties`.
@@ -823,11 +937,16 @@ def _execute_overwrite(overwrite, source, target, report_sink, tag: ImportResidu
         src_props = _dedupe_custom_fields(
             source.POS.GetSyncableProperties(src_obj), tgt_pre_props
         )
+        log = _resolve_decisions_for(overwrite, interactive_session)
+        src_props, tagged, ow_skips = _resolve_and_tag(
+            src_props, tgt_pre_props, tag, log,
+            GrammarCategory.POS, overwrite.target_guid, tag.run_id,
+        )
         target.POS.ApplySyncableProperties(tgt_obj, src_props)
         cache = getattr(target, "Cache")
-        apply_residue(tgt_obj, cache.DefaultAnalWs, tag.with_snapshot(tgt_pre_props))
+        apply_residue(tgt_obj, cache.DefaultAnalWs, tagged)
         report_sink.Info(f"  POS overwritten  guid={src_guid}")
-        return
+        return ow_skips
 
     if cat == GrammarCategory.TEMPLATES:
         src_tpl_wrap = _find_source_template_by_guid(source, src_guid)
@@ -909,11 +1028,16 @@ def _execute_overwrite(overwrite, source, target, report_sink, tag: ImportResidu
         src_props = _dedupe_custom_fields(
             source.LexEntry.GetSyncableProperties(src_entry), tgt_pre_props
         )
+        log = _resolve_decisions_for(overwrite, interactive_session)
+        src_props, tagged, ow_skips = _resolve_and_tag(
+            src_props, tgt_pre_props, tag, log,
+            GrammarCategory.ENTRY, overwrite.target_guid, tag.run_id,
+        )
         target.LexEntry.ApplySyncableProperties(tgt_entry, src_props)
         cache = getattr(target, "Cache")
-        apply_residue(tgt_entry, cache.DefaultAnalWs, tag.with_snapshot(tgt_pre_props))
+        apply_residue(tgt_entry, cache.DefaultAnalWs, tagged)
         report_sink.Info(f"  LexEntry overwritten  guid={src_guid}")
-        return
+        return ow_skips
 
     if cat == GrammarCategory.SENSE:
         # owner_guid is the parent entry GUID; look up the entry first,
@@ -958,11 +1082,16 @@ def _execute_overwrite(overwrite, source, target, report_sink, tag: ImportResidu
         src_props = _dedupe_custom_fields(
             source.Senses.GetSyncableProperties(src_sense), tgt_pre_props
         )
+        log = _resolve_decisions_for(overwrite, interactive_session)
+        src_props, tagged, ow_skips = _resolve_and_tag(
+            src_props, tgt_pre_props, tag, log,
+            GrammarCategory.SENSE, overwrite.target_guid, tag.run_id,
+        )
         target.Senses.ApplySyncableProperties(tgt_sense, src_props)
         cache = getattr(target, "Cache")
-        apply_residue(tgt_sense, cache.DefaultAnalWs, tag.with_snapshot(tgt_pre_props))
+        apply_residue(tgt_sense, cache.DefaultAnalWs, tagged)
         report_sink.Info(f"  LexSense overwritten  guid={src_guid}")
-        return
+        return ow_skips
 
     if cat == GrammarCategory.MSA:
         from SIL.LCModel import ICmObject, ILexEntry, IMoInflAffMsa
@@ -1067,15 +1196,22 @@ def _execute_overwrite(overwrite, source, target, report_sink, tag: ImportResidu
                     src_allo = _unwrap(sallo)
                     break
         tgt_pre_props = target.Allomorphs.GetSyncableProperties(tgt_allo)
+        ow_skips = []
+        tagged = tag.with_snapshot(tgt_pre_props)
         if src_allo is not None:
             src_props = _dedupe_custom_fields(
                 source.Allomorphs.GetSyncableProperties(src_allo), tgt_pre_props
             )
+            log = _resolve_decisions_for(overwrite, interactive_session)
+            src_props, tagged, ow_skips = _resolve_and_tag(
+                src_props, tgt_pre_props, tag, log,
+                GrammarCategory.ALLOMORPH, overwrite.target_guid, tag.run_id,
+            )
             target.Allomorphs.ApplySyncableProperties(tgt_allo, src_props)
         cache = getattr(target, "Cache")
-        apply_residue(tgt_allo, cache.DefaultAnalWs, tag.with_snapshot(tgt_pre_props))
+        apply_residue(tgt_allo, cache.DefaultAnalWs, tagged)
         report_sink.Info(f"  IMoAffixAllomorph overwritten  src={src_guid[:8]}  tgt={tgt_guid[:8]}")
-        return
+        return ow_skips
 
     if cat == GrammarCategory.PH_ENVIRONMENT:
         tgt_env = _find_target_env_by_guid(target, tgt_guid)
