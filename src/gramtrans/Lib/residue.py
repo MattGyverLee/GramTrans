@@ -180,14 +180,22 @@ def apply_carrier_a(obj, ws, tag: ImportResidueTag) -> bool:
     """
     _MISSING = object()
     lift = getattr(obj, "LiftResidue", _MISSING)
-    if lift is _MISSING or lift is None:
-        return False
+    if lift is _MISSING:
+        return False  # attribute absent entirely
     if hasattr(lift, "set_String"):
         from SIL.LCModel.Core.Text import TsStringUtils  # lazy -- only when needed
         lift.set_String(ws, TsStringUtils.MakeString(tag.serialize(), ws))
-    else:
+        return True
+    # lift is None, str (empty or populated), or some other non-multistring
+    # value.  For Unicode single-string properties (ILexEntry /
+    # IMoAffixAllomorph / IMoInflAffMsa expose LiftResidue this way in LCM
+    # 9.x), None means "not yet set" -- setattr is the correct write.  Try
+    # setattr; bail to Carrier B only if it raises (e.g. truly read-only).
+    try:
         setattr(obj, "LiftResidue", tag.serialize())
-    return True
+        return True
+    except Exception:
+        return False
 
 
 def apply_carrier_b(obj, ws, tag: ImportResidueTag, strict: bool = True) -> bool:

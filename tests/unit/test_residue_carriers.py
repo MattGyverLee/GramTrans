@@ -149,15 +149,17 @@ def test_carrier_a_absent_attribute_returns_false(patch_ts):
     assert not hasattr(obj, "LiftResidue")
 
 
-# Shape 2: attribute is None -> False, no write
-def test_carrier_a_none_attribute_returns_false(patch_ts):
-    """LiftResidue=None: returns False (uninitialized multistring path)."""
+# Shape 2: attribute is None -> setattr path (Unicode unset on LCM 9.x), returns True
+def test_carrier_a_none_attribute_setattr_writes(patch_ts):
+    """LiftResidue=None: on LCM 9.x ILexEntry/IMoAffixAllomorph/IMoInflAffMsa
+    LiftResidue is a Unicode single-string returning None when unset.  We
+    setattr the serialized tag onto it."""
     class _NullLift:
         LiftResidue = None
     obj = _NullLift()
     result = apply_carrier_a(obj, WS, TAG)
-    assert result is False
-    assert obj.LiftResidue is None  # unchanged
+    assert result is True
+    assert obj.LiftResidue == TAG.serialize()
 
 
 # Shape 3: attribute is empty str -> setattr path, returns True
