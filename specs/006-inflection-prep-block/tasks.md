@@ -63,17 +63,18 @@ description: "Phase 3b — Inflection / Lexicon-Prep Block tasks"
 
 ---
 
-## Phase 4: User Story 2 — Custom Fields (Priority: P1) — BLOCKED
+## Phase 4: User Story 2 — Custom Fields (Priority: P1) — SHIPPED (detect-only)
 
-**Status (2026-06-21)**: T014-T020 BLOCKED. See
-[us2-blocker-memo.md](us2-blocker-memo.md). `CustomFieldOperations.CreateField`
-refuses to run inside the Phase-1 transaction envelope that
-`transfer.execute()` operates in, and raw `IFwMetaDataCacheManaged.AddCustomField`
-produces corrupt records on next FLEx UI open. Resuming US2 requires
-either (1) a flexlibs2 transaction-mode-bypass flag, (2) splitting
-`MainFunction` into schema-pre-pass + transaction-pass, or (3)
-documenting a manual user workaround. Discovery surfaced during T014
-implementation prep via MCP probe of CreateField docstring.
+**Status (2026-06-21 08:45)**: US2 shipped as detect-and-report per LEX
+crew cycle-1 approval (Option C adopted). Creation remains blocked at
+flexlibs2 layer pending Phase 2 transaction mode. The four implemented
+callbacks (`enumerate_source`, `dependencies`,
+`required_writing_systems`, `plan_action`) detect target's existing
+custom fields via `CustomFieldOperations.GetAllFields` / `FindField`
+and emit `Skip(ALREADY_PRESENT_BY_GUID)` on match,
+`Skip(NEEDS_MANUAL)` on absence. `execute_action` is a registered
+no-op stub. See [us2-blocker-memo.md](us2-blocker-memo.md) for
+promotion path when Phase 2 transaction mode lands.
 
 **Goal (original)**: Custom-field definitions land in target before Phase 3c LexEntries reference them.
 

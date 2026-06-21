@@ -1,8 +1,8 @@
 # GramTrans — Session Handoff
 
-**Updated**: 2026-06-21 (02:25)
+**Updated**: 2026-06-21 (08:45)
 **Branch**: `main`
-**Phase**: Phase 3b (inflection / lexicon-prep block) **US1 + US3 + US4 SHIPPED**. US2 (custom_fields) BLOCKED on UoW conflict (see `specs/006-inflection-prep-block/us2-blocker-memo.md`). Phase 3c (affixes / stems, memo steps 14-18) pending spec.
+**Phase**: Phase 3b (inflection / lexicon-prep block) **US1 + US2 (detect-only) + US3 + US4 SHIPPED**. US2 creation remains blocked at flexlibs2 layer pending Phase 2 transaction mode; detect-and-report posture adopted via LEX crew cycle-1 review (Option C unanimous). Phase 3c (affixes / stems, memo steps 14-18) pending spec.
 
 ---
 

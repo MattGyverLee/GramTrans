@@ -75,6 +75,11 @@ class SkipReason(enum.Enum):
     ALREADY_PRESENT_BY_GUID = "already_present_by_guid"  # FR-009 informational
     INTERACTIVE_SKIP = "interactive_skip"  # Phase 2 (FR-204): user picked SKIP
     UNMAPPED_WS_USER_CHOSE_SKIP = "unmapped_ws_user_chose_skip"  # Phase 2 (FR-211)
+    # Phase 3b US2: emitted when a category requires a manual user step
+    # that GramTrans cannot perform automatically (e.g. custom-field
+    # schema creation, blocked by LCM at the flexlibs2 layer). Detail
+    # string MUST cite the specific user action required.
+    NEEDS_MANUAL = "needs_manual"
 
 
 class MergeResolution(enum.Enum):

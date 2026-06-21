@@ -1,7 +1,7 @@
 # US2 Blocker: Custom-Field Schema Mutation vs. UnitOfWork Envelope
 
 **Date**: 2026-06-21
-**Status**: BLOCKER for Phase 3b US2 (custom_fields). T014-T020 deferred.
+**Status**: RESOLVED — Option C (detect-and-report) adopted per LEX crew cycle-1 unanimous approval (lex-domain PASS, lex-author 9/10, lex-doc/lex-programmer/lex-qc converged). T014-T020 superseded; see code shipped in commit (this one) and spec.md US2 / FR-323 / FR-325 rewrites. Creation remains blocked at flexlibs2 layer; promotion path documented below.
 **Discovery vector**: MCP probe of `CustomFieldOperations.CreateField` docstring during T014 implementation prep.
 
 ## The constraint

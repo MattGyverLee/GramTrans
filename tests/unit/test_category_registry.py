@@ -101,10 +101,11 @@ def test_for_category_raises_keyerror_for_heavy_categories() -> None:
 def test_unimplemented_body_raises_not_implemented_with_task_pointer() -> None:
     """Still-unimplemented bodies raise NotImplementedError with the task ID.
 
-    gram_categories / inflection_features / inflection_classes / stem_names /
-    exception_features are now implemented (T039 complete for those five).
-    Check a category that is still stubbed: custom_fields.
+    Phase 3b shipped detect-and-skip for custom_fields (US2) and full
+    implementations for variant_types / complex_form_types /
+    semantic_domains (US3). The remaining stub categories are
+    adhoc_rules and compound_rules (Phase 3c+).
     """
-    bundle = categories.for_category(GrammarCategory.CUSTOM_FIELDS)
+    bundle = categories.for_category(GrammarCategory.ADHOC_RULES)
     with pytest.raises(NotImplementedError, match="T039"):
         bundle["enumerate_source"](context=object(), selection=object())

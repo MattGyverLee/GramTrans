@@ -438,26 +438,145 @@ def inflection_features_execute_action(action: PlannedAction, context: RunContex
     return new_feat
 
 
-# ----- custom_fields -------------------------------------------------------
+# ----- custom_fields (Phase 3b US2: detect-and-report, no creation) --------
+#
+# Custom-field SCHEMA creation is blocked at the flexlibs2 layer:
+# CustomFieldOperations.CreateField raises FP_TransactionError inside the
+# Phase-1 UoW envelope that wraps the entire transfer.execute().  Raw
+# IFwMetaDataCacheManaged.AddCustomField bypass corrupts records on next
+# FLEx UI open (flexlibs2 issue #21, 1,392 stranded senses cited in
+# flexlibs2/docs/CUSTOM_FIELDS.md).
+#
+# Shipping posture (FR-325, US2 in spec.md): detect target's existing
+# custom fields and Skip(NEEDS_MANUAL) for any source field that's
+# absent.  User must pre-create missing fields via FLEx UI before
+# re-running.  Phase 3c will populate VALUES into pre-existing target
+# fields via SetValue (which works inside the UoW).
+#
+# See specs/006-inflection-prep-block/us2-blocker-memo.md.
+
+# FLEx supports custom fields on these classes (per flexlibs2
+# CustomFieldOperations._GetClassID at line ~1341):
+_CUSTOM_FIELD_OWNER_CLASSES = ("LexEntry", "LexSense", "LexExampleSentence", "MoForm")
+
+
+class _CustomFieldRecord:
+    """Minimal record for a source custom-field definition.
+
+    Plays the role that an ICmObject normally would for the leaf-dispatch
+    contract -- carries a `guid` synthesized from the (owner_class, name)
+    tuple so the existing _guid_str_from / _target_has_guid helpers work
+    without modification.
+    """
+
+    __slots__ = ("guid", "Guid", "owner_class", "name", "field_id")
+
+    def __init__(self, owner_class: str, name: str, field_id: int = 0):
+        # Synthetic identity: custom fields have no LCM Guid.  Use
+        # "cf:<owner>:<name>" as the canonical key.
+        self.guid = f"cf:{owner_class}:{name}"
+        self.Guid = self.guid
+        self.owner_class = owner_class
+        self.name = name
+        self.field_id = field_id
+
+    @property
+    def concrete(self):
+        return self
+
+    @property
+    def CatalogSourceId(self):
+        return ""  # custom fields are by definition not GOLD
+
+
+def _enumerate_custom_fields(project):
+    """Yield _CustomFieldRecord for every custom field on the supported
+    owner classes.  Read-only -- safe inside the Phase-1 UoW envelope
+    (no _EnsureWriteEnabled guard on CustomFieldOperations.GetAllFields).
+    """
+    cf_ops = getattr(project, "CustomFields", None)
+    if cf_ops is None:
+        return
+    for cls in _CUSTOM_FIELD_OWNER_CLASSES:
+        try:
+            for field_id, label in cf_ops.GetAllFields(cls):
+                yield _CustomFieldRecord(cls, label, field_id)
+        except Exception:
+            # Class missing or read error -- continue with other classes.
+            continue
+
 
 def custom_fields_enumerate_source(context, selection):
-    raise NotImplementedError("T039")
+    """Walk source.CustomFields.GetAllFields per supported owner class."""
+    return list(_enumerate_custom_fields(context.source_handle))
 
 
 def custom_fields_dependencies(piece):
-    return ()
+    return ()  # leaf -- no inter-category deps
 
 
 def custom_fields_required_writing_systems(piece):
-    raise NotImplementedError("T039")
+    return ()  # WS handled at plan/value-population time, not schema time
 
 
 def custom_fields_plan_action(piece, context, ws_mapping):
-    raise NotImplementedError("T039")
+    """Detect-and-skip per FR-325 / US2.
+
+    - If target has the same (owner_class, name): Skip(ALREADY_PRESENT_BY_GUID)
+      (reuses the existing GUID-match skip; custom-field synthetic GUID
+      is "cf:<owner>:<name>" so identity match == sync match)
+    - Otherwise: Skip(NEEDS_MANUAL) directing the user to pre-create
+      the field in FLEx UI.  No PlannedAction emitted -- the execute
+      path stays cold (per lex-qc P1 invariant: skip at plan time, not
+      execute time).
+    """
+    src_guid = piece.guid  # "cf:<owner>:<name>"
+    target = context.target_handle
+    cf_ops = getattr(target, "CustomFields", None)
+    found = False
+    if cf_ops is not None:
+        try:
+            existing_id = cf_ops.FindField(piece.owner_class, piece.name)
+            found = bool(existing_id)
+        except Exception:
+            found = False
+    if found:
+        return Skip(
+            category=GrammarCategory.CUSTOM_FIELDS,
+            source_guid=src_guid,
+            reason=SkipReason.ALREADY_PRESENT_BY_GUID,
+            detail=(
+                f"Custom field {piece.owner_class}.{piece.name!r} already "
+                f"present in target."
+            ),
+        )
+    return Skip(
+        category=GrammarCategory.CUSTOM_FIELDS,
+        source_guid=src_guid,
+        reason=SkipReason.NEEDS_MANUAL,
+        detail=(
+            f"Pre-create custom field {piece.owner_class}.{piece.name!r} "
+            f"in FLEx > Tools > Configure > Custom Fields before re-running "
+            f"GramTrans. Names are case-sensitive. Schema creation is "
+            f"blocked at the flexlibs2 layer per "
+            f"flexlibs2/docs/CUSTOM_FIELDS.md."
+        ),
+    )
 
 
 def custom_fields_execute_action(action, context, ws_mapping, tag):
-    raise NotImplementedError("T039")
+    """No-op stub.  Schema creation is blocked at the flexlibs2 layer
+    (see custom_fields_plan_action docstring).  plan_action emits Skip
+    directly so this path is never reached during normal operation;
+    the stub is registered (rather than absent) so the leaf-dispatch
+    loop doesn't silently warn on a missing callback.
+
+    Upgrade path: when flexlibs2 Phase 2 transaction mode lands and
+    CustomFieldOperations.CreateField becomes safe, replace this body
+    with the actual creation call. plan_action's logic flips from
+    "always Skip" to "PlannedAction for absent fields" simultaneously.
+    """
+    return None
 
 
 # ----- inflection_classes --------------------------------------------------
