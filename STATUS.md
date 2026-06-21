@@ -18,6 +18,13 @@ This distinction was deliberate (lex-domain ruling, cycle 3). Do not collapse th
 - `contracts/custom-field-creation.md` still describes the would-be `AddCustomField` write path; rewrite during Phase 3c doc sweep.
 - Colon-in-name guid escaping fragility on `_CustomFieldRecord` (benign now, fragile if guid ever parsed). Phase 3c.
 
+### Phase 3b close-sweep deferred items (per LEX crew cycle 2-3, 2026-06-21)
+
+- **Rename `GRAM_CATEGORIES` enum -> `PARTS_OF_SPEECH`** at next API-break window. Enum string `"gram_categories"` is a public serialized-plan surface; retargeted now (Option B per cycle 2) to unblock US3 + Scenario C live verification while preserving plan compatibility. Update dispatch tables in `preview.py` + `transfer.py` and all selection-dict references in the same atomic commit.
+- **Add new `FEATURE_STRUC_TYPES` category** targeting `MsFeatureSystemOA.TypesOC` via `project.GramCat`. Salvages the pre-Option-B Phase 0 callback bodies (they correctly handle IFsFeatStrucType creation — just under the wrong label). Fills the ordering-memo gap: no current row exists for the feature-struct-type list.
+- **Spec-006 US1 clarification**: document the two-path setup (Phase 0 verb-vertical closure handles real POSes via `_select_source_poses` / `_plan_pos_closure`; Phase 3b leaf-dispatch `GRAM_CATEGORIES` callbacks handle the same target via the leaf-dispatch loop). The verb-vertical collision guard in `gram_categories_execute_action` covers the dual-dispatch case.
+- **Pattern audit** (lex-qc P2): sweep all `project.<Accessor>.GetAll()` callsites in `categories.py` against the flexlibs2 fork's actual accessor names + the spec's claimed LCM collection. Two same-shape bugs (`InflectionFeature`/`InflectionFeatures` accessor mismatch, `GramCat`/`POS` collection mismatch) caught this session; a third could be hiding.
+
 ---
 
 ## ▶▶▶ Phase 3b session — 2026-06-21

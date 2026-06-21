@@ -119,74 +119,91 @@ def _target_has_guid(target_iter, src_guid: str) -> bool:
 # Naming: `<category>_<verb>(...)`. Each block groups one category's five
 # functions for readability.
 
-# ----- gram_categories (GOLD-aware) ----------------------------------------
+# ----- gram_categories (GOLD-aware; targets Parts of Speech) ---------------
 #
-# Gram categories in LCM are IFsFeatStrucType objects (top-level) and
-# ICmPossibility objects (sub-categories).  They live under
-# LangProject.MsFeatureSystemOA.TypesOC (and TypesOC[*].SubPossibilitiesOS
-# recursively).  The flexlibs2 accessor is `project.GramCat`.
+# TODO: rename enum GRAM_CATEGORIES -> PARTS_OF_SPEECH at next API-break
+# window. The enum string is a public serialized-plan surface; retargeted
+# now (Option B per LEX crew cycle 2, 2026-06-21) to unblock US3 +
+# Scenario C live verification while preserving plan compatibility.
+# See STATUS.md Phase 3b deferred items.
+#
+# Per ordering-memo step 6: "Parts of Speech (= 'Gram Categories')" maps
+# to IPartOfSpeech objects in LangProject.PartsOfSpeechOA.PossibilitiesOS
+# (top-level + .SubPossibilitiesOS recursively). The flexlibs2 accessor
+# is `project.POS` -> POSOperations (NOT `project.GramCat`, which is
+# legacy naming pointing at IFsFeatStrucType in MsFeatureSystemOA.TypesOC;
+# that is a separate LCM subsystem deferred to Phase 3b close sweep as
+# new FEATURE_STRUC_TYPES category).
+#
+# Pre-fix (commit 86cfbbe and earlier): callbacks targeted GramCat and
+# created spurious IFsFeatStrucType objects when the user selected
+# GRAM_CATEGORIES expecting POS transfer. See verification-log.md for
+# the live-MCP finding that surfaced this Phase 0-era misalignment.
 
 def gram_categories_enumerate_source(context: RunContext, selection: Selection):
-    """Walk source.GramCat.GetAll() and yield each category."""
+    """Walk source.POS.GetAll(recursive=True) and yield each IPartOfSpeech."""
     source = context.source_handle
-    if not hasattr(source, "GramCat"):
+    if not hasattr(source, "POS"):
         return ()
-    return list(source.GramCat.GetAll(recursive=True))
+    return list(source.POS.GetAll(recursive=True))
 
 
 def gram_categories_dependencies(piece):
-    return ()  # leaf
+    return ()  # leaf -- POS owns inflection_classes / stem_names / exception_features
 
 
 def gram_categories_required_writing_systems(piece) -> Iterable[Tuple[str, WSKind]]:
-    """Gram categories have Name, Abbreviation, Description (analysis WS)."""
-    # Phase 0: analysis WS only.  The caller's WS mapping step handles
-    # the actual mapping; here we just signal "I need analysis WS".
-    # Return empty — the engine enforces WS mapping at the plan level.
+    """POS has Name, Abbreviation, Description (analysis WS)."""
     return ()
 
 
 def gram_categories_plan_action(piece, context: RunContext, ws_mapping: WSMapping):
-    """GOLD-aware: skip if the category IS a GOLD object; else plan Add."""
+    """GOLD-aware: skip if the POS IS a GOLD object; else plan Add."""
     if _is_gold(piece):
         return Skip(
             category=GrammarCategory.GRAM_CATEGORIES,
             source_guid=_guid_str_from(piece),
             reason=SkipReason.GOLD_INVIOLABLE,
             detail=(
-                f"Gram category is a GOLD object (CatalogSourceId="
+                f"POS is a GOLD object (CatalogSourceId="
                 f"{getattr(piece, 'CatalogSourceId', '?')!r}); "
                 "not transferred per FR-022 / Principle I."
             ),
         )
     src_guid = _guid_str_from(piece)
-    # Check whether the target already has this GUID.
     target = context.target_handle
-    if hasattr(target, "GramCat"):
-        if _target_has_guid(target.GramCat.GetAll(recursive=True), src_guid):
+    if hasattr(target, "POS"):
+        if _target_has_guid(target.POS.GetAll(recursive=True), src_guid):
             return Skip(
                 category=GrammarCategory.GRAM_CATEGORIES,
                 source_guid=src_guid,
                 reason=SkipReason.ALREADY_PRESENT_BY_GUID,
-                detail=f"Gram category GUID {src_guid[:8]}... already present in target.",
+                detail=f"POS GUID {src_guid[:8]}... already present in target.",
             )
     return PlannedAction(
         category=GrammarCategory.GRAM_CATEGORIES,
         source_guid=src_guid,
         intended_target_guid=src_guid,
-        summary=f"GramCategory guid={src_guid[:8]}...",
+        summary=f"POS guid={src_guid[:8]}...",
     )
 
 
 def gram_categories_execute_action(action: PlannedAction, context: RunContext, ws_mapping: WSMapping, tag: ImportResidueTag):
-    """Create a gram category in the target with GUID preserved.
+    """Create a Part of Speech in the target with GUID preserved.
 
-    Top-level cats use IFsFeatStrucTypeFactory.Create(Guid);
-    sub-cats use ICmPossibilityFactory.Create(Guid) + Add to parent.SubPossibilitiesOS.
-    ApplySyncableProperties syncs Name/Abbreviation/Description.
-    Carrier B residue via apply_carrier_b (Description-append).
+    Top-level POSes are created under LangProject.PartsOfSpeechOA.PossibilitiesOS
+    via IPartOfSpeechFactory.Create(Guid, ICmPossibilityList).
+    Sub-categories (POS-owned sub-POSes) are created via the same factory's
+    2-arg overload but the owner is the parent IPartOfSpeech (Create(Guid,
+    IPartOfSpeech)).
+
+    Verb-vertical collision guard: if a Phase 0 verb-vertical run is selected
+    alongside GRAM_CATEGORIES, the POS for the verb-vertical entry would be
+    created by the closure path first. We check target.POS.GetAll() inside
+    execute_action and skip if the GUID is already present, mirroring the
+    Phase 1 overwrite-detection pattern.
     """
-    from SIL.LCModel import ICmPossibilityFactory, IFsFeatStrucTypeFactory
+    from SIL.LCModel import IPartOfSpeechFactory
     from System import Guid as DotNetGuid
 
     if __package__:
@@ -198,64 +215,78 @@ def gram_categories_execute_action(action: PlannedAction, context: RunContext, w
     target = context.target_handle
     src_guid = action.source_guid
 
-    # Find the source object.
+    # Verb-vertical collision guard: skip if verb-vertical already created
+    # this POS earlier in the same run.
+    if _target_has_guid(target.POS.GetAll(recursive=True), src_guid):
+        return None  # already present (created by verb-vertical or prior run)
+
+    # Find the source POS to determine owner shape (top-level vs sub-POS).
     src_obj = None
-    for cat in source.GramCat.GetAll(recursive=True):
-        if _guid_str_from(cat) == src_guid:
-            src_obj = cat
+    for pos in source.POS.GetAll(recursive=True):
+        if _guid_str_from(pos) == src_guid:
+            src_obj = pos
             break
     if src_obj is None:
-        return None  # Source vanished; caller should warn.
+        return None
 
     cache = getattr(target, "Cache")
     ws = cache.DefaultAnalWs
-    feature_system = cache.LangProject.MsFeatureSystemOA
-
     parsed_guid = DotNetGuid.Parse(src_guid)
 
-    # Determine parent: if the source object's owner is a possibility
-    # (not the feature system itself), it's a sub-category.
+    # Determine parent: if source POS owner is another POS, this is a sub-POS;
+    # otherwise it's top-level (owned by the PartsOfSpeechOA list).
     src_owner = getattr(src_obj, "Owner", None)
-    is_subcategory = False
+    is_sub_pos = False
     src_owner_guid = None
     if src_owner is not None:
         try:
-            from SIL.LCModel import ICmPossibility
-            ICmPossibility(src_owner)  # will raise if not a possibility
-            is_subcategory = True
+            from SIL.LCModel import IPartOfSpeech
+            IPartOfSpeech(src_owner)  # cast probe: raises if owner isn't a POS
+            is_sub_pos = True
             src_owner_guid = _guid_str_from(src_owner)
         except Exception:
-            is_subcategory = False
+            is_sub_pos = False
 
-    if is_subcategory and src_owner_guid:
-        # Find the matching target parent.
+    # pythonnet overload resolution requires the interface-cast wrapper
+    # around target.GetFactory(); see transfer.py _create_pos_with_guid for
+    # the canonical pattern. ServiceLocator.GetService returns the raw
+    # COM-like object and Create dispatch fails to find the right overload.
+    factory = IPartOfSpeechFactory(target.GetFactory(IPartOfSpeechFactory))
+
+    if is_sub_pos and src_owner_guid:
+        # Find the matching target parent POS.
         target_parent = None
-        for cat in target.GramCat.GetAll(recursive=True):
-            if _guid_str_from(cat) == src_owner_guid:
-                target_parent = cat
+        for p in target.POS.GetAll(recursive=True):
+            if _guid_str_from(p) == src_owner_guid:
+                target_parent = p
                 break
         if target_parent is None:
-            return None  # Owner not in target; skip.
-        sl = cache.LangProject.Cache.ServiceLocator if hasattr(cache.LangProject, "Cache") else cache.ServiceLocator
-        factory = sl.GetService(ICmPossibilityFactory)
-        new_cat = factory.Create(parsed_guid)
-        _safe_add_to_owner(new_cat, target_parent.SubPossibilitiesOS,
-                           "ICmPossibilityFactory", src_guid)
+            return None  # parent not in target; skip (will retry next run)
+        try:
+            new_pos = factory.Create(parsed_guid, target_parent)
+        except Exception as e:
+            raise RuntimeError(
+                f"IPartOfSpeechFactory.Create(Guid, IPartOfSpeech) failed for "
+                f"{src_guid}: {e!r}"
+            ) from e
     else:
-        # Top-level: TypesOC requires IFsFeatStrucType.
-        sl = cache.ServiceLocator
-        factory = sl.GetService(IFsFeatStrucTypeFactory)
-        new_cat = factory.Create(parsed_guid)
-        _safe_add_to_owner(new_cat, feature_system.TypesOC,
-                           "IFsFeatStrucTypeFactory", src_guid)
+        # Top-level: owner is PartsOfSpeechOA possibility list.
+        from SIL.LCModel import ICmPossibilityList
+        pos_list = ICmPossibilityList(cache.LangProject.PartsOfSpeechOA)
+        try:
+            new_pos = factory.Create(parsed_guid, pos_list)
+        except Exception as e:
+            raise RuntimeError(
+                f"IPartOfSpeechFactory.Create(Guid, ICmPossibilityList) failed for "
+                f"{src_guid}: {e!r}"
+            ) from e
 
-    # Apply syncable properties (Name, Abbreviation, Description).
-    src_props = source.GramCat.GetSyncableProperties(src_obj)
-    target.GramCat.ApplySyncableProperties(new_cat, src_props)
+    # Apply syncable properties (Name, Abbreviation, Description, etc.).
+    src_props = source.POS.GetSyncableProperties(src_obj)
+    target.POS.ApplySyncableProperties(new_pos, src_props)
 
-    # Carrier B residue (gram categories have Description on ICmPossibility).
-    apply_carrier_b(new_cat, ws, tag)
-    return new_cat
+    apply_carrier_b(new_pos, ws, tag)
+    return new_pos
 
 
 # ----- inflection_features (GOLD-aware) ------------------------------------

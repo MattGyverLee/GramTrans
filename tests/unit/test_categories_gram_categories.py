@@ -49,7 +49,7 @@ class _FakeGramCatOps:
 class _FakeProject:
     def __init__(self, name: str, gram_cats=()) -> None:
         self.name = name
-        self.GramCat = _FakeGramCatOps(gram_cats)
+        self.POS = _FakeGramCatOps(gram_cats)  # gram_categories targets POS
 
     def ProjectName(self):
         return self.name
@@ -152,3 +152,51 @@ def test_enumerate_source_returns_all_cats() -> None:
 def test_execute_action_requires_lcm() -> None:
     """execute_action creates an LCM object — only runs under FlexTools host."""
     pytest.skip("LCM required; run as integration test with FlexTools host.")
+
+
+# ============================================================================
+# Contract tests (lex-qc P0 -- 2026-06-21)
+# ============================================================================
+# Per LEX crew cycle-2/3: the gram_categories callbacks were silently mis-
+# targeted at IFsFeatStrucType (project.GramCat) instead of IPartOfSpeech
+# (project.POS) for the entire Phase 0 era. Unit tests passed because the
+# fakes are duck-typed and don't encode LCM collection identity. These
+# source-inspection tests hard-fail if the wrong LCM types reappear in the
+# implementation.
+
+def test_contract_execute_action_does_not_reference_ms_feature_system() -> None:
+    """Contract: gram_categories_execute_action targets PartsOfSpeechOA,
+    NOT MsFeatureSystemOA. Regression guard for the Phase 0-era bug."""
+    import inspect
+    src = inspect.getsource(categories.gram_categories_execute_action)
+    assert "MsFeatureSystemOA" not in src, (
+        "Regression: gram_categories_execute_action references MsFeatureSystemOA. "
+        "Per ordering-memo step 6 + lex-domain cycle-2 ruling, this callback must "
+        "target PartsOfSpeechOA.PossibilitiesOS, not MsFeatureSystemOA.TypesOC."
+    )
+    assert "IFsFeatStrucTypeFactory" not in src, (
+        "Regression: gram_categories_execute_action uses IFsFeatStrucTypeFactory. "
+        "POS creation uses IPartOfSpeechFactory."
+    )
+    assert "PartsOfSpeechOA" in src, (
+        "Contract: gram_categories_execute_action must create POSes under "
+        "PartsOfSpeechOA. See verification-log.md."
+    )
+    assert "IPartOfSpeechFactory" in src, (
+        "Contract: gram_categories_execute_action must use IPartOfSpeechFactory."
+    )
+
+
+def test_contract_enumerate_source_walks_pos_not_gramcat() -> None:
+    """Contract: gram_categories_enumerate_source walks source.POS, not
+    source.GramCat. The flexlibs2 project.GramCat accessor resolves to
+    GramCatOperations which iterates IFsFeatStrucType -- the wrong list."""
+    import inspect
+    src = inspect.getsource(categories.gram_categories_enumerate_source)
+    assert "source.POS" in src, (
+        "Contract: enumerate must walk source.POS (IPartOfSpeech) per memo step 6."
+    )
+    assert "source.GramCat" not in src, (
+        "Regression: enumerate walks source.GramCat (IFsFeatStrucType). "
+        "See verification-log.md for the live-MCP finding."
+    )
