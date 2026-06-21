@@ -868,35 +868,194 @@ def exception_features_execute_action(action: PlannedAction, context: RunContext
     return target_val
 
 
-# ----- variant_types (closure: associated inflection features per FR-004) --
+# ----- shared possibility-list walker (Phase 3b) ---------------------------
+
+def _walk_possibilities(owning_list):
+    """Recursive walk of a CmPossibility-shaped hierarchy.
+
+    Iterates `owning_list.PossibilitiesOS` then each item's
+    `SubPossibilitiesOS`. Returns a flat list of every node. Used by
+    variant_types, complex_form_types, semantic_domains.
+    """
+    out = []
+    if owning_list is None:
+        return out
+    stack = list(getattr(owning_list, "PossibilitiesOS", []) or [])
+    while stack:
+        node = stack.pop(0)
+        out.append(node)
+        subs = getattr(node, "SubPossibilitiesOS", None)
+        if subs is not None:
+            for child in subs:
+                stack.append(child)
+    return out
+
+
+def _walk_possibilities_via_lexdb(source, accessor_name):
+    """Resolve source.Cache.LangProject.LexDbOA.<accessor> defensively and
+    return the recursive walk. `accessor_name` is e.g. 'VariantEntryTypesOA'.
+    """
+    try:
+        lex_db = source.Cache.LangProject.LexDbOA
+    except Exception:
+        return []
+    list_obj = getattr(lex_db, accessor_name, None)
+    return _walk_possibilities(list_obj)
+
+
+def _walk_semantic_domain_list(source):
+    try:
+        return _walk_possibilities(source.Cache.LangProject.SemanticDomainListOA)
+    except Exception:
+        return []
+
+
+# ----- variant_types (Phase 3b memo step 12; FR-327) -----------------------
 
 def variant_types_enumerate_source(context, selection):
-    raise NotImplementedError("T039")
+    """Recursive walk of LangProject.LexDbOA.VariantEntryTypesOA."""
+    return _walk_possibilities_via_lexdb(context.source_handle,
+                                          "VariantEntryTypesOA")
 
 
 def variant_types_dependencies(piece):
-    # NOT a leaf — variant types reference inflection features. The closure
-    # walker will follow these refs to pull in the features. T039 fills in
-    # the actual lookup.
-    raise NotImplementedError("T039: yield (INFLECTION_FEATURES, feature_guid) refs")
+    """FR-327: yield (INFLECTION_FEATURES, val_guid) for each
+    IFsSymFeatVal referenced by the variant type's InflFeatsOA constraint.
+
+    ILexEntryInflType only -- base ILexEntryType has no InflFeatsOA.
+    Empty tuple when piece is a base variant type or InflFeatsOA is None.
+    """
+    struct = getattr(piece, "InflFeatsOA", None)
+    if struct is None:
+        return ()
+    specs = getattr(struct, "FeatureSpecsOC", None)
+    if specs is None:
+        return ()
+    deps = []
+    for spec in specs:
+        val = getattr(spec, "ValueRA", None)
+        if val is None:
+            continue
+        try:
+            val_guid = _guid_str_from(val)
+        except Exception:
+            continue
+        deps.append((GrammarCategory.INFLECTION_FEATURES, val_guid))
+    return tuple(deps)
 
 
 def variant_types_required_writing_systems(piece):
-    raise NotImplementedError("T039")
+    return ()
 
 
 def variant_types_plan_action(piece, context, ws_mapping):
-    raise NotImplementedError("T039")
+    """GOLD-aware: skip GOLD variant types; PlannedAction for user-defined."""
+    if _is_gold(piece):
+        return Skip(
+            category=GrammarCategory.VARIANT_TYPES,
+            source_guid=_guid_str_from(piece),
+            reason=SkipReason.GOLD_INVIOLABLE,
+            detail=(
+                f"Variant type is a GOLD object (CatalogSourceId="
+                f"{getattr(piece, 'CatalogSourceId', '?')!r})."
+            ),
+        )
+    src_guid = _guid_str_from(piece)
+    target_existing = _walk_possibilities_via_lexdb(
+        context.target_handle, "VariantEntryTypesOA"
+    )
+    if _target_has_guid(target_existing, src_guid):
+        return Skip(
+            category=GrammarCategory.VARIANT_TYPES,
+            source_guid=src_guid,
+            reason=SkipReason.ALREADY_PRESENT_BY_GUID,
+            detail=f"Variant type GUID {src_guid[:8]}... already present in target.",
+        )
+    return PlannedAction(
+        category=GrammarCategory.VARIANT_TYPES,
+        source_guid=src_guid,
+        intended_target_guid=src_guid,
+        summary=f"VariantType guid={src_guid[:8]}...",
+    )
 
 
 def variant_types_execute_action(action, context, ws_mapping, tag):
-    raise NotImplementedError("T039")
+    """Create variant type with GUID preserved.
+
+    Uses ILexEntryInflTypeFactory.Create(Guid, owner) -- the 2-arg
+    overload that ICmPossibilityFactory inherits. Top-level owner is the
+    LexDb's VariantEntryTypesOA possibility list; nested owners are
+    parent ILexEntryType objects.
+    """
+    from SIL.LCModel import ILexEntryInflTypeFactory
+    from System import Guid as DotNetGuid
+
+    if __package__:
+        from .residue import apply_carrier_b
+    else:
+        from residue import apply_carrier_b  # type: ignore
+
+    source = context.source_handle
+    target = context.target_handle
+    src_guid = action.source_guid
+
+    # Locate source object in the recursive walk.
+    src_obj = None
+    for vt in _walk_possibilities_via_lexdb(source, "VariantEntryTypesOA"):
+        if _guid_str_from(vt) == src_guid:
+            src_obj = vt
+            break
+    if src_obj is None:
+        return None
+
+    cache = getattr(target, "Cache")
+    ws = cache.DefaultAnalWs
+    target_list = cache.LangProject.LexDbOA.VariantEntryTypesOA
+
+    # Resolve owner: nested (parent ILexEntryType) vs top-level (possibility list).
+    src_owner_guid = None
+    try:
+        owner = src_obj.Owner
+        owner_guid = _guid_str_from(owner)
+        if owner_guid != _guid_str_from(target_list):
+            src_owner_guid = owner_guid
+    except Exception:
+        pass
+
+    if src_owner_guid:
+        target_parent = None
+        for vt in _walk_possibilities(target_list):
+            if _guid_str_from(vt) == src_owner_guid:
+                target_parent = vt
+                break
+        if target_parent is None:
+            return None
+        owner_for_create = target_parent
+    else:
+        owner_for_create = target_list
+
+    parsed_guid = DotNetGuid.Parse(src_guid)
+    sl = cache.ServiceLocator
+    factory = sl.GetService(ILexEntryInflTypeFactory)
+    try:
+        new_vt = factory.Create(parsed_guid, owner_for_create)
+    except Exception as e:
+        raise RuntimeError(
+            f"ILexEntryInflTypeFactory.Create(Guid, owner) failed for "
+            f"{src_guid}: {e!r}"
+        ) from e
+
+    # ApplySyncableProperties via flexlibs2 BaseOperations if available.
+    apply_carrier_b(new_vt, ws, tag)
+    return new_vt
 
 
-# ----- complex_form_types --------------------------------------------------
+# ----- complex_form_types (Phase 3b memo step 13) --------------------------
 
 def complex_form_types_enumerate_source(context, selection):
-    raise NotImplementedError("T039")
+    """Recursive walk of LangProject.LexDbOA.ComplexEntryTypesOA."""
+    return _walk_possibilities_via_lexdb(context.source_handle,
+                                          "ComplexEntryTypesOA")
 
 
 def complex_form_types_dependencies(piece):
@@ -904,21 +1063,112 @@ def complex_form_types_dependencies(piece):
 
 
 def complex_form_types_required_writing_systems(piece):
-    raise NotImplementedError("T039")
+    return ()
 
 
 def complex_form_types_plan_action(piece, context, ws_mapping):
-    raise NotImplementedError("T039")
+    """GOLD-aware: skip GOLD complex form types; PlannedAction for user-defined."""
+    if _is_gold(piece):
+        return Skip(
+            category=GrammarCategory.COMPLEX_FORM_TYPES,
+            source_guid=_guid_str_from(piece),
+            reason=SkipReason.GOLD_INVIOLABLE,
+            detail=(
+                f"Complex form type is a GOLD object (CatalogSourceId="
+                f"{getattr(piece, 'CatalogSourceId', '?')!r})."
+            ),
+        )
+    src_guid = _guid_str_from(piece)
+    target_existing = _walk_possibilities_via_lexdb(
+        context.target_handle, "ComplexEntryTypesOA"
+    )
+    if _target_has_guid(target_existing, src_guid):
+        return Skip(
+            category=GrammarCategory.COMPLEX_FORM_TYPES,
+            source_guid=src_guid,
+            reason=SkipReason.ALREADY_PRESENT_BY_GUID,
+            detail=f"Complex form type GUID {src_guid[:8]}... already present.",
+        )
+    return PlannedAction(
+        category=GrammarCategory.COMPLEX_FORM_TYPES,
+        source_guid=src_guid,
+        intended_target_guid=src_guid,
+        summary=f"ComplexFormType guid={src_guid[:8]}...",
+    )
 
 
 def complex_form_types_execute_action(action, context, ws_mapping, tag):
-    raise NotImplementedError("T039")
+    """Create complex form type with GUID preserved.
+
+    Uses ILexEntryTypeFactory.Create(Guid, owner). Owner is either the
+    LexDb's ComplexEntryTypesOA possibility list (top-level) or a
+    parent ILexEntryType (nested).
+    """
+    from SIL.LCModel import ILexEntryTypeFactory
+    from System import Guid as DotNetGuid
+
+    if __package__:
+        from .residue import apply_carrier_b
+    else:
+        from residue import apply_carrier_b  # type: ignore
+
+    source = context.source_handle
+    target = context.target_handle
+    src_guid = action.source_guid
+
+    src_obj = None
+    for cft in _walk_possibilities_via_lexdb(source, "ComplexEntryTypesOA"):
+        if _guid_str_from(cft) == src_guid:
+            src_obj = cft
+            break
+    if src_obj is None:
+        return None
+
+    cache = getattr(target, "Cache")
+    ws = cache.DefaultAnalWs
+    target_list = cache.LangProject.LexDbOA.ComplexEntryTypesOA
+
+    src_owner_guid = None
+    try:
+        owner = src_obj.Owner
+        owner_guid = _guid_str_from(owner)
+        if owner_guid != _guid_str_from(target_list):
+            src_owner_guid = owner_guid
+    except Exception:
+        pass
+
+    if src_owner_guid:
+        target_parent = None
+        for cft in _walk_possibilities(target_list):
+            if _guid_str_from(cft) == src_owner_guid:
+                target_parent = cft
+                break
+        if target_parent is None:
+            return None
+        owner_for_create = target_parent
+    else:
+        owner_for_create = target_list
+
+    parsed_guid = DotNetGuid.Parse(src_guid)
+    sl = cache.ServiceLocator
+    factory = sl.GetService(ILexEntryTypeFactory)
+    try:
+        new_cft = factory.Create(parsed_guid, owner_for_create)
+    except Exception as e:
+        raise RuntimeError(
+            f"ILexEntryTypeFactory.Create(Guid, owner) failed for "
+            f"{src_guid}: {e!r}"
+        ) from e
+
+    apply_carrier_b(new_cft, ws, tag)
+    return new_cft
 
 
-# ----- semantic_domains (Phase 3b memo step 13b) ---------------------------
+# ----- semantic_domains (Phase 3b memo step 13b; FR-326) -------------------
 
 def semantic_domains_enumerate_source(context, selection):
-    raise NotImplementedError("Phase 3b T028")
+    """Recursive walk of LangProject.SemanticDomainListOA."""
+    return _walk_semantic_domain_list(context.source_handle)
 
 
 def semantic_domains_dependencies(piece):
@@ -926,15 +1176,105 @@ def semantic_domains_dependencies(piece):
 
 
 def semantic_domains_required_writing_systems(piece):
-    raise NotImplementedError("Phase 3b T028")
+    return ()
 
 
 def semantic_domains_plan_action(piece, context, ws_mapping):
-    raise NotImplementedError("Phase 3b T029")
+    """FR-326: skip the ~1700-entry GOLD catalog; PlannedAction for
+    project-specific custom additions."""
+    if _is_gold(piece):
+        return Skip(
+            category=GrammarCategory.SEMANTIC_DOMAINS,
+            source_guid=_guid_str_from(piece),
+            reason=SkipReason.GOLD_INVIOLABLE,
+            detail=(
+                f"Semantic domain is a GOLD catalog object (CatalogSourceId="
+                f"{getattr(piece, 'CatalogSourceId', '?')!r}); "
+                "ships with FieldWorks."
+            ),
+        )
+    src_guid = _guid_str_from(piece)
+    target_existing = _walk_semantic_domain_list(context.target_handle)
+    if _target_has_guid(target_existing, src_guid):
+        return Skip(
+            category=GrammarCategory.SEMANTIC_DOMAINS,
+            source_guid=src_guid,
+            reason=SkipReason.ALREADY_PRESENT_BY_GUID,
+            detail=f"Semantic domain GUID {src_guid[:8]}... already present.",
+        )
+    return PlannedAction(
+        category=GrammarCategory.SEMANTIC_DOMAINS,
+        source_guid=src_guid,
+        intended_target_guid=src_guid,
+        summary=f"SemanticDomain guid={src_guid[:8]}...",
+    )
 
 
 def semantic_domains_execute_action(action, context, ws_mapping, tag):
-    raise NotImplementedError("Phase 3b T029")
+    """Create custom semantic domain with GUID preserved.
+
+    Uses ICmSemanticDomainFactory.Create(Guid, owner). Owner is either
+    the LangProject's SemanticDomainListOA possibility list or a parent
+    ICmSemanticDomain (custom domain nested under a custom parent).
+    """
+    from SIL.LCModel import ICmSemanticDomainFactory
+    from System import Guid as DotNetGuid
+
+    if __package__:
+        from .residue import apply_carrier_b
+    else:
+        from residue import apply_carrier_b  # type: ignore
+
+    source = context.source_handle
+    target = context.target_handle
+    src_guid = action.source_guid
+
+    src_obj = None
+    for sd in _walk_semantic_domain_list(source):
+        if _guid_str_from(sd) == src_guid:
+            src_obj = sd
+            break
+    if src_obj is None:
+        return None
+
+    cache = getattr(target, "Cache")
+    ws = cache.DefaultAnalWs
+    target_list = cache.LangProject.SemanticDomainListOA
+
+    src_owner_guid = None
+    try:
+        owner = src_obj.Owner
+        owner_guid = _guid_str_from(owner)
+        if owner_guid != _guid_str_from(target_list):
+            src_owner_guid = owner_guid
+    except Exception:
+        pass
+
+    if src_owner_guid:
+        target_parent = None
+        for sd in _walk_possibilities(target_list):
+            if _guid_str_from(sd) == src_owner_guid:
+                target_parent = sd
+                break
+        if target_parent is None:
+            return None
+        owner_for_create = target_parent
+    else:
+        owner_for_create = target_list
+
+    parsed_guid = DotNetGuid.Parse(src_guid)
+    sl = cache.ServiceLocator
+    factory = sl.GetService(ICmSemanticDomainFactory)
+    try:
+        new_sd = factory.Create(parsed_guid, owner_for_create)
+    except Exception as e:
+        raise RuntimeError(
+            f"ICmSemanticDomainFactory.Create(Guid, owner) failed for "
+            f"{src_guid}: {e!r}"
+        ) from e
+
+    apply_carrier_b(new_sd, ws, tag)
+    return new_sd
 
 
 # ----- adhoc_rules ---------------------------------------------------------
