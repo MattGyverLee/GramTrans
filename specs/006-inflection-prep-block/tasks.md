@@ -63,9 +63,19 @@ description: "Phase 3b — Inflection / Lexicon-Prep Block tasks"
 
 ---
 
-## Phase 4: User Story 2 — Custom Fields (Priority: P1)
+## Phase 4: User Story 2 — Custom Fields (Priority: P1) — BLOCKED
 
-**Goal**: Custom-field definitions land in target before Phase 3c LexEntries reference them.
+**Status (2026-06-21)**: T014-T020 BLOCKED. See
+[us2-blocker-memo.md](us2-blocker-memo.md). `CustomFieldOperations.CreateField`
+refuses to run inside the Phase-1 transaction envelope that
+`transfer.execute()` operates in, and raw `IFwMetaDataCacheManaged.AddCustomField`
+produces corrupt records on next FLEx UI open. Resuming US2 requires
+either (1) a flexlibs2 transaction-mode-bypass flag, (2) splitting
+`MainFunction` into schema-pre-pass + transaction-pass, or (3)
+documenting a manual user workaround. Discovery surfaced during T014
+implementation prep via MCP probe of CreateField docstring.
+
+**Goal (original)**: Custom-field definitions land in target before Phase 3c LexEntries reference them.
 
 **Independent Test**: Quickstart Scenario A's custom-fields sub-step.
 
