@@ -37,6 +37,9 @@ LEAF_CATEGORIES = {
     GrammarCategory.PH_ENVIRONMENT,  # relocated from HEAVY in Phase 3a
     GrammarCategory.PHONOLOGICAL_RULES,
     GrammarCategory.STRATA,
+    # Phase 3b (memo step 13b) -- semantic domains; other 8 Phase 3b
+    # categories already listed above.
+    GrammarCategory.SEMANTIC_DOMAINS,
 }
 
 # Heavy categories (AFFIXES, TEMPLATES, MSAs) live in their own files and

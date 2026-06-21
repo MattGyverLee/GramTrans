@@ -83,12 +83,23 @@ def build_run_plan(
     # enumerate_source raises, the category is treated as empty (per
     # FR-308 skip-empty semantics).
     _LEAF_DISPATCH_CATEGORIES = (
+        # Phase 3a (memo steps 2-5 + 5b)
         GrammarCategory.PHONOLOGICAL_FEATURES,
         GrammarCategory.PHONEMES,
         GrammarCategory.NATURAL_CLASSES,
         GrammarCategory.PH_ENVIRONMENT,
         GrammarCategory.PHONOLOGICAL_RULES,
         GrammarCategory.STRATA,
+        # Phase 3b (memo steps 6-13b)
+        GrammarCategory.GRAM_CATEGORIES,
+        GrammarCategory.INFLECTION_FEATURES,
+        GrammarCategory.CUSTOM_FIELDS,
+        GrammarCategory.INFLECTION_CLASSES,
+        GrammarCategory.STEM_NAMES,
+        GrammarCategory.EXCEPTION_FEATURES,
+        GrammarCategory.VARIANT_TYPES,
+        GrammarCategory.COMPLEX_FORM_TYPES,
+        GrammarCategory.SEMANTIC_DOMAINS,
     )
     if __package__:
         from .categories import for_category

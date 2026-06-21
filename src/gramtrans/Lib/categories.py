@@ -915,6 +915,28 @@ def complex_form_types_execute_action(action, context, ws_mapping, tag):
     raise NotImplementedError("T039")
 
 
+# ----- semantic_domains (Phase 3b memo step 13b) ---------------------------
+
+def semantic_domains_enumerate_source(context, selection):
+    raise NotImplementedError("Phase 3b T028")
+
+
+def semantic_domains_dependencies(piece):
+    return ()
+
+
+def semantic_domains_required_writing_systems(piece):
+    raise NotImplementedError("Phase 3b T028")
+
+
+def semantic_domains_plan_action(piece, context, ws_mapping):
+    raise NotImplementedError("Phase 3b T029")
+
+
+def semantic_domains_execute_action(action, context, ws_mapping, tag):
+    raise NotImplementedError("Phase 3b T029")
+
+
 # ----- adhoc_rules ---------------------------------------------------------
 
 def adhoc_rules_enumerate_source(context, selection):
@@ -1652,6 +1674,17 @@ LEAF_CATEGORIES = {
         "required_writing_systems": strata_required_writing_systems,
         "plan_action": strata_plan_action,
         "execute_action": strata_execute_action,
+    },
+    # Phase 3b -- memo step 13b. Other 8 Phase 3b categories already
+    # registered above (gram_categories, inflection_features,
+    # custom_fields, inflection_classes, stem_names, exception_features,
+    # variant_types, complex_form_types).
+    GrammarCategory.SEMANTIC_DOMAINS: {
+        "enumerate_source": semantic_domains_enumerate_source,
+        "dependencies": semantic_domains_dependencies,
+        "required_writing_systems": semantic_domains_required_writing_systems,
+        "plan_action": semantic_domains_plan_action,
+        "execute_action": semantic_domains_execute_action,
     },
 }
 

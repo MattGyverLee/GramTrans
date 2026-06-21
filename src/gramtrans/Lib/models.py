@@ -50,6 +50,9 @@ class GrammarCategory(enum.Enum):
     NATURAL_CLASSES = "natural_classes"
     PHONOLOGICAL_RULES = "phonological_rules"
     STRATA = "strata"
+    # Phase 3b (memo step 13b) -- semantic domains; other 8 Phase 3b
+    # categories already declared above.
+    SEMANTIC_DOMAINS = "semantic_domains"
 
 
 class WSKind(enum.Enum):

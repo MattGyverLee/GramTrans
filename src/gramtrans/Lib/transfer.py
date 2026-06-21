@@ -106,12 +106,23 @@ def execute(plan: RunPlan, source, target, report_sink, tag: ImportResidueTag,
     # the registered execute_action callback.  Skips and overwrites
     # are handled by the existing paths above.
     _LEAF_DISPATCH_CATEGORIES = (
+        # Phase 3a (memo steps 2-5 + 5b)
         GrammarCategory.PHONOLOGICAL_FEATURES,
         GrammarCategory.PHONEMES,
         GrammarCategory.NATURAL_CLASSES,
         GrammarCategory.PH_ENVIRONMENT,
         GrammarCategory.PHONOLOGICAL_RULES,
         GrammarCategory.STRATA,
+        # Phase 3b (memo steps 6-13b)
+        GrammarCategory.GRAM_CATEGORIES,
+        GrammarCategory.INFLECTION_FEATURES,
+        GrammarCategory.CUSTOM_FIELDS,
+        GrammarCategory.INFLECTION_CLASSES,
+        GrammarCategory.STEM_NAMES,
+        GrammarCategory.EXCEPTION_FEATURES,
+        GrammarCategory.VARIANT_TYPES,
+        GrammarCategory.COMPLEX_FORM_TYPES,
+        GrammarCategory.SEMANTIC_DOMAINS,
     )
     if __package__:
         from .categories import for_category as _for_category
