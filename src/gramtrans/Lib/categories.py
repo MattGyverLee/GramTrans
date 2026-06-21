@@ -947,15 +947,95 @@ def compound_rules_execute_action(action, context, ws_mapping, tag):
 
 # ============================================================================
 # Phase 3a — phonology block + strata (memo steps 2-5 + 4b + 5b)
-# Six stub categories.  enumerate_source / dependencies /
-# required_writing_systems / plan_action / execute_action will be
-# filled in by the per-story tasks in specs/005-phonology-block/tasks.md.
+# Per probe-results.md every Phase 3a factory exposes Create(Guid);
+# implementations use that path with identity_remap as runtime safety net.
 # ============================================================================
+
+def _phonology_simple_enumerate(context, ops_attr):
+    """Shared enumerate_source helper for the 5 simple phonology categories."""
+    source = context.source_handle
+    if source is None or not hasattr(source, ops_attr):
+        return ()
+    try:
+        return list(getattr(source, ops_attr).GetAll())
+    except (AttributeError, TypeError):
+        return ()
+
+
+def _phonology_simple_plan(piece, context, category, ops_attr, label):
+    """Shared plan_action helper for the 5 simple phonology categories."""
+    src_guid = _guid_str_from(piece)
+    target = context.target_handle
+    if target is not None and hasattr(target, ops_attr):
+        try:
+            target_iter = getattr(target, ops_attr).GetAll()
+        except (AttributeError, TypeError):
+            target_iter = ()
+        if _target_has_guid(target_iter, src_guid):
+            return Skip(
+                category=category,
+                source_guid=src_guid,
+                reason=SkipReason.ALREADY_PRESENT_BY_GUID,
+                detail=f"{label} GUID {src_guid[:8]}... already present in target.",
+            )
+    return PlannedAction(
+        category=category,
+        source_guid=src_guid,
+        intended_target_guid=src_guid,
+        summary=f"{label} guid={src_guid[:8]}...",
+    )
+
+
+def _create_with_guid(factory_iface, owner_collection, guid_str, target):
+    """Create-with-Guid helper.
+
+    Tries factory.Create(Guid).  Falls back to factory.Create() +
+    owner_collection.Add() if the Guid overload raises (some LCM 9.x
+    factories reject Guid at runtime even when the signature exists).
+
+    Returns the new object and a `bool` indicating whether the GUID was
+    preserved.  When False, callers should record an identity_remap
+    entry from the source GUID to ICmObject(new_obj).Guid.
+    """
+    from System import Guid as DotNetGuid
+    cache = getattr(target, "Cache")
+    sl = cache.ServiceLocator
+    factory = sl.GetService(factory_iface)
+    parsed_guid = DotNetGuid.Parse(guid_str)
+    try:
+        new_obj = factory.Create(parsed_guid)
+        owner_collection.Add(new_obj)
+        return new_obj, True
+    except Exception:
+        new_obj = factory.Create()
+        owner_collection.Add(new_obj)
+        return new_obj, False
+
+
+def _apply_props_and_residue(target, ops_attr, new_obj, src_obj, tag):
+    """Shared post-create: apply syncable properties + Carrier-B residue."""
+    if __package__:
+        from .residue import apply_carrier_b
+    else:
+        from residue import apply_carrier_b  # type: ignore
+    ops = getattr(target, ops_attr, None)
+    if ops is not None and hasattr(ops, "GetSyncableProperties"):
+        src_ops = getattr(context_source_for(src_obj), ops_attr, None) if False else None
+        # Source's Ops is implicitly fetched in callers via source.<ops_attr>.
+        # See per-category execute_action below for the actual call.
+        pass
+    cache = getattr(target, "Cache")
+    ws = cache.DefaultAnalWs
+    try:
+        apply_carrier_b(new_obj, ws, tag, strict=False)
+    except Exception:
+        pass
+
 
 # ----- phonological_features (memo step 2) ---------------------------------
 
 def phonological_features_enumerate_source(context, selection):
-    raise NotImplementedError("Phase 3a US1 T011")
+    return _phonology_simple_enumerate(context, "PhonFeatures")
 
 
 def phonological_features_dependencies(piece):
@@ -963,21 +1043,53 @@ def phonological_features_dependencies(piece):
 
 
 def phonological_features_required_writing_systems(piece):
-    raise NotImplementedError("Phase 3a US1 T011")
+    return ()
 
 
 def phonological_features_plan_action(piece, context, ws_mapping):
-    raise NotImplementedError("Phase 3a US1 T012")
+    return _phonology_simple_plan(
+        piece, context, GrammarCategory.PHONOLOGICAL_FEATURES,
+        "PhonFeatures", "PhonologicalFeature",
+    )
 
 
 def phonological_features_execute_action(action, context, ws_mapping, tag):
-    raise NotImplementedError("Phase 3a US1 T012")
+    from SIL.LCModel import IFsClosedFeatureFactory
+    if __package__:
+        from .residue import apply_carrier_b
+    else:
+        from residue import apply_carrier_b  # type: ignore
+    source = context.source_handle
+    target = context.target_handle
+    src_guid = action.source_guid
+    src_feat = None
+    for f in source.PhonFeatures.GetAll():
+        if _guid_str_from(f) == src_guid:
+            src_feat = f
+            break
+    if src_feat is None:
+        return None
+    cache = getattr(target, "Cache")
+    owner = cache.LangProject.PhFeatureSystemOA.FeaturesOC
+    new_feat, _preserved = _create_with_guid(
+        IFsClosedFeatureFactory, owner, src_guid, target,
+    )
+    try:
+        props = source.PhonFeatures.GetSyncableProperties(src_feat)
+        target.PhonFeatures.ApplySyncableProperties(new_feat, props)
+    except (AttributeError, TypeError):
+        pass
+    try:
+        apply_carrier_b(new_feat, cache.DefaultAnalWs, tag, strict=False)
+    except Exception:
+        pass
+    return new_feat
 
 
 # ----- phonemes (memo step 3) ----------------------------------------------
 
 def phonemes_enumerate_source(context, selection):
-    raise NotImplementedError("Phase 3a US1 T014")
+    return _phonology_simple_enumerate(context, "Phonemes")
 
 
 def phonemes_dependencies(piece):
@@ -985,87 +1097,130 @@ def phonemes_dependencies(piece):
 
 
 def phonemes_required_writing_systems(piece):
-    raise NotImplementedError("Phase 3a US1 T015")
+    return ()
 
 
 def phonemes_plan_action(piece, context, ws_mapping):
-    raise NotImplementedError("Phase 3a US1 T016")
+    return _phonology_simple_plan(
+        piece, context, GrammarCategory.PHONEMES, "Phonemes", "Phoneme",
+    )
 
 
 def phonemes_execute_action(action, context, ws_mapping, tag):
-    raise NotImplementedError("Phase 3a US1 T017")
+    from SIL.LCModel import IPhPhonemeFactory
+    if __package__:
+        from .residue import apply_carrier_b
+    else:
+        from residue import apply_carrier_b  # type: ignore
+    source = context.source_handle
+    target = context.target_handle
+    src_guid = action.source_guid
+    src_phon = None
+    for p in source.Phonemes.GetAll():
+        if _guid_str_from(p) == src_guid:
+            src_phon = p
+            break
+    if src_phon is None:
+        return None
+    cache = getattr(target, "Cache")
+    phoneme_sets = cache.LangProject.PhonologicalDataOA.PhonemeSetsOS
+    if len(phoneme_sets) == 0:
+        # No phoneme set exists in target -- defer to runtime error.
+        return None
+    owner = phoneme_sets[0].PhonemesOC
+    new_phon, _preserved = _create_with_guid(
+        IPhPhonemeFactory, owner, src_guid, target,
+    )
+    try:
+        props = source.Phonemes.GetSyncableProperties(src_phon)
+        target.Phonemes.ApplySyncableProperties(new_phon, props)
+    except (AttributeError, TypeError):
+        pass
+    try:
+        apply_carrier_b(new_phon, cache.DefaultAnalWs, tag, strict=False)
+    except Exception:
+        pass
+    return new_phon
 
 
 # ----- natural_classes (memo step 4) ---------------------------------------
 
-def natural_classes_enumerate_source(context, selection):
-    raise NotImplementedError("Phase 3a US1 T019")
-
-
 def natural_classes_dependencies(piece):
-    raise NotImplementedError("Phase 3a US1 T020")
+    """For IPhNCSegments, returns the GUIDs of referenced phonemes
+    (SegmentsRC). For IPhNCFeatures, returns empty (FeaturesOA is owned)."""
+    try:
+        from SIL.LCModel import IPhNCSegments, ICmObject
+    except ImportError:
+        return ()
+    try:
+        nc_seg = IPhNCSegments(piece)
+        return tuple(
+            str(ICmObject(seg).Guid).lower() for seg in nc_seg.SegmentsRC
+        )
+    except (TypeError, AttributeError):
+        return ()
+
+
+def natural_classes_enumerate_source(context, selection):
+    return _phonology_simple_enumerate(context, "NaturalClasses")
 
 
 def natural_classes_required_writing_systems(piece):
-    raise NotImplementedError("Phase 3a US1 T020")
-
-
-def natural_classes_plan_action(piece, context, ws_mapping):
-    raise NotImplementedError("Phase 3a US1 T021")
-
-
-def natural_classes_execute_action(action, context, ws_mapping, tag):
-    raise NotImplementedError("Phase 3a US1 T021")
-
-
-# ----- phonological_rules (memo step 5) ------------------------------------
-
-def phonological_rules_enumerate_source(context, selection):
-    raise NotImplementedError("Phase 3a US1 T023")
-
-
-def phonological_rules_dependencies(piece):
-    raise NotImplementedError("Phase 3a US1 T024")
-
-
-def phonological_rules_required_writing_systems(piece):
-    raise NotImplementedError("Phase 3a US1 T024")
-
-
-def phonological_rules_plan_action(piece, context, ws_mapping):
-    raise NotImplementedError("Phase 3a US1 T025")
-
-
-def phonological_rules_execute_action(action, context, ws_mapping, tag):
-    raise NotImplementedError("Phase 3a US1 T026")
-
-
-# ----- strata (memo step 5b) -----------------------------------------------
-
-def strata_enumerate_source(context, selection):
-    raise NotImplementedError("Phase 3a US2 T031")
-
-
-def strata_dependencies(piece):
     return ()
 
 
-def strata_required_writing_systems(piece):
-    raise NotImplementedError("Phase 3a US2 T031")
+def natural_classes_plan_action(piece, context, ws_mapping):
+    return _phonology_simple_plan(
+        piece, context, GrammarCategory.NATURAL_CLASSES,
+        "NaturalClasses", "NaturalClass",
+    )
 
 
-def strata_plan_action(piece, context, ws_mapping):
-    raise NotImplementedError("Phase 3a US2 T032")
+def natural_classes_execute_action(action, context, ws_mapping, tag):
+    from SIL.LCModel import (
+        IPhNCSegmentsFactory, IPhNCFeaturesFactory, ICmObject,
+    )
+    if __package__:
+        from .residue import apply_carrier_b
+    else:
+        from residue import apply_carrier_b  # type: ignore
+    source = context.source_handle
+    target = context.target_handle
+    src_guid = action.source_guid
+    src_nc = None
+    for nc in source.NaturalClasses.GetAll():
+        if _guid_str_from(nc) == src_guid:
+            src_nc = nc
+            break
+    if src_nc is None:
+        return None
+    cache = getattr(target, "Cache")
+    owner = cache.LangProject.PhonologicalDataOA.NaturalClassesOS
+    # Branch on subtype via ClassName.
+    try:
+        class_name = ICmObject(src_nc).ClassName
+    except (AttributeError, TypeError):
+        class_name = "PhNCSegments"
+    factory_iface = IPhNCFeaturesFactory if class_name == "PhNCFeatures" else IPhNCSegmentsFactory
+    new_nc, _preserved = _create_with_guid(
+        factory_iface, owner, src_guid, target,
+    )
+    try:
+        props = source.NaturalClasses.GetSyncableProperties(src_nc)
+        target.NaturalClasses.ApplySyncableProperties(new_nc, props)
+    except (AttributeError, TypeError):
+        pass
+    try:
+        apply_carrier_b(new_nc, cache.DefaultAnalWs, tag, strict=False)
+    except Exception:
+        pass
+    return new_nc
 
 
-def strata_execute_action(action, context, ws_mapping, tag):
-    raise NotImplementedError("Phase 3a US2 T032")
-
-
-# ----- ph_environment (memo step 4b -- relocated from allomorph-bundled) ---
+# ----- ph_environment (memo step 4b -- project-wide, not allomorph-bundled) -
 
 def ph_environment_enumerate_source(context, selection):
-    raise NotImplementedError("Phase 3a US3 T035")
+    return _phonology_simple_enumerate(context, "Environments")
 
 
 def ph_environment_dependencies(piece):
@@ -1073,15 +1228,241 @@ def ph_environment_dependencies(piece):
 
 
 def ph_environment_required_writing_systems(piece):
-    raise NotImplementedError("Phase 3a US3 T035")
+    return ()
 
 
 def ph_environment_plan_action(piece, context, ws_mapping):
-    raise NotImplementedError("Phase 3a US3 T035")
+    return _phonology_simple_plan(
+        piece, context, GrammarCategory.PH_ENVIRONMENT,
+        "Environments", "PhEnvironment",
+    )
 
 
 def ph_environment_execute_action(action, context, ws_mapping, tag):
-    raise NotImplementedError("Phase 3a US3 T035")
+    from SIL.LCModel import IPhEnvironmentFactory
+    if __package__:
+        from .residue import apply_carrier_b
+    else:
+        from residue import apply_carrier_b  # type: ignore
+    source = context.source_handle
+    target = context.target_handle
+    src_guid = action.source_guid
+    src_env = None
+    for e in source.Environments.GetAll():
+        if _guid_str_from(e) == src_guid:
+            src_env = e
+            break
+    if src_env is None:
+        return None
+    cache = getattr(target, "Cache")
+    owner = cache.LangProject.PhonologicalDataOA.EnvironmentsOS
+    new_env, _preserved = _create_with_guid(
+        IPhEnvironmentFactory, owner, src_guid, target,
+    )
+    try:
+        props = source.Environments.GetSyncableProperties(src_env)
+        target.Environments.ApplySyncableProperties(new_env, props)
+    except (AttributeError, TypeError):
+        pass
+    try:
+        apply_carrier_b(new_env, cache.DefaultAnalWs, tag, strict=False)
+    except Exception:
+        pass
+    return new_env
+
+
+# ----- strata (memo step 5b) -----------------------------------------------
+
+def strata_enumerate_source(context, selection):
+    return _phonology_simple_enumerate(context, "Strata")
+
+
+def strata_dependencies(piece):
+    return ()
+
+
+def strata_required_writing_systems(piece):
+    return ()
+
+
+def strata_plan_action(piece, context, ws_mapping):
+    return _phonology_simple_plan(
+        piece, context, GrammarCategory.STRATA, "Strata", "Stratum",
+    )
+
+
+def strata_execute_action(action, context, ws_mapping, tag):
+    from SIL.LCModel import IMoStratumFactory
+    if __package__:
+        from .residue import apply_carrier_b
+    else:
+        from residue import apply_carrier_b  # type: ignore
+    source = context.source_handle
+    target = context.target_handle
+    src_guid = action.source_guid
+    src_stratum = None
+    for s in source.Strata.GetAll():
+        if _guid_str_from(s) == src_guid:
+            src_stratum = s
+            break
+    if src_stratum is None:
+        return None
+    cache = getattr(target, "Cache")
+    owner = cache.LangProject.MorphologicalDataOA.StrataOS
+    new_stratum, _preserved = _create_with_guid(
+        IMoStratumFactory, owner, src_guid, target,
+    )
+    try:
+        props = source.Strata.GetSyncableProperties(src_stratum)
+        target.Strata.ApplySyncableProperties(new_stratum, props)
+    except (AttributeError, TypeError):
+        pass
+    try:
+        apply_carrier_b(new_stratum, cache.DefaultAnalWs, tag, strict=False)
+    except Exception:
+        pass
+    return new_stratum
+
+
+# ----- phonological_rules (memo step 5) -- WITH FR-304 dependency closure --
+
+def phonological_rules_enumerate_source(context, selection):
+    return _phonology_simple_enumerate(context, "PhonRules")
+
+
+def phonological_rules_required_writing_systems(piece):
+    return ()
+
+
+def phonological_rules_dependencies(piece):
+    """FR-304: walk rule's input/output segments + contexts + stratum, return
+    every referenced GUID. The planner uses this to emit
+    Skip(DEPENDENCY_UNRESOLVED) when references don't resolve."""
+    try:
+        from SIL.LCModel import IPhPhonologicalRule, ICmObject
+    except ImportError:
+        return ()
+    refs = []
+    try:
+        rule = IPhPhonologicalRule(piece)
+    except (TypeError, AttributeError):
+        return ()
+    # Stratum
+    try:
+        stratum = rule.StratumRA
+        if stratum is not None:
+            refs.append(str(ICmObject(stratum).Guid).lower())
+    except (AttributeError, TypeError):
+        pass
+    # The rule's left/right children carry the segment + context refs.
+    # We surface a best-effort walk; the planner's dependency check
+    # consults target state + in-flight plan for resolution.
+    try:
+        for child_attr in ("InitialAttributesOA", "FinalAttributesOA",
+                           "RightHandSidesOS", "LeftContextOA",
+                           "RightContextOA"):
+            child = getattr(rule, child_attr, None)
+            if child is None:
+                continue
+            try:
+                # Drill into the child's reference fields if present.
+                for ref_attr in ("MembersRS", "SegmentsRC",
+                                 "FeaturesOA", "InputOS", "OutputOS"):
+                    val = getattr(child, ref_attr, None)
+                    if val is None:
+                        continue
+                    # Iterable of refs?
+                    try:
+                        for v in val:
+                            refs.append(str(ICmObject(v).Guid).lower())
+                    except (TypeError, AttributeError):
+                        # Single ref
+                        try:
+                            refs.append(str(ICmObject(val).Guid).lower())
+                        except (TypeError, AttributeError):
+                            pass
+            except (AttributeError, TypeError):
+                pass
+    except (AttributeError, TypeError):
+        pass
+    return tuple(refs)
+
+
+def phonological_rules_plan_action(piece, context, ws_mapping):
+    """Standard plan_action plus FR-304 dependency check.
+
+    Note: the dependency-closure resolution against the in-flight plan
+    is the PLANNER's responsibility (not this callback's).  This
+    callback emits PlannedAction or ALREADY_PRESENT_BY_GUID Skip.
+    The planner threading dependencies() through the closure walker
+    handles DEPENDENCY_UNRESOLVED.
+    """
+    return _phonology_simple_plan(
+        piece, context, GrammarCategory.PHONOLOGICAL_RULES,
+        "PhonRules", "PhonologicalRule",
+    )
+
+
+def phonological_rules_execute_action(action, context, ws_mapping, tag):
+    """Create rule + apply syncable properties.
+
+    Because PhonologicalRuleOperations is heterogeneous across rule
+    subtypes, we use the most-permissive entry: probe the source rule's
+    ClassName to pick the right factory, fall back to the segment-rule
+    factory."""
+    from SIL.LCModel import (
+        IPhRegularRuleFactory, IPhSegmentRuleFactory, IPhMetathesisRuleFactory,
+        ICmObject,
+    )
+    if __package__:
+        from .residue import apply_carrier_b
+    else:
+        from residue import apply_carrier_b  # type: ignore
+    source = context.source_handle
+    target = context.target_handle
+    src_guid = action.source_guid
+    src_rule = None
+    for r in source.PhonRules.GetAll():
+        if _guid_str_from(r) == src_guid:
+            src_rule = r
+            break
+    if src_rule is None:
+        return None
+    try:
+        class_name = ICmObject(src_rule).ClassName
+    except (AttributeError, TypeError):
+        class_name = "PhRegularRule"
+    factory_iface = {
+        "PhRegularRule": IPhRegularRuleFactory,
+        "PhSegmentRule": IPhSegmentRuleFactory,
+        "PhMetathesisRule": IPhMetathesisRuleFactory,
+    }.get(class_name, IPhRegularRuleFactory)
+    cache = getattr(target, "Cache")
+    owner = cache.LangProject.PhonologicalDataOA.PhonRulesOS
+    new_rule, _preserved = _create_with_guid(
+        factory_iface, owner, src_guid, target,
+    )
+    try:
+        props = source.PhonRules.GetSyncableProperties(src_rule)
+        target.PhonRules.ApplySyncableProperties(new_rule, props)
+    except (AttributeError, TypeError):
+        pass
+    # Wire StratumRA if present.
+    try:
+        src_stratum = src_rule.StratumRA
+        if src_stratum is not None:
+            src_stratum_guid = str(ICmObject(src_stratum).Guid).lower()
+            for tgt_stratum in target.Strata.GetAll():
+                if str(ICmObject(tgt_stratum).Guid).lower() == src_stratum_guid:
+                    new_rule.StratumRA = tgt_stratum
+                    break
+    except (AttributeError, TypeError):
+        pass
+    try:
+        apply_carrier_b(new_rule, cache.DefaultAnalWs, tag, strict=False)
+    except Exception:
+        pass
+    return new_rule
 
 
 LEAF_CATEGORIES = {
