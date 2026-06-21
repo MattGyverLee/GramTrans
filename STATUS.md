@@ -1,8 +1,61 @@
 # GramTrans — Session Handoff
 
-**Updated**: 2026-06-20 (23:25)
+**Updated**: 2026-06-21 (02:25)
 **Branch**: `main`
-**Phase**: Phase 3a (phonology block) **COMPLETE** end-to-end — US1+US2+US3+US4 shipped, Scenario D live-verified, P0 hardening landed. Phase 3b (morphology block) pending spec.
+**Phase**: Phase 3b (inflection / lexicon-prep block) **US1 + US3 + US4 SHIPPED**. US2 (custom_fields) BLOCKED on UoW conflict (see `specs/006-inflection-prep-block/us2-blocker-memo.md`). Phase 3c (affixes / stems, memo steps 14-18) pending spec.
+
+---
+
+## ▶▶▶ Phase 3b session — 2026-06-21
+
+### Shipped
+
+| Commit | What |
+|--------|------|
+| 6beac7a | T001-T003 — `SEMANTIC_DOMAINS` enum + 4 stub registry entries + `_LEAF_DISPATCH_CATEGORIES` extended in preview.py + transfer.py |
+| df77c9b | T004-T008 — MCP probes against Ejagham Full GT-Test (probe-results.md) |
+| 50480d4 | T011-T012 (US1) — leaf-dispatch smoke (4 tests covering all 9 Phase 3b categories) |
+| 61704ba | US2 BLOCKED memo — `CreateField` raises `FP_TransactionError` inside Phase-1 UoW; raw `AddCustomField` corrupts schema |
+| 1b457d3 | US3 — variant_types + complex_form_types + semantic_domains full 5-callback implementations + 18 unit tests |
+
+### Key probe findings (probe-results.md)
+
+- `ICmPossibilityFactory` / `IPartOfSpeechFactory` / `ICmSemanticDomainFactory`: `Create(Guid, parent)` — Guid-mandatory.
+- `MetaDataCacheAccessor.AddCustomField` returns Int32 flid; 0 == fail-loud.
+- `ILexEntryTypeFactory` / `ILexEntryInflTypeFactory`: 0-method stubs in MCP catalog → use `Cache.ServiceLocator.GetInstance[T]()`. Variants use `ILexEntryInflType` (has `InflFeatsOA`), complex use base `ILexEntryType`.
+- `InflFeatsOA` is **Owning Atomic** (single struct), NOT OS as initial spec assumed. Walk `InflFeatsOA.FeatureSpecsOC` → each `IFsFeatureSpecification.ValueRA.Guid`.
+
+### US2 blocker (custom_fields)
+
+`flexlibs2.CustomFieldOperations.CreateField` refuses to run inside an open
+UoW with `FP_TransactionError`. Phase-1 transaction mode (the default in
+flexlibs2 `OpenProject`) keeps that envelope open for our entire
+`transfer.execute()`. Raw `IFwMetaDataCacheManaged.AddCustomField` bypass
+produces corrupt records on next FLEx UI open (per the flexlibs2 docstring).
+
+T014-T020 deferred. Unblock requires either:
+1. flexlibs2 exposes a `transaction_mode='direct'` flag on `OpenProject`.
+2. Split `MainFunction` into schema-pre-pass + transaction-pass with separately-opened direct-mode handle.
+3. Document a manual user workaround and ship without automation.
+
+See [specs/006-inflection-prep-block/us2-blocker-memo.md](specs/006-inflection-prep-block/us2-blocker-memo.md).
+
+### Test totals (end of session)
+
+- Unit: **309 passed, 5 skipped** (was 287 at session start; +22 net)
+  - +4 dispatch-smoke tests (test_phase3b_leaf_dispatch.py)
+  - +18 US3 callback tests (test_categories_phase3b_us3.py)
+- Integration: unchanged (host-required scaffolds still skipped)
+
+### Next pickup checklist
+
+1. **Resolve US2 blocker.** Choose one of the three remediation paths in the memo. The cleanest is path (2): two-phase `MainFunction` with a schema-pre-pass. Requires confirming flexlibs2 exposes a direct-mode `OpenProject` flag.
+2. **Live MCP verification of US1+US3** — Scenarios A.1, A.3, C in quickstart. Defer Scenario B (overwrite re-run) until a non-empty US3 source is available. Defer Scenario D (FR-308) — covered by dispatch smoke.
+3. **Phase 3c spec** — memo steps 14-18 (affixes, ad-hoc/compound rules, slots, affix templates, stems). The leaf-dispatch pattern from 3a/3b extends naturally to these, modulo the heavy-category surfaces (affixes/templates/MSA) that don't fit the pure-leaf shape.
+
+---
+
+## ▶▶▶ Phase 3a CLOSED (2026-06-20 23:25)
 
 ---
 
