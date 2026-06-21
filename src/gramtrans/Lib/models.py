@@ -445,6 +445,9 @@ class RunReport:
     skips: tuple = ()  # tuple[Skip, ...]
     identity_remap: dict = field(default_factory=dict)
     wall_clock_seconds: float = 0.0
+    empty_categories: tuple = ()  # Phase 3a FR-308: categories selected
+    # but with zero items in source. Used by render_text_summary to emit
+    # "[skip] no items in source for X" lines.
 
     def __post_init__(self) -> None:
         # FR-018: sum of per_category[*].skipped must equal len(skips)

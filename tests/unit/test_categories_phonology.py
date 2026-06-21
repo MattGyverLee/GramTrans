@@ -594,3 +594,76 @@ def test_safe_add_to_owner_raises_orphan_risk_on_add_failure():
     assert "Orphan risk" in msg
     assert "IFsFactory" in msg
     assert "abc-123" in msg
+
+
+# ============================================================================
+# US2 — Strata smoke (Phase 3a)
+# Source projects rarely carry strata; the Phase 3a category callbacks
+# still need a unit-level smoke test confirming they wire up correctly
+# when source DOES have one.  Live MCP verification deferred until a
+# strata-bearing source becomes available.
+# ============================================================================
+
+def test_strata_plan_action_emits_planned_for_multiple_strata():
+    """Source with 3 strata, target empty -> 3 PlannedAction entries."""
+    src = _project(Strata=[_Item("s-1"), _Item("s-2"), _Item("s-3")])
+    tgt = _project(Strata=[])
+    items = categories.strata_enumerate_source(_ctx(src, tgt), SEL)
+    actions = [
+        categories.strata_plan_action(p, _ctx(src, tgt), WSM) for p in items
+    ]
+    assert len(actions) == 3
+    assert all(isinstance(a, PlannedAction) for a in actions)
+    assert {a.source_guid for a in actions} == {"s-1", "s-2", "s-3"}
+    assert all(a.category == GrammarCategory.STRATA for a in actions)
+
+
+def test_strata_partial_target_overlap_splits_actions_and_skips():
+    """Source with 3 strata, target has 1 by GUID -> 2 actions + 1 skip."""
+    src = _project(Strata=[_Item("s-1"), _Item("s-2"), _Item("s-3")])
+    tgt = _project(Strata=[_Item("s-2")])  # one overlap
+    actions = []
+    skips = []
+    for p in categories.strata_enumerate_source(_ctx(src, tgt), SEL):
+        result = categories.strata_plan_action(p, _ctx(src, tgt), WSM)
+        if isinstance(result, PlannedAction):
+            actions.append(result)
+        elif isinstance(result, Skip):
+            skips.append(result)
+    assert len(actions) == 2
+    assert len(skips) == 1
+    assert skips[0].source_guid == "s-2"
+    assert skips[0].reason == SkipReason.ALREADY_PRESENT_BY_GUID
+
+
+# ============================================================================
+# US4 — Empty-source UX (Phase 3a FR-308)
+# render_text_summary surfaces "[skip] no items in source for X" for any
+# category the user selected that produced zero actions/skips/overwrites.
+# ============================================================================
+
+def test_render_summary_emits_skip_line_for_empty_selected_categories():
+    """Build a RunReport with empty_categories populated and confirm
+    render_text_summary emits the expected line."""
+    from gramtrans.Lib.models import (
+        RunContext as _RC, RunMode as _RM, RunReport as _RR,
+    )
+    from gramtrans.Lib.report import render_text_summary
+    ctx = _RC(
+        source_handle=object(), source_project_name="Src", source_project_path="",
+        target_handle=object(), target_project_name="Tgt", target_project_path="",
+        run_id="GT-20260620-235900", started_at="2026-06-20T23:59:00",
+    )
+    rep = _RR(
+        context=ctx, mode=_RM.MOVE,
+        per_category={}, skips=(),
+        empty_categories=(
+            GrammarCategory.STRATA,
+            GrammarCategory.PHONOLOGICAL_RULES,
+        ),
+    )
+    lines = list(render_text_summary(rep))
+    skip_lines = [ln for ln in lines if "no items in source for" in ln]
+    assert len(skip_lines) == 2
+    assert any("strata" in ln for ln in skip_lines)
+    assert any("phonological_rules" in ln for ln in skip_lines)

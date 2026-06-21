@@ -1,8 +1,87 @@
 # GramTrans — Session Handoff
 
-**Updated**: 2026-06-20 (late evening)
+**Updated**: 2026-06-20 (23:25)
 **Branch**: `main`
-**Phase**: Phase 3a (phonology block) US1 SHIPPED, live MCP verified. Phase 3a US2-US4 + polish remain. Phase 3b (morphology block) pending spec.
+**Phase**: Phase 3a (phonology block) **COMPLETE** end-to-end — US1+US2+US3+US4 shipped, Scenario D live-verified, P0 hardening landed. Phase 3b (morphology block) pending spec.
+
+---
+
+## ▶▶▶ Phase 3a CLOSED (2026-06-20 23:25)
+
+Phase 3a finished cleanly. The phonology+strata block transfers via
+live MCP, FR-307 idempotency holds against Phase 0/1/2 verb-vertical,
+empty-source UX lines render correctly, and all four pre-existing
+Phase 0 orphan risks are now hardened with the `_safe_add_to_owner`
+helper.
+
+### Closeout work (after Phase 3a US1 ship)
+
+| Commit | What |
+|--------|------|
+| 82d8664 | STATUS handoff after US1 ship |
+| 3863ed2 | P0-A..D Phase 0 orphan hardening (`_safe_add_to_owner`) + 2 tests |
+| (this)  | US2 strata smoke tests, US3 Scenario D live verify, US4 empty-source UX (FR-308), final regression |
+
+### US2 (Strata)
+
+Data path already shipped in 608b72c.  Ejagham Mini has 0 strata, so
+live MCP verification deferred until a strata-bearing source is
+available.  Unit smoke tests added: 3-strata enumeration→plan, partial
+overlap (2 actions + 1 ALREADY_PRESENT_BY_GUID skip).
+
+### US3 (PhEnv idempotency) — **LIVE VERIFIED**
+
+Quickstart Scenario D probed via MCP: verb-vertical Phase 0/1/2
+closure with `enable_overwrite=True` over Ejagham Mini → Ejagham Full
+GT-Test after the phonology block had already populated environments.
+Result: **0 `ph_environment` CREATE actions**, 2 overwrites, 4
+ALREADY_PRESENT_BY_GUID skips.  FR-307 idempotency holds — the
+phonology-block relocation is invisible to existing Phase 0/1/2
+callers.
+
+### US4 (Empty-source UX, FR-308)
+
+`Lib/models.py.RunReport` gains `empty_categories: tuple = ()` field.
+`Lib/report.py._build_from_plan` derives it from
+`plan.selection.categories` minus the categories that produced
+any actions/skips/overwrites.  `render_text_summary` emits
+`[skip] no items in source for X` per FR-308.  Unit test confirms.
+
+### Test totals
+
+- 287 unit + 18 integration = **305 passing**, 20 skipped (all
+  live-FlexTools-required).
+- +5 from US1 ship: 2 US2 strata smoke, 1 US4 render, 2 P0 helper.
+
+### Phase 3a session inventory
+
+| Commit | Scope |
+|--------|-------|
+| c224e00 | spec |
+| 072dddb | plan + research + data-model + contracts + quickstart |
+| a6ac58c | tasks.md (47 tasks) |
+| ac8a6b9 | T001-T010 setup + foundational MCP probes |
+| 384de7c | T011-T029 US1 (six category callbacks + 29 tests) |
+| 608b72c | T030-T034 leaf-dispatch wiring + `_create_with_guid` hardening + SegmentsRC wiring |
+| 82d8664 | STATUS handoff |
+| 3863ed2 | P0-A..D Phase 0 orphan hardening |
+| (this)  | US2/US3/US4 + Polish |
+
+### Next session
+
+- **Phase 3b spec kickoff**: morphology block (memo steps 6-13: POS,
+  inflection features, custom fields, inflection classes, stem names,
+  exception features, variant types, complex form types, semantic
+  domains).  Several leaf callbacks are already COMPLETE in
+  categories.py from Phase 0; Phase 3b is largely wiring them through
+  the leaf-dispatch loop that landed in 608b72c.
+- Optional follow-up: QC P1-A — phonology categories' Carrier-B
+  residue silently no-ops when target `Description` is absent.  Not
+  blocking but residue tags aren't landing on disk for the new
+  categories the same way they do for Phase 1's snap+merge writes.
+  Probe via MCP first to confirm scope.
+- US2 live MCP probe against a strata-bearing source project (when
+  one becomes available).
 
 ---
 

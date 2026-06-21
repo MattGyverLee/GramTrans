@@ -113,6 +113,17 @@ def _build_from_plan(cls, plan: RunPlan, mode: RunMode,
         for cat, counts in per_category.items()
     }
 
+    # Phase 3a FR-308: categories selected by the user but with zero
+    # items in source are surfaced as "empty_categories" so
+    # render_text_summary can emit "[skip] no items in source for X".
+    selected_cats = {
+        c for c, on in getattr(plan, "selection", None).categories.items() if on
+    } if getattr(plan, "selection", None) is not None else set()
+    empty_cats = tuple(sorted(
+        (c for c in selected_cats if c not in per_category_final),
+        key=lambda c: c.value,
+    ))
+
     return cls(
         context=plan.context,
         mode=mode,
@@ -120,6 +131,7 @@ def _build_from_plan(cls, plan: RunPlan, mode: RunMode,
         skips=tuple(skips_list),
         identity_remap=dict(plan.identity_remap),
         wall_clock_seconds=wall_clock_seconds,
+        empty_categories=empty_cats,
     )
 
 
@@ -216,6 +228,10 @@ def render_text_summary(report: RunReport) -> Iterable[str]:
         f"  {'TOTAL':18s}  added={total_added}  skipped={total_skipped}"
         + (f"  overwritten={total_overwritten}" if total_overwritten else "")
     )
+    # Phase 3a FR-308: surface selected-but-empty categories explicitly so
+    # the linguist sees the scan happened even when nothing transferred.
+    for cat in getattr(report, "empty_categories", ()):
+        yield f"  [skip] no items in source for {cat.value}"
     if report.skips:
         yield "  Skips:"
         for s in report.skips:
