@@ -1,8 +1,78 @@
 # GramTrans — Session Handoff
 
-**Updated**: 2026-06-19 (late evening)
+**Updated**: 2026-06-20 (evening)
 **Branch**: `main`
-**Phase**: Phase 0 — Additive Grammar Transfer (constitution v5.0.0)
+**Phase**: Phase 2 SHIPPED. Phase 3 ordering memo ready at [specs/004-phase3-pipeline/ordering-memo.md](specs/004-phase3-pipeline/ordering-memo.md).
+
+---
+
+## ▶▶▶ Phase 2 complete + Phase 3 memo (2026-06-20)
+
+### Phase 2 ship state
+
+All four user stories of Phase 2 ([specs/003-phase2-interactive-merge/](specs/003-phase2-interactive-merge/)) shipped this session:
+
+- **US1 — per-conflict prompt** (commits af7da6b, 34c34dd): `detect_conflicts` + `_apply_merge_decisions` + executor wiring + `ConflictDialog` (PyQt5).
+- **US2 — WS-mapping wizard** (4cf1f9c): `detect_ws_mismatches` + `fold_choices_into_ws_mapping` + `WSWizard` (PyQt5).
+- **US3 — prior-run decision recall** (9b1715b): `load_prior_log` / `load_prior_decision` + ConflictDialog pre-fill.
+- **Phase 2 wiring** (c050aa1): `phase2_interactive_move()` entry helper threading WS wizard → plan → ConflictDialog → execute. **Live MCP verified** end-to-end against Ejagham Mini → Ejagham Full GT-Test with FakeResolver doubles: 0 WS mismatches, 14 conflict prompts collected, all answered TAKE_SOURCE, 67 overwrites applied in 1.43s, zero errors.
+
+**Test totals: 267 unit + integration tests green, 20 skipped (all live-FlexTools required).**
+
+Residue tag wire format extended to 4-or-5-or-6 segments:
+```
+GT|<run_id>|<source>|<iso_ts>[|snap=<base64>][|merge=<base64>]
+```
+
+### Phase 3 readiness — validation memo
+
+[specs/004-phase3-pipeline/ordering-memo.md](specs/004-phase3-pipeline/ordering-memo.md)
+is the artifact for the next session. It confirms the **22-step
+import ordering + 2 post-passes**, MCP-validated for every cross-reference:
+
+1. WS → 2. PhonFeatures → 3. Phonemes → 4. NaturalClasses → 4b. **PhEnvs** *(moved here, was bundled with allomorphs)* → 5. PhonRules → **5b. Strata** *(new; MCP-confirmed RA from templates/MSAs/compound rules)* → 6. POS → 7. InflectionFeatures → 8. CustomFields → 9. InflectionClasses → 10. StemNames → 11. ExceptionFeatures → 12. VariantTypes → 13. ComplexFormTypes → **13b. SemanticDomains** *(user: in scope)* → 14. **Affixes** (LexEntries + owned children) → 15. **AdHoc + Compound Rules** *(moved AFTER affixes — single structural correction from user's draft)* → 16. Slots → 17. AffixTemplates + **17.1 MSA-slot wiring** *(deferred from #14)* → 18. **Stems** (LexEntries + owned children) → **post-pass A** *(inter-entry refs)* → **18b. ReversalIndices** *(user: in scope)* → 19. **Texts** *(user-picker driven; new `texts_picker.py` dialog)* → 20. **WordformAnalyses** *(human-only; source-wins; machine analyses ephemeral)* → **post-pass B**.
+
+**Resolved open questions** (in memo):
+- Audio WSes treated like any other WS in the wizard.
+- Semantic domains + reversal indices both in scope.
+- WfiAnalysis evaluation conflicts: human-only, source wins.
+- Texts: user-picked subset via new PyQt picker.
+
+**Owned vs Referenced** principle now explicitly carried as the
+guiding rule: OA/OS/OC come with parent, RA/RS/RC must already exist
+in target or be deferred to a later step.
+
+### Implementation gap (for Phase 3 specification)
+
+| Status | Categories |
+|--------|-----------|
+| **COMPLETE** | gram_categories (POS-internals subset), inflection_features, inflection_classes, stem_names, exception_features |
+| **PARTIAL (verb-vertical hardcode)** | writing_systems_check, pos, entry, sense, msa, allomorph, ph_environment |
+| **STUB** | custom_fields, variant_types, complex_form_types, adhoc_rules, compound_rules, affixes, templates |
+| **ABSENT from enum** | phonological_features, phonemes, natural_classes, phonological_rules, strata, semantic_domains, reversal_indices, texts, wordform_analyses |
+
+Next session's first move: `/speckit-specify` for Phase 3 driven by the
+ordering memo. Suggested first slice — **phonology block (steps
+2-5 + 5b Strata + 4b PhEnvs)**: 5-6 new self-contained categories with
+no LexEntry coupling.
+
+### Phase 1 ship state (reference; shipped earlier in the session)
+
+FR-101..110 all live-verified — commits:
+- e6cde61 — Phase 1.1 Entry + Sense overwrite via direct GUID
+- e129b72 — Phase 1.2 MSA + Allomorph overwrite via fingerprint matching
+- e5f322c — Phase 1.3a PhEnvironment overwrite via enable_overwrite
+- 1097df5 — Phase 1.3b FR-106 pre-overwrite snapshot in residue tag
+- aecd565, 50f873d — Phase 1.3c v1+v2: residue carrier-write fix (LiftResidue is Unicode single-string on Layer 3 LCM classes; setattr-on-None lands `snap=` on disk)
+- f4cdd9c — Phase 1.4 FR-107 custom-field deduplication
+
+### Manual TODO (not blocking Phase 3)
+
+- **PyQt click-through verification**: open FlexTools, load Ejagham Full GT-Test, run `phase2_interactive_move()` without fake resolvers — confirm the QDialog renders, radios select, Apply commits, Cancel aborts. ~30 min, no code changes.
+
+---
+
+## ▶▶▶ Multi-POS walker + leaf categories + Phase 1 scaffold (2026-06-20)
 
 ---
 
