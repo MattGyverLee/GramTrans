@@ -61,6 +61,12 @@ from models import (
     Selection,
     WSMapping,
 )
+from conflict import (
+    UserCancelled,
+    build_session_from_resolutions,
+    collect_overwrite_conflicts,
+)
+from ws_mapping import detect_ws_mismatches, fold_choices_into_ws_mapping
 
 
 __version__ = "0.1.0"
@@ -197,6 +203,185 @@ def MainFunction(project, report, modifyAllowed):
         report.Error(f"[GramTrans] Fatal: {e}")
         import traceback
         report.Error(traceback.format_exc())
+
+
+# ============================================================================
+# Phase 2 interactive entry helper
+# ============================================================================
+
+def phase2_interactive_move(
+    project,
+    report,
+    modifyAllowed,
+    source_project_name=DEFAULT_SOURCE_PROJECT,
+    pos_picks=None,
+    ws_resolver=None,
+    conflict_resolver=None,
+    categories=None,
+):
+    """Phase 2 entry point that drives the full interactive flow:
+
+        WS-wizard -> build_run_plan -> ConflictDialog -> execute(session)
+
+    Designed for either FlexTools host invocation (production: PyQt
+    WSWizard + ConflictDialog) or live MCP testing (resolver doubles).
+    The standard `MainFunction` continues to expose the Phase 0
+    additive flow unchanged.
+
+    Args:
+        project: FLExProject target (FlexTools host's bound project).
+        report: FlexTools report sink (.Info / .Warning / .Error / .Blank).
+        modifyAllowed: True if the host permits writes.
+        source_project_name: name of the source project to open (default
+            "Ejagham Mini").
+        pos_picks: frozenset[str] of POS GUIDs to drive overwrite.  When
+            None, every POS in source is in scope.
+        ws_resolver: WSResolver implementation.  When None, the wizard
+            opens only if mismatches exist AND PyQt is importable;
+            otherwise the function falls back to identity WSMapping.
+        conflict_resolver: ConflictResolver implementation.  When None,
+            the dialog opens only if conflicts exist AND PyQt is
+            importable; otherwise the function falls back to Phase 1
+            source-wins (FR-109).
+        categories: dict[GrammarCategory, bool] for Selection.  When
+            None, all eight Phase-0 categories are enabled.
+
+    Returns:
+        RunReport on success.  Returns None on UserCancelled (no writes
+        occur).
+    """
+    import datetime, time
+    report.Info(f"[GramTrans Phase 2] interactive move start")
+    source = FLExProject()
+    source.OpenProject(projectName=source_project_name, writeEnabled=False)
+    try:
+        now = datetime.datetime.now()
+        run_id = now.strftime("GT-%Y%m%d-%H%M%S")
+        started_at = now.strftime("%Y-%m-%dT%H:%M:%S")
+        context = RunContext(
+            source_handle=source,
+            source_project_name=source_project_name,
+            source_project_path="",
+            target_handle=project,
+            target_project_name=project.ProjectName(),
+            target_project_path=_safe_project_path(project),
+            run_id=run_id,
+            started_at=started_at,
+        )
+
+        # 1. WS-mapping wizard (FR-209..212)
+        mismatches = detect_ws_mismatches(source, project)
+        ws_choices = ()
+        ws_mapping = WSMapping(entries=())
+        if mismatches:
+            report.Info(f"[Phase 2] {len(mismatches)} writing-system mismatch(es) detected.")
+            if ws_resolver is None:
+                ws_resolver = _build_default_ws_resolver(mismatches, project)
+            if ws_resolver is None:
+                report.Warning(
+                    "[Phase 2] No WS resolver available; falling back to "
+                    "identity mapping (Phase 0 behavior)."
+                )
+            else:
+                try:
+                    ws_choices = ws_resolver.resolve(mismatches)
+                except UserCancelled:
+                    report.Info("[Phase 2] WS wizard cancelled; aborting transfer.")
+                    return None
+                ws_mapping = fold_choices_into_ws_mapping(ws_choices, ws_mapping)
+                report.Info(f"[Phase 2] WS wizard resolved {len(ws_choices)} mismatch(es).")
+        else:
+            report.Info("[Phase 2] No WS mismatches; WS wizard not invoked.")
+
+        # 2. Build plan (interactive_merge=True gates Phase 2 path)
+        if categories is None:
+            categories = {c: True for c in (
+                GrammarCategory.POS, GrammarCategory.TEMPLATES, GrammarCategory.SLOTS,
+                GrammarCategory.ENTRY, GrammarCategory.SENSE, GrammarCategory.MSA,
+                GrammarCategory.ALLOMORPH, GrammarCategory.PH_ENVIRONMENT,
+            )}
+        selection = Selection(
+            categories=categories,
+            include_closure=True,
+            pos_picks=frozenset(pos_picks) if pos_picks else frozenset(),
+            enable_overwrite=True,
+            interactive_merge=True,
+            ws_mapping_choices=ws_choices,
+        )
+        plan = build_run_plan(context, selection, ws_mapping, source, project)
+        report.Info(
+            f"[Phase 2] Plan: actions={len(plan.actions)} "
+            f"overwrites={len(plan.overwrites)} skips={len(plan.skips)}"
+        )
+
+        # 3. Conflict detection + resolver
+        prompts = collect_overwrite_conflicts(plan, source, project)
+        session = None
+        if prompts:
+            report.Info(f"[Phase 2] {len(prompts)} conflict prompt(s) collected.")
+            if conflict_resolver is None:
+                conflict_resolver = _build_default_conflict_resolver(prompts)
+            if conflict_resolver is None:
+                report.Warning(
+                    "[Phase 2] No conflict resolver available; falling "
+                    "back to source-wins (FR-109)."
+                )
+            else:
+                try:
+                    decisions = conflict_resolver.resolve(prompts)
+                except UserCancelled:
+                    report.Info("[Phase 2] Conflict dialog cancelled; aborting transfer.")
+                    return None
+                session = build_session_from_resolutions(prompts, decisions)
+                report.Info(f"[Phase 2] {len(decisions)} decisions captured.")
+        else:
+            report.Info("[Phase 2] No conflicts in plan; conflict dialog not invoked.")
+
+        if not modifyAllowed:
+            report.Info("[Phase 2] modifyAllowed=False; preview-only run, no writes.")
+            return None
+
+        # 4. Execute with the resolved session
+        tag = ImportResidueTag.make(
+            run_id=run_id,
+            source_project_name=source_project_name,
+            timestamp=started_at,
+        )
+        t0 = time.time()
+        run_report = execute(plan, source, project, report, tag, interactive_session=session)
+        elapsed = time.time() - t0
+        report.Blank()
+        report.Info(f"[Phase 2] Move done in {elapsed:.3f}s")
+        for line in render_text_summary(run_report):
+            report.Info(line)
+        return run_report
+    finally:
+        source.CloseProject()
+
+
+def _build_default_ws_resolver(mismatches, target_project):
+    """Lazily import PyQt WSWizard; return None if PyQt is unavailable
+    (headless contexts) so the caller can fall back."""
+    try:
+        from ui.ws_wizard import WSWizard
+    except ImportError:
+        return None
+    try:
+        return WSWizard(mismatches, target_project=target_project)
+    except Exception:
+        return None
+
+
+def _build_default_conflict_resolver(prompts):
+    """Lazily import PyQt ConflictDialog; return None on import error."""
+    try:
+        from ui.conflict_dialog import ConflictDialog
+    except ImportError:
+        return None
+    try:
+        return ConflictDialog(prompts)
+    except Exception:
+        return None
 
 
 # ============================================================================

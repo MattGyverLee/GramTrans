@@ -238,11 +238,19 @@ _OW_OPS = {
 }
 
 
+def _unwrap(obj):
+    """flexlibs2 sometimes returns wrapper objects with a .concrete attr
+    holding the underlying LCM interface; unwrap before any ICmObject cast.
+    Mirrors transfer.py._unwrap."""
+    return obj.concrete if hasattr(obj, "concrete") else obj
+
+
 def _find_target_entry_by_guid(target, guid):
     from SIL.LCModel import ICmObject  # lazy
     for te in target.LexEntry.GetAll():
-        if str(ICmObject(te).Guid).lower() == guid.lower():
-            return te
+        concrete = _unwrap(te)
+        if str(ICmObject(concrete).Guid).lower() == guid.lower():
+            return concrete
     return None
 
 
@@ -251,8 +259,9 @@ def _find_target_sense_by_guid(target, guid, owner_entry_guid=""):
     entry = _find_target_entry_by_guid(target, owner_entry_guid) if owner_entry_guid else None
     if entry is not None:
         for s in target.LexEntry.GetSenses(entry):
-            if str(ICmObject(s).Guid).lower() == guid.lower():
-                return s
+            concrete = _unwrap(s)
+            if str(ICmObject(concrete).Guid).lower() == guid.lower():
+                return concrete
     return None
 
 
@@ -261,16 +270,18 @@ def _find_target_allo_by_guid(target, guid, owner_entry_guid=""):
     entry = _find_target_entry_by_guid(target, owner_entry_guid) if owner_entry_guid else None
     if entry is not None:
         for a in target.Allomorphs.GetAll(entry):
-            if str(ICmObject(a).Guid).lower() == guid.lower():
-                return a
+            concrete = _unwrap(a)
+            if str(ICmObject(concrete).Guid).lower() == guid.lower():
+                return concrete
     return None
 
 
 def _find_target_pos_by_guid(target, guid):
     from SIL.LCModel import ICmObject  # lazy
     for p in target.POS.GetAll(recursive=True):
-        if str(ICmObject(p).Guid).lower() == guid.lower():
-            return p
+        concrete = _unwrap(p)
+        if str(ICmObject(concrete).Guid).lower() == guid.lower():
+            return concrete
     return None
 
 
@@ -295,7 +306,8 @@ def collect_overwrite_conflicts(plan, source, target, prior_logs_by_guid=None):
     try:
         from SIL.LCModel import ICmObject
         for se in source.LexEntry.GetAll():
-            src_entry_by_guid[str(ICmObject(se).Guid).lower()] = se
+            concrete = _unwrap(se)
+            src_entry_by_guid[str(ICmObject(concrete).Guid).lower()] = concrete
     except (AttributeError, ImportError):
         # Outside FlexTools host -- caller is presumably running unit tests
         # with mocked source/target.  Bail.
@@ -322,8 +334,9 @@ def collect_overwrite_conflicts(plan, source, target, prior_logs_by_guid=None):
             tgt_obj = finder(target, ow.target_guid)
             src_obj = None
             for p in source.POS.GetAll(recursive=True):
-                if str(ICmObject(p).Guid).lower() == ow.source_guid.lower():
-                    src_obj = p
+                concrete = _unwrap(p)
+                if str(ICmObject(concrete).Guid).lower() == ow.source_guid.lower():
+                    src_obj = concrete
                     break
         elif cat == "entry":
             tgt_obj = finder(target, ow.target_guid)
@@ -334,8 +347,9 @@ def collect_overwrite_conflicts(plan, source, target, prior_logs_by_guid=None):
             src_obj = None
             if src_entry is not None:
                 for s in source.LexEntry.GetSenses(src_entry):
-                    if str(ICmObject(s).Guid).lower() == ow.source_guid.lower():
-                        src_obj = s
+                    concrete = _unwrap(s)
+                    if str(ICmObject(concrete).Guid).lower() == ow.source_guid.lower():
+                        src_obj = concrete
                         break
         elif cat == "allomorph":
             tgt_obj = finder(target, ow.target_guid, ow.owner_guid)
@@ -343,8 +357,9 @@ def collect_overwrite_conflicts(plan, source, target, prior_logs_by_guid=None):
             src_obj = None
             if src_entry is not None:
                 for a in source.Allomorphs.GetAll(src_entry):
-                    if str(ICmObject(a).Guid).lower() == ow.source_guid.lower():
-                        src_obj = a
+                    concrete = _unwrap(a)
+                    if str(ICmObject(concrete).Guid).lower() == ow.source_guid.lower():
+                        src_obj = concrete
                         break
         else:
             continue
