@@ -239,13 +239,15 @@ def gram_categories_execute_action(action: PlannedAction, context: RunContext, w
         sl = cache.LangProject.Cache.ServiceLocator if hasattr(cache.LangProject, "Cache") else cache.ServiceLocator
         factory = sl.GetService(ICmPossibilityFactory)
         new_cat = factory.Create(parsed_guid)
-        target_parent.SubPossibilitiesOS.Add(new_cat)
+        _safe_add_to_owner(new_cat, target_parent.SubPossibilitiesOS,
+                           "ICmPossibilityFactory", src_guid)
     else:
         # Top-level: TypesOC requires IFsFeatStrucType.
         sl = cache.ServiceLocator
         factory = sl.GetService(IFsFeatStrucTypeFactory)
         new_cat = factory.Create(parsed_guid)
-        feature_system.TypesOC.Add(new_cat)
+        _safe_add_to_owner(new_cat, feature_system.TypesOC,
+                           "IFsFeatStrucTypeFactory", src_guid)
 
     # Apply syncable properties (Name, Abbreviation, Description).
     src_props = source.GramCat.GetSyncableProperties(src_obj)
@@ -395,6 +397,10 @@ def inflection_features_execute_action(action: PlannedAction, context: RunContex
                 tgt_prop.set_String(ws_handle, TsStringUtils.MakeString(text, ws_handle))
 
     # Co-create values (IFsSymFeatVal) with their canonical GUIDs.
+    # P0-A hardening: the 2-arg Create attaches automatically; the 1-arg
+    # path guards Add with _safe_add_to_owner.  No no-arg fallback --
+    # if Create(Guid) is unsupported on this LCM build we fail loud
+    # rather than silently produce GUID-misaligned values.
     val_factory = sl.GetService(IFsSymFeatValFactory)
     if hasattr(src_feat_typed, "ValuesOC"):
         for src_val in src_feat_typed.ValuesOC:
@@ -408,9 +414,13 @@ def inflection_features_execute_action(action: PlannedAction, context: RunContex
             if new_val is None:
                 try:
                     new_val = val_factory.Create(parsed_val_guid)
-                except Exception:
-                    new_val = val_factory.Create()
-                new_feat.ValuesOC.Add(new_val)
+                except Exception as e:
+                    raise RuntimeError(
+                        f"IFsSymFeatValFactory does not support Create(Guid); "
+                        f"cannot align value GUID {val_guid} on feature {src_guid}"
+                    ) from e
+                _safe_add_to_owner(new_val, new_feat.ValuesOC,
+                                   "IFsSymFeatValFactory", val_guid)
             new_val = IFsSymFeatVal(new_val)
             src_val_typed = IFsSymFeatVal(src_val)
             for prop_name in ("Name", "Abbreviation", "Description"):
@@ -533,13 +543,17 @@ def inflection_classes_execute_action(action: PlannedAction, context: RunContext
     sl = cache.ServiceLocator
     factory = sl.GetService(IMoInflClassFactory)
 
-    new_ic = None
+    # P0-C hardening: no no-arg fallback (cf. probe-results.md);
+    # _safe_add_to_owner surfaces Add failures with orphan-risk message.
     try:
         new_ic = factory.Create(parsed_guid)
-    except Exception:
-        new_ic = factory.Create()
-
-    morph_data.ProdRestrictOA.PossibilitiesOS.Add(new_ic)
+    except Exception as e:
+        raise RuntimeError(
+            f"IMoInflClassFactory does not support Create(Guid); "
+            f"cannot align GUID {src_guid}"
+        ) from e
+    _safe_add_to_owner(new_ic, morph_data.ProdRestrictOA.PossibilitiesOS,
+                       "IMoInflClassFactory", src_guid)
     new_ic = IMoInflClass(new_ic)
 
     # Apply syncable properties.
@@ -670,13 +684,17 @@ def stem_names_execute_action(action: PlannedAction, context: RunContext, ws_map
     sl = cache.ServiceLocator
     factory = sl.GetService(IMoStemNameFactory)
 
-    new_sn = None
+    # P0-D hardening: no no-arg fallback (cf. probe-results.md);
+    # _safe_add_to_owner surfaces Add failures with orphan-risk message.
     try:
         new_sn = factory.Create(parsed_guid)
-    except Exception:
-        new_sn = factory.Create()
-
-    target_pos.StemNamesOC.Add(new_sn)
+    except Exception as e:
+        raise RuntimeError(
+            f"IMoStemNameFactory does not support Create(Guid); "
+            f"cannot align GUID {src_guid}"
+        ) from e
+    _safe_add_to_owner(new_sn, target_pos.StemNamesOC,
+                       "IMoStemNameFactory", src_guid)
     new_sn = IMoStemName(new_sn)
 
     # Copy Name multistring directly (IMoStemName has Name but may not
@@ -984,6 +1002,26 @@ def _phonology_simple_plan(piece, context, category, ops_attr, label):
         intended_target_guid=src_guid,
         summary=f"{label} guid={src_guid[:8]}...",
     )
+
+
+def _safe_add_to_owner(new_obj, owner_collection, factory_label, src_guid):
+    """Add `new_obj` to `owner_collection`; raise RuntimeError on failure
+    with an orphan-risk message so partial-allocation events are visible
+    rather than silently leaking into the LCM cache.
+
+    Mirrors the orphan-guard half of `_create_with_guid` so the four
+    pre-Phase-3a categories that hand-roll their own Create+Add
+    (gram_categories, inflection_features value loop,
+    inflection_classes, stem_names) get the same protection.
+    """
+    try:
+        owner_collection.Add(new_obj)
+    except Exception as e:
+        raise RuntimeError(
+            f"Orphan risk: Create({src_guid}) succeeded for "
+            f"{factory_label} but Add-to-owner failed: {e!r}. "
+            f"Investigate target LCM state before retrying."
+        ) from e
 
 
 def _create_with_guid(factory_iface, owner_collection, guid_str, target):

@@ -563,3 +563,34 @@ def test_nc_execute_raises_on_unresolved_phoneme():
     msg = str(exc_info.value)
     assert "ph-guid-2" in msg, f"Expected missing GUID in error: {msg}"
     assert "nc-guid-b" in msg, f"Expected NC GUID in error: {msg}"
+
+
+# ============================================================================
+# _safe_add_to_owner hardening tests (P0-A..D coverage)
+# ============================================================================
+
+def test_safe_add_to_owner_success_returns_silently():
+    """Happy path: Add succeeds → helper returns None without raising."""
+    owner = MagicMock()
+    owner.Add = MagicMock()  # no exception
+    result = categories._safe_add_to_owner(
+        new_obj="sentinel", owner_collection=owner,
+        factory_label="IFsFactory", src_guid="abc-123",
+    )
+    assert result is None
+    owner.Add.assert_called_once_with("sentinel")
+
+
+def test_safe_add_to_owner_raises_orphan_risk_on_add_failure():
+    """Add raises → RuntimeError mentions 'Orphan risk', factory label, and GUID."""
+    owner = MagicMock()
+    owner.Add = MagicMock(side_effect=ValueError("LCM Add rejected"))
+    with pytest.raises(RuntimeError) as exc_info:
+        categories._safe_add_to_owner(
+            new_obj="sentinel", owner_collection=owner,
+            factory_label="IFsFactory", src_guid="abc-123",
+        )
+    msg = str(exc_info.value)
+    assert "Orphan risk" in msg
+    assert "IFsFactory" in msg
+    assert "abc-123" in msg
