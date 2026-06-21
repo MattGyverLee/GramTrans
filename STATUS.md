@@ -1,8 +1,81 @@
 # GramTrans — Session Handoff
 
-**Updated**: 2026-06-20 (evening)
+**Updated**: 2026-06-20 (late evening)
 **Branch**: `main`
-**Phase**: Phase 2 SHIPPED. Phase 3 ordering memo ready at [specs/004-phase3-pipeline/ordering-memo.md](specs/004-phase3-pipeline/ordering-memo.md).
+**Phase**: Phase 3a (phonology block) US1 SHIPPED, live MCP verified. Phase 3a US2-US4 + polish remain. Phase 3b (morphology block) pending spec.
+
+---
+
+## ▶▶▶ Phase 3a US1 complete (2026-06-20 23:00)
+
+### Ship state
+
+Phase 3a MVP — the six self-contained phonology+strata categories from
+[specs/005-phonology-block/](specs/005-phonology-block/) per the
+validated 22-step ordering memo — transfers end-to-end via the live
+MCP path. Commits since 4c3cd1a (Phase 3 memo):
+
+| Commit | Tasks | What |
+|--------|-------|------|
+| c224e00 | spec | FR-301..311, 4 user stories, 6 entities, quality checklist green |
+| 072dddb | plan | research.md R1..R10 + data-model + contracts + quickstart |
+| a6ac58c | tasks.md | 47 tasks across 7 phases; MVP = phases 1+2+3 (29 tasks) |
+| ac8a6b9 | T001-T010 | enum + stubs + MCP probes (all factories support Create(Guid)) |
+| 384de7c | T011-T029 | six category callbacks (phon_features, phonemes, NCs, ph_env, phon_rules, strata) + 29 unit tests |
+| 608b72c | T030-T034 | leaf-dispatch wiring in preview.py + transfer.py; _create_with_guid hardened; SegmentsRC wiring; +4 cycle tests |
+
+### Live MCP verification (write-mode, Ejagham Mini → Ejagham Full GT-Test)
+
+- **PLAN**: 39 actions (32 phonemes + 5 NCs + 2 envs) + 2 PH_ENV skips
+  (already present by GUID).
+- **MOVE**: 39 actions executed via leaf-dispatch in **0.074 s**.
+- **DELTA**: target phonemes 32→64, NCs 5→10, envs 3→5.
+- **SegmentsRC matched on all 5 natural classes** (22 + 4 + 4 + 7 + 7
+  phoneme references wired correctly). P1-C lex-qc finding resolved.
+- `lcm_undoable_action_count = 42` (proper transaction).
+- Zero warnings, zero errors.
+- "Needs professional help" dialog did NOT recur on this write-mode run.
+
+### Cycle 1+2 lex-lead crew work (this session)
+
+- **lex-programmer** hardened `_create_with_guid`: removed no-arg
+  Create() fallback; Add-after-Create-failure surfaces RuntimeError
+  with "Orphan risk" message instead of silently leaking; +2 tests.
+- **lex-qc** swept categories.py for sibling orphan risks. Found 4 P0
+  sites in pre-existing Phase 0 categories (inflection_features value
+  loop, gram_categories hand-rolled Create+Add,
+  inflection_classes, stem_names) — out of scope for Phase 3a US1
+  because none are enabled in Scenario A's Selection; tracked for the
+  next commit (item #2 in next-up below).
+- **lex-programmer cycle 2** wired SegmentsRC on natural_classes
+  execute_action + deleted the P1-B dead `_apply_props_and_residue`
+  helper; +2 tests.
+- 282 unit tests pass (249 + 29 phonology surface + 2 orphan hardening
+  + 2 SegmentsRC wiring).
+
+### Next up
+
+1. **Apply `_create_with_guid`-style hardening to P0-A..D** in Phase
+   0 categories (inflection_features, gram_categories,
+   inflection_classes, stem_names). Same shape as 608b72c; one
+   commit. Eliminates latent orphan risk before any future Selection
+   enables them.
+2. **Phase 3a US2 (strata)**: data path already shipped in 608b72c;
+   needs a Scenario A re-run with Strata enabled + a smoke test in
+   tests/integration. Trivially close-out task.
+3. **Phase 3a US3 (PhEnv idempotency)**: confirm Phase 0/1/2 allomorph
+   closure produces zero new env creates when phonology block has
+   already populated them. Quickstart Scenario D.
+4. **Phase 3a US4 (empty-source UX)**: `[skip] no items in source for
+   X` log lines per FR-308.
+5. **Phase 3a Polish (T043-T047)**: full regression sweep + STATUS.md
+   final + commit topic-aligned increments.
+6. **Phase 3b spec** kickoff (memo steps 6-13: POS, inflection
+   features, custom fields, inflection classes, stem names, exception
+   features, variant types, complex form types, semantic domains).
+   Most leaf categories already COMPLETE in categories.py from earlier
+   sessions — Phase 3b is largely wiring them through the existing
+   leaf-dispatch loop that landed in 608b72c.
 
 ---
 
