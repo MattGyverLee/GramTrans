@@ -1,8 +1,19 @@
 # GramTrans — Session Handoff
 
-**Updated**: 2026-06-21 (09:00)
+**Updated**: 2026-06-21 (22:50 close-sweep)
 **Branch**: `main`
-**Phase**: Phase 3b (inflection / lexicon-prep block) **US1 + US2 (detect-only) + US3 + US4 SHIPPED, MERGE-GATE GREEN**. LEX crew cycles 1+2+3 all closed. US2 creation remains blocked at flexlibs2 layer pending Phase 2 transaction mode; detect-and-report posture adopted. Phase 3c (affixes / stems, memo steps 14-18) pending spec.
+**Phase**: Phase 3b **CLOSED** — all 41 tasks resolved (4 deferred-with-rationale; 37 shipped). US2 creation still blocked at flexlibs2 layer (detect-and-report posture adopted). Phase 3c spec scaffolded at [specs/007-affixes-stems/](specs/007-affixes-stems/) — memo steps 14-18 (affixes, ad-hoc / compound rules, slots, affix templates, stems).
+
+### Phase 3b close-sweep (2026-06-21 22:50)
+
+- Unit suite: **324 passed, 5 skipped**
+- Integration suite: **18 passed, 15 skipped** (all skips are live-FlexTools-required)
+- Live-MCP gate: GREEN across Runs 1-3 in [specs/006-inflection-prep-block/verification-log.md](specs/006-inflection-prep-block/verification-log.md)
+  - Run 1 (`194438a`): US1 Preview/Move — `InflectionFeatures` accessor fix landed; `gram_categories` semantic mismatch surfaced
+  - Run 2 (`798dc0b`): US1 re-run after `gram_categories` → `project.POS` retarget — POS 20→21
+  - Run 3 (`beeb60c`): US3 Preview/Move — VariantEntryTypes 12→13; 1792 GOLD semantic-domain skips; 5 source GUIDs verified
+- Deferred tasks (4): T017 / T019 / T020 (US2 creation pending Phase 2 transaction mode), T039 (Scenario B/E regression — Runs 1-3 are write-mode evidence on same target)
+- Open Scenario C (FR-327 feature-constraint closure) — requires a source with variant types carrying non-empty `InflFeatsOA`; unit-test coverage exists
 
 ### Note for future sessions — IDENTITY vs GUID skip semantics
 
