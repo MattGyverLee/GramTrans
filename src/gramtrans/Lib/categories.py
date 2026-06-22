@@ -1138,7 +1138,7 @@ def variant_types_execute_action(action, context, ws_mapping, tag):
     LexDb's VariantEntryTypesOA possibility list; nested owners are
     parent ILexEntryType objects.
     """
-    from SIL.LCModel import ILexEntryInflTypeFactory
+    from SIL.LCModel import ILexEntryInflTypeFactory, ICmObject, ICmPossibility, ICmPossibilityList
     from System import Guid as DotNetGuid
 
     if __package__:
@@ -1164,37 +1164,50 @@ def variant_types_execute_action(action, context, ws_mapping, tag):
     target_list = cache.LangProject.LexDbOA.VariantEntryTypesOA
 
     # Resolve owner: nested (parent ILexEntryType) vs top-level (possibility list).
+    # Cast to ICmObject so ClassName is reliably available (raw .Owner on
+    # source object returns ICmObjectOrId where ClassName may not surface).
     src_owner_guid = None
     try:
-        owner = src_obj.Owner
-        owner_guid = _guid_str_from(owner)
-        if owner_guid != _guid_str_from(target_list):
-            src_owner_guid = owner_guid
+        owner = ICmObject(src_obj).Owner
+        owner_class = getattr(owner, "ClassName", "")
+        if owner_class and "EntryType" in owner_class:
+            src_owner_guid = _guid_str_from(owner)
     except Exception:
         pass
 
-    if src_owner_guid:
-        target_parent = None
-        for vt in _walk_possibilities(target_list):
-            if _guid_str_from(vt) == src_owner_guid:
-                target_parent = vt
-                break
-        if target_parent is None:
-            return None
-        owner_for_create = target_parent
-    else:
-        owner_for_create = target_list
-
     parsed_guid = DotNetGuid.Parse(src_guid)
-    sl = cache.ServiceLocator
-    factory = sl.GetService(ILexEntryInflTypeFactory)
+    # Interface-cast wrapper required for pythonnet overload resolution.
+    factory = ILexEntryInflTypeFactory(target.GetFactory(ILexEntryInflTypeFactory))
+
+    # ILexEntryInflTypeFactory inherits only the 1-arg Create(Guid) overload
+    # from the generic ILcmFactory<T> base (the 2-arg ICmPossibilityFactory
+    # overloads don't surface through pythonnet for this subclass). Use
+    # Create(Guid) + manual Add to the appropriate owning collection.
     try:
-        new_vt = factory.Create(parsed_guid, owner_for_create)
+        new_vt = factory.Create(parsed_guid)
     except Exception as e:
         raise RuntimeError(
-            f"ILexEntryInflTypeFactory.Create(Guid, owner) failed for "
+            f"ILexEntryInflTypeFactory.Create(Guid) failed for "
             f"{src_guid}: {e!r}"
         ) from e
+
+    if src_owner_guid:
+        target_parent_raw = None
+        for vt in _walk_possibilities(target_list):
+            if _guid_str_from(vt) == src_owner_guid:
+                target_parent_raw = vt
+                break
+        if target_parent_raw is None:
+            return None
+        _safe_add_to_owner(
+            new_vt, ICmPossibility(target_parent_raw).SubPossibilitiesOS,
+            "ILexEntryInflTypeFactory", src_guid,
+        )
+    else:
+        _safe_add_to_owner(
+            new_vt, ICmPossibilityList(target_list).PossibilitiesOS,
+            "ILexEntryInflTypeFactory", src_guid,
+        )
 
     # ApplySyncableProperties via flexlibs2 BaseOperations if available.
     apply_carrier_b(new_vt, ws, tag)
@@ -1255,7 +1268,7 @@ def complex_form_types_execute_action(action, context, ws_mapping, tag):
     LexDb's ComplexEntryTypesOA possibility list (top-level) or a
     parent ILexEntryType (nested).
     """
-    from SIL.LCModel import ILexEntryTypeFactory
+    from SIL.LCModel import ILexEntryTypeFactory, ICmObject, ICmPossibility, ICmPossibilityList
     from System import Guid as DotNetGuid
 
     if __package__:
@@ -1279,37 +1292,44 @@ def complex_form_types_execute_action(action, context, ws_mapping, tag):
     ws = cache.DefaultAnalWs
     target_list = cache.LangProject.LexDbOA.ComplexEntryTypesOA
 
+    # Owner-type discrimination (see variant_types for rationale).
     src_owner_guid = None
     try:
-        owner = src_obj.Owner
-        owner_guid = _guid_str_from(owner)
-        if owner_guid != _guid_str_from(target_list):
-            src_owner_guid = owner_guid
+        owner = ICmObject(src_obj).Owner
+        owner_class = getattr(owner, "ClassName", "")
+        if owner_class and "EntryType" in owner_class:
+            src_owner_guid = _guid_str_from(owner)
     except Exception:
         pass
 
-    if src_owner_guid:
-        target_parent = None
-        for cft in _walk_possibilities(target_list):
-            if _guid_str_from(cft) == src_owner_guid:
-                target_parent = cft
-                break
-        if target_parent is None:
-            return None
-        owner_for_create = target_parent
-    else:
-        owner_for_create = target_list
-
     parsed_guid = DotNetGuid.Parse(src_guid)
-    sl = cache.ServiceLocator
-    factory = sl.GetService(ILexEntryTypeFactory)
+    factory = ILexEntryTypeFactory(target.GetFactory(ILexEntryTypeFactory))
+
+    # 1-arg Create(Guid) + manual Add (see variant_types for rationale).
     try:
-        new_cft = factory.Create(parsed_guid, owner_for_create)
+        new_cft = factory.Create(parsed_guid)
     except Exception as e:
         raise RuntimeError(
-            f"ILexEntryTypeFactory.Create(Guid, owner) failed for "
-            f"{src_guid}: {e!r}"
+            f"ILexEntryTypeFactory.Create(Guid) failed for {src_guid}: {e!r}"
         ) from e
+
+    if src_owner_guid:
+        target_parent_raw = None
+        for cft in _walk_possibilities(target_list):
+            if _guid_str_from(cft) == src_owner_guid:
+                target_parent_raw = cft
+                break
+        if target_parent_raw is None:
+            return None
+        _safe_add_to_owner(
+            new_cft, ICmPossibility(target_parent_raw).SubPossibilitiesOS,
+            "ILexEntryTypeFactory", src_guid,
+        )
+    else:
+        _safe_add_to_owner(
+            new_cft, ICmPossibilityList(target_list).PossibilitiesOS,
+            "ILexEntryTypeFactory", src_guid,
+        )
 
     apply_carrier_b(new_cft, ws, tag)
     return new_cft
@@ -1368,7 +1388,7 @@ def semantic_domains_execute_action(action, context, ws_mapping, tag):
     the LangProject's SemanticDomainListOA possibility list or a parent
     ICmSemanticDomain (custom domain nested under a custom parent).
     """
-    from SIL.LCModel import ICmSemanticDomainFactory
+    from SIL.LCModel import ICmSemanticDomainFactory, ICmObject, ICmPossibility, ICmPossibilityList
     from System import Guid as DotNetGuid
 
     if __package__:
@@ -1392,37 +1412,44 @@ def semantic_domains_execute_action(action, context, ws_mapping, tag):
     ws = cache.DefaultAnalWs
     target_list = cache.LangProject.SemanticDomainListOA
 
+    # Owner-type discrimination (see variant_types for rationale).
     src_owner_guid = None
     try:
-        owner = src_obj.Owner
-        owner_guid = _guid_str_from(owner)
-        if owner_guid != _guid_str_from(target_list):
-            src_owner_guid = owner_guid
+        owner = ICmObject(src_obj).Owner
+        owner_class = getattr(owner, "ClassName", "")
+        if owner_class == "CmSemanticDomain":
+            src_owner_guid = _guid_str_from(owner)
     except Exception:
         pass
 
-    if src_owner_guid:
-        target_parent = None
-        for sd in _walk_possibilities(target_list):
-            if _guid_str_from(sd) == src_owner_guid:
-                target_parent = sd
-                break
-        if target_parent is None:
-            return None
-        owner_for_create = target_parent
-    else:
-        owner_for_create = target_list
-
     parsed_guid = DotNetGuid.Parse(src_guid)
-    sl = cache.ServiceLocator
-    factory = sl.GetService(ICmSemanticDomainFactory)
+    factory = ICmSemanticDomainFactory(target.GetFactory(ICmSemanticDomainFactory))
+
+    # 1-arg Create(Guid) + manual Add (see variant_types for rationale).
     try:
-        new_sd = factory.Create(parsed_guid, owner_for_create)
+        new_sd = factory.Create(parsed_guid)
     except Exception as e:
         raise RuntimeError(
-            f"ICmSemanticDomainFactory.Create(Guid, owner) failed for "
-            f"{src_guid}: {e!r}"
+            f"ICmSemanticDomainFactory.Create(Guid) failed for {src_guid}: {e!r}"
         ) from e
+
+    if src_owner_guid:
+        target_parent_raw = None
+        for sd in _walk_possibilities(target_list):
+            if _guid_str_from(sd) == src_owner_guid:
+                target_parent_raw = sd
+                break
+        if target_parent_raw is None:
+            return None
+        _safe_add_to_owner(
+            new_sd, ICmPossibility(target_parent_raw).SubPossibilitiesOS,
+            "ICmSemanticDomainFactory", src_guid,
+        )
+    else:
+        _safe_add_to_owner(
+            new_sd, ICmPossibilityList(target_list).PossibilitiesOS,
+            "ICmSemanticDomainFactory", src_guid,
+        )
 
     apply_carrier_b(new_sd, ws, tag)
     return new_sd
