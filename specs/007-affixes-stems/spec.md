@@ -4,7 +4,17 @@
 
 **Created**: 2026-06-21
 
-**Status**: Draft — kickoff stub, awaiting `/speckit-clarify` + `/speckit-plan`
+**Status**: Ready for `/speckit-plan` — all clarifications resolved (Session 2026-06-22); quality checklist green ([checklists/requirements.md](checklists/requirements.md))
+
+## Clarifications
+
+### Session 2026-06-22
+
+- Q: Which LCM filter partitions LexEntries into "affix" (US1) vs "stem" (US3)? → A: `IMoMorphType.IsAffixType` — each LexEntry's primary `LexemeFormOA.MorphTypeRA.IsAffixType` boolean decides the partition. Matches FLEx UI's affix/stem split and the lexicon export pipeline.
+- Q: How should post-pass A resolve `LexEntryRef.ComponentLexemesRS` / `PrimaryLexemesRS` targets? → A: In-plan + target lookup. Resolve against (a) entries created in this Phase 3c plan plus (b) entries already in target by GUID. Unresolved refs skip with `DEPENDENCY_UNRESOLVED`. No cross-phase persistent state.
+- Q: Where does the 17.1 MSA-slot wiring sub-pass live in the dispatch loop? → A: Post-execute on the `AFFIX_TEMPLATES` executor (after slot-GUIDs from `SLOTS` are stable). Affix-entry executor stashes the (msa_guid, slot_guid_list) pairs on the plan; templates executor's tail block writes `MSA.SlotsRC` via the stashed mapping. No new `LEAF_CATEGORIES` entry; matches Phase 3a `natural_classes` SegmentsRC and Phase 3b `variant_types` InflFeatsOA post-execute patterns.
+- Q: How wide is Phase 0 verb-vertical's collision with Phase 3c affix transfer expected to be? → A: Phase 0 verb-vertical was a POC / MVP — never the steady-state model. The production pipeline ordering is: POS pre-reqs (inflection features, classes, stem names, exception features — Phase 3b) → POS + empty templates + empty slots (memo steps 6, 16, 17) → Affixes (memo step 14) → MSA-slot/template wiring (17.1) → Stems (step 18). Phase 0 should be retired / subsumed once Phase 3c lands. During the transition window, the collision-guard (target-GUID lookup before `_create_with_guid`) suffices for any Phase-0-then-Phase-3c re-run scenario; expected overlap = Phase 0's picked-POS affix subset.
+- Q: How should compound-rule subclasses (`IMoEndoCompound`, `IMoExoCompound`) be handled? → A: Per-subclass factories. `execute_action` inspects `ICmObject(src_obj).ClassName` and dispatches to `IMoEndoCompoundFactory` or `IMoExoCompoundFactory` (and any other concrete subclasses surfaced by MCP probe). Subclass-specific fields (e.g., `IMoExoCompound.ToMsaRA`) round-trip fully. Unknown subclasses emit `Skip(NEEDS_MANUAL)` rather than fall back to a lossy generic path.
 
 **Input**: Third implementation slice of the Phase 3 full-pipeline build-out per [specs/004-phase3-pipeline/ordering-memo.md](../004-phase3-pipeline/ordering-memo.md) — memo steps 14–18 plus the 17.1 MSA-slot wiring sub-pass. Builds on the project-level inflection scaffolding shipped by Phase 3b ([specs/006-inflection-prep-block/](../006-inflection-prep-block/)) and the phonology block shipped by Phase 3a ([specs/005-phonology-block/](../005-phonology-block/)).
 
@@ -38,22 +48,24 @@ FR-308 inheritance for all 5 new categories.
 ## Functional Requirements *(draft)*
 
 - **FR-331**: Add `AFFIXES`, `ADHOC_COMPOUND_RULES`, `SLOTS`, `AFFIX_TEMPLATES`, `STEMS` to `GrammarCategory` enum (5 new members). Extend `_LEAF_DISPATCH_CATEGORIES` in `Lib/preview.py` + `Lib/transfer.py`.
-- **FR-332**: Affix LexEntry transfer MUST bring owned children (senses, MSAs, allomorphs, examples, pronunciations, etymologies, entry-refs) atomically with the parent entry.
-- **FR-333**: `MSA.SlotsRC` and `LexEntryRef.ComponentLexemesRS` / `PrimaryLexemesRS` MUST be deferred — populated at 17.1 sub-pass and post-pass A respectively. Slot-GUIDs stashed by US1's planner per ordering-memo step 14.
-- **FR-334**: Phase 0/1/2 verb-vertical closure (which already creates affix LexEntries + MSAs + allomorphs for picked POSes) MUST coexist with leaf-dispatch Phase 3c. Collision guard via target-GUID lookup before each `_create_with_guid` (same pattern as Phase 3b `gram_categories` post-retarget).
+- **FR-332**: Affix LexEntry transfer MUST bring owned children (senses, MSAs, allomorphs, examples, pronunciations, etymologies, entry-refs) atomically with the parent entry. The affix-vs-stem partition is decided per-entry by `entry.LexemeFormOA.MorphTypeRA.IsAffixType` (the LCM `IMoMorphType.IsAffixType` boolean). Entries whose lexeme-form is absent or whose MorphType is unresolved skip with `Skip(DEPENDENCY_UNRESOLVED)`.
+- **FR-333**: `MSA.SlotsRC` and `LexEntryRef.ComponentLexemesRS` / `PrimaryLexemesRS` MUST be deferred — populated at 17.1 sub-pass and post-pass A respectively. The 17.1 sub-pass lives as a post-execute tail block on the `AFFIX_TEMPLATES` executor (runs after `SLOTS` has populated slot-GUIDs in target). The affix-entry executor (US1) stashes `(msa_guid, [slot_guid, ...])` mappings on the plan via a dedicated `plan.msa_slot_bindings` dict; the templates tail block consumes that mapping to write `MSA.SlotsRC`. Unresolved slot-GUIDs at wire time emit `Skip(DEPENDENCY_UNRESOLVED)` on the affected MSA, not on the template.
+- **FR-334**: Phase 0 verb-vertical was a POC / MVP scaffold and is not the steady-state model — the production pipeline runs the full ordered chain (Phase 3b pre-reqs → POS + empty templates + empty slots → Affixes → 17.1 wiring → Stems). For the transition window where Phase 0 may have already run against a target, Phase 3c MUST guard each `_create_with_guid` with a target-GUID lookup; on hit, emit `Skip(ALREADY_PRESENT_BY_GUID)` (same pattern as Phase 3b `gram_categories` post-retarget). No category-specific Phase-0-collision code beyond the universal guard.
 - **FR-335**: Stem LexEntry sense-to-semantic-domain refs MUST resolve against Phase 3b's transferred semantic domains (FR-326). `Skip(DEPENDENCY_UNRESOLVED)` if the referenced domain is absent from target and not in the in-flight plan.
 - **FR-336**: `MSA.StratumRA` (both `IMoInflAffMsa` and `IMoStemMsa`) MUST resolve to Strata from Phase 3a (FR-307 idempotency holds — re-running doesn't duplicate strata).
 - **FR-337**: Ad-Hoc + Compound rules MUST resolve their referenced affix LexEntries through `identity_remap` (Phase 1 FR-101..110) when source-GUID and target-GUID diverge.
+- **FR-340**: Post-pass A (`LexEntryRef.ComponentLexemesRS` / `PrimaryLexemesRS` wiring) MUST resolve referenced LexEntries against (a) entries created in the current Phase 3c plan and (b) entries already present in target by GUID. Refs that resolve to neither emit `Skip(DEPENDENCY_UNRESOLVED)`. Post-pass A MUST NOT scan target for fuzzy/fingerprint matches and MUST NOT depend on persistent state from earlier phase runs.
+- **FR-341**: Compound-rule transfer (US4 / memo step 15) MUST dispatch on `ICmObject(src_obj).ClassName` to per-subclass factories (`IMoEndoCompoundFactory`, `IMoExoCompoundFactory`, and any other concrete subclasses surfaced by MCP probe). Subclass-specific reference fields (`IMoExoCompound.ToMsaRA`, etc.) MUST be wired in `execute_action`. Unknown subclasses emit `Skip(NEEDS_MANUAL)` rather than fall through to a lossy generic `IMoCompoundRule` path.
 - **FR-338**: All 5 new categories MUST honor Phase 1 overwrite (`enable_overwrite=True`) and Phase 2 interactive merge (per-field conflicts surface as `ConflictPrompt`s).
 - **FR-339**: FR-308 empty-source UX MUST emit `[skip] no items in source for X` lines for each of the 5 new categories when source collection is empty.
 
 ## Open Questions *(for `/speckit-clarify`)*
 
-1. **Affix morph-type filter**: which LCM morph types qualify as "affix" for the LexEntry partition vs "stem"? (Spec assumes `IMoMorphType.IsAffixType` boolean; verify via MCP probe.)
-2. **Entry-ref handling order**: `LexEntryRef.ComponentLexemesRS` / `PrimaryLexemesRS` point at other LexEntries. Are those entries always within the same Phase 3c plan, or can they reference Phase 3b-or-earlier objects? (Affects whether post-pass A needs to scan across phases.)
-3. **17.1 implementation site**: is the MSA-slot wiring its own `LEAF_CATEGORIES` registry entry, or a post-execute callback on US1's affix-entry executor? (Affects the dispatch loop shape.)
-4. **Phase 0 collision width**: Phase 0 verb-vertical already creates 13 verb-affix entries from Ejagham Mini. Confirm the collision-guard catches all 13 when Phase 3c runs Selection-with-Affixes on the same source — or do we expect zero overlap by design (Phase 0 = picked-POS subset, Phase 3c = all affixes)?
-5. **Compound-rule sub-classes**: `IMoEndoCompound`, `IMoExoCompound`, etc. — handle each subclass via distinct factories, or a single generic `IMoCompoundRule` path?
+1. ~~Affix morph-type filter~~ — resolved (Clarifications, Session 2026-06-22): use `IMoMorphType.IsAffixType` boolean on `entry.LexemeFormOA.MorphTypeRA`.
+2. ~~Entry-ref handling order~~ — resolved (Clarifications, Session 2026-06-22): in-plan + target-by-GUID; see FR-340.
+3. ~~17.1 implementation site~~ — resolved (Clarifications, Session 2026-06-22): post-execute tail on `AFFIX_TEMPLATES` executor consuming `plan.msa_slot_bindings`. See FR-333.
+4. ~~Phase 0 collision width~~ — resolved (Clarifications, Session 2026-06-22): Phase 0 is POC, not steady-state; universal collision-guard suffices for the transition window. See FR-334 and the production-ordering note.
+5. ~~Compound-rule sub-classes~~ — resolved (Clarifications, Session 2026-06-22): per-subclass factories with `ClassName` dispatch. See FR-341.
 
 ## Success Criteria *(draft)*
 
@@ -65,6 +77,7 @@ FR-308 inheritance for all 5 new categories.
 
 - LexEntry inter-entry refs (`ComponentLexemesRS` / `PrimaryLexemesRS`) post-pass A — defer to a follow-up slice.
 - Reversal indices (memo step 18b), Texts (step 19), WordformAnalyses (step 20) — covered by post-Phase-3c slices.
+- **`IMoAffixProcess` allomorph subclass** — Phase 3c handles `MoAffixAllomorph` and `MoStemAllomorph` only. Source allomorphs whose `ClassName == "MoAffixProcess"` emit `Skip(NEEDS_MANUAL)` per the same fail-loud posture as FR-341 compound subclasses. Production support deferred to a post-Phase-3c slice once MCP probes characterise the AffixProcess rule chain.
 
 ## Next steps
 
