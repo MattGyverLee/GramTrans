@@ -1455,48 +1455,28 @@ def semantic_domains_execute_action(action, context, ws_mapping, tag):
     return new_sd
 
 
-# ----- adhoc_rules ---------------------------------------------------------
+# ----- adhoc_compound_rules ------------------------------------------------
+# Phase 3c FR-341: per-subclass dispatch on IMoCompoundRule + IMoAdhocProhibition
+# subclasses. Implementation lands in Phase 3c US4 (T056-T060).
 
-def adhoc_rules_enumerate_source(context, selection):
-    raise NotImplementedError("T039")
+def adhoc_compound_rules_enumerate_source(context, selection):
+    raise NotImplementedError("Phase 3c T056")
 
 
-def adhoc_rules_dependencies(piece):
+def adhoc_compound_rules_dependencies(piece):
     return ()
 
 
-def adhoc_rules_required_writing_systems(piece):
-    raise NotImplementedError("T039")
+def adhoc_compound_rules_required_writing_systems(piece):
+    raise NotImplementedError("Phase 3c T056")
 
 
-def adhoc_rules_plan_action(piece, context, ws_mapping):
-    raise NotImplementedError("T039")
+def adhoc_compound_rules_plan_action(piece, context, ws_mapping):
+    raise NotImplementedError("Phase 3c T058")
 
 
-def adhoc_rules_execute_action(action, context, ws_mapping, tag):
-    raise NotImplementedError("T039")
-
-
-# ----- compound_rules ------------------------------------------------------
-
-def compound_rules_enumerate_source(context, selection):
-    raise NotImplementedError("T039")
-
-
-def compound_rules_dependencies(piece):
-    return ()
-
-
-def compound_rules_required_writing_systems(piece):
-    raise NotImplementedError("T039")
-
-
-def compound_rules_plan_action(piece, context, ws_mapping):
-    raise NotImplementedError("T039")
-
-
-def compound_rules_execute_action(action, context, ws_mapping, tag):
-    raise NotImplementedError("T039")
+def adhoc_compound_rules_execute_action(action, context, ws_mapping, tag):
+    raise NotImplementedError("Phase 3c T059")
 
 
 # ============================================================================
@@ -2136,19 +2116,12 @@ LEAF_CATEGORIES = {
         "plan_action": complex_form_types_plan_action,
         "execute_action": complex_form_types_execute_action,
     },
-    GrammarCategory.ADHOC_RULES: {
-        "enumerate_source": adhoc_rules_enumerate_source,
-        "dependencies": adhoc_rules_dependencies,
-        "required_writing_systems": adhoc_rules_required_writing_systems,
-        "plan_action": adhoc_rules_plan_action,
-        "execute_action": adhoc_rules_execute_action,
-    },
-    GrammarCategory.COMPOUND_RULES: {
-        "enumerate_source": compound_rules_enumerate_source,
-        "dependencies": compound_rules_dependencies,
-        "required_writing_systems": compound_rules_required_writing_systems,
-        "plan_action": compound_rules_plan_action,
-        "execute_action": compound_rules_execute_action,
+    GrammarCategory.ADHOC_COMPOUND_RULES: {
+        "enumerate_source": adhoc_compound_rules_enumerate_source,
+        "dependencies": adhoc_compound_rules_dependencies,
+        "required_writing_systems": adhoc_compound_rules_required_writing_systems,
+        "plan_action": adhoc_compound_rules_plan_action,
+        "execute_action": adhoc_compound_rules_execute_action,
     },
     # Phase 3a — phonology block + strata (steps 2-5 + 4b + 5b)
     GrammarCategory.PHONOLOGICAL_FEATURES: {

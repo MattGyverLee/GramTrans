@@ -169,7 +169,7 @@ def MainFunction(project, report, modifyAllowed):
             selection = Selection(
                 categories={
                     GrammarCategory.POS: True,
-                    GrammarCategory.TEMPLATES: True,
+                    GrammarCategory.AFFIX_TEMPLATES: True,
                     GrammarCategory.SLOTS: True,
                 },
                 include_closure=True,
@@ -296,7 +296,7 @@ def phase2_interactive_move(
         # 2. Build plan (interactive_merge=True gates Phase 2 path)
         if categories is None:
             categories = {c: True for c in (
-                GrammarCategory.POS, GrammarCategory.TEMPLATES, GrammarCategory.SLOTS,
+                GrammarCategory.POS, GrammarCategory.AFFIX_TEMPLATES, GrammarCategory.SLOTS,
                 GrammarCategory.ENTRY, GrammarCategory.SENSE, GrammarCategory.MSA,
                 GrammarCategory.ALLOMORPH, GrammarCategory.PH_ENVIRONMENT,
             )}

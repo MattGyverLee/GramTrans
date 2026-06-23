@@ -32,11 +32,11 @@ class GrammarCategory(enum.Enum):
     EXCEPTION_FEATURES = "exception_features"
     VARIANT_TYPES = "variant_types"
     COMPLEX_FORM_TYPES = "complex_form_types"
-    ADHOC_RULES = "adhoc_rules"
-    COMPOUND_RULES = "compound_rules"
+    ADHOC_COMPOUND_RULES = "adhoc_compound_rules"  # Phase 3c: unified per FR-341 (per-subclass dispatch on IMoCompoundRule + IMoAdhocProhibition)
     AFFIXES = "affixes"
     SLOTS = "slots"
-    TEMPLATES = "templates"
+    AFFIX_TEMPLATES = "affix_templates"
+    STEMS = "stems"  # Phase 3c: memo step 18
     # Phase 0 MVP slice — surface categories used by transfer_verb_vertical:
     POS = "pos"
     ENTRY = "entry"
@@ -161,9 +161,9 @@ class Selection:
             raise ValueError(
                 "affix_picks non-empty requires categories[AFFIXES] to be True"
             )
-        if self.template_picks and self.categories.get(GrammarCategory.TEMPLATES) is not True:
+        if self.template_picks and self.categories.get(GrammarCategory.AFFIX_TEMPLATES) is not True:
             raise ValueError(
-                "template_picks non-empty requires categories[TEMPLATES] to be True"
+                "template_picks non-empty requires categories[AFFIX_TEMPLATES] to be True"
             )
         if self.pos_picks and self.categories.get(GrammarCategory.POS) is not True:
             raise ValueError(

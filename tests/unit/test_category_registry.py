@@ -28,8 +28,7 @@ LEAF_CATEGORIES = {
     GrammarCategory.EXCEPTION_FEATURES,
     GrammarCategory.VARIANT_TYPES,
     GrammarCategory.COMPLEX_FORM_TYPES,
-    GrammarCategory.ADHOC_RULES,
-    GrammarCategory.COMPOUND_RULES,
+    GrammarCategory.ADHOC_COMPOUND_RULES,  # Phase 3c: unified per FR-341 (was ADHOC_RULES + COMPOUND_RULES)
     # Phase 3a (memo steps 2-5 + 4b + 5b) -- phonology block + strata.
     GrammarCategory.PHONOLOGICAL_FEATURES,
     GrammarCategory.PHONEMES,
@@ -42,11 +41,11 @@ LEAF_CATEGORIES = {
     GrammarCategory.SEMANTIC_DOMAINS,
 }
 
-# Heavy categories (AFFIXES, TEMPLATES, MSAs) live in their own files and
+# Heavy categories (AFFIXES, AFFIX_TEMPLATES, MSAs) live in their own files and
 # are explicitly absent from the leaf registry.
 HEAVY_CATEGORIES = {
     GrammarCategory.AFFIXES,
-    GrammarCategory.TEMPLATES,
+    GrammarCategory.AFFIX_TEMPLATES,
     GrammarCategory.SLOTS,
     GrammarCategory.MSA,
     GrammarCategory.ALLOMORPH,
@@ -103,9 +102,9 @@ def test_unimplemented_body_raises_not_implemented_with_task_pointer() -> None:
 
     Phase 3b shipped detect-and-skip for custom_fields (US2) and full
     implementations for variant_types / complex_form_types /
-    semantic_domains (US3). The remaining stub categories are
-    adhoc_rules and compound_rules (Phase 3c+).
+    semantic_domains (US3). The remaining stub category is
+    adhoc_compound_rules (Phase 3c US4 — implementation lands at T056-T060).
     """
-    bundle = categories.for_category(GrammarCategory.ADHOC_RULES)
-    with pytest.raises(NotImplementedError, match="T039"):
+    bundle = categories.for_category(GrammarCategory.ADHOC_COMPOUND_RULES)
+    with pytest.raises(NotImplementedError, match="Phase 3c T056"):
         bundle["enumerate_source"](context=object(), selection=object())

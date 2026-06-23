@@ -241,7 +241,7 @@ def _execute_verb_vertical(
 
     # ----- Templates -----
     target_template = None
-    for action in _filter(plan.actions, GrammarCategory.TEMPLATES):
+    for action in _filter(plan.actions, GrammarCategory.AFFIX_TEMPLATES):
         src_template_wrap = _find_source_template_by_guid(source, action.source_guid)
         if src_template_wrap is None:
             report_sink.Warning(f"Source template {action.source_guid} vanished; skipping")
@@ -476,10 +476,10 @@ def _first_pos_guid(plan: RunPlan):
 
 def _first_template_guid(plan: RunPlan):
     for a in plan.actions:
-        if a.category == GrammarCategory.TEMPLATES:
+        if a.category == GrammarCategory.AFFIX_TEMPLATES:
             return a.source_guid
     for s in plan.skips:
-        if s.category == GrammarCategory.TEMPLATES:
+        if s.category == GrammarCategory.AFFIX_TEMPLATES:
             return s.source_guid
     return None
 
@@ -1010,7 +1010,7 @@ def _execute_overwrite(overwrite, source, target, report_sink, tag: ImportResidu
         report_sink.Info(f"  POS overwritten  guid={src_guid}")
         return ow_skips
 
-    if cat == GrammarCategory.TEMPLATES:
+    if cat == GrammarCategory.AFFIX_TEMPLATES:
         src_tpl_wrap = _find_source_template_by_guid(source, src_guid)
         if src_tpl_wrap is None:
             report_sink.Warning(f"  [OW] Template {src_guid[:8]} vanished in source")

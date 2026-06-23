@@ -113,7 +113,7 @@ def build_selection(picker: PickerState,
 
     `extra_categories` is the list of FR-004 categories the user toggled on
     OUTSIDE the affix tree (e.g., custom fields, inflection features). These
-    land in `Selection.categories` with True values; AFFIXES/TEMPLATES are
+    land in `Selection.categories` with True values; AFFIXES/AFFIX_TEMPLATES are
     set True automatically iff the picker yields non-empty picks for them.
     """
     affix_picks = compute_required_affixes(picker, inventory)
@@ -123,7 +123,7 @@ def build_selection(picker: PickerState,
     if affix_picks:
         categories[GrammarCategory.AFFIXES] = True
     if template_picks:
-        categories[GrammarCategory.TEMPLATES] = True
+        categories[GrammarCategory.AFFIX_TEMPLATES] = True
 
     return Selection(
         categories=categories,

@@ -48,12 +48,11 @@ _CATEGORY_TOGGLES = [
     GrammarCategory.EXCEPTION_FEATURES,
     GrammarCategory.VARIANT_TYPES,
     GrammarCategory.COMPLEX_FORM_TYPES,
-    GrammarCategory.ADHOC_RULES,
-    GrammarCategory.COMPOUND_RULES,
+    GrammarCategory.ADHOC_COMPOUND_RULES,
     GrammarCategory.CUSTOM_FIELDS,
     GrammarCategory.AFFIXES,
     GrammarCategory.SLOTS,
-    GrammarCategory.TEMPLATES,
+    GrammarCategory.AFFIX_TEMPLATES,
 ]
 
 

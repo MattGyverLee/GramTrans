@@ -347,7 +347,7 @@ class TestMainWindowCollectSelection:
         dlg = _bypass(MainWindow)
 
         on_cats = {GrammarCategory.POS, GrammarCategory.AFFIXES}
-        off_cats = {GrammarCategory.SLOTS, GrammarCategory.TEMPLATES}
+        off_cats = {GrammarCategory.SLOTS, GrammarCategory.AFFIX_TEMPLATES}
 
         dlg._toggles = {
             **{cat: self._make_toggle(True) for cat in on_cats},

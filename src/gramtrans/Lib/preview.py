@@ -207,7 +207,7 @@ def _select_source_poses(source, selection: Selection) -> List:
     """
     pos_closure_cats = (
         GrammarCategory.POS,
-        GrammarCategory.TEMPLATES,
+        GrammarCategory.AFFIX_TEMPLATES,
         GrammarCategory.SLOTS,
         GrammarCategory.ENTRY,
         GrammarCategory.SENSE,
@@ -297,7 +297,7 @@ def _plan_verb_vertical_inner(
 
     closure_on = selection.include_closure
     pos_on = selection.is_on(GrammarCategory.POS)
-    tpl_on = selection.is_on(GrammarCategory.TEMPLATES)
+    tpl_on = selection.is_on(GrammarCategory.AFFIX_TEMPLATES)
     slots_on = selection.is_on(GrammarCategory.SLOTS)
 
     src_verb = src_pos  # historical local name preserved; "verb" → "POS" here
@@ -355,7 +355,7 @@ def _plan_verb_vertical_inner(
                     missing_deps.append("slots")
                 if missing_deps:
                     skips.append(Skip(
-                        category=GrammarCategory.TEMPLATES,
+                        category=GrammarCategory.AFFIX_TEMPLATES,
                         source_guid=tpl_guid,
                         reason=SkipReason.BARE_BONES_MISSING_CLOSURE,
                         detail=(
@@ -880,7 +880,7 @@ def _emit_template(target,
     """Emit Add or Skip-by-GUID (Phase 0) / Overwrite (Phase 1) for a template."""
     if _target_has_template_guid(target, owner_pos_guid, tpl_guid):
         _emit_present_outcome(
-            GrammarCategory.TEMPLATES,
+            GrammarCategory.AFFIX_TEMPLATES,
             src_guid=tpl_guid,
             target_guid=tpl_guid,
             summary=f"Affix template already present (guid {tpl_guid[:8]}…)",
@@ -893,7 +893,7 @@ def _emit_template(target,
         )
     else:
         actions.append(PlannedAction(
-            category=GrammarCategory.TEMPLATES,
+            category=GrammarCategory.AFFIX_TEMPLATES,
             source_guid=tpl_guid,
             intended_target_guid=tpl_guid,
             summary=f"Affix template under Verb (guid {tpl_guid[:8]}…)",
