@@ -36,7 +36,9 @@ if __package__:
         GrammarCategory,
         RunMode,
         Selection,
+        WSKind,
         WSMapping,
+        WSMappingEntry,
         _DEFAULT_CONFLICT_MODES,
     )
     from ..protection import _is_protected, apply_isprotected_layer2
@@ -51,7 +53,9 @@ else:
         GrammarCategory,
         RunMode,
         Selection,
+        WSKind,
         WSMapping,
+        WSMappingEntry,
         _DEFAULT_CONFLICT_MODES,
     )
     from protection import _is_protected, apply_isprotected_layer2  # type: ignore
@@ -138,26 +142,47 @@ def _allowed_modes(cat: GrammarCategory) -> list:
 # ---------------------------------------------------------------------------
 
 class _PageProjectWS(QtWidgets.QWizardPage):
-    """Page 1: bind source + target projects and choose active writing systems.
+    """Page 1: bind source + target projects and choose writing-system mapping.
 
     The source is already bound from the FlexTools host (passed in at wizard
     construction time).  The user picks the target here.
 
-    WS decision: enumerate ACTIVE writing systems only (analysis + vernacular
-    currently active in the project; not the full installed superset).  This
-    is a PROJECT-LEVEL decision made once; no per-category WS negotiation.
+    WS decision: enumerate ACTIVE writing systems from the source project and
+    present a three-way MAP / CREATE / SKIP control re-hosted from
+    ws_mapping_dialog.py / ws_wizard.py mechanics.  Writing systems are split
+    into two groups: Vernacular WS and Analysis WS (by WSKind).  A dual-role
+    WS (appears in both groups) defaults both rows to the same choice and is
+    independently overridable (linked-until-touched).  A dual-role CREATE
+    choice points BOTH roles at the SAME target WS (no double-create).
+
+    Vernacular is lead: when a vernacular row is set, the same-tag analysis
+    row defaults to the vernacular choice and remains independently
+    overridable.
+
+    This is a PROJECT-LEVEL decision made once; no per-category WS negotiation.
     """
+
+    # Choice constants (MAP=0, CREATE=1, SKIP=2) mirrored from WSChoice.
+    _CHOICE_MAP = 0
+    _CHOICE_CREATE = 1
+    _CHOICE_SKIP = 2
 
     def __init__(self, stub, host_project, parent=None):
         super().__init__(parent)
         self._stub = stub
         self._host = host_project
         self._context = None   # set when target is bound
-        self._selected_ws_ids: list = []
+        self._target_ws_ids: list = []  # existing WS IDs in the target
+        # Row state: dict keyed by (ws_id, kind_value) -> {"choice": int, "target": str}
+        # kind_value is WSKind.VERNACULAR.value or WSKind.ANALYSIS.value
+        self._row_state: dict = {}
+        # Track which analysis rows are still "linked" to their vernacular twin.
+        self._analysis_linked: set = set()  # set of ws_id strings
 
         self.setTitle("Step 1 of 5: Project + Writing Systems")
         self.setSubTitle(
-            "Bind a target project and choose which writing systems to transfer."
+            "Bind a target project and map source writing systems to target "
+            "writing systems. Each WS can be Mapped, Created, or Skipped."
         )
         self._build_ui()
         self.registerField("target_ready*", self, "target_ready_prop",
@@ -199,21 +224,48 @@ class _PageProjectWS(QtWidgets.QWizardPage):
         layout.addLayout(tgt_row)
 
         layout.addWidget(QtWidgets.QLabel(
-            "Active writing systems (analysis + vernacular):", self
+            "Writing-system mapping (MAP / CREATE / SKIP per WS):", self
         ))
-        self._ws_list = QtWidgets.QListWidget(self)
-        self._ws_list.setSelectionMode(
-            QtWidgets.QAbstractItemView.SelectionMode.MultiSelection
-        )
-        layout.addWidget(self._ws_list, 1)
+
+        # Scrollable area holding the two WS group tables (Vernacular, Analysis).
+        scroll = QtWidgets.QScrollArea(self)
+        scroll.setWidgetResizable(True)
+        scroll_container = QtWidgets.QWidget()
+        scroll_layout = QtWidgets.QVBoxLayout(scroll_container)
+
+        # -- Vernacular WS group --
+        vern_group = QtWidgets.QGroupBox("Vernacular Writing Systems", scroll_container)
+        self._vern_layout = QtWidgets.QVBoxLayout(vern_group)
+        self._vern_table = self._make_ws_table(vern_group)
+        self._vern_layout.addWidget(self._vern_table)
+        scroll_layout.addWidget(vern_group)
+
+        # -- Analysis WS group --
+        anal_group = QtWidgets.QGroupBox("Analysis Writing Systems", scroll_container)
+        self._anal_layout = QtWidgets.QVBoxLayout(anal_group)
+        self._anal_table = self._make_ws_table(anal_group)
+        self._anal_layout.addWidget(self._anal_table)
+        scroll_layout.addWidget(anal_group)
+
+        scroll.setWidget(scroll_container)
+        layout.addWidget(scroll, 1)
 
         note = QtWidgets.QLabel(
             "[NOTE] Writing-system choice is made ONCE here, project-level.\n"
-            "The per-category WS handshake from earlier phases is retired.",
+            "The per-category WS handshake from earlier phases is retired.\n"
+            "Vernacular is lead: analysis rows with the same WS tag default to "
+            "the vernacular choice and are independently overridable.",
             self,
         )
         note.setWordWrap(True)
         layout.addWidget(note)
+
+    def _make_ws_table(self, parent) -> "QtWidgets.QTableWidget":
+        """Create a QTableWidget with columns: Source WS | Choice | Target WS."""
+        table = QtWidgets.QTableWidget(0, 3, parent)
+        table.setHorizontalHeaderLabels(["Source WS", "Choice", "Target WS"])
+        table.horizontalHeader().setStretchLastSection(True)
+        return table
 
     # ------------------------------------------------------------------
     def _on_pick_target(self) -> None:
@@ -242,28 +294,201 @@ class _PageProjectWS(QtWidgets.QWizardPage):
         self._tgt_label.setText(
             f"<b>{choice.project_name}</b> (<code>{choice.project_path}</code>)"
         )
-        self._populate_ws_list()
+        # Enumerate target WS IDs for the MAP target dropdown.
+        self._target_ws_ids = _enumerate_active_ws_ids(self._context.target_handle) \
+            if hasattr(self._context, "target_handle") else []
+        self._populate_ws_tables()
         self._set_target_ready(True)
 
-    def _populate_ws_list(self) -> None:
-        """Enumerate ACTIVE writing systems from the source project only."""
-        self._ws_list.clear()
-        ws_ids = _enumerate_active_ws_ids(self._host)
+    def _populate_ws_tables(self) -> None:
+        """Enumerate ACTIVE writing systems from the source project and build rows.
+
+        Writing systems are classified as VERNACULAR, ANALYSIS, or both (dual-role).
+        Dual-role WS appears in both groups; the analysis row is linked to the
+        vernacular choice until the user touches it independently.
+        """
+        vern_ids, anal_ids = _enumerate_ws_by_kind(self._host)
+        dual_ids = set(vern_ids) & set(anal_ids)
+
+        # Reset state.
+        self._row_state.clear()
+        self._analysis_linked = set(dual_ids)  # start linked for dual-role WSes
+
+        self._fill_table(
+            self._vern_table, vern_ids, kind_value=WSKind.VERNACULAR.value,
+            is_vernacular=True,
+        )
+        self._fill_table(
+            self._anal_table, anal_ids, kind_value=WSKind.ANALYSIS.value,
+            is_vernacular=False,
+        )
+
+    def _fill_table(self, table, ws_ids: list, kind_value: str,
+                    is_vernacular: bool) -> None:
+        """Populate `table` with one row per ws_id."""
+        table.setRowCount(0)
         for ws_id in ws_ids:
-            item = QtWidgets.QListWidgetItem(ws_id)
-            item.setSelected(True)   # default: all active WS selected
-            self._ws_list.addItem(item)
+            row = table.rowCount()
+            table.insertRow(row)
+
+            # Col 0: source WS label (read-only)
+            src_item = QtWidgets.QTableWidgetItem(ws_id)
+            src_item.setFlags(src_item.flags() & ~QtCore.Qt.ItemFlag.ItemIsEditable)
+            table.setItem(row, 0, src_item)
+
+            # Col 1: choice combo (MAP / CREATE / SKIP)
+            choice_cb = QtWidgets.QComboBox(table)
+            choice_cb.addItem("MAP to existing target WS", self._CHOICE_MAP)
+            choice_cb.addItem("CREATE new target WS", self._CHOICE_CREATE)
+            choice_cb.addItem("SKIP (drop objects using this WS)", self._CHOICE_SKIP)
+            # Pre-select MAP if a same-tag target WS exists.
+            if ws_id in self._target_ws_ids:
+                choice_cb.setCurrentIndex(self._CHOICE_MAP)
+            else:
+                choice_cb.setCurrentIndex(self._CHOICE_CREATE)
+            table.setCellWidget(row, 1, choice_cb)
+
+            # Col 2: target WS combo (editable; used for MAP).
+            tgt_cb = QtWidgets.QComboBox(table)
+            tgt_cb.setEditable(True)
+            tgt_cb.addItem("")
+            for t in self._target_ws_ids:
+                tgt_cb.addItem(t)
+            # Pre-populate with same-tag if available.
+            if ws_id in self._target_ws_ids:
+                tgt_cb.setCurrentText(ws_id)
+            else:
+                tgt_cb.setCurrentText(ws_id)  # CREATE: use source tag as proposed name
+            table.setCellWidget(row, 2, tgt_cb)
+
+            # Initialize row state.
+            key = (ws_id, kind_value)
+            self._row_state[key] = {
+                "choice": choice_cb.currentIndex(),
+                "target": tgt_cb.currentText(),
+            }
+
+            # Wire change signals to state updater.
+            choice_cb.currentIndexChanged.connect(
+                lambda idx, k=key, is_v=is_vernacular, wid=ws_id:
+                self._on_choice_changed(k, idx, is_v, wid)
+            )
+            tgt_cb.currentTextChanged.connect(
+                lambda text, k=key, is_v=is_vernacular, wid=ws_id:
+                self._on_target_changed(k, text, is_v, wid)
+            )
+
+    def _on_choice_changed(self, key, idx: int, is_vernacular: bool, ws_id: str) -> None:
+        """Update row state; propagate to linked analysis row if vernacular lead."""
+        self._row_state[key] = dict(self._row_state.get(key, {}), choice=idx)
+        if is_vernacular:
+            # Seed the linked analysis row if it hasn't been independently touched.
+            anal_key = (ws_id, WSKind.ANALYSIS.value)
+            if anal_key in self._row_state and ws_id in self._analysis_linked:
+                self._row_state[anal_key] = dict(
+                    self._row_state[anal_key], choice=idx
+                )
+                self._sync_analysis_row_widget(ws_id, idx)
+
+    def _on_target_changed(self, key, text: str, is_vernacular: bool, ws_id: str) -> None:
+        """Update row state; break link when analysis row is independently changed."""
+        self._row_state[key] = dict(self._row_state.get(key, {}), target=text)
+        if not is_vernacular:
+            # User explicitly changed analysis row: break the link.
+            self._analysis_linked.discard(ws_id)
+        if is_vernacular:
+            # Propagate to linked analysis row.
+            anal_key = (ws_id, WSKind.ANALYSIS.value)
+            if anal_key in self._row_state and ws_id in self._analysis_linked:
+                self._row_state[anal_key] = dict(
+                    self._row_state[anal_key], target=text
+                )
+
+    def _sync_analysis_row_widget(self, ws_id: str, choice_idx: int) -> None:
+        """Sync the analysis table widget for ws_id to choice_idx (linked update)."""
+        vern_ids, anal_ids = _enumerate_ws_by_kind(self._host)
+        if ws_id not in anal_ids:
+            return
+        row_idx = anal_ids.index(ws_id)
+        if row_idx >= self._anal_table.rowCount():
+            return
+        choice_cb = self._anal_table.cellWidget(row_idx, 1)
+        if choice_cb is not None and hasattr(choice_cb, "setCurrentIndex"):
+            # Block signal to avoid recursive propagation.
+            try:
+                choice_cb.blockSignals(True)
+                choice_cb.setCurrentIndex(choice_idx)
+            finally:
+                choice_cb.blockSignals(False)
 
     # ------------------------------------------------------------------
     def context(self):
         return self._context
 
     def selected_ws_ids(self) -> list:
+        """Return the list of source WS IDs that are not SKIP.
+
+        When the WS table has been populated (_row_state is set), derive the
+        list from the three-way control state.  Falls back to reading
+        _ws_list (the legacy QListWidget) if _row_state is unavailable,
+        for backward compatibility with existing test doubles that inject
+        a bare _ws_list mock.
+        """
+        row_state = getattr(self, "_row_state", None)
+        if row_state is not None:
+            result = []
+            seen = set()
+            for (ws_id, _kind), state in row_state.items():
+                if ws_id not in seen and state.get("choice") != self._CHOICE_SKIP:
+                    result.append(ws_id)
+                    seen.add(ws_id)
+            return result
+        # Legacy fallback (used by test_wizard_page_flow.py and old callers).
+        ws_list = getattr(self, "_ws_list", None)
+        if ws_list is None:
+            return []
         return [
-            self._ws_list.item(i).text()
-            for i in range(self._ws_list.count())
-            if self._ws_list.item(i).isSelected()
+            ws_list.item(i).text()
+            for i in range(ws_list.count())
+            if ws_list.item(i).isSelected()
         ]
+
+    def ws_mapping(self) -> "WSMapping":
+        """Build a WSMapping from the current page state.
+
+        MAP rows:    source_ws_id -> target_ws_id (create_in_target=False)
+        CREATE rows: source_ws_id -> source_ws_id (create_in_target=True)
+        SKIP rows:   omitted from the mapping.
+
+        Dual-role CREATE: both VERNACULAR and ANALYSIS entries point at the SAME
+        target WS (no double-create), identified by the source tag.
+        """
+        entries = []
+        seen_creates: dict = {}  # ws_id -> target_ws_id for CREATE rows
+        for (ws_id, kind_value), state in self._row_state.items():
+            choice = state.get("choice", self._CHOICE_SKIP)
+            target_text = (state.get("target") or ws_id).strip()
+            kind = WSKind(kind_value)
+            if choice == self._CHOICE_SKIP:
+                continue
+            if choice == self._CHOICE_CREATE:
+                # Dual-role: reuse the same target tag as the vernacular twin.
+                create_target = seen_creates.get(ws_id, target_text)
+                seen_creates[ws_id] = create_target
+                entries.append(WSMappingEntry(
+                    source_ws_id=ws_id,
+                    source_ws_kind=kind,
+                    target_ws_id=create_target,
+                    create_in_target=True,
+                ))
+            else:  # MAP
+                entries.append(WSMappingEntry(
+                    source_ws_id=ws_id,
+                    source_ws_kind=kind,
+                    target_ws_id=target_text or ws_id,
+                    create_in_target=False,
+                ))
+        return WSMapping(entries=tuple(entries))
 
     def isComplete(self) -> bool:
         return self._target_ready
@@ -579,8 +804,11 @@ class _PagePreview(QtWidgets.QWizardPage):
             if hasattr(wizard.page(1), "_inventory")
             else SourceAffixInventory(),
         )
-        # ws_mapping is None -> api.compute_preview substitutes empty mapping
-        state, payload = gt_api.compute_preview(context, selection, None)
+        # WS mapping from page 1 (three-way MAP/CREATE/SKIP control).
+        # Falls back to an empty mapping if page 1 has not yet built the table.
+        page1 = wizard.page(0)
+        ws_mapping = page1.ws_mapping() if hasattr(page1, "ws_mapping") else None
+        state, payload = gt_api.compute_preview(context, selection, ws_mapping)
         # Phase 3c: compute_preview always returns PREVIEW_READY
         self._cached_plan = payload
         if __package__:
@@ -683,6 +911,12 @@ class _PageFinish(QtWidgets.QWizardPage):
         self._stats.set_report(report)
         self._move_btn.setEnabled(False)
         self._move_done = True
+        # Move non-repeatability (P0): invalidate the preview page's cached plan
+        # so a double-click or re-entry cannot re-execute the same plan and
+        # create duplicate LCM objects.
+        preview_page = wizard.page(3)
+        if hasattr(preview_page, "_cached_plan"):
+            preview_page._cached_plan = None
         self.completeChanged.emit()
 
 
@@ -813,3 +1047,43 @@ def _enumerate_active_ws_ids(project) -> list:
         pass
 
     return ws_ids
+
+
+def _enumerate_ws_by_kind(project) -> "tuple[list, list]":
+    """Enumerate ACTIVE writing systems split by kind.
+
+    Returns:
+        (vern_ids, anal_ids) -- each a list[str] of WS IDs in active order.
+        A dual-role WS (both vernacular + analysis) appears in BOTH lists.
+        Falls back to ([], []) on any introspection failure.
+
+    LCM 9.x exposes:
+        project.VernacularWritingSystems  -> VERNACULAR active list
+        project.AnalysisWritingSystems    -> ANALYSIS active list
+    The flexlibs2 fork does NOT split them (WritingSystems.GetAll() returns
+    all), so we attempt LCM-direct first and fall back to treating all WS as
+    both kinds when the attribute is not available.
+    """
+    vern_ids: list = []
+    anal_ids: list = []
+    try:
+        vws = getattr(project, "VernacularWritingSystems", None)
+        if vws is not None:
+            for ws in vws:
+                ws_id = getattr(ws, "Id", None) or getattr(ws, "IcuLocale", None)
+                if ws_id and str(ws_id) not in vern_ids:
+                    vern_ids.append(str(ws_id))
+        aws = getattr(project, "AnalysisWritingSystems", None)
+        if aws is not None:
+            for ws in aws:
+                ws_id = getattr(ws, "Id", None) or getattr(ws, "IcuLocale", None)
+                if ws_id and str(ws_id) not in anal_ids:
+                    anal_ids.append(str(ws_id))
+        if vern_ids or anal_ids:
+            return (vern_ids, anal_ids)
+    except (AttributeError, TypeError, Exception):  # noqa: BLE001
+        pass
+
+    # Fallback: treat all active WSes as both kinds (graceful degradation).
+    all_ids = _enumerate_active_ws_ids(project)
+    return (list(all_ids), list(all_ids))

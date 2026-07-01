@@ -345,10 +345,97 @@ def _execute_verb_vertical(
 # created objects)
 # ============================================================================
 
+def _idempotency_guard(target, src_guid: str, expected_classname: str, report_sink):
+    """Idempotency guard: check if an object with `src_guid` already exists.
+
+    Called at EVERY Guid-preserving Create site BEFORE factory.Create(guid, ...).
+    LCM factory.Create(existingGuid, owner) does NOT throw -- it silently creates
+    a duplicate object permanently written to .fwdata on CloseProject. This guard
+    prevents that corruption.
+
+    Returns:
+        (True, existing_obj) if a same-class object was found -- caller should
+            return existing_obj immediately without calling Create.
+        (True, None) if a WRONG-class object was found -- caller should return
+            None and skip Create entirely (log WARNING).
+        (False, None) if no object exists for that GUID -- proceed with Create.
+    """
+    try:
+        existing = target.Object(src_guid)
+    except Exception:
+        existing = None
+
+    if existing is None:
+        return (False, None)
+
+    # Object exists. Check ClassName.
+    try:
+        classname = existing.ClassName
+    except Exception:
+        classname = None
+
+    if classname == expected_classname:
+        return (True, existing)
+
+    # Wrong class -- log and skip without create.
+    report_sink.Warning(
+        f"  [IDEMPOTENCY] GUID {src_guid[:8]}... exists as {classname!r} "
+        f"(expected {expected_classname!r}); skipping Create to avoid corruption"
+    )
+    return (True, None)
+
+
+def _cast_existing_to_pos(obj):
+    """Direct cast for PartOfSpeech (not in cast_to_concrete map)."""
+    from SIL.LCModel import IPartOfSpeech
+    return IPartOfSpeech(obj)
+
+
+def _cast_existing_to_slot(obj):
+    """Direct cast for MoInflAffixSlot (not in cast_to_concrete map)."""
+    from SIL.LCModel import IMoInflAffixSlot
+    return IMoInflAffixSlot(obj)
+
+
+def _cast_existing_to_environment(obj):
+    """Direct cast for PhEnvironment (not in cast_to_concrete map)."""
+    from SIL.LCModel import IPhEnvironment
+    return IPhEnvironment(obj)
+
+
+def _cast_existing_to_template(obj):
+    """cast_to_concrete maps MoInflAffixTemplate; use IMoInflAffixTemplate directly."""
+    from SIL.LCModel import IMoInflAffixTemplate
+    return IMoInflAffixTemplate(obj)
+
+
+def _cast_existing_to_lexentry(obj):
+    """cast_to_concrete maps LexEntry; use ILexEntry directly."""
+    from SIL.LCModel import ILexEntry
+    return ILexEntry(obj)
+
+
+def _cast_existing_to_lexsense(obj):
+    """cast_to_concrete maps LexSense; use ILexSense directly."""
+    from SIL.LCModel import ILexSense
+    return ILexSense(obj)
+
+
 def _create_pos_with_guid(target, src_guid: str, src_props, tag: ImportResidueTag, report_sink):
-    """Create a Part-of-Speech in the target with `src_guid` preserved."""
+    """Create a Part-of-Speech in the target with `src_guid` preserved.
+
+    Idempotency guard (P0): if a PartOfSpeech with this GUID already exists,
+    return it without calling Create (prevents LCM silent-duplicate corruption).
+    """
     from SIL.LCModel import IPartOfSpeechFactory, ICmPossibilityList
     from System import Guid as DotNetGuid
+
+    found, existing = _idempotency_guard(target, src_guid, "PartOfSpeech", report_sink)
+    if found:
+        if existing is not None:
+            report_sink.Info(f"  POS already exists (idempotency reuse)  guid={src_guid}")
+            return _cast_existing_to_pos(existing)
+        return None  # wrong-class object; skip
 
     factory = IPartOfSpeechFactory(target.GetFactory(IPartOfSpeechFactory))
     cache = getattr(target, "Cache")
@@ -361,9 +448,20 @@ def _create_pos_with_guid(target, src_guid: str, src_props, tag: ImportResidueTa
 
 
 def _create_template_with_guid(target, owner_pos, src_guid: str, src_props, tag: ImportResidueTag, report_sink):
-    """Create an Affix Template in the target owned by `owner_pos`."""
+    """Create an Affix Template in the target owned by `owner_pos`.
+
+    Idempotency guard (P0): if a MoInflAffixTemplate with this GUID already
+    exists, return it without calling Create.
+    """
     from SIL.LCModel import IMoInflAffixTemplateFactory
     from System import Guid as DotNetGuid
+
+    found, existing = _idempotency_guard(target, src_guid, "MoInflAffixTemplate", report_sink)
+    if found:
+        if existing is not None:
+            report_sink.Info(f"  Template already exists (idempotency reuse)  guid={src_guid}")
+            return _cast_existing_to_template(existing)
+        return None  # wrong-class object; skip
 
     factory = IMoInflAffixTemplateFactory(target.GetFactory(IMoInflAffixTemplateFactory))
     new_template = factory.Create(DotNetGuid.Parse(src_guid))
@@ -376,10 +474,21 @@ def _create_template_with_guid(target, owner_pos, src_guid: str, src_props, tag:
 
 
 def _create_slot_with_guid(target, owner_pos, src_guid: str, slot_name: str, tag: ImportResidueTag, report_sink):
-    """Create an Affix Slot in the target owned by `owner_pos`."""
+    """Create an Affix Slot in the target owned by `owner_pos`.
+
+    Idempotency guard (P0): if a MoInflAffixSlot with this GUID already
+    exists, return it without calling Create.
+    """
     from SIL.LCModel import IMoInflAffixSlotFactory, IMoInflAffixSlot
     from SIL.LCModel.Core.Text import TsStringUtils
     from System import Guid as DotNetGuid
+
+    found, existing = _idempotency_guard(target, src_guid, "MoInflAffixSlot", report_sink)
+    if found:
+        if existing is not None:
+            report_sink.Info(f"  Slot already exists (idempotency reuse)  guid={src_guid}")
+            return _cast_existing_to_slot(existing)
+        return None  # wrong-class object; skip
 
     factory = IMoInflAffixSlotFactory(target.GetFactory(IMoInflAffixSlotFactory))
     new_slot = factory.Create(DotNetGuid.Parse(src_guid))
@@ -769,9 +878,20 @@ def _find_target_env_by_guid(target, env_guid: str):
 
 
 def _create_environment_with_guid(target, src_guid: str, report_sink, tag: ImportResidueTag):
-    """Create IPhEnvironment in target's PhonologicalData with GUID preserved."""
+    """Create IPhEnvironment in target's PhonologicalData with GUID preserved.
+
+    Idempotency guard (P0): if a PhEnvironment with this GUID already exists,
+    return it without calling Create.
+    """
     from SIL.LCModel import IPhEnvironmentFactory, IPhEnvironment
     from System import Guid as DotNetGuid
+
+    found, existing = _idempotency_guard(target, src_guid, "PhEnvironment", report_sink)
+    if found:
+        if existing is not None:
+            report_sink.Info(f"  PhEnvironment already exists (idempotency reuse)  guid={src_guid}")
+            return _cast_existing_to_environment(existing)
+        return None  # wrong-class object; skip
 
     factory = IPhEnvironmentFactory(target.GetFactory(IPhEnvironmentFactory))
     new_env = factory.Create(DotNetGuid.Parse(src_guid))
@@ -786,9 +906,20 @@ def _create_environment_with_guid(target, src_guid: str, report_sink, tag: Impor
 
 def _create_lexentry_with_guid(target, src_guid: str, src_entry, source, tag: ImportResidueTag, report_sink):
     """Create ILexEntry owned by target.LexDb with GUID preserved + apply
-    syncable string properties."""
+    syncable string properties.
+
+    Idempotency guard (P0): if a LexEntry with this GUID already exists,
+    return it without calling Create.
+    """
     from SIL.LCModel import ILexEntryFactory, ILexDb
     from System import Guid as DotNetGuid
+
+    found, existing = _idempotency_guard(target, src_guid, "LexEntry", report_sink)
+    if found:
+        if existing is not None:
+            report_sink.Info(f"  LexEntry already exists (idempotency reuse)  guid={src_guid}")
+            return _cast_existing_to_lexentry(existing)
+        return None  # wrong-class object; skip
 
     factory = ILexEntryFactory(target.GetFactory(ILexEntryFactory))
     cache = getattr(target, "Cache")
@@ -802,9 +933,20 @@ def _create_lexentry_with_guid(target, src_guid: str, src_entry, source, tag: Im
 
 
 def _create_lexsense_with_guid(target, new_entry, src_guid: str, src_sense, source, tag: ImportResidueTag, report_sink):
-    """Create ILexSense owned by new_entry with GUID preserved."""
+    """Create ILexSense owned by new_entry with GUID preserved.
+
+    Idempotency guard (P0): if a LexSense with this GUID already exists,
+    return it without calling Create.
+    """
     from SIL.LCModel import ILexSenseFactory, ICmObject
     from System import Guid as DotNetGuid
+
+    found, existing = _idempotency_guard(target, src_guid, "LexSense", report_sink)
+    if found:
+        if existing is not None:
+            report_sink.Info(f"  LexSense already exists (idempotency reuse)  guid={src_guid}")
+            return _cast_existing_to_lexsense(existing)
+        return None  # wrong-class object; skip
 
     factory = ILexSenseFactory(target.GetFactory(ILexSenseFactory))
     new_sense = factory.Create(DotNetGuid.Parse(src_guid), new_entry)
