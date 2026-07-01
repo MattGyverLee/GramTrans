@@ -130,6 +130,7 @@ _PagePreview = _sw_mod._PagePreview
 _PageFinish = _sw_mod._PageFinish
 SelectionWizard = _sw_mod.SelectionWizard
 _enumerate_active_ws_ids = _sw_mod._enumerate_active_ws_ids
+_enumerate_ws_by_kind = _sw_mod._enumerate_ws_by_kind
 _allowed_modes = _sw_mod._allowed_modes
 
 
@@ -420,3 +421,110 @@ class TestIntermMergeLabel:
             f"MERGE label must explain 'link existing by ID, else add; no field update' "
             f"per spec section (i), got: {merge_label!r}"
         )
+
+
+# ===========================================================================
+# _enumerate_ws_by_kind -- LCM Current* path
+# ===========================================================================
+
+def _make_ws(ws_id: str):
+    """Return a minimal fake WS object with a .Id attribute."""
+    ws = MagicMock()
+    ws.Id = ws_id
+    return ws
+
+
+def _make_project_with_current_ws(vern_tags, anal_tags):
+    """Return a fake project whose Cache.LangProject.Current* lists are set."""
+    lang = MagicMock()
+    lang.CurrentVernacularWritingSystems = [_make_ws(t) for t in vern_tags]
+    lang.CurrentAnalysisWritingSystems = [_make_ws(t) for t in anal_tags]
+    cache = MagicMock()
+    cache.LangProject = lang
+    project = MagicMock()
+    project.Cache = cache
+    return project
+
+
+class TestEnumerateWsByKind:
+    """(a)-(d) from the fix specification."""
+
+    def test_a_correct_split_full_tags(self):
+        """(a) Cache.LangProject.Current* yields exact full tags in correct groups."""
+        project = _make_project_with_current_ws(
+            vern_tags=["etu", "etu-fonipa"],
+            anal_tags=["en"],
+        )
+        vern, anal = _enumerate_ws_by_kind(project)
+        assert vern == ["etu", "etu-fonipa"]
+        assert anal == ["en"]
+
+    def test_b_dual_role_tag_appears_in_both_lists(self):
+        """(b) A tag present in both Current* lists appears in both returned lists."""
+        project = _make_project_with_current_ws(
+            vern_tags=["etu", "en"],
+            anal_tags=["en", "fr"],
+        )
+        vern, anal = _enumerate_ws_by_kind(project)
+        assert "en" in vern
+        assert "en" in anal
+        # other tags stay in their own group only
+        assert "etu" in vern
+        assert "etu" not in anal
+        assert "fr" in anal
+        assert "fr" not in vern
+
+    def test_c_distinct_variant_tags_yield_distinct_entries_and_default_1to1(self):
+        """(c) 'etu' and 'etu-fonipa' are separate entries; each defaults to same-tag."""
+        project = _make_project_with_current_ws(
+            vern_tags=["etu", "etu-fonipa"],
+            anal_tags=["en"],
+        )
+        vern, _anal = _enumerate_ws_by_kind(project)
+        # Both variant tags present as distinct entries.
+        assert "etu" in vern
+        assert "etu-fonipa" in vern
+        assert vern.index("etu") != vern.index("etu-fonipa")
+        # Default 1:1 mapping: _fill_table pre-populates target combo with same tag.
+        # Verify the row-state key structure: each ws_id produces a distinct key.
+        from gramtrans.Lib.models import WSKind
+        keys = {(ws_id, WSKind.VERNACULAR.value) for ws_id in vern}
+        assert ("etu", WSKind.VERNACULAR.value) in keys
+        assert ("etu-fonipa", WSKind.VERNACULAR.value) in keys
+
+    def test_d_total_failure_degrades_to_all_as_both(self):
+        """(d) When Cache path raises, fallback returns (all_ids, all_ids)."""
+        ws1 = MagicMock()
+        ws1.Id = "etu"
+        ws2 = MagicMock()
+        ws2.Id = "en"
+
+        project = MagicMock()
+        # Make Cache raise so the primary path fails completely.
+        type(project).Cache = property(lambda self: (_ for _ in ()).throw(
+            AttributeError("no Cache")
+        ))
+        # Provide a WritingSystems.GetAll fallback used by _enumerate_active_ws_ids.
+        wss = MagicMock()
+        wss.GetAll.return_value = [ws1, ws2]
+        project.WritingSystems = wss
+        # No VernacularWritingSystems / AnalysisWritingSystems exposed.
+        del project.VernacularWritingSystems
+        del project.AnalysisWritingSystems
+
+        vern, anal = _enumerate_ws_by_kind(project)
+        # Both lists must be identical (all-as-both degradation).
+        assert vern == anal
+        # Must contain the WS IDs from the fallback enumerator.
+        assert "etu" in vern
+        assert "en" in vern
+
+    def test_no_duplicates_in_returned_lists(self):
+        """Duplicate WS entries in Current* are deduplicated."""
+        project = _make_project_with_current_ws(
+            vern_tags=["etu", "etu", "etu-fonipa"],
+            anal_tags=["en", "en"],
+        )
+        vern, anal = _enumerate_ws_by_kind(project)
+        assert vern.count("etu") == 1
+        assert anal.count("en") == 1

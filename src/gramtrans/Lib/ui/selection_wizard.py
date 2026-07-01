@@ -1055,30 +1055,37 @@ def _enumerate_ws_by_kind(project) -> "tuple[list, list]":
     Returns:
         (vern_ids, anal_ids) -- each a list[str] of WS IDs in active order.
         A dual-role WS (both vernacular + analysis) appears in BOTH lists.
-        Falls back to ([], []) on any introspection failure.
+        Falls back to treating all active WSes as both kinds on total failure.
 
-    LCM 9.x exposes:
-        project.VernacularWritingSystems  -> VERNACULAR active list
-        project.AnalysisWritingSystems    -> ANALYSIS active list
-    The flexlibs2 fork does NOT split them (WritingSystems.GetAll() returns
-    all), so we attempt LCM-direct first and fall back to treating all WS as
-    both kinds when the attribute is not available.
+    Primary access path (LCM 9.x via flexlibs2 FLExProject.Cache):
+        project.Cache.LangProject.CurrentVernacularWritingSystems
+        project.Cache.LangProject.CurrentAnalysisWritingSystems
+    Each entry exposes .Id (full BCP-47 tag, e.g. 'etu', 'etu-fonipa').
+    Current* is the correct "active/enabled" list; each distinct variant tag
+    (e.g. 'etu' vs 'etu-fonipa') is a separate entry and maps 1:1 by default.
+
+    NOTE: project.VernacularWritingSystems and project.AnalysisWritingSystems
+    are NOT exposed by the flexlibs2 FLExProject wrapper and return None --
+    the Cache.LangProject.Current* path is the correct primary path.
     """
     vern_ids: list = []
     anal_ids: list = []
     try:
-        vws = getattr(project, "VernacularWritingSystems", None)
-        if vws is not None:
-            for ws in vws:
-                ws_id = getattr(ws, "Id", None) or getattr(ws, "IcuLocale", None)
-                if ws_id and str(ws_id) not in vern_ids:
-                    vern_ids.append(str(ws_id))
-        aws = getattr(project, "AnalysisWritingSystems", None)
-        if aws is not None:
-            for ws in aws:
-                ws_id = getattr(ws, "Id", None) or getattr(ws, "IcuLocale", None)
-                if ws_id and str(ws_id) not in anal_ids:
-                    anal_ids.append(str(ws_id))
+        cache = getattr(project, "Cache", None)
+        lang = getattr(cache, "LangProject", None)
+        if lang is not None:
+            cvws = getattr(lang, "CurrentVernacularWritingSystems", None)
+            if cvws is not None:
+                for ws in cvws:
+                    ws_id = getattr(ws, "Id", None)
+                    if ws_id and str(ws_id) not in vern_ids:
+                        vern_ids.append(str(ws_id))
+            caws = getattr(lang, "CurrentAnalysisWritingSystems", None)
+            if caws is not None:
+                for ws in caws:
+                    ws_id = getattr(ws, "Id", None)
+                    if ws_id and str(ws_id) not in anal_ids:
+                        anal_ids.append(str(ws_id))
         if vern_ids or anal_ids:
             return (vern_ids, anal_ids)
     except (AttributeError, TypeError, Exception):  # noqa: BLE001
