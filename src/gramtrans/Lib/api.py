@@ -236,7 +236,14 @@ def compute_preview(context: RunContext,
 def execute_move(context: RunContext, plan: RunPlan) -> RunReport:
     """Execute the plan against the target. PRECONDITION: caller has verified
     the plan was produced from the current Selection/WSMapping (UI
-    state-machine gate, contracts/module-ui.md)."""
+    state-machine gate, contracts/module-ui.md).
+
+    WS mapping is NOT a parameter here by design: the WSMapping is a
+    preview-time concern that `compute_preview` has already baked into `plan`
+    (how source WS-tagged strings resolve into target objects). `execute_move`
+    is a faithful executor of an already-decided plan. Do NOT add a WSMapping
+    argument and re-map at execute time — that would let the committed result
+    diverge from the previewed one. The plan is the single source of truth."""
     if plan.context is not context and plan.context != context:
         raise PreviewStale(
             "Plan's context does not match the call context; the UI must "
