@@ -12,12 +12,12 @@ selects every affix under it via slot membership, etc.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Dict, FrozenSet, Iterable, Set, Tuple
+from typing import Dict, FrozenSet, Iterable, Optional, Set, Tuple
 
 if __package__:
-    from .models import GrammarCategory, Selection
+    from .models import CategoryScope, GrammarCategory, Selection
 else:
-    from models import GrammarCategory, Selection
+    from models import CategoryScope, GrammarCategory, Selection  # type: ignore
 
 
 # ============================================================================
@@ -108,13 +108,21 @@ def build_selection(picker: PickerState,
                     inventory: SourceAffixInventory,
                     *,
                     include_closure: bool = True,
-                    extra_categories: Iterable[GrammarCategory] = ()) -> Selection:
+                    extra_categories: Iterable[GrammarCategory] = (),
+                    category_scopes: Optional[Dict[GrammarCategory, CategoryScope]] = None,
+                    excluded_deps: Optional[FrozenSet[str]] = None) -> Selection:
     """Build a `Selection` from the picker state + inventory.
 
     `extra_categories` is the list of FR-004 categories the user toggled on
     OUTSIDE the affix tree (e.g., custom fields, inflection features). These
     land in `Selection.categories` with True values; AFFIXES/AFFIX_TEMPLATES are
     set True automatically iff the picker yields non-empty picks for them.
+
+    Phase 3c Selection UI additions:
+    - `category_scopes`: per-category three-scope map (NONE / AS_NEEDED / ALL).
+      When supplied, the old `include_closure` bool is still accepted for
+      back-compat but explicit scopes take precedence per `Selection.scope_for`.
+    - `excluded_deps`: frozenset of source GUIDs the user per-item deselected.
     """
     affix_picks = compute_required_affixes(picker, inventory)
     template_picks = compute_required_templates(picker, inventory)
@@ -130,4 +138,6 @@ def build_selection(picker: PickerState,
         include_closure=include_closure,
         affix_picks=affix_picks,
         template_picks=template_picks,
+        category_scopes=dict(category_scopes) if category_scopes else {},
+        excluded_deps=excluded_deps if excluded_deps is not None else frozenset(),
     )

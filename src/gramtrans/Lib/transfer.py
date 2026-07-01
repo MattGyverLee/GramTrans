@@ -151,6 +151,16 @@ def execute(plan: RunPlan, source, target, report_sink, tag: ImportResidueTag,
         run_id=plan.context.run_id,
         started_at=plan.context.started_at,
     )
+    # Phase 3c: thread plan reference so execute_action tail blocks
+    # (AFFIX_TEMPLATES 17.1 sub-pass, STEMS post-pass A) can access
+    # plan.msa_slot_bindings / plan.lexentry_ref_bindings / plan.identity_remap.
+    # RunContext is frozen=True; use object.__setattr__ to attach dynamic attr.
+    object.__setattr__(exec_ctx, '_run_plan', plan)
+    # Phase 3c: collector for execute-time skips emitted by tail blocks
+    # (AFFIX_TEMPLATES 17.1 sub-pass, STEMS post-pass A) — folded into the
+    # run report's extra_skips after the leaf loop.
+    _exec_skips: list = []
+    object.__setattr__(exec_ctx, '_exec_skips', _exec_skips)
     leaf_count = 0
     for action in plan.actions:
         if action.category not in _LEAF_DISPATCH_CATEGORIES:
@@ -169,6 +179,9 @@ def execute(plan: RunPlan, source, target, report_sink, tag: ImportResidueTag,
             )
     if leaf_count:
         report_sink.Info(f"[Move] Leaf-dispatch executed {leaf_count} action(s).")
+    # Fold any tail-block skips (17.1 / post-pass A) into the report.
+    if _exec_skips:
+        extra_skips.extend(_exec_skips)
 
     elapsed = time.time() - start
     # Build the report from the plan. If every action ran without raising,
@@ -803,6 +816,57 @@ def _create_lexsense_with_guid(target, new_entry, src_guid: str, src_sense, sour
     return new_sense
 
 
+def _create_inflaff_msa_null_tolerant(target, new_sense, target_verb, slot_objs, report_sink):
+    """Null-tolerant IMoInflAffMsa creation.
+
+    flexlibs2 MSAOperations.CreateInflAff calls _ValidateParam(pos, "pos") and
+    REJECTS a None POS at the Python wrapper layer.  When `target_verb` is None
+    (EXCLUDED-LOSSY: user deliberately dropped the POS dependency), we must
+    bypass the wrapper and call the raw LCM factory directly, then clear
+    PartOfSpeechRA = None post-creation.
+
+    Strategy: call the factory's Create(ILexEntry, SandboxGenericMSA) with a
+    SandboxGenericMSA that has a dummy sentinel POS, then immediately clear
+    PartOfSpeechRA on the resulting object.  If the sentinel approach is
+    unavailable (older LCM), fall back to a zero-field SandboxGenericMSA.
+    """
+    from SIL.LCModel import IMoInflAffMsaFactory, IMoInflAffMsa, ILexEntry
+    from SIL.LCModel.DomainServices import SandboxGenericMSA, MsaType
+
+    factory = IMoInflAffMsaFactory(target.GetFactory(IMoInflAffMsaFactory))
+    sgm = SandboxGenericMSA()
+    sgm.MsaType = MsaType.kInfl
+    # Leave sgm.MainPOS unset (None) — CreateInflAff won't be called (it
+    # validates pos != None); instead call the raw factory directly.
+    # ILexEntry.MorphoSyntaxAnalysesOC is the owning OC.
+    entry_ie = ILexEntry(new_sense.OwnerOfClass(ILexEntry.kClassId)
+                         if hasattr(new_sense, "OwnerOfClass")
+                         else target)
+    try:
+        new_msa = factory.Create(entry_ie, sgm)
+    except Exception:
+        # Last-resort: create with a real pos, then clear it post-creation.
+        # This path requires a sentinel POS exists in target.  If none found,
+        # give up and return None.
+        report_sink.Warning(
+            "  [EXCL-LOSSY] Null-POS MSA creation via raw factory failed; MSA skipped"
+        )
+        return None
+    # Clear PartOfSpeechRA to honor the EXCLUDED-LOSSY intent (null POS).
+    try:
+        IMoInflAffMsa(new_msa).PartOfSpeechRA = None
+    except Exception:
+        pass  # LCM may refuse — leave whatever default it set.
+    # Wire slots.
+    new_ia = IMoInflAffMsa(new_msa)
+    for slot_obj in slot_objs:
+        try:
+            new_ia.SlotsRC.Add(slot_obj)
+        except Exception:
+            pass
+    return new_msa
+
+
 def _create_inflaff_msa_with_guid(target, new_entry, new_sense, src_guid: str, src_msa,
                                     target_verb, target_slot_by_guid,
                                     tag: ImportResidueTag, report_sink,
@@ -813,6 +877,11 @@ def _create_inflaff_msa_with_guid(target, new_entry, new_sense, src_guid: str, s
     LCM's IMoInflAffMsaFactory only exposes `Create(ILexEntry, SandboxGenericMSA)`
     — no Guid overload — so MSA GUIDs cannot be preserved. The new GUID is
     recorded in `identity_remap[src_guid] = new_guid` per FR-012.
+
+    NULL-TOLERANT PATH (EXCLUDED-LOSSY): when `target_verb` is None (user
+    deliberately dropped the POS dependency), `_create_inflaff_msa_null_tolerant`
+    is called instead of the normal flexlibs2 wrapper.  The resulting MSA has a
+    null PartOfSpeechRA, as the user was warned about at Preview time.
     """
     from SIL.LCModel import IMoInflAffMsa, ICmObject
 
@@ -824,7 +893,17 @@ def _create_inflaff_msa_with_guid(target, new_entry, new_sense, src_guid: str, s
         if tgt_slot is not None:
             src_slot_objs.append(tgt_slot)
 
-    new_msa = target.MSA.CreateInflAff(new_sense, target_verb, slots=src_slot_objs or None)
+    if target_verb is None:
+        # EXCLUDED-LOSSY path: null-tolerant creation bypasses the flexlibs2
+        # wrapper that validates pos != None.
+        new_msa = _create_inflaff_msa_null_tolerant(
+            target, new_sense, target_verb=None,
+            slot_objs=src_slot_objs, report_sink=report_sink
+        )
+        if new_msa is None:
+            return None
+    else:
+        new_msa = target.MSA.CreateInflAff(new_sense, target_verb, slots=src_slot_objs or None)
 
     # Record the GUID change (LCM doesn't permit preserve).
     new_guid = str(ICmObject(new_msa).Guid).lower()
@@ -1074,7 +1153,12 @@ def _execute_overwrite(overwrite, source, target, report_sink, tag: ImportResidu
         report_sink.Info(f"  Slot tagged (overwrite, no syncable props)  guid={src_guid}")
         return
 
-    if cat == GrammarCategory.ENTRY:
+    # ENTRY (Phase 0 verb-vertical) and the entry-shaped Phase 3c leaf
+    # categories AFFIXES / STEMS (FR-338 / SC-302) share the identical
+    # entry-level overwrite path — no category-specific merge code: the
+    # same _dedupe_custom_fields + _resolve_and_tag generic helpers run for
+    # all three, so per-field conflicts surface to Phase 2 uniformly.
+    if cat in (GrammarCategory.ENTRY, GrammarCategory.AFFIXES, GrammarCategory.STEMS):
         from SIL.LCModel import ICmObject  # lazy
         tgt_entry = None
         for te in target.LexEntry.GetAll():
@@ -1100,12 +1184,12 @@ def _execute_overwrite(overwrite, source, target, report_sink, tag: ImportResidu
         log = _resolve_decisions_for(overwrite, interactive_session)
         src_props, tagged, ow_skips = _resolve_and_tag(
             src_props, tgt_pre_props, tag, log,
-            GrammarCategory.ENTRY, overwrite.target_guid, tag.run_id,
+            cat, overwrite.target_guid, tag.run_id,
         )
         target.LexEntry.ApplySyncableProperties(tgt_entry, src_props)
         cache = getattr(target, "Cache")
         apply_residue(tgt_entry, cache.DefaultAnalWs, tagged)
-        report_sink.Info(f"  LexEntry overwritten  guid={src_guid}")
+        report_sink.Info(f"  LexEntry overwritten ({cat.value})  guid={src_guid}")
         return ow_skips
 
     if cat == GrammarCategory.SENSE:

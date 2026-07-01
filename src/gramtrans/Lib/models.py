@@ -55,6 +55,22 @@ class GrammarCategory(enum.Enum):
     SEMANTIC_DOMAINS = "semantic_domains"
 
 
+class CategoryScope(enum.Enum):
+    """Per-category three-scope selector (Selection UI, plan.md revised 2026-07-01).
+
+    NONE      : do not transfer this category at all -- not even what the picked
+                items' closure needs.  A referencing entry becomes EXCLUDED-LOSSY
+                if the target lacks the dependency.
+    AS_NEEDED : (default) transfer exactly the closure the picked items require,
+                minus any per-item exclusions in `excluded_deps`.
+    ALL       : transfer the entire source category, including items nothing the
+                user picked references.
+    """
+    NONE = "none"
+    AS_NEEDED = "as_needed"
+    ALL = "all"
+
+
 class WSKind(enum.Enum):
     VERNACULAR = "vernacular"
     ANALYSIS = "analysis"
@@ -85,6 +101,12 @@ class SkipReason(enum.Enum):
     # from ALREADY_PRESENT_BY_GUID so sync-report readers don't infer
     # a Guid identity check occurred when none did.
     ALREADY_PRESENT_BY_IDENTITY = "already_present_by_identity"
+    # Phase 3c Selection UI: deliberate, informed omission of a dependency
+    # that a copied entry DOES reference and that the target does not already
+    # have.  Distinct from DEPENDENCY_UNRESOLVED (which is accidental and
+    # hard-fails); EXCLUDED_LOSSY is a soft warn+allow disposition -- the
+    # entry transfers with a null reference after explicit user confirmation.
+    EXCLUDED_LOSSY = "excluded_lossy"
 
 
 class MergeResolution(enum.Enum):
@@ -142,6 +164,22 @@ class Selection:
 
     `categories` is a dict[GrammarCategory, bool]: key present-and-True means
     the category is on; key absent or False means off.
+
+    Phase 3c Selection UI additions (plan.md revised 2026-07-01):
+    - `category_scopes`: per-category three-scope map (NONE / AS_NEEDED / ALL).
+      When absent for a category that is on, the effective scope is AS_NEEDED.
+      The old `include_closure=True` corresponds to every schema category
+      AS_NEEDED; `include_closure=False` corresponds to every schema category
+      NONE.  Both are preserved for backward compatibility (existing 324 tests).
+    - `excluded_deps`: frozenset of source GUIDs the user explicitly deselected
+      inside an AS_NEEDED category (per-item exclusion).  Excluded deps that a
+      copied entry references and that the target lacks become EXCLUDED-LOSSY
+      warnings.
+
+    BACK-COMPAT: callers that pass `include_closure=<bool>` continue to work.
+    The effective scope for any category not in `category_scopes` is derived
+    from `include_closure` (True -> AS_NEEDED, False -> NONE) so the existing
+    test suite requires no changes.
     """
     categories: dict = field(default_factory=dict)  # dict[GrammarCategory, bool]
     include_closure: bool = True
@@ -155,6 +193,9 @@ class Selection:
     # of falling through to FR-109 source-wins.
     ws_mapping_choices: tuple = ()  # Phase 2 (FR-209): tuple[WSMappingChoice, ...]
     # populated by the WSWizard before plan build.
+    # Phase 3c Selection UI (plan.md revised 2026-07-01):
+    category_scopes: dict = field(default_factory=dict)  # dict[GrammarCategory, CategoryScope]
+    excluded_deps: frozenset = field(default_factory=frozenset)  # frozenset[str] source GUIDs
 
     def __post_init__(self) -> None:
         if self.affix_picks and self.categories.get(GrammarCategory.AFFIXES) is not True:
@@ -178,6 +219,27 @@ class Selection:
     def is_on(self, category: GrammarCategory) -> bool:
         """Return True iff the category is explicitly enabled."""
         return self.categories.get(category) is True
+
+    def scope_for(self, category: "GrammarCategory") -> "CategoryScope":
+        """Return the effective CategoryScope for `category`.
+
+        Lookup order:
+        1. Explicit entry in `category_scopes`.
+        2. Fall back to the legacy `include_closure` bool:
+           True  -> AS_NEEDED (current behaviour)
+           False -> NONE (bare-bones / closure off)
+
+        This means old callers that never set `category_scopes` continue to
+        behave exactly as before.
+        """
+        explicit = self.category_scopes.get(category)
+        if explicit is not None:
+            return explicit
+        return CategoryScope.AS_NEEDED if self.include_closure else CategoryScope.NONE
+
+    def is_dep_excluded(self, dep_guid: str) -> bool:
+        """Return True iff `dep_guid` is in the per-item exclusion set."""
+        return dep_guid in self.excluded_deps
 
 
 # ============================================================================
@@ -222,6 +284,38 @@ class WSMapping:
 # ============================================================================
 # Plan + actions (E4)
 # ============================================================================
+
+@dataclass(frozen=True)
+class ExcludedLossy:
+    """EXCLUDED-LOSSY disposition (Selection UI, plan.md revised 2026-07-01).
+
+    The user deliberately dropped a dependency (via NONE scope or per-item
+    deselect) that a copied entry DOES reference, and the target does not
+    already have the dependency.  The entry will transfer with a null
+    reference.  This is warn+allow, never a hard block.
+
+    `entry_guid`    : source GUID of the payload entry that loses the link.
+    `entry_label`   : human-readable headword / name for the warning message.
+    `dep_category`  : which schema category the missing dep belongs to.
+    `dep_guid`      : source GUID of the dropped dependency.
+    `dep_label`     : human-readable name of the dropped dep.
+    `message`       : entry-centric warning text, e.g.
+                      "Entry '-PL' will have no Part of Speech."
+    """
+    category: "GrammarCategory"  # category of the ENTRY (not the dep)
+    entry_guid: str
+    entry_label: str
+    dep_category: "GrammarCategory"
+    dep_guid: str
+    dep_label: str
+    message: str
+
+    def __post_init__(self) -> None:
+        if not self.entry_guid:
+            raise ValueError("ExcludedLossy.entry_guid must be non-empty")
+        if not self.message:
+            raise ValueError("ExcludedLossy.message must be non-empty")
+
 
 @dataclass(frozen=True)
 class PlannedAction:
@@ -289,9 +383,16 @@ class RunPlan:
     # to post-pass A. Shape: {src_entry_guid: {"ComponentLexemesRS": [...],
     # "PrimaryLexemesRS": [...]}}.
     lexentry_ref_bindings: dict = field(default_factory=dict)
+    # Phase 3c Selection UI: EXCLUDED-LOSSY dispositions — deliberate, informed
+    # omissions that generate entry-centric warnings but never hard-block Move.
+    excluded_lossy: tuple = ()  # tuple[ExcludedLossy, ...]
 
     def category_count(self, category: GrammarCategory) -> int:
         return sum(1 for a in self.actions if a.category == category)
+
+    def excluded_lossy_count(self) -> int:
+        """Number of EXCLUDED-LOSSY warnings in the plan."""
+        return len(self.excluded_lossy)
 
 
 # ============================================================================
@@ -449,6 +550,7 @@ class CategoryReport:
     ws_mapped: int = 0             # Phase 2
     ws_created: int = 0
     ws_skipped: int = 0
+    excluded_lossy: int = 0        # Phase 3c Selection UI: deliberate warn+allow omissions
 
 
 @dataclass(frozen=True)
@@ -471,6 +573,8 @@ class RunReport:
     empty_categories: tuple = ()  # Phase 3a FR-308: categories selected
     # but with zero items in source. Used by render_text_summary to emit
     # "[skip] no items in source for X" lines.
+    # Phase 3c Selection UI: EXCLUDED-LOSSY warning channel.
+    excluded_lossy: tuple = ()  # tuple[ExcludedLossy, ...]
 
     def __post_init__(self) -> None:
         # FR-018: sum of per_category[*].skipped must equal len(skips)
