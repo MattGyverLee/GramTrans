@@ -71,6 +71,95 @@ class CategoryScope(enum.Enum):
     ALL = "all"
 
 
+class ConflictMode(enum.Enum):
+    """Per-category conflict mode (Selection UI, plan.md revised 2026-07-01 section h).
+
+    Determines what happens when a closure item from the source meets an
+    object already present in the target.
+
+    ADD_NEW   : always create a new copy, even if a matching object exists.
+    MERGE     : link-if-present-by-GUID else ADD (interim MERGE, Option b).
+                No field-level update is performed -- the page-3 control
+                MUST label this explicitly so users are not misled.
+    OVERWRITE : overwrite the target's existing object with source values
+                (only offered when structurally possible and not forbidden
+                by Layer-1 kind or Layer-2 IsProtected gating).
+    """
+    ADD_NEW = "add_new"
+    MERGE = "merge"
+    OVERWRITE = "overwrite"
+
+
+# ---------------------------------------------------------------------------
+# Layer-1 category-kind defaults (section h, plan.md revised 2026-07-01).
+# Maps each GrammarCategory to its default ConflictMode per kind:
+#   MULTI_INSTANCE     -> ADD_NEW (all three modes offered)
+#   SINGLETON_NONDELETABLE -> MERGE (ADD_NEW hidden)
+#   GOLD_RESERVED      -> MERGE (ADD_NEW hidden, OVERWRITE forbidden)
+#   CUSTOM_FIELDS      -> MERGE (ADD_NEW hidden, OVERWRITE forbidden, conservative default)
+# ---------------------------------------------------------------------------
+
+def _build_default_conflict_modes() -> dict:
+    """Return the default ConflictMode for every GrammarCategory per Layer-1."""
+    # MULTI_INSTANCE categories (all three modes offered; default ADD_NEW)
+    multi_instance = {
+        GrammarCategory.AFFIXES,
+        GrammarCategory.STEMS,
+        GrammarCategory.SLOTS,
+        GrammarCategory.AFFIX_TEMPLATES,
+        GrammarCategory.INFLECTION_CLASSES,
+        GrammarCategory.STEM_NAMES,
+        GrammarCategory.EXCEPTION_FEATURES,
+        GrammarCategory.ADHOC_COMPOUND_RULES,
+        GrammarCategory.PHONEMES,
+        GrammarCategory.NATURAL_CLASSES,
+        GrammarCategory.PHONOLOGICAL_RULES,
+        GrammarCategory.PH_ENVIRONMENT,
+        # STRATA reclassified to MULTI_INSTANCE (StrataOS is an Owning SEQUENCE)
+        GrammarCategory.STRATA,
+        # Phase 0 / entry-level categories
+        GrammarCategory.ENTRY,
+        GrammarCategory.SENSE,
+        GrammarCategory.MSA,
+        GrammarCategory.ALLOMORPH,
+    }
+    # GOLD_RESERVED categories (ADD_NEW hidden, OVERWRITE forbidden -> MERGE default)
+    gold_reserved = {
+        GrammarCategory.GRAM_CATEGORIES,
+        GrammarCategory.INFLECTION_FEATURES,
+        GrammarCategory.VARIANT_TYPES,
+        GrammarCategory.COMPLEX_FORM_TYPES,
+        GrammarCategory.POS,
+        GrammarCategory.PHONOLOGICAL_FEATURES,
+        GrammarCategory.SEMANTIC_DOMAINS,
+    }
+    # SINGLETON_NONDELETABLE (ADD_NEW hidden -> MERGE default)
+    singleton = {
+        GrammarCategory.WRITING_SYSTEMS_CHECK,
+    }
+    # CUSTOM_FIELDS: conservative default (ADD hidden, OVERWRITE forbidden, MERGE no-op-if-identical)
+    custom_fields = {
+        GrammarCategory.CUSTOM_FIELDS,
+    }
+    result: dict = {}
+    for cat in GrammarCategory:
+        if cat in multi_instance:
+            result[cat] = ConflictMode.ADD_NEW
+        elif cat in gold_reserved:
+            result[cat] = ConflictMode.MERGE
+        elif cat in singleton:
+            result[cat] = ConflictMode.MERGE
+        elif cat in custom_fields:
+            result[cat] = ConflictMode.MERGE
+        else:
+            # Fallback for any newly-added category: safest default
+            result[cat] = ConflictMode.MERGE
+    return result
+
+
+_DEFAULT_CONFLICT_MODES: dict = _build_default_conflict_modes()
+
+
 class WSKind(enum.Enum):
     VERNACULAR = "vernacular"
     ANALYSIS = "analysis"
@@ -196,6 +285,9 @@ class Selection:
     # Phase 3c Selection UI (plan.md revised 2026-07-01):
     category_scopes: dict = field(default_factory=dict)  # dict[GrammarCategory, CategoryScope]
     excluded_deps: frozenset = field(default_factory=frozenset)  # frozenset[str] source GUIDs
+    # Per-category conflict mode (section h).  When absent for a category, the
+    # Layer-1 default from `_DEFAULT_CONFLICT_MODES` is used via `conflict_mode_for`.
+    category_conflict_modes: dict = field(default_factory=dict)  # dict[GrammarCategory, ConflictMode]
 
     def __post_init__(self) -> None:
         if self.affix_picks and self.categories.get(GrammarCategory.AFFIXES) is not True:
@@ -240,6 +332,19 @@ class Selection:
     def is_dep_excluded(self, dep_guid: str) -> bool:
         """Return True iff `dep_guid` is in the per-item exclusion set."""
         return dep_guid in self.excluded_deps
+
+    def conflict_mode_for(self, category: "GrammarCategory") -> "ConflictMode":
+        """Return the effective ConflictMode for `category`.
+
+        Lookup order:
+        1. Explicit entry in `category_conflict_modes`.
+        2. Layer-1 default from `_DEFAULT_CONFLICT_MODES`.
+        3. MERGE as ultimate fallback (safest, non-destructive).
+        """
+        explicit = self.category_conflict_modes.get(category)
+        if explicit is not None:
+            return explicit
+        return _DEFAULT_CONFLICT_MODES.get(category, ConflictMode.MERGE)
 
 
 # ============================================================================
