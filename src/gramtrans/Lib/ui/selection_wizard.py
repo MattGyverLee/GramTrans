@@ -720,6 +720,12 @@ class SelectionWizard(QtWidgets.QWizard):
         self.setWindowTitle("GramTrans -- Selection Wizard (Phase 3c)")
         self.setModal(True)
         self.resize(900, 720)
+        # ClassicStyle renders pages using the widget palette instead of forcing
+        # a white page (AeroStyle/ModernStyle default on Windows). Under an OS
+        # dark theme the forced-white page left every QLabel white-on-white
+        # (illegible); ClassicStyle keeps text/background consistent with the
+        # palette in both light and dark themes.
+        self.setWizardStyle(QtWidgets.QWizard.WizardStyle.ClassicStyle)
 
         stub = gt_api.initialize_run(
             host_handle=host_project,
@@ -745,23 +751,6 @@ class SelectionWizard(QtWidgets.QWizard):
     def context(self):
         """Return the bound RunContext (available after page 1 is completed)."""
         return self._page_project_ws.context()
-
-
-# ---------------------------------------------------------------------------
-# Selection._replace_conflict_modes helper
-# ---------------------------------------------------------------------------
-# The Selection dataclass is frozen=True; we need a replace helper to attach
-# category_conflict_modes without modifying the frozen dataclass directly.
-# We monkey-patch a helper method onto Selection only if not already present.
-
-def _selection_replace_conflict_modes(self, category_conflict_modes: dict) -> "Selection":
-    """Return a new Selection with `category_conflict_modes` set."""
-    import dataclasses
-    return dataclasses.replace(self, category_conflict_modes=category_conflict_modes)
-
-# Attach only once to avoid repeated monkey-patches in test environments.
-if not hasattr(Selection, "_replace_conflict_modes"):
-    Selection._replace_conflict_modes = _selection_replace_conflict_modes
 
 
 # ---------------------------------------------------------------------------

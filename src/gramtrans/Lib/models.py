@@ -346,6 +346,19 @@ class Selection:
             return explicit
         return _DEFAULT_CONFLICT_MODES.get(category, ConflictMode.MERGE)
 
+    def _replace_conflict_modes(self, category_conflict_modes: dict) -> "Selection":
+        """Return a new Selection with `category_conflict_modes` set.
+
+        `dataclasses.replace` is fully compatible with `frozen=True` (it builds a
+        new instance rather than mutating in place). Defined here on the dataclass
+        itself — not monkey-patched from the wizard — so headless/API callers have
+        the method regardless of whether the Qt UI module was ever imported.
+        """
+        import dataclasses
+        return dataclasses.replace(
+            self, category_conflict_modes=category_conflict_modes
+        )
+
 
 # ============================================================================
 # Writing-system mapping (E3)
