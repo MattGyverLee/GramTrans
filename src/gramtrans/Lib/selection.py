@@ -81,6 +81,7 @@ class AffixRow:
     from_pos: Optional[str]  # attaches-to POS label for this appearance
     to_pos: Optional[str]    # produces POS label (deriv only)
     role: str              # "attaches" | "produces"
+    status: Optional[str] = None  # FR-018: "new" | "in_target" | "similar" | None
 
 
 @dataclass(frozen=True)
@@ -282,7 +283,57 @@ class _PosAccumulator:
         )
 
 
-def build_pos_grouped_inventory(source) -> PosGroupedAffixInventory:
+def _build_target_sets(target) -> Tuple[Set[str], Set[str]]:
+    """Build (target_guids, target_forms) from the target project for FR-018.
+
+    Both sets are built by enumerating the TARGET's affix entries with the
+    same IsAffixType filter + casts used for source entries.
+
+    Returns
+    -------
+    target_guids : set of lower-cased entry GUID strings
+    target_forms : set of stripped/casefold best-vernacular lexeme forms
+    """
+    target_guids: Set[str] = set()
+    target_forms: Set[str] = set()
+    try:
+        entries = list(target.Cache.LangProject.LexDbOA.Entries)
+    except (AttributeError, TypeError):
+        return target_guids, target_forms
+
+    for entry in entries:
+        entry_c = _cast(entry, "ILexEntry")
+        try:
+            form_obj = entry_c.LexemeFormOA
+            morph_type = _cast(form_obj.MorphTypeRA, "IMoMorphType")
+            if not morph_type.IsAffixType:
+                continue
+        except (AttributeError, TypeError):
+            continue
+        try:
+            g = str(entry.Guid).lower()
+            target_guids.add(g)
+        except (AttributeError, TypeError):
+            pass
+        f = _best_form(entry)
+        if f and f != "?":
+            target_forms.add(f.strip().casefold())
+
+    return target_guids, target_forms
+
+
+def _entry_status(entry_guid: str, form: str,
+                  target_guids: Set[str], target_forms: Set[str]) -> str:
+    """Compute FR-018 status for one source affix entry."""
+    if entry_guid in target_guids:
+        return "in_target"
+    normalized = form.strip().casefold()
+    if normalized and normalized in target_forms:
+        return "similar"
+    return "new"
+
+
+def build_pos_grouped_inventory(source, target=None) -> PosGroupedAffixInventory:
     """Build a PosGroupedAffixInventory from the source project.
 
     Parameters
@@ -291,12 +342,24 @@ def build_pos_grouped_inventory(source) -> PosGroupedAffixInventory:
         Duck-typed source handle exposing:
         - source.Cache.LangProject.LexDbOA.Entries
         - source.Cache.LangProject.PartsOfSpeechOA.PossibilitiesOS (recursive)
+    target:
+        Optional duck-typed target handle with the same LCM shape.
+        When supplied, each AffixRow.status is populated as "new" |
+        "in_target" | "similar" (FR-018).  When None, status is None for
+        every row (back-compat; all existing tests pass unchanged).
 
     Returns
     -------
     PosGroupedAffixInventory
         Pure frozen result; retains no LCM handles.
     """
+    # --- FR-018: build target lookup sets once (empty when target=None) ---
+    if target is not None:
+        target_guids, target_forms = _build_target_sets(target)
+    else:
+        target_guids = set()
+        target_forms = set()
+
     # --- Build POS hierarchy ---
     try:
         pos_possibilities = list(
@@ -336,6 +399,12 @@ def build_pos_grouped_inventory(source) -> PosGroupedAffixInventory:
         form = _best_form(entry)
         glosses = _collect_glosses(entry)
 
+        # FR-018: compute status once per entry (shared by all its rows)
+        if target is not None:
+            entry_st: Optional[str] = _entry_status(guid, form, target_guids, target_forms)
+        else:
+            entry_st = None
+
         # Collect MSAs
         try:
             msas = list(entry.MorphoSyntaxAnalysesOC)
@@ -347,6 +416,7 @@ def build_pos_grouped_inventory(source) -> PosGroupedAffixInventory:
             no_analysis_rows.append(AffixRow(
                 entry_guid=guid, form=form, glosses=glosses,
                 msa_kind="uncl", from_pos=None, to_pos=None, role="attaches",
+                status=entry_st,
             ))
             continue
 
@@ -378,7 +448,8 @@ def build_pos_grouped_inventory(source) -> PosGroupedAffixInventory:
                             _merge_row_glosses(acc.inflectional, guid, glosses)
                         continue
                     placed.add(key)
-                    row = AffixRow(guid, form, glosses, "infl", pl, None, "attaches")
+                    row = AffixRow(guid, form, glosses, "infl", pl, None, "attaches",
+                                  status=entry_st)
                     if pg in acc_by_guid:
                         acc_by_guid[pg].inflectional.append(row)
                         any_placed = True
@@ -409,7 +480,8 @@ def build_pos_grouped_inventory(source) -> PosGroupedAffixInventory:
                             _merge_row_glosses(acc_by_guid[pg].inflectional, guid, glosses)
                         continue
                     placed.add(key)
-                    row = AffixRow(guid, form, glosses, "uncl", pl, None, "attaches")
+                    row = AffixRow(guid, form, glosses, "uncl", pl, None, "attaches",
+                                  status=entry_st)
                     if pg in acc_by_guid:
                         acc_by_guid[pg].inflectional.append(row)
                         any_placed = True
@@ -437,7 +509,8 @@ def build_pos_grouped_inventory(source) -> PosGroupedAffixInventory:
                         if key not in placed:
                             placed.add(key)
                             row = AffixRow(guid, form, glosses, "deriv",
-                                          from_pl, to_pl, "attaches")
+                                          from_pl, to_pl, "attaches",
+                                          status=entry_st)
                             if from_pg in acc_by_guid:
                                 acc_by_guid[from_pg].deriv_attaches.append(row)
                             else:
@@ -452,7 +525,8 @@ def build_pos_grouped_inventory(source) -> PosGroupedAffixInventory:
                         if key not in placed:
                             placed.add(key)
                             row = AffixRow(guid, form, glosses, "deriv",
-                                          from_pl, to_pl, "produces")
+                                          from_pl, to_pl, "produces",
+                                          status=entry_st)
                             if to_pg in acc_by_guid:
                                 acc_by_guid[to_pg].deriv_produces.append(row)
                             else:
@@ -474,6 +548,7 @@ def build_pos_grouped_inventory(source) -> PosGroupedAffixInventory:
             no_pos_rows.append(AffixRow(
                 entry_guid=guid, form=form, glosses=glosses,
                 msa_kind="uncl", from_pos=None, to_pos=None, role="attaches",
+                status=entry_st,
             ))
 
     # --- Freeze the hierarchy, then prune POS nodes that hold no affixes ---
@@ -559,6 +634,7 @@ def _merge_row_glosses(rows: List[AffixRow], entry_guid: str, new_glosses: str) 
                 from_pos=row.from_pos,
                 to_pos=row.to_pos,
                 role=row.role,
+                status=row.status,
             )
             return
 

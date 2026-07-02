@@ -188,6 +188,20 @@ drawer under the "no part of speech" subgroup.
   this picker (deferred to a later phase); the selection produced MUST remain
   compatible with the existing transfer plan without changes to the dependency-closure
   engine.
+- **FR-017** (added 2026-07-01): The picker MUST make clear that the user is selecting
+  **affixes**, with parts of speech serving only as grouping. POS group rows retain a
+  check control that acts as "select all affixes under this group," but the surface MUST
+  additionally: (a) carry an instruction that the pick unit is affixes and POS rows are
+  groupings; (b) annotate each POS group row with the count of affixes it contains; and
+  (c) style POS/subgroup header rows distinctly from affix rows.
+- **FR-018** (added 2026-07-01): Because the target project is bound before the picker,
+  each affix row MUST show its **target presence** against the bound target, computed at
+  pick time: NEW (its identity is absent from the target), IN TARGET (its GUID is present
+  in the target), or SIMILAR (no GUID match but a same-form affix exists in the target —
+  a possible duplicate). This column reports target *presence only*; the final
+  disposition (Add / Link / Merge / Overwrite) is NOT decided here — it depends on the
+  per-category conflict mode chosen on the later page and is resolved in Preview. When no
+  target is available the column MUST be blank (not an error).
 
 ### Key Entities *(include if feature involves data)*
 

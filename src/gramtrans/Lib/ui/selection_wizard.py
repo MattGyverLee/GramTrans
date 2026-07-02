@@ -24,7 +24,7 @@ Constitution alignment:
 """
 from __future__ import annotations
 
-from typing import Optional
+from typing import Optional, Set
 
 from PyQt6 import QtCore, QtWidgets
 
@@ -524,11 +524,36 @@ _IS_PRODUCES = QtCore.Qt.ItemDataRole.UserRole + 4  # bool: True for deriv_produ
 # Page 2 -- Item picker (POS-grouped, specs/008-affix-pos-picker)
 # ---------------------------------------------------------------------------
 
+def _count_affixes_in_node(pos_node) -> int:
+    """Return the count of distinct affix entry_guids in pos_node's whole subtree.
+
+    Counts guids in inflectional + deriv_attaches + deriv_produces at this
+    node and recursively in all children.  Deduplicates across sub-lists so
+    an entry appearing in multiple subgroups of the same node is counted once.
+    Used by FR-017(b) to annotate POS group header labels.
+    """
+    guids: Set[str] = set()
+
+    def _collect(node) -> None:
+        for row in node.inflectional:
+            guids.add(row.entry_guid)
+        for row in node.deriv_attaches:
+            guids.add(row.entry_guid)
+        for row in node.deriv_produces:
+            guids.add(row.entry_guid)
+        for child in node.children:
+            _collect(child)
+
+    _collect(pos_node)
+    return len(guids)
+
+
 class _PageItemPicker(QtWidgets.QWizardPage):
     """Page 2: POS-grouped affix item picker.
 
-    Tree layout (4 columns):
-        Col 0: Affix form -> glosses  |  Col 1: Type  |  Col 2: From  |  Col 3: To
+    Tree layout (5 columns):
+        Col 0: Affix form -> glosses  |  Col 1: Type  |  Col 2: From  |
+        Col 3: To  |  Col 4: Target
 
     POS hierarchy:
         [POS node]
@@ -578,15 +603,17 @@ class _PageItemPicker(QtWidgets.QWizardPage):
         # --- Affixes tab (POS-grouped tree) ---
         affix_tab = QtWidgets.QWidget()
         affix_tab_layout = QtWidgets.QVBoxLayout(affix_tab)
+        # FR-017(a): instruction label making clear the pick unit is affixes
         affix_tab_layout.addWidget(QtWidgets.QLabel(
-            "Check POS groups or individual affixes to include in the transfer.\n"
-            "Checking a POS group selects all affixes that attach to it "
-            "(not affixes that only produce it).",
+            "Select the affixes to transfer. "
+            "Parts of speech below are groupings only -- "
+            "checking one selects the affixes under it.",
             affix_tab,
         ))
         self._tree = QtWidgets.QTreeWidget(affix_tab)
-        self._tree.setColumnCount(4)
-        self._tree.setHeaderLabels(["Affix / Group", "Type", "From", "To"])
+        # FR-017(d): 5 columns; col 4 = Target presence
+        self._tree.setColumnCount(5)
+        self._tree.setHeaderLabels(["Affix / Group", "Type", "From", "To", "Target"])
         self._tree.header().setStretchLastSection(False)
         self._tree.setAlternatingRowColors(True)
         affix_tab_layout.addWidget(self._tree, 1)
@@ -629,8 +656,11 @@ class _PageItemPicker(QtWidgets.QWizardPage):
             empty_item.setFlags(empty_item.flags() & ~QtCore.Qt.ItemFlag.ItemIsEnabled)
             return
 
+        # FR-018(e): obtain target handle from page-0 context; guard for no-target
+        target = self._get_target()
+
         try:
-            inventory = build_pos_grouped_inventory(source)
+            inventory = build_pos_grouped_inventory(source, target=target)
         except Exception:  # noqa: BLE001
             inventory = None  # type: ignore[assignment]
 
@@ -661,6 +691,27 @@ class _PageItemPicker(QtWidgets.QWizardPage):
                     return h
             host = getattr(page0, "_host", None)
             return host
+        except Exception:  # noqa: BLE001
+            return None
+
+    def _get_target(self):
+        """Return the target project handle from page-0 context, or None.
+
+        FR-018(e): the RunContext (set when user picks a target on page 1)
+        exposes .target_handle.  If no context or no target yet, returns None
+        so the builder is called with target=None (Target column blank, no crash).
+        """
+        try:
+            wizard = self.wizard()
+            if wizard is None:
+                return None
+            page0 = wizard.page(0)
+            if page0 is None:
+                return None
+            ctx = page0.context()
+            if ctx is None:
+                return None
+            return getattr(ctx, "target_handle", None)
         except Exception:  # noqa: BLE001
             return None
 
@@ -700,14 +751,18 @@ class _PageItemPicker(QtWidgets.QWizardPage):
                     self._add_affix_row(sg2, row)
 
         self._tree.expandAll()
-        # Resize columns to content after population
-        for col in range(4):
+        # Resize columns to content after population (5 columns now)
+        for col in range(5):
             self._tree.resizeColumnToContents(col)
 
     def _add_pos_node(self, parent, pos_node) -> None:
         """Recursively add a PosNode and its subgroups/children to the tree."""
+        # FR-017(b): annotate POS group label with distinct affix count
+        affix_count = _count_affixes_in_node(pos_node)
+        affix_word = "affix" if affix_count == 1 else "affixes"
+        pos_label = f"{pos_node.label} -- {affix_count} {affix_word}"
         pos_item = self._make_group_item(
-            parent, pos_node.label,
+            parent, pos_label,
             kind="pos_group", checkable=True, is_produces_group=False,
         )
         pos_item.setData(0, _GUID_ROLE, pos_node.pos_guid)
@@ -746,11 +801,16 @@ class _PageItemPicker(QtWidgets.QWizardPage):
     def _make_group_item(self, parent, label: str, *,
                          kind: str, checkable: bool,
                          is_produces_group: bool) -> QtWidgets.QTreeWidgetItem:
-        """Create a group/header tree item."""
+        """Create a group/header tree item.
+
+        FR-017(c): header rows (pos_group and subgroup) are styled with bold
+        font so they are visually distinct from affix leaf rows.
+        """
+        # 5 columns: label, type, from, to, target (blank for headers)
         if isinstance(parent, QtWidgets.QTreeWidget):
-            item = QtWidgets.QTreeWidgetItem(parent, [label, "", "", ""])
+            item = QtWidgets.QTreeWidgetItem(parent, [label, "", "", "", ""])
         else:
-            item = QtWidgets.QTreeWidgetItem(parent, [label, "", "", ""])
+            item = QtWidgets.QTreeWidgetItem(parent, [label, "", "", "", ""])
         item.setData(0, _KIND_ROLE, kind)
         item.setData(0, _IS_PRODUCES, is_produces_group)
         if checkable:
@@ -760,6 +820,11 @@ class _PageItemPicker(QtWidgets.QWizardPage):
                 | QtCore.Qt.ItemFlag.ItemIsAutoTristate
             )
             item.setCheckState(0, QtCore.Qt.CheckState.Unchecked)
+        # FR-017(c): bold font for all header/group rows
+        from PyQt6 import QtGui
+        bold_font = item.font(0)
+        bold_font.setBold(True)
+        item.setFont(0, bold_font)
         return item
 
     def _add_affix_row(self, parent: QtWidgets.QTreeWidgetItem,
@@ -771,9 +836,16 @@ class _PageItemPicker(QtWidgets.QWizardPage):
         )
         from_label = row.from_pos if row.from_pos else ("—" if row.role == "produces" else "")
         to_label = row.to_pos if row.to_pos else ("—" if row.msa_kind == "deriv" else "")
+        # FR-017(d): Target column -- "NEW" / "IN TARGET" / "SIMILAR" / ""
+        _status_labels = {
+            "new": "NEW",
+            "in_target": "IN TARGET",
+            "similar": "SIMILAR",
+        }
+        target_label = _status_labels.get(row.status or "", "")
 
         item = QtWidgets.QTreeWidgetItem(
-            parent, [label, type_label, from_label, to_label]
+            parent, [label, type_label, from_label, to_label, target_label]
         )
         item.setData(0, _GUID_ROLE, row.entry_guid)
         item.setData(0, _KIND_ROLE, "affix")
