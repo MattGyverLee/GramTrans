@@ -4245,7 +4245,7 @@ def strata_plan_action(piece, context, ws_mapping):
 
 
 def strata_execute_action(action, context, ws_mapping, tag):
-    from SIL.LCModel import IMoStratumFactory
+    from SIL.LCModel import IMoStratumFactory, IPhRegularRule, ICmObject
     if __package__:
         from .residue import apply_carrier_b
     else:
@@ -4274,7 +4274,86 @@ def strata_execute_action(action, context, ws_mapping, tag):
         apply_carrier_b(new_stratum, cache.DefaultAnalWs, tag, strict=False)
     except Exception:
         pass
+
+    # -------------------------------------------------------------------
+    # Deferred stratum wiring: drain context._phon_rule_stratum_wiring
+    # on the LAST strata action so all target strata are present.
+    # Enqueued by phonological_rules_execute_action (cannot wire inline
+    # because PHONOLOGICAL_RULES executes before STRATA in dispatch order).
+    # -------------------------------------------------------------------
+    _run_tail_once(
+        context, target, tag,
+        "_did_phon_rule_stratum_wiring",
+        GrammarCategory.STRATA,
+        _drain_phon_rule_stratum_wiring,
+    )
+
     return new_stratum
+
+
+def _drain_phon_rule_stratum_wiring(context, target, tag):
+    """Tail-block: wire InitialStratumRA / FinalStratumRA on target rules.
+
+    Runs once after the last STRATA execute_action; by then every target
+    MoStratum created during this run is reachable via target.Strata.GetAll().
+    """
+    try:
+        from SIL.LCModel import IPhRegularRule, ICmObject
+    except ImportError:
+        return []
+    pending = getattr(context, "_phon_rule_stratum_wiring", None)
+    if not pending:
+        return []
+
+    # Build GUID -> target stratum map
+    tgt_strat_by_guid = {}
+    try:
+        for ts in target.Strata.GetAll():
+            tgt_strat_by_guid[_guid_str_from(ts)] = ts
+    except (AttributeError, TypeError):
+        pass
+
+    # Build GUID -> target rule map (look up in PhonRulesOS)
+    tgt_rule_by_guid = {}
+    try:
+        cache = getattr(target, "Cache")
+        for tr in cache.LangProject.PhonologicalDataOA.PhonRulesOS:
+            tgt_rule_by_guid[_guid_str_from(tr)] = tr
+    except (AttributeError, TypeError):
+        pass
+
+    for rule_guid, initial_sg, final_sg in pending:
+        tgt_rule = tgt_rule_by_guid.get(rule_guid)
+        if tgt_rule is None:
+            print(
+                f"[WARN] stratum wiring drain: rule guid={rule_guid} not found "
+                f"in target PhonRulesOS; stratum refs left unset"
+            )
+            continue
+        try:
+            tgt_rr = IPhRegularRule(tgt_rule)
+        except (TypeError, AttributeError):
+            continue
+        for strat_attr, sg in (("InitialStratumRA", initial_sg),
+                                ("FinalStratumRA", final_sg)):
+            if sg is None:
+                continue
+            tgt_strat = tgt_strat_by_guid.get(sg)
+            if tgt_strat is None:
+                print(
+                    f"[WARN] stratum wiring drain: rule guid={rule_guid}: "
+                    f"{strat_attr} guid={sg} not found in target strata after "
+                    f"STRATA step; left unset"
+                )
+            else:
+                try:
+                    setattr(tgt_rr, strat_attr, tgt_strat)
+                except (AttributeError, TypeError) as _e:
+                    print(
+                        f"[WARN] stratum wiring drain: rule guid={rule_guid}: "
+                        f"could not set {strat_attr}: {_e!r}"
+                    )
+    return []
 
 
 # ----- phonological_rules (memo step 5) -- WITH FR-304 dependency closure --
@@ -4357,15 +4436,69 @@ def phonological_rules_plan_action(piece, context, ws_mapping):
     )
 
 
-def phonological_rules_execute_action(action, context, ws_mapping, tag):
-    """Create rule + apply syncable properties.
+def _create_with_guid_oa(factory_iface, guid_str, target):
+    """Create a GUID-preserving LCM object WITHOUT adding it to any collection.
 
-    Because PhonologicalRuleOperations is heterogeneous across rule
-    subtypes, we use the most-permissive entry: probe the source rule's
-    ClassName to pick the right factory, fall back to the segment-rule
-    factory."""
+    Used for OA (owned-atomic) fields that are set by direct assignment rather
+    than .Add() -- specifically LeftContextOA, RightContextOA, and
+    PhSequenceContext when it acts as the OA value of those fields.
+
+    Returns new_obj.  Raises RuntimeError if the factory does not support
+    Create(Guid) (same contract as _create_with_guid).
+    """
+    from System import Guid as DotNetGuid
+    cache = getattr(target, "Cache")
+    sl = cache.ServiceLocator
+    factory = sl.GetService(factory_iface)
+    factory_name = getattr(factory_iface, "__name__", repr(factory_iface))
+    parsed_guid = DotNetGuid.Parse(guid_str)
+    try:
+        new_obj = factory.Create(parsed_guid)
+    except Exception as e:
+        raise RuntimeError(
+            f"Factory {factory_name} does not support Create(Guid); "
+            f"cannot align GUID {guid_str}"
+        ) from e
+    return new_obj
+
+
+def phonological_rules_execute_action(action, context, ws_mapping, tag):
+    """Deep-copy a PhRegularRule (and its StrucDesc/RHS/context tree) to target.
+
+    Strategy:
+    - Cast src_rule to IPhRegularRule; copy Direction scalar.
+    - CONSTRAINT PRE-PASS: for every PhFeatureConstraint referenced by NC
+      simple-contexts in this rule, create it GUID-preserving in target
+      FeatConstraintsOS (if absent) and wire FeatureRA by GUID.
+    - StrucDescOS cells: create each context GUID-preserving, .Add() to
+      new_rr.StrucDescOS preserving order.
+    - RightHandSidesOS: create each IPhSegRuleRHS GUID-preserving; copy
+      StrucChangeOS cells (RHS-owned, may be empty); assign LeftContextOA /
+      RightContextOA.
+    - Context cells branch on ClassName:
+        PhSimpleContextSeg  -> .Add() into StrucDescOS/StrucChangeOS/MembersRS
+        PhSimpleContextNC   -> same; PlusConstrRS/MinusConstrRS wired post-pass
+        PhSimpleContextBdry -> same
+        PhSequenceContext   -> created via _create_with_guid_oa (OA assignment);
+                               members created+owned in PhPhonData.ContextsOS,
+                               refs .Add()ed to MembersRS in RS order.
+        PhIterationContext  -> detect and warn; do not silently drop.
+    - InitialStratumRA / FinalStratumRA: DEFERRED -- enqueued into
+      context._phon_rule_stratum_wiring and drained in
+      _drain_phon_rule_stratum_wiring() after STRATA step completes.
+      (PHONOLOGICAL_RULES dispatches before STRATA; inline wiring would
+      always miss because target strata do not yet exist.)
+    - Dead no-op removed: new_rule.StratumRA no longer attempted.
+    """
     from SIL.LCModel import (
         IPhRegularRuleFactory, IPhSegmentRuleFactory, IPhMetathesisRuleFactory,
+        IPhRegularRule,
+        IPhSegRuleRHSFactory,
+        IPhSimpleContextSegFactory, IPhSimpleContextNCFactory,
+        IPhSimpleContextBdryFactory, IPhSequenceContextFactory,
+        IPhSimpleContextSeg, IPhSimpleContextNC, IPhSimpleContextBdry,
+        IPhSequenceContext,
+        IPhFeatureConstraintFactory,
         ICmObject,
     )
     if __package__:
@@ -4378,10 +4511,7 @@ def phonological_rules_execute_action(action, context, ws_mapping, tag):
     src_rule = None
     for r in source.PhonRules.GetAll():
         if _guid_str_from(r) == src_guid:
-            # PhonRules.GetAll() yields flexicon PhonologicalRule wrappers
-            # (RuleCollection). Unwrap to the raw LCM object so ClassName
-            # detection, StratumRA, and sync operate on the real object
-            # rather than the wrapper (whose ICmObject cast fails).
+            # PhonRules.GetAll() yields flexicon wrappers; unwrap to raw LCM.
             src_rule = getattr(r, "_obj", r)
             break
     if src_rule is None:
@@ -4400,28 +4530,426 @@ def phonological_rules_execute_action(action, context, ws_mapping, tag):
     new_rule, _preserved = _create_with_guid(
         factory_iface, owner, src_guid, target,
     )
+    # Apply flat syncable properties (Name, Description, Disabled).
+    # This may NotImplementedError for some subtypes; that is non-fatal --
+    # the deep-copy below runs regardless.
     try:
         props = source.PhonRules.GetSyncableProperties(src_rule)
         target.PhonRules.ApplySyncableProperties(new_rule, props, ws_map=ws_mapping)
     except Exception:
-        # PhonologicalRuleOperations does not implement GetSyncableProperties
-        # (flexicon exposes only GetAll), so the base class raises
-        # NotImplementedError -- which (AttributeError, TypeError) would NOT
-        # catch, re-failing the action after the rule shell was created.
-        # Mirror phonemes_execute_action: degrade to a GUID-preserving create
-        # rather than aborting. See flexicon#222 for the sync-method gap.
         pass
-    # Wire StratumRA if present.
+
+    # Only PhRegularRule has the full StrucDesc/RHS tree.
+    if class_name != "PhRegularRule":
+        try:
+            apply_carrier_b(new_rule, cache.DefaultAnalWs, tag, strict=False)
+        except Exception:
+            pass
+        return new_rule
+
+    # --- Cast to typed interfaces ---
     try:
-        src_stratum = src_rule.StratumRA
-        if src_stratum is not None:
-            src_stratum_guid = str(ICmObject(src_stratum).Guid).lower()
-            for tgt_stratum in target.Strata.GetAll():
-                if str(ICmObject(tgt_stratum).Guid).lower() == src_stratum_guid:
-                    new_rule.StratumRA = tgt_stratum
-                    break
+        src_rr = IPhRegularRule(src_rule)
+        new_rr = IPhRegularRule(new_rule)
+    except (TypeError, AttributeError):
+        # Can't cast; rule shell is all we can produce.
+        try:
+            apply_carrier_b(new_rule, cache.DefaultAnalWs, tag, strict=False)
+        except Exception:
+            pass
+        return new_rule
+
+    # --- Copy Direction scalar ---
+    try:
+        new_rr.Direction = src_rr.Direction
     except (AttributeError, TypeError):
         pass
+
+    # -----------------------------------------------------------------------
+    # Build GUID-keyed lookup dicts (built once, used throughout).
+    # -----------------------------------------------------------------------
+    tgt_phon_data = cache.LangProject.PhonologicalDataOA
+
+    tgt_phoneme_by_guid = {
+        _guid_str_from(p): p
+        for p in target.Phonemes.GetAll()
+    }
+    tgt_nc_by_guid = {
+        _guid_str_from(nc): nc
+        for nc in target.NaturalClasses.GetAll()
+    }
+    # Boundary markers live in PhonemeSetsOS[*].BoundaryMarkersOC (owned
+    # COLLECTION -- note OC, not OS; using OS raises AttributeError at runtime).
+    tgt_bdry_by_guid = {}
+    try:
+        for ps in tgt_phon_data.PhonemeSetsOS:
+            try:
+                for bm in ps.BoundaryMarkersOC:
+                    tgt_bdry_by_guid[_guid_str_from(bm)] = bm
+            except AttributeError as _bm_err:
+                print(
+                    f"[ERROR] phonological_rules: ps.BoundaryMarkersOC raised "
+                    f"{_bm_err!r} -- attribute name wrong or LCM version mismatch; "
+                    f"boundary-marker lookup will be empty"
+                )
+                raise
+    except (AttributeError, TypeError) as _outer_err:
+        # Only suppress genuine absence of PhonemeSetsOS (null phon data),
+        # not an OC/OS attribute typo (already logged above).
+        pass
+    # PhonRuleFeats (for Req/ExclRuleFeatsRC)
+    tgt_phon_rule_feat_by_guid = {}
+    try:
+        for prf in tgt_phon_data.PhonRuleFeatsOA:
+            tgt_phon_rule_feat_by_guid[_guid_str_from(prf)] = prf
+    except (AttributeError, TypeError):
+        pass
+
+    # -----------------------------------------------------------------------
+    # CONSTRAINT PRE-PASS
+    # For every PhFeatureConstraint referenced by NC simple-contexts in this
+    # rule (via PlusConstrRS / MinusConstrRS), ensure it exists in target
+    # FeatConstraintsOS before context cells are wired.
+    # "Present by GUID" = the target FeatConstraintsOS already has an object
+    # whose GUID (via ICmObject cast) matches the source constraint GUID.
+    # If absent, create GUID-preserving and set FeatureRA by GUID lookup.
+    # -----------------------------------------------------------------------
+    tgt_constraint_by_guid = {
+        _guid_str_from(c): c
+        for c in tgt_phon_data.FeatConstraintsOS
+    }
+    # Source FsClosedFeature lookup (features already transferred)
+    tgt_feat_by_guid = {}
+    try:
+        for f in target.PhonFeatures.GetAll():
+            tgt_feat_by_guid[_guid_str_from(f)] = f
+    except (AttributeError, TypeError):
+        pass
+
+    def _collect_nc_constraints(context_seq):
+        """Yield (constraint_obj, constraint_guid) from NC contexts in seq."""
+        for cell in context_seq:
+            try:
+                cn = ICmObject(cell).ClassName
+            except (AttributeError, TypeError):
+                cn = ""
+            if cn == "PhSimpleContextNC":
+                try:
+                    nc_ctx = IPhSimpleContextNC(cell)
+                    for constr in list(nc_ctx.PlusConstrRS) + list(nc_ctx.MinusConstrRS):
+                        yield constr, _guid_str_from(constr)
+                except (AttributeError, TypeError):
+                    pass
+
+    def _pre_pass_constraints_from_seq(seq):
+        for constr, cg in _collect_nc_constraints(seq):
+            if cg not in tgt_constraint_by_guid:
+                # Create GUID-preserving in FeatConstraintsOS
+                try:
+                    new_constr, _ = _create_with_guid(
+                        IPhFeatureConstraintFactory,
+                        tgt_phon_data.FeatConstraintsOS,
+                        cg, target,
+                    )
+                    # Wire FeatureRA
+                    try:
+                        src_feat_ra = constr.FeatureRA
+                        if src_feat_ra is not None:
+                            feat_guid = _guid_str_from(src_feat_ra)
+                            tgt_feat = tgt_feat_by_guid.get(feat_guid)
+                            if tgt_feat is not None:
+                                new_constr.FeatureRA = tgt_feat
+                            else:
+                                print(
+                                    f"[WARN] phonological_rules constraint pre-pass: "
+                                    f"FsClosedFeature guid={feat_guid} not in target; "
+                                    f"constraint guid={cg} created without FeatureRA"
+                                )
+                    except (AttributeError, TypeError):
+                        pass
+                    tgt_constraint_by_guid[cg] = new_constr
+                except RuntimeError as e:
+                    print(
+                        f"[WARN] phonological_rules constraint pre-pass: "
+                        f"failed to create constraint guid={cg}: {e!r}"
+                    )
+
+    # Run pre-pass over StrucDescOS and all RHS contexts
+    try:
+        _pre_pass_constraints_from_seq(src_rr.StrucDescOS)
+    except (AttributeError, TypeError):
+        pass
+    try:
+        for src_rhs in src_rr.RightHandSidesOS:
+            for attr in ("StrucChangeOS", "LeftContextOA", "RightContextOA"):
+                try:
+                    val = getattr(src_rhs, attr, None)
+                    if val is None:
+                        continue
+                    # OA returns a single object; OS is iterable
+                    if attr.endswith("OA"):
+                        # May itself be a sequence
+                        try:
+                            cn = ICmObject(val).ClassName
+                            if cn == "PhSequenceContext":
+                                seq_ctx = IPhSequenceContext(val)
+                                _pre_pass_constraints_from_seq(seq_ctx.MembersRS)
+                            else:
+                                _pre_pass_constraints_from_seq([val])
+                        except (AttributeError, TypeError):
+                            pass
+                    else:
+                        _pre_pass_constraints_from_seq(val)
+                except (AttributeError, TypeError):
+                    pass
+    except (AttributeError, TypeError):
+        pass
+
+    # -----------------------------------------------------------------------
+    # Helper: create a context cell and populate its ref fields.
+    # owner_collection = the OS/collection it is OWNED by (.Add() called).
+    # Returns the new cell.
+    # -----------------------------------------------------------------------
+    def _copy_context_cell(src_cell, owner_collection):
+        """Create one context cell GUID-preserving into owner_collection."""
+        cell_guid = _guid_str_from(src_cell)
+        try:
+            cn = ICmObject(src_cell).ClassName
+        except (AttributeError, TypeError):
+            cn = "PhSimpleContextSeg"
+
+        if cn == "PhSimpleContextSeg":
+            new_cell, _ = _create_with_guid(
+                IPhSimpleContextSegFactory, owner_collection, cell_guid, target
+            )
+            # Wire FeatureStructureRA -> target phoneme
+            try:
+                src_feat_struct = IPhSimpleContextSeg(src_cell).FeatureStructureRA
+                if src_feat_struct is not None:
+                    fg = _guid_str_from(src_feat_struct)
+                    tgt_phon = tgt_phoneme_by_guid.get(fg)
+                    if tgt_phon is None:
+                        raise RuntimeError(
+                            f"PhSimpleContextSeg guid={cell_guid} references "
+                            f"phoneme guid={fg} absent from target"
+                        )
+                    IPhSimpleContextSeg(new_cell).FeatureStructureRA = tgt_phon
+            except RuntimeError:
+                raise
+            except (AttributeError, TypeError):
+                pass
+
+        elif cn == "PhSimpleContextNC":
+            new_cell, _ = _create_with_guid(
+                IPhSimpleContextNCFactory, owner_collection, cell_guid, target
+            )
+            nc_src = IPhSimpleContextNC(src_cell)
+            nc_new = IPhSimpleContextNC(new_cell)
+            # Wire FeatureStructureRA -> target NC
+            try:
+                src_nc_ref = nc_src.FeatureStructureRA
+                if src_nc_ref is not None:
+                    ng = _guid_str_from(src_nc_ref)
+                    tgt_nc = tgt_nc_by_guid.get(ng)
+                    if tgt_nc is None:
+                        raise RuntimeError(
+                            f"PhSimpleContextNC guid={cell_guid} references "
+                            f"NC guid={ng} absent from target"
+                        )
+                    nc_new.FeatureStructureRA = tgt_nc
+            except RuntimeError:
+                raise
+            except (AttributeError, TypeError):
+                pass
+            # Wire PlusConstrRS / MinusConstrRS (constraint pre-pass ensures present)
+            for rs_attr in ("PlusConstrRS", "MinusConstrRS"):
+                try:
+                    src_rs = getattr(nc_src, rs_attr, None)
+                    new_rs = getattr(nc_new, rs_attr, None)
+                    if src_rs is None or new_rs is None:
+                        continue
+                    for src_c in src_rs:
+                        cg = _guid_str_from(src_c)
+                        tgt_c = tgt_constraint_by_guid.get(cg)
+                        if tgt_c is None:
+                            raise RuntimeError(
+                                f"PhSimpleContextNC guid={cell_guid} references "
+                                f"constraint guid={cg} absent from target after pre-pass"
+                            )
+                        new_rs.Add(tgt_c)
+                except RuntimeError:
+                    raise
+                except (AttributeError, TypeError):
+                    pass
+
+        elif cn == "PhSimpleContextBdry":
+            new_cell, _ = _create_with_guid(
+                IPhSimpleContextBdryFactory, owner_collection, cell_guid, target
+            )
+            try:
+                src_feat_struct = IPhSimpleContextBdry(src_cell).FeatureStructureRA
+                if src_feat_struct is not None:
+                    bg = _guid_str_from(src_feat_struct)
+                    tgt_bm = tgt_bdry_by_guid.get(bg)
+                    if tgt_bm is None:
+                        print(
+                            f"[WARN] PhSimpleContextBdry guid={cell_guid}: "
+                            f"boundary marker guid={bg} absent from target; "
+                            f"FeatureStructureRA left unset"
+                        )
+                    else:
+                        IPhSimpleContextBdry(new_cell).FeatureStructureRA = tgt_bm
+            except (AttributeError, TypeError):
+                pass
+
+        elif cn == "PhSequenceContext":
+            # Sequence is OA-owned by the field that contains it; we still
+            # need to create it via factory before assigning -- but the
+            # sequence's MEMBERS are owned in PhPhonData.ContextsOS.
+            # owner_collection here is the parent OS (StrucDescOS / StrucChangeOS);
+            # we create the sequence as an OA of the parent OS item, so we
+            # create it and add it to owner_collection.
+            new_cell = _create_with_guid_oa(
+                IPhSequenceContextFactory, cell_guid, target
+            )
+            owner_collection.Add(new_cell)
+            seq_src = IPhSequenceContext(src_cell)
+            seq_new = IPhSequenceContext(new_cell)
+            # Members are owned in PhPhonData.ContextsOS
+            contexts_os = tgt_phon_data.ContextsOS
+            for member in seq_src.MembersRS:
+                member_cell = _copy_context_cell(member, contexts_os)
+                seq_new.MembersRS.Add(member_cell)
+
+        else:
+            # PhIterationContext or unknown -- warn, do not drop silently
+            print(
+                f"[WARN] unhandled context type ClassName={cn!r} "
+                f"guid={cell_guid} in rule guid={src_guid}; skipped"
+            )
+            return None
+
+        return new_cell
+
+    # -----------------------------------------------------------------------
+    # StrucDescOS (rule-owned context cells)
+    # -----------------------------------------------------------------------
+    try:
+        for src_cell in src_rr.StrucDescOS:
+            _copy_context_cell(src_cell, new_rr.StrucDescOS)
+    except (AttributeError, TypeError):
+        pass
+
+    # -----------------------------------------------------------------------
+    # RightHandSidesOS
+    # -----------------------------------------------------------------------
+    def _copy_rhs_oa_context(src_ctx_oa, new_rhs, attr_name):
+        """Copy an OA context (LeftContextOA / RightContextOA) onto new_rhs."""
+        if src_ctx_oa is None:
+            return
+        ctx_guid = _guid_str_from(src_ctx_oa)
+        try:
+            cn = ICmObject(src_ctx_oa).ClassName
+        except (AttributeError, TypeError):
+            cn = "PhSimpleContextSeg"
+
+        if cn == "PhSequenceContext":
+            # Sequence is OA; create it and assign; members go into ContextsOS.
+            new_seq = _create_with_guid_oa(IPhSequenceContextFactory, ctx_guid, target)
+            setattr(new_rhs, attr_name, new_seq)
+            seq_src = IPhSequenceContext(src_ctx_oa)
+            seq_new = IPhSequenceContext(new_seq)
+            contexts_os = tgt_phon_data.ContextsOS
+            for member in seq_src.MembersRS:
+                member_cell = _copy_context_cell(member, contexts_os)
+                if member_cell is not None:
+                    seq_new.MembersRS.Add(member_cell)
+        elif cn == "PhIterationContext":
+            print(
+                f"[WARN] unhandled PhIterationContext guid={ctx_guid} "
+                f"in rule guid={src_guid} at {attr_name}; skipped"
+            )
+        else:
+            # Simple context -- OA field: create into ContextsOS, then assign.
+            contexts_os = tgt_phon_data.ContextsOS
+            new_cell = _copy_context_cell(src_ctx_oa, contexts_os)
+            if new_cell is not None:
+                setattr(new_rhs, attr_name, new_cell)
+
+    try:
+        for src_rhs in src_rr.RightHandSidesOS:
+            rhs_guid = _guid_str_from(src_rhs)
+            new_rhs, _ = _create_with_guid(
+                IPhSegRuleRHSFactory, new_rr.RightHandSidesOS, rhs_guid, target
+            )
+            # StrucChangeOS (RHS-owned; may be empty for deletion rules)
+            try:
+                for src_cell in src_rhs.StrucChangeOS:
+                    _copy_context_cell(src_cell, new_rhs.StrucChangeOS)
+            except (AttributeError, TypeError):
+                pass
+            # LeftContextOA / RightContextOA
+            for oa_attr in ("LeftContextOA", "RightContextOA"):
+                try:
+                    src_oa = getattr(src_rhs, oa_attr, None)
+                    if src_oa is not None:
+                        _copy_rhs_oa_context(src_oa, new_rhs, oa_attr)
+                except (AttributeError, TypeError):
+                    pass
+            # Req/ExclRuleFeatsRC
+            for rc_attr in ("InputPOSesRC", "ReqRuleFeatsRC", "ExclRuleFeatsRC"):
+                try:
+                    src_rc = getattr(src_rhs, rc_attr, None)
+                    new_rc = getattr(new_rhs, rc_attr, None)
+                    if src_rc is None or new_rc is None:
+                        continue
+                    for src_item in src_rc:
+                        ig = _guid_str_from(src_item)
+                        tgt_item = tgt_phon_rule_feat_by_guid.get(ig)
+                        if tgt_item is not None:
+                            new_rc.Add(tgt_item)
+                        else:
+                            print(
+                                f"[WARN] rule guid={src_guid} RHS guid={rhs_guid} "
+                                f"{rc_attr} item guid={ig} absent from target; skipped"
+                            )
+                except (AttributeError, TypeError):
+                    pass
+    except (AttributeError, TypeError):
+        pass
+
+    # -----------------------------------------------------------------------
+    # InitialStratumRA / FinalStratumRA -- DEFERRED wiring.
+    # Leaf dispatch order is PH_ENVIRONMENT -> PHONOLOGICAL_RULES -> STRATA,
+    # so target strata do not yet exist when rules execute.  Enqueue a
+    # (rule_guid, initial_stratum_guid, final_stratum_guid) tuple into
+    # context._phon_rule_stratum_wiring; the drain runs in
+    # strata_execute_action's tail block after all strata are copied.
+    # -----------------------------------------------------------------------
+    deferred_initial_sg = None
+    deferred_final_sg = None
+    for strat_attr, slot in (("InitialStratumRA", "initial"), ("FinalStratumRA", "final")):
+        try:
+            src_strat = getattr(src_rr, strat_attr, None)
+            if src_strat is None:
+                continue
+            sg = str(ICmObject(src_strat).Guid).lower()
+            if slot == "initial":
+                deferred_initial_sg = sg
+            else:
+                deferred_final_sg = sg
+        except (AttributeError, TypeError):
+            pass
+    if deferred_initial_sg is not None or deferred_final_sg is not None:
+        pending = getattr(context, "_phon_rule_stratum_wiring", None)
+        if pending is None:
+            pending = []
+            try:
+                object.__setattr__(context, "_phon_rule_stratum_wiring", pending)
+            except (AttributeError, TypeError):
+                pass
+        pending.append((src_guid, deferred_initial_sg, deferred_final_sg))
+
     try:
         apply_carrier_b(new_rule, cache.DefaultAnalWs, tag, strict=False)
     except Exception:
