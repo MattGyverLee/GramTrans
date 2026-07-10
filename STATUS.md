@@ -1,5 +1,29 @@
 # GramTrans — Session Handoff
 
+## ▶▶▶ Phonological-rule deep-copy fix — CREW-APPROVED & COMMITTED (2026-07-09)
+
+**Commit**: `3792e6d` on `main` — `fix(gram): deep-copy phonological rule bodies +
+wire boundary FeatureStructureRA` (`categories.py`, +553/-25).
+**Problem**: phonological rules (IPhRegularRule) transferred as empty **shells**
+(name/description only, no body) — confirmed live in FLEx. Root cause: the old
+`phonological_rules_execute_action` relied on flexicon's absent
+`GetSyncableProperties` inside a swallowing `except: pass`, and sync-props never
+carry owned children anyway.
+**Fix**: recursive deep-copy of the rule body — StrucDesc cells, per-RHS
+StrucChange + Left/Right contexts, `PhSequenceContext` members owned into
+`PhPhonData.ContextsOS`, and a GUID-preserving `PhFeatureConstraint` pre-pass into
+`FeatConstraintsOS` (57 constraints; nothing else copied them). Fixed
+`BoundaryMarkersOS`→`BoundaryMarkersOC` (on IPhPhonemeSet) + hardened the except to
+fail loud; removed dead `StratumRA` no-op and deferred `Initial/FinalStratumRA`
+wiring via a tail-once drain after the STRATA step.
+**Verified live** (Mbugwe LizzieHC practice → Target, LEX crew 5 cycles): 39/39
+content-parity, 0 shells, 57 constraints wired (0 null), 24/24 boundary cells,
+5/5 assertions PASS.
+**Tracked follow-ups** (filed): **#25** (P1 — compound/adhoc rules likely copy as
+shells, same defect class; needs an exo-compound test corpus), **#26** (P2 —
+PhIterationContext not deep-copied, 5 rules incomplete, WARN-visible), **#27** (P3 —
+wrong-default class_name on cast failure).
+
 ## ▶▶▶ Feature 022 — Disposition Model (LINK/UPDATE/OVERWRITE + IGNORE/SKIP) CREW-APPROVED & MERGED (2026-07-05)
 
 **Spec**: [specs/022-disposition-model/](specs/022-disposition-model/) — spec + plan + tasks (33).
