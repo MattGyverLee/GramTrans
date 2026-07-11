@@ -2833,6 +2833,61 @@ def _resolve_target_pos(target, src_pos_guid):
     return None
 
 
+def _resolve_possibility_by_guid(possibility_list, guid):
+    """Return the CmPossibility in `possibility_list` (an ICmPossibilityList)
+    whose GUID matches `guid`, walking SubPossibilitiesOS recursively, or None.
+
+    Shared by the object-reference re-wire helpers below. Reference properties
+    that point at a possibility-list item (MorphTypeRA, StatusRA, ...) are
+    emitted by flexicon's GetSyncableProperties as a GUID *string*, and the
+    generic ApplySyncableProperties apply-loop cannot assign a string to an
+    object-reference property -- it skips it silently. The caller must therefore
+    re-wire the reference explicitly by resolving the GUID against the target
+    list, which is what these helpers do (the sibling Lib/transfer.py path
+    already does this for MorphTypeRA)."""
+    if not guid or possibility_list is None:
+        return None
+
+    def _walk(possibilities):
+        for poss in possibilities:
+            if _guid_str_from(poss) == guid:
+                return poss
+            subs = getattr(poss, "SubPossibilitiesOS", None)
+            if subs:
+                found = _walk(subs)
+                if found is not None:
+                    return found
+        return None
+
+    return _walk(possibility_list.PossibilitiesOS)
+
+
+def _resolve_target_morph_type(target, src_mt_guid):
+    """Return the target IMoMorphType whose GUID matches `src_mt_guid`, or None.
+
+    Morph types live in the global (shared) list at
+    LangProject.LexDbOA.MorphTypesOA and carry identical GUIDs across every FW
+    project, so a straight GUID lookup resolves them."""
+    try:
+        morph_types_list = target.Cache.LangProject.LexDbOA.MorphTypesOA
+    except AttributeError:
+        return None
+    return _resolve_possibility_by_guid(morph_types_list, src_mt_guid)
+
+
+def _resolve_target_status(target, src_status_guid):
+    """Return the target sense-Status CmPossibility whose GUID matches
+    `src_status_guid`, or None. Status items live in LangProject.StatusOA; the
+    default Confirmed/Tentative/Disproved items carry well-known GUIDs shared
+    across projects (a project-specific custom status simply won't resolve, and
+    the reference is left unset -- same fail-soft posture as MorphTypeRA)."""
+    try:
+        status_list = target.Cache.LangProject.StatusOA
+    except AttributeError:
+        return None
+    return _resolve_possibility_by_guid(status_list, src_status_guid)
+
+
 def _dispatch_msa_subclass(class_name):
     """Return the MSA subclass tag driving execute-time creation dispatch (E4).
 
@@ -2935,6 +2990,17 @@ def _walk_lex_entry_closure(src_entry, context, tag, category):
             target.Senses.ApplySyncableProperties(new_sense, sprops, ws_map=ws_map)
         except (AttributeError, TypeError):
             pass
+        # StatusRA is an object reference dropped by ApplySyncableProperties
+        # (emitted as a GUID string); re-wire it explicitly by GUID -- same
+        # bug class as the allomorph MorphTypeRA fix.
+        src_status = getattr(src_sense, "StatusRA", None)
+        if src_status is not None:
+            tgt_status = _resolve_target_status(target, _guid_str_from(src_status))
+            if tgt_status is not None:
+                try:
+                    new_sense.StatusRA = tgt_status
+                except (AttributeError, TypeError):
+                    pass
         # MSA for this sense (create once per source MSA guid).
         src_msa = getattr(src_sense, "MorphoSyntaxAnalysisRA", None)
         if src_msa is not None:
@@ -3001,6 +3067,18 @@ def _walk_entry_allomorphs(src_entry, new_entry, context, tag, identity_remap):
             target.Allomorphs.ApplySyncableProperties(new_allo, aprops, ws_map=ws_map)
         except (AttributeError, TypeError):
             pass
+        # MorphTypeRA is an object reference; ApplySyncableProperties emits it as
+        # a GUID string and its apply-loop drops object-references silently (see
+        # _resolve_target_morph_type). Wire it explicitly by GUID so the target
+        # entry shows the correct morph type instead of a blank one.
+        src_mt = getattr(src_allo, "MorphTypeRA", None)
+        if src_mt is not None:
+            tgt_mt = _resolve_target_morph_type(target, _guid_str_from(src_mt))
+            if tgt_mt is not None:
+                try:
+                    new_allo.MorphTypeRA = tgt_mt
+                except (AttributeError, TypeError):
+                    pass
         apply_residue(new_allo, ws, tag)
 
     lf = getattr(src_entry, "LexemeFormOA", None)
