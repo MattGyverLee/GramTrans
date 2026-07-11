@@ -232,6 +232,102 @@ def test_phonological_rules_dependencies_returns_tuple():
     assert isinstance(deps, tuple)
 
 
+# --- traversal test with an injected fake SIL.LCModel -----------------------
+# The real dependency walk imports typed interfaces from SIL.LCModel and casts
+# rule/context cells through them.  Outside a live LCM runtime that import
+# fails and the function returns () (covered above).  Here we inject a fake
+# SIL.LCModel whose interface names are identity casts, so the traversal logic
+# itself is exercised against a hand-built PhRegularRule graph.
+
+class _PhCell:
+    """Fake context cell: ClassName drives branch selection; FeatureStructureRA
+    is the phoneme/NC/boundary target; MembersRS holds sub-cells (sequence)."""
+
+    def __init__(self, class_name, guid=None, feature=None, members=None):
+        self.ClassName = class_name
+        self.guid = guid
+        self.FeatureStructureRA = feature
+        self.MembersRS = list(members) if members else []
+
+
+class _PhRef:
+    """Fake referenced target (phoneme / natural class / stratum)."""
+
+    def __init__(self, guid):
+        self.guid = guid
+
+
+class _PhRHS:
+    def __init__(self, struc_change=None, left=None, right=None):
+        self.StrucChangeOS = list(struc_change) if struc_change else []
+        self.LeftContextOA = left
+        self.RightContextOA = right
+
+
+class _PhRule:
+    def __init__(self, struc_desc, rhs_list, initial=None, final=None):
+        self.StrucDescOS = list(struc_desc)
+        self.RightHandSidesOS = list(rhs_list)
+        self.InitialStratumRA = initial
+        self.FinalStratumRA = final
+
+
+@pytest.fixture
+def _fake_lcmodel(monkeypatch):
+    import sys
+    import types
+
+    identity = lambda x: x  # noqa: E731 -- cast interfaces are identity in tests
+    fake = types.ModuleType("SIL.LCModel")
+    for name in (
+        "IPhSegmentRule", "IPhRegularRule",
+        "IPhSimpleContextSeg", "IPhSimpleContextNC", "IPhSequenceContext",
+        "ICmObject",
+    ):
+        setattr(fake, name, identity)
+    sil = types.ModuleType("SIL")
+    sil.LCModel = fake
+    monkeypatch.setitem(sys.modules, "SIL", sil)
+    monkeypatch.setitem(sys.modules, "SIL.LCModel", fake)
+    return fake
+
+
+def test_phonological_rules_dependencies_collects_phoneme_nc_stratum(_fake_lcmodel):
+    """Regression: the walk must surface every phoneme/NC/stratum the rule
+    references -- via StrucDescOS, per-RHS StrucChangeOS/Left/RightContextOA,
+    and PhSequenceContext members -- so the closure pulls them in before the
+    rule executes.  Boundary markers are NOT hard dependencies."""
+    struc_desc = [
+        _PhCell("PhSimpleContextSeg", "seg-a", feature=_PhRef("p1")),
+        _PhCell("PhSimpleContextNC", "nc-a", feature=_PhRef("nc1")),
+        _PhCell("PhSimpleContextBdry", "bdry-a", feature=_PhRef("b1")),
+        _PhCell("PhSequenceContext", "seq-a", members=[
+            _PhCell("PhSimpleContextSeg", "seg-b", feature=_PhRef("p2")),
+        ]),
+    ]
+    rhs = _PhRHS(
+        struc_change=[_PhCell("PhSimpleContextSeg", "seg-c", feature=_PhRef("p3"))],
+        left=_PhCell("PhSimpleContextNC", "nc-b", feature=_PhRef("nc2")),
+        right=_PhCell("PhSequenceContext", "seq-b", members=[
+            _PhCell("PhSimpleContextSeg", "seg-d", feature=_PhRef("p4")),
+        ]),
+    )
+    rule = _PhRule(struc_desc, [rhs],
+                   initial=_PhRef("s1"), final=_PhRef("s2"))
+
+    deps = set(categories.phonological_rules_dependencies(rule))
+
+    assert deps == {"p1", "p2", "p3", "p4", "nc1", "nc2", "s1", "s2"}
+    # Boundary markers are handled (WARN-only) inside execute, not a hard dep.
+    assert "b1" not in deps
+
+
+def test_phonological_rules_dependencies_empty_rule(_fake_lcmodel):
+    """A rule with no context cells and no strata yields no dependencies."""
+    rule = _PhRule([], [_PhRHS()])
+    assert categories.phonological_rules_dependencies(rule) == ()
+
+
 def test_phonological_rules_plan_action_emits_planned_for_new_guid():
     src = _project(PhonRules=[_Item("r-1")])
     tgt = _project(PhonRules=[])

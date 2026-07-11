@@ -4446,56 +4446,122 @@ def phonological_rules_required_writing_systems(piece):
 
 
 def phonological_rules_dependencies(piece):
-    """FR-304: walk rule's input/output segments + contexts + stratum, return
-    every referenced GUID. The planner uses this to emit
-    Skip(DEPENDENCY_UNRESOLVED) when references don't resolve."""
+    """FR-304: return GUIDs of the phonemes, natural classes, and strata a
+    phonological rule references, so the planner's closure pulls them in (or
+    emits Skip(DEPENDENCY_UNRESOLVED)) BEFORE the rule executes.
+
+    The rule body is a PhRegularRule (base IPhSegmentRule): input context cells
+    live in ``StrucDescOS``, and each right-hand side (IPhSegRuleRHS) owns
+    ``StrucChangeOS`` + ``LeftContextOA`` / ``RightContextOA``.  Every leaf
+    context cell points at its target via ``FeatureStructureRA``:
+      - PhSimpleContextSeg  -> a phoneme (IPhPhoneme)
+      - PhSimpleContextNC   -> a natural class (IPhNaturalClass)
+      - PhSimpleContextBdry -> a boundary marker
+      - PhSequenceContext   -> a sequence whose ``MembersRS`` are more cells
+    This mirrors ``_copy_context_cell`` in phonological_rules_execute_action.
+
+    Only PhSimpleContextSeg / PhSimpleContextNC references make execute RAISE
+    (RuntimeError -> silently swallowed by the leaf-dispatch loop, leaving a
+    name/description-only shell) when the target lacks them, so those are the
+    hard dependencies.  Strata mirror the deferred Initial/FinalStratumRA
+    wiring.  Boundary markers and PhFeatureConstraints are deliberately NOT
+    returned: execute creates constraints inline (GUID-preserving pre-pass) and
+    only WARNs on a missing boundary marker, so surfacing them here would emit
+    spurious DEPENDENCY_UNRESOLVED skips that block an otherwise-copyable rule.
+
+    Historical defect (fixed here): the previous walk cast to a non-existent
+    ``IPhPhonologicalRule`` interface and read ``StratumRA`` plus
+    ``InitialAttributesOA`` / ``FinalAttributesOA`` / ``MembersRS`` /
+    ``SegmentsRC`` / ``FeaturesOA`` / ``InputOS`` / ``OutputOS`` -- none of
+    which are real fields on a segment rule.  It surfaced no phoneme/NC refs at
+    all, so rules planned against a target missing those phonemes were created
+    as shells and their bodies silently dropped.
+    """
     try:
-        from SIL.LCModel import IPhPhonologicalRule, ICmObject
+        from SIL.LCModel import (
+            IPhSegmentRule, IPhRegularRule,
+            IPhSimpleContextSeg, IPhSimpleContextNC, IPhSequenceContext,
+            ICmObject,
+        )
     except ImportError:
         return ()
-    refs = []
-    try:
-        rule = IPhPhonologicalRule(piece)
-    except (TypeError, AttributeError):
-        return ()
-    # Stratum
-    try:
-        stratum = rule.StratumRA
-        if stratum is not None:
-            refs.append(str(ICmObject(stratum).Guid).lower())
-    except (AttributeError, TypeError):
-        pass
-    # The rule's left/right children carry the segment + context refs.
-    # We surface a best-effort walk; the planner's dependency check
-    # consults target state + in-flight plan for resolution.
-    try:
-        for child_attr in ("InitialAttributesOA", "FinalAttributesOA",
-                           "RightHandSidesOS", "LeftContextOA",
-                           "RightContextOA"):
-            child = getattr(rule, child_attr, None)
-            if child is None:
-                continue
+
+    raw = getattr(piece, "_obj", getattr(piece, "concrete", piece))
+    refs: list[str] = []
+
+    def _add(obj):
+        if obj is None:
+            return
+        g = _guid_str_from(obj)
+        if g and g not in refs:
+            refs.append(g)
+
+    def _collect_cell(cell):
+        """Collect phoneme/NC ref GUIDs from one context cell, recursing into
+        PhSequenceContext members.  Mirrors _copy_context_cell's ClassName
+        branching; boundary cells contribute no hard dependency."""
+        if cell is None:
+            return
+        try:
+            cn = ICmObject(cell).ClassName
+        except (AttributeError, TypeError):
+            return
+        if cn == "PhSimpleContextSeg":
             try:
-                # Drill into the child's reference fields if present.
-                for ref_attr in ("MembersRS", "SegmentsRC",
-                                 "FeaturesOA", "InputOS", "OutputOS"):
-                    val = getattr(child, ref_attr, None)
-                    if val is None:
-                        continue
-                    # Iterable of refs?
-                    try:
-                        for v in val:
-                            refs.append(str(ICmObject(v).Guid).lower())
-                    except (TypeError, AttributeError):
-                        # Single ref
-                        try:
-                            refs.append(str(ICmObject(val).Guid).lower())
-                        except (TypeError, AttributeError):
-                            pass
+                _add(IPhSimpleContextSeg(cell).FeatureStructureRA)
             except (AttributeError, TypeError):
                 pass
-    except (AttributeError, TypeError):
-        pass
+        elif cn == "PhSimpleContextNC":
+            try:
+                _add(IPhSimpleContextNC(cell).FeatureStructureRA)
+            except (AttributeError, TypeError):
+                pass
+        elif cn == "PhSequenceContext":
+            try:
+                for member in IPhSequenceContext(cell).MembersRS:
+                    _collect_cell(member)
+            except (AttributeError, TypeError):
+                pass
+        # PhSimpleContextBdry / PhIterationContext / unknown: no hard dep.
+
+    # --- segment-rule level: StrucDescOS + Initial/FinalStratumRA ---
+    try:
+        seg = IPhSegmentRule(raw)
+    except (TypeError, AttributeError):
+        seg = None
+    if seg is not None:
+        try:
+            for cell in seg.StrucDescOS:
+                _collect_cell(cell)
+        except (AttributeError, TypeError):
+            pass
+        for strat_attr in ("InitialStratumRA", "FinalStratumRA"):
+            try:
+                _add(getattr(seg, strat_attr, None))
+            except (AttributeError, TypeError):
+                pass
+
+    # --- regular-rule level: per-RHS StrucChangeOS + Left/RightContextOA ---
+    try:
+        rr = IPhRegularRule(raw)
+    except (TypeError, AttributeError):
+        rr = None
+    if rr is not None:
+        try:
+            for rhs in rr.RightHandSidesOS:
+                try:
+                    for cell in rhs.StrucChangeOS:
+                        _collect_cell(cell)
+                except (AttributeError, TypeError):
+                    pass
+                for oa_attr in ("LeftContextOA", "RightContextOA"):
+                    try:
+                        _collect_cell(getattr(rhs, oa_attr, None))
+                    except (AttributeError, TypeError):
+                        pass
+        except (AttributeError, TypeError):
+            pass
+
     return tuple(refs)
 
 
