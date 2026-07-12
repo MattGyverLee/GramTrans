@@ -4128,6 +4128,7 @@ def _walk_entry_allomorphs(src_entry, new_entry, context, tag, identity_remap, d
         copy_set = getattr(context, "_copy_set", None)
         if copy_set is None:
             copy_set = {}
+            object.__setattr__(context, "_copy_set", copy_set)
         copy_set[src_g] = new_allo
         _owned.reproduce_allomorph_hung_data(
             src_allo, new_allo, context, tag, resolver_cache, dropped)
