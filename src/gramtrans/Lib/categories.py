@@ -2961,12 +2961,19 @@ def _reference_decision_record(owner_kind, owner_guid, spec, decision):
 
 
 def _decide_reference_fields(owner_class, owner_guid, src_obj, target,
-                              resolver_cache, dropped, skip_fields=()):
+                              resolver_cache, dropped, skip_fields=(), source=None):
     """Preview-mode (T017): pure `decide_reference` pass over every
     `references.field_specs_for(owner_class)` row applicable to `src_obj` --
     no writes, ever (Principle III). Appends any REPORT_DROPPED record to
     `dropped` (FR-010, never silent) and returns the tuple of
-    `ReferenceDecisionRecord` for the owning `PlannedAction`."""
+    `ReferenceDecisionRecord` for the owning `PlannedAction`.
+
+    `source` (WS-keying structural fix, this cycle): the SOURCE FLExProject
+    handle (`context.source_handle`), forwarded to `decide_reference` so its
+    identical-vs-diverged check compares each item's OWN project's real
+    Id-keyed alts instead of the positional (no-resolver) fallback. Defaults
+    to `None` (unaffected) so no existing caller need change.
+    """
     if __package__:
         from . import references as _references
     else:
@@ -2976,7 +2983,8 @@ def _decide_reference_fields(owner_class, owner_guid, src_obj, target,
         if spec.field_name in skip_fields:
             continue
         for item in _iter_reference_items(spec, src_obj):
-            decision = _references.decide_reference(item, target, spec, resolver_cache)
+            decision = _references.decide_reference(
+                item, target, spec, resolver_cache, source=source)
             if decision is None:
                 continue
             if decision.dropped is not None:
@@ -2986,7 +2994,8 @@ def _decide_reference_fields(owner_class, owner_guid, src_obj, target,
 
 
 def _apply_reference_fields(owner_class, src_obj, new_obj, target, tag,
-                             resolver_cache, dropped, skip_fields=(), ws_map=None):
+                             resolver_cache, dropped, skip_fields=(), ws_map=None,
+                             source=None):
     """Move-mode (T016): `decide_reference` + `apply_reference` pass over
     every `references.field_specs_for(owner_class)` row applicable to
     `src_obj`, writing the result onto `new_obj`.
@@ -3006,6 +3015,15 @@ def _apply_reference_fields(owner_class, src_obj, new_obj, target, tag,
     `apply_reference` so its UPDATE/CREATE arms translate a renamed WS
     instead of defaulting to identity-only matching.
 
+    `source` (WS-keying structural fix, this cycle): the SOURCE FLExProject
+    handle (`context.source_handle`), threaded through to `decide_reference`/
+    `apply_reference` so the UPDATE/CREATE write paths key their multistring
+    props by the SOURCE's OWN real handle->Id resolver -- no content- or
+    order-based guessing (replaces the deleted `_id_keyed_multi_ws`
+    heuristic). Also passed on as `apply_reference`'s `dropped=` collector so
+    a source WS Id absent from the target's registered inventory is reported
+    (Principle I) instead of silently reproduced.
+
     Never raises: any per-item resolve/apply failure is swallowed (fail-soft,
     matching every other closure-walk write in this module) so one bad
     reference never aborts the rest of the entry/sense/allomorph copy.
@@ -3019,7 +3037,8 @@ def _apply_reference_fields(owner_class, src_obj, new_obj, target, tag,
             continue
         atomic = spec.cardinality == ReferenceCardinality.ATOMIC
         for item in _iter_reference_items(spec, src_obj):
-            decision = _references.decide_reference(item, target, spec, resolver_cache)
+            decision = _references.decide_reference(
+                item, target, spec, resolver_cache, source=source)
             if decision is None:
                 continue
             if decision.dropped is not None:
@@ -3028,7 +3047,7 @@ def _apply_reference_fields(owner_class, src_obj, new_obj, target, tag,
             try:
                 resolved = _references.apply_reference(
                     decision, target, owner_target, spec, resolver_cache, tag,
-                    ws_map=ws_map)
+                    ws_map=ws_map, source=source, dropped=dropped)
             except _references.UnmappedItemClassError as exc:
                 # Fail-loud CREATE-time factory gap (bug 2b defensive path,
                 # Principle I): never silently fall back to a wrong-classed
@@ -3066,13 +3085,19 @@ def _plan_entry_reference_decisions(src_entry, context, target):
         if dropped is None:
             dropped = []
         resolver_cache = _get_resolver_cache(context)
+        # WS-keying structural fix (this cycle): thread the SOURCE project
+        # handle through so `decide_reference` can compare each item's OWN
+        # project's real Id-keyed alts instead of the positional fallback.
+        source = getattr(context, "source_handle", None)
         entry_guid = _guid_str_from(src_entry)
         records = list(_decide_reference_fields(
-            "LexEntry", entry_guid, src_entry, target, resolver_cache, dropped))
+            "LexEntry", entry_guid, src_entry, target, resolver_cache, dropped,
+            source=source))
         for src_sense in getattr(src_entry, "SensesOS", None) or []:
             s_guid = _guid_str_from(src_sense)
             records.extend(_decide_reference_fields(
-                "LexSense", s_guid, src_sense, target, resolver_cache, dropped))
+                "LexSense", s_guid, src_sense, target, resolver_cache, dropped,
+                source=source))
         allomorphs = []
         lf = getattr(src_entry, "LexemeFormOA", None)
         if lf is not None:
@@ -3082,7 +3107,7 @@ def _plan_entry_reference_decisions(src_entry, context, target):
             a_guid = _guid_str_from(src_allo)
             records.extend(_decide_reference_fields(
                 "MoForm", a_guid, src_allo, target, resolver_cache, dropped,
-                skip_fields=_MOFORM_DEFERRED_FIELDS))
+                skip_fields=_MOFORM_DEFERRED_FIELDS, source=source))
         return tuple(records)
     except (AttributeError, TypeError, KeyError) as exc:
         import logging as _logging
@@ -3208,7 +3233,7 @@ def _walk_lex_entry_closure(src_entry, context, tag, category, dropped=None):
     resolver_cache = _get_resolver_cache(context)
     _apply_reference_fields(
         "LexEntry", src_entry, new_entry, target, tag, resolver_cache, dropped,
-        ws_map=ws_map)
+        ws_map=ws_map, source=context.source_handle)
 
     # Allomorphs (E3): LexemeFormOA + AlternateFormsOS.
     _walk_entry_allomorphs(src_entry, new_entry, context, tag, identity_remap, dropped=dropped)
@@ -3246,7 +3271,7 @@ def _walk_lex_entry_closure(src_entry, context, tag, category, dropped=None):
         # diverged items that the old hand-wire never had.
         _apply_reference_fields(
             "LexSense", src_sense, new_sense, target, tag, resolver_cache, dropped,
-            ws_map=ws_map)
+            ws_map=ws_map, source=context.source_handle)
         # MSA for this sense (create once per source MSA guid).
         src_msa = getattr(src_sense, "MorphoSyntaxAnalysisRA", None)
         if src_msa is not None:
@@ -3336,7 +3361,8 @@ def _walk_entry_allomorphs(src_entry, new_entry, context, tag, identity_remap, d
         # PhoneEnvRC/StemNameRA are skipped here (US3 T029; see docstring).
         _apply_reference_fields(
             "MoForm", src_allo, new_allo, target, tag, resolver_cache, dropped,
-            skip_fields=_MOFORM_DEFERRED_FIELDS, ws_map=ws_map)
+            skip_fields=_MOFORM_DEFERRED_FIELDS, ws_map=ws_map,
+            source=context.source_handle)
         # `dropped`/`resolver_cache` are in scope here for the future APR
         # reproduction (`Lib/owned.py.reproduce_allomorph_hung_data`, US3
         # T029). Not wired yet.
