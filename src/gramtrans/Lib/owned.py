@@ -36,6 +36,7 @@ import logging
 if __package__:
     from .models import (
         DroppedItemRecord,
+        OwnedCreateKind,
         OwnedObjectSpec,
         ReferenceAction,
         ReferenceCardinality,
@@ -46,6 +47,7 @@ if __package__:
 else:
     from models import (  # type: ignore
         DroppedItemRecord,
+        OwnedCreateKind,
         OwnedObjectSpec,
         ReferenceAction,
         ReferenceCardinality,
@@ -96,6 +98,11 @@ _TRANSLATION_REF_SPECS: tuple = _references.field_specs_for("CmTranslation")
 _ETYMOLOGY_REF_SPECS: tuple = _references.field_specs_for("LexEtymology")
 
 
+# Per-factory `create_kind` (this cycle's fix; models.OwnedCreateKind) --
+# confirmed live via MCP against Ejagham Mini: only 2 of these 5 factories
+# actually share the OWNER_TAKING `Create(guid, owner)` shape this table
+# uniformly (and incorrectly) assumed before this cycle. See
+# `models.OwnedCreateKind`'s docstring for the three shapes.
 OWNED_OBJECT_MAP: tuple = (
     OwnedObjectSpec(
         owner_class="LexSense",
@@ -103,6 +110,7 @@ OWNED_OBJECT_MAP: tuple = (
         factory="ILexExampleSentenceFactory",
         child_refs=_EXAMPLE_REF_SPECS,
         recurse=False,
+        create_kind=OwnedCreateKind.OWNER_TAKING,
     ),
     OwnedObjectSpec(
         owner_class="LexExampleSentence",
@@ -110,6 +118,10 @@ OWNED_OBJECT_MAP: tuple = (
         factory="ICmTranslationFactory",
         child_refs=_TRANSLATION_REF_SPECS,
         recurse=False,
+        # ICmTranslationFactory has NO (guid, owner) overload -- only
+        # Create(owner, translationType[, guid]), type required up front.
+        create_kind=OwnedCreateKind.OWNER_PLUS_TYPE,
+        type_ref_field="TypeRA",
     ),
     OwnedObjectSpec(
         owner_class="LexEntry",
@@ -117,6 +129,8 @@ OWNED_OBJECT_MAP: tuple = (
         factory="ILexPronunciationFactory",
         child_refs=(),
         recurse=False,
+        # ILexPronunciationFactory has only Create()/Create(Guid) -- unowned.
+        create_kind=OwnedCreateKind.UNOWNED_THEN_ADD,
     ),
     OwnedObjectSpec(
         owner_class="LexEntry",
@@ -124,6 +138,8 @@ OWNED_OBJECT_MAP: tuple = (
         factory="ILexEtymologyFactory",
         child_refs=_ETYMOLOGY_REF_SPECS,
         recurse=False,
+        # ILexEtymologyFactory has only Create()/Create(Guid) -- unowned.
+        create_kind=OwnedCreateKind.UNOWNED_THEN_ADD,
     ),
     OwnedObjectSpec(
         owner_class="LexSense",
@@ -131,6 +147,7 @@ OWNED_OBJECT_MAP: tuple = (
         factory="ILexSenseFactory",
         child_refs=(),
         recurse=True,
+        create_kind=OwnedCreateKind.OWNER_TAKING,
     ),
 )
 
@@ -223,6 +240,52 @@ def _child_class_name(factory_name: str) -> str:
     if name.endswith("Factory"):
         name = name[: -len("Factory")]
     return name
+
+
+def _owner_class_name(obj):
+    """Best-effort real LCM `ClassName` for `obj`, or `None` when
+    unavailable (host-free unit-test fakes that don't model `ClassName` at
+    all). Mirrors `categories._class_name_of` exactly -- kept as a separate
+    copy here (rather than importing that private helper) to avoid a
+    module-load-order dependency on `categories.py` at import time (the
+    same posture `_apply_full_sense_reference_fields` already documents for
+    its OWN lazy `categories` import).
+
+    QC P1a fix: this is what lets `_matches_owner_class` disambiguate an
+    `OWNED_OBJECT_MAP` row by the owner's REAL class rather than by
+    duck-typed `hasattr` alone -- a real `ILexEntry` happens to expose a
+    `SensesOS` attribute too (its own top-level senses), which `hasattr`
+    dispatch alone cannot tell apart from an `ILexSense.SensesOS` owned
+    child row."""
+    try:
+        from SIL.LCModel import ICmObject
+        return ICmObject(obj).ClassName
+    except Exception:
+        return getattr(obj, "ClassName", getattr(obj, "class_name", None))
+
+
+def _matches_owner_class(spec, src_owner, owning_fields) -> bool:
+    """QC P1a fix -- does `spec` (an `OWNED_OBJECT_MAP` row) apply to
+    `src_owner`?
+
+    Real `ClassName` available (a live LCM object, or any fake that models
+    it): match STRUCTURALLY, by `spec.owner_class == ClassName` -- this is
+    what actually disambiguates the `ILexEntry.SensesOS` vs
+    `ILexSense.SensesOS` collision the duck-typed `hasattr`-only dispatch
+    could not (a real `ILexEntry` passed here now correctly does NOT match
+    the `LexSense.SensesOS` row, `ClassName` being "LexEntry").
+
+    No `ClassName` available at all (host-free fakes that don't model it,
+    e.g. this module's own unit tests) -- fall back to the PRE-existing
+    duck-typed `hasattr(src_owner, spec.owning_field)` posture, same as
+    before this fix, disambiguated ONLY by the caller's explicit
+    `owning_fields` filter when given (unchanged behavior for every
+    existing caller/test).
+    """
+    class_name = _owner_class_name(src_owner)
+    if class_name is not None:
+        return spec.owner_class == class_name
+    return hasattr(src_owner, spec.owning_field)
 
 
 def _dropped_key(record) -> tuple:
@@ -379,20 +442,151 @@ def _apply_full_sense_reference_fields(owner_class, src_child, new_child, ctx, t
 _VISITED_KEY = "__owned_walk_visited_guids__"
 
 
+def _first_available_item(target_list):
+    """Best-effort FIRST top-level item in `target_list` (an
+    ICmPossibilityList-shaped container's `PossibilitiesOS`), or `None`
+    when absent/empty. Used by the OWNER_PLUS_TYPE fallback (FIX 2) to find
+    a content-preserving substitute type when the source's own type does
+    not resolve. Never raises."""
+    if target_list is None:
+        return None
+    try:
+        items = list(getattr(target_list, "PossibilitiesOS", None) or [])
+    except TypeError:
+        return None
+    return items[0] if items else None
+
+
+def _create_owner_plus_type_child(spec, src_child, new_owner, ctx, tag, resolver_cache,
+                                   dropped, guid, factory, parsed_guid):
+    """OWNER_PLUS_TYPE create (FIX 2, lead-decided fallback policy):
+    `ICmTranslationFactory.Create(owner, translationType, guid)` requires
+    the type resolved BEFORE create -- there is no create-then-set-type
+    overload (confirmed live via MCP). Resolve `spec.type_ref_field` (e.g.
+    "TypeRA") through the SAME `decide_reference`/`apply_reference` path
+    every other child ref field uses.
+
+    Policy (never silently mislabel or drop):
+    - resolves            -> use the resolved target item.
+    - does NOT resolve, target has >=1 type item available -> substitute the
+      FIRST available target type + report a DroppedItemRecord (reason
+      "translation type unresolved; substituted <fallback>").
+    - does NOT resolve, target has NO type item at all -> skip creating this
+      child entirely + report a DroppedItemRecord (reason "no translation
+      type available in target"). Returns `None` in that case (a genuine
+      skip, not a create failure -- the caller must not double-report it).
+    """
+    target = ctx.target_handle
+    source = ctx.source_handle
+    ws_map = getattr(ctx, "_ws_map", None)
+    owner_guid = _references._guid_str(src_child)
+    owner_label = _references._item_label(src_child)
+
+    type_spec = next(
+        (r for r in spec.child_refs if r.field_name == spec.type_ref_field), None)
+    source_type_item = (
+        getattr(src_child, spec.type_ref_field, None) if type_spec is not None else None
+    )
+    resolved_type = None
+
+    if type_spec is not None and source_type_item is not None:
+        decision = _references.decide_reference(
+            source_type_item, target, type_spec, resolver_cache, source=source)
+        if decision is not None:
+            if decision.dropped is not None:
+                _append_dropped(dropped, _enrich(decision.dropped, owner_guid, owner_label))
+            try:
+                resolved_type = _references.apply_reference(
+                    decision, target, None, type_spec, resolver_cache, tag,
+                    ws_map=ws_map, source=source, dropped=dropped,
+                )
+            except _references.UnmappedItemClassError as exc:
+                _append_dropped(dropped, _enrich(exc.dropped, owner_guid, owner_label))
+            except RuntimeError as exc:
+                _log.error(
+                    "owned._create_owner_plus_type_child: apply_reference "
+                    "failed for %s.%s: %s",
+                    spec.owner_class, spec.type_ref_field, exc, exc_info=True,
+                )
+            except (AttributeError, TypeError):
+                pass
+
+    if resolved_type is None:
+        fallback = _first_available_item(
+            type_spec.target_list_path(target) if type_spec is not None else None)
+        if fallback is not None:
+            resolved_type = fallback
+            fallback_label = _references._item_label(fallback) or repr(fallback)
+            _append_dropped(dropped, DroppedItemRecord(
+                owner_kind="CmTranslation",
+                owner_guid=guid,
+                owner_label=owner_label,
+                field_name=spec.type_ref_field or "TypeRA",
+                item_name=(
+                    _references._item_label(source_type_item)
+                    if source_type_item is not None else ""
+                ),
+                item_guid=(
+                    _references._guid_str(source_type_item)
+                    if source_type_item is not None else ""
+                ),
+                reason=f"translation type unresolved; substituted {fallback_label}",
+            ))
+        else:
+            _append_dropped(dropped, DroppedItemRecord(
+                owner_kind=spec.owner_class,
+                owner_guid=owner_guid,
+                owner_label=owner_label,
+                field_name=spec.owning_field,
+                item_name=owner_label,
+                item_guid=guid,
+                reason="no translation type available in target",
+            ))
+            return None
+
+    return factory.Create(new_owner, resolved_type, parsed_guid)
+
+
+def _create_owned_child(spec, src_child, new_owner, ctx, tag, resolver_cache, dropped, guid):
+    """Create one owned child per `spec.create_kind` (this cycle's fix --
+    `models.OwnedCreateKind`; see its docstring for the three shapes).
+    Returns the created child, or `None` when the OWNER_PLUS_TYPE fallback
+    policy decides to skip creation entirely (already reported its own
+    `DroppedItemRecord` -- not a create failure)."""
+    target = ctx.target_handle
+    factory = _get_owned_factory(target, spec.factory)
+    parsed_guid = _guid_for_create(guid)
+
+    if spec.create_kind == OwnedCreateKind.UNOWNED_THEN_ADD:
+        new_child = factory.Create(parsed_guid)
+        getattr(new_owner, spec.owning_field).Add(new_child)
+        return new_child
+
+    if spec.create_kind == OwnedCreateKind.OWNER_PLUS_TYPE:
+        return _create_owner_plus_type_child(
+            spec, src_child, new_owner, ctx, tag, resolver_cache, dropped, guid,
+            factory, parsed_guid,
+        )
+
+    # OWNER_TAKING (default): factory owns/adds the new child itself.
+    return factory.Create(parsed_guid, new_owner)
+
+
 def _copy_one_owned_child(spec, src_child, new_owner, ctx, tag, resolver_cache, dropped):
     """Create one owned child (one `spec.owning_field` member of `new_owner`),
     copy its syncable properties, resolve its `child_refs`, give it the full
     sense-reference treatment when `spec.recurse`, and tag it with residue.
     Returns the created child, or `None` on a create failure (reported as a
-    `DroppedItemRecord` -- never silent)."""
+    `DroppedItemRecord` -- never silent) or an OWNER_PLUS_TYPE fallback skip
+    (also already reported, see `_create_owner_plus_type_child`)."""
     target = ctx.target_handle
     source = ctx.source_handle
     guid = _references._guid_str(src_child)
     child_class_name = _child_class_name(spec.factory)
 
     try:
-        factory = _get_owned_factory(target, spec.factory)
-        new_child = factory.Create(_guid_for_create(guid), new_owner)
+        new_child = _create_owned_child(
+            spec, src_child, new_owner, ctx, tag, resolver_cache, dropped, guid)
     except Exception as exc:
         # Create() on a real LCM/COM factory can raise a wide variety of
         # runtime exception types (matches the existing bare `except
@@ -415,6 +609,12 @@ def _copy_one_owned_child(spec, src_child, new_owner, ctx, tag, resolver_cache, 
         ))
         return None
 
+    if new_child is None:
+        # OWNER_PLUS_TYPE fallback skip (`_create_owner_plus_type_child`
+        # already appended its own DroppedItemRecord) -- not a create
+        # failure, just nothing further to do for this child.
+        return None
+
     sync_name = _sync_ops_name(spec.owning_field)
     ws_map = getattr(ctx, "_ws_map", None)
     try:
@@ -422,10 +622,34 @@ def _copy_one_owned_child(spec, src_child, new_owner, ctx, tag, resolver_cache, 
         tgt_ops = getattr(target, sync_name)
         props = src_ops.GetSyncableProperties(src_child)
         tgt_ops.ApplySyncableProperties(new_child, props, ws_map=ws_map)
-    except (AttributeError, TypeError):
-        pass
+    except (AttributeError, TypeError) as exc:
+        # QC P2 fix: a swallowed sync-props failure used to leave a
+        # content-less child shell with NO record at all -- a fidelity
+        # loss just as real as an unresolved reference field (Principle I).
+        # Logged AND reported now, never silently swallowed.
+        _log.warning(
+            "owned._copy_one_owned_child: syncable-property copy failed for "
+            "%s.%s (guid=%s): %s", spec.owner_class, spec.owning_field, guid, exc,
+        )
+        _append_dropped(dropped, DroppedItemRecord(
+            owner_kind=spec.owner_class,
+            owner_guid=guid,
+            owner_label=_references._item_label(src_child),
+            field_name=spec.owning_field,
+            item_name=_references._item_label(src_child),
+            item_guid=guid,
+            reason=f"child content not copied: {exc}",
+        ))
 
-    _apply_child_refs(spec.child_refs, src_child, new_child, ctx, tag, resolver_cache, dropped)
+    child_refs = spec.child_refs
+    if spec.create_kind == OwnedCreateKind.OWNER_PLUS_TYPE and spec.type_ref_field:
+        # The type-determining ref was already resolved BEFORE create
+        # (`_create_owner_plus_type_child`) and passed straight into
+        # `factory.Create(owner, resolved_type, guid)` -- re-running it
+        # through the generic child_refs loop below would just redundantly
+        # re-decide/re-apply the same field.
+        child_refs = tuple(r for r in child_refs if r.field_name != spec.type_ref_field)
+    _apply_child_refs(child_refs, src_child, new_child, ctx, tag, resolver_cache, dropped)
 
     if spec.recurse:
         _apply_full_sense_reference_fields(
@@ -479,10 +703,15 @@ def walk_owned_children(src_owner, new_owner, ctx, tag, resolver_cache, dropped,
     Pronunciations/EtymologyOS, so only its own `ExamplesOS` + `SensesOS`
     -- the desired sub-sense leg -- match there).
 
-    For every `OwnedObjectSpec` applicable to `src_owner` (duck-typed: an
-    `owning_field` attribute present on `src_owner`, matching this module's
-    fail-soft posture elsewhere -- no live `ClassName` cast needed), each
-    member is: created via `ctx.target_handle.GetService(spec.factory)`,
+    For every `OwnedObjectSpec` applicable to `src_owner` (QC P1a fix, this
+    cycle: matched STRUCTURALLY by `src_owner`'s real `ClassName` against
+    `spec.owner_class` -- see `_matches_owner_class` -- falling back to the
+    pre-existing duck-typed `hasattr(src_owner, spec.owning_field)` posture
+    only when no `ClassName` is available at all, e.g. a host-free unit-test
+    fake), each member is: created per `spec.create_kind`
+    (`models.OwnedCreateKind` -- `ctx.target_handle.GetService(spec.factory)`
+    resolves the factory itself, then `_create_owned_child` dispatches the
+    actual `.Create(...)` call shape),
     given its own syncable-property copy, had its `child_refs` resolved
     through `references.decide_reference`/`apply_reference`, and tagged with
     `apply_residue`. Ordering is preserved for every owning field (all
@@ -516,7 +745,7 @@ def walk_owned_children(src_owner, new_owner, ctx, tag, resolver_cache, dropped,
         for spec in OWNED_OBJECT_MAP:
             if owning_fields is not None and spec.owning_field not in owning_fields:
                 continue
-            if not hasattr(src_owner, spec.owning_field):
+            if not _matches_owner_class(spec, src_owner, owning_fields):
                 continue
             try:
                 src_children = list(getattr(src_owner, spec.owning_field) or [])
@@ -668,7 +897,7 @@ def plan_owned_object_decisions(src_owner, ctx, resolver_cache, dropped,
         for spec in OWNED_OBJECT_MAP:
             if owning_fields is not None and spec.owning_field not in owning_fields:
                 continue
-            if not hasattr(src_owner, spec.owning_field):
+            if not _matches_owner_class(spec, src_owner, owning_fields):
                 continue
             try:
                 src_children = list(getattr(src_owner, spec.owning_field) or [])

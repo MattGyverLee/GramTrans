@@ -1046,6 +1046,31 @@ class ReferenceDecisionRecord:
     item_guid: str = ""
 
 
+class OwnedCreateKind(enum.Enum):
+    """How one `OwnedObjectSpec`'s child factory must be called (this
+    cycle's fix — confirmed live via MCP against Ejagham Mini: the 5 owned
+    child factories do NOT share one uniform `Create(guid, owner)` shape).
+
+    OWNER_TAKING     : `factory.Create(guid, owner)` — the factory takes the
+                        owner directly and (per the confirmed-live idiom
+                        already used by `categories.py`) owns/adds the new
+                        child itself. Used by `ILexExampleSentenceFactory`
+                        and `ILexSenseFactory` (sub-senses).
+    UNOWNED_THEN_ADD : `factory.Create(guid)` — no owner parameter at all;
+                        the result is UNOWNED and the caller must separately
+                        `owner.<owning_field>.Add(new_child)`. Used by
+                        `ILexPronunciationFactory` and `ILexEtymologyFactory`.
+    OWNER_PLUS_TYPE  : the factory requires a type-determining reference
+                        resolved BEFORE create — `factory.Create(owner,
+                        resolved_type, guid)`. Used by `ICmTranslationFactory`
+                        (`TypeRA`), which has no overload that creates a
+                        translation and sets its type afterward.
+    """
+    OWNER_TAKING = "owner_taking"
+    UNOWNED_THEN_ADD = "unowned_then_add"
+    OWNER_PLUS_TYPE = "owner_plus_type"
+
+
 @dataclass(frozen=True)
 class OwnedObjectSpec:
     """Drives the owned-object walk (FR-009/FR-009a; data-model.md
@@ -1061,12 +1086,22 @@ class OwnedObjectSpec:
     child_refs    : tuple[ReferenceFieldSpec, ...] — reference fields on the
                     child routed back through the resolver.
     recurse       : True for sub-senses (Sense.SensesOS).
+    create_kind   : OwnedCreateKind — which `factory.Create(...)` shape this
+                    row's child factory actually has (this cycle's fix).
+                    Defaults to OWNER_TAKING (the shape every OwnedObjectSpec
+                    used, incorrectly-uniformly, before this cycle).
+    type_ref_field: for OWNER_PLUS_TYPE only — the `child_refs` field name
+                    (e.g. "TypeRA") that must be resolved BEFORE create and
+                    passed straight into `factory.Create(owner, resolved,
+                    guid)`. Unused for the other two create kinds.
     """
     owner_class: str
     owning_field: str
     factory: Any
     child_refs: tuple = ()  # tuple[ReferenceFieldSpec, ...]
     recurse: bool = False
+    create_kind: "OwnedCreateKind" = OwnedCreateKind.OWNER_TAKING
+    type_ref_field: Optional[str] = None
 
 
 # ============================================================================

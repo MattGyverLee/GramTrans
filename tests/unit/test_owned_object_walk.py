@@ -18,31 +18,33 @@ contract in `specs/024-lexicon-reference-fidelity/contracts/owned-object-walk.md
 - FR-009: anything unreproducible appends exactly one `DroppedItemRecord`
   to the `dropped` collector -- never silent.
 
-TDD RED STATE (this cycle): `walk_owned_children` IS implemented, but it
-drives every `OWNED_OBJECT_MAP` row through one uniform
+Per-factory create shape (fixed this cycle): `walk_owned_children` no
+longer drives every `OWNED_OBJECT_MAP` row through one uniform
 `factory.Create(guid, new_owner)` call. MCP verification against a live
-Ejagham Mini project confirmed this uniform shape is wrong for 3 of the 5
+Ejagham Mini project confirmed that uniform shape was wrong for 3 of the 5
 owned-child factories:
 
   - `ICmTranslationFactory` has NO `(guid, owner)` overload -- only
     `Create(owner, translationType)` / `Create(owner, translationType, guid)`,
-    with the type required UP FRONT.
+    with the type required UP FRONT. `OwnedObjectSpec.create_kind ==
+    OWNER_PLUS_TYPE` resolves `TypeRA` via the resolver BEFORE create.
   - `ILexPronunciationFactory` / `ILexEtymologyFactory` have only
     `Create()` / `Create(Guid)` -- no owner parameter; the caller must
-    separately `.Add()` the unowned result to the owning collection.
+    separately `.Add()` the unowned result to the owning collection
+    (`create_kind == UNOWNED_THEN_ADD`).
 
-The fakes below now model each factory's REAL signature (see the
-"Child factories" section) and reject the wrong arity/shape, so
+The fakes below model each factory's REAL signature (see the
+"Child factories" section) and reject the wrong arity/shape, proving
 `test_examples_reproduced_ordered_with_translations_and_publication_refs`,
 `test_pronunciations_reproduced_under_entry_ordered`, and
-`test_etymology_reproduced_under_entry_with_language_rs_resolved` are
-expected to FAIL against the current uniform-Create `walk_owned_children`
-(translations/pronunciations/etymologies fail to create, or land unowned).
-Do NOT fix `walk_owned_children`/`OWNED_OBJECT_MAP` here -- this file only
-strengthens the write-first contract to the MCP-verified real shapes,
-matching the style of `tests/unit/test_reference_resolver.py`.
+`test_etymology_reproduced_under_entry_with_language_rs_resolved` GREEN
+against the per-`create_kind` dispatch in `Lib/owned.py`'s
+`_create_owned_child`/`_create_owner_plus_type_child` (translations/
+pronunciations/etymologies each now create via their own real signature,
+never via the old uniform `Create(guid, owner)`).
 `test_recursive_sub_senses_reproduced_ordered_with_own_ref_fields_resolved`
-(sub-senses, OWNER_TAKING like examples) is expected to keep PASSING.
+(sub-senses, OWNER_TAKING like examples) is unaffected by this cycle's fix
+and stays PASSING throughout.
 
 Fake style: modeled on `test_reference_resolver.py`'s `_FakePossibility` /
 `_FakeMultiString` / `_FakeTargetList` (reused here, same shape, for the
@@ -643,3 +645,37 @@ def test_unresolvable_example_publish_in_appends_exactly_one_dropped_record():
     assert record.field_name == "PublishIn"
     assert record.item_guid == "pub-guid-missing"
     assert record.reason  # non-empty per DroppedItemRecord.__post_init__
+
+
+# ============================================================================
+# Guard test -- QC P1a: OWNED_OBJECT_MAP rows must stay disambiguable by
+# owner_class alone. This is a STATIC check over the table itself (not a
+# walk), so it stays meaningful as the table grows (cycle 11 lexical-relation
+# rows) even before any new fake/live object exercises the new rows.
+# ============================================================================
+
+def test_owned_object_map_rows_are_disambiguable_by_owner_class():
+    """QC P1a: no two `OWNED_OBJECT_MAP` rows may share BOTH the same
+    `owning_field` AND the same `owner_class` -- that would be a genuine,
+    un-disambiguable duplicate no `ClassName` guard could ever tell apart
+    (`_matches_owner_class` matches on `spec.owner_class == ClassName`, so
+    two rows with the identical `owner_class` for the identical
+    `owning_field` would always BOTH match or BOTH miss together).
+
+    This does NOT forbid two DIFFERENT owner_class rows sharing the same
+    owning_field name (e.g. a hypothetical future `LexEntry.SensesOS` row
+    alongside today's `LexSense.SensesOS` row) -- that is exactly the shape
+    `_matches_owner_class`'s real-`ClassName` dispatch is designed to
+    disambiguate structurally. It only guards against the ambiguous case a
+    `ClassName` guard cannot help with at all: identical (owner_class,
+    owning_field) pairs. Guards the surface for cycle 11's growth
+    (lexical-relation rows)."""
+    seen: dict = {}
+    for spec in owned.OWNED_OBJECT_MAP:
+        key = (spec.owner_class, spec.owning_field)
+        assert key not in seen, (
+            f"OWNED_OBJECT_MAP has duplicate (owner_class, owning_field) "
+            f"rows for {key!r} -- a ClassName guard cannot disambiguate "
+            f"two rows that are identical on both axes"
+        )
+        seen[key] = spec
