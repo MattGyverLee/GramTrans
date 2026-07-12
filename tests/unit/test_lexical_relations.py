@@ -29,11 +29,25 @@ Copy-set convention (same fixture design as `test_allomorph_hung_data.py`):
 membership via `in`, value gives the real copied target object to point
 `TargetsRS` at.
 
-MappingType sentinels: `_MAPPING_TYPE_COLLECTION`/`_MAPPING_TYPE_PAIR` below
-are arbitrary ints, NOT MCP-verified against the real
-`LexRefTypeTags.MappingTypes` .NET enum (out of scope this cycle) -- they
-exist purely to give these fixtures a structural label ("no minimum member
-count" vs. "exactly 2 required") without asserting a specific enum member.
+MappingType constants: `_MAPPING_TYPE_COLLECTION`/`_MAPPING_TYPE_PAIR` below
+are now the REAL, MCP-verified `LexRefTypeTags.MappingTypes` .NET enum
+values (T031 implementation cycle correction -- the original values (100/200)
+were arbitrary placeholder sentinels, out of scope for the write-first
+cycle that authored this file). Authoritative mapping (int -> name): 0
+kmtSenseCollection, 1 kmtSensePair, 2 kmtSenseAsymmetricPair, 3 kmtSenseTree,
+4 kmtSenseSequence, 5 kmtEntryCollection, 6 kmtEntryPair, 7
+kmtEntryAsymmetricPair, 8 kmtEntryTree, 9 kmtEntrySequence, 10
+kmtEntryOrSenseCollection, 11 kmtEntryOrSensePair, 12
+kmtEntryOrSenseAsymmetricPair, 13 kmtEntryOrSenseTree, 14
+kmtEntryOrSenseSequence, 15 kmtSenseUnidirectional, 16
+kmtEntryUnidirectional, 17 kmtEntryOrSenseUnidirectional. `_MAPPING_TYPE_
+COLLECTION` = 10 (kmtEntryOrSenseCollection, open-ended -- no minimum
+member count); `_MAPPING_TYPE_PAIR` = 11 (kmtEntryOrSensePair, exactly 2
+members required). PAIR-family (1,2,6,7,11,12) and TREE-family (3,8,13)
+values drive `categories._evaluate_lexical_relation`'s partial-member
+policy; COLLECTION/SEQUENCE/UNIDIRECTIONAL values are all open-ended and
+share the same "reproduce with whatever was copied" treatment as the
+COLLECTION value exercised here.
 """
 from __future__ import annotations
 
@@ -171,9 +185,9 @@ class _FakeContext:
 
 _TAG = "tag-lexical-relations"
 
-# See module docstring -- structural sentinels, not real enum values.
-_MAPPING_TYPE_COLLECTION = 100  # no minimum member count
-_MAPPING_TYPE_PAIR = 200        # exactly 2 members required
+# See module docstring -- real, MCP-verified LexRefTypeTags.MappingTypes values.
+_MAPPING_TYPE_COLLECTION = 10  # kmtEntryOrSenseCollection -- no minimum member count
+_MAPPING_TYPE_PAIR = 11        # kmtEntryOrSensePair -- exactly 2 members required
 
 
 # ============================================================================

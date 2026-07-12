@@ -55,6 +55,7 @@ if __package__:
         GrammarCategory,
         PlannedAction,
         PlannedOverwrite,
+        ReferenceAction,
         ReferenceCardinality,
         ReferenceDecisionRecord,
         RunContext,
@@ -73,6 +74,7 @@ else:
         GrammarCategory,
         PlannedAction,
         PlannedOverwrite,
+        ReferenceAction,
         ReferenceCardinality,
         ReferenceDecisionRecord,
         RunContext,
@@ -3379,6 +3381,19 @@ def _plan_entry_reference_decisions(src_entry, context, target):
         records = list(_decide_reference_fields(
             "LexEntry", entry_guid, src_entry, target, resolver_cache, dropped,
             source=source))
+        # Feature 024 (T031, US3, FR-008): register the entry into
+        # `ctx._copy_set` (the SAME convention `owned.py`'s APR gate uses --
+        # `True` is a placeholder marker, Preview never needs a real target
+        # object) *before* discovering/planning any lexical relation this
+        # entry participates in, so the partial-member policy sees it as
+        # copied.
+        copy_set = getattr(context, "_copy_set", None)
+        if copy_set is None:
+            copy_set = {}
+            object.__setattr__(context, "_copy_set", copy_set)
+        copy_set[entry_guid] = True
+        records.extend(_plan_lex_relations_for_member(
+            src_entry, context, resolver_cache, dropped))
         # Feature 024 (T030, US3): entry-owned children (PronunciationsOS,
         # EtymologyOS) -- `owning_fields` restricts the scan to just those
         # two rows so this entry-level call does NOT also match
@@ -3403,6 +3418,13 @@ def _plan_entry_reference_decisions(src_entry, context, target):
             records.extend(_decide_reference_fields(
                 "LexSense", s_guid, src_sense, target, resolver_cache, dropped,
                 source=source))
+            # Feature 024 (T031, US3, FR-008): register the sense into
+            # `ctx._copy_set` (same placeholder-marker convention as the
+            # entry above) before planning any lexical relation it
+            # participates in.
+            copy_set[s_guid] = True
+            records.extend(_plan_lex_relations_for_member(
+                src_sense, context, resolver_cache, dropped))
             # Feature 024 (T030, US3): sense-owned children -- ExamplesOS (+
             # each example's TranslationsOC) and recursive sub-senses
             # (Sense.SensesOS). Left UNFILTERED, same reasoning as the
@@ -3449,6 +3471,359 @@ def _plan_entry_reference_decisions(src_entry, context, target):
             exc_info=True,
         )
         return ()
+
+
+
+# ============================================================================
+# T031 (US3, FR-008) -- lexical-relation reproduction
+# ============================================================================
+#
+# Contract: spec.md FR-008 ("reproduce lexical relations for a copied entry
+# when that entry participates as a member of the relation, preserving the
+# relation's mapping/tree/pair structure and only the members actually
+# copied"); `tests/unit/test_lexical_relations.py`.
+#
+# `ILexRefType.MappingType` (LexRefTypeTags.MappingTypes, MCP-confirmed live
+# 2026-07-11/12): PAIR/ASYMMETRIC-PAIR kinds (1,2,6,7,11,12) structurally
+# require EXACTLY 2 members -- a relation reduced below 2 copied members is
+# incoherent (a "pair" with one side is not a pair) and is NOT reproduced at
+# all, reported once against the RELATION itself. TREE kinds (3,8,13) need
+# their root/parent member (TargetsRS[0], by convention) copied or the whole
+# relation is incoherent the same way. COLLECTION (0,5,10) / SEQUENCE
+# (4,9,14) / UNIDIRECTIONAL (15,16,17) kinds are open-ended: reproduced with
+# whatever subset of members was actually copied (>=1), each non-copied
+# member reported individually (never silently included or dropped).
+_LEXICAL_RELATION_PAIR_TYPES = frozenset({1, 2, 6, 7, 11, 12})
+_LEXICAL_RELATION_TREE_TYPES = frozenset({3, 8, 13})
+
+_LEXREL_REPRODUCED_KEY = "__categories_lexrel_reproduced__"
+_LEXREL_PLANNED_KEY = "__categories_lexrel_planned__"
+
+
+def _resolve_target_lex_ref_type(target, type_guid: str):
+    """Resolve the target `ILexRefType` whose GUID is `type_guid` off
+    `target.Cache.LangProject.LexDbOA.ReferencesOA` (an `ICmPossibilityList`
+    of relation TYPES -- possibility-list-shaped, so this reuses
+    `references._find_in_possibility_list`'s recursive `PossibilitiesOS`/
+    `SubPossibilitiesOS` walk exactly like every other possibility-list
+    lookup in this codebase). Returns `None` when absent or the list itself
+    is unreachable (never raises)."""
+    if __package__:
+        from . import references as _references
+    else:
+        import references as _references  # type: ignore
+    try:
+        ref_list = target.Cache.LangProject.LexDbOA.ReferencesOA
+    except AttributeError:
+        return None
+    return _references._find_in_possibility_list(ref_list, type_guid)
+
+
+def _evaluate_lexical_relation(src_relation, ctx, dropped):
+    """Shared decision core for both `reproduce_lexical_relation` (Move) and
+    `plan_lexical_relation_decision` (Preview): resolves the target
+    `ILexRefType` by GUID, classifies every `TargetsRS` member against
+    `ctx._copy_set`, and applies the FR-008 partial-member policy. Never
+    creates or writes anything -- every branch that decides NOT to
+    reproduce the relation has already appended its own `DroppedItemRecord`
+    before returning `None`.
+
+    Returns `(rel_guid, target_type, copied_members)` -- a coherent,
+    reproducible relation (structural minimum satisfied, >=1 member
+    actually copied) -- or `None` when the relation must not be reproduced.
+    """
+    if __package__:
+        from . import references as _references
+    else:
+        import references as _references  # type: ignore
+
+    rel_guid = _guid_str_from(src_relation)
+    target = ctx.target_handle
+    source_type = getattr(src_relation, "Owner", None)
+    type_guid = _guid_str_from(source_type) if source_type is not None else ""
+    target_type = _resolve_target_lex_ref_type(target, type_guid)
+    if target_type is None:
+        _append_dropped_once(dropped, DroppedItemRecord(
+            owner_kind="LexRefType",
+            owner_guid=rel_guid,
+            owner_label="",
+            field_name="MembersOC",
+            item_name="",
+            item_guid=rel_guid,
+            reason="lexical relation type not found in target",
+        ))
+        return None
+
+    mapping_type = getattr(target_type, "MappingType", None)
+    copy_set = getattr(ctx, "_copy_set", None) or {}
+    src_targets = list(getattr(src_relation, "TargetsRS", None) or [])
+
+    copied_members = []
+    missing = []  # [(guid, member), ...]
+    for member in src_targets:
+        m_guid = _guid_str_from(member)
+        if m_guid and m_guid in copy_set:
+            copied_members.append(copy_set[m_guid])
+        else:
+            missing.append((m_guid, member))
+
+    if mapping_type in _LEXICAL_RELATION_PAIR_TYPES and len(copied_members) < 2:
+        # Lead+domain policy (this cycle): a PAIR/ASYMMETRIC-PAIR relation
+        # reduced below its structural minimum of 2 members is incoherent
+        # -- never create a degenerate one-sided "pair". Reported once,
+        # keyed to the RELATION itself (not one member) -- one record, not
+        # a per-member report, since the whole relation is being dropped.
+        _append_dropped_once(dropped, DroppedItemRecord(
+            owner_kind="LexReference",
+            owner_guid=rel_guid,
+            owner_label="",
+            field_name="TargetsRS",
+            item_name="",
+            item_guid=rel_guid,
+            reason=(
+                "pair relation reduced below minimum member count (2 "
+                f"required); not reproduced ({len(copied_members)} of "
+                f"{len(src_targets)} members copied)"
+            ),
+        ))
+        return None
+
+    if mapping_type in _LEXICAL_RELATION_TREE_TYPES:
+        # A TREE relation without its root/parent member is incoherent the
+        # same way -- by convention the root is TargetsRS's first member.
+        root_member = src_targets[0] if src_targets else None
+        root_guid = _guid_str_from(root_member) if root_member is not None else ""
+        if not root_guid or root_guid not in copy_set:
+            _append_dropped_once(dropped, DroppedItemRecord(
+                owner_kind="LexReference",
+                owner_guid=rel_guid,
+                owner_label="",
+                field_name="TargetsRS",
+                item_name="",
+                item_guid=rel_guid,
+                reason="tree relation root member not copied; not reproduced",
+            ))
+            return None
+
+    if not copied_members:
+        # COLLECTION/SEQUENCE/UNIDIRECTIONAL with ZERO copied members --
+        # nothing to reproduce; an empty LexReference would misrepresent
+        # the relation just as badly as a one-sided pair.
+        _append_dropped_once(dropped, DroppedItemRecord(
+            owner_kind="LexReference",
+            owner_guid=rel_guid,
+            owner_label="",
+            field_name="TargetsRS",
+            item_name="",
+            item_guid=rel_guid,
+            reason="relation reduced to zero copied members; not reproduced",
+        ))
+        return None
+
+    # Report every member NOT in the copy set (FR-008: never silently
+    # include or drop) -- the relation itself IS still reproduced, just
+    # with only the copied subset.
+    for m_guid, member in missing:
+        _append_dropped_once(dropped, DroppedItemRecord(
+            owner_kind="LexReference",
+            owner_guid=rel_guid,
+            owner_label="",
+            field_name="TargetsRS",
+            item_name=_references._item_label(member),
+            item_guid=m_guid,
+            reason="lexical-relation member not in copy set",
+        ))
+
+    return (rel_guid, target_type, copied_members)
+
+
+def reproduce_lexical_relation(src_relation, ctx, tag, resolver_cache, dropped):
+    """T031 (US3, FR-008) -- reproduce one lexical relation (`ILexReference`)
+    for COPIED members only.
+
+    Resolves the matching target `ILexRefType` by GUID (absent -> report +
+    skip), applies the partial-member policy (`_evaluate_lexical_relation`),
+    then creates the target `ILexReference` via the CONFIRMED-LIVE
+    OWNER-TAKING `ILexReferenceFactory.Create(guid, targetLexRefType)` (the
+    factory itself adds the new relation to `targetLexRefType.MembersOC`),
+    populates `TargetsRS` with ONLY the copied members preserving order, and
+    tags it with residue via `residue.apply_residue`'s already-registered
+    "LexReference" Carrier-A class.
+
+    Dedup (GUID-keyed, `resolver_cache`): a relation shared by multiple
+    copied members (each of which may independently trigger this call via
+    the caller's per-member discovery) is reproduced exactly once -- a
+    SUCCESSFUL creation is cached and returned directly on any later call
+    for the same relation GUID. A FAILED/incoherent attempt is deliberately
+    NOT cached (mirrors `owned._reproduce_one_apr`'s same posture): a
+    member missing THIS call might already be in the copy set by the time a
+    LATER call (for another of the relation's members, processed afterward
+    in the same run) comes through, so retrying must stay possible. The
+    `dropped`-record dedup (`_append_dropped_once`, keyed by (owner_guid,
+    field_name, item_guid)) already collapses a repeated report for the
+    same still-missing condition across retries.
+
+    Never raises: a factory `Create` failure is logged and reported instead
+    (Principle I), matching this module's posture elsewhere.
+    """
+    reproduced = resolver_cache.setdefault(_LEXREL_REPRODUCED_KEY, {})
+    rel_guid = _guid_str_from(src_relation)
+    if rel_guid and rel_guid in reproduced:
+        return reproduced[rel_guid]
+
+    evaluated = _evaluate_lexical_relation(src_relation, ctx, dropped)
+    if evaluated is None:
+        return None
+    rel_guid, target_type, copied_members = evaluated
+
+    if __package__:
+        from . import owned as _owned
+        from .residue import apply_residue
+    else:
+        import owned as _owned  # type: ignore
+        from residue import apply_residue  # type: ignore
+
+    target = ctx.target_handle
+    factory = _owned._get_owned_factory(target, "ILexReferenceFactory")
+    parsed_guid = _owned._guid_for_create(rel_guid)
+    try:
+        new_rel = factory.Create(parsed_guid, target_type)
+    except Exception as exc:
+        import logging as _logging
+        _logging.getLogger("gramtrans.Lib.categories").warning(
+            "reproduce_lexical_relation: create failed for relation %s: %s",
+            rel_guid, exc, exc_info=True,
+        )
+        _append_dropped_once(dropped, DroppedItemRecord(
+            owner_kind="LexReference",
+            owner_guid=rel_guid,
+            owner_label="",
+            field_name="MembersOC",
+            item_name="",
+            item_guid=rel_guid,
+            reason=f"create failed: {exc}",
+        ))
+        return None
+
+    for member in copied_members:
+        try:
+            new_rel.TargetsRS.Add(member)
+        except (AttributeError, TypeError):
+            pass
+
+    try:
+        cache = getattr(target, "Cache", None)
+        ws = getattr(cache, "DefaultAnalWs", None)
+        apply_residue(new_rel, ws, tag, class_name="LexReference")
+    except (AttributeError, TypeError):
+        pass
+
+    if rel_guid:
+        reproduced[rel_guid] = new_rel
+    return new_rel
+
+
+def plan_lexical_relation_decision(src_relation, ctx, resolver_cache, dropped):
+    """Preview-mode (T031, Principle III) read-only twin of
+    `reproduce_lexical_relation`: same target-type resolution + partial-
+    member policy (`_evaluate_lexical_relation`), but never creates
+    anything -- returns a `ReferenceDecisionRecord` (action=CREATE) when the
+    relation WOULD be reproduced, or `None` when it would not (already
+    reported to `dropped` by `_evaluate_lexical_relation`).
+
+    Dedup mirrors the Move-mode cache but keeps its own key
+    (`_LEXREL_PLANNED_KEY`) in the SAME `resolver_cache` instance -- Preview
+    and Move each get their own `resolver_cache` per run
+    (`preview.build_run_plan`/`transfer.execute`), so this never collides
+    with `reproduce_lexical_relation`'s own dedup.
+    """
+    planned = resolver_cache.setdefault(_LEXREL_PLANNED_KEY, {})
+    rel_guid = _guid_str_from(src_relation)
+    if rel_guid and rel_guid in planned:
+        return planned[rel_guid]
+
+    evaluated = _evaluate_lexical_relation(src_relation, ctx, dropped)
+    if evaluated is None:
+        return None
+    rel_guid, _target_type, _copied_members = evaluated
+
+    record = ReferenceDecisionRecord(
+        owner_kind="LexReference",
+        owner_guid=rel_guid,
+        field_name="MembersOC",
+        action=ReferenceAction.CREATE,
+        item_name="",
+        item_guid=rel_guid,
+    )
+    if rel_guid:
+        planned[rel_guid] = record
+    return record
+
+
+def _iter_lex_ref_types(ref_list):
+    """Every `ILexRefType` in `ref_list` (an `ICmPossibilityList`-shaped
+    container), recursing `SubPossibilitiesOS` -- mirrors
+    `references._find_in_possibility_list`'s own recursive walk."""
+    def _walk(items):
+        for item in items:
+            yield item
+            subs = getattr(item, "SubPossibilitiesOS", None)
+            if subs:
+                yield from _walk(subs)
+    return list(_walk(getattr(ref_list, "PossibilitiesOS", None) or []))
+
+
+def _discover_lex_relations_for_member(source, member_guid: str):
+    """Every source `ILexReference` whose `TargetsRS` contains a member with
+    `member_guid` -- discovered by scanning every `ILexRefType` in
+    `source.Cache.LangProject.LexDbOA.ReferencesOA` and each type's own
+    `MembersOC` (mirrors `owned._source_aprs`'s scan-and-match discovery
+    pattern for ad-hoc prohibition rules). Never raises; returns `[]` when
+    the source relation list is unreachable or `member_guid` is empty."""
+    if not member_guid:
+        return []
+    try:
+        ref_list = source.Cache.LangProject.LexDbOA.ReferencesOA
+    except AttributeError:
+        return []
+    relations = []
+    for lex_ref_type in _iter_lex_ref_types(ref_list):
+        for rel in getattr(lex_ref_type, "MembersOC", None) or []:
+            targets = getattr(rel, "TargetsRS", None) or []
+            if any(_guid_str_from(t) == member_guid for t in targets):
+                relations.append(rel)
+    return relations
+
+
+def _reproduce_lex_relations_for_member(src_obj, context, tag, resolver_cache, dropped):
+    """Move-mode (T031) caller-side discovery leg: reproduce every lexical
+    relation `src_obj` (a just-copied `LexEntry`/`LexSense`) participates in
+    as a member, via `reproduce_lexical_relation`. Called from
+    `_walk_lex_entry_closure` right after the entry/each sense is created
+    and registered into `context._copy_set` -- `ctx._copy_set` membership at
+    call time is exactly what `reproduce_lexical_relation`'s partial-member
+    policy checks against. Never raises: a per-relation failure is already
+    contained inside `reproduce_lexical_relation` itself."""
+    source = context.source_handle
+    member_guid = _guid_str_from(src_obj)
+    for src_relation in _discover_lex_relations_for_member(source, member_guid):
+        reproduce_lexical_relation(src_relation, context, tag, resolver_cache, dropped)
+
+
+def _plan_lex_relations_for_member(src_obj, context, resolver_cache, dropped) -> list:
+    """Preview-mode (T031) twin of `_reproduce_lex_relations_for_member`:
+    same per-member discovery, `plan_lexical_relation_decision` instead of
+    `reproduce_lexical_relation`. Returns the list of
+    `ReferenceDecisionRecord` for every relation that WOULD be reproduced."""
+    source = context.source_handle
+    member_guid = _guid_str_from(src_obj)
+    records = []
+    for src_relation in _discover_lex_relations_for_member(source, member_guid):
+        record = plan_lexical_relation_decision(
+            src_relation, context, resolver_cache, dropped)
+        if record is not None:
+            records.append(record)
+    return records
 
 
 def _dispatch_msa_subclass(class_name):
@@ -3566,6 +3941,18 @@ def _walk_lex_entry_closure(src_entry, context, tag, category, dropped=None):
         "LexEntry", src_entry, new_entry, target, tag, resolver_cache, dropped,
         ws_map=ws_map, source=context.source_handle, owner_guid=src_guid)
 
+    # Feature 024 (T031, US3, FR-008): register the entry into
+    # `context._copy_set` (same per-run dict `owned.py`'s allomorph-hung-data
+    # APR gate uses) *before* discovering/reproducing any lexical relation
+    # this entry participates in as a member -- `_reproduce_lex_relations_for_member`'s
+    # partial-member policy checks membership in this same dict.
+    copy_set = getattr(context, "_copy_set", None)
+    if copy_set is None:
+        copy_set = {}
+        object.__setattr__(context, "_copy_set", copy_set)
+    copy_set[src_guid] = new_entry
+    _reproduce_lex_relations_for_member(src_entry, context, tag, resolver_cache, dropped)
+
     # Feature 024 (T030, US3): entry-owned children -- PronunciationsOS,
     # EtymologyOS (`Lib/owned.py.walk_owned_children`). `owning_fields`
     # restricts this call to just those two `OWNED_OBJECT_MAP` rows: a real
@@ -3629,6 +4016,11 @@ def _walk_lex_entry_closure(src_entry, context, tag, category, dropped=None):
         _apply_reference_fields(
             "LexSense", src_sense, new_sense, target, tag, resolver_cache, dropped,
             ws_map=ws_map, source=context.source_handle, owner_guid=s_guid)
+        # Feature 024 (T031, US3, FR-008): register the sense into
+        # `context._copy_set` (same convention as the entry above) before
+        # reproducing any lexical relation it participates in.
+        copy_set[s_guid] = new_sense
+        _reproduce_lex_relations_for_member(src_sense, context, tag, resolver_cache, dropped)
         # MSA for this sense (create once per source MSA guid).
         src_msa = getattr(src_sense, "MorphoSyntaxAnalysisRA", None)
         if src_msa is not None:
