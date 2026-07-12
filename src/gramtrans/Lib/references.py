@@ -232,6 +232,21 @@ REFERENCE_FIELD_MAP: tuple = (
         target_list_path=lambda target: _lp(target).LexDbOA.LanguagesOA,
         hierarchical=False,
     ),
+
+    # ---- Extended-note reference fields (cycle-17 correction) --------------
+    # `LexSense.ExtendedNoteOS` owns `LexExtendedNote` (clid 5134); its own
+    # `ExtendedNoteTypeRA` (ReferenceAtom -> CmPossibility) home list is
+    # `lp.LexDbOA.ExtendedNoteTypesOA` (generic `ICmPossibilityFactory`,
+    # ItemClsid 7 -- confirmed live via reflection against
+    # SIL.LCModel.dll: `ILexDb.ExtendedNoteTypesOA : ICmPossibilityList`,
+    # `ILexExtendedNote.ExtendedNoteTypeRA : ICmPossibility`).
+    ReferenceFieldSpec(
+        owner_class="LexExtendedNote",
+        field_name="ExtendedNoteTypeRA",
+        cardinality=ReferenceCardinality.ATOMIC,
+        target_list_path=lambda target: _lp(target).LexDbOA.ExtendedNoteTypesOA,
+        hierarchical=False,
+    ),
 )
 
 

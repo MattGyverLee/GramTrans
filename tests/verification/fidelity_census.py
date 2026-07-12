@@ -28,14 +28,14 @@ Four buckets (`Bucket`):
   site` names the concrete function/table row.
 - DROP_REPORTED: never copied, but the transfer always emits a
   `DroppedItemRecord` for it (a genuine, surfaced fidelity loss).
-- OUT_OF_SCOPE_EXCLUDED: on `OUT_OF_SCOPE_EXCLUDED_FIELDS` (lead's SC-004
-  ruling) -- the four LexSense fields (AppendixesRC, ThesaurusItemsRC,
-  ExtendedNoteOS, PicturesOS; rationale-class "out-of-024-scope") PLUS
-  `LexEntry.MainEntriesOrSensesRS` (cycle-16 ruling; rationale-class
-  "read-only-derived-aggregate" -- visibly DISTINCT from the 4 decorative
-  LexSense exclusions: it is a read-only derived aggregate, `can_write=false`,
-  transitively populated by the LexEntryRef mechanism, not an independent
-  data-loss point). None of these 5 emit DroppedItemRecords by design.
+- OUT_OF_SCOPE_EXCLUDED: reserved for a genuinely read-only derived
+  aggregate that can never be an independent data-loss point --
+  EXACTLY `LexEntry.MainEntriesOrSensesRS` (cycle-16 ruling; rationale-class
+  "read-only-derived-aggregate": `can_write=false`, transitively populated
+  by the LexEntryRef mechanism). This bucket does NOT emit
+  DroppedItemRecords by design, and (cycle-17 correction, below) is no
+  longer used as a silent parking spot for genuinely-lost fields -- see
+  SC-003/FR-010 ("NOTHING is silently lost").
 - HANDLED_ELSEWHERE: reproduced by a sibling subsystem, not 024's lexicon
   transfer -- per lead's ruling this is the MSA family (`HANDLED_ELSEWHERE_
   FIELDS`): LexSense.MorphoSyntaxAnalysisRA, LexEntry.MorphoSyntaxAnalysesOC,
@@ -72,6 +72,54 @@ terminal buckets by the lead and are now real `CLASSIFICATION` entries:
   028-affix-allomorph-morphosyntax for eventual reproduction.
 
 Zero fields remain in `_UNCLASSIFIED_GAP_FIELDS` / xfail after this cycle.
+
+CYCLE-17 CENSUS CORRECTION: a prior lead ruling wrongly parked 4 LexSense
+fields (AppendixesRC, ThesaurusItemsRC, ExtendedNoteOS, PicturesOS) in the
+SILENT `OUT_OF_SCOPE_EXCLUDED` bucket -- a bucket that, by definition, emits
+no `DroppedItemRecord`. That violates SC-003/FR-010 ("NOTHING is silently
+lost") and the spec.md US5 clarification ("all owned child objects in
+v1"). MCP target-class truth (reflection against `SIL.LCModel.dll`)
+refined which of the 4 are cleanly reproducible; the corrected terminal
+buckets are:
+
+- `LexSense.ExtendedNoteOS` -> COPIED. Owns `LexExtendedNote` (clid 5134,
+  `ILexExtendedNoteFactory` -- base `Create()`/`Create(Guid)` only, no
+  owner overload -- UNOWNED_THEN_ADD, `Lib/owned.py.OWNED_OBJECT_MAP`).
+  Its `ExamplesOS` recurses through the SAME example-reproduction closure
+  `LexSense.ExamplesOS` already uses (`_EXAMPLE_REF_SPECS`, NOT forked --
+  a second `OWNED_OBJECT_MAP` row referencing the SAME child_refs/factory
+  constants). Its `ExtendedNoteTypeRA` resolves against the newly-added
+  `references.REFERENCE_FIELD_MAP` row -> `lp.LexDbOA.ExtendedNoteTypesOA`
+  (generic `ICmPossibilityFactory`, ItemClsid 7 -- no new typed-factory
+  mapping needed).
+- `LexSense.AppendixesRC` -> DROP_REPORTED (was silently excluded).
+  `LexAppendix` is a bespoke OWNED class in `LexDb.AppendixesOC` (NOT a
+  possibility list -- confirmed via reflection: `ILexAppendix` has only
+  `ContentsOA : IStText`) -- the generic resolver does not apply.
+  `categories._report_dropped_sense_scope_gaps` emits one
+  `DroppedItemRecord` per referenced appendix. Routed to
+  030-sense-appendix-thesaurus-refs.
+- `LexSense.ThesaurusItemsRC` -> DROP_REPORTED (was silently excluded).
+  Generic `CmPossibility` (confirmed via reflection:
+  `ILcmReferenceCollection<ICmPossibility>`) with no fixed home list
+  (legacy, dynamic-owner) -- no dynamic-owner resolution attempted. Same
+  emission function as AppendixesRC. Routed to
+  030-sense-appendix-thesaurus-refs.
+- `LexSense.PicturesOS` -> DROP_REPORTED (was silently excluded). Owns
+  `CmPicture` -> `CmFile` -> disk file (confirmed via reflection:
+  `ICmPicture.PictureFileRA : ICmFile`) -- never creates a `CmPicture`/
+  `CmFile` or copies a file. Same emission function. Routed to
+  029-sense-pictures.
+
+`LexEntry.MainEntriesOrSensesRS` is UNCHANGED (cycle-16 ruling,
+rationale-class "read-only-derived-aggregate") and is now the ONLY entry
+remaining in `OUT_OF_SCOPE_EXCLUDED_FIELDS`. On Ejagham Mini all 4
+corrected fields are vacuous (0 populated) -- this cycle's tests
+(`tests/unit/test_cycle17_sense_scope_gaps.py`,
+`tests/unit/test_owned_object_walk.py`'s
+`test_extended_note_reproduced_with_examples_and_type_resolved`) are
+fakes-only; live proof deferred to the T037-class fixture posture already
+accepted for lexrel/affix-MsEnv.
 """
 from __future__ import annotations
 
@@ -134,6 +182,10 @@ EXPECTED_MODEL_FIELDS: dict[str, tuple[FieldSpec, ...]] = {
         FieldSpec("Status", "RA"),
         FieldSpec("ThesaurusItems", "RC"),
         FieldSpec("UsageTypes", "RC"),
+    ),
+    "LexExtendedNote": (
+        FieldSpec("Examples", "OS"),
+        FieldSpec("ExtendedNoteType", "RA"),
     ),
     "MoStemAllomorph": (
         FieldSpec("MorphType", "RA"),
@@ -220,18 +272,17 @@ class Classification:
 
 
 # ----------------------------------------------------------------------------
-# OUT_OF_SCOPE_EXCLUDED_FIELDS -- lead's SC-004 ruling, EXACTLY these 5:
-# the original 4 decorative LexSense fields (rationale-class
-# "out-of-024-scope") PLUS LexEntry.MainEntriesOrSensesRS (cycle-16 ruling,
-# rationale-class "read-only-derived-aggregate" -- visibly DISTINCT: a
-# read-only derived aggregate transitively populated by the LexEntryRef
-# mechanism, not an independent data-loss point).
+# OUT_OF_SCOPE_EXCLUDED_FIELDS -- cycle-17 correction: EXACTLY ONE field,
+# `LexEntry.MainEntriesOrSensesRS` (cycle-16 ruling, rationale-class
+# "read-only-derived-aggregate" -- a read-only derived aggregate
+# transitively populated by the LexEntryRef mechanism, not an independent
+# data-loss point). The 4 LexSense fields formerly parked here
+# (AppendixesRC, ThesaurusItemsRC, ExtendedNoteOS, PicturesOS) violated
+# SC-003/FR-010 (silent exclusion) -- they are now real terminal buckets
+# (ExtendedNoteOS -> COPIED; the other 3 -> DROP_REPORTED). See this
+# module's "CYCLE-17 CENSUS CORRECTION" docstring section.
 # ----------------------------------------------------------------------------
 OUT_OF_SCOPE_EXCLUDED_FIELDS: frozenset[tuple[str, str]] = frozenset({
-    ("LexSense", "AppendixesRC"),
-    ("LexSense", "ThesaurusItemsRC"),
-    ("LexSense", "ExtendedNoteOS"),
-    ("LexSense", "PicturesOS"),
     ("LexEntry", "MainEntriesOrSensesRS"),
 })
 
@@ -317,9 +368,13 @@ CLASSIFICATION: dict[tuple[str, str], Classification] = {
         note="rationale-class: read-only-derived-aggregate -- can_write="
              "false; a read-only derived aggregate transitively populated "
              "by the LexEntryRef mechanism (see LexEntry.EntryRefsOS), not "
-             "an independent data-loss point. Visibly distinct from the "
-             "4 decorative LexSense exclusions below (rationale-class: "
-             "out-of-024-scope).",
+             "an independent data-loss point. This is the ONLY "
+             "OUT_OF_SCOPE_EXCLUDED entry as of cycle-17 -- the 4 LexSense "
+             "fields that used to sit alongside it under a decorative "
+             "'out-of-024-scope' label were a SILENT-exclusion violation "
+             "(SC-003/FR-010) and are now real COPIED/DROP_REPORTED "
+             "terminal buckets (see the module docstring's 'CYCLE-17 "
+             "CENSUS CORRECTION' section).",
     ),
     ("LexEntry", "MorphoSyntaxAnalysesOC"): Classification(
         Bucket.HANDLED_ELSEWHERE, _MSA_HANDLING_SITE,
@@ -345,11 +400,16 @@ CLASSIFICATION: dict[tuple[str, str], Classification] = {
         "categories._apply_reference_fields('LexSense', ...)",
     ),
     ("LexSense", "AppendixesRC"): Classification(
-        Bucket.OUT_OF_SCOPE_EXCLUDED,
-        "OUT_OF_SCOPE_EXCLUDED_FIELDS (lead SC-004 ruling)",
-        note="rationale-class: out-of-024-scope -- appendix cross-refs are "
-             "out of 024's fidelity scope (spec.md US5 clarification); does "
-             "not emit DroppedItemRecord.",
+        Bucket.DROP_REPORTED,
+        "categories._report_dropped_sense_scope_gaps (categories.py), "
+        "called from _walk_lex_entry_closure's sense loop (Move) and "
+        "_plan_entry_reference_decisions's sense loop (Preview) -- one "
+        "DroppedItemRecord per referenced LexAppendix",
+        note="cycle-17 lead correction (was wrongly OUT_OF_SCOPE_EXCLUDED, "
+             "a SILENT bucket -- violated SC-003/FR-010): LexAppendix is a "
+             "bespoke owned class (LexDb.AppendixesOC), not a possibility "
+             "list -- the generic resolver does not apply. Routed to "
+             "030-sense-appendix-thesaurus-refs for eventual reproduction.",
     ),
     ("LexSense", "DialectLabelsRS"): Classification(
         Bucket.COPIED,
@@ -378,21 +438,31 @@ CLASSIFICATION: dict[tuple[str, str], Classification] = {
         "categories._walk_lex_entry_closure's sense loop",
     ),
     ("LexSense", "ExtendedNoteOS"): Classification(
-        Bucket.OUT_OF_SCOPE_EXCLUDED,
-        "OUT_OF_SCOPE_EXCLUDED_FIELDS (lead SC-004 ruling)",
-        note="rationale-class: out-of-024-scope -- extended-note owned "
-             "text is out of 024's fidelity scope (spec.md US5 "
-             "clarification); does not emit DroppedItemRecord.",
+        Bucket.COPIED,
+        "owned.OWNED_OBJECT_MAP[owner_class=LexSense, owning_field="
+        "ExtendedNoteOS] (UNOWNED_THEN_ADD via ILexExtendedNoteFactory."
+        "Create(Guid)+Add), reached via owned.walk_owned_children(...) "
+        "unfiltered from categories._walk_lex_entry_closure's sense loop",
+        note="cycle-17 lead correction (was wrongly OUT_OF_SCOPE_EXCLUDED, "
+             "a SILENT bucket -- violated SC-003/FR-010): "
+             "ILexExtendedNoteFactory has only the base Create()/"
+             "Create(Guid) overloads (reflection-confirmed against "
+             "SIL.LCModel.dll) -- no owner overload, matching Pronunciation/"
+             "Etymology's UNOWNED_THEN_ADD shape.",
     ),
     ("LexSense", "MorphoSyntaxAnalysisRA"): Classification(
         Bucket.HANDLED_ELSEWHERE, _MSA_HANDLING_SITE,
     ),
     ("LexSense", "PicturesOS"): Classification(
-        Bucket.OUT_OF_SCOPE_EXCLUDED,
-        "OUT_OF_SCOPE_EXCLUDED_FIELDS (lead SC-004 ruling)",
-        note="rationale-class: out-of-024-scope -- pictures (binary/"
-             "file-linked media) are out of 024's fidelity scope (spec.md "
-             "US5 clarification); does not emit DroppedItemRecord.",
+        Bucket.DROP_REPORTED,
+        "categories._report_dropped_sense_scope_gaps (categories.py), "
+        "called from _walk_lex_entry_closure's sense loop (Move) and "
+        "_plan_entry_reference_decisions's sense loop (Preview) -- one "
+        "DroppedItemRecord per picture",
+        note="cycle-17 lead correction (was wrongly OUT_OF_SCOPE_EXCLUDED, "
+             "a SILENT bucket -- violated SC-003/FR-010): CmPicture -> "
+             "CmFile -> disk file is never created/copied. Routed to "
+             "029-sense-pictures for eventual reproduction.",
     ),
     ("LexSense", "SemanticDomainsRC"): Classification(
         Bucket.COPIED,
@@ -421,11 +491,16 @@ CLASSIFICATION: dict[tuple[str, str], Classification] = {
         "categories._apply_reference_fields('LexSense', ...)",
     ),
     ("LexSense", "ThesaurusItemsRC"): Classification(
-        Bucket.OUT_OF_SCOPE_EXCLUDED,
-        "OUT_OF_SCOPE_EXCLUDED_FIELDS (lead SC-004 ruling)",
-        note="rationale-class: out-of-024-scope -- thesaurus cross-refs "
-             "are out of 024's fidelity scope (spec.md US5 clarification); "
-             "does not emit DroppedItemRecord.",
+        Bucket.DROP_REPORTED,
+        "categories._report_dropped_sense_scope_gaps (categories.py), "
+        "called from _walk_lex_entry_closure's sense loop (Move) and "
+        "_plan_entry_reference_decisions's sense loop (Preview) -- one "
+        "DroppedItemRecord per referenced thesaurus item",
+        note="cycle-17 lead correction (was wrongly OUT_OF_SCOPE_EXCLUDED, "
+             "a SILENT bucket -- violated SC-003/FR-010): generic "
+             "CmPossibility with no fixed home list (legacy, dynamic-owner) "
+             "-- no dynamic-owner resolution attempted. Routed to "
+             "030-sense-appendix-thesaurus-refs for eventual reproduction.",
     ),
     ("LexSense", "UsageTypesRC"): Classification(
         Bucket.COPIED,
@@ -559,6 +634,28 @@ CLASSIFICATION: dict[tuple[str, str], Classification] = {
         "categories._reproduce_one_lex_relation (rebuilds new_rel.TargetsRS "
         "in source order, copied members only)",
     ),
+
+    # ---- LexExtendedNote (cycle-17 correction) -----------------------------
+    ("LexExtendedNote", "ExamplesOS"): Classification(
+        Bucket.COPIED,
+        "owned.OWNED_OBJECT_MAP[owner_class=LexExtendedNote, owning_field="
+        "ExamplesOS] -- SAME `_EXAMPLE_REF_SPECS`/`ILexExampleSentenceFactory` "
+        "table LexSense.ExamplesOS uses (not forked), reached via "
+        "owned.walk_owned_children's unconditional re-walk of a newly-"
+        "created LexExtendedNote's own owned collections",
+        note="ILexExampleSentenceFactory has no (Guid, ILexExtendedNote) "
+             "owner overload (reflection-confirmed) -- this row uses "
+             "UNOWNED_THEN_ADD (the factory's base Create(Guid) overload) "
+             "rather than the LexSense.ExamplesOS row's OWNER_TAKING "
+             "Create(Guid, owner) overload.",
+    ),
+    ("LexExtendedNote", "ExtendedNoteTypeRA"): Classification(
+        Bucket.COPIED,
+        "references.REFERENCE_FIELD_MAP[owner_class=LexExtendedNote, "
+        "field_name=ExtendedNoteTypeRA] -> lp.LexDbOA.ExtendedNoteTypesOA "
+        "(generic ICmPossibilityFactory, ItemClsid 7), dispatched via "
+        "owned._apply_child_refs as ExtendedNoteOS's own child_refs",
+    ),
 }
 
 
@@ -644,15 +741,14 @@ def test_no_unclassified_gap_fields_remain() -> None:
 
 
 def test_out_of_scope_excluded_list_is_exact() -> None:
-    """SC-004: nobody can quietly park an in-scope field on the exclusion
-    list, and the list can't silently shrink either -- exactly the 4
-    decorative LexSense fields the lead originally ruled out of scope PLUS
-    LexEntry.MainEntriesOrSensesRS (cycle-16 ruling)."""
+    """Cycle-17 correction (SC-003/FR-010, never-silent): nobody can quietly
+    park an in-scope field on the exclusion list, and the list can't
+    silently shrink either -- EXACTLY ONE field remains,
+    `LexEntry.MainEntriesOrSensesRS` (cycle-16 ruling). The 4 LexSense
+    fields formerly parked here (a SILENT bucket -- violated SC-003/FR-010)
+    are now real terminal buckets: `ExtendedNoteOS` -> COPIED;
+    `AppendixesRC`/`ThesaurusItemsRC`/`PicturesOS` -> DROP_REPORTED."""
     assert OUT_OF_SCOPE_EXCLUDED_FIELDS == frozenset({
-        ("LexSense", "AppendixesRC"),
-        ("LexSense", "ThesaurusItemsRC"),
-        ("LexSense", "ExtendedNoteOS"),
-        ("LexSense", "PicturesOS"),
         ("LexEntry", "MainEntriesOrSensesRS"),
     })
     for class_name, prop in OUT_OF_SCOPE_EXCLUDED_FIELDS:
@@ -664,23 +760,27 @@ def test_out_of_scope_excluded_list_is_exact() -> None:
         )
 
 
-def test_out_of_scope_excluded_rationale_classes_are_distinct() -> None:
-    """Cycle-16: `LexEntry.MainEntriesOrSensesRS` must be TAGGED with a
-    visibly DISTINCT rationale-class ("read-only-derived-aggregate") from
-    the 4 decorative LexSense exclusions ("out-of-024-scope") -- both are
-    OUT_OF_SCOPE_EXCLUDED, but for structurally different reasons, and the
-    note text must say so."""
+def test_out_of_scope_excluded_rationale_class_is_read_only_derived_aggregate() -> None:
+    """`LexEntry.MainEntriesOrSensesRS` must carry the
+    "read-only-derived-aggregate" rationale-class (cycle-16 ruling) --
+    cycle-17 renamed this test (was `..._are_distinct`, comparing it against
+    the 4 now-removed LexSense exclusions) since it is now the ONLY
+    OUT_OF_SCOPE_EXCLUDED entry -- nothing left to be "distinct" from."""
     lex_entry_note = classify_field("LexEntry", "MainEntriesOrSensesRS").note
     assert "rationale-class: read-only-derived-aggregate" in lex_entry_note
 
-    for class_name, prop in (
-        ("LexSense", "AppendixesRC"),
-        ("LexSense", "ThesaurusItemsRC"),
-        ("LexSense", "ExtendedNoteOS"),
-        ("LexSense", "PicturesOS"),
-    ):
-        note = classify_field(class_name, prop).note
-        assert "rationale-class: out-of-024-scope" in note
+
+def test_no_field_carries_out_of_024_scope_rationale_class() -> None:
+    """Cycle-17 regression guard: the "out-of-024-scope" rationale-class
+    (the SILENT-exclusion label the 4 corrected LexSense fields used to
+    carry) must not appear anywhere in `CLASSIFICATION` any more -- SC-003/
+    FR-010 forbids silent exclusion, and this rationale-class was exactly
+    that pattern."""
+    for (class_name, prop), classification in CLASSIFICATION.items():
+        assert "rationale-class: out-of-024-scope" not in classification.note, (
+            f"{class_name}.{prop} still carries the retired silent "
+            "'out-of-024-scope' rationale-class"
+        )
 
 
 def test_handled_elsewhere_msa_family_is_exact() -> None:
@@ -716,14 +816,18 @@ def test_guard_fires_for_unclassified_property() -> None:
 
 
 def test_expected_model_fields_field_count() -> None:
-    """Sanity check on the captured inventory itself: 73 REAL fields total
-    across the 10 classes (11+15+3+6+5+1+9+7+13+3), matching the injected
-    flextoolsMCP-verified snapshot exactly -- guards against an accidental
-    edit silently dropping or duplicating a row in `EXPECTED_MODEL_FIELDS`."""
+    """Sanity check on the captured inventory itself: 75 REAL fields total
+    across the 11 classes (11+15+2+3+6+5+1+9+7+13+3), matching the injected
+    flextoolsMCP-verified/reflection-confirmed snapshot exactly -- guards
+    against an accidental edit silently dropping or duplicating a row in
+    `EXPECTED_MODEL_FIELDS`. Cycle-17: added `LexExtendedNote` (2 REAL
+    fields -- ExamplesOS, ExtendedNoteTypeRA; `Discussion` is a multistring,
+    not owning/reference) as a newly-covered class."""
     counts = {name: len(fields) for name, fields in EXPECTED_MODEL_FIELDS.items()}
     assert counts == {
         "LexEntry": 11,
         "LexSense": 15,
+        "LexExtendedNote": 2,
         "MoStemAllomorph": 3,
         "MoAffixAllomorph": 6,
         "LexEntryRef": 5,
@@ -733,4 +837,4 @@ def test_expected_model_fields_field_count() -> None:
         "MoDerivAffMsa": 13,
         "MoUnclassifiedAffixMsa": 3,
     }
-    assert sum(counts.values()) == 73
+    assert sum(counts.values()) == 75

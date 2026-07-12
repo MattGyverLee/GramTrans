@@ -99,6 +99,7 @@ _EXAMPLE_REF_SPECS: tuple = (
 
 _TRANSLATION_REF_SPECS: tuple = _references.field_specs_for("CmTranslation")
 _ETYMOLOGY_REF_SPECS: tuple = _references.field_specs_for("LexEtymology")
+_EXTENDED_NOTE_REF_SPECS: tuple = _references.field_specs_for("LexExtendedNote")
 
 
 # Per-factory `create_kind` (this cycle's fix; models.OwnedCreateKind) --
@@ -151,6 +152,51 @@ OWNED_OBJECT_MAP: tuple = (
         child_refs=(),
         recurse=True,
         create_kind=OwnedCreateKind.OWNER_TAKING,
+    ),
+    # Cycle-17 correction (lead-corrected SC-004 ruling): LexSense.ExtendedNoteOS
+    # owns LexExtendedNote (clid 5134) -- confirmed live via reflection against
+    # SIL.LCModel.dll: `ILexExtendedNoteFactory` has ONLY the base
+    # `Create()`/`Create(Guid)` overloads (no `(Guid, owner)` overload) ->
+    # UNOWNED_THEN_ADD, same shape as Pronunciation/Etymology.
+    OwnedObjectSpec(
+        owner_class="LexSense",
+        owning_field="ExtendedNoteOS",
+        factory="ILexExtendedNoteFactory",
+        child_refs=_EXTENDED_NOTE_REF_SPECS,
+        recurse=False,
+        create_kind=OwnedCreateKind.UNOWNED_THEN_ADD,
+    ),
+    # LexExtendedNote.ExamplesOS: reproduced via the SAME child-example
+    # machinery LexSense.ExamplesOS already uses (same `_EXAMPLE_REF_SPECS`
+    # child_refs table, same `ILexExampleSentenceFactory` factory name) --
+    # NOT a fork of that closure, just a second OWNED_OBJECT_MAP row so
+    # `walk_owned_children`'s unconditional "recurse into every created
+    # child's own owned collections" leg (this module's own docstring)
+    # picks it up when it re-walks the newly-created LexExtendedNote.
+    # `ILexExampleSentenceFactory.Create(Guid, ILexSense owner)` has NO
+    # overload accepting an `ILexExtendedNote` owner (confirmed live via
+    # reflection) -- so this row uses `UNOWNED_THEN_ADD`
+    # (`factory.Create(guid)` then `new_note.ExamplesOS.Add(...)`), reusing
+    # the SAME factory's base `Create(Guid)` overload every UNOWNED_THEN_ADD
+    # row already relies on, rather than the sense-owned row's
+    # `Create(Guid, owner)` overload.
+    #
+    # Owning-field collision note: this shares `owning_field="ExamplesOS"`
+    # with the `LexSense.ExamplesOS` row above -- `_matches_owner_class`'s
+    # real-`ClassName` dispatch is what disambiguates the two (see that
+    # function's own docstring, "two DIFFERENT owner_class rows sharing the
+    # same owning_field"); a live `ICmObject.ClassName` always distinguishes
+    # them correctly. Any caller/fake passing a bare object with NO
+    # `ClassName` (the `hasattr`-only fallback) MUST set an explicit
+    # `.ClassName` to avoid double-matching -- see
+    # `test_owned_object_walk.py`'s `_FakeSourceSense`/new `_FakeExtendedNote`.
+    OwnedObjectSpec(
+        owner_class="LexExtendedNote",
+        owning_field="ExamplesOS",
+        factory="ILexExampleSentenceFactory",
+        child_refs=_EXAMPLE_REF_SPECS,
+        recurse=False,
+        create_kind=OwnedCreateKind.UNOWNED_THEN_ADD,
     ),
 )
 

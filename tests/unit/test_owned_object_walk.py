@@ -182,14 +182,40 @@ class _FakeEtymology:
         self.LanguageRS = list(language_rs)
 
 
-class _FakeSourceSense:
-    def __init__(self, guid, gloss="", examples=(), sub_senses=(), sense_type=None):
+class _FakeExtendedNote:
+    """Fake ILexExtendedNote (clid 5134): owns ExamplesOS (SAME child-example
+    shape as LexSense.ExamplesOS -- see OWNED_OBJECT_MAP's LexExtendedNote
+    row); carries the child ref field `ExtendedNoteTypeRA` ->
+    `lp.LexDbOA.ExtendedNoteTypesOA`. `ClassName` is set explicitly
+    (cycle-17): `_matches_owner_class`'s real-ClassName dispatch is what
+    disambiguates this row from `LexSense.ExamplesOS` (both rows share
+    `owning_field="ExamplesOS"`) -- without it, a bare hasattr-fallback
+    fake would double-match and double-copy `LexSense.ExamplesOS` too, since
+    ANY sense-shaped fake also duck-types `ExamplesOS`."""
+
+    def __init__(self, guid, discussion="", examples=(), extended_note_type=None):
         self.Guid = guid
         self.guid = guid
+        self.ClassName = "LexExtendedNote"
+        self.Discussion = _FakeMultiString({WS_EN: discussion} if discussion else {})
+        self.ExamplesOS = list(examples)
+        self.ExtendedNoteTypeRA = extended_note_type
+
+
+class _FakeSourceSense:
+    def __init__(self, guid, gloss="", examples=(), sub_senses=(), sense_type=None,
+                 extended_notes=()):
+        self.Guid = guid
+        self.guid = guid
+        self.ClassName = "LexSense"  # cycle-17: disambiguates the new
+        # LexExtendedNote.ExamplesOS row (same owning_field) via
+        # `_matches_owner_class`'s real-ClassName dispatch -- see
+        # `_FakeExtendedNote`'s docstring.
         self.Gloss = _FakeMultiString({WS_EN: gloss} if gloss else {})
         self.ExamplesOS = list(examples)
         self.SensesOS = list(sub_senses)
         self.SenseTypeRA = sense_type
+        self.ExtendedNoteOS = list(extended_notes)
 
 
 class _FakeSourceEntry:
@@ -212,6 +238,7 @@ class _NewSense:
         self.ExamplesOS = _FakeOwningCollection()
         self.SensesOS = _FakeOwningCollection()
         self.SenseTypeRA = None
+        self.ExtendedNoteOS = _FakeOwningCollection()
 
 
 class _NewEntry:
@@ -247,12 +274,26 @@ class _NewEntry:
 # ============================================================================
 
 class _FakeExampleFactory:
-    """OWNER_TAKING: `Create(Guid, ILexSense owner)`."""
+    """`ILexExampleSentenceFactory` -- real signature (reflection-confirmed
+    against `SIL.LCModel.dll`) has BOTH the base `Create(Guid)` overload
+    (inherited from `ILcmFactory<T>`, used for `LexExtendedNote.ExamplesOS`'s
+    UNOWNED_THEN_ADD row -- there is no `(Guid, ILexExtendedNote)` overload)
+    AND its own `Create(Guid, ILexSense owner)` (OWNER_TAKING, used for
+    `LexSense.ExamplesOS`). `owner=None` selects the base overload: the
+    returned example is UNOWNED, and the CALLER (`owned._create_owned_child`'s
+    UNOWNED_THEN_ADD branch) does the `.Add(...)` itself, never this fake."""
 
     def __init__(self):
         self.create_calls = []
 
-    def Create(self, guid, owner):
+    def Create(self, guid, owner=None):
+        if owner is None:
+            self.create_calls.append((guid, None))
+            new_ex = _FakeExample(guid)
+            new_ex.TranslationsOC = _FakeOwningCollection()
+            new_ex.DoNotPublishInRC = _FakeOwningCollection()
+            new_ex.PublishIn = _FakeOwningCollection()
+            return new_ex
         if not hasattr(owner, "ExamplesOS"):
             raise TypeError(
                 "ILexExampleSentenceFactory.Create(guid, owner) expects "
@@ -336,6 +377,27 @@ class _FakeEtymologyFactory:
         return new_e
 
 
+class _FakeExtendedNoteFactory:
+    """UNOWNED_THEN_ADD (cycle-17): `ILexExtendedNoteFactory` has only the
+    base `Create()` / `Create(Guid)` overloads (reflection-confirmed against
+    `SIL.LCModel.dll` -- no `(Guid, owner)` overload). Same arity rejection
+    as `_FakePronunciationFactory`/`_FakeEtymologyFactory`; the created
+    object is UNOWNED and the caller must separately do
+    `sense.ExtendedNoteOS.Add(obj)`. The created note's own `ExamplesOS`
+    starts as a real `_FakeOwningCollection` (not a plain list) so the
+    recursive re-walk into it can `.Add()` reproduced examples, exactly
+    like every other freshly-created owned parent in this file."""
+
+    def __init__(self):
+        self.create_calls = []
+
+    def Create(self, guid):
+        self.create_calls.append(guid)
+        new_note = _FakeExtendedNote(guid)
+        new_note.ExamplesOS = _FakeOwningCollection()
+        return new_note
+
+
 class _FakeSenseFactory:
     """OWNER_TAKING: `Create(Guid, ILexSense owner)` (sub-senses)."""
 
@@ -379,7 +441,8 @@ class _FakeSyncOps:
 
 
 class _FakeLangProject:
-    def __init__(self, translation_tags=None, languages=None, publication_types=None):
+    def __init__(self, translation_tags=None, languages=None, publication_types=None,
+                 extended_note_types=None):
         self.TranslationTagsOA = (
             translation_tags if translation_tags is not None else _FakeTargetList()
         )
@@ -391,6 +454,9 @@ class _FakeLangProject:
         lex_db.LanguagesOA = languages if languages is not None else _FakeTargetList()
         lex_db.PublicationTypesOA = (
             publication_types if publication_types is not None else _FakeTargetList()
+        )
+        lex_db.ExtendedNoteTypesOA = (
+            extended_note_types if extended_note_types is not None else _FakeTargetList()
         )
         self.LexDbOA = lex_db
 
@@ -408,15 +474,18 @@ class _FakeProject:
     `Pronunciations`, `Etymology`, `Senses`), and the owned-child factories
     exposed via `GetService` (the LCM service-locator idiom)."""
 
-    def __init__(self, translation_tags=None, languages=None, publication_types=None):
+    def __init__(self, translation_tags=None, languages=None, publication_types=None,
+                 extended_note_types=None):
         self.Cache = _FakeCache(
-            _FakeLangProject(translation_tags, languages, publication_types)
+            _FakeLangProject(translation_tags, languages, publication_types,
+                              extended_note_types)
         )
         self.Examples = _FakeSyncOps()
         self.Translations = _FakeSyncOps()
         self.Pronunciations = _FakeSyncOps()
         self.Etymology = _FakeSyncOps()
         self.Senses = _FakeSyncOps()
+        self.ExtendedNote = _FakeSyncOps()
 
         self._factories = {
             "ILexExampleSentenceFactory": _FakeExampleFactory(),
@@ -424,6 +493,7 @@ class _FakeProject:
             "ILexPronunciationFactory": _FakePronunciationFactory(),
             "ILexEtymologyFactory": _FakeEtymologyFactory(),
             "ILexSenseFactory": _FakeSenseFactory(),
+            "ILexExtendedNoteFactory": _FakeExtendedNoteFactory(),
         }
         self.requested_services = []
 
@@ -595,6 +665,60 @@ def test_recursive_sub_senses_reproduced_ordered_with_own_ref_fields_resolved():
     # The sub-sense got the SAME reference treatment a top-level sense gets
     # (SenseTypeRA resolved via the resolver, LINK to the matching target item).
     assert new_sub1.SenseTypeRA is target_type_item
+
+
+# ============================================================================
+# Case 4b (cycle-17 correction) -- Sense.ExtendedNoteOS -> LexExtendedNote,
+# recursing its own ExamplesOS through the SAME example machinery, and
+# resolving its ExtendedNoteTypeRA against lp.LexDbOA.ExtendedNoteTypesOA.
+# ============================================================================
+
+def test_extended_note_reproduced_with_examples_and_type_resolved():
+    type_guid = "entype-guid-1"
+    target_type_item = _FakePossibility(type_guid, name="Encyclopedic")
+    source_type_item = _FakePossibility(type_guid, name="Encyclopedic")
+
+    ex1 = _FakeExample("note-ex-1", text="an extended-note example")
+    note1 = _FakeExtendedNote(
+        "note-1", discussion="discussion text", examples=(ex1,),
+        extended_note_type=source_type_item,
+    )
+    src_sense = _FakeSourceSense(
+        "src-sense-en1", gloss="headword", extended_notes=(note1,))
+    new_sense = _NewSense()
+
+    source_handle = _FakeProject()
+    target_handle = _FakeProject(
+        extended_note_types=_FakeTargetList([target_type_item]))
+    ctx = _FakeContext(source_handle, target_handle)
+    resolver_cache: dict = {}
+    dropped: list = []
+
+    owned.walk_owned_children(src_sense, new_sense, ctx, _TAG, resolver_cache, dropped)
+
+    # `ILexExtendedNoteFactory.Create(guid)` returns an UNOWNED object -- the
+    # walk must then do `new_sense.ExtendedNoteOS.Add(new_note)` (no factory
+    # overload takes an owner; reflection-confirmed live against
+    # SIL.LCModel.dll). GUID preserved.
+    assert len(new_sense.ExtendedNoteOS) == 1
+    new_note = new_sense.ExtendedNoteOS[0]
+    assert new_note.Guid == "note-1"
+
+    # ExtendedNoteTypeRA resolved through the SAME resolver every other
+    # child ref field uses -- LINK against the matching target
+    # ExtendedNoteTypesOA item.
+    assert new_note.ExtendedNoteTypeRA is target_type_item
+
+    # ExamplesOS recursed through the EXISTING example-reproduction closure
+    # (same `_EXAMPLE_REF_SPECS`/`ILexExampleSentenceFactory` -- not forked):
+    # the newly-created note's own ExamplesOS is populated exactly like a
+    # sense's own ExamplesOS would be, GUID preserved.
+    assert [e.Guid for e in new_note.ExamplesOS] == ["note-ex-1"]
+
+    # Never double-processes the SENSE's own (empty) ExamplesOS as a result
+    # of the new LexExtendedNote.ExamplesOS row sharing the same
+    # owning_field name (`_matches_owner_class`'s real-ClassName dispatch).
+    assert list(new_sense.ExamplesOS) == []
 
 
 # ============================================================================

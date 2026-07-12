@@ -3443,6 +3443,13 @@ def _plan_entry_reference_decisions(src_entry, context, target):
             # senses loop above.
             records.extend(_owned.plan_owned_object_decisions(
                 src_sense, context, resolver_cache, dropped))
+            # Cycle-17 correction (DROP_REPORTED, never silent): SAME
+            # report-only function the Move path's sense loop calls -- no
+            # separate Preview decision logic exists for AppendixesRC/
+            # ThesaurusItemsRC/PicturesOS (no CREATE/LINK leg, nothing is
+            # ever created either mode), so Move's and Preview's drop sets
+            # are identical by construction.
+            _report_dropped_sense_scope_gaps(src_sense, dropped)
         allomorphs = []
         lf = getattr(src_entry, "LexemeFormOA", None)
         if lf is not None:
@@ -4086,6 +4093,72 @@ def _report_dropped_entry_refs(src_entry, dropped) -> None:
         ))
 
 
+# ----------------------------------------------------------------------------
+# Cycle-17 correction: LexSense.{AppendixesRC, ThesaurusItemsRC, PicturesOS}
+# -- never-silent DROP_REPORTED (corrects a prior lead ruling that had
+# silently parked these 4 fields in OUT_OF_SCOPE_EXCLUDED; ExtendedNoteOS,
+# the 4th field that ruling covered, is now COPIED -- see
+# `Lib/owned.py.OWNED_OBJECT_MAP`'s LexSense.ExtendedNoteOS row).
+# ----------------------------------------------------------------------------
+
+_SENSE_SCOPE_GAP_FIELDS = (
+    (
+        "AppendixesRC",
+        "LexAppendix is a bespoke owned class (LexDb.AppendixesOC), not a "
+        "possibility list -- not reproduced by feature 024's lexicon "
+        "transfer (routed to 030-sense-appendix-thesaurus-refs)",
+    ),
+    (
+        "ThesaurusItemsRC",
+        "thesaurus items are a generic CmPossibility with no fixed home "
+        "list (legacy, dynamic-owner) -- not reproduced by feature 024's "
+        "lexicon transfer (routed to 030-sense-appendix-thesaurus-refs)",
+    ),
+    (
+        "PicturesOS",
+        "CmPicture (-> CmFile -> disk file) is not reproduced by feature "
+        "024's lexicon transfer (routed to 029-sense-pictures)",
+    ),
+)
+
+
+def _report_dropped_sense_scope_gaps(src_sense, dropped) -> None:
+    """Emit one `DroppedItemRecord` per item referenced by
+    `src_sense.AppendixesRC` / `.ThesaurusItemsRC` / `.PicturesOS` -- called
+    identically from the Move path (`_walk_lex_entry_closure`'s sense loop)
+    and the Preview path (`_plan_entry_reference_decisions`'s sense loop),
+    so the two drop sets are identical by construction (there is no
+    CREATE/LINK leg to diverge for any of the three fields; none is ever
+    reproduced this cycle -- see `tests/verification/fidelity_census.py`'s
+    cycle-17 CLASSIFICATION rows for the full rationale)."""
+    owner_guid = _guid_str_from(src_sense)
+    owner_label = _owner_label_for("LexSense", src_sense)
+    for field_name, reason in _SENSE_SCOPE_GAP_FIELDS:
+        items = list(getattr(src_sense, field_name, None) or [])
+        for item in items:
+            _append_dropped_once(dropped, DroppedItemRecord(
+                owner_kind="LexSense",
+                owner_guid=owner_guid,
+                owner_label=owner_label,
+                field_name=field_name,
+                item_name=_references_item_label(item),
+                item_guid=_guid_str_from(item),
+                reason=reason,
+            ))
+
+
+def _references_item_label(item) -> str:
+    """Best-effort label for a dropped sense-scope-gap item -- reuses
+    `references._item_label` (reads `.Name`, best non-empty WS alt).
+    Returns "" for item shapes with no `.Name` (e.g. `LexAppendix`,
+    `CmPicture`) -- never raises."""
+    if __package__:
+        from . import references as _references
+    else:
+        import references as _references  # type: ignore
+    return _references._item_label(item)
+
+
 def _walk_lex_entry_closure(src_entry, context, tag, category, dropped=None):
     """Atomic owned-child closure write for one LexEntry (E2), shared by
     AFFIXES + STEMS execute_action.
@@ -4256,6 +4329,11 @@ def _walk_lex_entry_closure(src_entry, context, tag, category, dropped=None):
         _apply_reference_fields(
             "LexSense", src_sense, new_sense, target, tag, resolver_cache, dropped,
             ws_map=ws_map, source=context.source_handle, owner_guid=s_guid)
+        # Cycle-17 correction (DROP_REPORTED, never silent): AppendixesRC,
+        # ThesaurusItemsRC, PicturesOS are never reproduced -- report every
+        # referenced item. See `_report_dropped_sense_scope_gaps`'s own
+        # docstring (same function called from Preview's sense loop below).
+        _report_dropped_sense_scope_gaps(src_sense, dropped)
         # Feature 024 (T031, US3, FR-008): register the sense into
         # `context._copy_set` (same convention as the entry above) --
         # registration only; lexical-relation discovery for this sense
