@@ -957,15 +957,28 @@ class ReferenceDecision:
     ------
     action              : ReferenceAction.
     target_item         : existing target item when LINK/UPDATE, else None.
-    ancestors_to_create : ordered source items (root->leaf) when CREATE and
-                          hierarchical; empty tuple otherwise.
+    ancestors_to_create : ordered source items (root->leaf) when CREATE.
+                          For a hierarchical spec this is the full chain
+                          (root -> ... -> leaf); for a non-hierarchical spec
+                          it is the single-element `(source_item,)` tuple, so
+                          `apply_reference`'s CREATE arm has a uniform "create
+                          each of these under the right parent" loop
+                          regardless of `spec.hierarchical`. Empty only when
+                          action != CREATE.
     dropped             : DroppedItemRecord, set only when
                           action == REPORT_DROPPED.
+    source_item         : the source item `decide_reference` was given (or
+                          None if it was never resolvable). T015 additive
+                          field -- `apply_reference` needs the source object
+                          for UPDATE's src_props read and CREATE's property
+                          copy, and the contract's `apply_reference` signature
+                          does not separately receive it.
     """
     action: ReferenceAction
     target_item: Any = None
     ancestors_to_create: tuple = ()  # tuple of source items, root -> leaf
     dropped: Optional[DroppedItemRecord] = None
+    source_item: Any = None
 
     def __post_init__(self) -> None:
         if self.action == ReferenceAction.REPORT_DROPPED and self.dropped is None:
