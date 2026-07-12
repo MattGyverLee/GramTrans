@@ -216,18 +216,47 @@ class _FakeLexEntryOps:
 
 
 class _FakeCache:
-    def __init__(self):
+    def __init__(self, lang_project=None):
         self.DefaultAnalWs = 1
+        self.LangProject = lang_project
+
+
+class _FakeTargetList:
+    """Fake ICmPossibilityList: flat GUID-searchable container -- mirrors
+    `references._find_in_possibility_list`'s `PossibilitiesOS` walk."""
+
+    def __init__(self, items=()) -> None:
+        self.PossibilitiesOS = list(items)
+
+
+class _FakeLexDb:
+    def __init__(self, sense_types_list, publication_types_list) -> None:
+        self.SenseTypesOA = sense_types_list
+        self.PublicationTypesOA = publication_types_list
+
+
+class _FakeLangProject:
+    def __init__(self, lex_db) -> None:
+        self.LexDbOA = lex_db
 
 
 class _FakeProject:
     """Minimal fake FLExProject: `.LexEntry`, `.Senses`, `.Cache` -- the
-    exact accessors `_execute_overwrite`'s ENTRY/SENSE branches use."""
+    exact accessors `_execute_overwrite`'s ENTRY/SENSE branches use.
 
-    def __init__(self, lex_entry_ops, senses_ops):
+    `lang_project` (feature 024 US2 double-application regression test,
+    below): optional `_FakeLangProject`, threaded onto `.Cache.LangProject`
+    so the resolver's `references._lp(target).LexDbOA.{SenseTypesOA,
+    PublicationTypesOA}` target-list lookups succeed for the non-empty-
+    source overwrite scenarios. `None` (the default) matches every
+    pre-existing test in this file, none of which exercise the resolver's
+    target-list lookup (their sources are all empty, so `decide_reference`
+    is never reached)."""
+
+    def __init__(self, lex_entry_ops, senses_ops, lang_project=None):
         self.LexEntry = lex_entry_ops
         self.Senses = senses_ops
-        self.Cache = _FakeCache()
+        self.Cache = _FakeCache(lang_project)
 
 
 @pytest.fixture()
@@ -396,11 +425,20 @@ def test_overwrite_entry_empty_source_rc_fields_do_not_clear_target(patch_lcmode
 
 # ============================================================================
 # 4. SENSE overwrite: an unresolved CUSTOM SenseType GUID must yield exactly
-#    one DroppedItemRecord (FR-010), not a silent log. Fails today --
-#    `_execute_overwrite`'s SENSE branch has no `dropped` plumbing at all,
-#    so its return value can never carry one; the fake's unresolved-GUID
-#    branch only logs (mirrors the real code's `_log.warning`, lines
-#    700-704).
+#    one DroppedItemRecord (FR-010), not a silent log.
+#
+#    Post feature-024-US2-FIX-1 update: `_strip_ref_fields` now strips
+#    `SenseTypeRA` from `src_props` UNCONDITIONALLY (see `transfer.py`), so
+#    the raw `ApplySyncableProperties` call never sees the key at all any
+#    more -- `_FakeSensesOps`'s `if "SenseTypeRA" in props:` guard (mirroring
+#    the real code's `_log.warning`, lines 700-704) is therefore never
+#    entered, and the old "a log line fires" assertion that used to hold
+#    here no longer applies (that log line was always only an incidental
+#    confirmation of the OLD path, not this test's actual FR-010 contract).
+#    The load-bearing assertion is unchanged and still exercised: the
+#    SENSE branch's dedicated `_raw_sense_type_guid` fallback (the resolver
+#    structurally cannot see a raw GUID with no matching live `src_sense`
+#    attribute) must still surface exactly one DroppedItemRecord.
 # ============================================================================
 
 
@@ -441,20 +479,165 @@ def test_overwrite_sense_unresolved_custom_sense_type_yields_dropped_record(
             overwrite, source, target, _FakeReportSink(), TAG,
         )
 
-    # Today's actual behavior: a log line fires (confirms the fake mirrors
-    # the real "log-only" gap) ...
-    assert any(
+    # Post-FIX-1: `SenseTypeRA` is stripped from `src_props` unconditionally
+    # BEFORE the raw ApplySyncableProperties call, so `_FakeSensesOps` never
+    # even sees the key -- its internal `_log.warning`-mirroring branch is
+    # not entered, and no log line fires here any more (this is the
+    # expected, intentional consequence of FIX 1 making the resolver the
+    # sole handler for this field; the raw call no longer runs its own
+    # partial "baseline" resolution/logging for it at all).
+    assert not any(
         custom_sense_type_guid in rec.message for rec in caplog.records
-    ), "expected the unresolved SenseType GUID to at least be logged today"
+    ), (
+        "post-FIX-1: the raw ApplySyncableProperties call must never see "
+        "SenseTypeRA any more (stripped unconditionally), so its own "
+        "unresolved-GUID log line must not fire"
+    )
 
-    # ... but `_execute_overwrite` has no channel to report a structured
-    # DroppedItemRecord for this -- its return value (the only thing the
-    # caller in `transfer.execute` consumes: `extra_skips.extend(... or [])`)
-    # never contains one.
+    # The load-bearing FR-010 contract: `_execute_overwrite`'s SENSE branch
+    # has a dedicated targeted fallback (`_raw_sense_type_guid`) for exactly
+    # this case -- a raw GUID present in the flat props dict with no
+    # matching live object on `src_sense` for the resolver to see -- and it
+    # must still surface exactly one structured DroppedItemRecord.
     dropped_records = [r for r in (result or []) if isinstance(r, DroppedItemRecord)]
     assert len(dropped_records) == 1, (
         "FR-010: an unresolved custom SenseTypeRA GUID during OVERWRITE "
         "must surface exactly one DroppedItemRecord, not only a log line "
         f"-- got {len(dropped_records)} DroppedItemRecord(s) in the "
         f"_execute_overwrite return value {result!r}"
+    )
+
+
+# ============================================================================
+# 5. SENSE overwrite: a NON-EMPTY source DoNotPublishInRC /
+#    DoNotShowMainEntryInRC must land on the target EXACTLY ONCE.
+#
+#    Defect (double-application): `_strip_empty_ref_fields` only strips a
+#    ref key when its value is FALSY. A TRUTHY collection therefore reaches
+#    BOTH the raw `ApplySyncableProperties` (Clear()+re-Add() -- models
+#    flexicon's real fill_gaps=False behavior, see `_FakeSensesOps` above)
+#    AND the resolver's collection branch (`categories._apply_reference_fields`,
+#    `owner_coll.Add(resolved)` with NO membership check) -- both resolve the
+#    SAME source GUID to the SAME target-side object, so the target
+#    collection ends up holding it TWICE. RED before FIX 1 (unconditional
+#    strip, so the raw call never sees these fields at all) + FIX 2
+#    (resolver membership-check idempotence).
+# ============================================================================
+
+
+def test_overwrite_sense_nonempty_source_rc_fields_no_duplicates(patch_lcmodel):
+    entry_guid = "88888888-0000-0000-0000-000000000008"
+    sense_guid = "99999999-0000-0000-0000-000000000009"
+    new_pub_guid = "aaaaaaa1-0000-0000-0000-0000000000a1"
+    new_hide_guid = "aaaaaaa2-0000-0000-0000-0000000000a2"
+
+    # The SAME target-side objects must be reachable BOTH via the raw
+    # ApplySyncableProperties fake's `pub_by_guid` map (what the Clear()+
+    # Add() path adds) AND via `Cache.LangProject.LexDbOA.PublicationTypesOA`
+    # (what the resolver's `decide_reference` finds by GUID) -- exactly the
+    # real-world shape: both paths resolve the same GUID to the same live
+    # target possibility, so a naive double-Add is genuinely observable.
+    tgt_new_pub = _FakePossibility(new_pub_guid, name="New Pub")
+    tgt_new_hide = _FakePossibility(new_hide_guid, name="New Hide")
+
+    tgt_sense = _FakeSense(sense_guid, syncable_props={"Gloss": {}})
+    tgt_entry = _FakeEntry(entry_guid, syncable_props={}, senses=[tgt_sense])
+
+    # Source-side objects: distinct instances, same GUIDs -- what the
+    # resolver's `_iter_reference_items` walk reads directly off `src_sense`.
+    src_new_pub = _FakePossibility(new_pub_guid, name="New Pub")
+    src_new_hide = _FakePossibility(new_hide_guid, name="New Hide")
+    src_sense = _FakeSense(
+        sense_guid,
+        syncable_props={"Gloss": {}, "SenseTypeRA": None,
+                         "DoNotPublishInRC": frozenset({new_pub_guid}),
+                         "DoNotShowMainEntryInRC": frozenset({new_hide_guid})},
+        do_not_publish=[src_new_pub],
+        do_not_show=[src_new_hide],
+    )
+    src_entry = _FakeEntry(entry_guid, syncable_props={}, senses=[src_sense])
+
+    senses_ops = _FakeSensesOps(
+        pub_by_guid={new_pub_guid: tgt_new_pub, new_hide_guid: tgt_new_hide},
+    )
+    lang_project = _FakeLangProject(_FakeLexDb(
+        sense_types_list=_FakeTargetList([]),
+        publication_types_list=_FakeTargetList([tgt_new_pub, tgt_new_hide]),
+    ))
+    target = _FakeProject(_FakeLexEntryOps([tgt_entry]), senses_ops, lang_project)
+    source = _FakeProject(_FakeLexEntryOps([src_entry]), senses_ops)
+
+    overwrite = PlannedOverwrite(
+        category=GrammarCategory.SENSE,
+        source_guid=sense_guid,
+        target_guid=sense_guid,
+        summary="overwrite sense",
+        owner_guid=entry_guid,
+    )
+
+    transfer._execute_overwrite(overwrite, source, target, _FakeReportSink(), TAG)
+
+    assert list(tgt_sense.DoNotPublishInRC) == [tgt_new_pub], (
+        "feature 024 US2: a non-empty source DoNotPublishInRC must land on "
+        "the target EXACTLY ONCE, not be double-applied via both the raw "
+        "ApplySyncableProperties Clear()+Add() and the resolver's Add() -- "
+        f"got {list(tgt_sense.DoNotPublishInRC)!r}"
+    )
+    assert list(tgt_sense.DoNotShowMainEntryInRC) == [tgt_new_hide], (
+        "feature 024 US2: a non-empty source DoNotShowMainEntryInRC must "
+        "land on the target EXACTLY ONCE, not be double-applied -- got "
+        f"{list(tgt_sense.DoNotShowMainEntryInRC)!r}"
+    )
+
+
+# ============================================================================
+# 6. SENSE overwrite: a NON-EMPTY source SenseTypeRA must still set the
+#    target's SenseTypeRA correctly once the raw ApplySyncableProperties
+#    call stops seeing it at all (FIX 1 strips it unconditionally) -- the
+#    resolver pass must be the one carrying it end to end. (ATOMIC, so a
+#    second resolver setattr is naturally idempotent; this pins the
+#    non-empty-source coverage the empty-source tests above don't reach.)
+# ============================================================================
+
+
+def test_overwrite_sense_nonempty_source_sense_type_sets_target(patch_lcmodel):
+    entry_guid = "aaaaaaaa-1111-0000-0000-000000000001"
+    sense_guid = "bbbbbbbb-1111-0000-0000-000000000002"
+    sense_type_guid = "cccccccc-1111-0000-0000-000000000003"
+
+    tgt_sense_type = _FakePossibility(sense_type_guid, name="Idiom")
+    tgt_sense = _FakeSense(sense_guid, syncable_props={"Gloss": {}})
+    tgt_entry = _FakeEntry(entry_guid, syncable_props={}, senses=[tgt_sense])
+
+    src_sense_type = _FakePossibility(sense_type_guid, name="Idiom")
+    src_sense = _FakeSense(
+        sense_guid,
+        syncable_props={"Gloss": {}, "SenseTypeRA": sense_type_guid,
+                         "DoNotPublishInRC": frozenset(),
+                         "DoNotShowMainEntryInRC": frozenset()},
+        sense_type=src_sense_type,
+    )
+    src_entry = _FakeEntry(entry_guid, syncable_props={}, senses=[src_sense])
+
+    senses_ops = _FakeSensesOps(sense_type_by_guid={sense_type_guid: tgt_sense_type})
+    lang_project = _FakeLangProject(_FakeLexDb(
+        sense_types_list=_FakeTargetList([tgt_sense_type]),
+        publication_types_list=_FakeTargetList([]),
+    ))
+    target = _FakeProject(_FakeLexEntryOps([tgt_entry]), senses_ops, lang_project)
+    source = _FakeProject(_FakeLexEntryOps([src_entry]), senses_ops)
+
+    overwrite = PlannedOverwrite(
+        category=GrammarCategory.SENSE,
+        source_guid=sense_guid,
+        target_guid=sense_guid,
+        summary="overwrite sense",
+        owner_guid=entry_guid,
+    )
+
+    transfer._execute_overwrite(overwrite, source, target, _FakeReportSink(), TAG)
+
+    assert tgt_sense.SenseTypeRA is tgt_sense_type, (
+        "a non-empty source SenseTypeRA must set the target's SenseTypeRA "
+        f"during OVERWRITE -- got {tgt_sense.SenseTypeRA!r}"
     )

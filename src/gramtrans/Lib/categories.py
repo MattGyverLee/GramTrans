@@ -3187,12 +3187,69 @@ def _decide_reference_fields(owner_class, owner_guid, src_obj, target,
     return tuple(records)
 
 
+def _collection_already_has(owner_coll, resolved) -> bool:
+    """Feature 024 US2 FIX 2 (idempotence): True iff `owner_coll` already
+    contains an item with the same GUID as `resolved`.
+
+    Compares by GUID (via `_guid_str_from`), not raw `in`/`==` identity --
+    real LCM/COM-wrapped collection members are not guaranteed to be the
+    exact same Python wrapper instance across separate accessor calls even
+    when they wrap the identical underlying object, so identity/`__eq__`
+    comparison would be unreliable. This makes `_apply_reference_fields`'s
+    `.Add()` idempotent across re-runs of the SAME pass (a source item
+    resolving to an already-Added target member is a no-op, not a
+    duplicate) -- needed for both the `clear_before_add=True` OVERWRITE
+    path (defensive: the raw call may already have Add()-ed the same
+    member before this resolver pass runs, feature 024 US2's original
+    double-application defect) and the default ADD path (idempotent-union
+    safety net if a resolver pass is ever re-run against a partially
+    populated collection).
+
+    Fail-soft: any duck-typing gap iterating `owner_coll` (not iterable,
+    items lacking a GUID) is treated as "not found" -- the subsequent
+    `.Add()` attempt is itself already wrapped in a fail-soft
+    `AttributeError`/`TypeError` handler, matching this module's posture
+    elsewhere."""
+    resolved_guid = _guid_str_from(resolved)
+    if not resolved_guid:
+        return False
+    try:
+        return any(_guid_str_from(existing) == resolved_guid for existing in owner_coll)
+    except (AttributeError, TypeError):
+        return False
+
+
 def _apply_reference_fields(owner_class, src_obj, new_obj, target, tag,
                              resolver_cache, dropped, skip_fields=(), ws_map=None,
-                             source=None, owner_guid=""):
+                             source=None, owner_guid="", clear_before_add=False):
     """Move-mode (T016): `decide_reference` + `apply_reference` pass over
     every `references.field_specs_for(owner_class)` row applicable to
     `src_obj`, writing the result onto `new_obj`.
+
+    `clear_before_add` (feature 024 US2 FIX 3, replace-vs-union semantic):
+    when `False` (the default -- every ADD/closure call site, T016/T019),
+    a COLLECTION/SEQUENCE field is UNION-added: each resolved source member
+    is `.Add()`-ed onto whatever `new_obj`'s collection already holds
+    (idempotent per FIX 2 below, but never removes a pre-existing member).
+    Correct for ADD/closure, where `new_obj` is always a freshly-created
+    target object with an empty collection to begin with, so union and
+    replace coincide there.
+
+    When `True` (the OVERWRITE call sites in `transfer._execute_overwrite`
+    only), each COLLECTION/SEQUENCE field this pass actually touches is
+    REPLACED: the target collection is `.Clear()`-ed exactly once, the
+    first time this pass is about to `.Add()` a resolved member for that
+    field, then rebuilt from the resolved source members. This models the
+    OVERWRITE-path's expected "target becomes what the source now says"
+    semantic (matching the raw `ApplySyncableProperties` behavior this
+    pass now supersedes for these fields, see `transfer._strip_ref_fields`)
+    -- WITHOUT regressing the ADD path, since `clear_before_add` defaults
+    to `False` there. Critically, the clear only happens lazily, inside the
+    per-item loop below -- an EMPTY source (zero resolved members) means
+    the loop for that field never runs at all, so `.Clear()` is never
+    called and FR-007's non-destructive invariant (an empty source must
+    never blank a populated target) still holds even under
+    `clear_before_add=True`.
 
     `owner_guid` (feature 024 US4, T022): the owning LexEntry/LexSense/
     MoForm instance's own source GUID, used ONLY to enrich any
@@ -3234,6 +3291,12 @@ def _apply_reference_fields(owner_class, src_obj, new_obj, target, tag,
         from . import references as _references
     else:
         import references as _references  # type: ignore
+    # Feature 024 US2 FIX 3: fields actually `.Clear()`-ed this call, so a
+    # `clear_before_add=True` caller gets exactly one Clear() per field
+    # (the first time this pass is about to Add a resolved member for it),
+    # never a re-clear on a later item of the SAME field within this same
+    # pass.
+    cleared_fields: set = set()
     for spec in _references.field_specs_for(owner_class):
         if spec.field_name in skip_fields:
             continue
@@ -3258,10 +3321,26 @@ def _apply_reference_fields(owner_class, src_obj, new_obj, target, tag,
             if not atomic and resolved is not None:
                 owner_coll = getattr(new_obj, spec.field_name, None)
                 if owner_coll is not None:
-                    try:
-                        owner_coll.Add(resolved)
-                    except (AttributeError, TypeError):
-                        pass
+                    if clear_before_add and spec.field_name not in cleared_fields:
+                        # FIX 3 (replace semantic, OVERWRITE-only): clear the
+                        # target collection exactly once before the first
+                        # Add for this field -- an empty source never
+                        # reaches here at all (the `for item in
+                        # _iter_reference_items(...)` loop above simply
+                        # doesn't run), so FR-007's non-destructive
+                        # invariant is preserved.
+                        clear = getattr(owner_coll, "Clear", None)
+                        if callable(clear):
+                            try:
+                                clear()
+                            except (AttributeError, TypeError):
+                                pass
+                        cleared_fields.add(spec.field_name)
+                    if not _collection_already_has(owner_coll, resolved):
+                        try:
+                            owner_coll.Add(resolved)
+                        except (AttributeError, TypeError):
+                            pass
 
 
 def _plan_entry_reference_decisions(src_entry, context, target):

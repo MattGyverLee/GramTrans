@@ -72,7 +72,7 @@ else:
 
 
 # ============================================================================
-# Feature 024 US2 (OVERWRITE-path reference-field routing, FIX 1a)
+# Feature 024 US2 (OVERWRITE-path reference-field routing, FIX 1)
 # ============================================================================
 #
 # `_execute_overwrite`'s SENSE and ENTRY (+ AFFIXES/STEMS, same code path)
@@ -82,16 +82,21 @@ else:
 # tests/unit/test_overwrite_blanking.py's module docstring for the exact
 # flexicon source lines) -- an empty/unset source value blanks or clears an
 # already-populated target, violating FR-007's non-destructive invariant.
+# A NON-empty source value has its own defect if left in place: it would
+# reach BOTH the raw call AND the resolver pass below, resolving the same
+# GUID to the same target object twice (double-application -- see
+# `_strip_ref_fields`'s docstring).
 #
-# These keys are stripped from `src_props` BEFORE the raw
-# `ApplySyncableProperties` call and routed instead through
-# `categories._apply_reference_fields` -- the SAME generic resolver
-# (LINK/CREATE+ancestors/UPDATE/REPORT_DROPPED) the ADD/closure path already
-# uses (`categories._walk_lex_entry_closure`). Every OTHER reference field
-# registered in `references.REFERENCE_FIELD_MAP` for these owner classes
-# (UsageTypesRC, DomainTypesRC, StatusRA, ...) is OUT OF SCOPE for this fix
-# and is left on the raw-copy path unchanged -- `_overwrite_ref_skip_fields`
-# below excludes them from the resolver pass via `skip_fields=`.
+# These keys are therefore stripped from `src_props` UNCONDITIONALLY
+# (empty or not) BEFORE the raw `ApplySyncableProperties` call and routed
+# SOLELY through `categories._apply_reference_fields` instead -- the SAME
+# generic resolver (LINK/CREATE+ancestors/UPDATE/REPORT_DROPPED) the
+# ADD/closure path already uses (`categories._walk_lex_entry_closure`).
+# Every OTHER reference field registered in `references.REFERENCE_FIELD_MAP`
+# for these owner classes (UsageTypesRC, DomainTypesRC, StatusRA, ...) is OUT
+# OF SCOPE for this fix and is left on the raw-copy path unchanged --
+# `_overwrite_ref_skip_fields` below excludes them from the resolver pass via
+# `skip_fields=`.
 _OVERWRITE_SENSE_REF_FIELDS = frozenset(
     {"SenseTypeRA", "DoNotPublishInRC", "DoNotShowMainEntryInRC"}
 )
@@ -116,25 +121,33 @@ def _overwrite_ref_skip_fields(owner_class: str, keep_fields: frozenset) -> froz
     ) - keep_fields
 
 
-def _strip_empty_ref_fields(src_props: dict, fields) -> None:
-    """Remove each of `fields` from `src_props` in place, but ONLY when its
-    current value is falsy (`None`, `""`, empty set/frozenset/dict/tuple).
+def _strip_ref_fields(src_props: dict, fields) -> None:
+    """Remove each of `fields` from `src_props` in place, UNCONDITIONALLY --
+    regardless of whether its current value is truthy or falsy.
 
-    This targets exactly the destructive case (FR-007): flexicon's raw
-    `ApplySyncableProperties(fill_gaps=False)` for these fields is
-    blank-on-empty (`SenseTypeRA`) / clear-and-rebuild
-    (`DoNotPublishInRC`/`DoNotShowMainEntryInRC`) -- an EMPTY source value
-    must never reach that call. A NON-empty (truthy) value is deliberately
-    LEFT IN PLACE so the raw call still runs its existing baseline
-    resolution/logging for it; the generic resolver pass that runs right
-    after (`categories._apply_reference_fields`, object-attribute-driven)
-    supersedes that baseline whenever a live source object is actually
-    resolvable, and a value the resolver structurally cannot see (a raw
-    GUID with no matching live object attribute) still gets *some*
-    handling from the raw call rather than silently vanishing."""
+    Feature 024 US2 FIX 1 (root-cause option (a)): the prior version
+    (`_strip_empty_ref_fields`) only stripped a field when its value was
+    FALSY, on the theory that a truthy (non-empty) value should still reach
+    the raw `ApplySyncableProperties` call for "baseline" handling. That
+    left a real double-application defect: a TRUTHY collection value
+    (`DoNotPublishInRC`/`DoNotShowMainEntryInRC`) reached BOTH the raw call
+    (which `Clear()`s the target collection and re-`Add()`s each resolved
+    source member -- flexicon's `fill_gaps=False` semantics) AND the
+    generic resolver pass immediately after
+    (`categories._apply_reference_fields`, object-attribute-driven,
+    `owner_coll.Add(resolved)`) -- both resolving the SAME source GUID to
+    the SAME target object, so the target collection ended up holding it
+    TWICE.
+
+    Stripping unconditionally makes the resolver pass the SOLE handler for
+    these fields, full stop -- the raw call never touches them, empty or
+    not, so the Clear()+Add()-then-Add() double-application is removed by
+    construction. The non-destructive invariant (FR-007: an empty source
+    never blanks a populated target) still holds: `decide_reference`
+    returns `None` for an unset/empty source item, which is a documented
+    no-op for the resolver -- it never clears anything itself."""
     for field_name in fields:
-        if not src_props.get(field_name):
-            src_props.pop(field_name, None)
+        src_props.pop(field_name, None)
 
 
 # ============================================================================
@@ -1827,6 +1840,20 @@ def _execute_overwrite(overwrite, source, target, report_sink, tag: ImportResidu
     # entry-level overwrite path — no category-specific merge code: the
     # same _dedupe_custom_fields + _resolve_and_tag generic helpers run for
     # all three, so per-field conflicts surface to Phase 2 uniformly.
+    #
+    # LATENCY NOTE (feature 024 US2, this cycle): this branch is currently
+    # UNREACHED in production for ANY of the three categories. The verb-
+    # vertical planner that builds ENTRY `PlannedOverwrite`s is gated off
+    # (`_VERB_VERTICAL_ENABLED = False`), and the active leaf-dispatch
+    # planners for AFFIXES/STEMS (`affixes_plan_action`/`stems_plan_action`
+    # in `categories.py`) return `Skip(ALREADY_PRESENT_BY_GUID)` for any
+    # GUID-present item -- they never emit a `PlannedOverwrite` that would
+    # route here. A future reader should NOT assume the FIX 1/2/3 reference-
+    # field handling below (or any Preview overwrite-drop reporting) is
+    # exercised by a live run today; it is correctness hardening for when
+    # this path is enabled, not an active-data-loss fix. See
+    # `tests/unit/test_overwrite_blanking.py` for the unit-level coverage
+    # that keeps it correct in the meantime.
     if cat in (GrammarCategory.ENTRY, GrammarCategory.AFFIXES, GrammarCategory.STEMS):
         from SIL.LCModel import ICmObject  # lazy
         tgt_entry = None
@@ -1850,12 +1877,13 @@ def _execute_overwrite(overwrite, source, target, report_sink, tag: ImportResidu
         src_props = _dedupe_custom_fields(
             source.LexEntry.GetSyncableProperties(src_entry), tgt_pre_props
         )
-        # Feature 024 US2 (FIX 1a): strip the entry-level reference fields
-        # BEFORE the raw ApplySyncableProperties call, but ONLY when empty
-        # (the destructive blank/clear case) -- see the
+        # Feature 024 US2 (FIX 1, root-cause option (a)): strip the
+        # entry-level reference fields UNCONDITIONALLY (empty or not)
+        # BEFORE the raw ApplySyncableProperties call -- see the
         # `_OVERWRITE_ENTRY_REF_FIELDS` module comment above `execute()` and
-        # `_strip_empty_ref_fields`'s own docstring.
-        _strip_empty_ref_fields(src_props, _OVERWRITE_ENTRY_REF_FIELDS)
+        # `_strip_ref_fields`'s own docstring for why this must not be
+        # empty-only (double-application defect).
+        _strip_ref_fields(src_props, _OVERWRITE_ENTRY_REF_FIELDS)
         log = _resolve_decisions_for(overwrite, interactive_session)
         src_props, tagged, ow_skips = _resolve_and_tag(
             src_props, tgt_pre_props, tag, log,
@@ -1879,6 +1907,13 @@ def _execute_overwrite(overwrite, source, target, report_sink, tag: ImportResidu
             dropped,
             skip_fields=_overwrite_ref_skip_fields("LexEntry", _OVERWRITE_ENTRY_REF_FIELDS),
             ws_map=ws_map, source=source, owner_guid=src_guid,
+            # Feature 024 US2 FIX 3: OVERWRITE replaces these collections
+            # (target becomes exactly the resolved non-empty source
+            # members), not a union-add -- see
+            # `categories._apply_reference_fields`'s `clear_before_add`
+            # docstring for why this is safe to gate here without touching
+            # the ADD/closure path's default union semantic.
+            clear_before_add=True,
         )
         cache = getattr(target, "Cache")
         apply_residue(tgt_entry, cache.DefaultAnalWs, tagged)
@@ -1886,6 +1921,19 @@ def _execute_overwrite(overwrite, source, target, report_sink, tag: ImportResidu
         return list(ow_skips) + list(dropped[_dropped_before:])
 
     if cat == GrammarCategory.SENSE:
+        # LATENCY NOTE (feature 024 US2, this cycle): this branch is
+        # currently UNREACHED in production. SENSE is not one of the
+        # active leaf-dispatch categories in `categories.py` at all (only
+        # AFFIXES/STEMS/entry-shaped categories are dispatched today), and
+        # the verb-vertical planner that would build a SENSE
+        # `PlannedOverwrite` is gated off (`_VERB_VERTICAL_ENABLED =
+        # False`). A future reader should NOT assume the FIX 1/2/3
+        # reference-field handling below is exercised by a live run today;
+        # it is correctness hardening for when this path is enabled, not an
+        # active-data-loss fix. See
+        # `tests/unit/test_overwrite_blanking.py` for the unit-level
+        # coverage that keeps it correct in the meantime.
+        #
         # owner_guid is the parent entry GUID; look up the entry first,
         # then iterate its senses.
         from SIL.LCModel import ICmObject  # lazy
@@ -1928,15 +1976,18 @@ def _execute_overwrite(overwrite, source, target, report_sink, tag: ImportResidu
         src_props = _dedupe_custom_fields(
             source.Senses.GetSyncableProperties(src_sense), tgt_pre_props
         )
-        # Feature 024 US2 (FIX 1a): strip the sense-level reference fields
+        # Feature 024 US2 (FIX 1, root-cause option (a)): strip the
+        # sense-level reference fields UNCONDITIONALLY (empty or not)
         # BEFORE the raw ApplySyncableProperties call -- see the
-        # `_OVERWRITE_SENSE_REF_FIELDS` module comment above `execute()`.
+        # `_OVERWRITE_SENSE_REF_FIELDS` module comment above `execute()` and
+        # `_strip_ref_fields`'s own docstring for why this must not be
+        # empty-only (double-application defect).
         # `_raw_sense_type_guid` is captured for the targeted fallback below
         # (a raw GUID present only in the flat props dict, with no matching
         # live object on `src_sense` for the object-attribute-driven
         # resolver to see).
         _raw_sense_type_guid = src_props.get("SenseTypeRA")
-        _strip_empty_ref_fields(src_props, _OVERWRITE_SENSE_REF_FIELDS)
+        _strip_ref_fields(src_props, _OVERWRITE_SENSE_REF_FIELDS)
         log = _resolve_decisions_for(overwrite, interactive_session)
         src_props, tagged, ow_skips = _resolve_and_tag(
             src_props, tgt_pre_props, tag, log,
@@ -1963,6 +2014,13 @@ def _execute_overwrite(overwrite, source, target, report_sink, tag: ImportResidu
             dropped,
             skip_fields=_overwrite_ref_skip_fields("LexSense", _OVERWRITE_SENSE_REF_FIELDS),
             ws_map=ws_map, source=source, owner_guid=owner_entry_guid,
+            # Feature 024 US2 FIX 3: OVERWRITE replaces these collections
+            # (target becomes exactly the resolved non-empty source
+            # members), not a union-add -- see
+            # `categories._apply_reference_fields`'s `clear_before_add`
+            # docstring for why this is safe to gate here without touching
+            # the ADD/closure path's default union semantic.
+            clear_before_add=True,
         )
         # Targeted fallback (documented deviation from pure option (a)): a
         # raw SenseTypeRA GUID that is present in the flat props dict but
