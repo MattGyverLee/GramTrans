@@ -3344,12 +3344,15 @@ def _apply_reference_fields(owner_class, src_obj, new_obj, target, tag,
 
 
 def _plan_entry_reference_decisions(src_entry, context, target):
-    """Preview-mode (T017): read-only `decide_reference` pass across the
-    AFFIXES/STEMS entry -> sense -> allomorph closure -- the collector's
-    legitimate reach today (deeper owned-object legs -- sub-senses, examples,
-    pronunciations, etymologies -- are US3, not this task). Returns the
-    combined tuple of `ReferenceDecisionRecord` for
-    `PlannedAction.reference_decisions`.
+    """Preview-mode (T017/T030): read-only `decide_reference` pass across the
+    AFFIXES/STEMS entry -> sense -> allomorph closure, PLUS (T030, US3) the
+    read-only owned-object walk (`Lib/owned.py.plan_owned_object_decisions`)
+    for entry-owned PronunciationsOS/EtymologyOS and sense-owned ExamplesOS +
+    recursive sub-senses -- the SAME `owned.walk_owned_children` calls
+    `_walk_lex_entry_closure` makes at Move time, mirrored here read-only so
+    Preview shows every owned child that WOULD be created (plus its own
+    child-ref decisions) before Move ever writes. Returns the combined tuple
+    of `ReferenceDecisionRecord` for `PlannedAction.reference_decisions`.
 
     Fail-soft only for the narrow, expected duck-typing gaps (a test fake or
     real LCM object missing an attribute the resolver probes speculatively):
@@ -3376,11 +3379,40 @@ def _plan_entry_reference_decisions(src_entry, context, target):
         records = list(_decide_reference_fields(
             "LexEntry", entry_guid, src_entry, target, resolver_cache, dropped,
             source=source))
+        # Feature 024 (T030, US3): entry-owned children (PronunciationsOS,
+        # EtymologyOS) -- `owning_fields` restricts the scan to just those
+        # two rows so this entry-level call does NOT also match
+        # `OWNED_OBJECT_MAP`'s `LexSense.SensesOS` row (a real `ILexEntry`
+        # duck-types a `SensesOS` attribute too -- its own top-level senses
+        # collection). Letting the owned-object walk re-scan that here
+        # would double-count every top-level sense as a phantom "owned
+        # child" CREATE decision on top of the `_decide_reference_fields`
+        # pass the loop below already runs for each one directly. Lazy
+        # import (function-local): `owned.py` does not import `categories.py`
+        # at module scope; this is the reverse direction, deferred to call
+        # time to avoid a load-order cycle.
+        if __package__:
+            from . import owned as _owned
+        else:
+            import owned as _owned  # type: ignore
+        records.extend(_owned.plan_owned_object_decisions(
+            src_entry, context, resolver_cache, dropped,
+            owning_fields=frozenset({"PronunciationsOS", "EtymologyOS"})))
         for src_sense in getattr(src_entry, "SensesOS", None) or []:
             s_guid = _guid_str_from(src_sense)
             records.extend(_decide_reference_fields(
                 "LexSense", s_guid, src_sense, target, resolver_cache, dropped,
                 source=source))
+            # Feature 024 (T030, US3): sense-owned children -- ExamplesOS (+
+            # each example's TranslationsOC) and recursive sub-senses
+            # (Sense.SensesOS). Left UNFILTERED, same reasoning as the
+            # matching Move-mode call in `_walk_lex_entry_closure`: a
+            # `LexSense` does not duck-type Pronunciations/EtymologyOS, so
+            # this naturally matches only `ExamplesOS`/`SensesOS` (the
+            # sub-sense leg), never re-touching the entry's own top-level
+            # senses loop above.
+            records.extend(_owned.plan_owned_object_decisions(
+                src_sense, context, resolver_cache, dropped))
         allomorphs = []
         lf = getattr(src_entry, "LexemeFormOA", None)
         if lf is not None:
@@ -3518,6 +3550,26 @@ def _walk_lex_entry_closure(src_entry, context, tag, category, dropped=None):
         "LexEntry", src_entry, new_entry, target, tag, resolver_cache, dropped,
         ws_map=ws_map, source=context.source_handle, owner_guid=src_guid)
 
+    # Feature 024 (T030, US3): entry-owned children -- PronunciationsOS,
+    # EtymologyOS (`Lib/owned.py.walk_owned_children`). `owning_fields`
+    # restricts this call to just those two `OWNED_OBJECT_MAP` rows: a real
+    # `ILexEntry` also duck-types an attribute literally named `SensesOS`
+    # (its own top-level senses collection), which would otherwise ALSO
+    # match `OWNED_OBJECT_MAP`'s `LexSense.SensesOS` row (recurse=True, for
+    # SUB-sense recursion) and re-create every top-level sense a SECOND
+    # time as a phantom "owned child" -- double-processing the senses the
+    # loop below already creates directly. See `walk_owned_children`'s own
+    # docstring for the full explanation. Lazy import (function-local) --
+    # `owned.py` does not import `categories.py` at module scope, and this
+    # is the reverse direction, so deferring avoids a load-order cycle.
+    if __package__:
+        from . import owned as _owned
+    else:
+        import owned as _owned  # type: ignore
+    _owned.walk_owned_children(
+        src_entry, new_entry, context, tag, resolver_cache, dropped,
+        owning_fields=frozenset({"PronunciationsOS", "EtymologyOS"}))
+
     # Allomorphs (E3): LexemeFormOA + AlternateFormsOS.
     _walk_entry_allomorphs(src_entry, new_entry, context, tag, identity_remap, dropped=dropped)
 
@@ -3536,13 +3588,19 @@ def _walk_lex_entry_closure(src_entry, context, tag, category, dropped=None):
             target.Senses.ApplySyncableProperties(new_sense, sprops, ws_map=ws_map)
         except (AttributeError, TypeError):
             pass
-        # `dropped`/`resolver_cache` are still in scope here for the future
-        # sub-sense (Sense.SensesOS, recurse) and example (Sense.ExamplesOS +
-        # translation TypeRA) legs of the owned-object walk -- Lib/owned.py
-        # US3 (T028/T030) will call `walk_owned_children(src_sense, new_sense,
-        # context, tag, resolver_cache, dropped)` from right here once it is
-        # implemented.
-        #
+        # Feature 024 (T030, US3): sense-owned children -- ExamplesOS (+ each
+        # example's TranslationsOC) and recursive sub-senses (Sense.SensesOS,
+        # `OwnedObjectSpec.recurse=True`), both via the SAME
+        # `walk_owned_children` call -- a `LexSense` does not duck-type
+        # Pronunciations/EtymologyOS (those are entry-level only), so this
+        # call is left UNFILTERED: it naturally matches only `ExamplesOS`
+        # and `SensesOS` (the sub-sense leg), never re-touching the entry's
+        # own top-level senses (this loop's own iteration variable) since
+        # `src_sense.SensesOS` here is that SENSE's sub-senses, a distinct
+        # collection from `src_entry.SensesOS` above.
+        _owned.walk_owned_children(
+            src_sense, new_sense, context, tag, resolver_cache, dropped)
+
         # Feature 024 (T016): every sense-level reference field registered in
         # `references.REFERENCE_FIELD_MAP` -- SenseTypeRA, UsageTypesRC,
         # DomainTypesRC, AnthroCodesRC, DialectLabelsRS, StatusRA,
@@ -3646,9 +3704,13 @@ def _walk_entry_allomorphs(src_entry, new_entry, context, tag, identity_remap, d
             "MoForm", src_allo, new_allo, target, tag, resolver_cache, dropped,
             skip_fields=_MOFORM_DEFERRED_FIELDS, ws_map=ws_map,
             source=context.source_handle, owner_guid=src_g)
-        # `dropped`/`resolver_cache` are in scope here for the future APR
-        # reproduction (`Lib/owned.py.reproduce_allomorph_hung_data`, US3
-        # T029). Not wired yet.
+        # TODO(024 cycle-10): plug in
+        # `owned.reproduce_allomorph_hung_data(src_allo, new_allo, context,
+        # tag, resolver_cache, dropped)` right here once T029 implements it
+        # (PhoneEnvRC resolution + APR reproduction, US3, FR-009a) -- NOT
+        # this cycle's scope (T030 owned-CHILD portion only). `dropped`/
+        # `resolver_cache` are already in scope and threaded exactly as
+        # that future call will need them.
         apply_residue(new_allo, ws, tag)
 
     lf = getattr(src_entry, "LexemeFormOA", None)

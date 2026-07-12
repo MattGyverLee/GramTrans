@@ -13,9 +13,20 @@ every child reference field back through `Lib/references.py`'s resolver.
 ``reproduce_allomorph_hung_data`` (allomorph phonological environments, ad-hoc
 prohibition rules) is a separate US3 task (T029), not implemented here.
 
-Not yet wired into the live closure (`Lib/categories.py._walk_lex_entry_closure`)
--- that is T030. This module is proven standalone by
-`tests/unit/test_owned_object_walk.py`.
+``walk_owned_children`` is wired into the live closure (T030, this cycle):
+`Lib/categories.py._walk_lex_entry_closure` calls it from the ENTRY level
+(``owning_fields={"PronunciationsOS", "EtymologyOS"}``) and again from the
+SENSE level (unfiltered -- ``ExamplesOS`` + recursive sub-senses). See that
+function's inline comments for why the entry-level call needs the
+``owning_fields`` filter (a real ``ILexEntry`` also duck-types a
+``SensesOS`` attribute -- its own top-level senses -- which would otherwise
+double-process the senses the closure's own loop already creates). The
+read-only Preview twin, ``plan_owned_object_decisions``, is wired the same
+way into `Lib/categories.py._plan_entry_reference_decisions`. The allomorph
+leg (``reproduce_allomorph_hung_data``, T029) has a marked
+``TODO(024 cycle-10)`` plug-in point in
+`Lib/categories.py._walk_entry_allomorphs`, not wired yet. This module is
+proven standalone by `tests/unit/test_owned_object_walk.py`.
 """
 from __future__ import annotations
 
@@ -26,7 +37,9 @@ if __package__:
     from .models import (
         DroppedItemRecord,
         OwnedObjectSpec,
+        ReferenceAction,
         ReferenceCardinality,
+        ReferenceDecisionRecord,
         ReferenceFieldSpec,
     )
     from . import references as _references
@@ -34,7 +47,9 @@ else:
     from models import (  # type: ignore
         DroppedItemRecord,
         OwnedObjectSpec,
+        ReferenceAction,
         ReferenceCardinality,
+        ReferenceDecisionRecord,
         ReferenceFieldSpec,
     )
     import references as _references  # type: ignore
@@ -435,9 +450,34 @@ def _copy_one_owned_child(spec, src_child, new_owner, ctx, tag, resolver_cache, 
     return new_child
 
 
-def walk_owned_children(src_owner, new_owner, ctx, tag, resolver_cache, dropped) -> None:
+def walk_owned_children(src_owner, new_owner, ctx, tag, resolver_cache, dropped,
+                         owning_fields=None) -> None:
     """T028 -- reproduce `src_owner`'s owned children under `new_owner` per
     `OWNED_OBJECT_MAP` (contracts/owned-object-walk.md).
+
+    `owning_fields` (T030 wiring, optional): when given (a `frozenset` of
+    owning-field names), restrict this call to the `OWNED_OBJECT_MAP` rows
+    whose `owning_field` is a member -- e.g. `frozenset({"PronunciationsOS",
+    "EtymologyOS"})` for an ENTRY-level call. `None` (the default) applies
+    every row whose `owning_field` `src_owner` duck-types as present,
+    exactly as before this parameter existed (every pre-T030 caller/test
+    passes 6 positional args and gets this unfiltered behavior unchanged).
+
+    Why this is needed at the entry level: `OWNED_OBJECT_MAP` includes a
+    `LexSense.SensesOS` row (recurse=True, for SUB-sense recursion). A real
+    `ILexEntry` ALSO happens to expose an attribute literally named
+    `SensesOS` (its own top-level senses collection) -- `hasattr` duck-
+    typing does not check `spec.owner_class`, only whether the attribute
+    exists on whatever `src_owner` was passed. An unfiltered entry-level
+    call would therefore ALSO match that row and try to re-create every
+    top-level sense as a phantom "owned child" of the entry -- double-
+    processing senses the closure's own `for src_sense in
+    src_entry.SensesOS` loop (`categories._walk_lex_entry_closure`) already
+    creates directly. `categories.py` passes `owning_fields={"PronunciationsOS",
+    "EtymologyOS"}` for its entry-level call for exactly this reason, and
+    leaves the sense-level call unfiltered (a `LexSense` does not duck-type
+    Pronunciations/EtymologyOS, so only its own `ExamplesOS` + `SensesOS`
+    -- the desired sub-sense leg -- match there).
 
     For every `OwnedObjectSpec` applicable to `src_owner` (duck-typed: an
     `owning_field` attribute present on `src_owner`, matching this module's
@@ -474,6 +514,8 @@ def walk_owned_children(src_owner, new_owner, ctx, tag, resolver_cache, dropped)
         visited.add(owner_guid)
     try:
         for spec in OWNED_OBJECT_MAP:
+            if owning_fields is not None and spec.owning_field not in owning_fields:
+                continue
             if not hasattr(src_owner, spec.owning_field):
                 continue
             try:
@@ -501,3 +543,170 @@ def walk_owned_children(src_owner, new_owner, ctx, tag, resolver_cache, dropped)
     finally:
         if owner_guid:
             visited.discard(owner_guid)
+
+
+# ============================================================================
+# T030 (US3, Principle III) -- Preview-mode (read-only) twin of the walk
+# ============================================================================
+#
+# `plan_owned_object_decisions` mirrors `walk_owned_children`'s traversal
+# EXACTLY (same `OWNED_OBJECT_MAP` scan, same `owning_fields` filter, same
+# cyclic-guard `_VISITED_KEY` stack in `resolver_cache`, same recursive
+# re-walk of every created child's own owned collections) but never
+# creates anything, never calls a factory, never touches
+# GetSyncableProperties/ApplySyncableProperties/apply_residue -- only
+# `references.decide_reference`, exactly like
+# `categories._plan_entry_reference_decisions`/`_decide_reference_fields`
+# already do for top-level entry/sense/allomorph reference fields. This is
+# what lets `PlannedAction.reference_decisions` show every owned child
+# that WOULD be created (as a `ReferenceAction.CREATE` decision keyed by
+# the owning field, e.g. "ExamplesOS") plus that child's own reference-field
+# decisions (LINK/CREATE/UPDATE/REPORT_DROPPED) -- BEFORE Move ever writes.
+
+def _plan_child_ref_decisions(child_refs, src_child, ctx, resolver_cache, dropped) -> list:
+    """Read-only twin of `_apply_child_refs`: `decide_reference` ONLY (never
+    `apply_reference`, never a `.Create()`/`.Add()`) over every `child_refs`
+    `ReferenceFieldSpec` for one not-yet-created owned child. Returns a list
+    of `ReferenceDecisionRecord` (one per resolved item) and appends any
+    `DroppedItemRecord` to `dropped` -- same enrichment/dedup as the write
+    path (`_enrich`/`_append_dropped`), just never writing anything."""
+    if not child_refs:
+        return []
+    target = ctx.target_handle
+    source = ctx.source_handle
+    owner_guid = _references._guid_str(src_child)
+    owner_label = _references._item_label(src_child)
+    records: list = []
+    for spec in child_refs:
+        for item in _iter_ref_items(spec, src_child):
+            decision = _references.decide_reference(
+                item, target, spec, resolver_cache, source=source)
+            if decision is None:
+                continue
+            if decision.dropped is not None:
+                _append_dropped(dropped, _enrich(decision.dropped, owner_guid, owner_label))
+            src_item = decision.source_item
+            records.append(ReferenceDecisionRecord(
+                owner_kind=spec.owner_class,
+                owner_guid=owner_guid,
+                field_name=spec.field_name,
+                action=decision.action,
+                item_name=_references._item_label(src_item) if src_item is not None else "",
+                item_guid=_references._guid_str(src_item) if src_item is not None else "",
+            ))
+    return records
+
+
+def _plan_full_sense_reference_decisions(owner_class, src_child, ctx, resolver_cache,
+                                          dropped) -> tuple:
+    """Read-only twin of `_apply_full_sense_reference_fields`: give a
+    not-yet-created sub-sense the SAME Preview treatment a top-level sense
+    gets, by reusing `categories._decide_reference_fields` -- the SAME
+    read-only function `categories._plan_entry_reference_decisions` calls
+    for every top-level sense -- rather than duplicating its decide loop.
+
+    Lazy import for the same reason `_apply_full_sense_reference_fields`
+    already documents: `categories.py` is the one importing `owned.py` at
+    call time for T030's wiring, so this reverse (owned -> categories) import
+    must stay deferred to call time to avoid a module-load-order cycle."""
+    try:
+        if __package__:
+            from . import categories as _categories
+        else:
+            import categories as _categories  # type: ignore
+    except ImportError:  # pragma: no cover -- categories.py is always present
+        _log.warning(
+            "owned._plan_full_sense_reference_decisions: could not import "
+            "categories.py -- skipping the full %s reference-decision "
+            "preview for a recursively-planned sub-sense.", owner_class,
+        )
+        return ()
+    owner_guid = _references._guid_str(src_child)
+    return _categories._decide_reference_fields(
+        owner_class, owner_guid, src_child, ctx.target_handle, resolver_cache,
+        dropped, source=ctx.source_handle,
+    )
+
+
+def plan_owned_object_decisions(src_owner, ctx, resolver_cache, dropped,
+                                 owning_fields=None) -> tuple:
+    """T030 (US3, Principle III) -- read-only twin of `walk_owned_children`:
+    for every `OWNED_OBJECT_MAP` spec applicable to `src_owner` (same
+    `owning_fields` filter semantics as `walk_owned_children` -- see its
+    docstring for why the entry-level call needs one), produce a
+    `ReferenceDecisionRecord` for each owned child that WOULD be created
+    (`action=ReferenceAction.CREATE`, `field_name=spec.owning_field`) plus
+    that child's own `child_refs` decisions
+    (`_plan_child_ref_decisions`) and, for `spec.recurse` sub-senses, the
+    full top-level-sense reference-decision preview
+    (`_plan_full_sense_reference_decisions`). Recurses into every planned
+    child's OWN owned collections afterward, unconditionally -- mirroring
+    `walk_owned_children`'s unconditional re-walk (the `recurse` flag only
+    gates the EXTRA full-sense-decision pass, not the owned-collection
+    recursion itself).
+
+    Never creates anything, never calls a factory, never mutates the
+    target -- Principle III: every decision surfaced here must be knowable
+    from `decide_reference` alone, before Move ever writes.
+
+    Cyclic guard: shares the SAME `_VISITED_KEY` stack in `resolver_cache`
+    `walk_owned_children` maintains, so a Preview pass over cyclic/
+    self-referential owned data terminates exactly like the write pass
+    does (one `DroppedItemRecord`, reason "cyclic owned-object reference",
+    per re-entered GUID) -- this is a *different* resolver_cache instance
+    per plan-vs-move pass in production (Preview's own cache vs. Move's
+    own cache, per `preview.build_run_plan`/`transfer.execute`), so this
+    call's visited-stack bookkeeping never collides with the real write
+    pass's.
+    """
+    visited = resolver_cache.setdefault(_VISITED_KEY, set())
+    owner_guid = _references._guid_str(src_owner)
+    records: list = []
+    if owner_guid:
+        visited.add(owner_guid)
+    try:
+        for spec in OWNED_OBJECT_MAP:
+            if owning_fields is not None and spec.owning_field not in owning_fields:
+                continue
+            if not hasattr(src_owner, spec.owning_field):
+                continue
+            try:
+                src_children = list(getattr(src_owner, spec.owning_field) or [])
+            except TypeError:
+                continue
+            for src_child in src_children:
+                child_guid = _references._guid_str(src_child)
+                if child_guid and child_guid in visited:
+                    _append_dropped(dropped, DroppedItemRecord(
+                        owner_kind=spec.owner_class,
+                        owner_guid=owner_guid,
+                        owner_label=_references._item_label(src_owner),
+                        field_name=spec.owning_field,
+                        item_name=_references._item_label(src_child),
+                        item_guid=child_guid,
+                        reason="cyclic owned-object reference",
+                    ))
+                    continue
+                records.append(ReferenceDecisionRecord(
+                    owner_kind=spec.owner_class,
+                    owner_guid=owner_guid,
+                    field_name=spec.owning_field,
+                    action=ReferenceAction.CREATE,
+                    item_name=_references._item_label(src_child),
+                    item_guid=child_guid,
+                ))
+                records.extend(_plan_child_ref_decisions(
+                    spec.child_refs, src_child, ctx, resolver_cache, dropped))
+                if spec.recurse:
+                    records.extend(_plan_full_sense_reference_decisions(
+                        _child_class_name(spec.factory), src_child, ctx,
+                        resolver_cache, dropped))
+                # Recurse into this child's OWN owned collections regardless
+                # of `spec.recurse` (mirrors `walk_owned_children`'s
+                # unconditional re-walk one call above).
+                records.extend(plan_owned_object_decisions(
+                    src_child, ctx, resolver_cache, dropped))
+    finally:
+        if owner_guid:
+            visited.discard(owner_guid)
+    return tuple(records)
