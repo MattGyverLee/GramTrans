@@ -17,7 +17,9 @@ from typing import Iterable
 if __package__:
     from .models import (
         CategoryReport,
+        DroppedItemRecord,
         ExcludedLossy,
+        FidelityStatus,
         GrammarCategory,
         PlannedAction,
         RunMode,
@@ -29,7 +31,9 @@ if __package__:
 else:
     from models import (
         CategoryReport,
+        DroppedItemRecord,
         ExcludedLossy,
+        FidelityStatus,
         GrammarCategory,
         PlannedAction,
         RunMode,
@@ -49,7 +53,9 @@ else:
 def _build_from_plan(cls, plan: RunPlan, mode: RunMode,
                      wall_clock_seconds: float = 0.0,
                      extra_skips=(),
-                     extra_excluded_lossy=()) -> RunReport:
+                     extra_excluded_lossy=(),
+                     extra_dropped_items=(),
+                     fidelity_by_guid=None) -> RunReport:
     """Build a finalized RunReport from a RunPlan.
 
     Iterates plan.actions to accumulate per-category added/closure_pulled_in
@@ -57,6 +63,14 @@ def _build_from_plan(cls, plan: RunPlan, mode: RunMode,
     and the aggregate skips tuple. Returns a RunReport whose FR-018 invariant
     (checked in __post_init__) will pass because the counts are built from the
     same plan.
+
+    `extra_dropped_items` (feature 024, FR-010/FR-013): the per-run
+    ``dropped: list[DroppedItemRecord]`` collector threaded through the
+    closure walk (Lib/categories.py) and the resolver/owned-walk (Lib/
+    references.py, Lib/owned.py). Empty by default (foundational plumbing
+    only — nothing appends to it yet; see contracts/dropped-item-report.md
+    "Collection"). `fidelity_by_guid` is the per-object FidelityStatus map
+    (FR-013); also empty by default until US4 (T023) computes it.
     """
     per_category: dict = {}
 
@@ -149,6 +163,8 @@ def _build_from_plan(cls, plan: RunPlan, mode: RunMode,
         wall_clock_seconds=wall_clock_seconds,
         empty_categories=empty_cats,
         excluded_lossy=tuple(excluded_lossy_all),
+        dropped_items=tuple(extra_dropped_items),
+        fidelity_by_guid=dict(fidelity_by_guid) if fidelity_by_guid else {},
     )
 
 
@@ -194,6 +210,28 @@ def _to_snapshot_json(self) -> str:
         ],
         "identity_remap": dict(sorted(self.identity_remap.items())),
         "wall_clock_seconds": round(self.wall_clock_seconds, 3),
+        # Feature 024 (FR-010/FR-013, contracts/dropped-item-report.md
+        # "Snapshot compatibility"): additive keys only. A snapshot produced
+        # before this feature simply lacks these keys; any reader that does
+        # `data.get("dropped_items", [])` / `data.get("fidelity_by_guid", {})`
+        # sees the same empty defaults this run report carries when nothing
+        # has been dropped, so old snapshots remain loadable/comparable.
+        "dropped_items": [
+            {
+                "owner_kind": d.owner_kind,
+                "owner_guid": d.owner_guid,
+                "owner_label": d.owner_label,
+                "field_name": d.field_name,
+                "item_name": d.item_name,
+                "item_guid": d.item_guid,
+                "reason": d.reason,
+            }
+            for d in self.dropped_items
+        ],
+        "fidelity_by_guid": {
+            guid: status.name
+            for guid, status in sorted(self.fidelity_by_guid.items())
+        },
     }
     return json.dumps(payload, indent=2, sort_keys=False)
 
@@ -257,6 +295,24 @@ def render_text_summary(report: RunReport) -> Iterable[str]:
         yield f"  Warnings (entries with missing references) -- {len(report.excluded_lossy)} total:"
         for el in report.excluded_lossy:
             yield f"    - [WARN] {el.message}"
+    # Feature 024 (FR-010/FR-013, contracts/dropped-item-report.md): the
+    # never-silent report channel. Renders identically whether `report` came
+    # from Preview (`extra_dropped_items=payload.dropped_items`,
+    # `Lib/ui/selection_wizard.py` / `Lib/ui/main_window.py`) or Move
+    # (`extra_dropped_items=_dropped`, `Lib/transfer.py.execute`) -- both
+    # thread through `RunReport.build_from_plan` into the same
+    # `report.dropped_items` field this section reads, so the section
+    # automatically appears in both the Preview pane and the post-run
+    # statistics panel with no mode-specific code here. ASCII-only line
+    # format (`->`/`-`, never unicode arrows/dashes) per Windows console
+    # rules. An empty `dropped_items` renders no section at all.
+    if report.dropped_items:
+        yield f"  Dropped references / owned items -- {len(report.dropped_items)} total:"
+        for d in report.dropped_items:
+            yield (
+                f"    - {d.owner_label} [{d.owner_kind} {d.owner_guid[:8]}] . "
+                f"{d.field_name} -> \"{d.item_name}\" ({d.item_guid[:8]}) - {d.reason}"
+            )
     if report.identity_remap:
         yield "  Identity remap (LCM denied GUID-on-create):"
         for src, dst in sorted(report.identity_remap.items()):

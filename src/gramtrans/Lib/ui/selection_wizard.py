@@ -3995,8 +3995,21 @@ def _compute_wizard_plan(wizard) -> tuple:
 
     # Step 8: build run report and return.
     phon_warnings = _phonology_excluded_lossy_for(wizard)
+    # QC P1 (cycle-1 review, feature 024): surface the plan's projected drops
+    # (Lib/references.py `decide_reference`, run read-only during AFFIXES/
+    # STEMS plan_action) here too, so the wizard's Preview report is
+    # symmetric with both Move and the main-window Preview path.
+    # Feature 024 (T023, FR-013): per-object FidelityStatus, mirroring the
+    # Move-mode wiring in `Lib/transfer.py.execute`.
+    if __package__:
+        from ..categories import compute_fidelity_by_guid
+    else:
+        from categories import compute_fidelity_by_guid  # type: ignore
+    _plan_dropped = getattr(payload, "dropped_items", ())
     report = RunReport.build_from_plan(
-        payload, RunMode.PREVIEW, extra_excluded_lossy=phon_warnings
+        payload, RunMode.PREVIEW, extra_excluded_lossy=phon_warnings,
+        extra_dropped_items=_plan_dropped,
+        fidelity_by_guid=compute_fidelity_by_guid(_plan_dropped),
     )
     return (payload, report)
 

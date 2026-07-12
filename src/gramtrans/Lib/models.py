@@ -15,7 +15,7 @@ from __future__ import annotations
 import enum
 import logging as _logging
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Any, Callable, Optional
 
 
 # ============================================================================
@@ -580,6 +580,13 @@ class PlannedAction:
     intended_target_guid: str
     summary: str
     pulled_in_by: tuple = ()  # tuple[str, ...] of source GUIDs
+    # Feature 024 (T017, Principle III): per-item ReferenceDecision snapshots
+    # for every referenced-possibility field on the entry/sense/allomorph
+    # closure this action pulls in — populated read-only by the plan-builder
+    # (`Lib/categories.py._plan_entry_reference_decisions`) so Preview shows
+    # Add/Link/Update/Report *before* Move ever writes. Empty for categories
+    # that don't (yet) route through the resolver.
+    reference_decisions: tuple = ()  # tuple[ReferenceDecisionRecord, ...]
 
 
 @dataclass(frozen=True)
@@ -649,6 +656,14 @@ class PlannedOverwrite:
     pulled_in_by: tuple = ()
     owner_guid: str = ""  # parent reference for the executor's lookup
     write_mode: str = "overwrite"  # "overwrite" | "merge"
+    # Feature 024 (US2, Principle III): mirrors `PlannedAction.reference_decisions`
+    # — per-item ReferenceDecision snapshots for the OVERWRITE path's reference
+    # fields (see `transfer._OVERWRITE_SENSE_REF_FIELDS` /
+    # `_OVERWRITE_ENTRY_REF_FIELDS`), populated read-only by the plan-builder
+    # so Preview shows Link/Create/Update/Report *before* Move ever writes.
+    # Empty for overwrite categories that don't (yet) route through the
+    # resolver.
+    reference_decisions: tuple = ()  # tuple[ReferenceDecisionRecord, ...]
 
 
 @dataclass(frozen=True)
@@ -686,6 +701,12 @@ class RunPlan:
     # Phase 3c Selection UI: EXCLUDED-LOSSY dispositions — deliberate, informed
     # omissions that generate entry-centric warnings but never hard-block Move.
     excluded_lossy: tuple = ()  # tuple[ExcludedLossy, ...]
+    # Feature 024 QC P1 (cycle-1 review): projected drops computed by the
+    # read-only reference resolver during Preview planning (Lib/preview.py
+    # build_run_plan's `_dropped` collector). Mirrors `excluded_lossy` above
+    # so Preview surfaces the same never-silent guarantee Move already gets
+    # via `transfer.execute`'s `extra_dropped_items` -> RunReport wiring.
+    dropped_items: tuple = ()  # tuple[DroppedItemRecord, ...]
 
     def category_count(self, category: GrammarCategory) -> int:
         return sum(1 for a in self.actions if a.category == category)
@@ -836,6 +857,254 @@ class InteractiveSession:
 
 
 # ============================================================================
+# Feature 024 — Lexicon Reference & Owned-Object Fidelity
+# (specs/024-lexicon-reference-fidelity/data-model.md)
+# ============================================================================
+#
+# Pure-Python types shared by `Lib/references.py` (resolver dispatch table +
+# decision function), `Lib/owned.py` (owned-object walk), and `Lib/report.py`
+# (dropped-item report channel). No flexicon / LCM imports here — same
+# constraint as the rest of this module.
+
+class ReferenceAction(enum.Enum):
+    """Outcome of resolving one referenced possibility item against the
+    target (data-model.md Enums; contracts/reference-resolver.md decision
+    table).
+
+    LINK           : target already has an identical item (by GUID); reference
+                     it, write nothing.
+    CREATE         : item absent from target; create it (+ ancestor chain),
+                     preserving GUID.
+    UPDATE         : item present, diverged, and custom (not _is_protected);
+                     non-destructive update per the update semantic.
+    REPORT_DROPPED : item present, diverged, and shared/default
+                     (_is_protected) -> LINK the existing item + emit a
+                     divergence record; OR item unresolvable -> emit a
+                     dropped record.
+    """
+    LINK = "link"
+    CREATE = "create"
+    UPDATE = "update"
+    REPORT_DROPPED = "report_dropped"
+
+
+class FidelityStatus(enum.Enum):
+    """Per-copied-object fidelity outcome for the report (FR-013).
+
+    FULL    : every populated reference/owned field reproduced.
+    PARTIAL : reproduced with >=1 dropped item (count carried alongside, see
+              `RunReport.dropped_items` filtered by owner_guid).
+    """
+    FULL = "full"
+    PARTIAL = "partial"
+
+
+class ReferenceCardinality(enum.Enum):
+    """Shape of a referenced-possibility field on the owner (data-model.md
+    ReferenceFieldSpec `cardinality`)."""
+    ATOMIC = "atomic"        # single reference, e.g. SenseTypeRA
+    COLLECTION = "collection"  # unordered set, e.g. UsageTypesRC
+    SEQUENCE = "sequence"    # ordered list, e.g. DialectLabelsRS
+
+
+@dataclass(frozen=True)
+class DroppedItemRecord:
+    """FR-010 — the never-silent report unit.
+
+    Emitted exactly once per (owner, field, item) triple whenever a
+    referenced or owned item cannot be reproduced in the target (contracts/
+    dropped-item-report.md).
+
+    Fields
+    ------
+    owner_kind  : e.g. "LexSense", "LexEntry", "MoStemAllomorph",
+                  "LexExampleSentence".
+    owner_guid  : source GUID of the owning object.
+    owner_label : human headword/gloss for the report line.
+    field_name  : the reference/owned field that could not be reproduced.
+    item_name   : source item's name/abbreviation (best analysis alt).
+    item_guid   : source item GUID.
+    reason      : e.g. "shared-default diverged", "target list absent",
+                  "member not in copy set".
+
+    Dedup contract note: the "emitted exactly once" identity key is
+    ``(owner_guid, field_name, item_guid)`` — deliberately EXCLUDES `reason`,
+    so two records for the same (owner, field, item) triple with different
+    reason text still collapse to one (see `categories._dropped_key` /
+    `_append_dropped_once`, the enforcement point).
+    """
+    owner_kind: str
+    owner_guid: str
+    owner_label: str
+    field_name: str
+    item_name: str
+    item_guid: str
+    reason: str
+
+    def __post_init__(self) -> None:
+        if not self.owner_kind:
+            raise ValueError("DroppedItemRecord.owner_kind must be non-empty")
+        if not self.field_name:
+            raise ValueError("DroppedItemRecord.field_name must be non-empty")
+        if not self.reason:
+            raise ValueError("DroppedItemRecord.reason must be non-empty")
+
+
+@dataclass(frozen=True)
+class ReferenceFieldSpec:
+    """One row of the hand-curated dispatch table that drives the referenced-
+    possibility resolver (data-model.md; contracts/reference-resolver.md).
+
+    The census (FR-011) is the independent check that this map is complete —
+    this dataclass just describes one entry in it.
+
+    Fields
+    ------
+    owner_class      : class the field lives on (e.g. "LexSense").
+    field_name        : LCM property (e.g. "SenseTypeRA", "UsageTypesRC").
+    cardinality       : ReferenceCardinality.
+    target_list_path  : callable `target -> ICmPossibilityList` (e.g.
+                        ``lambda target: target.Cache.LangProject.LexDbOA.SenseTypesOA``).
+    hierarchical      : whether ancestor-chain creation applies (tree-shaped
+                        possibility list) vs a flat list.
+    """
+    owner_class: str
+    field_name: str
+    cardinality: ReferenceCardinality
+    target_list_path: Callable[[Any], Any]
+    hierarchical: bool = False
+
+
+@dataclass(frozen=True)
+class ReferenceDecision:
+    """Pure decision-function result (contracts/reference-resolver.md
+    `decide_reference(source_item, target, spec, cache) -> ReferenceDecision`).
+
+    Fields
+    ------
+    action              : ReferenceAction.
+    target_item         : existing target item when LINK/UPDATE, else None.
+    ancestors_to_create : ordered source items (root->leaf) when CREATE.
+                          For a hierarchical spec this is the full chain
+                          (root -> ... -> leaf); for a non-hierarchical spec
+                          it is the single-element `(source_item,)` tuple, so
+                          `apply_reference`'s CREATE arm has a uniform "create
+                          each of these under the right parent" loop
+                          regardless of `spec.hierarchical`. Empty only when
+                          action != CREATE.
+    dropped             : DroppedItemRecord, set only when
+                          action == REPORT_DROPPED.
+    source_item         : the source item `decide_reference` was given (or
+                          None if it was never resolvable). T015 additive
+                          field -- `apply_reference` needs the source object
+                          for UPDATE's src_props read and CREATE's property
+                          copy, and the contract's `apply_reference` signature
+                          does not separately receive it.
+    """
+    action: ReferenceAction
+    target_item: Any = None
+    ancestors_to_create: tuple = ()  # tuple of source items, root -> leaf
+    dropped: Optional[DroppedItemRecord] = None
+    source_item: Any = None
+
+    def __post_init__(self) -> None:
+        if self.action == ReferenceAction.REPORT_DROPPED and self.dropped is None:
+            raise ValueError(
+                "ReferenceDecision.dropped must be set when action is REPORT_DROPPED"
+            )
+        if self.action != ReferenceAction.REPORT_DROPPED and self.dropped is not None:
+            raise ValueError(
+                "ReferenceDecision.dropped must be None unless action is REPORT_DROPPED"
+            )
+
+
+@dataclass(frozen=True)
+class ReferenceDecisionRecord:
+    """T017 — a flat, report-friendly snapshot of one `ReferenceDecision`
+    (research R2, Principle III): Preview must show the resolver's per-item
+    decision *before* any write. Attached to `PlannedAction.reference_decisions`
+    by the plan-builder path (`Lib/categories.py`, `Lib/preview.py`).
+
+    Deliberately flat (strings + the `ReferenceAction` enum only, no live LCM
+    object refs) — mirrors `DroppedItemRecord`'s style so both survive past
+    the Preview call that produced them.
+
+    Fields
+    ------
+    owner_kind  : e.g. "LexEntry", "LexSense", "MoForm".
+    owner_guid  : source GUID of the owning object (entry/sense/allomorph).
+    field_name  : the `ReferenceFieldSpec.field_name` this decision resolves.
+    action      : ReferenceAction (LINK/CREATE/UPDATE/REPORT_DROPPED).
+    item_name   : source item's best-effort display name (may be "").
+    item_guid   : source item's GUID (may be "" when unresolvable).
+    """
+    owner_kind: str
+    owner_guid: str
+    field_name: str
+    action: ReferenceAction
+    item_name: str = ""
+    item_guid: str = ""
+
+
+class OwnedCreateKind(enum.Enum):
+    """How one `OwnedObjectSpec`'s child factory must be called (this
+    cycle's fix — confirmed live via MCP against Ejagham Mini: the 5 owned
+    child factories do NOT share one uniform `Create(guid, owner)` shape).
+
+    OWNER_TAKING     : `factory.Create(guid, owner)` — the factory takes the
+                        owner directly and (per the confirmed-live idiom
+                        already used by `categories.py`) owns/adds the new
+                        child itself. Used by `ILexExampleSentenceFactory`
+                        and `ILexSenseFactory` (sub-senses).
+    UNOWNED_THEN_ADD : `factory.Create(guid)` — no owner parameter at all;
+                        the result is UNOWNED and the caller must separately
+                        `owner.<owning_field>.Add(new_child)`. Used by
+                        `ILexPronunciationFactory` and `ILexEtymologyFactory`.
+    OWNER_PLUS_TYPE  : the factory requires a type-determining reference
+                        resolved BEFORE create — `factory.Create(owner,
+                        resolved_type, guid)`. Used by `ICmTranslationFactory`
+                        (`TypeRA`), which has no overload that creates a
+                        translation and sets its type afterward.
+    """
+    OWNER_TAKING = "owner_taking"
+    UNOWNED_THEN_ADD = "unowned_then_add"
+    OWNER_PLUS_TYPE = "owner_plus_type"
+
+
+@dataclass(frozen=True)
+class OwnedObjectSpec:
+    """Drives the owned-object walk (FR-009/FR-009a; data-model.md
+    OwnedObjectSpec).
+
+    Fields
+    ------
+    owner_class   : "LexEntry" | "LexSense" | "MoForm".
+    owning_field  : e.g. "ExamplesOS", "PronunciationsOS", "EtymologyOS",
+                    "SensesOS" (sub-senses).
+    factory       : LCM factory for the child (opaque; flexicon-supplied
+                    interface/service at runtime).
+    child_refs    : tuple[ReferenceFieldSpec, ...] — reference fields on the
+                    child routed back through the resolver.
+    recurse       : True for sub-senses (Sense.SensesOS).
+    create_kind   : OwnedCreateKind — which `factory.Create(...)` shape this
+                    row's child factory actually has (this cycle's fix).
+                    Defaults to OWNER_TAKING (the shape every OwnedObjectSpec
+                    used, incorrectly-uniformly, before this cycle).
+    type_ref_field: for OWNER_PLUS_TYPE only — the `child_refs` field name
+                    (e.g. "TypeRA") that must be resolved BEFORE create and
+                    passed straight into `factory.Create(owner, resolved,
+                    guid)`. Unused for the other two create kinds.
+    """
+    owner_class: str
+    owning_field: str
+    factory: Any
+    child_refs: tuple = ()  # tuple[ReferenceFieldSpec, ...]
+    recurse: bool = False
+    create_kind: "OwnedCreateKind" = OwnedCreateKind.OWNER_TAKING
+    type_ref_field: Optional[str] = None
+
+
+# ============================================================================
 # Run report (E6)
 # ============================================================================
 
@@ -875,6 +1144,11 @@ class RunReport:
     # "[skip] no items in source for X" lines.
     # Phase 3c Selection UI: EXCLUDED-LOSSY warning channel.
     excluded_lossy: tuple = ()  # tuple[ExcludedLossy, ...]
+    # Feature 024 (FR-010/FR-013, contracts/dropped-item-report.md): the
+    # never-silent report channel. Additive fields — old callers that never
+    # pass these get the empty defaults below (snapshot compatibility).
+    dropped_items: tuple = ()  # tuple[DroppedItemRecord, ...]
+    fidelity_by_guid: dict = field(default_factory=dict)  # owner_guid -> FidelityStatus
 
     def __post_init__(self) -> None:
         # FR-018: sum of per_category[*].skipped must equal len(skips)

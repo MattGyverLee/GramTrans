@@ -51,6 +51,61 @@ else:
 
 
 # ============================================================================
+# Feature 024 US2 (OVERWRITE-path Preview surfacing, FIX 1a)
+# ============================================================================
+#
+# Mirrors `transfer._OVERWRITE_SENSE_REF_FIELDS` / `_OVERWRITE_ENTRY_REF_FIELDS`
+# (duplicated here rather than cross-imported, matching this module's existing
+# "Re-imported helpers from preview.py — kept here to avoid a circular import"
+# convention in transfer.py -- see that module's `_lex_sense_msa` for
+# precedent): the reference fields the OVERWRITE-path executor routes through
+# the generic resolver instead of the raw blank-on-empty ApplySyncableProperties
+# copy. Used ONLY to populate `PlannedOverwrite.reference_decisions` below --
+# Preview never writes (Principle III); the read-only `_decide_reference_fields`
+# pass is safe here.
+_OVERWRITE_SENSE_REF_FIELDS = frozenset(
+    {"SenseTypeRA", "DoNotPublishInRC", "DoNotShowMainEntryInRC"}
+)
+_OVERWRITE_ENTRY_REF_FIELDS = frozenset(
+    {"DoNotPublishInRC", "DoNotShowMainEntryInRC"}
+)
+
+
+def _overwrite_reference_decisions(owner_class, owner_guid, src_obj, target,
+                                    keep_fields, source=None):
+    """Read-only `decide_reference` pass over `keep_fields` only (the
+    OVERWRITE-path resolver's actual scope, see `_OVERWRITE_*_REF_FIELDS`
+    above) for a single ENTRY/SENSE `PlannedOverwrite` -- populates
+    `PlannedOverwrite.reference_decisions` so Preview shows Link/Create/
+    Update/Report *before* Move ever writes (Principle III), the same
+    guarantee `PlannedAction.reference_decisions` gives the ADD path.
+
+    Uses a call-local `resolver_cache`/`dropped` (this function has no
+    `RunContext` to read a per-run collector from -- the verb-vertical
+    planner functions that call this predate the context-based leaf-category
+    plan_action functions). Never raises: any resolver failure yields an
+    empty tuple, matching `categories._plan_entry_reference_decisions`'s own
+    fail-soft posture for the identical duck-typing-gap class of failure.
+    """
+    if __package__:
+        from .categories import _decide_reference_fields
+        from . import references as _references
+    else:
+        from categories import _decide_reference_fields  # type: ignore
+        import references as _references  # type: ignore
+    try:
+        skip_fields = frozenset(
+            spec.field_name for spec in _references.field_specs_for(owner_class)
+        ) - keep_fields
+        return _decide_reference_fields(
+            owner_class, owner_guid, src_obj, target,
+            resolver_cache={}, dropped=[], skip_fields=skip_fields, source=source,
+        )
+    except (AttributeError, TypeError, KeyError):
+        return ()
+
+
+# ============================================================================
 # Public API
 # ============================================================================
 
@@ -120,6 +175,32 @@ def build_run_plan(
     # Phase 3c Selection UI: thread excluded_lossy collector so leaf-dispatch
     # plan_action callbacks can add EXCLUDED-LOSSY warnings.
     object.__setattr__(context, '_excluded_lossy', excluded_lossy)
+
+    # Feature 024 (T010/T016/T017, FR-010/FR-012, contracts/dropped-item-
+    # report.md "Collection"): thread the per-run dropped-item collector so
+    # the referenced-possibility resolver (Lib/references.py
+    # `decide_reference`, US1, wired into `Lib/categories.py`'s
+    # AFFIXES/STEMS `plan_action`) can append DroppedItemRecord instances
+    # (Principle III — decisions must appear in Preview, not only post-run).
+    _dropped: list = []
+    object.__setattr__(context, '_dropped', _dropped)
+
+    # Feature 024 (T016, FR-012): per-run GUID -> resolved/created target
+    # item cache for the resolver, mirroring `_dropped` above. Shared across
+    # every reference field/owner so a possibility already resolved earlier
+    # in the walk short-circuits to LINK without re-deciding.
+    _resolver_cache: dict = {}
+    object.__setattr__(context, '_resolver_cache', _resolver_cache)
+
+    # Feature 024 (T029/T030, US3, FR-009a): per-run copy-set dict
+    # (`Lib/owned.py`'s `ctx._copy_set` convention -- see that module's own
+    # "T029 (US3, FR-009a)" section docstring) threaded the same way as
+    # `_dropped`/`_resolver_cache` above, so `_plan_allomorph_hung_data_decisions`'s
+    # (`plan_allomorph_hung_data_decisions`'s) APR copy-set gate sees every
+    # allomorph already planned earlier in this SAME run (across every
+    # entry, not just the one currently being planned).
+    _copy_set: dict = {}
+    object.__setattr__(context, '_copy_set', _copy_set)
 
     # Phase 3a leaf-category dispatch: iterate every Phase 3a category
     # that's enabled in the selection.  Each category's registered
@@ -201,6 +282,28 @@ def build_run_plan(
                 cat.value, len(pieces), len(actions) - _cat_actions_before,
             )
 
+    # Feature 024 (T031, US3, FR-008 -- single-final-pass redesign):
+    # `plan_all_lexical_relations` is the SOLE lexical-relation discovery +
+    # planning path (see its own module banner at categories.py:3488-3504)
+    # -- it runs exactly ONCE, here, after the leaf-category loop above has
+    # planned every AFFIXES/STEMS entry, top-level sense, and recursively-
+    # planned sub-sense/allomorph, so the run's `context._copy_set` is fully
+    # settled. There is no per-member incremental trigger anywhere in
+    # `_plan_entry_reference_decisions`/`owned.plan_owned_object_decisions`
+    # during the leaf-category loop above; a relation touching any planned
+    # member is discovered and evaluated for the first and only time right
+    # here, source-ordered by construction
+    # (`_iter_relations_touching_copy_set` walks the copy_set once). Move
+    # mode runs the SAME single final pass (`transfer.
+    # reproduce_all_lexical_relations`, after its own leaf-dispatch loop)
+    # over the SAME kind of fully-settled copy_set, so Preview and Move
+    # converge on identical relations-in/decisions-out.
+    if __package__:
+        from .categories import plan_all_lexical_relations
+    else:
+        from categories import plan_all_lexical_relations  # type: ignore
+    plan_all_lexical_relations(context, _resolver_cache, _dropped)
+
     # T023: rules missing-reference detection (018-rules-page US4/FR-014/FR-015).
     # Runs AFTER the leaf dispatch so 'in-flight' actions are fully enumerated.
     # Routes into the shared excluded_lossy list -> single Move gate (T024).
@@ -209,8 +312,9 @@ def build_run_plan(
     )
 
     _log.debug(
-        "build_run_plan: done  actions=%d skips=%d overwrites=%d excluded_lossy=%d",
-        len(actions), len(skips), len(overwrites), len(excluded_lossy),
+        "build_run_plan: done  actions=%d skips=%d overwrites=%d excluded_lossy=%d "
+        "dropped_items=%d",
+        len(actions), len(skips), len(overwrites), len(excluded_lossy), len(_dropped),
     )
     return RunPlan(
         context=context,
@@ -223,6 +327,11 @@ def build_run_plan(
         msa_slot_bindings=_msa_slot_bindings,
         lexentry_ref_bindings=_lexentry_ref_bindings,
         excluded_lossy=tuple(excluded_lossy),
+        # QC P1 (cycle-1 review, feature 024): carry the read-only resolver's
+        # projected drops into the plan so Preview is symmetric with Move
+        # (Move already surfaces `_dropped` via transfer.execute's
+        # extra_dropped_items -> RunReport wiring).
+        dropped_items=tuple(_dropped),
     )
 
 
@@ -836,6 +945,10 @@ def _plan_layer3_verb_affixes_inner(
                     pulled_in_by=() if selection.is_on(GrammarCategory.ENTRY)
                                  else (src_verb_guid,),
                     owner_guid="",
+                    reference_decisions=_overwrite_reference_decisions(
+                        "LexEntry", entry_guid, entry, target,
+                        _OVERWRITE_ENTRY_REF_FIELDS, source=source,
+                    ),
                 ))
                 identity_remap[entry_guid] = resolution.target_guid
                 if tgt_entry_for_remap is not None:
@@ -856,6 +969,10 @@ def _plan_layer3_verb_affixes_inner(
                 match_via="guid",
                 pulled_in_by=() if selection.is_on(GrammarCategory.ENTRY) else (src_verb_guid,),
                 owner_guid="",  # LexEntries are LexDb-owned; no parent ref needed
+                reference_decisions=_overwrite_reference_decisions(
+                    "LexEntry", entry_guid, entry, target,
+                    _OVERWRITE_ENTRY_REF_FIELDS, source=source,
+                ),
             ))
             for _sense, sense_guid in sense_actions:
                 overwrites.append(PlannedOverwrite(
@@ -866,6 +983,10 @@ def _plan_layer3_verb_affixes_inner(
                     match_via="guid",
                     pulled_in_by=(entry_guid,),
                     owner_guid=entry_guid,
+                    reference_decisions=_overwrite_reference_decisions(
+                        "LexSense", sense_guid, _sense, target,
+                        _OVERWRITE_SENSE_REF_FIELDS, source=source,
+                    ),
                 ))
             # Phase 1.2 (FR-104): MSAs and Allomorphs are matched by
             # fingerprint against the target entry's existing MSAs and

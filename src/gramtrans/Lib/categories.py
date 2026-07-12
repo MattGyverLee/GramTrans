@@ -50,9 +50,14 @@ from typing import Iterable, Tuple
 if __package__:
     from .models import (
         CreateDefinitionAction,
+        DroppedItemRecord,
+        FidelityStatus,
         GrammarCategory,
         PlannedAction,
         PlannedOverwrite,
+        ReferenceAction,
+        ReferenceCardinality,
+        ReferenceDecisionRecord,
         RunContext,
         Selection,
         Skip,
@@ -64,9 +69,14 @@ if __package__:
 else:
     from models import (  # type: ignore
         CreateDefinitionAction,
+        DroppedItemRecord,
+        FidelityStatus,
         GrammarCategory,
         PlannedAction,
         PlannedOverwrite,
+        ReferenceAction,
+        ReferenceCardinality,
+        ReferenceDecisionRecord,
         RunContext,
         Selection,
         Skip,
@@ -2880,12 +2890,1095 @@ def _resolve_target_status(target, src_status_guid):
     `src_status_guid`, or None. Status items live in LangProject.StatusOA; the
     default Confirmed/Tentative/Disproved items carry well-known GUIDs shared
     across projects (a project-specific custom status simply won't resolve, and
-    the reference is left unset -- same fail-soft posture as MorphTypeRA)."""
+    the reference is left unset -- same fail-soft posture as MorphTypeRA).
+
+    NOTE (feature 024 T016): no longer called by the closure walk below --
+    `_apply_reference_fields("LexSense", ...)` now resolves StatusRA through
+    the generic `references` resolver (which additionally UPDATEs a diverged
+    custom status and REPORT_DROPPEDs a diverged shared/default one instead
+    of just silently leaving it unset). Retained standalone: still exercised
+    directly by `tests/unit/test_morphtype_resolution.py` and still a valid
+    plain GUID-lookup primitive."""
     try:
         status_list = target.Cache.LangProject.StatusOA
     except AttributeError:
         return None
     return _resolve_possibility_by_guid(status_list, src_status_guid)
+
+
+# ============================================================================
+# Generic referenced-possibility dispatch (feature 024 US1, T016/T017)
+# ============================================================================
+#
+# Subsumes the hand-wired MorphType/Status/SemanticDomain re-wire blocks that
+# used to live inline in `_walk_lex_entry_closure` / `_walk_entry_allomorphs`
+# (research R1): every field registered in `references.REFERENCE_FIELD_MAP`
+# for LexEntry/LexSense/MoForm is now resolved through the one generic
+# decide_reference/apply_reference code path below, instead of one bespoke
+# GUID-lookup-and-setattr block per field. PhoneEnvRC/StemNameRA on MoForm are
+# explicitly excluded here -- their `target_list_path` is a documented US3
+# (T029) placeholder, not a real ICmPossibilityList yet (see
+# `references.py` REFERENCE_FIELD_MAP comments).
+
+_MOFORM_DEFERRED_FIELDS = ("PhoneEnvRC", "StemNameRA")
+
+
+def _get_resolver_cache(context) -> dict:
+    """Per-run GUID -> resolved/created target item cache (FR-012), threaded
+    onto `context._resolver_cache` by `preview.build_run_plan` / `transfer.execute`
+    (mirrors the `context._dropped` fallback pattern above)."""
+    cache = getattr(context, "_resolver_cache", None)
+    if cache is None:
+        cache = {}
+    return cache
+
+
+def _iter_reference_items(spec, src_obj):
+    """Return the list of source items a `ReferenceFieldSpec` yields off
+    `src_obj`: the single value for ATOMIC, or the members for
+    COLLECTION/SEQUENCE. Empty when the field is unset/absent (never raises)."""
+    src_val = getattr(src_obj, spec.field_name, None)
+    if spec.cardinality == ReferenceCardinality.ATOMIC:
+        return [src_val] if src_val is not None else []
+    try:
+        return list(src_val) if src_val else []
+    except TypeError:
+        return []
+
+
+def _reference_decision_record(owner_kind, owner_guid, spec, decision):
+    """Flatten one `ReferenceDecision` into a `ReferenceDecisionRecord` (T017)
+    for `PlannedAction.reference_decisions` -- no live LCM refs retained."""
+    if __package__:
+        from . import references as _references
+    else:
+        import references as _references  # type: ignore
+    src_item = decision.source_item
+    item_name = _references._item_label(src_item) if src_item is not None else ""
+    item_guid = _guid_str_from(src_item) if src_item is not None else ""
+    return ReferenceDecisionRecord(
+        owner_kind=owner_kind,
+        owner_guid=owner_guid,
+        field_name=spec.field_name,
+        action=decision.action,
+        item_name=item_name,
+        item_guid=item_guid,
+    )
+
+
+# ============================================================================
+# Dropped-item enrichment + exactly-once dedup (feature 024 US4, T022)
+# ============================================================================
+#
+# `references.decide_reference`/`apply_reference` build `DroppedItemRecord`s
+# from a bare source item + `ReferenceFieldSpec` -- neither function has the
+# owning LexEntry/LexSense/MoForm *instance* in scope (only `spec.owner_class`,
+# a bare string), so every record they build carries owner_guid=""/
+# owner_label="" placeholders (contracts/reference-resolver.md's signature
+# never threads owner identity through). This section patches those
+# placeholders in with the real owner instance's identity -- available here,
+# where `_decide_reference_fields`/`_apply_reference_fields` hold both
+# `owner_guid` and `src_obj` -- and enforces the contract's "emitted exactly
+# once per (owner, field, item) triple" invariant regardless of how many
+# times a decide/apply pass re-derives the same drop for the same owner
+# (e.g. a re-walk, or `_apply_reference_fields` internally re-running
+# `decide_reference` before calling `apply_reference`).
+
+_OWNER_LABEL_FIELD = {
+    "LexEntry": "CitationForm",
+    "LexSense": "Gloss",
+    "MoForm": "Form",
+}
+
+
+def _owner_label_for(owner_class: str, obj) -> str:
+    """Best-effort human label for a `DroppedItemRecord.owner_label` -- the
+    multistring field appropriate to the OWNER's class (LexEntry's
+    CitationForm, LexSense's Gloss, MoForm's Form), first non-empty
+    writing-system alt. Mirrors `references._item_label`'s extraction style
+    (same underlying `_multistring_dict` reader) but keyed by which owner
+    class this dropped record belongs to, rather than always reading `.Name`
+    (entries/senses/allomorphs don't carry a `.Name`).
+
+    Returns "" when `obj` is None, the owner class is unrecognized, or the
+    field is unset -- never raises (a report line always renders, even with
+    a blank label)."""
+    if obj is None:
+        return ""
+    if __package__:
+        from . import references as _references
+    else:
+        import references as _references  # type: ignore
+    field_name = _OWNER_LABEL_FIELD.get(owner_class)
+    if field_name is None:
+        return ""
+    snapshot = _references._multistring_dict(getattr(obj, field_name, None))
+    for text in snapshot.values():
+        if text:
+            return text
+    return ""
+
+
+def _dropped_key(record) -> tuple:
+    """The contract's identity key for a `DroppedItemRecord`
+    (contracts/dropped-item-report.md: "emitted exactly once per (owner,
+    field, item) triple") -- deliberately excludes `reason` so two records
+    for the same triple with different reason text still collapse to one."""
+    return (record.owner_guid, record.field_name, record.item_guid)
+
+
+def _append_dropped_once(dropped: list, record) -> None:
+    """Append `record` to the per-run `dropped` collector unless a record
+    with the same `_dropped_key` is already present. O(n) scan over the
+    (typically small) per-run drop list; simpler and more robust than
+    threading a parallel `seen` set through every closure-walk signature."""
+    key = _dropped_key(record)
+    for existing in dropped:
+        if _dropped_key(existing) == key:
+            return
+    dropped.append(record)
+
+
+
+def _enrich_dropped(owner_class: str, owner_guid: str, src_obj, record):
+    """Return `record` with the real owner_guid/owner_label patched in
+    (see module comment above -- `references.py` cannot know either)."""
+    import dataclasses
+    return dataclasses.replace(
+        record, owner_guid=owner_guid,
+        owner_label=_owner_label_for(owner_class, src_obj),
+    )
+
+
+def compute_fidelity_by_guid(dropped) -> dict:
+    """FR-013 -- per-object `FidelityStatus` for `RunReport.fidelity_by_guid`.
+
+    PARTIAL for every `owner_guid` referenced by >=1 `DroppedItemRecord` in
+    `dropped`; per `FidelityStatus`'s own docstring (models.py), FULL is the
+    implicit status for any owner GUID *absent* from this dict (an object
+    only earns an explicit entry once something was actually dropped for
+    it -- enumerating every fully-reproduced object just to assert a
+    negative would require a full extra pass over the plan for no
+    additional information). The per-object drop COUNT is not stored here;
+    it is obtained by filtering `RunReport.dropped_items` for the same
+    `owner_guid` (both are keyed identically -- see `_enrich_dropped`
+    above).
+
+    Never raises; a record with an empty `owner_guid` (unenriched --
+    shouldn't happen after T022, but tolerated defensively) is skipped
+    since an empty key can't identify a specific object."""
+    result: dict = {}
+    for record in dropped:
+        if not record.owner_guid:
+            continue
+        result[record.owner_guid] = FidelityStatus.PARTIAL
+    return result
+
+
+def _call_apply_reference(_references, decision, target, owner_target, spec,
+                           resolver_cache, tag, ws_map, source, dropped,
+                           owner_class, owner_guid, src_obj):
+    """`_apply_reference_fields`'s single call point into
+    `references.apply_reference`, isolated so the fail-soft exception
+    handling and the dropped-record enrichment/dedup live in one place.
+
+    `apply_reference`'s UPDATE/CREATE arms may append raw (unenriched,
+    owner_guid="") `DroppedItemRecord`(s) directly to `dropped` for the
+    "source WS absent in target" case (its own `dropped=` parameter), and
+    `UnmappedItemClassError` carries one more (`exc.dropped`) for the
+    unmapped-CREATE-factory case. Both are captured here, enriched with the
+    real owner identity, and deduped via `_append_dropped_once` -- exactly
+    once, matching `decision.dropped`'s handling in the caller.
+
+    Returns `(resolved, ok)`: `ok=False` on any swallowed failure (the
+    caller's pre-existing fail-soft `continue`), matching this module's
+    posture elsewhere -- one bad reference must never abort the rest of the
+    entry/sense/allomorph copy.
+
+    QC P1 (cycle-N review): `RuntimeError` is handled SEPARATELY from the
+    benign `AttributeError`/`TypeError` duck-typing gaps. `apply_reference`'s
+    CREATE arm can raise a `RuntimeError` from `references._add_to_owner`
+    when `Create()` succeeded but adding the new object to its owner
+    collection failed -- a genuine orphan-risk (Principle I: never silent).
+    Swallowing that alongside ordinary attribute-shape gaps would hide it
+    entirely (no log, no record) and let the orphaned `Create()` vanish
+    without a trace. It is now logged AND surfaced as a `DroppedItemRecord`
+    (enriched with the real owner identity below, same as every other
+    record this function produces).
+    """
+    before = len(dropped)
+    resolved = None
+    ok = True
+    try:
+        resolved = _references.apply_reference(
+            decision, target, owner_target, spec, resolver_cache, tag,
+            ws_map=ws_map, source=source, dropped=dropped)
+    except _references.UnmappedItemClassError as exc:
+        # Fail-loud CREATE-time factory gap (bug 2b defensive path,
+        # Principle I): never silently fall back to a wrong-classed generic
+        # factory -- surface it as a dropped record instead (raw; enriched
+        # uniformly below alongside any ws-absent records).
+        dropped.append(exc.dropped)
+        ok = False
+    except RuntimeError as exc:
+        # QC P1 fix: orphan-risk failure from `references._add_to_owner`
+        # (Create() succeeded, Add-to-owner failed) -- log it loudly and
+        # record it, rather than the previous silent `ok=False` swallow.
+        import logging as _logging
+        item = getattr(decision, "source_item", None)
+        item_guid = _guid_str_from(item) if item is not None else ""
+        _logging.getLogger("gramtrans.Lib.categories").error(
+            "_call_apply_reference: RuntimeError applying %s.%s (item=%s) "
+            "-- orphan risk, see references._add_to_owner: %s",
+            owner_class, spec.field_name, item_guid, exc, exc_info=True,
+        )
+        dropped.append(DroppedItemRecord(
+            owner_kind=owner_class,
+            owner_guid="",
+            owner_label="",
+            field_name=spec.field_name,
+            item_name="",
+            item_guid=item_guid,
+            reason=f"apply_reference failed: {exc}",
+        ))
+        ok = False
+    except (AttributeError, TypeError):
+        ok = False
+    if len(dropped) > before:
+        raw = dropped[before:]
+        del dropped[before:]
+        for record in raw:
+            _append_dropped_once(
+                dropped, _enrich_dropped(owner_class, owner_guid, src_obj, record),
+            )
+    return resolved, ok
+
+
+def _decide_reference_fields(owner_class, owner_guid, src_obj, target,
+                              resolver_cache, dropped, skip_fields=(), source=None):
+    """Preview-mode (T017): pure `decide_reference` pass over every
+    `references.field_specs_for(owner_class)` row applicable to `src_obj` --
+    no writes, ever (Principle III). Appends any REPORT_DROPPED record to
+    `dropped` (FR-010, never silent) and returns the tuple of
+    `ReferenceDecisionRecord` for the owning `PlannedAction`.
+
+    `source` (WS-keying structural fix, this cycle): the SOURCE FLExProject
+    handle (`context.source_handle`), forwarded to `decide_reference` so its
+    identical-vs-diverged check compares each item's OWN project's real
+    Id-keyed alts instead of the positional (no-resolver) fallback. Defaults
+    to `None` (unaffected) so no existing caller need change.
+    """
+    if __package__:
+        from . import references as _references
+    else:
+        import references as _references  # type: ignore
+    records = []
+    for spec in _references.field_specs_for(owner_class):
+        if spec.field_name in skip_fields:
+            continue
+        for item in _iter_reference_items(spec, src_obj):
+            decision = _references.decide_reference(
+                item, target, spec, resolver_cache, source=source)
+            if decision is None:
+                continue
+            if decision.dropped is not None:
+                _append_dropped_once(
+                    dropped,
+                    _enrich_dropped(owner_class, owner_guid, src_obj, decision.dropped),
+                )
+            records.append(_reference_decision_record(owner_class, owner_guid, spec, decision))
+    return tuple(records)
+
+
+def _collection_already_has(owner_coll, resolved) -> bool:
+    """Feature 024 US2 FIX 2 (idempotence): True iff `owner_coll` already
+    contains an item with the same GUID as `resolved`.
+
+    Compares by GUID (via `_guid_str_from`), not raw `in`/`==` identity --
+    real LCM/COM-wrapped collection members are not guaranteed to be the
+    exact same Python wrapper instance across separate accessor calls even
+    when they wrap the identical underlying object, so identity/`__eq__`
+    comparison would be unreliable. This makes `_apply_reference_fields`'s
+    `.Add()` idempotent across re-runs of the SAME pass (a source item
+    resolving to an already-Added target member is a no-op, not a
+    duplicate) -- needed for both the `clear_before_add=True` OVERWRITE
+    path (defensive: the raw call may already have Add()-ed the same
+    member before this resolver pass runs, feature 024 US2's original
+    double-application defect) and the default ADD path (idempotent-union
+    safety net if a resolver pass is ever re-run against a partially
+    populated collection).
+
+    Fail-soft: any duck-typing gap iterating `owner_coll` (not iterable,
+    items lacking a GUID) is treated as "not found" -- the subsequent
+    `.Add()` attempt is itself already wrapped in a fail-soft
+    `AttributeError`/`TypeError` handler, matching this module's posture
+    elsewhere."""
+    resolved_guid = _guid_str_from(resolved)
+    if not resolved_guid:
+        return False
+    try:
+        return any(_guid_str_from(existing) == resolved_guid for existing in owner_coll)
+    except (AttributeError, TypeError):
+        return False
+
+
+def _apply_reference_fields(owner_class, src_obj, new_obj, target, tag,
+                             resolver_cache, dropped, skip_fields=(), ws_map=None,
+                             source=None, owner_guid="", clear_before_add=False):
+    """Move-mode (T016): `decide_reference` + `apply_reference` pass over
+    every `references.field_specs_for(owner_class)` row applicable to
+    `src_obj`, writing the result onto `new_obj`.
+
+    `clear_before_add` (feature 024 US2 FIX 3, replace-vs-union semantic):
+    when `False` (the default -- every ADD/closure call site, T016/T019),
+    a COLLECTION/SEQUENCE field is UNION-added: each resolved source member
+    is `.Add()`-ed onto whatever `new_obj`'s collection already holds
+    (idempotent per FIX 2 below, but never removes a pre-existing member).
+    Correct for ADD/closure, where `new_obj` is always a freshly-created
+    target object with an empty collection to begin with, so union and
+    replace coincide there.
+
+    When `True` (the OVERWRITE call sites in `transfer._execute_overwrite`
+    only), each COLLECTION/SEQUENCE field this pass actually touches is
+    REPLACED: the target collection is `.Clear()`-ed exactly once, the
+    first time this pass is about to `.Add()` a resolved member for that
+    field, then rebuilt from the resolved source members. This models the
+    OVERWRITE-path's expected "target becomes what the source now says"
+    semantic (matching the raw `ApplySyncableProperties` behavior this
+    pass now supersedes for these fields, see `transfer._strip_ref_fields`)
+    -- WITHOUT regressing the ADD path, since `clear_before_add` defaults
+    to `False` there. Critically, the clear only happens lazily, inside the
+    per-item loop below -- an EMPTY source (zero resolved members) means
+    the loop for that field never runs at all, so `.Clear()` is never
+    called and FR-007's non-destructive invariant (an empty source must
+    never blank a populated target) still holds even under
+    `clear_before_add=True`.
+
+    `owner_guid` (feature 024 US4, T022): the owning LexEntry/LexSense/
+    MoForm instance's own source GUID, used ONLY to enrich any
+    `DroppedItemRecord` produced this pass with its real owner identity
+    (`references.py` itself never sees the owner instance, only the field
+    spec -- see the module comment above `_decide_reference_fields`).
+    Defaults to `""` (unenriched -- matches every pre-T022 caller/test that
+    doesn't pass it) so no existing call site breaks.
+
+    ATOMIC fields: `apply_reference` is given `new_obj` directly, so it sets
+    `new_obj.<field_name>` itself. COLLECTION/SEQUENCE fields: `apply_reference`
+    is given `owner_obj=None` (so it performs no setattr) and this function
+    `.Add()`s the resolved item onto `new_obj`'s collection/sequence property
+    instead -- `apply_reference`'s single-value setattr would be wrong for a
+    multi-member field.
+
+    `ws_map` (WS-keying hardening, this cycle): the same
+    `{source_ws_id: target_ws_id}` dict every other closure UPDATE site in
+    this module already forwards to `ApplySyncableProperties` (e.g.
+    `target.Senses.ApplySyncableProperties(new_sense, sprops, ws_map=ws_map)`
+    a few lines below this function's callers) -- forwarded on to
+    `apply_reference` so its UPDATE/CREATE arms translate a renamed WS
+    instead of defaulting to identity-only matching.
+
+    `source` (WS-keying structural fix, this cycle): the SOURCE FLExProject
+    handle (`context.source_handle`), threaded through to `decide_reference`/
+    `apply_reference` so the UPDATE/CREATE write paths key their multistring
+    props by the SOURCE's OWN real handle->Id resolver -- no content- or
+    order-based guessing (replaces the deleted `_id_keyed_multi_ws`
+    heuristic). Also passed on as `apply_reference`'s `dropped=` collector so
+    a source WS Id absent from the target's registered inventory is reported
+    (Principle I) instead of silently reproduced.
+
+    Never raises: any per-item resolve/apply failure is swallowed (fail-soft,
+    matching every other closure-walk write in this module) so one bad
+    reference never aborts the rest of the entry/sense/allomorph copy.
+    """
+    if __package__:
+        from . import references as _references
+    else:
+        import references as _references  # type: ignore
+    # Feature 024 US2 FIX 3: fields actually `.Clear()`-ed this call, so a
+    # `clear_before_add=True` caller gets exactly one Clear() per field
+    # (the first time this pass is about to Add a resolved member for it),
+    # never a re-clear on a later item of the SAME field within this same
+    # pass.
+    cleared_fields: set = set()
+    for spec in _references.field_specs_for(owner_class):
+        if spec.field_name in skip_fields:
+            continue
+        atomic = spec.cardinality == ReferenceCardinality.ATOMIC
+        for item in _iter_reference_items(spec, src_obj):
+            decision = _references.decide_reference(
+                item, target, spec, resolver_cache, source=source)
+            if decision is None:
+                continue
+            if decision.dropped is not None:
+                _append_dropped_once(
+                    dropped,
+                    _enrich_dropped(owner_class, owner_guid, src_obj, decision.dropped),
+                )
+            owner_target = new_obj if atomic else None
+            resolved, ok = _call_apply_reference(
+                _references, decision, target, owner_target, spec, resolver_cache,
+                tag, ws_map, source, dropped, owner_class, owner_guid, src_obj,
+            )
+            if not ok:
+                continue
+            if not atomic and resolved is not None:
+                owner_coll = getattr(new_obj, spec.field_name, None)
+                if owner_coll is not None:
+                    if clear_before_add and spec.field_name not in cleared_fields:
+                        # FIX 3 (replace semantic, OVERWRITE-only): clear the
+                        # target collection exactly once before the first
+                        # Add for this field -- an empty source never
+                        # reaches here at all (the `for item in
+                        # _iter_reference_items(...)` loop above simply
+                        # doesn't run), so FR-007's non-destructive
+                        # invariant is preserved.
+                        clear = getattr(owner_coll, "Clear", None)
+                        if callable(clear):
+                            try:
+                                clear()
+                            except (AttributeError, TypeError):
+                                pass
+                        cleared_fields.add(spec.field_name)
+                    if not _collection_already_has(owner_coll, resolved):
+                        try:
+                            owner_coll.Add(resolved)
+                        except (AttributeError, TypeError):
+                            pass
+
+
+def _plan_entry_reference_decisions(src_entry, context, target):
+    """Preview-mode (T017/T030): read-only `decide_reference` pass across the
+    AFFIXES/STEMS entry -> sense -> allomorph closure, PLUS (T030, US3) the
+    read-only owned-object walk (`Lib/owned.py.plan_owned_object_decisions`)
+    for entry-owned PronunciationsOS/EtymologyOS and sense-owned ExamplesOS +
+    recursive sub-senses -- the SAME `owned.walk_owned_children` calls
+    `_walk_lex_entry_closure` makes at Move time, mirrored here read-only so
+    Preview shows every owned child that WOULD be created (plus its own
+    child-ref decisions) before Move ever writes. Returns the combined tuple
+    of `ReferenceDecisionRecord` for `PlannedAction.reference_decisions`.
+
+    Fail-soft only for the narrow, expected duck-typing gaps (a test fake or
+    real LCM object missing an attribute the resolver probes speculatively):
+    any of those yields an empty tuple rather than aborting plan_action,
+    matching this module's fail-soft posture elsewhere (`_apply_reference_fields`,
+    same except set, `categories.py:3023`). A genuine resolver bug (anything
+    else) is NOT swallowed here -- Principle III (never silent): Preview must
+    surface a crash, not silently show "nothing to report"."""
+    try:
+        dropped = getattr(context, "_dropped", None)
+        if dropped is None:
+            dropped = []
+        resolver_cache = _get_resolver_cache(context)
+        # WS-keying structural fix (this cycle): thread the SOURCE project
+        # handle through so `decide_reference` can compare each item's OWN
+        # project's real Id-keyed alts instead of the positional fallback.
+        # Cycle-5 cleanup: `source_handle` is a required, non-Optional
+        # `TransferContext` field (models.py) -- direct access here matches
+        # every Move-mode call site (`context.source_handle`), removing the
+        # Preview-vs-Move inconsistency of a defensive `getattr` fallback
+        # that could silently mask a genuinely missing field.
+        source = context.source_handle
+        entry_guid = _guid_str_from(src_entry)
+        records = list(_decide_reference_fields(
+            "LexEntry", entry_guid, src_entry, target, resolver_cache, dropped,
+            source=source))
+        # Cycle-16 lead adjudication (DROP_REPORTED): SAME report-only
+        # function the Move path (`_walk_lex_entry_closure`) calls -- no
+        # separate Preview decision logic exists for EntryRefsOS (no
+        # CREATE/LINK leg, nothing is ever created either mode), so Move's
+        # and Preview's drop sets are identical by construction.
+        _report_dropped_entry_refs(src_entry, dropped)
+        # Feature 024 (T031, US3, FR-008): register the entry into
+        # `ctx._copy_set` (the SAME convention `owned.py`'s APR gate uses --
+        # `True` is a placeholder marker, Preview never needs a real target
+        # object) -- this is REGISTRATION only. Feature 024 (single-final-
+        # pass redesign): lexical-relation DISCOVERY for this entry is no
+        # longer done here -- `plan_all_lexical_relations` (the sole lexrel
+        # path, see its module banner) runs once, later, over the complete,
+        # fully-assembled `ctx._copy_set` (`Lib/preview.py.build_run_plan`'s
+        # call site).
+        copy_set = getattr(context, "_copy_set", None)
+        if copy_set is None:
+            copy_set = {}
+            object.__setattr__(context, "_copy_set", copy_set)
+        copy_set[entry_guid] = True
+        # Feature 024 (T030, US3): entry-owned children (PronunciationsOS,
+        # EtymologyOS) -- `owning_fields` restricts the scan to just those
+        # two rows so this entry-level call does NOT also match
+        # `OWNED_OBJECT_MAP`'s `LexSense.SensesOS` row (a real `ILexEntry`
+        # duck-types a `SensesOS` attribute too -- its own top-level senses
+        # collection). Letting the owned-object walk re-scan that here
+        # would double-count every top-level sense as a phantom "owned
+        # child" CREATE decision on top of the `_decide_reference_fields`
+        # pass the loop below already runs for each one directly. Lazy
+        # import (function-local): `owned.py` does not import `categories.py`
+        # at module scope; this is the reverse direction, deferred to call
+        # time to avoid a load-order cycle.
+        if __package__:
+            from . import owned as _owned
+        else:
+            import owned as _owned  # type: ignore
+        records.extend(_owned.plan_owned_object_decisions(
+            src_entry, context, resolver_cache, dropped,
+            owning_fields=frozenset({"PronunciationsOS", "EtymologyOS"})))
+        for src_sense in getattr(src_entry, "SensesOS", None) or []:
+            s_guid = _guid_str_from(src_sense)
+            records.extend(_decide_reference_fields(
+                "LexSense", s_guid, src_sense, target, resolver_cache, dropped,
+                source=source))
+            # Feature 024 (T031, US3, FR-008): register the sense into
+            # `ctx._copy_set` (same placeholder-marker convention as the
+            # entry above) -- registration only; lexical-relation discovery
+            # for this sense happens once, later, in `plan_all_lexical_
+            # relations`'s single final pass (see comment on the entry
+            # registration above).
+            copy_set[s_guid] = True
+            # Feature 024 (T030, US3): sense-owned children -- ExamplesOS (+
+            # each example's TranslationsOC) and recursive sub-senses
+            # (Sense.SensesOS). Left UNFILTERED, same reasoning as the
+            # matching Move-mode call in `_walk_lex_entry_closure`: a
+            # `LexSense` does not duck-type Pronunciations/EtymologyOS, so
+            # this naturally matches only `ExamplesOS`/`SensesOS` (the
+            # sub-sense leg), never re-touching the entry's own top-level
+            # senses loop above.
+            records.extend(_owned.plan_owned_object_decisions(
+                src_sense, context, resolver_cache, dropped))
+            # Cycle-17 correction (DROP_REPORTED, never silent): SAME
+            # report-only function the Move path's sense loop calls -- no
+            # separate Preview decision logic exists for AppendixesRC/
+            # ThesaurusItemsRC/PicturesOS (no CREATE/LINK leg, nothing is
+            # ever created either mode), so Move's and Preview's drop sets
+            # are identical by construction.
+            _report_dropped_sense_scope_gaps(src_sense, dropped)
+        allomorphs = []
+        lf = getattr(src_entry, "LexemeFormOA", None)
+        if lf is not None:
+            allomorphs.append(lf)
+        allomorphs.extend(getattr(src_entry, "AlternateFormsOS", None) or [])
+        for src_allo in allomorphs:
+            a_guid = _guid_str_from(src_allo)
+            records.extend(_decide_reference_fields(
+                "MoForm", a_guid, src_allo, target, resolver_cache, dropped,
+                skip_fields=_MOFORM_DEFERRED_FIELDS, source=source))
+            # Feature 024 (T029/T030, US3): read-only twin of the Move-mode
+            # `owned.reproduce_allomorph_hung_data` call in
+            # `_walk_entry_allomorphs` -- PhoneEnvRC/StemNameRA link-or-report
+            # plus the APR copy-set gate, surfaced in Preview before Move
+            # ever writes (Principle III). Same `ctx._copy_set` caller
+            # contract: record this allomorph as (would-be) copied *before*
+            # calling in, since nothing is actually created yet in Preview
+            # (`True` is a placeholder marker -- the plan twin never needs a
+            # real target object, only GUID membership).
+            copy_set = getattr(context, "_copy_set", None)
+            if copy_set is None:
+                copy_set = {}
+                object.__setattr__(context, "_copy_set", copy_set)
+            copy_set[a_guid] = True
+            records.extend(_owned.plan_allomorph_hung_data_decisions(
+                src_allo, context, resolver_cache, dropped))
+        return tuple(records)
+    except (AttributeError, TypeError, KeyError) as exc:
+        import logging as _logging
+        _logging.getLogger("gramtrans.Lib.categories").warning(
+            "_plan_entry_reference_decisions: %s on entry %s -- returning "
+            "no reference decisions for this entry.",
+            type(exc).__name__, _guid_str_from(src_entry),
+            exc_info=True,
+        )
+        return ()
+
+
+
+# ============================================================================
+# T031 (US3, FR-008) -- lexical-relation reproduction
+# ============================================================================
+#
+# Contract: spec.md FR-008 ("reproduce lexical relations for a copied entry
+# when that entry participates as a member of the relation, preserving the
+# relation's mapping/tree/pair structure and only the members actually
+# copied"); `tests/unit/test_lexical_relations.py`.
+#
+# Feature 024 (single-final-pass redesign): `reproduce_all_lexical_relations`
+# (Move) / `plan_all_lexical_relations` (Preview) are the SOLE lexrel
+# discovery + reproduction path -- there is no per-member incremental
+# discovery trigger anywhere else in the closure walk (`_walk_lex_entry_
+# closure`, `_plan_entry_reference_decisions`, or `Lib/owned.py`'s recursed-
+# sub-sense leg). Each of those sites still REGISTERS its copied member's
+# GUID into `ctx._copy_set` as it goes (entry/sense/sub-sense/allomorph
+# registration is unchanged and still required -- the final pass needs a
+# COMPLETE copy_set to enumerate against), but none of them calls into
+# lexical-relation discovery directly any more. `Lib/transfer.py.execute`/
+# `Lib/preview.py.build_run_plan` each call the final pass exactly ONCE,
+# after their leaf-dispatch loop has finished assembling the run's entire
+# copy_set, enumerating every source `ILexReference` touching ANY copied
+# member of ANY kind (entry, sense, sub-sense, or allomorph -- the
+# enumeration in `_iter_relations_touching_copy_set` does not care what kind
+# of object a `TargetsRS` member is) exactly once each (deduped by relation
+# GUID).
+#
+# `ILexRefType.MappingType` (LexRefTypeTags.MappingTypes, MCP-confirmed live
+# 2026-07-11/12): PAIR/ASYMMETRIC-PAIR kinds (1,2,6,7,11,12) structurally
+# require EXACTLY 2 members -- a relation reduced below 2 copied members is
+# incoherent (a "pair" with one side is not a pair) and is NOT reproduced at
+# all, reported once against the RELATION itself. TREE kinds (3,8,13) need
+# their root/parent member (TargetsRS[0], by convention) copied or the whole
+# relation is incoherent the same way. COLLECTION (0,5,10) / SEQUENCE
+# (4,9,14) / UNIDIRECTIONAL (15,16,17) kinds are open-ended: reproduced with
+# whatever subset of members was actually copied (>=1), each non-copied
+# member reported individually (never silently included or dropped).
+_LEXICAL_RELATION_PAIR_TYPES = frozenset({1, 2, 6, 7, 11, 12})
+_LEXICAL_RELATION_TREE_TYPES = frozenset({3, 8, 13})
+
+_LEXREL_REPRODUCED_KEY = "__categories_lexrel_reproduced__"
+_LEXREL_PLANNED_KEY = "__categories_lexrel_planned__"
+
+
+def _resolve_target_lex_ref_type(target, type_guid: str):
+    """Resolve the target `ILexRefType` whose GUID is `type_guid` off
+    `target.Cache.LangProject.LexDbOA.ReferencesOA` (an `ICmPossibilityList`
+    of relation TYPES -- possibility-list-shaped, so this reuses
+    `references._find_in_possibility_list`'s recursive `PossibilitiesOS`/
+    `SubPossibilitiesOS` walk exactly like every other possibility-list
+    lookup in this codebase). Returns `None` when absent or the list itself
+    is unreachable (never raises)."""
+    if __package__:
+        from . import references as _references
+    else:
+        import references as _references  # type: ignore
+    try:
+        ref_list = target.Cache.LangProject.LexDbOA.ReferencesOA
+    except AttributeError:
+        return None
+    return _references._find_in_possibility_list(ref_list, type_guid)
+
+
+def _evaluate_lexical_relation(src_relation, ctx, dropped):
+    """Shared decision core for both `reproduce_lexical_relation` (Move) and
+    `plan_lexical_relation_decision` (Preview): resolves the target
+    `ILexRefType` by GUID, classifies every `TargetsRS` member against
+    `ctx._copy_set`, and applies the FR-008 partial-member policy. Never
+    creates or writes anything -- every branch that decides NOT to
+    reproduce the relation has already appended its own `DroppedItemRecord`
+    before returning `None`.
+
+    Returns `(rel_guid, target_type, copied_members)` -- a coherent,
+    reproducible relation (structural minimum satisfied, >=1 member
+    actually copied) -- or `None` when the relation must not be reproduced.
+    """
+    if __package__:
+        from . import references as _references
+    else:
+        import references as _references  # type: ignore
+
+    rel_guid = _guid_str_from(src_relation)
+
+    # Feature 024 (single-final-pass redesign): this function is the SOLE
+    # lexical-relation discovery + evaluation path (module banner above) --
+    # every call is a fresh, AUTHORITATIVE re-evaluation of `src_relation`
+    # against the CURRENT `ctx._copy_set`. Wipe any `DroppedItemRecord` this
+    # SAME relation left behind on an earlier call (member-level "not in
+    # copy set" or relation-level "reduced below minimum"/"tree relation
+    # root member not copied"/"reduced to zero copied members") before
+    # re-deriving what is currently true, rather than retracting individual
+    # stale records piecemeal as each condition happens to resolve (the
+    # removed `_retract_dropped` helper's approach). In production this
+    # function is evaluated exactly once per relation per run (`_iter_
+    # relations_touching_copy_set` dedups by GUID and the final pass itself
+    # runs once over the complete copy_set), so this wipe is a no-op there;
+    # it matters only when a caller re-invokes the final pass more than once
+    # over a growing copy_set (this module's own regression tests simulate
+    # that to prove convergence still holds without incremental discovery).
+    if rel_guid:
+        dropped[:] = [
+            r for r in dropped
+            if not (r.owner_guid == rel_guid and r.field_name == "TargetsRS")
+        ]
+
+    target = ctx.target_handle
+    source_type = getattr(src_relation, "Owner", None)
+    type_guid = _guid_str_from(source_type) if source_type is not None else ""
+    target_type = _resolve_target_lex_ref_type(target, type_guid)
+    if target_type is None:
+        _append_dropped_once(dropped, DroppedItemRecord(
+            owner_kind="LexRefType",
+            owner_guid=rel_guid,
+            owner_label="",
+            field_name="MembersOC",
+            item_name="",
+            item_guid=rel_guid,
+            reason="lexical relation type not found in target",
+        ))
+        return None
+
+    mapping_type = getattr(target_type, "MappingType", None)
+    copy_set = getattr(ctx, "_copy_set", None) or {}
+    src_targets = list(getattr(src_relation, "TargetsRS", None) or [])
+
+    copied_members = []
+    missing = []  # [(guid, member), ...]
+    for member in src_targets:
+        m_guid = _guid_str_from(member)
+        if m_guid and m_guid in copy_set:
+            copied_members.append(copy_set[m_guid])
+        else:
+            missing.append((m_guid, member))
+
+    if mapping_type in _LEXICAL_RELATION_PAIR_TYPES and len(copied_members) < 2:
+        # Lead+domain policy (this cycle): a PAIR/ASYMMETRIC-PAIR relation
+        # reduced below its structural minimum of 2 members is incoherent
+        # -- never create a degenerate one-sided "pair". Reported once,
+        # keyed to the RELATION itself (not one member) -- one record, not
+        # a per-member report, since the whole relation is being dropped.
+        _append_dropped_once(dropped, DroppedItemRecord(
+            owner_kind="LexReference",
+            owner_guid=rel_guid,
+            owner_label="",
+            field_name="TargetsRS",
+            item_name="",
+            item_guid=rel_guid,
+            reason=(
+                "pair relation reduced below minimum member count (2 "
+                f"required); not reproduced ({len(copied_members)} of "
+                f"{len(src_targets)} members copied)"
+            ),
+        ))
+        return None
+
+    if mapping_type in _LEXICAL_RELATION_TREE_TYPES:
+        # A TREE relation without its root/parent member is incoherent the
+        # same way -- by convention the root is TargetsRS's first member.
+        root_member = src_targets[0] if src_targets else None
+        root_guid = _guid_str_from(root_member) if root_member is not None else ""
+        if not root_guid or root_guid not in copy_set:
+            _append_dropped_once(dropped, DroppedItemRecord(
+                owner_kind="LexReference",
+                owner_guid=rel_guid,
+                owner_label="",
+                field_name="TargetsRS",
+                item_name="",
+                item_guid=rel_guid,
+                reason="tree relation root member not copied; not reproduced",
+            ))
+            return None
+
+    if not copied_members:
+        # COLLECTION/SEQUENCE/UNIDIRECTIONAL with ZERO copied members --
+        # nothing to reproduce; an empty LexReference would misrepresent
+        # the relation just as badly as a one-sided pair.
+        _append_dropped_once(dropped, DroppedItemRecord(
+            owner_kind="LexReference",
+            owner_guid=rel_guid,
+            owner_label="",
+            field_name="TargetsRS",
+            item_name="",
+            item_guid=rel_guid,
+            reason="relation reduced to zero copied members; not reproduced",
+        ))
+        return None
+
+    # Feature 024 (single-final-pass redesign): every structural-minimum
+    # gate above has now been cleared -- this relation WILL be reproduced.
+    # Any stale relation-level "not reproduced" record from an earlier,
+    # less-complete call was already wiped by the upfront clear at the top
+    # of this function, so there is nothing further to retract here.
+
+    # Report every member NOT in the copy set (FR-008: never silently
+    # include or drop) -- the relation itself IS still reproduced, just
+    # with only the copied subset.
+    for m_guid, member in missing:
+        _append_dropped_once(dropped, DroppedItemRecord(
+            owner_kind="LexReference",
+            owner_guid=rel_guid,
+            owner_label="",
+            field_name="TargetsRS",
+            item_name=_references._item_label(member),
+            item_guid=m_guid,
+            reason="lexical-relation member not in copy set",
+        ))
+
+    return (rel_guid, target_type, copied_members)
+
+
+def _rebuild_targets_rs_in_source_order(existing, copied_members) -> None:
+    """Make `existing.TargetsRS` match `copied_members` (already source-
+    ordered by `_evaluate_lexical_relation`) exactly, in place -- used ONLY
+    by `reproduce_lexical_relation`'s cache-hit branch, which (per that
+    function's docstring) is unreachable in a real production run and
+    exercised only by tests that re-invoke the final pass more than once.
+    A plain sequence of `.Add()` calls cannot fix an already-wrong order
+    (`.Add()` only appends), so this clears the collection first when the
+    underlying object supports `.Clear()` (every real LCM reference
+    sequence does); when it does not (a bare test double), it replaces the
+    collection outright with a freshly-built one of the same type holding
+    `copied_members` in the correct order. Never raises."""
+    if list(getattr(existing, "TargetsRS", None) or []) == list(copied_members):
+        return
+    clear = getattr(getattr(existing, "TargetsRS", None), "Clear", None)
+    if callable(clear):
+        try:
+            clear()
+            for member in copied_members:
+                existing.TargetsRS.Add(member)
+            return
+        except (AttributeError, TypeError):
+            pass
+    try:
+        fresh = type(existing.TargetsRS)()
+        for member in copied_members:
+            fresh.Add(member)
+        existing.TargetsRS = fresh
+    except (AttributeError, TypeError):
+        pass
+
+
+def reproduce_lexical_relation(src_relation, ctx, tag, resolver_cache, dropped):
+    """T031 (US3, FR-008) -- reproduce one lexical relation (`ILexReference`)
+    for COPIED members only.
+
+    Resolves the matching target `ILexRefType` by GUID (absent -> report +
+    skip), applies the partial-member policy (`_evaluate_lexical_relation`),
+    then creates the target `ILexReference` via the CONFIRMED-LIVE
+    OWNER-TAKING `ILexReferenceFactory.Create(guid, targetLexRefType)` (the
+    factory itself adds the new relation to `targetLexRefType.MembersOC`),
+    populates `TargetsRS` with ONLY the copied members in SOURCE ORDER (built
+    BY CONSTRUCTION -- `_evaluate_lexical_relation` iterates the source
+    relation's own `TargetsRS` in source order and appends the copied
+    counterpart of each member as it goes; there is no append-in-discovery-
+    order and no incremental union), and tags it with residue via
+    `residue.apply_residue`'s already-registered "LexReference" Carrier-A
+    class.
+
+    Feature 024 (single-final-pass redesign): this function is the SOLE
+    lexical-relation reproduction path, called only from
+    `reproduce_all_lexical_relations`'s single end-of-run sweep over the
+    COMPLETE `ctx._copy_set` -- there is no per-member incremental trigger
+    left anywhere in the closure walk. `resolver_cache`'s GUID-keyed dedup
+    (`_LEXREL_REPRODUCED_KEY`) therefore normally sees each relation exactly
+    once per run (`_iter_relations_touching_copy_set` also dedups by GUID).
+    The cache-hit branch below is UNREACHABLE in production for that reason;
+    it exists only so a caller that re-invokes this function more than once
+    over a growing copy_set (this module's own regression tests, simulating
+    successive points in a closure) still converges on the correct,
+    source-ordered result -- it REBUILDS `TargetsRS` from the freshly
+    recomputed, source-ordered `copied_members` rather than incrementally
+    unioning new members onto whatever partial list an earlier call already
+    produced (the old union-update posture, which could leave a later-
+    discovered member appended after one that belongs after it in source
+    order -- the SEQUENCE/TREE ordering defect this redesign fixes).
+
+    Never raises: a factory `Create` failure is logged and reported instead
+    (Principle I), matching this module's posture elsewhere.
+    """
+    reproduced = resolver_cache.setdefault(_LEXREL_REPRODUCED_KEY, {})
+    rel_guid = _guid_str_from(src_relation)
+
+    evaluated = _evaluate_lexical_relation(src_relation, ctx, dropped)
+    if evaluated is None:
+        return None
+    rel_guid, target_type, copied_members = evaluated
+
+    existing = reproduced.get(rel_guid) if rel_guid else None
+    if existing is not None:
+        _rebuild_targets_rs_in_source_order(existing, copied_members)
+        return existing
+
+    if __package__:
+        from . import owned as _owned
+        from .residue import apply_residue
+    else:
+        import owned as _owned  # type: ignore
+        from residue import apply_residue  # type: ignore
+
+    target = ctx.target_handle
+    factory = _owned._get_owned_factory(target, "ILexReferenceFactory")
+    parsed_guid = _owned._guid_for_create(rel_guid)
+    try:
+        new_rel = factory.Create(parsed_guid, target_type)
+    except Exception as exc:
+        import logging as _logging
+        _logging.getLogger("gramtrans.Lib.categories").warning(
+            "reproduce_lexical_relation: create failed for relation %s: %s",
+            rel_guid, exc, exc_info=True,
+        )
+        _append_dropped_once(dropped, DroppedItemRecord(
+            owner_kind="LexReference",
+            owner_guid=rel_guid,
+            owner_label="",
+            field_name="MembersOC",
+            item_name="",
+            item_guid=rel_guid,
+            reason=f"create failed: {exc}",
+        ))
+        return None
+
+    for member in copied_members:
+        try:
+            new_rel.TargetsRS.Add(member)
+        except (AttributeError, TypeError):
+            pass
+
+    try:
+        cache = getattr(target, "Cache", None)
+        ws = getattr(cache, "DefaultAnalWs", None)
+        apply_residue(new_rel, ws, tag, class_name="LexReference")
+    except (AttributeError, TypeError):
+        pass
+
+    if rel_guid:
+        reproduced[rel_guid] = new_rel
+    return new_rel
+
+
+def plan_lexical_relation_decision(src_relation, ctx, resolver_cache, dropped):
+    """Preview-mode (T031, Principle III) read-only twin of
+    `reproduce_lexical_relation`: same target-type resolution + partial-
+    member policy (`_evaluate_lexical_relation`), but never creates
+    anything -- returns a `ReferenceDecisionRecord` (action=CREATE) when the
+    relation WOULD be reproduced, or `None` when it would not (already
+    reported to `dropped` by `_evaluate_lexical_relation`).
+
+    Dedup mirrors the Move-mode cache but keeps its own key
+    (`_LEXREL_PLANNED_KEY`) in the SAME `resolver_cache` instance -- Preview
+    and Move each get their own `resolver_cache` per run
+    (`preview.build_run_plan`/`transfer.execute`), so this never collides
+    with `reproduce_lexical_relation`'s own dedup.
+
+    Single-final-pass redesign (this cycle): `_evaluate_lexical_relation` is
+    re-run on EVERY call, even one that will end up hitting the planned-
+    record cache below -- its retraction of stale drop records must run
+    every time `ctx._copy_set` may have grown, exactly mirroring the
+    Move-mode fix in `reproduce_lexical_relation`. A `ReferenceDecisionRecord`
+    itself carries no per-member membership (unlike Move's `TargetsRS`), so
+    once a relation is known to reproduce, the cached record is returned
+    as-is -- there is nothing on it that a later, fuller evaluation could
+    change.
+    """
+    planned = resolver_cache.setdefault(_LEXREL_PLANNED_KEY, {})
+    rel_guid = _guid_str_from(src_relation)
+
+    evaluated = _evaluate_lexical_relation(src_relation, ctx, dropped)
+    if evaluated is None:
+        return None
+    rel_guid, _target_type, _copied_members = evaluated
+
+    if rel_guid and rel_guid in planned:
+        return planned[rel_guid]
+
+    record = ReferenceDecisionRecord(
+        owner_kind="LexReference",
+        owner_guid=rel_guid,
+        field_name="MembersOC",
+        action=ReferenceAction.CREATE,
+        item_name="",
+        item_guid=rel_guid,
+    )
+    if rel_guid:
+        planned[rel_guid] = record
+    return record
+
+
+def _iter_lex_ref_types(ref_list):
+    """Every `ILexRefType` in `ref_list` (an `ICmPossibilityList`-shaped
+    container), recursing `SubPossibilitiesOS` -- mirrors
+    `references._find_in_possibility_list`'s own recursive walk."""
+    def _walk(items):
+        for item in items:
+            yield item
+            subs = getattr(item, "SubPossibilitiesOS", None)
+            if subs:
+                yield from _walk(subs)
+    return list(_walk(getattr(ref_list, "PossibilitiesOS", None) or []))
+
+
+def _iter_relations_touching_copy_set(source, copy_set):
+    """Every source `ILexReference` at least one of whose `TargetsRS`
+    members has a GUID present in `copy_set`, each yielded EXACTLY ONCE
+    (deduped by the relation's own GUID) regardless of how many of its
+    members are in `copy_set`.
+
+    Feature 024 (single-final-pass redesign): this is the ONLY discovery
+    scan in the whole module -- there is no per-member incremental
+    discovery leg left anywhere (the old `_discover_lex_relations_for_member`
+    scan-per-member helper and its two callers,
+    `_reproduce_lex_relations_for_member`/`_plan_lex_relations_for_member`,
+    are removed). A relation shared by K copied members of ANY kind --
+    entry, sense, sub-sense, or allomorph, this function does not care what
+    kind of object a `TargetsRS` member is -- is found exactly ONCE here,
+    matching FR-008's "enumerate every source lexical relation touching ANY
+    copied member (dedup by relation GUID)" requirement directly. Never
+    raises; yields nothing when the source relation list is unreachable or
+    `copy_set` is empty."""
+    if not copy_set:
+        return
+    try:
+        ref_list = source.Cache.LangProject.LexDbOA.ReferencesOA
+    except AttributeError:
+        return
+    seen_rel_guids = set()
+    for lex_ref_type in _iter_lex_ref_types(ref_list):
+        for rel in getattr(lex_ref_type, "MembersOC", None) or []:
+            rel_guid = _guid_str_from(rel)
+            if rel_guid and rel_guid in seen_rel_guids:
+                continue
+            targets = getattr(rel, "TargetsRS", None) or []
+            if any(_guid_str_from(t) in copy_set for t in targets):
+                if rel_guid:
+                    seen_rel_guids.add(rel_guid)
+                yield rel
+
+
+def reproduce_all_lexical_relations(context, tag, resolver_cache, dropped):
+    """T031 (US3, FR-008) single-final-pass redesign, Move mode -- the ONE
+    place lexical-relation reproduction runs: called after the ENTIRE
+    entry/sense/sub-sense copy_set for this run has been assembled (see
+    `Lib/transfer.py.execute`'s call site, right after the leaf-dispatch
+    loop -- AFFIXES and STEMS, the two categories that populate
+    `context._copy_set`, are both fully executed by then).
+
+    Enumerates every source `ILexReference` touching ANY member of the
+    FINAL, fully-settled `context._copy_set` -- of ANY kind: entry, sense,
+    sub-sense, or allomorph, since `_iter_relations_touching_copy_set` does
+    not discriminate by member kind, which naturally covers allomorph
+    members even though no incremental trigger for allomorphs ever existed
+    -- deduped by relation GUID via `_iter_relations_touching_copy_set`, and
+    evaluates each EXACTLY ONCE against COMPLETE membership via
+    `reproduce_lexical_relation`. This is now the SOLE lexrel discovery +
+    reproduction path in the module (see the T031 section banner above) --
+    there is no other call site left anywhere in the closure walk. Per-
+    MappingType structural rulings (pair exactly-2-else-drop-whole, tree
+    root=TargetsRS[0], collection/sequence/unidirectional copied-subset) are
+    UNCHANGED."""
+    source = context.source_handle
+    copy_set = getattr(context, "_copy_set", None) or {}
+    for src_relation in _iter_relations_touching_copy_set(source, copy_set):
+        reproduce_lexical_relation(src_relation, context, tag, resolver_cache, dropped)
+
+
+def plan_all_lexical_relations(context, resolver_cache, dropped) -> list:
+    """Preview-mode twin of `reproduce_all_lexical_relations`: same
+    single-final-pass enumeration (`_iter_relations_touching_copy_set`)
+    over the FINAL `context._copy_set` assembled by `Lib/preview.py.
+    build_run_plan`'s leaf-category loop, `plan_lexical_relation_decision`
+    instead of the Move-mode reproduce call. Preview and Move run this
+    SAME pass over the SAME kind of fully-settled copy_set (each own their
+    own per-run copy_set/resolver_cache/dropped, per the existing
+    Preview/Move-each-get-their-own-resolver_cache convention), so the two
+    modes converge on the same relations in, same decisions out. Returns
+    the list of `ReferenceDecisionRecord` for every relation that WOULD be
+    reproduced -- callers fold this into `RunPlan`-level bookkeeping
+    (`Lib/preview.py` currently threads reference decisions per-action; this
+    single pass is not owned by any one action, so its records are surfaced
+    via `context._dropped`/a dedicated plan-level collector at the call
+    site rather than one action's `reference_decisions` tuple)."""
+    source = context.source_handle
+    copy_set = getattr(context, "_copy_set", None) or {}
+    records = []
+    for src_relation in _iter_relations_touching_copy_set(source, copy_set):
+        record = plan_lexical_relation_decision(
+            src_relation, context, resolver_cache, dropped)
+        if record is not None:
+            records.append(record)
+    return records
 
 
 def _dispatch_msa_subclass(class_name):
@@ -2915,7 +4008,158 @@ def _class_name_of(obj):
         return getattr(obj, "ClassName", getattr(obj, "class_name", None))
 
 
-def _walk_lex_entry_closure(src_entry, context, tag, category):
+# ----------------------------------------------------------------------------
+# Cycle-16 lead adjudication -- LexEntry.EntryRefsOS: DROP_REPORTED.
+# ----------------------------------------------------------------------------
+#
+# No code site anywhere in `Lib/*.py` calls `ILexEntryRefFactory` -- a copied
+# entry's `EntryRefsOS` is simply never populated on the target (routed to
+# 027-complex-forms-variants). `_run_post_pass_a` only WIRES
+# ComponentLexemesRS/PrimaryLexemesRS onto an EntryRef that already exists;
+# since none is ever created for a freshly-copied entry, it is unreachable.
+# Per the lead's ruling this cycle: report every un-reproduced `EntryRefsOS`
+# member (one `DroppedItemRecord` per `LexEntryRef`, naming the relationship
+# kind -- variant vs complex-form, from `RefType` -- plus its component +
+# variant/complex type). This SUBSUMES `LexEntryRef.{ComponentLexemesRS,
+# PrimaryLexemesRS, VariantEntryTypesRS, ComplexEntryTypesRS,
+# ShowComplexFormsInRS}` -- none of those 5 fields gets its own separate
+# `DroppedItemRecord` (they cannot exist without an un-reproduced
+# `LexEntryRef` in the first place).
+
+_LEX_ENTRY_REF_KIND_BY_TYPE = {0: "variant", 1: "complex-form"}
+
+
+def _lex_entry_ref_kind(ref) -> str:
+    """Human relationship-kind label from `ILexEntryRef.RefType` (real LCM
+    `LexEntryRefTags` int: 0 = variant (`krtVariant`), 1 = complex-form
+    (`krtComplexForm`)). Any other/absent value renders as its own
+    `RefType=<value>` label rather than silently guessing."""
+    ref_type = getattr(ref, "RefType", None)
+    return _LEX_ENTRY_REF_KIND_BY_TYPE.get(ref_type, f"RefType={ref_type!r}")
+
+
+def _lex_entry_ref_identity_label(ref, kind: str) -> str:
+    """Best-effort `item_name` for one un-reproduced `LexEntryRef`: its
+    (first) component lexeme's label plus its (first) variant/complex-form
+    type's label -- "identify the LexEntryRef (its component + variant/
+    complex type)" per the lead's ruling. Never raises; missing pieces just
+    render as "(none)"."""
+    if __package__:
+        from . import references as _references
+    else:
+        import references as _references  # type: ignore
+
+    comps = list(getattr(ref, "ComponentLexemesRS", None) or [])
+    comp_label = ""
+    if comps:
+        comp_label = _owner_label_for("LexEntry", comps[0]) or _guid_str_from(comps[0])
+
+    type_field = "VariantEntryTypesRS" if kind == "variant" else "ComplexEntryTypesRS"
+    types = list(getattr(ref, type_field, None) or [])
+    type_label = _references._item_label(types[0]) if types else ""
+
+    parts = [f"component={comp_label or '(none)'}"]
+    if type_label:
+        parts.append(f"type={type_label}")
+    return f"{kind}: " + ", ".join(parts)
+
+
+def _report_dropped_entry_refs(src_entry, dropped) -> None:
+    """Emit one `DroppedItemRecord` per `LexEntryRef` owned by
+    `src_entry.EntryRefsOS` -- called identically from the Move path
+    (`_walk_lex_entry_closure`) and the Preview path
+    (`_plan_entry_reference_decisions`), so the two drop sets are identical
+    by construction (there is no CREATE/LINK leg to diverge; both are
+    report-only -- no `ILexEntryRef` is ever created this cycle)."""
+    refs = list(getattr(src_entry, "EntryRefsOS", None) or [])
+    if not refs:
+        return
+    owner_guid = _guid_str_from(src_entry)
+    owner_label = _owner_label_for("LexEntry", src_entry)
+    for ref in refs:
+        kind = _lex_entry_ref_kind(ref)
+        _append_dropped_once(dropped, DroppedItemRecord(
+            owner_kind="LexEntry",
+            owner_guid=owner_guid,
+            owner_label=owner_label,
+            field_name="EntryRefsOS",
+            item_name=_lex_entry_ref_identity_label(ref, kind),
+            item_guid=_guid_str_from(ref),
+            reason=(
+                f"LexEntryRef ({kind}) is not reproduced by feature 024's "
+                "lexicon transfer -- no ILexEntryRefFactory create site "
+                "exists (routed to 027-complex-forms-variants)"
+            ),
+        ))
+
+
+# ----------------------------------------------------------------------------
+# Cycle-17 correction: LexSense.{AppendixesRC, ThesaurusItemsRC, PicturesOS}
+# -- never-silent DROP_REPORTED (corrects a prior lead ruling that had
+# silently parked these 4 fields in OUT_OF_SCOPE_EXCLUDED; ExtendedNoteOS,
+# the 4th field that ruling covered, is now COPIED -- see
+# `Lib/owned.py.OWNED_OBJECT_MAP`'s LexSense.ExtendedNoteOS row).
+# ----------------------------------------------------------------------------
+
+_SENSE_SCOPE_GAP_FIELDS = (
+    (
+        "AppendixesRC",
+        "LexAppendix is a bespoke owned class (LexDb.AppendixesOC), not a "
+        "possibility list -- not reproduced by feature 024's lexicon "
+        "transfer (routed to 030-sense-appendix-thesaurus-refs)",
+    ),
+    (
+        "ThesaurusItemsRC",
+        "thesaurus items are a generic CmPossibility with no fixed home "
+        "list (legacy, dynamic-owner) -- not reproduced by feature 024's "
+        "lexicon transfer (routed to 030-sense-appendix-thesaurus-refs)",
+    ),
+    (
+        "PicturesOS",
+        "CmPicture (-> CmFile -> disk file) is not reproduced by feature "
+        "024's lexicon transfer (routed to 029-sense-pictures)",
+    ),
+)
+
+
+def _report_dropped_sense_scope_gaps(src_sense, dropped) -> None:
+    """Emit one `DroppedItemRecord` per item referenced by
+    `src_sense.AppendixesRC` / `.ThesaurusItemsRC` / `.PicturesOS` -- called
+    identically from the Move path (`_walk_lex_entry_closure`'s sense loop)
+    and the Preview path (`_plan_entry_reference_decisions`'s sense loop),
+    so the two drop sets are identical by construction (there is no
+    CREATE/LINK leg to diverge for any of the three fields; none is ever
+    reproduced this cycle -- see `tests/verification/fidelity_census.py`'s
+    cycle-17 CLASSIFICATION rows for the full rationale)."""
+    owner_guid = _guid_str_from(src_sense)
+    owner_label = _owner_label_for("LexSense", src_sense)
+    for field_name, reason in _SENSE_SCOPE_GAP_FIELDS:
+        items = list(getattr(src_sense, field_name, None) or [])
+        for item in items:
+            _append_dropped_once(dropped, DroppedItemRecord(
+                owner_kind="LexSense",
+                owner_guid=owner_guid,
+                owner_label=owner_label,
+                field_name=field_name,
+                item_name=_references_item_label(item),
+                item_guid=_guid_str_from(item),
+                reason=reason,
+            ))
+
+
+def _references_item_label(item) -> str:
+    """Best-effort label for a dropped sense-scope-gap item -- reuses
+    `references._item_label` (reads `.Name`, best non-empty WS alt).
+    Returns "" for item shapes with no `.Name` (e.g. `LexAppendix`,
+    `CmPicture`) -- never raises."""
+    if __package__:
+        from . import references as _references
+    else:
+        import references as _references  # type: ignore
+    return _references._item_label(item)
+
+
+def _walk_lex_entry_closure(src_entry, context, tag, category, dropped=None):
     """Atomic owned-child closure write for one LexEntry (E2), shared by
     AFFIXES + STEMS execute_action.
 
@@ -2928,6 +4172,23 @@ def _walk_lex_entry_closure(src_entry, context, tag, category):
     LexEntryRef component/primary lexemes are NOT written here (deferred to
     post-pass A). Carrier A residue cascades to entry/senses/MSAs/allomorphs.
 
+    `dropped` (feature 024, FR-010/FR-012, contracts/dropped-item-report.md):
+    the per-run ``list[DroppedItemRecord]`` collector. When not passed
+    explicitly, falls back to ``context._dropped`` (attached by
+    `Lib/preview.py.build_run_plan` / `Lib/transfer.py.execute` via
+    ``object.__setattr__``, mirroring ``_ws_map``/``_identity_remap``).
+
+    Feature 024 (T016, US1): every `LexEntry`/`LexSense` field registered in
+    `references.REFERENCE_FIELD_MAP` (DialectLabelsRS, PublishIn,
+    DoNotPublishInRC, DoNotShowMainEntryInRC on the entry; SenseTypeRA,
+    UsageTypesRC, DomainTypesRC, AnthroCodesRC, DialectLabelsRS, StatusRA,
+    SemanticDomainsRC, PublishIn, DoNotPublishInRC, DoNotShowMainEntryInRC on
+    each sense) is now resolved through `_apply_reference_fields` -- the
+    generic decide_reference/apply_reference dispatch that subsumes the old
+    hand-wired StatusRA + SemanticDomainsRC re-wire blocks that used to live
+    inline here. The sub-sense/example/pronunciation/etymology legs of the
+    owned-object walk (`Lib/owned.py`, US3) are still future writers.
+
     LCM-bound: imports SIL.LCModel, so it is exercised only under a live host /
     the integration suite. Returns the created ILexEntry (or None if the source
     object could not be re-resolved)."""
@@ -2939,6 +4200,11 @@ def _walk_lex_entry_closure(src_entry, context, tag, category):
         from .residue import apply_residue
     else:
         from residue import apply_residue  # type: ignore
+
+    if dropped is None:
+        dropped = getattr(context, "_dropped", None)
+    if dropped is None:
+        dropped = []
 
     target = context.target_handle
     src_guid = _guid_str_from(src_entry)
@@ -2972,8 +4238,56 @@ def _walk_lex_entry_closure(src_entry, context, tag, category):
         except (AttributeError, TypeError):
             pass
 
+    # Feature 024 (T016): entry-level reference fields (DialectLabelsRS,
+    # PublishIn, DoNotPublishInRC, DoNotShowMainEntryInRC) via the generic
+    # resolver -- these were previously dropped silently by
+    # ApplySyncableProperties (research R1).
+    resolver_cache = _get_resolver_cache(context)
+    _apply_reference_fields(
+        "LexEntry", src_entry, new_entry, target, tag, resolver_cache, dropped,
+        ws_map=ws_map, source=context.source_handle, owner_guid=src_guid)
+
+    # Cycle-16 lead adjudication (DROP_REPORTED): EntryRefsOS is never
+    # reproduced (no ILexEntryRefFactory create site) -- report every
+    # un-reproduced LexEntryRef, never silently drop it. See
+    # `_report_dropped_entry_refs`'s own docstring.
+    _report_dropped_entry_refs(src_entry, dropped)
+
+    # Feature 024 (T031, US3, FR-008): register the entry into
+    # `context._copy_set` (same per-run dict `owned.py`'s allomorph-hung-data
+    # APR gate uses) -- REGISTRATION only. Feature 024 (single-final-pass
+    # redesign): lexical-relation discovery for this entry is no longer
+    # triggered here -- `reproduce_all_lexical_relations` (the sole lexrel
+    # path) runs once, later, over the complete, fully-assembled
+    # `context._copy_set` (`Lib/transfer.py.execute`'s call site).
+    copy_set = getattr(context, "_copy_set", None)
+    if copy_set is None:
+        copy_set = {}
+        object.__setattr__(context, "_copy_set", copy_set)
+    copy_set[src_guid] = new_entry
+
+    # Feature 024 (T030, US3): entry-owned children -- PronunciationsOS,
+    # EtymologyOS (`Lib/owned.py.walk_owned_children`). `owning_fields`
+    # restricts this call to just those two `OWNED_OBJECT_MAP` rows: a real
+    # `ILexEntry` also duck-types an attribute literally named `SensesOS`
+    # (its own top-level senses collection), which would otherwise ALSO
+    # match `OWNED_OBJECT_MAP`'s `LexSense.SensesOS` row (recurse=True, for
+    # SUB-sense recursion) and re-create every top-level sense a SECOND
+    # time as a phantom "owned child" -- double-processing the senses the
+    # loop below already creates directly. See `walk_owned_children`'s own
+    # docstring for the full explanation. Lazy import (function-local) --
+    # `owned.py` does not import `categories.py` at module scope, and this
+    # is the reverse direction, so deferring avoids a load-order cycle.
+    if __package__:
+        from . import owned as _owned
+    else:
+        import owned as _owned  # type: ignore
+    _owned.walk_owned_children(
+        src_entry, new_entry, context, tag, resolver_cache, dropped,
+        owning_fields=frozenset({"PronunciationsOS", "EtymologyOS"}))
+
     # Allomorphs (E3): LexemeFormOA + AlternateFormsOS.
-    _walk_entry_allomorphs(src_entry, new_entry, context, tag, identity_remap)
+    _walk_entry_allomorphs(src_entry, new_entry, context, tag, identity_remap, dropped=dropped)
 
     # Senses + owned MSAs (E4). ILexSense.MorphoSyntaxAnalysisRA links to an
     # MSA owned by ILexEntry.MorphoSyntaxAnalysesOC.
@@ -2990,17 +4304,42 @@ def _walk_lex_entry_closure(src_entry, context, tag, category):
             target.Senses.ApplySyncableProperties(new_sense, sprops, ws_map=ws_map)
         except (AttributeError, TypeError):
             pass
-        # StatusRA is an object reference dropped by ApplySyncableProperties
-        # (emitted as a GUID string); re-wire it explicitly by GUID -- same
-        # bug class as the allomorph MorphTypeRA fix.
-        src_status = getattr(src_sense, "StatusRA", None)
-        if src_status is not None:
-            tgt_status = _resolve_target_status(target, _guid_str_from(src_status))
-            if tgt_status is not None:
-                try:
-                    new_sense.StatusRA = tgt_status
-                except (AttributeError, TypeError):
-                    pass
+        # Feature 024 (T030, US3): sense-owned children -- ExamplesOS (+ each
+        # example's TranslationsOC) and recursive sub-senses (Sense.SensesOS,
+        # `OwnedObjectSpec.recurse=True`), both via the SAME
+        # `walk_owned_children` call -- a `LexSense` does not duck-type
+        # Pronunciations/EtymologyOS (those are entry-level only), so this
+        # call is left UNFILTERED: it naturally matches only `ExamplesOS`
+        # and `SensesOS` (the sub-sense leg), never re-touching the entry's
+        # own top-level senses (this loop's own iteration variable) since
+        # `src_sense.SensesOS` here is that SENSE's sub-senses, a distinct
+        # collection from `src_entry.SensesOS` above.
+        _owned.walk_owned_children(
+            src_sense, new_sense, context, tag, resolver_cache, dropped)
+
+        # Feature 024 (T016): every sense-level reference field registered in
+        # `references.REFERENCE_FIELD_MAP` -- SenseTypeRA, UsageTypesRC,
+        # DomainTypesRC, AnthroCodesRC, DialectLabelsRS, StatusRA,
+        # SemanticDomainsRC, PublishIn, DoNotPublishInRC,
+        # DoNotShowMainEntryInRC -- via the generic resolver. Subsumes the old
+        # hand-wired `_resolve_target_status`/`StatusRA` re-wire block and the
+        # `_wire_semantic_domains` call that used to be here (research R1):
+        # both are now one call, and get UPDATE/REPORT_DROPPED handling for
+        # diverged items that the old hand-wire never had.
+        _apply_reference_fields(
+            "LexSense", src_sense, new_sense, target, tag, resolver_cache, dropped,
+            ws_map=ws_map, source=context.source_handle, owner_guid=s_guid)
+        # Cycle-17 correction (DROP_REPORTED, never silent): AppendixesRC,
+        # ThesaurusItemsRC, PicturesOS are never reproduced -- report every
+        # referenced item. See `_report_dropped_sense_scope_gaps`'s own
+        # docstring (same function called from Preview's sense loop below).
+        _report_dropped_sense_scope_gaps(src_sense, dropped)
+        # Feature 024 (T031, US3, FR-008): register the sense into
+        # `context._copy_set` (same convention as the entry above) --
+        # registration only; lexical-relation discovery for this sense
+        # happens once, later, in `reproduce_all_lexical_relations`'s single
+        # final pass (see comment on the entry registration above).
+        copy_set[s_guid] = new_sense
         # MSA for this sense (create once per source MSA guid).
         src_msa = getattr(src_sense, "MorphoSyntaxAnalysisRA", None)
         if src_msa is not None:
@@ -3016,24 +4355,44 @@ def _walk_lex_entry_closure(src_entry, context, tag, category):
                     new_sense.MorphoSyntaxAnalysisRA = new_msa
                 except (AttributeError, TypeError):
                     pass
-        # STEMS: wire sense.SemanticDomainsRC by GUID lookup (E10).
-        _wire_semantic_domains(src_sense, new_sense, target)
         apply_residue(new_sense, ws, tag)
 
     return new_entry
 
 
-def _walk_entry_allomorphs(src_entry, new_entry, context, tag, identity_remap):
+def _walk_entry_allomorphs(src_entry, new_entry, context, tag, identity_remap, dropped=None):
     """Create IMoForm allomorphs (E3) for an entry: LexemeFormOA then each
     AlternateFormsOS member. GUID is not factory-preservable for allomorphs;
-    the new GUID is recorded in identity_remap."""
+    the new GUID is recorded in identity_remap.
+
+    `dropped` (feature 024, FR-010/FR-012): per-run
+    ``list[DroppedItemRecord]`` collector, falling back to
+    ``context._dropped`` when not passed explicitly (see
+    `_walk_lex_entry_closure`).
+
+    Feature 024 (T016, US1): `MorphTypeRA` is resolved through the generic
+    `_apply_reference_fields("MoForm", ...)` dispatch, subsuming the old
+    hand-wired `_resolve_target_morph_type` re-wire block that used to live
+    inline in `_mk` below. `PhoneEnvRC`/`StemNameRA` are explicitly excluded
+    from that dispatch -- their `references.REFERENCE_FIELD_MAP` rows are
+    documented US3 (T029) placeholders (phonological environments and
+    per-POS stem names need special-cased target lookups, not a plain
+    ICmPossibilityList), not this task's scope.
+    """
     from SIL.LCModel import (
         IMoAffixAllomorphFactory, IMoStemAllomorphFactory, ILexEntry, ICmObject,
     )
     if __package__:
         from .residue import apply_residue
+        from . import owned as _owned
     else:
         from residue import apply_residue  # type: ignore
+        import owned as _owned  # type: ignore
+    if dropped is None:
+        dropped = getattr(context, "_dropped", None)
+    if dropped is None:
+        dropped = []
+    resolver_cache = _get_resolver_cache(context)
     target = context.target_handle
     cache = getattr(target, "Cache")
     ws = cache.DefaultAnalWs
@@ -3067,18 +4426,31 @@ def _walk_entry_allomorphs(src_entry, new_entry, context, tag, identity_remap):
             target.Allomorphs.ApplySyncableProperties(new_allo, aprops, ws_map=ws_map)
         except (AttributeError, TypeError):
             pass
-        # MorphTypeRA is an object reference; ApplySyncableProperties emits it as
-        # a GUID string and its apply-loop drops object-references silently (see
-        # _resolve_target_morph_type). Wire it explicitly by GUID so the target
-        # entry shows the correct morph type instead of a blank one.
-        src_mt = getattr(src_allo, "MorphTypeRA", None)
-        if src_mt is not None:
-            tgt_mt = _resolve_target_morph_type(target, _guid_str_from(src_mt))
-            if tgt_mt is not None:
-                try:
-                    new_allo.MorphTypeRA = tgt_mt
-                except (AttributeError, TypeError):
-                    pass
+        # Feature 024 (T016): MorphTypeRA via the generic resolver -- subsumes
+        # the old `_resolve_target_morph_type` hand-wire block (research R1).
+        # PhoneEnvRC/StemNameRA are skipped here (US3 T029; see docstring).
+        _apply_reference_fields(
+            "MoForm", src_allo, new_allo, target, tag, resolver_cache, dropped,
+            skip_fields=_MOFORM_DEFERRED_FIELDS, ws_map=ws_map,
+            source=context.source_handle, owner_guid=src_g)
+        # Feature 024 (T029/T030, US3, FR-009a): allomorph-hung data --
+        # PhoneEnvRC (link/report against the target's flat phonological
+        # environment sequence), StemNameRA (link/report against the owning
+        # POS's own StemNamesOC), and any ad-hoc prohibition rule (APR)
+        # referencing this allomorph (reproduced only when every member is
+        # already in the run's copy set -- `owned.py`'s own module docstring
+        # for the full contract). `ctx._copy_set` records the allomorph
+        # CURRENTLY being copied *before* the call, per that module's
+        # documented caller contract, so an APR whose OTHER member is this
+        # same allomorph (a self/adjacent-allomorph rule) or an
+        # earlier-processed allomorph in this same run can already resolve.
+        copy_set = getattr(context, "_copy_set", None)
+        if copy_set is None:
+            copy_set = {}
+            object.__setattr__(context, "_copy_set", copy_set)
+        copy_set[src_g] = new_allo
+        _owned.reproduce_allomorph_hung_data(
+            src_allo, new_allo, context, tag, resolver_cache, dropped)
         apply_residue(new_allo, ws, tag)
 
     lf = getattr(src_entry, "LexemeFormOA", None)
@@ -3189,30 +4561,6 @@ def _wire_stratum(src_msa, new_msa, target):
                 return
     except (AttributeError, TypeError):
         pass
-
-
-def _wire_semantic_domains(src_sense, new_sense, target):
-    """Wire sense.SemanticDomainsRC to Phase 3b-transferred domains by GUID
-    lookup (E10). Missing domains are left unwired (surfaced as a sense-level
-    dependency skip by the planner)."""
-    src_rc = getattr(src_sense, "SemanticDomainsRC", None)
-    if src_rc is None:
-        return
-    tgt_rc = getattr(new_sense, "SemanticDomainsRC", None)
-    if tgt_rc is None:
-        return
-    try:
-        target_domains = list(_walk_semantic_domain_list(target))
-    except Exception:
-        target_domains = []
-    for src_dom in src_rc:
-        g = _guid_str_from(src_dom)
-        tgt_dom = _find_target_obj_by_guid(target_domains, g)
-        if tgt_dom is not None:
-            try:
-                tgt_rc.Add(tgt_dom)
-            except (AttributeError, TypeError):
-                pass
 
 
 # ----- 17.1 MSA-slot wiring sub-pass (FR-333) ------------------------------
@@ -3423,7 +4771,14 @@ def affixes_required_writing_systems(piece):
 def affixes_plan_action(piece, context, ws_mapping):
     """One PlannedAction per affix LexEntry. Side effect (FR-333/FR-340):
     stash MSA->slot and EntryRef component bindings into the plan for the
-    deferred 17.1 sub-pass + post-pass A."""
+    deferred 17.1 sub-pass + post-pass A.
+
+    Feature 024 (T017, US1, Principle III): also computes the read-only
+    `decide_reference` pass across this entry's sense/allomorph reference
+    fields and attaches the result to `PlannedAction.reference_decisions`,
+    so Preview shows Add/Link/Update/Report decisions before Move ever
+    writes. Never blocks planning -- any resolver failure yields an empty
+    tuple (see `_plan_entry_reference_decisions`)."""
     # Constitution v7.0.0: GOLD items transfer as ordinary items (no field lock).
     src_guid = _guid_str_from(piece)
     _stash_entry_bindings(piece, context)
@@ -3434,11 +4789,13 @@ def affixes_plan_action(piece, context, ws_mapping):
             reason=SkipReason.ALREADY_PRESENT_BY_GUID,
             detail=f"Affix LexEntry GUID {src_guid[:8]}... already present in target.",
         )
+    ref_decisions = _plan_entry_reference_decisions(piece, context, context.target_handle)
     return PlannedAction(
         category=GrammarCategory.AFFIXES,
         source_guid=src_guid,
         intended_target_guid=src_guid,
         summary=f"Affix LexEntry guid={src_guid[:8]}...",
+        reference_decisions=ref_decisions,
     )
 
 
@@ -3806,7 +5163,10 @@ def stems_required_writing_systems(piece):
 
 def stems_plan_action(piece, context, ws_mapping):
     """One PlannedAction per stem entry. Side effect: same lexentry_ref_bindings
-    stash as AFFIXES for any EntryRefs on the stem entry (FR-340)."""
+    stash as AFFIXES for any EntryRefs on the stem entry (FR-340).
+
+    Feature 024 (T017, US1, Principle III): same read-only reference-decision
+    surfacing as `affixes_plan_action` -- see its docstring."""
     # Constitution v7.0.0: GOLD items transfer as ordinary items (no field lock).
     src_guid = _guid_str_from(piece)
     _stash_entry_bindings(piece, context)
@@ -3817,11 +5177,13 @@ def stems_plan_action(piece, context, ws_mapping):
             reason=SkipReason.ALREADY_PRESENT_BY_GUID,
             detail=f"Stem LexEntry GUID {src_guid[:8]}... already present in target.",
         )
+    ref_decisions = _plan_entry_reference_decisions(piece, context, context.target_handle)
     return PlannedAction(
         category=GrammarCategory.STEMS,
         source_guid=src_guid,
         intended_target_guid=src_guid,
         summary=f"Stem LexEntry guid={src_guid[:8]}...",
+        reference_decisions=ref_decisions,
     )
 
 

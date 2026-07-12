@@ -264,7 +264,24 @@ class MainWindow(QtWidgets.QDialog):
             from ..report import RunReport
         else:
             from report import RunReport  # type: ignore
-        report = RunReport.build_from_plan(plan, RunMode.PREVIEW)
+        # QC P1 (cycle-1 review, feature 024): pass the plan's projected
+        # drops (Lib/references.py `decide_reference`, run read-only during
+        # AFFIXES/STEMS plan_action) so Preview surfaces them symmetrically
+        # with Move (which threads its own `_dropped` collector into
+        # `RunReport.build_from_plan` via `extra_dropped_items` in
+        # `Lib/transfer.py.execute`).
+        # Feature 024 (T023, FR-013): per-object FidelityStatus, mirroring the
+        # Move-mode wiring in `Lib/transfer.py.execute`.
+        if __package__:
+            from ..categories import compute_fidelity_by_guid
+        else:
+            from categories import compute_fidelity_by_guid  # type: ignore
+        _plan_dropped = getattr(plan, "dropped_items", ())
+        report = RunReport.build_from_plan(
+            plan, RunMode.PREVIEW,
+            extra_dropped_items=_plan_dropped,
+            fidelity_by_guid=compute_fidelity_by_guid(_plan_dropped),
+        )
         self._stats.set_report(report)
 
     def _on_move(self) -> None:
