@@ -326,6 +326,52 @@ expected and accepted, that the gap matches the dropped-items report from US4).
 - **Feature 025 — full reversals**: reversal-index entries and their reversal-index
   categories, applying the same never-silent fidelity guarantee to reversal content.
 - **Feature 026 — texts / wordforms**: interlinear texts and wordform analyses.
+- **Feature 027 — complex forms & variants**: the `LexEntryRef` family
+  (`LexEntry.EntryRefsOS` + component/primary lexeme refs + variant/complex entry
+  types + `ShowComplexFormsIn`). Surfaced by the 024 census as un-reproduced,
+  live-reachable data loss (variant relationships); 024 DROP_REPORTs them.
+- **Feature 028 — affix-allomorph morphosyntax**: `MoAffixAllomorph`
+  `InflectionClassesRC` / `MsEnvFeaturesOA` / `MsEnvPartOfSpeechRA` / `PositionRS`;
+  024 DROP_REPORTs them (code gap, vacuous-live on Ejagham Mini).
+- **Feature 029 — sense pictures**: `LexSense.PicturesOS` → `CmPicture` → `CmFile` →
+  the backing image file on disk (a filesystem/asset concern outside the LCM object
+  graph); 024 DROP_REPORTs each picture.
+- **Feature 030 — sense appendix & thesaurus references**: `LexSense.AppendixesRC`
+  (bespoke owned `LexAppendix`, not a possibility list) and `LexSense.ThesaurusItemsRC`
+  (legacy generic `CmPossibility`, dynamic-owner); 024 DROP_REPORTs them.
 
 All three clarification questions from the initial draft are now resolved (see
 Clarifications). No open `[NEEDS CLARIFICATION]` markers remain.
+
+## Delivery Status & As-Built Amendments (024 complete — 2026-07-12)
+
+Feature 024 is **implemented and merged**. All user stories US1–US5 are done; the
+full suite is green (one pre-existing, unrelated wizard/POS failure excepted). This
+section records where the delivered code diverges from or refines the requirements
+above; the requirements themselves are left intact as the original intent.
+
+- **FR-011 (census) delivered**: `tests/verification/fidelity_census.py` classifies
+  every populated owned/reference model field (75 fields across 11 classes, enumerated
+  from the LCM metadata cache) into exactly one of four terminal buckets — **COPIED**,
+  **DROP_REPORTED**, **HANDLED_ELSEWHERE** (the MSA family, reproduced by the POS/MSA
+  path), **OUT_OF_SCOPE_EXCLUDED** — with a never-silent guard (`classify_field` raises
+  on any unclassified field, enforced by a regression test).
+- **Exclusion policy (SC-003/FR-010 alignment)**: the ONLY permitted *silent*
+  exclusion is a **read-only derived aggregate** — exactly one field,
+  `LexEntry.MainEntriesOrSensesRS` (`can_write = false`), which carries no independent
+  data (it is transitively populated by the `LexEntryRef` mechanism). There is **no
+  silent out-of-scope bucket for real data**. Every other non-reproduced field is
+  DROP_REPORTED. *(This corrects a mid-implementation ruling that had wrongly parked
+  four real LexSense fields in a silent-exclusion bucket; see the LexSense note below.)*
+- **LexSense fidelity, as built**: `ExtendedNoteOS` = **COPIED** (deep-copied via
+  `ILexExtendedNoteFactory`, recursing its owned `ExamplesOS` through the same example
+  machinery and resolving `ExtendedNoteTypeRA` against `LexDb.ExtendedNoteTypesOA`);
+  `AppendixesRC` / `ThesaurusItemsRC` / `PicturesOS` = **DROP_REPORTED** (reproduction
+  deferred to features 030 / 030 / 029 respectively, never silent).
+- **FR-008 (lexical relations) as built**: reproduced by a **single final pass** at
+  closure-end (not an incremental per-member trigger), source-ordered by construction,
+  per-`MappingType` rulings preserved (pair = exactly 2, tree hierarchical,
+  collection/sequence open-ended), copied-members-only.
+
+For the live-validation posture (which paths are unit/fakes-proven vs. live-confirmed),
+see [validation-status.md](./validation-status.md).
