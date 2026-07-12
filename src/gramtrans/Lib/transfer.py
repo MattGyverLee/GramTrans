@@ -375,6 +375,12 @@ def execute(plan: RunPlan, source, target, report_sink, tag: ImportResidueTag,
     # cache with the ADD/closure path (FR-012 idempotency across the whole
     # run, not just within one path).
     object.__setattr__(exec_ctx, '_resolver_cache', _resolver_cache)
+    # Feature 024 (T029/T030, US3, FR-009a): per-run copy-set dict
+    # (`Lib/owned.py`'s `ctx._copy_set` convention) threaded the same way as
+    # `_dropped`/`_resolver_cache` above, so `owned.reproduce_allomorph_hung_data`'s
+    # APR copy-set gate sees every allomorph already copied earlier in this
+    # SAME run (across every entry, not just the one currently being copied).
+    object.__setattr__(exec_ctx, '_copy_set', {})
     # C6: categories gated behind the flexicon ITsString.get_String fix.
     # When _phoneme_env_field_diff_enabled() is False (current state), field-diff
     # for PHONEMES and PH_ENVIRONMENT is skipped — they remain SELECTOR-ONLY

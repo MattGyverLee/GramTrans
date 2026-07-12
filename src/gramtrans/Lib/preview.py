@@ -192,6 +192,16 @@ def build_run_plan(
     _resolver_cache: dict = {}
     object.__setattr__(context, '_resolver_cache', _resolver_cache)
 
+    # Feature 024 (T029/T030, US3, FR-009a): per-run copy-set dict
+    # (`Lib/owned.py`'s `ctx._copy_set` convention -- see that module's own
+    # "T029 (US3, FR-009a)" section docstring) threaded the same way as
+    # `_dropped`/`_resolver_cache` above, so `_plan_allomorph_hung_data_decisions`'s
+    # (`plan_allomorph_hung_data_decisions`'s) APR copy-set gate sees every
+    # allomorph already planned earlier in this SAME run (across every
+    # entry, not just the one currently being planned).
+    _copy_set: dict = {}
+    object.__setattr__(context, '_copy_set', _copy_set)
+
     # Phase 3a leaf-category dispatch: iterate every Phase 3a category
     # that's enabled in the selection.  Each category's registered
     # callbacks live in Lib/categories.py.  Errors-as-skips: if an

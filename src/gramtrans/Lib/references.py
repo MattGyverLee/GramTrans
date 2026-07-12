@@ -185,30 +185,31 @@ REFERENCE_FIELD_MAP: tuple = (
         owner_class="MoForm",
         field_name="PhoneEnvRC",
         cardinality=ReferenceCardinality.COLLECTION,
-        # Phonological environments are not a simple `lp.*` possibility list --
-        # they are resolved via the existing PH_ENVIRONMENT category target
-        # (categories.py leaf-dispatch, GrammarCategory.PH_ENVIRONMENT).
-        # TODO(024): wire via the existing PH_ENVIRONMENT leaf-category target
-        # (categories.py `for_category(GrammarCategory.PH_ENVIRONMENT)`) rather
-        # than a bare list accessor -- environments live under
-        # `lp.LexDbOA.PhonologicalDataOA.EnvironmentsOS`, which is not itself
-        # an ICmPossibilityList; the resolver's US3 implementation (T029) must
-        # special-case this row.
-        target_list_path=lambda target: _lp(target).LexDbOA.PhonologicalDataOA.EnvironmentsOS,
+        # Phonological environments are NOT a simple `lp.*` possibility list --
+        # `lp.PhonologicalDataOA.EnvironmentsOS` (confirmed live, MCP,
+        # 2026-07-11/12 -- NOT under `LexDbOA`) is a flat OWNED SEQUENCE, no
+        # `PossibilitiesOS` nesting. This row's `target_list_path` is kept for
+        # documentation/census purposes only -- `decide_reference` never
+        # actually resolves it: `categories._MOFORM_DEFERRED_FIELDS` excludes
+        # PhoneEnvRC from the generic dispatch, and the real US3 (T029)
+        # implementation is `owned.reproduce_allomorph_hung_data`
+        # (`Lib/owned.py`), which reads this exact accessor directly and
+        # NEVER routes it through `_find_in_possibility_list`.
+        target_list_path=lambda target: _lp(target).PhonologicalDataOA.EnvironmentsOS,
         hierarchical=False,
     ),
     ReferenceFieldSpec(
         owner_class="MoForm",
         field_name="StemNameRA",
         cardinality=ReferenceCardinality.ATOMIC,
-        # POS stem-names are resolved via the existing STEM_NAMES category
-        # target (categories.py leaf-dispatch, GrammarCategory.STEM_NAMES),
-        # which is scoped per-POS (`IPartOfSpeech.StemNamesOC`), not a single
-        # global possibility list.
-        # TODO(024): wire via the existing STEM_NAMES leaf-category target
-        # (categories.py `for_category(GrammarCategory.STEM_NAMES)`) -- the
-        # resolver's US3 implementation (T029) must resolve the owning POS
-        # first, then look up StemNamesOC on it.
+        # POS stem-names are scoped PER-POS (`IPartOfSpeech.StemNamesOC`), not
+        # a single global possibility list, so this row's `target_list_path`
+        # is intentionally `None` (documentation/census placeholder only --
+        # `categories._MOFORM_DEFERRED_FIELDS` excludes StemNameRA from the
+        # generic dispatch). The real US3 (T029) implementation is
+        # `owned.reproduce_allomorph_hung_data` (`Lib/owned.py`), which
+        # resolves the owning POS first (`categories._resolve_target_pos`),
+        # then searches that POS's own `StemNamesOC` by GUID.
         target_list_path=lambda target: None,
         hierarchical=False,
     ),

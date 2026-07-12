@@ -11,7 +11,9 @@ reproduces a copied entry's/sense's owned children under the target, routing
 every child reference field back through `Lib/references.py`'s resolver.
 
 ``reproduce_allomorph_hung_data`` (allomorph phonological environments, ad-hoc
-prohibition rules) is a separate US3 task (T029), not implemented here.
+prohibition rules, per-POS stem names -- US3 task T029) and its Preview twin
+``plan_allomorph_hung_data_decisions`` are implemented in this module's own
+"T029 (US3, FR-009a)" section, below ``OWNED_OBJECT_MAP``/``walk_owned_children``.
 
 ``walk_owned_children`` is wired into the live closure (T030, this cycle):
 `Lib/categories.py._walk_lex_entry_closure` calls it from the ENTRY level
@@ -23,10 +25,11 @@ function's inline comments for why the entry-level call needs the
 double-process the senses the closure's own loop already creates). The
 read-only Preview twin, ``plan_owned_object_decisions``, is wired the same
 way into `Lib/categories.py._plan_entry_reference_decisions`. The allomorph
-leg (``reproduce_allomorph_hung_data``, T029) has a marked
-``TODO(024 cycle-10)`` plug-in point in
-`Lib/categories.py._walk_entry_allomorphs`, not wired yet. This module is
-proven standalone by `tests/unit/test_owned_object_walk.py`.
+leg (``reproduce_allomorph_hung_data`` / ``plan_allomorph_hung_data_decisions``,
+T029/T030) is wired into `Lib/categories.py._walk_entry_allomorphs` (Move) and
+`_plan_entry_reference_decisions` (Preview) the same way. This module is
+proven standalone by `tests/unit/test_owned_object_walk.py` and
+`tests/unit/test_allomorph_hung_data.py`.
 """
 from __future__ import annotations
 
@@ -264,7 +267,7 @@ def _owner_class_name(obj):
         return getattr(obj, "ClassName", getattr(obj, "class_name", None))
 
 
-def _matches_owner_class(spec, src_owner, owning_fields) -> bool:
+def _matches_owner_class(spec, src_owner) -> bool:
     """QC P1a fix -- does `spec` (an `OWNED_OBJECT_MAP` row) apply to
     `src_owner`?
 
@@ -745,7 +748,7 @@ def walk_owned_children(src_owner, new_owner, ctx, tag, resolver_cache, dropped,
         for spec in OWNED_OBJECT_MAP:
             if owning_fields is not None and spec.owning_field not in owning_fields:
                 continue
-            if not _matches_owner_class(spec, src_owner, owning_fields):
+            if not _matches_owner_class(spec, src_owner):
                 continue
             try:
                 src_children = list(getattr(src_owner, spec.owning_field) or [])
@@ -897,7 +900,7 @@ def plan_owned_object_decisions(src_owner, ctx, resolver_cache, dropped,
         for spec in OWNED_OBJECT_MAP:
             if owning_fields is not None and spec.owning_field not in owning_fields:
                 continue
-            if not _matches_owner_class(spec, src_owner, owning_fields):
+            if not _matches_owner_class(spec, src_owner):
                 continue
             try:
                 src_children = list(getattr(src_owner, spec.owning_field) or [])
@@ -938,4 +941,454 @@ def plan_owned_object_decisions(src_owner, ctx, resolver_cache, dropped,
     finally:
         if owner_guid:
             visited.discard(owner_guid)
+    return tuple(records)
+
+
+# ============================================================================
+# T029 (US3, FR-009a) -- reproduce_allomorph_hung_data
+# ============================================================================
+#
+# Contract: contracts/owned-object-walk.md `reproduce_allomorph_hung_data`;
+# research.md R6. Covers three allomorph-hung fields NOT handled by the
+# generic `references.decide_reference`/`apply_reference` dispatch (they are
+# explicitly excluded there via `categories._MOFORM_DEFERRED_FIELDS`):
+#
+# - `PhoneEnvRC`: `lp.PhonologicalDataOA.EnvironmentsOS` is a flat OWNED
+#   SEQUENCE, not an `ICmPossibilityList` -- link by GUID if present in the
+#   target, REPORT_DROPPED if absent, NEVER create an environment (contract
+#   non-goal; environments are their own transferable category,
+#   `GrammarCategory.PH_ENVIRONMENT`).
+# - `StemNameRA`: `IPartOfSpeech.StemNamesOC` is scoped PER-POS, not a single
+#   global list -- resolve the owning POS first (`categories._resolve_target_pos`,
+#   the same owner-POS-lookup idiom `categories.stem_names_execute_action`
+#   already uses), then search that POS's own `StemNamesOC` by GUID.
+# - APRs (`IMoAlloAdhocProhib`, owned by
+#   `LangProject.MorphologicalDataOA.AdhocCoProhibitionsOC`): discover every
+#   source APR whose `FirstAllomorphRA`/`RestOfAllosRS`/`AllomorphsRS`
+#   references the allomorph currently being copied; reproduce ONLY when
+#   every one of an APR's members is in the run's copy set (mirrors FR-008's
+#   lexical-relation partial-member rule), else report each missing member
+#   (reason "member not in copy set") and do NOT create the APR at all.
+#
+# Copy-set convention: `ctx._copy_set` is a per-run ``dict[str_guid,
+# already_copied_target_object]`` (Move mode) or ``dict[str_guid, True]``
+# (Preview mode, no real target object exists yet) threaded onto `ctx` the
+# same way `_dropped`/`_resolver_cache` already are (`preview.build_run_plan`
+# / `transfer.execute`). The caller (`categories.py._walk_entry_allomorphs`/
+# `_plan_entry_reference_decisions`) is responsible for recording the
+# allomorph CURRENTLY being processed into `ctx._copy_set` *before* calling
+# into this section -- every fixture/call site here assumes the current
+# allomorph's own GUID is already a copy-set member.
+
+_APR_REPRODUCED_KEY = "__owned_apr_reproduced_guids__"
+_APR_PLANNED_KEY = "__owned_apr_planned_guids__"
+
+
+def _get_copy_set(ctx) -> dict:
+    """Per-run copy-set dict (see module-level convention above), tolerating
+    a `ctx` that hasn't had `_copy_set` threaded onto it yet (defaults to an
+    empty, throwaway dict -- matches `_get_resolver_cache`'s posture)."""
+    copy_set = getattr(ctx, "_copy_set", None)
+    if copy_set is None:
+        copy_set = {}
+    return copy_set
+
+
+def _target_phonological_environments(target) -> list:
+    """`lp.PhonologicalDataOA.EnvironmentsOS` -- a flat owned SEQUENCE, NOT
+    an `ICmPossibilityList` (no `PossibilitiesOS` nesting). Deliberately
+    does NOT route through `references._find_in_possibility_list` (contract:
+    "do NOT use the generic possibility resolver" for this field)."""
+    try:
+        return list(target.Cache.LangProject.PhonologicalDataOA.EnvironmentsOS or [])
+    except (AttributeError, TypeError):
+        return []
+
+
+def _reproduce_phone_env_rc(src_allo, new_allo, ctx, dropped) -> None:
+    """Link each of `src_allo.PhoneEnvRC`'s members to its target-project
+    counterpart by GUID, or report it dropped -- never creates an
+    environment (contract non-goal)."""
+    src_envs = list(getattr(src_allo, "PhoneEnvRC", None) or [])
+    if not src_envs:
+        return
+    owner_guid = _references._guid_str(src_allo)
+    owner_label = _references._item_label(src_allo)
+    target_envs = _target_phonological_environments(ctx.target_handle)
+    new_coll = getattr(new_allo, "PhoneEnvRC", None)
+    for src_env in src_envs:
+        env_guid = _references._guid_str(src_env)
+        target_env = next(
+            (e for e in target_envs if _references._guid_str(e) == env_guid), None)
+        if target_env is not None:
+            if new_coll is not None:
+                try:
+                    new_coll.Add(target_env)
+                except (AttributeError, TypeError):
+                    pass
+            continue
+        label = _references._item_label(src_env) or env_guid
+        _append_dropped(dropped, DroppedItemRecord(
+            owner_kind="MoForm",
+            owner_guid=owner_guid,
+            owner_label=owner_label,
+            field_name="PhoneEnvRC",
+            item_name=_references._item_label(src_env),
+            item_guid=env_guid,
+            reason=f"environment {label} not present in target",
+        ))
+
+
+def _owner_of(obj):
+    """Best-effort owning object for `obj` -- casts via a real
+    `ICmObject(obj).Owner` when a live LCM host is available (mirrors
+    `categories.py`'s repeated "raw .Owner on source object returns
+    ICmObjectOrId" cast comment), falling back to a plain
+    `getattr(obj, "Owner", None)` for host-free fakes that set `.Owner`
+    directly (this module's own unit tests)."""
+    try:
+        from SIL.LCModel import ICmObject
+        return ICmObject(obj).Owner
+    except Exception:
+        return getattr(obj, "Owner", None)
+
+
+def _resolve_target_pos_by_guid(target, pos_guid: str):
+    """Resolve the target `IPartOfSpeech` whose GUID is `pos_guid`, by
+    reusing `categories._resolve_target_pos` (the SAME owner-POS-lookup
+    idiom `categories.stem_names_execute_action` already uses) -- lazy
+    import for the same load-order reason every other `owned.py` ->
+    `categories.py` call already documents."""
+    if not pos_guid:
+        return None
+    try:
+        if __package__:
+            from . import categories as _categories
+        else:
+            import categories as _categories  # type: ignore
+    except ImportError:  # pragma: no cover -- categories.py is always present
+        return None
+    return _categories._resolve_target_pos(target, pos_guid)
+
+
+def _reproduce_stem_name_ra(src_allo, new_allo, ctx, dropped) -> None:
+    """Resolve `src_allo.StemNameRA` against the OWNING POS's own
+    `StemNamesOC` in the target (POS-scoped, not a single global list), or
+    report it dropped (REPORT-only -- no StemName is ever created here)."""
+    src_sn = getattr(src_allo, "StemNameRA", None)
+    if src_sn is None:
+        return
+    owner_guid = _references._guid_str(src_allo)
+    owner_label = _references._item_label(src_allo)
+    sn_guid = _references._guid_str(src_sn)
+    src_pos = _owner_of(src_sn)
+    pos_guid = _references._guid_str(src_pos) if src_pos is not None else ""
+    target_pos = _resolve_target_pos_by_guid(ctx.target_handle, pos_guid)
+    target_sn = None
+    if target_pos is not None:
+        for sn in getattr(target_pos, "StemNamesOC", None) or []:
+            if _references._guid_str(sn) == sn_guid:
+                target_sn = sn
+                break
+    if target_sn is not None:
+        try:
+            new_allo.StemNameRA = target_sn
+        except (AttributeError, TypeError):
+            pass
+        return
+    reason = (
+        "stem name not found in target POS's StemNamesOC" if target_pos is not None
+        else "stem name's owning POS not resolvable in target"
+    )
+    _append_dropped(dropped, DroppedItemRecord(
+        owner_kind="MoForm",
+        owner_guid=owner_guid,
+        owner_label=owner_label,
+        field_name="StemNameRA",
+        item_name=_references._item_label(src_sn),
+        item_guid=sn_guid,
+        reason=reason,
+    ))
+
+
+def _apr_member_fields(apr) -> list:
+    """``[(field_name, member), ...]`` over one APR's three member fields,
+    in a fixed, deterministic order (FirstAllomorphRA, then RestOfAllosRS,
+    then AllomorphsRS members) -- used both to check copy-set membership and
+    to decide which field name a "member not in copy set" report is filed
+    under (the first field the missing member is found in)."""
+    fields: list = []
+    first = getattr(apr, "FirstAllomorphRA", None)
+    if first is not None:
+        fields.append(("FirstAllomorphRA", first))
+    for m in getattr(apr, "RestOfAllosRS", None) or []:
+        fields.append(("RestOfAllosRS", m))
+    for m in getattr(apr, "AllomorphsRS", None) or []:
+        fields.append(("AllomorphsRS", m))
+    return fields
+
+
+def _source_aprs(source) -> list:
+    try:
+        return list(
+            source.Cache.LangProject.MorphologicalDataOA.AdhocCoProhibitionsOC or [])
+    except (AttributeError, TypeError):
+        return []
+
+
+def _reproduce_aprs_for_allomorph(src_allo, ctx, tag, resolver_cache, dropped) -> None:
+    """Discover every source APR referencing `src_allo`, then reproduce it
+    (via `IMoAlloAdhocProhibFactory.Create(guid)` + manual
+    `AdhocCoProhibitionsOC.Add` -- the same UNOWNED-then-add shape
+    `OwnedCreateKind.UNOWNED_THEN_ADD` models, applied directly here since
+    the owner is `LangProject.MorphologicalDataOA`, not a per-child
+    `OwnedObjectSpec` row) ONLY when every one of its members is already in
+    the run's copy set (``ctx._copy_set``) -- else reports each missing
+    member and creates nothing.
+
+    Dedup (guard against reproducing the same APR twice): once an APR has
+    actually been created this run, its GUID is recorded in
+    `resolver_cache[_APR_REPRODUCED_KEY]` so a later call (e.g. for the
+    APR's OTHER allomorph member, processed afterward in the same run) skips
+    it. A DROP is deliberately NOT recorded there -- `_append_dropped`'s own
+    (owner_guid, field_name, item_guid) dedup already collapses a repeat
+    report for the same still-missing member, while leaving room for a later
+    call (once the missing member finally IS copied) to succeed."""
+    source = ctx.source_handle
+    target = ctx.target_handle
+    src_guid = _references._guid_str(src_allo)
+    if not src_guid:
+        return
+    reproduced_guids = resolver_cache.setdefault(_APR_REPRODUCED_KEY, set())
+    copy_set = _get_copy_set(ctx)
+    for src_apr in _source_aprs(source):
+        apr_guid = _references._guid_str(src_apr)
+        if not apr_guid or apr_guid in reproduced_guids:
+            continue
+        member_fields = _apr_member_fields(src_apr)
+        if not any(_references._guid_str(m) == src_guid for _, m in member_fields):
+            continue
+        _reproduce_one_apr(
+            src_apr, apr_guid, member_fields, ctx, tag, copy_set, dropped,
+            reproduced_guids)
+
+
+def _reproduce_one_apr(src_apr, apr_guid, member_fields, ctx, tag, copy_set,
+                        dropped, reproduced_guids) -> None:
+    missing_seen: set = set()
+    all_present = True
+    for field_name, member in member_fields:
+        m_guid = _references._guid_str(member)
+        if m_guid and m_guid in copy_set:
+            continue
+        all_present = False
+        if m_guid and m_guid not in missing_seen:
+            missing_seen.add(m_guid)
+            _append_dropped(dropped, DroppedItemRecord(
+                owner_kind="MoAlloAdhocProhib",
+                owner_guid=apr_guid,
+                owner_label="",
+                field_name=field_name,
+                item_name=_references._item_label(member),
+                item_guid=m_guid,
+                reason="member not in copy set",
+            ))
+    if not all_present:
+        return
+
+    target = ctx.target_handle
+    try:
+        factory = _get_owned_factory(target, "IMoAlloAdhocProhibFactory")
+        new_apr = factory.Create(_guid_for_create(apr_guid))
+        target.Cache.LangProject.MorphologicalDataOA.AdhocCoProhibitionsOC.Add(new_apr)
+    except Exception as exc:
+        _log.warning(
+            "owned._reproduce_one_apr: create/add failed for APR %s: %s",
+            apr_guid, exc, exc_info=True,
+        )
+        _append_dropped(dropped, DroppedItemRecord(
+            owner_kind="MoAlloAdhocProhib",
+            owner_guid=apr_guid,
+            owner_label="",
+            field_name="AdhocCoProhibitionsOC",
+            item_name="",
+            item_guid=apr_guid,
+            reason=f"create failed: {exc}",
+        ))
+        return
+
+    first = getattr(src_apr, "FirstAllomorphRA", None)
+    if first is not None:
+        new_apr.FirstAllomorphRA = copy_set.get(_references._guid_str(first))
+    for m in getattr(src_apr, "RestOfAllosRS", None) or []:
+        copied = copy_set.get(_references._guid_str(m))
+        if copied is not None:
+            try:
+                new_apr.RestOfAllosRS.Add(copied)
+            except (AttributeError, TypeError):
+                pass
+    for m in getattr(src_apr, "AllomorphsRS", None) or []:
+        copied = copy_set.get(_references._guid_str(m))
+        if copied is not None:
+            try:
+                new_apr.AllomorphsRS.Add(copied)
+            except (AttributeError, TypeError):
+                pass
+
+    try:
+        ws = getattr(getattr(target, "Cache", None), "DefaultAnalWs", None)
+        if __package__:
+            from .residue import apply_residue as _apply_residue
+        else:
+            from residue import apply_residue as _apply_residue  # type: ignore
+        _apply_residue(new_apr, ws, tag, class_name="MoAlloAdhocProhib")
+    except (AttributeError, TypeError):
+        pass
+
+    reproduced_guids.add(apr_guid)
+
+
+def reproduce_allomorph_hung_data(src_allo, new_allo, ctx, tag, resolver_cache,
+                                   dropped) -> None:
+    """T029 (US3, FR-009a) -- reproduce a copied allomorph's "hung" data:
+    `PhoneEnvRC` (link/report against the target's flat environment
+    sequence), `StemNameRA` (link/report against the owning POS's own
+    `StemNamesOC`), and any ad-hoc prohibition rule (APR) referencing it
+    (reproduce only when every member is in the run's copy set, else report
+    each missing member -- see `contracts/owned-object-walk.md`).
+
+    Never creates a phonological environment or a StemName from scratch
+    (contract non-goals) -- both are REPORT-only when unresolvable. Never
+    raises: every per-field failure is caught and reported (or silently
+    tolerated for a benign duck-typing gap), matching this module's posture
+    elsewhere (`_copy_one_owned_child`/`_apply_child_refs`)."""
+    _reproduce_phone_env_rc(src_allo, new_allo, ctx, dropped)
+    _reproduce_stem_name_ra(src_allo, new_allo, ctx, dropped)
+    _reproduce_aprs_for_allomorph(src_allo, ctx, tag, resolver_cache, dropped)
+
+
+# ============================================================================
+# T029/T030 Preview-mode (read-only) twin -- plan_allomorph_hung_data_decisions
+# ============================================================================
+#
+# Mirrors `reproduce_allomorph_hung_data` exactly (same PhoneEnvRC/StemNameRA
+# link-or-report logic, same APR copy-set gate) but never creates/links
+# anything -- only `ReferenceDecisionRecord`s (LINK/CREATE) plus whatever
+# `DroppedItemRecord`s the underlying checks already produce, for
+# `PlannedAction.reference_decisions` (Principle III).
+
+def _plan_phone_env_rc_decisions(src_allo, ctx, dropped) -> list:
+    src_envs = list(getattr(src_allo, "PhoneEnvRC", None) or [])
+    if not src_envs:
+        return []
+    owner_guid = _references._guid_str(src_allo)
+    owner_label = _references._item_label(src_allo)
+    target_envs = _target_phonological_environments(ctx.target_handle)
+    records: list = []
+    for src_env in src_envs:
+        env_guid = _references._guid_str(src_env)
+        target_env = next(
+            (e for e in target_envs if _references._guid_str(e) == env_guid), None)
+        if target_env is not None:
+            records.append(ReferenceDecisionRecord(
+                owner_kind="MoForm", owner_guid=owner_guid, field_name="PhoneEnvRC",
+                action=ReferenceAction.LINK,
+                item_name=_references._item_label(src_env), item_guid=env_guid,
+            ))
+            continue
+        label = _references._item_label(src_env) or env_guid
+        _append_dropped(dropped, DroppedItemRecord(
+            owner_kind="MoForm", owner_guid=owner_guid, owner_label=owner_label,
+            field_name="PhoneEnvRC", item_name=_references._item_label(src_env),
+            item_guid=env_guid, reason=f"environment {label} not present in target",
+        ))
+    return records
+
+
+def _plan_stem_name_ra_decision(src_allo, ctx, dropped) -> list:
+    src_sn = getattr(src_allo, "StemNameRA", None)
+    if src_sn is None:
+        return []
+    owner_guid = _references._guid_str(src_allo)
+    owner_label = _references._item_label(src_allo)
+    sn_guid = _references._guid_str(src_sn)
+    src_pos = _owner_of(src_sn)
+    pos_guid = _references._guid_str(src_pos) if src_pos is not None else ""
+    target_pos = _resolve_target_pos_by_guid(ctx.target_handle, pos_guid)
+    target_sn = None
+    if target_pos is not None:
+        for sn in getattr(target_pos, "StemNamesOC", None) or []:
+            if _references._guid_str(sn) == sn_guid:
+                target_sn = sn
+                break
+    if target_sn is not None:
+        return [ReferenceDecisionRecord(
+            owner_kind="MoForm", owner_guid=owner_guid, field_name="StemNameRA",
+            action=ReferenceAction.LINK,
+            item_name=_references._item_label(src_sn), item_guid=sn_guid,
+        )]
+    reason = (
+        "stem name not found in target POS's StemNamesOC" if target_pos is not None
+        else "stem name's owning POS not resolvable in target"
+    )
+    _append_dropped(dropped, DroppedItemRecord(
+        owner_kind="MoForm", owner_guid=owner_guid, owner_label=owner_label,
+        field_name="StemNameRA", item_name=_references._item_label(src_sn),
+        item_guid=sn_guid, reason=reason,
+    ))
+    return []
+
+
+def _plan_aprs_for_allomorph_decisions(src_allo, ctx, resolver_cache, dropped) -> list:
+    source = ctx.source_handle
+    src_guid = _references._guid_str(src_allo)
+    if not src_guid:
+        return []
+    planned_guids = resolver_cache.setdefault(_APR_PLANNED_KEY, set())
+    copy_set = _get_copy_set(ctx)
+    records: list = []
+    for src_apr in _source_aprs(source):
+        apr_guid = _references._guid_str(src_apr)
+        if not apr_guid or apr_guid in planned_guids:
+            continue
+        member_fields = _apr_member_fields(src_apr)
+        if not any(_references._guid_str(m) == src_guid for _, m in member_fields):
+            continue
+        missing_seen: set = set()
+        all_present = True
+        for field_name, member in member_fields:
+            m_guid = _references._guid_str(member)
+            if m_guid and m_guid in copy_set:
+                continue
+            all_present = False
+            if m_guid and m_guid not in missing_seen:
+                missing_seen.add(m_guid)
+                _append_dropped(dropped, DroppedItemRecord(
+                    owner_kind="MoAlloAdhocProhib", owner_guid=apr_guid, owner_label="",
+                    field_name=field_name, item_name=_references._item_label(member),
+                    item_guid=m_guid, reason="member not in copy set",
+                ))
+        if not all_present:
+            continue
+        planned_guids.add(apr_guid)
+        records.append(ReferenceDecisionRecord(
+            owner_kind="MoAlloAdhocProhib", owner_guid=apr_guid,
+            field_name="AdhocCoProhibitionsOC", action=ReferenceAction.CREATE,
+            item_name="", item_guid=apr_guid,
+        ))
+    return records
+
+
+def plan_allomorph_hung_data_decisions(src_allo, ctx, resolver_cache, dropped) -> tuple:
+    """T029/T030 (US3, Principle III) -- read-only twin of
+    `reproduce_allomorph_hung_data`: same PhoneEnvRC/StemNameRA link-or-report
+    checks and the same APR copy-set gate, but only `decide`s -- never
+    links/creates. Caller contract is identical to the write path: the
+    allomorph currently being planned must already be a member of
+    `ctx._copy_set` before this is called."""
+    records: list = []
+    records.extend(_plan_phone_env_rc_decisions(src_allo, ctx, dropped))
+    records.extend(_plan_stem_name_ra_decision(src_allo, ctx, dropped))
+    records.extend(_plan_aprs_for_allomorph_decisions(
+        src_allo, ctx, resolver_cache, dropped))
     return tuple(records)

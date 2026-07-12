@@ -3423,6 +3423,22 @@ def _plan_entry_reference_decisions(src_entry, context, target):
             records.extend(_decide_reference_fields(
                 "MoForm", a_guid, src_allo, target, resolver_cache, dropped,
                 skip_fields=_MOFORM_DEFERRED_FIELDS, source=source))
+            # Feature 024 (T029/T030, US3): read-only twin of the Move-mode
+            # `owned.reproduce_allomorph_hung_data` call in
+            # `_walk_entry_allomorphs` -- PhoneEnvRC/StemNameRA link-or-report
+            # plus the APR copy-set gate, surfaced in Preview before Move
+            # ever writes (Principle III). Same `ctx._copy_set` caller
+            # contract: record this allomorph as (would-be) copied *before*
+            # calling in, since nothing is actually created yet in Preview
+            # (`True` is a placeholder marker -- the plan twin never needs a
+            # real target object, only GUID membership).
+            copy_set = getattr(context, "_copy_set", None)
+            if copy_set is None:
+                copy_set = {}
+                object.__setattr__(context, "_copy_set", copy_set)
+            copy_set[a_guid] = True
+            records.extend(_owned.plan_allomorph_hung_data_decisions(
+                src_allo, context, resolver_cache, dropped))
         return tuple(records)
     except (AttributeError, TypeError, KeyError) as exc:
         import logging as _logging
@@ -3657,8 +3673,10 @@ def _walk_entry_allomorphs(src_entry, new_entry, context, tag, identity_remap, d
     )
     if __package__:
         from .residue import apply_residue
+        from . import owned as _owned
     else:
         from residue import apply_residue  # type: ignore
+        import owned as _owned  # type: ignore
     if dropped is None:
         dropped = getattr(context, "_dropped", None)
     if dropped is None:
@@ -3704,13 +3722,23 @@ def _walk_entry_allomorphs(src_entry, new_entry, context, tag, identity_remap, d
             "MoForm", src_allo, new_allo, target, tag, resolver_cache, dropped,
             skip_fields=_MOFORM_DEFERRED_FIELDS, ws_map=ws_map,
             source=context.source_handle, owner_guid=src_g)
-        # TODO(024 cycle-10): plug in
-        # `owned.reproduce_allomorph_hung_data(src_allo, new_allo, context,
-        # tag, resolver_cache, dropped)` right here once T029 implements it
-        # (PhoneEnvRC resolution + APR reproduction, US3, FR-009a) -- NOT
-        # this cycle's scope (T030 owned-CHILD portion only). `dropped`/
-        # `resolver_cache` are already in scope and threaded exactly as
-        # that future call will need them.
+        # Feature 024 (T029/T030, US3, FR-009a): allomorph-hung data --
+        # PhoneEnvRC (link/report against the target's flat phonological
+        # environment sequence), StemNameRA (link/report against the owning
+        # POS's own StemNamesOC), and any ad-hoc prohibition rule (APR)
+        # referencing this allomorph (reproduced only when every member is
+        # already in the run's copy set -- `owned.py`'s own module docstring
+        # for the full contract). `ctx._copy_set` records the allomorph
+        # CURRENTLY being copied *before* the call, per that module's
+        # documented caller contract, so an APR whose OTHER member is this
+        # same allomorph (a self/adjacent-allomorph rule) or an
+        # earlier-processed allomorph in this same run can already resolve.
+        copy_set = getattr(context, "_copy_set", None)
+        if copy_set is None:
+            copy_set = {}
+        copy_set[src_g] = new_allo
+        _owned.reproduce_allomorph_hung_data(
+            src_allo, new_allo, context, tag, resolver_cache, dropped)
         apply_residue(new_allo, ws, tag)
 
     lf = getattr(src_entry, "LexemeFormOA", None)
