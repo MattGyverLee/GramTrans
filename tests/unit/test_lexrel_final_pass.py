@@ -346,20 +346,21 @@ def test_sense_and_subsense_collection_relation_reproduces_complete_no_false_dro
     DIFFERENT entry's sub-sense (copied later, via the recursive `SensesOS`
     leg) must reproduce with BOTH members and no false drop, in both Move
     and Preview. Sense A's copy point is driven through the final-pass
-    entrypoint directly (no per-member trigger call); sense B's sub-sense is
-    driven through the real closure entrypoint (`owned.walk_owned_children`/
-    `owned.plan_owned_object_decisions`) -- ordering of `_copy_set` is
-    exactly as the real closure produces it. (`walk_owned_children` still
-    fires its OWN internal recursed-child trigger for the sub-sense --
-    that is plumbing inside a surviving entrypoint, not something this test
-    calls directly.)
+    entrypoint directly; sense B's sub-sense is driven through the real
+    closure entrypoint (`owned.walk_owned_children`/`owned.plan_owned_
+    object_decisions`) -- ordering of `_copy_set` is exactly as the real
+    closure produces it.
 
-    Already GREEN: sense A happens to be source-first here, so the
-    final pass's first call (sense A only) creates a correctly-ordered
-    partial relation, and the sub-sense's later registration unions onto
-    the END in the same relative order -- no divergence for this 2-member,
-    source-order-matches-copy-order case. See tests 6-8 for the ordering
-    defect this masks.
+    Single-final-pass redesign (this cycle): `walk_owned_children`'s own
+    internal recursed-child lexrel-discovery trigger is REMOVED (it only
+    REGISTERS the sub-sense into `ctx._copy_set` now -- `owned.py` ~697/985)
+    -- discovery for the sub-sense's relation happens exactly like every
+    other member's, via an explicit call to the final pass AFTER the
+    registering step, mirroring how `Lib/transfer.py.execute`/`Lib/
+    preview.py.build_run_plan` really order things (ALL closure work,
+    including recursive sub-sense walks, completes before the single
+    end-of-run final pass ever runs) and matching every sibling test in
+    this file's own call-then-final-pass pattern.
     """
     type_guid, rel_guid = "type-sense-sub", "rel-sense-sub"
 
@@ -390,14 +391,17 @@ def test_sense_and_subsense_collection_relation_reproduces_complete_no_false_dro
     categories.plan_all_lexical_relations(preview_ctx, preview_cache, preview_dropped)
 
     # --- sense B's sub-sense copied LATER, via the real recursive walk
-    # (registers + fires its own discovery trigger internally -- owned.py
-    # ~747-749/1033-1035) ---
+    # (registers into `ctx._copy_set` only -- owned.py ~697/985) -- then the
+    # final pass runs again, exactly as it would at the true end of a real
+    # run once every entry/sense/sub-sense/allomorph has been registered ---
     sense_b_move = _NewSense("sense-b-new")
     owned.walk_owned_children(
         sense_b_src, sense_b_move, move_ctx, _TAG, move_cache, move_dropped)
     owned.plan_owned_object_decisions(
         sense_b_src, preview_ctx, preview_cache, preview_dropped)
     sub_b_move = sense_b_move.SensesOS[0]
+    categories.reproduce_all_lexical_relations(move_ctx, _TAG, move_cache, move_dropped)
+    categories.plan_all_lexical_relations(preview_ctx, preview_cache, preview_dropped)
 
     move_rels = list(move_ctx.target_handle.Cache.LangProject.LexDbOA
                       .ReferencesOA.PossibilitiesOS[0].MembersOC)

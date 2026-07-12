@@ -443,14 +443,22 @@ def _register_copy_set(ctx, guid: str, value) -> None:
     late-initializing (and PERSISTING via `object.__setattr__`, matching
     `TransferContext`'s frozen-dataclass posture) the dict onto `ctx` when
     it isn't there yet -- the SAME per-run copy-set convention
-    `Lib/categories.py`'s entry/top-level-sense registration sites use
-    (categories.py ~3390/3394, ~3425, ~3949/3953, ~4022, ~4128/4131). Called
-    for a recursively-copied sub-sense (`OwnedObjectSpec.recurse`) so the
-    copy set stays symmetric with top-level entry/sense registration: a
+    `Lib/categories.py`'s entry/top-level-sense registration sites use.
+    Called for a recursively-copied sub-sense (`OwnedObjectSpec.recurse`) so
+    the copy set stays symmetric with top-level entry/sense registration: a
     lexical relation whose member is a copied sub-sense must find that
     sub-sense's own GUID here, not just its owning top-level sense's.
     No-op when `guid` is falsy (mirrors every other copy-set write site,
-    which never registers an empty-string GUID)."""
+    which never registers an empty-string GUID).
+
+    Feature 024 (single-final-pass redesign): this is REGISTRATION only --
+    the sub-sense DISCOVERY wrappers that used to sit right after each call
+    site (`_reproduce_lex_relations_for_recursed_child`/`_plan_lex_relations_
+    for_recursed_child`) are removed. `categories.reproduce_all_lexical_
+    relations`/`plan_all_lexical_relations` (the sole lexrel path, see
+    `Lib/categories.py`'s T031 section banner) run once, later, over the
+    complete, fully-assembled `ctx._copy_set` -- which needs this
+    registration to be complete, hence why it stays."""
     if not guid:
         return
     copy_set = getattr(ctx, "_copy_set", None)
@@ -458,64 +466,6 @@ def _register_copy_set(ctx, guid: str, value) -> None:
         copy_set = {}
         object.__setattr__(ctx, "_copy_set", copy_set)
     copy_set[guid] = value
-
-
-def _reproduce_lex_relations_for_recursed_child(src_child, ctx, tag, resolver_cache,
-                                                 dropped) -> None:
-    """QC P1 fix (feature 024) -- Move-mode: once a recursively-copied
-    sub-sense has been registered into `ctx._copy_set`
-    (`_register_copy_set`, immediately above), give it the SAME
-    lexical-relation discovery pass a top-level sense gets --
-    `categories._reproduce_lex_relations_for_member` -- so a relation whose
-    member is (or includes) this sub-sense's own GUID is discovered and
-    reproduced too, mirroring `categories._walk_lex_entry_closure`'s own
-    call for each top-level sense (categories.py ~4023). Called exactly
-    once per created sub-sense from `_copy_one_owned_child` (never from the
-    unconditional owned-collection re-walk one level up), so this cannot
-    re-trigger `walk_owned_children` itself or double-discover the same
-    sub-sense. `reproduce_lexical_relation`'s own GUID-keyed dedup
-    (`resolver_cache`) additionally makes a later, independent discovery
-    call for the SAME relation (e.g. via the sub-sense's owning top-level
-    sense) idempotent, so no relation is ever created twice.
-
-    Lazy import for the same load-order reason
-    `_apply_full_sense_reference_fields` already documents."""
-    try:
-        if __package__:
-            from . import categories as _categories
-        else:
-            import categories as _categories  # type: ignore
-    except ImportError:  # pragma: no cover -- categories.py is always present
-        _log.warning(
-            "owned._reproduce_lex_relations_for_recursed_child: could not "
-            "import categories.py -- skipping lexical-relation discovery "
-            "for a recursively-copied sub-sense.",
-        )
-        return
-    _categories._reproduce_lex_relations_for_member(
-        src_child, ctx, tag, resolver_cache, dropped)
-
-
-def _plan_lex_relations_for_recursed_child(src_child, ctx, resolver_cache, dropped) -> list:
-    """Read-only (Preview) twin of `_reproduce_lex_relations_for_recursed_child`:
-    same discovery, `categories._plan_lex_relations_for_member` instead of
-    the Move-mode reproduce call. Returns the list of
-    `ReferenceDecisionRecord` for every relation that WOULD be reproduced
-    for this sub-sense."""
-    try:
-        if __package__:
-            from . import categories as _categories
-        else:
-            import categories as _categories  # type: ignore
-    except ImportError:  # pragma: no cover -- categories.py is always present
-        _log.warning(
-            "owned._plan_lex_relations_for_recursed_child: could not import "
-            "categories.py -- skipping lexical-relation discovery for a "
-            "recursively-planned sub-sense.",
-        )
-        return []
-    return _categories._plan_lex_relations_for_member(
-        src_child, ctx, resolver_cache, dropped)
 
 
 # ============================================================================
@@ -740,13 +690,15 @@ def _copy_one_owned_child(spec, src_child, new_owner, ctx, tag, resolver_cache, 
         # QC P1 fix (feature 024, FR-009 accuracy gap): register the copied
         # sub-sense into `ctx._copy_set` (source guid -> new target
         # sub-sense) -- symmetric with `categories.py`'s top-level
-        # entry/sense registration -- THEN give it the same lexical-relation
-        # discovery pass a top-level sense gets, so a relation whose member
-        # is this sub-sense is found (never falsely reported "member not in
-        # copy set") and reproduced.
+        # entry/sense registration -- so a relation whose member is this
+        # sub-sense is found (never falsely reported "member not in copy
+        # set") by the SOLE lexrel discovery/reproduction path,
+        # `categories.reproduce_all_lexical_relations`'s single final pass
+        # (feature 024, single-final-pass redesign -- the per-member
+        # discovery wrapper that used to run immediately after this
+        # registration is removed; the final pass runs once, later, over
+        # the complete copy_set instead).
         _register_copy_set(ctx, guid, new_child)
-        _reproduce_lex_relations_for_recursed_child(
-            src_child, ctx, tag, resolver_cache, dropped)
 
     ws = getattr(getattr(target, "Cache", None), "DefaultAnalWs", None)
     try:
@@ -1026,13 +978,16 @@ def plan_owned_object_decisions(src_owner, ctx, resolver_cache, dropped,
                     # QC P1 fix (feature 024, FR-009 accuracy gap): register
                     # the planned sub-sense into `ctx._copy_set` (Preview's
                     # `True` placeholder-marker convention -- no real target
-                    # object exists yet) THEN plan its own lexical-relation
-                    # discovery, symmetric with the Move-mode registration +
-                    # discovery immediately above and with
+                    # object exists yet), symmetric with the Move-mode
+                    # registration immediately above and with
                     # `categories.py`'s top-level entry/sense registration.
+                    # Feature 024 (single-final-pass redesign): the
+                    # lexical-relation discovery wrapper that used to run
+                    # right after this registration is removed --
+                    # `categories.plan_all_lexical_relations`'s single final
+                    # pass (the sole lexrel path) covers this sub-sense
+                    # once, later, over the complete copy_set instead.
                     _register_copy_set(ctx, child_guid, True)
-                    records.extend(_plan_lex_relations_for_recursed_child(
-                        src_child, ctx, resolver_cache, dropped))
                 # Recurse into this child's OWN owned collections regardless
                 # of `spec.recurse` (mirrors `walk_owned_children`'s
                 # unconditional re-walk one call above).
