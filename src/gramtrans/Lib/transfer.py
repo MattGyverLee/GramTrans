@@ -21,6 +21,7 @@ _log = logging.getLogger(__name__)
 
 if __package__:
     from .models import (
+        DroppedItemRecord,
         GrammarCategory,
         MergeDecision,
         MergeDecisionLog,
@@ -45,6 +46,7 @@ if __package__:
     from . import report as _report_module  # registers RunReport.build_from_plan
 else:
     from models import (
+        DroppedItemRecord,
         GrammarCategory,
         MergeDecision,
         MergeDecisionLog,
@@ -67,6 +69,72 @@ else:
     )
     from ws_mapping import to_ws_map_dict  # type: ignore
     import report as _report_module  # registers RunReport.build_from_plan
+
+
+# ============================================================================
+# Feature 024 US2 (OVERWRITE-path reference-field routing, FIX 1a)
+# ============================================================================
+#
+# `_execute_overwrite`'s SENSE and ENTRY (+ AFFIXES/STEMS, same code path)
+# branches call the raw flexicon `ApplySyncableProperties` with
+# `fill_gaps=False`. For these specific fields, that raw call's semantics are
+# BLANK-ON-EMPTY / CLEAR-AND-REBUILD (see
+# tests/unit/test_overwrite_blanking.py's module docstring for the exact
+# flexicon source lines) -- an empty/unset source value blanks or clears an
+# already-populated target, violating FR-007's non-destructive invariant.
+#
+# These keys are stripped from `src_props` BEFORE the raw
+# `ApplySyncableProperties` call and routed instead through
+# `categories._apply_reference_fields` -- the SAME generic resolver
+# (LINK/CREATE+ancestors/UPDATE/REPORT_DROPPED) the ADD/closure path already
+# uses (`categories._walk_lex_entry_closure`). Every OTHER reference field
+# registered in `references.REFERENCE_FIELD_MAP` for these owner classes
+# (UsageTypesRC, DomainTypesRC, StatusRA, ...) is OUT OF SCOPE for this fix
+# and is left on the raw-copy path unchanged -- `_overwrite_ref_skip_fields`
+# below excludes them from the resolver pass via `skip_fields=`.
+_OVERWRITE_SENSE_REF_FIELDS = frozenset(
+    {"SenseTypeRA", "DoNotPublishInRC", "DoNotShowMainEntryInRC"}
+)
+_OVERWRITE_ENTRY_REF_FIELDS = frozenset(
+    {"DoNotPublishInRC", "DoNotShowMainEntryInRC"}
+)
+
+
+def _overwrite_ref_skip_fields(owner_class: str, keep_fields: frozenset) -> frozenset:
+    """Every `references.field_specs_for(owner_class)` field name NOT in
+    `keep_fields` -- passed as `_apply_reference_fields`'s `skip_fields=` so
+    the OVERWRITE-path resolver pass only touches the fields this fix is
+    scoped to (`_OVERWRITE_SENSE_REF_FIELDS` / `_OVERWRITE_ENTRY_REF_FIELDS`),
+    leaving every other registered reference field's OVERWRITE behavior
+    unchanged (out of scope for this fix)."""
+    if __package__:
+        from . import references as _references
+    else:
+        import references as _references  # type: ignore
+    return frozenset(
+        spec.field_name for spec in _references.field_specs_for(owner_class)
+    ) - keep_fields
+
+
+def _strip_empty_ref_fields(src_props: dict, fields) -> None:
+    """Remove each of `fields` from `src_props` in place, but ONLY when its
+    current value is falsy (`None`, `""`, empty set/frozenset/dict/tuple).
+
+    This targets exactly the destructive case (FR-007): flexicon's raw
+    `ApplySyncableProperties(fill_gaps=False)` for these fields is
+    blank-on-empty (`SenseTypeRA`) / clear-and-rebuild
+    (`DoNotPublishInRC`/`DoNotShowMainEntryInRC`) -- an EMPTY source value
+    must never reach that call. A NON-empty (truthy) value is deliberately
+    LEFT IN PLACE so the raw call still runs its existing baseline
+    resolution/logging for it; the generic resolver pass that runs right
+    after (`categories._apply_reference_fields`, object-attribute-driven)
+    supersedes that baseline whenever a live source object is actually
+    resolvable, and a value the resolver structurally cannot see (a raw
+    GUID with no matching live object attribute) still gets *some*
+    handling from the raw call rather than silently vanishing."""
+    for field_name in fields:
+        if not src_props.get(field_name):
+            src_props.pop(field_name, None)
 
 
 # ============================================================================
@@ -99,6 +167,16 @@ def execute(plan: RunPlan, source, target, report_sink, tag: ImportResidueTag,
     # threaded to the create path via exec_ctx._ws_map and to the
     # overwrite/update path via the ws_map= parameter.
     ws_map = to_ws_map_dict(getattr(plan, "ws_mapping", None))
+
+    # Feature 024 (T010/T016, FR-010/FR-012): per-run dropped-item collector
+    # and resolver cache, created HERE (rather than alongside exec_ctx below)
+    # so the OVERWRITE loop -- which runs BEFORE exec_ctx exists -- can also
+    # thread them into `_execute_overwrite` (US2, FIX 1a). The SAME list/dict
+    # objects are attached to exec_ctx further down (`object.__setattr__`)
+    # so the leaf-dispatch/closure-walk resolver calls share one collector
+    # and one cache for the whole run.
+    _dropped: list = []
+    _resolver_cache: dict = {}
 
     if _log.isEnabledFor(logging.DEBUG):
         _log.debug(
@@ -187,10 +265,20 @@ def execute(plan: RunPlan, source, target, report_sink, tag: ImportResidueTag,
             )
         else:
             # OVERWRITE (or any unknown mode): existing destructive path.
-            extra_skips.extend(
-                _execute_overwrite(ow, source, target, report_sink, tag, interactive_session, ws_map=ws_map)
-                or []
-            )
+            # Feature 024 US2 (FIX 1a): `_dropped`/`_resolver_cache` threaded
+            # in so the SENSE/ENTRY branches' reference-field routing shares
+            # the SAME per-run collector/cache as the ADD/closure path --
+            # `_dropped` is folded into the RunReport via `extra_dropped_items`
+            # below (mutated in place; NOT re-added via extra_skips, which
+            # would double-count it). `_execute_overwrite`'s return value may
+            # now also contain DroppedItemRecord instances (for a caller that
+            # observes the return directly, e.g. unit tests) -- only Skip
+            # instances belong in extra_skips.
+            _ow_result = _execute_overwrite(
+                ow, source, target, report_sink, tag, interactive_session,
+                ws_map=ws_map, dropped=_dropped, resolver_cache=_resolver_cache,
+            ) or []
+            extra_skips.extend(s for s in _ow_result if isinstance(s, Skip))
 
     # Phase 3a leaf-category dispatch (execute side): for every
     # PlannedAction whose category is in the leaf set, route through
@@ -262,12 +350,17 @@ def execute(plan: RunPlan, source, target, report_sink, tag: ImportResidueTag,
     # resolver (Lib/references.py, US1) can append DroppedItemRecord
     # instances. Folded into the RunReport below (`extra_dropped_items`) so
     # Move-mode reporting is wired end-to-end.
-    _dropped: list = []
+    # Feature 024 US2 (FIX 1a): `_dropped` is the SAME object created above
+    # (before the OVERWRITE loop) so records the OVERWRITE-path resolver
+    # calls append during that loop are ALSO present here — not a second,
+    # disconnected collector.
     object.__setattr__(exec_ctx, '_dropped', _dropped)
     # Feature 024 (T016, FR-012): per-run GUID -> resolved/created target
     # item cache for the resolver, mirroring `_dropped` above (and
-    # `Lib/preview.py.build_run_plan`'s identical attachment).
-    _resolver_cache: dict = {}
+    # `Lib/preview.py.build_run_plan`'s identical attachment). Also the SAME
+    # object created above so the OVERWRITE-path resolver calls share one
+    # cache with the ADD/closure path (FR-012 idempotency across the whole
+    # run, not just within one path).
     object.__setattr__(exec_ctx, '_resolver_cache', _resolver_cache)
     # C6: categories gated behind the flexicon ITsString.get_String fix.
     # When _phoneme_env_field_diff_enabled() is False (current state), field-diff
@@ -1615,7 +1708,8 @@ def _find_obj_by_guid(ops, guid_str: str):
 
 
 def _execute_overwrite(overwrite, source, target, report_sink, tag: ImportResidueTag,
-                       interactive_session=None, ws_map=None):
+                       interactive_session=None, ws_map=None, dropped=None,
+                       resolver_cache=None):
     """Apply a single PlannedOverwrite: look up the target object by GUID,
     pull source's syncable properties, and apply them via flexicon's
     `ApplySyncableProperties`.
@@ -1623,7 +1717,28 @@ def _execute_overwrite(overwrite, source, target, report_sink, tag: ImportResidu
     Pre-overwrite snapshot in residue (FR-106) is currently NOT recorded —
     queued for Phase 1.1. The existing Carrier-A/B tag is still applied so
     the user can see the run_id that touched this object.
+
+    `dropped` (Feature 024 US2, FIX 1a): the per-run `DroppedItemRecord`
+    collector (`execute()`'s `_dropped`, shared with the ADD/closure path).
+    `resolver_cache` (same feature): the per-run GUID -> resolved/created
+    target item cache (`execute()`'s `_resolver_cache`, FR-012 idempotency,
+    also shared with the ADD/closure path). Both default to a fresh,
+    call-local collector/cache when not supplied (e.g. a direct unit-test
+    call) so every branch remains callable standalone.
+
+    Return value: a list combining this call's skip records (`ow_skips`,
+    unchanged from before) with any `DroppedItemRecord`(s) appended to
+    `dropped` DURING this call (not the collector's full accumulated
+    history — relevant when a shared, cross-call `dropped` list is passed
+    in). Every record is ALSO mutated into `dropped` in place regardless of
+    what the return value contains, so a caller that folds the shared
+    collector into a RunReport separately (`execute()`'s
+    `extra_dropped_items=tuple(_dropped)`) never double-counts it.
     """
+    if dropped is None:
+        dropped = []
+    if resolver_cache is None:
+        resolver_cache = {}
     cat = overwrite.category
     src_guid = overwrite.source_guid
     tgt_guid = overwrite.target_guid
@@ -1735,6 +1850,12 @@ def _execute_overwrite(overwrite, source, target, report_sink, tag: ImportResidu
         src_props = _dedupe_custom_fields(
             source.LexEntry.GetSyncableProperties(src_entry), tgt_pre_props
         )
+        # Feature 024 US2 (FIX 1a): strip the entry-level reference fields
+        # BEFORE the raw ApplySyncableProperties call, but ONLY when empty
+        # (the destructive blank/clear case) -- see the
+        # `_OVERWRITE_ENTRY_REF_FIELDS` module comment above `execute()` and
+        # `_strip_empty_ref_fields`'s own docstring.
+        _strip_empty_ref_fields(src_props, _OVERWRITE_ENTRY_REF_FIELDS)
         log = _resolve_decisions_for(overwrite, interactive_session)
         src_props, tagged, ow_skips = _resolve_and_tag(
             src_props, tgt_pre_props, tag, log,
@@ -1744,10 +1865,25 @@ def _execute_overwrite(overwrite, source, target, report_sink, tag: ImportResidu
             tgt_entry, src_props, ws_map=ws_map,
             fill_gaps=(getattr(overwrite, "write_mode", "overwrite") == "merge"),
         )
+        # Route the stripped fields through the SAME generic resolver the
+        # ADD/closure path uses (LINK/CREATE+ancestors/UPDATE/REPORT_DROPPED)
+        # -- an empty/unset source value is a documented no-op there
+        # (`decide_reference` returns None), never a blank/clear.
+        if __package__:
+            from .categories import _apply_reference_fields as _apply_ref_fields
+        else:
+            from categories import _apply_reference_fields as _apply_ref_fields  # type: ignore
+        _dropped_before = len(dropped)
+        _apply_ref_fields(
+            "LexEntry", src_entry, tgt_entry, target, tagged, resolver_cache,
+            dropped,
+            skip_fields=_overwrite_ref_skip_fields("LexEntry", _OVERWRITE_ENTRY_REF_FIELDS),
+            ws_map=ws_map, source=source, owner_guid=src_guid,
+        )
         cache = getattr(target, "Cache")
         apply_residue(tgt_entry, cache.DefaultAnalWs, tagged)
         report_sink.Info(f"  LexEntry overwritten ({cat.value})  guid={src_guid}")
-        return ow_skips
+        return list(ow_skips) + list(dropped[_dropped_before:])
 
     if cat == GrammarCategory.SENSE:
         # owner_guid is the parent entry GUID; look up the entry first,
@@ -1792,16 +1928,64 @@ def _execute_overwrite(overwrite, source, target, report_sink, tag: ImportResidu
         src_props = _dedupe_custom_fields(
             source.Senses.GetSyncableProperties(src_sense), tgt_pre_props
         )
+        # Feature 024 US2 (FIX 1a): strip the sense-level reference fields
+        # BEFORE the raw ApplySyncableProperties call -- see the
+        # `_OVERWRITE_SENSE_REF_FIELDS` module comment above `execute()`.
+        # `_raw_sense_type_guid` is captured for the targeted fallback below
+        # (a raw GUID present only in the flat props dict, with no matching
+        # live object on `src_sense` for the object-attribute-driven
+        # resolver to see).
+        _raw_sense_type_guid = src_props.get("SenseTypeRA")
+        _strip_empty_ref_fields(src_props, _OVERWRITE_SENSE_REF_FIELDS)
         log = _resolve_decisions_for(overwrite, interactive_session)
         src_props, tagged, ow_skips = _resolve_and_tag(
             src_props, tgt_pre_props, tag, log,
             GrammarCategory.SENSE, overwrite.target_guid, tag.run_id,
         )
         target.Senses.ApplySyncableProperties(tgt_sense, src_props, ws_map=ws_map)
+        # Route the stripped fields through the SAME generic resolver the
+        # ADD/closure path uses (LINK/CREATE+ancestors/UPDATE/REPORT_DROPPED)
+        # -- an empty/unset source value is a documented no-op there
+        # (`decide_reference` returns None), never a blank/clear.
+        if __package__:
+            from .categories import (
+                _apply_reference_fields as _apply_ref_fields,
+                _append_dropped_once as _append_dropped,
+            )
+        else:
+            from categories import (  # type: ignore
+                _apply_reference_fields as _apply_ref_fields,
+                _append_dropped_once as _append_dropped,
+            )
+        _dropped_before = len(dropped)
+        _apply_ref_fields(
+            "LexSense", src_sense, tgt_sense, target, tagged, resolver_cache,
+            dropped,
+            skip_fields=_overwrite_ref_skip_fields("LexSense", _OVERWRITE_SENSE_REF_FIELDS),
+            ws_map=ws_map, source=source, owner_guid=owner_entry_guid,
+        )
+        # Targeted fallback (documented deviation from pure option (a)): a
+        # raw SenseTypeRA GUID that is present in the flat props dict but
+        # has NO resolvable live object on `src_sense` (getattr returns
+        # None) can never be seen by the object-attribute-driven resolver
+        # call above -- `_iter_reference_items` reads `src_sense.SenseTypeRA`
+        # directly, not the props dict, so it yields nothing for this shape.
+        # Surface it explicitly rather than let it silently vanish once
+        # stripped from `src_props` (FR-010, never-silent).
+        if _raw_sense_type_guid and getattr(src_sense, "SenseTypeRA", None) is None:
+            _append_dropped(dropped, DroppedItemRecord(
+                owner_kind="LexSense",
+                owner_guid=owner_entry_guid,
+                owner_label="",
+                field_name="SenseTypeRA",
+                item_name="",
+                item_guid=str(_raw_sense_type_guid),
+                reason="unresolved custom SenseTypeRA reference (no source object available)",
+            ))
         cache = getattr(target, "Cache")
         apply_residue(tgt_sense, cache.DefaultAnalWs, tagged)
         report_sink.Info(f"  LexSense overwritten  guid={src_guid}")
-        return ow_skips
+        return list(ow_skips) + list(dropped[_dropped_before:])
 
     if cat == GrammarCategory.MSA:
         from SIL.LCModel import ICmObject, ILexEntry, IMoInflAffMsa

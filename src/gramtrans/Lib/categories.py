@@ -50,6 +50,7 @@ from typing import Iterable, Tuple
 if __package__:
     from .models import (
         CreateDefinitionAction,
+        DroppedItemRecord,
         FidelityStatus,
         GrammarCategory,
         PlannedAction,
@@ -67,6 +68,7 @@ if __package__:
 else:
     from models import (  # type: ignore
         CreateDefinitionAction,
+        DroppedItemRecord,
         FidelityStatus,
         GrammarCategory,
         PlannedAction,
@@ -3089,6 +3091,17 @@ def _call_apply_reference(_references, decision, target, owner_target, spec,
     caller's pre-existing fail-soft `continue`), matching this module's
     posture elsewhere -- one bad reference must never abort the rest of the
     entry/sense/allomorph copy.
+
+    QC P1 (cycle-N review): `RuntimeError` is handled SEPARATELY from the
+    benign `AttributeError`/`TypeError` duck-typing gaps. `apply_reference`'s
+    CREATE arm can raise a `RuntimeError` from `references._add_to_owner`
+    when `Create()` succeeded but adding the new object to its owner
+    collection failed -- a genuine orphan-risk (Principle I: never silent).
+    Swallowing that alongside ordinary attribute-shape gaps would hide it
+    entirely (no log, no record) and let the orphaned `Create()` vanish
+    without a trace. It is now logged AND surfaced as a `DroppedItemRecord`
+    (enriched with the real owner identity below, same as every other
+    record this function produces).
     """
     before = len(dropped)
     resolved = None
@@ -3104,7 +3117,29 @@ def _call_apply_reference(_references, decision, target, owner_target, spec,
         # uniformly below alongside any ws-absent records).
         dropped.append(exc.dropped)
         ok = False
-    except (AttributeError, TypeError, RuntimeError):
+    except RuntimeError as exc:
+        # QC P1 fix: orphan-risk failure from `references._add_to_owner`
+        # (Create() succeeded, Add-to-owner failed) -- log it loudly and
+        # record it, rather than the previous silent `ok=False` swallow.
+        import logging as _logging
+        item = getattr(decision, "source_item", None)
+        item_guid = _guid_str_from(item) if item is not None else ""
+        _logging.getLogger("gramtrans.Lib.categories").error(
+            "_call_apply_reference: RuntimeError applying %s.%s (item=%s) "
+            "-- orphan risk, see references._add_to_owner: %s",
+            owner_class, spec.field_name, item_guid, exc, exc_info=True,
+        )
+        dropped.append(DroppedItemRecord(
+            owner_kind=owner_class,
+            owner_guid="",
+            owner_label="",
+            field_name=spec.field_name,
+            item_name="",
+            item_guid=item_guid,
+            reason=f"apply_reference failed: {exc}",
+        ))
+        ok = False
+    except (AttributeError, TypeError):
         ok = False
     if len(dropped) > before:
         raw = dropped[before:]

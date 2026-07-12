@@ -51,6 +51,61 @@ else:
 
 
 # ============================================================================
+# Feature 024 US2 (OVERWRITE-path Preview surfacing, FIX 1a)
+# ============================================================================
+#
+# Mirrors `transfer._OVERWRITE_SENSE_REF_FIELDS` / `_OVERWRITE_ENTRY_REF_FIELDS`
+# (duplicated here rather than cross-imported, matching this module's existing
+# "Re-imported helpers from preview.py — kept here to avoid a circular import"
+# convention in transfer.py -- see that module's `_lex_sense_msa` for
+# precedent): the reference fields the OVERWRITE-path executor routes through
+# the generic resolver instead of the raw blank-on-empty ApplySyncableProperties
+# copy. Used ONLY to populate `PlannedOverwrite.reference_decisions` below --
+# Preview never writes (Principle III); the read-only `_decide_reference_fields`
+# pass is safe here.
+_OVERWRITE_SENSE_REF_FIELDS = frozenset(
+    {"SenseTypeRA", "DoNotPublishInRC", "DoNotShowMainEntryInRC"}
+)
+_OVERWRITE_ENTRY_REF_FIELDS = frozenset(
+    {"DoNotPublishInRC", "DoNotShowMainEntryInRC"}
+)
+
+
+def _overwrite_reference_decisions(owner_class, owner_guid, src_obj, target,
+                                    keep_fields, source=None):
+    """Read-only `decide_reference` pass over `keep_fields` only (the
+    OVERWRITE-path resolver's actual scope, see `_OVERWRITE_*_REF_FIELDS`
+    above) for a single ENTRY/SENSE `PlannedOverwrite` -- populates
+    `PlannedOverwrite.reference_decisions` so Preview shows Link/Create/
+    Update/Report *before* Move ever writes (Principle III), the same
+    guarantee `PlannedAction.reference_decisions` gives the ADD path.
+
+    Uses a call-local `resolver_cache`/`dropped` (this function has no
+    `RunContext` to read a per-run collector from -- the verb-vertical
+    planner functions that call this predate the context-based leaf-category
+    plan_action functions). Never raises: any resolver failure yields an
+    empty tuple, matching `categories._plan_entry_reference_decisions`'s own
+    fail-soft posture for the identical duck-typing-gap class of failure.
+    """
+    if __package__:
+        from .categories import _decide_reference_fields
+        from . import references as _references
+    else:
+        from categories import _decide_reference_fields  # type: ignore
+        import references as _references  # type: ignore
+    try:
+        skip_fields = frozenset(
+            spec.field_name for spec in _references.field_specs_for(owner_class)
+        ) - keep_fields
+        return _decide_reference_fields(
+            owner_class, owner_guid, src_obj, target,
+            resolver_cache={}, dropped=[], skip_fields=skip_fields, source=source,
+        )
+    except (AttributeError, TypeError, KeyError):
+        return ()
+
+
+# ============================================================================
 # Public API
 # ============================================================================
 
@@ -858,6 +913,10 @@ def _plan_layer3_verb_affixes_inner(
                     pulled_in_by=() if selection.is_on(GrammarCategory.ENTRY)
                                  else (src_verb_guid,),
                     owner_guid="",
+                    reference_decisions=_overwrite_reference_decisions(
+                        "LexEntry", entry_guid, entry, target,
+                        _OVERWRITE_ENTRY_REF_FIELDS, source=source,
+                    ),
                 ))
                 identity_remap[entry_guid] = resolution.target_guid
                 if tgt_entry_for_remap is not None:
@@ -878,6 +937,10 @@ def _plan_layer3_verb_affixes_inner(
                 match_via="guid",
                 pulled_in_by=() if selection.is_on(GrammarCategory.ENTRY) else (src_verb_guid,),
                 owner_guid="",  # LexEntries are LexDb-owned; no parent ref needed
+                reference_decisions=_overwrite_reference_decisions(
+                    "LexEntry", entry_guid, entry, target,
+                    _OVERWRITE_ENTRY_REF_FIELDS, source=source,
+                ),
             ))
             for _sense, sense_guid in sense_actions:
                 overwrites.append(PlannedOverwrite(
@@ -888,6 +951,10 @@ def _plan_layer3_verb_affixes_inner(
                     match_via="guid",
                     pulled_in_by=(entry_guid,),
                     owner_guid=entry_guid,
+                    reference_decisions=_overwrite_reference_decisions(
+                        "LexSense", sense_guid, _sense, target,
+                        _OVERWRITE_SENSE_REF_FIELDS, source=source,
+                    ),
                 ))
             # Phase 1.2 (FR-104): MSAs and Allomorphs are matched by
             # fingerprint against the target entry's existing MSAs and

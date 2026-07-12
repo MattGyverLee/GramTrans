@@ -656,6 +656,14 @@ class PlannedOverwrite:
     pulled_in_by: tuple = ()
     owner_guid: str = ""  # parent reference for the executor's lookup
     write_mode: str = "overwrite"  # "overwrite" | "merge"
+    # Feature 024 (US2, Principle III): mirrors `PlannedAction.reference_decisions`
+    # — per-item ReferenceDecision snapshots for the OVERWRITE path's reference
+    # fields (see `transfer._OVERWRITE_SENSE_REF_FIELDS` /
+    # `_OVERWRITE_ENTRY_REF_FIELDS`), populated read-only by the plan-builder
+    # so Preview shows Link/Create/Update/Report *before* Move ever writes.
+    # Empty for overwrite categories that don't (yet) route through the
+    # resolver.
+    reference_decisions: tuple = ()  # tuple[ReferenceDecisionRecord, ...]
 
 
 @dataclass(frozen=True)
@@ -918,6 +926,12 @@ class DroppedItemRecord:
     item_guid   : source item GUID.
     reason      : e.g. "shared-default diverged", "target list absent",
                   "member not in copy set".
+
+    Dedup contract note: the "emitted exactly once" identity key is
+    ``(owner_guid, field_name, item_guid)`` — deliberately EXCLUDES `reason`,
+    so two records for the same (owner, field, item) triple with different
+    reason text still collapse to one (see `categories._dropped_key` /
+    `_append_dropped_once`, the enforcement point).
     """
     owner_kind: str
     owner_guid: str

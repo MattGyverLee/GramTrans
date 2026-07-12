@@ -310,7 +310,12 @@ def _multistring_dict(ms, handle_to_id: dict | None = None) -> dict:
                     key = handle_to_id.get(wh, wh) if handle_to_id else wh
                     out[key] = text
         except Exception:
-            out = {}
+            # QC P2 fix: a failure partway through (e.g. index i=3 of 10
+            # raises) must not discard the alt slots already collected --
+            # `out` is left as-is (whatever was gathered before the failure)
+            # rather than reset to `{}`, so a partial multistring snapshot
+            # is still better than none.
+            pass
         if out:
             return out
     data = getattr(ms, "_data", None)
