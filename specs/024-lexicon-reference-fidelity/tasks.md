@@ -104,12 +104,12 @@ OVERWRITE-mode copy of the matching source → those fields retain a correct val
 
 ### Tests for User Story 2 ⚠️ (write first, must FAIL before implementation)
 
-- [ ] T018 [P] [US2] Write `tests/unit/test_blanking_fix.py`: overwrite-mode copy does NOT blank a populated target `SenseTypeRA`/`DoNotPublishInRC`/`DoNotShowMainEntryInRC` (FR-006), and an empty/unset source reference never blanks a populated target field across all conflict modes (FR-007/SC-002).
+- [X] T018 [P] [US2] Write `tests/unit/test_blanking_fix.py`: overwrite-mode copy does NOT blank a populated target `SenseTypeRA`/`DoNotPublishInRC`/`DoNotShowMainEntryInRC` (FR-006), and an empty/unset source reference never blanks a populated target field across all conflict modes (FR-007/SC-002).
 
 ### Implementation for User Story 2
 
-- [ ] T019 [US2] Confirm/extend the re-wire pass in `src/gramtrans/Lib/categories.py` so the three previously-dropped sense/entry ref fields (`SenseTypeRA`, `DoNotPublishInRC`, `DoNotShowMainEntryInRC`) route through the T015 resolver instead of being discarded on apply (FR-006, research R1; depends on T016).
-- [ ] T020 [US2] Enforce the non-destructive invariant in `src/gramtrans/Lib/references.py` `apply_reference`: when the source item is `None`/unset, leave the target field unchanged — never write empty (FR-007; depends on T015). Cross-check the update path in `src/gramtrans/Lib/conflict.py` honors the same semantic.
+- [X] T019 [US2] Confirm/extend the re-wire pass in `src/gramtrans/Lib/categories.py` so the three previously-dropped sense/entry ref fields (`SenseTypeRA`, `DoNotPublishInRC`, `DoNotShowMainEntryInRC`) route through the T015 resolver instead of being discarded on apply (FR-006, research R1; depends on T016). Confirmed already fully wired via T016's generic `_apply_reference_fields` dispatch (no `skip_fields` excludes them at either the `LexEntry` or `LexSense` call sites in `_walk_lex_entry_closure`) — no additional wiring needed; `tests/unit/test_blanking_fix.py`'s end-to-end tests lock this in.
+- [X] T020 [US2] Enforce the non-destructive invariant in `src/gramtrans/Lib/references.py` `apply_reference`: when the source item is `None`/unset, leave the target field unchanged — never write empty (FR-007; depends on T015). Cross-check the update path in `src/gramtrans/Lib/conflict.py` honors the same semantic. Confirmed already correct on both sides: `decide_reference(None, ...)` returns `None` and `apply_reference(None, ...)` no-ops without touching the owner field; `conflict.apply_update_semantic`/`_is_empty` independently skip any write where the source value is empty (`if _is_empty(src_val): continue`) — same non-destructive semantic, no fix required.
 
 **Checkpoint**: US1 + US2 both work — no field is blanked under any mode; quickstart Scenario 2 passes.
 

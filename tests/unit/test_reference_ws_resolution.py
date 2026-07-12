@@ -212,7 +212,10 @@ def _spec(target_list=None) -> ReferenceFieldSpec:
 # (a) -- single genuine divergence, but the target registers a WS (fr) the
 # SOURCE item simply never populated -- the exact condition the live note
 # flags ("real projects register 3+ WS but a possibility Name may populate
-# only 1-2").
+# only 1-2"). Cycle-5 cleanup: these (a)/(b) expectations were updated to
+# match the deletion of `_best_effort_id_keyed`'s difflib similarity guess
+# (see each test's own docstring) -- the deterministic-only fallback leaves
+# an unmatched alt unresolved rather than guessing.
 # ============================================================================
 
 
@@ -220,23 +223,20 @@ def test_update_single_diverged_alt_dropped_when_source_leaves_a_ws_unpopulated(
     """3 target WS (en/es/fr). Source Name populates only en (matches
     target exactly) + es (genuinely diverged: "Agua Fresca" vs target's
     stale "Agua Vieja") -- fr is not populated on the SOURCE item at all.
-    Expected (post-fix) behaviour: the single genuine divergence (es) lands
-    on target es (2002); en/fr untouched.
+    No real `source` project resolver is threaded (production always
+    threads one; this exercises the bare fallback only).
 
-    Dry trace against TODAY's code: `_id_keyed_multi_ws` content-matches en
-    ("Water" -> target handle 2001 -> id "en"), leaving "Agua Fresca"
-    unmatched (`text_to_target_handle` has no "Agua Fresca" entry).
-    `remaining_ids = sorted({"en","es","fr"} - {"en"}) = ["es", "fr"]` --
-    TWO remaining slots, but only ONE genuinely-unmatched source text (fr
-    was simply never populated on the source -- not a divergence at all).
-    `len(unmatched)=1 != len(remaining_ids)=2`, so the elimination guard
-    (`if unmatched and len(unmatched) == len(remaining_ids)`) refuses to
-    pair them -- `id_props` ends up `{"en": "Water"}` only, and
-    `conflict.apply_update_semantic` writes nothing for es at all (falling
-    back to the raw handle-keyed snapshot hits the same silent-skip as
-    `test_reference_ws_keying.py`'s pre-fix case). The assertion below --
-    `target_item.Name._data[2002] == "Agua Fresca"` -- fails today (actual
-    stays "Agua Vieja").
+    Cycle-5 cleanup superseded this test's original expectation: the
+    `_best_effort_id_keyed` similarity-guessing second pass (greedy
+    `difflib.SequenceMatcher` pairing) that used to land "Agua Fresca" on
+    target es by textual closeness has been DELETED -- no similarity
+    guessing remains anywhere in `references.py`. Without a real source
+    resolver, an alt with no EXACT text match against the target's current
+    alts is simply left unresolved (not guessed at): es keeps its stale
+    "Agua Vieja" rather than being overwritten by a guess, and en/fr are
+    untouched either way. This is the correct, safe fallback contract now
+    that every production call site threads a real `source` (see the
+    tripwire warning `apply_reference` logs on this exact path).
     """
     guid = "aaaaaaaa-0000-0000-0000-aaaaaaaaaaaa"
     source_item = _FakePossibility(
@@ -255,38 +255,43 @@ def test_update_single_diverged_alt_dropped_when_source_leaves_a_ws_unpopulated(
         decision, target, owner_obj=None, spec=spec, cache={}, tag=None,
     )
 
-    assert target_item.Name._data.get(2002) == "Agua Fresca", (
-        f"single genuine divergence (es) was not written; "
-        f"target Name._data={target_item.Name._data!r}"
+    assert target_item.Name._data.get(2002) == "Agua Vieja", (
+        f"no exact-text match exists for the es divergence -- the "
+        f"deterministic-only fallback must leave it unresolved (never "
+        f"guess), not overwrite it; target Name._data="
+        f"{target_item.Name._data!r}"
     )
     assert target_item.Name._data.get(2001) == "Water", "en must be unchanged"
     assert target_item.Name._data.get(2003) == "Eau", "fr must be unchanged"
 
 
 # ============================================================================
-# (b) -- P0 case: TWO alts diverge simultaneously; the elimination zip pairs
-# them by (source handle order) vs (target Id-alpha order), which have no
-# guaranteed relationship -- a mis-assignment (swap) results.
+# (b) -- P0 case: TWO alts diverge simultaneously. The original elimination
+# zip (and, before this cleanup, the difflib similarity guess that replaced
+# it) risked pairing them by (source handle order) vs (target Id-alpha
+# order)/textual closeness, which have no guaranteed relationship -- a
+# mis-assignment (swap) was possible. Deleting all guessing removes the
+# risk entirely: an unmatched alt is left unresolved, never swapped.
 # ============================================================================
 
 
 def test_update_two_diverged_alts_land_on_correct_ws_not_swapped():
     """es AND fr BOTH diverge simultaneously. The SOURCE project happens to
     have assigned fr a LOWER handle (1002) than es (1003) -- an arbitrary
-    per-project detail with zero relationship to alphabetical Id order.
-    Expected (post-fix): es's new text lands on target es (2002); fr's new
-    text lands on target fr (2003) -- each on its OWN ws, never swapped.
+    per-project detail with zero relationship to alphabetical Id order. No
+    real `source` project resolver is threaded (production always threads
+    one; this exercises the bare fallback only).
 
-    Dry trace against TODAY's code: `_id_keyed_multi_ws` iterates
-    `sorted(src_snapshot.items(), key=lambda kv: str(kv[0]))` -- BY HANDLE --
-    giving unmatched-in-handle-order = ["Rio" (fr, handle 1002), "Agua
-    Fresca" (es, handle 1003)] (neither matches the target's stale texts).
-    `remaining_ids = sorted({"en","es","fr"} - {"en"}) = ["es", "fr"]` --
-    ALPHABETICAL. `zip(["es","fr"], ["Rio","Agua Fresca"])` pairs
-    `es -> "Rio"` and `fr -> "Agua Fresca"` -- SWAPPED (es should get "Agua
-    Fresca", fr should get "Rio"). Both assertions below fail today:
-    `target_item.Name._data[2002]` is "Rio" (not "Agua Fresca"); `[2003]` is
-    "Agua Fresca" (not "Rio").
+    Cycle-5 cleanup superseded this test's original expectation: the
+    `_best_effort_id_keyed` similarity-guessing second pass (greedy
+    `difflib`/elimination pairing that used to risk exactly this kind of
+    swap -- the original P0 bug this test was written to lock in a fix
+    for) has been DELETED entirely -- no similarity or elimination guessing
+    remains. Without a real source resolver, an alt with no EXACT text
+    match against the target's current alts is left unresolved rather than
+    guessed at: es and fr both keep their stale target text (never
+    swapped, never guess-written) -- the safe, correct fallback now that
+    every production call site threads a real `source`.
     """
     guid = "bbbbbbbb-0000-0000-0000-bbbbbbbbbbbb"
     # SOURCE_WS says fr's true Id-handle pairing is ("fr", 1003) -- but this
@@ -309,11 +314,12 @@ def test_update_two_diverged_alts_land_on_correct_ws_not_swapped():
         decision, target, owner_obj=None, spec=spec, cache={}, tag=None,
     )
 
-    assert target_item.Name._data.get(2002) == "Agua Fresca", (
-        f"es landed on the wrong content (sort-order swap); "
+    assert target_item.Name._data.get(2002) == "Agua Vieja", (
+        f"no exact-text match exists for es -- the deterministic-only "
+        f"fallback must leave it unresolved (never guess, never swap); "
         f"target Name._data={target_item.Name._data!r}"
     )
-    assert target_item.Name._data.get(2003) == "Rio", (
+    assert target_item.Name._data.get(2003) == "Eau", (
         f"fr landed on the wrong content (sort-order swap); "
         f"target Name._data={target_item.Name._data!r}"
     )
@@ -482,4 +488,83 @@ def test_update_never_blanks_target_alt_when_source_alt_is_unset():
     )
     assert target_item.Name._data.get(2003) == "Eau", (
         "fr must never be blanked from an unset source alt (FR-007)"
+    )
+
+
+# ============================================================================
+# P3 (cycle-5 cleanup) -- (d) above proves the Id-keyed
+# `divergence_fingerprint` catches a content swap when NO source resolver is
+# threaded (`decide_reference(source_item, object(), spec, {})`, `source`
+# defaulting to `None` -- the positional/no-resolver fallback path). This
+# section proves the SAME two outcomes hold when a REAL source resolver IS
+# threaded through `decide_reference(..., source=source_project)` -- the
+# genuinely Id-keyed comparison path (`_fields_identical` ->
+# `divergence_fingerprint(item, handle_to_id=...)` with a non-empty
+# `handle_to_id` from `_project_handle_to_id`), not merely its fallback.
+# ============================================================================
+
+
+def test_fields_identical_same_id_content_links_with_source_threaded():
+    """Source and target each have their OWN (different) handle for "en",
+    but both resolve to the SAME Id ("en") via their OWN project's
+    `WritingSystems.GetAll()` -- and both hold the SAME text under it.
+    With a real `source` (and `target`) resolver threaded through, this
+    must fingerprint as IDENTICAL and `decide_reference` must LINK.
+    """
+    guid = "ffffffff-0000-0000-0000-ffffffffffff"
+    source_item = _FakePossibility(guid, name_by_handle={1001: "Water"})  # source's "en" handle
+    target_item = _FakePossibility(guid, name_by_handle={2001: "Water"})  # target's "en" handle
+    source_project = _FakeWSProject(SOURCE_WS)
+    target_project = _FakeWSProject(TARGET_WS)
+
+    assert references.divergence_fingerprint(
+        source_item, handle_to_id=references._project_handle_to_id(source_project)
+    ) == references.divergence_fingerprint(
+        target_item, handle_to_id=references._project_handle_to_id(target_project)
+    ), "same-Id-identical content must fingerprint identically when threaded via real resolvers"
+
+    spec = _spec(_FakeTargetList([target_item]))
+    decision = references.decide_reference(
+        source_item, target_project, spec, {}, source=source_project,
+    )
+
+    assert decision.action == ReferenceAction.LINK, (
+        f"expected LINK for same-Id-identical content with source threaded, "
+        f"got {decision.action!r} (dropped={decision.dropped!r})"
+    )
+
+
+def test_fields_identical_en_es_swap_diverges_with_source_threaded():
+    """Same en/es content-swap shape as (d) above, but this time BOTH
+    `source` and `target` real project resolvers are threaded through
+    `decide_reference`/`divergence_fingerprint` -- the genuinely Id-keyed
+    comparison path, not the no-resolver positional fallback (d) exercises.
+    Must still detect the swap as diverged, never LINK.
+    """
+    guid = "11111111-0000-0000-0000-111111111111"
+    # Source's own handles: en=1001, es=1002 (per SOURCE_WS).
+    source_item = _FakePossibility(guid, name_by_handle={1001: "Water", 1002: "Agua"})
+    # Target's own handles: en=2001, es=2002 (per TARGET_WS) -- but SWAPPED content.
+    target_item = _FakePossibility(guid, name_by_handle={2001: "Agua", 2002: "Water"})
+    source_project = _FakeWSProject(SOURCE_WS)
+    target_project = _FakeWSProject(TARGET_WS)
+
+    assert references.divergence_fingerprint(
+        source_item, handle_to_id=references._project_handle_to_id(source_project)
+    ) != references.divergence_fingerprint(
+        target_item, handle_to_id=references._project_handle_to_id(target_project)
+    ), (
+        "en/es content swap must fingerprint as diverged when threaded via "
+        "real per-project resolvers, not just the no-resolver fallback"
+    )
+
+    spec = _spec(_FakeTargetList([target_item]))
+    decision = references.decide_reference(
+        source_item, target_project, spec, {}, source=source_project,
+    )
+
+    assert decision.action != ReferenceAction.LINK, (
+        f"expected a divergence outcome (UPDATE or REPORT_DROPPED) for a "
+        f"content swap with source threaded, got LINK "
+        f"(dropped={decision.dropped!r})"
     )

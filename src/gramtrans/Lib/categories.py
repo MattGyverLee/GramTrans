@@ -3088,7 +3088,12 @@ def _plan_entry_reference_decisions(src_entry, context, target):
         # WS-keying structural fix (this cycle): thread the SOURCE project
         # handle through so `decide_reference` can compare each item's OWN
         # project's real Id-keyed alts instead of the positional fallback.
-        source = getattr(context, "source_handle", None)
+        # Cycle-5 cleanup: `source_handle` is a required, non-Optional
+        # `TransferContext` field (models.py) -- direct access here matches
+        # every Move-mode call site (`context.source_handle`), removing the
+        # Preview-vs-Move inconsistency of a defensive `getattr` fallback
+        # that could silently mask a genuinely missing field.
+        source = context.source_handle
         entry_guid = _guid_str_from(src_entry)
         records = list(_decide_reference_fields(
             "LexEntry", entry_guid, src_entry, target, resolver_cache, dropped,

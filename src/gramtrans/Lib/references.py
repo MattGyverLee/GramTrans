@@ -20,7 +20,9 @@ Foundational layer only (T002/T008): this module currently defines the data
 """
 from __future__ import annotations
 
-import difflib
+import logging
+
+_log = logging.getLogger("gramtrans.Lib.references")
 
 if __package__:
     from .models import (
@@ -392,29 +394,31 @@ def _project_handle_to_id(project) -> dict:
 
 
 def _best_effort_id_keyed(src_snapshot: dict, tgt_snapshot: dict, target_ws_by_id: dict) -> dict:
-    """Legacy BEST-EFFORT fallback for `apply_reference`'s UPDATE/CREATE arms
-    when NO real source-project WS resolver is available (`source=None`,
-    e.g. a caller that hasn't been updated to thread it through yet). When a
-    real `source` project IS given, this is never called -- `apply_reference`
-    reads the source's own handle->Id map directly via `_multistring_dict(ms,
-    source_handle_to_id)` instead, with no guessing at all (this cycle's
-    structural fix).
+    """DETERMINISTIC exact-Id-match fallback for `apply_reference`'s
+    UPDATE/CREATE arms when NO real source-project WS resolver is available
+    (`source=None`). When a real `source` project IS given, this is never
+    called -- `apply_reference` reads the source's own handle->Id map
+    directly via `_multistring_dict(ms, source_handle_to_id)` instead, with
+    no guessing at all.
 
-    Two-pass, deterministic, never guesses at random:
+    Cycle-5 cleanup: the prior two-pass version's second pass (greedy
+    `difflib.SequenceMatcher` best-similarity pairing of any remaining,
+    genuinely-changed source alt against a remaining target id) was pure
+    guessing -- no genuine Id evidence exists without a source resolver, and
+    a similarity score is not evidence of WS identity. It is DELETED. This
+    function now performs ONLY the single safe, deterministic pass: a
+    source alt whose TEXT equals a target id's CURRENT text is assigned
+    that same id (unchanged content is presumed to belong to the same
+    writing system). Any source alt that does not exactly match an
+    existing target text is left unresolved -- FR-007's non-destructive
+    posture is preserved by leaving it unassigned rather than guessed at.
 
-    1. Exact content match: a source alt whose TEXT equals a target id's
-       CURRENT text is assigned that same id -- safe, since unchanged
-       content is presumed to belong to the same writing system.
-    2. Best-similarity match: any remaining (genuinely new/changed) source
-       alt is greedily paired with the remaining target id whose CURRENT
-       text is the closest textual match (`difflib.SequenceMatcher.ratio`),
-       highest-confidence pairs assigned first -- so two alts diverging in
-       the SAME update are never swapped by an arbitrary sort order (the
-       deleted `zip(sorted(ids), unmatched-handle-order)` bug). This is
-       still a heuristic (no genuine Id evidence exists without a source
-       resolver) -- FR-007 non-destructive posture is preserved because an
-       unmatched leftover (more remaining source alts than remaining ids,
-       or vice-versa) is simply left unassigned rather than guessed.
+    Production callers always thread a real `source` (`source_handle` is a
+    required, non-Optional `TransferContext` field -- see
+    `models.TransferContext.source_handle`), so this bare fallback should
+    never actually run outside a test double that hasn't been updated;
+    `apply_reference`/`decide_reference` log a tripwire warning when
+    `source` comes in as `None` for exactly that reason.
 
     Returns ``{}`` when `target_ws_by_id` or `src_snapshot` is empty.
     """
@@ -429,7 +433,6 @@ def _best_effort_id_keyed(src_snapshot: dict, tgt_snapshot: dict, target_ws_by_i
 
     id_props: dict = {}
     matched_ids: set = set()
-    remaining_src: dict = {}
     for handle, text in src_snapshot.items():
         if not text:
             continue
@@ -437,31 +440,6 @@ def _best_effort_id_keyed(src_snapshot: dict, tgt_snapshot: dict, target_ws_by_i
         if tid is not None and tid not in matched_ids:
             id_props[tid] = text
             matched_ids.add(tid)
-        else:
-            remaining_src[handle] = text
-
-    remaining_ids = [i for i in target_ws_by_id if i not in matched_ids]
-    if remaining_src and remaining_ids:
-        tgt_current_by_id = {
-            handle_to_target_id[h]: t
-            for h, t in tgt_snapshot.items()
-            if handle_to_target_id.get(h) in remaining_ids
-        }
-        scored = []
-        for handle, text in remaining_src.items():
-            for tid in remaining_ids:
-                cur = tgt_current_by_id.get(tid, "")
-                score = difflib.SequenceMatcher(None, text, cur).ratio()
-                scored.append((score, tid, handle, text))
-        scored.sort(key=lambda t: (-t[0], t[1]))
-        used_src: set = set()
-        used_ids: set = set()
-        for score, tid, handle, text in scored:
-            if handle in used_src or tid in used_ids:
-                continue
-            id_props[tid] = text
-            used_src.add(handle)
-            used_ids.add(tid)
     return id_props
 
 
@@ -813,6 +791,28 @@ def apply_reference(decision, target, owner_obj, spec: "ReferenceFieldSpec", cac
     else:
         import conflict  # type: ignore
         from residue import apply_residue  # type: ignore
+
+    if source is None and decision.action in (
+        ReferenceAction.UPDATE, ReferenceAction.CREATE,
+    ):
+        # Tripwire (cycle-5 cleanup): `source_handle` is a required,
+        # non-Optional `TransferContext` field (models.py) -- production
+        # ALWAYS threads a real source project handle through
+        # `categories.py`'s `_apply_reference_fields`/`_decide_reference_fields`
+        # call sites. Reaching UPDATE/CREATE here with `source=None` means
+        # the bare deterministic `_best_effort_id_keyed` exact-Id-match
+        # fallback is about to run instead of the real per-project WS
+        # resolver -- expected only from a test double built before the
+        # `source` parameter existed, never from a live transfer.
+        _log.warning(
+            "apply_reference: source handle resolver is None for %s.%s "
+            "(action=%s) -- falling back to the deterministic "
+            "exact-Id-match heuristic instead of the real source project "
+            "WS resolver. Production always threads source_handle "
+            "(a required TransferContext field); this indicates a caller "
+            "has not been updated to pass it.",
+            spec.owner_class, spec.field_name, decision.action,
+        )
 
     if decision.action == ReferenceAction.LINK:
         target_item = decision.target_item

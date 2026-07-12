@@ -175,25 +175,23 @@ def test_update_lands_non_default_ws_alt_on_target():
     ICmMultiString on the SOURCE project actually stores its alts). Target
     project: en=2001, es=2002 (DIFFERENT handles for the SAME Ids). The
     target is missing the 'es' alt entirely; the source has it ("Agua").
+    No real `source` project resolver is threaded here (production always
+    threads one -- see `test_reference_ws_resolution.py`'s real-source
+    tests for the exact-Id-match case this test used to stand in for).
 
-    Expected (post-fix) behaviour: the source 'es' alt lands on the
-    target's 'es' handle (2002).
-
-    Dry trace against TODAY's code: `apply_reference`'s UPDATE arm builds
-    `src_props["Name"] = _multistring_dict(source_item.Name)`.
-    `_multistring_dict` (no `StringCount` on `_FakeMultiString`) falls to
-    the `_data` branch and returns `{1001: "Water", 1002: "Agua"}` --
-    keyed by the SOURCE's own handles, not by Id. `conflict.apply_update_
-    semantic` sees this differs from the target's `{2001: "Water"}` and is
-    non-empty, so it calls `ops.ApplySyncableProperties(target_item,
-    {"Name": {1001: "Water", 1002: "Agua"}}, ws_map=None)`. Inside the
-    (contract-correct) fake ops, `target_ws_by_id = {"en": 2001,
-    "es": 2002}` (Id-keyed). For `src_ws_id=1002` (an int, a source
-    HANDLE): `tgt_ws_id = 1002` (identity, no ws_map) ->
-    `target_ws_by_id.get(1002)` is `None` (the dict has no integer keys at
-    all) -> silent skip. Same for `src_ws_id=1001`. Nothing is written, so
-    `target_item.Name._data.get(2002)` is still `None`, not "Agua" ->
-    assertion below fails today.
+    Cycle-5 cleanup superseded this test's original expectation: landing
+    the 'es' alt via 1:1 elimination (no exact text match, but exactly one
+    remaining source alt and one remaining target id) was still a GUESS --
+    the same P0 swap risk `_best_effort_id_keyed`'s deletion targets, just
+    disguised as "unambiguous" because only one candidate happened to be
+    left. All such guessing (elimination or similarity-based) is now
+    deleted; the deterministic-only fallback requires an EXACT text match
+    to assign an id, so an alt with none is correctly left unresolved
+    (`target_item.Name._data.get(2002)` stays `None`) rather than assigned
+    on the strength of a 1:1 coincidence. The genuine fix for this exact
+    scenario is threading a real `source` resolver (proven via
+    `test_reference_ws_resolution.py`'s threaded tests and the live write
+    test noted in STATUS/handoff), not a fallback heuristic.
     """
     guid = "aaaaaaaa-1111-1111-1111-aaaaaaaaaaaa"
     source_item = _FakePossibility(
@@ -224,10 +222,13 @@ def test_update_lands_non_default_ws_alt_on_target():
         decision, target, owner_obj=None, spec=spec, cache={}, tag=None,
     )
 
-    assert target_item.Name._data.get(2002) == "Agua", (
-        f"source 'es' alt did not land on target handle 2002; "
-        f"target Name._data={target_item.Name._data!r}"
+    assert target_item.Name._data.get(2002) is None, (
+        f"no exact-text match exists for the source's 'es' alt against the "
+        f"target's current alts -- the deterministic-only fallback must "
+        f"leave it unresolved rather than assign it on a 1:1-remaining "
+        f"coincidence; target Name._data={target_item.Name._data!r}"
     )
+    assert target_item.Name._data.get(2001) == "Water", "en must be unchanged"
 
 
 # ============================================================================
