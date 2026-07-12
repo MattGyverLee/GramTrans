@@ -2986,7 +2986,7 @@ def _decide_reference_fields(owner_class, owner_guid, src_obj, target,
 
 
 def _apply_reference_fields(owner_class, src_obj, new_obj, target, tag,
-                             resolver_cache, dropped, skip_fields=()):
+                             resolver_cache, dropped, skip_fields=(), ws_map=None):
     """Move-mode (T016): `decide_reference` + `apply_reference` pass over
     every `references.field_specs_for(owner_class)` row applicable to
     `src_obj`, writing the result onto `new_obj`.
@@ -2997,6 +2997,14 @@ def _apply_reference_fields(owner_class, src_obj, new_obj, target, tag,
     `.Add()`s the resolved item onto `new_obj`'s collection/sequence property
     instead -- `apply_reference`'s single-value setattr would be wrong for a
     multi-member field.
+
+    `ws_map` (WS-keying hardening, this cycle): the same
+    `{source_ws_id: target_ws_id}` dict every other closure UPDATE site in
+    this module already forwards to `ApplySyncableProperties` (e.g.
+    `target.Senses.ApplySyncableProperties(new_sense, sprops, ws_map=ws_map)`
+    a few lines below this function's callers) -- forwarded on to
+    `apply_reference` so its UPDATE/CREATE arms translate a renamed WS
+    instead of defaulting to identity-only matching.
 
     Never raises: any per-item resolve/apply failure is swallowed (fail-soft,
     matching every other closure-walk write in this module) so one bad
@@ -3019,7 +3027,8 @@ def _apply_reference_fields(owner_class, src_obj, new_obj, target, tag,
             owner_target = new_obj if atomic else None
             try:
                 resolved = _references.apply_reference(
-                    decision, target, owner_target, spec, resolver_cache, tag)
+                    decision, target, owner_target, spec, resolver_cache, tag,
+                    ws_map=ws_map)
             except _references.UnmappedItemClassError as exc:
                 # Fail-loud CREATE-time factory gap (bug 2b defensive path,
                 # Principle I): never silently fall back to a wrong-classed
@@ -3198,7 +3207,8 @@ def _walk_lex_entry_closure(src_entry, context, tag, category, dropped=None):
     # ApplySyncableProperties (research R1).
     resolver_cache = _get_resolver_cache(context)
     _apply_reference_fields(
-        "LexEntry", src_entry, new_entry, target, tag, resolver_cache, dropped)
+        "LexEntry", src_entry, new_entry, target, tag, resolver_cache, dropped,
+        ws_map=ws_map)
 
     # Allomorphs (E3): LexemeFormOA + AlternateFormsOS.
     _walk_entry_allomorphs(src_entry, new_entry, context, tag, identity_remap, dropped=dropped)
@@ -3235,7 +3245,8 @@ def _walk_lex_entry_closure(src_entry, context, tag, category, dropped=None):
         # both are now one call, and get UPDATE/REPORT_DROPPED handling for
         # diverged items that the old hand-wire never had.
         _apply_reference_fields(
-            "LexSense", src_sense, new_sense, target, tag, resolver_cache, dropped)
+            "LexSense", src_sense, new_sense, target, tag, resolver_cache, dropped,
+            ws_map=ws_map)
         # MSA for this sense (create once per source MSA guid).
         src_msa = getattr(src_sense, "MorphoSyntaxAnalysisRA", None)
         if src_msa is not None:
@@ -3325,7 +3336,7 @@ def _walk_entry_allomorphs(src_entry, new_entry, context, tag, identity_remap, d
         # PhoneEnvRC/StemNameRA are skipped here (US3 T029; see docstring).
         _apply_reference_fields(
             "MoForm", src_allo, new_allo, target, tag, resolver_cache, dropped,
-            skip_fields=_MOFORM_DEFERRED_FIELDS)
+            skip_fields=_MOFORM_DEFERRED_FIELDS, ws_map=ws_map)
         # `dropped`/`resolver_cache` are in scope here for the future APR
         # reproduction (`Lib/owned.py.reproduce_allomorph_hung_data`, US3
         # T029). Not wired yet.

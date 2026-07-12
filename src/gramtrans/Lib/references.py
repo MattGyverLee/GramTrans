@@ -266,10 +266,31 @@ def field_specs_for(owner_class: str) -> tuple:
 _FINGERPRINT_FIELDS = ("Name", "Abbreviation", "Description")
 
 
-def _multistring_dict(ms) -> dict:
-    """Best-effort ``{ws_handle: text}`` snapshot of a multistring-shaped prop.
+def _multistring_dict(ms, handle_to_id: dict | None = None) -> dict:
+    """Best-effort snapshot of a multistring-shaped prop.
 
     Returns ``{}`` on any failure or when `ms` is None. Never raises.
+
+    Args:
+        ms: the multistring-shaped prop (real `ICmMultiString`, or a
+            duck-typed test fake exposing `StringCount`/`GetStringFromIndex`
+            and/or a `_data` dict).
+        handle_to_id: optional ``{ws_handle: ws_id}`` resolver. When given,
+            each WS handle key is translated to its portable Id string via
+            this map (falling back to the raw handle for any handle absent
+            from the map). When `None` (the default), keys are the raw
+            handle/whatever `ms` itself exposes -- unchanged legacy shape,
+            used by callers that don't need Id-keyed output at all
+            (`_item_label`; `divergence_fingerprint` compares text VALUES
+            only and never looks at these keys, see its own docstring).
+
+    WS-keying hardening (this cycle): a real `ICmMultiString` has no Id
+    concept of its own (only the project-level `WritingSystems` repo knows
+    handle<->Id) -- the resolver has to come from the CALLER, who has (or
+    can obtain) that repo. See `_resolve_target_ws_by_id` for how
+    `apply_reference`'s UPDATE/CREATE arms build one for the props dict
+    `ApplySyncableProperties` expects (Id-keyed per the confirmed-live
+    `BaseOperations.ApplySyncableProperties` contract).
     """
     if ms is None:
         return {}
@@ -282,7 +303,8 @@ def _multistring_dict(ms) -> dict:
                 tss, wh = res if isinstance(res, tuple) else (res, None)
                 text = getattr(tss, "Text", None)
                 if text:
-                    out[wh] = text
+                    key = handle_to_id.get(wh, wh) if handle_to_id else wh
+                    out[key] = text
         except Exception:
             out = {}
         if out:
@@ -291,17 +313,132 @@ def _multistring_dict(ms) -> dict:
     if isinstance(data, dict):
         for wh, text in data.items():
             if text:
-                out[wh] = text
+                key = handle_to_id.get(wh, wh) if handle_to_id else wh
+                out[key] = text
     return out
+
+
+# ============================================================================
+# WS-keying hardening (this cycle) -- Id-keyed props for ApplySyncableProperties
+# ============================================================================
+#
+# Confirmed live + from flexicon source (`BaseOperations.py`
+# `ApplySyncableProperties` :1209-1287, `_apply_props_loop` :306-362):
+# a multistring PROP VALUE must be a `dict[str, str]` keyed by the SOURCE
+# writing-system's portable **Id** (e.g. "en"/"es"), never its per-project
+# HANDLE (non-portable). `ApplySyncableProperties` builds
+# `target_ws_by_id = {ws.Id: ws.Handle}` from the TARGET project's OWN
+# `WritingSystems.GetAll()`, translates `src_ws_id` via `ws_map` (identity
+# when absent/falsy), then looks up the target handle by Id -- silently
+# skipping any entry whose (mapped) Id has no target handle.
+
+def _resolve_target_ws_by_id(ops) -> dict:
+    """Best-effort ``{ws_id: ws_handle}`` for the project `ops` (e.g.
+    `target.PossibilityLists`) is bound to.
+
+    Real flexicon `BaseOperations.__init__` stores the owning FLExProject as
+    the PUBLIC `self.project` attribute (confirmed:
+    `flexicon/code/BaseOperations.py:498`), and `ApplySyncableProperties`
+    itself reads `self.project.WritingSystems.GetAll()` to build this exact
+    table internally (`BaseOperations.py:1279-1281`) -- so `ops.project.
+    WritingSystems.GetAll()` is the production-correct read. A private
+    `_target_project`/`_project`-shaped attribute is also tried, for
+    duck-typed test doubles that model the same project-holding shape under
+    a different name (see `tests/unit/test_reference_ws_keying.py`'s
+    `_FakePossibilityListsOps`). Returns ``{}`` on any failure -- callers
+    fall back to the legacy raw-handle-keyed snapshot in that case (never
+    raises, never blocks a write outright).
+    """
+    for attr in ("project", "_target_project", "_project"):
+        proj = getattr(ops, attr, None)
+        if proj is None:
+            continue
+        ws_ops = getattr(proj, "WritingSystems", None)
+        if ws_ops is None:
+            continue
+        try:
+            table = {ws.Id: ws.Handle for ws in (ws_ops.GetAll() or [])}
+        except Exception:
+            continue
+        if table:
+            return table
+    return {}
+
+
+def _id_keyed_multi_ws(src_snapshot: dict, tgt_snapshot: dict, target_ws_by_id: dict) -> dict:
+    """Best-effort translate a HANDLE-keyed source snapshot into an
+    Id-keyed dict suitable for `ApplySyncableProperties`'s Id-driven lookup,
+    for the case where the TRUE per-project handle->Id resolution for the
+    SOURCE side isn't available (`apply_reference`'s contract signature only
+    carries the `target` project handle, not the source's -- T015; a bare
+    LCM item carries no accessible project/Cache of its own either).
+
+    Two-pass resolution, both grounded in actual evidence, never guessing a
+    WRONG assignment when the evidence is ambiguous:
+
+    1. Content match: a source alt whose TEXT already exists in the
+       target's CURRENT snapshot is assigned the target's own Id for that
+       same handle -- safe, since the matching content genuinely
+       corresponds to the same writing system.
+    2. Elimination: source alts left over after (1) (genuinely new content,
+       e.g. a non-default-WS alt the target doesn't have yet) are assigned,
+       in deterministic sorted order, to the target's remaining
+       not-yet-assigned Ids -- but ONLY when the two remaining counts line
+       up 1:1 (an unambiguous pairing); otherwise those leftover alts are
+       dropped rather than guessed at (fail-soft, FR-007 non-destructive
+       posture: never write a WRONG alt instead of just skipping it).
+
+    Returns ``{}`` (skip everything) when `target_ws_by_id` itself is
+    empty -- callers fall back to the raw handle-keyed snapshot in that
+    case (today's legacy best-effort behaviour, unchanged).
+    """
+    if not target_ws_by_id or not src_snapshot:
+        return {}
+    id_props: dict = {}
+    text_to_target_handle = {text: handle for handle, text in tgt_snapshot.items()}
+    target_handle_to_id = {handle: wid for wid, handle in target_ws_by_id.items()}
+    matched_ids: set = set()
+    unmatched: list = []
+    for handle, text in sorted(src_snapshot.items(), key=lambda kv: str(kv[0])):
+        tgt_handle = text_to_target_handle.get(text)
+        matched_id = target_handle_to_id.get(tgt_handle) if tgt_handle is not None else None
+        if matched_id is not None:
+            id_props[matched_id] = text
+            matched_ids.add(matched_id)
+        else:
+            unmatched.append(text)
+    remaining_ids = sorted(set(target_ws_by_id) - matched_ids)
+    if unmatched and len(unmatched) == len(remaining_ids):
+        for rid, text in zip(remaining_ids, unmatched):
+            id_props[rid] = text
+    return id_props
 
 
 def divergence_fingerprint(item) -> tuple:
     """T012 -- the per-item divergence fingerprint (research R7).
 
-    A tuple of ``(field_name, sorted (ws_handle, text) pairs)`` triples over
-    Name/Abbreviation/Description (whichever are present on `item`). Two
-    items with equal fingerprints are "identical" for LINK-vs-UPDATE
-    purposes; any difference is a divergence.
+    A tuple of ``(field_name, sorted texts)`` pairs over Name/Abbreviation/
+    Description (whichever are present on `item`). Two items with equal
+    fingerprints are "identical" for LINK-vs-UPDATE purposes; any difference
+    is a divergence.
+
+    WS-keying hardening (this cycle): compares SORTED TEXT VALUES only, not
+    ``(ws_key, text)`` pairs. `divergence_fingerprint`'s own signature takes
+    a single bare `item` -- no project/Cache handle at all -- so there is no
+    way to translate either item's own per-project WS HANDLE into its
+    portable Id from here (that translation needs the item's *owning*
+    project's WritingSystemFactory, which isn't reachable from a bare LCM
+    object). Comparing raw handle-keyed snapshots directly (the pre-fix
+    behaviour) is actively wrong: the SAME writing system gets a DIFFERENT
+    handle in each project's cache, so Id-for-Id-identical content across a
+    source/target pair always looked "diverged" purely because the dict KEYS
+    differed, even though every alt matched. Dropping the keys and comparing
+    the sorted bag of texts fixes that false-divergence without needing any
+    resolver; the accepted trade-off is that content coincidentally swapped
+    between two writing systems (same texts, wrong WS) would no longer be
+    flagged as diverged -- judged acceptable since Ids aren't derivable here
+    at all today, and the previous behaviour was actively wrong in the
+    common (no swap) case.
     """
     parts = []
     for field_name in _FINGERPRINT_FIELDS:
@@ -309,7 +446,7 @@ def divergence_fingerprint(item) -> tuple:
         if ms is None:
             continue
         snapshot = _multistring_dict(ms)
-        parts.append((field_name, tuple(sorted(snapshot.items()))))
+        parts.append((field_name, tuple(sorted(snapshot.values()))))
     return tuple(parts)
 
 
@@ -547,13 +684,24 @@ def _best_text(ms) -> str:
     return ""
 
 
-def apply_reference(decision, target, owner_obj, spec: "ReferenceFieldSpec", cache: dict, tag):
+def apply_reference(decision, target, owner_obj, spec: "ReferenceFieldSpec", cache: dict, tag,
+                     ws_map=None):
     """Move-mode executor for one `ReferenceDecision` (contracts/
     reference-resolver.md). Returns the target item the owner should
     reference, or None.
 
     `decision is None` (source_item was unset) is the FR-007 non-destructive
     no-op: `owner_obj`'s field is left completely untouched.
+
+    `ws_map` (WS-keying hardening, this cycle): optional
+    ``{source_ws_id: target_ws_id}`` dict, forwarded through to
+    `conflict.apply_update_semantic`/`ApplySyncableProperties` on the
+    UPDATE/CREATE write paths, exactly like `categories.py`'s existing
+    closure UPDATE sites (`target.Senses.ApplySyncableProperties(...,
+    ws_map=ws_map)` etc.). Defaults to `None` (identity: a source Id maps
+    to the same target Id when no rename is configured) so every existing
+    caller (and every unit test built before this parameter existed)
+    continues to work unchanged.
     """
     if decision is None:
         return None
@@ -595,12 +743,28 @@ def apply_reference(decision, target, owner_obj, spec: "ReferenceFieldSpec", cac
         # empty/unset dict as "skip" -- so this can never blank a target WS
         # alt from an empty/unset source alt (FR-007 non-destructive
         # invariant), it can only add/update alts the source actually has.
+        #
+        # WS-keying hardening (this cycle): `ApplySyncableProperties` matches
+        # a multistring prop value by writing-system **Id**, not handle (the
+        # authoritative, confirmed-live `BaseOperations` contract) -- so
+        # `src_props[field]` must be Id-keyed, not the raw per-project
+        # handle `_multistring_dict` returns by default. `_id_keyed_multi_ws`
+        # best-effort-translates via content-matching against the target's
+        # own current snapshot (+ elimination for genuinely new alts);
+        # `_resolve_target_ws_by_id` supplies its `{id: handle}` table. When
+        # either can't be resolved, fall back to the raw handle-keyed
+        # snapshot (today's legacy best-effort behaviour -- never worse than
+        # before this fix, just not necessarily WS-correct).
+        target_ws_by_id = _resolve_target_ws_by_id(ops)
         src_props = {}
         tgt_props = {}
         for field_name in _FINGERPRINT_FIELDS:
-            src_props[field_name] = _multistring_dict(getattr(source_item, field_name, None))
-            tgt_props[field_name] = _multistring_dict(getattr(target_item, field_name, None))
-        conflict.apply_update_semantic(src_props, tgt_props, ops, target_item)
+            src_snapshot = _multistring_dict(getattr(source_item, field_name, None))
+            tgt_snapshot = _multistring_dict(getattr(target_item, field_name, None))
+            id_keyed = _id_keyed_multi_ws(src_snapshot, tgt_snapshot, target_ws_by_id)
+            src_props[field_name] = id_keyed if id_keyed else src_snapshot
+            tgt_props[field_name] = tgt_snapshot
+        conflict.apply_update_semantic(src_props, tgt_props, ops, target_item, ws_map=ws_map)
         if owner_obj is not None:
             setattr(owner_obj, spec.field_name, target_item)
         return target_item
@@ -680,16 +844,35 @@ def apply_reference(decision, target, owner_obj, spec: "ReferenceFieldSpec", cac
                         new_obj, ICmPossibility(parent_target_item).SubPossibilitiesOS,
                         "ICmPossibilityFactory", anc_guid,
                     )
+                # CREATE-path content audit (this cycle, LEAD decision):
+                # possibility Name/Abbreviation/Description are copied as
+                # FULL multi-WS (Id-keyed dicts), NOT best-alt -- a freshly
+                # created item deserves the same WS fidelity `apply_reference`
+                # UPDATE now gives an existing one. `_id_keyed_multi_ws`'s
+                # content-match phase is always a no-op here (a brand-new
+                # `new_obj` has no existing alts to match against), so this
+                # resolves purely via elimination against the target
+                # project's own known WS ids -- correct when the ancestor's
+                # populated-alt count matches the target's WS count exactly,
+                # else (the common case: more target WS's registered than
+                # this ancestor happens to have text for) it comes back
+                # empty and we fall back to `_best_text`'s single best-alt
+                # string (the pre-cycle behaviour) so CREATE never regresses
+                # to writing nothing at all.
                 ops = target.PossibilityLists
+                target_ws_by_id = _resolve_target_ws_by_id(ops)
+                create_props = {}
+                for field_name in _FINGERPRINT_FIELDS:
+                    field_ms = getattr(anc, field_name, None)
+                    if field_ms is None:
+                        continue
+                    src_snapshot = _multistring_dict(field_ms)
+                    if not src_snapshot:
+                        continue
+                    id_keyed = _id_keyed_multi_ws(src_snapshot, {}, target_ws_by_id)
+                    create_props[field_name] = id_keyed if id_keyed else _best_text(field_ms)
                 try:
-                    ops.ApplySyncableProperties(
-                        new_obj,
-                        {
-                            field_name: _best_text(getattr(anc, field_name, None))
-                            for field_name in _FINGERPRINT_FIELDS
-                            if getattr(anc, field_name, None) is not None
-                        },
-                    )
+                    ops.ApplySyncableProperties(new_obj, create_props, ws_map=ws_map)
                 except (AttributeError, TypeError):
                     pass
                 apply_residue(new_obj, ws, tag, class_name=getattr(anc, "ClassName", None))
