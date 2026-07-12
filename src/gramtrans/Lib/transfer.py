@@ -436,23 +436,23 @@ def execute(plan: RunPlan, source, target, report_sink, tag: ImportResidueTag,
     if leaf_count:
         report_sink.Info(f"[Move] Leaf-dispatch executed {leaf_count} action(s).")
 
-    # Feature 024 (T031, US3, FR-008 -- single-final-pass redesign): sweep
-    # every lexical relation touching ANY member of the now fully-settled
-    # `exec_ctx._copy_set` -- the leaf-dispatch loop above has just finished
-    # every AFFIXES/STEMS entry (the two categories that populate
-    # `_copy_set`), so every top-level sense and recursively-copied
-    # sub-sense this run will ever create is already registered. This is
-    # the move-execute "all copied" boundary. `categories.
-    # reproduce_lexical_relation`'s own per-relation dedup (resolver_cache)
-    # makes this idempotent alongside any per-member incremental trigger
-    # already fired inside `_walk_lex_entry_closure`/`owned.
-    # walk_owned_children` during the loop above -- this sweep only ever
-    # COMPLETES an already-partial relation (union-updates `TargetsRS`,
-    # never duplicates), and its own `_evaluate_lexical_relation` re-run
-    # retracts any stale drop record an earlier, less-complete evaluation
-    # left behind. Preview runs the SAME pass (`preview.build_run_plan`,
-    # after its own leaf-category loop) over the SAME kind of fully-settled
-    # copy_set, so the two converge on identical relations-in/decisions-out.
+    # Feature 024 (T031, US3, FR-008 -- single-final-pass redesign):
+    # `reproduce_all_lexical_relations` is the SOLE lexical-relation
+    # discovery + reproduction path (see its own module banner at
+    # categories.py:3488-3504) -- it runs exactly ONCE, here, after the
+    # leaf-dispatch loop above has finished every AFFIXES/STEMS entry (the
+    # two categories that populate `_copy_set`), so every top-level sense
+    # and recursively-copied sub-sense/allomorph this run will ever create
+    # is already registered. There is no per-member incremental trigger
+    # anywhere in `_walk_lex_entry_closure`/`owned.walk_owned_children`
+    # during the loop above; a relation touching any copied member is
+    # discovered and evaluated for the first and only time right here,
+    # source-ordered by construction (`_iter_relations_touching_copy_set`
+    # walks the copy_set once). Preview runs the SAME single final pass
+    # (`preview.plan_all_lexical_relations`, called from
+    # `preview.build_run_plan` after its own leaf-category loop) over the
+    # SAME kind of fully-settled copy_set, so the two converge on
+    # identical relations-in/decisions-out.
     if __package__:
         from .categories import reproduce_all_lexical_relations
     else:

@@ -378,6 +378,61 @@ def test_apr_member_not_in_copy_set_reports_dropped_and_apr_not_created():
 
 
 # ============================================================================
+# (d2) P1-A regression: an APR whose member-not-in-copy-set drop was
+# recorded on an EARLIER, incomplete call must NOT survive once a LATER
+# call (for the APR's other member, once IT has been copied) succeeds in
+# reproducing the APR -- the incremental-cache-staleness defect class this
+# cycle's lexrel rework fixed for `_evaluate_lexical_relation`
+# (categories.py:3578-3582) but left unfixed on this APR path.
+# ============================================================================
+
+def test_apr_stale_dropped_record_retracted_once_apr_is_later_reproduced():
+    apr_guid = "apr-guid-stale"
+    allo_a_src = _FakeSourceAllomorph("allo-a-guid-stale")
+    allo_b_src = _FakeSourceAllomorph("allo-b-guid-stale")
+    allo_a_new = _FakeNewAllomorph("allo-a-guid-stale")
+    allo_b_new = _FakeNewAllomorph("allo-b-guid-stale")
+
+    src_apr = _FakeSourceAPR(
+        apr_guid,
+        first_allomorph=allo_a_src,
+        rest_of_allos=[allo_b_src],
+        allomorphs=[allo_a_src, allo_b_src],
+    )
+
+    source = _FakeProject(aprs=[src_apr])
+    apr_factory = _FakeAPRFactory()
+    target = _FakeProject(factories={"IMoAlloAdhocProhibFactory": apr_factory})
+    # allo_a is copied FIRST -- allo_b is not yet in the copy set, so this
+    # first call can only report allo_b as missing and must create nothing.
+    ctx = _FakeContext(source, target, copy_set={"allo-a-guid-stale": allo_a_new})
+    dropped: list = []
+    resolver_cache: dict = {}
+
+    owned.reproduce_allomorph_hung_data(
+        allo_a_src, allo_a_new, ctx, _TAG, resolver_cache, dropped)
+
+    assert len(dropped) == 1
+    assert dropped[0].item_guid == "allo-b-guid-stale"
+    assert list(target.Cache.LangProject.MorphologicalDataOA.AdhocCoProhibitionsOC) == []
+
+    # allo_b is copied SECOND, in the same run -- this later call now finds
+    # every member present and reproduces the APR.
+    ctx._copy_set["allo-b-guid-stale"] = allo_b_new
+    owned.reproduce_allomorph_hung_data(
+        allo_b_src, allo_b_new, ctx, _TAG, resolver_cache, dropped)
+
+    target_aprs = list(target.Cache.LangProject.MorphologicalDataOA.AdhocCoProhibitionsOC)
+    assert len(target_aprs) == 1
+    assert target_aprs[0].Guid == apr_guid
+
+    # The FINAL fidelity report must contain NO DroppedItemRecord for this
+    # now-reproduced APR/member -- the earlier false-negative must have been
+    # retracted, not left sitting alongside the APR that WAS reproduced.
+    assert dropped == []
+
+
+# ============================================================================
 # (e) StemNameRA resolves against the target POS's StemNamesOC, or REPORTs.
 # ============================================================================
 

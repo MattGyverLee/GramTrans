@@ -282,22 +282,22 @@ def build_run_plan(
                 cat.value, len(pieces), len(actions) - _cat_actions_before,
             )
 
-    # Feature 024 (T031, US3, FR-008 -- single-final-pass redesign): sweep
-    # every lexical relation touching ANY member of the now fully-settled
-    # `context._copy_set` (every AFFIXES/STEMS entry, top-level sense, and
-    # recursively-copied sub-sense has been planned by the leaf-category
-    # loop above -- this runs AFTER it, at the "all copied" boundary).
-    # `categories.plan_lexical_relation_decision`'s own per-relation dedup
-    # (`_LEXREL_PLANNED_KEY` in `_resolver_cache`) makes this idempotent
-    # alongside any per-member incremental trigger already fired inside
+    # Feature 024 (T031, US3, FR-008 -- single-final-pass redesign):
+    # `plan_all_lexical_relations` is the SOLE lexical-relation discovery +
+    # planning path (see its own module banner at categories.py:3488-3504)
+    # -- it runs exactly ONCE, here, after the leaf-category loop above has
+    # planned every AFFIXES/STEMS entry, top-level sense, and recursively-
+    # planned sub-sense/allomorph, so the run's `context._copy_set` is fully
+    # settled. There is no per-member incremental trigger anywhere in
     # `_plan_entry_reference_decisions`/`owned.plan_owned_object_decisions`
-    # during the leaf-category loop -- this sweep only ever COMPLETES an
-    # already-partial relation (never duplicates), and its own
-    # `_evaluate_lexical_relation` re-run retracts any stale drop record an
-    # earlier, less-complete evaluation left behind. Move mode runs the
-    # SAME pass (`transfer.execute`, after its own leaf-dispatch loop) over
-    # the SAME kind of fully-settled copy_set, so Preview and Move converge
-    # on identical relations-in/decisions-out.
+    # during the leaf-category loop above; a relation touching any planned
+    # member is discovered and evaluated for the first and only time right
+    # here, source-ordered by construction
+    # (`_iter_relations_touching_copy_set` walks the copy_set once). Move
+    # mode runs the SAME single final pass (`transfer.
+    # reproduce_all_lexical_relations`, after its own leaf-dispatch loop)
+    # over the SAME kind of fully-settled copy_set, so Preview and Move
+    # converge on identical relations-in/decisions-out.
     if __package__:
         from .categories import plan_all_lexical_relations
     else:
