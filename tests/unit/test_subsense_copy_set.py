@@ -35,8 +35,15 @@ kmtEntryOrSenseCollection is used throughout: open-ended, no minimum member
 count, so the PAIR/TREE structural-minimum branches of
 `_evaluate_lexical_relation` never interfere with isolating this defect).
 
-Both tests below MUST FAIL against current code (write-first, RED). Do NOT
-implement the fix in this file.
+Both tests below drive reproduction through the FINAL-PASS entrypoint
+(`categories.reproduce_all_lexical_relations`) rather than the per-member
+incremental trigger (`categories._reproduce_lex_relations_for_member`,
+slated for removal alongside the single-final-pass redesign -- see
+`test_lexrel_final_pass.py`'s module docstring) -- the sub-sense copy is
+still driven through the real `owned.walk_owned_children` closure
+entrypoint, unchanged. Both tests are GREEN (the QC P1 registration fix,
+commit 11c60ef, already landed); do NOT implement further fixes in this
+file.
 """
 from __future__ import annotations
 
@@ -302,10 +309,10 @@ def test_relation_with_sole_subsense_member_is_reproduced():
     assert "sub-1" in ctx._copy_set
     assert ctx._copy_set["sub-1"] is new_sub1
 
-    # Effect assertion: discovery/reproduction driven by the sub-sense's own
-    # GUID must find and reproduce the relation.
-    categories._reproduce_lex_relations_for_member(
-        sub1, ctx, _TAG, resolver_cache, dropped)
+    # Effect assertion: the FINAL PASS, run over the now fully-settled
+    # copy_set, must find and reproduce the relation (not the per-member
+    # incremental trigger, which is slated for removal).
+    categories.reproduce_all_lexical_relations(ctx, _TAG, resolver_cache, dropped)
 
     new_rels = list(target_type.MembersOC)
     assert len(new_rels) == 1
@@ -364,8 +371,12 @@ def test_relation_with_sense_and_subsense_members_reproduces_without_false_drop(
         src_sense, new_sense, ctx, _TAG, resolver_cache, dropped)
     new_sub1 = new_sense.SensesOS[0]
 
-    categories._reproduce_lex_relations_for_member(
-        src_sense, ctx, _TAG, resolver_cache, dropped)
+    # Final-pass entrypoint, not the doomed per-member trigger -- the
+    # top-level sense was already registered above (pre-populated) and the
+    # sub-sense's own registration/discovery already ran inside
+    # `walk_owned_children`; this call mirrors `transfer.execute`'s
+    # end-of-run sweep and must converge on the same, complete result.
+    categories.reproduce_all_lexical_relations(ctx, _TAG, resolver_cache, dropped)
 
     new_rels = list(target_type.MembersOC)
     assert len(new_rels) == 1

@@ -1,53 +1,63 @@
-"""Write-first tests (feature 024, US3, FR-008) locking the DEFECT that the
-incremental, per-copied-member/GUID-cached lexical-relation discovery in
-`Lib/categories.py` (`_evaluate_lexical_relation`, `reproduce_lexical_
-relation`, `plan_lexical_relation_decision`, `_reproduce_lex_relations_for_
-member`/`_plan_lex_relations_for_member`) produces WRONG, PERMANENT results
-for a multi-member relation whose members are copied at DIFFERENT times:
+"""Tests (feature 024, US3, FR-008) driving lexical-relation reproduction
+through the FINAL-PASS entrypoints ONLY --
+`categories.reproduce_all_lexical_relations` (Move) /
+`categories.plan_all_lexical_relations` (Preview) -- the same functions
+`Lib/transfer.py.execute`/`Lib/preview.py.build_run_plan` call once, after
+the run's ENTIRE `ctx._copy_set` has been assembled. This file no longer
+calls the per-member incremental trigger functions
+(`categories._reproduce_lex_relations_for_member`/
+`categories._plan_lex_relations_for_member`, `owned._reproduce_lex_relations_
+for_recursed_child`/`owned._plan_lex_relations_for_recursed_child`) directly
+-- those are slated for removal once the single-final-pass redesign lands
+(the "next task"), so no test here may pin them as a standalone API. Where
+a scenario needs a member to already be sitting in `ctx._copy_set` "as if"
+an earlier point of the closure had copied it, the test drives that through
+`owned.walk_owned_children`/`owned.plan_owned_object_decisions` (a surviving
+closure entrypoint) or by mutating `ctx._copy_set` directly and re-invoking
+the final-pass entrypoint -- never by calling the doomed per-member trigger.
 
-  * COLLECTION/SEQUENCE/TREE kinds: the FIRST discovery (fired the moment
-    the FIRST member is copied) creates-and-CACHES a PARTIAL `ILexReference`
-    (missing every member not yet copied) keyed by relation GUID
-    (`_LEXREL_REPRODUCED_KEY`/`_LEXREL_PLANNED_KEY`). Every LATER discovery
-    trigger (fired when a later member is copied) hits that cache and
-    returns immediately -- the relation is never completed, and the
-    `DroppedItemRecord` ("lexical-relation member not in copy set")
-    recorded for the not-yet-copied member is NEVER retracted, becoming a
-    permanent FALSE report for a member that WAS, in fact, copied.
-  * PAIR/ASYMMETRIC-PAIR kinds: a FIRST discovery with < 2 members copied
-    drops the WHOLE relation ("reduced below minimum") and is deliberately
-    NOT cached (so a later, fuller discovery CAN still succeed) -- but the
-    earlier "reduced below minimum" `DroppedItemRecord` is never retracted
-    either, so a relation that ultimately reproduces successfully still
-    carries a stale, phantom, contradictory drop record.
+Tests 1-5 retarget the ORIGINAL write-first defects this file locked
+(partial-cache-then-stale-drop for COLLECTION/PAIR members copied at
+different times) onto the final-pass entrypoints: each "member copied at
+time T" step is now `ctx._copy_set[guid] = value` followed by a call to
+`reproduce_all_lexical_relations`/`plan_all_lexical_relations` -- these
+calls hit EXACTLY the same `reproduce_lexical_relation`/
+`plan_lexical_relation_decision` caching core the old per-member trigger
+called, so the same completeness/no-false-drop guarantees apply, now
+proven through the surviving API.
 
-`categories.py` ~3522-3637 (`_evaluate_lexical_relation`, the shared
-Preview/Move core), ~3640-3723 (`reproduce_lexical_relation`, Move, GUID
-cache ~3669/3721), ~3726-3760 (`plan_lexical_relation_decision`, Preview,
-own `_LEXREL_PLANNED_KEY` cache in the SAME `resolver_cache`), ~3798-3826
-(`_reproduce_lex_relations_for_member`/`_plan_lex_relations_for_member`,
-the per-member trigger). `Lib/owned.py` ~441-459 (`_register_copy_set`),
-~463-519 (`_reproduce_lex_relations_for_recursed_child`/`_plan_lex_
-relations_for_recursed_child` -- QC P1: a recursively-copied sub-sense is
-now registered into `ctx._copy_set` AND given its own discovery trigger the
-moment it is created, so the sub-sense-registration gap `test_subsense_
-copy_set.py` was written against is already fixed; the tests below build on
-that fix rather than re-testing it).
+Tests 6-8 (NEW, this cycle) are the FIRST tests in this suite to prove the
+HYBRID's remaining defect: TargetsRS on a MULTI-member relation whose
+members are copied (added to `ctx._copy_set`) in an order DIFFERENT from
+the SOURCE relation's own `TargetsRS` order comes out in CLOSURE-DISCOVERY
+order, not SOURCE order, because `reproduce_lexical_relation`'s cache-hit
+branch only ever APPENDS newly-available members onto whatever partial
+`TargetsRS` an earlier, less-complete final-pass call already created --
+it never re-sorts. `_evaluate_lexical_relation` itself always recomputes
+`copied_members` in correct source order from scratch every call (proven by
+using it as a read-only probe of the CORRECT order below); the divergence
+lives entirely in the stateful `existing.TargetsRS.Add()` accumulation in
+`reproduce_lexical_relation`'s cache-hit branch. These three tests (test 6
+COLLECTION, test 7 SEQUENCE, test 8 TREE) MUST FAIL (RED) against current
+code on their ORDER assertion, and MUST PASS once the single-final-pass
+redesign makes TargetsRS always reflect the CURRENT, fully-settled copy_set
+recomputed in source order (regardless of how many times, or in what copy
+order, the final pass happens to run). PAIR/ASYMMETRIC-PAIR relations are
+NOT similarly affected (a below-minimum evaluation is never cached, so the
+first CREATE only ever happens once >=2 members are already present, at
+which point `copied_members` is already correct source order) -- no
+dedicated PAIR ordering test is added for that reason.
 
-None of these tests pre-register a member into `ctx._copy_set` before the
-timeline that copies it (unlike `test_subsense_copy_set.py`'s Test 2, which
-pre-registers the top-level sense before calling `walk_owned_children` --
-masking the real ordering where a top-level sense's OWN registration
-(categories.py ~4022) happens AFTER its recursive sub-sense leg has already
-run (~4004-4005) and after the sub-sense's own discovery trigger has
-already fired (owned.py ~748-749). See the module-end note re: whether
-that masking should be removed once the final-pass implementer lands.
-
-This is a diagnostic/regression-locking file for the upcoming SINGLE
-FINAL PASS redesign (replacing per-member incremental discovery). ALL
-tests below MUST FAIL against current code and MUST PASS once discovery
-runs as one pass over the fully-settled `ctx._copy_set` at the end of the
-run. Do NOT implement the fix here.
+Test 9 (NEW, this cycle) proves a relation whose sole trigger-eligible
+member is an ALLOMORPH (`IMoForm`) is discovered and reproduced by the
+final pass even though NO per-member incremental trigger exists for
+allomorphs at all (`categories._plan_entry_reference_decisions`'s allomorph
+loop registers `copy_set[a_guid] = True` but never calls
+`_plan_lex_relations_for_member` for it -- confirmed by reading
+categories.py's allomorph loop, ~3456-3481). This case is already GREEN
+today: the final pass's own enumeration (`_iter_relations_touching_copy_
+set`) does not care what kind of object a `TargetsRS` member is, so it is
+found and reproduced on its first (and only) evaluation regardless.
 """
 from __future__ import annotations
 
@@ -268,13 +278,18 @@ def test_cross_entry_collection_relation_reproduces_complete_preview_and_move():
     """Two entries copied at DIFFERENT points in the closure both being
     members of one open-ended COLLECTION relation must reproduce COMPLETE
     (both members present, no false drop) in BOTH Move and Preview, and the
-    two must not diverge.
+    two must not diverge. Driven ENTIRELY through the final-pass entrypoints
+    (`reproduce_all_lexical_relations`/`plan_all_lexical_relations`), called
+    once per simulated copy point -- never through the per-member incremental
+    trigger.
 
-    FAILS TODAY (partial-cache bug): entry 1's discovery trigger fires
-    while entry 2 is not yet copied -- creates+caches a relation with ONLY
-    entry 1, permanently drops entry 2 as "not in copy set". Entry 2's OWN
-    later discovery trigger hits the GUID cache and returns immediately,
-    never adding entry 2 and never retracting its false drop.
+    Already GREEN (T031 hybrid fix, commit 4142899): the first final-pass
+    call, with only entry 1 in `_copy_set`, creates+caches a relation with
+    ONLY entry 1 and drops entry 2 as "not in copy set"; the SECOND
+    final-pass call (entry 2 now copied) re-evaluates against the grown
+    copy_set, unions in entry 2, and retracts the stale drop. Since entry 1
+    is source-first here, the union-append lands in correct source order
+    too (see tests 6-8 for the case where it does not).
     """
     type_guid, rel_guid = "type-cross", "rel-cross"
     e1_src, e2_src = _FakeMember("entry-1"), _FakeMember("entry-2")
@@ -293,21 +308,19 @@ def test_cross_entry_collection_relation_reproduces_complete_preview_and_move():
     move_dropped, preview_dropped = [], []
     move_cache, preview_cache = {}, {}
 
-    # --- entry 1 copied first ---
+    # --- entry 1 copied first: final pass runs against the copy_set as it
+    # stands at this point in the (simulated) closure ---
     move_ctx._copy_set["entry-1"] = e1_move
-    categories._reproduce_lex_relations_for_member(
-        e1_src, move_ctx, _TAG, move_cache, move_dropped)
+    categories.reproduce_all_lexical_relations(move_ctx, _TAG, move_cache, move_dropped)
     preview_ctx._copy_set["entry-1"] = True
-    preview_rec_1 = categories._plan_lex_relations_for_member(
-        e1_src, preview_ctx, preview_cache, preview_dropped)
+    categories.plan_all_lexical_relations(preview_ctx, preview_cache, preview_dropped)
 
-    # --- entry 2 copied LATER (separate point in the closure) ---
+    # --- entry 2 copied LATER (separate point in the closure); the final
+    # pass runs again against the now-grown copy_set ---
     move_ctx._copy_set["entry-2"] = e2_move
-    categories._reproduce_lex_relations_for_member(
-        e2_src, move_ctx, _TAG, move_cache, move_dropped)
+    categories.reproduce_all_lexical_relations(move_ctx, _TAG, move_cache, move_dropped)
     preview_ctx._copy_set["entry-2"] = True
-    preview_rec_2 = categories._plan_lex_relations_for_member(
-        e2_src, preview_ctx, preview_cache, preview_dropped)
+    categories.plan_all_lexical_relations(preview_ctx, preview_cache, preview_dropped)
 
     move_rels = list(move_ctx.target_handle.Cache.LangProject.LexDbOA
                       .ReferencesOA.PossibilitiesOS[0].MembersOC)
@@ -332,16 +345,21 @@ def test_sense_and_subsense_collection_relation_reproduces_complete_no_false_dro
     """A relation whose members are a top-level sense (copied first) and a
     DIFFERENT entry's sub-sense (copied later, via the recursive `SensesOS`
     leg) must reproduce with BOTH members and no false drop, in both Move
-    and Preview. No member is pre-registered into `ctx._copy_set` outside
-    the actual copy mechanism (`owned.walk_owned_children`/
-    `plan_owned_object_decisions`) -- ordering is exactly as the real
-    closure produces it.
+    and Preview. Sense A's copy point is driven through the final-pass
+    entrypoint directly (no per-member trigger call); sense B's sub-sense is
+    driven through the real closure entrypoint (`owned.walk_owned_children`/
+    `owned.plan_owned_object_decisions`) -- ordering of `_copy_set` is
+    exactly as the real closure produces it. (`walk_owned_children` still
+    fires its OWN internal recursed-child trigger for the sub-sense --
+    that is plumbing inside a surviving entrypoint, not something this test
+    calls directly.)
 
-    FAILS TODAY: sense A's discovery trigger fires before sense B's
-    sub-sense exists at all -- partial-caches the relation with only sense
-    A, permanently drops the sub-sense as "not in copy set" even after
-    `walk_owned_children` copies and registers it (owned.py QC P1 fix) and
-    fires its OWN discovery trigger, which hits the stale cache.
+    Already GREEN: sense A happens to be source-first here, so the
+    final pass's first call (sense A only) creates a correctly-ordered
+    partial relation, and the sub-sense's later registration unions onto
+    the END in the same relative order -- no divergence for this 2-member,
+    source-order-matches-copy-order case. See tests 6-8 for the ordering
+    defect this masks.
     """
     type_guid, rel_guid = "type-sense-sub", "rel-sense-sub"
 
@@ -367,11 +385,9 @@ def test_sense_and_subsense_collection_relation_reproduces_complete_no_false_dro
     # categories.py's own top-level-sense registration order) ---
     sense_a_move = _NewSense("sense-a-new")
     move_ctx._copy_set["sense-a"] = sense_a_move
-    categories._reproduce_lex_relations_for_member(
-        sense_a_src, move_ctx, _TAG, move_cache, move_dropped)
+    categories.reproduce_all_lexical_relations(move_ctx, _TAG, move_cache, move_dropped)
     preview_ctx._copy_set["sense-a"] = True
-    categories._plan_lex_relations_for_member(
-        sense_a_src, preview_ctx, preview_cache, preview_dropped)
+    categories.plan_all_lexical_relations(preview_ctx, preview_cache, preview_dropped)
 
     # --- sense B's sub-sense copied LATER, via the real recursive walk
     # (registers + fires its own discovery trigger internally -- owned.py
@@ -403,15 +419,17 @@ def test_pair_relation_members_copied_at_different_times_reproduces_once_no_stal
     """A PAIR relation whose 2 members are copied at different times must
     end up reproduced exactly once, with both members, and NO leftover
     "reduced below minimum" `DroppedItemRecord` once the second member
-    arrives and completes it.
+    arrives and completes it. Driven entirely through
+    `reproduce_all_lexical_relations`/`plan_all_lexical_relations`, called
+    once per simulated copy point.
 
-    FAILS TODAY (stale-drop bug): member 1 alone triggers the pair's
+    Already GREEN (T031 hybrid fix): member 1 alone triggers the pair's
     structural-minimum check (< 2 copied) -- drops the WHOLE relation
-    ("reduced below minimum"), deliberately NOT cached so a later, fuller
-    attempt can still succeed. Member 2's later trigger DOES succeed and
-    creates the relation -- but the earlier drop record is never retracted,
-    so the successful relation coexists with a phantom "not reproduced"
-    report about itself.
+    ("reduced below minimum") and is deliberately NOT cached so a later,
+    fuller call can still succeed. Member 2's later call DOES succeed and
+    creates the relation, and `_evaluate_lexical_relation`'s own retraction
+    removes the earlier "below minimum" drop record for this same relation
+    GUID.
     """
     type_guid, rel_guid = "type-pair", "rel-pair"
     m1_src, m2_src = _FakeMember("pair-m1"), _FakeMember("pair-m2")
@@ -432,19 +450,15 @@ def test_pair_relation_members_copied_at_different_times_reproduces_once_no_stal
 
     # --- member 1 copied first: pair below minimum, whole relation dropped ---
     move_ctx._copy_set["pair-m1"] = m1_move
-    categories._reproduce_lex_relations_for_member(
-        m1_src, move_ctx, _TAG, move_cache, move_dropped)
+    categories.reproduce_all_lexical_relations(move_ctx, _TAG, move_cache, move_dropped)
     preview_ctx._copy_set["pair-m1"] = True
-    categories._plan_lex_relations_for_member(
-        m1_src, preview_ctx, preview_cache, preview_dropped)
+    categories.plan_all_lexical_relations(preview_ctx, preview_cache, preview_dropped)
 
     # --- member 2 copied later: pair now complete ---
     move_ctx._copy_set["pair-m2"] = m2_move
-    categories._reproduce_lex_relations_for_member(
-        m2_src, move_ctx, _TAG, move_cache, move_dropped)
+    categories.reproduce_all_lexical_relations(move_ctx, _TAG, move_cache, move_dropped)
     preview_ctx._copy_set["pair-m2"] = True
-    categories._plan_lex_relations_for_member(
-        m2_src, preview_ctx, preview_cache, preview_dropped)
+    categories.plan_all_lexical_relations(preview_ctx, preview_cache, preview_dropped)
 
     assert len(move_factory.create_calls) == 1
     move_rels = list(move_ctx.target_handle.Cache.LangProject.LexDbOA
@@ -464,13 +478,12 @@ def test_genuinely_absent_member_reported_exactly_once_not_duplicated():
     """A 3-member COLLECTION relation where member 3 is NEVER copied must
     end up with exactly ONE `DroppedItemRecord` total once members 1 and 2
     (copied at different times) both land -- member 3's genuine absence
-    reported once, no stale/duplicate record for members 1 or 2.
+    reported once, no stale/duplicate record for members 1 or 2. Driven
+    through `reproduce_all_lexical_relations`, called once per copy point.
 
-    FAILS TODAY: member 1's trigger partial-caches the relation (only
-    member 1 present) and reports BOTH member 2 and member 3 as missing.
-    Member 2's later trigger hits the cache and never corrects anything --
-    its "not in copy set" report survives forever alongside member 3's
-    genuine one, so `dropped` ends up with 2 records instead of 1.
+    Already GREEN: the first final-pass call (member 1 only) reports BOTH
+    member 2 and member 3 as missing; the second call (member 2 now copied)
+    retracts member 2's drop and leaves only member 3's genuine one.
     """
     type_guid, rel_guid = "type-triple", "rel-triple"
     m1_src, m2_src, m3_src = (
@@ -492,12 +505,10 @@ def test_genuinely_absent_member_reported_exactly_once_not_duplicated():
     move_cache = {}
 
     move_ctx._copy_set["tri-m1"] = m1_move
-    categories._reproduce_lex_relations_for_member(
-        m1_src, move_ctx, _TAG, move_cache, move_dropped)
+    categories.reproduce_all_lexical_relations(move_ctx, _TAG, move_cache, move_dropped)
 
     move_ctx._copy_set["tri-m2"] = m2_move
-    categories._reproduce_lex_relations_for_member(
-        m2_src, move_ctx, _TAG, move_cache, move_dropped)
+    categories.reproduce_all_lexical_relations(move_ctx, _TAG, move_cache, move_dropped)
 
     assert len(move_dropped) == 1
     assert move_dropped[0].item_guid == "tri-m3"
@@ -514,19 +525,17 @@ def test_genuinely_absent_member_reported_exactly_once_not_duplicated():
 # ============================================================================
 
 def test_relation_evaluated_exactly_once_regardless_of_trigger_count():
-    """A 2-member COLLECTION relation triggers discovery THREE times (once
-    per member's own copy point, plus one redundant re-trigger for member 1
-    after the relation is already complete) -- must still create exactly
-    ONE `ILexReference`, with each member appearing exactly ONCE in
-    `TargetsRS` (never re-added).
+    """A 2-member COLLECTION relation's discovery/reproduction is driven
+    THREE times via `reproduce_all_lexical_relations` (once per member's own
+    copy point, plus one redundant call for the SAME, already-complete
+    copy_set) -- must still create exactly ONE `ILexReference`, with each
+    member appearing exactly ONCE in `TargetsRS` (never re-added).
 
-    FAILS TODAY: member 1's trigger caches a PARTIAL relation (member 1
-    only). Member 2's trigger hits the cache and never adds member 2 --
-    `TargetsRS` never reaches length 2. (The redundant third trigger
-    already behaves safely today via the GUID cache -- this test locks
-    that non-duplication guarantee wrong-side-up: this file's whole point
-    is that today's cache-driven "safety" against duplication is bought at
-    the cost of never allowing legitimate completion.)
+    Already GREEN: the first call (member 1 only) caches a PARTIAL relation.
+    The second call (member 2 now copied) unions member 2 in. The third,
+    redundant call (copy_set unchanged) hits the cache and adds nothing new
+    -- `resolver_cache`'s GUID-keyed dedup makes this safe regardless of how
+    many times the final pass happens to run.
     """
     type_guid, rel_guid = "type-retrigger", "rel-retrigger"
     m1_src, m2_src = _FakeMember("re-m1"), _FakeMember("re-m2")
@@ -546,17 +555,14 @@ def test_relation_evaluated_exactly_once_regardless_of_trigger_count():
     move_cache = {}
 
     move_ctx._copy_set["re-m1"] = m1_move
-    categories._reproduce_lex_relations_for_member(
-        m1_src, move_ctx, _TAG, move_cache, move_dropped)
+    categories.reproduce_all_lexical_relations(move_ctx, _TAG, move_cache, move_dropped)
 
     move_ctx._copy_set["re-m2"] = m2_move
-    categories._reproduce_lex_relations_for_member(
-        m2_src, move_ctx, _TAG, move_cache, move_dropped)
+    categories.reproduce_all_lexical_relations(move_ctx, _TAG, move_cache, move_dropped)
 
-    # Redundant re-trigger for member 1, after the relation is (or should
-    # be) already complete.
-    categories._reproduce_lex_relations_for_member(
-        m1_src, move_ctx, _TAG, move_cache, move_dropped)
+    # Redundant re-run of the final pass, after the relation is (or should
+    # be) already complete -- copy_set is unchanged from the previous call.
+    categories.reproduce_all_lexical_relations(move_ctx, _TAG, move_cache, move_dropped)
 
     assert len(move_factory.create_calls) == 1
     move_rels = list(move_ctx.target_handle.Cache.LangProject.LexDbOA
@@ -564,6 +570,213 @@ def test_relation_evaluated_exactly_once_regardless_of_trigger_count():
     assert len(move_rels) == 1
     assert list(move_rels[0].TargetsRS) == [m1_move, m2_move]
     assert not any("not in copy set" in getattr(r, "reason", "") for r in move_dropped)
+
+
+# ============================================================================
+# Tests 6-8 (NEW, this cycle) -- SOURCE-ORDER TargetsRS regardless of
+# copy/discovery order. RED against the current hybrid for all three: the
+# cache-hit union-append in `reproduce_lexical_relation` lands new members
+# at the END of whatever partial `TargetsRS` an earlier, less-complete
+# final-pass call already created, not at their correct source position.
+# ============================================================================
+
+_MAPPING_TYPE_SEQUENCE = 14  # kmtEntryOrSenseSequence -- ordered, open-ended
+_MAPPING_TYPE_TREE = 13      # kmtEntryOrSenseTree -- ordered, root = TargetsRS[0]
+
+
+def test_collection_relation_targetsrs_in_source_order_regardless_of_copy_order():
+    """Source relation members [A, B, C] (COLLECTION) must reproduce as
+    target TargetsRS [A, B, C] even though the closure copies them in the
+    order A, C, B (final pass invoked once per copy point, mirroring how
+    the SAME `reproduce_lexical_relation` cache is exercised whether the
+    caller is a per-member trigger or repeated final-pass calls).
+
+    RED today: stage 1 (A only) creates TargetsRS=[A]. Stage 2 (+C) unions
+    C onto the end -> [A, C]. Stage 3 (+B) unions B onto the end -> [A, C,
+    B] -- WRONG source order (B belongs between A and C).
+    """
+    type_guid, rel_guid = "type-coll-order", "rel-coll-order"
+    a_src, b_src, c_src = _FakeMember("ord-a"), _FakeMember("ord-b"), _FakeMember("ord-c")
+    a_mv, b_mv, c_mv = _FakeMember("ord-a"), _FakeMember("ord-b"), _FakeMember("ord-c")
+
+    src_type = _FakeLexRefType(type_guid, _MAPPING_TYPE_COLLECTION)
+    src_rel = _FakeSourceLexReference(rel_guid, src_type, targets=[a_src, b_src, c_src])
+    src_type.MembersOC.Add(src_rel)
+
+    move_factory = _FakeLexReferenceFactory()
+    move_ctx, preview_ctx = _new_ctx_pair(
+        ref_types_src=[src_type],
+        ref_types_move_tgt=[_FakeLexRefType(type_guid, _MAPPING_TYPE_COLLECTION)],
+        ref_types_preview_tgt=[_FakeLexRefType(type_guid, _MAPPING_TYPE_COLLECTION)],
+        rel_factory=move_factory)
+    move_dropped, preview_dropped = [], []
+    move_cache, preview_cache = {}, {}
+
+    # Copy order: A, then C, then B -- deliberately NOT source order.
+    for guid, mv in (("ord-a", a_mv), ("ord-c", c_mv), ("ord-b", b_mv)):
+        move_ctx._copy_set[guid] = mv
+        categories.reproduce_all_lexical_relations(move_ctx, _TAG, move_cache, move_dropped)
+        preview_ctx._copy_set[guid] = True
+        categories.plan_all_lexical_relations(preview_ctx, preview_cache, preview_dropped)
+
+    move_rels = list(move_ctx.target_handle.Cache.LangProject.LexDbOA
+                      .ReferencesOA.PossibilitiesOS[0].MembersOC)
+    assert len(move_rels) == 1
+    # Completeness (already correct today): all three present, no false drop.
+    assert {m.Guid for m in move_rels[0].TargetsRS} == {"ord-a", "ord-b", "ord-c"}
+    assert not any("not in copy set" in getattr(r, "reason", "") for r in move_dropped)
+    assert not any("not in copy set" in getattr(r, "reason", "") for r in preview_dropped)
+    # SOURCE-ORDER assertion -- RED today (comes out [A, C, B]).
+    assert list(move_rels[0].TargetsRS) == [a_mv, b_mv, c_mv]
+
+
+def test_sequence_relation_targetsrs_in_source_order_regardless_of_copy_order():
+    """Same defect as the COLLECTION test above, for a SEQUENCE-kind
+    relation (MappingType 14, `kmtEntryOrSenseSequence`) -- semantically
+    ORDER-defined by definition, so a misordered TargetsRS is a correctness
+    bug, not just cosmetic. Also asserts Preview/Move convergence: Preview's
+    own read-only probe of the CURRENT, fully-settled copy_set (via the
+    shared `_evaluate_lexical_relation` core -- never used here to DRIVE
+    reproduction, only to inspect what order SHOULD result) always computes
+    correct source order, proving the divergence lives in Move's stateful
+    `TargetsRS.Add()` accumulation, not in the shared decision core.
+    """
+    type_guid, rel_guid = "type-seq-order", "rel-seq-order"
+    a_src, b_src, c_src = _FakeMember("seq-a"), _FakeMember("seq-b"), _FakeMember("seq-c")
+    a_mv, b_mv, c_mv = _FakeMember("seq-a"), _FakeMember("seq-b"), _FakeMember("seq-c")
+
+    src_type = _FakeLexRefType(type_guid, _MAPPING_TYPE_SEQUENCE)
+    src_rel = _FakeSourceLexReference(rel_guid, src_type, targets=[a_src, b_src, c_src])
+    src_type.MembersOC.Add(src_rel)
+
+    move_factory = _FakeLexReferenceFactory()
+    move_ctx, preview_ctx = _new_ctx_pair(
+        ref_types_src=[src_type],
+        ref_types_move_tgt=[_FakeLexRefType(type_guid, _MAPPING_TYPE_SEQUENCE)],
+        ref_types_preview_tgt=[_FakeLexRefType(type_guid, _MAPPING_TYPE_SEQUENCE)],
+        rel_factory=move_factory)
+    move_dropped, preview_dropped = [], []
+    move_cache, preview_cache = {}, {}
+
+    for guid, mv in (("seq-a", a_mv), ("seq-c", c_mv), ("seq-b", b_mv)):
+        move_ctx._copy_set[guid] = mv
+        categories.reproduce_all_lexical_relations(move_ctx, _TAG, move_cache, move_dropped)
+        # Preview's copy_set stores the GUID itself (not a bare `True`
+        # placeholder) so the read-only probe below can show actual member
+        # identity, not just membership count.
+        preview_ctx._copy_set[guid] = guid
+        categories.plan_all_lexical_relations(preview_ctx, preview_cache, preview_dropped)
+
+    # Preview convergence probe: the shared core, evaluated fresh against
+    # the NOW fully-settled copy_set, always recomputes correct source
+    # order -- this is a read-only assertion helper, not a reproduction
+    # driver (its own drop-list side effects are discarded via a scratch list).
+    probe_dropped: list = []
+    evaluated = categories._evaluate_lexical_relation(src_rel, preview_ctx, probe_dropped)
+    assert evaluated is not None
+    _rel_guid, _target_type, correct_order = evaluated
+    assert correct_order == ["seq-a", "seq-b", "seq-c"]
+
+    move_rels = list(move_ctx.target_handle.Cache.LangProject.LexDbOA
+                      .ReferencesOA.PossibilitiesOS[0].MembersOC)
+    assert len(move_rels) == 1
+    assert not any("not in copy set" in getattr(r, "reason", "") for r in move_dropped)
+    assert not any("not in copy set" in getattr(r, "reason", "") for r in preview_dropped)
+    # SOURCE-ORDER assertion -- RED today: Move's real TargetsRS diverges
+    # from the correct order the shared core always computes.
+    assert list(move_rels[0].TargetsRS) == [a_mv, b_mv, c_mv]
+
+
+def test_tree_relation_targetsrs_in_source_order_regardless_of_copy_order():
+    """Same defect for a TREE-kind relation (MappingType 13,
+    `kmtEntryOrSenseTree`): root/parent (TargetsRS[0], the ROOT source
+    member) copied FIRST (required -- a tree without its root is
+    incoherent and never reproduced at all), then the two children copied
+    OUT of source order (Y before X, though source order is [ROOT, X, Y]).
+    """
+    type_guid, rel_guid = "type-tree-order", "rel-tree-order"
+    root_src, x_src, y_src = (
+        _FakeMember("tree-root"), _FakeMember("tree-x"), _FakeMember("tree-y"))
+    root_mv, x_mv, y_mv = (
+        _FakeMember("tree-root"), _FakeMember("tree-x"), _FakeMember("tree-y"))
+
+    src_type = _FakeLexRefType(type_guid, _MAPPING_TYPE_TREE)
+    src_rel = _FakeSourceLexReference(
+        rel_guid, src_type, targets=[root_src, x_src, y_src])
+    src_type.MembersOC.Add(src_rel)
+
+    move_factory = _FakeLexReferenceFactory()
+    move_ctx, preview_ctx = _new_ctx_pair(
+        ref_types_src=[src_type],
+        ref_types_move_tgt=[_FakeLexRefType(type_guid, _MAPPING_TYPE_TREE)],
+        ref_types_preview_tgt=[_FakeLexRefType(type_guid, _MAPPING_TYPE_TREE)],
+        rel_factory=move_factory)
+    move_dropped, preview_dropped = [], []
+    move_cache, preview_cache = {}, {}
+
+    # Copy order: ROOT (required first), then Y, then X -- NOT source order.
+    for guid, mv in (("tree-root", root_mv), ("tree-y", y_mv), ("tree-x", x_mv)):
+        move_ctx._copy_set[guid] = mv
+        categories.reproduce_all_lexical_relations(move_ctx, _TAG, move_cache, move_dropped)
+        preview_ctx._copy_set[guid] = True
+        categories.plan_all_lexical_relations(preview_ctx, preview_cache, preview_dropped)
+
+    move_rels = list(move_ctx.target_handle.Cache.LangProject.LexDbOA
+                      .ReferencesOA.PossibilitiesOS[0].MembersOC)
+    assert len(move_rels) == 1
+    assert not any("root member not copied" in getattr(r, "reason", "") for r in move_dropped)
+    assert not any("not in copy set" in getattr(r, "reason", "") for r in move_dropped)
+    assert not any("not in copy set" in getattr(r, "reason", "") for r in preview_dropped)
+    # SOURCE-ORDER assertion -- RED today (comes out [ROOT, Y, X]).
+    assert list(move_rels[0].TargetsRS) == [root_mv, x_mv, y_mv]
+
+
+# ============================================================================
+# Test 9 (NEW, this cycle) -- relation trigger-eligible member is an
+# ALLOMORPH: no per-member incremental trigger exists for allomorphs at all
+# (categories.py's allomorph loop registers `copy_set[a_guid] = True` but
+# never calls a per-member lexrel discovery function for it) -- the final
+# pass must still discover and reproduce it. Already GREEN.
+# ============================================================================
+
+def test_relation_with_allomorph_member_discovered_by_final_pass_only():
+    """A relation whose sole `TargetsRS` member is an allomorph (`IMoForm`)
+    is registered into `ctx._copy_set` exactly the way
+    `categories._plan_entry_reference_decisions`'s allomorph loop does
+    (`copy_set[a_guid] = True`, no discovery call alongside it) -- proving
+    the final pass is the ONLY path that ever finds this relation."""
+    type_guid, rel_guid = "type-allo", "rel-allo"
+    allo_src = _FakeMember("allo-1")
+    allo_mv = _FakeMember("allo-1")
+
+    src_type = _FakeLexRefType(type_guid, _MAPPING_TYPE_COLLECTION)
+    src_rel = _FakeSourceLexReference(rel_guid, src_type, targets=[allo_src])
+    src_type.MembersOC.Add(src_rel)
+
+    move_factory = _FakeLexReferenceFactory()
+    move_ctx, preview_ctx = _new_ctx_pair(
+        ref_types_src=[src_type],
+        ref_types_move_tgt=[_FakeLexRefType(type_guid, _MAPPING_TYPE_COLLECTION)],
+        ref_types_preview_tgt=[_FakeLexRefType(type_guid, _MAPPING_TYPE_COLLECTION)],
+        rel_factory=move_factory)
+    move_dropped, preview_dropped = [], []
+    move_cache, preview_cache = {}, {}
+
+    # Mirrors categories.py's allomorph loop: register into copy_set, no
+    # per-member discovery call alongside it (none exists for allomorphs).
+    move_ctx._copy_set["allo-1"] = allo_mv
+    preview_ctx._copy_set["allo-1"] = True
+
+    # ONLY the final pass ever runs for this member.
+    categories.reproduce_all_lexical_relations(move_ctx, _TAG, move_cache, move_dropped)
+    categories.plan_all_lexical_relations(preview_ctx, preview_cache, preview_dropped)
+
+    move_rels = list(move_ctx.target_handle.Cache.LangProject.LexDbOA
+                      .ReferencesOA.PossibilitiesOS[0].MembersOC)
+    assert len(move_rels) == 1
+    assert list(move_rels[0].TargetsRS) == [allo_mv]
+    assert not any("not in copy set" in getattr(r, "reason", "") for r in move_dropped)
+    assert not any("not in copy set" in getattr(r, "reason", "") for r in preview_dropped)
 
 
 # ============================================================================

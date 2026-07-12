@@ -1,5 +1,12 @@
-"""Write-first unit tests for the T031 lexical-relation reproduce path
-(feature 024 US3, FR-008) -- `categories.reproduce_lexical_relation`.
+"""Unit tests for the T031 lexical-relation reproduce path (feature 024 US3,
+FR-008), driven through the FINAL-PASS entrypoint
+`categories.reproduce_all_lexical_relations` (the same function
+`Lib/transfer.py.execute` calls once at the end of a run, over the fully-
+assembled `ctx._copy_set`) rather than by calling the per-relation
+`categories.reproduce_lexical_relation` directly against a single relation
+-- these tests exercise the enumeration (`_iter_relations_touching_copy_
+set`) as well as the per-relation structural rulings, matching how
+Move/Preview actually invoke this code.
 
 Contract: spec.md FR-008 ("reproduce lexical relations for a copied entry
 when that entry participates as a member of the relation, preserving the
@@ -17,12 +24,16 @@ members ONLY. `ILexRefType.MappingType` (Int32) gives the relation's
 structural kind (tree/pair/sequence/collection) -- preserve structure;
 report members not in the copy set (never silently include or drop).
 
-Function under test (NOT YET IMPLEMENTED -- T031, categories.py, per
-tasks.md): `categories.reproduce_lexical_relation(src_relation, ctx, tag,
-resolver_cache, dropped) -> new_relation | None`. This is the PER-RELATION
-leg of T031 (mirrors `owned.reproduce_allomorph_hung_data`'s per-allomorph
-granularity) -- discovering every relation a given copied entry/sense
-participates in is a separate concern this file does not test.
+Function under test: `categories.reproduce_all_lexical_relations(context,
+tag, resolver_cache, dropped) -> None` (categories.py), which enumerates
+every source `ILexReference` touching `context._copy_set`
+(`_iter_relations_touching_copy_set`, deduped by relation GUID) and, for
+each, applies the same per-relation ruling `categories.
+reproduce_lexical_relation(src_relation, ctx, tag, resolver_cache, dropped)
+-> new_relation | None` does (target-type resolution, partial-member
+policy, structural minimum by `MappingType`). The created relation (or its
+absence) is read back off `target_type.MembersOC`, not off a return value
+-- `reproduce_all_lexical_relations` itself returns `None`.
 
 Copy-set convention (same fixture design as `test_allomorph_hung_data.py`):
 `ctx._copy_set` is a `dict[str_guid, already_copied_target_object]` --
@@ -207,6 +218,7 @@ def test_lexical_relation_reproduced_with_all_copied_members_and_mapping_type_pr
     src_type = _FakeLexRefType(type_guid, _MAPPING_TYPE_COLLECTION)
     src_rel = _FakeSourceLexReference(
         rel_guid, src_type, targets=[m_a_src, m_b_src, m_c_src])
+    src_type.MembersOC.Add(src_rel)  # discoverable by the final-pass enumeration
 
     target_type = _FakeLexRefType(type_guid, _MAPPING_TYPE_COLLECTION)
     factory = _FakeLexReferenceFactory()
@@ -219,8 +231,11 @@ def test_lexical_relation_reproduced_with_all_copied_members_and_mapping_type_pr
     dropped: list = []
     resolver_cache: dict = {}
 
-    new_rel = categories.reproduce_lexical_relation(
-        src_rel, ctx, _TAG, resolver_cache, dropped)
+    # Driven through the final-pass entrypoint over the already-assembled
+    # (all 3 members present) copy_set -- the same call
+    # `Lib/transfer.py.execute` makes once at the end of a run.
+    categories.reproduce_all_lexical_relations(ctx, _TAG, resolver_cache, dropped)
+    new_rel = target_type.MembersOC[0]
 
     assert new_rel is not None
     assert new_rel.Guid == rel_guid
@@ -247,6 +262,7 @@ def test_lexical_relation_members_not_in_copy_set_are_reported_and_excluded():
     src_type = _FakeLexRefType(type_guid, _MAPPING_TYPE_COLLECTION)
     src_rel = _FakeSourceLexReference(
         rel_guid, src_type, targets=[m_a_src, m_b_src, m_c_src])
+    src_type.MembersOC.Add(src_rel)
 
     target_type = _FakeLexRefType(type_guid, _MAPPING_TYPE_COLLECTION)
     factory = _FakeLexReferenceFactory()
@@ -257,8 +273,8 @@ def test_lexical_relation_members_not_in_copy_set_are_reported_and_excluded():
     dropped: list = []
     resolver_cache: dict = {}
 
-    new_rel = categories.reproduce_lexical_relation(
-        src_rel, ctx, _TAG, resolver_cache, dropped)
+    categories.reproduce_all_lexical_relations(ctx, _TAG, resolver_cache, dropped)
+    new_rel = target_type.MembersOC[0]
 
     assert new_rel is not None
     assert list(new_rel.TargetsRS) == [m_a_new, m_b_new]  # ordered, only copied
@@ -303,6 +319,7 @@ def test_lexical_relation_pair_type_reduced_below_minimum_members():
 
     src_type = _FakeLexRefType(type_guid, _MAPPING_TYPE_PAIR)
     src_rel = _FakeSourceLexReference(rel_guid, src_type, targets=[m_a_src, m_b_src])
+    src_type.MembersOC.Add(src_rel)
 
     target_type = _FakeLexRefType(type_guid, _MAPPING_TYPE_PAIR)
     factory = _FakeLexReferenceFactory()
@@ -313,11 +330,12 @@ def test_lexical_relation_pair_type_reduced_below_minimum_members():
     dropped: list = []
     resolver_cache: dict = {}
 
-    new_rel = categories.reproduce_lexical_relation(
-        src_rel, ctx, _TAG, resolver_cache, dropped)
+    categories.reproduce_all_lexical_relations(ctx, _TAG, resolver_cache, dropped)
 
     # --- RULING (A) encoded here; flip to (B) if the domain reviewer rules
-    # otherwise (see docstring) ---
+    # otherwise (see docstring) -- no relation is EVER created, so there is
+    # nothing to read back off `target_type.MembersOC`.
+    new_rel = None
     assert new_rel is None
     assert factory.create_calls == []
     assert list(target_type.MembersOC) == []
