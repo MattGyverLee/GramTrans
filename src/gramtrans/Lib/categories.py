@@ -3020,6 +3020,12 @@ def _apply_reference_fields(owner_class, src_obj, new_obj, target, tag,
             try:
                 resolved = _references.apply_reference(
                     decision, target, owner_target, spec, resolver_cache, tag)
+            except _references.UnmappedItemClassError as exc:
+                # Fail-loud CREATE-time factory gap (bug 2b defensive path,
+                # Principle I): never silently fall back to a wrong-classed
+                # generic factory -- surface it as a dropped record instead.
+                dropped.append(exc.dropped)
+                continue
             except (AttributeError, TypeError, RuntimeError):
                 continue
             if not atomic and resolved is not None:
@@ -3039,9 +3045,13 @@ def _plan_entry_reference_decisions(src_entry, context, target):
     combined tuple of `ReferenceDecisionRecord` for
     `PlannedAction.reference_decisions`.
 
-    Never raises: any failure (e.g. a duck-typed test fake missing a target
-    possibility list) yields an empty tuple rather than aborting plan_action,
-    matching this module's fail-soft posture elsewhere."""
+    Fail-soft only for the narrow, expected duck-typing gaps (a test fake or
+    real LCM object missing an attribute the resolver probes speculatively):
+    any of those yields an empty tuple rather than aborting plan_action,
+    matching this module's fail-soft posture elsewhere (`_apply_reference_fields`,
+    same except set, `categories.py:3023`). A genuine resolver bug (anything
+    else) is NOT swallowed here -- Principle III (never silent): Preview must
+    surface a crash, not silently show "nothing to report"."""
     try:
         dropped = getattr(context, "_dropped", None)
         if dropped is None:
@@ -3065,7 +3075,14 @@ def _plan_entry_reference_decisions(src_entry, context, target):
                 "MoForm", a_guid, src_allo, target, resolver_cache, dropped,
                 skip_fields=_MOFORM_DEFERRED_FIELDS))
         return tuple(records)
-    except Exception:
+    except (AttributeError, TypeError, KeyError) as exc:
+        import logging as _logging
+        _logging.getLogger("gramtrans.Lib.categories").warning(
+            "_plan_entry_reference_decisions: %s on entry %s -- returning "
+            "no reference decisions for this entry.",
+            type(exc).__name__, _guid_str_from(src_entry),
+            exc_info=True,
+        )
         return ()
 
 
@@ -3422,38 +3439,6 @@ def _wire_stratum(src_msa, new_msa, target):
                 return
     except (AttributeError, TypeError):
         pass
-
-
-def _wire_semantic_domains(src_sense, new_sense, target):
-    """Wire sense.SemanticDomainsRC to Phase 3b-transferred domains by GUID
-    lookup (E10). Missing domains are left unwired (surfaced as a sense-level
-    dependency skip by the planner).
-
-    NOTE (feature 024 T016): no longer called from `_walk_lex_entry_closure`
-    -- `_apply_reference_fields("LexSense", ...)` now resolves
-    SemanticDomainsRC through the generic `references` resolver (which
-    additionally CREATEs a domain absent from the target instead of leaving
-    it unwired, and UPDATE/REPORT_DROPPED-handles a diverged one). Retained
-    standalone: not otherwise referenced, but harmless, still-correct dead
-    code kept for history/diff-legibility rather than deleted outright."""
-    src_rc = getattr(src_sense, "SemanticDomainsRC", None)
-    if src_rc is None:
-        return
-    tgt_rc = getattr(new_sense, "SemanticDomainsRC", None)
-    if tgt_rc is None:
-        return
-    try:
-        target_domains = list(_walk_semantic_domain_list(target))
-    except Exception:
-        target_domains = []
-    for src_dom in src_rc:
-        g = _guid_str_from(src_dom)
-        tgt_dom = _find_target_obj_by_guid(target_domains, g)
-        if tgt_dom is not None:
-            try:
-                tgt_rc.Add(tgt_dom)
-            except (AttributeError, TypeError):
-                pass
 
 
 # ----- 17.1 MSA-slot wiring sub-pass (FR-333) ------------------------------

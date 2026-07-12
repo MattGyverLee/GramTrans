@@ -372,19 +372,24 @@ def _find_in_possibility_list(target_list, guid: str):
 # ============================================================================
 
 def _ancestor_chain(source_item) -> tuple:
-    """Root->leaf ordered ancestor chain for a hierarchical possibility item.
+    """Root->leaf ordered ancestor chain for a possibility item.
 
-    Walks `.Owner` (falling back to `.OwningPossibility`) up from
-    `source_item` while the owner is itself a possibility (has a `.Guid`);
-    stops at the possibility list (Owner is None, or not possibility-shaped).
+    Walks `.OwningPossibility` up from `source_item` and stops when it is
+    `None` -- the only reliable top-level marker on live LCM. A top-level
+    `ICmPossibility`'s `.Owner` is the owning `ICmPossibilityList` itself
+    (ClassID 8), which ALSO exposes a `.Guid` -- so a `.Owner`-based walk
+    cannot distinguish "top-level" from "nested" and would wrongly walk INTO
+    the list (MCP-confirmed live on Ejagham Mini). `.OwningPossibility` is
+    `None` at top level and the parent possibility for a sub-item, so it is
+    the only safe stop condition. Never returns the owning list. For a
+    genuinely top-level `source_item` this naturally no-ops to
+    `(source_item,)`.
     """
     chain = [source_item]
     current = source_item
     while True:
-        owner = getattr(current, "Owner", None)
+        owner = getattr(current, "OwningPossibility", None)
         if owner is None:
-            owner = getattr(current, "OwningPossibility", None)
-        if owner is None or not hasattr(owner, "Guid"):
             break
         chain.append(owner)
         current = owner
@@ -439,9 +444,21 @@ def decide_reference(source_item, target, spec: "ReferenceFieldSpec", cache: dic
     if target_item is None:
         # CREATE. `ancestors_to_create` is always populated so `apply_reference`
         # has a uniform "create each of these, top-down" loop: the full
-        # root->leaf chain when hierarchical, or just the leaf itself
-        # (`source_item`) as a single-element tuple otherwise.
-        ancestors = _ancestor_chain(source_item) if spec.hierarchical else (source_item,)
+        # root->leaf chain, or just the leaf itself (`source_item`) as a
+        # single-element tuple when it is genuinely top-level.
+        #
+        # Deliberately NOT gated on `spec.hierarchical`: that static flag is
+        # a per-*field* description of the typical shape and can disagree
+        # with the live per-*project* `Depth` (MCP-confirmed: SenseTypes is
+        # flat in this project but flagged hierarchical; UsageTypes is a
+        # real tree here -- Depth=127 -- but flagged flat), and `Depth` is
+        # per-project so the static flag can be wrong in the target project
+        # regardless. `_ancestor_chain` is driven purely by the live
+        # `OwningPossibility` chain, so it naturally no-ops to `(source_item,)`
+        # for a genuinely top-level item -- calling it unconditionally is
+        # always correct, never just when `spec.hierarchical` happens to
+        # agree with the live shape.
+        ancestors = _ancestor_chain(source_item)
         return ReferenceDecision(
             action=ReferenceAction.CREATE,
             ancestors_to_create=ancestors,
@@ -459,7 +476,11 @@ def decide_reference(source_item, target, spec: "ReferenceFieldSpec", cache: dic
         )
 
     # Diverged + protected (shared/default) -> LINK the existing item, but
-    # report the divergence (FR-003/005, research R3).
+    # report the divergence (FR-003/005, research R3). Per 024 FR-003
+    # (user-clarified Q2) a shared/default item is NOT auto-mutated as a
+    # copy side-effect (side-effect avoidance) -- compatible with
+    # constitution v7.0.0 "GOLD is updatable" (protection just means this
+    # particular copy does not silently overwrite it).
     dropped = DroppedItemRecord(
         owner_kind=spec.owner_class,
         owner_guid="",
@@ -480,6 +501,23 @@ def decide_reference(source_item, target, spec: "ReferenceFieldSpec", cache: dic
 # ============================================================================
 # T015 -- apply_reference (Move-mode executor)
 # ============================================================================
+
+class UnmappedItemClassError(RuntimeError):
+    """Raised by `apply_reference`'s CREATE arm when a target possibility
+    list's `ItemClsid` has no entry in the typed-factory lookup below.
+
+    Principle I (never silent): rather than fall back to the generic
+    `ICmPossibilityFactory` -- which risks creating the item wrong-classed
+    in a typed list -- this fails loud. Carries a ready-made
+    `DroppedItemRecord` (`.dropped`) so the caller (`categories.py
+    ._apply_reference_fields`) can append it to the per-run dropped
+    collector before skipping this item.
+    """
+
+    def __init__(self, dropped: "DroppedItemRecord") -> None:
+        self.dropped = dropped
+        super().__init__(dropped.reason)
+
 
 def _add_to_owner(new_obj, owner_collection, factory_label: str, src_guid: str) -> None:
     """Add `new_obj` to `owner_collection`; raise RuntimeError on failure so
@@ -547,12 +585,21 @@ def apply_reference(decision, target, owner_obj, spec: "ReferenceFieldSpec", cac
         target_item = decision.target_item
         source_item = decision.source_item
         ops = target.PossibilityLists
-        tgt_props = ops.GetSyncableProperties(target_item)
+        # Propagate the SAME per-WS multistring set `divergence_fingerprint`
+        # compared (Name/Abbreviation/Description alts across ALL writing
+        # systems) -- not just `ops.GetSyncableProperties`'s single
+        # best/default-WS text, which under-propagated WS-specific
+        # divergences the fingerprint already detected. `_multistring_dict`
+        # returns `{}` for an absent field, and `conflict.apply_update_semantic`
+        # (via `conflict._is_empty`'s dict-aware check) already treats an
+        # empty/unset dict as "skip" -- so this can never blank a target WS
+        # alt from an empty/unset source alt (FR-007 non-destructive
+        # invariant), it can only add/update alts the source actually has.
         src_props = {}
+        tgt_props = {}
         for field_name in _FINGERPRINT_FIELDS:
-            ms = getattr(source_item, field_name, None)
-            if ms is not None:
-                src_props[field_name] = _best_text(ms)
+            src_props[field_name] = _multistring_dict(getattr(source_item, field_name, None))
+            tgt_props[field_name] = _multistring_dict(getattr(target_item, field_name, None))
         conflict.apply_update_semantic(src_props, tgt_props, ops, target_item)
         if owner_obj is not None:
             setattr(owner_obj, spec.field_name, target_item)
@@ -566,12 +613,52 @@ def apply_reference(decision, target, owner_obj, spec: "ReferenceFieldSpec", cac
         if target_list is None:
             return None  # target list vanished between decide/apply -- fail soft
 
-        from SIL.LCModel import ICmPossibilityFactory, ICmPossibility, ICmPossibilityList
+        from SIL.LCModel import (
+            ICmPossibilityFactory,
+            ICmPossibility,
+            ICmPossibilityList,
+            ICmSemanticDomainFactory,
+            ICmAnthroItemFactory,
+            IMoMorphTypeFactory,
+        )
         from System import Guid as DotNetGuid
 
         cm_cache = target.Cache
         ws = cm_cache.DefaultAnalWs
-        factory = ICmPossibilityFactory(target.GetFactory(ICmPossibilityFactory))
+
+        # Typed factory by the TARGET list's ItemClsid (bug 2b) -- creating
+        # via the generic ICmPossibilityFactory unconditionally wrong-classed
+        # items in a typed list (e.g. ItemClsid 66 = CmSemanticDomain would be
+        # created as a bare clsid-7 CmPossibility). Mapping confirmed live on
+        # Ejagham Mini across every list REFERENCE_FIELD_MAP currently drives:
+        # 66=CmSemanticDomain, 26=CmAnthroItem, 5042=MoMorphType, 7=generic
+        # CmPossibility (SenseTypes/UsageTypes/DomainTypes/DialectLabels/
+        # PublicationTypes/Languages/Status/TranslationTags).
+        factory_by_item_clsid = {
+            66: ICmSemanticDomainFactory,
+            26: ICmAnthroItemFactory,
+            5042: IMoMorphTypeFactory,
+            7: ICmPossibilityFactory,
+        }
+        item_clsid = getattr(target_list, "ItemClsid", None)
+        factory_iface = factory_by_item_clsid.get(item_clsid)
+        if factory_iface is None:
+            # Defensive fail-loud path (Principle I): no current field-map
+            # list hits this (all confirmed mapped above), but a FUTURE
+            # unmapped clsid must never silently fall back to the generic
+            # factory -- that risks wrong-classing the new item.
+            leaf = decision.source_item
+            dropped = DroppedItemRecord(
+                owner_kind=spec.owner_class,
+                owner_guid="",
+                owner_label="",
+                field_name=spec.field_name,
+                item_name=_item_label(leaf),
+                item_guid=_guid_str(leaf),
+                reason=f"unmapped item class {item_clsid} for CREATE",
+            )
+            raise UnmappedItemClassError(dropped)
+        factory = factory_iface(target.GetFactory(factory_iface))
 
         parent_target_item = None  # None => Add to the list root
         created_item = None
