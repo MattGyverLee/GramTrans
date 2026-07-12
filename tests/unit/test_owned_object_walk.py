@@ -18,13 +18,31 @@ contract in `specs/024-lexicon-reference-fidelity/contracts/owned-object-walk.md
 - FR-009: anything unreproducible appends exactly one `DroppedItemRecord`
   to the `dropped` collector -- never silent.
 
-TDD RED STATE: `walk_owned_children` (and the `OWNED_OBJECT_MAP` it is
-driven by) are not implemented yet (T027-T029 are still `[ ]` in tasks.md as
-of this writing) -- every test below is expected to FAIL with
-`AttributeError: module 'gramtrans.Lib.owned' has no attribute
-'walk_owned_children'`. Do NOT implement `walk_owned_children` or
-`OWNED_OBJECT_MAP` here; this file only records the write-first contract,
+TDD RED STATE (this cycle): `walk_owned_children` IS implemented, but it
+drives every `OWNED_OBJECT_MAP` row through one uniform
+`factory.Create(guid, new_owner)` call. MCP verification against a live
+Ejagham Mini project confirmed this uniform shape is wrong for 3 of the 5
+owned-child factories:
+
+  - `ICmTranslationFactory` has NO `(guid, owner)` overload -- only
+    `Create(owner, translationType)` / `Create(owner, translationType, guid)`,
+    with the type required UP FRONT.
+  - `ILexPronunciationFactory` / `ILexEtymologyFactory` have only
+    `Create()` / `Create(Guid)` -- no owner parameter; the caller must
+    separately `.Add()` the unowned result to the owning collection.
+
+The fakes below now model each factory's REAL signature (see the
+"Child factories" section) and reject the wrong arity/shape, so
+`test_examples_reproduced_ordered_with_translations_and_publication_refs`,
+`test_pronunciations_reproduced_under_entry_ordered`, and
+`test_etymology_reproduced_under_entry_with_language_rs_resolved` are
+expected to FAIL against the current uniform-Create `walk_owned_children`
+(translations/pronunciations/etymologies fail to create, or land unowned).
+Do NOT fix `walk_owned_children`/`OWNED_OBJECT_MAP` here -- this file only
+strengthens the write-first contract to the MCP-verified real shapes,
 matching the style of `tests/unit/test_reference_resolver.py`.
+`test_recursive_sub_senses_reproduced_ordered_with_own_ref_fields_resolved`
+(sub-senses, OWNER_TAKING like examples) is expected to keep PASSING.
 
 Fake style: modeled on `test_reference_resolver.py`'s `_FakePossibility` /
 `_FakeMultiString` / `_FakeTargetList` (reused here, same shape, for the
@@ -203,17 +221,41 @@ class _NewEntry:
 
 
 # ============================================================================
-# Child factories -- GUID-preserving `.Create(guid, owner)` auto-add, mirroring
-# the proven `ILexSenseFactory.Create(DotNetGuid.Parse(s_guid), new_entry)`
-# idiom already used by `Lib/categories.py._walk_lex_entry_closure` for the
-# owned entry->sense leg.
+# Child factories -- each fake models its OWN real LCM `Create` signature
+# (MCP-verified against Ejagham Mini, live), NOT a uniform `Create(guid,
+# owner)`. Only 2 of 5 are actually OWNER_TAKING that shape:
+#
+#   - ILexExampleSentenceFactory.Create(Guid, ILexSense owner)        -- OWNER_TAKING
+#   - ILexSenseFactory.Create(Guid, ILexSense owner)  (sub-senses)     -- OWNER_TAKING
+#   - ICmTranslationFactory: NO (guid, owner) overload; only
+#     Create(ILexExampleSentence owner, ICmPossibility translationType)
+#     / Create(owner, translationType, Guid) -- type required UP FRONT -- OWNER_PLUS_TYPE
+#   - ILexPronunciationFactory: only Create() / Create(Guid) -- UNOWNED;
+#     caller must then `entry.PronunciationsOS.Add(obj)`            -- UNOWNED_THEN_ADD
+#   - ILexEtymologyFactory: only Create() / Create(Guid) -- UNOWNED;
+#     caller must then `entry.EtymologyOS.Add(obj)`                 -- UNOWNED_THEN_ADD
+#
+# The OWNER_TAKING fakes still mirror the proven
+# `ILexSenseFactory.Create(DotNetGuid.Parse(s_guid), new_entry)` idiom already
+# used by `Lib/categories.py._walk_lex_entry_closure` for the owned
+# entry->sense leg. Every fake below REJECTS the wrong arity/shape for its own
+# signature so a walk that still calls the old uniform `Create(guid, owner)`
+# against an OWNER_PLUS_TYPE/UNOWNED_THEN_ADD factory fails loudly (RED)
+# instead of silently doing the wrong thing.
 # ============================================================================
 
 class _FakeExampleFactory:
+    """OWNER_TAKING: `Create(Guid, ILexSense owner)`."""
+
     def __init__(self):
         self.create_calls = []
 
     def Create(self, guid, owner):
+        if not hasattr(owner, "ExamplesOS"):
+            raise TypeError(
+                "ILexExampleSentenceFactory.Create(guid, owner) expects "
+                f"owner to be an ILexSense (ExamplesOS); got {owner!r}"
+            )
         self.create_calls.append((guid, owner))
         new_ex = _FakeExample(guid)
         new_ex.TranslationsOC = _FakeOwningCollection()
@@ -224,44 +266,86 @@ class _FakeExampleFactory:
 
 
 class _FakeTranslationFactory:
+    """OWNER_PLUS_TYPE: `ICmTranslationFactory` has NO `(guid, owner)`
+    overload -- only `Create(ILexExampleSentence owner, ICmPossibility
+    translationType)` / `Create(owner, translationType, Guid)`. The type
+    MUST be resolved and supplied up front; there is no create-then-set-type
+    path. Rejects the old (guid, owner) shape (arg 1 must duck-type an
+    owning example, i.e. carry `TranslationsOC`) and rejects a missing/None
+    `translationType` (ValueError) -- the walk must resolve `TypeRA` via
+    `references.decide_reference`/`apply_reference` BEFORE calling Create,
+    not after."""
+
     def __init__(self):
         self.create_calls = []
 
-    def Create(self, guid, owner):
-        self.create_calls.append((guid, owner))
-        new_tr = _FakeTranslation(guid)
+    def Create(self, owner, translation_type, guid=None):
+        if not hasattr(owner, "TranslationsOC"):
+            raise TypeError(
+                "ICmTranslationFactory.Create(owner, translationType[, guid]) "
+                f"expects owner to be an ILexExampleSentence (TranslationsOC); "
+                f"got {owner!r} -- looks like the old (guid, owner) shape"
+            )
+        if translation_type is None:
+            raise ValueError(
+                "ICmTranslationFactory.Create requires a non-None "
+                "translationType (TypeRA) resolved BEFORE create -- there is "
+                "no overload that creates a translation and sets its type "
+                "afterward"
+            )
+        self.create_calls.append((owner, translation_type, guid))
+        new_tr = _FakeTranslation(
+            guid if guid is not None else "generated-tr-guid",
+            type_ra=translation_type,
+        )
         owner.TranslationsOC.Add(new_tr)
         return new_tr
 
 
 class _FakePronunciationFactory:
+    """UNOWNED_THEN_ADD: `ILexPronunciationFactory` has only `Create()` /
+    `Create(Guid)` -- no owner parameter at all. Passing an extra owner
+    positional (the old uniform `Create(guid, owner)` shape) is rejected by
+    plain Python arity checking (this fake takes exactly one argument besides
+    `self`). The created object is UNOWNED; the caller must separately do
+    `entry.PronunciationsOS.Add(obj)`."""
+
     def __init__(self):
         self.create_calls = []
 
-    def Create(self, guid, owner):
-        self.create_calls.append((guid, owner))
-        new_p = _FakePronunciation(guid)
-        owner.PronunciationsOS.Add(new_p)
-        return new_p
+    def Create(self, guid):
+        self.create_calls.append(guid)
+        return _FakePronunciation(guid)
 
 
 class _FakeEtymologyFactory:
+    """UNOWNED_THEN_ADD: `ILexEtymologyFactory` has only `Create()` /
+    `Create(Guid)` -- no owner parameter. Same arity rejection as
+    `_FakePronunciationFactory`; the created object is UNOWNED and the caller
+    must separately do `entry.EtymologyOS.Add(obj)`."""
+
     def __init__(self):
         self.create_calls = []
 
-    def Create(self, guid, owner):
-        self.create_calls.append((guid, owner))
+    def Create(self, guid):
+        self.create_calls.append(guid)
         new_e = _FakeEtymology(guid)
         new_e.LanguageRS = _FakeOwningCollection()
-        owner.EtymologyOS.Add(new_e)
         return new_e
 
 
 class _FakeSenseFactory:
+    """OWNER_TAKING: `Create(Guid, ILexSense owner)` (sub-senses)."""
+
     def __init__(self):
         self.create_calls = []
 
     def Create(self, guid, owner):
+        if not hasattr(owner, "SensesOS"):
+            raise TypeError(
+                "ILexSenseFactory.Create(guid, owner) expects owner to be "
+                f"an ILexSense (SensesOS); got {owner!r}"
+            )
         self.create_calls.append((guid, owner))
         new_s = _NewSense(guid)
         owner.SensesOS.Add(new_s)
@@ -404,9 +488,14 @@ def test_examples_reproduced_ordered_with_translations_and_publication_refs():
     assert (new_ex1, {"_marker": "ex-1"}) in [
         (obj, props) for obj, props, _ws in target_handle.Examples.apply_calls
     ]
-    # The example's own TranslationsOC reproduced, TypeRA resolved via the
-    # resolver (LINK against the matching target translation-tag item).
+    # The example's own TranslationsOC reproduced, GUID preserved, TypeRA
+    # resolved via the resolver BEFORE create (LINK against the matching
+    # target translation-tag item) and passed straight into
+    # `ICmTranslationFactory.Create(owner, translationType, guid)` --
+    # never set afterward via `setattr` on an already-created translation
+    # (there is no such overload).
     assert len(new_ex1.TranslationsOC) == 1
+    assert new_ex1.TranslationsOC[0].Guid == "tr-1"
     assert new_ex1.TranslationsOC[0].TypeRA is target_type_item
     # DoNotPublishInRC/PublishIn routed through the resolver.
     assert target_pub_item in list(new_ex1.PublishIn)
@@ -430,6 +519,9 @@ def test_pronunciations_reproduced_under_entry_ordered():
 
     owned.walk_owned_children(src_entry, new_entry, ctx, _TAG, resolver_cache, dropped)
 
+    # `ILexPronunciationFactory.Create(guid)` returns an UNOWNED object --
+    # the walk itself must then do `new_entry.PronunciationsOS.Add(new_p)`
+    # (no factory overload takes an owner). Ordering + GUIDs preserved.
     assert [p.Guid for p in new_entry.PronunciationsOS] == ["pron-1", "pron-2"]
 
 
@@ -454,8 +546,12 @@ def test_etymology_reproduced_under_entry_with_language_rs_resolved():
 
     owned.walk_owned_children(src_entry, new_entry, ctx, _TAG, resolver_cache, dropped)
 
+    # `ILexEtymologyFactory.Create(guid)` returns an UNOWNED object -- the
+    # walk itself must then do `new_entry.EtymologyOS.Add(new_e)` (no
+    # factory overload takes an owner). GUID preserved, LanguageRS resolved.
     assert len(new_entry.EtymologyOS) == 1
     new_etym = new_entry.EtymologyOS[0]
+    assert new_etym.Guid == "etym-1"
     assert list(new_etym.LanguageRS) == [target_lang_item]
 
 
@@ -504,31 +600,46 @@ def test_recursive_sub_senses_reproduced_ordered_with_own_ref_fields_resolved():
 # DroppedItemRecord, never silent.
 # ============================================================================
 
-def test_unresolvable_etymology_language_appends_exactly_one_dropped_record():
-    source_lang_item = _FakePossibility("lang-guid-missing", name="Unknown Tongue")
-    etym1 = _FakeEtymology(
-        "etym-2", form="unresolvable-form", language_rs=(source_lang_item,)
+def test_unresolvable_example_publish_in_appends_exactly_one_dropped_record():
+    """FR-009 dropped-record coverage, deliberately routed through
+    Example.PublishIn (OWNER_TAKING -- `ILexExampleSentenceFactory.Create`
+    is unaffected by this cycle's owner-shape strengthening) rather than
+    Etymology.LanguageRS as in an earlier revision of this test: once
+    `_FakeEtymologyFactory`/`_FakeTranslationFactory` model their REAL
+    (non-uniform) `Create` signatures, etymology creation itself now fails
+    before `LanguageRS` resolution is ever attempted -- see
+    `test_etymology_reproduced_under_entry_with_language_rs_resolved` and
+    `test_pronunciations_reproduced_under_entry_ordered` for that
+    (deliberately RED) create-failure coverage. This test instead keeps
+    exercising the "target list absent" REPORT_DROPPED branch
+    (contracts/reference-resolver.md) end-to-end on a still-succeeding
+    create path, so FR-009's never-silent guarantee stays proven GREEN
+    independent of the owner-shape bug."""
+    source_pub_item = _FakePossibility("pub-guid-missing", name="Unknown Publication")
+    ex1 = _FakeExample(
+        "ex-3", text="undropped example", publish_in=(source_pub_item,)
     )
-    src_entry = _FakeSourceEntry("src-entry-3", etymologies=(etym1,))
-    new_entry = _NewEntry()
+    src_sense = _FakeSourceSense("src-sense-3", gloss="drop-test", examples=(ex1,))
+    new_sense = _NewSense()
 
     source_handle = _FakeProject()
-    # `languages=None` here resolves through `_FakeLangProject`'s own default
-    # (`_FakeTargetList()`, empty-but-present) -- to model "target list
-    # ABSENT" (not merely empty) we explicitly null out LanguagesOA after
-    # construction, matching `decide_reference`'s REPORT_DROPPED "target
-    # list absent" branch (contracts/reference-resolver.md).
+    # `publication_types=None` here resolves through `_FakeLangProject`'s own
+    # default (`_FakeTargetList()`, empty-but-present) -- to model "target
+    # list ABSENT" (not merely empty) we explicitly null out
+    # PublicationTypesOA after construction, matching `decide_reference`'s
+    # REPORT_DROPPED "target list absent" branch (contracts/
+    # reference-resolver.md).
     target_handle = _FakeProject()
-    target_handle.Cache.LangProject.LexDbOA.LanguagesOA = None
+    target_handle.Cache.LangProject.LexDbOA.PublicationTypesOA = None
     ctx = _FakeContext(source_handle, target_handle)
     resolver_cache: dict = {}
     dropped: list = []
 
-    owned.walk_owned_children(src_entry, new_entry, ctx, _TAG, resolver_cache, dropped)
+    owned.walk_owned_children(src_sense, new_sense, ctx, _TAG, resolver_cache, dropped)
 
     assert len(dropped) == 1
     record = dropped[0]
     assert isinstance(record, DroppedItemRecord)
-    assert record.field_name == "LanguageRS"
-    assert record.item_guid == "lang-guid-missing"
+    assert record.field_name == "PublishIn"
+    assert record.item_guid == "pub-guid-missing"
     assert record.reason  # non-empty per DroppedItemRecord.__post_init__
