@@ -435,6 +435,30 @@ def execute(plan: RunPlan, source, target, report_sink, tag: ImportResidueTag,
             )
     if leaf_count:
         report_sink.Info(f"[Move] Leaf-dispatch executed {leaf_count} action(s).")
+
+    # Feature 024 (T031, US3, FR-008 -- single-final-pass redesign): sweep
+    # every lexical relation touching ANY member of the now fully-settled
+    # `exec_ctx._copy_set` -- the leaf-dispatch loop above has just finished
+    # every AFFIXES/STEMS entry (the two categories that populate
+    # `_copy_set`), so every top-level sense and recursively-copied
+    # sub-sense this run will ever create is already registered. This is
+    # the move-execute "all copied" boundary. `categories.
+    # reproduce_lexical_relation`'s own per-relation dedup (resolver_cache)
+    # makes this idempotent alongside any per-member incremental trigger
+    # already fired inside `_walk_lex_entry_closure`/`owned.
+    # walk_owned_children` during the loop above -- this sweep only ever
+    # COMPLETES an already-partial relation (union-updates `TargetsRS`,
+    # never duplicates), and its own `_evaluate_lexical_relation` re-run
+    # retracts any stale drop record an earlier, less-complete evaluation
+    # left behind. Preview runs the SAME pass (`preview.build_run_plan`,
+    # after its own leaf-category loop) over the SAME kind of fully-settled
+    # copy_set, so the two converge on identical relations-in/decisions-out.
+    if __package__:
+        from .categories import reproduce_all_lexical_relations
+    else:
+        from categories import reproduce_all_lexical_relations  # type: ignore
+    reproduce_all_lexical_relations(exec_ctx, tag, _resolver_cache, _dropped)
+
     # Fold any tail-block skips (17.1 / post-pass A) into the report.
     if _exec_skips:
         extra_skips.extend(_exec_skips)

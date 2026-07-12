@@ -3039,6 +3039,24 @@ def _append_dropped_once(dropped: list, record) -> None:
     dropped.append(record)
 
 
+def _retract_dropped(dropped: list, owner_guid: str, field_name: str, item_guid: str) -> None:
+    """Remove any `DroppedItemRecord` matching `(owner_guid, field_name,
+    item_guid)` (the same identity key `_dropped_key`/`_append_dropped_once`
+    use) from the per-run `dropped` collector, in place.
+
+    Feature 024 (lexical-relation single-final-pass redesign): a relation
+    evaluated more than once as `ctx._copy_set` fills in (per-member
+    incremental discovery triggers, or a genuine re-evaluation in the
+    final-pass sweep) can find a member -- or the relation as a whole --
+    that was reported missing/incoherent on an EARLIER, less-complete
+    evaluation has since become present/coherent. Without retraction those
+    earlier reports become permanent, stale, contradictory records for an
+    item that was in fact faithfully reproduced (T031 incremental-discovery
+    defect this redesign fixes). No-op when no matching record exists."""
+    key = (owner_guid, field_name, item_guid)
+    dropped[:] = [r for r in dropped if _dropped_key(r) != key]
+
+
 def _enrich_dropped(owner_class: str, owner_guid: str, src_obj, record):
     """Return `record` with the real owner_guid/owner_label patched in
     (see module comment above -- `references.py` cannot know either)."""
@@ -3564,6 +3582,13 @@ def _evaluate_lexical_relation(src_relation, ctx, dropped):
         m_guid = _guid_str_from(member)
         if m_guid and m_guid in copy_set:
             copied_members.append(copy_set[m_guid])
+            # Feature 024 (single-final-pass redesign): this member is NOW
+            # copied -- retract any stale "member not in copy set" record an
+            # EARLIER, less-complete evaluation of this same relation left
+            # behind for it (T031 incremental-discovery defect). Idempotent
+            # no-op when no such record exists (first evaluation, or a
+            # member that was always present).
+            _retract_dropped(dropped, rel_guid, "TargetsRS", m_guid)
         else:
             missing.append((m_guid, member))
 
@@ -3620,6 +3645,16 @@ def _evaluate_lexical_relation(src_relation, ctx, dropped):
         ))
         return None
 
+    # Feature 024 (single-final-pass redesign): every structural-minimum
+    # gate above has now been cleared -- this relation WILL be reproduced.
+    # Retract any stale relation-level "not reproduced" record ("reduced
+    # below minimum" / "tree relation root member not copied" / "reduced to
+    # zero copied members") an EARLIER, less-complete evaluation of this
+    # SAME relation left behind (T031 incremental-discovery defect): that
+    # record described a condition which no longer holds. No-op on the
+    # relation's first (and only) evaluation.
+    _retract_dropped(dropped, rel_guid, "TargetsRS", rel_guid)
+
     # Report every member NOT in the copy set (FR-008: never silently
     # include or drop) -- the relation itself IS still reproduced, just
     # with only the copied subset.
@@ -3650,31 +3685,53 @@ def reproduce_lexical_relation(src_relation, ctx, tag, resolver_cache, dropped):
     tags it with residue via `residue.apply_residue`'s already-registered
     "LexReference" Carrier-A class.
 
-    Dedup (GUID-keyed, `resolver_cache`): a relation shared by multiple
-    copied members (each of which may independently trigger this call via
-    the caller's per-member discovery) is reproduced exactly once -- a
-    SUCCESSFUL creation is cached and returned directly on any later call
-    for the same relation GUID. A FAILED/incoherent attempt is deliberately
-    NOT cached (mirrors `owned._reproduce_one_apr`'s same posture): a
-    member missing THIS call might already be in the copy set by the time a
-    LATER call (for another of the relation's members, processed afterward
-    in the same run) comes through, so retrying must stay possible. The
-    `dropped`-record dedup (`_append_dropped_once`, keyed by (owner_guid,
-    field_name, item_guid)) already collapses a repeated report for the
-    same still-missing condition across retries.
+    Dedup (GUID-keyed, `resolver_cache`) -- single-final-pass redesign (this
+    cycle, replacing the earlier "cache success, never revisit" posture that
+    permanently froze a relation at whatever subset of members happened to
+    be copied on its FIRST discovery trigger): a relation shared by multiple
+    copied members (each of which may independently trigger this call, via
+    the caller's per-member discovery OR the final-pass sweep) is CREATED
+    exactly once, but every call -- including one that hits the cache --
+    re-runs `_evaluate_lexical_relation` against the CURRENT `ctx._copy_set`
+    and unions in any member copied SINCE the cached creation (matched by
+    GUID, never re-added). This makes the result independent of call order
+    or count: whichever call happens to be the LAST one against a fully-
+    settled copy set always leaves `TargetsRS` complete, and
+    `_evaluate_lexical_relation`'s own retraction (`_retract_dropped`)
+    already cleans up any stale "not in copy set"/"reduced below minimum"
+    record from an earlier, less-complete evaluation of this same relation.
+    A FAILED/incoherent evaluation (still below structural minimum) is
+    never cached, so a later, fuller call can still succeed and create it.
 
     Never raises: a factory `Create` failure is logged and reported instead
     (Principle I), matching this module's posture elsewhere.
     """
     reproduced = resolver_cache.setdefault(_LEXREL_REPRODUCED_KEY, {})
     rel_guid = _guid_str_from(src_relation)
-    if rel_guid and rel_guid in reproduced:
-        return reproduced[rel_guid]
 
     evaluated = _evaluate_lexical_relation(src_relation, ctx, dropped)
     if evaluated is None:
         return None
     rel_guid, target_type, copied_members = evaluated
+
+    existing = reproduced.get(rel_guid) if rel_guid else None
+    if existing is not None:
+        # Already created on an earlier call -- union in any member copied
+        # since then instead of returning a permanently-partial relation.
+        existing_guids = {
+            _guid_str_from(t) for t in getattr(existing, "TargetsRS", None) or []
+        }
+        for member in copied_members:
+            m_guid = _guid_str_from(member)
+            if m_guid and m_guid in existing_guids:
+                continue
+            try:
+                existing.TargetsRS.Add(member)
+            except (AttributeError, TypeError):
+                pass
+            if m_guid:
+                existing_guids.add(m_guid)
+        return existing
 
     if __package__:
         from . import owned as _owned
@@ -3736,16 +3793,27 @@ def plan_lexical_relation_decision(src_relation, ctx, resolver_cache, dropped):
     and Move each get their own `resolver_cache` per run
     (`preview.build_run_plan`/`transfer.execute`), so this never collides
     with `reproduce_lexical_relation`'s own dedup.
+
+    Single-final-pass redesign (this cycle): `_evaluate_lexical_relation` is
+    re-run on EVERY call, even one that will end up hitting the planned-
+    record cache below -- its retraction of stale drop records must run
+    every time `ctx._copy_set` may have grown, exactly mirroring the
+    Move-mode fix in `reproduce_lexical_relation`. A `ReferenceDecisionRecord`
+    itself carries no per-member membership (unlike Move's `TargetsRS`), so
+    once a relation is known to reproduce, the cached record is returned
+    as-is -- there is nothing on it that a later, fuller evaluation could
+    change.
     """
     planned = resolver_cache.setdefault(_LEXREL_PLANNED_KEY, {})
     rel_guid = _guid_str_from(src_relation)
-    if rel_guid and rel_guid in planned:
-        return planned[rel_guid]
 
     evaluated = _evaluate_lexical_relation(src_relation, ctx, dropped)
     if evaluated is None:
         return None
     rel_guid, _target_type, _copied_members = evaluated
+
+    if rel_guid and rel_guid in planned:
+        return planned[rel_guid]
 
     record = ReferenceDecisionRecord(
         owner_kind="LexReference",
@@ -3819,6 +3887,94 @@ def _plan_lex_relations_for_member(src_obj, context, resolver_cache, dropped) ->
     member_guid = _guid_str_from(src_obj)
     records = []
     for src_relation in _discover_lex_relations_for_member(source, member_guid):
+        record = plan_lexical_relation_decision(
+            src_relation, context, resolver_cache, dropped)
+        if record is not None:
+            records.append(record)
+    return records
+
+
+def _iter_relations_touching_copy_set(source, copy_set):
+    """Every source `ILexReference` at least one of whose `TargetsRS`
+    members has a GUID present in `copy_set`, each yielded EXACTLY ONCE
+    (deduped by the relation's own GUID) regardless of how many of its
+    members are in `copy_set`.
+
+    Feature 024 (single-final-pass redesign): the final-pass entry point
+    (`reproduce_all_lexical_relations`/`plan_all_lexical_relations`) uses
+    this instead of the per-member `_discover_lex_relations_for_member`
+    scan-per-member loop -- a relation shared by K copied members is found
+    once here rather than K times, matching the task's "enumerate every
+    source lexical relation touching ANY copied member (dedup by relation
+    GUID)" requirement directly, rather than relying on the downstream
+    resolver_cache to collapse K redundant discoveries after the fact.
+    Never raises; yields nothing when the source relation list is
+    unreachable or `copy_set` is empty."""
+    if not copy_set:
+        return
+    try:
+        ref_list = source.Cache.LangProject.LexDbOA.ReferencesOA
+    except AttributeError:
+        return
+    seen_rel_guids = set()
+    for lex_ref_type in _iter_lex_ref_types(ref_list):
+        for rel in getattr(lex_ref_type, "MembersOC", None) or []:
+            rel_guid = _guid_str_from(rel)
+            if rel_guid and rel_guid in seen_rel_guids:
+                continue
+            targets = getattr(rel, "TargetsRS", None) or []
+            if any(_guid_str_from(t) in copy_set for t in targets):
+                if rel_guid:
+                    seen_rel_guids.add(rel_guid)
+                yield rel
+
+
+def reproduce_all_lexical_relations(context, tag, resolver_cache, dropped):
+    """T031 (US3, FR-008) single-final-pass redesign, Move mode -- the ONE
+    place lexical-relation reproduction runs: called after the ENTIRE
+    entry/sense/sub-sense copy_set for this run has been assembled (see
+    `Lib/transfer.py.execute`'s call site, right after the leaf-dispatch
+    loop -- AFFIXES and STEMS, the two categories that populate
+    `context._copy_set`, are both fully executed by then).
+
+    Enumerates every source `ILexReference` touching ANY member of the
+    FINAL, fully-settled `context._copy_set` (deduped by relation GUID via
+    `_iter_relations_touching_copy_set`), and evaluates each exactly once
+    against COMPLETE membership via `reproduce_lexical_relation` (itself
+    idempotent -- see that function's own docstring -- so calling it here
+    is safe even for a relation ALSO reached earlier via a per-member
+    incremental trigger elsewhere in the closure walk; the union-update
+    posture means this final sweep can only complete an already-partial
+    relation, never duplicate or corrupt one). Per-MappingType structural
+    rulings (pair exactly-2-else-drop-whole, tree root=TargetsRS[0],
+    collection/sequence/unidirectional copied-subset) are UNCHANGED --
+    only the TIMING of evaluation moves to this single end-of-run pass."""
+    source = context.source_handle
+    copy_set = getattr(context, "_copy_set", None) or {}
+    for src_relation in _iter_relations_touching_copy_set(source, copy_set):
+        reproduce_lexical_relation(src_relation, context, tag, resolver_cache, dropped)
+
+
+def plan_all_lexical_relations(context, resolver_cache, dropped) -> list:
+    """Preview-mode twin of `reproduce_all_lexical_relations`: same
+    single-final-pass enumeration (`_iter_relations_touching_copy_set`)
+    over the FINAL `context._copy_set` assembled by `Lib/preview.py.
+    build_run_plan`'s leaf-category loop, `plan_lexical_relation_decision`
+    instead of the Move-mode reproduce call. Preview and Move run this
+    SAME pass over the SAME kind of fully-settled copy_set (each own their
+    own per-run copy_set/resolver_cache/dropped, per the existing
+    Preview/Move-each-get-their-own-resolver_cache convention), so the two
+    modes converge on the same relations in, same decisions out. Returns
+    the list of `ReferenceDecisionRecord` for every relation that WOULD be
+    reproduced -- callers fold this into `RunPlan`-level bookkeeping
+    (`Lib/preview.py` currently threads reference decisions per-action; this
+    single pass is not owned by any one action, so its records are surfaced
+    via `context._dropped`/a dedicated plan-level collector at the call
+    site rather than one action's `reference_decisions` tuple)."""
+    source = context.source_handle
+    copy_set = getattr(context, "_copy_set", None) or {}
+    records = []
+    for src_relation in _iter_relations_touching_copy_set(source, copy_set):
         record = plan_lexical_relation_decision(
             src_relation, context, resolver_cache, dropped)
         if record is not None:

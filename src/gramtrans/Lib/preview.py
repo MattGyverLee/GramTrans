@@ -282,6 +282,28 @@ def build_run_plan(
                 cat.value, len(pieces), len(actions) - _cat_actions_before,
             )
 
+    # Feature 024 (T031, US3, FR-008 -- single-final-pass redesign): sweep
+    # every lexical relation touching ANY member of the now fully-settled
+    # `context._copy_set` (every AFFIXES/STEMS entry, top-level sense, and
+    # recursively-copied sub-sense has been planned by the leaf-category
+    # loop above -- this runs AFTER it, at the "all copied" boundary).
+    # `categories.plan_lexical_relation_decision`'s own per-relation dedup
+    # (`_LEXREL_PLANNED_KEY` in `_resolver_cache`) makes this idempotent
+    # alongside any per-member incremental trigger already fired inside
+    # `_plan_entry_reference_decisions`/`owned.plan_owned_object_decisions`
+    # during the leaf-category loop -- this sweep only ever COMPLETES an
+    # already-partial relation (never duplicates), and its own
+    # `_evaluate_lexical_relation` re-run retracts any stale drop record an
+    # earlier, less-complete evaluation left behind. Move mode runs the
+    # SAME pass (`transfer.execute`, after its own leaf-dispatch loop) over
+    # the SAME kind of fully-settled copy_set, so Preview and Move converge
+    # on identical relations-in/decisions-out.
+    if __package__:
+        from .categories import plan_all_lexical_relations
+    else:
+        from categories import plan_all_lexical_relations  # type: ignore
+    plan_all_lexical_relations(context, _resolver_cache, _dropped)
+
     # T023: rules missing-reference detection (018-rules-page US4/FR-014/FR-015).
     # Runs AFTER the leaf dispatch so 'in-flight' actions are fully enumerated.
     # Routes into the shared excluded_lossy list -> single Move gate (T024).
