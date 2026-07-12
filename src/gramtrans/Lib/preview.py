@@ -121,6 +121,17 @@ def build_run_plan(
     # plan_action callbacks can add EXCLUDED-LOSSY warnings.
     object.__setattr__(context, '_excluded_lossy', excluded_lossy)
 
+    # Feature 024 (T010, FR-010/FR-012, contracts/dropped-item-report.md
+    # "Collection"): thread the per-run dropped-item collector so the
+    # referenced-possibility resolver (Lib/references.py `decide_reference`,
+    # US1) and the owned-object walk (Lib/owned.py, US3) can append
+    # DroppedItemRecord instances once wired into the plan-builder path
+    # (Principle III — decisions must appear in Preview, not only post-run).
+    # Foundational plumbing only: the channel exists end-to-end via this
+    # context attribute, but nothing appends to it yet.
+    _dropped: list = []
+    object.__setattr__(context, '_dropped', _dropped)
+
     # Phase 3a leaf-category dispatch: iterate every Phase 3a category
     # that's enabled in the selection.  Each category's registered
     # callbacks live in Lib/categories.py.  Errors-as-skips: if an

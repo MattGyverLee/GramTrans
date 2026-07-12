@@ -255,6 +255,16 @@ def execute(plan: RunPlan, source, target, report_sink, tag: ImportResidueTag,
     # run report's extra_skips after the leaf loop.
     _exec_skips: list = []
     object.__setattr__(exec_ctx, '_exec_skips', _exec_skips)
+    # Feature 024 (T010, FR-010/FR-012, contracts/dropped-item-report.md
+    # "Collection"): per-run dropped-item collector threaded into the
+    # closure walk (Lib/categories.py `_walk_lex_entry_closure` /
+    # `_walk_entry_allomorphs`, read via `context._dropped`) so the resolver
+    # (Lib/references.py, US1) and owned-object walk (Lib/owned.py, US3) have
+    # a channel to append DroppedItemRecord instances into once implemented.
+    # Folded into the RunReport below (`extra_dropped_items`) so Move-mode
+    # reporting is wired end-to-end; nothing appends yet (foundational only).
+    _dropped: list = []
+    object.__setattr__(exec_ctx, '_dropped', _dropped)
     # C6: categories gated behind the flexicon ITsString.get_String fix.
     # When _phoneme_env_field_diff_enabled() is False (current state), field-diff
     # for PHONEMES and PH_ENVIRONMENT is skipped — they remain SELECTOR-ONLY
@@ -330,6 +340,10 @@ def execute(plan: RunPlan, source, target, report_sink, tag: ImportResidueTag,
         plan, RunMode.MOVE,
         wall_clock_seconds=elapsed,
         extra_skips=tuple(extra_skips),
+        # Feature 024 (T010): threads end-to-end for Move mode. `_dropped` is
+        # always empty at this point (foundational plumbing only) so this is
+        # a no-op today; it becomes live once US1/US3 append to it.
+        extra_dropped_items=tuple(_dropped),
     )
 
 

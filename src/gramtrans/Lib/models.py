@@ -15,7 +15,7 @@ from __future__ import annotations
 import enum
 import logging as _logging
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Any, Callable, Optional
 
 
 # ============================================================================
@@ -836,6 +836,172 @@ class InteractiveSession:
 
 
 # ============================================================================
+# Feature 024 — Lexicon Reference & Owned-Object Fidelity
+# (specs/024-lexicon-reference-fidelity/data-model.md)
+# ============================================================================
+#
+# Pure-Python types shared by `Lib/references.py` (resolver dispatch table +
+# decision function), `Lib/owned.py` (owned-object walk), and `Lib/report.py`
+# (dropped-item report channel). No flexicon / LCM imports here — same
+# constraint as the rest of this module.
+
+class ReferenceAction(enum.Enum):
+    """Outcome of resolving one referenced possibility item against the
+    target (data-model.md Enums; contracts/reference-resolver.md decision
+    table).
+
+    LINK           : target already has an identical item (by GUID); reference
+                     it, write nothing.
+    CREATE         : item absent from target; create it (+ ancestor chain),
+                     preserving GUID.
+    UPDATE         : item present, diverged, and custom (not _is_protected);
+                     non-destructive update per the update semantic.
+    REPORT_DROPPED : item present, diverged, and shared/default
+                     (_is_protected) -> LINK the existing item + emit a
+                     divergence record; OR item unresolvable -> emit a
+                     dropped record.
+    """
+    LINK = "link"
+    CREATE = "create"
+    UPDATE = "update"
+    REPORT_DROPPED = "report_dropped"
+
+
+class FidelityStatus(enum.Enum):
+    """Per-copied-object fidelity outcome for the report (FR-013).
+
+    FULL    : every populated reference/owned field reproduced.
+    PARTIAL : reproduced with >=1 dropped item (count carried alongside, see
+              `RunReport.dropped_items` filtered by owner_guid).
+    """
+    FULL = "full"
+    PARTIAL = "partial"
+
+
+class ReferenceCardinality(enum.Enum):
+    """Shape of a referenced-possibility field on the owner (data-model.md
+    ReferenceFieldSpec `cardinality`)."""
+    ATOMIC = "atomic"        # single reference, e.g. SenseTypeRA
+    COLLECTION = "collection"  # unordered set, e.g. UsageTypesRC
+    SEQUENCE = "sequence"    # ordered list, e.g. DialectLabelsRS
+
+
+@dataclass(frozen=True)
+class DroppedItemRecord:
+    """FR-010 — the never-silent report unit.
+
+    Emitted exactly once per (owner, field, item) triple whenever a
+    referenced or owned item cannot be reproduced in the target (contracts/
+    dropped-item-report.md).
+
+    Fields
+    ------
+    owner_kind  : e.g. "LexSense", "LexEntry", "MoStemAllomorph",
+                  "LexExampleSentence".
+    owner_guid  : source GUID of the owning object.
+    owner_label : human headword/gloss for the report line.
+    field_name  : the reference/owned field that could not be reproduced.
+    item_name   : source item's name/abbreviation (best analysis alt).
+    item_guid   : source item GUID.
+    reason      : e.g. "shared-default diverged", "target list absent",
+                  "member not in copy set".
+    """
+    owner_kind: str
+    owner_guid: str
+    owner_label: str
+    field_name: str
+    item_name: str
+    item_guid: str
+    reason: str
+
+    def __post_init__(self) -> None:
+        if not self.owner_kind:
+            raise ValueError("DroppedItemRecord.owner_kind must be non-empty")
+        if not self.field_name:
+            raise ValueError("DroppedItemRecord.field_name must be non-empty")
+        if not self.reason:
+            raise ValueError("DroppedItemRecord.reason must be non-empty")
+
+
+@dataclass(frozen=True)
+class ReferenceFieldSpec:
+    """One row of the hand-curated dispatch table that drives the referenced-
+    possibility resolver (data-model.md; contracts/reference-resolver.md).
+
+    The census (FR-011) is the independent check that this map is complete —
+    this dataclass just describes one entry in it.
+
+    Fields
+    ------
+    owner_class      : class the field lives on (e.g. "LexSense").
+    field_name        : LCM property (e.g. "SenseTypeRA", "UsageTypesRC").
+    cardinality       : ReferenceCardinality.
+    target_list_path  : callable `target -> ICmPossibilityList` (e.g.
+                        ``lambda target: target.Cache.LangProject.LexDbOA.SenseTypesOA``).
+    hierarchical      : whether ancestor-chain creation applies (tree-shaped
+                        possibility list) vs a flat list.
+    """
+    owner_class: str
+    field_name: str
+    cardinality: ReferenceCardinality
+    target_list_path: Callable[[Any], Any]
+    hierarchical: bool = False
+
+
+@dataclass(frozen=True)
+class ReferenceDecision:
+    """Pure decision-function result (contracts/reference-resolver.md
+    `decide_reference(source_item, target, spec, cache) -> ReferenceDecision`).
+
+    Fields
+    ------
+    action              : ReferenceAction.
+    target_item         : existing target item when LINK/UPDATE, else None.
+    ancestors_to_create : ordered source items (root->leaf) when CREATE and
+                          hierarchical; empty tuple otherwise.
+    dropped             : DroppedItemRecord, set only when
+                          action == REPORT_DROPPED.
+    """
+    action: ReferenceAction
+    target_item: Any = None
+    ancestors_to_create: tuple = ()  # tuple of source items, root -> leaf
+    dropped: Optional[DroppedItemRecord] = None
+
+    def __post_init__(self) -> None:
+        if self.action == ReferenceAction.REPORT_DROPPED and self.dropped is None:
+            raise ValueError(
+                "ReferenceDecision.dropped must be set when action is REPORT_DROPPED"
+            )
+        if self.action != ReferenceAction.REPORT_DROPPED and self.dropped is not None:
+            raise ValueError(
+                "ReferenceDecision.dropped must be None unless action is REPORT_DROPPED"
+            )
+
+
+@dataclass(frozen=True)
+class OwnedObjectSpec:
+    """Drives the owned-object walk (FR-009/FR-009a; data-model.md
+    OwnedObjectSpec).
+
+    Fields
+    ------
+    owner_class   : "LexEntry" | "LexSense" | "MoForm".
+    owning_field  : e.g. "ExamplesOS", "PronunciationsOS", "EtymologyOS",
+                    "SensesOS" (sub-senses).
+    factory       : LCM factory for the child (opaque; flexicon-supplied
+                    interface/service at runtime).
+    child_refs    : tuple[ReferenceFieldSpec, ...] — reference fields on the
+                    child routed back through the resolver.
+    recurse       : True for sub-senses (Sense.SensesOS).
+    """
+    owner_class: str
+    owning_field: str
+    factory: Any
+    child_refs: tuple = ()  # tuple[ReferenceFieldSpec, ...]
+    recurse: bool = False
+
+
+# ============================================================================
 # Run report (E6)
 # ============================================================================
 
@@ -875,6 +1041,11 @@ class RunReport:
     # "[skip] no items in source for X" lines.
     # Phase 3c Selection UI: EXCLUDED-LOSSY warning channel.
     excluded_lossy: tuple = ()  # tuple[ExcludedLossy, ...]
+    # Feature 024 (FR-010/FR-013, contracts/dropped-item-report.md): the
+    # never-silent report channel. Additive fields — old callers that never
+    # pass these get the empty defaults below (snapshot compatibility).
+    dropped_items: tuple = ()  # tuple[DroppedItemRecord, ...]
+    fidelity_by_guid: dict = field(default_factory=dict)  # owner_guid -> FidelityStatus
 
     def __post_init__(self) -> None:
         # FR-018: sum of per_category[*].skipped must equal len(skips)

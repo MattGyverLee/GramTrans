@@ -2915,7 +2915,7 @@ def _class_name_of(obj):
         return getattr(obj, "ClassName", getattr(obj, "class_name", None))
 
 
-def _walk_lex_entry_closure(src_entry, context, tag, category):
+def _walk_lex_entry_closure(src_entry, context, tag, category, dropped=None):
     """Atomic owned-child closure write for one LexEntry (E2), shared by
     AFFIXES + STEMS execute_action.
 
@@ -2928,6 +2928,16 @@ def _walk_lex_entry_closure(src_entry, context, tag, category):
     LexEntryRef component/primary lexemes are NOT written here (deferred to
     post-pass A). Carrier A residue cascades to entry/senses/MSAs/allomorphs.
 
+    `dropped` (feature 024, FR-010/FR-012, contracts/dropped-item-report.md):
+    the per-run ``list[DroppedItemRecord]`` collector. When not passed
+    explicitly, falls back to ``context._dropped`` (attached by
+    `Lib/preview.py.build_run_plan` / `Lib/transfer.py.execute` via
+    ``object.__setattr__``, mirroring ``_ws_map``/``_identity_remap``). This
+    is foundational plumbing only (T010): the channel exists end-to-end but
+    nothing appends to it yet -- the reference resolver (`Lib/references.py`,
+    US1) and the owned-object walk (`Lib/owned.py`, US3, which will own the
+    sub-sense/example legs of this closure) are the future writers.
+
     LCM-bound: imports SIL.LCModel, so it is exercised only under a live host /
     the integration suite. Returns the created ILexEntry (or None if the source
     object could not be re-resolved)."""
@@ -2939,6 +2949,11 @@ def _walk_lex_entry_closure(src_entry, context, tag, category):
         from .residue import apply_residue
     else:
         from residue import apply_residue  # type: ignore
+
+    if dropped is None:
+        dropped = getattr(context, "_dropped", None)
+    if dropped is None:
+        dropped = []
 
     target = context.target_handle
     src_guid = _guid_str_from(src_entry)
@@ -2973,7 +2988,7 @@ def _walk_lex_entry_closure(src_entry, context, tag, category):
             pass
 
     # Allomorphs (E3): LexemeFormOA + AlternateFormsOS.
-    _walk_entry_allomorphs(src_entry, new_entry, context, tag, identity_remap)
+    _walk_entry_allomorphs(src_entry, new_entry, context, tag, identity_remap, dropped=dropped)
 
     # Senses + owned MSAs (E4). ILexSense.MorphoSyntaxAnalysisRA links to an
     # MSA owned by ILexEntry.MorphoSyntaxAnalysesOC.
@@ -2990,6 +3005,12 @@ def _walk_lex_entry_closure(src_entry, context, tag, category):
             target.Senses.ApplySyncableProperties(new_sense, sprops, ws_map=ws_map)
         except (AttributeError, TypeError):
             pass
+        # T010(024): `dropped` is in scope here for the future sub-sense
+        # (Sense.SensesOS, recurse) and example (Sense.ExamplesOS +
+        # translation TypeRA) legs of the owned-object walk -- Lib/owned.py
+        # US3 (T028/T030) will call `walk_owned_children(src_sense, new_sense,
+        # context, tag, resolver_cache, dropped)` from right here once it is
+        # implemented. Not wired yet; `dropped` is unused below by design.
         # StatusRA is an object reference dropped by ApplySyncableProperties
         # (emitted as a GUID string); re-wire it explicitly by GUID -- same
         # bug class as the allomorph MorphTypeRA fix.
@@ -3023,10 +3044,20 @@ def _walk_lex_entry_closure(src_entry, context, tag, category):
     return new_entry
 
 
-def _walk_entry_allomorphs(src_entry, new_entry, context, tag, identity_remap):
+def _walk_entry_allomorphs(src_entry, new_entry, context, tag, identity_remap, dropped=None):
     """Create IMoForm allomorphs (E3) for an entry: LexemeFormOA then each
     AlternateFormsOS member. GUID is not factory-preservable for allomorphs;
-    the new GUID is recorded in identity_remap."""
+    the new GUID is recorded in identity_remap.
+
+    `dropped` (feature 024, FR-010/FR-012): per-run
+    ``list[DroppedItemRecord]`` collector, falling back to
+    ``context._dropped`` when not passed explicitly (see
+    `_walk_lex_entry_closure`). Foundational plumbing only (T010) -- kept in
+    scope for the allomorph-hung reference fields (`MorphTypeRA`, `PhoneEnvRC`,
+    `StemNameRA`) and the allomorph-hung data reproduction (phonological
+    environments, ad-hoc prohibition rules) that `Lib/references.py`/
+    `Lib/owned.py` (US1/US3) will route through here; nothing appends yet.
+    """
     from SIL.LCModel import (
         IMoAffixAllomorphFactory, IMoStemAllomorphFactory, ILexEntry, ICmObject,
     )
@@ -3034,6 +3065,10 @@ def _walk_entry_allomorphs(src_entry, new_entry, context, tag, identity_remap):
         from .residue import apply_residue
     else:
         from residue import apply_residue  # type: ignore
+    if dropped is None:
+        dropped = getattr(context, "_dropped", None)
+    if dropped is None:
+        dropped = []
     target = context.target_handle
     cache = getattr(target, "Cache")
     ws = cache.DefaultAnalWs
@@ -3079,6 +3114,10 @@ def _walk_entry_allomorphs(src_entry, new_entry, context, tag, identity_remap):
                     new_allo.MorphTypeRA = tgt_mt
                 except (AttributeError, TypeError):
                     pass
+        # T010(024): `dropped` is in scope here for the future PhoneEnvRC /
+        # StemNameRA resolution and APR reproduction
+        # (`Lib/owned.py.reproduce_allomorph_hung_data`, US3 T029). Not wired
+        # yet; unused below by design.
         apply_residue(new_allo, ws, tag)
 
     lf = getattr(src_entry, "LexemeFormOA", None)
