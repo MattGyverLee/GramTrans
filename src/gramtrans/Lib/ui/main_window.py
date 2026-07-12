@@ -270,9 +270,17 @@ class MainWindow(QtWidgets.QDialog):
         # with Move (which threads its own `_dropped` collector into
         # `RunReport.build_from_plan` via `extra_dropped_items` in
         # `Lib/transfer.py.execute`).
+        # Feature 024 (T023, FR-013): per-object FidelityStatus, mirroring the
+        # Move-mode wiring in `Lib/transfer.py.execute`.
+        if __package__:
+            from ..categories import compute_fidelity_by_guid
+        else:
+            from categories import compute_fidelity_by_guid  # type: ignore
+        _plan_dropped = getattr(plan, "dropped_items", ())
         report = RunReport.build_from_plan(
             plan, RunMode.PREVIEW,
-            extra_dropped_items=getattr(plan, "dropped_items", ()),
+            extra_dropped_items=_plan_dropped,
+            fidelity_by_guid=compute_fidelity_by_guid(_plan_dropped),
         )
         self._stats.set_report(report)
 

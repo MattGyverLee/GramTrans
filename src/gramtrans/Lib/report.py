@@ -295,6 +295,24 @@ def render_text_summary(report: RunReport) -> Iterable[str]:
         yield f"  Warnings (entries with missing references) -- {len(report.excluded_lossy)} total:"
         for el in report.excluded_lossy:
             yield f"    - [WARN] {el.message}"
+    # Feature 024 (FR-010/FR-013, contracts/dropped-item-report.md): the
+    # never-silent report channel. Renders identically whether `report` came
+    # from Preview (`extra_dropped_items=payload.dropped_items`,
+    # `Lib/ui/selection_wizard.py` / `Lib/ui/main_window.py`) or Move
+    # (`extra_dropped_items=_dropped`, `Lib/transfer.py.execute`) -- both
+    # thread through `RunReport.build_from_plan` into the same
+    # `report.dropped_items` field this section reads, so the section
+    # automatically appears in both the Preview pane and the post-run
+    # statistics panel with no mode-specific code here. ASCII-only line
+    # format (`->`/`-`, never unicode arrows/dashes) per Windows console
+    # rules. An empty `dropped_items` renders no section at all.
+    if report.dropped_items:
+        yield f"  Dropped references / owned items -- {len(report.dropped_items)} total:"
+        for d in report.dropped_items:
+            yield (
+                f"    - {d.owner_label} [{d.owner_kind} {d.owner_guid[:8]}] . "
+                f"{d.field_name} -> \"{d.item_name}\" ({d.item_guid[:8]}) - {d.reason}"
+            )
     if report.identity_remap:
         yield "  Identity remap (LCM denied GUID-on-create):"
         for src, dst in sorted(report.identity_remap.items()):

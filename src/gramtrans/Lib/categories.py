@@ -50,6 +50,7 @@ from typing import Iterable, Tuple
 if __package__:
     from .models import (
         CreateDefinitionAction,
+        FidelityStatus,
         GrammarCategory,
         PlannedAction,
         PlannedOverwrite,
@@ -66,6 +67,7 @@ if __package__:
 else:
     from models import (  # type: ignore
         CreateDefinitionAction,
+        FidelityStatus,
         GrammarCategory,
         PlannedAction,
         PlannedOverwrite,
@@ -2960,6 +2962,160 @@ def _reference_decision_record(owner_kind, owner_guid, spec, decision):
     )
 
 
+# ============================================================================
+# Dropped-item enrichment + exactly-once dedup (feature 024 US4, T022)
+# ============================================================================
+#
+# `references.decide_reference`/`apply_reference` build `DroppedItemRecord`s
+# from a bare source item + `ReferenceFieldSpec` -- neither function has the
+# owning LexEntry/LexSense/MoForm *instance* in scope (only `spec.owner_class`,
+# a bare string), so every record they build carries owner_guid=""/
+# owner_label="" placeholders (contracts/reference-resolver.md's signature
+# never threads owner identity through). This section patches those
+# placeholders in with the real owner instance's identity -- available here,
+# where `_decide_reference_fields`/`_apply_reference_fields` hold both
+# `owner_guid` and `src_obj` -- and enforces the contract's "emitted exactly
+# once per (owner, field, item) triple" invariant regardless of how many
+# times a decide/apply pass re-derives the same drop for the same owner
+# (e.g. a re-walk, or `_apply_reference_fields` internally re-running
+# `decide_reference` before calling `apply_reference`).
+
+_OWNER_LABEL_FIELD = {
+    "LexEntry": "CitationForm",
+    "LexSense": "Gloss",
+    "MoForm": "Form",
+}
+
+
+def _owner_label_for(owner_class: str, obj) -> str:
+    """Best-effort human label for a `DroppedItemRecord.owner_label` -- the
+    multistring field appropriate to the OWNER's class (LexEntry's
+    CitationForm, LexSense's Gloss, MoForm's Form), first non-empty
+    writing-system alt. Mirrors `references._item_label`'s extraction style
+    (same underlying `_multistring_dict` reader) but keyed by which owner
+    class this dropped record belongs to, rather than always reading `.Name`
+    (entries/senses/allomorphs don't carry a `.Name`).
+
+    Returns "" when `obj` is None, the owner class is unrecognized, or the
+    field is unset -- never raises (a report line always renders, even with
+    a blank label)."""
+    if obj is None:
+        return ""
+    if __package__:
+        from . import references as _references
+    else:
+        import references as _references  # type: ignore
+    field_name = _OWNER_LABEL_FIELD.get(owner_class)
+    if field_name is None:
+        return ""
+    snapshot = _references._multistring_dict(getattr(obj, field_name, None))
+    for text in snapshot.values():
+        if text:
+            return text
+    return ""
+
+
+def _dropped_key(record) -> tuple:
+    """The contract's identity key for a `DroppedItemRecord`
+    (contracts/dropped-item-report.md: "emitted exactly once per (owner,
+    field, item) triple") -- deliberately excludes `reason` so two records
+    for the same triple with different reason text still collapse to one."""
+    return (record.owner_guid, record.field_name, record.item_guid)
+
+
+def _append_dropped_once(dropped: list, record) -> None:
+    """Append `record` to the per-run `dropped` collector unless a record
+    with the same `_dropped_key` is already present. O(n) scan over the
+    (typically small) per-run drop list; simpler and more robust than
+    threading a parallel `seen` set through every closure-walk signature."""
+    key = _dropped_key(record)
+    for existing in dropped:
+        if _dropped_key(existing) == key:
+            return
+    dropped.append(record)
+
+
+def _enrich_dropped(owner_class: str, owner_guid: str, src_obj, record):
+    """Return `record` with the real owner_guid/owner_label patched in
+    (see module comment above -- `references.py` cannot know either)."""
+    import dataclasses
+    return dataclasses.replace(
+        record, owner_guid=owner_guid,
+        owner_label=_owner_label_for(owner_class, src_obj),
+    )
+
+
+def compute_fidelity_by_guid(dropped) -> dict:
+    """FR-013 -- per-object `FidelityStatus` for `RunReport.fidelity_by_guid`.
+
+    PARTIAL for every `owner_guid` referenced by >=1 `DroppedItemRecord` in
+    `dropped`; per `FidelityStatus`'s own docstring (models.py), FULL is the
+    implicit status for any owner GUID *absent* from this dict (an object
+    only earns an explicit entry once something was actually dropped for
+    it -- enumerating every fully-reproduced object just to assert a
+    negative would require a full extra pass over the plan for no
+    additional information). The per-object drop COUNT is not stored here;
+    it is obtained by filtering `RunReport.dropped_items` for the same
+    `owner_guid` (both are keyed identically -- see `_enrich_dropped`
+    above).
+
+    Never raises; a record with an empty `owner_guid` (unenriched --
+    shouldn't happen after T022, but tolerated defensively) is skipped
+    since an empty key can't identify a specific object."""
+    result: dict = {}
+    for record in dropped:
+        if not record.owner_guid:
+            continue
+        result[record.owner_guid] = FidelityStatus.PARTIAL
+    return result
+
+
+def _call_apply_reference(_references, decision, target, owner_target, spec,
+                           resolver_cache, tag, ws_map, source, dropped,
+                           owner_class, owner_guid, src_obj):
+    """`_apply_reference_fields`'s single call point into
+    `references.apply_reference`, isolated so the fail-soft exception
+    handling and the dropped-record enrichment/dedup live in one place.
+
+    `apply_reference`'s UPDATE/CREATE arms may append raw (unenriched,
+    owner_guid="") `DroppedItemRecord`(s) directly to `dropped` for the
+    "source WS absent in target" case (its own `dropped=` parameter), and
+    `UnmappedItemClassError` carries one more (`exc.dropped`) for the
+    unmapped-CREATE-factory case. Both are captured here, enriched with the
+    real owner identity, and deduped via `_append_dropped_once` -- exactly
+    once, matching `decision.dropped`'s handling in the caller.
+
+    Returns `(resolved, ok)`: `ok=False` on any swallowed failure (the
+    caller's pre-existing fail-soft `continue`), matching this module's
+    posture elsewhere -- one bad reference must never abort the rest of the
+    entry/sense/allomorph copy.
+    """
+    before = len(dropped)
+    resolved = None
+    ok = True
+    try:
+        resolved = _references.apply_reference(
+            decision, target, owner_target, spec, resolver_cache, tag,
+            ws_map=ws_map, source=source, dropped=dropped)
+    except _references.UnmappedItemClassError as exc:
+        # Fail-loud CREATE-time factory gap (bug 2b defensive path,
+        # Principle I): never silently fall back to a wrong-classed generic
+        # factory -- surface it as a dropped record instead (raw; enriched
+        # uniformly below alongside any ws-absent records).
+        dropped.append(exc.dropped)
+        ok = False
+    except (AttributeError, TypeError, RuntimeError):
+        ok = False
+    if len(dropped) > before:
+        raw = dropped[before:]
+        del dropped[before:]
+        for record in raw:
+            _append_dropped_once(
+                dropped, _enrich_dropped(owner_class, owner_guid, src_obj, record),
+            )
+    return resolved, ok
+
+
 def _decide_reference_fields(owner_class, owner_guid, src_obj, target,
                               resolver_cache, dropped, skip_fields=(), source=None):
     """Preview-mode (T017): pure `decide_reference` pass over every
@@ -2988,17 +3144,28 @@ def _decide_reference_fields(owner_class, owner_guid, src_obj, target,
             if decision is None:
                 continue
             if decision.dropped is not None:
-                dropped.append(decision.dropped)
+                _append_dropped_once(
+                    dropped,
+                    _enrich_dropped(owner_class, owner_guid, src_obj, decision.dropped),
+                )
             records.append(_reference_decision_record(owner_class, owner_guid, spec, decision))
     return tuple(records)
 
 
 def _apply_reference_fields(owner_class, src_obj, new_obj, target, tag,
                              resolver_cache, dropped, skip_fields=(), ws_map=None,
-                             source=None):
+                             source=None, owner_guid=""):
     """Move-mode (T016): `decide_reference` + `apply_reference` pass over
     every `references.field_specs_for(owner_class)` row applicable to
     `src_obj`, writing the result onto `new_obj`.
+
+    `owner_guid` (feature 024 US4, T022): the owning LexEntry/LexSense/
+    MoForm instance's own source GUID, used ONLY to enrich any
+    `DroppedItemRecord` produced this pass with its real owner identity
+    (`references.py` itself never sees the owner instance, only the field
+    spec -- see the module comment above `_decide_reference_fields`).
+    Defaults to `""` (unenriched -- matches every pre-T022 caller/test that
+    doesn't pass it) so no existing call site breaks.
 
     ATOMIC fields: `apply_reference` is given `new_obj` directly, so it sets
     `new_obj.<field_name>` itself. COLLECTION/SEQUENCE fields: `apply_reference`
@@ -3042,19 +3209,16 @@ def _apply_reference_fields(owner_class, src_obj, new_obj, target, tag,
             if decision is None:
                 continue
             if decision.dropped is not None:
-                dropped.append(decision.dropped)
+                _append_dropped_once(
+                    dropped,
+                    _enrich_dropped(owner_class, owner_guid, src_obj, decision.dropped),
+                )
             owner_target = new_obj if atomic else None
-            try:
-                resolved = _references.apply_reference(
-                    decision, target, owner_target, spec, resolver_cache, tag,
-                    ws_map=ws_map, source=source, dropped=dropped)
-            except _references.UnmappedItemClassError as exc:
-                # Fail-loud CREATE-time factory gap (bug 2b defensive path,
-                # Principle I): never silently fall back to a wrong-classed
-                # generic factory -- surface it as a dropped record instead.
-                dropped.append(exc.dropped)
-                continue
-            except (AttributeError, TypeError, RuntimeError):
+            resolved, ok = _call_apply_reference(
+                _references, decision, target, owner_target, spec, resolver_cache,
+                tag, ws_map, source, dropped, owner_class, owner_guid, src_obj,
+            )
+            if not ok:
                 continue
             if not atomic and resolved is not None:
                 owner_coll = getattr(new_obj, spec.field_name, None)
@@ -3238,7 +3402,7 @@ def _walk_lex_entry_closure(src_entry, context, tag, category, dropped=None):
     resolver_cache = _get_resolver_cache(context)
     _apply_reference_fields(
         "LexEntry", src_entry, new_entry, target, tag, resolver_cache, dropped,
-        ws_map=ws_map, source=context.source_handle)
+        ws_map=ws_map, source=context.source_handle, owner_guid=src_guid)
 
     # Allomorphs (E3): LexemeFormOA + AlternateFormsOS.
     _walk_entry_allomorphs(src_entry, new_entry, context, tag, identity_remap, dropped=dropped)
@@ -3276,7 +3440,7 @@ def _walk_lex_entry_closure(src_entry, context, tag, category, dropped=None):
         # diverged items that the old hand-wire never had.
         _apply_reference_fields(
             "LexSense", src_sense, new_sense, target, tag, resolver_cache, dropped,
-            ws_map=ws_map, source=context.source_handle)
+            ws_map=ws_map, source=context.source_handle, owner_guid=s_guid)
         # MSA for this sense (create once per source MSA guid).
         src_msa = getattr(src_sense, "MorphoSyntaxAnalysisRA", None)
         if src_msa is not None:
@@ -3367,7 +3531,7 @@ def _walk_entry_allomorphs(src_entry, new_entry, context, tag, identity_remap, d
         _apply_reference_fields(
             "MoForm", src_allo, new_allo, target, tag, resolver_cache, dropped,
             skip_fields=_MOFORM_DEFERRED_FIELDS, ws_map=ws_map,
-            source=context.source_handle)
+            source=context.source_handle, owner_guid=src_g)
         # `dropped`/`resolver_cache` are in scope here for the future APR
         # reproduction (`Lib/owned.py.reproduce_allomorph_hung_data`, US3
         # T029). Not wired yet.

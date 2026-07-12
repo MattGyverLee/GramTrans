@@ -340,6 +340,14 @@ def execute(plan: RunPlan, source, target, report_sink, tag: ImportResidueTag,
     # Build the report from the plan. If every action ran without raising,
     # the FR-018 invariant on RunReport.__post_init__ passes by construction
     # (every PlannedAction → +1 added, every plan.Skip → +1 skipped).
+    # Feature 024 (T023, FR-013): per-object FidelityStatus (FULL/PARTIAL)
+    # computed from the same `_dropped` collector -- see
+    # `categories.compute_fidelity_by_guid`'s docstring for the FULL-by-
+    # absence convention.
+    if __package__:
+        from .categories import compute_fidelity_by_guid as _compute_fidelity_by_guid
+    else:
+        from categories import compute_fidelity_by_guid as _compute_fidelity_by_guid  # type: ignore
     return RunReport.build_from_plan(
         plan, RunMode.MOVE,
         wall_clock_seconds=elapsed,
@@ -349,6 +357,7 @@ def execute(plan: RunPlan, source, target, report_sink, tag: ImportResidueTag,
         # every REPORT_DROPPED reference decision made during the AFFIXES/
         # STEMS closure write.
         extra_dropped_items=tuple(_dropped),
+        fidelity_by_guid=_compute_fidelity_by_guid(_dropped),
     )
 
 
