@@ -115,7 +115,7 @@ buckets are:
 rationale-class "read-only-derived-aggregate") and is now the ONLY entry
 remaining in `OUT_OF_SCOPE_EXCLUDED_FIELDS`. On Ejagham Mini all 4
 corrected fields are vacuous (0 populated) -- this cycle's tests
-(`tests/unit/test_cycle17_sense_scope_gaps.py`,
+(`tests/unit/test_cycle16c_sense_scope_gaps.py`,
 `tests/unit/test_owned_object_walk.py`'s
 `test_extended_note_reproduced_with_examples_and_type_resolved`) are
 fakes-only; live proof deferred to the T037-class fixture posture already

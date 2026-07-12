@@ -1285,23 +1285,33 @@ def _reproduce_aprs_for_allomorph(src_allo, ctx, tag, resolver_cache, dropped) -
 _APR_MEMBER_FIELD_NAMES = ("FirstAllomorphRA", "RestOfAllosRS", "AllomorphsRS")
 
 
+def _wipe_stale_apr_dropped_records(dropped, apr_guid) -> None:
+    """Shared by Move's `_reproduce_one_apr` and Preview's
+    `_plan_aprs_for_allomorph_decisions` (mirrors
+    categories._evaluate_lexical_relation's upfront wipe, categories.py:3578-
+    3582): every call for a given `apr_guid` is a fresh, AUTHORITATIVE re-
+    evaluation of the source APR against the CURRENT copy_set -- the growing
+    copy_set means an earlier "member not in copy set" DroppedItemRecord this
+    SAME apr_guid left behind can be stale by the time a later allomorph's
+    copy makes every member present. Wipe those member-level records before
+    re-deriving what is currently true, rather than leaving a now-false drop
+    sitting in the report alongside an APR that WAS reproduced/planned.
+
+    Scope is deliberately narrow: only records owned by this exact
+    `apr_guid` whose `field_name` is one of `_APR_MEMBER_FIELD_NAMES` are
+    removed; genuine still-true drops are re-appended by the caller
+    immediately afterward."""
+    if not apr_guid:
+        return
+    dropped[:] = [
+        r for r in dropped
+        if not (r.owner_guid == apr_guid and r.field_name in _APR_MEMBER_FIELD_NAMES)
+    ]
+
+
 def _reproduce_one_apr(src_apr, apr_guid, member_fields, ctx, tag, copy_set,
                         dropped, reproduced_guids) -> None:
-    # P1-A fix (mirrors categories._evaluate_lexical_relation's upfront wipe,
-    # categories.py:3578-3582): every call to this function for a given
-    # `apr_guid` (until it succeeds, at which point `reproduced_guids` skips
-    # further calls) is a fresh, AUTHORITATIVE re-evaluation of `src_apr`
-    # against the CURRENT copy_set -- the growing copy_set means an earlier
-    # "member not in copy set" DroppedItemRecord this SAME apr_guid left
-    # behind can be stale by the time a later allomorph's copy makes every
-    # member present. Wipe those member-level records before re-deriving
-    # what is currently true, rather than leaving a now-false drop sitting
-    # in the report alongside the APR that WAS reproduced.
-    if apr_guid:
-        dropped[:] = [
-            r for r in dropped
-            if not (r.owner_guid == apr_guid and r.field_name in _APR_MEMBER_FIELD_NAMES)
-        ]
+    _wipe_stale_apr_dropped_records(dropped, apr_guid)
 
     missing_seen: set = set()
     all_present = True
@@ -1572,15 +1582,7 @@ def _plan_aprs_for_allomorph_decisions(src_allo, ctx, resolver_cache, dropped) -
         member_fields = _apr_member_fields(src_apr)
         if not any(_references._guid_str(m) == src_guid for _, m in member_fields):
             continue
-        # P1-A fix (same staleness discipline as the write path's
-        # `_reproduce_one_apr` -- see its comment): wipe this apr_guid's
-        # prior member-level "not in copy set" records before re-deriving
-        # against the current copy_set.
-        if apr_guid:
-            dropped[:] = [
-                r for r in dropped
-                if not (r.owner_guid == apr_guid and r.field_name in _APR_MEMBER_FIELD_NAMES)
-            ]
+        _wipe_stale_apr_dropped_records(dropped, apr_guid)
         missing_seen: set = set()
         all_present = True
         for field_name, member in member_fields:
