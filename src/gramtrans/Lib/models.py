@@ -580,6 +580,13 @@ class PlannedAction:
     intended_target_guid: str
     summary: str
     pulled_in_by: tuple = ()  # tuple[str, ...] of source GUIDs
+    # Feature 024 (T017, Principle III): per-item ReferenceDecision snapshots
+    # for every referenced-possibility field on the entry/sense/allomorph
+    # closure this action pulls in — populated read-only by the plan-builder
+    # (`Lib/categories.py._plan_entry_reference_decisions`) so Preview shows
+    # Add/Link/Update/Report *before* Move ever writes. Empty for categories
+    # that don't (yet) route through the resolver.
+    reference_decisions: tuple = ()  # tuple[ReferenceDecisionRecord, ...]
 
 
 @dataclass(frozen=True)
@@ -686,6 +693,12 @@ class RunPlan:
     # Phase 3c Selection UI: EXCLUDED-LOSSY dispositions — deliberate, informed
     # omissions that generate entry-centric warnings but never hard-block Move.
     excluded_lossy: tuple = ()  # tuple[ExcludedLossy, ...]
+    # Feature 024 QC P1 (cycle-1 review): projected drops computed by the
+    # read-only reference resolver during Preview planning (Lib/preview.py
+    # build_run_plan's `_dropped` collector). Mirrors `excluded_lossy` above
+    # so Preview surfaces the same never-silent guarantee Move already gets
+    # via `transfer.execute`'s `extra_dropped_items` -> RunReport wiring.
+    dropped_items: tuple = ()  # tuple[DroppedItemRecord, ...]
 
     def category_count(self, category: GrammarCategory) -> int:
         return sum(1 for a in self.actions if a.category == category)
@@ -989,6 +1002,34 @@ class ReferenceDecision:
             raise ValueError(
                 "ReferenceDecision.dropped must be None unless action is REPORT_DROPPED"
             )
+
+
+@dataclass(frozen=True)
+class ReferenceDecisionRecord:
+    """T017 — a flat, report-friendly snapshot of one `ReferenceDecision`
+    (research R2, Principle III): Preview must show the resolver's per-item
+    decision *before* any write. Attached to `PlannedAction.reference_decisions`
+    by the plan-builder path (`Lib/categories.py`, `Lib/preview.py`).
+
+    Deliberately flat (strings + the `ReferenceAction` enum only, no live LCM
+    object refs) — mirrors `DroppedItemRecord`'s style so both survive past
+    the Preview call that produced them.
+
+    Fields
+    ------
+    owner_kind  : e.g. "LexEntry", "LexSense", "MoForm".
+    owner_guid  : source GUID of the owning object (entry/sense/allomorph).
+    field_name  : the `ReferenceFieldSpec.field_name` this decision resolves.
+    action      : ReferenceAction (LINK/CREATE/UPDATE/REPORT_DROPPED).
+    item_name   : source item's best-effort display name (may be "").
+    item_guid   : source item's GUID (may be "" when unresolvable).
+    """
+    owner_kind: str
+    owner_guid: str
+    field_name: str
+    action: ReferenceAction
+    item_name: str = ""
+    item_guid: str = ""
 
 
 @dataclass(frozen=True)

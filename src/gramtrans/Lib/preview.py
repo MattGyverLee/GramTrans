@@ -121,16 +121,21 @@ def build_run_plan(
     # plan_action callbacks can add EXCLUDED-LOSSY warnings.
     object.__setattr__(context, '_excluded_lossy', excluded_lossy)
 
-    # Feature 024 (T010, FR-010/FR-012, contracts/dropped-item-report.md
-    # "Collection"): thread the per-run dropped-item collector so the
-    # referenced-possibility resolver (Lib/references.py `decide_reference`,
-    # US1) and the owned-object walk (Lib/owned.py, US3) can append
-    # DroppedItemRecord instances once wired into the plan-builder path
+    # Feature 024 (T010/T016/T017, FR-010/FR-012, contracts/dropped-item-
+    # report.md "Collection"): thread the per-run dropped-item collector so
+    # the referenced-possibility resolver (Lib/references.py
+    # `decide_reference`, US1, wired into `Lib/categories.py`'s
+    # AFFIXES/STEMS `plan_action`) can append DroppedItemRecord instances
     # (Principle III — decisions must appear in Preview, not only post-run).
-    # Foundational plumbing only: the channel exists end-to-end via this
-    # context attribute, but nothing appends to it yet.
     _dropped: list = []
     object.__setattr__(context, '_dropped', _dropped)
+
+    # Feature 024 (T016, FR-012): per-run GUID -> resolved/created target
+    # item cache for the resolver, mirroring `_dropped` above. Shared across
+    # every reference field/owner so a possibility already resolved earlier
+    # in the walk short-circuits to LINK without re-deciding.
+    _resolver_cache: dict = {}
+    object.__setattr__(context, '_resolver_cache', _resolver_cache)
 
     # Phase 3a leaf-category dispatch: iterate every Phase 3a category
     # that's enabled in the selection.  Each category's registered
@@ -220,8 +225,9 @@ def build_run_plan(
     )
 
     _log.debug(
-        "build_run_plan: done  actions=%d skips=%d overwrites=%d excluded_lossy=%d",
-        len(actions), len(skips), len(overwrites), len(excluded_lossy),
+        "build_run_plan: done  actions=%d skips=%d overwrites=%d excluded_lossy=%d "
+        "dropped_items=%d",
+        len(actions), len(skips), len(overwrites), len(excluded_lossy), len(_dropped),
     )
     return RunPlan(
         context=context,
@@ -234,6 +240,11 @@ def build_run_plan(
         msa_slot_bindings=_msa_slot_bindings,
         lexentry_ref_bindings=_lexentry_ref_bindings,
         excluded_lossy=tuple(excluded_lossy),
+        # QC P1 (cycle-1 review, feature 024): carry the read-only resolver's
+        # projected drops into the plan so Preview is symmetric with Move
+        # (Move already surfaces `_dropped` via transfer.execute's
+        # extra_dropped_items -> RunReport wiring).
+        dropped_items=tuple(_dropped),
     )
 
 

@@ -3995,8 +3995,13 @@ def _compute_wizard_plan(wizard) -> tuple:
 
     # Step 8: build run report and return.
     phon_warnings = _phonology_excluded_lossy_for(wizard)
+    # QC P1 (cycle-1 review, feature 024): surface the plan's projected drops
+    # (Lib/references.py `decide_reference`, run read-only during AFFIXES/
+    # STEMS plan_action) here too, so the wizard's Preview report is
+    # symmetric with both Move and the main-window Preview path.
     report = RunReport.build_from_plan(
-        payload, RunMode.PREVIEW, extra_excluded_lossy=phon_warnings
+        payload, RunMode.PREVIEW, extra_excluded_lossy=phon_warnings,
+        extra_dropped_items=getattr(payload, "dropped_items", ()),
     )
     return (payload, report)
 

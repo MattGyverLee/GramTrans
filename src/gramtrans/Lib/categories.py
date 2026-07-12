@@ -53,6 +53,8 @@ if __package__:
         GrammarCategory,
         PlannedAction,
         PlannedOverwrite,
+        ReferenceCardinality,
+        ReferenceDecisionRecord,
         RunContext,
         Selection,
         Skip,
@@ -67,6 +69,8 @@ else:
         GrammarCategory,
         PlannedAction,
         PlannedOverwrite,
+        ReferenceCardinality,
+        ReferenceDecisionRecord,
         RunContext,
         Selection,
         Skip,
@@ -2880,12 +2884,189 @@ def _resolve_target_status(target, src_status_guid):
     `src_status_guid`, or None. Status items live in LangProject.StatusOA; the
     default Confirmed/Tentative/Disproved items carry well-known GUIDs shared
     across projects (a project-specific custom status simply won't resolve, and
-    the reference is left unset -- same fail-soft posture as MorphTypeRA)."""
+    the reference is left unset -- same fail-soft posture as MorphTypeRA).
+
+    NOTE (feature 024 T016): no longer called by the closure walk below --
+    `_apply_reference_fields("LexSense", ...)` now resolves StatusRA through
+    the generic `references` resolver (which additionally UPDATEs a diverged
+    custom status and REPORT_DROPPEDs a diverged shared/default one instead
+    of just silently leaving it unset). Retained standalone: still exercised
+    directly by `tests/unit/test_morphtype_resolution.py` and still a valid
+    plain GUID-lookup primitive."""
     try:
         status_list = target.Cache.LangProject.StatusOA
     except AttributeError:
         return None
     return _resolve_possibility_by_guid(status_list, src_status_guid)
+
+
+# ============================================================================
+# Generic referenced-possibility dispatch (feature 024 US1, T016/T017)
+# ============================================================================
+#
+# Subsumes the hand-wired MorphType/Status/SemanticDomain re-wire blocks that
+# used to live inline in `_walk_lex_entry_closure` / `_walk_entry_allomorphs`
+# (research R1): every field registered in `references.REFERENCE_FIELD_MAP`
+# for LexEntry/LexSense/MoForm is now resolved through the one generic
+# decide_reference/apply_reference code path below, instead of one bespoke
+# GUID-lookup-and-setattr block per field. PhoneEnvRC/StemNameRA on MoForm are
+# explicitly excluded here -- their `target_list_path` is a documented US3
+# (T029) placeholder, not a real ICmPossibilityList yet (see
+# `references.py` REFERENCE_FIELD_MAP comments).
+
+_MOFORM_DEFERRED_FIELDS = ("PhoneEnvRC", "StemNameRA")
+
+
+def _get_resolver_cache(context) -> dict:
+    """Per-run GUID -> resolved/created target item cache (FR-012), threaded
+    onto `context._resolver_cache` by `preview.build_run_plan` / `transfer.execute`
+    (mirrors the `context._dropped` fallback pattern above)."""
+    cache = getattr(context, "_resolver_cache", None)
+    if cache is None:
+        cache = {}
+    return cache
+
+
+def _iter_reference_items(spec, src_obj):
+    """Return the list of source items a `ReferenceFieldSpec` yields off
+    `src_obj`: the single value for ATOMIC, or the members for
+    COLLECTION/SEQUENCE. Empty when the field is unset/absent (never raises)."""
+    src_val = getattr(src_obj, spec.field_name, None)
+    if spec.cardinality == ReferenceCardinality.ATOMIC:
+        return [src_val] if src_val is not None else []
+    try:
+        return list(src_val) if src_val else []
+    except TypeError:
+        return []
+
+
+def _reference_decision_record(owner_kind, owner_guid, spec, decision):
+    """Flatten one `ReferenceDecision` into a `ReferenceDecisionRecord` (T017)
+    for `PlannedAction.reference_decisions` -- no live LCM refs retained."""
+    if __package__:
+        from . import references as _references
+    else:
+        import references as _references  # type: ignore
+    src_item = decision.source_item
+    item_name = _references._item_label(src_item) if src_item is not None else ""
+    item_guid = _guid_str_from(src_item) if src_item is not None else ""
+    return ReferenceDecisionRecord(
+        owner_kind=owner_kind,
+        owner_guid=owner_guid,
+        field_name=spec.field_name,
+        action=decision.action,
+        item_name=item_name,
+        item_guid=item_guid,
+    )
+
+
+def _decide_reference_fields(owner_class, owner_guid, src_obj, target,
+                              resolver_cache, dropped, skip_fields=()):
+    """Preview-mode (T017): pure `decide_reference` pass over every
+    `references.field_specs_for(owner_class)` row applicable to `src_obj` --
+    no writes, ever (Principle III). Appends any REPORT_DROPPED record to
+    `dropped` (FR-010, never silent) and returns the tuple of
+    `ReferenceDecisionRecord` for the owning `PlannedAction`."""
+    if __package__:
+        from . import references as _references
+    else:
+        import references as _references  # type: ignore
+    records = []
+    for spec in _references.field_specs_for(owner_class):
+        if spec.field_name in skip_fields:
+            continue
+        for item in _iter_reference_items(spec, src_obj):
+            decision = _references.decide_reference(item, target, spec, resolver_cache)
+            if decision is None:
+                continue
+            if decision.dropped is not None:
+                dropped.append(decision.dropped)
+            records.append(_reference_decision_record(owner_class, owner_guid, spec, decision))
+    return tuple(records)
+
+
+def _apply_reference_fields(owner_class, src_obj, new_obj, target, tag,
+                             resolver_cache, dropped, skip_fields=()):
+    """Move-mode (T016): `decide_reference` + `apply_reference` pass over
+    every `references.field_specs_for(owner_class)` row applicable to
+    `src_obj`, writing the result onto `new_obj`.
+
+    ATOMIC fields: `apply_reference` is given `new_obj` directly, so it sets
+    `new_obj.<field_name>` itself. COLLECTION/SEQUENCE fields: `apply_reference`
+    is given `owner_obj=None` (so it performs no setattr) and this function
+    `.Add()`s the resolved item onto `new_obj`'s collection/sequence property
+    instead -- `apply_reference`'s single-value setattr would be wrong for a
+    multi-member field.
+
+    Never raises: any per-item resolve/apply failure is swallowed (fail-soft,
+    matching every other closure-walk write in this module) so one bad
+    reference never aborts the rest of the entry/sense/allomorph copy.
+    """
+    if __package__:
+        from . import references as _references
+    else:
+        import references as _references  # type: ignore
+    for spec in _references.field_specs_for(owner_class):
+        if spec.field_name in skip_fields:
+            continue
+        atomic = spec.cardinality == ReferenceCardinality.ATOMIC
+        for item in _iter_reference_items(spec, src_obj):
+            decision = _references.decide_reference(item, target, spec, resolver_cache)
+            if decision is None:
+                continue
+            if decision.dropped is not None:
+                dropped.append(decision.dropped)
+            owner_target = new_obj if atomic else None
+            try:
+                resolved = _references.apply_reference(
+                    decision, target, owner_target, spec, resolver_cache, tag)
+            except (AttributeError, TypeError, RuntimeError):
+                continue
+            if not atomic and resolved is not None:
+                owner_coll = getattr(new_obj, spec.field_name, None)
+                if owner_coll is not None:
+                    try:
+                        owner_coll.Add(resolved)
+                    except (AttributeError, TypeError):
+                        pass
+
+
+def _plan_entry_reference_decisions(src_entry, context, target):
+    """Preview-mode (T017): read-only `decide_reference` pass across the
+    AFFIXES/STEMS entry -> sense -> allomorph closure -- the collector's
+    legitimate reach today (deeper owned-object legs -- sub-senses, examples,
+    pronunciations, etymologies -- are US3, not this task). Returns the
+    combined tuple of `ReferenceDecisionRecord` for
+    `PlannedAction.reference_decisions`.
+
+    Never raises: any failure (e.g. a duck-typed test fake missing a target
+    possibility list) yields an empty tuple rather than aborting plan_action,
+    matching this module's fail-soft posture elsewhere."""
+    try:
+        dropped = getattr(context, "_dropped", None)
+        if dropped is None:
+            dropped = []
+        resolver_cache = _get_resolver_cache(context)
+        entry_guid = _guid_str_from(src_entry)
+        records = list(_decide_reference_fields(
+            "LexEntry", entry_guid, src_entry, target, resolver_cache, dropped))
+        for src_sense in getattr(src_entry, "SensesOS", None) or []:
+            s_guid = _guid_str_from(src_sense)
+            records.extend(_decide_reference_fields(
+                "LexSense", s_guid, src_sense, target, resolver_cache, dropped))
+        allomorphs = []
+        lf = getattr(src_entry, "LexemeFormOA", None)
+        if lf is not None:
+            allomorphs.append(lf)
+        allomorphs.extend(getattr(src_entry, "AlternateFormsOS", None) or [])
+        for src_allo in allomorphs:
+            a_guid = _guid_str_from(src_allo)
+            records.extend(_decide_reference_fields(
+                "MoForm", a_guid, src_allo, target, resolver_cache, dropped,
+                skip_fields=_MOFORM_DEFERRED_FIELDS))
+        return tuple(records)
+    except Exception:
+        return ()
 
 
 def _dispatch_msa_subclass(class_name):
@@ -2932,11 +3113,18 @@ def _walk_lex_entry_closure(src_entry, context, tag, category, dropped=None):
     the per-run ``list[DroppedItemRecord]`` collector. When not passed
     explicitly, falls back to ``context._dropped`` (attached by
     `Lib/preview.py.build_run_plan` / `Lib/transfer.py.execute` via
-    ``object.__setattr__``, mirroring ``_ws_map``/``_identity_remap``). This
-    is foundational plumbing only (T010): the channel exists end-to-end but
-    nothing appends to it yet -- the reference resolver (`Lib/references.py`,
-    US1) and the owned-object walk (`Lib/owned.py`, US3, which will own the
-    sub-sense/example legs of this closure) are the future writers.
+    ``object.__setattr__``, mirroring ``_ws_map``/``_identity_remap``).
+
+    Feature 024 (T016, US1): every `LexEntry`/`LexSense` field registered in
+    `references.REFERENCE_FIELD_MAP` (DialectLabelsRS, PublishIn,
+    DoNotPublishInRC, DoNotShowMainEntryInRC on the entry; SenseTypeRA,
+    UsageTypesRC, DomainTypesRC, AnthroCodesRC, DialectLabelsRS, StatusRA,
+    SemanticDomainsRC, PublishIn, DoNotPublishInRC, DoNotShowMainEntryInRC on
+    each sense) is now resolved through `_apply_reference_fields` -- the
+    generic decide_reference/apply_reference dispatch that subsumes the old
+    hand-wired StatusRA + SemanticDomainsRC re-wire blocks that used to live
+    inline here. The sub-sense/example/pronunciation/etymology legs of the
+    owned-object walk (`Lib/owned.py`, US3) are still future writers.
 
     LCM-bound: imports SIL.LCModel, so it is exercised only under a live host /
     the integration suite. Returns the created ILexEntry (or None if the source
@@ -2987,6 +3175,14 @@ def _walk_lex_entry_closure(src_entry, context, tag, category, dropped=None):
         except (AttributeError, TypeError):
             pass
 
+    # Feature 024 (T016): entry-level reference fields (DialectLabelsRS,
+    # PublishIn, DoNotPublishInRC, DoNotShowMainEntryInRC) via the generic
+    # resolver -- these were previously dropped silently by
+    # ApplySyncableProperties (research R1).
+    resolver_cache = _get_resolver_cache(context)
+    _apply_reference_fields(
+        "LexEntry", src_entry, new_entry, target, tag, resolver_cache, dropped)
+
     # Allomorphs (E3): LexemeFormOA + AlternateFormsOS.
     _walk_entry_allomorphs(src_entry, new_entry, context, tag, identity_remap, dropped=dropped)
 
@@ -3005,23 +3201,24 @@ def _walk_lex_entry_closure(src_entry, context, tag, category, dropped=None):
             target.Senses.ApplySyncableProperties(new_sense, sprops, ws_map=ws_map)
         except (AttributeError, TypeError):
             pass
-        # T010(024): `dropped` is in scope here for the future sub-sense
-        # (Sense.SensesOS, recurse) and example (Sense.ExamplesOS +
+        # `dropped`/`resolver_cache` are still in scope here for the future
+        # sub-sense (Sense.SensesOS, recurse) and example (Sense.ExamplesOS +
         # translation TypeRA) legs of the owned-object walk -- Lib/owned.py
         # US3 (T028/T030) will call `walk_owned_children(src_sense, new_sense,
         # context, tag, resolver_cache, dropped)` from right here once it is
-        # implemented. Not wired yet; `dropped` is unused below by design.
-        # StatusRA is an object reference dropped by ApplySyncableProperties
-        # (emitted as a GUID string); re-wire it explicitly by GUID -- same
-        # bug class as the allomorph MorphTypeRA fix.
-        src_status = getattr(src_sense, "StatusRA", None)
-        if src_status is not None:
-            tgt_status = _resolve_target_status(target, _guid_str_from(src_status))
-            if tgt_status is not None:
-                try:
-                    new_sense.StatusRA = tgt_status
-                except (AttributeError, TypeError):
-                    pass
+        # implemented.
+        #
+        # Feature 024 (T016): every sense-level reference field registered in
+        # `references.REFERENCE_FIELD_MAP` -- SenseTypeRA, UsageTypesRC,
+        # DomainTypesRC, AnthroCodesRC, DialectLabelsRS, StatusRA,
+        # SemanticDomainsRC, PublishIn, DoNotPublishInRC,
+        # DoNotShowMainEntryInRC -- via the generic resolver. Subsumes the old
+        # hand-wired `_resolve_target_status`/`StatusRA` re-wire block and the
+        # `_wire_semantic_domains` call that used to be here (research R1):
+        # both are now one call, and get UPDATE/REPORT_DROPPED handling for
+        # diverged items that the old hand-wire never had.
+        _apply_reference_fields(
+            "LexSense", src_sense, new_sense, target, tag, resolver_cache, dropped)
         # MSA for this sense (create once per source MSA guid).
         src_msa = getattr(src_sense, "MorphoSyntaxAnalysisRA", None)
         if src_msa is not None:
@@ -3037,8 +3234,6 @@ def _walk_lex_entry_closure(src_entry, context, tag, category, dropped=None):
                     new_sense.MorphoSyntaxAnalysisRA = new_msa
                 except (AttributeError, TypeError):
                     pass
-        # STEMS: wire sense.SemanticDomainsRC by GUID lookup (E10).
-        _wire_semantic_domains(src_sense, new_sense, target)
         apply_residue(new_sense, ws, tag)
 
     return new_entry
@@ -3052,11 +3247,16 @@ def _walk_entry_allomorphs(src_entry, new_entry, context, tag, identity_remap, d
     `dropped` (feature 024, FR-010/FR-012): per-run
     ``list[DroppedItemRecord]`` collector, falling back to
     ``context._dropped`` when not passed explicitly (see
-    `_walk_lex_entry_closure`). Foundational plumbing only (T010) -- kept in
-    scope for the allomorph-hung reference fields (`MorphTypeRA`, `PhoneEnvRC`,
-    `StemNameRA`) and the allomorph-hung data reproduction (phonological
-    environments, ad-hoc prohibition rules) that `Lib/references.py`/
-    `Lib/owned.py` (US1/US3) will route through here; nothing appends yet.
+    `_walk_lex_entry_closure`).
+
+    Feature 024 (T016, US1): `MorphTypeRA` is resolved through the generic
+    `_apply_reference_fields("MoForm", ...)` dispatch, subsuming the old
+    hand-wired `_resolve_target_morph_type` re-wire block that used to live
+    inline in `_mk` below. `PhoneEnvRC`/`StemNameRA` are explicitly excluded
+    from that dispatch -- their `references.REFERENCE_FIELD_MAP` rows are
+    documented US3 (T029) placeholders (phonological environments and
+    per-POS stem names need special-cased target lookups, not a plain
+    ICmPossibilityList), not this task's scope.
     """
     from SIL.LCModel import (
         IMoAffixAllomorphFactory, IMoStemAllomorphFactory, ILexEntry, ICmObject,
@@ -3069,6 +3269,7 @@ def _walk_entry_allomorphs(src_entry, new_entry, context, tag, identity_remap, d
         dropped = getattr(context, "_dropped", None)
     if dropped is None:
         dropped = []
+    resolver_cache = _get_resolver_cache(context)
     target = context.target_handle
     cache = getattr(target, "Cache")
     ws = cache.DefaultAnalWs
@@ -3102,22 +3303,15 @@ def _walk_entry_allomorphs(src_entry, new_entry, context, tag, identity_remap, d
             target.Allomorphs.ApplySyncableProperties(new_allo, aprops, ws_map=ws_map)
         except (AttributeError, TypeError):
             pass
-        # MorphTypeRA is an object reference; ApplySyncableProperties emits it as
-        # a GUID string and its apply-loop drops object-references silently (see
-        # _resolve_target_morph_type). Wire it explicitly by GUID so the target
-        # entry shows the correct morph type instead of a blank one.
-        src_mt = getattr(src_allo, "MorphTypeRA", None)
-        if src_mt is not None:
-            tgt_mt = _resolve_target_morph_type(target, _guid_str_from(src_mt))
-            if tgt_mt is not None:
-                try:
-                    new_allo.MorphTypeRA = tgt_mt
-                except (AttributeError, TypeError):
-                    pass
-        # T010(024): `dropped` is in scope here for the future PhoneEnvRC /
-        # StemNameRA resolution and APR reproduction
-        # (`Lib/owned.py.reproduce_allomorph_hung_data`, US3 T029). Not wired
-        # yet; unused below by design.
+        # Feature 024 (T016): MorphTypeRA via the generic resolver -- subsumes
+        # the old `_resolve_target_morph_type` hand-wire block (research R1).
+        # PhoneEnvRC/StemNameRA are skipped here (US3 T029; see docstring).
+        _apply_reference_fields(
+            "MoForm", src_allo, new_allo, target, tag, resolver_cache, dropped,
+            skip_fields=_MOFORM_DEFERRED_FIELDS)
+        # `dropped`/`resolver_cache` are in scope here for the future APR
+        # reproduction (`Lib/owned.py.reproduce_allomorph_hung_data`, US3
+        # T029). Not wired yet.
         apply_residue(new_allo, ws, tag)
 
     lf = getattr(src_entry, "LexemeFormOA", None)
@@ -3233,7 +3427,15 @@ def _wire_stratum(src_msa, new_msa, target):
 def _wire_semantic_domains(src_sense, new_sense, target):
     """Wire sense.SemanticDomainsRC to Phase 3b-transferred domains by GUID
     lookup (E10). Missing domains are left unwired (surfaced as a sense-level
-    dependency skip by the planner)."""
+    dependency skip by the planner).
+
+    NOTE (feature 024 T016): no longer called from `_walk_lex_entry_closure`
+    -- `_apply_reference_fields("LexSense", ...)` now resolves
+    SemanticDomainsRC through the generic `references` resolver (which
+    additionally CREATEs a domain absent from the target instead of leaving
+    it unwired, and UPDATE/REPORT_DROPPED-handles a diverged one). Retained
+    standalone: not otherwise referenced, but harmless, still-correct dead
+    code kept for history/diff-legibility rather than deleted outright."""
     src_rc = getattr(src_sense, "SemanticDomainsRC", None)
     if src_rc is None:
         return
@@ -3462,7 +3664,14 @@ def affixes_required_writing_systems(piece):
 def affixes_plan_action(piece, context, ws_mapping):
     """One PlannedAction per affix LexEntry. Side effect (FR-333/FR-340):
     stash MSA->slot and EntryRef component bindings into the plan for the
-    deferred 17.1 sub-pass + post-pass A."""
+    deferred 17.1 sub-pass + post-pass A.
+
+    Feature 024 (T017, US1, Principle III): also computes the read-only
+    `decide_reference` pass across this entry's sense/allomorph reference
+    fields and attaches the result to `PlannedAction.reference_decisions`,
+    so Preview shows Add/Link/Update/Report decisions before Move ever
+    writes. Never blocks planning -- any resolver failure yields an empty
+    tuple (see `_plan_entry_reference_decisions`)."""
     # Constitution v7.0.0: GOLD items transfer as ordinary items (no field lock).
     src_guid = _guid_str_from(piece)
     _stash_entry_bindings(piece, context)
@@ -3473,11 +3682,13 @@ def affixes_plan_action(piece, context, ws_mapping):
             reason=SkipReason.ALREADY_PRESENT_BY_GUID,
             detail=f"Affix LexEntry GUID {src_guid[:8]}... already present in target.",
         )
+    ref_decisions = _plan_entry_reference_decisions(piece, context, context.target_handle)
     return PlannedAction(
         category=GrammarCategory.AFFIXES,
         source_guid=src_guid,
         intended_target_guid=src_guid,
         summary=f"Affix LexEntry guid={src_guid[:8]}...",
+        reference_decisions=ref_decisions,
     )
 
 
@@ -3845,7 +4056,10 @@ def stems_required_writing_systems(piece):
 
 def stems_plan_action(piece, context, ws_mapping):
     """One PlannedAction per stem entry. Side effect: same lexentry_ref_bindings
-    stash as AFFIXES for any EntryRefs on the stem entry (FR-340)."""
+    stash as AFFIXES for any EntryRefs on the stem entry (FR-340).
+
+    Feature 024 (T017, US1, Principle III): same read-only reference-decision
+    surfacing as `affixes_plan_action` -- see its docstring."""
     # Constitution v7.0.0: GOLD items transfer as ordinary items (no field lock).
     src_guid = _guid_str_from(piece)
     _stash_entry_bindings(piece, context)
@@ -3856,11 +4070,13 @@ def stems_plan_action(piece, context, ws_mapping):
             reason=SkipReason.ALREADY_PRESENT_BY_GUID,
             detail=f"Stem LexEntry GUID {src_guid[:8]}... already present in target.",
         )
+    ref_decisions = _plan_entry_reference_decisions(piece, context, context.target_handle)
     return PlannedAction(
         category=GrammarCategory.STEMS,
         source_guid=src_guid,
         intended_target_guid=src_guid,
         summary=f"Stem LexEntry guid={src_guid[:8]}...",
+        reference_decisions=ref_decisions,
     )
 
 
