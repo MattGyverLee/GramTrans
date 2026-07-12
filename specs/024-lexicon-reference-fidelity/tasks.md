@@ -73,7 +73,7 @@ created, renamed default LINKed+reported, both entries resolve to the right item
 
 ### Tests for User Story 1 ⚠️ (write first, must FAIL before implementation)
 
-- [ ] T011 [P] [US1] Write `tests/unit/test_reference_resolver.py`: LINK (identical GUID), CREATE (absent + ancestor chain), UPDATE (custom diverged), REPORT_DROPPED (shared/default diverged; target list absent), and cache-reuse/idempotency (FR-012) cases against the decision table in contracts/reference-resolver.md.
+- [X] T011 [P] [US1] Write `tests/unit/test_reference_resolver.py`: LINK (identical GUID), CREATE (absent + ancestor chain), UPDATE (custom diverged), REPORT_DROPPED (shared/default diverged; target list absent), and cache-reuse/idempotency (FR-012) cases against the decision table in contracts/reference-resolver.md.
 
 ### Implementation for User Story 1
 
