@@ -1330,6 +1330,92 @@ def _reproduce_one_apr(src_apr, apr_guid, member_fields, ctx, tag, copy_set,
     reproduced_guids.add(apr_guid)
 
 
+# ----------------------------------------------------------------------------
+# Cycle-16 lead adjudication -- MoAffixAllomorph MsEnv/inflection-class/
+# position fields: DROP_REPORTED (never reproduced, always surfaced).
+# ----------------------------------------------------------------------------
+#
+# `InflectionClassesRC`, `MsEnvFeaturesOA`, `MsEnvPartOfSpeechRA`, `PositionRS`
+# are REAL `MoAffixAllomorph`-only fields (data-model.md/fidelity_census.py)
+# with NO reproduction code anywhere in `Lib/*.py` -- routed to
+# 028-affix-allomorph-morphosyntax. Per the lead's ruling this cycle, the
+# transfer must stop being silent about them: one `DroppedItemRecord` per
+# POPULATED field on the SOURCE allomorph (never per-item -- these are
+# reported as a field-level loss, not enumerated member-by-member). Vacuous
+# (zero records) for a `MoStemAllomorph` (the fields don't exist there) and
+# for a `MoAffixAllomorph` where none of the 4 happen to be populated.
+
+_MOAFFIX_MSENV_FIELDS: tuple = (
+    ("InflectionClassesRC", "collection"),
+    ("MsEnvFeaturesOA", "atomic"),
+    ("MsEnvPartOfSpeechRA", "atomic"),
+    ("PositionRS", "collection"),
+)
+
+
+def _is_moaffix_allomorph(src_allo) -> bool:
+    """True when `src_allo` is (or duck-types as) a `MoAffixAllomorph`.
+
+    Real `ClassName` available -> match it exactly (disambiguates from
+    `MoStemAllomorph`, which never carries these 4 fields at all). No
+    `ClassName` available (host-free fakes) -> fall back to duck-typing:
+    present if the fake exposes ANY of the 4 field names -- a
+    `MoStemAllomorph` fixture that never sets them naturally reports
+    nothing either way."""
+    class_name = _owner_class_name(src_allo)
+    if class_name is not None:
+        return class_name == "MoAffixAllomorph"
+    return any(hasattr(src_allo, field_name)
+               for field_name, _ in _MOAFFIX_MSENV_FIELDS)
+
+
+def _moaffix_msenv_populated_fields(src_allo) -> list:
+    """`[(field_name, value), ...]` for every one of the 4 MsEnv/inflection-
+    class/position fields that is actually POPULATED on `src_allo` (atomic:
+    not None; collection: non-empty) -- empty list for a non-`MoAffixAllomorph`
+    or an allomorph where none are set."""
+    if not _is_moaffix_allomorph(src_allo):
+        return []
+    populated: list = []
+    for field_name, shape in _MOAFFIX_MSENV_FIELDS:
+        value = getattr(src_allo, field_name, None)
+        if shape == "atomic":
+            if value is not None:
+                populated.append((field_name, value))
+            continue
+        try:
+            items = list(value) if value is not None else []
+        except TypeError:
+            items = []
+        if items:
+            populated.append((field_name, value))
+    return populated
+
+
+def _report_dropped_moaffix_msenv_fields(src_allo, dropped) -> None:
+    """DROP_REPORTED emission (Move + Preview twin call the SAME function --
+    there is no CREATE/LINK leg to diverge, both are report-only): one
+    `DroppedItemRecord` per populated field in `_MOAFFIX_MSENV_FIELDS`."""
+    populated = _moaffix_msenv_populated_fields(src_allo)
+    if not populated:
+        return
+    owner_guid = _references._guid_str(src_allo)
+    owner_label = _references._item_label(src_allo)
+    for field_name, _value in populated:
+        _append_dropped(dropped, DroppedItemRecord(
+            owner_kind="MoAffixAllomorph",
+            owner_guid=owner_guid,
+            owner_label=owner_label,
+            field_name=field_name,
+            item_name="",
+            item_guid="",
+            reason=(
+                f"{field_name} is not reproduced by feature 024's lexicon "
+                "transfer (routed to 028-affix-allomorph-morphosyntax)"
+            ),
+        ))
+
+
 def reproduce_allomorph_hung_data(src_allo, new_allo, ctx, tag, resolver_cache,
                                    dropped) -> None:
     """T029 (US3, FR-009a) -- reproduce a copied allomorph's "hung" data:
@@ -1337,7 +1423,10 @@ def reproduce_allomorph_hung_data(src_allo, new_allo, ctx, tag, resolver_cache,
     sequence), `StemNameRA` (link/report against the owning POS's own
     `StemNamesOC`), and any ad-hoc prohibition rule (APR) referencing it
     (reproduce only when every member is in the run's copy set, else report
-    each missing member -- see `contracts/owned-object-walk.md`).
+    each missing member -- see `contracts/owned-object-walk.md`). Also
+    reports (cycle-16 lead adjudication, never creates) any populated
+    `MoAffixAllomorph`-only MsEnv/inflection-class/position field --
+    `_report_dropped_moaffix_msenv_fields`.
 
     Never creates a phonological environment or a StemName from scratch
     (contract non-goals) -- both are REPORT-only when unresolvable. Never
@@ -1347,6 +1436,7 @@ def reproduce_allomorph_hung_data(src_allo, new_allo, ctx, tag, resolver_cache,
     _reproduce_phone_env_rc(src_allo, new_allo, ctx, dropped)
     _reproduce_stem_name_ra(src_allo, new_allo, ctx, dropped)
     _reproduce_aprs_for_allomorph(src_allo, ctx, tag, resolver_cache, dropped)
+    _report_dropped_moaffix_msenv_fields(src_allo, dropped)
 
 
 # ============================================================================
@@ -1476,10 +1566,16 @@ def plan_allomorph_hung_data_decisions(src_allo, ctx, resolver_cache, dropped) -
     checks and the same APR copy-set gate, but only `decide`s -- never
     links/creates. Caller contract is identical to the write path: the
     allomorph currently being planned must already be a member of
-    `ctx._copy_set` before this is called."""
+    `ctx._copy_set` before this is called.
+
+    Cycle-16: also calls `_report_dropped_moaffix_msenv_fields` -- the SAME
+    report-only function the Move twin (`reproduce_allomorph_hung_data`)
+    calls, so Preview's drop set is identical to Move's for these 4 fields
+    by construction (no separate CREATE/LINK decision exists for them)."""
     records: list = []
     records.extend(_plan_phone_env_rc_decisions(src_allo, ctx, dropped))
     records.extend(_plan_stem_name_ra_decision(src_allo, ctx, dropped))
     records.extend(_plan_aprs_for_allomorph_decisions(
         src_allo, ctx, resolver_cache, dropped))
+    _report_dropped_moaffix_msenv_fields(src_allo, dropped)
     return tuple(records)

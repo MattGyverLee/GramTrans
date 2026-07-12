@@ -3382,6 +3382,12 @@ def _plan_entry_reference_decisions(src_entry, context, target):
         records = list(_decide_reference_fields(
             "LexEntry", entry_guid, src_entry, target, resolver_cache, dropped,
             source=source))
+        # Cycle-16 lead adjudication (DROP_REPORTED): SAME report-only
+        # function the Move path (`_walk_lex_entry_closure`) calls -- no
+        # separate Preview decision logic exists for EntryRefsOS (no
+        # CREATE/LINK leg, nothing is ever created either mode), so Move's
+        # and Preview's drop sets are identical by construction.
+        _report_dropped_entry_refs(src_entry, dropped)
         # Feature 024 (T031, US3, FR-008): register the entry into
         # `ctx._copy_set` (the SAME convention `owned.py`'s APR gate uses --
         # `True` is a placeholder marker, Preview never needs a real target
@@ -3995,6 +4001,91 @@ def _class_name_of(obj):
         return getattr(obj, "ClassName", getattr(obj, "class_name", None))
 
 
+# ----------------------------------------------------------------------------
+# Cycle-16 lead adjudication -- LexEntry.EntryRefsOS: DROP_REPORTED.
+# ----------------------------------------------------------------------------
+#
+# No code site anywhere in `Lib/*.py` calls `ILexEntryRefFactory` -- a copied
+# entry's `EntryRefsOS` is simply never populated on the target (routed to
+# 027-complex-forms-variants). `_run_post_pass_a` only WIRES
+# ComponentLexemesRS/PrimaryLexemesRS onto an EntryRef that already exists;
+# since none is ever created for a freshly-copied entry, it is unreachable.
+# Per the lead's ruling this cycle: report every un-reproduced `EntryRefsOS`
+# member (one `DroppedItemRecord` per `LexEntryRef`, naming the relationship
+# kind -- variant vs complex-form, from `RefType` -- plus its component +
+# variant/complex type). This SUBSUMES `LexEntryRef.{ComponentLexemesRS,
+# PrimaryLexemesRS, VariantEntryTypesRS, ComplexEntryTypesRS,
+# ShowComplexFormsInRS}` -- none of those 5 fields gets its own separate
+# `DroppedItemRecord` (they cannot exist without an un-reproduced
+# `LexEntryRef` in the first place).
+
+_LEX_ENTRY_REF_KIND_BY_TYPE = {0: "variant", 1: "complex-form"}
+
+
+def _lex_entry_ref_kind(ref) -> str:
+    """Human relationship-kind label from `ILexEntryRef.RefType` (real LCM
+    `LexEntryRefTags` int: 0 = variant (`krtVariant`), 1 = complex-form
+    (`krtComplexForm`)). Any other/absent value renders as its own
+    `RefType=<value>` label rather than silently guessing."""
+    ref_type = getattr(ref, "RefType", None)
+    return _LEX_ENTRY_REF_KIND_BY_TYPE.get(ref_type, f"RefType={ref_type!r}")
+
+
+def _lex_entry_ref_identity_label(ref, kind: str) -> str:
+    """Best-effort `item_name` for one un-reproduced `LexEntryRef`: its
+    (first) component lexeme's label plus its (first) variant/complex-form
+    type's label -- "identify the LexEntryRef (its component + variant/
+    complex type)" per the lead's ruling. Never raises; missing pieces just
+    render as "(none)"."""
+    if __package__:
+        from . import references as _references
+    else:
+        import references as _references  # type: ignore
+
+    comps = list(getattr(ref, "ComponentLexemesRS", None) or [])
+    comp_label = ""
+    if comps:
+        comp_label = _owner_label_for("LexEntry", comps[0]) or _guid_str_from(comps[0])
+
+    type_field = "VariantEntryTypesRS" if kind == "variant" else "ComplexEntryTypesRS"
+    types = list(getattr(ref, type_field, None) or [])
+    type_label = _references._item_label(types[0]) if types else ""
+
+    parts = [f"component={comp_label or '(none)'}"]
+    if type_label:
+        parts.append(f"type={type_label}")
+    return f"{kind}: " + ", ".join(parts)
+
+
+def _report_dropped_entry_refs(src_entry, dropped) -> None:
+    """Emit one `DroppedItemRecord` per `LexEntryRef` owned by
+    `src_entry.EntryRefsOS` -- called identically from the Move path
+    (`_walk_lex_entry_closure`) and the Preview path
+    (`_plan_entry_reference_decisions`), so the two drop sets are identical
+    by construction (there is no CREATE/LINK leg to diverge; both are
+    report-only -- no `ILexEntryRef` is ever created this cycle)."""
+    refs = list(getattr(src_entry, "EntryRefsOS", None) or [])
+    if not refs:
+        return
+    owner_guid = _guid_str_from(src_entry)
+    owner_label = _owner_label_for("LexEntry", src_entry)
+    for ref in refs:
+        kind = _lex_entry_ref_kind(ref)
+        _append_dropped_once(dropped, DroppedItemRecord(
+            owner_kind="LexEntry",
+            owner_guid=owner_guid,
+            owner_label=owner_label,
+            field_name="EntryRefsOS",
+            item_name=_lex_entry_ref_identity_label(ref, kind),
+            item_guid=_guid_str_from(ref),
+            reason=(
+                f"LexEntryRef ({kind}) is not reproduced by feature 024's "
+                "lexicon transfer -- no ILexEntryRefFactory create site "
+                "exists (routed to 027-complex-forms-variants)"
+            ),
+        ))
+
+
 def _walk_lex_entry_closure(src_entry, context, tag, category, dropped=None):
     """Atomic owned-child closure write for one LexEntry (E2), shared by
     AFFIXES + STEMS execute_action.
@@ -4082,6 +4173,12 @@ def _walk_lex_entry_closure(src_entry, context, tag, category, dropped=None):
     _apply_reference_fields(
         "LexEntry", src_entry, new_entry, target, tag, resolver_cache, dropped,
         ws_map=ws_map, source=context.source_handle, owner_guid=src_guid)
+
+    # Cycle-16 lead adjudication (DROP_REPORTED): EntryRefsOS is never
+    # reproduced (no ILexEntryRefFactory create site) -- report every
+    # un-reproduced LexEntryRef, never silently drop it. See
+    # `_report_dropped_entry_refs`'s own docstring.
+    _report_dropped_entry_refs(src_entry, dropped)
 
     # Feature 024 (T031, US3, FR-008): register the entry into
     # `context._copy_set` (same per-run dict `owned.py`'s allomorph-hung-data

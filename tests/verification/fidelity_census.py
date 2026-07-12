@@ -29,8 +29,13 @@ Four buckets (`Bucket`):
 - DROP_REPORTED: never copied, but the transfer always emits a
   `DroppedItemRecord` for it (a genuine, surfaced fidelity loss).
 - OUT_OF_SCOPE_EXCLUDED: on `OUT_OF_SCOPE_EXCLUDED_FIELDS` (lead's SC-004
-  ruling) -- exactly the four LexSense fields: AppendixesRC, ThesaurusItemsRC,
-  ExtendedNoteOS, PicturesOS. These do NOT emit DroppedItemRecords by design.
+  ruling) -- the four LexSense fields (AppendixesRC, ThesaurusItemsRC,
+  ExtendedNoteOS, PicturesOS; rationale-class "out-of-024-scope") PLUS
+  `LexEntry.MainEntriesOrSensesRS` (cycle-16 ruling; rationale-class
+  "read-only-derived-aggregate" -- visibly DISTINCT from the 4 decorative
+  LexSense exclusions: it is a read-only derived aggregate, `can_write=false`,
+  transitively populated by the LexEntryRef mechanism, not an independent
+  data-loss point). None of these 5 emit DroppedItemRecords by design.
 - HANDLED_ELSEWHERE: reproduced by a sibling subsystem, not 024's lexicon
   transfer -- per lead's ruling this is the MSA family (`HANDLED_ELSEWHERE_
   FIELDS`): LexSense.MorphoSyntaxAnalysisRA, LexEntry.MorphoSyntaxAnalysesOC,
@@ -38,15 +43,35 @@ Four buckets (`Bucket`):
   MoDerivAffMsa, MoUnclassifiedAffixMsa) -- reproduced via the POS/MSA path
   (`Lib/categories.py._create_msa_for_closure` + `Lib/categories_msas.py`).
 
-KNOWN CENSUS FAILURES (lead adjudication needed -- see this module's test
-output and the docstring on `_UNCLASSIFIED_GAP_FIELDS` below): 11 REAL
-fields across `LexEntry`, `MoAffixAllomorph`, and `LexEntryRef` have NO
-`CLASSIFICATION` entry because the current transfer code genuinely does not
-touch them (and no spec doc lists them as excluded) -- this is the census
-doing its SC-004 job, not a bug in the census itself. `test_no_unclassified_
-real_fields` fails loudly, one parametrized case per gap field, until lead
-adjudicates each into one of the four buckets (or the code is extended to
-cover it).
+CYCLE-16 CENSUS RESOLUTION: the 11 fields the cycle-16 census run surfaced
+as unclassified gaps (see `_UNCLASSIFIED_GAP_FIELDS`'s pre-cycle-16
+docstring, retained below for provenance) have all been adjudicated into
+terminal buckets by the lead and are now real `CLASSIFICATION` entries:
+
+- `LexEntry.EntryRefsOS` -> DROP_REPORTED. The transfer now emits one
+  `DroppedItemRecord` per un-reproduced `LexEntryRef` owned by a copied
+  entry (`Lib/categories.py._report_dropped_entry_refs`, called from both
+  `_walk_lex_entry_closure` (Move) and `_plan_entry_reference_decisions`
+  (Preview) -- Move == Preview by construction, same function). Routed to
+  027-complex-forms-variants for eventual reproduction.
+- `LexEntryRef.{ComponentLexemesRS, PrimaryLexemesRS, VariantEntryTypesRS,
+  ComplexEntryTypesRS, ShowComplexFormsInRS}` -> DROP_REPORTED, SUBSUMED by
+  the parent `EntryRefsOS` record above -- no `LexEntryRef` is ever created,
+  so these 5 fields cannot exist independently of that drop. Each points at
+  the SAME emission site as `EntryRefsOS`; no double-counting.
+- `LexEntry.MainEntriesOrSensesRS` -> OUT_OF_SCOPE_EXCLUDED
+  (rationale-class "read-only-derived-aggregate"; see above).
+- `MoAffixAllomorph.{InflectionClassesRC, MsEnvFeaturesOA,
+  MsEnvPartOfSpeechRA, PositionRS}` -> DROP_REPORTED. One
+  `DroppedItemRecord` per POPULATED field on a created `MoAffixAllomorph`
+  (`Lib/owned.py._report_dropped_moaffix_msenv_fields`, called from both
+  `reproduce_allomorph_hung_data` (Move) and
+  `plan_allomorph_hung_data_decisions` (Preview) -- Move == Preview by
+  construction, same function). Vacuous on Ejagham Mini (0/106 allomorphs
+  populate these) but honest for other projects. Routed to
+  028-affix-allomorph-morphosyntax for eventual reproduction.
+
+Zero fields remain in `_UNCLASSIFIED_GAP_FIELDS` / xfail after this cycle.
 """
 from __future__ import annotations
 
@@ -195,13 +220,19 @@ class Classification:
 
 
 # ----------------------------------------------------------------------------
-# OUT_OF_SCOPE_EXCLUDED_FIELDS -- lead's SC-004 ruling, EXACTLY these 4
+# OUT_OF_SCOPE_EXCLUDED_FIELDS -- lead's SC-004 ruling, EXACTLY these 5:
+# the original 4 decorative LexSense fields (rationale-class
+# "out-of-024-scope") PLUS LexEntry.MainEntriesOrSensesRS (cycle-16 ruling,
+# rationale-class "read-only-derived-aggregate" -- visibly DISTINCT: a
+# read-only derived aggregate transitively populated by the LexEntryRef
+# mechanism, not an independent data-loss point).
 # ----------------------------------------------------------------------------
 OUT_OF_SCOPE_EXCLUDED_FIELDS: frozenset[tuple[str, str]] = frozenset({
     ("LexSense", "AppendixesRC"),
     ("LexSense", "ThesaurusItemsRC"),
     ("LexSense", "ExtendedNoteOS"),
     ("LexSense", "PicturesOS"),
+    ("LexEntry", "MainEntriesOrSensesRS"),
 })
 
 # ----------------------------------------------------------------------------
@@ -231,6 +262,19 @@ HANDLED_ELSEWHERE_FIELDS: frozenset[tuple[str, str]] = frozenset(
 # ----------------------------------------------------------------------------
 CLASSIFICATION: dict[tuple[str, str], Classification] = {
     # ---- LexEntry --------------------------------------------------------
+    ("LexEntry", "EntryRefsOS"): Classification(
+        Bucket.DROP_REPORTED,
+        "categories._report_dropped_entry_refs (categories.py:4060), called "
+        "from _walk_lex_entry_closure (Move, categories.py:4089+) and "
+        "_plan_entry_reference_decisions (Preview) -- one DroppedItemRecord "
+        "per un-reproduced LexEntryRef owned by the entry",
+        note="cycle-16 lead adjudication: no ILexEntryRefFactory create "
+             "site exists anywhere in Lib/*.py; routed to "
+             "027-complex-forms-variants for eventual reproduction. "
+             "Subsumes LexEntryRef.{ComponentLexemesRS, PrimaryLexemesRS, "
+             "VariantEntryTypesRS, ComplexEntryTypesRS, "
+             "ShowComplexFormsInRS} -- see those rows.",
+    ),
     ("LexEntry", "AlternateFormsOS"): Classification(
         Bucket.COPIED,
         "categories._walk_entry_allomorphs._mk "
@@ -267,6 +311,16 @@ CLASSIFICATION: dict[tuple[str, str], Classification] = {
         "categories._walk_entry_allomorphs._mk "
         "(entry_ie.LexemeFormOA = new_allo)",
     ),
+    ("LexEntry", "MainEntriesOrSensesRS"): Classification(
+        Bucket.OUT_OF_SCOPE_EXCLUDED,
+        "OUT_OF_SCOPE_EXCLUDED_FIELDS (cycle-16 lead ruling)",
+        note="rationale-class: read-only-derived-aggregate -- can_write="
+             "false; a read-only derived aggregate transitively populated "
+             "by the LexEntryRef mechanism (see LexEntry.EntryRefsOS), not "
+             "an independent data-loss point. Visibly distinct from the "
+             "4 decorative LexSense exclusions below (rationale-class: "
+             "out-of-024-scope).",
+    ),
     ("LexEntry", "MorphoSyntaxAnalysesOC"): Classification(
         Bucket.HANDLED_ELSEWHERE, _MSA_HANDLING_SITE,
     ),
@@ -293,8 +347,9 @@ CLASSIFICATION: dict[tuple[str, str], Classification] = {
     ("LexSense", "AppendixesRC"): Classification(
         Bucket.OUT_OF_SCOPE_EXCLUDED,
         "OUT_OF_SCOPE_EXCLUDED_FIELDS (lead SC-004 ruling)",
-        note="rationale: appendix cross-refs are out of 024's fidelity scope "
-             "(spec.md US5 clarification); does not emit DroppedItemRecord.",
+        note="rationale-class: out-of-024-scope -- appendix cross-refs are "
+             "out of 024's fidelity scope (spec.md US5 clarification); does "
+             "not emit DroppedItemRecord.",
     ),
     ("LexSense", "DialectLabelsRS"): Classification(
         Bucket.COPIED,
@@ -325,9 +380,9 @@ CLASSIFICATION: dict[tuple[str, str], Classification] = {
     ("LexSense", "ExtendedNoteOS"): Classification(
         Bucket.OUT_OF_SCOPE_EXCLUDED,
         "OUT_OF_SCOPE_EXCLUDED_FIELDS (lead SC-004 ruling)",
-        note="rationale: extended-note owned text is out of 024's fidelity "
-             "scope (spec.md US5 clarification); does not emit "
-             "DroppedItemRecord.",
+        note="rationale-class: out-of-024-scope -- extended-note owned "
+             "text is out of 024's fidelity scope (spec.md US5 "
+             "clarification); does not emit DroppedItemRecord.",
     ),
     ("LexSense", "MorphoSyntaxAnalysisRA"): Classification(
         Bucket.HANDLED_ELSEWHERE, _MSA_HANDLING_SITE,
@@ -335,9 +390,9 @@ CLASSIFICATION: dict[tuple[str, str], Classification] = {
     ("LexSense", "PicturesOS"): Classification(
         Bucket.OUT_OF_SCOPE_EXCLUDED,
         "OUT_OF_SCOPE_EXCLUDED_FIELDS (lead SC-004 ruling)",
-        note="rationale: pictures (binary/file-linked media) are out of "
-             "024's fidelity scope (spec.md US5 clarification); does not "
-             "emit DroppedItemRecord.",
+        note="rationale-class: out-of-024-scope -- pictures (binary/"
+             "file-linked media) are out of 024's fidelity scope (spec.md "
+             "US5 clarification); does not emit DroppedItemRecord.",
     ),
     ("LexSense", "SemanticDomainsRC"): Classification(
         Bucket.COPIED,
@@ -368,9 +423,9 @@ CLASSIFICATION: dict[tuple[str, str], Classification] = {
     ("LexSense", "ThesaurusItemsRC"): Classification(
         Bucket.OUT_OF_SCOPE_EXCLUDED,
         "OUT_OF_SCOPE_EXCLUDED_FIELDS (lead SC-004 ruling)",
-        note="rationale: thesaurus cross-refs are out of 024's fidelity "
-             "scope (spec.md US5 clarification); does not emit "
-             "DroppedItemRecord.",
+        note="rationale-class: out-of-024-scope -- thesaurus cross-refs "
+             "are out of 024's fidelity scope (spec.md US5 clarification); "
+             "does not emit DroppedItemRecord.",
     ),
     ("LexSense", "UsageTypesRC"): Classification(
         Bucket.COPIED,
@@ -414,6 +469,88 @@ CLASSIFICATION: dict[tuple[str, str], Classification] = {
         "owned.reproduce_allomorph_hung_data, itself called from "
         "categories._walk_entry_allomorphs._mk)",
     ),
+    ("MoAffixAllomorph", "InflectionClassesRC"): Classification(
+        Bucket.DROP_REPORTED,
+        "owned._report_dropped_moaffix_msenv_fields (owned.py:1395), "
+        "called from reproduce_allomorph_hung_data (Move, owned.py:1419+) "
+        "and plan_allomorph_hung_data_decisions (Preview, owned.py:1563+), "
+        "themselves called from categories._walk_entry_allomorphs._mk "
+        "(Move) / categories._plan_entry_reference_decisions (Preview) -- "
+        "one DroppedItemRecord per populated MsEnv/inflection-class/"
+        "position field on a created MoAffixAllomorph",
+        note="cycle-16 lead adjudication: routed to "
+             "028-affix-allomorph-morphosyntax for eventual reproduction. "
+             "Vacuous on Ejagham Mini (0/106 allomorphs populate this).",
+    ),
+    ("MoAffixAllomorph", "MsEnvFeaturesOA"): Classification(
+        Bucket.DROP_REPORTED,
+        "owned._report_dropped_moaffix_msenv_fields (owned.py:1395), "
+        "called from reproduce_allomorph_hung_data (Move) and "
+        "plan_allomorph_hung_data_decisions (Preview)",
+        note="cycle-16 lead adjudication: routed to "
+             "028-affix-allomorph-morphosyntax for eventual reproduction. "
+             "Vacuous on Ejagham Mini (0/106 allomorphs populate this).",
+    ),
+    ("MoAffixAllomorph", "MsEnvPartOfSpeechRA"): Classification(
+        Bucket.DROP_REPORTED,
+        "owned._report_dropped_moaffix_msenv_fields (owned.py:1395), "
+        "called from reproduce_allomorph_hung_data (Move) and "
+        "plan_allomorph_hung_data_decisions (Preview)",
+        note="cycle-16 lead adjudication: routed to "
+             "028-affix-allomorph-morphosyntax for eventual reproduction. "
+             "Vacuous on Ejagham Mini (0/106 allomorphs populate this).",
+    ),
+    ("MoAffixAllomorph", "PositionRS"): Classification(
+        Bucket.DROP_REPORTED,
+        "owned._report_dropped_moaffix_msenv_fields (owned.py:1395), "
+        "called from reproduce_allomorph_hung_data (Move) and "
+        "plan_allomorph_hung_data_decisions (Preview)",
+        note="cycle-16 lead adjudication: routed to "
+             "028-affix-allomorph-morphosyntax for eventual reproduction. "
+             "Vacuous on Ejagham Mini (0/106 allomorphs populate this).",
+    ),
+
+    # ---- LexEntryRef (SUBSUMED by parent LexEntry.EntryRefsOS drop) -------
+    ("LexEntryRef", "ComponentLexemesRS"): Classification(
+        Bucket.DROP_REPORTED,
+        "SAME emission site as LexEntry.EntryRefsOS: "
+        "categories._report_dropped_entry_refs (categories.py:4060)",
+        note="subsumed by parent EntryRefsOS drop record -- no LexEntryRef "
+             "is ever created, so this field cannot exist independently of "
+             "that drop; no separate DroppedItemRecord is emitted for it.",
+    ),
+    ("LexEntryRef", "PrimaryLexemesRS"): Classification(
+        Bucket.DROP_REPORTED,
+        "SAME emission site as LexEntry.EntryRefsOS: "
+        "categories._report_dropped_entry_refs (categories.py:4060)",
+        note="subsumed by parent EntryRefsOS drop record -- no LexEntryRef "
+             "is ever created, so this field cannot exist independently of "
+             "that drop; no separate DroppedItemRecord is emitted for it.",
+    ),
+    ("LexEntryRef", "VariantEntryTypesRS"): Classification(
+        Bucket.DROP_REPORTED,
+        "SAME emission site as LexEntry.EntryRefsOS: "
+        "categories._report_dropped_entry_refs (categories.py:4060)",
+        note="subsumed by parent EntryRefsOS drop record -- no LexEntryRef "
+             "is ever created, so this field cannot exist independently of "
+             "that drop; no separate DroppedItemRecord is emitted for it.",
+    ),
+    ("LexEntryRef", "ComplexEntryTypesRS"): Classification(
+        Bucket.DROP_REPORTED,
+        "SAME emission site as LexEntry.EntryRefsOS: "
+        "categories._report_dropped_entry_refs (categories.py:4060)",
+        note="subsumed by parent EntryRefsOS drop record -- no LexEntryRef "
+             "is ever created, so this field cannot exist independently of "
+             "that drop; no separate DroppedItemRecord is emitted for it.",
+    ),
+    ("LexEntryRef", "ShowComplexFormsInRS"): Classification(
+        Bucket.DROP_REPORTED,
+        "SAME emission site as LexEntry.EntryRefsOS: "
+        "categories._report_dropped_entry_refs (categories.py:4060)",
+        note="subsumed by parent EntryRefsOS drop record -- no LexEntryRef "
+             "is ever created, so this field cannot exist independently of "
+             "that drop; no separate DroppedItemRecord is emitted for it.",
+    ),
 
     # ---- LexReference ------------------------------------------------------
     ("LexReference", "TargetsRS"): Classification(
@@ -429,56 +566,20 @@ CLASSIFICATION: dict[tuple[str, str], Classification] = {
 # Gap surfacing -- SC-004 never-silent guard
 # ============================================================================
 #
-# These 11 REAL fields have NO `CLASSIFICATION` entry (and are not on
-# `OUT_OF_SCOPE_EXCLUDED_FIELDS` / `HANDLED_ELSEWHERE_FIELDS` either) because
-# the current transfer code genuinely does not touch them, and no spec
-# document lists them as excluded:
-#
-# - LexEntry.EntryRefsOS: NO code site anywhere in `Lib/*.py` calls
-#   `ILexEntryRefFactory` (grep-confirmed) -- a copied entry's `EntryRefsOS`
-#   is simply never populated on the target. `categories._run_post_pass_a`
-#   ("post-pass A", feature 007) wires `ComponentLexemesRS`/`PrimaryLexemesRS`
-#   onto a target `ILexEntryRef` IF ONE ALREADY EXISTS
-#   (`target_entry.EntryRefsOS`) -- confirmed via
-#   `tests/unit/test_phase3c_post_pass_a.py`'s fixture, which PRE-POPULATES
-#   `EntryRefsOS` on its fake rather than exercising real creation. Since
-#   nothing creates the `ILexEntryRef` object itself, this wiring is
-#   unreachable for a freshly-copied entry in a genuine Move run.
-# - LexEntry.MainEntriesOrSensesRS: zero references anywhere in `Lib/*.py` or
-#   in any 024 spec doc.
-# - MoAffixAllomorph.{InflectionClassesRC, MsEnvFeaturesOA,
-#   MsEnvPartOfSpeechRA, PositionRS}: zero references anywhere in `Lib/*.py`.
-#   (The two other MoAffixAllomorph fields, MorphTypeRA/PhoneEnvRC, ARE
-#   handled -- see `CLASSIFICATION` -- because they are shared "MoForm"
-#   fields also present on MoStemAllomorph.)
-# - LexEntryRef.{ComplexEntryTypesRS, ComponentLexemesRS, PrimaryLexemesRS,
-#   ShowComplexFormsInRS, VariantEntryTypesRS}: same root cause as
-#   `LexEntry.EntryRefsOS` above -- the owning object is never created, so
-#   none of its 5 reference fields have a reachable code path in a genuine
-#   Move run. `ComponentLexemesRS`/`PrimaryLexemesRS` have WIRING code
-#   (`_run_post_pass_a`) but it is unreachable without entry-ref creation;
-#   the other 3 fields have no code touching them at all.
-#
-# Per the task brief: "If the code does not touch them at all and they are
-# not on any documented list, that is a census FAIL you must surface, NOT
-# paper over." These are surfaced here, not silently defaulted -- lead needs
-# to adjudicate whether LexEntryRef reproduction (a NEW `ILexEntryRefFactory`
-# create step) belongs in 024's scope, is a documented exclusion, or is
-# genuinely `HANDLED_ELSEWHERE` by a sibling subsystem this census hasn't
-# been told about.
-_UNCLASSIFIED_GAP_FIELDS: tuple[tuple[str, str], ...] = (
-    ("LexEntry", "EntryRefsOS"),
-    ("LexEntry", "MainEntriesOrSensesRS"),
-    ("MoAffixAllomorph", "InflectionClassesRC"),
-    ("MoAffixAllomorph", "MsEnvFeaturesOA"),
-    ("MoAffixAllomorph", "MsEnvPartOfSpeechRA"),
-    ("MoAffixAllomorph", "PositionRS"),
-    ("LexEntryRef", "ComplexEntryTypesRS"),
-    ("LexEntryRef", "ComponentLexemesRS"),
-    ("LexEntryRef", "PrimaryLexemesRS"),
-    ("LexEntryRef", "ShowComplexFormsInRS"),
-    ("LexEntryRef", "VariantEntryTypesRS"),
-)
+# Cycle-16 RESOLUTION: the 11 fields formerly listed here as unclassified
+# gaps (LexEntry.EntryRefsOS; LexEntry.MainEntriesOrSensesRS;
+# MoAffixAllomorph.{InflectionClassesRC, MsEnvFeaturesOA,
+# MsEnvPartOfSpeechRA, PositionRS}; LexEntryRef.{ComplexEntryTypesRS,
+# ComponentLexemesRS, PrimaryLexemesRS, ShowComplexFormsInRS,
+# VariantEntryTypesRS}) have ALL been adjudicated into terminal buckets
+# (see the module docstring's "CYCLE-16 CENSUS RESOLUTION" section and the
+# `CLASSIFICATION` entries above) -- this tuple is now empty, and
+# `test_known_gaps_need_lead_adjudication` (the xfail(strict) test that
+# used to document them) has been removed accordingly. The never-silent
+# guard itself (`classify_field` raising `LookupError` for anything with no
+# bucket) remains fully intact and is regression-tested by
+# `test_guard_fires_for_unclassified_property` below.
+_UNCLASSIFIED_GAP_FIELDS: tuple[tuple[str, str], ...] = ()
 
 
 def classify_field(class_name: str, prop: str) -> Classification:
@@ -499,8 +600,8 @@ def classify_field(class_name: str, prop: str) -> Classification:
         f"fidelity_census: REAL field {class_name}.{prop} has no bucket "
         "classification (COPIED / DROP_REPORTED / OUT_OF_SCOPE_EXCLUDED / "
         "HANDLED_ELSEWHERE). SC-004 never-silent: this is a genuine census "
-        "FAIL requiring lead adjudication, not a bug in the census -- see "
-        "this module's '_UNCLASSIFIED_GAP_FIELDS' docstring section."
+        "FAIL requiring lead adjudication -- add a CLASSIFICATION entry (or "
+        "a documented exclusion/handoff) for this field."
     )
 
 
@@ -532,42 +633,27 @@ def test_every_real_field_is_classified(class_name: str, prop: str) -> None:
     assert classification.bucket in Bucket
 
 
-@pytest.mark.xfail(
-    reason="SC-004 census gap: REAL field has no CLASSIFICATION entry -- "
-           "needs lead adjudication (see _UNCLASSIFIED_GAP_FIELDS docstring). "
-           "Marked xfail(strict=True) rather than a plain failure so the "
-           "suite stays green while the gap stays loudly visible in test "
-           "output; if this ever starts PASSING, strict=True turns that into "
-           "a hard failure demanding the gap list be updated.",
-    strict=True,
-)
-@pytest.mark.parametrize(
-    "class_name, prop", sorted(_UNCLASSIFIED_GAP_FIELDS),
-    ids=[f"{c}.{p}" for c, p in sorted(_UNCLASSIFIED_GAP_FIELDS)],
-)
-def test_known_gaps_need_lead_adjudication(class_name: str, prop: str) -> None:
-    """Documents (and FAILS on) each of the 11 fields with no home in the
-    current transfer code (see `_UNCLASSIFIED_GAP_FIELDS`'s docstring for the
-    root-cause analysis of each). This test is EXPECTED to fail until lead
-    adjudicates a bucket for each field or the code is extended to cover it
-    -- it is the census surfacing a real gap, not a defect in the census."""
-    pytest.fail(
-        f"{class_name}.{prop} has no CLASSIFICATION entry: current transfer "
-        "code does not reproduce, report-drop, exclude, or hand off this "
-        "REAL field to another subsystem. Needs lead adjudication (see "
-        "fidelity_census.py's '_UNCLASSIFIED_GAP_FIELDS' docstring)."
-    )
+def test_no_unclassified_gap_fields_remain() -> None:
+    """Cycle-16 closure: `_UNCLASSIFIED_GAP_FIELDS` must be empty -- every
+    field the census surfaced as a gap has been adjudicated into a terminal
+    bucket with a real `CLASSIFICATION` entry (or added to one of the two
+    frozenset ledgers). If a future model change reintroduces a gap, THIS
+    test (not an xfail) is what will start failing, naming the size of the
+    reintroduced gap set."""
+    assert _UNCLASSIFIED_GAP_FIELDS == ()
 
 
 def test_out_of_scope_excluded_list_is_exact() -> None:
     """SC-004: nobody can quietly park an in-scope field on the exclusion
-    list, and the list can't silently shrink either -- exactly the 4 LexSense
-    fields the lead ruled out of scope."""
+    list, and the list can't silently shrink either -- exactly the 4
+    decorative LexSense fields the lead originally ruled out of scope PLUS
+    LexEntry.MainEntriesOrSensesRS (cycle-16 ruling)."""
     assert OUT_OF_SCOPE_EXCLUDED_FIELDS == frozenset({
         ("LexSense", "AppendixesRC"),
         ("LexSense", "ThesaurusItemsRC"),
         ("LexSense", "ExtendedNoteOS"),
         ("LexSense", "PicturesOS"),
+        ("LexEntry", "MainEntriesOrSensesRS"),
     })
     for class_name, prop in OUT_OF_SCOPE_EXCLUDED_FIELDS:
         classification = classify_field(class_name, prop)
@@ -576,6 +662,25 @@ def test_out_of_scope_excluded_list_is_exact() -> None:
             f"{class_name}.{prop}: OUT_OF_SCOPE_EXCLUDED entries must carry "
             "a rationale string"
         )
+
+
+def test_out_of_scope_excluded_rationale_classes_are_distinct() -> None:
+    """Cycle-16: `LexEntry.MainEntriesOrSensesRS` must be TAGGED with a
+    visibly DISTINCT rationale-class ("read-only-derived-aggregate") from
+    the 4 decorative LexSense exclusions ("out-of-024-scope") -- both are
+    OUT_OF_SCOPE_EXCLUDED, but for structurally different reasons, and the
+    note text must say so."""
+    lex_entry_note = classify_field("LexEntry", "MainEntriesOrSensesRS").note
+    assert "rationale-class: read-only-derived-aggregate" in lex_entry_note
+
+    for class_name, prop in (
+        ("LexSense", "AppendixesRC"),
+        ("LexSense", "ThesaurusItemsRC"),
+        ("LexSense", "ExtendedNoteOS"),
+        ("LexSense", "PicturesOS"),
+    ):
+        note = classify_field(class_name, prop).note
+        assert "rationale-class: out-of-024-scope" in note
 
 
 def test_handled_elsewhere_msa_family_is_exact() -> None:
