@@ -1,5 +1,47 @@
 # GramTrans — Session Handoff
 
+## ▶▶▶ Feature 025 — Full Reversals — SPURT 5 (QC + verification gate: RED) IN PROGRESS (2026-07-12)
+
+**Worktree**: `D:/Github/_Projects/_LEX/GramTrans-025-full-reversals` on branch
+`025-full-reversals` @ `d1f1283` (clean; cycle 5 was read-only, NO code changed; NOT merged).
+**Handoff**: `specs/025-full-reversals/.crew-handoff.json`. Cumulative tasks: **T001-T033** (all
+three user stories). **QC GATE: RED** — remediation required before Polish.
+
+**Ralph-loop spurt 5 (LEX crew, cycle 5)** — checkpoint = combined lex-qc + lex-verification gate
+over US1+US2+US3 (parallel, read-only). **Gate verdict: RED (QC 78/100).**
+
+**Settled GREEN (do NOT relitigate)** — 3 of 5 adjudicated items, QC + verification concur:
+- **Item 1**: US2 decide `source=None` vs apply `target=target_project` asymmetry is DELIBERATE
+  and correct (fingerprint tuple-shape symmetry; `source=None` keeps both sides positional).
+- **Item 2**: T021 per-index tripwire is genuine (poisoned Cache), not a tautology.
+- **Item 5**: config-view missing_refs use the single unified `dropped_items` channel.
+- Verification: suite 1494/1 reconciles; sole failure is the pre-existing baseline (authored in
+  ancestor `80586dd`), NOT a 025 regression.
+
+**Two P0 MUST-FIX blockers (why the gate is RED):**
+1. **P0-1** — `config_views.resolve_config_dirs` runs `os.makedirs` on **both source and target**
+   during Preview (mutates the SOURCE tree; violates `preview.py` READ-ONLY + contract "target
+   only"). `test_preview_no_writes.py`'s fake short-circuits before `makedirs` → coverage gap.
+2. **P0-2** — `render_reversal_decisions` + `render_config_view_records` are **dead code** (never
+   called from `Lib/ui/main_window.py`); the reversal Add/Link plan and config-view
+   Add/Overwrite/Skip list are never shown before Move (**Principle III violation**); docstrings
+   falsely claim compliance.
+
+**Hardening flagged (fold into remediation):** regression test pinning `source=None` (no test
+guards it today); P1-1 (Move recomputes `plan_reversals` vs reusing `RunPlan.reversal_decisions`);
+P1-2 (DRY `_target_ws_ids`).
+
+**Next checkpoint (spurt 6): remediation** — fix P0-1 (split path-computation from `makedirs`;
+Preview never touches source; defer `makedirs` to Move) + P0-2 (wire the render fns into the
+Preview pane; fix docstrings), TDD (failing test first for each). Then re-run the QC+verification
+gate to GREEN, then deferred Polish T034-T037 (incl. T035 cross-cutting never-silent assertion,
+still TODO, + live-MCP T037).
+
+**Reports**: [cycle5-qc](specs/025-full-reversals/reviews/cycle5-qc.md),
+[cycle5-verification](specs/025-full-reversals/reviews/cycle5-verification.md) (+ cycle1-4 programmer).
+
+---
+
 ## ▶▶▶ Feature 025 — Full Reversals — SPURT 4 (Phase 5 US3) IN PROGRESS (2026-07-12)
 
 **Worktree**: `D:/Github/_Projects/_LEX/GramTrans-025-full-reversals` on branch

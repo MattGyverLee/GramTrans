@@ -3,41 +3,50 @@
   "created": "2026-07-12",
   "updated": "2026-07-12",
   "status": "in_progress",
-  "spurt": 4,
-  "last_cycle": 4,
-  "checkpoint_completed": "Phase 5 US3 (T028-T033) — .fwdictconfig dictionary + reversal config-view file copy (plan Add/Overwrite/Skip via filecmp, absent-reference scan, apply with .gtbak backup, Preview/Move wiring)",
+  "spurt": 5,
+  "last_cycle": 5,
+  "checkpoint_completed": "Combined QC + verification gate over US1+US2+US3 — gate RED (2 P0 MUST-FIX)",
+  "qc_gate": "RED (score 78/100; items 1/2/5 ACCEPT, items 3/4 MUST-FIX)",
   "blocker": null,
   "worktree": {
     "path": "D:/Github/_Projects/_LEX/GramTrans-025-full-reversals",
     "branch": "025-full-reversals",
     "exists": true,
     "head": "d1f1283",
-    "merged_to_main": false
+    "merged_to_main": false,
+    "note": "clean; cycle 5 was read-only review, no code changed"
   },
   "dependency_024": { "gate": "T004", "status": "PASS" },
   "tasks_total": 37,
   "tasks_done": ["T001","T002","T003","T004","T005","T006","T007","T008","T009","T010","T011","T012","T013","T014","T015","T016","T017","T018","T019","T020","T021","T022","T023","T024","T025","T026","T027","T028","T029","T030","T031","T032","T033"],
   "all_user_stories_implemented": true,
-  "next_checkpoint": "Combined QC + lex-verification pass over US1+US2+US3, THEN Phase 6 Polish (T034-T037). QC gates the write path before Polish's live-MCP run.",
-  "next_entry": "Run a combined lex-qc + lex-verification cycle. QC MUST ADJUDICATE (not merely note): (1) US2 decide-side source=None vs apply-side target=target_project asymmetry — correct-by-design or latent bug in what gets reproduced; (2) T021 per-index tripwire fires and is not defeated by the US2 apply path; (3) UI-wiring gap — render_reversal_decisions AND render_config_view_records exist but are NOT called from Lib/ui/main_window.py (rule blocking vs documented follow-up); (4) US3 Preview-mutation nuance — resolve_config_dirs os.makedirs scaffolds empty target subdirs during Preview vs preview.py READ-ONLY guarantee (accept narrow exception OR require a no-makedirs read-only path from Preview); (5) US3 missing-ref owner_kind == 'ConfigView' flows into the unified 024 never-silent report. Only after QC gates the write path: Phase 6 Polish T034-T037 (census extension, unified never-silent assertion, regression gate, live-MCP quickstart). T037 is a destructive-capable live-LCM write — needs a disposable -restore-ready target or it trips needs_human.",
-  "carry_forward": [
-    "PRE-EXISTING BASELINE FAILURE (NOT a 025 regression): test_wizard_pos_grammar_wiring.py::TestPosClosureWalksPickedPos::test_plan_emits_pos_action_for_picked_pos. Full suite as-built: 1494 passed / 9 skipped / 14 xfailed / 14 xpassed / 1 failed.",
-    "US2 DEVIATION #1 (decide-side): _decide_reversal_category uses source=None (real source vs index-shaped target breaks _fields_identical tuple-shape symmetry). MANDATORY QC line-item.",
-    "US2 DEVIATION #2 (apply-side): _apply_pos_decision passes target=target_project + per-call ReferenceFieldSpec (bare IReversalIndex lacks .GetFactory/.PossibilityLists). MANDATORY QC line-item.",
-    "US3 DEVIATION (load-bearing): resolve_config_dirs os.makedirs(exist_ok=True) scaffolds empty target ConfigurationSettings subdirs during Preview — empty-dir only, no .fwdictconfig bytes, but a real FS write vs preview.py READ-ONLY docstring. MANDATORY QC line-item.",
-    "US3 minor deviations: models.py RunPlan.config_view_records field added (mirrors US1 reversal_decisions); custom-field discriminator isCustomField=\"true\" (confirmed vs FieldWorks ConfigurableDictionaryNode.cs); WS-check uses target raw WS-id list only (contract has no ws_mapping param).",
-    "UI-WIRING GAP (not yet ruled): render_reversal_decisions + render_config_view_records exist in the render layer but are NOT wired into Lib/ui/main_window.py.",
-    "WORKTREE NOT MERGED to main — merge only after Polish + validation, all gates green."
+  "next_checkpoint": "Remediation spurt (fresh cycle) — fix P0-1 (config_views READ-ONLY in Preview) + P0-2 (surface reversal + config-view plan before Move so Principle III actually holds), TDD; then re-run the QC+verification gate to green. THEN deferred Polish T034-T037.",
+  "next_entry": "Fresh cycle (lex-programmer, TDD) fixing the two P0s in worktree D:/Github/_Projects/_LEX/GramTrans-025-full-reversals (branch 025-full-reversals @ d1f1283). P0-1: config_views.py:115-129 resolve_config_dirs + plan_config_views:311-312 — split path-COMPUTATION from directory-CREATION; Preview only computes the intended TARGET subdir path (never os.makedirs, NEVER touch the source tree); defer makedirs to apply/Move (transfer.py:495). Failing test FIRST in test_preview_no_writes.py (a _FakeProject whose _project_dir does NOT raise, asserting no makedirs / no source mutation during build_run_plan). P0-2: wire render_reversal_decisions + render_config_view_records (preview.py:403,450) into Lib/ui/main_window.py Preview pane so the reversal Add/Link plan + config-view Add/Overwrite/Skip list are shown before Move; correct the false Principle-III docstrings (categories.py:4028, models.py:718,729). Failing test FIRST proving the plan reaches the Preview render path. Fold in: regression test pinning source=None (reversals.py:343); consider P1-1 (reuse RunPlan.reversal_decisions at Move, categories.py:4034) + P1-2 (DRY _target_ws_ids). After GREEN gate re-run: Polish T034-T037 incl. T035 cross-cutting never-silent assertion (still TODO) + live-MCP T037.",
+  "carry_forward_settled_green": [
+    "Item 1: US2 decide source=None vs apply target=target_project asymmetry is DELIBERATE and correct (references.py:513-528 fingerprint shapes; source=None keeps both sides positional). Confirmed by verification. DO NOT relitigate.",
+    "Item 2: T021 per-index tripwire is genuine (poisoned Cache), not a tautology — locked by test_target_list_binds_to_index_never_to_lang_project. DO NOT relitigate.",
+    "Item 5: config-view missing_refs use the SINGLE unified dropped_items channel (no separate channel, no owner_kind allow-list). DO NOT relitigate."
+  ],
+  "open_blockers_p0": [
+    "P0-1 (QC item 4): config_views.resolve_config_dirs os.makedirs on BOTH source+target during Preview — mutates the SOURCE tree; violates preview.py READ-ONLY + contract 'target only'. Test gap: test_preview_no_writes.py _FakeProject short-circuits before makedirs.",
+    "P0-2 (QC item 3): render_reversal_decisions + render_config_view_records are dead code (not called from main_window.py) — reversal Add/Link plan + config-view Add/Overwrite/Skip list never shown before Move (Principle III violation); docstrings falsely claim compliance."
+  ],
+  "hardening_flagged": [
+    "Verification item C: no regression test pins source=None (reversals.py:343) — a future refactor threading source=src_project silently reintroduces the spurious-UPDATE bug.",
+    "QC P1-1: Move recomputes plan_reversals (categories.py:4034) instead of reusing RunPlan.reversal_decisions — Preview/Move divergence risk (tech debt, confirm scope).",
+    "QC P1-2: _target_ws_ids duplicated (reversals.py:133-142 == config_views.py:141-145)."
   ],
   "reports": [
     "specs/025-full-reversals/reviews/cycle1-programmer.md",
     "specs/025-full-reversals/reviews/cycle2-programmer.md",
     "specs/025-full-reversals/reviews/cycle3-programmer.md",
-    "specs/025-full-reversals/reviews/cycle4-programmer.md"
+    "specs/025-full-reversals/reviews/cycle4-programmer.md",
+    "specs/025-full-reversals/reviews/cycle5-qc.md",
+    "specs/025-full-reversals/reviews/cycle5-verification.md"
   ],
   "notes": [
-    "Implementation work stays on the 025 worktree; spec artifacts (specs/, STATUS.md, .crew-handoff.json) commit to main.",
-    "Reversal categories target per-index PartsOfSpeechOA, never LangProject.PartsOfSpeechOA.",
-    "Remaining: combined QC + verification, then Polish (T034-T037), then worktree merge. Feature NOT complete."
+    "Pre-existing baseline failure (NOT a 025 regression, authored in ancestor 80586dd): test_wizard_pos_grammar_wiring.py::TestPosClosureWalksPickedPos::test_plan_emits_pos_action_for_picked_pos. Suite: 1494 passed / 9 skipped / 14 xfailed / 14 xpassed / 1 failed.",
+    "Implementation on the 025 worktree; spec artifacts (specs/, STATUS.md, .crew-handoff.json) on main.",
+    "Remaining: remediation (2 P0) -> re-run gate green -> Polish (T034-T037) -> worktree merge. Feature NOT complete."
   ]
 }
