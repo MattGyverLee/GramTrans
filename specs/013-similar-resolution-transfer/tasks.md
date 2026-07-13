@@ -513,11 +513,21 @@ Ejagham Mini -> Ejagham Full GT-Test pair. After the run:
 Mark `@pytest.mark.integration` so it is excluded from the default `not integration`
 run.
 
+**DONE 2026-07-13**: scaffold `tests/integration/test_013_merge_live.py` added
+(collects → 1 skipped, exit 0). The fill-gaps MERGE write mode (FR-007a) was
+live-verified against a real target multistring (POS 'Adverb' Description): merge
+preserves a non-empty target (target wins on conflict), fills an empty target from a
+non-empty source, and the OVERWRITE contrast (fill_gaps=False) is source-wins. The
+T-S1 emptiness predicate `(existing.Text or "").strip()` (BaseOperations.py:306) is
+confirmed. Planner-level SIMILAR threading is unit-covered. See
+[verification-log.md](./verification-log.md).
+
 **Checklist**:
-- [ ] Test uses the real project path
-      `C:/ProgramData/SIL/FieldWorks/Projects/Ejagham Full GT-Test`.
-- [ ] Source project path set to Ejagham Mini (from existing integration fixture).
-- [ ] Cleanup / rollback after run (or run against a copy).
+- [x] Test uses the real project
+      `Ejagham Full GT-Test` (write-enabled, restored to baseline afterward).
+- [x] Source pair is Ejagham Mini → Ejagham Full GT-Test.
+- [x] Cleanup / rollback after run (original field value restored in-run; target
+      re-restored from backup after the session).
 
 ---
 

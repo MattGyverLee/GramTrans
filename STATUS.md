@@ -1,5 +1,29 @@
 # GramTrans — Session Handoff
 
+## ▶▶▶ Feature 025 — Full Reversals — P0 sub-entry fix landed + verified; RE-MOVE pending human -restore (2026-07-13)
+
+**STOPPING POINT.** Feature 025 is code-complete and offline-GREEN. See the consolidated
+**[HANDOFF.md](specs/025-full-reversals/HANDOFF.md)** for the single pickup point.
+
+**Worktree** `025-full-reversals` @ **`9d1266b`** (NOT merged). Attended session; Ralph loop cancelled.
+
+**Just landed:** the P0 silent sub-entry sense-loss bug (found by the T037 Phase-2 live Move) is
+**FIXED** (`9d1266b`) and **offline-verified** (cycle 13): `_create_sub_entry` now threads + links
+`first_sense`; 3 RED-confirmed regression tests; tripwire reproduces the exact `SensesRS=0` bug when
+reverted; full suite **1508 passed / 1 pre-existing fail**; top-level path untouched.
+
+**Remaining (attended, needs_human):**
+1. `-restore` **Target** in FieldWorks (it holds the partial Move — top-level OK, sub-entries empty).
+2. Re-run the T037 Phase-2 Move (`scratchpad/t037_move_driver.py`, Ejagham Mini → restored Target, @ `9d1266b`).
+3. Verify sub-entry `SensesRS` now matches the Preview plan.
+4. Merge `025-full-reversals` → main. Feature complete.
+
+**Non-blocking backlog** (in HANDOFF.md): sentinel-prefix hardening; Finding 2 (`_run_post_pass_a`
+dead `get_object_by_guid` + never-silent emit); Finding 3 (024 `MorphTypeRA`/`CmTranslation.TypeRA`/
+`LexExampleSentence.TranslationsOC` gaps); P1-1/P1-2; UI-pane confirm; live WS-Id re-confirm.
+
+---
+
 ## ▶▶▶ Feature 025 — Full Reversals — T037 Phase 2 (live Move) RAN — Scenario 1 PARTIAL FAIL, P0 sub-entry bug (2026-07-13)
 
 **Attended session.** The destructive live Move (Ejagham Mini → **Target**) RAN, committed, and
@@ -344,6 +368,56 @@ T021-T024 tests first, then T025-T027.
 
 **Reports**: [cycle1-programmer.md](specs/025-full-reversals/reviews/cycle1-programmer.md),
 [cycle2-programmer.md](specs/025-full-reversals/reviews/cycle2-programmer.md).
+
+---
+
+## ▶▶▶ Live integration tests 013 / 016 / 022 — RUN & GREEN (2026-07-13)
+
+Drove the real GramTrans engine live via FLExToolsMCP `flextools_run_module` (the
+flexicon-enabled process imports `C:\Github\GramTrans\src\gramtrans` directly) against
+`Ejagham Mini` → freshly-restored `Ejagham Full GT-Test`. Added three skip-by-default
+`@pytest.mark.integration` scaffolds (each collects → 1 skipped, exit 0 on bare pytest)
+and a `verification-log.md` per feature.
+
+- **016 Custom Fields (T024/T026)** — PASS. Source `LexSense.'Target Equivalent'`
+  (type 13) classified NEW, `MoForm.'Allomorph Comment'` IN_TARGET. Full transfer emitted
+  exactly 1 `CreateDefinitionAction` (for the NEW field, 0 for the IN_TARGET one); target
+  CF count 11→12; field present after a fresh reopen (create-early persisted, no flid-0);
+  re-run → both IN_TARGET → 0 new creates (idempotent, SC-009).
+  [scaffold](tests/integration/test_custom_fields_live.py) ·
+  [log](specs/016-custom-fields-wizard-tab/verification-log.md).
+- **013 SIMILAR MERGE write mode (T-S3c / T-S1)** — PASS. On a real target multistring:
+  MERGE (fill_gaps=True) preserves a non-empty target (conflict → target wins) and fills an
+  empty target from a non-empty source; OVERWRITE (fill_gaps=False) is source-wins. T-S1
+  emptiness predicate confirmed as `(existing.Text or "").strip()` (BaseOperations.py:306).
+  Planner-level SIMILAR threading stays unit-covered.
+  [scaffold](tests/integration/test_013_merge_live.py) ·
+  [log](specs/013-similar-resolution-transfer/verification-log.md).
+- **022 Disposition (T029)** — PASS with one FINDING. Disposition SKIP/UPDATE/OVERWRITE
+  correct (SC-004); UPDATE non-destructive proven live (diverged→source, empty-source
+  preserved, SC-002). **FINDING: SC-003 destructive-blank does NOT reproduce for
+  multistrings** — the fork's `_apply_props_loop` skips empty multistring text
+  unconditionally (`BaseOperations.py:291 if not text: continue`), so OVERWRITE cannot
+  blank a target multistring alt from an empty source (UPDATE ≡ OVERWRITE for that case).
+  Direct `set_String("")` DOES blank, so the capability exists; the write path guards it.
+  Encoded as `xfail(strict)` in the scaffold.
+  [scaffold](tests/integration/test_conflict_live.py) ·
+  [log](specs/022-disposition-model/verification-log.md).
+
+**Follow-ups filed (non-blocking):**
+1. **022 SC-003 reconcile** — decide whether OVERWRITE *should* blank multistrings from an
+   empty source. If yes, drop/relax the `if not text: continue` guard in the fork's
+   `_apply_props_loop` for the `fill_gaps=False` path (careful: it also protects the merge
+   path); then the `xfail(strict)` in `test_conflict_live.py` flips green. If the current
+   safety-positive behavior is intended, amend spec 022 SC-003/FR-004 to scope blanking to
+   non-multistring fields and downgrade the unit-test claim.
+2. **016 value-fill** — the create-early schema path is proven; the per-field value-fill
+   count was not asserted (fresh target already holds Ejagham Full entries by GUID). Assert
+   it with a source whose transferred sense carries a `'Target Equivalent'` value, or via a
+   stem-picker selection. `quickstart.md` (T023) still unwritten.
+3. **013 full round-trip** — a planner→executor SIMILAR round-trip on a hand-seeded
+   `SimilarResolution(X,"merge",Y)` needs a similar-but-different-GUID affix fixture (none
+   off-the-shelf in the Ejagham corpus).
 
 ---
 

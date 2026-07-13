@@ -1,13 +1,25 @@
-"""Affix-category transfer surface (T049, FR-005).
+"""Affix-category transfer surface -- INTENTIONALLY UNIMPLEMENTED placeholder.
 
-Affixes carry the heaviest closure in Phase 0: each affix pulls its
-allomorphs, APRs, referenced inflection features + inflection classes +
-stem names + exception features. Plus they may reference phonological
-environments (Layer 3 territory).
+DO NOT mistake this for a pending backlog item. Phase-0 affix transfer is
+LIVE and MCP-verified via the closure/plan path, NOT through this module:
 
-Per contracts/category-transfer.md, this module implements the five
-functions of the CategoryTransfer protocol. Bodies are NotImplementedError
-until T049 lands; the registry below makes them callable from the engine.
+    Lib/preview.py._plan_layer3_verb_affixes   (planning)
+    Lib/transfer.py._execute_layer3            (LexEntry/Sense/MSA/Allomorph)
+    Lib/categories.py._create_msa_for_closure  (MSA wiring)
+
+That path walks affixes as part of the POS closure and plans ALL affix
+entries for a POS. The one thing it does NOT do is consume per-item picks
+(`selection.affix_picks` / `selection.stem_picks`). This module is the
+placeholder for that acknowledged, human-flagged design gap: a pick-aware
+`enumerate_source` that would honour affix_picks/stem_picks. Whether to
+build it is an open DESIGN decision (see the xfail
+`test_stem_picks_flow_into_compute_plan_owned_children` in
+tests/unit/test_selection_ui.py), not a scheduled task.
+
+The bodies deliberately raise NotImplementedError; that xfail test relies on
+it to document the gap. The former `categories_templates.py` /
+`categories_msas.py` sibling stubs were the same abandoned "generic-walker
+refactor" and were deleted once the closure/plan path proved sufficient.
 """
 from __future__ import annotations
 

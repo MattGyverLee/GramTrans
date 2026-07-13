@@ -6617,6 +6617,7 @@ LEAF_CATEGORIES = {
 
 def for_category(category: GrammarCategory) -> dict:
     """Lookup the function bundle for a leaf category. Raises KeyError if
-    the category isn't a leaf (use `categories_affixes`, `categories_templates`,
-    or `categories_msas` for the heavy ones)."""
+    the category isn't a leaf. The heavy categories (affixes / templates /
+    MSAs) are transferred via the closure/plan path in `Lib/preview.py` +
+    `Lib/transfer.py` + `_create_msa_for_closure`, not through this registry."""
     return LEAF_CATEGORIES[category]

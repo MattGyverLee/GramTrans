@@ -41,7 +41,7 @@ Four buckets (`Bucket`):
   FIELDS`): LexSense.MorphoSyntaxAnalysisRA, LexEntry.MorphoSyntaxAnalysesOC,
   and every REAL field of the four MSA classes (MoStemMsa, MoInflAffMsa,
   MoDerivAffMsa, MoUnclassifiedAffixMsa) -- reproduced via the POS/MSA path
-  (`Lib/categories.py._create_msa_for_closure` + `Lib/categories_msas.py`).
+  (`Lib/categories.py._create_msa_for_closure`).
 
 CYCLE-16 CENSUS RESOLUTION: the 11 fields the cycle-16 census run surfaced
 as unclassified gaps (see `_UNCLASSIFIED_GAP_FIELDS`'s pre-cycle-16
@@ -291,7 +291,7 @@ OUT_OF_SCOPE_EXCLUDED_FIELDS: frozenset[tuple[str, str]] = frozenset({
 # ----------------------------------------------------------------------------
 _MSA_HANDLING_SITE = (
     "categories._create_msa_for_closure (POS/MSA path: target.MSA.Create* "
-    "dispatch) + Lib/categories_msas.py -- reproduced via the POS/MSA path, "
+    "dispatch) -- reproduced via the POS/MSA path, "
     "not 024's lexicon (entry/sense) transfer"
 )
 
@@ -800,7 +800,7 @@ def test_handled_elsewhere_msa_family_is_exact() -> None:
     for class_name, prop in HANDLED_ELSEWHERE_FIELDS:
         classification = classify_field(class_name, prop)
         assert classification.bucket == Bucket.HANDLED_ELSEWHERE
-        assert "MSA" in classification.site or "categories_msas" in classification.site
+        assert "MSA" in classification.site
 
 
 def test_guard_fires_for_unclassified_property() -> None:

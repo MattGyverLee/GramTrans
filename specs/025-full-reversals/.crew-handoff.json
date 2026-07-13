@@ -2,12 +2,19 @@
   "feature": "025-full-reversals",
   "created": "2026-07-12",
   "updated": "2026-07-12",
-  "status": "in_progress",
+  "status": "needs_human",
   "spurt": 9,
-  "last_cycle": 12,
-  "checkpoint_completed": "T037 Phase 2 (live destructive Move, Ejagham Mini -> Target) RAN + persisted; Scenario 1 write-half PARTIAL FAIL — top-level PASS, sub-entry sense-linking FAIL (P0 silent data-loss bug found in 025's own reversals.py)",
-  "qc_gate": "GREEN offline; T037 Phase-2 PARTIAL FAIL (new P0)",
-  "blocker": "P0 in 025's own code: reversals.py::_apply_one_entry drops the (only) linked sense on every reversal SUB-entry. Must fix + re-gate + re-Move against a FRESHLY-RESTORED Target. Target is currently in a partially-broken state (134 top-level entries written OK, but sub-entries have empty SensesRS) and MUST be -restored before any re-Move.",
+  "last_cycle": 13,
+  "checkpoint_completed": "T037 Phase-2 P0 sub-entry sense-loss bug FIXED (cycle 13, commit 9d1266b) + offline verified (tripwire genuine, suite 1508 passed / 1 known-fail, top-level path untouched)",
+  "qc_gate": "GREEN offline (incl. the P0 fix + 3 regression tests)",
+  "blocker": "RE-MOVE needs a human: (1) -restore Target in FieldWorks (it currently holds the partial Move — 134 top-level entries OK but sub-entries have empty SensesRS); (2) attended re-run of the T037 Phase-2 Move (scratchpad/t037_move_driver.py) Ejagham Mini -> restored Target with the fix @ 9d1266b; (3) verify sub-entry SensesRS counts now match the Preview plan. Then merge 025-full-reversals -> main and the feature is complete.",
+  "t037_phase2_fix": {
+    "commit": "9d1266b",
+    "fix": "reversals.py::_create_sub_entry now takes first_sense and links it via _link_remaining_senses; _apply_one_entry passes first_sense to both create paths so remaining_senses = target_senses[1:] is correct for sub-entries too. Top-level path unchanged.",
+    "tests": "3 regression tests in test_reversal_category_resolve.py (1-sense sub -> 1; N-sense sub -> N; 0-sense sub stays 0 + top-level 1/2 unchanged). RED-confirmed pre-fix (Test A got 0).",
+    "verification": "cycle13-verification.md: PASS all 5 items; tripwire reproduces SensesRS=0 when reverted; suite 1 failed / 1508 passed / 9 skipped / 14 xfailed / 14 xpassed; worktree clean at 9d1266b.",
+    "reports": ["cycle13-programmer.md", "cycle13-verification.md"]
+  },
   "t037_phase2": {
     "status": "PARTIAL FAIL",
     "ran": "transfer.execute committed + persisted (fresh re-open confirmed). 134/134 top-level reversal entries written to target en index (GUID ab4d4345 reused, R4); top-level single+multi-sense linking PASS (foot/leg/palm frond = 2 senses); ReversalForm PASS; sub-entry recursion STRUCTURE PASS (all 7 parents, exact counts); LangProject.PartsOfSpeechOA untouched (13/13); config en.fwdictconfig SKIP (no write, no .gtbak).",
@@ -52,7 +59,7 @@
     "path": "D:/Github/_Projects/_LEX/GramTrans-025-full-reversals",
     "branch": "025-full-reversals",
     "exists": true,
-    "head": "1a1849c",
+    "head": "9d1266b",
     "merged_to_main": false
   },
   "dependency_024": { "gate": "T004", "status": "PASS" },

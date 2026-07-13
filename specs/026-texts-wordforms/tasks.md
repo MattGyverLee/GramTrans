@@ -34,10 +34,10 @@ Single-project FlexTools module. Source under `src/gramtrans/Lib/` (UI under
 
 **Purpose**: Establish the worktree and confirm the hard dependency before any code lands.
 
-- [ ] T001 Create the feature worktree `../GramTrans-026-texts-wordforms` on branch `026-texts-wordforms` (CLAUDE.md Git Workflow); all Phase 2+ edits happen there, not on `main`.
-- [ ] T002 Verify prerequisites: 024-lexicon-reference-fidelity is merged to `main` (resolver `Lib/references.py`, `Lib/owned.py`, `Lib/protection.py`, `DroppedItemRecord`/`FidelityStatus` in `Lib/report.py`+`Lib/models.py`, `Lib/ws_mapping.py` all present) and flexicon installed editable (`pip install -e D:/Github/_Projects/_LEX/flexlibs2`, `pyflexicon>=4.1`). Record confirmation in `specs/026-texts-wordforms/quickstart.md` prerequisites.
-- [ ] T003 [P] Create module stub `src/gramtrans/Lib/texts.py` with the four contract signatures (`plan_texts`, `apply_texts`) from `contracts/text-structure-walk.md` and a module docstring citing FR-001..005/017.
-- [ ] T004 [P] Create module stub `src/gramtrans/Lib/wordforms.py` with the contract signatures (`plan_analyses`, `resolve_or_report_category`, `apply_analyses`, `plan_morph_bundles`, `apply_morph_bundles`, `plan_alignment`, `apply_alignment`, `plan_agent`, `apply_agent`) from the four wordform contracts, docstring citing FR-006..016.
+- [x] T001 Create the feature worktree `../GramTrans-026-texts-wordforms` on branch `026-texts-wordforms` (CLAUDE.md Git Workflow); all Phase 2+ edits happen there, not on `main`.
+- [x] T002 Verify prerequisites: 024-lexicon-reference-fidelity is merged to `main` (resolver `Lib/references.py`, `Lib/owned.py`, `Lib/protection.py`, `DroppedItemRecord`/`FidelityStatus` in `Lib/report.py`+`Lib/models.py`, `Lib/ws_mapping.py` all present) and flexicon installed editable (`pip install -e D:/Github/_Projects/_LEX/flexlibs2`, `pyflexicon>=4.1`). Record confirmation in `specs/026-texts-wordforms/quickstart.md` prerequisites.
+- [x] T003 [P] Create module stub `src/gramtrans/Lib/texts.py` with the four contract signatures (`plan_texts`, `apply_texts`) from `contracts/text-structure-walk.md` and a module docstring citing FR-001..005/017.
+- [x] T004 [P] Create module stub `src/gramtrans/Lib/wordforms.py` with the contract signatures (`plan_analyses`, `resolve_or_report_category`, `apply_analyses`, `plan_morph_bundles`, `apply_morph_bundles`, `plan_alignment`, `apply_alignment`, `plan_agent`, `apply_agent`) from the four wordform contracts, docstring citing FR-006..016.
 
 ---
 
@@ -48,12 +48,12 @@ that every user story depends on.
 
 **⚠️ CRITICAL**: No user story work can begin until this phase is complete.
 
-- [ ] T005 Add the 026 enums to `src/gramtrans/Lib/models.py`: `EvalVerdict` (`HUMAN_APPROVED`/`HUMAN_DENIED`/`NEEDS_REVIEW`) and `AlignmentTokenKind` (`ANALYSIS`/`WORDFORM`/`PUNCTUATION`) per data-model.md Enums.
-- [ ] T006 Add the 026 dataclasses to `src/gramtrans/Lib/models.py` (depends on T005): `TextTransferPlan`, `ParagraphPlan`, `SegmentPlan`, `AnalysisPlan`, `MorphBundlePlan`, `IdentityRef`, `GlossPlan`, `ProvisionedAgent` per data-model.md Dataclasses; reuse (do not redefine) `DroppedItemRecord`/`FidelityStatus`/`ReferenceDecision`/`PlannedAction` from 024.
-- [ ] T007 Add **Texts** as a Model-A selectable category in `src/gramtrans/Lib/selection.py` (per-text pick, not all-or-nothing; wordforms ride along as closure, FR-001/FR-001a).
-- [ ] T008 Add the Texts item-picker page to `src/gramtrans/Lib/ui/selection_wizard.py`, riding the existing wizard, populated from `TextOperations.GetAll()` (SC-004 deselect-per-text).
-- [ ] T009 Register residue carriers in `src/gramtrans/Lib/residue.py`: `Text` (+ `StText`/`StTxtPara`) and `WfiWordform`/`WfiAnalysis` using the Description-append `[GT-Tag]` fallback (R8, constitution residue clause).
-- [ ] T010 Wire the text-transfer dispatch hook into `src/gramtrans/Lib/preview.py` (build TextTransferPlans when Texts selected) and `src/gramtrans/Lib/transfer.py` (execute them in Move mode, after 024+025 in import order per R8); reuse the `Lib/conflict.py` UPDATE (source-preferring, never-blank) semantic for re-run (FR-021).
+- [x] T005 Add the 026 enums to `src/gramtrans/Lib/models.py`: `EvalVerdict` (`HUMAN_APPROVED`/`HUMAN_DENIED`/`NEEDS_REVIEW`) and `AlignmentTokenKind` (`ANALYSIS`/`WORDFORM`/`PUNCTUATION`) per data-model.md Enums.
+- [x] T006 Add the 026 dataclasses to `src/gramtrans/Lib/models.py` (depends on T005): `TextTransferPlan`, `ParagraphPlan`, `SegmentPlan`, `AnalysisPlan`, `MorphBundlePlan`, `IdentityRef`, `GlossPlan`, `ProvisionedAgent` per data-model.md Dataclasses; reuse (do not redefine) `DroppedItemRecord`/`FidelityStatus`/`ReferenceDecision`/`PlannedAction` from 024.
+- [x] T007 Add **Texts** as a Model-A selectable category in `src/gramtrans/Lib/selection.py` (per-text pick, not all-or-nothing; wordforms ride along as closure, FR-001/FR-001a).
+- [x] T008 Add the Texts item-picker page to `src/gramtrans/Lib/ui/selection_wizard.py`, riding the existing wizard, populated from `TextOperations.GetAll()` (SC-004 deselect-per-text).
+- [x] T009 Register residue carriers in `src/gramtrans/Lib/residue.py`: `Text` (+ `StText`/`StTxtPara`) and `WfiWordform`/`WfiAnalysis` using the Description-append `[GT-Tag]` fallback (R8, constitution residue clause).
+- [x] T010 Wire the text-transfer dispatch hook into `src/gramtrans/Lib/preview.py` (build TextTransferPlans when Texts selected) and `src/gramtrans/Lib/transfer.py` (execute them in Move mode, after 024+025 in import order per R8); reuse the `Lib/conflict.py` UPDATE (source-preferring, never-blank) semantic for re-run (FR-021).
 
 **Checkpoint**: Foundation ready — user stories can begin.
 
@@ -70,13 +70,13 @@ missing genres are created via the resolver, WS-unmappable strings reported (spe
 
 ### Tests for User Story 1
 
-- [ ] T011 [P] [US1] Write `tests/unit/test_text_structure_walk.py` — text/para/segment reproduction, free/literal translations + notes, genre create-via-resolver (FR-005 sc.2), WS-mapping gate skip+report (FR-020 sc.3), non-destructive re-run (FR-021). Must fail before T012–T014.
+- [x] T011 [P] [US1] Write `tests/unit/test_text_structure_walk.py` — text/para/segment reproduction, free/literal translations + notes, genre create-via-resolver (FR-005 sc.2), WS-mapping gate skip+report (FR-020 sc.3), non-destructive re-run (FR-021). Must fail before T012–T014.
 
 ### Implementation for User Story 1
 
-- [ ] T012 [US1] Implement `plan_texts(...)` in `src/gramtrans/Lib/texts.py` per `contracts/text-structure-walk.md`: identity disposition (GUID → `TextOperations.Find(title)` → ADD/UPDATE/SKIP, FR-021), `GenresRC` via `references.decide_reference` against `LangProject.GenreListOA` (create-allowed, resolver_cache, FR-005), owned walk `ContentsOA.ParagraphsOS → SegmentOperations.GetAll` building `ParagraphPlan`/`SegmentPlan` with WS-gated baseline/`GetFreeTranslation`/`GetLiteralTranslation`/`GetNotes` (unmapped WS → `DroppedItemRecord`, FR-020, FR-002/003/004). Zero-analysis text still yields a full plan (edge case). No writes.
-- [ ] T013 [US1] Implement `apply_texts(...)` in `src/gramtrans/Lib/texts.py`: `TextOperations.Create(name, genre)` (preserve source GUID where permitted else record mapping, FR-022), set abbreviation/source/`SetIsTranslated` (FR-002); `ParagraphOperations.Create(text, content, wsHandle)` + segments; write baseline/`SetFreeTranslation`/`SetLiteralTranslation`/notes non-destructively (FR-021); apply genre `ReferenceDecision`s (`references.apply_reference`); `apply_residue` (R8).
-- [ ] T014 [US1] Surface each `TextTransferPlan` as Add/Update/Skip/Report lines in `src/gramtrans/Lib/preview.py` and execute via `apply_texts` in `src/gramtrans/Lib/transfer.py` (FR-019); route dropped genres/WS through the 024 unified report channel (FR-023).
+- [x] T012 [US1] Implement `plan_texts(...)` in `src/gramtrans/Lib/texts.py` per `contracts/text-structure-walk.md`: identity disposition (GUID → `TextOperations.Find(title)` → ADD/UPDATE/SKIP, FR-021), `GenresRC` via `references.decide_reference` against `LangProject.GenreListOA` (create-allowed, resolver_cache, FR-005), owned walk `ContentsOA.ParagraphsOS → SegmentOperations.GetAll` building `ParagraphPlan`/`SegmentPlan` with WS-gated baseline/`GetFreeTranslation`/`GetLiteralTranslation`/`GetNotes` (unmapped WS → `DroppedItemRecord`, FR-020, FR-002/003/004). Zero-analysis text still yields a full plan (edge case). No writes.
+- [x] T013 [US1] Implement `apply_texts(...)` in `src/gramtrans/Lib/texts.py`: `TextOperations.Create(name, genre)` (preserve source GUID where permitted else record mapping, FR-022), set abbreviation/source/`SetIsTranslated` (FR-002); `ParagraphOperations.Create(text, content, wsHandle)` + segments; write baseline/`SetFreeTranslation`/`SetLiteralTranslation`/notes non-destructively (FR-021); apply genre `ReferenceDecision`s (`references.apply_reference`); `apply_residue` (R8).
+- [x] T014 [US1] Surface each `TextTransferPlan` as Add/Update/Skip/Report lines in `src/gramtrans/Lib/preview.py` and execute via `apply_texts` in `src/gramtrans/Lib/transfer.py` (FR-019); route dropped genres/WS through the 024 unified report channel (FR-023).
 
 **Checkpoint**: US1 fully functional — a corpus of texts moves with structure + translations, MVP demoable.
 
@@ -94,20 +94,20 @@ bundles wired by identity, zero parser-only created (spec US2 Independent Test, 
 
 ### Tests for User Story 2
 
-- [ ] T015 [P] [US2] Write `tests/unit/test_human_eval_gate.py` — copy iff `GetHumanEvaluation` non-null; parser-only/un-evaluated excluded and counted (FR-006, SC-001). Fail-first.
-- [ ] T016 [P] [US2] Write `tests/unit/test_analysis_verdict.py` — approve/deny verdict preserved (FR-007); agent provisioned once and reused, not duplicated (FR-009). Fail-first.
-- [ ] T017 [P] [US2] Write `tests/unit/test_morph_bundle_wiring.py` — resolvable morph-bundle refs wired by GUID identity (FR-010) (needs-review/deny cases added in US3 T028). Fail-first.
-- [ ] T018 [P] [US2] Write `tests/unit/test_segment_alignment.py` — `AnalysesRS` reproduced in source token order incl. `WORDFORM`/`PUNCTUATION` slots (FR-012, SC-006). Fail-first.
+- [x] T015 [P] [US2] Write `tests/unit/test_human_eval_gate.py` — copy iff `GetHumanEvaluation` non-null; parser-only/un-evaluated excluded and counted (FR-006, SC-001). Fail-first.
+- [x] T016 [P] [US2] Write `tests/unit/test_analysis_verdict.py` — approve/deny verdict preserved (FR-007); agent provisioned once and reused, not duplicated (FR-009). Fail-first.
+- [x] T017 [P] [US2] Write `tests/unit/test_morph_bundle_wiring.py` — resolvable morph-bundle refs wired by GUID identity (FR-010) (needs-review/deny cases added in US3 T028). Fail-first.
+- [x] T018 [P] [US2] Write `tests/unit/test_segment_alignment.py` — `AnalysesRS` reproduced in source token order incl. `WORDFORM`/`PUNCTUATION` slots (FR-012, SC-006). Fail-first.
 
 ### Implementation for User Story 2
 
-- [ ] T019 [US2] Build the per-run **target GUID index** on the run context (once, from the 024/025 copy-set + live target) in `src/gramtrans/Lib/wordforms.py`, providing O(1) source-GUID → target lexical-object lookup for morph-bundle wiring (R4, plan.md Performance Goals). NOT the 024 possibility resolver.
-- [ ] T020 [US2] Implement `plan_agent(...)` + `apply_agent(...)` in `src/gramtrans/Lib/wordforms.py` per `contracts/human-agent-provisioning.md`: prefer `AgentOperations.GetHumanAgents()`/`FindByType` (reuse → Link), else `Create(name)`+`SetHuman` (Add); cache the single agent on ctx for every evaluation this run (FR-009, R3).
-- [ ] T021 [US2] Implement `plan_analyses(...)` + `resolve_or_report_category(...)` in `src/gramtrans/Lib/wordforms.py` per `contracts/analysis-human-eval-walk.md`: keep only analyses with non-null `GetHumanEvaluation` (FR-006), set `verdict` from `Approves` (FR-007), resolve `CategoryRA` via the resolve-or-report variant against `LangProject.PartsOfSpeechOA` (CREATE→REPORT_DROPPED, FR-011), capture WS-gated wordform form + `spelling_status`. No writes.
-- [ ] T022 [US2] Implement `apply_analyses(...)` in `src/gramtrans/Lib/wordforms.py`: find-or-create target wordform by form+WS (global identity, R7), set spelling status (`WordformOperations.ApproveSpelling`/status setter, non-destructive), `WfiAnalysisOperations.Create(wordform)` (preserve GUID where permitted, FR-022), apply category decision (`SetCategory` when resolved), and write verdict — `HUMAN_APPROVED` (not needs-review) → `ApproveAnalysis` owned by the provisioned agent; `HUMAN_DENIED` → `RejectAnalysis`; `apply_residue` (R8). (NEEDS_REVIEW no-verdict path completed in US3 T027.)
-- [ ] T023 [US2] Implement `plan_morph_bundles(...)` + `apply_morph_bundles(...)` in `src/gramtrans/Lib/wordforms.py` per `contracts/morph-bundle-identity-wiring.md`: build four `IdentityRef`s (`MorphRA`/`MsaRA`/`SenseRA`/`InflTypeRA`) via the T019 GUID index; `WfiMorphBundleOperations.Create` in source order, always `SetForm`, wire each resolved ref (`SetMSA`/`SetSense`/`SetMorphType`/`SetInflType`/`SetInflectionClass`). Unresolved-ref reporting/downgrade completed in US3.
-- [ ] T024 [US2] Implement `plan_alignment(...)` + `apply_alignment(...)` in `src/gramtrans/Lib/wordforms.py` per `contracts/segment-alignment.md`: read `SegmentOperations.GetAnalyses`, classify tokens (`AlignmentTokenKind`), rebuild target `AnalysesRS` in source order via the raw LCM surface (`project.GetService(...)` + `CastingOperations.cast_to_concrete`, Principle II fallback, R5); preserve punctuation/bare-wordform slots (FR-012, SC-006). Carry the R5 `[PROBE]` note.
-- [ ] T025 [US2] Delegate from `plan_texts`/`apply_texts` (T012/T013) into the wordform walk per segment, and surface analysis/agent/morph-bundle/alignment decisions in `preview.py` + execute in `transfer.py` (FR-019); route through the unified report (FR-023).
+- [x] T019 [US2] Build the per-run **target GUID index** on the run context (once, from the 024/025 copy-set + live target) in `src/gramtrans/Lib/wordforms.py`, providing O(1) source-GUID → target lexical-object lookup for morph-bundle wiring (R4, plan.md Performance Goals). NOT the 024 possibility resolver.
+- [x] T020 [US2] Implement `plan_agent(...)` + `apply_agent(...)` in `src/gramtrans/Lib/wordforms.py` per `contracts/human-agent-provisioning.md`: prefer `AgentOperations.GetHumanAgents()`/`FindByType` (reuse → Link), else `Create(name)`+`SetHuman` (Add); cache the single agent on ctx for every evaluation this run (FR-009, R3).
+- [x] T021 [US2] Implement `plan_analyses(...)` + `resolve_or_report_category(...)` in `src/gramtrans/Lib/wordforms.py` per `contracts/analysis-human-eval-walk.md`: keep only analyses with non-null `GetHumanEvaluation` (FR-006), set `verdict` from `Approves` (FR-007), resolve `CategoryRA` via the resolve-or-report variant against `LangProject.PartsOfSpeechOA` (CREATE→REPORT_DROPPED, FR-011), capture WS-gated wordform form + `spelling_status`. No writes.
+- [x] T022 [US2] Implement `apply_analyses(...)` in `src/gramtrans/Lib/wordforms.py`: find-or-create target wordform by form+WS (global identity, R7), set spelling status (`WordformOperations.ApproveSpelling`/status setter, non-destructive), `WfiAnalysisOperations.Create(wordform)` (preserve GUID where permitted, FR-022), apply category decision (`SetCategory` when resolved), and write verdict — `HUMAN_APPROVED` (not needs-review) → `ApproveAnalysis` owned by the provisioned agent; `HUMAN_DENIED` → `RejectAnalysis`; `apply_residue` (R8). (NEEDS_REVIEW no-verdict path completed in US3 T027.)
+- [x] T023 [US2] Implement `plan_morph_bundles(...)` + `apply_morph_bundles(...)` in `src/gramtrans/Lib/wordforms.py` per `contracts/morph-bundle-identity-wiring.md`: build four `IdentityRef`s (`MorphRA`/`MsaRA`/`SenseRA`/`InflTypeRA`) via the T019 GUID index; `WfiMorphBundleOperations.Create` in source order, always `SetForm`, wire each resolved ref (`SetMSA`/`SetSense`/`SetMorphType`/`SetInflType`/`SetInflectionClass`). Unresolved-ref reporting/downgrade completed in US3.
+- [x] T024 [US2] Implement `plan_alignment(...)` + `apply_alignment(...)` in `src/gramtrans/Lib/wordforms.py` per `contracts/segment-alignment.md`: read `SegmentOperations.GetAnalyses`, classify tokens (`AlignmentTokenKind`), rebuild target `AnalysesRS` in source order via the raw LCM surface (`project.GetService(...)` + `CastingOperations.cast_to_concrete`, Principle II fallback, R5); preserve punctuation/bare-wordform slots (FR-012, SC-006). Carry the R5 `[PROBE]` note.
+- [x] T025 [US2] Delegate from `plan_texts`/`apply_texts` (T012/T013) into the wordform walk per segment, and surface analysis/agent/morph-bundle/alignment decisions in `preview.py` + execute in `transfer.py` (FR-019); route through the unified report (FR-023).
 
 **Checkpoint**: US1 + US2 both work — human analyses reproduce and align for the fully-resolvable case.
 
@@ -125,9 +125,9 @@ unresolvable morpheme → deny retained, morpheme reported, not downgraded (spec
 
 ### Implementation for User Story 3
 
-- [ ] T026 [US3] In `plan_analyses` (`src/gramtrans/Lib/wordforms.py`), compute `needs_review = (verdict == HUMAN_APPROVED and any unresolved IdentityRef)` (FR-014); a `HUMAN_DENIED` analysis is **never** downgraded (FR-015).
-- [ ] T027 [US3] Complete the NEEDS_REVIEW apply path in `apply_analyses` (`src/gramtrans/Lib/wordforms.py`): create the analysis and write **no** human evaluation (natural no-verdict state, R2/FR-014) — no in-FLEx marker, no proxy-deny; leave unresolved morph-bundle fields unset in `apply_morph_bundles`.
-- [ ] T028 [US3] Emit one `DroppedItemRecord` per unresolved `IdentityRef` (owner_kind `WfiMorphBundle`, field = ref name, reason "referent not copied to target") and per needs-review downgrade, with text/segment/wordform/morpheme context (FR-016), through the unified report (FR-023); extend `tests/unit/test_morph_bundle_wiring.py` with the needs-review-approve, retained-deny, and report-context cases (FR-014/015/016, SC-002/003).
+- [x] T026 [US3] In `plan_analyses` (`src/gramtrans/Lib/wordforms.py`), compute `needs_review = (verdict == HUMAN_APPROVED and any unresolved IdentityRef)` (FR-014); a `HUMAN_DENIED` analysis is **never** downgraded (FR-015).
+- [x] T027 [US3] Complete the NEEDS_REVIEW apply path in `apply_analyses` (`src/gramtrans/Lib/wordforms.py`): create the analysis and write **no** human evaluation (natural no-verdict state, R2/FR-014) — no in-FLEx marker, no proxy-deny; leave unresolved morph-bundle fields unset in `apply_morph_bundles`.
+- [x] T028 [US3] Emit one `DroppedItemRecord` per unresolved `IdentityRef` (owner_kind `WfiMorphBundle`, field = ref name, reason "referent not copied to target") and per needs-review downgrade (owner_kind `WfiAnalysis`, field `verdict`), with wordform-form + morpheme-form locate context (FR-016), through the unified report (FR-023); extended `tests/unit/test_morph_bundle_wiring.py` with the needs-review-report, retained-deny, and report-context cases (FR-014/015/016, SC-002/003).
 
 **Checkpoint**: Referential completeness holds — no false approvals, no silent drops.
 
@@ -144,13 +144,13 @@ categories resolved against target POS (unresolved reported) (spec US4 Independe
 
 ### Tests for User Story 4
 
-- [ ] T029 [P] [US4] Write `tests/unit/test_adjacent_data.py` — human-approved `WfiGloss` reproduced but parser-only gloss excluded (FR-008 sc.1); spelling status reproduced (FR-013 sc.2); category resolve-or-report, absent POS left unset + reported, never created (FR-011 sc.3). Fail-first.
+- [x] T029 [P] [US4] Write `tests/unit/test_adjacent_data.py` — human-approved `WfiGloss` reproduced but parser-only gloss excluded (FR-008 sc.1); spelling status reproduced (FR-013 sc.2); category resolve-or-report, absent POS left unset + reported, never created (FR-011 sc.3). Fail-first.
 
 ### Implementation for User Story 4
 
-- [ ] T030 [US4] In `plan_analyses`/`apply_analyses` (`src/gramtrans/Lib/wordforms.py`), gate `WfiGloss` by human evaluation (`GetGlosses` filtered, FR-008) into `GlossPlan`s and copy only human-evaluated glosses (`WfiGlossOperations` set/`SetGloss`).
-- [ ] T031 [US4] Confirm/finalize spelling-status reproduction onto the target wordform in `apply_analyses` (`WordformOperations.ApproveSpelling`/status setter, non-destructive, FR-013).
-- [ ] T032 [US4] Finalize category resolve-or-report in `apply_analyses` (`SetCategory` when resolved; unset + `DroppedItemRecord` when absent, FR-011) and confirm it flows to the unified report (FR-023).
+- [x] T030 [US4] In `plan_analyses`/`apply_analyses` (`src/gramtrans/Lib/wordforms.py`), gate `WfiGloss` by human evaluation (`plan_glosses` filters via `WfiGlosses.GetHumanEvaluation`, FR-008) into `GlossPlan`s and copy only human-evaluated glosses (`_apply_glosses` → `WfiGlosses.Create`/`SetForm`).
+- [x] T031 [US4] Confirm/finalize spelling-status reproduction onto the target wordform in `apply_analyses` (`WordformOperations` status setter, non-destructive — a None source status writes nothing, FR-013); covered by `test_adjacent_data.py`.
+- [x] T032 [US4] Finalize category resolve-or-report in `apply_analyses` (`SetCategory` when resolved; unset + `DroppedItemRecord` when absent, FR-011) and confirm it flows to the unified report (FR-023); covered by `test_adjacent_data.py`.
 
 **Checkpoint**: Copied interlinear is visibly complete — glosses, spelling, categories present.
 
@@ -166,12 +166,12 @@ per-segment tag references, unresolvable tags reported (spec US5 Independent Tes
 
 ### Tests for User Story 5
 
-- [ ] T033 [P] [US5] Write `tests/unit/test_text_markup_tags.py` — tag list + per-segment tag refs reproduced; tag absent from target created via resolver; unresolvable tag reported (FR-017). Fail-first.
+- [x] T033 [P] [US5] Write `tests/unit/test_text_markup_tags.py` — tag list + per-segment tag refs reproduced; tag absent from target created via resolver; unresolvable tag reported (FR-017). Fail-first.
 
 ### Implementation for User Story 5
 
-- [ ] T034 [US5] In `plan_texts` (`src/gramtrans/Lib/texts.py`), resolve per-segment text-markup tag references via `references.decide_reference` against the text-markup tag list (create-allowed, GUID-preserving, resolver_cache) into `SegmentPlan.tag_decisions` (FR-017, R6).
-- [ ] T035 [US5] In `apply_texts`, apply the tag `ReferenceDecision`s (`references.apply_reference`) — referenced tag possibilities + per-segment refs; route any unresolvable tag to the unified report (FR-017/023).
+- [x] T034 [US5] In `plan_texts` (`src/gramtrans/Lib/texts.py`), resolve per-segment text-markup tag references via `references.decide_reference` against the text-markup tag list (create-allowed, GUID-preserving, resolver_cache) into `SegmentPlan.tag_decisions` (FR-017, R6). Target list `LangProject.TextMarkupTagsOA` confirmed static (probe-results.md R6); tags read via raw `IStText.TagsOC`/`ITextTag` (no wrapper).
+- [x] T035 [US5] In `apply_texts`, apply the tag `ReferenceDecision`s (`references.apply_reference`) — referenced tag possibilities + per-segment refs (raw `ITextTagFactory`, `_safe`-wrapped); route any unresolvable tag to the unified report (FR-017/023).
 
 **Checkpoint**: All five user stories independently functional.
 
@@ -181,11 +181,11 @@ per-segment tag references, unresolvable tags reported (spec US5 Independent Tes
 
 **Purpose**: Fidelity verification, validation runs, and the deferred live [PROBE] confirmations.
 
-- [ ] T036 [P] Extend `tests/verification/fidelity_census.py` with the 7 new classes (`Text`, `StTxtPara`, `Segment`, `WfiWordform`, `WfiAnalysis`, `WfiMorphBundle`, `WfiGloss`) so every populated source field is either reproduced or carries a matching `DroppedItemRecord` (SC-003).
-- [ ] T037 [P] Run the offline unit gate (all 7 `tests/unit/test_*` files from quickstart.md) and the extended census; confirm all pass, zero silent losses.
-- [ ] T038 Run the quickstart.md validation scenarios (US1–US5 + re-run non-destructive check) as Preview then Move against the `Ejagham Mini → Ejagham Full GT-Test` pair; confirm SC-001..SC-007 (re-run shows SKIP/UPDATE not ADD, SC-005).
-- [ ] T039 Execute the deferred live [PROBE] confirmations once the MCP `run_module`/CLR-init path is restored and record results in `specs/026-texts-wordforms/probe-results.md`: R2 (needs-review renders unanalyzed-but-present, SC-006 context), R5 (exact `AnalysesRS` write path), R6 (target-list accessors `GenreListOA` / text-markup tag list owner).
-- [ ] T040 Verify residue tagging (`[GT-Tag]` Description-append) is present and non-destructive on every added/overwritten text/paragraph/wordform/analysis (R8, constitution residue gate).
+- [x] T036 [P] Extend `tests/verification/fidelity_census.py` with the 7 new classes (`Text`, `StTxtPara`, `Segment`, `WfiWordform`, `WfiAnalysis`, `WfiMorphBundle`, `WfiGloss`) so every populated source field is either reproduced or carries a matching `DroppedItemRecord` (SC-003). Added the 026 census section (25 real owning/reference fields, buckets COPIED/DROP_REPORTED/OUT_OF_SCOPE_EXCLUDED with tested rationales + never-silent guard). Surfaced + fixed an SC-003 gap: `Segment.NotesOS` was captured but silently dropped on apply → now DROP_REPORTED via `texts._apply_segment_notes`.
+- [x] T037 [P] Run the offline unit gate (all 7 `tests/unit/test_*` files from quickstart.md) + `test_residue_tagging_026.py` (T040) and the extended census; **153 passed, zero silent losses**. (7 repo-wide failures in `test_013_apply_syncable_signature.py`/`test_wizard_pos_grammar_wiring.py` are pre-existing on clean HEAD, require a live flexicon install, and are outside the 026 gate — confirmed via `git stash`.)
+- [~] T038 **DEFERRED** (blocked): run_module CLR init still fails (`Failed to initialize Python.Runtime.dll`, re-probed 2026-07-12). Quickstart US1–US5 + re-run validation against `Ejagham Mini → Ejagham Full GT-Test` cannot execute until the runtime is restored. Pickup checklist recorded in `probe-results.md`.
+- [x] T039 Recorded the deferred live [PROBE] status in `specs/026-texts-wordforms/probe-results.md`: R6 target-list accessors **resolved on the static surface** (`GenreListOA`, `LangProject.TextMarkupTagsOA`, `IStText.TagsOC`/`ITextTag`); R2 (needs-review appearance) and R5 (exact `AnalysesRS` write path, plus the newly-surfaced `Segment.NotesOS` note write path) remain behaviourally **DEFERRED** on the CLR runtime.
+- [x] T040 Residue tagging (`[GT-Tag]` Carrier-B Description-append) confirmed present + non-destructive on every added text/paragraph/wordform/analysis via `tests/unit/test_residue_tagging_026.py` (spies `apply_residue`; asserts the 4 class kinds tagged + Carrier-B graceful degrade) (R8, constitution residue gate).
 
 ---
 
