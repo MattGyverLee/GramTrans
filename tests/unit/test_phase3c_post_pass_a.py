@@ -464,3 +464,148 @@ def test_post_pass_a_wires_via_live_repo_fallback(_stub_lcm_and_system) -> None:
     assert skips == []
     assert ref.ComponentLexemesRS.add_log == [comp]
     assert ref.PrimaryLexemesRS.add_log == [prim]
+
+
+# ============================================================================
+# Live-object CAST path (issue #28 layer 2) — `_resolve_target_by_guid` returns
+# a bare ICmObject on the live target, whose typed members (.SlotsRC,
+# .EntryRefsOS, .ComponentLexemesRS/.PrimaryLexemesRS) are invisible until the
+# object is cast to the declaring interface. MCP-confirmed: uncast
+# `.EntryRefsOS` -> None; `ILexEntry(obj).EntryRefsOS` -> the sequence. These
+# fakes reproduce that: a `_Bare` object hides typed members (attribute access
+# raises / getattr -> None, exactly like live pythonnet) and only the stubbed
+# interface cast surfaces the typed `_view`. Without the cast fix both passes
+# silently no-op (171 raises AttributeError -> swallowed; post-pass A wires 0).
+# ============================================================================
+
+class _Bare:
+    """Bare ICmObject stand-in: exposes .guid; typed members hidden until a
+    stubbed interface cast returns the matching `_view`."""
+
+    def __init__(self, guid, views=None) -> None:
+        self.guid = guid
+        self._views = dict(views or {})
+
+
+class _Typed:
+    """A cast 'view' exposing the typed members the interface declares."""
+
+    def __init__(self, guid, **members) -> None:
+        self.guid = guid
+        for k, v in members.items():
+            setattr(self, k, v)
+
+
+def _iface_cast(name):
+    """A stub SIL.LCModel interface: `IFoo(bare)` -> bare._views['IFoo']."""
+    def cast(obj):
+        return getattr(obj, "_views", {}).get(name, obj)
+    return cast
+
+
+@pytest.fixture
+def _stub_lcm_with_interfaces():
+    """Stub SIL.LCModel + System with the interface casts the passes use, so
+    `_cast_lcm` surfaces the typed view of a bare live object offline."""
+    fake_lcm = types.ModuleType("SIL.LCModel")
+    fake_lcm.ICmObjectRepository = object()
+    for iface in ("IMoInflAffMsa", "IMoInflAffixSlot", "ILexEntry", "ILexEntryRef"):
+        setattr(fake_lcm, iface, _iface_cast(iface))
+    sys.modules.setdefault("SIL", types.ModuleType("SIL"))
+    original_lcm = sys.modules.get("SIL.LCModel")
+    sys.modules["SIL.LCModel"] = fake_lcm
+
+    fake_system = types.ModuleType("System")
+    fake_system.Guid = type(
+        "FakeGuid", (), {"Parse": staticmethod(lambda s: ("parsed", s))}
+    )
+    original_system = sys.modules.get("System")
+    sys.modules["System"] = fake_system
+
+    yield
+
+    if original_lcm is None:
+        sys.modules.pop("SIL.LCModel", None)
+    else:
+        sys.modules["SIL.LCModel"] = original_lcm
+    if original_system is None:
+        sys.modules.pop("System", None)
+    else:
+        sys.modules["System"] = original_system
+
+
+def test_171_casts_bare_msa_and_slot(_stub_lcm_with_interfaces) -> None:
+    """171 sub-pass casts the bare resolved MSA/slot so SlotsRC is reachable;
+    without the cast, `bare.SlotsRC` would raise (silently swallowed live)."""
+    slot_view = _Typed("slot-1")
+    slot_bare = _Bare("slot-1", views={"IMoInflAffixSlot": slot_view})
+    msa_slots = _FakeRefSeq()
+    msa_view = _Typed("msa-1", SlotsRC=msa_slots)
+    msa_bare = _Bare("msa-1", views={"IMoInflAffMsa": msa_view})
+    target = _FakeLiveTarget({"msa-1": msa_bare, "slot-1": slot_bare})
+    ctx = _ctx_171({"msa-1": ["slot-1"]})
+
+    skips = categories._run_171_subpass(ctx, target, tag=None)
+
+    assert skips == []
+    assert msa_slots.add_log == [slot_view]  # the CAST slot was wired
+
+
+def test_post_pass_a_casts_bare_entry_and_ref(_stub_lcm_with_interfaces) -> None:
+    """post-pass A casts the bare resolved entry (-> EntryRefsOS) and each ref
+    (-> ComponentLexemesRS/PrimaryLexemesRS); without the casts getattr yields
+    None and the pass wires 0 (the live #28 layer-2 no-op)."""
+    comp_seq = _FakeRefSeq()
+    ref_view = _Typed("ref-1", ComponentLexemesRS=comp_seq,
+                      PrimaryLexemesRS=_FakeRefSeq())
+    ref_bare = _Bare("ref-1", views={"ILexEntryRef": ref_view})
+    entry_view = _Typed("entry-1", EntryRefsOS=[ref_bare])
+    entry_bare = _Bare("entry-1", views={"ILexEntry": entry_view})
+    comp = _FakeObj("comp")
+    target = _FakeLiveTarget({"entry-1": entry_bare, "comp": comp})
+    ctx = _ctx_post_pass_a({"entry-1": {"ComponentLexemesRS": ["comp"]}})
+
+    skips = categories._run_post_pass_a(ctx, target, tag=None)
+
+    assert skips == []
+    assert comp_seq.add_log == [comp]  # wired into the CAST ref's sequence
+
+
+# ---- _cast_lcm unit coverage ------------------------------------------------
+
+def test_cast_lcm_none_returns_none() -> None:
+    assert categories._cast_lcm(None, "ILexEntry") is None
+
+
+def test_cast_lcm_passthrough_when_interface_absent() -> None:
+    """No SIL.LCModel (or no such interface) -> object returned unchanged
+    (the offline duck-typed fake path)."""
+    fake = _FakeObj("x")
+    sys.modules.pop("SIL.LCModel", None)  # ensure import fails
+    assert categories._cast_lcm(fake, "ILexEntry") is fake
+
+
+def test_cast_lcm_invokes_interface_when_present(_stub_lcm_with_interfaces) -> None:
+    view = _Typed("v")
+    bare = _Bare("v", views={"ILexEntry": view})
+    assert categories._cast_lcm(bare, "ILexEntry") is view
+
+
+def test_cast_lcm_falls_back_when_cast_raises() -> None:
+    """A cast that raises (already-correct type / uncastable) -> return obj."""
+    fake_lcm = types.ModuleType("SIL.LCModel")
+
+    def _boom(_obj):
+        raise TypeError("cannot cast")
+
+    fake_lcm.ILexEntry = _boom
+    original = sys.modules.get("SIL.LCModel")
+    sys.modules["SIL.LCModel"] = fake_lcm
+    try:
+        obj = _FakeObj("y")
+        assert categories._cast_lcm(obj, "ILexEntry") is obj
+    finally:
+        if original is None:
+            sys.modules.pop("SIL.LCModel", None)
+        else:
+            sys.modules["SIL.LCModel"] = original

@@ -4902,6 +4902,9 @@ def _run_171_subpass(context, target, tag=None):
                         "affix transfer"),
             ))
             continue
+        # Cast the live-resolved ICmObject so .SlotsRC is reachable (issue #28
+        # layer 2); fakes pass through unchanged.
+        target_msa = _cast_lcm(target_msa, "IMoInflAffMsa")
         for src_slot_guid in src_slot_guids:
             target_slot = _resolve_target_by_guid(target, src_slot_guid)
             if target_slot is None:
@@ -4913,6 +4916,9 @@ def _run_171_subpass(context, target, tag=None):
                             "slot transfer"),
                 ))
                 continue
+            # SlotsRC is a typed collection of IMoInflAffixSlot; add the cast
+            # slot, not the bare ICmObject.
+            target_slot = _cast_lcm(target_slot, "IMoInflAffixSlot")
             slot_g = _guid_str_from(target_slot)
             already = any(
                 (existing is target_slot) or (_guid_str_from(existing) == slot_g)
@@ -4963,7 +4969,11 @@ def _run_post_pass_a(context, target, tag=None):
                         "affixes+stems transfer"),
             ))
             continue
+        # Cast the live-resolved ICmObject so .EntryRefsOS is reachable (issue
+        # #28 layer 2); fakes pass through unchanged.
+        target_entry = _cast_lcm(target_entry, "ILexEntry")
         for target_ref in getattr(target_entry, "EntryRefsOS", None) or []:
+            target_ref = _cast_lcm(target_ref, "ILexEntryRef")
             for field_name in ("ComponentLexemesRS", "PrimaryLexemesRS"):
                 seq = getattr(target_ref, field_name, None)
                 if seq is None:
@@ -5028,6 +5038,45 @@ def _resolve_target_by_guid(target, guid):
             guid, exc, exc_info=True,
         )
         return None
+
+
+def _cast_lcm(obj, iface_name):
+    """Cast a live LCM object to the named ``SIL.LCModel`` interface so its
+    typed members are reachable, returning offline fakes unchanged.
+
+    ``_resolve_target_by_guid`` returns a bare ``ICmObject`` on the live target
+    (``repo.GetObject`` is typed ``ICmObject``). pythonnet exposes ONLY the
+    static-type's members, so ``getattr(icmobject, "EntryRefsOS", None)`` is
+    ``None`` and ``icmobject.SlotsRC`` is invisible until the object is cast to
+    the interface that declares them -- e.g. ``ILexEntry(obj).EntryRefsOS`` or
+    ``IMoInflAffMsa(obj).SlotsRC`` (issue #28 layer 2; MCP-confirmed: uncast
+    ``.EntryRefsOS`` -> None, ``ILexEntry(obj).EntryRefsOS`` -> the sequence).
+    This is the same live-vs-fake divergence as ``_resolve_target_by_guid``: the
+    offline duck-typed fakes expose the members directly and are returned as-is
+    (the ``SIL.LCModel`` import / interface attr is absent under the test stub,
+    so both except branches pass the fake through untouched)."""
+    if obj is None:
+        return None
+    # Read the already-imported SIL.LCModel from sys.modules rather than
+    # re-importing: in a live run the resolver's `from SIL.LCModel import ...`
+    # has already loaded it, and re-`import`-ing can be intercepted by
+    # pythonnet's CLR meta-path finder (bypassing an offline test stub). If it
+    # is absent (no pythonnet), fall back to a plain import; either way a
+    # missing module/interface means the offline duck-typed fake path.
+    import sys as _sys
+    _lcm = _sys.modules.get("SIL.LCModel")
+    if _lcm is None:
+        try:
+            import SIL.LCModel as _lcm  # noqa: F811
+        except Exception:  # noqa: BLE001 -- no pythonnet -> fake path
+            return obj
+    iface = getattr(_lcm, iface_name, None)
+    if iface is None:
+        return obj
+    try:
+        return iface(obj)
+    except Exception:  # noqa: BLE001 -- already the right type, or an uncastable fake
+        return obj
 
 
 def _run_infl_feature_link_pass(context, target, tag=None):
