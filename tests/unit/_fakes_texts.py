@@ -143,12 +143,26 @@ class FakeEvaluation:
 
 class FakeAnalysis:
     def __init__(self, guid, human_eval=None, category=None, morph_bundles=(),
-                 class_name="WfiAnalysis"):
+                 glosses=(), class_name="WfiAnalysis"):
         self.guid = guid
         self.Guid = guid
         self.human_evaluation = human_eval
         self.CategoryRA = category
         self.morph_bundles = list(morph_bundles)
+        self.glosses = list(glosses)
+        self.ClassName = class_name
+
+    def GetHumanEvaluation(self):
+        return self.human_evaluation
+
+
+class FakeGloss:
+    def __init__(self, guid, forms=None, human_eval=None,
+                 class_name="WfiGloss"):
+        self.guid = guid
+        self.Guid = guid
+        self.forms = dict(forms or {})   # {handle: text}
+        self.human_evaluation = human_eval
         self.ClassName = class_name
 
     def GetHumanEvaluation(self):
@@ -389,6 +403,29 @@ class FakeMorphBundleOps:
         b.wired["infl_type"] = it
 
 
+class FakeWfiGlossOps:
+    def __init__(self):
+        self.created = []
+
+    def GetAll(self, a):
+        return list(getattr(a, "glosses", []))
+
+    def GetForm(self, g, wsHandle=None):
+        return g.forms.get(wsHandle)
+
+    def GetHumanEvaluation(self, g):
+        return getattr(g, "human_evaluation", None)
+
+    def Create(self, a):
+        g = FakeGloss(guid="tgt-gloss")
+        g.set_form = {}
+        self.created.append(g)
+        return g
+
+    def SetForm(self, g, text, wsHandle=None):
+        g.set_form[wsHandle] = text
+
+
 class FakeAgent:
     def __init__(self, name, is_human=True):
         self.name = name
@@ -433,6 +470,7 @@ class FakeProject:
         self.Cache = FakeCache(lang_project or FakeLangProject())
         self.WfiAnalyses = FakeWfiAnalysisOps(self)
         self.WfiMorphBundles = FakeMorphBundleOps()
+        self.WfiGlosses = FakeWfiGlossOps()
         self.Agents = FakeAgentOps(agents)
         self._default_vern_id = default_vern_id
         self._default_anal_id = default_anal_id

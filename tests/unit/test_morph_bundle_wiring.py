@@ -126,6 +126,55 @@ def test_deny_with_unresolved_ref_keeps_deny():
                      morph_bundles=[bundle]),
     ])
     seg = FakeSegment(guid="seg-1", wordforms=(wf,))
-    plans = wordforms.plan_analyses(seg, source, target, ctx, {}, [])
+    dropped = []
+    plans = wordforms.plan_analyses(seg, source, target, ctx, {}, dropped)
     assert plans[0].verdict == EvalVerdict.HUMAN_DENIED
     assert plans[0].needs_review is False
+    # FR-015: no needs-review downgrade record for a retained deny …
+    assert [d for d in dropped if d.field_name == "verdict"] == []
+    # … but the unresolved morpheme is still reported (FR-016).
+    assert [d for d in dropped if d.field_name == "SenseRA"]
+
+
+def test_needs_review_downgrade_is_reported():
+    # T028/FR-016: the approve→needs-review downgrade itself is a report record,
+    # since the analysis is written no-verdict (T027) — the report is the only
+    # signal the linguist gets to re-approve it once the morpheme lands.
+    target = _target()
+    source = FakeProject(ws_list=[WS_VERN, WS_EN])
+    ctx = FakeCtx(source_handle=source, ws_map={}, copy_set={})
+    bundle = FakeMorphBundle(guid="mb-1", form={2: "dog"},
+                             sense=FakeCmObject("sense-missing"))
+    wf = FakeWordform(guid="wf-1", form_by_handle={2: "dogs"}, analyses=[
+        FakeAnalysis("an-approved", human_eval=FakeEvaluation(approves=True),
+                     morph_bundles=[bundle]),
+    ])
+    seg = FakeSegment(guid="seg-1", wordforms=(wf,))
+    dropped = []
+    wordforms.plan_analyses(seg, source, target, ctx, {}, dropped)
+    verdict_drops = [d for d in dropped if d.field_name == "verdict"]
+    assert len(verdict_drops) == 1
+    assert verdict_drops[0].owner_kind == "WfiAnalysis"
+    assert verdict_drops[0].item_name == "needs-review"
+    assert verdict_drops[0].owner_guid == "an-approved"
+
+
+def test_unresolved_ref_report_carries_locate_context():
+    # FR-016: the dropped record must carry enough context to finish it by hand —
+    # the owning wordform form and the morpheme form.
+    target = _target()
+    source = FakeProject(ws_list=[WS_VERN, WS_EN])
+    ctx = FakeCtx(source_handle=source, ws_map={}, copy_set={})
+    bundle = FakeMorphBundle(guid="mb-1", form={2: "dog"},
+                             sense=FakeCmObject("sense-missing"))
+    wf = FakeWordform(guid="wf-1", form_by_handle={2: "dogs"}, analyses=[
+        FakeAnalysis("an-approved", human_eval=FakeEvaluation(approves=True),
+                     morph_bundles=[bundle]),
+    ])
+    seg = FakeSegment(guid="seg-1", wordforms=(wf,))
+    dropped = []
+    wordforms.plan_analyses(seg, source, target, ctx, {}, dropped)
+    sense_drop = next(d for d in dropped if d.field_name == "SenseRA")
+    assert sense_drop.owner_label == "dogs"   # owning wordform form
+    assert sense_drop.item_name == "dog"      # morpheme form
+    assert sense_drop.item_guid == "sense-missing"

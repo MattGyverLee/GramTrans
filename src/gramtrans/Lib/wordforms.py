@@ -38,7 +38,7 @@ if __package__:
         AnalysisPlan,
         DroppedItemRecord,
         EvalVerdict,
-        GlossPlan,  # noqa: F401 — US4 (T030) will populate GlossPlan
+        GlossPlan,
         IdentityRef,
         MorphBundlePlan,
         ProvisionedAgent,
@@ -56,7 +56,7 @@ else:  # pragma: no cover
         AnalysisPlan,
         DroppedItemRecord,
         EvalVerdict,
-        GlossPlan,  # noqa: F401
+        GlossPlan,
         IdentityRef,
         MorphBundlePlan,
         ProvisionedAgent,
@@ -342,14 +342,31 @@ def plan_analyses(segment, source, target, ctx, resolver_cache, dropped) -> List
                            _guid_str(analysis))
                 continue
             verdict = _verdict_from_eval(evaluation)
+            wf_label = _first_text(wf_form)
             category_decision = resolve_or_report_category(
                 analysis, target, resolver_cache, dropped)
-            morph_bundles = tuple(plan_morph_bundles(analysis, target, ctx, dropped))
+            morph_bundles = tuple(plan_morph_bundles(
+                analysis, target, ctx, dropped, context_label=wf_label))
+            glosses = tuple(plan_glosses(analysis, source, target, ctx, dropped))
 
             # needs_review (FR-014): an APPROVE that lost ≥1 morpheme referent.
             # A DENY is never downgraded (FR-015).
             has_unresolved = any(mb.unresolved_refs() for mb in morph_bundles)
             needs_review = (verdict == EvalVerdict.HUMAN_APPROVED and has_unresolved)
+            if needs_review:
+                # FR-016: the downgrade itself is a reported gap — the approve is
+                # written no-verdict (T027), so the report is the only signal the
+                # linguist has to find and re-approve it once the morpheme lands.
+                dropped.append(DroppedItemRecord(
+                    owner_kind="WfiAnalysis",
+                    owner_guid=_guid_str(analysis) or "?",
+                    owner_label=wf_label,
+                    field_name="verdict",
+                    item_name="needs-review",
+                    item_guid=_guid_str(analysis),
+                    reason="approve downgraded to needs-review: "
+                           "unresolved morph-bundle reference(s)",
+                ))
 
             plans.append(AnalysisPlan(
                 source_guid=_guid_str(analysis),
@@ -358,7 +375,7 @@ def plan_analyses(segment, source, target, ctx, resolver_cache, dropped) -> List
                 verdict=verdict,
                 category_decision=category_decision,
                 morph_bundles=morph_bundles,
-                glosses=(),  # US4 (T030)
+                glosses=glosses,
                 needs_review=needs_review,
             ))
     return plans
@@ -404,12 +421,105 @@ def resolve_or_report_category(analysis, target, resolver_cache, dropped):
     return decision
 
 
+# ===========================================================================
+# T030 — word-level gloss human-evaluation gate (FR-008, US4)
+# ===========================================================================
+
+def _gloss_human_evaluation(source, gloss):
+    """Return a WfiGloss's human evaluation, or None (the FR-008 gate).
+
+    Prefers `WfiGlosses.GetHumanEvaluation`; tolerant of a duck-typed fake that
+    exposes `GetHumanEvaluation` / `human_evaluation` on the gloss itself."""
+    gl_ops = getattr(source, "WfiGlosses", None)
+    if gl_ops is not None and hasattr(gl_ops, "GetHumanEvaluation"):
+        try:
+            return gl_ops.GetHumanEvaluation(gloss)
+        except Exception:
+            return None
+    fn = getattr(gloss, "GetHumanEvaluation", None)
+    if callable(fn):
+        try:
+            return fn()
+        except Exception:
+            return None
+    return getattr(gloss, "human_evaluation", None)
+
+
+def plan_glosses(analysis, source, target, ctx, dropped) -> List:
+    """Pure/decision pass → list of human-evaluated `models.GlossPlan` (FR-008).
+
+    Applies the SAME human-evaluation gate as analyses: a `WfiGloss` is kept iff
+    it carries a non-null human evaluation. Parser-only / un-evaluated glosses
+    are excluded (no plan, no write). Gloss forms are WS-gated (FR-020). No
+    writes.
+    """
+    gl_ops = getattr(source, "WfiGlosses", None)
+    ws_map = dict(getattr(ctx, "_ws_map", None) or {})
+    tgt_ws_ids = target_ws_ids(target)
+
+    glosses = []
+    if gl_ops is not None and hasattr(gl_ops, "GetAll"):
+        glosses = _texts._safe(lambda: list(gl_ops.GetAll(analysis) or [])) or []
+    if not glosses:
+        glosses = list(getattr(analysis, "glosses", None)
+                       or getattr(analysis, "MeaningsOC", None) or [])
+
+    plans: List[GlossPlan] = []
+    for gloss in glosses:
+        evaluation = _gloss_human_evaluation(source, gloss)
+        if evaluation is None:
+            # FR-008: parser-only / un-evaluated gloss — excluded, no write.
+            _log.debug("plan_glosses: skip non-human-evaluated gloss %s",
+                       _guid_str(gloss))
+            continue
+        forms = {}
+        if gl_ops is not None and hasattr(gl_ops, "GetForm"):
+            forms = capture_per_ws(
+                lambda o, h: gl_ops.GetForm(o, h), gloss, source, ws_map, tgt_ws_ids,
+                owner_kind="WfiGloss", owner_guid=_guid_str(gloss),
+                owner_label="", field_name="Form", dropped=dropped,
+            )
+        plans.append(GlossPlan(
+            source_guid=_guid_str(gloss),
+            forms=forms,
+            verdict=_verdict_from_eval(evaluation),
+        ))
+    return plans
+
+
+def _apply_glosses(plan, target, analysis_obj, ctx, dropped) -> None:
+    """Move-mode — reproduce the human-evaluated glosses (FR-008) on the target
+    analysis: create each gloss and write its WS-gated forms."""
+    if not plan.glosses:
+        return None
+    gl_ops = getattr(target, "WfiGlosses", None)
+    if gl_ops is None:
+        return None
+    ws_map = dict(getattr(ctx, "_ws_map", None) or {})
+    tgt_id2h = id_to_handle(target)
+    for gplan in plan.glosses:
+        gloss = _texts._safe(lambda: gl_ops.Create(analysis_obj))
+        if gloss is None:
+            dropped.append(DroppedItemRecord(
+                owner_kind="WfiGloss", owner_guid=gplan.source_guid or "?",
+                owner_label="", field_name="Create", item_name="",
+                item_guid="", reason="gloss create failed",
+            ))
+            continue
+        for src_id, text in (gplan.forms or {}).items():
+            tgt_id = ws_map.get(src_id, src_id) if ws_map else src_id
+            h = tgt_id2h.get(tgt_id)
+            if text and (h is not None or not tgt_id2h):
+                _texts._safe(lambda t=text, hh=h: gl_ops.SetForm(gloss, t, hh))
+    return None
+
+
 def apply_analyses(plans, source, target, ctx, tag, resolver_cache, dropped) -> None:
     """Move-mode — realize the AnalysisPlans on the target's wordforms.
 
     Find-or-create the target wordform by form+WS (R7); set spelling status
     (FR-013, non-destructive); `WfiAnalyses.Create`; apply the category decision;
-    wire morph bundles (delegated); write the verdict —
+    wire morph bundles + copy human-evaluated glosses (delegated); write the verdict —
       HUMAN_APPROVED and not needs_review → ApproveAnalysis (owned by the run's
         provisioned agent);
       HUMAN_DENIED → RejectAnalysis (incl. the deny-with-unresolvable case);
@@ -460,6 +570,9 @@ def apply_analyses(plans, source, target, ctx, tag, resolver_cache, dropped) -> 
 
         # Morph bundles (identity wiring).
         apply_morph_bundles(analysis_obj, plan.morph_bundles, target, ctx, dropped)
+
+        # Word-level glosses (human-evaluated only, US4/FR-008).
+        _apply_glosses(plan, target, analysis_obj, ctx, dropped)
 
         # Verdict write (the crux).
         _write_verdict(plan, wa_ops, analysis_obj, agent)
@@ -565,14 +678,15 @@ def _bundle_referent(source_ops, bundle, field_name, getter_name):
     return getattr(bundle, field_name, None)
 
 
-def plan_morph_bundles(analysis, target, ctx, dropped) -> List:
+def plan_morph_bundles(analysis, target, ctx, dropped, context_label="") -> List:
     """Pure/decision pass → list of `models.MorphBundlePlan`.
 
     For each bundle capture the WS-gated form and build up to four IdentityRefs
     (MorphRA / MsaRA / SenseRA / InflTypeRA) via the per-run target GUID index
     (R4). Every UNRESOLVED ref emits one DroppedItemRecord (owner_kind
     WfiMorphBundle, field = ref name, reason "referent not copied to target")
-    with locate-and-finish context (FR-016)."""
+    with locate-and-finish context (FR-016): `context_label` carries the owning
+    wordform form and `item_name` the morpheme form."""
     source = getattr(ctx, "source_handle", None)
     mb_ops = getattr(source, "WfiMorphBundles", None) if source is not None else None
     ws_map = dict(getattr(ctx, "_ws_map", None) or {})
@@ -601,11 +715,13 @@ def plan_morph_bundles(analysis, target, ctx, dropped) -> List:
             ref = _resolve_ref(ctx, target, field_name, referent)
             refs[field_name] = ref
             if ref is not None and not ref.resolved:
-                # FR-016: unresolved referent — unlinked + reported.
+                # FR-016: unresolved referent — unlinked + reported, with the
+                # wordform (owner_label) + morpheme form (item_name) so the gap
+                # can be located and finished manually.
                 dropped.append(DroppedItemRecord(
                     owner_kind="WfiMorphBundle", owner_guid=bundle_guid or "?",
-                    owner_label="", field_name=field_name,
-                    item_name="", item_guid=ref.source_guid,
+                    owner_label=context_label, field_name=field_name,
+                    item_name=_first_text(form), item_guid=ref.source_guid,
                     reason="referent not copied to target",
                 ))
         plans.append(MorphBundlePlan(
@@ -789,6 +905,14 @@ def _seq_len(seq) -> int:
 # ===========================================================================
 # ctx helpers
 # ===========================================================================
+
+def _first_text(ws_dict) -> str:
+    """First non-empty string in a WS-keyed dict (a locate label for reports)."""
+    for value in (ws_dict or {}).values():
+        if value:
+            return value
+    return ""
+
 
 def _stash(ctx, name, value):
     try:
