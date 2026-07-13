@@ -1,5 +1,38 @@
 # GramTrans — Session Handoff
 
+## ▶▶▶ Feature 025 — Full Reversals — T037 Phase 2 (live Move) RAN — Scenario 1 PARTIAL FAIL, P0 sub-entry bug (2026-07-13)
+
+**Attended session.** The destructive live Move (Ejagham Mini → **Target**) RAN, committed, and
+persisted (fresh re-open confirmed). Worktree `025-full-reversals` @ `b8d325d`.
+
+**⚠️ Target is now in a partially-broken state and MUST be `-restored` before any re-Move.**
+
+**Scenario 1 write-half: PARTIAL FAIL.**
+- **PASS:** 134/134 top-level reversal entries written to target `en` index (GUID `ab4d4345`
+  reused, R4); top-level single- AND multi-sense linking (foot/leg/palm frond = 2 senses);
+  `ReversalForm` text; sub-entry recursion **structure** (all 7 parents, exact counts);
+  `LangProject.PartsOfSpeechOA` untouched (13/13 identical); config `en.fwdictconfig` SKIP (no
+  write, no `.gtbak`); no crash / partial write / stuck lock (2nd attempt, exit 0).
+- **FAIL (P0, 025's own code — silent data loss):** every reversal **sub-entry** drops its linked
+  sense. `reversals.py::_apply_one_entry` computes `remaining_senses = target_senses[1:]` assuming
+  the create linked sense #1 — true for `_create_top_level_entry` (wrapper links it) but FALSE for
+  `_create_sub_entry` (links no sense). So a 1-sense sub-entry silently ends with empty `SensesRS`.
+  9/10 sampled sub-entries had `senses=0` where Preview predicted 1. No exception/DroppedItemRecord.
+
+**Two non-blocking findings also surfaced:** (2) `categories.py::_run_post_pass_a` calls a
+non-existent `FLExProject.get_object_by_guid` → `AttributeError`, logged WARN but not emitted as a
+dropped record (invisible to never-silent) — 024-era, fix/emit later; (3) the cycle-11 never-silent
+fix is **working as designed** — `dropped_items` grew 6→337, correctly surfacing pre-existing 024
+`MorphTypeRA`/`CmTranslation.TypeRA` divergences + `LexExampleSentence.TranslationsOC` gaps (backlog).
+
+**Next:** fix the P0 sub-entry sense-linking bug (TDD, `_create_sub_entry` links `first_sense` +
+regression that N-sense sub-entry → N in `SensesRS`), re-gate, then **re-Move against a
+freshly-`-restored` Target** to confirm sub-entry sense counts match the plan. Then merge to main.
+
+**Report:** [cycle12-verification-t037-move](specs/025-full-reversals/reviews/cycle12-verification-t037-move.md).
+
+---
+
 ## ▶▶▶ Feature 025 — Full Reversals — T037 findings remediated + re-gate GREEN — Move authorized (2026-07-13)
 
 **Attended session.** Source **Ejagham Mini** → target **Target** (disposable, user-confirmed).

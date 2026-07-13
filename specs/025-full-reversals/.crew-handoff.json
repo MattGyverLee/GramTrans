@@ -2,12 +2,26 @@
   "feature": "025-full-reversals",
   "created": "2026-07-12",
   "updated": "2026-07-12",
-  "status": "ready_for_move",
-  "spurt": 8,
-  "last_cycle": 11,
-  "checkpoint_completed": "T037 Phase-1 findings remediated (cycle 10) + re-gate GREEN (cycle 11): Finding 1 never-silent fix + Finding 2 Preview/Move WS parity, both CLOSED; offline suite 1505 passed / 1 known-fail; domain SAFE-WITH-FOLLOWUP",
-  "qc_gate": "GREEN",
-  "blocker": null,
+  "status": "in_progress",
+  "spurt": 9,
+  "last_cycle": 12,
+  "checkpoint_completed": "T037 Phase 2 (live destructive Move, Ejagham Mini -> Target) RAN + persisted; Scenario 1 write-half PARTIAL FAIL — top-level PASS, sub-entry sense-linking FAIL (P0 silent data-loss bug found in 025's own reversals.py)",
+  "qc_gate": "GREEN offline; T037 Phase-2 PARTIAL FAIL (new P0)",
+  "blocker": "P0 in 025's own code: reversals.py::_apply_one_entry drops the (only) linked sense on every reversal SUB-entry. Must fix + re-gate + re-Move against a FRESHLY-RESTORED Target. Target is currently in a partially-broken state (134 top-level entries written OK, but sub-entries have empty SensesRS) and MUST be -restored before any re-Move.",
+  "t037_phase2": {
+    "status": "PARTIAL FAIL",
+    "ran": "transfer.execute committed + persisted (fresh re-open confirmed). 134/134 top-level reversal entries written to target en index (GUID ab4d4345 reused, R4); top-level single+multi-sense linking PASS (foot/leg/palm frond = 2 senses); ReversalForm PASS; sub-entry recursion STRUCTURE PASS (all 7 parents, exact counts); LangProject.PartsOfSpeechOA untouched (13/13); config en.fwdictconfig SKIP (no write, no .gtbak).",
+    "FAIL": "sub-entry sense-linking: 9/10 sampled sub-entries have senses=0 where Preview correctly predicted 1 — silent data loss.",
+    "driver": "scratchpad/t037_move_driver.py",
+    "log": "scratchpad/t037_move.log",
+    "report": "specs/025-full-reversals/reviews/cycle12-verification-t037-move.md",
+    "note": "First attempt crashed pre-write on a UnicodeEncodeError (cp1252 console printing a non-ASCII gloss) BEFORE execute — no write; driver patched (UTF-8 stdout + PID-aware stale-lock precheck) and re-run clean."
+  },
+  "t037_phase2_findings": [
+    "P0 (BLOCKING, 025's own code): reversals.py::_apply_one_entry (~807-839) computes remaining_senses = target_senses[1:] assuming the create linked sense #1 — true for _create_top_level_entry (wrapper Create(index, text, first_sense) links it) but FALSE for _create_sub_entry (raw factory + SubentriesOS.Add, links NO sense and never receives first_sense). So a 1-sense sub-entry drops its only sense silently (no exception/DroppedItemRecord/warning). Fix: give _create_sub_entry a first_sense param and link it (mirror top-level), OR have the create fns report whether they consumed first_sense so remaining_senses is computed per-branch. Add regression: sub-entry with N senses -> exactly N in SensesRS after apply_reversals.",
+    "Finding 2 (non-blocking, 024-era): categories.py::_run_post_pass_a (~4750) calls non-existent FLExProject.get_object_by_guid -> AttributeError, caught by transfer.execute per-action try/except and logged as WARN but NOT emitted as a DroppedItemRecord (invisible to never-silent). Fix/remove the dead call and/or emit a dropped record.",
+    "Finding 3 (non-blocking, working-as-designed): the cycle-11 never-silent fix now correctly surfaces pre-existing 024 gaps — dropped_items grew 6 -> 265(Preview)/337(post): mostly MoForm.MorphTypeRA + CmTranslation.TypeRA 'shared-default diverged', plus ~72 LexExampleSentence.TranslationsOC 'FLExProject has no attribute Translations'. Backlog, not a regression."
+  ],
   "t037_findings_remediation": {
     "commit": "b8d325d",
     "finding1_closed": "references.py _multistring_dict resolver branch all-str keys (references.py:341,358 -> (handle_to_id.get(wh) or str(wh))); categories.py _plan_entry_reference_decisions catch-all now emits a guarded DroppedItemRecord via _append_dropped_once (never-silent restored). +TDD tripwires confirmed RED.",
