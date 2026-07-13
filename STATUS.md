@@ -1,5 +1,38 @@
 # GramTrans — Session Handoff
 
+## ▶▶▶ Feature 031 — Inflection-Feature Linking — T024 live validation PASS after 2 fixes; T026 merge pending (2026-07-13)
+
+**Phases 1-5 complete; Phase 6 T022/T023/T024/T025 done. Only T026 (merge) left.**
+Worktree `031-fix-inflection-feature-linking` @ **`9e41a1f`** (NOT merged). Prevention-only
+scope (FR-011): no code path remediates already-polluted records.
+
+**T024 live validation (attended, user-authorized): `Ejagham Mini` → restored `Target`.**
+Driver `scratchpad/run031_live.py` (restore-from-backup → diagnose → Move → re-Move →
+diagnose). **First run FAILED and caught two real Phase 3-4 defects the offline mocked
+tests missed; both fixed (`9e41a1f`); re-run PASS:**
+- `linked_features 0 → 3` (== source): US1 link pass wired 0/13 because
+  `_run_infl_feature_link_pass` called `target.get_object_by_guid`, which the LIVE
+  flexicon `FLExProject` does NOT have (only the offline fakes do) → `AttributeError`
+  swallowed. Fixed with `_resolve_target_by_guid` (getter for fakes; LCM object repo
+  `project.ObjectRepository(ICmObjectRepository)` live, MCP-verified).
+- `nameless_features 1 → 0`: `inflection_features_execute_action` crashed casting a
+  source `FsComplexFeature` to `IFsClosedFeature`, leaving a nameless twin. Fixed with an
+  up-front type guard → `Skip(UNSUPPORTED_LCM_TYPE)`, creates nothing.
+- Idempotent re-Move (4 feat / 35 val both runs), 0 duplicate GUIDs. The 1 remaining
+  orphaned feature is correct (orphaned in the source too — we never invent links).
+
+**⚠️ Two follow-ups flagged (out of 031 scope) — see `pattern-audit.md`:**
+1. The SAME `get_object_by_guid` latent bug is in `_run_post_pass_a` (024) and
+   `_run_171_subpass` (msa-slot-wiring) — those wiring passes likely no-op on a live
+   target. Route through the shared resolver + add live regression.
+2. Full complex/open-feature transfer (currently skipped `UNSUPPORTED_LCM_TYPE`).
+
+**Remaining: T026** — merge `031-fix-inflection-feature-linking` → `main` and remove the
+worktree. Given the two fixes were unplanned Phase 3-4 bug fixes, consider a lex-crew
+review cycle before merge.
+
+---
+
 ## ▶▶▶ Feature 031 — Inflection-Feature Linking — Phase 5 (US3) DONE; live validation (T024) is the blocking gate (2026-07-13)
 
 **Phases 1-5 complete; Phase 6 offline parts done.** Worktree

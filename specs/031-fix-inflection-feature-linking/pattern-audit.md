@@ -62,6 +62,35 @@ or add a `ws_map` param) is applied globally.
   `ws_map`; keys by Id internally so not a raw-handle defect (noted as a missing-remap
   nuance only).
 
+## Second bug class (T024 live finding): `target.get_object_by_guid` on the live target
+
+The T024 live Move surfaced a **separate** shaped bug: the Move wiring post-passes
+call `target.get_object_by_guid(guid)`, but the **live flexicon `FLExProject` has no
+such method** — it exists only on the offline test fakes. On the live target the call
+raises `AttributeError`, which `transfer.execute` swallows, so the wiring silently does
+nothing (031 wired 0/13 feature→category links before the fix). Correct live resolution
+(verified read-only via FLExToolsMCP): `project.ObjectRepository(ICmObjectRepository)`
+→ `IsValidObjectId(guid)` guard → `GetObject(guid)`.
+
+| File:line | Function | Status |
+|---|---|---|
+| `src/gramtrans/Lib/categories.py` `_run_infl_feature_link_pass` | 031 US1 link pass | FIXED (worktree `9e41a1f`) via new `_resolve_target_by_guid` (getter for fakes, LCM object repo live). |
+| `src/gramtrans/Lib/categories.py:4862,4873` `_run_171_subpass` | MSA→slot wiring (`msa-slot-wiring`) | **SUSPECT — same latent bug.** Calls `target.get_object_by_guid` directly; would no-op on a live target. Out of 031 scope — file a follow-up. |
+| `src/gramtrans/Lib/categories.py:4922,4940` `_run_post_pass_a` | LexEntryRef wiring (024/FR-340) | **SUSPECT — same latent bug.** Same direct call; route through `_resolve_target_by_guid` (or equivalent) and re-validate live. |
+
+These two SUSPECTs mean any prior "wiring post-pass" whose feature was validated only
+offline may not actually wire on a live target. Recommend a follow-up spec that routes
+all three passes through the shared resolver and adds a live regression.
+
+## Third defect (T024 live finding): non-closed inflection features
+
+`inflection_features_execute_action` assumed every `IFsFeatDefn` in
+`MsFeatureSystemOA.FeaturesOC` is an `IFsClosedFeature`. `Ejagham Mini` contains one
+`FsComplexFeature`; the unconditional `IFsClosedFeature(src_feat)` cast raised and left a
+nameless closed-feature twin. FIXED (worktree `9e41a1f`): an up-front type guard emits
+`Skip(UNSUPPORTED_LCM_TYPE)` and creates nothing. Full complex/open-feature transfer is a
+documented follow-up (not in 031 scope).
+
 ## Coverage note
 
 Verified: the three SUSPECTs above are the complete set of source-handle-into-target
