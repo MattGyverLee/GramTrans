@@ -1,9 +1,41 @@
 # GramTrans — Session Handoff
 
-## ▶▶▶ Feature 031 — Inflection-Feature Linking — T024 live validation PASS after 2 fixes; T026 merge pending (2026-07-13)
+## ▶▶▶ Feature 031 — Inflection-Feature Linking — COMPLETE: merged to main after LEX-crew review (2026-07-13)
 
-**Phases 1-5 complete; Phase 6 T022/T023/T024/T025 done. Only T026 (merge) left.**
-Worktree `031-fix-inflection-feature-linking` @ **`9e41a1f`** (NOT merged). Prevention-only
+**FEATURE COMPLETE.** All tasks T001–T026 done. Merged `031-fix-inflection-feature-linking`
+→ **`main` @ `aa56d3d`** (`--no-ff`); worktree + branch removed. Prevention-only scope
+(FR-011). Merged-tree offline suite: **1535 passed / 1 pre-existing baseline fail**
+(`test_wizard_pos_grammar_wiring`, unrelated — confirmed non-regression).
+
+**LEX-crew pre-merge review (2 cycles) — all gates green:**
+- Cycle 1: verification APPROVE (both fixes correct vs live LCM), domain APPROVED (skip+report
+  for complex features is correct; audit complete), QC BLOCK at 74/100 (pattern-audit gate +
+  2 broad-except P1s + missing fake-repo test).
+- Cycle 2 (fixes in `b5cd49b` code + `c8adb2f` spec): QC 92/100 gate CLEAR / APPROVE,
+  verification PASS. Final lex-lead verdict: **GO**.
+- Artifacts: `specs/031-fix-inflection-feature-linking/reviews/cycle{1,2}-*.md`.
+
+**What shipped:** US1 feature→category link wiring; US2 WS-mapped naming + feature dedup;
+US3 read-only diagnosis (`debug/diag_infl_features.py`); and the T024 live-found fixes
+(live GUID resolution via `_resolve_target_by_guid` → LCM object repo; non-closed-feature
+guard `UNSUPPORTED_LCM_TYPE`; log-before-swallow hardening).
+
+**Live T024 evidence (attended, Ejagham Mini → restored `Target`):** linked_features 0→3
+(== source), nameless_features 1→0, idempotent re-Move (4 feat / 35 val both runs), 0
+duplicate GUIDs, `FsComplexFeature` cleanly skipped. Driver: `scratchpad/run031_live.py`.
+
+**⚠️ HIGH-PRIORITY FOLLOW-UP (ticketed in `pattern-audit.md`, out of 031 scope):** the SAME
+unguarded-`get_object_by_guid`-on-live-target bug is latent in `_run_171_subpass`
+(categories.py:4894/4905) and `_run_post_pass_a` (categories.py:4954/4972) — those wiring
+passes likely silently no-op on a live target. Route them through `_resolve_target_by_guid`
++ add live regression. Second follow-up: full complex/open inflection-feature transfer.
+
+---
+
+## ▶▶▶ Feature 031 — Inflection-Feature Linking — Phase 5 (US3) DONE; live validation (T024) is the blocking gate (2026-07-13)
+
+**Phases 1-5 complete; Phase 6 offline parts done.** Worktree
+`031-fix-inflection-feature-linking` @ **`e376b39`** (NOT merged). Prevention-only
 scope (FR-011): no code path remediates already-polluted records.
 
 **T024 live validation (attended, user-authorized): `Ejagham Mini` → restored `Target`.**
