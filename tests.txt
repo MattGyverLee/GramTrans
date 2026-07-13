@@ -11,3 +11,7 @@ python debug/coverage_report.py
 $env:GRAMTRANS_TARGET = "Target"          # default
 $env:GRAMTRANS_SOURCE = "Esperanto"    # default
 python debug/coverage_report.py
+
+
+Phn rules
+"Any" Affixes

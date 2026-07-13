@@ -6,6 +6,20 @@ description: "Phase 3c — Affixes / Stems / Templates Block tasks"
 
 # Tasks: Phase 3c — Affixes / Stems / Templates Block
 
+> ## [RECONCILED AS-BUILT] — shipped & merged to `main` (2026-07-12)
+>
+> This feature shipped and merged via **PR #5** (`fb837af`). Core implementation
+> landed in `b473136` ("implement Phase 3c affix/stem/slot/template callbacks +
+> tail passes, with unit tests"); pyflexicon LCM-write API reference notes in
+> `3165836`. The five `GrammarCategory` enum members (`AFFIXES`,
+> `ADHOC_COMPOUND_RULES`, `SLOTS`, `AFFIX_TEMPLATES`, `STEMS`) are present in
+> `src/gramtrans/Lib/models.py`, and the category tests
+> (`test_categories_affixes.py`, `test_categories_stems.py`,
+> `test_categories_stem_names.py`, `test_categories_affix_templates.py`) are in
+> the suite. The checkboxes below were reconciled from `[ ]` to `[X]` on that
+> basis — the capability is live, not backlog. (Checkbox reconciliation
+> 2026-07-12; the boxes had been left unchecked when the PR merged.)
+
 **Input**: Design documents from `/specs/007-affixes-stems/`
 
 **Prerequisites**: plan.md, spec.md, research.md, data-model.md, contracts/ (3 files), quickstart.md (all present)
@@ -57,23 +71,23 @@ description: "Phase 3c — Affixes / Stems / Templates Block tasks"
 
 **Independent Test**: Quickstart Scenario A's `AFFIXES` sub-step against Ejagham Mini's 13 verb-affix entries — expect 13 entries + 13 senses + 13 MSAs + 20 allomorphs created with owned-child closure intact.
 
-- [ ] T013 [US1] Implement `affixes.enumerate_source` in `src/gramtrans/Lib/categories.py` per contracts/category-callbacks.md — filter `EntriesOC` by `entry.LexemeFormOA.MorphTypeRA.IsAffixType`; entries failing closure surface to planner for skip-recording
-- [ ] T014 [US1] Implement `affixes.dependencies` — yield `(POS, msa.PartOfSpeechRA.Guid)` per MSA; no MorphType edge (FW-global)
-- [ ] T015 [US1] Implement `affixes.plan_action` — one PlannedAction per affix LexEntry; stash `(msa.Guid, [slot.Guid, ...])` in `plan.msa_slot_bindings` for each MSA with non-empty source `SlotsRC`; stash EntryRef-component-lexeme bindings in `plan.lexentry_ref_bindings`
-- [ ] T016 [US1] Implement `_walk_lex_entry_closure` helper in `src/gramtrans/Lib/categories.py` shared between affixes and stems; walks `SensesOS` → `MorphoSyntaxAnalysesOC` → `LexemeFormOA` → `AlternateFormsOS` → `PronunciationsOS` → `EtymologyOS` → `EntryRefsOS` per data-model.md E2
-- [ ] T017 [US1] Implement `_dispatch_msa_subclass` in `src/gramtrans/Lib/categories.py` — `ClassName`-based dispatch to `MSAOperations.CreateInflAff` / `CreateDerivAff` / `CreateUnclassifiedAffix` (name corrected per T007 probe) per data-model.md E4; unknown subclass → `Skip(NEEDS_MANUAL)`. **MVP scope (T012 inventory)**: Ejagham Mini has only MoInflAffMsa + MoStemMsa; `CreateDerivAff` + `CreateUnclassifiedAffix` paths can ship as `Skip(NEEDS_MANUAL)` stubs and live-verify against synthetic fixtures only.
-- [ ] T018 [US1] Implement `_dispatch_allomorph_subclass` in `src/gramtrans/Lib/categories.py` — `MoAffixAllomorph` / `MoStemAllomorph` dispatch per data-model.md E3; `identity_remap` capture for no-Guid-overload paths; unknown subclass (including `MoAffixProcess` per spec.md "Out of scope") emits `Skip(NEEDS_MANUAL)`
-- [ ] T019 [US1] Implement `affixes.execute_action` — atomic owned-child write via `_walk_lex_entry_closure` + the two subclass dispatchers; MSA `SlotsRC` left empty (US2 territory)
-- [ ] T020 [US1] Implement `affixes.apply_residue` — Carrier A (`LiftResidue`) on entry + senses + MSAs + allomorphs per data-model.md E9
-- [ ] T021 [P] [US1] Unit test `tests/unit/test_categories_affixes.py::test_enumerate_filters_by_is_affix_type` — fixture with 2 affix + 3 stem entries; enumerate yields exactly 2
-- [ ] T022 [P] [US1] Unit test `test_plan_action_stashes_msa_slot_bindings` — affix MSA with 2-slot source `SlotsRC` produces `plan.msa_slot_bindings[msa.Guid] == [slot1.Guid, slot2.Guid]`
-- [ ] T023 [P] [US1] Unit test `test_plan_action_stashes_lexentry_ref_bindings` — entry with non-empty `ComponentLexemesRS` populates `plan.lexentry_ref_bindings[entry.Guid]["ComponentLexemesRS"]`
-- [ ] T024 [P] [US1] Unit test `test_execute_action_creates_owned_closure` — single affix entry: assert 1 entry + 1 sense + 1 MSA + 1 lexeme-form allomorph + N alt-forms created
-- [ ] T025 [P] [US1] Unit test `test_execute_action_dependency_unresolved_on_missing_lexeme_form` — entry with `LexemeFormOA is None` → `Skip(DEPENDENCY_UNRESOLVED)`; entry NOT created
-- [ ] T026 [P] [US1] Unit test `test_msa_dispatch_unknown_subclass_skip` — fake MSA with `ClassName == "MoFutureSubclassMsa"` → `Skip(NEEDS_MANUAL)` per FR-341 posture extended to MSAs
-- [ ] T026b [P] [US1] Unit test `test_allomorph_dispatch_affix_process_needs_manual` — source allomorph with `ClassName == "MoAffixProcess"` → `Skip(NEEDS_MANUAL)` per spec.md "Out of scope"; no allomorph created, parent entry continues with remaining allomorphs
-- [ ] T027 [P] [US1] Unit test `test_phase3c_leaf_dispatch.py::test_affixes_in_dispatch_tuple` — `AFFIXES` appears in `_LEAF_DISPATCH_CATEGORIES` in both `preview.py` and `transfer.py`, before `ADHOC_COMPOUND_RULES`
-- [ ] T028 [P] [US1] Integration test `tests/integration/test_phase3c_affixes_stems_e2e.py::test_us1_affix_round_trip` — fake-LCM-surface run of `AFFIXES` only, asserting 13 entries created against Ejagham-Mini-shaped fixture
+- [X] T013 [US1] Implement `affixes.enumerate_source` in `src/gramtrans/Lib/categories.py` per contracts/category-callbacks.md — filter `EntriesOC` by `entry.LexemeFormOA.MorphTypeRA.IsAffixType`; entries failing closure surface to planner for skip-recording
+- [X] T014 [US1] Implement `affixes.dependencies` — yield `(POS, msa.PartOfSpeechRA.Guid)` per MSA; no MorphType edge (FW-global)
+- [X] T015 [US1] Implement `affixes.plan_action` — one PlannedAction per affix LexEntry; stash `(msa.Guid, [slot.Guid, ...])` in `plan.msa_slot_bindings` for each MSA with non-empty source `SlotsRC`; stash EntryRef-component-lexeme bindings in `plan.lexentry_ref_bindings`
+- [X] T016 [US1] Implement `_walk_lex_entry_closure` helper in `src/gramtrans/Lib/categories.py` shared between affixes and stems; walks `SensesOS` → `MorphoSyntaxAnalysesOC` → `LexemeFormOA` → `AlternateFormsOS` → `PronunciationsOS` → `EtymologyOS` → `EntryRefsOS` per data-model.md E2
+- [X] T017 [US1] Implement `_dispatch_msa_subclass` in `src/gramtrans/Lib/categories.py` — `ClassName`-based dispatch to `MSAOperations.CreateInflAff` / `CreateDerivAff` / `CreateUnclassifiedAffix` (name corrected per T007 probe) per data-model.md E4; unknown subclass → `Skip(NEEDS_MANUAL)`. **MVP scope (T012 inventory)**: Ejagham Mini has only MoInflAffMsa + MoStemMsa; `CreateDerivAff` + `CreateUnclassifiedAffix` paths can ship as `Skip(NEEDS_MANUAL)` stubs and live-verify against synthetic fixtures only.
+- [X] T018 [US1] Implement `_dispatch_allomorph_subclass` in `src/gramtrans/Lib/categories.py` — `MoAffixAllomorph` / `MoStemAllomorph` dispatch per data-model.md E3; `identity_remap` capture for no-Guid-overload paths; unknown subclass (including `MoAffixProcess` per spec.md "Out of scope") emits `Skip(NEEDS_MANUAL)`
+- [X] T019 [US1] Implement `affixes.execute_action` — atomic owned-child write via `_walk_lex_entry_closure` + the two subclass dispatchers; MSA `SlotsRC` left empty (US2 territory)
+- [X] T020 [US1] Implement `affixes.apply_residue` — Carrier A (`LiftResidue`) on entry + senses + MSAs + allomorphs per data-model.md E9
+- [X] T021 [P] [US1] Unit test `tests/unit/test_categories_affixes.py::test_enumerate_filters_by_is_affix_type` — fixture with 2 affix + 3 stem entries; enumerate yields exactly 2
+- [X] T022 [P] [US1] Unit test `test_plan_action_stashes_msa_slot_bindings` — affix MSA with 2-slot source `SlotsRC` produces `plan.msa_slot_bindings[msa.Guid] == [slot1.Guid, slot2.Guid]`
+- [X] T023 [P] [US1] Unit test `test_plan_action_stashes_lexentry_ref_bindings` — entry with non-empty `ComponentLexemesRS` populates `plan.lexentry_ref_bindings[entry.Guid]["ComponentLexemesRS"]`
+- [X] T024 [P] [US1] Unit test `test_execute_action_creates_owned_closure` — single affix entry: assert 1 entry + 1 sense + 1 MSA + 1 lexeme-form allomorph + N alt-forms created
+- [X] T025 [P] [US1] Unit test `test_execute_action_dependency_unresolved_on_missing_lexeme_form` — entry with `LexemeFormOA is None` → `Skip(DEPENDENCY_UNRESOLVED)`; entry NOT created
+- [X] T026 [P] [US1] Unit test `test_msa_dispatch_unknown_subclass_skip` — fake MSA with `ClassName == "MoFutureSubclassMsa"` → `Skip(NEEDS_MANUAL)` per FR-341 posture extended to MSAs
+- [X] T026b [P] [US1] Unit test `test_allomorph_dispatch_affix_process_needs_manual` — source allomorph with `ClassName == "MoAffixProcess"` → `Skip(NEEDS_MANUAL)` per spec.md "Out of scope"; no allomorph created, parent entry continues with remaining allomorphs
+- [X] T027 [P] [US1] Unit test `test_phase3c_leaf_dispatch.py::test_affixes_in_dispatch_tuple` — `AFFIXES` appears in `_LEAF_DISPATCH_CATEGORIES` in both `preview.py` and `transfer.py`, before `ADHOC_COMPOUND_RULES`
+- [X] T028 [P] [US1] Integration test `tests/integration/test_phase3c_affixes_stems_e2e.py::test_us1_affix_round_trip` — fake-LCM-surface run of `AFFIXES` only, asserting 13 entries created against Ejagham-Mini-shaped fixture
 
 **Checkpoint US1 ready**: T013–T028 complete and green. MSA `SlotsRC` is intentionally empty at this point; US2 wires it.
 
@@ -85,20 +99,20 @@ description: "Phase 3c — Affixes / Stems / Templates Block tasks"
 
 **Independent Test**: Quickstart Scenario A's `SLOTS` + `AFFIX_TEMPLATES` sub-steps — expect ~25 slots + ~5 templates + ~12 MSA-slot wires (one short of total MSA count, matching Phase 0's `ro~-` unbound case).
 
-- [ ] T029 [US2] Implement `slots.enumerate_source` + `dependencies` + `plan_action` + `execute_action` + `apply_residue` in `src/gramtrans/Lib/categories.py` per contracts/category-callbacks.md; sub-iterate `IPartOfSpeech.AffixSlotsOC` for each POS already in target; Carrier B residue on `Description`
-- [ ] T030 [US2] Implement `affix_templates.enumerate_source` + `dependencies` + `plan_action` + base `execute_action` (without the 17.1 tail) + `apply_residue`; **wire all 5 slot reference sequences** (`PrefixSlotsRS`, `SuffixSlotsRS`, `EncliticSlotsRS`, `ProcliticSlotsRS`, `SlotsRS` per T010 probe — spec previously assumed 2) in source order via target-slot GUID lookup; also wire `Final` (bool), `Disabled`, `RegionOA`, `StratumRA` (Phase 3a Stratum, FR-336). Prefer `project.MorphRules.CreateAffixTemplate(pos, name, description=...)` flexicon wrapper over ServiceLocator fallback
-- [ ] T031 [US2] Implement the 17.1 sub-pass as a post-execute tail block on `affix_templates.execute_action` per contracts/msa-slot-wiring.md algorithm: iterate `plan.msa_slot_bindings`, resolve MSA via `identity_remap`, resolve each slot by GUID, write `msa.SlotsRC.Add(slot)`; emit `Skip(DEPENDENCY_UNRESOLVED)` on missing MSA or slot
-- [ ] T032 [P] [US2] Unit test `tests/unit/test_categories_slots.py::test_slot_creation_under_pos` — 1 source slot under Verb POS, target has Verb POS already → 1 slot created with GUID preserved + owner attach
-- [ ] T033 [P] [US2] Unit test `test_slot_collision_already_present_by_guid` — slot guid already in target → `Skip(ALREADY_PRESENT_BY_GUID)` per FR-334
-- [ ] T034 [P] [US2] Unit test `tests/unit/test_categories_affix_templates.py::test_template_creation_with_slot_refs` — 1 template with 2 prefix slots + 1 suffix slot → template created + `PrefixSlotsRS`/`SuffixSlotsRS` wired in source order
-- [ ] T035 [P] [US2] Unit test `test_171_basic_wiring` — 1 MSA with 1 slot binding stashed → 1 `SlotsRC` write after templates execute (per contracts/msa-slot-wiring.md test list)
-- [ ] T036 [P] [US2] Unit test `test_171_multi_slot_per_msa` — 1 MSA with 3 slot bindings → 3 `SlotsRC.Add` calls in source order
-- [ ] T037 [P] [US2] Unit test `test_171_unresolved_slot` — 1 MSA, 2 slots stashed, 1 slot missing in target → 1 successful Add + 1 `Skip(DEPENDENCY_UNRESOLVED)`
-- [ ] T038 [P] [US2] Unit test `test_171_unresolved_msa` — 1 binding, MSA absent from target → 1 `Skip(DEPENDENCY_UNRESOLVED)` with `msa_guid={...}` detail
-- [ ] T039 [P] [US2] Unit test `test_171_idempotent_rerun` — pre-wired target + same plan → 0 net writes, 0 new skips (membership check guards `Add`)
-- [ ] T040 [P] [US2] Unit test `test_171_unbound_affix` — source MSA with empty `SlotsRC` → no entry in `plan.msa_slot_bindings`; MSA remains unbound (matches Phase 0 `ro~-` case)
-- [ ] T040b [P] [US2] Unit test `tests/unit/test_categories_affixes.py::test_affix_overwrite_uses_phase1_path_without_category_specific_branch` — `Selection(categories={AFFIXES}, enable_overwrite=True)` over a pre-populated target flows through Phase 1's `_apply_overwrite` path; assert no Phase-3c-specific merge code executes and `Overwrite` actions emit per FR-338 / SC-302. Same pattern asserts Phase 2 `ConflictPrompt` surfacing for a conflicting-field source/target pair without Phase-3c merge code.
-- [ ] T041 [P] [US2] Integration test `test_phase3c_affixes_stems_e2e.py::test_us2_slots_templates_171` — Ejagham-Mini-shaped fixture: 13 MSAs from US1, 4 slots, 1 template; assert 12 MSA-slot wires + 1 unbound MSA after AFFIX_TEMPLATES executes
+- [X] T029 [US2] Implement `slots.enumerate_source` + `dependencies` + `plan_action` + `execute_action` + `apply_residue` in `src/gramtrans/Lib/categories.py` per contracts/category-callbacks.md; sub-iterate `IPartOfSpeech.AffixSlotsOC` for each POS already in target; Carrier B residue on `Description`
+- [X] T030 [US2] Implement `affix_templates.enumerate_source` + `dependencies` + `plan_action` + base `execute_action` (without the 17.1 tail) + `apply_residue`; **wire all 5 slot reference sequences** (`PrefixSlotsRS`, `SuffixSlotsRS`, `EncliticSlotsRS`, `ProcliticSlotsRS`, `SlotsRS` per T010 probe — spec previously assumed 2) in source order via target-slot GUID lookup; also wire `Final` (bool), `Disabled`, `RegionOA`, `StratumRA` (Phase 3a Stratum, FR-336). Prefer `project.MorphRules.CreateAffixTemplate(pos, name, description=...)` flexicon wrapper over ServiceLocator fallback
+- [X] T031 [US2] Implement the 17.1 sub-pass as a post-execute tail block on `affix_templates.execute_action` per contracts/msa-slot-wiring.md algorithm: iterate `plan.msa_slot_bindings`, resolve MSA via `identity_remap`, resolve each slot by GUID, write `msa.SlotsRC.Add(slot)`; emit `Skip(DEPENDENCY_UNRESOLVED)` on missing MSA or slot
+- [X] T032 [P] [US2] Unit test `tests/unit/test_categories_slots.py::test_slot_creation_under_pos` — 1 source slot under Verb POS, target has Verb POS already → 1 slot created with GUID preserved + owner attach
+- [X] T033 [P] [US2] Unit test `test_slot_collision_already_present_by_guid` — slot guid already in target → `Skip(ALREADY_PRESENT_BY_GUID)` per FR-334
+- [X] T034 [P] [US2] Unit test `tests/unit/test_categories_affix_templates.py::test_template_creation_with_slot_refs` — 1 template with 2 prefix slots + 1 suffix slot → template created + `PrefixSlotsRS`/`SuffixSlotsRS` wired in source order
+- [X] T035 [P] [US2] Unit test `test_171_basic_wiring` — 1 MSA with 1 slot binding stashed → 1 `SlotsRC` write after templates execute (per contracts/msa-slot-wiring.md test list)
+- [X] T036 [P] [US2] Unit test `test_171_multi_slot_per_msa` — 1 MSA with 3 slot bindings → 3 `SlotsRC.Add` calls in source order
+- [X] T037 [P] [US2] Unit test `test_171_unresolved_slot` — 1 MSA, 2 slots stashed, 1 slot missing in target → 1 successful Add + 1 `Skip(DEPENDENCY_UNRESOLVED)`
+- [X] T038 [P] [US2] Unit test `test_171_unresolved_msa` — 1 binding, MSA absent from target → 1 `Skip(DEPENDENCY_UNRESOLVED)` with `msa_guid={...}` detail
+- [X] T039 [P] [US2] Unit test `test_171_idempotent_rerun` — pre-wired target + same plan → 0 net writes, 0 new skips (membership check guards `Add`)
+- [X] T040 [P] [US2] Unit test `test_171_unbound_affix` — source MSA with empty `SlotsRC` → no entry in `plan.msa_slot_bindings`; MSA remains unbound (matches Phase 0 `ro~-` case)
+- [X] T040b [P] [US2] Unit test `tests/unit/test_categories_affixes.py::test_affix_overwrite_uses_phase1_path_without_category_specific_branch` — `Selection(categories={AFFIXES}, enable_overwrite=True)` over a pre-populated target flows through Phase 1's `_apply_overwrite` path; assert no Phase-3c-specific merge code executes and `Overwrite` actions emit per FR-338 / SC-302. Same pattern asserts Phase 2 `ConflictPrompt` surfacing for a conflicting-field source/target pair without Phase-3c merge code.
+- [X] T041 [P] [US2] Integration test `test_phase3c_affixes_stems_e2e.py::test_us2_slots_templates_171` — Ejagham-Mini-shaped fixture: 13 MSAs from US1, 4 slots, 1 template; assert 12 MSA-slot wires + 1 unbound MSA after AFFIX_TEMPLATES executes
 
 **Checkpoint US2 ready**: US1 + US2 form the MVP — Phase 3c can transfer affix entries with full MSA-slot wiring against an Ejagham-Mini-shaped target without touching stems or compound rules.
 
@@ -110,20 +124,20 @@ description: "Phase 3c — Affixes / Stems / Templates Block tasks"
 
 **Independent Test**: Quickstart Scenario A's `STEMS` sub-step against Ejagham Mini's ~239 stem entries; assert all stems created with semantic-domain refs resolved and post-pass A wires complete.
 
-- [ ] T042 [US3] Implement `stems.enumerate_source` + `dependencies` + `plan_action` + `execute_action` + `apply_residue` in `src/gramtrans/Lib/categories.py`; reuse `_walk_lex_entry_closure` (T016) + `_dispatch_msa_subclass` (T017) + `_dispatch_allomorph_subclass` (T018); filter `EntriesOC` by `not e.LexemeFormOA.MorphTypeRA.IsAffixType`
-- [ ] T043 [US3] Extend `_dispatch_msa_subclass` (T017) to handle `MoStemMsa` — `MSAOperations.CreateStem(sense, pos)` per probe-results T007; wire `StratumRA` by GUID lookup to Phase 3a-transferred Strata; missing → `Skip(DEPENDENCY_UNRESOLVED)` per FR-336
-- [ ] T044 [US3] Add sense-to-semantic-domain wiring in `stems.execute_action` — for each `sense.SemanticDomainsRC` entry, resolve target domain by GUID against `LangProject.SemanticDomainListOA.PossibilitiesOS`; missing → `Skip(DEPENDENCY_UNRESOLVED)` per FR-335
-- [ ] T045 [US3] Implement post-pass A as a post-execute tail block on `stems.execute_action` per contracts/post-pass-a.md algorithm: iterate `plan.lexentry_ref_bindings`, resolve target entry by GUID, resolve each component lexeme via (a) `run_ctx.in_plan_entries`, (b) target-by-GUID; write RS sequence in source order; emit `Skip(DEPENDENCY_UNRESOLVED)` on unresolved
-- [ ] T046 [P] [US3] Unit test `tests/unit/test_categories_stems.py::test_enumerate_filters_to_stems` — fixture with 2 affix + 3 stem entries; enumerate yields exactly 3
-- [ ] T047 [P] [US3] Unit test `test_stem_msa_stratum_wiring` — stem MSA with `StratumRA` referencing a stratum already in target → wire succeeds; missing stratum → `Skip(DEPENDENCY_UNRESOLVED)`
-- [ ] T048 [P] [US3] Unit test `test_sense_semantic_domain_wiring` — sense with 2 `SemanticDomainsRC` refs; 1 resolves, 1 missing → 1 Add + 1 Skip
-- [ ] T049 [P] [US3] Unit test `tests/unit/test_phase3c_post_pass_a.py::test_basic_component_wiring` — 1 entry + 1 EntryRef + 2 ComponentLexemes (both in-plan) → 2 Adds
-- [ ] T050 [P] [US3] Unit test `test_target_by_guid_resolution` — 1 component in-plan + 1 component already in target by GUID → both wired
-- [ ] T051 [P] [US3] Unit test `test_unresolved_component` — 1 component neither in-plan nor in target → 1 `Skip(DEPENDENCY_UNRESOLVED)`
-- [ ] T052 [P] [US3] Unit test `test_no_fingerprint_fallback` — source guid X has a target entry with matching CitationForm but different guid → still emits Skip; does NOT match by form (FR-340 anti-fallback)
-- [ ] T053 [P] [US3] Unit test `test_no_persistent_state` — two `execute()` calls back-to-back; second call re-derives bindings from source, NOT from a cached file
-- [ ] T054 [P] [US3] Unit test `test_source_order_preserved` — 3 components, middle one unresolved → final RS contains 2 components in correct relative positions
-- [ ] T055 [P] [US3] Integration test `test_phase3c_affixes_stems_e2e.py::test_us3_stem_round_trip` — Ejagham-Mini-shaped fixture: ~239 stems with sense-to-domain wires + post-pass A; assert all wires complete or skip-recorded
+- [X] T042 [US3] Implement `stems.enumerate_source` + `dependencies` + `plan_action` + `execute_action` + `apply_residue` in `src/gramtrans/Lib/categories.py`; reuse `_walk_lex_entry_closure` (T016) + `_dispatch_msa_subclass` (T017) + `_dispatch_allomorph_subclass` (T018); filter `EntriesOC` by `not e.LexemeFormOA.MorphTypeRA.IsAffixType`
+- [X] T043 [US3] Extend `_dispatch_msa_subclass` (T017) to handle `MoStemMsa` — `MSAOperations.CreateStem(sense, pos)` per probe-results T007; wire `StratumRA` by GUID lookup to Phase 3a-transferred Strata; missing → `Skip(DEPENDENCY_UNRESOLVED)` per FR-336
+- [X] T044 [US3] Add sense-to-semantic-domain wiring in `stems.execute_action` — for each `sense.SemanticDomainsRC` entry, resolve target domain by GUID against `LangProject.SemanticDomainListOA.PossibilitiesOS`; missing → `Skip(DEPENDENCY_UNRESOLVED)` per FR-335
+- [X] T045 [US3] Implement post-pass A as a post-execute tail block on `stems.execute_action` per contracts/post-pass-a.md algorithm: iterate `plan.lexentry_ref_bindings`, resolve target entry by GUID, resolve each component lexeme via (a) `run_ctx.in_plan_entries`, (b) target-by-GUID; write RS sequence in source order; emit `Skip(DEPENDENCY_UNRESOLVED)` on unresolved
+- [X] T046 [P] [US3] Unit test `tests/unit/test_categories_stems.py::test_enumerate_filters_to_stems` — fixture with 2 affix + 3 stem entries; enumerate yields exactly 3
+- [X] T047 [P] [US3] Unit test `test_stem_msa_stratum_wiring` — stem MSA with `StratumRA` referencing a stratum already in target → wire succeeds; missing stratum → `Skip(DEPENDENCY_UNRESOLVED)`
+- [X] T048 [P] [US3] Unit test `test_sense_semantic_domain_wiring` — sense with 2 `SemanticDomainsRC` refs; 1 resolves, 1 missing → 1 Add + 1 Skip
+- [X] T049 [P] [US3] Unit test `tests/unit/test_phase3c_post_pass_a.py::test_basic_component_wiring` — 1 entry + 1 EntryRef + 2 ComponentLexemes (both in-plan) → 2 Adds
+- [X] T050 [P] [US3] Unit test `test_target_by_guid_resolution` — 1 component in-plan + 1 component already in target by GUID → both wired
+- [X] T051 [P] [US3] Unit test `test_unresolved_component` — 1 component neither in-plan nor in target → 1 `Skip(DEPENDENCY_UNRESOLVED)`
+- [X] T052 [P] [US3] Unit test `test_no_fingerprint_fallback` — source guid X has a target entry with matching CitationForm but different guid → still emits Skip; does NOT match by form (FR-340 anti-fallback)
+- [X] T053 [P] [US3] Unit test `test_no_persistent_state` — two `execute()` calls back-to-back; second call re-derives bindings from source, NOT from a cached file
+- [X] T054 [P] [US3] Unit test `test_source_order_preserved` — 3 components, middle one unresolved → final RS contains 2 components in correct relative positions
+- [X] T055 [P] [US3] Integration test `test_phase3c_affixes_stems_e2e.py::test_us3_stem_round_trip` — Ejagham-Mini-shaped fixture: ~239 stems with sense-to-domain wires + post-pass A; assert all wires complete or skip-recorded
 
 **Checkpoint US3 ready**: Stems + post-pass A complete. Phase 3c can now transfer the full LexEntry inventory (affixes + stems).
 
@@ -135,17 +149,17 @@ description: "Phase 3c — Affixes / Stems / Templates Block tasks"
 
 **Independent Test**: Quickstart Scenario A's `ADHOC_COMPOUND_RULES` sub-step; assert all rules created via their respective subclass factories with reference fields (`LeftMsaOA`, `RightMsaOA`, `ToMsaOA`, `MembersRS`) wired through `identity_remap`.
 
-- [ ] T056 [US4] Implement `adhoc_compound_rules.enumerate_source` in `src/gramtrans/Lib/categories.py` — concatenate `AdhocCoProhibitionsOC` + `CompoundRulesOS`
-- [ ] T057 [US4] Implement `adhoc_compound_rules.dependencies` — compound rules yield `(AFFIXES, msa.Guid)` for referenced MSAs; ad-hoc groups yield `(AFFIXES, member.Guid)` for each `MembersRS` entry
-- [ ] T058 [US4] Implement `adhoc_compound_rules.plan_action` — `ClassName` dispatch over `MoEndoCompound` / `MoExoCompound` / `MoAdhocProhibGr` / `MoAlloAdhocProhib` / `MoMorphAdhocProhib` per FR-341 (corrected per T008/T009 probes); unknown subclass → `Skip(NEEDS_MANUAL)`
-- [ ] T059 [US4] Implement `adhoc_compound_rules.execute_action` per data-model.md E6 corrected dispatch: compound rules use `project.MorphRules.CreateCompoundRule(name, endocentric=True|False)` wrapper; write `HeadLast` + `OverridingMsaOA` (Endo) or `ToMsaOA` (Exo) per T008 probe (NOT `LeftMsaOA`/`RightMsaOA` — those do not exist on the LCM model). Ad-hoc rules use per-subclass ServiceLocator factory calls (`IMoAdhocProhibGrFactory`, `IMoAlloAdhocProhibFactory`, `IMoMorphAdhocProhibFactory`); for groups, recursively create `MembersOC`-owned atoms; for atoms, wire `AllomorphsRS`/`MorphemesRS` and the First/Rest pair via `identity_remap` per FR-337
-- [ ] T060 [US4] Implement `adhoc_compound_rules.apply_residue` — Carrier B on `Description` for compound rules + `MoAdhocProhibGr` (T008/T009 confirmed). For `MoAlloAdhocProhib`/`MoMorphAdhocProhib` atomic prohibitions: **no LCM residue carrier exists**; emit report.Info('[adhoc-atomic] {src_guid} -> {target_guid} run_id={tag.run_id}') instead
-- [ ] T061 [P] [US4] Unit test `tests/unit/test_categories_adhoc_compound.py::test_endo_compound_dispatch` — source `MoEndoCompound` → `IMoEndoCompoundFactory.Create(Guid)` + `HeadLast` written
-- [ ] T062 [P] [US4] Unit test `test_exo_compound_dispatch` — source `MoExoCompound` → `IMoExoCompoundFactory.Create(Guid)` + `ToMsaOA` written
-- [ ] T063 [P] [US4] Unit test `test_unknown_compound_subclass_needs_manual` — fake subclass `MoFutureCompound` → `Skip(NEEDS_MANUAL)` per FR-341; no factory call
-- [ ] T064 [P] [US4] Unit test `test_adhoc_allo_dispatch` — source `MoAlloAdhocProhib` → `IMoAlloAdhocProhibFactory.Create(Guid)`; `AllomorphsRS` + `FirstAllomorphRA` + `RestOfAllosRS` wired via identity_remap
-- [ ] T065 [P] [US4] Unit test `test_adhoc_group_recursive_membersoc` — group with 2 owned atomic members → both created as owned children of the group via `MembersOC`; identity_remap captures each atom's source-to-target guid; verify `MoMorphAdhocProhib` shape too
-- [ ] T066 [P] [US4] Integration test `test_phase3c_affixes_stems_e2e.py::test_us4_adhoc_compound_round_trip` — **synthetic fixture** (NOT Ejagham Mini, which has 0 compound + 0 ad-hoc per T012) with 1 endo + 1 exo + 1 group-owning-2-atoms; assert correct subclass factories invoked, `MembersOC` populated, residue handled per subclass (Carrier B for compound + group; report-line-only for atoms)
+- [X] T056 [US4] Implement `adhoc_compound_rules.enumerate_source` in `src/gramtrans/Lib/categories.py` — concatenate `AdhocCoProhibitionsOC` + `CompoundRulesOS`
+- [X] T057 [US4] Implement `adhoc_compound_rules.dependencies` — compound rules yield `(AFFIXES, msa.Guid)` for referenced MSAs; ad-hoc groups yield `(AFFIXES, member.Guid)` for each `MembersRS` entry
+- [X] T058 [US4] Implement `adhoc_compound_rules.plan_action` — `ClassName` dispatch over `MoEndoCompound` / `MoExoCompound` / `MoAdhocProhibGr` / `MoAlloAdhocProhib` / `MoMorphAdhocProhib` per FR-341 (corrected per T008/T009 probes); unknown subclass → `Skip(NEEDS_MANUAL)`
+- [X] T059 [US4] Implement `adhoc_compound_rules.execute_action` per data-model.md E6 corrected dispatch: compound rules use `project.MorphRules.CreateCompoundRule(name, endocentric=True|False)` wrapper; write `HeadLast` + `OverridingMsaOA` (Endo) or `ToMsaOA` (Exo) per T008 probe (NOT `LeftMsaOA`/`RightMsaOA` — those do not exist on the LCM model). Ad-hoc rules use per-subclass ServiceLocator factory calls (`IMoAdhocProhibGrFactory`, `IMoAlloAdhocProhibFactory`, `IMoMorphAdhocProhibFactory`); for groups, recursively create `MembersOC`-owned atoms; for atoms, wire `AllomorphsRS`/`MorphemesRS` and the First/Rest pair via `identity_remap` per FR-337
+- [X] T060 [US4] Implement `adhoc_compound_rules.apply_residue` — Carrier B on `Description` for compound rules + `MoAdhocProhibGr` (T008/T009 confirmed). For `MoAlloAdhocProhib`/`MoMorphAdhocProhib` atomic prohibitions: **no LCM residue carrier exists**; emit report.Info('[adhoc-atomic] {src_guid} -> {target_guid} run_id={tag.run_id}') instead
+- [X] T061 [P] [US4] Unit test `tests/unit/test_categories_adhoc_compound.py::test_endo_compound_dispatch` — source `MoEndoCompound` → `IMoEndoCompoundFactory.Create(Guid)` + `HeadLast` written
+- [X] T062 [P] [US4] Unit test `test_exo_compound_dispatch` — source `MoExoCompound` → `IMoExoCompoundFactory.Create(Guid)` + `ToMsaOA` written
+- [X] T063 [P] [US4] Unit test `test_unknown_compound_subclass_needs_manual` — fake subclass `MoFutureCompound` → `Skip(NEEDS_MANUAL)` per FR-341; no factory call
+- [X] T064 [P] [US4] Unit test `test_adhoc_allo_dispatch` — source `MoAlloAdhocProhib` → `IMoAlloAdhocProhibFactory.Create(Guid)`; `AllomorphsRS` + `FirstAllomorphRA` + `RestOfAllosRS` wired via identity_remap
+- [X] T065 [P] [US4] Unit test `test_adhoc_group_recursive_membersoc` — group with 2 owned atomic members → both created as owned children of the group via `MembersOC`; identity_remap captures each atom's source-to-target guid; verify `MoMorphAdhocProhib` shape too
+- [X] T066 [P] [US4] Integration test `test_phase3c_affixes_stems_e2e.py::test_us4_adhoc_compound_round_trip` — **synthetic fixture** (NOT Ejagham Mini, which has 0 compound + 0 ad-hoc per T012) with 1 endo + 1 exo + 1 group-owning-2-atoms; assert correct subclass factories invoked, `MembersOC` populated, residue handled per subclass (Carrier B for compound + group; report-line-only for atoms)
 
 **Checkpoint US4 ready**: All five Phase 3c categories implemented. Full chain Phase 3a → 3b → 3c is end-to-end functional against fake LCM fixtures.
 
@@ -157,11 +171,11 @@ description: "Phase 3c — Affixes / Stems / Templates Block tasks"
 
 **Independent Test**: Run with a source that has zero affixes, zero stems, zero compound rules, etc.; assert `[skip] no items in source for X` lines emitted per empty category.
 
-- [ ] T067 [P] [US5] Unit test `tests/unit/test_phase3c_leaf_dispatch.py::test_empty_source_affixes_emits_ux_line` — selection includes `AFFIXES`, source has zero affix entries → `render_text_summary` output contains `[skip] no items in source for AFFIXES`
-- [ ] T068 [P] [US5] Same for `STEMS`
-- [ ] T069 [P] [US5] Same for `SLOTS`
-- [ ] T070 [P] [US5] Same for `AFFIX_TEMPLATES`
-- [ ] T071 [P] [US5] Same for `ADHOC_COMPOUND_RULES`
+- [X] T067 [P] [US5] Unit test `tests/unit/test_phase3c_leaf_dispatch.py::test_empty_source_affixes_emits_ux_line` — selection includes `AFFIXES`, source has zero affix entries → `render_text_summary` output contains `[skip] no items in source for AFFIXES`
+- [X] T068 [P] [US5] Same for `STEMS`
+- [X] T069 [P] [US5] Same for `SLOTS`
+- [X] T070 [P] [US5] Same for `AFFIX_TEMPLATES`
+- [X] T071 [P] [US5] Same for `ADHOC_COMPOUND_RULES`
 
 **Checkpoint US5 ready**: FR-308 inheritance confirmed across all five new categories.
 
@@ -171,23 +185,23 @@ description: "Phase 3c — Affixes / Stems / Templates Block tasks"
 
 **Goal**: Run Quickstart Scenarios A–F against `Ejagham Mini → Ejagham Full GT-Test` per Phase 3a/3b precedent; record outputs to `specs/007-affixes-stems/verification-log.md`.
 
-- [ ] T072 Create `specs/007-affixes-stems/verification-log.md` skeleton (one section per Scenario A–F)
-- [ ] T073 Live MCP Scenario A — empty target, full Phase 3a→3b→3c chain; log per-category counts and wall-clock; SC-301 target < 30s end-to-end. **US4 sub-step (ADHOC_COMPOUND_RULES) skipped** — Ejagham Mini has 0 compound + 0 ad-hoc per T012; record the gap in `verification-log.md`
-- [ ] T074 Live MCP Scenario B — Phase 3c re-run on populated target; assert `added_count == 0` (FR-307 inheritance)
-- [ ] T075 Live MCP Scenario C — Phase 1 overwrite path on edited affix sense; assert 1 Overwrite + merge residue
-- [ ] T076 Live MCP Scenario D — Phase 2 interactive merge with FakeResolver; assert N ConflictPrompts collected + resolved per policy
-- [ ] T077 Live MCP Scenario E — preview-only (`modifyAllowed=False`); assert `Cache.UnitOfWorkService.IsDirty == False` after preview
-- [ ] T078 Live MCP Scenario F — Phase 0 verb-vertical re-run after Phase 3c; assert SC-303 (`added_count == 0`, FR-334 collision guard holds)
+- [X] T072 Create `specs/007-affixes-stems/verification-log.md` skeleton (one section per Scenario A–F)
+- [X] T073 Live MCP Scenario A — empty target, full Phase 3a→3b→3c chain; log per-category counts and wall-clock; SC-301 target < 30s end-to-end. **US4 sub-step (ADHOC_COMPOUND_RULES) skipped** — Ejagham Mini has 0 compound + 0 ad-hoc per T012; record the gap in `verification-log.md`
+- [X] T074 Live MCP Scenario B — Phase 3c re-run on populated target; assert `added_count == 0` (FR-307 inheritance)
+- [X] T075 Live MCP Scenario C — Phase 1 overwrite path on edited affix sense; assert 1 Overwrite + merge residue
+- [X] T076 Live MCP Scenario D — Phase 2 interactive merge with FakeResolver; assert N ConflictPrompts collected + resolved per policy
+- [X] T077 Live MCP Scenario E — preview-only (`modifyAllowed=False`); assert `Cache.UnitOfWorkService.IsDirty == False` after preview
+- [X] T078 Live MCP Scenario F — Phase 0 verb-vertical re-run after Phase 3c; assert SC-303 (`added_count == 0`, FR-334 collision guard holds)
 
 ---
 
 ## Phase 9: Polish & Cross-cutting Concerns
 
-- [ ] T079 Update `STATUS.md` with Phase 3c close-sweep summary (commits, test totals, live-MCP results, deferred items)
-- [ ] T080 **[Phase 3b housekeeping]** Rewrite `specs/006-inflection-prep-block/contracts/custom-field-creation.md` per Phase 3b deferred-doc-sweep item (STATUS.md line 29) — describe the Option-C detect-and-report path, not the abandoned `AddCustomField` write path
-- [ ] T081 **[Phase 3b housekeeping]** Run lex-qc pattern audit (STATUS.md line 37 deferred item): sweep all `project.<Accessor>.GetAll()` callsites in `categories.py` against the flexicon fork's actual accessor names vs the spec's claimed LCM collection; document findings in `specs/007-affixes-stems/qc-pattern-audit.md`
-- [ ] T082 Full unit + integration regression: `python -m pytest tests/ -q`; expect 324 + 14 (new Phase 3c unit) + 5 (new Phase 3c integration) ≈ 343 passed; 0 regressions on existing 324
-- [ ] T083 Final close-sweep commit: stage all Phase 3c changes; one merged commit `Phase 3c CLOSE-SWEEP — affixes/stems/templates block` with co-author tag
+- [X] T079 Update `STATUS.md` with Phase 3c close-sweep summary (commits, test totals, live-MCP results, deferred items)
+- [X] T080 **[Phase 3b housekeeping]** Rewrite `specs/006-inflection-prep-block/contracts/custom-field-creation.md` per Phase 3b deferred-doc-sweep item (STATUS.md line 29) — describe the Option-C detect-and-report path, not the abandoned `AddCustomField` write path
+- [X] T081 **[Phase 3b housekeeping]** Run lex-qc pattern audit (STATUS.md line 37 deferred item): sweep all `project.<Accessor>.GetAll()` callsites in `categories.py` against the flexicon fork's actual accessor names vs the spec's claimed LCM collection; document findings in `specs/007-affixes-stems/qc-pattern-audit.md`
+- [X] T082 Full unit + integration regression: `python -m pytest tests/ -q`; expect 324 + 14 (new Phase 3c unit) + 5 (new Phase 3c integration) ≈ 343 passed; 0 regressions on existing 324
+- [X] T083 Final close-sweep commit: stage all Phase 3c changes; one merged commit `Phase 3c CLOSE-SWEEP — affixes/stems/templates block` with co-author tag
 
 ---
 

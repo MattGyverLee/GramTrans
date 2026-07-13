@@ -230,12 +230,16 @@ class TestPageItemPicker:
         assert isinstance(state, PickerState)
         assert state == PickerState()
 
-    def test_stems_tab_not_available(self):
-        """Stems tab must be present but disabled (Layer-3 not yet available)."""
-        # We can verify by checking the module-level comment / docstring.
+    def test_stems_have_their_own_page(self):
+        """Stems now occupy a dedicated wizard page (_PageStemPicker) that
+        follows the affix picker; the affix picker is affix-only."""
         import inspect
-        src = inspect.getsource(_PageItemPicker)
-        assert "STUBBED" in src or "not yet available" in src.lower()
+        stem_src = inspect.getsource(_sw_mod._PageStemPicker)
+        assert "stem_picks" in stem_src
+        affix_src = inspect.getsource(_PageItemPicker)
+        # The affix picker no longer builds a Stems tab.
+        assert "_tabs" not in affix_src
+        assert "addTab" not in affix_src
 
 
 # ===========================================================================
@@ -480,9 +484,10 @@ class _FakeWizard:
     default (no merge) for those blocks -- keeping this fixture tiny.
     """
 
-    def __init__(self, affix_selection, pos_guids):
+    def __init__(self, affix_selection, pos_guids, stem_picks=None):
         self._affix_selection = affix_selection
         self._pos_guids = set(pos_guids)
+        self._stem_picks = frozenset(stem_picks or ())
 
     def page_project_ws(self):
         m = MagicMock()
@@ -493,6 +498,11 @@ class _FakeWizard:
     def page_items(self):
         m = MagicMock()
         m.collect_selection.return_value = self._affix_selection
+        return m
+
+    def page_stems(self):
+        m = MagicMock()
+        m.stem_picks.return_value = self._stem_picks
         return m
 
     def page_phonology(self):
@@ -556,6 +566,36 @@ class TestComputeWizardPlanPosWiring:
         selection, plan, report = self._run(wizard)
 
         assert selection.is_on(GrammarCategory.GRAM_CATEGORIES) is False
+
+
+class TestComputeWizardPlanStemWiring:
+    """Stems picked on the dedicated Stems page must reach the plan: flag the
+    STEMS category and populate leaf_item_picks[STEMS] (the contract the leaf
+    dispatch reads via selection.leaf_picks_for(STEMS))."""
+
+    _run = TestComputeWizardPlanPosWiring._run
+
+    def test_stem_picks_flag_stems_and_populate_leaf_picks(self):
+        wizard = _FakeWizard(
+            _affix_only_selection(), pos_guids=set(),
+            stem_picks={"STEM-Dog-1", "stem-cat-2"},
+        )
+        selection, plan, report = self._run(wizard)
+
+        assert selection.is_on(GrammarCategory.STEMS) is True
+        # GUIDs lower-cased to match categories._guid_str_from() on the source.
+        assert selection.leaf_picks_for(GrammarCategory.STEMS) == frozenset(
+            {"stem-dog-1", "stem-cat-2"}
+        )
+
+    def test_no_stem_picks_leaves_stems_off(self):
+        wizard = _FakeWizard(
+            _affix_only_selection(), pos_guids=set(), stem_picks=set(),
+        )
+        selection, plan, report = self._run(wizard)
+
+        assert selection.is_on(GrammarCategory.STEMS) is False
+        assert selection.leaf_picks_for(GrammarCategory.STEMS) is None
 
 
 # ===========================================================================

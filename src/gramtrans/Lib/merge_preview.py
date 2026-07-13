@@ -35,9 +35,10 @@ from __future__ import annotations
 
 import html
 import logging
+from collections import Counter
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable
 
 # Reused from ws_fonts.py (confirmed Qt-free).
 if __package__:
@@ -370,8 +371,7 @@ def diff_props(
     indent, group)}`` produced by ``_entry_scalar_meta`` (entry scalars) and
     ``_gather_entry_nested`` (nested children).  When present, stamps
     ``display_name``/``sort_key``/``indent``/``group`` onto each emitted
-    ``FieldDiff`` for that key (a legacy 3-tuple without ``group`` is
-    tolerated).  When ``None`` behavior is identical to today (G8).
+    ``FieldDiff`` for that key.  When ``None`` behavior is identical to today (G8).
 
     Guarantees (FR-002 – FR-006):
     - ``tgt_props is None`` -> every field/value ``added`` (SC-001, FR-002).
@@ -391,16 +391,10 @@ def diff_props(
     def _make_fd(key: str, segs: list[DiffSegment]) -> FieldDiff:
         """Build a FieldDiff, stamping meta if present.
 
-        Meta entries are ``(display_name, sort_key, indent[, group])``; a
-        legacy 3-tuple (no group) is tolerated so older callers keep working.
+        Meta entries are ``(display_name, sort_key, indent, group)``.
         """
         if meta and key in meta:
-            entry = meta[key]
-            if len(entry) >= 4:
-                dn, sk, ind, grp = entry[0], entry[1], entry[2], entry[3]
-            else:
-                dn, sk, ind = entry
-                grp = ""
+            dn, sk, ind, grp = meta[key]
             return FieldDiff(
                 field_name=key,
                 segments=tuple(segs),
@@ -702,17 +696,6 @@ def _render_field_body(segments: tuple, registry: WsFontRegistry) -> str:
     return "".join(out)
 
 
-def _render_segment(seg: DiffSegment, registry: WsFontRegistry) -> str:
-    """Render one ``DiffSegment`` as an HTML span (WS tag -> grey subscript).
-
-    Retained for callers/tests that render a single segment; ``to_html`` uses
-    ``_render_field_body`` so it can de-duplicate WS codes and form replacements.
-    """
-    wid, val = _split_ws_prefix(seg.text)
-    prefix = _ws_code_html(wid) if wid else ""
-    return prefix + _value_span(val, seg.kind, seg.ws_role, registry)
-
-
 # ============================================================================
 # WS role classification  (FR-009, R5)
 # ============================================================================
@@ -967,23 +950,18 @@ def _find_target_variant_type_by_guid(target: Any, guid: str) -> Any:
     ``_walk_possibilities_via_lexdb(target, "VariantEntryTypesOA")``.
     There is no ``project.VariantTypes`` or ``project.Variants`` accessor;
     the variant-type list lives under LexDbOA, not under a top-level ops attr.
-    We reach it defensively via ``Cache.LangProject.LexDbOA``.
+    Reuses ``categories._walk_possibilities_via_lexdb`` (the same defensive
+    ``Cache.LangProject.LexDbOA.<accessor>`` resolve + recursive walk GramTrans
+    already uses for variant/complex-form types) rather than re-walking here.
     """
     try:
-        lex_db = target.Cache.LangProject.LexDbOA
-        variant_list = getattr(lex_db, "VariantEntryTypesOA", None)
-        if variant_list is None:
-            return None
-        # Recursive walk (mirrors categories._walk_possibilities)
-        stack = list(getattr(variant_list, "PossibilitiesOS", []) or [])
-        while stack:
-            node = stack.pop(0)
+        if __package__:
+            from .categories import _walk_possibilities_via_lexdb  # lazy; Qt-free
+        else:
+            from categories import _walk_possibilities_via_lexdb  # type: ignore
+        for node in _walk_possibilities_via_lexdb(target, "VariantEntryTypesOA"):
             if _guid_eq(_obj_guid(node), guid):
                 return _unwrap(node)
-            subs = getattr(node, "SubPossibilitiesOS", None)
-            if subs:
-                for child in subs:
-                    stack.append(child)
     except Exception:
         pass
     return None
@@ -1172,6 +1150,8 @@ _CATEGORY_VALUE_TO_KEY: dict[str, "str | None"] = {
     "writing_systems_check": None,
     "inflection_classes": None,
     "exception_features": None,
+    "feature_struct_types": None,
+    "pos_inflectable_feats": None,
     "complex_form_types": None,
     "adhoc_compound_rules": None,
     "semantic_domains": None,
@@ -2134,7 +2114,7 @@ def _gather_entry_nested(
     handle: Any,
     obj: Any,
     notes_out: list[str],
-) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+) -> tuple[dict[str, Any], dict[str, Any]]:
     """Gather nested entry fields (senses, allomorphs, MSAs) into flat dicts.
 
     Returns
@@ -2143,8 +2123,8 @@ def _gather_entry_nested(
         Flat ``{machine_key: value}`` dict of child fields to MERGE with the
         entry-scalar props already gathered by GetSyncableProperties.
     meta:
-        ``{machine_key: (display_name, sort_key, indent)}`` — consumed by
-        ``diff_props`` to stamp FieldDiff ordering/labeling.
+        ``{machine_key: (display_name, sort_key, indent, group)}`` — consumed
+        by ``diff_props`` to stamp FieldDiff ordering/labeling.
 
     Guarantees:
     - G1: non-empty sense, allomorph, MSA fields are included.
@@ -2224,16 +2204,14 @@ def _gather_entry_nested(
         except Exception:
             sense_gloss_raw.append("")
 
-    # Assign ordinal suffixes for colliding glosses
-    gloss_counts: dict[str, int] = {}
+    # Assign ordinal suffixes for colliding glosses (single pass; a suffix is
+    # only needed when a gloss appears more than once across the sense list).
+    gloss_counts = Counter(sense_gloss_raw)
+    gloss_seen: dict[str, int] = {}
     gloss_ordinals: list[str] = []
     for g in sense_gloss_raw:
-        gloss_counts[g] = gloss_counts.get(g, 0) + 1
-    gloss_seen: dict[str, int] = {}
-    for g in sense_gloss_raw:
         gloss_seen[g] = gloss_seen.get(g, 0) + 1
-        suffix = f"#{gloss_seen[g]}" if gloss_counts[g] > 1 else ""
-        gloss_ordinals.append(suffix)
+        gloss_ordinals.append(f"#{gloss_seen[g]}" if gloss_counts[g] > 1 else "")
 
     for s_idx, sense in enumerate(senses):
         ordinal = s_idx + 1

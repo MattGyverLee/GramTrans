@@ -86,7 +86,7 @@ class TestPreviewCollapsePreselectedAll:
                           re.DOTALL)
         assert match, "_PageEntryTypes setTitle not found in source"
         title = match.group(1)
-        assert "of 9" in title, f"Expected 'of 9' in title, got: {title!r}"
+        assert "of 10" in title, f"Expected 'of 10' in title, got: {title!r}"
 
     def test_page_title_contains_entry_types(self):
         """Check that the title string mentions 'Entry' or 'Types'."""

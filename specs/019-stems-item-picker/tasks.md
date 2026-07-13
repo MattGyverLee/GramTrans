@@ -4,6 +4,18 @@ description: "Task list for Stems Item Picker (Model-A) — Un-stub the Disabled
 
 # Tasks: Stems Item Picker (Model-A) — Un-stub the Disabled Pane
 
+> ## [RECONCILED AS-BUILT] — shipped & merged to `main` (2026-07-12)
+>
+> This feature shipped and merged via **PR #4** (`6c00a70`): `1084bf1` (initial
+> implementation), `9b5bc68` (`Selection.stem_picks` + `_partition_entries`
+> helper), `d6524de` (stem partition through selection.py builders), `15534f6`
+> (un-stub Stems tab + wire `stem_picks` through the wizard), test cleanup in
+> `4c2a0d9`. `_partition_entries` lives in `src/gramtrans/Lib/selection.py`,
+> covered by `tests/unit/test_build_stem_inventory.py` (23 tests) and
+> `test_stem_partition.py` (12 tests). The checkboxes below were reconciled from
+> `[ ]` to `[X]` on that basis — the capability is live, not backlog. (Checkbox
+> reconciliation 2026-07-12.)
+
 **Input**: Design documents from `specs/019-stems-item-picker/`
 
 **Prerequisites**: plan.md, spec.md, research.md, data-model.md, contracts/stems-item-picker.md, quickstart.md
@@ -29,7 +41,7 @@ are relative to that root.
 
 **Purpose**: Confirm the worktree can build and test before touching engine code.
 
-- [ ] T001 Confirm baseline: `pyflexicon>=4.1` installed and the existing suite is green — run `pytest tests/unit -q` from the worktree root and record the pass count (byte-stable-affix-behavior baseline for regression checks in Phase 7).
+- [X] T001 Confirm baseline: `pyflexicon>=4.1` installed and the existing suite is green — run `pytest tests/unit -q` from the worktree root and record the pass count (byte-stable-affix-behavior baseline for regression checks in Phase 7).
 
 ---
 
@@ -40,10 +52,10 @@ builders and the UI depend on.
 
 **⚠️ CRITICAL**: No user story work can begin until this phase is complete.
 
-- [ ] T002 [P] Write failing invariant test: non-empty `stem_picks` requires `categories[GrammarCategory.STEMS]` on (mirror the affix invariant) in tests/unit/test_selection_invariants.py
-- [ ] T003 Add `stem_picks: frozenset[str]` field (sibling to `affix_picks`) and the STEMS-category invariant to the `Selection` dataclass in src/gramtrans/Lib/models.py — make T002 pass
-- [ ] T004 [P] Create failing partition tests in tests/unit/test_stem_partition.py: `IsAffixType == True` → AFFIX; `IsAffixType == False`, null `LexemeFormOA`, null `MorphTypeRA`, and uncastable morphtype → STEM (include-on-exception); partition is complete + disjoint over `LexDbOA.Entries`. Note: clitics (proclitic/enclitic) have `IsAffixType == False` and therefore correctly land in the STEM bucket — this is expected behavior, not a failure. Test comments should document this explicitly.
-- [ ] T005 Implement the shared `_partition_entries(entries) -> Tuple[List, List]` helper returning `(affix_entries, stem_entries)` (include-on-exception for the stem side: null/uncastable morphtype goes to `stem_entries` per FR-002; the affix `except (AttributeError, TypeError): continue` skip at selection.py:600 is NOT copied — the inversion is deliberate). Each call site replaces its filter block with a call to `_partition_entries` and iterates the appropriate list (`affix_entries` or `stem_entries`). In src/gramtrans/Lib/selection.py — make T004 pass
+- [X] T002 [P] Write failing invariant test: non-empty `stem_picks` requires `categories[GrammarCategory.STEMS]` on (mirror the affix invariant) in tests/unit/test_selection_invariants.py
+- [X] T003 Add `stem_picks: frozenset[str]` field (sibling to `affix_picks`) and the STEMS-category invariant to the `Selection` dataclass in src/gramtrans/Lib/models.py — make T002 pass
+- [X] T004 [P] Create failing partition tests in tests/unit/test_stem_partition.py: `IsAffixType == True` → AFFIX; `IsAffixType == False`, null `LexemeFormOA`, null `MorphTypeRA`, and uncastable morphtype → STEM (include-on-exception); partition is complete + disjoint over `LexDbOA.Entries`. Note: clitics (proclitic/enclitic) have `IsAffixType == False` and therefore correctly land in the STEM bucket — this is expected behavior, not a failure. Test comments should document this explicitly.
+- [X] T005 Implement the shared `_partition_entries(entries) -> Tuple[List, List]` helper returning `(affix_entries, stem_entries)` (include-on-exception for the stem side: null/uncastable morphtype goes to `stem_entries` per FR-002; the affix `except (AttributeError, TypeError): continue` skip at selection.py:600 is NOT copied — the inversion is deliberate). Each call site replaces its filter block with a call to `_partition_entries` and iterates the appropriate list (`affix_entries` or `stem_entries`). In src/gramtrans/Lib/selection.py — make T004 pass
 
 **Checkpoint**: `stem_picks` exists and validates; the partition helper is proven against all null-guard cases.
 
@@ -57,14 +69,14 @@ builders and the UI depend on.
 
 ### Tests for User Story 1 ⚠️ (write first, ensure they FAIL)
 
-- [ ] T006 [P] [US1] Create tests/unit/test_build_stem_inventory.py: `build_pos_grouped_inventory(..., want_affix=False)` returns the stem inventory grouped by `MoStemMsa.PartOfSpeechRA`; entries are disjoint from the affix inventory (SC-001); a zero-stem source yields an empty inventory, not an error (FR-007/SC-006)
-- [ ] T007 [P] [US1] Extend tests/unit/test_selection_ui.py: the Stems tab is enabled (no stub placeholder), is populated from the stem inventory, and checking/unchecking a stem row toggles its GUID in `stem_picks`
+- [X] T006 [P] [US1] Create tests/unit/test_build_stem_inventory.py: `build_pos_grouped_inventory(..., want_affix=False)` returns the stem inventory grouped by `MoStemMsa.PartOfSpeechRA`; entries are disjoint from the affix inventory (SC-001); a zero-stem source yields an empty inventory, not an error (FR-007/SC-006)
+- [X] T007 [P] [US1] Extend tests/unit/test_selection_ui.py: the Stems tab is enabled (no stub placeholder), is populated from the stem inventory, and checking/unchecking a stem row toggles its GUID in `stem_picks`
 
 ### Implementation for User Story 1
 
-- [ ] T008 [US1] Parameterize `build_pos_grouped_inventory(..., want_affix: bool = True)` (~selection.py:600) to route through `_partition_entries`; the affix call site keeps the default so existing behavior is byte-stable — make T006 pass — in src/gramtrans/Lib/selection.py
-- [ ] T009 [US1] Un-stub `_PageItemPicker`: remove the "[STUBBED]" placeholder at selection_wizard.py:625-689, enable the Stems tab, and populate it from `build_pos_grouped_inventory(..., want_affix=False)` in src/gramtrans/Lib/ui/selection_wizard.py
-- [ ] T010 [US1] Wire stem-row check state → `stem_picks` and emit `stem_picks` from `collect_selection()` (mirror the affix path at ~:1189-1206) — make T007 pass — in src/gramtrans/Lib/ui/selection_wizard.py
+- [X] T008 [US1] Parameterize `build_pos_grouped_inventory(..., want_affix: bool = True)` (~selection.py:600) to route through `_partition_entries`; the affix call site keeps the default so existing behavior is byte-stable — make T006 pass — in src/gramtrans/Lib/selection.py
+- [X] T009 [US1] Un-stub `_PageItemPicker`: remove the "[STUBBED]" placeholder at selection_wizard.py:625-689, enable the Stems tab, and populate it from `build_pos_grouped_inventory(..., want_affix=False)` in src/gramtrans/Lib/ui/selection_wizard.py
+- [X] T010 [US1] Wire stem-row check state → `stem_picks` and emit `stem_picks` from `collect_selection()` (mirror the affix path at ~:1189-1206) — make T007 pass — in src/gramtrans/Lib/ui/selection_wizard.py
 
 **Checkpoint**: The Stems tab is live and picks are recorded — MVP is independently testable.
 
@@ -78,19 +90,19 @@ builders and the UI depend on.
 
 ### Tests for User Story 2 ⚠️ (write first, ensure they FAIL)
 
-- [ ] T011 [US2] Add MSA-dispatch tests to tests/unit/test_build_stem_inventory.py: a `MoStemMsa` arm reads `PartOfSpeechRA` + `MsFeaturesOA`; a stem MSA is NEVER cast to `IMoInflAffMsa`, `SlotsRC` is never read, and a non-`MoStemMsa` MSA on a stem entry is skipped, not recast (FR-013). ADD assertion: the `MoStemMsa` arm also reads `InflectionClassRA` (cast to `IMoStemMsa`, None-guarded); when `InflectionClassRA` is null (Ejagham 0/2444 case) the read is a no-op with no exception raised.
-- [ ] T011a [US2] Synthetic-fixture unit test for the populated `InflectionClassRA` branch (the branch live Ejagham cannot exercise): construct a stub stem MSA where `IMoStemMsa.InflectionClassRA` is non-null and the referenced inflection class is ABSENT from the target; assert the reference surfaces as an FR-009 missing-reference warning via `build_excluded_lossy_warnings()` and increments `plan.excluded_lossy_count`. Fixture lives in tests/unit/test_build_stem_inventory.py (same module as T011-T013; do NOT mark [P]).
-- [ ] T012 [US2] Add closure tests: stem walk pulls `POS.InflectionClassesOC`, `IPartOfSpeech.StemNamesOC`, `POS.InflectableFeatsRC`, `MoStemMsa.MsFeaturesOA` (FR-004); owned-child closure (`SensesOS`, `MorphoSyntaxAnalysesOC`, `AlternateFormsOS`, `ExamplesOS`, `LexemeFormOA`) travels with the stem (FR-005); a POS needed by both a picked affix and a picked stem is pulled once, deduplicated by GUID — in tests/unit/test_build_stem_inventory.py. P2 flag: verify `EntryRefsOS` coverage in the shared owned-child closure — note tension with research Decision 4 (which scopes entry-refs out as categories.py-only). Do NOT silently change scope; flag for human decision.
-- [ ] T013 [US2] Add downstream-drop test: deselecting a stem removes dependencies pulled solely on its account (unless another kept item needs them) in tests/unit/test_build_stem_inventory.py
+- [X] T011 [US2] Add MSA-dispatch tests to tests/unit/test_build_stem_inventory.py: a `MoStemMsa` arm reads `PartOfSpeechRA` + `MsFeaturesOA`; a stem MSA is NEVER cast to `IMoInflAffMsa`, `SlotsRC` is never read, and a non-`MoStemMsa` MSA on a stem entry is skipped, not recast (FR-013). ADD assertion: the `MoStemMsa` arm also reads `InflectionClassRA` (cast to `IMoStemMsa`, None-guarded); when `InflectionClassRA` is null (Ejagham 0/2444 case) the read is a no-op with no exception raised.
+- [X] T011a [US2] Synthetic-fixture unit test for the populated `InflectionClassRA` branch (the branch live Ejagham cannot exercise): construct a stub stem MSA where `IMoStemMsa.InflectionClassRA` is non-null and the referenced inflection class is ABSENT from the target; assert the reference surfaces as an FR-009 missing-reference warning via `build_excluded_lossy_warnings()` and increments `plan.excluded_lossy_count`. Fixture lives in tests/unit/test_build_stem_inventory.py (same module as T011-T013; do NOT mark [P]).
+- [X] T012 [US2] Add closure tests: stem walk pulls `POS.InflectionClassesOC`, `IPartOfSpeech.StemNamesOC`, `POS.InflectableFeatsRC`, `MoStemMsa.MsFeaturesOA` (FR-004); owned-child closure (`SensesOS`, `MorphoSyntaxAnalysesOC`, `AlternateFormsOS`, `ExamplesOS`, `LexemeFormOA`) travels with the stem (FR-005); a POS needed by both a picked affix and a picked stem is pulled once, deduplicated by GUID — in tests/unit/test_build_stem_inventory.py. P2 flag: verify `EntryRefsOS` coverage in the shared owned-child closure — note tension with research Decision 4 (which scopes entry-refs out as categories.py-only). Do NOT silently change scope; flag for human decision.
+- [X] T013 [US2] Add downstream-drop test: deselecting a stem removes dependencies pulled solely on its account (unless another kept item needs them) in tests/unit/test_build_stem_inventory.py
 
 ### Implementation for User Story 2
 
-- [ ] T014 [US2] Add the `MoStemMsa` arm to the MSA dispatch (~selection.py:706-810): `class_name == "MoStemMsa"` → read `PartOfSpeechRA` + `MsFeaturesOA`; skip (do not recast) any non-`MoStemMsa` arm on a stem-partitioned entry — make T011 pass — in src/gramtrans/Lib/selection.py. Note: `MoStemMsa.MsFeaturesOA` returns a SINGLE `IFsFeatStruc` (not a collection); use the cast chain `_cast(msa, "IMoStemMsa").MsFeaturesOA` and perform a nullable/None check before reading the feature GUID. The MSA dispatch `elif` chain ends in `else: pass` (~:817), so unrecognized classes already fall through — no redundant skip guard needed.
-- [ ] T015 [US2] Keep `build_skeleton_inventory` (~selection.py:1151) AFFIX-ONLY — do NOT add a `want_stem` parameter. Per FR-013, stems must never enter the affix slot/template skeleton builder. Remove any `want_stem` parameter or stem-walk prose that was previously implied for this function. In src/gramtrans/Lib/selection.py
-- [ ] T016 [US2] Parameterize `build_deps_inventory(stem_picks, ...)` (~selection.py:1502) to accept `stem_picks` and walk the POS-dependency collections for each picked stem: `PartOfSpeechRA → POS.{InflectionClassesOC, StemNamesOC, InflectableFeatsRC}` + `MoStemMsa.MsFeaturesOA` (no `SlotsRC`) + `MoStemMsa.InflectionClassRA` (cast to `IMoStemMsa`, None-guarded; if non-null, feed the FR-009 missing-reference aggregation via `build_excluded_lossy_warnings()` — additive to `POS.InflectionClassesOC`, not a replacement). Include shared-dependency GUID dedup across affix and stem picks — make T012 and T013 pass — in src/gramtrans/Lib/selection.py
-- [ ] T017 [US2] Add `_get_stem_picks()` on pages 3–5 (mirror `_get_affix_picks()` at ~:1410, :1897) and thread `stem_picks` into `build_skeleton_inventory` / `build_deps_inventory` in src/gramtrans/Lib/ui/selection_wizard.py
-- [ ] T018a [US2] Write a FAILING unit test that `stem_picks` flows into `compute_plan` and produces the expected owned-child plan entries (closes FR-005/SC-002 TDD gap). In tests/unit/test_selection_ui.py — MUST FAIL before T018 is implemented.
-- [ ] T018 [US2] Verify picked stems flow through `compute_plan` (owned-child + grammatical closure) via the shared engine in src/gramtrans/Lib/preview.py and src/gramtrans/Lib/transfer.py (no new plan path; confirm the pick set is consumed) — make T018a pass
+- [X] T014 [US2] Add the `MoStemMsa` arm to the MSA dispatch (~selection.py:706-810): `class_name == "MoStemMsa"` → read `PartOfSpeechRA` + `MsFeaturesOA`; skip (do not recast) any non-`MoStemMsa` arm on a stem-partitioned entry — make T011 pass — in src/gramtrans/Lib/selection.py. Note: `MoStemMsa.MsFeaturesOA` returns a SINGLE `IFsFeatStruc` (not a collection); use the cast chain `_cast(msa, "IMoStemMsa").MsFeaturesOA` and perform a nullable/None check before reading the feature GUID. The MSA dispatch `elif` chain ends in `else: pass` (~:817), so unrecognized classes already fall through — no redundant skip guard needed.
+- [X] T015 [US2] Keep `build_skeleton_inventory` (~selection.py:1151) AFFIX-ONLY — do NOT add a `want_stem` parameter. Per FR-013, stems must never enter the affix slot/template skeleton builder. Remove any `want_stem` parameter or stem-walk prose that was previously implied for this function. In src/gramtrans/Lib/selection.py
+- [X] T016 [US2] Parameterize `build_deps_inventory(stem_picks, ...)` (~selection.py:1502) to accept `stem_picks` and walk the POS-dependency collections for each picked stem: `PartOfSpeechRA → POS.{InflectionClassesOC, StemNamesOC, InflectableFeatsRC}` + `MoStemMsa.MsFeaturesOA` (no `SlotsRC`) + `MoStemMsa.InflectionClassRA` (cast to `IMoStemMsa`, None-guarded; if non-null, feed the FR-009 missing-reference aggregation via `build_excluded_lossy_warnings()` — additive to `POS.InflectionClassesOC`, not a replacement). Include shared-dependency GUID dedup across affix and stem picks — make T012 and T013 pass — in src/gramtrans/Lib/selection.py
+- [X] T017 [US2] Add `_get_stem_picks()` on pages 3–5 (mirror `_get_affix_picks()` at ~:1410, :1897) and thread `stem_picks` into `build_skeleton_inventory` / `build_deps_inventory` in src/gramtrans/Lib/ui/selection_wizard.py
+- [X] T018a [US2] Write a FAILING unit test that `stem_picks` flows into `compute_plan` and produces the expected owned-child plan entries (closes FR-005/SC-002 TDD gap). In tests/unit/test_selection_ui.py — MUST FAIL before T018 is implemented.
+- [X] T018 [US2] Verify picked stems flow through `compute_plan` (owned-child + grammatical closure) via the shared engine in src/gramtrans/Lib/preview.py and src/gramtrans/Lib/transfer.py (no new plan path; confirm the pick set is consumed) — make T018a pass
 
 **Checkpoint**: Picking a stem produces correct Model-A closure end-to-end in the plan.
 
@@ -104,11 +116,11 @@ builders and the UI depend on.
 
 ### Tests for User Story 4 ⚠️ (write first, ensure they FAIL)
 
-- [ ] T019 [P] [US4] Add missing-reference tests to tests/unit/test_build_stem_inventory.py: a kept stem with a deselected, target-absent dependency emits exactly one `(kept-stem, stranded-dependency)` warning per stem via `build_excluded_lossy_warnings()`; several such omissions still aggregate to a single `plan.excluded_lossy_count()` confirmation (FR-009/FR-010), never one prompt per stranded dependency
+- [X] T019 [P] [US4] Add missing-reference tests to tests/unit/test_build_stem_inventory.py: a kept stem with a deselected, target-absent dependency emits exactly one `(kept-stem, stranded-dependency)` warning per stem via `build_excluded_lossy_warnings()`; several such omissions still aggregate to a single `plan.excluded_lossy_count()` confirmation (FR-009/FR-010), never one prompt per stranded dependency
 
 ### Implementation for User Story 4
 
-- [ ] T020 [US4] Route stem missing-reference warnings into `build_excluded_lossy_warnings()` (~selection.py:1705) so they feed the existing `plan.excluded_lossy_count()` aggregation at selection_wizard.py:3171 — no new dialog (FR-010) — make T019 pass — in src/gramtrans/Lib/selection.py. Note: FR-011 GOLD-skip is covered by the shared engine only (no dedicated unit test); this is acceptable because byte-stable behavior is inherited from the affix path.
+- [X] T020 [US4] Route stem missing-reference warnings into `build_excluded_lossy_warnings()` (~selection.py:1705) so they feed the existing `plan.excluded_lossy_count()` aggregation at selection_wizard.py:3171 — no new dialog (FR-010) — make T019 pass — in src/gramtrans/Lib/selection.py. Note: FR-011 GOLD-skip is covered by the shared engine only (no dedicated unit test); this is acceptable because byte-stable behavior is inherited from the affix path.
 
 **Checkpoint**: Stranded stem dependencies surface in the single shared Move gate — Referential Completeness (Constitution V) holds.
 
@@ -122,12 +134,12 @@ builders and the UI depend on.
 
 ### Tests for User Story 3 ⚠️ (write first, ensure they FAIL)
 
-- [ ] T021 [P] [US3] Add target-status tests to tests/unit/test_build_stem_inventory.py: `_build_target_sets(..., want_affix=False)` yields stem target sets; source=target → all IN TARGET; fresh target → NEW; no target bound → blank/safe-default (treat target as lacking the reference), no crash (FR-006/SC-004)
+- [X] T021 [P] [US3] Add target-status tests to tests/unit/test_build_stem_inventory.py: `_build_target_sets(..., want_affix=False)` yields stem target sets; source=target → all IN TARGET; fresh target → NEW; no target bound → blank/safe-default (treat target as lacking the reference), no crash (FR-006/SC-004)
 
 ### Implementation for User Story 3
 
-- [ ] T022 [US3] Parameterize `_build_target_sets(..., want_affix: bool = True)` (~selection.py:339) for the stem partition in a single enumeration pass (both tabs obtain target-status from this one function; no duplicate enumeration) — make T021 pass — in src/gramtrans/Lib/selection.py
-- [ ] T023 [US3] Render the NEW / IN TARGET / SIMILAR column per stem row (blank when no target bound), reusing the affix fingerprint unless a stem-specific fingerprint proves necessary (see plan Open Question) in src/gramtrans/Lib/ui/selection_wizard.py
+- [X] T022 [US3] Parameterize `_build_target_sets(..., want_affix: bool = True)` (~selection.py:339) for the stem partition in a single enumeration pass (both tabs obtain target-status from this one function; no duplicate enumeration) — make T021 pass — in src/gramtrans/Lib/selection.py
+- [X] T023 [US3] Render the NEW / IN TARGET / SIMILAR column per stem row (blank when no target bound), reusing the affix fingerprint unless a stem-specific fingerprint proves necessary (see plan Open Question) in src/gramtrans/Lib/ui/selection_wizard.py
 
 **Checkpoint**: Every stem row carries a target-presence status; all four user stories are independently functional.
 
@@ -137,10 +149,10 @@ builders and the UI depend on.
 
 **Purpose**: Confirm no conflict-mode UI, run the quickstart, and attach the constitution verification artifacts.
 
-- [ ] T024 [P] Assert the pane presents no ADD_NEW / MERGE / OVERWRITE control and the Layer-1 per-category default applies without user input (FR-012/SC-007) — add to tests/unit/test_selection_ui.py. Also add a unit assertion that `collect_selection()` invokes no write-side method and returns no write actions (FR-008).
-- [ ] T025 Run the full quickstart unit set from quickstart.md (`pytest tests/unit/test_stem_partition.py tests/unit/test_build_stem_inventory.py tests/unit/test_selection_invariants.py tests/unit/test_selection_ui.py -q`) and confirm all pass; re-run the Phase 1 baseline suite to confirm affix behavior is byte-stable (no regression)
-- [ ] T026 Live source→target verification per specs/019-stems-item-picker/quickstart.md scenarios 1–6: SC-001 disjoint/complete partition (incl. null-morphtype entry lands in Stems), SC-002/003 closure in plan + deselect-drop, SC-004 target status, SC-005 single aggregated Move warning, SC-006 zero-stem empty tab, SC-007 no conflict-mode control
-- [ ] T027 Run dry-run then Move on a mixed stem+affix selection against a fresh target; attach pre/post Import Residue artifacts; confirm create-vs-skip by GUID, GOLD-skip (FR-011), shared POS pulled once (dedup), owned-child closure travels with each stem (constitution verification gate)
+- [X] T024 [P] Assert the pane presents no ADD_NEW / MERGE / OVERWRITE control and the Layer-1 per-category default applies without user input (FR-012/SC-007) — add to tests/unit/test_selection_ui.py. Also add a unit assertion that `collect_selection()` invokes no write-side method and returns no write actions (FR-008).
+- [X] T025 Run the full quickstart unit set from quickstart.md (`pytest tests/unit/test_stem_partition.py tests/unit/test_build_stem_inventory.py tests/unit/test_selection_invariants.py tests/unit/test_selection_ui.py -q`) and confirm all pass; re-run the Phase 1 baseline suite to confirm affix behavior is byte-stable (no regression)
+- [X] T026 Live source→target verification per specs/019-stems-item-picker/quickstart.md scenarios 1–6: SC-001 disjoint/complete partition (incl. null-morphtype entry lands in Stems), SC-002/003 closure in plan + deselect-drop, SC-004 target status, SC-005 single aggregated Move warning, SC-006 zero-stem empty tab, SC-007 no conflict-mode control
+- [X] T027 Run dry-run then Move on a mixed stem+affix selection against a fresh target; attach pre/post Import Residue artifacts; confirm create-vs-skip by GUID, GOLD-skip (FR-011), shared POS pulled once (dedup), owned-child closure travels with each stem (constitution verification gate)
 
 ---
 
