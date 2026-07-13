@@ -1,5 +1,41 @@
 # GramTrans — Session Handoff
 
+## ▶▶▶ Feature 025 — Full Reversals — SPURT 2 (Phase 3 US1) IN PROGRESS (2026-07-12)
+
+**Worktree**: `D:/Github/_Projects/_LEX/GramTrans-025-full-reversals` on branch
+`025-full-reversals` @ `48b2d75`. **Handoff**: `specs/025-full-reversals/.crew-handoff.json`.
+Cumulative tasks done: **T001-T020** (Phase 1+2 scaffold + US1). Remaining: US2 (T021-T027),
+US3 (T028-T033), Polish (T034-T037).
+
+**Ralph-loop spurt 2 (LEX crew, cycle 2)** — checkpoint = Phase 3 US1 (reversal entries ride
+along with copied senses), **DONE** as one TDD unit:
+- **RED→GREEN honored**: T009-T013 (5 reversal-walk tests) confirmed genuine RED (missing
+  `plan_reversals` symbol) before any T014-T020 code, then GREEN — 5/5 pass.
+- **T014-T020**: `plan_reversals` (decision-only, closure-scoped to copied senses, WS-gated,
+  never-silent), recursive `SubentriesOS` sub-entry builder, `apply_reversals` (Move-only —
+  create index/entry, non-destructive `ReversalForm`, copied-only `SensesRS` links), residue
+  carriers, and `categories`/`preview`/`transfer` wiring into the unified 024 dropped-items pipe.
+- **No regressions**: full unit suite 1476/1477. The 1 failure
+  (`test_wizard_pos_grammar_wiring.py::...::test_plan_emits_pos_action_for_picked_pos`) is
+  **pre-existing at baseline `241dbeb`** (verified via git stash) — NOT introduced by 025.
+- **T005 shape resolved**: `ReversalFieldSpec` kept and made load-bearing; `REVERSAL_FIELD_MAP`
+  wraps all 4 rows as real instances. `ReversalDecision` gained `target_ws_id` for to-create indexes.
+- **US2 seam marked**: `reversals._resolve_reversal_category_link_if_present` (LINK-if-present
+  stub, `*** US2 SEAM ***`); `resolver_cache` already threaded through `plan_reversals`.
+
+**Carry-forward (not blockers)**: (1) `preview.render_reversal_decisions` is Lib-level, not yet
+wired into `Lib/ui/main_window.py` Preview pane — assign to a UI-wiring spurt. (2) Recommend a
+dedicated QC + verification cycle (incl. live MCP T037) after US2/US3 land.
+
+**Next checkpoint (spurt 3)**: Phase 4 US2 (T021-T027) — reversal categories resolve against the
+per-index `PartsOfSpeechOA` via the 024 three-way resolver, replacing the US1 stub. TDD:
+T021-T024 tests first, then T025-T027.
+
+**Reports**: [cycle1-programmer.md](specs/025-full-reversals/reviews/cycle1-programmer.md),
+[cycle2-programmer.md](specs/025-full-reversals/reviews/cycle2-programmer.md).
+
+---
+
 ## ▶▶▶ Feature 025 — Full Reversals — SPURT 1 (Phase 1+2 scaffold) IN PROGRESS (2026-07-12)
 
 **Spec**: [specs/025-full-reversals/](specs/025-full-reversals/) — spec (stub) + plan +

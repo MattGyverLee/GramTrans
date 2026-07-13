@@ -3,35 +3,39 @@
   "created": "2026-07-12",
   "updated": "2026-07-12",
   "status": "in_progress",
-  "spurt": 1,
-  "last_cycle": 1,
-  "checkpoint_completed": "Phase 1 Setup (T001-T003) + Phase 2 Foundational (T004-T008)",
+  "spurt": 2,
+  "last_cycle": 2,
+  "checkpoint_completed": "Phase 3 US1 (T009-T020) — reversal entries ride along with copied senses",
   "blocker": null,
   "worktree": {
     "path": "D:/Github/_Projects/_LEX/GramTrans-025-full-reversals",
     "branch": "025-full-reversals",
     "exists": true,
-    "head": "241dbeb"
+    "head": "48b2d75"
   },
   "dependency_024": {
     "gate": "T004",
     "status": "PASS",
-    "evidence": "decide_reference/apply_reference, ReferenceFieldSpec, walk_owned_children, FidelityStatus/DroppedItemRecord all present in worktree after branch-off main@d58fd6b."
+    "evidence": "references/owned/report reuse surface present after branch-off main@d58fd6b."
   },
   "tasks_total": 37,
-  "tasks_done": ["T001", "T002", "T003", "T004", "T005", "T006", "T007", "T008"],
-  "next_checkpoint": "Phase 3 US1 (T009-T020) — reversal entries ride along with copied senses. TDD order: author T009-T013 reversal-walk tests first (must FAIL), then T014-T020 implementation (plan_reversals, sub-entry builder, apply_reversals, residue, categories/preview/transfer wiring).",
-  "next_entry": "In worktree D:/Github/_Projects/_LEX/GramTrans-025-full-reversals (branch 025-full-reversals @ 241dbeb), begin Phase 3 US1 by authoring T009-T013 tests replacing the scaffold skips BEFORE writing plan_reversals/apply_reversals bodies.",
+  "tasks_done": ["T001","T002","T003","T004","T005","T006","T007","T008","T009","T010","T011","T012","T013","T014","T015","T016","T017","T018","T019","T020"],
+  "next_checkpoint": "Phase 4 US2 (T021-T027) — reversal categories resolve against the per-index PartsOfSpeechOA via the 024 references.decide_reference/apply_reference three-way resolver, replacing the US1 LINK-if-present stub.",
+  "next_entry": "Open the US2 seam at reversals._resolve_reversal_category_link_if_present (docstring tagged '*** US2 SEAM ***'); replace LINK-if-present with full three-way resolution per contracts/reversal-category-resolution.md, consuming the already-threaded resolver_cache with a GUID-keyed per-category cache. Author T021-T024 tests RED first, then implement T025-T027 GREEN.",
   "carry_forward": [
-    "T005 shape: ReversalFieldSpec is not literally defined in data-model.md (only ReversalDecision implied). Programmer split it into field-shape spec vs per-entry decision output mirroring 024's ReferenceFieldSpec/ReferenceDecision. Nothing consumes these frozen dataclasses yet — first US1 consumer (T014) should confirm or revise the shape.",
-    "T007 was documentation-only: no owner_kind whitelist/enum exists to extend; the three new owner_kinds (ReversalIndexEntry, ReversalIndex, ConfigView) are documented near DroppedItemRecord."
+    "T005 shape resolved: ReversalFieldSpec kept and made load-bearing; REVERSAL_FIELD_MAP wraps all 4 rows as real instances. ReversalDecision gained target_ws_id: str = '' for to-create indexes.",
+    "US2 seam: reversals._resolve_reversal_category_link_if_present is LINK-by-GUID-if-present else None; unresolved category is a documented US1 simplification, NOT reported as a drop (US2 completes the three-way). resolver_cache already threaded through plan_reversals (accepted, not yet consumed).",
+    "PRE-EXISTING BASELINE FAILURE (NOT a regression, verified via git stash at 241dbeb): test_wizard_pos_grammar_wiring.py::TestPosClosureWalksPickedPos::test_plan_emits_pos_action_for_picked_pos. Do not attribute to 025 work.",
+    "CARRIED-FORWARD UI GAP (not a blocker): preview.render_reversal_decisions (T019) is Lib-level, not yet wired into Lib/ui/main_window.py Preview pane — assign to a UI-wiring spurt.",
+    "Recommend a dedicated QC + verification cycle after US2/US3 land (they share the reversal seam), including live MCP validation (T037)."
   ],
   "reports": [
-    "specs/025-full-reversals/reviews/cycle1-programmer.md"
+    "specs/025-full-reversals/reviews/cycle1-programmer.md",
+    "specs/025-full-reversals/reviews/cycle2-programmer.md"
   ],
   "notes": [
-    "Implementation work stays on the 025 worktree per CLAUDE.md git protocol; spec artifacts (specs/, STATUS.md, .crew-handoff.json) commit to main.",
+    "Implementation work stays on the 025 worktree; spec artifacts (specs/, STATUS.md, .crew-handoff.json) commit to main.",
     "Reversal categories target per-index PartsOfSpeechOA, never LangProject.PartsOfSpeechOA.",
-    "Live validation via FLExTools MCP against Ejagham Mini -> Ejagham Full GT-Test (deferred to Polish T037)."
+    "Remaining after US2: US3 (T028-T033 config-view copy), Polish (T034-T037). Feature NOT complete."
   ]
 }
