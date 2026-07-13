@@ -3479,12 +3479,42 @@ def _plan_entry_reference_decisions(src_entry, context, target):
         return tuple(records)
     except (AttributeError, TypeError, KeyError) as exc:
         import logging as _logging
+        # T037 Finding 1(b) (fidelity-critical, never-silent): the prior
+        # version of this handler logged a warning and `return ()`ed with NO
+        # `DroppedItemRecord` -- any real reference/owned-object decision
+        # this entry's closure would have produced (LINK/CREATE/UPDATE for
+        # every sense, allomorph, owned child) vanished with no trace in
+        # `RunPlan.dropped_items`, violating FR-010 / Principle III. Guard
+        # the GUID extraction itself (the same call this handler's own log
+        # line used unprotected before -- if THAT also raises, e.g. because
+        # the underlying exception came from a duck-typing gap on
+        # `src_entry` itself, we still must not let the except handler
+        # itself throw) and always append a best-effort report.
+        try:
+            entry_guid = _guid_str_from(src_entry)
+        except Exception:
+            entry_guid = ""
         _logging.getLogger("gramtrans.Lib.categories").warning(
             "_plan_entry_reference_decisions: %s on entry %s -- returning "
             "no reference decisions for this entry.",
-            type(exc).__name__, _guid_str_from(src_entry),
+            type(exc).__name__, entry_guid,
             exc_info=True,
         )
+        try:
+            dropped = getattr(context, "_dropped", None)
+        except Exception:
+            dropped = None
+        if dropped is not None:
+            _append_dropped_once(dropped, DroppedItemRecord(
+                owner_kind="LexEntry",
+                owner_guid=entry_guid,
+                owner_label="",
+                field_name="EntryReferenceDecisions",
+                item_name="",
+                item_guid=entry_guid,
+                reason=f"reference-decision planning failed: "
+                       f"{type(exc).__name__}: {exc}",
+            ))
         return ()
 
 
@@ -3979,6 +4009,73 @@ def plan_all_lexical_relations(context, resolver_cache, dropped) -> list:
         if record is not None:
             records.append(record)
     return records
+
+
+# ============================================================================
+# Feature 025 (full reversals, US1 T018) -- reversal closure single-final-pass
+# ============================================================================
+#
+# Mirrors `plan_all_lexical_relations`/`reproduce_all_lexical_relations`'s
+# single-final-pass timing exactly: called ONCE, after the leaf-dispatch
+# loop (AFFIXES/STEMS) has assembled the run's COMPLETE `context._copy_set`
+# -- every top-level entry, top-level sense, recursively-copied sub-sense,
+# and allomorph this run will ever copy is already registered by then.
+# `Lib/reversals.py.plan_reversals` only ever matches a
+# `ReversalIndexEntry.SensesRS` member's GUID against `copy_set`'s keys --
+# the entry/sub-sense/allomorph GUIDs mixed into that same dict are
+# harmless noise, never a false match (no two different LCM objects in a
+# project share a GUID). Call sites: `Lib/preview.py.build_run_plan` (Preview,
+# right after `plan_all_lexical_relations`) and `Lib/transfer.py.execute`
+# (Move, right after `reproduce_all_lexical_relations`).
+
+def plan_reversal_decisions(context, resolver_cache, dropped) -> tuple:
+    """Preview-mode (US1, T018): read-only reversal-closure decision pass.
+    Returns the tuple of `ReversalDecision` `Lib/preview.py.build_run_plan`
+    folds into `RunPlan.reversal_decisions` (T019) -- every reversal
+    `DroppedItemRecord` this walk produces already flows into the SAME
+    `dropped` collector every other Preview decision uses, so it reaches
+    `RunPlan.dropped_items` automatically."""
+    if __package__:
+        from . import reversals as _reversals
+    else:
+        import reversals as _reversals  # type: ignore
+    copy_set = getattr(context, "_copy_set", None) or {}
+    return tuple(_reversals.plan_reversals(
+        copy_set, context.source_handle, context.target_handle, context,
+        resolver_cache, dropped,
+    ))
+
+
+def reproduce_reversal_entries(context, tag, resolver_cache, dropped) -> None:
+    """Move-mode (US1, T018/T020) twin of `plan_reversal_decisions`:
+    recomputes the SAME decision walk against the run's fully-settled, REAL
+    `context._copy_set` (guid -> the actual created target object, not
+    Preview's `True` placeholder marker -- `Lib/reversals.py.apply_reversals`
+    needs the real target sense objects to link `SensesRS`), then applies
+    it. Called once from `Lib/transfer.py.execute`, right after
+    `reproduce_all_lexical_relations` -- reversal entries are written ONLY
+    here, in Move mode.
+
+    Principle III (P0-2, feature-025 cycle-6 remediation): the SAME Add/Link
+    decision this walk applies was already rendered on the Preview surface
+    the click before -- `Lib/ui/main_window.py._on_preview` calls
+    `Lib/preview.py.render_preview_extra_lines(plan)` (which wraps
+    `render_reversal_decisions`) and displays the result via `Lib/ui/
+    stats_panel.py.StatsPanel.set_report`'s `extra_lines` parameter, BEFORE
+    the user can click Move. Prior to that fix this docstring's claim was
+    FALSE: `render_reversal_decisions` had no call site anywhere, so no
+    reversal decision was ever shown before this function wrote it."""
+    if __package__:
+        from . import reversals as _reversals
+    else:
+        import reversals as _reversals  # type: ignore
+    copy_set = getattr(context, "_copy_set", None) or {}
+    decisions = _reversals.plan_reversals(
+        copy_set, context.source_handle, context.target_handle, context,
+        resolver_cache, dropped,
+    )
+    _reversals.apply_reversals(
+        decisions, context.target_handle, context, tag, resolver_cache, dropped)
 
 
 def _dispatch_msa_subclass(class_name):

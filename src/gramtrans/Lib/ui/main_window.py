@@ -282,7 +282,19 @@ class MainWindow(QtWidgets.QDialog):
             extra_dropped_items=_plan_dropped,
             fidelity_by_guid=compute_fidelity_by_guid(_plan_dropped),
         )
-        self._stats.set_report(report)
+        # Feature 025 (full reversals, P0-2 cycle-6 remediation, Principle
+        # III): surface the reversal Add/Link plan + config-view
+        # Add/Overwrite/Skip list on the Preview surface BEFORE Move ever
+        # writes -- `render_preview_extra_lines` composes both
+        # `Lib/preview.py.render_reversal_decisions` and
+        # `.render_config_view_records` (each a no-op `()` on an empty
+        # plan), previously computed every Preview run but never shown.
+        if __package__:
+            from ..preview import render_preview_extra_lines
+        else:
+            from preview import render_preview_extra_lines  # type: ignore
+        extra_lines = render_preview_extra_lines(plan)
+        self._stats.set_report(report, extra_lines)
 
     def _on_move(self) -> None:
         if self._cached_plan is None or self._cached_plan_signature is None:

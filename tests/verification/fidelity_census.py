@@ -142,6 +142,19 @@ class FieldSpec:
     RS=ReferenceSeq. `name` is the bare metadata field name (e.g.
     "AlternateForms"); the C# property is `name + kind` (e.g.
     "AlternateFormsOS") -- `prop` returns that concatenation.
+
+    Feature 025 (full reversals) T034 ADDITION: `kind == "MU"` denotes an
+    IMultiUnicode/IMultiString VALUE field (e.g. `ReversalIndexEntry.
+    ReversalForm`) -- a genuine census-worthy field this module chooses to
+    track (see `ReversalIndexEntry`'s "(a)" decision below), but NOT an
+    owning/reference field in the OA/OC/OS/RA/RC/RS sense. LCM's own naming
+    convention gives such fields NO type suffix at all (the bare metadata
+    name IS the C# property -- "ReversalForm", "Discussion"), so `prop`
+    special-cases "MU" to return `name` unsuffixed rather than the nonsense
+    "ReversalFormMU" the generic concatenation would otherwise produce --
+    the ONLY change `FieldSpec`/`_all_real_fields` needed to carry a value
+    field through the SAME never-silent machinery every owning/reference
+    field already uses (no other module semantics touched).
     """
 
     name: str
@@ -149,6 +162,8 @@ class FieldSpec:
 
     @property
     def prop(self) -> str:
+        if self.kind == "MU":
+            return self.name
         return f"{self.name}{self.kind}"
 
 
@@ -249,6 +264,25 @@ EXPECTED_MODEL_FIELDS: dict[str, tuple[FieldSpec, ...]] = {
         FieldSpec("Components", "RS"),
         FieldSpec("GlossBundle", "RS"),
         FieldSpec("PartOfSpeech", "RA"),
+    ),
+    # ---- ReversalIndexEntry (feature 025 full-reversals, T034) -------------
+    # `IReversalIndexEntry`'s reference/owned fields (mirrors `Lib/reversals.
+    # py.REVERSAL_FIELD_MAP` -- the SAME four rows, T008/T014). `SensesRS`/
+    # `PartOfSpeechRA`/`SubentriesOS` are genuine owning/reference fields
+    # (RS/RA/OS respectively). `ReversalForm` is IMultiUnicode -- a VALUE
+    # field, not owning/reference -- carried here as `kind="MU"` (see
+    # `FieldSpec`'s own docstring for the `prop` special-case) rather than
+    # silently excluded the way 024's `LexExtendedNote.Discussion` (also an
+    # IMultiString value field) is: T034 named `ReversalForm` explicitly, so
+    # silently excluding it here would be a FRESH SC-003/FR-010 violation on
+    # a field the task called out by name. `Discussion` itself is left
+    # UNCHANGED (still excluded) -- 024 never named it as needing coverage,
+    # so retrofitting it is a separate, unprompted scope change.
+    "ReversalIndexEntry": (
+        FieldSpec("Senses", "RS"),
+        FieldSpec("PartOfSpeech", "RA"),
+        FieldSpec("Subentries", "OS"),
+        FieldSpec("ReversalForm", "MU"),
     ),
 }
 
@@ -656,6 +690,70 @@ CLASSIFICATION: dict[tuple[str, str], Classification] = {
         "(generic ICmPossibilityFactory, ItemClsid 7), dispatched via "
         "owned._apply_child_refs as ExtendedNoteOS's own child_refs",
     ),
+
+    # ---- ReversalIndexEntry (feature 025 full-reversals, T034) -------------
+    ("ReversalIndexEntry", "SensesRS"): Classification(
+        Bucket.COPIED,
+        "reversals._resolve_sense_links (reversals.py), called from "
+        "reversals._build_entry_decision -- re-wires SensesRS to the "
+        "copied-sense set only; every non-copied member is DROP_REPORTED "
+        "individually (owner_kind 'ReversalIndexEntry', field_name "
+        "'SensesRS', reason 'member not in copy set')",
+        note="US1 T014 (feature 025-full-reversals, R3/024 FR-008 partial-"
+             "member policy): the FIELD itself is COPIED (re-wired to "
+             "whatever subset was actually copied); only individual omitted "
+             "MEMBERS are DROP_REPORTED -- same posture as 024's COLLECTION/"
+             "SEQUENCE lexical-relation kinds (LexReference.TargetsRS).",
+    ),
+    ("ReversalIndexEntry", "PartOfSpeechRA"): Classification(
+        Bucket.COPIED,
+        "reversals._decide_reversal_category (US2 T025), applied by "
+        "reversals._apply_pos_decision (T026) -- routes through the SAME "
+        "024 three-way resolver (references.decide_reference/"
+        "apply_reference) against the TARGET REVERSAL INDEX's OWN "
+        "PartsOfSpeechOA (never LangProject.PartsOfSpeechOA, per R5)",
+        note="REPORT_DROPPED sub-cases (to-create index / list absent -- "
+             "reason 'target reversal category list absent'; shared-default "
+             "divergence -- resolver's own REPORT_DROPPED arm) each emit a "
+             "DroppedItemRecord (owner_kind 'ReversalIndexEntry', field_name "
+             "'PartOfSpeechRA') the same way every other referenced-"
+             "possibility field in this codebase does.",
+    ),
+    ("ReversalIndexEntry", "SubentriesOS"): Classification(
+        Bucket.COPIED,
+        "reversals._build_entry_decision's unconditional SubentriesOS "
+        "recursion (US1 T014, applied by reversals._apply_one_entry's own "
+        "recursion, T016/T027 sub-entry create path) -- mirrors "
+        "owned.walk_owned_children's recursive owned-child pattern; every "
+        "sub-entry gets its own ReversalDecision (and target sub-entry) at "
+        "every depth, never truncated.",
+    ),
+    ("ReversalIndexEntry", "ReversalForm"): Classification(
+        Bucket.COPIED,
+        "reversals._reversal_form_alts (US1 T014, plan-time snapshot) + "
+        "reversals._set_reversal_form_alt (T016, apply-time per-WS write) "
+        "-- non-destructive alt copy (R6/024 FR-007): an empty/absent "
+        "source alt is never a key in reversal_form_alts, so a later write "
+        "pass can never blank an existing populated target alt for that WS",
+        note="(a)/(b) DECISION (T034, documented per task instruction): "
+             "ReversalForm is IMultiUnicode -- a VALUE field, not an owning/"
+             "reference field -- so it does not naturally fit this module's "
+             "OA/OC/OS/RA/RC/RS-suffix FieldSpec shape, and 024's own "
+             "precedent (LexExtendedNote.Discussion, also IMultiString) is "
+             "to EXCLUDE such fields from EXPECTED_MODEL_FIELDS entirely. "
+             "Chose (a) -- a new FieldSpec kind ('MU', see FieldSpec's own "
+             "docstring for the minimal `prop` special-case this required) "
+             "carrying a real COPIED CLASSIFICATION entry pointing at the "
+             "non-destructive alt-copy site above -- over (b) mirroring "
+             "Discussion's silent exclusion, because T034's own task text "
+             "explicitly named ReversalForm as a field requiring a "
+             "'defensible, DOCUMENTED choice': silently excluding a field "
+             "the task called out by name would itself be a fresh SC-003/"
+             "FR-010 violation, the exact defect cycle-17 corrected for the "
+             "4 LexSense fields above. Discussion is deliberately left "
+             "UNCHANGED (still excluded) -- retrofitting it now would be an "
+             "unprompted scope change; only ReversalForm was named.",
+    ),
 }
 
 
@@ -816,13 +914,19 @@ def test_guard_fires_for_unclassified_property() -> None:
 
 
 def test_expected_model_fields_field_count() -> None:
-    """Sanity check on the captured inventory itself: 75 REAL fields total
-    across the 11 classes (11+15+2+3+6+5+1+9+7+13+3), matching the injected
+    """Sanity check on the captured inventory itself: 79 REAL fields total
+    across the 12 classes (11+15+2+3+6+5+1+9+7+13+3+4), matching the injected
     flextoolsMCP-verified/reflection-confirmed snapshot exactly -- guards
     against an accidental edit silently dropping or duplicating a row in
     `EXPECTED_MODEL_FIELDS`. Cycle-17: added `LexExtendedNote` (2 REAL
     fields -- ExamplesOS, ExtendedNoteTypeRA; `Discussion` is a multistring,
-    not owning/reference) as a newly-covered class."""
+    not owning/reference) as a newly-covered class. Feature 025 (full
+    reversals) T034: added `ReversalIndexEntry` (4 REAL fields -- SensesRS,
+    PartOfSpeechRA, SubentriesOS, and `ReversalForm` -- the last is ALSO a
+    multistring/IMultiUnicode field like `Discussion`, but is deliberately
+    COVERED here (kind="MU", a real COPIED classification) rather than
+    excluded, per the (a)/(b) decision documented on its own CLASSIFICATION
+    entry above -- `Discussion` itself remains excluded, unchanged)."""
     counts = {name: len(fields) for name, fields in EXPECTED_MODEL_FIELDS.items()}
     assert counts == {
         "LexEntry": 11,
@@ -836,5 +940,6 @@ def test_expected_model_fields_field_count() -> None:
         "MoInflAffMsa": 7,
         "MoDerivAffMsa": 13,
         "MoUnclassifiedAffixMsa": 3,
+        "ReversalIndexEntry": 4,
     }
-    assert sum(counts.values()) == 75
+    assert sum(counts.values()) == 79

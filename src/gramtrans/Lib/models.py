@@ -707,6 +707,36 @@ class RunPlan:
     # so Preview surfaces the same never-silent guarantee Move already gets
     # via `transfer.execute`'s `extra_dropped_items` -> RunReport wiring.
     dropped_items: tuple = ()  # tuple[DroppedItemRecord, ...]
+    # Feature 025 (US1, T018/T019): the reversal closure walk's decision
+    # output (`Lib/reversals.py.plan_reversals`, called once from
+    # `Lib/categories.py.plan_reversal_decisions` after the leaf-dispatch
+    # loop's `context._copy_set` is fully settled — same single-final-pass
+    # timing as `plan_all_lexical_relations`). Every reversal
+    # `DroppedItemRecord` this walk produces already flows through
+    # `dropped_items` above (the single unified 024 channel); this field
+    # carries the Add/Link decisions themselves so Preview renders them
+    # (`Lib/preview.py.render_reversal_decisions`, wrapped by
+    # `render_preview_extra_lines` and displayed via `Lib/ui/main_window.py.
+    # _on_preview` -> `Lib/ui/stats_panel.py.StatsPanel.set_report`'s
+    # `extra_lines` param -- P0-2, feature-025 cycle-6 remediation) before
+    # Move ever writes.
+    reversal_decisions: tuple = ()  # tuple[ReversalDecision, ...]
+    # Feature 025 (full reversals, US3 T033): Part B `.fwdictconfig`
+    # configuration-view copy plan (`Lib/config_views.py.plan_config_views`),
+    # computed once in `Lib/preview.py.build_run_plan` (fail-soft -- a
+    # duck-typing gap on a test double or an unresolvable project directory
+    # yields an empty tuple rather than raising, mirroring this module's
+    # "errors-as-skips" convention elsewhere in `build_run_plan`). Each
+    # record's `missing_refs` already flows into `dropped_items` above (the
+    # SAME unified 024 channel -- no separate config-view report section);
+    # this field carries the Add/Overwrite/Skip actions themselves so
+    # Preview renders them (`Lib/preview.py.render_config_view_records`,
+    # wrapped by `render_preview_extra_lines` and displayed via `Lib/ui/
+    # main_window.py._on_preview` -> `Lib/ui/stats_panel.py.StatsPanel.
+    # set_report`'s `extra_lines` param -- P0-2, feature-025 cycle-6
+    # remediation) before Move's `Lib/transfer.py.execute` calls
+    # `apply_config_views`.
+    config_view_records: tuple = ()  # tuple[ConfigViewRecord, ...]
 
     def category_count(self, category: GrammarCategory) -> int:
         return sum(1 for a in self.actions if a.category == category)
@@ -932,6 +962,21 @@ class DroppedItemRecord:
     so two records for the same (owner, field, item) triple with different
     reason text still collapse to one (see `categories._dropped_key` /
     `_append_dropped_once`, the enforcement point).
+
+    Feature 025 (full reversals) `owner_kind` note: `owner_kind` is a
+    free-form non-empty string (see `__post_init__` below) — there is no
+    enumerated/validated whitelist of owner_kind values anywhere in this
+    module or in `Lib/report.py`. 025 adds three new owner_kind values used
+    by the reversal + config-view walks, documented here rather than
+    enforced (T007, tasks.md — documentation-only, no whitelist exists to
+    extend):
+        - "ReversalIndexEntry" — PartOfSpeechRA shared-default divergence,
+          unmapped WS on an entry's alt, partial SensesRS member.
+        - "ReversalIndex"      — a whole reversal index dropped (its
+          WritingSystem could not be mapped to a target analysis WS).
+        - "ConfigView"         — a `.fwdictconfig` file whose reference
+          (WS / custom field / style) is absent in the target; `field_name`
+          carries the reference kind, `item_name` the referenced label.
     """
     owner_kind: str
     owner_guid: str
@@ -1044,6 +1089,149 @@ class ReferenceDecisionRecord:
     action: ReferenceAction
     item_name: str = ""
     item_guid: str = ""
+
+
+# ============================================================================
+# Feature 025 (full reversals) — Part A dataclasses (T005)
+# ============================================================================
+# Reuse DroppedItemRecord / FidelityStatus / ReferenceDecision /
+# ReferenceFieldSpec unchanged (data-model.md "Reused from 024 (no change)").
+# Scaffolding only: no logic lives here, just the decision-shape contract
+# that Lib/reversals.py's plan_reversals (US1 T014) / apply_reversals
+# (US1 T016) will populate and consume.
+
+@dataclass(frozen=True)
+class ReversalFieldSpec:
+    """Reversal analogue of `ReferenceFieldSpec`, describing ONE field-level
+    building block of a reversal entry's decision (data-model.md "Reversal
+    field map"; mirrors the rows of `reversals.REVERSAL_FIELD_MAP`).
+
+    Distinguishes the single reference field (`PartOfSpeechRA`, routed
+    through the 024 resolver against the target index's OWN
+    `PartsOfSpeechOA`) from the fields the resolver does not handle:
+    `SensesRS` (ref-seq re-wire to the copied-sense set), `ReversalForm`
+    (IMultiUnicode value copy), and `SubentriesOS` (owned recurse).
+
+    Fields
+    ------
+    field_name     : e.g. "PartOfSpeechRA", "SensesRS", "ReversalForm",
+                     "SubentriesOS".
+    kind           : "reference_atomic" (decide_reference/apply_reference) |
+                     "ref_seq_rewire" (SensesRS) |
+                     "multi_unicode_value_copy" (ReversalForm) |
+                     "owned_recurse" (SubentriesOS).
+    reference_spec : the underlying `ReferenceFieldSpec` when
+                     `kind == "reference_atomic"` (PartOfSpeechRA against
+                     the per-index PartsOfSpeechOA, hierarchical=True);
+                     `None` for the other three kinds.
+    """
+    field_name: str
+    kind: str
+    reference_spec: Optional[ReferenceFieldSpec] = None
+
+
+@dataclass(frozen=True)
+class ReversalDecision:
+    """Per-entry decision output of the Part A reversal closure walk
+    (data-model.md; `reversals.plan_reversals`, US1 T014 / US2 T025).
+    Mirrors `ReferenceDecision`'s decision-only posture — built by the
+    plan-builder, consumed by Preview rendering and `apply_reversals`; no
+    writes performed while building one.
+
+    Fields
+    ------
+    source_entry_guid     : GUID of the source `IReversalIndexEntry` this
+                             decision reproduces.
+    target_index_ref      : opaque handle to the target `IReversalIndex` —
+                             the existing index object when one already
+                             matches the mapped WS, or `None` meaning
+                             "create via `ReversalIndexOperations.Create`"
+                             (mirrors `ReferenceDecision.target_item`'s
+                             existing-vs-to-create posture).
+    target_ws_id           : the mapped TARGET analysis writing-system id
+                             this entry's index belongs (or will belong) to.
+                             US1 (T014/T005 shape revision, this cycle):
+                             ADDED because `target_index_ref` alone cannot
+                             identify which WS a to-create index is FOR
+                             (`target_index_ref is None` carries no WS
+                             identity of its own) — both Preview's per-index
+                             grouping (T019) and `apply_reversals`'s
+                             `ReversalIndexOperations.Create(name, target_ws)`
+                             call (T016) need it. Always populated (never
+                             empty) for a real decision; every sub-entry
+                             decision carries the SAME `target_ws_id` as its
+                             top-level ancestor (one index per entry tree).
+    pos_decision           : `ReferenceDecision` for `PartOfSpeechRA`
+                             against the target index's own
+                             `PartsOfSpeechOA`. US1 (T015) stubs this to a
+                             LINK-if-present decision; US2 (T025) replaces
+                             it with the full `decide_reference()` outcome.
+    linked_sense_guids     : tuple of target-sense GUIDs this entry links
+                             to (copied-only — `SensesRS` members not in
+                             the copy set are excluded here and reported
+                             via `dropped_sense_members` instead).
+    dropped_sense_members  : tuple[DroppedItemRecord, ...] — one per
+                             `SensesRS` member omitted because it is not
+                             in the copy set (024 FR-008 / R3; owner_kind
+                             "ReversalIndexEntry", reason "member not in
+                             copy set").
+    reversal_form_alts     : dict[str, str] — mapped target WS tag ->
+                             source `ReversalForm` string for that WS,
+                             NON-EMPTY VALUES ONLY (non-destructive copy;
+                             R6 / 024 FR-007 — an empty/absent source alt is
+                             never a key here, so a write pass over this
+                             dict structurally can never blank an existing
+                             populated target alt for that WS: there is
+                             nothing to write).
+    sub_entry_decisions    : tuple["ReversalDecision", ...] — recursive
+                             `SubentriesOS` tree (R6).
+    """
+    source_entry_guid: str
+    target_index_ref: Any = None
+    target_ws_id: str = ""
+    pos_decision: Optional[ReferenceDecision] = None
+    linked_sense_guids: tuple = ()
+    dropped_sense_members: tuple = ()
+    reversal_form_alts: dict = field(default_factory=dict)
+    sub_entry_decisions: tuple = ()
+
+
+# ============================================================================
+# Feature 025 (full reversals) — Part B dataclass (T006)
+# ============================================================================
+
+class ConfigViewAction(enum.Enum):
+    """Disposition for one `.fwdictconfig` configuration-view file
+    (data-model.md `ConfigViewRecord.action`; Preview-visible, R8)."""
+    ADD = "add"
+    OVERWRITE = "overwrite"
+    SKIP = "skip"
+
+
+@dataclass(frozen=True)
+class ConfigViewRecord:
+    """One row per configuration-view file considered for copy (data-model.md
+    "New dataclass: ConfigViewRecord", Part B; `config_views.
+    plan_config_views` / `apply_config_views`, US3 T031/T032).
+
+    Fields
+    ------
+    kind         : "Dictionary" | "ReversalIndex".
+    filename     : e.g. "en.fwdictconfig".
+    src_path     : absolute source path.
+    tgt_path     : absolute target path (parallel subdir).
+    action       : ConfigViewAction — ADD | OVERWRITE | SKIP.
+    missing_refs : list[DroppedItemRecord] — WS / custom-field / style
+                   references in the file that are absent in the target
+                   (R9); owner_kind "ConfigView", `field_name` carries the
+                   reference kind, `item_name` the referenced label.
+    """
+    kind: str
+    filename: str
+    src_path: str
+    tgt_path: str
+    action: ConfigViewAction
+    missing_refs: list = field(default_factory=list)
 
 
 class OwnedCreateKind(enum.Enum):

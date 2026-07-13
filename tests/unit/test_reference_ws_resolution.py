@@ -568,3 +568,55 @@ def test_fields_identical_en_es_swap_diverges_with_source_threaded():
         f"content swap with source threaded, got LINK "
         f"(dropped={decision.dropped!r})"
     )
+
+
+# ============================================================================
+# T037 Finding 1(a) -- write-first regression: `divergence_fingerprint` must
+# not raise when a threaded `handle_to_id` resolver is MISSING an entry for
+# one of the item's populated WS handles (live corpus symptom: ~164 stem
+# entries hit `TypeError: '<' not supported between instances of 'int' and
+# 'str'` at `references.py:505`'s `sorted(snapshot.items())`, because
+# `_multistring_dict`'s resolver branch fell back to the RAW INT handle for
+# any handle absent from `handle_to_id` -- producing a snapshot with MIXED
+# str/int keys that `sorted()` cannot compare).
+#
+# Root cause: `_multistring_dict(ms, handle_to_id)` -- when `handle_to_id` is
+# supplied but a handle `wh` is absent from it -- must still yield a STABLE,
+# CONSISTENTLY-TYPED (all-str) key, never the raw int handle.
+# ============================================================================
+
+def test_divergence_fingerprint_does_not_raise_when_resolver_missing_a_handle():
+    """`source_project`'s own `WritingSystems.GetAll()` registers only "en"
+    (handle 1001) -- but the source ITEM's `Name` multistring ALSO populates
+    a second alt under handle 1003, a handle absent from that resolver
+    entirely (the live corpus condition: a WS handle on the object that the
+    project's own enumeration doesn't surface, e.g. a stale/orphaned
+    writing-system slot). Calling `divergence_fingerprint` with the
+    resulting PARTIAL `handle_to_id` must not raise -- and the fingerprint
+    it returns must be a stable, sortable, ALL-STR-KEYED snapshot (the
+    unresolved handle stringified, never left as a raw `int`)."""
+    guid = "22222222-0000-0000-0000-222222222222"
+    partial_source_project = _FakeWSProject((_FakeWritingSystem("en", 1001),))
+    source_item = _FakePossibility(
+        guid, name_by_handle={1001: "Water", 1003: "Orphan"},
+    )
+    handle_to_id = references._project_handle_to_id(partial_source_project)
+    assert handle_to_id == {1001: "en"}, "sanity: handle 1003 is absent from the resolver"
+
+    fingerprint = references.divergence_fingerprint(
+        source_item, handle_to_id=handle_to_id,
+    )
+
+    name_field = next(part for part in fingerprint if part[0] == "Name")
+    snapshot_pairs = name_field[1]
+    keys = [k for k, _ in snapshot_pairs]
+    assert all(isinstance(k, str) for k in keys), (
+        f"expected an all-str-keyed snapshot (the unresolved handle 1003 "
+        f"stringified), got mixed-type keys: {keys!r}"
+    )
+    assert dict(snapshot_pairs) == {"en": "Water", "1003": "Orphan"}
+
+    # sorted()/sortability itself must not raise (the actual TypeError site).
+    assert tuple(sorted(dict(snapshot_pairs).items())) == (
+        ("1003", "Orphan"), ("en", "Water"),
+    )

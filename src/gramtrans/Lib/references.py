@@ -297,12 +297,22 @@ def _multistring_dict(ms, handle_to_id: dict | None = None) -> dict:
             and/or a `_data` dict).
         handle_to_id: optional ``{ws_handle: ws_id}`` resolver. When given,
             each WS handle key is translated to its portable Id string via
-            this map (falling back to the raw handle for any handle absent
-            from the map). When `None` (the default), keys are the raw
-            handle/whatever `ms` itself exposes -- unchanged legacy shape,
-            used by callers that don't need Id-keyed output at all
-            (`_item_label`; `divergence_fingerprint` compares text VALUES
-            only and never looks at these keys, see its own docstring).
+            this map, falling back to the STRINGIFIED raw handle (`str(wh)`,
+            never the bare `int`) for any handle absent from the map --
+            T037 Finding 1(a) fix: the resolver branch's output MUST be
+            consistently str-keyed (never a mix of resolved str Ids and
+            unresolved int handles), because `divergence_fingerprint`'s
+            resolver-branch path (`tuple(sorted(snapshot.items()))`,
+            references.py ~505) raises `TypeError: '<' not supported between
+            instances of 'int' and 'str'` on a mixed-type-keyed dict -- the
+            live symptom that hit ~164 stem entries when a source item
+            populated a WS handle absent from its own project's
+            `WritingSystems.GetAll()` enumeration. When `None` (the
+            default), keys are the raw handle/whatever `ms` itself exposes
+            -- unchanged legacy shape, used by callers that don't need
+            Id-keyed output at all (`_item_label`; `divergence_fingerprint`'s
+            NO-resolver fallback compares text VALUES only and never looks
+            at these keys, see its own docstring).
 
     WS-keying hardening (this cycle): a real `ICmMultiString` has no Id
     concept of its own (only the project-level `WritingSystems` repo knows
@@ -323,7 +333,12 @@ def _multistring_dict(ms, handle_to_id: dict | None = None) -> dict:
                 tss, wh = res if isinstance(res, tuple) else (res, None)
                 text = getattr(tss, "Text", None)
                 if text:
-                    key = handle_to_id.get(wh, wh) if handle_to_id else wh
+                    # T037 Finding 1(a): when a resolver IS supplied, an
+                    # absent handle must fall back to a STRINGIFIED handle
+                    # (never the bare int) -- see this function's own
+                    # docstring for the mixed-int/str-key TypeError this
+                    # fixes in divergence_fingerprint's resolver branch.
+                    key = (handle_to_id.get(wh) or str(wh)) if handle_to_id else wh
                     out[key] = text
         except Exception:
             # QC P2 fix: a failure partway through (e.g. index i=3 of 10
@@ -338,7 +353,9 @@ def _multistring_dict(ms, handle_to_id: dict | None = None) -> dict:
     if isinstance(data, dict):
         for wh, text in data.items():
             if text:
-                key = handle_to_id.get(wh, wh) if handle_to_id else wh
+                # T037 Finding 1(a): same stringified-fallback fix as the
+                # StringCount branch above.
+                key = (handle_to_id.get(wh) or str(wh)) if handle_to_id else wh
                 out[key] = text
     return out
 
