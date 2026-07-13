@@ -1,5 +1,50 @@
 # GramTrans — Session Handoff
 
+## ▶▶▶ Feature 025 — Full Reversals — SPURT 6 (P0 remediation + gate re-check: GREEN) IN PROGRESS (2026-07-12)
+
+**Worktree**: `D:/Github/_Projects/_LEX/GramTrans-025-full-reversals` on branch
+`025-full-reversals` @ `930fe7c` (clean; NOT merged). **Handoff**:
+`specs/025-full-reversals/.crew-handoff.json`. Cumulative tasks: **T001-T033** (all three user
+stories). **QC GATE: GREEN** — both P0 blockers CLOSED. Remaining: Phase 6 Polish (T034-T037),
+then worktree merge.
+
+**Ralph-loop spurt 6 (LEX crew, cycles 6-7)** — remediation of the two spurt-5 P0 blockers, then a
+focused parallel gate re-check. **Gate verdict: GREEN** (independent QC + verification corroboration).
+
+**Cycle 6 (remediation, committed `930fe7c`)** — one TDD unit, failing test first per fix:
+- **P0-1 CLOSED**: `config_views` decision pass is now provably READ-ONLY. New pure
+  `compute_config_dirs` (path arithmetic, no `makedirs`) is called for both src+tgt in
+  `plan_config_views`; `resolve_config_dirs`/`makedirs` live only in `apply_config_views` (Move).
+  No longer touches the source tree. Docstrings/comment corrected.
+- **P0-2 CLOSED**: `render_preview_extra_lines` composes `render_reversal_decisions` +
+  `render_config_view_records` and is reached from `main_window._on_preview` ->
+  `StatsPanel.set_report(report, extra_lines)` — the reversal Add/Link plan + config-view
+  Add/Overwrite/Skip list ARE now shown before Move (Principle III genuinely holds). Move path
+  unaffected (`extra_lines` defaults to `()`). Previously-false docstrings corrected.
+- **Hardening**: regression test pinning `source=None` at the reversal category decide seam.
+
+**Cycle 7 (gate re-check, parallel lex-qc + lex-verification, read-only)**:
+- QC: both P0s traced CLOSED with file:line evidence.
+- Verification: all 3 new cycle-6 tests are genuine RED tripwires (broke each fix -> test failed ->
+  reverted). Worktree clean at `930fe7c`. Suite **1522 passed / 1 failed / 76 skipped / 14 xfailed
+  / 14 xpassed** — the 1 failure is the pre-existing baseline (`test_wizard_pos_grammar_wiring::
+  test_plan_emits_pos_action_for_picked_pos`, untouched); the 1522-vs-earlier count is benign drift.
+
+**Settled GREEN (do NOT relitigate)**: items 1/2/5 (cycle 5) + both P0s (cycles 6-7).
+**Deferred tech-debt (P1, non-blocking)**: P1-1 (reuse `RunPlan.reversal_decisions` at Move),
+P1-2 (DRY `_target_ws_ids`).
+
+**Next checkpoint (spurt 7): Phase 6 Polish** — T034 (census extension), T035 (unified never-silent
+cross-cutting assertion, still TODO), T036 (regression gate), **T037 (live-MCP quickstart —
+destructive-capable; reaching it -> `needs_human` unless a disposable `-restore`-ready target is
+confirmed)**. T034-T036 are offline/autonomous.
+
+**Reports**: cycle5-qc/verification, cycle6-programmer,
+[cycle7-qc](specs/025-full-reversals/reviews/cycle7-qc.md),
+[cycle7-verification](specs/025-full-reversals/reviews/cycle7-verification.md) (+ cycle1-4 programmer).
+
+---
+
 ## ▶▶▶ Feature 025 — Full Reversals — SPURT 5 (QC + verification gate: RED) IN PROGRESS (2026-07-12)
 
 **Worktree**: `D:/Github/_Projects/_LEX/GramTrans-025-full-reversals` on branch

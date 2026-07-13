@@ -3,38 +3,35 @@
   "created": "2026-07-12",
   "updated": "2026-07-12",
   "status": "in_progress",
-  "spurt": 5,
-  "last_cycle": 5,
-  "checkpoint_completed": "Combined QC + verification gate over US1+US2+US3 — gate RED (2 P0 MUST-FIX)",
-  "qc_gate": "RED (score 78/100; items 1/2/5 ACCEPT, items 3/4 MUST-FIX)",
+  "spurt": 6,
+  "last_cycle": 7,
+  "checkpoint_completed": "P0 remediation (cycle 6) + QC/verification gate re-check GREEN (cycle 7) — both P0 blockers CLOSED",
+  "qc_gate": "GREEN",
   "blocker": null,
   "worktree": {
     "path": "D:/Github/_Projects/_LEX/GramTrans-025-full-reversals",
     "branch": "025-full-reversals",
     "exists": true,
-    "head": "d1f1283",
-    "merged_to_main": false,
-    "note": "clean; cycle 5 was read-only review, no code changed"
+    "head": "930fe7c",
+    "merged_to_main": false
   },
   "dependency_024": { "gate": "T004", "status": "PASS" },
   "tasks_total": 37,
   "tasks_done": ["T001","T002","T003","T004","T005","T006","T007","T008","T009","T010","T011","T012","T013","T014","T015","T016","T017","T018","T019","T020","T021","T022","T023","T024","T025","T026","T027","T028","T029","T030","T031","T032","T033"],
   "all_user_stories_implemented": true,
-  "next_checkpoint": "Remediation spurt (fresh cycle) — fix P0-1 (config_views READ-ONLY in Preview) + P0-2 (surface reversal + config-view plan before Move so Principle III actually holds), TDD; then re-run the QC+verification gate to green. THEN deferred Polish T034-T037.",
-  "next_entry": "Fresh cycle (lex-programmer, TDD) fixing the two P0s in worktree D:/Github/_Projects/_LEX/GramTrans-025-full-reversals (branch 025-full-reversals @ d1f1283). P0-1: config_views.py:115-129 resolve_config_dirs + plan_config_views:311-312 — split path-COMPUTATION from directory-CREATION; Preview only computes the intended TARGET subdir path (never os.makedirs, NEVER touch the source tree); defer makedirs to apply/Move (transfer.py:495). Failing test FIRST in test_preview_no_writes.py (a _FakeProject whose _project_dir does NOT raise, asserting no makedirs / no source mutation during build_run_plan). P0-2: wire render_reversal_decisions + render_config_view_records (preview.py:403,450) into Lib/ui/main_window.py Preview pane so the reversal Add/Link plan + config-view Add/Overwrite/Skip list are shown before Move; correct the false Principle-III docstrings (categories.py:4028, models.py:718,729). Failing test FIRST proving the plan reaches the Preview render path. Fold in: regression test pinning source=None (reversals.py:343); consider P1-1 (reuse RunPlan.reversal_decisions at Move, categories.py:4034) + P1-2 (DRY _target_ws_ids). After GREEN gate re-run: Polish T034-T037 incl. T035 cross-cutting never-silent assertion (still TODO) + live-MCP T037.",
+  "next_checkpoint": "Phase 6 Polish — T034 (extend tests/verification/fidelity_census.py with reversal classes), T035 (unified never-silent cross-cutting assertion — one build_run_plan yielding BOTH reversal owner_kinds AND ConfigView in one dropped_items tuple — still TODO), T036 (regression gate — no-reversal/no-config project plans nothing extra, output identical to a 024-only run), T037 (live-MCP quickstart Scenarios 1-5, Ejagham Mini -> disposable *-GT-Test).",
+  "next_entry": "Start Phase 6 Polish at T034 (offline census extension). T034-T036 are OFFLINE and proceed autonomously. T037 is a destructive-capable live-LCM write — when the Polish spurt reaches T037, set status=needs_human and surface to the user UNLESS a disposable, -restore-ready target is confirmed available.",
+  "t037_warning": "T037 = live-MCP quickstart write against a real FLEx target. Per Ralph handoff protocol a live-LCM write must NOT run unattended. Reaching T037 -> status=needs_human unless a disposable -restore-ready target is confirmed.",
   "carry_forward_settled_green": [
-    "Item 1: US2 decide source=None vs apply target=target_project asymmetry is DELIBERATE and correct (references.py:513-528 fingerprint shapes; source=None keeps both sides positional). Confirmed by verification. DO NOT relitigate.",
-    "Item 2: T021 per-index tripwire is genuine (poisoned Cache), not a tautology — locked by test_target_list_binds_to_index_never_to_lang_project. DO NOT relitigate.",
-    "Item 5: config-view missing_refs use the SINGLE unified dropped_items channel (no separate channel, no owner_kind allow-list). DO NOT relitigate."
+    "Item 1: US2 decide source=None vs apply target=target_project asymmetry is DELIBERATE and correct. DO NOT relitigate.",
+    "Item 2: T021 per-index tripwire is genuine (poisoned Cache), not a tautology. DO NOT relitigate.",
+    "Item 5: config-view missing_refs use the SINGLE unified dropped_items channel. DO NOT relitigate.",
+    "P0-1 CLOSED: config_views decision pass provably read-only (compute_config_dirs pure; makedirs only in apply_config_views at Move). Verified by RED tripwire.",
+    "P0-2 CLOSED: render_preview_extra_lines composes both render fns and is reached from main_window._on_preview -> StatsPanel.set_report(report, extra_lines); Move path unaffected (extra_lines defaults to ()). Docstrings corrected. Verified by RED tripwire."
   ],
-  "open_blockers_p0": [
-    "P0-1 (QC item 4): config_views.resolve_config_dirs os.makedirs on BOTH source+target during Preview — mutates the SOURCE tree; violates preview.py READ-ONLY + contract 'target only'. Test gap: test_preview_no_writes.py _FakeProject short-circuits before makedirs.",
-    "P0-2 (QC item 3): render_reversal_decisions + render_config_view_records are dead code (not called from main_window.py) — reversal Add/Link plan + config-view Add/Overwrite/Skip list never shown before Move (Principle III violation); docstrings falsely claim compliance."
-  ],
-  "hardening_flagged": [
-    "Verification item C: no regression test pins source=None (reversals.py:343) — a future refactor threading source=src_project silently reintroduces the spurious-UPDATE bug.",
-    "QC P1-1: Move recomputes plan_reversals (categories.py:4034) instead of reusing RunPlan.reversal_decisions — Preview/Move divergence risk (tech debt, confirm scope).",
-    "QC P1-2: _target_ws_ids duplicated (reversals.py:133-142 == config_views.py:141-145)."
+  "deferred_tech_debt_p1": [
+    "P1-1: Move recomputes plan_reversals (categories.py:4034) instead of reusing RunPlan.reversal_decisions — Preview/Move divergence risk (non-blocking).",
+    "P1-2: _target_ws_ids duplicated (reversals.py:133-142 == config_views.py:141-145) — DRY (non-blocking)."
   ],
   "reports": [
     "specs/025-full-reversals/reviews/cycle1-programmer.md",
@@ -42,11 +39,14 @@
     "specs/025-full-reversals/reviews/cycle3-programmer.md",
     "specs/025-full-reversals/reviews/cycle4-programmer.md",
     "specs/025-full-reversals/reviews/cycle5-qc.md",
-    "specs/025-full-reversals/reviews/cycle5-verification.md"
+    "specs/025-full-reversals/reviews/cycle5-verification.md",
+    "specs/025-full-reversals/reviews/cycle6-programmer.md",
+    "specs/025-full-reversals/reviews/cycle7-qc.md",
+    "specs/025-full-reversals/reviews/cycle7-verification.md"
   ],
   "notes": [
-    "Pre-existing baseline failure (NOT a 025 regression, authored in ancestor 80586dd): test_wizard_pos_grammar_wiring.py::TestPosClosureWalksPickedPos::test_plan_emits_pos_action_for_picked_pos. Suite: 1494 passed / 9 skipped / 14 xfailed / 14 xpassed / 1 failed.",
+    "Suite (worktree @ 930fe7c): 1522 passed / 1 failed / 76 skipped / 14 xfailed / 14 xpassed. The 1 failure is PRE-EXISTING baseline test_wizard_pos_grammar_wiring::test_plan_emits_pos_action_for_picked_pos (untouched) — NOT a 025 regression. The 1522-vs-earlier-1499 count is benign baseline drift.",
     "Implementation on the 025 worktree; spec artifacts (specs/, STATUS.md, .crew-handoff.json) on main.",
-    "Remaining: remediation (2 P0) -> re-run gate green -> Polish (T034-T037) -> worktree merge. Feature NOT complete."
+    "Merge to main happens ONLY after Polish (T034-T037) + validation, all gates green. Feature NOT complete."
   ]
 }
