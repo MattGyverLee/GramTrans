@@ -1,5 +1,50 @@
 # GramTrans — Session Handoff
 
+## ▶▶▶ Feature 025 — Full Reversals — SPURT 3 (Phase 4 US2) IN PROGRESS (2026-07-12)
+
+**Worktree**: `D:/Github/_Projects/_LEX/GramTrans-025-full-reversals` on branch
+`025-full-reversals` @ `d84fc0b` (parent `48b2d75`). **Handoff**:
+`specs/025-full-reversals/.crew-handoff.json`. Cumulative tasks done: **T001-T027**
+(Phase 1+2 scaffold + US1 + US2). Remaining: US3 (T028-T033), Polish (T034-T037).
+
+**Ralph-loop spurt 3 (LEX crew, cycle 3)** — checkpoint = Phase 4 US2 (reversal categories
+resolve against the per-index `PartsOfSpeechOA` via the 024 three-way resolver), **DONE** as one
+TDD unit (committed `d84fc0b`):
+- **RED→GREEN**: T021-T024 tests confirmed RED against the US1 LINK-if-present stub, then GREEN.
+- **T025-T027**: `PartOfSpeechRA` now routes through `references.decide_reference`/`apply_reference`
+  against the target **reversal index's** `PartsOfSpeechOA` (CREATE+ancestors / UPDATE /
+  LINK+REPORT / LINK), shared per-run `resolver_cache`, dropped records enriched with
+  `ReversalIndexEntry` owner identity + `PartOfSpeechRA` field, flowing into the unified 024 report.
+- **Per-index binding intact**: `LangProject.PartsOfSpeechOA` never touched (T021 tripwire passes).
+  None-index guard reports `"target reversal category list absent"` (no crash).
+- **No new regressions**: full suite 1483 passed / 10 skipped / 14 xfailed / 14 xpassed / **1 failed**
+  — the 1 failure is the same **pre-existing baseline** (`test_wizard_pos_grammar_wiring.py::...::
+  test_plan_emits_pos_action_for_picked_pos`, verified via git stash), NOT a 025 regression.
+
+**Two load-bearing US2 deviations (in-line documented; MANDATORY QC line-items):**
+1. **Decide-side**: `_decide_reversal_category` calls `decide_reference` with `source=None` (a real
+   source against an index-shaped target breaks `_fields_identical` tuple-shape symmetry → spurious
+   UPDATE on byte-identical content).
+2. **Apply-side**: `_apply_pos_decision` passes `target=target_project` (real FLExProject) with a
+   per-call `ReferenceFieldSpec` (`dataclasses.replace` closing `target_list_path` over the resolved
+   `target_index.PartsOfSpeechOA`) — a bare `IReversalIndex` lacks `.GetFactory`/`.PossibilityLists`,
+   so a literal `target=target_index` would `AttributeError` and silently no-op every write.
+
+**Carry-forward**: (1) `preview.render_reversal_decisions` still not wired into UI Preview pane.
+(2) **QC recommendation**: run ONE combined lex-qc + lex-verification cycle over the full
+US1+US2+US3 surface immediately before Polish (incl. live MCP T037) — must adjudicate the two
+deviations above + the T021 tripwire.
+
+**Next checkpoint (spurt 4)**: Phase 5 US3 (T028-T033) — `.fwdictconfig` dictionary + reversal
+config-view file copy (Add/Overwrite/Skip + absent-reference reporting) in the independent
+`config_views.py`; do NOT modify US1/US2 code. TDD: T028-T030 tests first, then T031-T033.
+
+**Reports**: [cycle1](specs/025-full-reversals/reviews/cycle1-programmer.md),
+[cycle2](specs/025-full-reversals/reviews/cycle2-programmer.md),
+[cycle3](specs/025-full-reversals/reviews/cycle3-programmer.md).
+
+---
+
 ## ▶▶▶ Feature 025 — Full Reversals — SPURT 2 (Phase 3 US1) IN PROGRESS (2026-07-12)
 
 **Worktree**: `D:/Github/_Projects/_LEX/GramTrans-025-full-reversals` on branch
