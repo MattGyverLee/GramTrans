@@ -355,3 +355,45 @@ def test_move_and_preview_drop_sets_identical_for_moaffix_msenv_fields():
 
     assert _key(move_dropped) == _key(preview_dropped)
     assert len(move_dropped) == 4
+
+
+# ============================================================================
+# T037 Finding 1(b) -- `_plan_entry_reference_decisions`'s catch-all must
+# EMIT a DroppedItemRecord, never silently `return ()` (Principle III /
+# FR-010). Before this fix the broad `except (AttributeError, TypeError,
+# KeyError)` at categories.py:3480-3488 only logged a warning and returned
+# an empty tuple -- any residual reference-decision failure for an entry
+# vanished with no trace in `RunPlan.dropped_items`.
+# ============================================================================
+
+def test_plan_entry_reference_decisions_catchall_emits_dropped_record(monkeypatch):
+    """Force a TypeError inside the try body (the resolver-cache lookup, the
+    first call `_plan_entry_reference_decisions` makes after establishing
+    `dropped`) and assert the except handler appends exactly one
+    `DroppedItemRecord` to the run's `dropped` sink -- never a silent `()`."""
+    entry = _FakeSourceEntry("entry-guid-catchall")
+
+    def _boom(_context):
+        raise TypeError("forced failure for T037 Finding 1(b) regression")
+
+    monkeypatch.setattr(categories, "_get_resolver_cache", _boom)
+
+    preview_dropped: list = []
+    ctx = _FakeRunContext(source_handle=object())
+    ctx._dropped = preview_dropped
+
+    result = categories._plan_entry_reference_decisions(entry, ctx, target=object())
+
+    assert result == (), "the fail-soft return value itself is unchanged (empty tuple)"
+    assert len(preview_dropped) == 1, (
+        f"expected exactly one DroppedItemRecord surfacing the forced "
+        f"TypeError, got {preview_dropped!r} -- a silent () violates "
+        f"Principle III / FR-010"
+    )
+    record = preview_dropped[0]
+    assert isinstance(record, DroppedItemRecord)
+    assert record.owner_kind == "LexEntry"
+    assert record.owner_guid == "entry-guid-catchall"
+    assert record.item_guid == "entry-guid-catchall"
+    assert "TypeError" in record.reason
+    assert "forced failure for T037 Finding 1(b) regression" in record.reason

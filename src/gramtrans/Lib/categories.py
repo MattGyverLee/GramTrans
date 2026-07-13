@@ -3479,12 +3479,42 @@ def _plan_entry_reference_decisions(src_entry, context, target):
         return tuple(records)
     except (AttributeError, TypeError, KeyError) as exc:
         import logging as _logging
+        # T037 Finding 1(b) (fidelity-critical, never-silent): the prior
+        # version of this handler logged a warning and `return ()`ed with NO
+        # `DroppedItemRecord` -- any real reference/owned-object decision
+        # this entry's closure would have produced (LINK/CREATE/UPDATE for
+        # every sense, allomorph, owned child) vanished with no trace in
+        # `RunPlan.dropped_items`, violating FR-010 / Principle III. Guard
+        # the GUID extraction itself (the same call this handler's own log
+        # line used unprotected before -- if THAT also raises, e.g. because
+        # the underlying exception came from a duck-typing gap on
+        # `src_entry` itself, we still must not let the except handler
+        # itself throw) and always append a best-effort report.
+        try:
+            entry_guid = _guid_str_from(src_entry)
+        except Exception:
+            entry_guid = ""
         _logging.getLogger("gramtrans.Lib.categories").warning(
             "_plan_entry_reference_decisions: %s on entry %s -- returning "
             "no reference decisions for this entry.",
-            type(exc).__name__, _guid_str_from(src_entry),
+            type(exc).__name__, entry_guid,
             exc_info=True,
         )
+        try:
+            dropped = getattr(context, "_dropped", None)
+        except Exception:
+            dropped = None
+        if dropped is not None:
+            _append_dropped_once(dropped, DroppedItemRecord(
+                owner_kind="LexEntry",
+                owner_guid=entry_guid,
+                owner_label="",
+                field_name="EntryReferenceDecisions",
+                item_name="",
+                item_guid=entry_guid,
+                reason=f"reference-decision planning failed: "
+                       f"{type(exc).__name__}: {exc}",
+            ))
         return ()
 
 

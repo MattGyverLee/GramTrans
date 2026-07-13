@@ -33,7 +33,9 @@ if __package__:
         SkipReason,
         WSMapping,
     )
+    from .ws_mapping import to_ws_map_dict
 else:
+    from ws_mapping import to_ws_map_dict  # type: ignore
     from models import (
         CategoryScope,
         CreateDefinitionAction,
@@ -311,6 +313,21 @@ def build_run_plan(
     # in `_dropped` (folded into `dropped_items` below); `_reversal_decisions`
     # carries the Add/Link decisions themselves for Preview rendering
     # (`render_reversal_decisions`, below) before Move ever writes.
+    # T037 Finding 2 (Preview/Move parity, feature-025 cycle-10 remediation):
+    # thread the caller's WSMapping into `context._ws_map` -- the SAME
+    # ``{source_ws_id: target_ws_id}`` dict shape `transfer.execute` computes
+    # via this exact helper (`Lib/transfer.py:182`) and attaches to its own
+    # exec_ctx (`Lib/transfer.py:353`) BEFORE calling
+    # `reproduce_reversal_entries` -> `reversals.plan_reversals`. Without
+    # this, `reversals.plan_reversals`'s `getattr(ctx, "_ws_map", None) or {}`
+    # read (`Lib/reversals.py:443`) always fell back to `{}` (identity) here
+    # in Preview, so a non-identity mapping's reversal-index target WS could
+    # never be correctly predicted before Move ever writes. Set BEFORE
+    # `plan_reversal_decisions` (immediately below) so its whole reversal
+    # walk -- and any other reversal-path reader added later -- sees the
+    # real mapping.
+    object.__setattr__(context, '_ws_map', to_ws_map_dict(ws_mapping))
+
     if __package__:
         from .categories import plan_reversal_decisions
     else:
