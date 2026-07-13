@@ -69,17 +69,17 @@ the Preview listed one Link row per association (quickstart Steps 2–3).
 
 ### Tests for User Story 1 ⚠️ (write first, must FAIL before implementation)
 
-- [ ] T006 [P] [US1] In `tests/unit/test_031_infl_feature_linking.py`: test that plan-building gathers one `(target_pos_guid, feature_guid)` link per source `POS.InflectableFeatsRC` member in scope (contract C1 COUNT).
-- [ ] T007 [P] [US1] In `tests/unit/test_031_infl_feature_linking.py`: test the wiring post-pass adds the feature to a mocked target `InflectableFeatsRC` exactly once, is idempotent on a second run, and is order-independent (contract C2 IDEMPOTENT/ORDER-INDEPENDENT).
-- [ ] T008 [P] [US1] In `tests/unit/test_031_infl_feature_linking.py`: test that a missing feature OR missing POS endpoint yields a reported `Skip(DEPENDENCY_UNRESOLVED)` and performs NO `.Add` (contract C2 DEFERRED-NOT-DANGLING / VR-4).
+- [X] T006 [P] [US1] In `tests/unit/test_031_infl_feature_linking.py`: test that plan-building gathers one `(target_pos_guid, feature_guid)` link per source `POS.InflectableFeatsRC` member in scope (contract C1 COUNT).
+- [X] T007 [P] [US1] In `tests/unit/test_031_infl_feature_linking.py`: test the wiring post-pass adds the feature to a mocked target `InflectableFeatsRC` exactly once, is idempotent on a second run, and is order-independent (contract C2 IDEMPOTENT/ORDER-INDEPENDENT).
+- [X] T008 [P] [US1] In `tests/unit/test_031_infl_feature_linking.py`: test that a missing feature OR missing POS endpoint yields a reported `Skip(DEPENDENCY_UNRESOLVED)` and performs NO `.Add` (contract C2 DEFERRED-NOT-DANGLING / VR-4).
 
 ### Implementation for User Story 1
 
-- [ ] T009 [US1] In `src/gramtrans/Lib/categories.py` (or the plan-builder path in `src/gramtrans/Lib/preview.py`): during plan-building, for each in-scope POS read source `InflectableFeatsRC` and record `(target_pos_guid, feature_guid)` links into the `FeatureCategoryLink` binding (contract C1).
-- [ ] T010 [US1] In `src/gramtrans/Lib/preview.py`: surface each link binding as a distinct Preview row with proposed action **Link** (already-present pairs shown as SKIP/already-linked) so preview count == committed count (contract C1 / VR-5 / SC-004).
-- [ ] T011 [US1] In `src/gramtrans/Lib/categories.py`: implement `_run_infl_feature_link_pass(context, target, tag=None) -> list[Skip]` modeled on `_run_post_pass_a` — resolve endpoints (in-plan then `get_object_by_guid`), cast POS to `IPartOfSpeech`, membership-guard, `InflectableFeatsRC.Add`, emit Skips for unresolved endpoints (contract C2).
-- [ ] T012 [US1] In `src/gramtrans/Lib/categories.py` / `src/gramtrans/Lib/transfer.py`: register the post-pass via `_run_tail_once` so it runs exactly once in Move after both `GRAM_CATEGORIES` and `INFLECTION_FEATURES` actions execute; fold its Skips into `context._exec_skips` (no silent skips).
-- [ ] T013 [US1] Ensure emitted Skips appear in the post-run statistics panel (verify wiring to the existing skip-reporting path; add coverage in `tests/unit/test_031_infl_feature_linking.py`).
+- [X] T009 [US1] In `src/gramtrans/Lib/categories.py` (or the plan-builder path in `src/gramtrans/Lib/preview.py`): during plan-building, for each in-scope POS read source `InflectableFeatsRC` and record `(target_pos_guid, feature_guid)` links into the `FeatureCategoryLink` binding (contract C1).
+- [X] T010 [US1] In `src/gramtrans/Lib/preview.py`: surface each link binding as a distinct Preview row with proposed action **Link** (already-present pairs shown as SKIP/already-linked) so preview count == committed count (contract C1 / VR-5 / SC-004).
+- [X] T011 [US1] In `src/gramtrans/Lib/categories.py`: implement `_run_infl_feature_link_pass(context, target, tag=None) -> list[Skip]` modeled on `_run_post_pass_a` — resolve endpoints (in-plan then `get_object_by_guid`), cast POS to `IPartOfSpeech`, membership-guard, `InflectableFeatsRC.Add`, emit Skips for unresolved endpoints (contract C2).
+- [X] T012 [US1] In `src/gramtrans/Lib/categories.py` / `src/gramtrans/Lib/transfer.py`: register the post-pass via `_run_tail_once` so it runs exactly once in Move after both `GRAM_CATEGORIES` and `INFLECTION_FEATURES` actions execute; fold its Skips into `context._exec_skips` (no silent skips).
+- [X] T013 [US1] Ensure emitted Skips appear in the post-run statistics panel (verify wiring to the existing skip-reporting path; add coverage in `tests/unit/test_031_infl_feature_linking.py`).
 
 **Checkpoint**: Features become selectable on lexical entries; links are preview-visible and Move-only.
 
@@ -96,14 +96,14 @@ exist (quickstart Step 4 / SC-002 / SC-003).
 
 ### Tests for User Story 2 ⚠️ (write first, must FAIL before implementation)
 
-- [ ] T014 [P] [US2] In `tests/unit/test_categories_inflection_features.py`: test that feature and value `Name`/`Abbreviation`/`Description` are written using the TARGET writing-system handle (via `ws_map`), asserting a source string in WS X lands in target WS X and the name is non-empty in the target default analysis WS (contract C3 NON-NULL-NAME / WS-FIDELITY / VR-2).
-- [ ] T015 [P] [US2] In `tests/unit/test_categories_inflection_features.py`: test that a feature present in the target by feature-level GUID is classified `in_target` (not `new`) and is NOT re-created on re-run (contract C4 / VR-1).
+- [X] T014 [P] [US2] In `tests/unit/test_categories_inflection_features.py`: test that feature and value `Name`/`Abbreviation`/`Description` are written using the TARGET writing-system handle (via `ws_map`), asserting a source string in WS X lands in target WS X and the name is non-empty in the target default analysis WS (contract C3 NON-NULL-NAME / WS-FIDELITY / VR-2).
+- [X] T015 [P] [US2] In `tests/unit/test_categories_inflection_features.py`: test that a feature present in the target by feature-level GUID is classified `in_target` (not `new`) and is NOT re-created on re-run (contract C4 / VR-1).
 
 ### Implementation for User Story 2
 
-- [ ] T016 [US2] In `src/gramtrans/Lib/categories.py` `inflection_features_execute_action`: replace the raw source-handle string copy (currently `all_ws` built from `source.WritingSystems` written directly) with a WS-mapped copy — prefer `InflectionFeature.ApplySyncableProperties(..., ws_map=ws_mapping)` per T004; else translate source→target handles via `ws_mapping`. Apply to both the feature and each `IFsSymFeatVal` value (contract C3).
-- [ ] T017 [US2] In `src/gramtrans/Lib/selection.py`: split `_gather_target_infl_feat_guids` (or its callers) into a feature-level GUID set and a value-level GUID set; classify feature rows (`depth=0`) against the feature-level set and value rows (`depth=1`) against the value-level set (contract C4 / data-model dedup sets).
-- [ ] T018 [US2] In `src/gramtrans/Lib/categories.py`: verify `inflection_features_plan_action` / `_plan_gold_reserved_edit` emit `ADD` only when the feature-level GUID is absent from the target, and that `inflection_features_execute_action` does not create a fresh-GUID twin when `factory.Create(parsed_guid, ...)` is unavailable (fail-loud, not silent duplicate) — add regression coverage in `tests/unit/test_categories_inflection_features.py`.
+- [X] T016 [US2] In `src/gramtrans/Lib/categories.py` `inflection_features_execute_action`: replace the raw source-handle string copy (currently `all_ws` built from `source.WritingSystems` written directly) with a WS-mapped copy — prefer `InflectionFeature.ApplySyncableProperties(..., ws_map=ws_mapping)` per T004; else translate source→target handles via `ws_mapping`. Apply to both the feature and each `IFsSymFeatVal` value (contract C3).
+- [X] T017 [US2] In `src/gramtrans/Lib/selection.py`: split `_gather_target_infl_feat_guids` (or its callers) into a feature-level GUID set and a value-level GUID set; classify feature rows (`depth=0`) against the feature-level set and value rows (`depth=1`) against the value-level set (contract C4 / data-model dedup sets).
+- [X] T018 [US2] In `src/gramtrans/Lib/categories.py`: verify `inflection_features_plan_action` / `_plan_gold_reserved_edit` emit `ADD` only when the feature-level GUID is absent from the target, and that `inflection_features_execute_action` does not create a fresh-GUID twin when `factory.Create(parsed_guid, ...)` is unavailable (fail-loud, not silent duplicate) — add regression coverage in `tests/unit/test_categories_inflection_features.py`.
 
 **Checkpoint**: Features/values always named; re-run adds nothing new.
 
