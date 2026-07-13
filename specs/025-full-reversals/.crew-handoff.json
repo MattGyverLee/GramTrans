@@ -1,0 +1,37 @@
+{
+  "feature": "025-full-reversals",
+  "created": "2026-07-12",
+  "updated": "2026-07-12",
+  "status": "in_progress",
+  "spurt": 1,
+  "last_cycle": 1,
+  "checkpoint_completed": "Phase 1 Setup (T001-T003) + Phase 2 Foundational (T004-T008)",
+  "blocker": null,
+  "worktree": {
+    "path": "D:/Github/_Projects/_LEX/GramTrans-025-full-reversals",
+    "branch": "025-full-reversals",
+    "exists": true,
+    "head": "241dbeb"
+  },
+  "dependency_024": {
+    "gate": "T004",
+    "status": "PASS",
+    "evidence": "decide_reference/apply_reference, ReferenceFieldSpec, walk_owned_children, FidelityStatus/DroppedItemRecord all present in worktree after branch-off main@d58fd6b."
+  },
+  "tasks_total": 37,
+  "tasks_done": ["T001", "T002", "T003", "T004", "T005", "T006", "T007", "T008"],
+  "next_checkpoint": "Phase 3 US1 (T009-T020) — reversal entries ride along with copied senses. TDD order: author T009-T013 reversal-walk tests first (must FAIL), then T014-T020 implementation (plan_reversals, sub-entry builder, apply_reversals, residue, categories/preview/transfer wiring).",
+  "next_entry": "In worktree D:/Github/_Projects/_LEX/GramTrans-025-full-reversals (branch 025-full-reversals @ 241dbeb), begin Phase 3 US1 by authoring T009-T013 tests replacing the scaffold skips BEFORE writing plan_reversals/apply_reversals bodies.",
+  "carry_forward": [
+    "T005 shape: ReversalFieldSpec is not literally defined in data-model.md (only ReversalDecision implied). Programmer split it into field-shape spec vs per-entry decision output mirroring 024's ReferenceFieldSpec/ReferenceDecision. Nothing consumes these frozen dataclasses yet — first US1 consumer (T014) should confirm or revise the shape.",
+    "T007 was documentation-only: no owner_kind whitelist/enum exists to extend; the three new owner_kinds (ReversalIndexEntry, ReversalIndex, ConfigView) are documented near DroppedItemRecord."
+  ],
+  "reports": [
+    "specs/025-full-reversals/reviews/cycle1-programmer.md"
+  ],
+  "notes": [
+    "Implementation work stays on the 025 worktree per CLAUDE.md git protocol; spec artifacts (specs/, STATUS.md, .crew-handoff.json) commit to main.",
+    "Reversal categories target per-index PartsOfSpeechOA, never LangProject.PartsOfSpeechOA.",
+    "Live validation via FLExTools MCP against Ejagham Mini -> Ejagham Full GT-Test (deferred to Polish T037)."
+  ]
+}

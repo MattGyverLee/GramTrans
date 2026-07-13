@@ -1,5 +1,38 @@
 # GramTrans — Session Handoff
 
+## ▶▶▶ Feature 025 — Full Reversals — SPURT 1 (Phase 1+2 scaffold) IN PROGRESS (2026-07-12)
+
+**Spec**: [specs/025-full-reversals/](specs/025-full-reversals/) — spec (stub) + plan +
+research + data-model + contracts + quickstart + tasks (37). **Depends on 024** (merged to
+main at `d58fd6b`; reuse surface `references.py`/`owned.py`/`report.py` confirmed present).
+**Worktree**: `D:/Github/_Projects/_LEX/GramTrans-025-full-reversals` on branch
+`025-full-reversals` @ `241dbeb`. **Handoff**: `specs/025-full-reversals/.crew-handoff.json`.
+
+**Ralph-loop spurt 1 (LEX crew, cycle 1)** — checkpoint = Phase 1 Setup + Phase 2 Foundational,
+**DONE**:
+- **T001-T003**: scaffolded `Lib/reversals.py` (Part A), `Lib/config_views.py` (Part B), and 3
+  skip-placeholder test files (`test_reversal_walk.py`, `test_reversal_category_resolve.py`,
+  `test_config_view_copy.py`) — collect cleanly (3 skipped, 0 errors).
+- **T004** (024 dependency gate): **PASS** — `decide_reference`/`apply_reference`,
+  `ReferenceFieldSpec`, `walk_owned_children`, `FidelityStatus`/`DroppedItemRecord` all present.
+- **T005-T008**: `ReversalFieldSpec`/`ReversalDecision`/`ConfigViewRecord` (+`ConfigViewAction`
+  enum) dataclasses in `models.py`; owner_kinds documented (T007 **documentation-only** — no
+  owner_kind whitelist exists to extend); `REVERSAL_FIELD_MAP` (PartOfSpeechRA / SensesRS /
+  ReversalForm / SubentriesOS) in `reversals.py`. Import smoke-test green.
+- Scope discipline: scaffolding + shared-infra only, no `plan_reversals`/`apply_reversals` bodies.
+
+**Carry-forward (not a blocker)**: `ReversalFieldSpec` is not literally in `data-model.md` (only
+`ReversalDecision` implied); programmer made a reasoned 024-mirroring split. Nothing consumes
+these frozen dataclasses yet — the first US1 consumer (T014) should confirm or revise the shape.
+
+**Next checkpoint (spurt 2)**: Phase 3 US1 (T009-T020) — reversal entries ride along with copied
+senses. TDD: author T009-T013 reversal-walk tests first (must FAIL), then T014-T020
+implementation. See `.crew-handoff.json` `next_entry`.
+
+**Programmer report**: [specs/025-full-reversals/reviews/cycle1-programmer.md](specs/025-full-reversals/reviews/cycle1-programmer.md).
+
+---
+
 ## ▶▶▶ Phonological-rule deep-copy fix — CREW-APPROVED & COMMITTED (2026-07-09)
 
 **Commit**: `3792e6d` on `main` — `fix(gram): deep-copy phonological rule bodies +
