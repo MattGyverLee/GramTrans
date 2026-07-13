@@ -356,6 +356,10 @@ def gram_categories_plan_action(piece, context: RunContext, ws_mapping: WSMappin
             return target.POS.GetAll(recursive=True)
         return ()
 
+    # 031 US1 (C1): gather this POS's feature->category links for the Move
+    # wiring post-pass, whether the POS is created (ADD) or matched (SKIP).
+    _stash_feature_category_links(piece, context)
+
     result = _plan_gold_reserved_edit(
         piece, GrammarCategory.GRAM_CATEGORIES, context, _target_iter,
     )
@@ -529,6 +533,92 @@ def inflection_features_plan_action(piece, context: RunContext, ws_mapping: WSMa
     )
 
 
+def _ws_map_dict(ws_mapping):
+    """Normalize the execute-time `ws_mapping` arg into a
+    ``{source_ws_id: target_ws_id}`` dict.
+
+    At Move time transfer.execute passes the already-flattened dict
+    (`Lib/ws_mapping.py.to_ws_map_dict`); a WSMapping object (or None) is also
+    accepted so the function is callable directly in tests."""
+    if ws_mapping is None:
+        return {}
+    if isinstance(ws_mapping, dict):
+        return ws_mapping
+    if hasattr(ws_mapping, "entries"):
+        if __package__:
+            from .ws_mapping import to_ws_map_dict
+        else:
+            from ws_mapping import to_ws_map_dict  # type: ignore
+        return to_ws_map_dict(ws_mapping)
+    return {}
+
+
+def _tss_read_text(tss):
+    """Read `.Text` from an ITsString (via cast on the live runtime) or a
+    duck-typed fake offline. SIL-optional."""
+    try:
+        from SIL.LCModel.Core.KernelInterfaces import ITsString
+    except Exception:  # noqa: BLE001 -- offline: no pythonnet
+        return getattr(tss, "Text", tss)
+    return ITsString(tss).Text
+
+
+def _tss_make_string(text, handle):
+    """Build an ITsString for `text` on `handle` (live) or return the plain text
+    offline. SIL-optional."""
+    try:
+        from SIL.LCModel.Core.Text import TsStringUtils
+    except Exception:  # noqa: BLE001 -- offline: no pythonnet
+        return text
+    return TsStringUtils.MakeString(text, handle)
+
+
+def _copy_multistrings_ws_mapped(src_typed, new_typed, prop_names, *,
+                                 source, target, ws_map,
+                                 read_text=None, make_string=None):
+    """Copy each multistring property from `src_typed` to `new_typed`, writing
+    every value to the TARGET writing-system handle for its (mapped) WS Id --
+    never the raw source handle (031 US2, contract C3).
+
+    This is the explicit source->target handle-translation path mandated for
+    IFsSymFeatVal values (research.md T004-A: the flexicon Operations
+    GetSyncableProperties surface is unconfirmed for symbolic values). A source
+    WS with no target counterpart (after mapping) is skipped, so a string is
+    never written to a wrong/absent handle -- the WS-FIDELITY guarantee that
+    stops the bare-GUID-feature defect (research.md T004-B).
+
+    `read_text`/`make_string` isolate the SIL ITsString / TsStringUtils calls so
+    this stays import-safe and unit-testable offline; the live executor passes
+    the real callables (or lets these SIL-optional defaults resolve them)."""
+    if read_text is None:
+        read_text = _tss_read_text
+    if make_string is None:
+        make_string = _tss_make_string
+    ws_map = ws_map or {}
+    try:
+        src_id_by_handle = {ws.Handle: ws.Id for ws in source.WritingSystems.GetAll()}
+    except (AttributeError, TypeError):
+        src_id_by_handle = {}
+    try:
+        tgt_handle_by_id = {ws.Id: ws.Handle for ws in target.WritingSystems.GetAll()}
+    except (AttributeError, TypeError):
+        tgt_handle_by_id = {}
+    for prop_name in prop_names:
+        src_prop = getattr(src_typed, prop_name, None)
+        tgt_prop = getattr(new_typed, prop_name, None)
+        if src_prop is None or tgt_prop is None:
+            continue
+        for src_handle, src_id in src_id_by_handle.items():
+            text = read_text(src_prop.get_String(src_handle))
+            if not text:
+                continue
+            tgt_id = ws_map.get(src_id, src_id)  # identity when unmapped
+            tgt_handle = tgt_handle_by_id.get(tgt_id)
+            if tgt_handle is None:
+                continue  # no counterpart target WS -> skip (never wrong handle)
+            tgt_prop.set_String(tgt_handle, make_string(text, tgt_handle))
+
+
 def inflection_features_execute_action(action: PlannedAction, context: RunContext, ws_mapping: WSMapping, tag: ImportResidueTag):
     """Create an IFsClosedFeature in the target with GUID preserved.
 
@@ -539,6 +629,20 @@ def inflection_features_execute_action(action: PlannedAction, context: RunContex
 
     Values (IFsSymFeatVal) are co-created via CreateValue so they land
     in the same transaction.  Carrier B residue is applied.
+
+    031 US2: `Name`/`Abbreviation`/`Description` are copied through
+    writing-system mapping (contract C3) -- the feature via the flexicon
+    Operations `ApplySyncableProperties(..., ws_map=...)` surface (mirrors the
+    POS path, research.md T004-A), each IFsSymFeatVal value via the explicit
+    `_copy_multistrings_ws_mapped` handle-translation fallback (the Operations
+    surface is unconfirmed for symbolic values). The prior code wrote names with
+    the raw SOURCE handle, landing them on a wrong/absent target WS -- the
+    bare-GUID-feature defect (research.md T004-B).
+
+    031 US1: after the LAST INFLECTION_FEATURES action, the feature->category
+    wiring post-pass runs exactly once (via `_run_tail_once`), populating each
+    target POS `InflectableFeatsRC`. The tail is invoked from a `finally` so it
+    still fires when an individual feature action returns early or raises.
     """
     from SIL.LCModel import IFsClosedFeatureFactory, IFsClosedFeature, IFsSymFeatValFactory, IFsSymFeatVal
     from System import Guid as DotNetGuid
@@ -552,97 +656,109 @@ def inflection_features_execute_action(action: PlannedAction, context: RunContex
     target = context.target_handle
     src_guid = action.source_guid
 
-    # Locate source feature.
-    src_feat = None
-    for f in source.InflectionFeatures.FeatureGetAll():
-        if _guid_str_from(f) == src_guid:
-            src_feat = f
-            break
-    if src_feat is None:
-        return None
-
-    cache = getattr(target, "Cache")
-    ws = cache.DefaultAnalWs
-    feature_system = cache.LangProject.MsFeatureSystemOA
-    parsed_guid = DotNetGuid.Parse(src_guid)
-
-    sl = cache.ServiceLocator
-    factory = sl.GetService(IFsClosedFeatureFactory)
-
-    # Path A: 2-arg Create(Guid, featureSystem).
-    new_feat = None
     try:
-        new_feat = factory.Create(parsed_guid, feature_system)
-    except Exception:
+        # Locate source feature.
+        src_feat = None
+        for f in source.InflectionFeatures.FeatureGetAll():
+            if _guid_str_from(f) == src_guid:
+                src_feat = f
+                break
+        if src_feat is None:
+            return None
+
+        cache = getattr(target, "Cache")
+        ws = cache.DefaultAnalWs
+        feature_system = cache.LangProject.MsFeatureSystemOA
+        parsed_guid = DotNetGuid.Parse(src_guid)
+
+        sl = cache.ServiceLocator
+        factory = sl.GetService(IFsClosedFeatureFactory)
+
+        # Path A: 2-arg Create(Guid, featureSystem).
         new_feat = None
-
-    if new_feat is None:
-        # Path B: Create(Guid) + Add.
         try:
-            new_feat = factory.Create(parsed_guid)
+            new_feat = factory.Create(parsed_guid, feature_system)
         except Exception:
-            new_feat = factory.Create()
-        feature_system.FeaturesOC.Add(new_feat)
+            new_feat = None
 
-    new_feat = IFsClosedFeature(new_feat)
-
-    # Apply syncable properties (Name, Abbreviation, Description).
-    # InflectionFeatureOperations.GetSyncableProperties works on IMoInflClass;
-    # for features we read properties directly.
-    src_feat_typed = IFsClosedFeature(src_feat)
-    from SIL.LCModel.Core.KernelInterfaces import ITsString
-    from SIL.LCModel.Core.Text import TsStringUtils
-    all_ws = {ws_obj.Id: ws_obj.Handle for ws_obj in source.WritingSystems.GetAll()}
-    for prop_name in ("Name", "Abbreviation", "Description"):
-        src_prop = getattr(src_feat_typed, prop_name, None)
-        tgt_prop = getattr(new_feat, prop_name, None)
-        if src_prop is None or tgt_prop is None:
-            continue
-        for ws_id, ws_handle in all_ws.items():
-            text = ITsString(src_prop.get_String(ws_handle)).Text
-            if text:
-                tgt_prop.set_String(ws_handle, TsStringUtils.MakeString(text, ws_handle))
-
-    # Co-create values (IFsSymFeatVal) with their canonical GUIDs.
-    # P0-A hardening: the 2-arg Create attaches automatically; the 1-arg
-    # path guards Add with _safe_add_to_owner.  No no-arg fallback --
-    # if Create(Guid) is unsupported on this LCM build we fail loud
-    # rather than silently produce GUID-misaligned values.
-    val_factory = sl.GetService(IFsSymFeatValFactory)
-    if hasattr(src_feat_typed, "ValuesOC"):
-        for src_val in src_feat_typed.ValuesOC:
-            val_guid = _guid_str_from(src_val)
-            parsed_val_guid = DotNetGuid.Parse(val_guid)
-            new_val = None
+        if new_feat is None:
+            # Path B: Create(Guid) + guarded Add. No no-arg fallback -- if
+            # Create(Guid) is unsupported we fail loud rather than silently
+            # produce a fresh-GUID duplicate feature on re-run (031 US2, C4/VR-1;
+            # research.md R3 dedup). Mirrors the value path's fail-loud posture.
             try:
-                new_val = val_factory.Create(parsed_val_guid, new_feat)
-            except Exception:
-                new_val = None
-            if new_val is None:
-                try:
-                    new_val = val_factory.Create(parsed_val_guid)
-                except Exception as e:
-                    raise RuntimeError(
-                        f"IFsSymFeatValFactory does not support Create(Guid); "
-                        f"cannot align value GUID {val_guid} on feature {src_guid}"
-                    ) from e
-                _safe_add_to_owner(new_val, new_feat.ValuesOC,
-                                   "IFsSymFeatValFactory", val_guid)
-            new_val = IFsSymFeatVal(new_val)
-            src_val_typed = IFsSymFeatVal(src_val)
-            for prop_name in ("Name", "Abbreviation", "Description"):
-                src_p = getattr(src_val_typed, prop_name, None)
-                tgt_p = getattr(new_val, prop_name, None)
-                if src_p is None or tgt_p is None:
-                    continue
-                for ws_id, ws_handle in all_ws.items():
-                    text = ITsString(src_p.get_String(ws_handle)).Text
-                    if text:
-                        tgt_p.set_String(ws_handle, TsStringUtils.MakeString(text, ws_handle))
+                new_feat = factory.Create(parsed_guid)
+            except Exception as e:
+                raise RuntimeError(
+                    f"IFsClosedFeatureFactory does not support Create(Guid); "
+                    f"cannot align feature GUID {src_guid} (a no-GUID create "
+                    f"would produce a duplicate feature on re-run)"
+                ) from e
+            _safe_add_to_owner(new_feat, feature_system.FeaturesOC,
+                               "IFsClosedFeatureFactory", src_guid)
 
-    # Carrier B: Description-append on the feature.
-    apply_carrier_b(new_feat, ws, tag)
-    return new_feat
+        new_feat = IFsClosedFeature(new_feat)
+
+        # Apply syncable properties (Name, Abbreviation, Description) with WS
+        # mapping via the Operations surface -- the same call the POS path uses
+        # (categories.py gram_categories create path). Falls back to the explicit
+        # handle-translation copy if that surface is unavailable on this build.
+        src_feat_typed = IFsClosedFeature(src_feat)
+        ws_map = _ws_map_dict(ws_mapping)
+        try:
+            src_props = source.InflectionFeatures.GetSyncableProperties(src_feat_typed)
+            target.InflectionFeatures.ApplySyncableProperties(
+                new_feat, src_props, ws_map=ws_map)
+        except Exception:
+            _copy_multistrings_ws_mapped(
+                src_feat_typed, new_feat, ("Name", "Abbreviation", "Description"),
+                source=source, target=target, ws_map=ws_map)
+
+        # Co-create values (IFsSymFeatVal) with their canonical GUIDs.
+        # P0-A hardening: the 2-arg Create attaches automatically; the 1-arg
+        # path guards Add with _safe_add_to_owner.  No no-arg fallback --
+        # if Create(Guid) is unsupported on this LCM build we fail loud
+        # rather than silently produce GUID-misaligned values.
+        val_factory = sl.GetService(IFsSymFeatValFactory)
+        if hasattr(src_feat_typed, "ValuesOC"):
+            for src_val in src_feat_typed.ValuesOC:
+                val_guid = _guid_str_from(src_val)
+                parsed_val_guid = DotNetGuid.Parse(val_guid)
+                new_val = None
+                try:
+                    new_val = val_factory.Create(parsed_val_guid, new_feat)
+                except Exception:
+                    new_val = None
+                if new_val is None:
+                    try:
+                        new_val = val_factory.Create(parsed_val_guid)
+                    except Exception as e:
+                        raise RuntimeError(
+                            f"IFsSymFeatValFactory does not support Create(Guid); "
+                            f"cannot align value GUID {val_guid} on feature {src_guid}"
+                        ) from e
+                    _safe_add_to_owner(new_val, new_feat.ValuesOC,
+                                       "IFsSymFeatValFactory", val_guid)
+                new_val = IFsSymFeatVal(new_val)
+                src_val_typed = IFsSymFeatVal(src_val)
+                # C3: values copy via the explicit ws-mapped handle translation
+                # (Operations GetSyncableProperties is unconfirmed for values).
+                _copy_multistrings_ws_mapped(
+                    src_val_typed, new_val, ("Name", "Abbreviation", "Description"),
+                    source=source, target=target, ws_map=ws_map)
+
+        # Carrier B: Description-append on the feature.
+        apply_carrier_b(new_feat, ws, tag)
+        return new_feat
+    finally:
+        # 031 US1 (T012, contract C2): wire feature->category links exactly once,
+        # on the last INFLECTION_FEATURES action (after every GRAM_CATEGORIES
+        # action has executed -- leaf-dispatch order). The `finally` guarantees
+        # the tail's per-call counter advances even on an early return / raise so
+        # the post-pass still fires on the final action.
+        _run_tail_once(context, target, tag, "_did_infl_feature_link_pass",
+                       GrammarCategory.INFLECTION_FEATURES,
+                       _run_infl_feature_link_pass)
 
 
 # ----- custom_fields (Phase 3b US2: detect-and-report, no creation) --------
@@ -2765,8 +2881,8 @@ def _affix_type_of(entry):
 
 
 def _binding_map(context, name):
-    """Return the live binding dict for `name` ("msa_slot_bindings" or
-    "lexentry_ref_bindings").
+    """Return the live binding dict for `name` ("msa_slot_bindings",
+    "lexentry_ref_bindings", or "feature_category_links").
 
     Preview.build_run_plan attaches `_msa_slot_bindings` / `_lexentry_ref_bindings`
     straight onto the RunContext for plan_action to stash into; transfer.execute
@@ -2812,6 +2928,62 @@ def _stash_entry_bindings(entry, context):
             )
             slot["ComponentLexemesRS"].extend(comp)
             slot["PrimaryLexemesRS"].extend(prim)
+
+
+def _stash_feature_category_links(pos_piece, context):
+    """Gather feature->category links from a source POS's InflectableFeatsRC into
+    the run-plan's `feature_category_links` binding (031 US1, contract C1).
+
+    Called from `gram_categories_plan_action` for every in-scope POS (created or
+    matched). Records `{target_pos_guid: [feature_guid, ...]}` -- GUIDs are
+    preserved on transfer so target_pos_guid == source pos guid. Consumed by the
+    Move wiring post-pass `_run_infl_feature_link_pass` (registered via
+    `_run_tail_once`). Idempotent: a (pos, feature) pair already recorded is not
+    duplicated.
+
+    In-scope endpoints only: gathers nothing unless INFLECTION_FEATURES is
+    selected (no features transferred => no links to wire), and honors an
+    INFLECTION_FEATURES leaf-pick subset when one is present. Mirrors
+    `_stash_entry_bindings`."""
+    link_map = _binding_map(context, "feature_category_links")
+    if link_map is None:
+        return
+    selection = getattr(context, "_selection", None)
+    if selection is not None:
+        try:
+            if not selection.is_on(GrammarCategory.INFLECTION_FEATURES):
+                return
+        except (AttributeError, TypeError):
+            pass
+    picks = None
+    if selection is not None:
+        try:
+            picks = selection.leaf_picks_for(GrammarCategory.INFLECTION_FEATURES)
+        except (AttributeError, TypeError):
+            picks = None
+    pos_guid = _guid_str_from(pos_piece)
+    if not pos_guid:
+        return
+    # CAST DISCIPLINE (research.md T004-C): InflectableFeatsRC requires an
+    # IPartOfSpeech cast on the live LCM runtime; fakes fall through unchanged.
+    pos_typed = pos_piece
+    try:
+        from SIL.LCModel import IPartOfSpeech
+        pos_typed = IPartOfSpeech(pos_piece)
+    except Exception:
+        pos_typed = pos_piece
+    feats_rc = getattr(pos_typed, "InflectableFeatsRC", None)
+    if feats_rc is None:
+        return
+    for feat in feats_rc:
+        fg = _guid_str_from(feat)
+        if not fg:
+            continue
+        if picks is not None and fg not in picks:
+            continue
+        bucket = link_map.setdefault(pos_guid, [])
+        if fg not in bucket:
+            bucket.append(fg)
 
 
 def _entry_pos_deps(entry):
@@ -4783,6 +4955,83 @@ def _run_post_pass_a(context, target, tag=None):
                     if already:
                         continue
                     seq.Add(target_lex)
+    return skips
+
+
+# ----- feature->category link wiring post-pass (031 US1, contract C2) ------
+# contracts/feature-category-link.md. Runs as a tail block on the last
+# INFLECTION_FEATURES execute_action -- which, in leaf-dispatch order, runs
+# after every GRAM_CATEGORIES action (transfer.py `_LEAF_DISPATCH_CATEGORIES`),
+# so both endpoints (POS and feature) exist before wiring.
+
+def _run_infl_feature_link_pass(context, target, tag=None):
+    """Wire IPartOfSpeech.InflectableFeatsRC from plan.feature_category_links
+    after both POS (GRAM_CATEGORIES) and features (INFLECTION_FEATURES) are
+    stable in the target.
+
+    Bindings shape: `{target_pos_guid: [feature_guid, ...]}` (gathered by
+    `_stash_feature_category_links`). Each endpoint resolves via
+    `target.get_object_by_guid` -- GUIDs are preserved on transfer, so no
+    fingerprint/name fallback is needed.
+
+    Returns a list of Skip(DEPENDENCY_UNRESOLVED) -- one per unresolved POS and
+    one per unresolved feature (VR-4: deferred, never a dangling write).
+    Idempotent via a membership guard (VR-3); order-independent (runs after both
+    endpoints exist)."""
+    skips = []
+    plan = getattr(context, "_run_plan", None)
+    if plan is not None:
+        bindings = getattr(plan, "feature_category_links", None) or {}
+    else:
+        bindings = _binding_map(context, "feature_category_links") or {}
+
+    for pos_guid, feature_guids in bindings.items():
+        target_pos = target.get_object_by_guid(pos_guid)
+        if target_pos is None:
+            skips.append(Skip(
+                category=GrammarCategory.GRAM_CATEGORIES,
+                source_guid=pos_guid,
+                reason=SkipReason.DEPENDENCY_UNRESOLVED,
+                detail=(f"pos_guid={pos_guid} not in target after "
+                        "categories+features transfer"),
+            ))
+            continue
+        # CAST DISCIPLINE (research.md T004-C): InflectableFeatsRC requires an
+        # IPartOfSpeech cast on the live LCM runtime; fakes fall through.
+        pos_typed = target_pos
+        try:
+            from SIL.LCModel import IPartOfSpeech
+            pos_typed = IPartOfSpeech(target_pos)
+        except Exception:
+            pos_typed = target_pos
+        feats_rc = getattr(pos_typed, "InflectableFeatsRC", None)
+        if feats_rc is None:
+            skips.append(Skip(
+                category=GrammarCategory.GRAM_CATEGORIES,
+                source_guid=pos_guid,
+                reason=SkipReason.DEPENDENCY_UNRESOLVED,
+                detail=f"InflectableFeatsRC unavailable on target POS {pos_guid}",
+            ))
+            continue
+        for feature_guid in feature_guids:
+            target_feat = target.get_object_by_guid(feature_guid)
+            if target_feat is None:
+                skips.append(Skip(
+                    category=GrammarCategory.INFLECTION_FEATURES,
+                    source_guid=feature_guid,
+                    reason=SkipReason.DEPENDENCY_UNRESOLVED,
+                    detail=(f"feature_guid={feature_guid} not in target after "
+                            "features transfer"),
+                ))
+                continue
+            feat_g = _guid_str_from(target_feat)
+            already = any(
+                (existing is target_feat) or (_guid_str_from(existing) == feat_g)
+                for existing in feats_rc
+            )
+            if already:
+                continue
+            feats_rc.Add(target_feat)
     return skips
 
 

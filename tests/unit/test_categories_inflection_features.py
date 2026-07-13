@@ -144,3 +144,169 @@ def test_enumerate_source_returns_all_features() -> None:
 @pytest.mark.integration
 def test_execute_action_requires_lcm() -> None:
     pytest.skip("LCM required; run as integration test with FlexTools host.")
+
+
+# ============================================================================
+# Feature 031 US2 -- WS-mapped name copy (C3) + feature-level dedup (C4)
+# ============================================================================
+
+from gramtrans.Lib import selection as _selection
+
+
+class _FakeWS:
+    def __init__(self, ws_id: str, handle: int) -> None:
+        self.Id = ws_id
+        self.Handle = handle
+
+
+class _FakeWSColl:
+    def __init__(self, ws=()) -> None:
+        self._ws = list(ws)
+
+    def GetAll(self):
+        return list(self._ws)
+
+
+class _FakeTsString:
+    def __init__(self, text: str) -> None:
+        self.Text = text
+
+
+class _FakeMultiString:
+    """Duck-typed ITsMultiString: text keyed by WS handle."""
+
+    def __init__(self, by_handle=None) -> None:
+        self._by_handle = dict(by_handle or {})
+
+    def get_String(self, handle):  # noqa: N802 -- mirrors LCM PascalCase
+        return _FakeTsString(self._by_handle.get(handle, ""))
+
+    def set_String(self, handle, tss):  # noqa: N802
+        self._by_handle[handle] = tss.Text if hasattr(tss, "Text") else tss
+
+
+class _FakeStrObj:
+    """A feature / value stand-in exposing Name/Abbreviation/Description."""
+
+    def __init__(self) -> None:
+        self.Name = _FakeMultiString()
+        self.Abbreviation = _FakeMultiString()
+        self.Description = _FakeMultiString()
+
+
+class _WSFakeProject:
+    def __init__(self, ws) -> None:
+        self.WritingSystems = _FakeWSColl(ws)
+
+
+# Inject explicit read/make callables so the copy helper never touches SIL --
+# a sibling test may leave a partial fake `SIL.LCModel` in sys.modules whose
+# ITsString rejects our duck-typed strings.
+def _copy_fakes(**kw):
+    kw.setdefault("read_text", lambda tss: tss.Text)
+    kw.setdefault("make_string", lambda text, handle: _FakeTsString(text))
+    return kw
+
+
+# --- C3: WS-mapped multistring copy (T014) ---------------------------------
+#
+# Reproduces the Ejagham pair's smoking gun (research.md T004-B): source `etu`
+# handle 999000003 vs target `etu` handle 999000002. The pre-fix code wrote the
+# name with the SOURCE handle, landing it on a wrong/absent target WS (bare-GUID
+# feature). The fix must translate source->target handle by WS Id.
+
+def test_ws_mapped_copy_lands_name_on_target_handle() -> None:
+    # source: en=1, etu=999000003 ; target: en=1, etu=999000002
+    source = _WSFakeProject([_FakeWS("en", 1), _FakeWS("etu", 999000003)])
+    target = _WSFakeProject([_FakeWS("en", 1), _FakeWS("etu", 999000002)])
+    src = _FakeStrObj()
+    src.Name = _FakeMultiString({1: "Number", 999000003: "Nomba"})
+    new = _FakeStrObj()
+
+    categories._copy_multistrings_ws_mapped(
+        src, new, ("Name", "Abbreviation", "Description"),
+        **_copy_fakes(source=source, target=target, ws_map={}),  # identity map
+    )
+
+    # WS-FIDELITY: etu string lands on the TARGET etu handle, not the source one.
+    assert new.Name.get_String(999000002).Text == "Nomba"
+    assert new.Name.get_String(999000003).Text == ""  # never the source handle
+    # NON-NULL-NAME: analysis WS (en, coincident handle) preserved.
+    assert new.Name.get_String(1).Text == "Number"
+
+
+def test_ws_mapped_copy_honors_nonidentity_map() -> None:
+    # source vernacular `mgz` (handle 7) -> target `etu` (handle 5) via ws_map.
+    source = _WSFakeProject([_FakeWS("mgz", 7)])
+    target = _WSFakeProject([_FakeWS("etu", 5)])
+    src = _FakeStrObj()
+    src.Abbreviation = _FakeMultiString({7: "num"})
+    new = _FakeStrObj()
+
+    categories._copy_multistrings_ws_mapped(
+        src, new, ("Name", "Abbreviation", "Description"),
+        **_copy_fakes(source=source, target=target, ws_map={"mgz": "etu"}),
+    )
+    assert new.Abbreviation.get_String(5).Text == "num"
+
+
+def test_ws_mapped_copy_skips_absent_target_ws() -> None:
+    # A source WS with no target counterpart is skipped -- never written to a
+    # wrong handle (WS-FIDELITY); the field simply stays empty.
+    source = _WSFakeProject([_FakeWS("zz", 9)])
+    target = _WSFakeProject([_FakeWS("en", 1)])
+    src = _FakeStrObj()
+    src.Name = _FakeMultiString({9: "orphan"})
+    new = _FakeStrObj()
+
+    categories._copy_multistrings_ws_mapped(
+        src, new, ("Name",), **_copy_fakes(source=source, target=target, ws_map={}),
+    )
+    assert new.Name.get_String(1).Text == ""
+    assert new.Name.get_String(9).Text == ""
+
+
+# --- C4: feature-level vs value-level dedup sets (T015) ---------------------
+
+class _FakeClosedFeature031:
+    def __init__(self, guid, values=()) -> None:
+        self.guid = guid.lower()
+        self.Guid = guid
+        self.ValuesOC = list(values)
+
+
+class _FakeValue031:
+    def __init__(self, guid) -> None:
+        self.guid = guid.lower()
+        self.Guid = guid
+
+
+class _FakeInflOps031:
+    def __init__(self, feats) -> None:
+        self._feats = list(feats)
+
+    def FeatureGetAll(self):
+        return list(self._feats)
+
+
+class _FakeDedupTarget:
+    def __init__(self, feats) -> None:
+        self.InflectionFeatures = _FakeInflOps031(feats)
+
+
+def test_feature_and_value_guid_sets_are_distinct() -> None:
+    # C4: a present feature by feature-level GUID classifies via the FEATURE set,
+    # not the value set. Pre-fix, both used the value-level set, so a present
+    # feature read as `new` and was re-created (duplicate) on re-run.
+    val = _FakeValue031("V-1")
+    feat = _FakeClosedFeature031("F-1", values=(val,))
+    target = _FakeDedupTarget([feat])
+
+    feat_guids = _selection._gather_target_infl_feature_guids(target)
+    value_guids = _selection._gather_target_infl_feat_guids(target)
+
+    assert "f-1" in feat_guids
+    assert "f-1" not in value_guids  # feature GUID is NOT in the value set
+    assert "v-1" in value_guids
+    assert "v-1" not in feat_guids
+
