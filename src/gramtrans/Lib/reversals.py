@@ -238,37 +238,120 @@ def _reversal_form_alts(src_entry, src_project, ctx) -> dict:
     return alts
 
 
-def _resolve_reversal_category_link_if_present(src_entry, target_index_ref):
-    """US1 stub (T015): LINK-if-present ONLY. Returns a
-    `ReferenceDecision(LINK, ...)` when the source `PartOfSpeechRA` is set
-    AND already present (by GUID) in the target index's OWN
-    `PartsOfSpeechOA`; returns `None` otherwise (source unset, target index
-    not yet created, target list absent, OR the item is simply not found).
+def _entry_label_from_form_alts(form_alts: dict) -> str:
+    """Best-effort human label for a `ReversalIndexEntry`-owned
+    `DroppedItemRecord` -- the entry's OWN `ReversalForm` text (the field
+    024's `categories._owner_label_for` convention would read for this
+    owner class, but `ReversalIndexEntry` has no registered row there --
+    024 only knows LexEntry/LexSense/MoForm's label fields). Reads from
+    the ALREADY-COMPUTED `reversal_form_alts` dict (`_reversal_form_alts`
+    at plan time / `ReversalDecision.reversal_form_alts` at apply time)
+    rather than re-deriving it from the live entry object, since neither
+    call site otherwise has a cheap `.Name`-shaped accessor to read (a
+    `references._item_label(src_entry)` call, mirroring `_resolve_sense_
+    links`'s existing pattern, would always return "" here -- an
+    `IReversalIndexEntry` has no `.Name` field at all). Returns "" when
+    `form_alts` is empty (never raises)."""
+    return next(iter(form_alts.values()), "") if form_alts else ""
 
-    *** US2 SEAM *** -- the full three-way CREATE/UPDATE/REPORT_DROPPED
-    resolution (`references.decide_reference` against the target index's
-    `PartsOfSpeechOA`, per reversal-category-resolution.md) replaces this
-    stub in US2 (T025). Do NOT add CREATE/UPDATE handling here -- an absent
-    category is intentionally left unresolved (not reported as a drop) in
-    this cycle; it is a known, documented simplification, not a data loss.
+
+def _decide_reversal_category(src_entry, entry_guid: str, target_index_ref, form_alts: dict,
+                               resolver_cache, dropped):
+    """T025 (US2) -- resolve `src_entry.PartOfSpeechRA` against the TARGET
+    REVERSAL INDEX's OWN `PartsOfSpeechOA` (never `LangProject.
+    PartsOfSpeechOA`) via the full 024 three-way resolver (`references.
+    decide_reference`), replacing the US1 LINK-if-present stub
+    (`_resolve_reversal_category_link_if_present`, US1 T015).
+
+    Returns `None` (no-op, FR-007) when the source `PartOfSpeechRA` is
+    unset -- callers must not call `apply_reference` in that case.
+
+    Guard (contracts/reversal-category-resolution.md's "index absent"
+    row): `target_index_ref is None` (a to-create index -- calling
+    `spec.target_list_path(None)` would raise `AttributeError` reading
+    `None.PartsOfSpeechOA`) OR the index's own `PartsOfSpeechOA` is `None`
+    (list absent on an otherwise-existing index) BOTH collapse to the SAME
+    `REPORT_DROPPED` outcome, built directly here (bypassing `references.
+    decide_reference` entirely for this one case) so the reason text is
+    exactly `"target reversal category list absent"` -- 024's OWN
+    `decide_reference` would instead say the more generic `"target list
+    absent"` for the present-but-empty-list case, and would crash outright
+    for a `None` index; neither matches this feature's contract verbatim.
+
+    Every other case (index present, list present) is delegated wholesale
+    to `references.decide_reference` -- LINK / CREATE (+ancestor chain) /
+    UPDATE / REPORT_DROPPED (shared-default divergence) all come from the
+    SAME 024 resolver + shared `resolver_cache`, with NO reversal-specific
+    reimplementation of `protection._is_protected` classification or
+    ancestor-chain walking.
+
+    *** DEVIATION (discovered this cycle, documented for QC) ***
+    `decide_reference` is called with `source=None` -- deliberately NOT
+    threading the source project handle through, even though this codebase's
+    OTHER `decide_reference` call sites (`categories._decide_reference_fields`)
+    always do. Rationale: `decide_reference`'s own `target` argument here is
+    the reversal INDEX (per the contract's explicit "target_list_path
+    receives the index, not the project" requirement) -- an index has no
+    `.WritingSystems` accessor, so `references._project_handle_to_id(target)`
+    always resolves empty and `_fields_identical` falls back to the
+    NO-RESOLVER positional fingerprint for the target side. If a REAL
+    `source` project were threaded through, the SOURCE side would instead use
+    the genuinely Id-keyed fingerprint format -- which is a structurally
+    DIFFERENT tuple shape (`((ws_id, text),)` pairs) than the target side's
+    positional format (`(text,)`), so the two can NEVER compare equal even
+    for byte-identical content. Confirmed empirically (T021): threading
+    `source=src_project` made every identical-content case report `UPDATE`
+    (spuriously "diverged") instead of `LINK`. Passing `source=None` keeps
+    BOTH sides on the SAME (less sophisticated, but symmetric and correct)
+    positional fallback -- the only combination that works given `target`
+    must be an index, not a project, for this one field.
+
+    Every `DroppedItemRecord` this produces -- the guard's own, or one
+    unpacked from `decide_reference`'s `ReferenceDecision.dropped` (which
+    arrives with `owner_guid=""`/`owner_label=""` placeholders; `references.py`
+    itself never sees the owning `ReversalIndexEntry` instance) -- is
+    enriched with the REAL owner identity before being appended to the
+    shared `dropped` collector (mirrors `categories._enrich_dropped`). The
+    US1 stub never dropped anything; reporting is new in US2.
     """
     src_pos = getattr(src_entry, "PartOfSpeechRA", None)
-    if src_pos is None or target_index_ref is None:
+    if src_pos is None:
         return None
-    target_list = getattr(target_index_ref, "PartsOfSpeechOA", None)
-    if target_list is None:
-        return None
-    guid = references._guid_str(src_pos)
-    target_item = references._find_in_possibility_list(target_list, guid)
-    if target_item is None:
-        return None
-    return ReferenceDecision(
-        action=ReferenceAction.LINK, target_item=target_item, source_item=src_pos,
+
+    owner_label = _entry_label_from_form_alts(form_alts)
+    target_list = (
+        getattr(target_index_ref, "PartsOfSpeechOA", None)
+        if target_index_ref is not None else None
     )
+    if target_list is None:
+        record = DroppedItemRecord(
+            owner_kind="ReversalIndexEntry",
+            owner_guid=entry_guid,
+            owner_label=owner_label,
+            field_name="PartOfSpeechRA",
+            item_name=references._item_label(src_pos),
+            item_guid=references._guid_str(src_pos),
+            reason="target reversal category list absent",
+        )
+        dropped.append(record)
+        return ReferenceDecision(
+            action=ReferenceAction.REPORT_DROPPED, source_item=src_pos, dropped=record,
+        )
+
+    spec = REVERSAL_FIELD_MAP["PartOfSpeechRA"].reference_spec
+    decision = references.decide_reference(
+        src_pos, target_index_ref, spec, resolver_cache, source=None)
+    if decision is not None and decision.dropped is not None:
+        import dataclasses
+        enriched = dataclasses.replace(
+            decision.dropped, owner_guid=entry_guid, owner_label=owner_label)
+        dropped.append(enriched)
+        decision = dataclasses.replace(decision, dropped=enriched)
+    return decision
 
 
 def _build_entry_decision(src_entry, target_ws_id: str, target_index_ref, src_project,
-                           ctx, copied_senses, dropped) -> ReversalDecision:
+                           ctx, copied_senses, resolver_cache, dropped) -> ReversalDecision:
     """Build one `ReversalDecision` for `src_entry` (top-level or a
     sub-entry -- the shape is identical at every depth), recursing
     `SubentriesOS` UNCONDITIONALLY (R6: owned hierarchical collection,
@@ -278,12 +361,20 @@ def _build_entry_decision(src_entry, target_ws_id: str, target_index_ref, src_pr
     entry_guid = references._guid_str(src_entry)
     linked, dropped_members = _resolve_sense_links(
         src_entry, copied_senses, entry_guid, dropped)
-    pos_decision = _resolve_reversal_category_link_if_present(
-        src_entry, target_index_ref)
     form_alts = _reversal_form_alts(src_entry, src_project, ctx)
+    # US2 (T025): `_decide_reversal_category` deliberately does NOT thread a
+    # `source` project handle into `decide_reference` -- see its own
+    # docstring's "DEVIATION" note for why (an index-shaped `target` has no
+    # `.WritingSystems` to build a comparable resolver from, so threading a
+    # real source resolver alongside it breaks identical-content detection
+    # entirely rather than improving it).
+    pos_decision = _decide_reversal_category(
+        src_entry, entry_guid, target_index_ref, form_alts, resolver_cache, dropped,
+    )
     sub_decisions = tuple(
         _build_entry_decision(
-            sub, target_ws_id, target_index_ref, src_project, ctx, copied_senses, dropped)
+            sub, target_ws_id, target_index_ref, src_project, ctx, copied_senses,
+            resolver_cache, dropped)
         for sub in (getattr(src_entry, "SubentriesOS", None) or [])
     )
     return ReversalDecision(
@@ -313,13 +404,13 @@ def plan_reversals(copied_senses, src_project, target, ctx, resolver_cache, drop
     copied senses). `Lib/categories.py.plan_reversal_decisions`/
     `reproduce_reversal_entries` (T018) pass `ctx._copy_set` directly.
 
-    `resolver_cache` is accepted per the contract signature (reserved for
-    US2's reversal-category cache -- "a shared reversal category resolved
-    once by GUID for the run -> reused, not re-created") but not yet
-    consumed here: US1's `_resolve_reversal_category_link_if_present` stub
-    does its own uncached GUID lookup per entry (cheap; category lists are
-    small). US2 (T025) wires the full `decide_reference` pass through this
-    same `resolver_cache` instance.
+    `resolver_cache` (US2, T025): threaded straight through to `references.
+    decide_reference` for every entry's `PartOfSpeechRA` (via
+    `_decide_reversal_category`) -- the SAME dict instance for every entry
+    in this run, so a reversal category shared by K entries is resolved
+    against the target list only until the first CREATE/LINK settles it;
+    `apply_reversals`' own use of this same cache (T026) is what makes a
+    shared to-create category actually get CREATEd at most once.
 
     *** T005 SHAPE CHECK (spurt 2) *** -- `ReversalFieldSpec`/
     `ReversalDecision` (models.py) were unconfirmed scaffolding from spurt 1.
@@ -383,7 +474,7 @@ def plan_reversals(copied_senses, src_project, target, ctx, resolver_cache, drop
         for src_entry in in_scope_entries:
             decisions.append(_build_entry_decision(
                 src_entry, target_ws_id, target_index_ref, src_project, ctx,
-                copied_senses, dropped,
+                copied_senses, resolver_cache, dropped,
             ))
 
     return decisions
@@ -592,17 +683,126 @@ def _link_remaining_senses(entry, senses) -> None:
             pass
 
 
+def _apply_pos_decision(pos_decision, target_project, target_index, new_entry, resolver_cache,
+                         tag, ws_map, source, dropped, entry_guid: str, owner_label: str) -> None:
+    """T026 (US2) -- apply one entry's `PartOfSpeechRA` `ReferenceDecision`
+    (built at plan time by `_decide_reversal_category`) via the SAME 024
+    `references.apply_reference` executor every other reference field in
+    this codebase writes through -- CREATE (+ancestors) / UPDATE / LINK all
+    write against `target_index`'s OWN `PartsOfSpeechOA` (never
+    `LangProject.PartsOfSpeechOA`), replacing the US1 LINK-only block.
+
+    *** DEVIATION (discovered this cycle, documented for QC) *** --
+    `apply_reference` is called with `target=target_project` (the FULL
+    target FLExProject, `_apply_one_entry`'s own `target` parameter), NOT
+    `target_index` -- and with a PER-CALL `ReferenceFieldSpec` (`apply_spec`
+    below, built via `dataclasses.replace` off the static
+    `REVERSAL_FIELD_MAP["PartOfSpeechRA"].reference_spec`) whose
+    `target_list_path` closes over the ALREADY-RESOLVED `target_index`
+    instead of reading it from whatever `apply_reference` passes as
+    `target`. Rationale: `apply_reference`'s UPDATE arm reads `target.
+    PossibilityLists` and its CREATE arm reads `target.Cache`/`target.
+    GetFactory(...)` in addition to `spec.target_list_path(target)` --
+    `PossibilityLists`/`GetFactory` are FLExProject-level flexicon
+    conveniences (confirmed: `flexicon/code/FLExProject.py:315`'s
+    `GetFactory`; `BaseOperations.__init__` stores `self.project =
+    project`, i.e. `PossibilityLists` is only ever reachable off a project
+    handle) -- a bare `IReversalIndex` object has NEITHER. Passing
+    `target=target_index` (matching `decide_reference`'s OWN `target`
+    binding, per the contract) would make CREATE/UPDATE raise
+    `AttributeError` on `target.GetFactory`/`target.PossibilityLists` --
+    caught by this function's own fail-soft wrapper below, but silently
+    turning EVERY CREATE/UPDATE into a total no-op (not even the LINK
+    `setattr` reached) in production. Passing the real project instead
+    fixes this: `target.Cache`/`target.PossibilityLists`/`target.
+    GetFactory` all resolve correctly, `target.WritingSystems` gives a REAL
+    resolver for `source`'s Id-keyed write (unlike `decide_reference`'s
+    index-shaped `target`, see `_decide_reversal_category`'s own deviation
+    note), and `apply_spec.target_list_path` still ultimately reads
+    `target_index.PartsOfSpeechOA` -- R5's "never touch LangProject.
+    PartsOfSpeechOA" guarantee is unaffected; only the SIGNAL VALUE plumbed
+    through `apply_reference`'s `target` parameter changes, not which
+    possibility list ends up written to. LINK/REPORT_DROPPED (the two
+    actions that never read `target` at all inside `apply_reference`) are
+    unaffected either way.
+
+    The shared `resolver_cache` (the SAME dict threaded through every
+    entry `apply_reversals` processes this run) is what actually
+    guarantees a reversal category used by K entries is CREATEd at most
+    once: `apply_reference`'s CREATE arm checks `cache.get(anc_guid) or
+    _find_in_possibility_list(...)` before calling the factory, so every
+    entry after the first one to CREATE a given ancestor GUID finds it
+    already cached and links to it instead (see `references.py`'s CREATE
+    arm) -- no reversal-specific cache logic needed here at all.
+
+    No-ops (never raises) when `pos_decision` is `None` (source
+    `PartOfSpeechRA` was unset -- FR-007) or `target_index` is `None` (the
+    to-create-index case -- `_decide_reversal_category`'s own guard already
+    resolved this to `REPORT_DROPPED` with `target_item=None` at plan time,
+    so there is nothing left to write here).
+
+    Mirrors `categories._call_apply_reference`'s enrichment posture: any
+    RAW (`owner_guid=""`) `DroppedItemRecord` `apply_reference` appends to
+    `dropped` itself via its own `dropped=` collector (the "source writing
+    system absent in target" case, surfaced during UPDATE/CREATE), or that
+    `UnmappedItemClassError` carries (`exc.dropped`), is patched with the
+    real `ReversalIndexEntry` identity before this function returns --
+    `references.py` never sees the owning entry instance."""
+    if pos_decision is None or target_index is None:
+        return
+    import dataclasses
+    base_spec = REVERSAL_FIELD_MAP["PartOfSpeechRA"].reference_spec
+    apply_spec = dataclasses.replace(
+        base_spec,
+        target_list_path=lambda _project, _idx=target_index: _idx.PartsOfSpeechOA,
+    )
+    before = len(dropped)
+    try:
+        references.apply_reference(
+            pos_decision, target_project, new_entry, apply_spec, resolver_cache, tag,
+            ws_map=ws_map, source=source, dropped=dropped,
+        )
+    except references.UnmappedItemClassError as exc:
+        dropped.append(exc.dropped)
+    except RuntimeError as exc:
+        _log.warning(
+            "reversals._apply_pos_decision: RuntimeError applying "
+            "PartOfSpeechRA for entry=%s: %s", entry_guid, exc, exc_info=True,
+        )
+        dropped.append(DroppedItemRecord(
+            owner_kind="ReversalIndexEntry", owner_guid=entry_guid,
+            owner_label=owner_label, field_name="PartOfSpeechRA",
+            item_name="", item_guid="",
+            reason=f"apply_reference failed: {exc}",
+        ))
+    except (AttributeError, TypeError):
+        pass
+    if len(dropped) > before:
+        raw = dropped[before:]
+        del dropped[before:]
+        for record in raw:
+            if not record.owner_guid:
+                record = dataclasses.replace(
+                    record, owner_guid=entry_guid, owner_label=owner_label)
+            dropped.append(record)
+
+
 def _apply_one_entry(decision: "ReversalDecision", target, ctx, tag, resolver_cache,
                       dropped, parent_target_entry):
     """Apply one `ReversalDecision` (Move mode): resolve/create the target
-    index (top-level only), create the entry (top-level via the
-    `ReversalIndexEntryOperations` wrapper, sub-entry via the raw factory),
-    write every remaining `ReversalForm` alt non-destructively, link every
-    remaining copied sense, apply the US1 LINK-if-present `PartOfSpeechRA`
-    decision, tag with residue (R7 -- `ReversalIndexEntry` has NO residue
-    carrier at all per `residue.NO_RESIDUE_CARRIER_CLASSES`; the creation
-    itself, recorded here via `dropped`/the caller's own accounting, is the
-    audit trail for that case), and recurse `SubentriesOS`. Never raises."""
+    index (every depth -- top-level entries create/reuse it via
+    `_ensure_target_index`; sub-entries hit the SAME per-run cache the
+    first top-level call already populated), create the entry (top-level
+    via the `ReversalIndexEntryOperations` wrapper, sub-entry via the raw
+    factory), write every remaining `ReversalForm` alt non-destructively,
+    link every remaining copied sense, apply the US2 three-way
+    `PartOfSpeechRA` decision against the target index's OWN
+    `PartsOfSpeechOA` (`_apply_pos_decision`, T026 -- replaces the US1
+    LINK-only block), tag with residue (R7 -- `ReversalIndexEntry` has NO
+    residue carrier at all per `residue.NO_RESIDUE_CARRIER_CLASSES`; the
+    creation itself, recorded here via `dropped`/the caller's own
+    accounting, is the audit trail for that case), and recurse
+    `SubentriesOS`. Never raises."""
     copy_set = getattr(ctx, "_copy_set", None) or {}
     target_senses = [
         copy_set[g] for g in decision.linked_sense_guids
@@ -611,8 +811,15 @@ def _apply_one_entry(decision: "ReversalDecision", target, ctx, tag, resolver_ca
     first_sense = target_senses[0] if target_senses else None
     primary_ws_id, primary_text = _primary_form(decision)
 
+    # US2 (T025/T026): resolved/created UNCONDITIONALLY now (not just for
+    # top-level entries) -- a sub-entry's own `PartOfSpeechRA` also
+    # resolves against this SAME per-index list. `_ensure_target_index` is
+    # idempotent (per-run cache keyed by `target_ws_id`), so re-deriving it
+    # here for every sub-entry in the same tree is a cheap cache hit, never
+    # a second `ReversalIndexes.Create` call.
+    target_index = _ensure_target_index(decision, target, tag, resolver_cache, dropped)
+
     if parent_target_entry is None:
-        target_index = _ensure_target_index(decision, target, tag, resolver_cache, dropped)
         if target_index is None:
             return None
         new_entry = _create_top_level_entry(
@@ -631,11 +838,11 @@ def _apply_one_entry(decision: "ReversalDecision", target, ctx, tag, resolver_ca
     remaining_senses = target_senses[1:] if first_sense is not None else target_senses
     _link_remaining_senses(new_entry, remaining_senses)
 
-    if decision.pos_decision is not None and decision.pos_decision.action == ReferenceAction.LINK:
-        try:
-            new_entry.PartOfSpeechRA = decision.pos_decision.target_item
-        except (AttributeError, TypeError):
-            pass
+    _apply_pos_decision(
+        decision.pos_decision, target, target_index, new_entry, resolver_cache, tag,
+        getattr(ctx, "_ws_map", None), getattr(ctx, "source_handle", None), dropped,
+        decision.source_entry_guid, _entry_label_from_form_alts(decision.reversal_form_alts),
+    )
 
     if residue.has_residue_carrier("ReversalIndexEntry"):
         try:
