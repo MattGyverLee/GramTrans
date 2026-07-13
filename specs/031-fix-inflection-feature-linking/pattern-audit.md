@@ -103,9 +103,9 @@ route all four sibling call sites (`categories.py:4894`, `4905`, `4954`, `4972`)
 through `_resolve_target_by_guid` (or an equivalent shared, guarded resolver) and add
 a live regression Move covering MSA→slot wiring and LexEntryRef wiring, mirroring the
 031 T024 live-probe methodology (Ejagham Mini → restored target, read-only verify via
-FLExToolsMCP first). No `specs/*/HANDOFF.md` or issue-tracker backlog file currently
-exists for this repo's convention, so this note is the ticket of record until a
-dedicated `specs/NNN-*` folder is opened for the fix.
+FLExToolsMCP first). **Filed as GitHub issue
+[MattGyverLee/GramTrans#28](https://github.com/MattGyverLee/GramTrans/issues/28)
+(`bug`, HIGH).**
 
 ### Shape (b): bare `IFsClosedFeature(src_feat)` cast
 
@@ -140,7 +140,9 @@ and hardened (this cycle). No further sibling sites need this fix.
 `FsComplexFeature`; the unconditional `IFsClosedFeature(src_feat)` cast raised and left a
 nameless closed-feature twin. FIXED (worktree `9e41a1f`): an up-front type guard emits
 `Skip(UNSUPPORTED_LCM_TYPE)` and creates nothing. Full complex/open-feature transfer is a
-documented follow-up (not in 031 scope).
+documented follow-up (not in 031 scope) — **filed as GitHub issue
+[MattGyverLee/GramTrans#29](https://github.com/MattGyverLee/GramTrans/issues/29)
+(`enhancement`).**
 
 ## Coverage note
 
