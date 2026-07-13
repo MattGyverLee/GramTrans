@@ -1,5 +1,50 @@
 # GramTrans — Session Handoff
 
+## ▶▶▶ Feature 025 — Full Reversals — SPURT 7 (Phase 6 Polish offline) — NEEDS_HUMAN for T037 (2026-07-12)
+
+**Worktree**: `D:/Github/_Projects/_LEX/GramTrans-025-full-reversals` on branch
+`025-full-reversals` @ `1a1849c` (clean; NOT merged). **Handoff**:
+`specs/025-full-reversals/.crew-handoff.json` (`status: needs_human`). **Cumulative tasks:
+T001-T036 done; QC gate GREEN.** Only **T037** (live-MCP validation) + the worktree merge remain.
+
+### ⛔ ACTION REQUIRED (human, attended session)
+
+The Ralph loop has stopped at `needs_human`. The one remaining task, **T037**, is a
+**destructive-capable live-LCM write** against a real FLEx target and must NOT run unattended.
+To finish feature 025, a human must, with **FLExTools MCP active**:
+1. Confirm a **disposable, `-restore`-ready** target project is available (Ejagham Mini →
+   disposable `*-GT-Test`).
+2. Run **quickstart Scenarios 1-5** per
+   [specs/025-full-reversals/quickstart.md](specs/025-full-reversals/quickstart.md), recording
+   pre/post evidence per STATUS.md conventions.
+3. Once T037 passes, **merge worktree branch `025-full-reversals` (@ `1a1849c` or later) into
+   main** — the feature is then complete.
+
+**Ralph-loop spurt 7 (LEX crew, cycle 8)** — offline Phase 6 Polish, **DONE** (committed `1a1849c`):
+- **T034**: fidelity census extended 75→79 fields — `ReversalIndexEntry` added (`SensesRS`,
+  `PartOfSpeechRA`, `SubentriesOS`, `ReversalForm`), all classified `COPIED` with concrete
+  `reversals.py` code sites. Never-silent guard intact; OUT_OF_SCOPE/HANDLED_ELSEWHERE ledgers
+  unchanged. **ReversalForm decision (a)**: included via new `FieldSpec.kind == "MU"` (IMultiUnicode
+  value field) — grounded in the SC-003/FR-010 never-silent principle, NOT the 024 `Discussion`
+  silent-exclusion precedent.
+- **T035**: unified never-silent cross-cutting test — drives the real `plan_reversal_decisions` +
+  `plan_config_views` into ONE shared `dropped` list; asserts all three owner_kinds
+  (`ReversalIndexEntry`, `ReversalIndex`, `ConfigView`) with full identity + reason.
+- **T036**: empty-project regression gate — real `build_run_plan` over an empty project yields
+  empty reversal/config/dropped collections, no `ConfigurationSettings/` materializes, byte-identical
+  to a 024-only run.
+- **Suite**: 1524 passed / 1 known-fail / 76 skipped / 14 xfailed / 14 xpassed. The 1 failure is the
+  pre-existing baseline (`test_wizard_pos_grammar_wiring::test_plan_emits_pos_action_for_picked_pos`,
+  untouched) — NOT a 025 regression.
+
+**Settled GREEN (do NOT relitigate)**: items 1/2/5 + both P0s + all Polish offline tasks.
+**Deferred tech-debt (P1, non-blocking, tracked)**: P1-1 (reuse `RunPlan.reversal_decisions` at
+Move), P1-2 (DRY `_target_ws_ids`).
+
+**Report**: [cycle8-programmer](specs/025-full-reversals/reviews/cycle8-programmer.md).
+
+---
+
 ## ▶▶▶ Feature 025 — Full Reversals — SPURT 6 (P0 remediation + gate re-check: GREEN) IN PROGRESS (2026-07-12)
 
 **Worktree**: `D:/Github/_Projects/_LEX/GramTrans-025-full-reversals` on branch
