@@ -2914,7 +2914,8 @@ def _affix_type_of(entry):
 
 def _binding_map(context, name):
     """Return the live binding dict for `name` ("msa_slot_bindings",
-    "lexentry_ref_bindings", or "feature_category_links").
+    "lexentry_ref_bindings", "entryref_create_bindings", or
+    "feature_category_links").
 
     Preview.build_run_plan attaches `_msa_slot_bindings` / `_lexentry_ref_bindings`
     straight onto the RunContext for plan_action to stash into; transfer.execute
@@ -2931,12 +2932,18 @@ def _binding_map(context, name):
 
 def _stash_entry_bindings(entry, context):
     """Stash the deferred MSA->slot and EntryRef component bindings for an
-    entry being transferred (FR-333 17.1 sub-pass + FR-340 post-pass A).
+    entry being transferred (FR-333 17.1 sub-pass + FR-340 post-pass A; 027
+    US1/US2/US3 contract C1's `entryref_create_bindings`).
 
     Called from AFFIXES + STEMS plan_action. Only MSAs with a NON-EMPTY
     source `SlotsRC` and EntryRefs with non-empty component/primary sequences
-    produce a binding — an unbound affix (empty SlotsRC) never enters
-    `plan.msa_slot_bindings` (matches the Ejagham Mini `ro~-` case, T040)."""
+    produce a `lexentry_ref_bindings` entry — an unbound affix (empty
+    SlotsRC) never enters `plan.msa_slot_bindings` (matches the Ejagham Mini
+    `ro~-` case, T040). `entryref_create_bindings` (027) is populated
+    UNCONDITIONALLY for every `EntryRefsOS` member (even one with 0
+    components/primaries still needs its container created) -- see
+    data-model.md's binding extension and contract C1. READ-ONLY: this walks
+    the SOURCE entry's ref collection only; no target writes (Principle III)."""
     msa_map = _binding_map(context, "msa_slot_bindings")
     if msa_map is not None:
         for msa in getattr(entry, "MorphoSyntaxAnalysesOC", None) or []:
@@ -2946,20 +2953,38 @@ def _stash_entry_bindings(entry, context):
             msa_map[_guid_str_from(msa)] = [_guid_str_from(s) for s in slots]
 
     ref_map = _binding_map(context, "lexentry_ref_bindings")
-    if ref_map is not None:
+    create_map = _binding_map(context, "entryref_create_bindings")
+    if ref_map is not None or create_map is not None:
+        entry_guid = _guid_str_from(entry)
         for ref in getattr(entry, "EntryRefsOS", None) or []:
             comp = [_guid_str_from(x)
                     for x in (getattr(ref, "ComponentLexemesRS", None) or [])]
             prim = [_guid_str_from(x)
                     for x in (getattr(ref, "PrimaryLexemesRS", None) or [])]
-            if not comp and not prim:
-                continue
-            slot = ref_map.setdefault(
-                _guid_str_from(entry),
-                {"ComponentLexemesRS": [], "PrimaryLexemesRS": []},
-            )
-            slot["ComponentLexemesRS"].extend(comp)
-            slot["PrimaryLexemesRS"].extend(prim)
+            if ref_map is not None and (comp or prim):
+                slot = ref_map.setdefault(
+                    entry_guid,
+                    {"ComponentLexemesRS": [], "PrimaryLexemesRS": []},
+                )
+                slot["ComponentLexemesRS"].extend(comp)
+                slot["PrimaryLexemesRS"].extend(prim)
+            if create_map is not None:
+                ref_guid = _guid_str_from(ref)
+                if not ref_guid:
+                    continue
+                record = {
+                    "ref_guid": ref_guid,
+                    "ref_type": getattr(ref, "RefType", None),
+                    "components": comp,
+                    "primaries": prim,
+                    "variant_entry_types": list(
+                        getattr(ref, "VariantEntryTypesRS", None) or []),
+                    "complex_entry_types": list(
+                        getattr(ref, "ComplexEntryTypesRS", None) or []),
+                    "show_complex_forms_in": list(
+                        getattr(ref, "ShowComplexFormsInRS", None) or []),
+                }
+                create_map.setdefault(entry_guid, []).append(record)
 
 
 def _stash_feature_category_links(pos_piece, context):
@@ -4930,6 +4955,150 @@ def _run_171_subpass(context, target, tag=None):
     return skips
 
 
+# ----- entry-ref container creation pass (027 US1/US3, contract C1) -------
+# contracts/entryref-reproduction.md C1. Runs as the FRONT HALF of the
+# STEMS-tail post-pass, immediately before `_run_post_pass_a` (C2) below,
+# inside the SAME `_run_tail_once` idempotency guard (research.md
+# Decision 6) -- a ref's components must already exist on the target before
+# C2 can wire them, and `_run_post_pass_a` needs a real container to exist
+# before it can find anything to wire (it was previously UNREACHABLE: see
+# the "Cycle-16 lead adjudication" note above `_report_dropped_entry_refs`).
+
+def _create_entryref_container(target, ref_guid):
+    """Create one target `LexEntryRef` with GUID preserved from `ref_guid`,
+    via the raw `ILexEntryRefFactory` (research.md Decision 1 -- flexicon has
+    no wrapper for this factory, so `ILexEntryRefFactory(target.GetFactory(
+    ILexEntryRefFactory))` is the sanctioned constitution-II fallback idiom,
+    same shape as this file's `ILexEntryTypeFactory`/`ILexEntryInflTypeFactory`
+    raw-factory call sites).
+
+    Returns `None` (never raises) when the interface/factory is unavailable
+    or `Create` fails, so the caller can degrade to report-only (contract C1
+    "Errors": Principle II graceful degrade, never crash the transfer)."""
+    try:
+        from SIL.LCModel import ILexEntryRefFactory
+        from System import Guid as DotNetGuid
+    except Exception:  # noqa: BLE001 -- no pythonnet / interface absent
+        return None
+    try:
+        factory = ILexEntryRefFactory(target.GetFactory(ILexEntryRefFactory))
+    except Exception:  # noqa: BLE001 -- GetFactory/cast unavailable
+        return None
+    try:
+        parsed_guid = DotNetGuid.Parse(str(ref_guid))
+        return factory.Create(parsed_guid)
+    except Exception:  # noqa: BLE001 -- Create(Guid) unsupported/failed
+        return None
+
+
+def _run_entryref_create_pass(context, target, tag=None):
+    """C1: create target `LexEntryRef` containers before C2
+    (`_run_post_pass_a`) wires their component/primary lexemes.
+
+    Reads `plan.entryref_create_bindings` (`{src_entry_guid: [ref_record,
+    ...]}`, data-model.md's extension, gathered read-only by
+    `_stash_entry_bindings`) and `plan.identity_remap`. Resolves the owning
+    entry via `_resolve_target_by_guid` (offline fakes: `get_object_by_guid`;
+    live: the LCM object repository, issue #28 layer 1) then
+    `_cast_lcm(..., "ILexEntry")` so `.EntryRefsOS` is reachable (issue #28
+    layer 2) -- the SAME two-step resolution idiom `_run_171_subpass` /
+    `_run_post_pass_a` use, closing the identical latent-bug shape flagged in
+    STATUS.md for this pass before it existed.
+
+    For each ref_record not yet reproduced on the target entry (GUID guard,
+    INV-1 -- idempotent re-Move, SC-003), creates the container via
+    `_create_entryref_container`, sets `RefType` (cast to `ILexEntryRef`
+    first), and owns it into `EntryRefsOS`. Does NOT wire
+    ComponentLexemesRS/PrimaryLexemesRS/*EntryTypesRS -- C2 (and, in a later
+    phase, C3) own that; this pass only guarantees a cast, GUID-correct,
+    RefType-correct EMPTY container exists (contract C1 "MUST NOT").
+
+    Returns a list of Skip(DEPENDENCY_UNRESOLVED) -- one per unresolved
+    owning entry (or one whose cast `EntryRefsOS` is still unreachable).
+    Absent `ILexEntryRefFactory`/interface degrades to report-only (one
+    `DroppedItemRecord` per un-created ref) rather than crashing (Principle
+    II) -- never silent (Principle V): the record is emitted, not swallowed."""
+    skips = []
+    dropped = getattr(context, "_dropped", None)
+    if dropped is None:
+        dropped = []
+    plan = getattr(context, "_run_plan", None)
+    if plan is not None:
+        bindings = getattr(plan, "entryref_create_bindings", None) or {}
+        remap = getattr(plan, "identity_remap", None) or {}
+    else:
+        bindings = _binding_map(context, "entryref_create_bindings") or {}
+        remap = getattr(context, "_identity_remap", None) or {}
+
+    for src_entry_guid, ref_records in bindings.items():
+        target_entry_guid = remap.get(src_entry_guid, src_entry_guid)
+        target_entry = _resolve_target_by_guid(target, target_entry_guid)
+        if target_entry is None:
+            skips.append(Skip(
+                category=GrammarCategory.STEMS,
+                source_guid=src_entry_guid,
+                reason=SkipReason.DEPENDENCY_UNRESOLVED,
+                detail=(f"entry_guid={src_entry_guid} not in target for "
+                        "LexEntryRef creation"),
+            ))
+            continue
+        # Cast the live-resolved ICmObject so .EntryRefsOS is reachable
+        # (issue #28 layer 2); fakes pass through unchanged.
+        target_entry = _cast_lcm(target_entry, "ILexEntry")
+        entry_refs = getattr(target_entry, "EntryRefsOS", None)
+        if entry_refs is None:
+            skips.append(Skip(
+                category=GrammarCategory.STEMS,
+                source_guid=src_entry_guid,
+                reason=SkipReason.DEPENDENCY_UNRESOLVED,
+                detail=(f"EntryRefsOS unavailable on target entry "
+                        f"{target_entry_guid}"),
+            ))
+            continue
+        existing_guids = {
+            _guid_str_from(_cast_lcm(r, "ILexEntryRef")) for r in entry_refs
+        }
+        for rec in ref_records:
+            ref_guid = rec.get("ref_guid")
+            if not ref_guid:
+                continue
+            if ref_guid in existing_guids:
+                continue  # INV-1 idempotency guard -- already reproduced
+            new_ref = _create_entryref_container(target, ref_guid)
+            if new_ref is None:
+                ref_type = rec.get("ref_type")
+                _append_dropped_once(dropped, DroppedItemRecord(
+                    owner_kind="LexEntry",
+                    owner_guid=src_entry_guid,
+                    owner_label="",
+                    field_name="EntryRefsOS",
+                    item_name=_LEX_ENTRY_REF_KIND_BY_TYPE.get(
+                        ref_type, f"RefType={ref_type!r}"),
+                    item_guid=ref_guid,
+                    reason=(
+                        "ILexEntryRefFactory/interface unavailable -- "
+                        "LexEntryRef could not be created (degraded, "
+                        "not crashed -- Principle II)"
+                    ),
+                ))
+                continue
+            try:
+                entry_refs.Add(new_ref)
+            except Exception as e:
+                raise RuntimeError(
+                    f"Orphan risk: ILexEntryRefFactory.Create({ref_guid}) "
+                    f"succeeded but Add-to-EntryRefsOS failed: {e!r}. "
+                    "Investigate target LCM state before retrying."
+                ) from e
+            new_ref_typed = _cast_lcm(new_ref, "ILexEntryRef")
+            try:
+                new_ref_typed.RefType = rec.get("ref_type")
+            except (AttributeError, TypeError):
+                pass
+            existing_guids.add(ref_guid)
+    return skips
+
+
 # ----- post-pass A: LexEntryRef wiring (FR-340) ----------------------------
 # contracts/post-pass-a.md. Runs as a tail block on STEMS execute_action.
 
@@ -5651,8 +5820,15 @@ def stems_plan_action(piece, context, ws_mapping):
 
 def stems_execute_action(action, context, ws_mapping, tag):
     """Owned-child closure write for the stem LexEntry (same closure as AFFIXES,
-    MSA dispatch including MoStemMsa). Tail block: run post-pass A once (on the
-    last stem) after all stem writes complete (FR-340)."""
+    MSA dispatch including MoStemMsa). Tail block: run the 027 create-then-wire
+    STEMS tail once (on the last stem) after all stem writes complete --
+    `_run_entryref_create_pass` (C1) creates each in-closure LexEntryRef
+    container FIRST, then `_run_post_pass_a` (C2, FR-340) wires its
+    ComponentLexemesRS/PrimaryLexemesRS -- `_run_post_pass_a` was previously
+    unreachable (no create site existed; see the "Cycle-16 lead adjudication"
+    note above `_report_dropped_entry_refs`) and is now reachable because C1
+    runs first, in the SAME tail, on the SAME `_run_tail_once` "last STEMS
+    action" timing (research.md Decision 6)."""
     source = context.source_handle
     target = context.target_handle
     src_guid = action.source_guid
@@ -5662,7 +5838,13 @@ def stems_execute_action(action, context, ws_mapping, tag):
         new_entry = _walk_lex_entry_closure(
             src_entry, context, tag, GrammarCategory.STEMS)
 
-    # Tail block (post-pass A) — run once after all stems complete.
+    # Tail block (front: entry-ref container creation, 027 US1/US3 contract
+    # C1) -- MUST run before _run_post_pass_a's wiring (C2): a ref's
+    # container has to exist before its component/primary lexemes can be
+    # wired into it.
+    _run_tail_once(context, target, tag, "_did_entryref_create_pass",
+                   GrammarCategory.STEMS, _run_entryref_create_pass)
+    # Tail block (post-pass A, C2) — run once after all stems complete.
     _run_tail_once(context, target, tag, "_did_post_pass_a",
                    GrammarCategory.STEMS, _run_post_pass_a)
     return new_entry

@@ -169,6 +169,14 @@ def build_run_plan(
     _lexentry_ref_bindings: dict = {}
     object.__setattr__(context, '_msa_slot_bindings', _msa_slot_bindings)
     object.__setattr__(context, '_lexentry_ref_bindings', _lexentry_ref_bindings)
+    # Feature 027 (Complex Forms & Variants, US1/US2/US3, contract C1): the
+    # parallel, richer per-ref LexEntryRef CREATION binding accumulator --
+    # SAME threading convention as `_lexentry_ref_bindings` above, gathered
+    # by the SAME `_stash_entry_bindings` call site (extended) and consumed
+    # by the Move wiring post-pass `_run_entryref_create_pass` (the front
+    # half of the STEMS tail, immediately before `_run_post_pass_a`).
+    _entryref_create_bindings: dict = {}
+    object.__setattr__(context, '_entryref_create_bindings', _entryref_create_bindings)
     # Feature 031 (US1, T009): feature->category link accumulator, written by
     # `categories.gram_categories_plan_action` -> `_stash_feature_category_links`
     # and consumed by the Move wiring post-pass (`_run_infl_feature_link_pass`,
@@ -393,6 +401,9 @@ def build_run_plan(
         overwrites=tuple(overwrites),
         msa_slot_bindings=_msa_slot_bindings,
         lexentry_ref_bindings=_lexentry_ref_bindings,
+        # Feature 027 (US1/US2/US3, contract C1): gathered create bindings
+        # (see the accumulator attachment above).
+        entryref_create_bindings=_entryref_create_bindings,
         # Feature 031 (US1, T009): gathered feature->category link bindings.
         feature_category_links=_feature_category_links,
         excluded_lossy=tuple(excluded_lossy),
