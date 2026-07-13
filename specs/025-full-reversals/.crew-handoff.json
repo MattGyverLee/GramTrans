@@ -1,13 +1,14 @@
 {
   "feature": "025-full-reversals",
   "created": "2026-07-12",
-  "updated": "2026-07-12",
-  "status": "needs_human",
+  "updated": "2026-07-13",
+  "status": "feature_complete",
   "spurt": 9,
-  "last_cycle": 13,
-  "checkpoint_completed": "T037 Phase-2 P0 sub-entry sense-loss bug FIXED (cycle 13, commit 9d1266b) + offline verified (tripwire genuine, suite 1508 passed / 1 known-fail, top-level path untouched)",
-  "qc_gate": "GREEN offline (incl. the P0 fix + 3 regression tests)",
-  "blocker": "RE-MOVE needs a human: (1) -restore Target in FieldWorks (it currently holds the partial Move — 134 top-level entries OK but sub-entries have empty SensesRS); (2) attended re-run of the T037 Phase-2 Move (scratchpad/t037_move_driver.py) Ejagham Mini -> restored Target with the fix @ 9d1266b; (3) verify sub-entry SensesRS counts now match the Preview plan. Then merge 025-full-reversals -> main and the feature is complete.",
+  "last_cycle": 14,
+  "merged_to_main_commit": "cb88b00",
+  "checkpoint_completed": "T037 Phase-2 live re-Move PASS (cycle 14): Target restored from clean Target.bak, destructive Move re-run @ 9d1266b (164 added/0 skipped; en index ab4d4345 reused R4; 134 top-level + 10 sub persisted = 144 on-disk), P0 sub-entry sense-loss fix VERIFIED (all 10 sub-entries' SensesRS match Preview plan exactly: 9x=1, 1x=0 for CLS8,14 legitimately senseless). Merged 025-full-reversals -> main @ cb88b00.",
+  "qc_gate": "GREEN offline + LIVE-VALIDATED. Merged-tree suite: 1 pre-existing baseline fail (confirmed on branch 9d1266b AND main e033565 independently) / 1510 passed / 9 skipped / 14 xfailed / 14 xpassed.",
+  "blocker": null,
   "t037_phase2_fix": {
     "commit": "9d1266b",
     "fix": "reversals.py::_create_sub_entry now takes first_sense and links it via _link_remaining_senses; _apply_one_entry passes first_sense to both create paths so remaining_senses = target_senses[1:] is correct for sub-entries too. Top-level path unchanged.",
@@ -15,8 +16,18 @@
     "verification": "cycle13-verification.md: PASS all 5 items; tripwire reproduces SensesRS=0 when reverted; suite 1 failed / 1508 passed / 9 skipped / 14 xfailed / 14 xpassed; worktree clean at 9d1266b.",
     "reports": ["cycle13-programmer.md", "cycle13-verification.md"]
   },
+  "t037_phase2_remove": {
+    "status": "PASS (cycle 14, live-validated)",
+    "date": "2026-07-13",
+    "restore": "Target restored from clean auto-backup Target.bak (0 ReversalIndexEntry, empty en index); polluted fwdata preserved as Target.fwdata.partialmove-evidence.",
+    "move": "transfer.execute 1.62s RunMode.MOVE: stems added=164 skipped=0; en index ab4d4345 reused (R4); 134 top-level + 10 sub-entries; on-disk fwdata 144 ReversalIndexEntry confirmed on fresh re-open. en.fwdictconfig SKIP; PartsOfSpeechOA untouched; 337 dropped_items = known non-blocking 024-era backlog.",
+    "verification": "All 10 sub-entries' post-Move SensesRS match the Preview plan exactly (plan: 9x linked_senses=1 + 1x=0 for CLS8,14 with dropped_sense_members=0; actual: 9x senses=1 + 1x=0). Pre-fix the same run left 9/10 silently at 0. P0 fix 9d1266b live-verified.",
+    "driver": "scratchpad/t037_move_driver.py (recovered from prior session scratchpad)",
+    "log": "scratchpad/t037_move_rerun.log",
+    "report": "specs/025-full-reversals/reviews/cycle14-verification-t037-remove.md"
+  },
   "t037_phase2": {
-    "status": "PARTIAL FAIL",
+    "status": "SUPERSEDED by t037_phase2_remove (was PARTIAL FAIL pre-fix)",
     "ran": "transfer.execute committed + persisted (fresh re-open confirmed). 134/134 top-level reversal entries written to target en index (GUID ab4d4345 reused, R4); top-level single+multi-sense linking PASS (foot/leg/palm frond = 2 senses); ReversalForm PASS; sub-entry recursion STRUCTURE PASS (all 7 parents, exact counts); LangProject.PartsOfSpeechOA untouched (13/13); config en.fwdictconfig SKIP (no write, no .gtbak).",
     "FAIL": "sub-entry sense-linking: 9/10 sampled sub-entries have senses=0 where Preview correctly predicted 1 — silent data loss.",
     "driver": "scratchpad/t037_move_driver.py",
@@ -60,15 +71,16 @@
     "branch": "025-full-reversals",
     "exists": true,
     "head": "9d1266b",
-    "merged_to_main": false
+    "merged_to_main": true,
+    "merge_commit": "cb88b00"
   },
   "dependency_024": { "gate": "T004", "status": "PASS" },
   "tasks_total": 37,
   "tasks_done": ["T001","T002","T003","T004","T005","T006","T007","T008","T009","T010","T011","T012","T013","T014","T015","T016","T017","T018","T019","T020","T021","T022","T023","T024","T025","T026","T027","T028","T029","T030","T031","T032","T033","T034","T035","T036"],
-  "tasks_remaining": ["T037 (live-MCP quickstart validation — attended)", "worktree merge 025-full-reversals -> main (after T037 validates)"],
+  "tasks_remaining": [],
   "all_user_stories_implemented": true,
-  "next_checkpoint": "T037 live-MCP quickstart validation (ATTENDED, needs_human) -> then merge to main -> feature complete.",
-  "next_entry": "HUMAN must, in an attended session with FLExTools MCP active: (1) confirm a disposable, -restore-ready target project is available (Ejagham Mini -> disposable *-GT-Test); (2) run quickstart Scenarios 1-5 per specs/025-full-reversals/quickstart.md, recording pre/post evidence per STATUS.md conventions; (3) once T037 passes, merge worktree branch 025-full-reversals (@ 1a1849c or later) into main — feature is then complete.",
+  "next_checkpoint": "NONE — feature complete and merged @ cb88b00.",
+  "next_entry": "Feature 025 is COMPLETE. Non-blocking backlog remains (S2/S3/S4-ADD-OVERWRITE fixtures, Findings 2/3 024-era gaps, sentinel-prefix hardening, P1-1/P1-2 DRY, PyQt Preview-pane UI confirm) — tracked in HANDOFF.md 'Non-blocking backlog', out of the critical path. Worktree 025-full-reversals safe to remove.",
   "carry_forward_settled_green": [
     "Items 1/2/5 (cycle 5) + both P0s (cycles 6-7): CLOSED. Do NOT relitigate.",
     "ReversalForm census decision (a): included via FieldSpec.kind == 'MU' (IMultiUnicode value field), classified COPIED — grounded in the SC-003/FR-010 never-silent principle; NOT the 024 Discussion silent-exclusion precedent."
@@ -87,12 +99,14 @@
     "specs/025-full-reversals/reviews/cycle6-programmer.md",
     "specs/025-full-reversals/reviews/cycle7-qc.md",
     "specs/025-full-reversals/reviews/cycle7-verification.md",
-    "specs/025-full-reversals/reviews/cycle8-programmer.md"
+    "specs/025-full-reversals/reviews/cycle8-programmer.md",
+    "specs/025-full-reversals/reviews/cycle14-verification-t037-remove.md"
   ],
   "notes": [
-    "Everything offline is GREEN and code-complete (T001-T036); only live validation (T037) + merge remain.",
+    "FEATURE COMPLETE (2026-07-13): all 37 tasks done, live-validated end-to-end, merged to main @ cb88b00.",
+    "Everything offline is GREEN and code-complete (T001-T036); live validation (T037) DONE + merged.",
     "Full suite (worktree @ 1a1849c): 1524 passed / 1 known-fail / 76 skipped / 14 xfailed / 14 xpassed. The 1 failure is PRE-EXISTING baseline test_wizard_pos_grammar_wiring::test_plan_emits_pos_action_for_picked_pos (NOT a 025 regression).",
     "Implementation on the 025 worktree; spec artifacts (specs/, STATUS.md, .crew-handoff.json) on main.",
-    "RALPH LOOP: status=needs_human -> the loop must STOP and surface the blocker; do NOT perform T037 unattended."
+    "RALPH LOOP: status=feature_complete -> loop exits (FEATURE COMPLETE). T037 was performed attended on 2026-07-13; no unattended destructive write occurred."
   ]
 }

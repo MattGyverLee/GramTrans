@@ -1,28 +1,31 @@
 # Feature 025 — Full Reversals — HANDOFF
 
-**Date:** 2026-07-13 | **Status:** `needs_human` — code-complete & offline-green; ONE attended
-live step (re-Move) + merge remain. | **Worktree:** `D:/Github/_Projects/_LEX/GramTrans-025-full-reversals`
-branch `025-full-reversals` @ **`9d1266b`** (NOT merged to main).
+**Date:** 2026-07-13 | **Status:** `feature_complete` — live-validated end-to-end and **merged to
+`main` @ `cb88b00`**. Nothing left to do. | **Worktree:** `025-full-reversals` @ `9d1266b` (now
+merged; safe to remove).
 
 This doc is the single pickup point. Machine-readable state:
 [.crew-handoff.json](./.crew-handoff.json). Session log: [../../STATUS.md](../../STATUS.md).
 
 ---
 
-## TL;DR — what's left
+## TL;DR — DONE (2026-07-13 attended session)
 
-1. **`-restore` the `Target` project in FieldWorks.** It currently holds a *partial* Move (134
-   top-level reversal entries written OK, but sub-entries have empty `SensesRS` from the now-fixed
-   P0 bug). It must be clean before re-testing.
-2. **Re-run the T037 Phase-2 live Move** (attended, FLExTools MCP / `py` launcher, Target not open
-   in FieldWorks): `scratchpad/t037_move_driver.py`, source **Ejagham Mini** → restored **Target**,
-   code @ `9d1266b`.
-3. **Verify** the re-Move: sub-entry `SensesRS` counts now match the Preview plan (the 9 sub-entries
-   that dropped their sense should each carry 1). Top-level was already PASS.
-4. **Merge** `025-full-reversals` → `main`. Feature complete.
+The single `needs_human` blocker (attended live re-Move + merge) is closed. Evidence:
+[reviews/cycle14-verification-t037-remove.md](./reviews/cycle14-verification-t037-remove.md).
 
-> The Ralph loop was **cancelled** (it correctly refused to perform the destructive live write
-> unattended). This is now a normal attended session.
+1. **Restored** `Target` from its clean pre-Move auto-backup `Target.bak` (0 reversal entries;
+   polluted fwdata preserved as `Target.fwdata.partialmove-evidence`).
+2. **Re-ran the T037 Phase-2 live Move** (`scratchpad/t037_move_driver.py`, `Ejagham Mini` →
+   restored `Target`, code @ `9d1266b`): 164 added / 0 skipped; en index `ab4d4345` reused (R4);
+   134 top-level + 10 sub-entries persisted (144 total, confirmed on fresh re-open + on-disk).
+3. **Verified** — PASS: all 10 sub-entries' post-Move `SensesRS` match the Preview plan exactly
+   (9× senses=1, 1× senses=0 for `CLS8,14` which legitimately had none). Pre-fix left 9/10 at 0.
+4. **Merged** `025-full-reversals` → `main` @ `cb88b00`. Offline suite on merged tree:
+   1 pre-existing baseline fail (not a 025 regression) / 1510 passed / 9 skipped / 14 xf / 14 xp.
+
+> The Ralph loop had been cancelled (it correctly refused the destructive live write unattended).
+> This attended session completed it.
 
 ---
 
@@ -68,7 +71,7 @@ Run against **Ejagham Mini → Target** (disposable, user-confirmed). Reusable d
 
 | Scenario | Offline | Live (T037) |
 |---|---|---|
-| S1 reversal ride-along | ✅ | Preview ✅; Move top-level ✅, **sub-entry sense re-Move PENDING** |
+| S1 reversal ride-along | ✅ | Preview ✅; Move top-level ✅; **sub-entry sense re-Move ✅ (cycle 14)** |
 | S2 per-index category resolve | ✅ | Not exercisable — no reversal `PartOfSpeechRA` in Ejagham Mini (needs fixture) |
 | S3 WS gate | ✅ | Not exercisable — identity `en`/`etu` WS pair (needs unmapped-WS fixture) |
 | S4 config views | ✅ | SKIP path only (byte-identical); ADD/OVERWRITE/`missing_refs` need a fixture |
@@ -102,6 +105,7 @@ Run against **Ejagham Mini → Target** (disposable, user-confirmed). Reusable d
 
 ## Git
 
-- Implementation on worktree `025-full-reversals` @ `9d1266b`; **not merged**.
-- All spec artifacts (this doc, reviews, handoff json, STATUS.md) are on `main`.
-- Merge only after the live re-Move validates sub-entry sense counts.
+- Implementation branch `025-full-reversals` @ `9d1266b` **merged to `main` @ `cb88b00`**
+  (2026-07-13). Worktree `D:/Github/_Projects/_LEX/GramTrans-025-full-reversals` is safe to remove.
+- All spec artifacts (this doc, reviews incl. cycle14, handoff json, STATUS.md) are on `main`.
+- Live re-Move validated sub-entry sense counts (cycle 14) — merge done. **Feature complete.**

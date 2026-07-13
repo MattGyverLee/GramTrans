@@ -1,5 +1,33 @@
 # GramTrans — Session Handoff
 
+## ▶▶▶ Feature 025 — Full Reversals — COMPLETE: live re-Move PASS + merged to main (2026-07-13)
+
+**FEATURE COMPLETE.** All 37 tasks (T001–T037) done, live-validated end-to-end, and
+**merged `025-full-reversals` → `main` @ `cb88b00`**. The single `needs_human` blocker is closed.
+Evidence: **[cycle14-verification-t037-remove.md](specs/025-full-reversals/reviews/cycle14-verification-t037-remove.md)**.
+
+**Attended session, this session did:**
+1. **Restored Target** from its clean pre-Move auto-backup `Target.bak` (0 reversal entries, empty
+   `en` index). Polluted fwdata preserved as `Target.fwdata.partialmove-evidence`. Guarded: no FLEx
+   GUI, no `.lock`.
+2. **Re-ran the T037 Phase-2 live Move** (`scratchpad/t037_move_driver.py`, Ejagham Mini → restored
+   Target, code @ `9d1266b`): 164 added / 0 skipped; `en` index `ab4d4345` reused (R4); 134
+   top-level + 10 sub-entries persisted (**144 on-disk `ReversalIndexEntry`**, confirmed on fresh
+   re-open). `en.fwdictconfig` SKIP; `PartsOfSpeechOA` untouched; 337 dropped = known 024-era backlog.
+3. **Verified — PASS:** all 10 sub-entries' post-Move `SensesRS` match the Preview plan **exactly**
+   (plan 9× `linked_senses=1` + 1× `=0` for `CLS8,14` w/ `dropped_sense_members=0`; actual 9×
+   `senses=1` + 1× `=0`). Pre-fix the same run left 9/10 silently at 0 → P0 fix `9d1266b` live-proven.
+4. **Merged to main @ `cb88b00`.** Merged-tree offline suite: **1 pre-existing baseline fail /
+   1510 passed / 9 skipped / 14 xfailed / 14 xpassed**. The 1 failure
+   (`test_wizard_pos_grammar_wiring::test_plan_emits_pos_action_for_picked_pos`) was confirmed
+   failing on both branch `9d1266b` AND main `e033565` independently — not a 025 regression.
+
+**Non-blocking backlog** (tracked in HANDOFF.md, out of critical path): S2/S3/S4-ADD/OVERWRITE
+fixtures; Findings 2/3 (024-era gaps); sentinel-prefix hardening; P1-1/P1-2 DRY; PyQt Preview-pane
+UI confirm. **Worktree `025-full-reversals` safe to remove.**
+
+---
+
 ## ▶▶▶ Feature 025 — Full Reversals — P0 sub-entry fix landed + verified; RE-MOVE pending human -restore (2026-07-13)
 
 **STOPPING POINT.** Feature 025 is code-complete and offline-GREEN. See the consolidated
