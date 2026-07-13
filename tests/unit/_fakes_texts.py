@@ -69,10 +69,19 @@ class FakePossibilityList:
         self.ItemClsid = 7
 
 
+_UNSET = object()
+
+
 class FakeLangProject:
-    def __init__(self, genre_list=None, pos_list=None):
+    def __init__(self, genre_list=None, pos_list=None, tag_list=_UNSET):
         self.GenreListOA = genre_list if genre_list is not None else FakePossibilityList()
         self.PartsOfSpeechOA = pos_list if pos_list is not None else FakePossibilityList()
+        # Feature 026 US5 (text-markup tags): TextMarkupTagsOA is the tag
+        # possibility list. Omitting `tag_list` gives an empty (present) list ->
+        # CREATE; passing None models an absent target list -> REPORT_DROPPED.
+        self.TextMarkupTagsOA = (
+            FakePossibilityList() if tag_list is _UNSET else tag_list
+        )
 
 
 class FakeCache:
@@ -86,7 +95,7 @@ class FakeCache:
 
 class FakeText:
     def __init__(self, guid, name, abbreviation="", is_translated=None,
-                 genres=(), paragraphs=(), source_text=""):
+                 genres=(), paragraphs=(), source_text="", tags=()):
         self.guid = guid
         self.Guid = guid
         self.name = name
@@ -95,6 +104,27 @@ class FakeText:
         self.genres = list(genres)
         self.paragraphs = list(paragraphs)
         self.source_text = source_text
+        # Feature 026 US5: per-text ITextTag objects (text-markup tags).
+        self.tags = list(tags)
+
+
+class FakeTextTag:
+    """Duck-typed ITextTag: a text-markup tag reference spanning segment(s).
+
+    `TagRA` is the referenced possibility (in TextMarkupTagsOA); the begin/end
+    segment refs and analysis indices locate the tagged span (single-segment in
+    the fakes).
+    """
+
+    def __init__(self, guid, tag_ra=None, begin_seg=None, end_seg=None,
+                 begin_idx=0, end_idx=0):
+        self.guid = guid
+        self.Guid = guid
+        self.TagRA = tag_ra
+        self.BeginSegmentRA = begin_seg
+        self.EndSegmentRA = end_seg if end_seg is not None else begin_seg
+        self.BeginAnalysisIndex = begin_idx
+        self.EndAnalysisIndex = end_idx
 
 
 class FakeParagraph:
@@ -426,6 +456,29 @@ class FakeWfiGlossOps:
         g.set_form[wsHandle] = text
 
 
+class FakeTextTagOps:
+    """Target-side seam for per-segment text-markup tag creation (US5).
+
+    flexicon exposes NO ITextTag wrapper, so production reaches the raw LCM
+    surface (StText.TagsOC + ITextTagFactory, [PROBE] R6/T039). This duck-typed
+    op models the same Create contract for the offline gate."""
+
+    def __init__(self):
+        self.created = []
+
+    def Create(self, text, tag_possibility, begin_seg, end_seg=None,
+               begin_idx=0, end_idx=0):
+        rec = FakeTextTag(
+            guid="tgt-tag", tag_ra=tag_possibility,
+            begin_seg=begin_seg, end_seg=end_seg or begin_seg,
+            begin_idx=begin_idx, end_idx=end_idx,
+        )
+        self.created.append(rec)
+        if hasattr(text, "target_tags"):
+            text.target_tags.append(rec)
+        return rec
+
+
 class FakeAgent:
     def __init__(self, name, is_human=True):
         self.name = name
@@ -471,6 +524,7 @@ class FakeProject:
         self.WfiAnalyses = FakeWfiAnalysisOps(self)
         self.WfiMorphBundles = FakeMorphBundleOps()
         self.WfiGlosses = FakeWfiGlossOps()
+        self.TextTags = FakeTextTagOps()
         self.Agents = FakeAgentOps(agents)
         self._default_vern_id = default_vern_id
         self._default_anal_id = default_anal_id

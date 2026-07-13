@@ -264,6 +264,95 @@ def _genre_spec() -> ReferenceFieldSpec:
     )
 
 
+# ===========================================================================
+# Text-markup tag reference field spec (ITextTag.TagRA -> LangProject.
+# TextMarkupTagsOA) — US5, FR-017, R6
+# ===========================================================================
+#
+# Like the genre spec, a standalone ReferenceFieldSpec threaded through the
+# shared 024 resolver so tag creation reuses the SAME create-time concept<->GUID
+# discipline (create-allowed, GUID-preserving). Target-list accessor
+# `LangProject.TextMarkupTagsOA` confirmed on the live LCM surface via FLExTools
+# MCP (2026-07-12); the per-segment ITextTag write path itself has no flexicon
+# wrapper and is reached raw (R6 [PROBE] carried to T039).
+
+def _tag_spec() -> ReferenceFieldSpec:
+    return ReferenceFieldSpec(
+        owner_class="TextTag",
+        field_name="TagRA",
+        cardinality=ReferenceCardinality.ATOMIC,
+        target_list_path=lambda target: target.Cache.LangProject.TextMarkupTagsOA,
+        hierarchical=True,
+    )
+
+
+def _source_text_tags(source, text) -> list:
+    """Return the source text's `ITextTag` objects (US5), or [].
+
+    Prefers a duck-typed `text.tags` (the offline fake shape). Production reaches
+    the raw LCM surface: `TextOperations.GetContents(text)` -> `IStText.TagsOC`
+    (no flexicon wrapper exists for text-markup tags). Never raises."""
+    tags = getattr(text, "tags", None)
+    if tags is not None:
+        try:
+            return list(tags)
+        except Exception:
+            return []
+    text_ops = getattr(source, "Texts", None)
+    contents = None
+    if text_ops is not None and hasattr(text_ops, "GetContents"):
+        contents = _safe(lambda: text_ops.GetContents(text))
+    tags_oc = getattr(contents, "TagsOC", None)
+    if tags_oc is None:
+        return []
+    try:
+        return list(tags_oc)
+    except Exception:
+        return []
+
+
+def _tags_by_begin_segment(source, text) -> dict:
+    """Group the text's tags by their begin-segment source GUID (US5).
+
+    A tag with no `TagRA` (no referenced possibility) or no begin segment is
+    skipped — nothing to reproduce."""
+    out: dict = {}
+    for tag in _source_text_tags(source, text):
+        if getattr(tag, "TagRA", None) is None:
+            continue
+        begin_guid = _guid_str(getattr(tag, "BeginSegmentRA", None))
+        out.setdefault(begin_guid, []).append(tag)
+    return out
+
+
+def _decide_segment_tags(tags, source, target, resolver_cache, dropped):
+    """Resolve each tag's `TagRA` possibility via the shared resolver →
+    tuple[ReferenceDecision] (US5, FR-017).
+
+    Create-allowed (a tag absent from the target list is CREATEd, GUID-
+    preserving); an unresolvable tag (target list absent) is a REPORT_DROPPED
+    decision carrying its own DroppedItemRecord. Never raises."""
+    if not tags:
+        return ()
+    spec = _tag_spec()
+    decisions = []
+    for tag in tags:
+        poss = getattr(tag, "TagRA", None)
+        if poss is None:
+            continue
+        try:
+            decision = _references.decide_reference(
+                poss, target, spec, resolver_cache, source=source)
+        except Exception:
+            decision = None
+        if decision is None:
+            continue
+        decisions.append(decision)
+        if decision.dropped is not None:
+            dropped.append(decision.dropped)
+    return tuple(decisions)
+
+
 def _text_disposition(target, src_guid: str, title: str):
     """ADD / UPDATE-shaped disposition for one source text (FR-021).
 
@@ -328,21 +417,23 @@ def _decide_genres(source_text, source, target, resolver_cache, dropped):
 
 
 def _walk_paragraphs(source_text, source, target, ctx, ws_map, tgt_ws_ids,
-                     resolver_cache, dropped, text_guid, text_label):
+                     resolver_cache, dropped, text_guid, text_label,
+                     tags_by_seg=None):
     """Walk the text's paragraphs → tuple[ParagraphPlan] with WS-gated content.
 
     For each paragraph: capture its baseline text (per-WS) and walk its segments
     (`Segments.GetAll`), building `SegmentPlan`s with WS-gated baseline /
     free+literal translation / notes (FR-002/003/004/020). Each segment's
     human-evaluated analyses + `AnalysesRS` alignment are delegated to
-    `Lib/wordforms.py` (US2, T025). Per-segment text-markup tags (US5, FR-017)
-    are resolved in `_segment_tag_decisions` (deferred to US5 — empty here).
-    """
+    `Lib/wordforms.py` (US2, T025). Per-segment text-markup tag references
+    (US5, FR-017) are resolved via `_decide_segment_tags` against the tags that
+    begin at that segment (`tags_by_seg`)."""
     if __package__:
         from . import wordforms as _wordforms
     else:  # pragma: no cover
         import wordforms as _wordforms  # type: ignore
 
+    tags_by_seg = tags_by_seg or {}
     para_plans: List[ParagraphPlan] = []
     seg_ops = getattr(source, "Segments", None)
     para_ops = getattr(source, "Paragraphs", None)
@@ -393,6 +484,11 @@ def _walk_paragraphs(source_text, source, target, ctx, ws_map, tgt_ws_ids,
                 seg, source, target, ctx, resolver_cache, dropped))
             alignment = tuple(_wordforms.plan_alignment(seg, ctx, dropped))
 
+            # US5 (T034): per-segment text-markup tag references.
+            tag_decisions = _decide_segment_tags(
+                tags_by_seg.get(seg_guid, ()), source, target,
+                resolver_cache, dropped)
+
             seg_plans.append(SegmentPlan(
                 source_guid=seg_guid,
                 baseline=baseline,
@@ -401,7 +497,7 @@ def _walk_paragraphs(source_text, source, target, ctx, ws_map, tgt_ws_ids,
                 notes=notes,
                 analyses=analyses,
                 alignment=alignment,
-                tag_decisions=(),  # US5 (T034)
+                tag_decisions=tag_decisions,
             ))
         para_plans.append(ParagraphPlan(
             source_guid=para_guid,
@@ -491,9 +587,11 @@ def plan_texts(selection, source, target, ctx, resolver_cache, dropped) -> List:
 
         action, target_guid = _text_disposition(target, src_guid, title)
         genre_decisions = _decide_genres(text, source, target, resolver_cache, dropped)
+        tags_by_seg = _tags_by_begin_segment(source, text)
         paragraphs = _walk_paragraphs(
             text, source, target, ctx, ws_map, tgt_ws_ids,
             resolver_cache, dropped, src_guid, title,
+            tags_by_seg=tags_by_seg,
         )
 
         plans.append(TextTransferPlan(
@@ -530,10 +628,13 @@ def apply_texts(plans, source, target, ctx, tag, report_sink,
     """US1 Move-mode apply — execute the TextTransferPlans.
 
     See contracts/text-structure-walk.md. Creates/updates each text, its
-    paragraphs and segments, writes baseline / free+literal translations / notes
-    non-destructively (FR-021), applies genre (and, US5, tag) ReferenceDecisions,
-    wires the human-evaluated analyses + alignment via `Lib/wordforms.py`, and
-    residue-tags the created objects (Carrier B, R8).
+    paragraphs and segments, writes baseline / free+literal translations
+    non-destructively (FR-021), applies genre and (US5) text-markup tag
+    ReferenceDecisions, wires the human-evaluated analyses + alignment via
+    `Lib/wordforms.py`, and residue-tags the created objects (Carrier B, R8).
+    Segment notes are captured in the plan but currently reported rather than
+    reproduced — no confirmed note write path (see `_apply_segment_notes`,
+    deferred to the R5-class live probe, T039).
     """
     if not plans:
         return None
@@ -579,7 +680,7 @@ def apply_texts(plans, source, target, ctx, tag, report_sink,
 
         _apply_paragraphs(plan, target, target_text, para_ops, seg_ops,
                           ctx, tag, ws_map, tgt_id2h, default_vern_handle,
-                          _wordforms, apply_residue, dropped)
+                          _wordforms, apply_residue, resolver_cache, source, dropped)
     if report_sink is not None and hasattr(report_sink, "Info"):
         _safe(lambda: report_sink.Info(
             f"[Move] Texts: {_added} added, {_updated} updated "
@@ -625,9 +726,101 @@ def _apply_genres(plan, target, target_text, resolver_cache, tag, source, ws_map
         ))
 
 
+def _apply_segment_notes(seg_plan, tgt_seg, dropped):
+    """Reproduce (or report) a segment's captured notes.
+
+    flexicon's `SegmentOperations` exposes `GetNotes` (read) but no note
+    setter/factory wrapper, and the raw `ISegment.NotesOS` + `INoteFactory`
+    write path is an unconfirmed live surface (the CLR `run_module` probe is
+    down — R5-class deferral). Rather than silently discard a captured note
+    (the pre-census behaviour, an SC-003 violation), emit one DroppedItemRecord
+    per note so the loss is always surfaced (never-silent). Reproduction via the
+    raw note factory is deferred to the same live-probe pass as R5 (T039).
+    """
+    for note_text in (seg_plan.notes or ()):
+        dropped.append(DroppedItemRecord(
+            owner_kind="Segment", owner_guid=seg_plan.source_guid or "?",
+            owner_label="", field_name="NotesOS",
+            item_name=str(note_text)[:60], item_guid="",
+            reason="segment note not reproduced: no confirmed note write path "
+                   "(deferred to live-probe, T039)",
+        ))
+
+
+def _apply_segment_tags(seg_plan, target, target_text, tgt_seg, resolver_cache,
+                        tag, source, ws_map, dropped):
+    """US5 Move-mode — reproduce the per-segment text-markup tag references.
+
+    For each tag ReferenceDecision on the segment: apply it via the shared
+    resolver (LINK the existing possibility / CREATE the absent one, GUID-
+    preserving, FR-017) to obtain the target tag possibility, then create the
+    per-segment `ITextTag` referencing it. A REPORT_DROPPED (unresolvable) tag
+    was already reported at plan time — nothing is written for it here."""
+    if not seg_plan.tag_decisions:
+        return
+    spec = _tag_spec()
+    tt_ops = getattr(target, "TextTags", None)
+    for decision in seg_plan.tag_decisions:
+        if getattr(decision, "action", None) == ReferenceAction.REPORT_DROPPED:
+            continue  # unresolvable — already reported (FR-017/023)
+        possibility = _safe(lambda d=decision: _references.apply_reference(
+            d, target, None, spec, resolver_cache, tag,
+            ws_map=ws_map or None, source=source, dropped=dropped,
+        ))
+        if possibility is None:
+            possibility = getattr(decision, "target_item", None)
+        if possibility is None:
+            continue
+        _create_text_tag(target, target_text, tgt_seg, possibility, tt_ops,
+                         seg_plan, dropped)
+
+
+def _create_text_tag(target, target_text, tgt_seg, possibility, tt_ops,
+                     seg_plan, dropped):
+    """Create one per-segment `ITextTag` wired to `possibility` (US5).
+
+    Prefers a duck-typed `target.TextTags.Create` (offline seam / any future
+    wrapper); otherwise reaches the raw LCM surface (`IStText.TagsOC` +
+    `ITextTagFactory`, R6 [PROBE]/T039). A single-segment span (begin==end) is
+    the offline-provable slice; a multi-segment span + exact analysis indices
+    are part of the deferred live confirmation. A tag that cannot be created is
+    reported, never silently dropped."""
+    if tt_ops is not None and hasattr(tt_ops, "Create"):
+        created = _safe(lambda: tt_ops.Create(target_text, possibility, tgt_seg, tgt_seg))
+        if created is not None:
+            return created
+    created = _safe(lambda: _raw_create_text_tag(target, target_text, tgt_seg, possibility))
+    if created is None:
+        dropped.append(DroppedItemRecord(
+            owner_kind="TextTag", owner_guid=seg_plan.source_guid or "?",
+            owner_label="", field_name="TagRA", item_name="",
+            item_guid="", reason="text-markup tag reference could not be created",
+        ))
+    return created
+
+
+def _raw_create_text_tag(target, target_text, tgt_seg, possibility):
+    """Raw-LCM per-segment `ITextTag` creation (R6 [PROBE]/T039).
+
+    No flexicon wrapper exists for text-markup tags, so this is the Principle II
+    fallback: create via `ITextTagFactory`, own it under the text's
+    `IStText.TagsOC`, and wire `TagRA` + begin/end segment. Wrapped by `_safe`
+    at the call site so an unconfirmed accessor degrades to a reported drop
+    rather than aborting the walk."""
+    from SIL.LCModel import IStText, ITextTagFactory  # lazy — absent offline
+    contents = target.Texts.GetContents(target_text)
+    st_text = IStText(contents)
+    tag_obj = ITextTagFactory(target.GetFactory(ITextTagFactory)).Create()
+    st_text.TagsOC.Add(tag_obj)
+    tag_obj.TagRA = possibility
+    tag_obj.BeginSegmentRA = tgt_seg
+    tag_obj.EndSegmentRA = tgt_seg
+    return tag_obj
+
+
 def _apply_paragraphs(plan, target, target_text, para_ops, seg_ops, ctx, tag,
                       ws_map, tgt_id2h, default_vern_handle, _wordforms,
-                      apply_residue, dropped):
+                      apply_residue, resolver_cache, source, dropped):
     if para_ops is None or seg_ops is None:
         return
     for para_plan in plan.paragraphs:
@@ -671,11 +864,15 @@ def _apply_paragraphs(plan, target, target_text, para_ops, seg_ops, ctx, tag,
                     ))
                     continue
             _write_segment_fields(seg_plan, target, seg_ops, tgt_seg, ws_map, tgt_id2h)
+            _apply_segment_notes(seg_plan, tgt_seg, dropped)
             # US2: analyses + AnalysesRS alignment.
             _wordforms.apply_analyses(
                 seg_plan.analyses, source_of(ctx), target, ctx, tag,
                 None, dropped)
             _wordforms.apply_alignment(tgt_seg, seg_plan.alignment, ctx, dropped)
+            # US5 (T035): per-segment text-markup tag references.
+            _apply_segment_tags(seg_plan, target, target_text, tgt_seg,
+                                resolver_cache, tag, source, ws_map, dropped)
 
 
 def source_of(ctx):
