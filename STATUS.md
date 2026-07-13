@@ -1,5 +1,35 @@
 # GramTrans — Session Handoff
 
+## ▶▶▶ Feature 025 — Full Reversals — T037 PHASE 1 (live read-only Preview) DONE — 2 bugs found, Move HELD (2026-07-12)
+
+**Attended session** (Ralph loop cancelled). Source **Ejagham Mini** → target **Target**
+(disposable/-restore-ready, user-confirmed). Worktree `025-full-reversals` @ `1a1849c`.
+Reusable headless driver: `scratchpad/t037_driver.py` (has `--move`, currently hard-refuses).
+
+**T037 Phase 1 = read-only Preview: PASS.** `build_run_plan` (SC-006 read-only held — Target
+byte-unchanged, no new source dirs): 164 actions, **134 top-level reversal Add decisions**
+(Link into the target's reused empty `en` index, R4), sub-entry recursion + `ReversalForm` carry
+verified, 1 config-view SKIP (byte-identical `en.fwdictconfig`), 6 dropped_items (all pre-existing
+`LexEntryRef` variant → 027, not reversal). **Scenario 1 verified end-to-end at Preview level.**
+S2/S3 not exercisable with this corpus (no reversal `PartOfSpeechRA`; identity WS); S4 partial
+(SKIP only); S5 partial + gap (Finding 1).
+
+**Two latent bugs surfaced (both pre-existing, exposed by the live run):**
+1. **Finding 1 — never-silent violation (024-era shared path, fidelity-critical):** ~164 stem
+   entries hit a `divergence_fingerprint` `TypeError` (mixed `int`/`str` keys) swallowed by a broad
+   `except` in `_plan_entry_reference_decisions` → returns `()` with **no `DroppedItemRecord`**.
+   Reference-field divergences silently discarded. Does NOT corrupt reversal decisions (separate
+   call) but violates FR-010/Principle III.
+2. **Finding 2 — 025 Preview/Move parity:** `build_run_plan` never sets `context._ws_map`, so
+   Preview's reversal walk always runs under identity WS (Move does set it). Harmless for this
+   identity-WS pair; a real gap under non-identity mappings.
+
+**Move HELD** pending decision: remediate findings first vs validate the reversal Move now
+(identity-WS corpus — Move would be correct for this data). See
+[cycle9-verification-t037-preview.md](specs/025-full-reversals/reviews/cycle9-verification-t037-preview.md).
+
+---
+
 ## ▶▶▶ Feature 025 — Full Reversals — SPURT 7 (Phase 6 Polish offline) — NEEDS_HUMAN for T037 (2026-07-12)
 
 **Worktree**: `D:/Github/_Projects/_LEX/GramTrans-025-full-reversals` on branch

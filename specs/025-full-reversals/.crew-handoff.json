@@ -3,11 +3,25 @@
   "created": "2026-07-12",
   "updated": "2026-07-12",
   "status": "needs_human",
-  "spurt": 7,
-  "last_cycle": 8,
-  "checkpoint_completed": "Phase 6 Polish offline — T034 census reversal classes, T035 unified never-silent assertion, T036 regression gate",
-  "qc_gate": "GREEN",
-  "blocker": "T037 is a live-MCP/LCM write against a real FLEx target (Ejagham Mini -> disposable *-GT-Test). It requires (a) a human to confirm a disposable, -restore-ready target project is available, and (b) an attended session with FLExTools MCP active. The Ralph loop MUST NOT perform this unattended (destructive live-LCM write).",
+  "spurt": 8,
+  "last_cycle": 9,
+  "checkpoint_completed": "T037 Phase 1 (read-only Preview) — Scenario 1 verified end-to-end vs live Ejagham Mini -> Target; read-only guarantee held; 2 latent bugs surfaced",
+  "qc_gate": "GREEN (offline); T037 Phase-1 PASS read-only, Move HELD pending Finding triage",
+  "blocker": "T037 Phase 2 (destructive Move) is HELD. Phase 1 live Preview surfaced 2 pre-existing latent bugs (see t037_findings). Finding 1 is a never-silent violation (fidelity-critical). Human/crew must decide remediate-first vs validate-reversal-Move-now before the destructive write. Target confirmed disposable/-restore-ready (user, attended).",
+  "t037_phase1": {
+    "status": "PASS (read-only)",
+    "source": "Ejagham Mini",
+    "target": "Target",
+    "result": "build_run_plan: 164 actions, 134 top-level reversal Add decisions (Link into target's reused empty en index, R4), 1 config-view SKIP (byte-identical en.fwdictconfig), 6 dropped_items (all pre-existing LexEntryRef variant, owner_kind LexEntry, routed to 027). Target byte-unchanged; no new source dirs (P0-1). Sub-entry recursion + ReversalForm carry verified.",
+    "driver": "scratchpad/t037_driver.py (reusable, has --move flag that currently hard-refuses)",
+    "log": "scratchpad/t037_run1.log",
+    "report": "specs/025-full-reversals/reviews/cycle9-verification-t037-preview.md",
+    "scenario_coverage": "S1 SUPPORTED (Preview verified); S2 NOT-EXERCISABLE (no reversal entry has PartOfSpeechRA in this corpus); S3 NOT-EXERCISABLE (identity WS, no unmapped index); S4 PARTIAL (SKIP path only — no ADD/OVERWRITE/missing_refs in this corpus); S5 PARTIAL + gap (Finding 1)."
+  },
+  "t037_findings": [
+    "FINDING 1 (never-silent violation, 024-era shared path, fidelity-critical): ~164 stem entries hit TypeError in references.py::divergence_fingerprint (sorted() over mixed int/str keys from _multistring_dict when a WS handle is absent from handle_to_id); swallowed by broad except in categories.py::_plan_entry_reference_decisions (~3480-3488) that returns () with NO DroppedItemRecord. Reference-field divergences silently discarded — contradicts FR-010/Principle III never-silent. Does NOT corrupt reversal decisions (separate call) but is a real completeness gap. Fix: make _multistring_dict keys consistently str (never mixed) AND emit a DroppedItemRecord from the catch-all.",
+    "FINDING 2 (025 Preview/Move parity, 025's own code): preview.build_run_plan never sets context._ws_map, so plan_reversals (reversals.py:443 ws_map = getattr(ctx,'_ws_map',None) or {}) always runs under identity WS in Preview; transfer.execute DOES set it (transfer.py:353). Preview can't predict Move for reversals under a non-identity WSMapping. Harmless for Ejagham Mini->Target (shared en/etu). Fix: build_run_plan should object.__setattr__(context,'_ws_map', to_ws_map_dict(ws_mapping)) before plan_reversal_decisions, mirroring execute."
+  ],
   "worktree": {
     "path": "D:/Github/_Projects/_LEX/GramTrans-025-full-reversals",
     "branch": "025-full-reversals",
