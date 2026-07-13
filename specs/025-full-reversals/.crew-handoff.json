@@ -3,38 +3,41 @@
   "created": "2026-07-12",
   "updated": "2026-07-12",
   "status": "in_progress",
-  "spurt": 3,
-  "last_cycle": 3,
-  "checkpoint_completed": "Phase 4 US2 (T021-T027) — reversal categories resolve against the per-index PartsOfSpeechOA via the 024 three-way resolver",
+  "spurt": 4,
+  "last_cycle": 4,
+  "checkpoint_completed": "Phase 5 US3 (T028-T033) — .fwdictconfig dictionary + reversal config-view file copy (plan Add/Overwrite/Skip via filecmp, absent-reference scan, apply with .gtbak backup, Preview/Move wiring)",
   "blocker": null,
   "worktree": {
     "path": "D:/Github/_Projects/_LEX/GramTrans-025-full-reversals",
     "branch": "025-full-reversals",
     "exists": true,
-    "head": "d84fc0b",
-    "parent": "48b2d75"
+    "head": "d1f1283",
+    "merged_to_main": false
   },
   "dependency_024": { "gate": "T004", "status": "PASS" },
   "tasks_total": 37,
-  "tasks_done": ["T001","T002","T003","T004","T005","T006","T007","T008","T009","T010","T011","T012","T013","T014","T015","T016","T017","T018","T019","T020","T021","T022","T023","T024","T025","T026","T027"],
-  "next_checkpoint": "Phase 5 US3 (T028-T033) — .fwdictconfig dictionary + reversal configuration-view file copy (Add/Overwrite/Skip planning + absent-reference reporting), independent file config_views.py.",
-  "next_entry": "Open config_views.py for US3. Author T028-T030 tests RED first (Add/Overwrite/Skip decision planning + absent-reference reporting for .fwdictconfig dictionary and reversal config-view files, temp dirs), then implement T031-T033 GREEN. This file is independent of the reversal seam (reversals.py/categories.py) — do NOT modify US1/US2 code.",
+  "tasks_done": ["T001","T002","T003","T004","T005","T006","T007","T008","T009","T010","T011","T012","T013","T014","T015","T016","T017","T018","T019","T020","T021","T022","T023","T024","T025","T026","T027","T028","T029","T030","T031","T032","T033"],
+  "all_user_stories_implemented": true,
+  "next_checkpoint": "Combined QC + lex-verification pass over US1+US2+US3, THEN Phase 6 Polish (T034-T037). QC gates the write path before Polish's live-MCP run.",
+  "next_entry": "Run a combined lex-qc + lex-verification cycle. QC MUST ADJUDICATE (not merely note): (1) US2 decide-side source=None vs apply-side target=target_project asymmetry — correct-by-design or latent bug in what gets reproduced; (2) T021 per-index tripwire fires and is not defeated by the US2 apply path; (3) UI-wiring gap — render_reversal_decisions AND render_config_view_records exist but are NOT called from Lib/ui/main_window.py (rule blocking vs documented follow-up); (4) US3 Preview-mutation nuance — resolve_config_dirs os.makedirs scaffolds empty target subdirs during Preview vs preview.py READ-ONLY guarantee (accept narrow exception OR require a no-makedirs read-only path from Preview); (5) US3 missing-ref owner_kind == 'ConfigView' flows into the unified 024 never-silent report. Only after QC gates the write path: Phase 6 Polish T034-T037 (census extension, unified never-silent assertion, regression gate, live-MCP quickstart). T037 is a destructive-capable live-LCM write — needs a disposable -restore-ready target or it trips needs_human.",
   "carry_forward": [
-    "US2 verified clean by lead: RED-before-GREEN honored; LangProject.PartsOfSpeechOA never touched (T021 tripwire); None-index guard reports 'target reversal category list absent'; dropped records enriched with ReversalIndexEntry identity + PartOfSpeechRA field.",
-    "PRE-EXISTING BASELINE FAILURE (NOT a 025 regression, verified via git stash at 48b2d75): test_wizard_pos_grammar_wiring.py::TestPosClosureWalksPickedPos::test_plan_emits_pos_action_for_picked_pos. Full suite otherwise 1483 passed, 10 skipped, 14 xfailed, 14 xpassed, 1 failed.",
-    "CARRIED-FORWARD UI GAP (not a blocker): preview.render_reversal_decisions (T019, US1) is Lib-level, still not wired into Lib/ui/main_window.py Preview pane. Assign to a UI-wiring spurt.",
-    "US2 DEVIATION #1 (decide-side, load-bearing): _decide_reversal_category calls references.decide_reference with source=None, not source=src_project — threading a real source against an index-shaped target breaks _fields_identical tuple-shape symmetry, making LINK unreachable and forcing spurious UPDATE on byte-identical content. In-line documented. MANDATORY QC line-item.",
-    "US2 DEVIATION #2 (apply-side, load-bearing): _apply_pos_decision passes target=target_project (real FLExProject) with a per-call ReferenceFieldSpec (dataclasses.replace overriding target_list_path to close over the resolved target_index.PartsOfSpeechOA). A bare IReversalIndex lacks .GetFactory/.PossibilityLists, so literal target=target_index would raise AttributeError inside apply_reference's CREATE/UPDATE arms and silently no-op every write. Possibility list read/written unchanged. In-line documented. MANDATORY QC line-item.",
-    "QC/VERIFICATION RECOMMENDATION: defer the dedicated QC + lex-verification pass to AFTER US3 lands (config_views.py is independent). Run ONE combined QC + verification cycle over the full US1+US2+US3 surface immediately before Polish (T034-T037), incl. live MCP validation (T037). Mandatory line-items: the two US2 deviations above + the T021 per-index-vs-LangProject tripwire."
+    "PRE-EXISTING BASELINE FAILURE (NOT a 025 regression): test_wizard_pos_grammar_wiring.py::TestPosClosureWalksPickedPos::test_plan_emits_pos_action_for_picked_pos. Full suite as-built: 1494 passed / 9 skipped / 14 xfailed / 14 xpassed / 1 failed.",
+    "US2 DEVIATION #1 (decide-side): _decide_reversal_category uses source=None (real source vs index-shaped target breaks _fields_identical tuple-shape symmetry). MANDATORY QC line-item.",
+    "US2 DEVIATION #2 (apply-side): _apply_pos_decision passes target=target_project + per-call ReferenceFieldSpec (bare IReversalIndex lacks .GetFactory/.PossibilityLists). MANDATORY QC line-item.",
+    "US3 DEVIATION (load-bearing): resolve_config_dirs os.makedirs(exist_ok=True) scaffolds empty target ConfigurationSettings subdirs during Preview — empty-dir only, no .fwdictconfig bytes, but a real FS write vs preview.py READ-ONLY docstring. MANDATORY QC line-item.",
+    "US3 minor deviations: models.py RunPlan.config_view_records field added (mirrors US1 reversal_decisions); custom-field discriminator isCustomField=\"true\" (confirmed vs FieldWorks ConfigurableDictionaryNode.cs); WS-check uses target raw WS-id list only (contract has no ws_mapping param).",
+    "UI-WIRING GAP (not yet ruled): render_reversal_decisions + render_config_view_records exist in the render layer but are NOT wired into Lib/ui/main_window.py.",
+    "WORKTREE NOT MERGED to main — merge only after Polish + validation, all gates green."
   ],
   "reports": [
     "specs/025-full-reversals/reviews/cycle1-programmer.md",
     "specs/025-full-reversals/reviews/cycle2-programmer.md",
-    "specs/025-full-reversals/reviews/cycle3-programmer.md"
+    "specs/025-full-reversals/reviews/cycle3-programmer.md",
+    "specs/025-full-reversals/reviews/cycle4-programmer.md"
   ],
   "notes": [
     "Implementation work stays on the 025 worktree; spec artifacts (specs/, STATUS.md, .crew-handoff.json) commit to main.",
     "Reversal categories target per-index PartsOfSpeechOA, never LangProject.PartsOfSpeechOA.",
-    "Remaining after US3: Polish (T034-T037). Feature NOT complete."
+    "Remaining: combined QC + verification, then Polish (T034-T037), then worktree merge. Feature NOT complete."
   ]
 }

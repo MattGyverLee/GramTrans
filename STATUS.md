@@ -1,5 +1,43 @@
 # GramTrans — Session Handoff
 
+## ▶▶▶ Feature 025 — Full Reversals — SPURT 4 (Phase 5 US3) IN PROGRESS (2026-07-12)
+
+**Worktree**: `D:/Github/_Projects/_LEX/GramTrans-025-full-reversals` on branch
+`025-full-reversals` @ `d1f1283` (NOT yet merged to main). **Handoff**:
+`specs/025-full-reversals/.crew-handoff.json`. Cumulative tasks done: **T001-T033** —
+**all three user stories implemented** (US1 + US2 + US3). Remaining: combined QC +
+verification, then Polish (T034-T037), then worktree merge.
+
+**Ralph-loop spurt 4 (LEX crew, cycle 4)** — checkpoint = Phase 5 US3 (`.fwdictconfig`
+dictionary + reversal config-view file copy), **DONE** as one TDD unit (committed `d1f1283`):
+- **RED→GREEN**: 11 new `test_config_view_copy.py` tests failed collection (missing
+  `apply_config_views`) then GREEN after implementation.
+- **T031-T033**: `config_views.py` self-contained plain file I/O — `filecmp.cmp(shallow=False)`
+  for Add/Skip/Overwrite, `xml.etree.ElementTree` reference scan, `shutil.copy2` copy +
+  `.gtbak` backup before OVERWRITE; Preview/Move wiring in `preview.py`/`transfer.py`/`models.py`.
+- **Scope adherence**: `reversals.py`/`categories.py` (reversal LCM seam) UNTOUCHED (git diff
+  vs `d84fc0b` = 5 files). Plan pass writes no `.fwdictconfig` bytes (Principle III).
+- **No new regressions**: full suite 1494 passed / 9 skipped / 14 xfailed / 14 xpassed / **1
+  failed** — the 1 failure is the pre-existing baseline, unchanged.
+
+**Next checkpoint (spurt 5): combined lex-qc + lex-verification pass BEFORE Polish** (QC gates
+the write path before any live-MCP run). QC MUST adjudicate: (1) US2 decide-side `source=None`
+vs apply-side `target=target_project` asymmetry; (2) T021 per-index tripwire not defeated by the
+US2 apply path; (3) UI-wiring gap — `render_reversal_decisions` + `render_config_view_records`
+exist but are NOT called from `Lib/ui/main_window.py` (blocking vs follow-up); (4) US3
+Preview-mutation nuance — `resolve_config_dirs` `os.makedirs` scaffolds empty target subdirs
+during Preview vs `preview.py` READ-ONLY guarantee; (5) US3 missing-ref `owner_kind == "ConfigView"`
+flows into the unified 024 never-silent report. **Then** Polish T034-T037 (census, never-silent
+assertion, regression gate, live-MCP quickstart T037 — needs a disposable `-restore`-ready target
+or it trips `needs_human`).
+
+**Reports**: [cycle1](specs/025-full-reversals/reviews/cycle1-programmer.md),
+[cycle2](specs/025-full-reversals/reviews/cycle2-programmer.md),
+[cycle3](specs/025-full-reversals/reviews/cycle3-programmer.md),
+[cycle4](specs/025-full-reversals/reviews/cycle4-programmer.md).
+
+---
+
 ## ▶▶▶ Feature 025 — Full Reversals — SPURT 3 (Phase 4 US2) IN PROGRESS (2026-07-12)
 
 **Worktree**: `D:/Github/_Projects/_LEX/GramTrans-025-full-reversals` on branch
