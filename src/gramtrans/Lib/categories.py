@@ -666,6 +666,31 @@ def inflection_features_execute_action(action: PlannedAction, context: RunContex
         if src_feat is None:
             return None
 
+        # 031 US2 (T024 live finding): this create path only supports
+        # IFsClosedFeature. A non-closed IFsFeatDefn (e.g. IFsComplexFeature /
+        # IFsOpenFeature) crashed the `IFsClosedFeature(src_feat)` cast below and
+        # left a NAMELESS closed-feature twin in the target. Detect it up front,
+        # report it (UNSUPPORTED_LCM_TYPE -- no silent skip), and create nothing.
+        # Full complex/open-feature transfer is tracked as a follow-up.
+        try:
+            IFsClosedFeature(src_feat)
+        except Exception:
+            try:
+                _src_cls = src_feat.GetType().Name
+            except Exception:  # noqa: BLE001
+                _src_cls = type(src_feat).__name__
+            exec_skips = getattr(context, "_exec_skips", None)
+            if exec_skips is not None:
+                exec_skips.append(Skip(
+                    category=GrammarCategory.INFLECTION_FEATURES,
+                    source_guid=src_guid,
+                    reason=SkipReason.UNSUPPORTED_LCM_TYPE,
+                    detail=(f"source feature {src_guid} is {_src_cls}, not "
+                            "IFsClosedFeature; complex/open feature transfer is "
+                            "not supported by this path"),
+                ))
+            return None
+
         cache = getattr(target, "Cache")
         ws = cache.DefaultAnalWs
         feature_system = cache.LangProject.MsFeatureSystemOA
@@ -4964,6 +4989,32 @@ def _run_post_pass_a(context, target, tag=None):
 # after every GRAM_CATEGORIES action (transfer.py `_LEAF_DISPATCH_CATEGORIES`),
 # so both endpoints (POS and feature) exist before wiring.
 
+def _resolve_target_by_guid(target, guid):
+    """Resolve a target object by GUID across offline fakes AND the live target.
+
+    Offline test doubles expose ``get_object_by_guid(guid)``. The live flexicon
+    ``FLExProject`` has NO such method (031 T024 live finding: the wiring passes
+    only ever ran against fakes) -- resolve via the LCM object repository, using
+    the project's own ``ObjectRepository`` accessor (the same idiom api.py uses
+    for IUndoStackManager). API verified read-only via FLExToolsMCP:
+    ``repo = project.ObjectRepository(ICmObjectRepository)``; guard with
+    ``IsValidObjectId(guid)`` then ``GetObject(guid)``. Returns None when the
+    GUID is absent from the target (caller emits Skip(DEPENDENCY_UNRESOLVED))."""
+    getter = getattr(target, "get_object_by_guid", None)
+    if callable(getter):
+        return getter(guid)
+    try:
+        from SIL.LCModel import ICmObjectRepository
+        from System import Guid as _DotNetGuid
+        repo = target.ObjectRepository(ICmObjectRepository)
+        parsed = _DotNetGuid.Parse(str(guid))
+        if not repo.IsValidObjectId(parsed):
+            return None
+        return repo.GetObject(parsed)
+    except Exception:  # noqa: BLE001 -- absent repo / bad guid -> unresolved
+        return None
+
+
 def _run_infl_feature_link_pass(context, target, tag=None):
     """Wire IPartOfSpeech.InflectableFeatsRC from plan.feature_category_links
     after both POS (GRAM_CATEGORIES) and features (INFLECTION_FEATURES) are
@@ -4971,7 +5022,8 @@ def _run_infl_feature_link_pass(context, target, tag=None):
 
     Bindings shape: `{target_pos_guid: [feature_guid, ...]}` (gathered by
     `_stash_feature_category_links`). Each endpoint resolves via
-    `target.get_object_by_guid` -- GUIDs are preserved on transfer, so no
+    `_resolve_target_by_guid` (offline fakes: `get_object_by_guid`; live:
+    the LCM object repository) -- GUIDs are preserved on transfer, so no
     fingerprint/name fallback is needed.
 
     Returns a list of Skip(DEPENDENCY_UNRESOLVED) -- one per unresolved POS and
@@ -4986,7 +5038,7 @@ def _run_infl_feature_link_pass(context, target, tag=None):
         bindings = _binding_map(context, "feature_category_links") or {}
 
     for pos_guid, feature_guids in bindings.items():
-        target_pos = target.get_object_by_guid(pos_guid)
+        target_pos = _resolve_target_by_guid(target, pos_guid)
         if target_pos is None:
             skips.append(Skip(
                 category=GrammarCategory.GRAM_CATEGORIES,
@@ -5014,7 +5066,7 @@ def _run_infl_feature_link_pass(context, target, tag=None):
             ))
             continue
         for feature_guid in feature_guids:
-            target_feat = target.get_object_by_guid(feature_guid)
+            target_feat = _resolve_target_by_guid(target, feature_guid)
             if target_feat is None:
                 skips.append(Skip(
                     category=GrammarCategory.INFLECTION_FEATURES,

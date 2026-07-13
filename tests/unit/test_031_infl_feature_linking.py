@@ -207,6 +207,37 @@ class TestWiringPostPass:
         assert skips[0].source_guid == "pos-1"
 
 
+class TestResolveTargetByGuid:
+    """T024 live-finding regression: the wiring pass must resolve GUIDs on the
+    LIVE target too, not only on fakes that expose get_object_by_guid.
+
+    The live flexicon FLExProject has NO get_object_by_guid; _resolve_target_by_guid
+    falls back to the LCM object repository. Offline (no pythonnet) that fallback
+    import fails and the helper returns None -- so these tests pin the getter
+    dispatch + the graceful no-getter behavior; the live repo path is proven by
+    the T024 live Move (linked_features 0 -> 3)."""
+
+    def test_prefers_get_object_by_guid_when_present(self) -> None:
+        feat = _FakeFeat("F-A")
+        target = _FakeTarget([feat])
+        assert categories._resolve_target_by_guid(target, "f-a") is feat
+
+    def test_returns_none_without_getter_or_repo(self) -> None:
+        class _Bare:  # no get_object_by_guid, no ObjectRepository
+            pass
+        assert categories._resolve_target_by_guid(_Bare(), "anything") is None
+
+    def test_link_pass_resolves_via_helper_not_direct_attr(self) -> None:
+        # A target whose ONLY resolution channel is get_object_by_guid still
+        # wires (guards against a regression to a direct live-only accessor).
+        feat = _FakeFeat("F-A")
+        pos = _FakePOS("POS-1")
+        target = _FakeTarget([feat, pos])
+        ctx = _ctx_with_links(target, {"pos-1": ["f-a"]})
+        assert categories._run_infl_feature_link_pass(ctx, target) == []
+        assert list(pos.InflectableFeatsRC) == [feat]
+
+
 class TestSkipReporting:
     """T013 -- emitted Skips surface in the post-run statistics panel."""
 
