@@ -147,3 +147,44 @@ destructive-write remediation pass in the critical path.
   implementation choice). Verify via FLExTools MCP against `Ejagham Mini`.
 - Confirm the exact plan binding field name / location on the run-plan object
   (`models.py`) for the feature→POS link, consistent with `lexentry_ref_bindings`.
+
+---
+
+## T004 — Live-probe results (RESOLVED 2026-07-13, FLExToolsMCP, read-only)
+
+Probed `flexicon` API mode against `Ejagham Mini` (source) and `Ejagham Full GT-Test`
+(target). All runs certified read-only (0 target modifications).
+
+**A. Syncable-properties surface (R2 open item — RESOLVED).**
+`InflectionFeatureOperations.GetSyncableProperties(feature)` returns a dict with keys
+`['Abbreviation', 'Description', 'Name']` for `IFsClosedFeature`; the class also exposes
+`ApplySyncableProperties(item, props, ws_map=None, fill_gaps=False)`. **Decision: use the
+`ApplySyncableProperties(..., ws_map=ws_mapping)` path for features** (mirrors the POS
+path), which is the R2 preferred approach.
+  - **Value caveat**: every feature in `Ejagham Mini` is an `IFsFeatDefn` with
+    `ValuesOC` count = 0, so `GetSyncableProperties` on an `IFsSymFeatVal` could not be
+    exercised empirically in this pair. The C3 implementation MUST therefore keep the
+    explicit source→target handle-translation fallback for values (do not assume the
+    Operations surface accepts an `IFsSymFeatVal` until proven on a project that has
+    symbolic values).
+
+**B. WS-handle divergence (R2 root-cause — CONFIRMED, smoking gun).**
+  - Source `Ejagham Mini`: `en=999000001`, `etu=999000003`.
+  - Target `Ejagham Full GT-Test`: `en=999000001`, `etu=999000002`.
+  - The vernacular `etu` handle differs (source 999000003 vs target 999000002). The
+    current code writes names with the **source** handle 999000003, which does not
+    address `etu` in the target → the string lands on a wrong/absent WS and the
+    feature/value shows as a bare GUID. `en` happens to coincide (999000001 in both),
+    which is why analysis-WS names can survive while vernacular names are lost. This
+    empirically confirms the R2 hypothesis and mandates ws-mapped writes (C3).
+
+**C. `IPartOfSpeech.InflectableFeatsRC` accessor + `.Add` idiom (RESOLVED).**
+  - Property is `ILcmReferenceCollection[IFsFeatDefn]`; exposes `Add`, `Contains`,
+    `Remove`. Accessing it on a `p` typed as `ICmObject`/`ICmPossibility` fails the
+    MCP casting validator — **must cast `IPartOfSpeech(p)` first** (validates T011).
+  - Source `Ejagham Mini` currently holds **13** feature←POS reference-collection
+    memberships across 20 POSes (C1 COUNT baseline for the reference pair).
+
+**D. models.py binding (second open item — decided in T005).**
+Field named `feature_category_links`, shape `{target_pos_guid: [feature_guid, ...]}`,
+mirroring `lexentry_ref_bindings`. See data-model.md `FeatureCategoryLink`.

@@ -35,9 +35,9 @@ usable fix); US3 (P2) is the read-only diagnosis.
 
 **Purpose**: Work environment and test scaffolds
 
-- [ ] T001 Create the implementation worktree `../GramTrans-031-fix-inflection-feature-linking` on branch `031-fix-inflection-feature-linking` from `main` (per CLAUDE.md git protocol; code changes land here, not on `main`).
-- [ ] T002 [P] Create failing test scaffold file `tests/unit/test_031_infl_feature_linking.py` with the test class skeleton and `pytest` imports (no assertions yet).
-- [ ] T003 [P] Create read-only diagnosis scaffold `debug/diag_infl_features.py` with a `main()` that opens a target project read-only and prints an empty report dict (no target writes).
+- [X] T001 Create the implementation worktree `../GramTrans-031-fix-inflection-feature-linking` on branch `031-fix-inflection-feature-linking` from `main` (per CLAUDE.md git protocol; code changes land here, not on `main`).
+- [X] T002 [P] Create failing test scaffold file `tests/unit/test_031_infl_feature_linking.py` with the test class skeleton and `pytest` imports (no assertions yet).
+- [X] T003 [P] Create read-only diagnosis scaffold `debug/diag_infl_features.py` with a `main()` that opens a target project read-only and prints an empty report dict (no target writes).
 
 **Checkpoint**: Worktree ready; empty scaffolds compile.
 
@@ -50,8 +50,8 @@ plan binding — both US1 and US2 depend on these.
 
 **⚠️ CRITICAL**: No user-story implementation begins until this phase is complete.
 
-- [ ] T004 Live-probe via FLExToolsMCP against `Ejagham Mini`: confirm whether the flexicon `InflectionFeature` Operations surface exposes `GetSyncableProperties`/`ApplySyncableProperties` for `IFsClosedFeature` and `IFsSymFeatVal`; capture the source-vs-target writing-system handle divergence for a known WS Id; confirm the `IPartOfSpeech.InflectableFeatsRC` accessor and `.Add` idiom. Record answers in `specs/031-fix-inflection-feature-linking/research.md` (R2/R5 open items).
-- [ ] T005 Add the `FeatureCategoryLink` plan binding to the run-plan model in `src/gramtrans/Lib/models.py` (shape `{target_pos_guid: [feature_guid, ...]}`, mirroring `lexentry_ref_bindings`); default empty; per data-model.md.
+- [X] T004 Live-probe via FLExToolsMCP against `Ejagham Mini`: confirm whether the flexicon `InflectionFeature` Operations surface exposes `GetSyncableProperties`/`ApplySyncableProperties` for `IFsClosedFeature` and `IFsSymFeatVal`; capture the source-vs-target writing-system handle divergence for a known WS Id; confirm the `IPartOfSpeech.InflectableFeatsRC` accessor and `.Add` idiom. Record answers in `specs/031-fix-inflection-feature-linking/research.md` (R2/R5 open items). **DONE** — see research.md "T004 — Live-probe results": syncable surface confirmed for features (`{Name,Abbreviation,Description}`); WS-handle divergence CONFIRMED (source `etu=999000003` vs target `etu=999000002`); `InflectableFeatsRC` = `ILcmReferenceCollection[IFsFeatDefn]` with `Add` and requires `IPartOfSpeech(p)` cast; 13 source links. Value-case caveat: no `IFsSymFeatVal` in the Ejagham pair — keep C3 explicit-handle fallback.
+- [X] T005 Add the `FeatureCategoryLink` plan binding to the run-plan model in `src/gramtrans/Lib/models.py` (shape `{target_pos_guid: [feature_guid, ...]}`, mirroring `lexentry_ref_bindings`); default empty; per data-model.md. **DONE** — added `RunPlan.feature_category_links: dict` (field name resolves the second Phase-0 open item).
 
 **Checkpoint**: API surface confirmed; plan can carry feature→POS links.
 
