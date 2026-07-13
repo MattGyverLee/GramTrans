@@ -459,6 +459,20 @@ def execute(plan: RunPlan, source, target, report_sink, tag: ImportResidueTag,
         from categories import reproduce_all_lexical_relations  # type: ignore
     reproduce_all_lexical_relations(exec_ctx, tag, _resolver_cache, _dropped)
 
+    # Feature 025 (full reversals, US1 T018/T020): the reversal closure
+    # walk's Move-mode twin -- SAME single-final-pass timing as
+    # `reproduce_all_lexical_relations` immediately above, over the SAME
+    # now-fully-settled `exec_ctx._copy_set` (real created target objects,
+    # not Preview's `True` placeholder). Reversal index/entry writes happen
+    # ONLY here, in Move mode, after the plan has already been shown to the
+    # user via Preview (Principle III) -- `Lib/preview.py.build_run_plan`
+    # never writes; this is the sole write path.
+    if __package__:
+        from .categories import reproduce_reversal_entries
+    else:
+        from categories import reproduce_reversal_entries  # type: ignore
+    reproduce_reversal_entries(exec_ctx, tag, _resolver_cache, _dropped)
+
     # Fold any tail-block skips (17.1 / post-pass A) into the report.
     if _exec_skips:
         extra_skips.extend(_exec_skips)

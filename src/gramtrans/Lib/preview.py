@@ -304,6 +304,19 @@ def build_run_plan(
         from categories import plan_all_lexical_relations  # type: ignore
     plan_all_lexical_relations(context, _resolver_cache, _dropped)
 
+    # Feature 025 (full reversals, US1 T018/T019): the reversal closure
+    # walk -- SAME single-final-pass timing as `plan_all_lexical_relations`
+    # immediately above, run once now that `context._copy_set` is fully
+    # settled. Every reversal `DroppedItemRecord` this produces is already
+    # in `_dropped` (folded into `dropped_items` below); `_reversal_decisions`
+    # carries the Add/Link decisions themselves for Preview rendering
+    # (`render_reversal_decisions`, below) before Move ever writes.
+    if __package__:
+        from .categories import plan_reversal_decisions
+    else:
+        from categories import plan_reversal_decisions  # type: ignore
+    _reversal_decisions = plan_reversal_decisions(context, _resolver_cache, _dropped)
+
     # T023: rules missing-reference detection (018-rules-page US4/FR-014/FR-015).
     # Runs AFTER the leaf dispatch so 'in-flight' actions are fully enumerated.
     # Routes into the shared excluded_lossy list -> single Move gate (T024).
@@ -332,7 +345,63 @@ def build_run_plan(
         # (Move already surfaces `_dropped` via transfer.execute's
         # extra_dropped_items -> RunReport wiring).
         dropped_items=tuple(_dropped),
+        # Feature 025 (US1, T018/T019): the reversal closure walk's
+        # decision output (see the call site above).
+        reversal_decisions=tuple(_reversal_decisions),
     )
+
+
+# ============================================================================
+# Feature 025 (full reversals, US1 T019) -- reversal-decision Preview rendering
+# ============================================================================
+
+def _render_one_reversal_decision(decision, indent: int) -> List[str]:
+    """One Add-entry line per `ReversalDecision`, recursing
+    `sub_entry_decisions` at increasing indent -- the sub-entry TREE shape
+    (R6) rendered as nested lines."""
+    pad = " " * indent
+    form = next(iter(decision.reversal_form_alts.values()), "") if decision.reversal_form_alts else "(no form)"
+    sense_count = len(decision.linked_sense_guids)
+    lines = [f"{pad}Add entry {form!r} -- links {sense_count} sense(s)"]
+    for sub in decision.sub_entry_decisions:
+        lines.extend(_render_one_reversal_decision(sub, indent=indent + 2))
+    return lines
+
+
+def render_reversal_decisions(plan: RunPlan) -> Tuple[str, ...]:
+    """T019 (US1, Principle III): render `plan.reversal_decisions` for the
+    Preview pane, grouped by per-writing-system target index (existing ->
+    'Link', to-create -> 'Add'), one Add-entry line per top-level entry
+    (recursing sub-entries) -- BEFORE Move ever writes.
+
+    Reversal `DroppedItemRecord`s are deliberately NOT duplicated here --
+    they already flow through the single unified 024 channel
+    (`RunPlan.dropped_items` / `RunReport.dropped_items`, rendered by
+    `report.render_text_summary`); this function renders only what WOULD be
+    added/linked, not what was dropped. Returns an empty tuple when the
+    plan has no reversal decisions at all (no rendering needed).
+
+    This is a plain-text rendering surface (mirrors `report.
+    render_text_summary`'s own line-based contract) -- wiring an actual
+    interactive PyQt widget onto it is a separate UI concern, not part of
+    this feature's US1 scope (`Lib/ui/main_window.py`/the stats panel can
+    call this the same way they already consume `report.render_text_summary`
+    for the run-report pane).
+    """
+    if not plan.reversal_decisions:
+        return ()
+    by_ws: dict = {}
+    for decision in plan.reversal_decisions:
+        by_ws.setdefault(decision.target_ws_id, []).append(decision)
+
+    lines: List[str] = []
+    for ws_id in sorted(by_ws):
+        group = by_ws[ws_id]
+        action = "Add" if group[0].target_index_ref is None else "Link"
+        lines.append(f"  Reversal index [{ws_id}] ({action}):")
+        for decision in group:
+            lines.extend(_render_one_reversal_decision(decision, indent=4))
+    return tuple(lines)
 
 
 # ============================================================================

@@ -707,6 +707,16 @@ class RunPlan:
     # so Preview surfaces the same never-silent guarantee Move already gets
     # via `transfer.execute`'s `extra_dropped_items` -> RunReport wiring.
     dropped_items: tuple = ()  # tuple[DroppedItemRecord, ...]
+    # Feature 025 (US1, T018/T019): the reversal closure walk's decision
+    # output (`Lib/reversals.py.plan_reversals`, called once from
+    # `Lib/categories.py.plan_reversal_decisions` after the leaf-dispatch
+    # loop's `context._copy_set` is fully settled — same single-final-pass
+    # timing as `plan_all_lexical_relations`). Every reversal
+    # `DroppedItemRecord` this walk produces already flows through
+    # `dropped_items` above (the single unified 024 channel); this field
+    # carries the Add/Link decisions themselves so Preview can render them
+    # (`Lib/preview.py.render_reversal_decisions`) before Move ever writes.
+    reversal_decisions: tuple = ()  # tuple[ReversalDecision, ...]
 
     def category_count(self, category: GrammarCategory) -> int:
         return sum(1 for a in self.actions if a.category == category)
@@ -1118,6 +1128,19 @@ class ReversalDecision:
                              "create via `ReversalIndexOperations.Create`"
                              (mirrors `ReferenceDecision.target_item`'s
                              existing-vs-to-create posture).
+    target_ws_id           : the mapped TARGET analysis writing-system id
+                             this entry's index belongs (or will belong) to.
+                             US1 (T014/T005 shape revision, this cycle):
+                             ADDED because `target_index_ref` alone cannot
+                             identify which WS a to-create index is FOR
+                             (`target_index_ref is None` carries no WS
+                             identity of its own) — both Preview's per-index
+                             grouping (T019) and `apply_reversals`'s
+                             `ReversalIndexOperations.Create(name, target_ws)`
+                             call (T016) need it. Always populated (never
+                             empty) for a real decision; every sub-entry
+                             decision carries the SAME `target_ws_id` as its
+                             top-level ancestor (one index per entry tree).
     pos_decision           : `ReferenceDecision` for `PartOfSpeechRA`
                              against the target index's own
                              `PartsOfSpeechOA`. US1 (T015) stubs this to a
@@ -1133,13 +1156,19 @@ class ReversalDecision:
                              "ReversalIndexEntry", reason "member not in
                              copy set").
     reversal_form_alts     : dict[str, str] — mapped target WS tag ->
-                             source `ReversalForm` string for that WS
-                             (non-destructive copy; R6 / 024 FR-007).
+                             source `ReversalForm` string for that WS,
+                             NON-EMPTY VALUES ONLY (non-destructive copy;
+                             R6 / 024 FR-007 — an empty/absent source alt is
+                             never a key here, so a write pass over this
+                             dict structurally can never blank an existing
+                             populated target alt for that WS: there is
+                             nothing to write).
     sub_entry_decisions    : tuple["ReversalDecision", ...] — recursive
                              `SubentriesOS` tree (R6).
     """
     source_entry_guid: str
     target_index_ref: Any = None
+    target_ws_id: str = ""
     pos_decision: Optional[ReferenceDecision] = None
     linked_sense_guids: tuple = ()
     dropped_sense_members: tuple = ()
