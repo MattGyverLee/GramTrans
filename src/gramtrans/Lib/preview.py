@@ -202,6 +202,17 @@ def build_run_plan(
     _copy_set: dict = {}
     object.__setattr__(context, '_copy_set', _copy_set)
 
+    # Feature 026 (texts-wordforms, T014): the ``{source_ws_id: target_ws_id}``
+    # map (from the run's WSMapping) attached to the context so `Lib/texts.py`'s
+    # plan_texts / `Lib/wordforms.py`'s plan_analyses can gate every WS-bearing
+    # string at Preview time (FR-020) — matching how `transfer.execute` attaches
+    # the same `_ws_map` for the apply side. Identity ({}) when no rename set.
+    if __package__:
+        from .ws_mapping import to_ws_map_dict as _to_ws_map_dict
+    else:
+        from ws_mapping import to_ws_map_dict as _to_ws_map_dict  # type: ignore
+    object.__setattr__(context, '_ws_map', _to_ws_map_dict(ws_mapping))
+
     # Phase 3a leaf-category dispatch: iterate every Phase 3a category
     # that's enabled in the selection.  Each category's registered
     # callbacks live in Lib/categories.py.  Errors-as-skips: if an
