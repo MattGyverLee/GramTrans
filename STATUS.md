@@ -1,5 +1,47 @@
 # GramTrans — Session Handoff
 
+## ▶▶▶ Feature 031 — Inflection-Feature Linking — Phase 5 (US3) DONE; live validation (T024) is the blocking gate (2026-07-13)
+
+**Phases 1-5 complete; Phase 6 offline parts done.** Worktree
+`031-fix-inflection-feature-linking` @ **`e376b39`** (NOT merged). Prevention-only
+scope (FR-011): no code path remediates already-polluted records.
+
+**This session did (Phase 5 + Phase 6 offline, FlexTools MCP as source of truth):**
+1. **US3 read-only diagnosis** (T019-T021): `debug/diag_infl_features.py` — pure
+   `build_report(view)` classification core over a `ProjectView` facade
+   (offline-testable) + live `_LcmProjectView`. `main()` opens `writeEnabled=False`
+   and asserts a pre/post object-count snapshot is unchanged (READ-ONLY guard);
+   plain-ASCII output. 6 US3 tests pass (shape / counts / COMPLETE partition /
+   WS-map evidence / duplicate-GUID).
+2. **MCP navigation + casts validated read-only** (both runs certified read-only):
+   `Ejagham Mini` → 5 feat / 20 POS / 35 val → **3 linked + 2 orphaned = 5**
+   (COMPLETE holds), names read (`BantuPl`); `Ejagham Full GT-Test` → **clean**
+   (0 feat) — already restored. Target `etu=999000002` vs source `etu=999000003`
+   re-confirms the T004 WS-handle divergence behind Defect 2.
+3. **T023 full offline suite**: `1529 passed / 1 failed / 1 skipped` (+ 6 new US3).
+   The 1 failure (`test_wizard_pos_grammar_wiring::test_plan_emits_pos_action_for_picked_pos`)
+   is a **pre-existing baseline fail** — reproduced at clean HEAD `c3f89bf` with the
+   Phase-5 files stashed. NOT a 031 regression.
+4. **T022 pattern audit** (see `specs/031-fix-inflection-feature-linking/pattern-audit.md`):
+   the WS-handle-copy bug class has **3 SUSPECT siblings** — `stem_names_execute_action`
+   (categories.py:1388-1400), `slots_execute_action` (categories.py:5265-5276),
+   `_execute_gold_reserved_merge` (transfer.py:2392-2436). All OUT of 031 scope →
+   **file a follow-up spec** to apply the `ws_map` fix globally. All other
+   Name/Abbrev/Desc paths route through `ApplySyncableProperties(ws_map=...)` (SAFE).
+
+**Remaining (attended, needs_human):**
+1. **T024** — destructive live Move `Ejagham Mini` → clean/restored
+   `Ejagham Full GT-Test` (quickstart Steps 0-4); attach pre/post diagnosis reports +
+   Import Residue / `[GT-Tag]` evidence. **Restore the target from a clean backup
+   first; run attended; never under an unattended loop.**
+2. **T026** — merge `031-fix-inflection-feature-linking` → `main` after T024 passes;
+   remove the worktree.
+
+**Backlog (out of 031 critical path):** the 3 WS-handle sibling bugs above; the
+pre-existing `test_wizard_pos_grammar_wiring` failure.
+
+---
+
 ## ▶▶▶ Feature 025 — Full Reversals — COMPLETE: live re-Move PASS + merged to main (2026-07-13)
 
 **FEATURE COMPLETE.** All 37 tasks (T001–T037) done, live-validated end-to-end, and
