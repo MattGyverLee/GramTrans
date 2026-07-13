@@ -737,6 +737,15 @@ class RunPlan:
     # remediation) before Move's `Lib/transfer.py.execute` calls
     # `apply_config_views`.
     config_view_records: tuple = ()  # tuple[ConfigViewRecord, ...]
+    # Feature 031 (US1, T005/T009): feature->category link bindings gathered
+    # during Preview plan-building from each in-scope source
+    # `IPartOfSpeech.InflectableFeatsRC` and consumed by the Move wiring
+    # post-pass (`Lib/categories.py._run_infl_feature_link_pass`, registered via
+    # `_run_tail_once`) that populates the target POS `InflectableFeatsRC`. Shape
+    # mirrors `lexentry_ref_bindings`: {target_pos_guid: [feature_guid, ...]}.
+    # Ephemeral per run; not serialised into the run snapshot. See
+    # specs/031-fix-inflection-feature-linking/data-model.md (FeatureCategoryLink).
+    feature_category_links: dict = field(default_factory=dict)  # str -> list[str]
 
     def category_count(self, category: GrammarCategory) -> int:
         return sum(1 for a in self.actions if a.category == category)

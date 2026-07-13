@@ -169,6 +169,12 @@ def build_run_plan(
     _lexentry_ref_bindings: dict = {}
     object.__setattr__(context, '_msa_slot_bindings', _msa_slot_bindings)
     object.__setattr__(context, '_lexentry_ref_bindings', _lexentry_ref_bindings)
+    # Feature 031 (US1, T009): feature->category link accumulator, written by
+    # `categories.gram_categories_plan_action` -> `_stash_feature_category_links`
+    # and consumed by the Move wiring post-pass (`_run_infl_feature_link_pass`,
+    # tail block on the last INFLECTION_FEATURES execute_action).
+    _feature_category_links: dict = {}
+    object.__setattr__(context, '_feature_category_links', _feature_category_links)
     # Phase 3c FR-338: thread the live Selection so entry-shaped leaf
     # plan_actions (AFFIXES/STEMS) can honor enable_overwrite by emitting a
     # PlannedOverwrite instead of a Skip when the target already has the GUID.
@@ -387,6 +393,8 @@ def build_run_plan(
         overwrites=tuple(overwrites),
         msa_slot_bindings=_msa_slot_bindings,
         lexentry_ref_bindings=_lexentry_ref_bindings,
+        # Feature 031 (US1, T009): gathered feature->category link bindings.
+        feature_category_links=_feature_category_links,
         excluded_lossy=tuple(excluded_lossy),
         # QC P1 (cycle-1 review, feature 024): carry the read-only resolver's
         # projected drops into the plan so Preview is symmetric with Move
@@ -503,10 +511,73 @@ def render_config_view_records(plan: RunPlan) -> Tuple[str, ...]:
 # P0-2 (feature 025 cycle-6 remediation) -- Preview surface composition
 # ============================================================================
 
+# ============================================================================
+# Feature 031 (US1, T010) -- feature->category link Preview rendering
+# ============================================================================
+
+def _target_pos_infl_feat_guids(target, pos_guid):
+    """Return the set of feature GUIDs already in a target POS's
+    InflectableFeatsRC, or None when the target can't answer (fail-soft ->
+    render as 'Link'). Used only to label already-linked pairs as SKIP (C1
+    DEDUP); never mutates the target."""
+    getter = getattr(target, "get_object_by_guid", None)
+    if getter is None:
+        return None
+    try:
+        pos = getter(pos_guid)
+    except Exception:  # noqa: BLE001
+        return None
+    if pos is None:
+        return None
+    pos_typed = pos
+    try:
+        from SIL.LCModel import IPartOfSpeech  # noqa: PLC0415
+        pos_typed = IPartOfSpeech(pos)
+    except Exception:  # noqa: BLE001
+        pos_typed = pos
+    feats_rc = getattr(pos_typed, "InflectableFeatsRC", None)
+    if feats_rc is None:
+        return None
+    out = set()
+    try:
+        for feat in feats_rc:
+            g = str(getattr(feat, "Guid", getattr(feat, "guid", ""))).lower()
+            if g:
+                out.add(g)
+    except (AttributeError, TypeError):
+        return None
+    return out
+
+
+def render_feature_category_links(plan: RunPlan) -> Tuple[str, ...]:
+    """T010 (US1, Principle III / VR-5 / SC-004): render `plan.feature_category_
+    links` for the Preview pane -- one row per (POS, feature) association with a
+    proposed action **Link**, or **SKIP (already linked)** when the pair is
+    already present in the target POS's InflectableFeatsRC (contract C1 DEDUP).
+
+    The number of Link rows equals the number of (POS, feature) pairs that the
+    Move wiring post-pass will write, so preview count == committed count.
+    Returns an empty tuple when the plan carries no links (mirrors
+    `render_reversal_decisions`)."""
+    links = getattr(plan, "feature_category_links", None) or {}
+    if not links:
+        return ()
+    target = getattr(getattr(plan, "context", None), "target_handle", None)
+    lines: List[str] = ["  Inflection feature -> category links:"]
+    for pos_guid in sorted(links):
+        present = _target_pos_infl_feat_guids(target, pos_guid)
+        for feature_guid in links[pos_guid]:
+            already = present is not None and str(feature_guid).lower() in present
+            action = "SKIP (already linked)" if already else "Link"
+            lines.append(f"    {action}  POS {pos_guid} <- feature {feature_guid}")
+    return tuple(lines)
+
+
 def render_preview_extra_lines(plan: RunPlan) -> Tuple[str, ...]:
     """Compose the Preview-only extra lines -- the reversal Add/Link plan
-    (`render_reversal_decisions`) and the config-view Add/Overwrite/Skip
-    list (`render_config_view_records`) -- that `Lib/ui/main_window.py.
+    (`render_reversal_decisions`), the config-view Add/Overwrite/Skip
+    list (`render_config_view_records`), and the feature->category link plan
+    (`render_feature_category_links`) -- that `Lib/ui/main_window.py.
     _on_preview` displays alongside the existing stats-panel report text
     BEFORE Move ever writes (Principle III).
 
@@ -519,7 +590,11 @@ def render_preview_extra_lines(plan: RunPlan) -> Tuple[str, ...]:
     render fn already returns `()` for an empty plan, so this composition
     is a clean no-op when the plan carries neither.
     """
-    return tuple(render_reversal_decisions(plan)) + tuple(render_config_view_records(plan))
+    return (
+        tuple(render_reversal_decisions(plan))
+        + tuple(render_config_view_records(plan))
+        + tuple(render_feature_category_links(plan))
+    )
 
 
 # ============================================================================
