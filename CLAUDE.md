@@ -1,7 +1,7 @@
 <!-- SPECKIT START -->
 For additional context about technologies to be used, project structure,
 shell commands, and other important information, read the current plan
-at specs/026-texts-wordforms/plan.md
+at specs/031-fix-inflection-feature-linking/plan.md
 <!-- SPECKIT END -->
 
 ## Git Workflow Protocol (specs → main, work → worktree)
