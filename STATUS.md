@@ -1,5 +1,38 @@
 # GramTrans — Session Handoff
 
+## ▶▶▶ Feature 025 — Full Reversals — T037 findings remediated + re-gate GREEN — Move authorized (2026-07-13)
+
+**Attended session.** Source **Ejagham Mini** → target **Target** (disposable, user-confirmed).
+Worktree `025-full-reversals` @ **`b8d325d`**. User chose "fix both findings, then Move".
+
+**Both T037 Phase-1 findings CLOSED (cycle 10 remediation, TDD) + re-gate GREEN (cycle 11):**
+- **Finding 1 (never-silent, 024-shared):** `references.py::_multistring_dict` resolver branch now
+  yields all-`str` keys (`(handle_to_id.get(wh) or str(wh))`) so `divergence_fingerprint` can't
+  raise; `categories.py::_plan_entry_reference_decisions` catch-all now emits a guarded
+  `DroppedItemRecord` (never-silent restored). TDD tripwire RED-confirmed.
+- **Finding 2 (025 Preview/Move parity):** `build_run_plan` sets `context._ws_map` via the same
+  `to_ws_map_dict` helper `transfer.execute` uses, before `plan_reversal_decisions`. TDD tripwire
+  RED-confirmed.
+- **Re-gate (3 parallel read-only reviewers):** QC APPROVE (both CLOSED); verification PASS (fresh
+  suite **1505 passed / 1 known pre-existing fail**, tripwires genuine RED, worktree clean, count
+  reconciled — the earlier ~1524 figure was stale/orphaned); domain **SAFE-WITH-FOLLOWUP** (a
+  bare-digit WS Id is forbidden by BCP-47, so the stringify collision is not realistic; fingerprint
+  contract preserved).
+
+**Non-blocking follow-ups (documented, not gating):** sentinel-prefix hardening for the fallback
+key; a live-MCP re-confirm of WS Id shapes (domain lacked live MCP); P1-1/P1-2 tech-debt.
+
+**Move AUTHORIZED (`status: ready_for_move`).** Next: run the attended live Move
+(`scratchpad/t037_driver.py --move`, Ejagham Mini → Target), capture post-state, verify Scenario 1
+write half, then merge `025-full-reversals` → main.
+
+**Reports:** [cycle10-programmer](specs/025-full-reversals/reviews/cycle10-programmer.md),
+[cycle11-qc](specs/025-full-reversals/reviews/cycle11-qc.md),
+[cycle11-verification](specs/025-full-reversals/reviews/cycle11-verification.md),
+[cycle11-domain](specs/025-full-reversals/reviews/cycle11-domain.md).
+
+---
+
 ## ▶▶▶ Feature 025 — Full Reversals — T037 PHASE 1 (live read-only Preview) DONE — 2 bugs found, Move HELD (2026-07-12)
 
 **Attended session** (Ralph loop cancelled). Source **Ejagham Mini** → target **Target**

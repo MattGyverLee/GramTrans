@@ -2,12 +2,24 @@
   "feature": "025-full-reversals",
   "created": "2026-07-12",
   "updated": "2026-07-12",
-  "status": "needs_human",
+  "status": "ready_for_move",
   "spurt": 8,
-  "last_cycle": 9,
-  "checkpoint_completed": "T037 Phase 1 (read-only Preview) — Scenario 1 verified end-to-end vs live Ejagham Mini -> Target; read-only guarantee held; 2 latent bugs surfaced",
-  "qc_gate": "GREEN (offline); T037 Phase-1 PASS read-only, Move HELD pending Finding triage",
-  "blocker": "T037 Phase 2 (destructive Move) is HELD. Phase 1 live Preview surfaced 2 pre-existing latent bugs (see t037_findings). Finding 1 is a never-silent violation (fidelity-critical). Human/crew must decide remediate-first vs validate-reversal-Move-now before the destructive write. Target confirmed disposable/-restore-ready (user, attended).",
+  "last_cycle": 11,
+  "checkpoint_completed": "T037 Phase-1 findings remediated (cycle 10) + re-gate GREEN (cycle 11): Finding 1 never-silent fix + Finding 2 Preview/Move WS parity, both CLOSED; offline suite 1505 passed / 1 known-fail; domain SAFE-WITH-FOLLOWUP",
+  "qc_gate": "GREEN",
+  "blocker": null,
+  "t037_findings_remediation": {
+    "commit": "b8d325d",
+    "finding1_closed": "references.py _multistring_dict resolver branch all-str keys (references.py:341,358 -> (handle_to_id.get(wh) or str(wh))); categories.py _plan_entry_reference_decisions catch-all now emits a guarded DroppedItemRecord via _append_dropped_once (never-silent restored). +TDD tripwires confirmed RED.",
+    "finding2_closed": "preview.build_run_plan sets object.__setattr__(context,'_ws_map', to_ws_map_dict(ws_mapping)) before plan_reversal_decisions, mirroring transfer.execute -> Preview/Move WS parity for reversals. +TDD tripwire confirmed RED.",
+    "regate": "cycle11: QC APPROVE (both CLOSED); verification PASS (suite 1505 pass/1 known-fail, tripwires genuine RED, worktree clean); domain SAFE-WITH-FOLLOWUP (bare-digit WS Id forbidden by BCP-47, non-blocking sentinel-prefix follow-up).",
+    "reports": ["cycle10-programmer.md", "cycle11-qc.md", "cycle11-verification.md", "cycle11-domain.md"]
+  },
+  "non_blocking_followups": [
+    "sentinel-prefix hardening f'~unresolved~{wh}' for the _multistring_dict fallback key (domain cycle11) — near-zero regression cost, makes fallback key-space provably disjoint from any legal WS Id.",
+    "live-MCP re-confirm of WS Id/handle shapes (domain cycle11 tool caveat — reviewer lacked live FLExToolsMCP, reused recorded live evidence).",
+    "P1-1 (reuse RunPlan.reversal_decisions at Move) and P1-2 (DRY _target_ws_ids)."
+  ],
   "t037_phase1": {
     "status": "PASS (read-only)",
     "source": "Ejagham Mini",
