@@ -1,82 +1,71 @@
-"""T033b: FR-020 target lock / read-only detection — integration scaffolds against Ejagham Full GT-Test."""
+"""T033b / FR-020: target lock / read-only / unavailable detection.
+
+FR-020 requires that a target which cannot be opened for exclusive write is
+surfaced by ``api.bind_target`` as a ``TargetUnavailable`` (a clean, UI-showable
+error) BEFORE any write — never as a raw flexicon/OS exception, and never
+deferred to ``execute_move``.
+
+The wrapping mechanism (open failure -> TargetUnavailable) is testable without
+a live host by pointing bind_target at a target that cannot be opened: with
+flexicon absent the import guard raises TargetUnavailable; with flexicon present
+the OpenProject failure is caught and re-raised as TargetUnavailable. Either
+way the contract holds, so ``test_unopenable_target_raises_target_unavailable``
+runs in the ordinary suite.
+
+The specific "target currently open in FLEx / directory ACL read-only"
+scenarios need a real host + a deliberately-locked project, so they remain
+host-gated skips.
+"""
 from __future__ import annotations
 
 import pytest
 
-# All integration tests are marked so unit-only runs skip them:
-#   pytest -m 'not integration'
-# The marker is registered in pyproject.toml.
+from gramtrans.Lib.api import (
+    TargetCandidate,
+    TargetUnavailable,
+    bind_target,
+    initialize_run,
+)
+
 pytestmark = pytest.mark.integration
 
 
-def test_target_open_in_flex_yields_target_unavailable() -> None:
-    """FR-020: bind_target() raises TargetUnavailable when the target project is already opened for write by FLEx.
-
-    Requires:
-    - FlexTools host running this test (not raw pytest from CLI).
-    - Ejagham Mini at C:\\ProgramData\\SIL\\FieldWorks\\Projects\\Ejagham Mini (source)
-    - Ejagham Full GT-Test simultaneously opened in FLEx itself (so the LCM
-      lock file is held by another process)
-
-    Asserts: api.bind_target(ctx, target_name='Ejagham Full GT-Test') raises
-    gramtrans.Lib.api.TargetUnavailable before any write is attempted.  The
-    error message must identify the project name so the user knows which project
-    to close.  FR-020 requires this check to occur during bind_target(), not
-    deferred to execute_move().
-    """
-    pytest.skip(
-        "Integration test — requires FlexTools host. "
-        "Run via FlexTools MCP `flextools_run_module` or under the host directly."
+def _source_stub():
+    return initialize_run(
+        object(),
+        source_project_name="Ejagham Mini",
+        source_project_path=r"C:\ProgramData\SIL\FieldWorks\Projects\Ejagham Mini",
     )
 
-    if False:
-        from gramtrans.Lib.api import TargetUnavailable, bind_target, initialize_run  # noqa: F401
 
-        # Pre-condition: Ejagham Full GT-Test must be open in FLEx to hold the lock.
-        ctx = initialize_run(source_project_name="Ejagham Mini")
-        with pytest.raises(TargetUnavailable) as exc_info:
-            bind_target(ctx, target_name="Ejagham Full GT-Test")
-        assert "Ejagham Full GT-Test" in str(exc_info.value)
-
-
-def test_read_only_project_directory_yields_target_unavailable() -> None:
-    """FR-020: bind_target() raises TargetUnavailable when the target's project directory is read-only on disk.
-
-    Requires:
-    - FlexTools host running this test (not raw pytest from CLI).
-    - Ejagham Mini at C:\\ProgramData\\SIL\\FieldWorks\\Projects\\Ejagham Mini (source)
-    - Ejagham Full GT-Test freshly restored then its project directory set
-      read-only via icacls / attrib before this test runs.
-
-    Asserts: api.bind_target(ctx, target_name='Ejagham Full GT-Test') raises
-    TargetUnavailable when the LCM open attempt fails due to the filesystem
-    being read-only.  The module must surface this as TargetUnavailable (not an
-    unhandled OSError / flexicon exception) so the UI can present a meaningful
-    message.  FR-020 closes the coverage gap flagged in the 2026-06-19 audit.
-    """
-    pytest.skip(
-        "Integration test — requires FlexTools host. "
-        "Run via FlexTools MCP `flextools_run_module` or under the host directly."
+def test_unopenable_target_raises_target_unavailable() -> None:
+    """FR-020 error-wrapping contract: a distinct target that cannot be opened
+    surfaces as TargetUnavailable (not a raw exception), before any write."""
+    stub = _source_stub()
+    choice = TargetCandidate(
+        project_name="No Such GramTrans Target",
+        project_path=r"C:\ProgramData\SIL\FieldWorks\Projects\No Such GramTrans Target",
     )
+    with pytest.raises(TargetUnavailable):
+        bind_target(stub, choice)
 
-    if False:
-        import subprocess  # noqa: F401
 
-        from gramtrans.Lib.api import TargetUnavailable, bind_target, initialize_run  # noqa: F401
+@pytest.mark.skip(
+    reason="Requires a live FLEx host with the target 'Ejagham Full GT-Test' "
+    "simultaneously OPEN in FLEx (holding the LCM lock). Run manually under the "
+    "host. bind_target must raise TargetUnavailable naming the project."
+)
+def test_target_open_in_flex_yields_target_unavailable() -> None:  # pragma: no cover
+    """FR-020: a target held open for write by FLEx itself is refused at
+    bind_target with a TargetUnavailable that names the project."""
+    ...
 
-        project_dir = (
-            r"C:\ProgramData\SIL\FieldWorks\Projects\Ejagham Full GT-Test"
-        )
-        # Make the directory read-only before the test.
-        subprocess.run(
-            ["icacls", project_dir, "/deny", "Everyone:(W)"], check=True
-        )
-        try:
-            ctx = initialize_run(source_project_name="Ejagham Mini")
-            with pytest.raises(TargetUnavailable):
-                bind_target(ctx, target_name="Ejagham Full GT-Test")
-        finally:
-            # Restore write permissions regardless of test outcome.
-            subprocess.run(
-                ["icacls", project_dir, "/remove:d", "Everyone"], check=True
-            )
+
+@pytest.mark.skip(
+    reason="Requires a live host + setting the target's project directory ACL "
+    "read-only (icacls) before the run. Run manually. bind_target must surface "
+    "the read-only open failure as TargetUnavailable, not a raw OSError."
+)
+def test_read_only_project_directory_yields_target_unavailable() -> None:  # pragma: no cover
+    """FR-020: a read-only target directory surfaces as TargetUnavailable."""
+    ...
