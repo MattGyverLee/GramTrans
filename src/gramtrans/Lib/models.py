@@ -717,6 +717,18 @@ class RunPlan:
     # carries the Add/Link decisions themselves so Preview can render them
     # (`Lib/preview.py.render_reversal_decisions`) before Move ever writes.
     reversal_decisions: tuple = ()  # tuple[ReversalDecision, ...]
+    # Feature 025 (full reversals, US3 T033): Part B `.fwdictconfig`
+    # configuration-view copy plan (`Lib/config_views.py.plan_config_views`),
+    # computed once in `Lib/preview.py.build_run_plan` (fail-soft -- a
+    # duck-typing gap on a test double or an unresolvable project directory
+    # yields an empty tuple rather than raising, mirroring this module's
+    # "errors-as-skips" convention elsewhere in `build_run_plan`). Each
+    # record's `missing_refs` already flows into `dropped_items` above (the
+    # SAME unified 024 channel -- no separate config-view report section);
+    # this field carries the Add/Overwrite/Skip actions themselves so
+    # Preview can render them (`Lib/preview.py.render_config_view_records`)
+    # before Move's `Lib/transfer.py.execute` calls `apply_config_views`.
+    config_view_records: tuple = ()  # tuple[ConfigViewRecord, ...]
 
     def category_count(self, category: GrammarCategory) -> int:
         return sum(1 for a in self.actions if a.category == category)

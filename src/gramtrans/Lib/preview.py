@@ -317,6 +317,34 @@ def build_run_plan(
         from categories import plan_reversal_decisions  # type: ignore
     _reversal_decisions = plan_reversal_decisions(context, _resolver_cache, _dropped)
 
+    # Feature 025 (full reversals, US3 T033): Part B `.fwdictconfig`
+    # configuration-view copy plan -- SAME "compute once in Preview, write
+    # once in Move" split as the reversal walk immediately above, but this
+    # is a plain file-I/O decision pass (`Lib/config_views.py.plan_config_
+    # views`), not an LCM closure walk. Fail-soft: `plan_config_views`
+    # resolves each project's on-disk directory from its LCM cache path
+    # (`config_views.resolve_config_dirs`), which raises `ValueError` for a
+    # duck-typed test double that exposes none of the expected accessors
+    # (`Lib/ui/main_window.py._safe_path`'s `ProjectPath`/`ProjectFilename`/
+    # `ProjectFolder` convention, or the real `project.project.ProjectId
+    # .Path`) -- e.g. `tests/unit/test_preview_no_writes.py`'s `_FakeProject`.
+    # Swallowing that (and any other duck-typing gap) to an empty tuple
+    # mirrors this function's existing "errors-as-skips" posture for leaf
+    # categories above (`pieces = []` on enumerate_source failure) so a
+    # project handle that can't answer the config-view question simply
+    # contributes none, rather than aborting the whole Preview walk.
+    if __package__:
+        from .config_views import plan_config_views
+    else:
+        from config_views import plan_config_views  # type: ignore
+    try:
+        _config_view_records = plan_config_views(source, target)
+    except Exception:  # noqa: BLE001 -- fail-soft, see docstring above
+        _config_view_records = []
+    for _cv_record in _config_view_records:
+        if _cv_record.missing_refs:
+            _dropped.extend(_cv_record.missing_refs)
+
     # T023: rules missing-reference detection (018-rules-page US4/FR-014/FR-015).
     # Runs AFTER the leaf dispatch so 'in-flight' actions are fully enumerated.
     # Routes into the shared excluded_lossy list -> single Move gate (T024).
@@ -348,6 +376,10 @@ def build_run_plan(
         # Feature 025 (US1, T018/T019): the reversal closure walk's
         # decision output (see the call site above).
         reversal_decisions=tuple(_reversal_decisions),
+        # Feature 025 (US3, T033): the config-view copy plan (see the call
+        # site above); `missing_refs` on each record are already folded
+        # into `dropped_items` above.
+        config_view_records=tuple(_config_view_records),
     )
 
 
@@ -401,6 +433,49 @@ def render_reversal_decisions(plan: RunPlan) -> Tuple[str, ...]:
         lines.append(f"  Reversal index [{ws_id}] ({action}):")
         for decision in group:
             lines.extend(_render_one_reversal_decision(decision, indent=4))
+    return tuple(lines)
+
+
+# ============================================================================
+# Feature 025 (full reversals, US3 T033) -- config-view Preview rendering
+# ============================================================================
+
+_CONFIG_VIEW_ACTION_LABEL = {
+    "add": "Add",
+    "overwrite": "Overwrite",
+    "skip": "Skip (already up to date)",
+}
+
+
+def render_config_view_records(plan: RunPlan) -> Tuple[str, ...]:
+    """T033 (US3, Principle III): render `plan.config_view_records` for the
+    Preview pane, grouped by `kind` ("Dictionary" / "ReversalIndex"), one
+    line per `.fwdictconfig` file showing its planned Add/Overwrite/Skip
+    disposition -- BEFORE Move's `Lib/transfer.py.execute` calls
+    `Lib/config_views.py.apply_config_views`.
+
+    Missing-reference records (`ConfigViewRecord.missing_refs`) are
+    deliberately NOT duplicated here -- they already flow through the SAME
+    unified 024 dropped-items channel as every other drop in this codebase
+    (`RunPlan.dropped_items` / `RunReport.dropped_items`, rendered by
+    `report.render_text_summary`); this function renders only the
+    Add/Overwrite/Skip file dispositions themselves. Returns an empty tuple
+    when the plan has no config-view records at all (mirrors
+    `render_reversal_decisions`'s empty-plan posture).
+    """
+    if not plan.config_view_records:
+        return ()
+    by_kind: dict = {}
+    for record in plan.config_view_records:
+        by_kind.setdefault(record.kind, []).append(record)
+
+    lines: List[str] = []
+    lines.append("  Configuration views:")
+    for kind in sorted(by_kind):
+        lines.append(f"    {kind}:")
+        for record in by_kind[kind]:
+            label = _CONFIG_VIEW_ACTION_LABEL.get(record.action.value, record.action.value)
+            lines.append(f"      {label} {record.filename!r}")
     return tuple(lines)
 
 
