@@ -504,6 +504,61 @@ def _make_import_residue_tag():
     )
 
 
+# ============================================================================
+# Hardening (feature 025 cycle-6 remediation): pin source=None
+# ============================================================================
+
+def test_decide_reversal_category_pins_source_to_none(monkeypatch):
+    """`_decide_reversal_category` MUST call `references.decide_reference`
+    with `source=None` -- deliberate (see that function's own
+    "*** DEVIATION ***" docstring section): threading a real source
+    project reintroduces a spurious-UPDATE bug because the source and
+    target sides would then use structurally DIFFERENT fingerprint shapes
+    (`references.py:513-528` -- Id-keyed pairs vs. the target index's
+    positional fallback), so byte-identical content could never compare
+    equal. No test guarded this before; this spies on `references.
+    decide_reference` (via `reversals.references`, the module attribute
+    `_decide_reversal_category` actually calls through) and fails if a
+    future refactor threads a real source project instead of `None`."""
+    guid = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+    source_pos = _FakePossibility(guid, name="Noun")
+    target_pos = _FakePossibility(guid, name="Noun")
+    sense = _FakeSense("s1")
+    entry = _FakeReversalEntry("e1", senses=[sense], pos=source_pos)
+    src_idx = _FakeReversalIndex("src-idx", "en", entries=[entry])
+    tgt_idx = _FakeReversalIndex(
+        "tgt-idx", "en", pos_list=_FakeTargetList([target_pos]))
+
+    src = _FakeProject(ws_list=[_FakeWS("en", 1)], indexes=[src_idx])
+    target = _FakeProject(ws_list=[_FakeWS("en", 10)], indexes=[tgt_idx])
+    ctx = _FakeCtx()
+    dropped: list = []
+
+    real_decide_reference = reversals.references.decide_reference
+    observed_sources: list = []
+
+    def _spy_decide_reference(*args, **kwargs):
+        observed_sources.append(kwargs.get("source", "MISSING-KWARG"))
+        return real_decide_reference(*args, **kwargs)
+
+    monkeypatch.setattr(reversals.references, "decide_reference", _spy_decide_reference)
+
+    decisions = reversals.plan_reversals({"s1"}, src, target, ctx, {}, dropped)
+
+    assert len(observed_sources) == 1, (
+        f"expected decide_reference invoked exactly once for the "
+        f"PartOfSpeechRA field, got {observed_sources!r}"
+    )
+    assert observed_sources[0] is None, (
+        "_decide_reversal_category must call references.decide_reference "
+        f"with source=None; observed source={observed_sources[0]!r}"
+    )
+    # Sanity: the walk still produced its normal LINK outcome (spy is
+    # transparent, not just intercepting).
+    assert len(decisions) == 1
+    assert decisions[0].pos_decision.action == ReferenceAction.LINK
+
+
 def test_shared_reversal_category_created_at_most_once_across_entries(monkeypatch):
     """Contract guarantee: "a reversal category used by K entries is
     created at most once" -- two entries share the SAME to-create

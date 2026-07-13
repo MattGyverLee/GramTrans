@@ -322,9 +322,12 @@ def build_run_plan(
     # once in Move" split as the reversal walk immediately above, but this
     # is a plain file-I/O decision pass (`Lib/config_views.py.plan_config_
     # views`), not an LCM closure walk. Fail-soft: `plan_config_views`
-    # resolves each project's on-disk directory from its LCM cache path
-    # (`config_views.resolve_config_dirs`), which raises `ValueError` for a
-    # duck-typed test double that exposes none of the expected accessors
+    # resolves each project's on-disk directory (for BOTH source and
+    # target -- read-only, creates nothing) from its LCM cache path
+    # (`config_views.compute_config_dirs`, P0-1 feature-025 cycle-6
+    # remediation -- the plain, non-directory-creating path helper), which
+    # raises `ValueError` for a duck-typed test double that exposes none of
+    # the expected accessors
     # (`Lib/ui/main_window.py._safe_path`'s `ProjectPath`/`ProjectFilename`/
     # `ProjectFolder` convention, or the real `project.project.ProjectId
     # .Path`) -- e.g. `tests/unit/test_preview_no_writes.py`'s `_FakeProject`.
@@ -477,6 +480,29 @@ def render_config_view_records(plan: RunPlan) -> Tuple[str, ...]:
             label = _CONFIG_VIEW_ACTION_LABEL.get(record.action.value, record.action.value)
             lines.append(f"      {label} {record.filename!r}")
     return tuple(lines)
+
+
+# ============================================================================
+# P0-2 (feature 025 cycle-6 remediation) -- Preview surface composition
+# ============================================================================
+
+def render_preview_extra_lines(plan: RunPlan) -> Tuple[str, ...]:
+    """Compose the Preview-only extra lines -- the reversal Add/Link plan
+    (`render_reversal_decisions`) and the config-view Add/Overwrite/Skip
+    list (`render_config_view_records`) -- that `Lib/ui/main_window.py.
+    _on_preview` displays alongside the existing stats-panel report text
+    BEFORE Move ever writes (Principle III).
+
+    Before this fix neither render function had any call site in the
+    codebase: `_on_preview` built a `RunReport` and called `self._stats.
+    set_report(report)`, which surfaces `RunPlan.dropped_items` only -- the
+    reversal Add/Link plan and the config-view Add/Overwrite/Skip list were
+    computed every Preview run (`build_run_plan`) but never shown to the
+    user. This is the single seam `_on_preview` now calls; each underlying
+    render fn already returns `()` for an empty plan, so this composition
+    is a clean no-op when the plan carries neither.
+    """
+    return tuple(render_reversal_decisions(plan)) + tuple(render_config_view_records(plan))
 
 
 # ============================================================================

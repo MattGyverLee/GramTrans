@@ -11,7 +11,7 @@ Read-only — the panel never mutates the report.
 """
 from __future__ import annotations
 
-from typing import Optional
+from typing import Optional, Sequence
 
 from PyQt6 import QtCore, QtWidgets
 
@@ -70,6 +70,25 @@ class StatsPanel(QtWidgets.QWidget):
         self._skip_view.setMaximumBlockCount(2000)
         layout.addWidget(self._skip_view, 1)
 
+        # Feature 025 (full reversals, P0-2 cycle-6 remediation): the
+        # reversal Add/Link plan (`Lib/preview.py.render_reversal_
+        # decisions`) and the config-view Add/Overwrite/Skip list
+        # (`.render_config_view_records`), composed by `Lib/preview.py.
+        # render_preview_extra_lines` and passed in by `main_window.
+        # _on_preview` -- Principle III requires these be shown BEFORE
+        # Move ever writes. Hidden (no row reserved) when there is nothing
+        # to show, matching the identity-remap section's own posture below.
+        self._extra_label = QtWidgets.QLabel(
+            "Reversals & configuration views (Preview -- not yet written):", self
+        )
+        self._extra_view = QtWidgets.QPlainTextEdit(self)
+        self._extra_view.setReadOnly(True)
+        self._extra_view.setMaximumBlockCount(2000)
+        self._extra_label.setVisible(False)
+        self._extra_view.setVisible(False)
+        layout.addWidget(self._extra_label)
+        layout.addWidget(self._extra_view, 1)
+
         # Identity remap (hidden unless non-empty)
         self._remap_label = QtWidgets.QLabel("Identity remap (LCM denied GUID-on-create):", self)
         self._remap_view = QtWidgets.QPlainTextEdit(self)
@@ -83,7 +102,12 @@ class StatsPanel(QtWidgets.QWidget):
         self._footer = QtWidgets.QLabel("", self)
         layout.addWidget(self._footer)
 
-    def set_report(self, report: RunReport) -> None:
+    def set_report(self, report: RunReport, extra_lines: Sequence[str] = ()) -> None:
+        """Render `report`. `extra_lines` (feature 025 P0-2, cycle-6
+        remediation) is the Preview-only composed reversal Add/Link plan +
+        config-view Add/Overwrite/Skip list from `Lib/preview.py.
+        render_preview_extra_lines` -- optional and empty for Move-mode
+        reports (Move already wrote; there's nothing left to preview)."""
         mode_word = "Preview" if report.mode is RunMode.PREVIEW else "Move"
         self._header.setText(
             f"{mode_word} run · run_id={report.context.run_id} · "
@@ -131,6 +155,18 @@ class StatsPanel(QtWidgets.QWidget):
         else:
             self._remap_label.setVisible(False)
             self._remap_view.setVisible(False)
+
+        # Feature 025 (full reversals, P0-2 cycle-6 remediation): the
+        # reversal Add/Link plan + config-view Add/Overwrite/Skip list --
+        # BEFORE Move ever writes (Principle III). Hidden when there's
+        # nothing to show (Move-mode reports, or a plan with neither).
+        if extra_lines:
+            self._extra_label.setVisible(True)
+            self._extra_view.setVisible(True)
+            self._extra_view.setPlainText("\n".join(extra_lines))
+        else:
+            self._extra_label.setVisible(False)
+            self._extra_view.setVisible(False)
 
         self._footer.setText(f"Wall clock: {report.wall_clock_seconds:.3f}s")
 

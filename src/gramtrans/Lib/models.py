@@ -714,8 +714,12 @@ class RunPlan:
     # timing as `plan_all_lexical_relations`). Every reversal
     # `DroppedItemRecord` this walk produces already flows through
     # `dropped_items` above (the single unified 024 channel); this field
-    # carries the Add/Link decisions themselves so Preview can render them
-    # (`Lib/preview.py.render_reversal_decisions`) before Move ever writes.
+    # carries the Add/Link decisions themselves so Preview renders them
+    # (`Lib/preview.py.render_reversal_decisions`, wrapped by
+    # `render_preview_extra_lines` and displayed via `Lib/ui/main_window.py.
+    # _on_preview` -> `Lib/ui/stats_panel.py.StatsPanel.set_report`'s
+    # `extra_lines` param -- P0-2, feature-025 cycle-6 remediation) before
+    # Move ever writes.
     reversal_decisions: tuple = ()  # tuple[ReversalDecision, ...]
     # Feature 025 (full reversals, US3 T033): Part B `.fwdictconfig`
     # configuration-view copy plan (`Lib/config_views.py.plan_config_views`),
@@ -726,8 +730,12 @@ class RunPlan:
     # record's `missing_refs` already flows into `dropped_items` above (the
     # SAME unified 024 channel -- no separate config-view report section);
     # this field carries the Add/Overwrite/Skip actions themselves so
-    # Preview can render them (`Lib/preview.py.render_config_view_records`)
-    # before Move's `Lib/transfer.py.execute` calls `apply_config_views`.
+    # Preview renders them (`Lib/preview.py.render_config_view_records`,
+    # wrapped by `render_preview_extra_lines` and displayed via `Lib/ui/
+    # main_window.py._on_preview` -> `Lib/ui/stats_panel.py.StatsPanel.
+    # set_report`'s `extra_lines` param -- P0-2, feature-025 cycle-6
+    # remediation) before Move's `Lib/transfer.py.execute` calls
+    # `apply_config_views`.
     config_view_records: tuple = ()  # tuple[ConfigViewRecord, ...]
 
     def category_count(self, category: GrammarCategory) -> int:

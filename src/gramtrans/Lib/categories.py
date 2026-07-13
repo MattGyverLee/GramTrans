@@ -4024,8 +4024,17 @@ def reproduce_reversal_entries(context, tag, resolver_cache, dropped) -> None:
     needs the real target sense objects to link `SensesRS`), then applies
     it. Called once from `Lib/transfer.py.execute`, right after
     `reproduce_all_lexical_relations` -- reversal entries are written ONLY
-    here, in Move mode, after the plan has already been shown to the user
-    (Principle III)."""
+    here, in Move mode.
+
+    Principle III (P0-2, feature-025 cycle-6 remediation): the SAME Add/Link
+    decision this walk applies was already rendered on the Preview surface
+    the click before -- `Lib/ui/main_window.py._on_preview` calls
+    `Lib/preview.py.render_preview_extra_lines(plan)` (which wraps
+    `render_reversal_decisions`) and displays the result via `Lib/ui/
+    stats_panel.py.StatsPanel.set_report`'s `extra_lines` parameter, BEFORE
+    the user can click Move. Prior to that fix this docstring's claim was
+    FALSE: `render_reversal_decisions` had no call site anywhere, so no
+    reversal decision was ever shown before this function wrote it."""
     if __package__:
         from . import reversals as _reversals
     else:

@@ -16,13 +16,20 @@ custom field or WS the target lacks) rather than silently importing a
 broken view -- see specs/025-full-reversals/contracts/config-view-copy.md.
 
 Plan/apply split (Principle III, Preview-before-mutate):
-- `plan_config_views` (decision-only, no file writes) enumerates source
-  configs, computes Add/Overwrite/Skip per file (via `filecmp`), and scans
-  each file's references against the target, producing `ConfigViewRecord`s
-  (see `models.ConfigViewRecord`).
+- `plan_config_views` (decision-only, no file writes, NO DIRECTORY
+  CREATION on either project tree -- P0-1, feature-025 cycle-6
+  remediation) enumerates source configs via the pure `compute_config_
+  dirs` path helper, computes Add/Overwrite/Skip per file (via `filecmp`),
+  and scans each file's references against the target, producing
+  `ConfigViewRecord`s (see `models.ConfigViewRecord`). A non-existent
+  `ConfigurationSettings/` folder on either side (e.g. a brand-new target)
+  simply yields an empty file listing for that side -- Preview never
+  creates it.
 - `apply_config_views` (Move-mode only) performs the actual file copies:
   `shutil.copy2` for ADD/OVERWRITE, backing up any replaced target file
-  first; SKIP performs no I/O.
+  first; SKIP performs no I/O. This is also the only place any directory
+  gets created (per-file `os.makedirs` right before each ADD/OVERWRITE
+  copy).
 
 Schema notes (US3 T031/T032, confirmed against the actual FieldWorks source
 -- `Src/xWorks/ConfigurableDictionaryNode.cs` -- and live `.fwdictconfig`
@@ -112,21 +119,45 @@ def _project_dir(project) -> str:
     )
 
 
-def resolve_config_dirs(project):
-    """Derive `(dictionary_dir, reversal_dir)` absolute paths for a
-    flexicon project handle (R8, contracts/config-view-copy.md).
+def compute_config_dirs(project):
+    """Pure path computation -- derive `(dictionary_dir, reversal_dir)`
+    absolute paths for a flexicon project handle (R8, contracts/config-
+    view-copy.md) WITHOUT creating either directory and WITHOUT any other
+    filesystem side effect.
 
-    Creates the target `ConfigurationSettings/Dictionary/` and
-    `.../ReversalIndex/` subdirectories if they do not already exist (a
-    brand-new target project may not have a `ConfigurationSettings` folder
-    at all yet).
+    This is the ONLY directory-path helper `plan_config_views` may call
+    (P0-1, feature-025 cycle-6 remediation): Preview's decision pass runs
+    this against BOTH the source and target project handles, and creating
+    a directory on the SOURCE tree during Preview would violate `Lib/
+    preview.py`'s read-only guarantee (Principle III) as well as
+    `contracts/config-view-copy.md`:13's "target only" mutation scope.
     """
     project_dir = _project_dir(project)
     dictionary_dir = os.path.join(project_dir, "ConfigurationSettings", "Dictionary")
     reversal_dir = os.path.join(project_dir, "ConfigurationSettings", "ReversalIndex")
+    return (os.path.abspath(dictionary_dir), os.path.abspath(reversal_dir))
+
+
+def resolve_config_dirs(project):
+    """Derive `(dictionary_dir, reversal_dir)` absolute paths for a
+    flexicon project handle (R8, contracts/config-view-copy.md), creating
+    both subdirectories if they do not already exist (a brand-new target
+    project may not have a `ConfigurationSettings` folder at all yet).
+
+    Directory-CREATING wrapper around `compute_config_dirs`. This function
+    has no call site inside this module as of P0-1 (feature-025 cycle-6
+    remediation) -- `plan_config_views` (Preview, read-only) now calls the
+    pure `compute_config_dirs` for both src and tgt, and `apply_config_
+    views` (Move-only) already does its own per-file `os.makedirs` right
+    before each copy, so no plan-time directory creation is needed. Kept
+    for any external/future caller that genuinely wants "give me a real,
+    already-existing directory" semantics -- but NEVER call this against a
+    SOURCE project handle from a read-only code path.
+    """
+    dictionary_dir, reversal_dir = compute_config_dirs(project)
     os.makedirs(dictionary_dir, exist_ok=True)
     os.makedirs(reversal_dir, exist_ok=True)
-    return (os.path.abspath(dictionary_dir), os.path.abspath(reversal_dir))
+    return (dictionary_dir, reversal_dir)
 
 
 # ============================================================================
@@ -298,7 +329,15 @@ def _scan_missing_refs(
 
 
 def plan_config_views(src_project, tgt_project) -> List[ConfigViewRecord]:
-    """Decision pass (R8/R9, contracts/config-view-copy.md). No writes.
+    """Decision pass (R8/R9, contracts/config-view-copy.md). No writes --
+    and, per P0-1 (feature-025 cycle-6 remediation), NO DIRECTORY CREATION
+    on either project tree. This function calls the pure `compute_config_
+    dirs` (never `resolve_config_dirs`) for BOTH src and tgt, so a brand-
+    new target with no `ConfigurationSettings/` folder yet simply yields
+    an empty file listing (`_list_fwdictconfig` returns `[]` for a
+    non-existent directory) rather than having Preview create it. Directory
+    creation happens exactly once, at Move time, inside `apply_config_
+    views`'s own per-file `os.makedirs` right before each ADD/OVERWRITE copy.
 
     Enumerates every `*.fwdictconfig` under the source's `Dictionary/` and
     `ReversalIndex/` subdirs, computes ADD/SKIP/OVERWRITE against the
@@ -308,8 +347,8 @@ def plan_config_views(src_project, tgt_project) -> List[ConfigViewRecord]:
     ADD/OVERWRITE/SKIP exactly as it would be otherwise -- FLEx degrades a
     dangling reference gracefully; missing_refs is purely reporting.
     """
-    src_dict_dir, src_rev_dir = resolve_config_dirs(src_project)
-    tgt_dict_dir, tgt_rev_dir = resolve_config_dirs(tgt_project)
+    src_dict_dir, src_rev_dir = compute_config_dirs(src_project)
+    tgt_dict_dir, tgt_rev_dir = compute_config_dirs(tgt_project)
 
     tgt_ws_ids = _target_ws_ids(tgt_project)
     tgt_field_names = _target_custom_field_names(tgt_project)

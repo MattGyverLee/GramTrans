@@ -10,10 +10,12 @@ a live target snapshot (T081).
 """
 from __future__ import annotations
 
+import os
 from typing import Iterable, List
 
 import pytest
 
+from gramtrans.Lib import config_views as config_views_mod
 from gramtrans.Lib import preview as preview_mod
 from gramtrans.Lib.models import (
     GrammarCategory,
@@ -253,3 +255,64 @@ def test_fr019_same_project_handle_refused() -> None:
     p = _FakeProject("ambiguous")
     with pytest.raises(ValueError, match="FR-019"):
         _ctx(p, p)
+
+
+# ============================================================================
+# P0-1 (feature 025 cycle-6 remediation): config_views Preview must be
+# READ-ONLY -- no directory creation on EITHER tree, source included.
+# ============================================================================
+
+def test_build_run_plan_never_creates_config_view_directories(
+    _patch_preview_lcm_helpers, monkeypatch, tmp_path,
+) -> None:
+    """`build_run_plan`'s Preview decision pass calls `config_views.
+    plan_config_views(source, target)` (see `Lib/preview.py` build_run_plan's
+    Feature-025-US3 section). That call MUST NOT create any directory on
+    EITHER the source or the target tree -- Preview is read-only (Principle
+    III) and `contracts/config-view-copy.md`:13 says config-view files are
+    only ever written "target only", never even a bare directory on the
+    source.
+
+    The plain `_FakeProject` fixture used elsewhere in this file has no
+    on-disk directory accessor, so `config_views._project_dir` raises
+    `ValueError` and `plan_config_views` is swallowed by `build_run_plan`'s
+    fail-soft `except Exception` -- silently short-circuiting BEFORE
+    `os.makedirs` is ever reached (the coverage gap the QC review flagged).
+    Here both fakes get a real `ProjectFolder` pointing at a distinct
+    tmp_path directory so `_project_dir` succeeds and the config-view
+    planning path is actually exercised end-to-end.
+    """
+    makedirs_calls: List[str] = []
+    real_makedirs = os.makedirs
+
+    def _spy_makedirs(path, *a, **kw):
+        makedirs_calls.append(str(path))
+        return real_makedirs(path, *a, **kw)
+
+    monkeypatch.setattr(config_views_mod.os, "makedirs", _spy_makedirs)
+
+    src_dir = tmp_path / "SourceProject"
+    tgt_dir = tmp_path / "TargetProject"
+    src_dir.mkdir()
+    tgt_dir.mkdir()
+
+    src = _FakeProject("src", verb=None)
+    tgt = _FakeProject("tgt", verb=None)
+    src.ProjectFolder = str(src_dir)
+    tgt.ProjectFolder = str(tgt_dir)
+
+    plan = build_run_plan(_ctx(src, tgt), _selection(), WSMapping(entries=()), src, tgt)
+
+    assert makedirs_calls == [], (
+        "build_run_plan (Preview) must never call config_views.os.makedirs "
+        f"-- got calls for: {makedirs_calls}"
+    )
+    assert not (src_dir / "ConfigurationSettings").exists(), (
+        "Preview must not create ConfigurationSettings/* under the SOURCE "
+        "project tree"
+    )
+    assert not (tgt_dir / "ConfigurationSettings").exists(), (
+        "Preview must not create ConfigurationSettings/* under the TARGET "
+        "project tree either -- directory creation is Move-only"
+    )
+    assert plan.config_view_records == ()
