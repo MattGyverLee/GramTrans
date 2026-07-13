@@ -151,8 +151,9 @@ class _FakeReversalIndex:
 
 
 class _FakeCtx:
-    def __init__(self, ws_map: dict | None = None) -> None:
+    def __init__(self, ws_map: dict | None = None, copy_set: dict | None = None) -> None:
         self._ws_map = dict(ws_map or {})
+        self._copy_set = dict(copy_set or {})
 
 
 # ============================================================================
@@ -460,6 +461,7 @@ class _FakeApplyReversalEntry:
         self.PartOfSpeechRA = None
         self.ReversalForm = _FakeApplySettableMultiString()
         self.SensesRS = _FakeApplyCollection()
+        self.SubentriesOS = _FakeApplyCollection()
 
 
 class _FakeApplySettableMultiString:
@@ -473,8 +475,29 @@ class _FakeReversalEntriesOps:
 
     def Create(self, index, form, sense):
         entry = _FakeApplyReversalEntry()
+        if sense is not None:
+            # Mirrors the real `ReversalIndexEntryOperations.Create(index,
+            # form, sense)` wrapper: the single `sense` param IS linked onto
+            # SensesRS as part of Create (research.md R1) -- without this
+            # the fake would silently diverge from live behavior and the
+            # top-level single/multi-sense regression assertions below
+            # would be meaningless.
+            entry.SensesRS.Add(sense)
         self.created.append(entry)
         return entry
+
+
+class _FakeSubEntryFactory:
+    """Fake `IReversalIndexEntryFactory` -- the raw-factory fallback
+    `_create_sub_entry` uses (no parent-entry overload on the
+    `ReversalIndexEntryOperations` wrapper)."""
+
+    def __init__(self) -> None:
+        self.create_calls = 0
+
+    def Create(self):
+        self.create_calls += 1
+        return _FakeApplyReversalEntry()
 
 
 class _FakeApplyTarget:
@@ -484,10 +507,16 @@ class _FakeApplyTarget:
         self.ReversalEntries = _FakeReversalEntriesOps()
         self.factory = _FakeApplyFactory()
         self.requested_factory_keys: list = []
+        self.sub_entry_factory = _FakeSubEntryFactory()
+        self.requested_service_keys: list = []
 
     def GetFactory(self, key):
         self.requested_factory_keys.append(key)
         return self.factory
+
+    def GetService(self, key):
+        self.requested_service_keys.append(key)
+        return self.sub_entry_factory
 
 
 class _FakeApplyReversalIndex:
@@ -614,3 +643,186 @@ def test_shared_reversal_category_created_at_most_once_across_entries(monkeypatc
     assert len(created_entries) == 2
     assert created_entries[0].PartOfSpeechRA is not None
     assert created_entries[0].PartOfSpeechRA is created_entries[1].PartOfSpeechRA
+
+
+# ============================================================================
+# P0 regression (T037 Phase-2 cycle-12 Finding 1, cycle-13 fix): a reversal
+# SUB-entry's own linked senses were silently dropped. `_apply_one_entry`
+# always slices `remaining_senses = target_senses[1:] if first_sense is not
+# None else target_senses` on the assumption the create call already linked
+# `first_sense` -- true for `_create_top_level_entry` (`ReversalEntries.
+# Create(index, form, sense)` links it), but FALSE for `_create_sub_entry`
+# (raw `IReversalIndexEntryFactory.Create()` + `parent.SubentriesOS.Add(...)`
+# links NOTHING). A sub-entry with exactly 1 linked sense therefore ended up
+# with SensesRS EMPTY (live proof: 9/10 sampled sub-entries had senses=0
+# where Preview predicted 1). These tests lock the fix: `_create_sub_entry`
+# now also consumes `first_sense` (mirroring the top-level contract) so the
+# SAME `remaining_senses` slice is correct for both branches.
+# ============================================================================
+
+def test_sub_entry_single_sense_is_linked_not_silently_dropped():
+    """THE BUG, Test A: a sub-entry with exactly 1 linked (copied) sense
+    must end up with exactly 1 member in SensesRS after apply_reversals.
+    Pre-fix this asserted 0 (the sense was silently dropped, no exception,
+    no DroppedItemRecord)."""
+    target_index = _FakeApplyReversalIndex(_FakePosList())
+    target = _FakeApplyTarget()
+    sense = _FakeSense("s-sub")
+
+    top_decision = ReversalDecision(
+        source_entry_guid="e-top",
+        target_index_ref=target_index,
+        target_ws_id="en",
+        pos_decision=None,
+        linked_sense_guids=(),
+        reversal_form_alts={"en": "topform"},
+        sub_entry_decisions=(
+            ReversalDecision(
+                source_entry_guid="e-sub",
+                target_index_ref=target_index,
+                target_ws_id="en",
+                pos_decision=None,
+                linked_sense_guids=("s-sub",),
+                reversal_form_alts={"en": "subform"},
+            ),
+        ),
+    )
+
+    ctx = _FakeCtx(copy_set={"s-sub": sense})
+    resolver_cache: dict = {}
+    dropped: list = []
+    tag = _make_import_residue_tag()
+
+    reversals.apply_reversals([top_decision], target, ctx, tag, resolver_cache, dropped)
+
+    top_entries = target.ReversalEntries.created
+    assert len(top_entries) == 1
+    sub_entries = list(top_entries[0].SubentriesOS)
+    assert len(sub_entries) == 1
+    sub_entry = sub_entries[0]
+    linked = list(sub_entry.SensesRS)
+    assert len(linked) == 1, (
+        f"expected the sub-entry's single linked sense to survive "
+        f"apply_reversals, got {linked!r} (silently dropped pre-fix)"
+    )
+    assert linked[0] is sense
+
+
+def test_sub_entry_multi_sense_links_all_n():
+    """Test B: a sub-entry with N>1 linked senses ends with exactly N in
+    SensesRS -- guards the `remaining_senses` slice arithmetic for the
+    multi-sense sub-entry case (pre-fix this lost exactly the FIRST of the
+    N senses, since `_create_sub_entry` never linked it and the slice
+    assumed it already was)."""
+    target_index = _FakeApplyReversalIndex(_FakePosList())
+    target = _FakeApplyTarget()
+    sense1 = _FakeSense("s-sub-1")
+    sense2 = _FakeSense("s-sub-2")
+
+    top_decision = ReversalDecision(
+        source_entry_guid="e-top",
+        target_index_ref=target_index,
+        target_ws_id="en",
+        pos_decision=None,
+        linked_sense_guids=(),
+        reversal_form_alts={"en": "topform"},
+        sub_entry_decisions=(
+            ReversalDecision(
+                source_entry_guid="e-sub",
+                target_index_ref=target_index,
+                target_ws_id="en",
+                pos_decision=None,
+                linked_sense_guids=("s-sub-1", "s-sub-2"),
+                reversal_form_alts={"en": "subform"},
+            ),
+        ),
+    )
+
+    ctx = _FakeCtx(copy_set={"s-sub-1": sense1, "s-sub-2": sense2})
+    resolver_cache: dict = {}
+    dropped: list = []
+    tag = _make_import_residue_tag()
+
+    reversals.apply_reversals([top_decision], target, ctx, tag, resolver_cache, dropped)
+
+    sub_entry = list(target.ReversalEntries.created[0].SubentriesOS)[0]
+    linked = list(sub_entry.SensesRS)
+    assert len(linked) == 2
+    assert sense1 in linked and sense2 in linked
+
+
+def test_sub_entry_zero_sense_stays_zero_and_top_level_unaffected():
+    """Test C: a 0-sense sub-entry stays 0 (no spurious link introduced by
+    the fix), and top-level entries with 1 and with 2 linked senses still
+    end with exactly 1 / 2 -- `_create_top_level_entry`'s existing,
+    already-correct contract must not regress."""
+    target_index = _FakeApplyReversalIndex(_FakePosList())
+    target = _FakeApplyTarget()
+
+    top_decision_zero_sub = ReversalDecision(
+        source_entry_guid="e-top-a",
+        target_index_ref=target_index,
+        target_ws_id="en",
+        pos_decision=None,
+        linked_sense_guids=(),
+        reversal_form_alts={"en": "topform-a"},
+        sub_entry_decisions=(
+            ReversalDecision(
+                source_entry_guid="e-sub-zero",
+                target_index_ref=target_index,
+                target_ws_id="en",
+                pos_decision=None,
+                linked_sense_guids=(),
+                reversal_form_alts={"en": "subform-zero"},
+            ),
+        ),
+    )
+
+    sense_top1 = _FakeSense("s-top-1")
+    top_decision_one = ReversalDecision(
+        source_entry_guid="e-top-b",
+        target_index_ref=target_index,
+        target_ws_id="en",
+        pos_decision=None,
+        linked_sense_guids=("s-top-1",),
+        reversal_form_alts={"en": "topform-b"},
+    )
+
+    sense_top2a = _FakeSense("s-top-2a")
+    sense_top2b = _FakeSense("s-top-2b")
+    top_decision_two = ReversalDecision(
+        source_entry_guid="e-top-c",
+        target_index_ref=target_index,
+        target_ws_id="en",
+        pos_decision=None,
+        linked_sense_guids=("s-top-2a", "s-top-2b"),
+        reversal_form_alts={"en": "topform-c"},
+    )
+
+    ctx = _FakeCtx(copy_set={
+        "s-top-1": sense_top1,
+        "s-top-2a": sense_top2a,
+        "s-top-2b": sense_top2b,
+    })
+    resolver_cache: dict = {}
+    dropped: list = []
+    tag = _make_import_residue_tag()
+
+    reversals.apply_reversals(
+        [top_decision_zero_sub, top_decision_one, top_decision_two],
+        target, ctx, tag, resolver_cache, dropped,
+    )
+
+    created = target.ReversalEntries.created
+    assert len(created) == 3
+    entry_zero_sub_parent, entry_one, entry_two = created
+
+    sub_entry_zero = list(entry_zero_sub_parent.SubentriesOS)[0]
+    assert len(list(sub_entry_zero.SensesRS)) == 0
+
+    assert len(list(entry_one.SensesRS)) == 1
+    assert list(entry_one.SensesRS)[0] is sense_top1
+
+    linked_two = list(entry_two.SensesRS)
+    assert len(linked_two) == 2
+    assert sense_top2a in linked_two and sense_top2b in linked_two

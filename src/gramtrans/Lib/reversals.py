@@ -619,14 +619,31 @@ def _create_top_level_entry(target, target_index, primary_text, first_sense, dec
         return None
 
 
-def _create_sub_entry(target, parent_entry, primary_ws_id, primary_text, decision, dropped):
+def _create_sub_entry(target, parent_entry, primary_ws_id, primary_text, first_sense,
+                       decision, dropped):
     """Create `decision`'s target SUB-entry. `ReversalIndexEntryOperations.
     Create` always attaches to `index.EntriesOC` (no parent-entry overload)
     -- sub-entries fall back to the raw `IReversalIndexEntryFactory`
     (`owned._get_owned_factory`, the SAME service-locator idiom every other
     raw-factory create in this codebase uses) plus a manual
     `parent.SubentriesOS.Add(...)`, matching research.md R1's "fall back to
-    GetService only if needed" posture."""
+    GetService only if needed" posture.
+
+    `first_sense` (T037 Phase-2 cycle-12 Finding 1 / cycle-13 fix): unlike
+    `_create_top_level_entry`'s `ReversalEntries.Create(index, form, sense)`
+    wrapper, the raw factory's bare `.Create()` has no sense parameter at
+    all -- it links NOTHING. `_apply_one_entry` unconditionally slices
+    `remaining_senses = target_senses[1:] if first_sense is not None else
+    target_senses`, i.e. it ALWAYS assumes the create call already linked
+    `first_sense`, for both branches. That assumption was only ever true
+    for the top-level branch; for a sub-entry with exactly one linked sense
+    this silently dropped it (no exception, no `DroppedItemRecord` -- live
+    proof: 9/10 sampled sub-entries had senses=0 where Preview predicted 1).
+    Linking `first_sense` here -- via the SAME `_link_remaining_senses`
+    mechanism every other sense-Add in this module uses (never inventing a
+    second linking path) -- makes the top-level and sub-entry branches
+    consume `first_sense` identically, so the single `remaining_senses`
+    slice back in `_apply_one_entry` is correct for both."""
     if not primary_text:
         dropped.append(DroppedItemRecord(
             owner_kind="ReversalIndexEntry",
@@ -658,6 +675,8 @@ def _create_sub_entry(target, parent_entry, primary_ws_id, primary_text, decisio
         ))
         return None
     _set_reversal_form_alt(new_sub, target, primary_ws_id, primary_text)
+    if first_sense is not None:
+        _link_remaining_senses(new_sub, [first_sense])
     return new_sub
 
 
@@ -793,9 +812,15 @@ def _apply_one_entry(decision: "ReversalDecision", target, ctx, tag, resolver_ca
     index (every depth -- top-level entries create/reuse it via
     `_ensure_target_index`; sub-entries hit the SAME per-run cache the
     first top-level call already populated), create the entry (top-level
-    via the `ReversalIndexEntryOperations` wrapper, sub-entry via the raw
-    factory), write every remaining `ReversalForm` alt non-destructively,
-    link every remaining copied sense, apply the US2 three-way
+    via the `ReversalIndexEntryOperations` wrapper, which links
+    `first_sense` as part of `Create(index, form, sense)`; sub-entry via
+    the raw factory, which now ALSO links `first_sense` explicitly --
+    cycle-13 fix for T037 Phase-2 Finding 1, see `_create_sub_entry`'s own
+    docstring -- so both branches consume `first_sense` identically and the
+    `remaining_senses = target_senses[1:] if first_sense is not None else
+    target_senses` slice below is correct for both), write every remaining
+    `ReversalForm` alt non-destructively, link every remaining copied
+    sense, apply the US2 three-way
     `PartOfSpeechRA` decision against the target index's OWN
     `PartsOfSpeechOA` (`_apply_pos_decision`, T026 -- replaces the US1
     LINK-only block), tag with residue (R7 -- `ReversalIndexEntry` has NO
@@ -826,7 +851,8 @@ def _apply_one_entry(decision: "ReversalDecision", target, ctx, tag, resolver_ca
             target, target_index, primary_text, first_sense, decision, dropped)
     else:
         new_entry = _create_sub_entry(
-            target, parent_target_entry, primary_ws_id, primary_text, decision, dropped)
+            target, parent_target_entry, primary_ws_id, primary_text, first_sense,
+            decision, dropped)
     if new_entry is None:
         return None
 
