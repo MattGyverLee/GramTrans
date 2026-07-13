@@ -125,9 +125,9 @@ unresolvable morpheme → deny retained, morpheme reported, not downgraded (spec
 
 ### Implementation for User Story 3
 
-- [ ] T026 [US3] In `plan_analyses` (`src/gramtrans/Lib/wordforms.py`), compute `needs_review = (verdict == HUMAN_APPROVED and any unresolved IdentityRef)` (FR-014); a `HUMAN_DENIED` analysis is **never** downgraded (FR-015).
-- [ ] T027 [US3] Complete the NEEDS_REVIEW apply path in `apply_analyses` (`src/gramtrans/Lib/wordforms.py`): create the analysis and write **no** human evaluation (natural no-verdict state, R2/FR-014) — no in-FLEx marker, no proxy-deny; leave unresolved morph-bundle fields unset in `apply_morph_bundles`.
-- [ ] T028 [US3] Emit one `DroppedItemRecord` per unresolved `IdentityRef` (owner_kind `WfiMorphBundle`, field = ref name, reason "referent not copied to target") and per needs-review downgrade, with text/segment/wordform/morpheme context (FR-016), through the unified report (FR-023); extend `tests/unit/test_morph_bundle_wiring.py` with the needs-review-approve, retained-deny, and report-context cases (FR-014/015/016, SC-002/003).
+- [x] T026 [US3] In `plan_analyses` (`src/gramtrans/Lib/wordforms.py`), compute `needs_review = (verdict == HUMAN_APPROVED and any unresolved IdentityRef)` (FR-014); a `HUMAN_DENIED` analysis is **never** downgraded (FR-015).
+- [x] T027 [US3] Complete the NEEDS_REVIEW apply path in `apply_analyses` (`src/gramtrans/Lib/wordforms.py`): create the analysis and write **no** human evaluation (natural no-verdict state, R2/FR-014) — no in-FLEx marker, no proxy-deny; leave unresolved morph-bundle fields unset in `apply_morph_bundles`.
+- [x] T028 [US3] Emit one `DroppedItemRecord` per unresolved `IdentityRef` (owner_kind `WfiMorphBundle`, field = ref name, reason "referent not copied to target") and per needs-review downgrade (owner_kind `WfiAnalysis`, field `verdict`), with wordform-form + morpheme-form locate context (FR-016), through the unified report (FR-023); extended `tests/unit/test_morph_bundle_wiring.py` with the needs-review-report, retained-deny, and report-context cases (FR-014/015/016, SC-002/003).
 
 **Checkpoint**: Referential completeness holds — no false approvals, no silent drops.
 
@@ -144,13 +144,13 @@ categories resolved against target POS (unresolved reported) (spec US4 Independe
 
 ### Tests for User Story 4
 
-- [ ] T029 [P] [US4] Write `tests/unit/test_adjacent_data.py` — human-approved `WfiGloss` reproduced but parser-only gloss excluded (FR-008 sc.1); spelling status reproduced (FR-013 sc.2); category resolve-or-report, absent POS left unset + reported, never created (FR-011 sc.3). Fail-first.
+- [x] T029 [P] [US4] Write `tests/unit/test_adjacent_data.py` — human-approved `WfiGloss` reproduced but parser-only gloss excluded (FR-008 sc.1); spelling status reproduced (FR-013 sc.2); category resolve-or-report, absent POS left unset + reported, never created (FR-011 sc.3). Fail-first.
 
 ### Implementation for User Story 4
 
-- [ ] T030 [US4] In `plan_analyses`/`apply_analyses` (`src/gramtrans/Lib/wordforms.py`), gate `WfiGloss` by human evaluation (`GetGlosses` filtered, FR-008) into `GlossPlan`s and copy only human-evaluated glosses (`WfiGlossOperations` set/`SetGloss`).
-- [ ] T031 [US4] Confirm/finalize spelling-status reproduction onto the target wordform in `apply_analyses` (`WordformOperations.ApproveSpelling`/status setter, non-destructive, FR-013).
-- [ ] T032 [US4] Finalize category resolve-or-report in `apply_analyses` (`SetCategory` when resolved; unset + `DroppedItemRecord` when absent, FR-011) and confirm it flows to the unified report (FR-023).
+- [x] T030 [US4] In `plan_analyses`/`apply_analyses` (`src/gramtrans/Lib/wordforms.py`), gate `WfiGloss` by human evaluation (`plan_glosses` filters via `WfiGlosses.GetHumanEvaluation`, FR-008) into `GlossPlan`s and copy only human-evaluated glosses (`_apply_glosses` → `WfiGlosses.Create`/`SetForm`).
+- [x] T031 [US4] Confirm/finalize spelling-status reproduction onto the target wordform in `apply_analyses` (`WordformOperations` status setter, non-destructive — a None source status writes nothing, FR-013); covered by `test_adjacent_data.py`.
+- [x] T032 [US4] Finalize category resolve-or-report in `apply_analyses` (`SetCategory` when resolved; unset + `DroppedItemRecord` when absent, FR-011) and confirm it flows to the unified report (FR-023); covered by `test_adjacent_data.py`.
 
 **Checkpoint**: Copied interlinear is visibly complete — glosses, spelling, categories present.
 
