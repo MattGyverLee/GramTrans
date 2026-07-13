@@ -4874,8 +4874,9 @@ def _run_171_subpass(context, target, tag=None):
 
     Reads `context._run_plan.msa_slot_bindings` (a `{src_msa_guid:
     [src_slot_guid, ...]}` dict) and `context._run_plan.identity_remap`.
-    Resolves each MSA via identity_remap then `target.get_object_by_guid`, then
-    each slot via `target.get_object_by_guid` (slots are GUID-preserved, E8).
+    Resolves each MSA via identity_remap then `_resolve_target_by_guid`, then
+    each slot via `_resolve_target_by_guid` (offline fakes: `get_object_by_guid`;
+    live: LCM object repository). Slots are GUID-preserved (E8).
 
     Returns a list of Skip(DEPENDENCY_UNRESOLVED) — one per unresolved MSA or
     per unresolved slot reference. Idempotent: an already-present slot on an
@@ -4891,7 +4892,7 @@ def _run_171_subpass(context, target, tag=None):
 
     for src_msa_guid, src_slot_guids in bindings.items():
         target_msa_guid = remap.get(src_msa_guid, src_msa_guid)
-        target_msa = target.get_object_by_guid(target_msa_guid)
+        target_msa = _resolve_target_by_guid(target, target_msa_guid)
         if target_msa is None:
             skips.append(Skip(
                 category=GrammarCategory.AFFIX_TEMPLATES,
@@ -4902,7 +4903,7 @@ def _run_171_subpass(context, target, tag=None):
             ))
             continue
         for src_slot_guid in src_slot_guids:
-            target_slot = target.get_object_by_guid(src_slot_guid)
+            target_slot = _resolve_target_by_guid(target, src_slot_guid)
             if target_slot is None:
                 skips.append(Skip(
                     category=GrammarCategory.AFFIX_TEMPLATES,
@@ -4933,7 +4934,8 @@ def _run_post_pass_a(context, target, tag=None):
     Bindings shape: `{src_entry_guid: {"ComponentLexemesRS": [...],
     "PrimaryLexemesRS": [...]}}`. Each referenced lexeme resolves against (a)
     the in-plan creation list (`plan.in_plan_entries`), then (b)
-    `target.get_object_by_guid`. No fingerprint/name fallback (FR-340).
+    `_resolve_target_by_guid` (offline fakes: `get_object_by_guid`; live: LCM
+    object repository). No fingerprint/name fallback (FR-340).
 
     Returns Skip(DEPENDENCY_UNRESOLVED) — one per unresolved target entry and
     one per unresolved component lexeme. Idempotent via a membership guard;
@@ -4951,7 +4953,7 @@ def _run_post_pass_a(context, target, tag=None):
                    or getattr(context, "_in_plan_entries", None) or {})
 
     for src_entry_guid, ref_dict in bindings.items():
-        target_entry = target.get_object_by_guid(src_entry_guid)
+        target_entry = _resolve_target_by_guid(target, src_entry_guid)
         if target_entry is None:
             skips.append(Skip(
                 category=GrammarCategory.STEMS,
@@ -4969,7 +4971,7 @@ def _run_post_pass_a(context, target, tag=None):
                 for src_lex_guid in ref_dict.get(field_name, []):
                     target_lex = in_plan.get(src_lex_guid) if in_plan else None
                     if target_lex is None:
-                        target_lex = target.get_object_by_guid(src_lex_guid)
+                        target_lex = _resolve_target_by_guid(target, src_lex_guid)
                     if target_lex is None:
                         skips.append(Skip(
                             category=GrammarCategory.STEMS,

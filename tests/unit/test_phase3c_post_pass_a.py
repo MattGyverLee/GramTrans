@@ -24,6 +24,7 @@ reads host-free, and record every RS/RC ``Add`` so ordering can be asserted.
 """
 from __future__ import annotations
 
+import sys
 import types
 
 import pytest
@@ -360,3 +361,106 @@ def test_171_skips_are_skip_instances() -> None:
     ctx = _ctx_171({"msa-missing": ["slot-1"]})
     skips = categories._run_171_subpass(ctx, _FakeTarget({}), tag=None)
     assert skips and all(isinstance(s, Skip) for s in skips)
+
+
+# ============================================================================
+# Live-repo fallback (issue #28) — both passes must resolve GUIDs through
+# `_resolve_target_by_guid`, which falls back to the LCM object repository on
+# a live flexicon FLExProject (which has NO `get_object_by_guid`). These tests
+# drive each pass end-to-end against a live-style target so the fallback branch
+# is exercised THROUGH the pass, not just via the resolver in isolation — the
+# coverage gap that let the 031-shaped bug ship in these two passes.
+# ============================================================================
+
+class _FakeRepo:
+    """LCM ICmObjectRepository stand-in: IsValidObjectId + GetObject over a map."""
+
+    def __init__(self, objects_by_guid=None) -> None:
+        self._objs = dict(objects_by_guid or {})
+
+    def IsValidObjectId(self, guid):
+        # guid arrives as the ("parsed", <str>) tuple from the stub Guid.Parse.
+        return self._key(guid) in self._objs
+
+    def GetObject(self, guid):
+        return self._objs.get(self._key(guid))
+
+    @staticmethod
+    def _key(guid):
+        return guid[1] if isinstance(guid, tuple) else guid
+
+
+class _FakeLiveTarget:
+    """Mirrors the live flexicon FLExProject: exposes ObjectRepository() but
+    NO get_object_by_guid, so `_resolve_target_by_guid` must take the live
+    LCM-repo fallback branch."""
+
+    def __init__(self, objects_by_guid=None) -> None:
+        self._repo = _FakeRepo(objects_by_guid)
+
+    def ObjectRepository(self, iface):
+        return self._repo
+
+
+@pytest.fixture
+def _stub_lcm_and_system():
+    """Stub SIL.LCModel + System so `_resolve_target_by_guid`'s live branch
+    imports resolve offline (mirrors test_031_infl_feature_linking)."""
+    fake_lcm = types.ModuleType("SIL.LCModel")
+    fake_lcm.ICmObjectRepository = object()
+    sys.modules.setdefault("SIL", types.ModuleType("SIL"))
+    original_lcm = sys.modules.get("SIL.LCModel")
+    sys.modules["SIL.LCModel"] = fake_lcm
+
+    fake_system = types.ModuleType("System")
+    fake_system.Guid = type(
+        "FakeGuid", (), {"Parse": staticmethod(lambda s: ("parsed", s))}
+    )
+    original_system = sys.modules.get("System")
+    sys.modules["System"] = fake_system
+
+    yield
+
+    if original_lcm is None:
+        sys.modules.pop("SIL.LCModel", None)
+    else:
+        sys.modules["SIL.LCModel"] = original_lcm
+    if original_system is None:
+        sys.modules.pop("System", None)
+    else:
+        sys.modules["System"] = original_system
+
+
+def test_171_wires_via_live_repo_fallback(_stub_lcm_and_system) -> None:
+    """_run_171_subpass wires MSA->slot on a live-style target (no getter),
+    proving it routes through the LCM-repo fallback (issue #28)."""
+    msa = _FakeTargetMSA("msa-1")
+    slot = _FakeObj("slot-1")
+    target = _FakeLiveTarget({"msa-1": msa, "slot-1": slot})
+    ctx = _ctx_171({"msa-1": ["slot-1"]})
+
+    skips = categories._run_171_subpass(ctx, target, tag=None)
+
+    assert skips == []
+    assert msa.SlotsRC.add_log == [slot]
+
+
+def test_post_pass_a_wires_via_live_repo_fallback(_stub_lcm_and_system) -> None:
+    """_run_post_pass_a wires LexEntryRef component/primary on a live-style
+    target (no getter), proving the LCM-repo fallback path (issue #28)."""
+    ref = _FakeEntryRef()
+    entry = _FakeTargetEntry("entry-1", entry_refs=[ref])
+    comp, prim = _FakeObj("comp"), _FakeObj("prim")
+    target = _FakeLiveTarget({"entry-1": entry, "comp": comp, "prim": prim})
+    ctx = _ctx_post_pass_a({
+        "entry-1": {
+            "ComponentLexemesRS": ["comp"],
+            "PrimaryLexemesRS": ["prim"],
+        }
+    })
+
+    skips = categories._run_post_pass_a(ctx, target, tag=None)
+
+    assert skips == []
+    assert ref.ComponentLexemesRS.add_log == [comp]
+    assert ref.PrimaryLexemesRS.add_log == [prim]
