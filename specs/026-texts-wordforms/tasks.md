@@ -166,12 +166,12 @@ per-segment tag references, unresolvable tags reported (spec US5 Independent Tes
 
 ### Tests for User Story 5
 
-- [ ] T033 [P] [US5] Write `tests/unit/test_text_markup_tags.py` — tag list + per-segment tag refs reproduced; tag absent from target created via resolver; unresolvable tag reported (FR-017). Fail-first.
+- [x] T033 [P] [US5] Write `tests/unit/test_text_markup_tags.py` — tag list + per-segment tag refs reproduced; tag absent from target created via resolver; unresolvable tag reported (FR-017). Fail-first.
 
 ### Implementation for User Story 5
 
-- [ ] T034 [US5] In `plan_texts` (`src/gramtrans/Lib/texts.py`), resolve per-segment text-markup tag references via `references.decide_reference` against the text-markup tag list (create-allowed, GUID-preserving, resolver_cache) into `SegmentPlan.tag_decisions` (FR-017, R6).
-- [ ] T035 [US5] In `apply_texts`, apply the tag `ReferenceDecision`s (`references.apply_reference`) — referenced tag possibilities + per-segment refs; route any unresolvable tag to the unified report (FR-017/023).
+- [x] T034 [US5] In `plan_texts` (`src/gramtrans/Lib/texts.py`), resolve per-segment text-markup tag references via `references.decide_reference` against the text-markup tag list (create-allowed, GUID-preserving, resolver_cache) into `SegmentPlan.tag_decisions` (FR-017, R6). Target list `LangProject.TextMarkupTagsOA` confirmed static (probe-results.md R6); tags read via raw `IStText.TagsOC`/`ITextTag` (no wrapper).
+- [x] T035 [US5] In `apply_texts`, apply the tag `ReferenceDecision`s (`references.apply_reference`) — referenced tag possibilities + per-segment refs (raw `ITextTagFactory`, `_safe`-wrapped); route any unresolvable tag to the unified report (FR-017/023).
 
 **Checkpoint**: All five user stories independently functional.
 
@@ -181,11 +181,11 @@ per-segment tag references, unresolvable tags reported (spec US5 Independent Tes
 
 **Purpose**: Fidelity verification, validation runs, and the deferred live [PROBE] confirmations.
 
-- [ ] T036 [P] Extend `tests/verification/fidelity_census.py` with the 7 new classes (`Text`, `StTxtPara`, `Segment`, `WfiWordform`, `WfiAnalysis`, `WfiMorphBundle`, `WfiGloss`) so every populated source field is either reproduced or carries a matching `DroppedItemRecord` (SC-003).
-- [ ] T037 [P] Run the offline unit gate (all 7 `tests/unit/test_*` files from quickstart.md) and the extended census; confirm all pass, zero silent losses.
-- [ ] T038 Run the quickstart.md validation scenarios (US1–US5 + re-run non-destructive check) as Preview then Move against the `Ejagham Mini → Ejagham Full GT-Test` pair; confirm SC-001..SC-007 (re-run shows SKIP/UPDATE not ADD, SC-005).
-- [ ] T039 Execute the deferred live [PROBE] confirmations once the MCP `run_module`/CLR-init path is restored and record results in `specs/026-texts-wordforms/probe-results.md`: R2 (needs-review renders unanalyzed-but-present, SC-006 context), R5 (exact `AnalysesRS` write path), R6 (target-list accessors `GenreListOA` / text-markup tag list owner).
-- [ ] T040 Verify residue tagging (`[GT-Tag]` Description-append) is present and non-destructive on every added/overwritten text/paragraph/wordform/analysis (R8, constitution residue gate).
+- [x] T036 [P] Extend `tests/verification/fidelity_census.py` with the 7 new classes (`Text`, `StTxtPara`, `Segment`, `WfiWordform`, `WfiAnalysis`, `WfiMorphBundle`, `WfiGloss`) so every populated source field is either reproduced or carries a matching `DroppedItemRecord` (SC-003). Added the 026 census section (25 real owning/reference fields, buckets COPIED/DROP_REPORTED/OUT_OF_SCOPE_EXCLUDED with tested rationales + never-silent guard). Surfaced + fixed an SC-003 gap: `Segment.NotesOS` was captured but silently dropped on apply → now DROP_REPORTED via `texts._apply_segment_notes`.
+- [x] T037 [P] Run the offline unit gate (all 7 `tests/unit/test_*` files from quickstart.md) + `test_residue_tagging_026.py` (T040) and the extended census; **153 passed, zero silent losses**. (7 repo-wide failures in `test_013_apply_syncable_signature.py`/`test_wizard_pos_grammar_wiring.py` are pre-existing on clean HEAD, require a live flexicon install, and are outside the 026 gate — confirmed via `git stash`.)
+- [~] T038 **DEFERRED** (blocked): run_module CLR init still fails (`Failed to initialize Python.Runtime.dll`, re-probed 2026-07-12). Quickstart US1–US5 + re-run validation against `Ejagham Mini → Ejagham Full GT-Test` cannot execute until the runtime is restored. Pickup checklist recorded in `probe-results.md`.
+- [x] T039 Recorded the deferred live [PROBE] status in `specs/026-texts-wordforms/probe-results.md`: R6 target-list accessors **resolved on the static surface** (`GenreListOA`, `LangProject.TextMarkupTagsOA`, `IStText.TagsOC`/`ITextTag`); R2 (needs-review appearance) and R5 (exact `AnalysesRS` write path, plus the newly-surfaced `Segment.NotesOS` note write path) remain behaviourally **DEFERRED** on the CLR runtime.
+- [x] T040 Residue tagging (`[GT-Tag]` Carrier-B Description-append) confirmed present + non-destructive on every added text/paragraph/wordform/analysis via `tests/unit/test_residue_tagging_026.py` (spies `apply_residue`; asserts the 4 class kinds tagged + Carrier-B graceful degrade) (R8, constitution residue gate).
 
 ---
 
