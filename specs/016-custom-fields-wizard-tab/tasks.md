@@ -218,9 +218,13 @@ target field → IN TARGET + note, plan still proceeds.
 - [ ] T023 [P] Write `specs/016-custom-fields-wizard-tab/quickstart.md` with live Scenarios
   (US1 render, US2 toggle-off, US3 create-before-fill + fresh-target Move + idempotent re-run,
   US4 status + type-diff) against Ejagham Mini → freshly-restored Ejagham Full GT-Test.
-- [ ] T024 Add live integration scaffold `tests/integration/test_custom_fields_live.py`
+- [x] T024 Add live integration scaffold `tests/integration/test_custom_fields_live.py`
   (skip-by-default, `@pytest.mark.integration`) covering the quickstart scenarios; collects + skips
-  cleanly on bare pytest.
+  cleanly on bare pytest. **DONE 2026-07-13**: scaffold added (collects → 1 skipped, exit 0);
+  live-verified against Ejagham Mini → fresh Ejagham Full GT-Test — create-early for NEW
+  `LexSense.'Target Equivalent'`, reuse for IN_TARGET `MoForm.'Allomorph Comment'`, target CF
+  11→12 persisted on reopen, idempotent re-run (0 new creates). See
+  [verification-log.md](./verification-log.md).
 - [x] T025 Full regression sweep (`pytest tests/unit/`), confirm zero regressions vs the 633-baseline;
   update the `custom-field-creation.md` contract addendum note (type-diff-not-a-collision override)
   and [STATUS.md](../../STATUS.md) with the 016 handoff + the T004 creation-route verdict.

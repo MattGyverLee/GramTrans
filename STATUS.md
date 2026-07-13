@@ -1,5 +1,55 @@
 # GramTrans — Session Handoff
 
+## ▶▶▶ Live integration tests 013 / 016 / 022 — RUN & GREEN (2026-07-13)
+
+Drove the real GramTrans engine live via FLExToolsMCP `flextools_run_module` (the
+flexicon-enabled process imports `C:\Github\GramTrans\src\gramtrans` directly) against
+`Ejagham Mini` → freshly-restored `Ejagham Full GT-Test`. Added three skip-by-default
+`@pytest.mark.integration` scaffolds (each collects → 1 skipped, exit 0 on bare pytest)
+and a `verification-log.md` per feature.
+
+- **016 Custom Fields (T024/T026)** — PASS. Source `LexSense.'Target Equivalent'`
+  (type 13) classified NEW, `MoForm.'Allomorph Comment'` IN_TARGET. Full transfer emitted
+  exactly 1 `CreateDefinitionAction` (for the NEW field, 0 for the IN_TARGET one); target
+  CF count 11→12; field present after a fresh reopen (create-early persisted, no flid-0);
+  re-run → both IN_TARGET → 0 new creates (idempotent, SC-009).
+  [scaffold](tests/integration/test_custom_fields_live.py) ·
+  [log](specs/016-custom-fields-wizard-tab/verification-log.md).
+- **013 SIMILAR MERGE write mode (T-S3c / T-S1)** — PASS. On a real target multistring:
+  MERGE (fill_gaps=True) preserves a non-empty target (conflict → target wins) and fills an
+  empty target from a non-empty source; OVERWRITE (fill_gaps=False) is source-wins. T-S1
+  emptiness predicate confirmed as `(existing.Text or "").strip()` (BaseOperations.py:306).
+  Planner-level SIMILAR threading stays unit-covered.
+  [scaffold](tests/integration/test_013_merge_live.py) ·
+  [log](specs/013-similar-resolution-transfer/verification-log.md).
+- **022 Disposition (T029)** — PASS with one FINDING. Disposition SKIP/UPDATE/OVERWRITE
+  correct (SC-004); UPDATE non-destructive proven live (diverged→source, empty-source
+  preserved, SC-002). **FINDING: SC-003 destructive-blank does NOT reproduce for
+  multistrings** — the fork's `_apply_props_loop` skips empty multistring text
+  unconditionally (`BaseOperations.py:291 if not text: continue`), so OVERWRITE cannot
+  blank a target multistring alt from an empty source (UPDATE ≡ OVERWRITE for that case).
+  Direct `set_String("")` DOES blank, so the capability exists; the write path guards it.
+  Encoded as `xfail(strict)` in the scaffold.
+  [scaffold](tests/integration/test_conflict_live.py) ·
+  [log](specs/022-disposition-model/verification-log.md).
+
+**Follow-ups filed (non-blocking):**
+1. **022 SC-003 reconcile** — decide whether OVERWRITE *should* blank multistrings from an
+   empty source. If yes, drop/relax the `if not text: continue` guard in the fork's
+   `_apply_props_loop` for the `fill_gaps=False` path (careful: it also protects the merge
+   path); then the `xfail(strict)` in `test_conflict_live.py` flips green. If the current
+   safety-positive behavior is intended, amend spec 022 SC-003/FR-004 to scope blanking to
+   non-multistring fields and downgrade the unit-test claim.
+2. **016 value-fill** — the create-early schema path is proven; the per-field value-fill
+   count was not asserted (fresh target already holds Ejagham Full entries by GUID). Assert
+   it with a source whose transferred sense carries a `'Target Equivalent'` value, or via a
+   stem-picker selection. `quickstart.md` (T023) still unwritten.
+3. **013 full round-trip** — a planner→executor SIMILAR round-trip on a hand-seeded
+   `SimilarResolution(X,"merge",Y)` needs a similar-but-different-GUID affix fixture (none
+   off-the-shelf in the Ejagham corpus).
+
+---
+
 ## ▶▶▶ Feature 025 — Full Reversals — SPURT 1 (Phase 1+2 scaffold) IN PROGRESS (2026-07-12)
 
 **Spec**: [specs/025-full-reversals/](specs/025-full-reversals/) — spec (stub) + plan +
