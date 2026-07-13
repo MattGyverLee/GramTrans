@@ -311,6 +311,26 @@ def build_run_plan(
         context, selection, actions, excluded_lossy, source, target
     )
 
+    # Feature 026 (texts-wordforms, T010): dedicated text + wordform walk.
+    # Texts do NOT route through the leaf-dispatch bundle above — they have
+    # their own plan-builder (Lib/texts.py) that produces TextTransferPlans
+    # (each carrying its paragraph/segment/analysis decisions, Principle III).
+    # Runs after the lexical leaf dispatch so morph-bundle targets planned by
+    # 024/025 are already in the copy set (R8 ordering). Shares the SAME
+    # `_resolver_cache` (genres/tags) and `_dropped` collectors as the rest of
+    # the walk so the never-silent guarantee is uniform (FR-023).
+    _text_plans: list = []
+    if selection.is_on(GrammarCategory.TEXTS):
+        if __package__:
+            from .texts import plan_texts as _plan_texts
+        else:
+            from texts import plan_texts as _plan_texts  # type: ignore
+        _text_plans = list(_plan_texts(
+            selection, source, target, context, _resolver_cache, _dropped
+        ))
+        _log.debug("build_run_plan: TEXTS on; plan_texts produced %d text plan(s)",
+                   len(_text_plans))
+
     _log.debug(
         "build_run_plan: done  actions=%d skips=%d overwrites=%d excluded_lossy=%d "
         "dropped_items=%d",
@@ -332,6 +352,9 @@ def build_run_plan(
         # (Move already surfaces `_dropped` via transfer.execute's
         # extra_dropped_items -> RunReport wiring).
         dropped_items=tuple(_dropped),
+        # Feature 026 (T010): per-text transfer plans consumed by transfer.py's
+        # TEXTS apply hook. Empty tuple when TEXTS is not selected.
+        text_plans=tuple(_text_plans),
     )
 
 

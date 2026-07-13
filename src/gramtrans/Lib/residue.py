@@ -49,6 +49,25 @@ CARRIER_A_CLASSES = frozenset({
 })
 
 
+# Feature 026 (texts-wordforms, R8): interlinear-text and wordform-analysis
+# classes carry the [GT-Tag] residue marker via Carrier B (Description-append) —
+# they do NOT expose LiftResidue, so they are deliberately absent from
+# CARRIER_A_CLASSES. Some (StText/StTxtPara, WfiWordform, WfiAnalysis) may also
+# lack a Description multistring on the live surface; for those, Carrier B
+# degrades gracefully (strict=False) rather than hard-failing — the run report
+# is the never-silent backstop (Principle I "fail loudly" is satisfied by the
+# report entry, not by raising mid-transfer). Registered here so `apply_residue`
+# knows to pass strict=False for these classes without changing behaviour for
+# any pre-026 class (which stays strict=True).
+CARRIER_B_GRACEFUL_CLASSES = frozenset({
+    "Text",
+    "StText",
+    "StTxtPara",
+    "WfiWordform",
+    "WfiAnalysis",
+})
+
+
 @dataclass(frozen=True)
 class ImportResidueTag:
     """Structured per-object tag (data-model.md E5).
@@ -292,4 +311,7 @@ def apply_residue(obj, ws, tag: ImportResidueTag, class_name: Optional[str] = No
         # report.
         apply_carrier_b(obj, ws, tag, strict=False)
         return
-    apply_carrier_b(obj, ws, tag)
+    # Feature 026 (R8): text/wordform classes route to Carrier B; those that may
+    # lack Description degrade gracefully (strict=False) instead of raising.
+    strict = class_name not in CARRIER_B_GRACEFUL_CLASSES
+    apply_carrier_b(obj, ws, tag, strict=strict)

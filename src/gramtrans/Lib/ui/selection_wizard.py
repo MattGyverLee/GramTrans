@@ -57,6 +57,7 @@ if __package__:
         build_rules_inventory,
         build_selection,
         build_skeleton_inventory,
+        build_text_inventory,
         collapse_entry_types,
         collapse_phonology,
         collapse_pos_grouped,
@@ -100,6 +101,7 @@ else:
         build_rules_inventory,
         build_selection,
         build_skeleton_inventory,
+        build_text_inventory,
         collapse_entry_types,
         collapse_phonology,
         collapse_pos_grouped,
@@ -3866,6 +3868,150 @@ def _entry_types_missing_ref_for(wizard) -> list:
 # Page 4 -- Preview
 # ---------------------------------------------------------------------------
 
+class _PageTexts(QtWidgets.QWizardPage):
+    """Texts item picker (Feature 026, US1 — Model-A per-text selection, FR-001).
+
+    A flat, checkable list of the source's interlinear texts. The wordform
+    analyses a human evaluated ride along as the closure of the checked texts
+    (FR-001a), so there is no separate wordform picker. Rows open preselected
+    (checked); deselect is the primary gesture (SC-004 — deselect any text
+    without affecting the others). Exposes the checked set via
+    :meth:`text_picks`, folded into the Selection by `_compute_wizard_plan`.
+
+    Kept intentionally simple (no MergePreviewPane, no POS grouping): texts are
+    never SIMILAR-resolvable and the analysis wiring is decided by the transfer
+    walk (Lib/texts.py + Lib/wordforms.py), not the picker.
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setTitle("Texts")
+        self.setSubTitle(
+            "Select the interlinear texts to transfer. Their human-evaluated "
+            "wordform analyses, translations, notes, and genres come across with "
+            "them. Uncheck any text to leave it out."
+        )
+        self._text_inventory = None
+        self._build_ui()
+
+    def _build_ui(self) -> None:
+        layout = QtWidgets.QVBoxLayout(self)
+        layout.addWidget(QtWidgets.QLabel(
+            "Interlinear texts in the source project (checked = transfer):", self
+        ))
+        self._text_tree = QtWidgets.QTreeWidget(self)
+        self._text_tree.setColumnCount(3)
+        self._text_tree.setHeaderLabels(["Text", "Abbrev.", "Target"])
+        self._text_tree.setAlternatingRowColors(True)
+        self._text_tree.setRootIsDecorated(False)
+        layout.addWidget(self._text_tree, 1)
+        btn_row = QtWidgets.QHBoxLayout()
+        select_all = QtWidgets.QPushButton("Select all", self)
+        select_none = QtWidgets.QPushButton("Select none", self)
+        select_all.clicked.connect(lambda: self._set_all(QtCore.Qt.CheckState.Checked))
+        select_none.clicked.connect(lambda: self._set_all(QtCore.Qt.CheckState.Unchecked))
+        btn_row.addWidget(select_all)
+        btn_row.addWidget(select_none)
+        btn_row.addStretch(1)
+        layout.addLayout(btn_row)
+
+    # -- source/target handles (per-page copy, matching the wizard convention) --
+    def _get_source(self):
+        try:
+            wizard = self.wizard()
+            if wizard is None:
+                return None
+            page0 = wizard.page_project_ws()
+            if page0 is None:
+                return None
+            ctx = page0.context()
+            if ctx is not None:
+                h = getattr(ctx, "source_handle", None)
+                if h is not None:
+                    return h
+            return getattr(page0, "_host", None)
+        except Exception:  # noqa: BLE001
+            return None
+
+    def _get_target(self):
+        try:
+            wizard = self.wizard()
+            if wizard is None:
+                return None
+            page0 = wizard.page_project_ws()
+            if page0 is None:
+                return None
+            ctx = page0.context()
+            if ctx is None:
+                return None
+            return getattr(ctx, "target_handle", None)
+        except Exception:  # noqa: BLE001
+            return None
+
+    def initializePage(self) -> None:
+        """Build the text inventory from the bound source and populate the list.
+
+        Guards for no-source (renders a disabled placeholder row, no crash).
+        """
+        source = self._get_source()
+        self._text_tree.clear()
+        if source is None:
+            self._text_inventory = None
+            empty = QtWidgets.QTreeWidgetItem(self._text_tree, ["(No source project bound)"])
+            empty.setFlags(empty.flags() & ~QtCore.Qt.ItemFlag.ItemIsEnabled)
+            return
+        target = self._get_target()
+        try:
+            inventory = build_text_inventory(source, target=target)
+        except Exception:  # noqa: BLE001
+            inventory = None
+        self._text_inventory = inventory
+        if inventory is None:
+            return
+        self.populate_text_list(inventory)
+
+    def populate_text_list(self, inventory) -> None:
+        """Populate the checkable text list from a TextInventory.
+
+        Rows open preselected (checked). Called by initializePage; may also be
+        called directly in tests.
+        """
+        self._text_tree.clear()
+        _status_labels = {"new": "NEW", "in_target": "IN TARGET"}
+        for row in inventory.texts:
+            target_label = _status_labels.get(row.status or "", "")
+            item = QtWidgets.QTreeWidgetItem(
+                self._text_tree, [row.title, row.abbreviation, target_label]
+            )
+            item.setData(0, _GUID_ROLE, row.guid)
+            item.setData(0, _ITEM_CAT_ROLE, GrammarCategory.TEXTS)
+            item.setFlags(item.flags() | QtCore.Qt.ItemFlag.ItemIsUserCheckable)
+            item.setCheckState(0, QtCore.Qt.CheckState.Checked)
+        for col in range(3):
+            self._text_tree.resizeColumnToContents(col)
+
+    def _set_all(self, state) -> None:
+        root = self._text_tree.invisibleRootItem()
+        for i in range(root.childCount()):
+            child = root.child(i)
+            if child.flags() & QtCore.Qt.ItemFlag.ItemIsUserCheckable:
+                child.setCheckState(0, state)
+
+    def text_picks(self) -> frozenset:
+        """Checked text GUIDs intersected with the known text inventory."""
+        if self._text_inventory is None:
+            return frozenset()
+        checked: set = set()
+        root = self._text_tree.invisibleRootItem()
+        for i in range(root.childCount()):
+            child = root.child(i)
+            if child.checkState(0) == QtCore.Qt.CheckState.Checked:
+                guid = child.data(0, _GUID_ROLE)
+                if guid:
+                    checked.add(guid)
+        return frozenset(checked) & self._text_inventory.all_text_guids()
+
+
 class _PagePreview(QtWidgets.QWizardPage):
     """Page 4: Preview / StatsPanel.
 
@@ -4091,6 +4237,23 @@ def _compute_wizard_plan(wizard) -> tuple:
                 selection,
                 categories=merged_categories,
                 leaf_item_picks=merged_leaf,
+            )
+
+    # Step 5g: texts -- fold the dedicated Texts page picks into the selection
+    # (Feature 026, FR-001). The preview/transfer TEXTS hook enumerates the
+    # source's texts filtered by selection.text_picks; mirror that contract
+    # here. GUIDs are lower-cased to match the source-side _text_guid()
+    # normalization. Empty picks leave TEXTS off (nothing to transfer).
+    texts_page = wizard.page_texts() if hasattr(wizard, "page_texts") else None
+    if texts_page is not None and hasattr(texts_page, "text_picks"):
+        text_picks = texts_page.text_picks()
+        if text_picks:
+            merged_categories = dict(selection.categories)
+            merged_categories[GrammarCategory.TEXTS] = True
+            selection = dataclasses.replace(
+                selection,
+                categories=merged_categories,
+                text_picks=frozenset(g.lower() for g in text_picks),
             )
 
     # Step 6: WS mapping from page 0.
@@ -4372,6 +4535,7 @@ class SelectionWizard(QtWidgets.QWizard):
         # 018-rules-page: Rules page sits after Lexical-entry types (021, not yet added)
         # and before Preview (FR-007).  Positioned after _PageGramDeps per spec order.
         self._page_rules = _PageRules()
+        self._page_texts = _PageTexts()        # Feature 026 texts-wordforms
         self._page_preview = _PagePreview()
         self._page_finish = _PageFinish(report_sink, modify_allowed)
 
@@ -4384,7 +4548,8 @@ class SelectionWizard(QtWidgets.QWizard):
         self.addPage(self._page_gram_deps)     # index 6
         self.addPage(self._page_entry_types)   # index 7  (spec 021 lexical-entry types)
         self.addPage(self._page_rules)         # index 8  (018-rules-page)
-        self.addPage(self._page_finish)        # index 9
+        self.addPage(self._page_texts)         # index 9  (026 texts-wordforms)
+        self.addPage(self._page_finish)        # index 10
 
         self.setOption(QtWidgets.QWizard.WizardOption.HaveHelpButton, False)
 
@@ -4423,6 +4588,10 @@ class SelectionWizard(QtWidgets.QWizard):
     def page_rules(self):
         """Named accessor for _PageRules (018-rules-page P-1 pattern)."""
         return self._page_rules
+
+    def page_texts(self):
+        """Named accessor for _PageTexts (Feature 026, P-1 pattern)."""
+        return self._page_texts
 
     def page_preview(self):
         return self._page_preview

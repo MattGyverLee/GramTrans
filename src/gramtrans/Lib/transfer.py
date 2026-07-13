@@ -459,6 +459,24 @@ def execute(plan: RunPlan, source, target, report_sink, tag: ImportResidueTag,
         from categories import reproduce_all_lexical_relations  # type: ignore
     reproduce_all_lexical_relations(exec_ctx, tag, _resolver_cache, _dropped)
 
+    # Feature 026 (texts-wordforms, T010): apply the text + wordform walk.
+    # Runs AFTER the lexical leaf dispatch + relation reproduction so every
+    # morph-bundle target (senses/MSAs/allomorphs from 024) exists before an
+    # analysis is wired to it by identity (R8 ordering). Consumes the
+    # TextTransferPlans built during Preview (plan.text_plans) and shares the
+    # SAME per-run `_dropped` collector + `_resolver_cache` (genres/tags) so
+    # dropped texts/segments/references land in the unified report (FR-023).
+    # Inert when no text was selected (empty plan.text_plans).
+    _text_plans = getattr(plan, "text_plans", ()) or ()
+    if _text_plans:
+        if __package__:
+            from .texts import apply_texts as _apply_texts
+        else:
+            from texts import apply_texts as _apply_texts  # type: ignore
+        _apply_texts(_text_plans, source, target, exec_ctx, tag, report_sink,
+                     _resolver_cache, _dropped)
+        report_sink.Info(f"[Move] Texts walk applied {len(_text_plans)} text plan(s).")
+
     # Fold any tail-block skips (17.1 / post-pass A) into the report.
     if _exec_skips:
         extra_skips.extend(_exec_skips)

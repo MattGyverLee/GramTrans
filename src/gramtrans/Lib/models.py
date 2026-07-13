@@ -54,6 +54,12 @@ class GrammarCategory(enum.Enum):
     # Phase 3b (memo step 13b) -- semantic domains; other 8 Phase 3b
     # categories already declared above.
     SEMANTIC_DOMAINS = "semantic_domains"
+    # Feature 026 (texts-wordforms): interlinear texts + their human-evaluated
+    # wordform analyses ride along as the closure of the selected texts
+    # (FR-001/FR-001a). Selected as a Model-A item-picker (Selection.text_picks);
+    # NOT part of the leaf-dispatch set -- texts route through the dedicated
+    # Lib/texts.py + Lib/wordforms.py walk (see preview/transfer TEXTS hook).
+    TEXTS = "texts"
 
 
 class CategoryScope(enum.Enum):
@@ -129,6 +135,10 @@ def _build_default_conflict_modes() -> dict:
         GrammarCategory.SENSE,
         GrammarCategory.MSA,
         GrammarCategory.ALLOMORPH,
+        # Feature 026: texts are multi-instance; re-run is the non-destructive
+        # UPDATE semantic (FR-021 -- never blank a populated target field from
+        # an empty source, never duplicate a text already present by identity).
+        GrammarCategory.TEXTS,
     }
     # GOLD_RESERVED categories: constitution v7.0.0 -- GOLD items are ordinary
     # items whose fields carry no special immutability, so they default to the
@@ -353,6 +363,12 @@ class Selection:
     stem_picks: frozenset = field(default_factory=frozenset)  # frozenset[str]
     template_picks: frozenset = field(default_factory=frozenset)  # frozenset[str]
     pos_picks: frozenset = field(default_factory=frozenset)  # frozenset[str] — POS GUIDs
+    # Feature 026 (texts-wordforms): Model-A per-text picks — source IText GUIDs
+    # the user selected to transfer (FR-001, per-text not all-or-nothing). The
+    # wordform analyses ride along as the closure of these texts (FR-001a), so
+    # there is no separate wordform pick set. Guarded in __post_init__ like the
+    # other item-pick sets: non-empty requires categories[TEXTS] to be True.
+    text_picks: frozenset = field(default_factory=frozenset)  # frozenset[str] — IText GUIDs
     enable_overwrite: bool = False  # Phase 1 (FR-101/FR-108): when True,
     # already-present-by-GUID items become PlannedOverwrites instead of skips.
     interactive_merge: bool = False  # Phase 2 (FR-201): when True, per-field
@@ -403,6 +419,10 @@ class Selection:
         if self.pos_picks and self.categories.get(GrammarCategory.POS) is not True:
             raise ValueError(
                 "pos_picks non-empty requires categories[POS] to be True"
+            )
+        if self.text_picks and self.categories.get(GrammarCategory.TEXTS) is not True:
+            raise ValueError(
+                "text_picks non-empty requires categories[TEXTS] to be True"
             )
         if self.interactive_merge and not self.enable_overwrite:
             raise ValueError(
@@ -707,6 +727,13 @@ class RunPlan:
     # so Preview surfaces the same never-silent guarantee Move already gets
     # via `transfer.execute`'s `extra_dropped_items` -> RunReport wiring.
     dropped_items: tuple = ()  # tuple[DroppedItemRecord, ...]
+    # Feature 026 (texts-wordforms): per-text transfer plans produced by
+    # Lib/texts.py.plan_texts during the Preview walk and consumed verbatim by
+    # Lib/transfer.py's TEXTS apply hook. Additive field — old callers that
+    # never select TEXTS get the empty default (snapshot compatibility, like
+    # `dropped_items` above). Each TextTransferPlan carries its own
+    # paragraph/segment/analysis decisions (Principle III, FR-019).
+    text_plans: tuple = ()  # tuple[TextTransferPlan, ...]
 
     def category_count(self, category: GrammarCategory) -> int:
         return sum(1 for a in self.actions if a.category == category)
@@ -1158,3 +1185,187 @@ class RunReport:
                 f"FR-018 violation: sum(per_category[*].skipped)={cat_skipped_total} "
                 f"!= len(skips)={len(self.skips)}"
             )
+
+
+# ============================================================================
+# Feature 026 — Texts & Wordforms
+# (specs/026-texts-wordforms/data-model.md)
+# ============================================================================
+#
+# Pure-Python transfer-time bookkeeping for the interlinear-text + human-
+# evaluated-wordform walk (Lib/texts.py, Lib/wordforms.py). LCM objects are
+# unchanged; 026 adds plan-side types, not model schema. The never-silent
+# report unit (DroppedItemRecord) and per-object outcome (FidelityStatus) are
+# REUSED unchanged from feature 024 (above) — only 026-specific additions live
+# here. No flexicon / LCM imports — same constraint as the rest of this module.
+
+
+class EvalVerdict(enum.Enum):
+    """The human verdict carried by a copy-eligible analysis or gloss (R1).
+
+    Machine/parser verdicts are never represented — they gate the item out
+    before it reaches the plan (FR-006/008).
+
+    HUMAN_APPROVED : a human accepted the analysis/gloss
+                     (`GetHumanEvaluation` non-null, `Approves=True`).
+    HUMAN_DENIED   : a human rejected it — still copied, the deny IS curation
+                     (`GetHumanEvaluation` non-null, `Approves=False`).
+    NEEDS_REVIEW   : was HUMAN_APPROVED at source but >=1 morph-bundle
+                     reference is unresolvable in the target, so the approve
+                     can no longer be substantiated (FR-014). Written as the
+                     platform's natural no-verdict state (create the analysis,
+                     write NO human evaluation — R2). A HUMAN_DENIED analysis is
+                     NEVER downgraded (FR-015).
+    """
+    HUMAN_APPROVED = "human_approved"
+    HUMAN_DENIED = "human_denied"
+    NEEDS_REVIEW = "needs_review"
+
+
+class AlignmentTokenKind(enum.Enum):
+    """Classifies each `Segment.AnalysesRS` token so baseline alignment is
+    preserved for non-analysis tokens (edge case: punctuation / bare
+    wordforms, R5, FR-012).
+
+    ANALYSIS    : token is a human-evaluated analysis wired to a target analysis.
+    WORDFORM    : token is a bare wordform (no copied analysis) — occupies its slot.
+    PUNCTUATION : punctuation / non-wordform token — occupies its slot for
+                  positional fidelity.
+    """
+    ANALYSIS = "analysis"
+    WORDFORM = "wordform"
+    PUNCTUATION = "punctuation"
+
+
+@dataclass(frozen=True)
+class IdentityRef:
+    """R4 — result of a morph-bundle reference target-by-GUID lookup.
+
+    Wired against the per-run target GUID index (built from the 024/025
+    copy-set + the live target), NOT the 024 possibility resolver. An
+    unresolved ref → unlinked morpheme + a DroppedItemRecord + (if on an
+    approve) a needs-review downgrade (FR-014/016).
+    """
+    field_name: str            # e.g. "SenseRA"
+    source_guid: str           # source referent GUID
+    target_obj: Any = None     # resolved target object, or None when 024 did not copy it
+    resolved: bool = False     # target_obj is not None
+
+
+@dataclass(frozen=True)
+class MorphBundlePlan:
+    """US2/US3 — one morpheme slot of an analysis (data-model.md MorphBundlePlan).
+
+    `form` is written even when refs are unlinked, for a legible bundle
+    (FR-010). Each of the four references is an IdentityRef resolved by GUID.
+    """
+    source_guid: str           # source IWfiMorphBundle GUID
+    form: dict = field(default_factory=dict)  # WS-id -> morpheme form (WS-gated)
+    morph_ref: Optional[IdentityRef] = None   # MorphRA (allomorph)
+    msa_ref: Optional[IdentityRef] = None     # MsaRA
+    sense_ref: Optional[IdentityRef] = None   # SenseRA
+    infl_type_ref: Optional[IdentityRef] = None  # InflTypeRA (optional)
+
+    def unresolved_refs(self) -> tuple:
+        """Return the IdentityRefs on this bundle that did NOT resolve."""
+        return tuple(
+            r for r in (self.morph_ref, self.msa_ref, self.sense_ref,
+                        self.infl_type_ref)
+            if r is not None and not r.resolved
+        )
+
+
+@dataclass(frozen=True)
+class GlossPlan:
+    """US4 — a word-level WfiGloss copied only when a human evaluation exists
+    (FR-008)."""
+    source_guid: str
+    forms: dict = field(default_factory=dict)  # WS-id -> gloss string (WS-gated)
+    verdict: Optional["EvalVerdict"] = None
+
+
+@dataclass(frozen=True)
+class AnalysisPlan:
+    """US2/US3/US4 — the differentiating unit (data-model.md AnalysisPlan).
+
+    Exists IFF the source analysis carries a human evaluation (FR-006). The
+    verdict is HUMAN_APPROVED/HUMAN_DENIED at source; `needs_review` (an
+    approve with >=1 unresolved morpheme, FR-014) flips the effective write to
+    the no-verdict state. `category_decision` is the resolve-or-report
+    ReferenceDecision for CategoryRA (CREATE suppressed, FR-011).
+    """
+    source_guid: str           # source IWfiAnalysis GUID (preserved on create where permitted)
+    wordform_form: dict = field(default_factory=dict)  # WS-id -> surface form (WS-gated)
+    spelling_status: Any = None  # reproduced onto the target wordform (FR-013)
+    verdict: Optional["EvalVerdict"] = None
+    category_decision: Optional["ReferenceDecision"] = None  # CategoryRA (resolve-or-report)
+    morph_bundles: tuple = ()  # tuple[MorphBundlePlan, ...]
+    glosses: tuple = ()        # tuple[GlossPlan, ...] — human-evaluated only
+    needs_review: bool = False  # True iff an approve lost >=1 morpheme reference
+
+
+@dataclass(frozen=True)
+class AlignmentToken:
+    """R5 — one token of a segment's reproduced `AnalysesRS` (FR-012, SC-006).
+
+    `target_ref` is the intended target referent (IAnalysis / IWfiWordform /
+    punctuation object) resolved at apply time from the source→target analysis
+    map; None until then. Token order + count mirror the source so the baseline
+    stays aligned even where a token has no copied analysis.
+    """
+    kind: "AlignmentTokenKind"
+    source_guid: str = ""
+    target_ref: Any = None
+
+
+@dataclass(frozen=True)
+class SegmentPlan:
+    """US1 — one segment's decisions (data-model.md SegmentPlan).
+
+    Every string dict is WS-gated (WS-id -> string); an unmapped WS yields a
+    DroppedItemRecord and that string alone is skipped (FR-020), never written.
+    """
+    source_guid: str           # source ISegment GUID
+    baseline: dict = field(default_factory=dict)
+    free_translation: dict = field(default_factory=dict)
+    literal_translation: dict = field(default_factory=dict)
+    notes: tuple = ()          # note strings (WS-gated)
+    analyses: tuple = ()       # tuple[AnalysisPlan, ...] — human-evaluated only
+    alignment: tuple = ()      # tuple[AlignmentToken, ...] — AnalysesRS reproduction
+    tag_decisions: tuple = ()  # tuple[ReferenceDecision, ...] — per-segment text-markup tags (US5)
+
+
+@dataclass(frozen=True)
+class ParagraphPlan:
+    """US1 — one paragraph's ordered segments + WS-gated baseline."""
+    source_guid: str           # source IStTxtPara GUID
+    segments: tuple = ()       # tuple[SegmentPlan, ...]
+    baseline: dict = field(default_factory=dict)  # WS-id -> baseline string (WS-gated)
+
+
+@dataclass(frozen=True)
+class TextTransferPlan:
+    """US1 — one per selected text (data-model.md TextTransferPlan).
+
+    `disposition` reuses the ADD/UPDATE/SKIP vocabulary per FR-021.
+    `target_guid` is the matched target text GUID on UPDATE/SKIP (identity map,
+    FR-022), else None on ADD.
+    """
+    source_guid: str           # source IText GUID
+    title: str = ""            # best-analysis title, for the report/Preview line
+    disposition: Optional["ReferenceAction"] = None  # ADD/UPDATE/SKIP-shaped
+    genre_decisions: tuple = ()  # tuple[ReferenceDecision, ...] — GenresRC (create-allowed)
+    paragraphs: tuple = ()     # tuple[ParagraphPlan, ...]
+    target_guid: Optional[str] = None
+    abbreviation: str = ""
+    source_text: str = ""      # IText.Source (renamed to avoid clashing with source_guid)
+    is_translated: Optional[bool] = None
+
+
+@dataclass(frozen=True)
+class ProvisionedAgent:
+    """US2 (R3) — the single human agent that owns every copied evaluation this
+    run (FR-009). `created` True → Add in Preview; False → reused existing (Link).
+    """
+    target_agent: Any = None   # LCM ICmAgent
+    created: bool = False
