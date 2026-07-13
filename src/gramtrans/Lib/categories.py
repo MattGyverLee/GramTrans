@@ -674,11 +674,18 @@ def inflection_features_execute_action(action: PlannedAction, context: RunContex
         # Full complex/open-feature transfer is tracked as a follow-up.
         try:
             IFsClosedFeature(src_feat)
-        except Exception:
+        except Exception as _cast_exc:
             try:
                 _src_cls = src_feat.GetType().Name
             except Exception:  # noqa: BLE001
                 _src_cls = type(src_feat).__name__
+            import logging as _logging
+            _logging.getLogger("gramtrans.Lib.categories").warning(
+                "inflection_features_execute_action: IFsClosedFeature(src_feat) "
+                "cast failed for source feature %s (class=%s) -- treating as "
+                "UNSUPPORTED_LCM_TYPE: %s",
+                src_guid, _src_cls, _cast_exc, exc_info=True,
+            )
             exec_skips = getattr(context, "_exec_skips", None)
             if exec_skips is not None:
                 exec_skips.append(Skip(
@@ -5011,7 +5018,13 @@ def _resolve_target_by_guid(target, guid):
         if not repo.IsValidObjectId(parsed):
             return None
         return repo.GetObject(parsed)
-    except Exception:  # noqa: BLE001 -- absent repo / bad guid -> unresolved
+    except Exception as exc:  # noqa: BLE001 -- absent repo / bad guid -> unresolved
+        import logging as _logging
+        _logging.getLogger("gramtrans.Lib.categories").warning(
+            "_resolve_target_by_guid: live LCM resolution failed for guid %s "
+            "-- treating as unresolved: %s",
+            guid, exc, exc_info=True,
+        )
         return None
 
 

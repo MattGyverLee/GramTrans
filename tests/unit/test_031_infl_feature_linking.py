@@ -238,6 +238,93 @@ class TestResolveTargetByGuid:
         assert list(pos.InflectableFeatsRC) == [feat]
 
 
+class TestResolveTargetByGuidLiveRepo:
+    """Cycle-1 review Action 3: cover the live LCM-repo branch of
+    `_resolve_target_by_guid`, which was previously unexercised offline
+    because `_FakeTarget` always exposes `get_object_by_guid` and
+    short-circuits before this branch ever runs. Stubs `sys.modules`
+    for `SIL.LCModel` / `System` per the sibling convention in
+    test_categories_exception_features.py / test_categories_phonology.py."""
+
+    class _FakeRepo:
+        def __init__(self, valid=True, obj=None) -> None:
+            self._valid = valid
+            self._obj = obj
+            self.get_calls: list = []
+
+        def IsValidObjectId(self, guid) -> bool:
+            return self._valid
+
+        def GetObject(self, guid):
+            self.get_calls.append(guid)
+            return self._obj
+
+    class _FakeLiveTarget:
+        """No get_object_by_guid -- mirrors the live flexicon FLExProject,
+        which only exposes ObjectRepository()."""
+
+        def __init__(self, repo) -> None:
+            self._repo = repo
+
+        def ObjectRepository(self, iface):
+            return self._repo
+
+    @pytest.fixture(autouse=True)
+    def _stub_lcm_and_system_modules(self):
+        import types
+
+        fake_lcm = types.ModuleType("SIL.LCModel")
+        fake_lcm.ICmObjectRepository = object()
+        sys.modules.setdefault("SIL", types.ModuleType("SIL"))
+        original_lcm = sys.modules.get("SIL.LCModel")
+        sys.modules["SIL.LCModel"] = fake_lcm
+
+        self._fake_guid_class = type(
+            "FakeGuid", (), {"Parse": staticmethod(lambda s: ("parsed", s))}
+        )
+        fake_system = types.ModuleType("System")
+        fake_system.Guid = self._fake_guid_class
+        original_system = sys.modules.get("System")
+        sys.modules["System"] = fake_system
+
+        yield
+
+        if original_lcm is None:
+            sys.modules.pop("SIL.LCModel", None)
+        else:
+            sys.modules["SIL.LCModel"] = original_lcm
+        if original_system is None:
+            sys.modules.pop("System", None)
+        else:
+            sys.modules["System"] = original_system
+
+    def test_invalid_object_id_returns_none(self) -> None:
+        # (a) IsValidObjectId=False -> None, GetObject never called.
+        repo = self._FakeRepo(valid=False)
+        target = self._FakeLiveTarget(repo)
+        assert categories._resolve_target_by_guid(target, "aaaa") is None
+        assert repo.get_calls == []
+
+    def test_valid_id_returns_get_object_result(self) -> None:
+        # (b) valid id -> GetObject result returned.
+        expected = object()
+        repo = self._FakeRepo(valid=True, obj=expected)
+        target = self._FakeLiveTarget(repo)
+        result = categories._resolve_target_by_guid(target, "aaaa")
+        assert result is expected
+        assert repo.get_calls == [("parsed", "aaaa")]
+
+    def test_guid_parse_raising_returns_none(self) -> None:
+        # (c) Guid.Parse raising -> None (caught by the outer except).
+        self._fake_guid_class.Parse = staticmethod(
+            lambda s: (_ for _ in ()).throw(ValueError("bad guid"))
+        )
+        repo = self._FakeRepo(valid=True, obj=object())
+        target = self._FakeLiveTarget(repo)
+        assert categories._resolve_target_by_guid(target, "not-a-guid") is None
+        assert repo.get_calls == []
+
+
 class TestSkipReporting:
     """T013 -- emitted Skips surface in the post-run statistics panel."""
 
