@@ -1,36 +1,34 @@
 {
   "feature": "027-complex-forms-variants",
-  "status": "needs_human",
+  "status": "feature_complete",
   "worktree": "../GramTrans-027-complex-forms-variants",
   "branch": "027-complex-forms-variants",
-  "worktree_commit": "f1917fa",
-  "main_commit": "ab4879d",
+  "worktree_commit": "02413b5",
+  "main_commit": "2d94484",
   "merged": false,
-  "last_cycle": 7,
-  "spurts_completed": 6,
-  "tasks_done": ["T001", "T002", "T003", "T004", "T005", "T006", "T007", "T008", "T009", "T010", "T011", "T012", "T013", "T014", "T015", "T016", "T017", "T018", "T019", "T020", "T021", "T022", "T023", "T024"],
-  "tasks_remaining": ["T025 (attended live 0->6 proof — needs_human)", "T026 (file US3 complex-form live-proof follow-up issue; update #28, close #30 after T025)", "T027 (merge — depends on T025 + crew approval)"],
+  "last_cycle": 8,
+  "spurts_completed": 7,
+  "tasks_done": ["T001", "T002", "T003", "T004", "T005", "T006", "T007", "T008", "T009", "T010", "T011", "T012", "T013", "T014", "T015", "T016", "T017", "T018", "T019", "T020", "T021", "T022", "T023", "T024", "T025"],
+  "tasks_remaining": ["T026 (file US3 complex-form live-proof follow-up issue; update #28 LexEntryRef leg proven; close #30 — outward GitHub writes, human-confirmed)", "T027 (merge 027->main --no-ff; remove worktree; update STATUS.md — human-confirmed)"],
   "gates": {
-    "verification": "PASS (cycle 5 over ec40a32) — src/ untouched for US3; targeted 027 suite green; both tripwires reproduced. Cycle-7 fix spurt re-proven: targeted 027 suite 60 passed, fidelity_census guard suite 86 passed, byte-compile clean, diff scope doc/comment/census only.",
-    "qc": "94/100 APPROVE (cycle 5 over ec40a32) — T016/T017/T018 genuine; no P0/P1 in code, only P2 test-fixture DRY.",
-    "domain": "91/100 APPROVED (cycle 6 over 34be1ad) — RefType semantics, C3 three-way disposition, Principle-I GOLD GUID-preserve all PASS. Conditional item (P1-a leaf-pick scope) now satisfied at documented-limitation scope by cycle-7 research.md addendum. Live C3 list-shape re-confirmation deferred to T025 (mcp_deviation).",
-    "author": "8/10 CONCERNS, NOT merge-blocking (cycle 6 over 34be1ad) — #28 layer-1/2 idiom, 024 reuse, STEMS-tail ordering all compliant. One deferred design-consistency follow-up: no C3 Preview decide-only twin (Principle III narrowness; not a correctness bug)."
+    "verification": "GREEN. Offline PASS (cycle 5 over ec40a32) + cycle-7 fix re-proven. LIVE: T025 attended 0->6 proof RESOLVED at worktree 02413b5 (run #2 fully clean): containers 0->6, RefType 6/6, variant-type 6/6, components 6/6 (1 each), EntryRefsOS drops 0 (was 6 in run #1), idempotent, exit 0. Run #1 (f1917fa) surfaced a real C4 false-positive-drop defect; cycle-8 fixed + live re-proved.",
+    "qc": "94/100 APPROVE (cycle 5 over ec40a32). Cycle-8 delta is a surgical _cast_lcm(m,'ILexEntry') before _affix_type_of in _entry_ref_is_reproducible + 1 RED-first regression test; reuses the module's established cast idiom, no new P0/P1.",
+    "domain": "91/100 APPROVED (cycle 6 over 34be1ad). P1-a leaf-pick scope satisfied at documented-limitation scope (cycle-7 addendum). C3 live list-shape re-confirmation (mcp_deviation) remains PENDING but is now NON-GATING: the live CREATE arm wired 6/6 variant-types, directly exercising the factory dispatch the shapes underpin.",
+    "author": "8/10 CONCERNS, NOT merge-blocking (cycle 6 over 34be1ad). One deferred design-consistency follow-up: no C3 Preview decide-only twin (Principle III narrowness; not a correctness bug).",
+    "cycle8_fix": "BLESSED. RED-first regression test (test_entry_ref_reproducible_casts_bare_component_before_affix_check, _Bare/_Typed under _stub_lcm_full) reproduced the false-positive drop then passed post-fix. Targeted 027 suite 61 passed (+1). Full unit suite 1580 passed modulo the documented test_wizard_pos_grammar_wiring baseline fail. Byte-compile clean. Sweep audit: fixed site + 3 siblings checked; 1 cosmetic-only residual (uncast label at categories.py:4398, drop-count-neutral) deferred to the T026 follow-up."
   },
-  "gate_verdict_cycle7": "MERGE-GATE GREEN (crew approval granted). Both merge-blocking P1s closed at doc/comment/census scope in cycle-7 fix spurt (worktree f1917fa, main ab4879d): P1a leaf-pick run-scope gap now carries a docstring caveat + research.md Decision 5 'Documented limitation (deferred post-merge)' addendum; P1b/c fidelity_census.py 6 LexEntryRef-family rows now point at the real create site (_create_entryref_container/_run_entryref_create_pass, categories.py) with refreshed line-refs (4435/4535) + the stale inline comment corrected; 'GUID-remapped'->'GUID-preserved' wording nit fixed in contract C3 + T014 docstring. No run-scoped selection logic changed. Offline gates all GREEN. HOWEVER T027 (merge) also depends on T025 (attended live proof), which is needs_human and NOT yet run — so the merge itself CANNOT proceed unattended.",
+  "gate_verdict_cycle8": "MERGE AUTHORIZED. All crew quality gates GREEN and T025 live proof PASS at 02413b5. The cycle-8 fix is blessed on the strength of (1) the authoritative live re-proof (6 false-positive drops -> 0), (2) the RED-first regression test that closes the exact bare-ICmObject structural blind spot the offline fakes could not catch, and (3) the full offline suite green. No further crew cycle warranted. Remaining T026/T027 are mechanical/outward-facing (GitHub issue writes + git merge) and are handed to the main session to execute WITH HUMAN CONFIRMATION.",
   "open_items": {
-    "P1a_leafpick_scope": "RESOLVED-AT-DOC-SCOPE (cycle 7) — documented-limitation note landed in research.md Decision 5 + _entry_ref_is_reproducible docstring caveat. The PREFERRED run-scoped leaf-pick fix (thread run selection/pick-set through _report_dropped_entry_refs so membership, not just intrinsic type eligibility, is checked) is DEFERRED post-merge as a non-gating follow-up.",
-    "P1bc_fidelity_census_stale": "RESOLVED (cycle 7) — fidelity_census.py LexEntry.EntryRefsOS + all 5 LexEntryRef.* rows now cite the real create site + refreshed line-refs; stale inline comment corrected; census guard suite 86 passed.",
-    "mcp_deviation": "OPEN — tied to T025. C3 live list-shape claims (VariantEntryTypesOA/ComplexEntryTypesOA ItemClsid=5118 Depth=127; PublicationTypesOA ItemClsid=7 Depth=1) rest on a probe (scratchpad/probe_c3_lists.py) absent on disk. Must re-confirm via FLExToolsMCP at/before T025. NON-BLOCKING for the offline gate; a live-proof precondition.",
-    "author_c3_preview_twin": "DEFERRED post-merge (non-gating) — add a C3 Preview decide-only twin mirroring _decide_reference_fields/_apply_reference_fields so C3 entry-type CREATE/REPORT_DROPPED decisions surface in Preview. Principle III consistency gap, not a correctness bug.",
-    "P2_test_fixture_dry": "OPTIONAL (non-gating) — extract tests/unit/_fixtures_lexentry_ref.py housing _FakeRefSeq + a single guid-only fake + _ctx_create_and_wire; three test files each carry a near-identical copy.",
-    "P2_nits_cycle3": "OPTIONAL (non-gating) — categories.py:5086 defensive getattr inconsistency; _OWNER_LABEL_FIELD has no LexEntryRef entry (blank owner_label, cosmetic); test_reference_create_paths.py _ITEM_CLSID_FACTORY_CASES not extended with (5118,'ILexEntryTypeFactory')."
+    "P1a_leafpick_scope": "RESOLVED-AT-DOC-SCOPE (cycle 7). PREFERRED run-scoped leaf-pick fix DEFERRED post-merge (non-gating).",
+    "P1bc_fidelity_census_stale": "RESOLVED (cycle 7).",
+    "cycle8_cosmetic_label": "NON-GATING follow-up (fold into T026) — _lex_entry_ref_identity_label (categories.py:4398) reads an uncast first component for the dropped-ref label; drop-count-neutral (label falls back to GUID string on live LCM), does NOT affect fidelity counts.",
+    "mcp_deviation": "NON-GATING (was a T025 live-proof precondition) — C3 live list-shape re-confirm still PENDING, but the live CREATE arm wired 6/6 variant-types, functionally exercising the same factory dispatch. Fold the explicit MCP shape re-confirm into the T026 follow-up if desired.",
+    "author_c3_preview_twin": "DEFERRED post-merge (non-gating).",
+    "P2_test_fixture_dry": "OPTIONAL (non-gating).",
+    "P2_nits_cycle3": "OPTIONAL (non-gating).",
+    "stale_probe_verdict_string": "COSMETIC — probe27_components.py VERDICT text still hardcodes 'despite the 6 C4 drop reports' from run #1; live drop count is now 0. Scratchpad-only, not shipped."
   },
-  "needs_human": {
-    "T025": "ATTENDED live 0->6 Move proof (SC-001/002/003/004) — restore target first, FLExToolsMCP active, run scratchpad/run27_live.py, Ejagham Mini -> restored Target. Confirm LexEntryRef 0->6, VariantEntryTypesRS wired, re-Move 0-duplicate, out-of-closure refs reported. Write evidence to specs/027-complex-forms-variants/verification-log.md. NEVER under an unattended loop.",
-    "C3_live_reconfirm": "At/before T025, re-verify the three C3 target-list shapes (5118/Depth=127 x2; 7/Depth=1) via FLExToolsMCP against Ejagham Mini — closes mcp_deviation.",
-    "T027": "Merge 027-complex-forms-variants -> main (--no-ff) ONLY after T025 passes; remove worktree; update STATUS.md."
-  },
-  "next_checkpoint": "T025 attended live proof (human-run), then T026 (file follow-up issue) + T027 (merge).",
-  "next_entry": "HUMAN: restore the disposable target, run scratchpad/run27_live.py (Ejagham Mini -> restored Target) with FLExToolsMCP active; also re-confirm the C3 list shapes. On PASS, file the T026 US3 live-proof follow-up issue, then merge (T027).",
-  "updated": "2026-07-13 (cycle-7 merge-gate: crew approval GREEN; blocked on T025 needs_human)"
+  "next_checkpoint": "T026 (file follow-up issue; update #28; close #30) then T027 (merge --no-ff; remove worktree; update STATUS.md) — both human-confirmed.",
+  "next_entry": "MAIN SESSION (with human confirmation for the outward writes): T026 file the US3 complex-form live-proof follow-up issue, update #28 (LexEntryRef leg proven live), close #30; then T027 merge 027-complex-forms-variants -> main (--no-ff), remove the worktree, update STATUS.md.",
+  "updated": "2026-07-14 (cycle-8: merge authorized; T025 live PASS at 02413b5; feature_complete pending human-confirmed T026/T027)"
 }

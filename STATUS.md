@@ -1,5 +1,58 @@
 # GramTrans — Session Handoff
 
+## ▶▶▶ Feature 027 — Complex Forms & Variants — FEATURE COMPLETE (crew gates green + T025 live PASS); MERGE AUTHORIZED, pending human-confirmed T026/T027 (2026-07-14)
+
+**Worktree** `../GramTrans-027-complex-forms-variants` on branch `027-complex-forms-variants`
+@ **`02413b5`** (clean; NOT yet merged). Spec/verification-log on **`main` @ `2d94484`**.
+**Handoff**: `specs/027-complex-forms-variants/.crew-handoff.json` (`status: feature_complete`).
+Cumulative: **T001-T025 done**. Remaining (human-confirmed, outward-facing): **T026** (file US3
+complex-form live-proof follow-up issue; update #28; close #30) + **T027** (merge `--no-ff`;
+remove worktree; update STATUS.md).
+
+**FINAL VERDICT: APPROVED — MERGE AUTHORIZED.** All crew quality gates are GREEN and the T025
+attended live `0 -> 6` proof PASSES at the fixed HEAD `02413b5`.
+
+- **All offline crew gates GREEN** (carried from cycles 5-7): verification PASS, QC 94/100 APPROVE,
+  domain 91/100 APPROVED, author 8/10 CONCERNS-not-blocking. Both merge-blocking P1s closed at
+  doc/comment/census scope in cycle 7.
+- **T025 attended live proof (needs_human) — RUN and RESOLVED.** Run #1 (`f1917fa`) proved the
+  `0 -> 6` reproduction (6 containers, RefType 6/6, 1 component wired each, variant-type 6/6,
+  idempotent) but surfaced a real **C4 defect**: 6 false-positive `DroppedItemRecord`s for
+  fully-reproduced refs. Root cause = the #28 layer-2 cast gap — `_entry_ref_is_reproducible` ran
+  `_affix_type_of` on uncast bare-`ICmObject` component members (`LexemeFormOA` read `None`).
+- **Cycle-8 fix (worktree `02413b5`) — BLESSED.** Surgical `_cast_lcm(m, "ILexEntry")` before
+  `_affix_type_of`, reusing the module's own idiom, plus a RED-first regression test
+  (`test_entry_ref_reproducible_casts_bare_component_before_affix_check`, `_Bare`/`_Typed` under
+  `_stub_lcm_full`) that closes the exact structural blind spot the offline fakes could not catch
+  (`_FakeEligibleEntry` exposed `LexemeFormOA` directly). Targeted 027 suite **61 passed** (+1);
+  full unit suite **1580 passed** modulo the documented `test_wizard_pos_grammar_wiring` baseline
+  fail; byte-compile clean. Sweep audit: fixed site + 3 siblings; 1 cosmetic-only residual
+  (uncast label at `categories.py:4398`, drop-count-neutral) deferred to T026.
+- **T025 re-run #2 (fixed HEAD `02413b5`) — FULLY CLEAN.** containers `0 -> 6`, RefType 6/6,
+  variant-type 6/6, components 6/6, **EntryRefsOS drops 0** (was 6), idempotent, exit 0. T025 GREEN.
+- **Bless rationale:** the live re-proof is the authoritative verification for a live-surfaced
+  defect; the new regression test locks the structural gap; the full offline suite is green. A
+  further crew cycle over a one-line cast would be a wasted cycle.
+
+**⛔ REMAINING (human-confirmed — main session executes with the human; NOT under an unattended loop):**
+1. **T026** — file the US3 complex-form live-proof follow-up issue (needs a constructed
+   complex-form fixture; parallel to #31's MSA->slot live source); update issue **#28** (LexEntryRef
+   leg now proven live); **close #30**. Optionally fold in the C3 MCP list-shape re-confirm
+   (`mcp_deviation`, non-gating) and the cosmetic `categories.py:4398` label cast.
+2. **T027** — merge `027-complex-forms-variants` -> `main` (`--no-ff`); remove the worktree; update
+   this STATUS.md. Merge the tree, then confirm the merged-tree offline suite matches (1580 passed
+   modulo the baseline fail).
+
+**Deferred post-merge follow-ups (non-gating):** run-scoped leaf-pick fix (only the doc note
+landed); author's C3 Preview decide-only twin; P2 test-fixture DRY; cycle-3 P2 nits; the stale
+`probe27_components.py` VERDICT string ("despite the 6 C4 drop reports" — scratchpad-only, live
+count is now 0).
+
+- Reports: `specs/027-complex-forms-variants/verification-log.md`,
+  `specs/027-complex-forms-variants/reviews/cycle{5-verification,5-qc,6-domain,6-author,6-qc,6-verification,7-programmer,8-programmer}.md`.
+
+---
+
 ## ▶▶▶ Feature 027 — Complex Forms & Variants — MERGE GATE (cycle 7) — CREW APPROVAL GREEN; BLOCKED on T025 (needs_human) (2026-07-13)
 
 **Worktree** `../GramTrans-027-complex-forms-variants` on branch `027-complex-forms-variants`
