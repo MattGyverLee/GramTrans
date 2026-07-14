@@ -393,6 +393,116 @@ def test_identical_variant_type_links_only_no_create_no_report(_stub_lcm_full) -
 
 
 # ============================================================================
+# T017 -- three-way disposition over ComplexEntryTypesRS (RefType==1),
+# mirroring T013's VariantEntryTypesRS matrix exactly (absent -> create incl.
+# ancestor chain; diverged custom -> update; diverged shared/GOLD -> link +
+# report; identical -> link). Parametric parity with the VariantEntryTypesRS
+# path: same generic `_apply_reference_fields` dispatch, same 5118
+# (`LexEntryType`) factory arm -- only the RefType/target-list/field-name
+# differ.
+# ============================================================================
+
+def test_absent_complex_type_creates_with_guid_preserved(_stub_lcm_full) -> None:
+    """Source complex-type item absent from target -> CREATE incl. ancestor
+    chain (single-element here: a top-level item), GUID preserved onto the
+    new target item, linked into the ref's ComplexEntryTypesRS, 0 drops."""
+    entry = _FakeTargetEntry("entry-c1")
+    lexdb = _FakeLexDb(complex_types=[])  # absent
+    target = _FakeTarget({"entry-c1": entry}, lexdb)
+    src_ctype = _FakeEntryType("src-ctype-1", name="Compound")
+    ctx = _ctx_create({"entry-c1": [_ref_record(
+        "ref-c1", ref_type=1, complex_entry_types=[src_ctype])]})
+
+    skips = categories._run_entryref_create_pass(ctx, target, tag=_TAG)
+
+    assert skips == []
+    assert ctx._dropped == []
+    new_ref = list(entry.EntryRefsOS)[0]
+    linked = list(new_ref.ComplexEntryTypesRS)
+    assert len(linked) == 1
+    assert linked[0].guid == "src-ctype-1"  # GUID preserved (Principle I)
+    # The created item actually landed in the target's own list, not just on
+    # the ref -- proves CREATE (not a phantom link to nothing).
+    assert len(lexdb.ComplexEntryTypesOA.PossibilitiesOS) == 1
+    assert list(lexdb.ComplexEntryTypesOA.PossibilitiesOS)[0] is linked[0]
+
+
+def test_diverged_custom_complex_type_updates_and_links_same_object(_stub_lcm_full) -> None:
+    """Target already has a matching-GUID, NON-protected (custom) item whose
+    Name diverges from source -> UPDATE, then LINK that SAME existing
+    object (no duplicate created), 0 drops (UPDATE is not a report path)."""
+    entry = _FakeTargetEntry("entry-c2")
+    existing = _FakeEntryType("ctype-2", name="Old Name", is_protected=False)
+    lexdb = _FakeLexDb(complex_types=[existing])
+    target = _FakeTarget({"entry-c2": entry}, lexdb)
+    src_ctype = _FakeEntryType("ctype-2", name="New Name")
+    ctx = _ctx_create({"entry-c2": [_ref_record(
+        "ref-c2", ref_type=1, complex_entry_types=[src_ctype])]})
+
+    skips = categories._run_entryref_create_pass(ctx, target, tag=_TAG)
+
+    assert skips == []
+    assert ctx._dropped == []
+    new_ref = list(entry.EntryRefsOS)[0]
+    linked = list(new_ref.ComplexEntryTypesRS)
+    assert len(linked) == 1
+    assert linked[0] is existing  # same object -- linked, not replaced
+    # No duplicate: the target list still holds exactly the one pre-existing
+    # item (UPDATE never creates a second item for the same GUID).
+    assert len(lexdb.ComplexEntryTypesOA.PossibilitiesOS) == 1
+
+
+def test_diverged_shared_gold_complex_type_links_and_reports(_stub_lcm_full) -> None:
+    """Target has a matching-GUID, PROTECTED (shared/GOLD) item whose Name
+    diverges from source -> LINK the existing item (never auto-mutated) +
+    exactly 1 DroppedItemRecord reporting the divergence (FR-003/005)."""
+    entry = _FakeTargetEntry("entry-c3")
+    existing = _FakeEntryType("ctype-gold-3", name="GOLD Name", is_protected=True)
+    lexdb = _FakeLexDb(complex_types=[existing])
+    target = _FakeTarget({"entry-c3": entry}, lexdb)
+    src_ctype = _FakeEntryType("ctype-gold-3", name="Divergent Name")
+    ctx = _ctx_create({"entry-c3": [_ref_record(
+        "ref-c3", ref_type=1, complex_entry_types=[src_ctype])]})
+
+    skips = categories._run_entryref_create_pass(ctx, target, tag=_TAG)
+
+    assert skips == []
+    new_ref = list(entry.EntryRefsOS)[0]
+    linked = list(new_ref.ComplexEntryTypesRS)
+    assert len(linked) == 1
+    assert linked[0] is existing  # linked to the existing GOLD item...
+    assert existing.Name._data.get(WS_EN) == "GOLD Name"  # ...never overwritten
+    assert len(lexdb.ComplexEntryTypesOA.PossibilitiesOS) == 1  # no duplicate
+    assert len(ctx._dropped) == 1
+    rec = ctx._dropped[0]
+    assert rec.field_name == "ComplexEntryTypesRS"
+    assert rec.item_guid == "ctype-gold-3"
+    assert "diverged" in rec.reason
+
+
+def test_identical_complex_type_links_only_no_create_no_report(_stub_lcm_full) -> None:
+    """Target already has a matching-GUID item with IDENTICAL Name -> LINK
+    only: 0 new items created, 0 drops."""
+    entry = _FakeTargetEntry("entry-c4")
+    existing = _FakeEntryType("ctype-4", name="Same Name", is_protected=False)
+    lexdb = _FakeLexDb(complex_types=[existing])
+    target = _FakeTarget({"entry-c4": entry}, lexdb)
+    src_ctype = _FakeEntryType("ctype-4", name="Same Name")
+    ctx = _ctx_create({"entry-c4": [_ref_record(
+        "ref-c4", ref_type=1, complex_entry_types=[src_ctype])]})
+
+    skips = categories._run_entryref_create_pass(ctx, target, tag=_TAG)
+
+    assert skips == []
+    assert ctx._dropped == []
+    new_ref = list(entry.EntryRefsOS)[0]
+    linked = list(new_ref.ComplexEntryTypesRS)
+    assert len(linked) == 1
+    assert linked[0] is existing
+    assert len(lexdb.ComplexEntryTypesOA.PossibilitiesOS) == 1
+
+
+# ============================================================================
 # RefType routing -- complex-form types + always-on publication types
 # ============================================================================
 

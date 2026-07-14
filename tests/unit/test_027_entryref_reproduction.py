@@ -318,6 +318,90 @@ def test_entryref_create_pass_multi_component_complex_form(_stub_lcm_full) -> No
 
 
 # ============================================================================
+# T016 -- RefType=1 complex-form container: N components w/ M-elem PRIMARY
+# SUBSET, source order preserved in BOTH ComponentLexemesRS and
+# PrimaryLexemesRS. Parallel in shape to the create-then-wire variant
+# (RefType=0) tests in test_phase3c_post_pass_a.py
+# (`test_create_then_wire_full_flow`/`test_create_then_wire_preserves_source_
+# order`) -- this test runs C1 (`_run_entryref_create_pass`) THEN C2
+# (`_run_post_pass_a`) over the SAME ctx/target, the real STEMS-tail
+# create-then-wire order, but for a complex-form ref whose PrimaryLexemesRS
+# is a STRICT SUBSET of ComponentLexemesRS in a DIFFERENT relative order.
+# ============================================================================
+
+class _FakeLexeme:
+    """Anything addressed by GUID and owned as a component/primary lexeme
+    (lowercase `.guid` so `_guid_str_from` resolves host-free)."""
+
+    def __init__(self, guid: str) -> None:
+        self.guid = guid
+
+
+def _ctx_create_and_wire(entryref_create_bindings, lexentry_ref_bindings,
+                          identity_remap=None) -> RunContext:
+    """Like `_ctx_create` above, but also carries `plan.lexentry_ref_bindings`
+    (+ an empty `plan.in_plan_entries`) so `_run_post_pass_a` (C2) can run
+    immediately after `_run_entryref_create_pass` (C1) over the SAME ctx --
+    the create-then-wire order `stems_execute_action` actually uses."""
+    ctx = _make_ctx()
+    plan = types.SimpleNamespace(
+        entryref_create_bindings={
+            k: list(v) for k, v in entryref_create_bindings.items()
+        },
+        lexentry_ref_bindings=dict(lexentry_ref_bindings),
+        in_plan_entries={},
+        identity_remap=dict(identity_remap or {}),
+    )
+    object.__setattr__(ctx, "_run_plan", plan)
+    object.__setattr__(ctx, "_dropped", [])
+    return ctx
+
+
+def test_entryref_create_pass_complex_form_primary_subset_order_preserved(
+        _stub_lcm_full) -> None:
+    """RefType=1 complex-form container, C1 (create) THEN C2 (wire), N=3
+    components with an M=2 PRIMARY SUBSET (a strict subset of the components,
+    listed in a DIFFERENT relative order than the components) -- both
+    ComponentLexemesRS and PrimaryLexemesRS preserve their OWN source order
+    end-to-end, and the primary subset is not silently expanded to the full
+    component set (nor reordered to match component order)."""
+    lex_a, lex_b, lex_c = _FakeLexeme("lex-a"), _FakeLexeme("lex-b"), _FakeLexeme("lex-c")
+    entry = _FakeTargetEntry("entry-1")
+    factory = _FakeEntryRefFactory()
+    target = _FakeTarget(
+        {"entry-1": entry, "lex-a": lex_a, "lex-b": lex_b, "lex-c": lex_c},
+        factory=factory,
+    )
+    ctx = _ctx_create_and_wire(
+        entryref_create_bindings={
+            "entry-1": [_ref_record(
+                "ref-cf1", ref_type=1,
+                components=["lex-a", "lex-b", "lex-c"],
+                primaries=["lex-c", "lex-a"],
+            )],
+        },
+        lexentry_ref_bindings={
+            "entry-1": {
+                "ComponentLexemesRS": ["lex-a", "lex-b", "lex-c"],
+                "PrimaryLexemesRS": ["lex-c", "lex-a"],
+            },
+        },
+    )
+
+    create_skips = categories._run_entryref_create_pass(ctx, target, tag=None)
+    wire_skips = categories._run_post_pass_a(ctx, target, tag=None)
+
+    assert create_skips == []
+    assert wire_skips == []
+    new_ref = list(entry.EntryRefsOS)[0]
+    assert new_ref.RefType == 1
+    assert list(new_ref.ComponentLexemesRS) == [lex_a, lex_b, lex_c]
+    # M=2 primary subset (lex_b excluded), in the AUTHORED order [lex_c,
+    # lex_a] -- not component order, not alphabetical.
+    assert list(new_ref.PrimaryLexemesRS) == [lex_c, lex_a]
+
+
+# ============================================================================
 # T008 -- fake ICmObjectRepository fallback branch (closes the #28 offline gap)
 # ============================================================================
 
