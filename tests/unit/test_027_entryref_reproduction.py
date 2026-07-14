@@ -427,3 +427,37 @@ def test_entryref_create_pass_casts_bare_entry_reproduces_n(_stub_lcm_full) -> N
     assert skips == []
     assert factory.create_log == ["ref-1"]
     assert len(entry_refs_seq) == 1  # wired into the CAST entry's sequence
+
+
+# ============================================================================
+# P1 (cycle-3 DRY fold) -- `_safe_add_to_owner` orphan-risk raise path
+# ============================================================================
+
+class _FailingAddRefSeq(_FakeRefSeq):
+    """An owning sequence whose `.Add()` always raises -- simulates
+    `Create()` succeeding but the LCM Add-to-owner call failing."""
+
+    def Add(self, obj):
+        raise RuntimeError("Add-to-owner failed (simulated LCM failure)")
+
+
+def test_entryref_create_pass_add_failure_raises_orphan_risk_runtimeerror(
+        _stub_lcm_full) -> None:
+    """`entry_refs.Add(new_ref)` failing after a successful `Create()` must
+    raise a `RuntimeError` naming the orphan risk -- this is now routed
+    through the shared `_safe_add_to_owner` helper (P1 DRY fold, same one
+    every other hand-rolled Create+Add category site already uses) instead
+    of a bespoke inline try/except, so this branch proves the fold didn't
+    silently drop the orphan-risk guard."""
+    entry = _FakeTargetEntry("entry-1")
+    entry.EntryRefsOS = _FailingAddRefSeq()
+    factory = _FakeEntryRefFactory()
+    target = _FakeTarget({"entry-1": entry}, factory=factory)
+    ctx = _ctx_create({"entry-1": [_ref_record("ref-1", ref_type=0)]})
+
+    with pytest.raises(RuntimeError, match="Orphan risk"):
+        categories._run_entryref_create_pass(ctx, target, tag=None)
+
+    # Create() DID succeed (the orphan risk is real -- an object exists
+    # somewhere that never got owned) before the Add failure surfaced.
+    assert factory.create_log == ["ref-1"]

@@ -45,6 +45,7 @@ LCM API notes (discovered during implementation):
 """
 from __future__ import annotations
 
+import types
 from typing import Iterable, Tuple
 
 if __package__:
@@ -4335,22 +4336,38 @@ def _class_name_of(obj):
 
 
 # ----------------------------------------------------------------------------
-# Cycle-16 lead adjudication -- LexEntry.EntryRefsOS: DROP_REPORTED.
+# 027 contract C4 -- LexEntry.EntryRefsOS: reproduce-in-closure / report-rest.
 # ----------------------------------------------------------------------------
 #
-# No code site anywhere in `Lib/*.py` calls `ILexEntryRefFactory` -- a copied
-# entry's `EntryRefsOS` is simply never populated on the target (routed to
-# 027-complex-forms-variants). `_run_post_pass_a` only WIRES
-# ComponentLexemesRS/PrimaryLexemesRS onto an EntryRef that already exists;
-# since none is ever created for a freshly-copied entry, it is unreachable.
-# Per the lead's ruling this cycle: report every un-reproduced `EntryRefsOS`
-# member (one `DroppedItemRecord` per `LexEntryRef`, naming the relationship
-# kind -- variant vs complex-form, from `RefType` -- plus its component +
-# variant/complex type). This SUBSUMES `LexEntryRef.{ComponentLexemesRS,
-# PrimaryLexemesRS, VariantEntryTypesRS, ComplexEntryTypesRS,
-# ShowComplexFormsInRS}` -- none of those 5 fields gets its own separate
-# `DroppedItemRecord` (they cannot exist without an un-reproduced
-# `LexEntryRef` in the first place).
+# HISTORY (cycle-16 lead adjudication, superseded this cycle): before 027, no
+# code site anywhere in `Lib/*.py` called `ILexEntryRefFactory` -- EntryRefsOS
+# was NEVER populated on the target, so every ref was unconditionally
+# reported dropped (report-all). 027's C1-C3
+# (`_run_entryref_create_pass`/`_run_post_pass_a`) now actually CREATE the
+# container and wire its components/primaries/entry-types, so report-all
+# would double-book a successfully reproduced ref as ALSO dropped (P2).
+#
+# POLICY (research.md Decision 5, contract C4): a ref is reproduced (0
+# records) iff every one of its ComponentLexemesRS/PrimaryLexemesRS members
+# is itself eligible for STEMS/AFFIXES transfer (`_affix_type_of(m)[0]` --
+# has LexemeFormOA + its MorphTypeRA, the SAME eligibility test this module
+# uses to classify every LexEntry into STEMS/AFFIXES) -- i.e. WILL exist on
+# the target once this transfer's STEMS/AFFIXES tail completes, regardless of
+# processing order (the create-then-wire tail runs once, after every
+# in-scope entry's closure has already been walked -- see
+# `stems_execute_action`'s `_run_tail_once` ordering -- so an order-dependent
+# "already on target right now" check would false-positive on a
+# not-yet-walked sibling entry). A ref with zero components/primaries is
+# trivially reproduced (nothing external to fail on). Entry-type/publication
+# (C3) resolution is NOT this function's concern -- `_run_entryref_create_pass`
+# routes those through `_decide_reference_fields`/`_apply_reference_fields`,
+# which already reports an unresolved type/publication item on its own; this
+# function reporting the SAME ref again would reintroduce the double-booking
+# this flip removes.
+#
+# A NOT-reproduced ref still gets exactly one `DroppedItemRecord` (naming the
+# relationship kind -- variant vs complex-form, from `RefType` -- plus its
+# component + variant/complex type), unchanged from the pre-027 shape.
 
 _LEX_ENTRY_REF_KIND_BY_TYPE = {0: "variant", 1: "complex-form"}
 
@@ -4390,19 +4407,34 @@ def _lex_entry_ref_identity_label(ref, kind: str) -> str:
     return f"{kind}: " + ", ".join(parts)
 
 
+def _entry_ref_is_reproducible(ref) -> bool:
+    """027 contract C4: True iff every ComponentLexemesRS/PrimaryLexemesRS
+    member of `ref` is itself STEMS/AFFIXES-eligible (`_affix_type_of`),
+    i.e. will exist on the target once this run's create-then-wire tail
+    completes. A ref with 0 components/primaries is trivially True."""
+    members = (list(getattr(ref, "ComponentLexemesRS", None) or [])
+               + list(getattr(ref, "PrimaryLexemesRS", None) or []))
+    return all(_affix_type_of(m)[0] for m in members)
+
+
 def _report_dropped_entry_refs(src_entry, dropped) -> None:
-    """Emit one `DroppedItemRecord` per `LexEntryRef` owned by
-    `src_entry.EntryRefsOS` -- called identically from the Move path
+    """Emit one `DroppedItemRecord` per NOT-reproduced `LexEntryRef` owned
+    by `src_entry.EntryRefsOS` (027 contract C4 -- see the policy comment
+    above this function) -- called identically from the Move path
     (`_walk_lex_entry_closure`) and the Preview path
     (`_plan_entry_reference_decisions`), so the two drop sets are identical
-    by construction (there is no CREATE/LINK leg to diverge; both are
-    report-only -- no `ILexEntryRef` is ever created this cycle)."""
+    by construction. A ref whose components/primaries are all in-closure
+    (`_entry_ref_is_reproducible`) is silently skipped here -- C1-C3
+    reproduce it; a ref with an out-of-closure member gets exactly one
+    record, unchanged in shape from the pre-027 report-all behavior."""
     refs = list(getattr(src_entry, "EntryRefsOS", None) or [])
     if not refs:
         return
     owner_guid = _guid_str_from(src_entry)
     owner_label = _owner_label_for("LexEntry", src_entry)
     for ref in refs:
+        if _entry_ref_is_reproducible(ref):
+            continue
         kind = _lex_entry_ref_kind(ref)
         _append_dropped_once(dropped, DroppedItemRecord(
             owner_kind="LexEntry",
@@ -4412,9 +4444,9 @@ def _report_dropped_entry_refs(src_entry, dropped) -> None:
             item_name=_lex_entry_ref_identity_label(ref, kind),
             item_guid=_guid_str_from(ref),
             reason=(
-                f"LexEntryRef ({kind}) is not reproduced by feature 024's "
-                "lexicon transfer -- no ILexEntryRefFactory create site "
-                "exists (routed to 027-complex-forms-variants)"
+                f"LexEntryRef ({kind}) has a component/primary lexeme "
+                "outside this transfer's copy closure (never STEMS/AFFIXES "
+                "-eligible) -- not reproduced (027-complex-forms-variants)"
             ),
         ))
 
@@ -5009,9 +5041,25 @@ def _run_entryref_create_pass(context, target, tag=None):
     INV-1 -- idempotent re-Move, SC-003), creates the container via
     `_create_entryref_container`, sets `RefType` (cast to `ILexEntryRef`
     first), and owns it into `EntryRefsOS`. Does NOT wire
-    ComponentLexemesRS/PrimaryLexemesRS/*EntryTypesRS -- C2 (and, in a later
-    phase, C3) own that; this pass only guarantees a cast, GUID-correct,
-    RefType-correct EMPTY container exists (contract C1 "MUST NOT").
+    ComponentLexemesRS/PrimaryLexemesRS -- C2 owns that; this pass only
+    guarantees a cast, GUID-correct, RefType-correct container exists
+    (contract C1 "MUST NOT").
+
+    C3 (US2/US3, this cycle): immediately after RefType is set on a newly
+    created ref, resolves its entry-type / publication reference fields --
+    `VariantEntryTypesRS` (RefType==0 only), `ComplexEntryTypesRS`
+    (RefType==1 only), `ShowComplexFormsInRS` (always) -- through 024's
+    generic `_apply_reference_fields` dispatch (three-way disposition:
+    absent -> create incl. ancestor chain, GUID-remapped, Principle I;
+    diverged custom -> update; diverged shared/GOLD -> link + report,
+    never overwritten; identical -> link). The per-ref source values come
+    straight off `rec["variant_entry_types"]`/`["complex_entry_types"]`/
+    `["show_complex_forms_in"]` (live SOURCE items, gathered by
+    `_stash_entry_bindings`) wrapped in a small synthetic namespace so the
+    generic `references.field_specs_for("LexEntryRef")` dispatch can read
+    them via plain `getattr` -- no separate C3-only code path. An
+    unresolved item (target list absent / unmapped item class) surfaces as
+    a `DroppedItemRecord`, never silently.
 
     Returns a list of Skip(DEPENDENCY_UNRESOLVED) -- one per unresolved
     owning entry (or one whose cast `EntryRefsOS` is still unreachable).
@@ -5029,6 +5077,13 @@ def _run_entryref_create_pass(context, target, tag=None):
     else:
         bindings = _binding_map(context, "entryref_create_bindings") or {}
         remap = getattr(context, "_identity_remap", None) or {}
+    # C3: fetched ONCE for the whole pass (not per-ref) so the GUID->resolved
+    # cache (FR-012 idempotency) is shared across every ref/entry this pass
+    # touches -- the same item referenced by two different refs resolves
+    # (and, on CREATE, is created) exactly once.
+    resolver_cache = _get_resolver_cache(context)
+    ws_map = getattr(context, "_ws_map", None)
+    source = getattr(context, "source_handle", None)
 
     for src_entry_guid, ref_records in bindings.items():
         target_entry_guid = remap.get(src_entry_guid, src_entry_guid)
@@ -5082,19 +5137,33 @@ def _run_entryref_create_pass(context, target, tag=None):
                     ),
                 ))
                 continue
-            try:
-                entry_refs.Add(new_ref)
-            except Exception as e:
-                raise RuntimeError(
-                    f"Orphan risk: ILexEntryRefFactory.Create({ref_guid}) "
-                    f"succeeded but Add-to-EntryRefsOS failed: {e!r}. "
-                    "Investigate target LCM state before retrying."
-                ) from e
+            _safe_add_to_owner(new_ref, entry_refs, "ILexEntryRefFactory", ref_guid)
             new_ref_typed = _cast_lcm(new_ref, "ILexEntryRef")
+            ref_type = rec.get("ref_type")
             try:
-                new_ref_typed.RefType = rec.get("ref_type")
+                new_ref_typed.RefType = ref_type
             except (AttributeError, TypeError):
                 pass
+            # C3: resolve entry-type / publication references now that the
+            # container is owned and RefType-correct. `type_skip` excludes
+            # whichever of Variant-/ComplexEntryTypesRS doesn't apply to this
+            # RefType (contract C3: RefType==0 -> variant only, RefType==1 ->
+            # complex only); ShowComplexFormsInRS is always attempted.
+            type_skip = set()
+            if ref_type != 0:
+                type_skip.add("VariantEntryTypesRS")
+            if ref_type != 1:
+                type_skip.add("ComplexEntryTypesRS")
+            type_src = types.SimpleNamespace(
+                VariantEntryTypesRS=rec.get("variant_entry_types") or [],
+                ComplexEntryTypesRS=rec.get("complex_entry_types") or [],
+                ShowComplexFormsInRS=rec.get("show_complex_forms_in") or [],
+            )
+            _apply_reference_fields(
+                "LexEntryRef", type_src, new_ref_typed, target, tag,
+                resolver_cache, dropped, skip_fields=type_skip,
+                ws_map=ws_map, source=source, owner_guid=ref_guid,
+            )
             existing_guids.add(ref_guid)
     return skips
 

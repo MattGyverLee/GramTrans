@@ -13,6 +13,17 @@ Covers the two DROP_REPORTED emission sites the census gap identified:
    ComplexEntryTypesRS, ShowComplexFormsInRS}` -- no separate records for
    those 5 fields.
 
+   SUPERSEDED (027 cycle-3, contract C4): originally report-ALL (no
+   `ILexEntryRefFactory` create site existed at cycle-16 time). 027 added
+   C1-C3 (`_run_entryref_create_pass`/`_run_post_pass_a`), which actually
+   reproduce a ref whose components/primaries are all in-closure -- so the
+   policy flipped to report-only-un-reproduced
+   (`categories._entry_ref_is_reproducible`); see
+   `tests/unit/test_027_never_silent.py` for the flip's own dedicated
+   coverage. The tests below still use fakes shaped to be "out of closure"
+   (no `LexemeFormOA`) so they continue to exercise the reported half of
+   that split unchanged.
+
 2. `MoAffixAllomorph.{InflectionClassesRC, MsEnvFeaturesOA,
    MsEnvPartOfSpeechRA, PositionRS}`
    (`Lib/owned.py._report_dropped_moaffix_msenv_fields`, called identically
@@ -148,8 +159,16 @@ def test_entry_ref_complex_form_type_emits_one_dropped_record_naming_complex_for
 
 
 def test_entry_with_multiple_entry_refs_emits_one_record_per_ref():
-    ref_a = _FakeLexEntryRef("ref-a", ref_type=0)
-    ref_b = _FakeLexEntryRef("ref-b", ref_type=1)
+    """027 C4 policy flip: a ref with 0 components/primaries is trivially
+    "in closure" (nothing external to fail on) and is no longer reported --
+    so both refs here are given an out-of-closure `_FakeComponentEntry`
+    component (it lacks `LexemeFormOA`, hence `_affix_type_of` -> ineligible
+    -- see `_entry_ref_is_reproducible`) to keep proving the per-ref (not
+    per-entry) multiplicity this test targets."""
+    comp_a = _FakeComponentEntry("comp-a", citation_form="word-a")
+    comp_b = _FakeComponentEntry("comp-b", citation_form="word-b")
+    ref_a = _FakeLexEntryRef("ref-a", ref_type=0, components=[comp_a])
+    ref_b = _FakeLexEntryRef("ref-b", ref_type=1, components=[comp_b])
     entry = _FakeSourceEntry("entry-guid-3", entry_refs=[ref_a, ref_b])
 
     dropped: list = []

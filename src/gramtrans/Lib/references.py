@@ -173,6 +173,41 @@ REFERENCE_FIELD_MAP: tuple = (
         hierarchical=False,
     ),
 
+    # ---- LexEntryRef reference fields (027 US2/US3, contract C3) ----------
+    # Confirmed live via a read-only probe against Ejagham Mini (027 cycle-3,
+    # `scratchpad/probe_c3_lists.py` -- FLExToolsMCP itself is not exposed to
+    # this session; see the programmer's cycle-3 report for the deviation
+    # note): `LexDbOA.VariantEntryTypesOA` / `.ComplexEntryTypesOA` are both
+    # `ICmPossibilityList`, `ItemClsid=5118` (`LexEntryType`), `Depth=127`
+    # (hierarchical, same "flagged hierarchical even when flat in a given
+    # project" pattern as SenseTypes above). `.PublicationTypesOA` is
+    # `ItemClsid=7` (generic `CmPossibility`), `Depth=1` -- same list
+    # `PublishIn`/`DoNotPublishInRC`/`DoNotShowMainEntryInRC` already use
+    # above, confirming `ShowComplexFormsInRS` shares that home list despite
+    # its own field being a `RS` (sequence), not `RC` (collection) --
+    # cardinality is a per-FIELD LCM declaration, not a per-list property.
+    ReferenceFieldSpec(
+        owner_class="LexEntryRef",
+        field_name="VariantEntryTypesRS",
+        cardinality=ReferenceCardinality.SEQUENCE,
+        target_list_path=lambda target: _lp(target).LexDbOA.VariantEntryTypesOA,
+        hierarchical=True,
+    ),
+    ReferenceFieldSpec(
+        owner_class="LexEntryRef",
+        field_name="ComplexEntryTypesRS",
+        cardinality=ReferenceCardinality.SEQUENCE,
+        target_list_path=lambda target: _lp(target).LexDbOA.ComplexEntryTypesOA,
+        hierarchical=True,
+    ),
+    ReferenceFieldSpec(
+        owner_class="LexEntryRef",
+        field_name="ShowComplexFormsInRS",
+        cardinality=ReferenceCardinality.SEQUENCE,
+        target_list_path=lambda target: _lp(target).LexDbOA.PublicationTypesOA,
+        hierarchical=False,
+    ),
+
     # ---- Allomorph reference fields ---------------------------------------
     ReferenceFieldSpec(
         owner_class="MoForm",  # MoStemAllomorph / MoAffixAllomorph
@@ -985,6 +1020,7 @@ def apply_reference(decision, target, owner_obj, spec: "ReferenceFieldSpec", cac
             ICmSemanticDomainFactory,
             ICmAnthroItemFactory,
             IMoMorphTypeFactory,
+            ILexEntryTypeFactory,
         )
         from System import Guid as DotNetGuid
 
@@ -996,13 +1032,17 @@ def apply_reference(decision, target, owner_obj, spec: "ReferenceFieldSpec", cac
         # items in a typed list (e.g. ItemClsid 66 = CmSemanticDomain would be
         # created as a bare clsid-7 CmPossibility). Mapping confirmed live on
         # Ejagham Mini across every list REFERENCE_FIELD_MAP currently drives:
-        # 66=CmSemanticDomain, 26=CmAnthroItem, 5042=MoMorphType, 7=generic
-        # CmPossibility (SenseTypes/UsageTypes/DomainTypes/DialectLabels/
-        # PublicationTypes/Languages/Status/TranslationTags).
+        # 66=CmSemanticDomain, 26=CmAnthroItem, 5042=MoMorphType, 5118=
+        # LexEntryType (027 US2/US3, VariantEntryTypesOA/ComplexEntryTypesOA --
+        # same `ILexEntryTypeFactory.Create(Guid)` 1-arg idiom
+        # `categories.complex_form_types_execute_action` already uses), 7=
+        # generic CmPossibility (SenseTypes/UsageTypes/DomainTypes/
+        # DialectLabels/PublicationTypes/Languages/Status/TranslationTags).
         factory_by_item_clsid = {
             66: ICmSemanticDomainFactory,
             26: ICmAnthroItemFactory,
             5042: IMoMorphTypeFactory,
+            5118: ILexEntryTypeFactory,
             7: ICmPossibilityFactory,
         }
         item_clsid = getattr(target_list, "ItemClsid", None)
