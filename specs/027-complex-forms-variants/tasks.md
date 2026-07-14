@@ -20,31 +20,31 @@ satisfies the issue #28/#30 live `0 → N` acceptance.
 
 ## Phase 1: Setup
 
-- [ ] T001 Create the implementation worktree `../GramTrans-027-complex-forms-variants` on
+- [x] T001 Create the implementation worktree `../GramTrans-027-complex-forms-variants` on
       new branch `027-complex-forms-variants` from `main` (carries #28 layer-1/2 fixes);
       confirm `pip install -e D:/Github/_Projects/_LEX/flexlibs2` resolves and
       `python -m pytest tests/unit -q` is green modulo the known
       `test_wizard_pos_grammar_wiring` baseline fail.
-- [ ] T002 [P] Add skip-collecting scaffolds for the three new unit files
+- [x] T002 [P] Add skip-collecting scaffolds for the three new unit files
       `tests/unit/test_027_entryref_reproduction.py`,
       `tests/unit/test_027_entry_type_resolve.py`,
       `tests/unit/test_027_never_silent.py` (import smoke only; collect clean).
-- [ ] T003 [P] Add `@pytest.mark.integration` skip-by-default scaffold
+- [x] T003 [P] Add `@pytest.mark.integration` skip-by-default scaffold
       `tests/integration/test_027_complex_forms_live.py` (collects → 1 skipped, exit 0).
 
 ## Phase 2: Foundational (blocking prerequisites)
 
-- [ ] T004 Confirm the 024 reuse surface is present on the branch:
+- [x] T004 Confirm the 024 reuse surface is present on the branch:
       `references.decide_reference`/`apply_reference`, `owned.walk_owned_children`,
       `report.DroppedItemRecord`, and the on-`main` `categories._resolve_target_by_guid` +
       `_cast_lcm`. Gate task — record a one-line PASS in the task notes; if any is absent,
       STOP and escalate.
-- [ ] T005 Extend the plan binding shape in `src/gramtrans/Lib/models.py` per data-model.md:
+- [x] T005 Extend the plan binding shape in `src/gramtrans/Lib/models.py` per data-model.md:
       per-source-entry list of per-ref records `{ref_guid, ref_type, components, primaries,
       variant_entry_types, complex_entry_types, show_complex_forms_in}`, keeping the existing
       `_run_post_pass_a` consumption working (extend or add a parallel
       `entryref_create_bindings`; keep Preview gatherer + Move consumer in lockstep).
-- [ ] T006 Populate the extended bindings at plan time in `src/gramtrans/Lib/preview.py` /
+- [x] T006 Populate the extended bindings at plan time in `src/gramtrans/Lib/preview.py` /
       the STEMS gather path (`stems_execute_action`): walk source `EntryRefsOS`, record each
       ref's guid/RefType/components/primaries/type-refs, closure-scoped. Read-only (no writes).
 
@@ -54,25 +54,25 @@ satisfies the issue #28/#30 live `0 → N` acceptance.
 lexemes, so `Ejagham Mini`'s 6 variant refs land on the target (`0 → 6`).
 **Independent test**: quickstart §1 (offline) + §3 (attended live `0 → 6`).
 
-- [ ] T007 [P] [US1] RED: in `tests/unit/test_027_entryref_reproduction.py`, failing tests
+- [x] T007 [P] [US1] RED: in `tests/unit/test_027_entryref_reproduction.py`, failing tests
       for C1 container creation over duck-typed fakes — variant ref created, GUID preserved,
       `RefType=0` set, owned into `EntryRefsOS`; unresolved target entry → `Skip`.
-- [ ] T008 [P] [US1] RED: fake `ICmObjectRepository` fallback-branch test (no
+- [x] T008 [P] [US1] RED: fake `ICmObjectRepository` fallback-branch test (no
       `get_object_by_guid` getter) proving C1 resolves via the live-repo path — closes the
       offline gap that let #28 ship.
-- [ ] T009 [P] [US1] RED: `_Bare` vs `_Typed` cast tripwire — an uncast `LexEntry`/
+- [x] T009 [P] [US1] RED: `_Bare` vs `_Typed` cast tripwire — an uncast `LexEntry`/
       `LexEntryRef` reproduces 0 (reproducing the #28 layer-2 live no-op), the cast path
       reproduces N. Same shape as the existing #28 regression tests.
-- [ ] T010 [US1] GREEN: implement `_run_entryref_create_pass` (C1) in
+- [x] T010 [US1] GREEN: implement `_run_entryref_create_pass` (C1) in
       `src/gramtrans/Lib/categories.py` — resolve+cast entry, GUID-idempotency guard,
       `ILexEntryRefFactory(target.GetFactory(ILexEntryRefFactory))` create (confirm the exact
       `Create` signature live per research Decision 1), set `RefType`, own into `EntryRefsOS`.
       Degrade to report-only if factory/interface absent.
-- [ ] T011 [US1] GREEN: make `_run_post_pass_a` (C2) reachable — invoke create-then-wire in
+- [x] T011 [US1] GREEN: make `_run_post_pass_a` (C2) reachable — invoke create-then-wire in
       the STEMS tail (front: create; then existing component/primary wiring) under
       `_run_tail_once`. Extend `tests/unit/test_phase3c_post_pass_a.py` for create-then-wire,
       order preservation, and membership-guard idempotency.
-- [ ] T012 [US1] Wire the pass into the Move executor in `src/gramtrans/Lib/transfer.py`
+- [x] T012 [US1] Wire the pass into the Move executor in `src/gramtrans/Lib/transfer.py`
       (STEMS-tail placement alongside the existing post-passes); confirm ordering after all
       closure entries exist.
 

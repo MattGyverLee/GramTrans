@@ -1,0 +1,26 @@
+{
+  "feature": "027-complex-forms-variants",
+  "status": "in_progress",
+  "worktree": "../GramTrans-027-complex-forms-variants",
+  "branch": "027-complex-forms-variants",
+  "worktree_commit": "e8686c3",
+  "merged": false,
+  "last_cycle": 2,
+  "spurts_completed": 2,
+  "tasks_done": ["T001", "T002", "T003", "T004", "T005", "T006", "T007", "T008", "T009", "T010", "T011", "T012"],
+  "gates": {
+    "verification": "PASS (4/4 items; RED-before-GREEN genuine; offline 1555 passed / 1 pre-existing baseline fail)",
+    "qc": "90/100 APPROVE (issue #28 cast/resolve guard PASS; no P0)"
+  },
+  "open_items": {
+    "P1_dry": "categories.py:5085-5092 inline Add-failure raise should reuse _safe_add_to_owner (categories.py:5956) + add one branch test; non-blocking, folded into spurt 3 alongside Phase 6 C4",
+    "P2_double_bookkeeping": "reproduced refs still reported dropped; resolved by C4 drop-policy flip (T020)"
+  },
+  "next_checkpoint": "Checkpoint US2 (Phase 4, T013-T015) + Phase 6 C4 drop-policy flip (T019-T020), folding the P1 DRY fix",
+  "next_entry": "Author US2 RED tests T013 (three-way entry-type disposition) + T014 (GOLD GUID-remap Principle-I) first, then T015 GREEN (route variant_entry_types/show_complex_forms_in through references.decide_reference/apply_reference); then Phase 6 T019 RED + T020 GREEN flip of _report_dropped_entry_refs (C4), and refactor categories.py:5085-5092 to _safe_add_to_owner (P1).",
+  "attended_only": {
+    "T025": "destructive live 0->N Move proof (SC-001/002/003/004) — needs_human, never unattended",
+    "US3_live": "complex-form live proof (T026 follow-up) — needs_human"
+  },
+  "updated": "2026-07-13"
+}

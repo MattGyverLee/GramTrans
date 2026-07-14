@@ -1,5 +1,54 @@
 # GramTrans — Session Handoff
 
+## ▶▶▶ Feature 027 — Complex Forms & Variants — SPURT 2 (Phase 3 US1 MVP) DONE; gates GREEN (2026-07-13)
+
+**Worktree** `../GramTrans-027-complex-forms-variants` on branch `027-complex-forms-variants`
+@ **`e8686c3`** (clean; NOT merged). **Handoff**:
+`specs/027-complex-forms-variants/.crew-handoff.json`. Cumulative tasks: **T001-T012 done**
+(Phase 1 Setup + Phase 2 Foundational + Phase 3 US1 MVP). Remaining: US2 (T013-T015),
+US3 (T016-T018), Phase 6 cross-cutting (T019-T022), Polish/live (T023-T027).
+
+**Ralph-loop spurt 2 (LEX crew, cycle 2) — combined verification + QC gate over the US1 MVP
+offline slice. Both gates GREEN; US1 MVP checkpoint REACHED.**
+- **Verification: PASS (all 4 items).** RED-before-GREEN confirmed genuine via two independent
+  scratch-neuter proofs (full-neuter → all 9 tests RED; surgical removal of the
+  `_cast_lcm(target_entry,"ILexEntry")` line at categories.py:5047 → exactly the one predicted
+  test fails with the semantically-correct `Skip(EntryRefsOS unavailable)`). Offline suite
+  **1 failed / 1555 passed / 9 skipped / 14 xfailed / 14 xpassed** — sole failure is the
+  documented pre-existing baseline `test_wizard_pos_grammar_wiring`, NOT a 027 regression.
+  Integration scaffold skips clean (1 skipped, exit 0). 27/27 phase3c tests incl 3 genuine
+  C1-then-C2 integration tests (`_run_create_then_wire` against the SAME object graph).
+  Worktree left clean.
+- **QC: 90/100 APPROVE.** Issue #28 cast/resolve guard PASS — two-step `_resolve_target_by_guid`
+  → `_cast_lcm` idiom matches `_run_171_subpass`/`_run_post_pass_a` exactly, no bypass; GUID
+  idempotency (INV-1) PASS; error-degradation PASS. No P0.
+- **One P1 (DRY, non-blocking, FOLDED into next spurt):** `entry_refs.Add(new_ref)` at
+  categories.py:5085-5092 inline-duplicates the orphan-risk raise-on-Add-failure pattern
+  instead of reusing `_safe_add_to_owner` (categories.py:5956). The raise itself is the
+  established file-wide convention (10+ sites) for genuine Create-succeeded-but-Add-failed
+  corruption risk, NOT a "never crash" contract violation. Fix = replace with
+  `_safe_add_to_owner(new_ref, entry_refs, "ILexEntryRefFactory", ref_guid)` + one branch test.
+  Deferred to the next spurt (natural to land alongside the Phase 6 C4 create/drop rework).
+- **P2 double-bookkeeping (assessed, not a defect):** reproduced refs are currently created
+  AND still reported dropped (`_report_dropped_entry_refs`, categories.py:4393, called from
+  both Preview 3619 and Move 4580). This is the correctly-scoped C4/Phase-6 interim state,
+  resolved by the drop-policy flip in the next spurt.
+- Reports: `specs/027-complex-forms-variants/reviews/cycle2-verification.md`,
+  `specs/027-complex-forms-variants/reviews/cycle2-qc.md`.
+
+**Next checkpoint (spurt 3): Phase 4 US2 (T013-T015) + Phase 6 C4 drop-policy flip (T019-T020),
+folding the P1 DRY fix.** US2 = route `variant_entry_types`/`show_complex_forms_in` through
+024's `references.decide_reference`/`apply_reference` (three-way disposition; GOLD GUID-remap,
+never overwrite) so each reproduced ref carries a resolved entry-type. C4 = flip
+`_report_dropped_entry_refs` to reproduce-in-closure / report-only-out-of-closure, clearing the
+double-bookkeeping. TDD: RED tests (T013/T014; T019) before GREEN.
+
+**⚠️ NOT part of the autonomous spurts (attended / needs_human):** T025 (destructive live
+`0 → N` Move proof, SC-001/002/003/004) and the US3 complex-form live proof (T026 follow-up).
+Reaching those → emit `needs_human` and stop; never run a destructive live-LCM write unattended.
+
+---
+
 ## ▶▶▶ Feature 031 — Inflection-Feature Linking — COMPLETE: merged to main after LEX-crew review (2026-07-13)
 
 **FEATURE COMPLETE.** All tasks T001–T026 done. Merged `031-fix-inflection-feature-linking`
