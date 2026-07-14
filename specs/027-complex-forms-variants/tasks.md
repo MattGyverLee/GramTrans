@@ -149,17 +149,19 @@ an empty entry-type where the source had one.
       binding, counting containers (SC-001 0→6), RefType (C1), VariantEntryTypesRS (C3), +
       idempotent re-Move (SC-003). Casts via `_cast_lcm` (#28 layer 2). Compiles clean;
       ATTENDED-ONLY, execution deferred to T025.]**
-- [ ] T025 **[ATTENDED / needs_human]** [US1][US2] Live `0 → N` proof (SC-001/002/003/004):
-      restored target, attended Move `Ejagham Mini → Target`, FLExToolsMCP re-resolution
-      confirms `LexEntryRef 0 → 6`, variant-type wired, re-Move 0-duplicate, out-of-closure
-      refs reported. Write evidence to
-      `specs/027-complex-forms-variants/verification-log.md`. **Never under an unattended
-      loop.**
-- [ ] T026 File the **US3 complex-form live-proof** follow-up issue (needs a constructed
-      complex-form fixture; parallel to #31's MSA→slot live source) and record it in
-      `STATUS.md`. Update issue #28 (LexEntryRef leg now proven) and close #30 after T025.
-- [ ] T027 Merge `027-complex-forms-variants` → `main` (`--no-ff`) after LEX-crew review
-      gates are green and T025 passes; remove the worktree; update `STATUS.md` handoff.
+- [x] T025 **[ATTENDED]** [US1][US2] Live `0 → N` proof (SC-001/002/003/004): restored target,
+      attended Move `Ejagham Mini → Target`. **[DONE — ran attended 2026-07-14. Run #1 (`f1917fa`)
+      proved `LexEntryRef 0 → 6` but surfaced a C4 false-positive-drop defect (#28 layer-2 cast gap
+      in `_entry_ref_is_reproducible`); fixed at `02413b5` (cycle-8, `_cast_lcm` + RED-first test).
+      Re-run #2 fully clean: containers `0 → 6`, RefType 6/6, variant-type 6/6, components 6/6,
+      **EntryRefsOS drops 0**, idempotent. Evidence: `verification-log.md`.]**
+- [x] T026 File the **US3 complex-form live-proof** follow-up issue; update #28; close #30.
+      **[DONE — filed #32 (US3 live proof + deferred non-gating items); commented #28 (LexEntryRef
+      leg proven live + sibling cast-gap fixed); #30 auto-closed by the merge's "Resolves #30" +
+      resolution comment added.]**
+- [x] T027 Merge `027-complex-forms-variants` → `main` (`--no-ff`); remove worktree; update
+      `STATUS.md`. **[DONE — merged `4b8b4dc` (no conflicts), pushed to origin; merged-tree suite
+      1580 passed modulo the documented baseline fail; worktree removed; STATUS.md updated.]**
 
 ---
 

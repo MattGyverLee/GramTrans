@@ -1,13 +1,19 @@
 # GramTrans — Session Handoff
 
-## ▶▶▶ Feature 027 — Complex Forms & Variants — FEATURE COMPLETE (crew gates green + T025 live PASS); MERGE AUTHORIZED, pending human-confirmed T026/T027 (2026-07-14)
+## ▶▶▶ Feature 027 — Complex Forms & Variants — DONE & MERGED (2026-07-14)
 
-**Worktree** `../GramTrans-027-complex-forms-variants` on branch `027-complex-forms-variants`
-@ **`02413b5`** (clean; NOT yet merged). Spec/verification-log on **`main` @ `2d94484`**.
+**MERGED to `main` @ `4b8b4dc`** (`--no-ff`, no conflicts, pushed to origin). Worktree
+`../GramTrans-027-complex-forms-variants` removed; branch `027-complex-forms-variants` ref
+retained (merged). Merged-tree offline suite **1580 passed** modulo the documented
+`test_wizard_pos_grammar_wiring` baseline fail. **All 27 tasks (T001-T027) done.**
+
+**Issues**: **#30 CLOSED** (LexEntryRef containers now reproduced). **#28** commented (LexEntryRef
+leg proven live; its `_run_171_subpass` MSA->slot leg stays open, tracked by #31). **#32 filed** —
+US3 complex-form live `0->N` proof (needs a constructed fixture) + the deferred non-gating
+follow-ups (run-scoped leaf-pick fix, C3 Preview decide-only twin, cosmetic uncast label
+`categories.py:4398`, C3 list-shape MCP re-confirm, P2 test-fixture DRY).
+
 **Handoff**: `specs/027-complex-forms-variants/.crew-handoff.json` (`status: feature_complete`).
-Cumulative: **T001-T025 done**. Remaining (human-confirmed, outward-facing): **T026** (file US3
-complex-form live-proof follow-up issue; update #28; close #30) + **T027** (merge `--no-ff`;
-remove worktree; update STATUS.md).
 
 **FINAL VERDICT: APPROVED — MERGE AUTHORIZED.** All crew quality gates are GREEN and the T025
 attended live `0 -> 6` proof PASSES at the fixed HEAD `02413b5`.
