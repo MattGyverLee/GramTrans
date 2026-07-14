@@ -1,5 +1,53 @@
 # GramTrans — Session Handoff
 
+## ▶▶▶ Feature 027 — Complex Forms & Variants — MERGE GATE (cycle 7) — CREW APPROVAL GREEN; BLOCKED on T025 (needs_human) (2026-07-13)
+
+**Worktree** `../GramTrans-027-complex-forms-variants` on branch `027-complex-forms-variants`
+@ **`f1917fa`** (clean; NOT merged). Spec addendum on **`main` @ `ab4879d`**. **Handoff**:
+`specs/027-complex-forms-variants/.crew-handoff.json` (`status: needs_human`). Cumulative:
+**T001-T024 done**. Remaining: **T025** (attended live proof — needs_human), **T026** (file
+US3 live-proof follow-up issue), **T027** (merge — depends on T025 + crew approval).
+
+**MERGE VERDICT: crew approval GREEN — but the merge itself is HELD on T025.** Per tasks.md
+"T027 (merge) depends on T025 + crew approval." Crew approval is now granted (all offline gates
+green, both merge-blocking P1s closed); T025 (the attended live `0 → 6` proof) is `needs_human`
+and has NOT been run, so **the merge cannot proceed unattended**.
+
+- **All offline crew gates GREEN:** verification PASS (cycle 5) + QC 94/100 APPROVE (cycle 5) +
+  domain 91/100 APPROVED (cycle 6) + author 8/10 CONCERNS-not-blocking (cycle 6).
+- **Cycle-7 fix spurt (worktree `f1917fa`, main `ab4879d`) closed both merge-blocking P1s at
+  doc/comment/census scope — NO run-scoped logic changed:**
+  - **P1a (leaf-pick run-scope gap):** `_entry_ref_is_reproducible` docstring now caveats
+    intrinsic/type-scoped (not run-scoped) eligibility; research.md Decision 5 gained a
+    "Documented limitation (deferred post-merge)" addendum.
+  - **P1b/c (stale fidelity_census):** `tests/verification/fidelity_census.py` 6 LexEntryRef-family
+    rows now point at the real create site (`_create_entryref_container`/`_run_entryref_create_pass`)
+    with refreshed line-refs (4435/4535); stale inline comment corrected.
+  - Wording nit "GUID-remapped" → "GUID-preserved" fixed in contract C3 + T014 docstring.
+  - Prove: targeted 027 suite **60 passed**; fidelity_census guard suite **86 passed**;
+    byte-compile clean; diff scope confirmed doc/comment/census only.
+
+**⛔ ACTION REQUIRED (human, attended session) — remaining needs_human items:**
+1. **T025 live proof** — restore the disposable target, activate FLExToolsMCP, run
+   `scratchpad/run27_live.py` (Ejagham Mini → restored Target). Confirm `LexEntryRef 0 → 6`,
+   `VariantEntryTypesRS` wired, re-Move 0-duplicate, out-of-closure refs reported. Write evidence
+   to `specs/027-complex-forms-variants/verification-log.md`. **Never under an unattended loop.**
+2. **C3 live re-confirm (mcp_deviation)** — at/before T025, re-verify the three C3 list shapes
+   (`VariantEntryTypesOA`/`ComplexEntryTypesOA` ItemClsid=5118/Depth=127; `PublicationTypesOA`
+   ItemClsid=7/Depth=1) via FLExToolsMCP; the cited probe `scratchpad/probe_c3_lists.py` is absent.
+3. On PASS → file the **T026** US3 complex-form live-proof follow-up issue (update #28, close #30),
+   then **T027** merge `027-complex-forms-variants` → `main` (`--no-ff`) and remove the worktree.
+
+**Deferred post-merge follow-ups (non-gating):** (a) the PREFERRED run-scoped leaf-pick fix
+(thread run selection through `_report_dropped_entry_refs` so membership, not just intrinsic type
+eligibility, is checked — only the documented-limitation note landed); (b) author's C3 Preview
+decide-only twin (Principle III consistency, not correctness); (c) P2 test-fixture DRY
+(`tests/unit/_fixtures_lexentry_ref.py`); (d) cycle-3 P2 nits.
+
+- Reports: `specs/027-complex-forms-variants/reviews/cycle{5-verification,5-qc,6-domain,6-author,6-qc,6-verification,7-programmer}.md`.
+
+---
+
 ## ▶▶▶ Feature 027 — Complex Forms & Variants — SPURT 4 (Phase 5 US3, T016-T018) DONE; cycle-5 gate APPROVED (2026-07-13)
 
 **Worktree** `../GramTrans-027-complex-forms-variants` on branch `027-complex-forms-variants`
