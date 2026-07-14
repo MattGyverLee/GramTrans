@@ -1,5 +1,41 @@
 # 027 — T025 Live Validation Log (attended)
 
+## FINAL STATUS: PASS (after cycle-8 fix)
+
+The first T025 run (HEAD `f1917fa`) proved `0 → 6` reproduction but surfaced a C4
+drop-reporting defect (6 false-positive drops). Cycle 8 fixed it (worktree `02413b5` —
+cast component members via `_cast_lcm` before `_affix_type_of`) and the **re-run at the
+fixed HEAD is fully clean**: containers `0 → 6`, RefType 6/6, variant-type 6/6, component
+lexemes 6/6, **EntryRefsOS drops 0** (Move #1 and #2), idempotent. Both the first
+(defective) run and the passing re-run are recorded below.
+
+---
+
+## Re-run #2 (RESOLVED) — HEAD `02413b5`, attended, `run27_live_v2.log`
+
+| Metric | Move #1 | Re-Move #2 |
+|---|---|---|
+| LexEntryRef containers on target | **6** (0 → 6) | 6 (stable) |
+| RefType correct | 6/6 | 6/6 |
+| variant-type wired (C3) | 6/6 | 6/6 |
+| containers missing | 0 | 0 |
+| component lexemes wired (probe) | **6/6** (1 each) | — |
+| **EntryRefsOS drop records (C4)** | **0** ✅ (was 6) | 0 |
+
+All driver self-checks PASS (SC-001/002/003/004); exit 0. The 6 false-positive drops from
+run #1 are eliminated — reproduced in-closure refs are correctly NOT reported. Data
+correctness (containers + components + types) is unchanged from run #1. (Note: the standalone
+`probe27_components.py` VERDICT text still says "despite the 6 C4 drop reports" — that string
+is hardcoded from run #1 and is stale; the current live drop count is 0.)
+
+**C3 list-shape MCP re-confirmation:** still PENDING (domain `mcp_deviation`) — optional
+belt-and-suspenders; the live CREATE-arm succeeded (6/6 types wired), which exercises the
+same factory dispatch the shapes underpin.
+
+---
+
+## Run #1 (DEFECTIVE — superseded, kept for the record)
+
 **Run:** 2026-07-13 ~23:32, attended (user-directed) · **Driver:** `scratchpad/run27_live.py`
 **Pair:** `Ejagham Mini → Target` (Target restored from `Target 2026-07-06 0218.fwbackup`)
 **Worktree HEAD:** `f1917fa` · **Exit:** 0 (driver self-checks all PASS)
