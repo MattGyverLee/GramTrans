@@ -78,6 +78,18 @@ FLExToolsMCP instead of direct code inspection" for flexicon/liblcm.
   (Principle V) is preserved because unreproducible relationships still surface as drops.
 - **Alternatives rejected**: keeping report-all and adding creation separately — would
   double-count (a reproduced ref reported as dropped) and break SC-004's drop-count parity.
+- **Documented limitation (deferred post-merge)**: `_entry_ref_is_reproducible` (the
+  eligibility check backing this split) only asks whether a component/primary member is
+  INTRINSICALLY STEMS/AFFIXES-eligible (`_affix_type_of`) — it is type-scoped, not
+  run-scoped. It does not consult run-scoped leaf-pick selection membership
+  (`selection.leaf_picks_for`, `selection.py` ~438-445), which further narrows what
+  `stems_enumerate_source` / `affixes_enumerate_source` actually enumerate on a
+  leaf-pick-narrowed run (`categories.py` ~5817-5838, ~5447). On a run where the user has
+  narrowed the leaf-pick selection, a component/primary that is structurally eligible but
+  NOT selected for this run can therefore be misreported as reproducible (FULL fidelity)
+  when it will not actually exist on the target for this run. Threading run-scoped
+  selection state into `_entry_ref_is_reproducible` is explicitly deferred — it is a
+  post-merge refactor, not part of this feature's merge-blocking scope.
 
 ## Decision 6 — creation runs as a post-pass after all closure entries exist
 

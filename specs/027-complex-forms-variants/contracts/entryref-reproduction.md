@@ -45,9 +45,9 @@ For each created `target_ref`:
 - always → resolve `show_complex_forms_in` into `ShowComplexFormsInRS`.
 
 Resolution uses `references.decide_reference`/`apply_reference` against the target entry-type
-/ publication lists: absent → create incl. ancestor chain (GUID-remapped, Principle I);
-diverged custom → update; diverged shared/GOLD → link + report; identical → link. Unresolved
-→ `DroppedItemRecord`. No overwrite of existing target GOLD items (INV-4).
+/ publication lists: absent → create incl. ancestor chain (GUID-preserved, not reassigned,
+Principle I); diverged custom → update; diverged shared/GOLD → link + report; identical →
+link. Unresolved → `DroppedItemRecord`. No overwrite of existing target GOLD items (INV-4).
 
 ## C4 — Never-silent drop policy (`_report_dropped_entry_refs`, behavior change)
 
@@ -88,7 +88,7 @@ A source with 0 `LexEntryRef`: C1 creates nothing, C2/C3 wire nothing, C4 report
 - C2: component/primary wiring, order, membership-guard idempotency (extend
   `test_phase3c_post_pass_a.py`).
 - C3: three-way entry-type resolution (absent/diverged-custom/diverged-GOLD/identical) +
-  Principle-I GUID-remap-at-create.
+  Principle-I GUID-preserved-at-create (not reassigned).
 - C3 complex-form (US3): RefType 1, multi-component + primary subset, `ComplexEntryTypesRS`.
 - C4: in-closure reproduced (0 drop) vs out-of-closure reported (1 drop each); Preview/Move
   parity.
