@@ -221,6 +221,76 @@ def test_entry_with_no_entry_refs_still_emits_nothing():
     assert dropped == []
 
 
+# ============================================================================
+# Cycle-8 hotfix -- #28 layer-2 cast gap in `_entry_ref_is_reproducible`
+# (T025 live finding): a ComponentLexemesRS/PrimaryLexemesRS member taken
+# straight from the source ref is a BARE ICmObject on live LCM -- its
+# LexemeFormOA is invisible until cast to ILexEntry (`_cast_lcm`, the same
+# #28-layer-2 idiom `_run_entryref_create_pass` already uses on the target
+# entry/ref). Without the cast, `_affix_type_of(bare)` reads
+# `getattr(bare, "LexemeFormOA", None)` -> None -> (False, False) -> the ref
+# is wrongly judged out-of-closure -> a false-positive DroppedItemRecord.
+# Live proof: all 6 Ejagham Mini variant refs were fully reproduced
+# (container + component + variant type) yet all 6 were reported dropped
+# (specs/027-complex-forms-variants/verification-log.md). The offline
+# `_FakeEligibleEntry`/`_FakeIneligibleEntry` fakes above expose LexemeFormOA
+# directly (no cast needed), so T019/T021 pass green and cannot catch this --
+# this test models the member as a `_Bare`/`_Typed` pair (issue #28 layer-2
+# tripwire shape, mirrored from test_027_entryref_reproduction.py's T009)
+# under the SAME `_stub_lcm_full` fixture used elsewhere in this file, so
+# `_cast_lcm` actually casts instead of falling back to the identity path.
+# ============================================================================
+
+class _Bare:
+    """Bare ICmObject stand-in for a component/primary lexeme: exposes
+    `.guid`; typed members (`LexemeFormOA`) stay hidden until the object is
+    cast to the interface whose stubbed view carries them."""
+
+    def __init__(self, guid, views=None) -> None:
+        self.guid = guid
+        self._views = dict(views or {})
+
+
+class _Typed:
+    """A cast 'view' exposing the typed members `ILexEntry` declares."""
+
+    def __init__(self, guid, **members) -> None:
+        self.guid = guid
+        for k, v in members.items():
+            setattr(self, k, v)
+
+
+def test_entry_ref_reproducible_casts_bare_component_before_affix_check(
+        _stub_lcm_full) -> None:
+    """A variant ref whose sole component is a BARE object -- eligible
+    (LexemeFormOA + eligible MorphTypeRA) ONLY once cast to `ILexEntry` --
+    must still be judged reproducible (0 dropped records) once
+    `_entry_ref_is_reproducible` casts each member before calling
+    `_affix_type_of`.
+
+    RED (pre-fix, observed): `_entry_ref_is_reproducible` calls
+    `_affix_type_of` directly on the uncast bare member; `getattr(bare,
+    "LexemeFormOA", None)` is None (hidden until cast) -> `_affix_type_of`
+    returns (False, ...) -> the ref is judged NOT reproducible -> exactly 1
+    false-positive `DroppedItemRecord` -- `assert dropped == []` fails
+    (`assert [<DroppedItemRecord ...>] == []`).
+
+    GREEN (post-fix): each member is cast via `_cast_lcm(m, "ILexEntry")`
+    first, surfacing the typed view's LexemeFormOA/MorphTypeRA -> the ref
+    IS reproducible -> 0 dropped records."""
+    component_view = _Typed("comp-cast-1", LexemeFormOA=_FakeLexemeForm())
+    bare_comp = _Bare("comp-cast-1", views={"ILexEntry": component_view})
+    vtype = _FakePossibilityType("vtype-cast-1", name="Dialectal Variant")
+    ref = _FakeLexEntryRef("ref-cast-1", ref_type=0, components=[bare_comp],
+                            variant_types=[vtype])
+    entry = _FakeSourceEntry("entry-cast-1", entry_refs=[ref])
+
+    dropped: list = []
+    categories._report_dropped_entry_refs(entry, dropped)
+
+    assert dropped == []
+
+
 # ----------------------------------------------------------------------------
 # C5 -- Move/Preview drop-set parity, re-proven under the new policy.
 # ----------------------------------------------------------------------------

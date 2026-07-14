@@ -4426,10 +4426,20 @@ def _entry_ref_is_reproducible(ref) -> bool:
     when in fact it will not exist on the target for this run. The
     run-scoped fix (threading selection state into this check) is
     tracked as a post-merge follow-up; see
-    specs/027-complex-forms-variants/research.md Decision 5 addendum."""
+    specs/027-complex-forms-variants/research.md Decision 5 addendum.
+
+    #28 LAYER-2 CAST (cycle-8 hotfix): each member is a bare `ICmObject` on
+    live LCM -- `getattr(m, "LexemeFormOA", None)` is invisible until `m` is
+    cast to `ILexEntry` (same idiom as `_cast_lcm`'s other call sites in
+    this module). Without the cast every member reads as (False, ...),
+    every ref with a non-empty component/primary set is misjudged
+    out-of-closure, and `_report_dropped_entry_refs` emits a false-positive
+    `DroppedItemRecord` for every reproducible ref (T025 live finding: all
+    6 Ejagham Mini variant refs were fully reproduced yet all 6 were
+    reported dropped)."""
     members = (list(getattr(ref, "ComponentLexemesRS", None) or [])
                + list(getattr(ref, "PrimaryLexemesRS", None) or []))
-    return all(_affix_type_of(m)[0] for m in members)
+    return all(_affix_type_of(_cast_lcm(m, "ILexEntry"))[0] for m in members)
 
 
 def _report_dropped_entry_refs(src_entry, dropped) -> None:
