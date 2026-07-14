@@ -226,6 +226,9 @@ def _install_fake_lcm(monkeypatch) -> types.ModuleType:
     class IMoMorphTypeFactory(_IdentityCast):
         pass
 
+    class ILexEntryTypeFactory(_IdentityCast):
+        pass
+
     fake_lcm = types.ModuleType("SIL.LCModel")
     fake_lcm.ICmPossibilityFactory = ICmPossibilityFactory
     fake_lcm.ICmPossibility = ICmPossibility
@@ -233,6 +236,12 @@ def _install_fake_lcm(monkeypatch) -> types.ModuleType:
     fake_lcm.ICmSemanticDomainFactory = ICmSemanticDomainFactory
     fake_lcm.ICmAnthroItemFactory = ICmAnthroItemFactory
     fake_lcm.IMoMorphTypeFactory = IMoMorphTypeFactory
+    # 027 US2/US3 (contract C3): VariantEntryTypesRS/ComplexEntryTypesRS
+    # (ItemClsid 5118) route through ILexEntryTypeFactory -- added to the
+    # CREATE arm's unconditional `from SIL.LCModel import (...)` alongside
+    # the other 6, so every fake stub of that module needs this attribute
+    # too, even tests (like this one) that never exercise clsid 5118.
+    fake_lcm.ILexEntryTypeFactory = ILexEntryTypeFactory
 
     fake_system = types.ModuleType("System")
     fake_system.Guid = types.SimpleNamespace(Parse=lambda s: s)

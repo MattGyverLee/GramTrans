@@ -365,6 +365,9 @@ def _install_fake_lcm(monkeypatch) -> types.ModuleType:
     class IMoMorphTypeFactory(_IdentityCast):
         pass
 
+    class ILexEntryTypeFactory(_IdentityCast):
+        pass
+
     fake_lcm = types.ModuleType("SIL.LCModel")
     fake_lcm.ICmPossibilityFactory = ICmPossibilityFactory
     fake_lcm.ICmPossibility = ICmPossibility
@@ -372,6 +375,10 @@ def _install_fake_lcm(monkeypatch) -> types.ModuleType:
     fake_lcm.ICmSemanticDomainFactory = ICmSemanticDomainFactory
     fake_lcm.ICmAnthroItemFactory = ICmAnthroItemFactory
     fake_lcm.IMoMorphTypeFactory = IMoMorphTypeFactory
+    # 027 US2/US3 (contract C3): added to the CREATE arm's unconditional
+    # `from SIL.LCModel import (...)` -- see test_reference_create_paths.py's
+    # sibling fixture for the same addition.
+    fake_lcm.ILexEntryTypeFactory = ILexEntryTypeFactory
 
     fake_system = types.ModuleType("System")
     fake_system.Guid = types.SimpleNamespace(Parse=lambda s: s)
