@@ -549,18 +549,19 @@ def test_show_complex_forms_in_always_resolves_regardless_of_ref_type(_stub_lcm_
 
 
 # ============================================================================
-# T014 -- Principle-I GUID-remap-at-create; existing GOLD item linked never
-# overwritten (the same divergent-GOLD shape as above, restated to name the
-# invariant explicitly per the task's own wording).
+# T014 -- Principle-I GUID-preserved-at-create (not reassigned); existing
+# GOLD item linked never overwritten (the same divergent-GOLD shape as
+# above, restated to name the invariant explicitly per the task's own
+# wording).
 # ============================================================================
 
 def test_gold_reserved_entry_type_guid_remapped_at_creation(_stub_lcm_full) -> None:
     """A GOLD/reserved-flagged source entry-type absent from the target is
-    still created with its GUID PRESERVED (remapped 1:1, never a fresh
-    random target GUID) -- Principle I. CREATE does not consult
-    `IsProtected` at all (protection only gates an EXISTING diverged
-    target item); this proves the create path itself never mints a new
-    identity for a reserved concept."""
+    still created with its GUID PRESERVED (not reassigned -- 1:1 via
+    factory.Create(parsed_guid), never a fresh random target GUID) --
+    Principle I. CREATE does not consult `IsProtected` at all (protection
+    only gates an EXISTING diverged target item); this proves the create
+    path itself never mints a new identity for a reserved concept."""
     entry = _FakeTargetEntry("entry-7")
     lexdb = _FakeLexDb(variant_types=[])  # absent on target
     target = _FakeTarget({"entry-7": entry}, lexdb)

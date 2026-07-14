@@ -349,14 +349,23 @@ CLASSIFICATION: dict[tuple[str, str], Classification] = {
     # ---- LexEntry --------------------------------------------------------
     ("LexEntry", "EntryRefsOS"): Classification(
         Bucket.DROP_REPORTED,
-        "categories._report_dropped_entry_refs (categories.py:4060), called "
-        "from _walk_lex_entry_closure (Move, categories.py:4089+) and "
+        "027-complex-forms-variants now CREATES in-closure LexEntryRef "
+        "containers via categories._create_entryref_container / "
+        "_run_entryref_create_pass (categories.py:5014/5041, using the raw "
+        "ILexEntryRefFactory, categories.py:5026-5031) -- COPIED for those. "
+        "Any remaining not-reproducible ref is reported via "
+        "categories._report_dropped_entry_refs (categories.py:4435), called "
+        "from _walk_lex_entry_closure (Move, categories.py:4535+) and "
         "_plan_entry_reference_decisions (Preview) -- one DroppedItemRecord "
         "per un-reproduced LexEntryRef owned by the entry",
-        note="cycle-16 lead adjudication: no ILexEntryRefFactory create "
-             "site exists anywhere in Lib/*.py; routed to "
-             "027-complex-forms-variants for eventual reproduction. "
-             "Subsumes LexEntryRef.{ComponentLexemesRS, PrimaryLexemesRS, "
+        note="cycle-16 lead adjudication (no ILexEntryRefFactory create "
+             "site) has been SUPERSEDED by 027-complex-forms-variants, "
+             "which added that create site. Bucket stays DROP_REPORTED "
+             "because a residual, not-reproducible-per-"
+             "_entry_ref_is_reproducible subset is still reported, not "
+             "silently dropped -- see that function's docstring for a "
+             "documented leaf-pick-selection-scope caveat. Subsumes "
+             "LexEntryRef.{ComponentLexemesRS, PrimaryLexemesRS, "
              "VariantEntryTypesRS, ComplexEntryTypesRS, "
              "ShowComplexFormsInRS} -- see those rows.",
     ),
@@ -619,46 +628,76 @@ CLASSIFICATION: dict[tuple[str, str], Classification] = {
              "Vacuous on Ejagham Mini (0/106 allomorphs populate this).",
     ),
 
-    # ---- LexEntryRef (SUBSUMED by parent LexEntry.EntryRefsOS drop) -------
+    # ---- LexEntryRef (SUBSUMED by parent LexEntry.EntryRefsOS row) --------
     ("LexEntryRef", "ComponentLexemesRS"): Classification(
         Bucket.DROP_REPORTED,
         "SAME emission site as LexEntry.EntryRefsOS: "
-        "categories._report_dropped_entry_refs (categories.py:4060)",
-        note="subsumed by parent EntryRefsOS drop record -- no LexEntryRef "
-             "is ever created, so this field cannot exist independently of "
-             "that drop; no separate DroppedItemRecord is emitted for it.",
+        "categories._report_dropped_entry_refs (categories.py:4435); "
+        "reproducible refs are instead COPIED via "
+        "categories._run_entryref_create_pass (categories.py:5041)",
+        note="subsumed by the parent EntryRefsOS row -- "
+             "027-complex-forms-variants added the LexEntryRef create site "
+             "(_create_entryref_container, categories.py:5014, using "
+             "ILexEntryRefFactory), so this field IS created when its "
+             "owning ref is reproducible; a not-reproducible ref's fields "
+             "get no separate DroppedItemRecord (subsumed by the one "
+             "emitted for the owning EntryRefsOS row).",
     ),
     ("LexEntryRef", "PrimaryLexemesRS"): Classification(
         Bucket.DROP_REPORTED,
         "SAME emission site as LexEntry.EntryRefsOS: "
-        "categories._report_dropped_entry_refs (categories.py:4060)",
-        note="subsumed by parent EntryRefsOS drop record -- no LexEntryRef "
-             "is ever created, so this field cannot exist independently of "
-             "that drop; no separate DroppedItemRecord is emitted for it.",
+        "categories._report_dropped_entry_refs (categories.py:4435); "
+        "reproducible refs are instead COPIED via "
+        "categories._run_entryref_create_pass (categories.py:5041)",
+        note="subsumed by the parent EntryRefsOS row -- "
+             "027-complex-forms-variants added the LexEntryRef create site "
+             "(_create_entryref_container, categories.py:5014, using "
+             "ILexEntryRefFactory), so this field IS created when its "
+             "owning ref is reproducible; a not-reproducible ref's fields "
+             "get no separate DroppedItemRecord (subsumed by the one "
+             "emitted for the owning EntryRefsOS row).",
     ),
     ("LexEntryRef", "VariantEntryTypesRS"): Classification(
         Bucket.DROP_REPORTED,
         "SAME emission site as LexEntry.EntryRefsOS: "
-        "categories._report_dropped_entry_refs (categories.py:4060)",
-        note="subsumed by parent EntryRefsOS drop record -- no LexEntryRef "
-             "is ever created, so this field cannot exist independently of "
-             "that drop; no separate DroppedItemRecord is emitted for it.",
+        "categories._report_dropped_entry_refs (categories.py:4435); "
+        "reproducible refs are instead COPIED via "
+        "categories._run_entryref_create_pass (categories.py:5041)",
+        note="subsumed by the parent EntryRefsOS row -- "
+             "027-complex-forms-variants added the LexEntryRef create site "
+             "(_create_entryref_container, categories.py:5014, using "
+             "ILexEntryRefFactory), so this field IS created when its "
+             "owning ref is reproducible; a not-reproducible ref's fields "
+             "get no separate DroppedItemRecord (subsumed by the one "
+             "emitted for the owning EntryRefsOS row).",
     ),
     ("LexEntryRef", "ComplexEntryTypesRS"): Classification(
         Bucket.DROP_REPORTED,
         "SAME emission site as LexEntry.EntryRefsOS: "
-        "categories._report_dropped_entry_refs (categories.py:4060)",
-        note="subsumed by parent EntryRefsOS drop record -- no LexEntryRef "
-             "is ever created, so this field cannot exist independently of "
-             "that drop; no separate DroppedItemRecord is emitted for it.",
+        "categories._report_dropped_entry_refs (categories.py:4435); "
+        "reproducible refs are instead COPIED via "
+        "categories._run_entryref_create_pass (categories.py:5041)",
+        note="subsumed by the parent EntryRefsOS row -- "
+             "027-complex-forms-variants added the LexEntryRef create site "
+             "(_create_entryref_container, categories.py:5014, using "
+             "ILexEntryRefFactory), so this field IS created when its "
+             "owning ref is reproducible; a not-reproducible ref's fields "
+             "get no separate DroppedItemRecord (subsumed by the one "
+             "emitted for the owning EntryRefsOS row).",
     ),
     ("LexEntryRef", "ShowComplexFormsInRS"): Classification(
         Bucket.DROP_REPORTED,
         "SAME emission site as LexEntry.EntryRefsOS: "
-        "categories._report_dropped_entry_refs (categories.py:4060)",
-        note="subsumed by parent EntryRefsOS drop record -- no LexEntryRef "
-             "is ever created, so this field cannot exist independently of "
-             "that drop; no separate DroppedItemRecord is emitted for it.",
+        "categories._report_dropped_entry_refs (categories.py:4435); "
+        "reproducible refs are instead COPIED via "
+        "categories._run_entryref_create_pass (categories.py:5041)",
+        note="subsumed by the parent EntryRefsOS row -- "
+             "027-complex-forms-variants added the LexEntryRef create site "
+             "(_create_entryref_container, categories.py:5014, using "
+             "ILexEntryRefFactory), so this field IS created when its "
+             "owning ref is reproducible; a not-reproducible ref's fields "
+             "get no separate DroppedItemRecord (subsumed by the one "
+             "emitted for the owning EntryRefsOS row).",
     ),
 
     # ---- LexReference ------------------------------------------------------

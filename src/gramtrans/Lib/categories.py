@@ -4409,9 +4409,24 @@ def _lex_entry_ref_identity_label(ref, kind: str) -> str:
 
 def _entry_ref_is_reproducible(ref) -> bool:
     """027 contract C4: True iff every ComponentLexemesRS/PrimaryLexemesRS
-    member of `ref` is itself STEMS/AFFIXES-eligible (`_affix_type_of`),
-    i.e. will exist on the target once this run's create-then-wire tail
-    completes. A ref with 0 components/primaries is trivially True."""
+    member of `ref` is itself STEMS/AFFIXES-eligible (`_affix_type_of`).
+    A ref with 0 components/primaries is trivially True.
+
+    CAVEAT (known limitation, deferred post-merge): this check is
+    INTRINSIC/type-scoped only -- it asks "could this member ever be
+    copied" (`_affix_type_of`), not "will this member actually be
+    copied on THIS run". It does not consult run-scoped leaf-pick
+    selection membership (`selection.leaf_picks_for`, selection.py
+    ~438-445), which further narrows what stems_enumerate_source /
+    affixes_enumerate_source actually enumerate on a leaf-pick-narrowed
+    run (categories.py ~5817-5838, ~5447). Consequently, on a run where
+    the user has narrowed the leaf-pick selection, a component/primary
+    that is structurally eligible but NOT selected for this run can be
+    misclassified here as reproducible ("will exist on the target"),
+    when in fact it will not exist on the target for this run. The
+    run-scoped fix (threading selection state into this check) is
+    tracked as a post-merge follow-up; see
+    specs/027-complex-forms-variants/research.md Decision 5 addendum."""
     members = (list(getattr(ref, "ComponentLexemesRS", None) or [])
                + list(getattr(ref, "PrimaryLexemesRS", None) or []))
     return all(_affix_type_of(m)[0] for m in members)
@@ -4605,9 +4620,12 @@ def _walk_lex_entry_closure(src_entry, context, tag, category, dropped=None):
         "LexEntry", src_entry, new_entry, target, tag, resolver_cache, dropped,
         ws_map=ws_map, source=context.source_handle, owner_guid=src_guid)
 
-    # Cycle-16 lead adjudication (DROP_REPORTED): EntryRefsOS is never
-    # reproduced (no ILexEntryRefFactory create site) -- report every
-    # un-reproduced LexEntryRef, never silently drop it. See
+    # 027-complex-forms-variants: EntryRefsOS is now reproduced for
+    # in-closure refs via the create-then-wire tail
+    # (`_run_entryref_create_pass` / `_create_entryref_container`, using
+    # `ILexEntryRefFactory`) -- this call reports the remainder: any
+    # `LexEntryRef` NOT reproducible per `_entry_ref_is_reproducible` is
+    # still DROP_REPORTED here, never silently dropped. See
     # `_report_dropped_entry_refs`'s own docstring.
     _report_dropped_entry_refs(src_entry, dropped)
 
@@ -5050,9 +5068,9 @@ def _run_entryref_create_pass(context, target, tag=None):
     `VariantEntryTypesRS` (RefType==0 only), `ComplexEntryTypesRS`
     (RefType==1 only), `ShowComplexFormsInRS` (always) -- through 024's
     generic `_apply_reference_fields` dispatch (three-way disposition:
-    absent -> create incl. ancestor chain, GUID-remapped, Principle I;
-    diverged custom -> update; diverged shared/GOLD -> link + report,
-    never overwritten; identical -> link). The per-ref source values come
+    absent -> create incl. ancestor chain, GUID-preserved (not reassigned)
+    per Principle I; diverged custom -> update; diverged shared/GOLD ->
+    link + report, never overwritten; identical -> link). The per-ref source values come
     straight off `rec["variant_entry_types"]`/`["complex_entry_types"]`/
     `["show_complex_forms_in"]` (live SOURCE items, gathered by
     `_stash_entry_bindings`) wrapped in a small synthetic namespace so the
