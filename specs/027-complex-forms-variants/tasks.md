@@ -103,13 +103,14 @@ an empty entry-type where the source had one.
 `ComplexEntryTypesRS`). Live proof deferred (no complex-form corpus).
 **Independent test**: quickstart §1 (US3 tests); live proof tracked follow-up.
 
-- [ ] T016 [P] [US3] RED: complex-form tests in `tests/unit/test_027_entryref_reproduction.py`
+- [x] T016 [P] [US3] RED: complex-form tests in `tests/unit/test_027_entryref_reproduction.py`
       — `RefType=1`, N components with M-primary subset, source order preserved.
-- [ ] T017 [P] [US3] RED: `ComplexEntryTypesRS` three-way resolution test in
+- [x] T017 [P] [US3] RED: `ComplexEntryTypesRS` three-way resolution test in
       `tests/unit/test_027_entry_type_resolve.py`.
-- [ ] T018 [US3] GREEN: extend C1/C3 to handle `RefType=1` (complex_entry_types →
+- [x] T018 [US3] GREEN: extend C1/C3 to handle `RefType=1` (complex_entry_types →
       `ComplexEntryTypesRS`; primaries subset) in `src/gramtrans/Lib/categories.py` — should
-      be parametric parity with US1/US2, no new create path.
+      be parametric parity with US1/US2, no new create path. **[DONE — parity already existed;
+      T018 confirmed no new production code needed, verified genuine by cycle-5 QC.]**
 
 ## Phase 6: Cross-cutting — drop policy & Preview parity
 

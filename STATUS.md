@@ -1,5 +1,69 @@
 # GramTrans — Session Handoff
 
+## ▶▶▶ Feature 027 — Complex Forms & Variants — SPURT 4 (Phase 5 US3, T016-T018) DONE; cycle-5 gate APPROVED (2026-07-13)
+
+**Worktree** `../GramTrans-027-complex-forms-variants` on branch `027-complex-forms-variants`
+@ **`ec40a32`** (clean; NOT merged; diff base `da06a5c`). **Handoff**:
+`specs/027-complex-forms-variants/.crew-handoff.json`. Cumulative tasks: **T001-T020 done**
+(Setup + Foundational + US1 MVP + US2/C3 + US3 complex-form + C4 drop-policy flip). Remaining:
+Phase 6 (T021-T022), Polish/live (T023-T027; T025 + US3-live are attended/needs_human).
+
+**Ralph-loop spurt 4 (LEX crew, cycles 4-5) — US3 = extend C1/C3 to RefType=1 complex-form ->
+`ComplexEntryTypesRS`. This was a TEST-ONLY spurt (`ec40a32` = 194 insertions across 2 test
+files, src/ untouched) because the production path was already parametric. VERDICT: APPROVE —
+both gates GREEN, Phase 5 US3 checkpoint CLOSED, no remediation.**
+
+- **Verification: PASS (all 4 items), no blockers.** Diffstat confirms `src/` genuinely untouched
+  (`da06a5c..ec40a32` = 2 test files, 194 insertions, 0 deletions). Targeted 027 suite **50 passed**;
+  full suite **1575 passed / 1 documented baseline fail** (`test_wizard_pos_grammar_wiring`,
+  non-regression) **/ 9 skipped / 14 xfailed / 14 xpassed** — exact match to programmer's numbers.
+  Both tripwires independently reproduced from scratch and reverted to a byte-clean worktree:
+  narrowing the C2 wiring loop (`categories.py:5215`) to `ComponentLexemesRS` only breaks exactly
+  T016's `PrimaryLexemesRS` assertion; forcing `ComplexEntryTypesRS` into `type_skip`
+  unconditionally (`categories.py:5155-5156`) breaks exactly the 5 T017 disposition tests, each with
+  empty `ComplexEntryTypesRS` — genuine discriminators, not narrative artifacts.
+- **QC: 94/100 APPROVE, no P0/P1.** T016 (`test_027_entryref_reproduction.py`) genuinely pins
+  RefType=1 primary **subset** membership (strict list-equality, `lex_b` excluded), **independent
+  per-field source order** (primaries `c,a` vs components `a,b,c`), and **cross-field overlap** with
+  per-field membership guards — a real, previously-unexercised combination the sibling
+  phase3c test never covered. T017's four new tests mirror T013's variant matrix for
+  `ComplexEntryTypesRS` (absent->CREATE guid-preserved + landed in `ComplexEntryTypesOA.PossibilitiesOS`;
+  diverged-custom->UPDATE+LINK same object; diverged-GOLD->LINK+report, `Name` never overwritten,
+  `field_name=="ComplexEntryTypesRS"`; identical->LINK-only), plus a negative-path routing test that
+  `VariantEntryTypesOA` is never touched for a RefType=1 ref. **T018 "no production code needed"
+  independently verified genuine** against `categories.py:5026-5240` + `references.py:150-294,1000-1070`:
+  `ComplexEntryTypesRS -> ComplexEntryTypesOA` (NOT `VariantEntryTypesOA`); both share the
+  `ItemClsid=5118 -> ILexEntryTypeFactory` CREATE arm (list-shape-driven, not RefType-driven); the
+  only RefType-aware code is the single-point `type_skip` branch in `categories.py`; and the C2
+  wiring loop reads each field's own list with a per-field guard, so primaries are wired independently
+  of components (never assumes `primaries == components`).
+- **Two NEW P2 findings (test-fixture DRY only, non-blocking, non-gating):** `_FakeRefSeq` /
+  guid-only fake / `_ctx_create_and_wire` now duplicated near-identically across three test files;
+  this cycle added a third copy rather than sharing (and the same conceptual fake is named `_FakeObj`
+  in one file, `_FakeLexeme` in another). Suggested low-priority cleanup: extract
+  `tests/unit/_fixtures_lexentry_ref.py`. No functional risk. Folded forward.
+- **Carried-forward and still OPEN (gating feature_complete, NOT US3):** P1a (leaf-pick scope in
+  `_entry_ref_is_reproducible`, categories.py:4410-4417), P1b/c (stale `fidelity_census.py` audit map
+  + inline comment categories.py:4608-4611), and the `mcp_deviation` (C3 live list-shape claims must be
+  re-confirmed via FLExToolsMCP at/before T025). See `.crew-handoff.json` `open_items`.
+- Reports: `specs/027-complex-forms-variants/reviews/cycle5-verification.md`,
+  `specs/027-complex-forms-variants/reviews/cycle5-qc.md`.
+
+**Next checkpoint (spurt 5): Phase 6 T021-T022**, then the two folded-forward P1s in one pass before
+the feature-complete gate. T021 = Preview/Move parity for the RefType=1 complex-form path (mirror the
+variant-path parity coverage); T022 = empty-source regression (no complex-form refs -> no
+`ComplexEntryTypesRS` create/wire, byte-identical to a 024-only run). TDD RED-before-GREEN. Then fold
+the P1a documented-limitation note into research.md Decision 5 and refresh `fidelity_census.py`
+(create site now `categories.py:5122`; C1/C2 reproduce Component/Primary in-closure; C3 gives the
+three type/show fields CREATE/UPDATE/LINK disposition) + the stale inline comment, in a single
+follow-up commit.
+
+**⚠️ NOT part of the autonomous spurts (attended / needs_human):** T025 (destructive live `0 → N`
+Move proof, SC-001/002/003/004; also the FLExToolsMCP re-confirmation of C3 list shapes) and the
+US3 complex-form live proof (T026 follow-up). Reaching those → emit `needs_human` and stop.
+
+---
+
 ## ▶▶▶ Feature 027 — Complex Forms & Variants — SPURT 3 (US2/C3 + Phase 6 C4 + P1 fold) DONE; cycle-3 gate CONDITIONAL-APPROVED (2026-07-13)
 
 **Worktree** `../GramTrans-027-complex-forms-variants` on branch `027-complex-forms-variants`
