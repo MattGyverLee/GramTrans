@@ -135,12 +135,20 @@ an empty entry-type where the source had one.
 
 ## Phase 7: Polish & Live Validation
 
-- [ ] T023 Run the full offline suite (`python -m pytest tests/unit -q`); confirm green
+- [x] T023 Run the full offline suite (`python -m pytest tests/unit -q`); confirm green
       modulo the documented `test_wizard_pos_grammar_wiring` baseline fail; confirm each new
-      RED test is a genuine tripwire (breaks when its fix is reverted).
-- [ ] T024 [P] Author `scratchpad/run27_live.py` (restore → diagnose → Move → re-Move →
+      RED test is a genuine tripwire (breaks when its fix is reverted). **[DONE — 1579 passed,
+      only the documented baseline fail. Tripwires confirmed by temporary revert: reverting the
+      C4 flip (`_entry_ref_is_reproducible` → False) fails T019 + both T021 C5 tests; reverting
+      C1 (`_create_entryref_container` → None) fails T007-T009 + T021 created-set parity. Source
+      tree restored clean after each revert.]**
+- [x] T024 [P] Author `scratchpad/run27_live.py` (restore → diagnose → Move → re-Move →
       diagnose), modeled on `run031_live.py` + the `run28_live.py` FLExToolsMCP
-      re-resolution probe; keep it attended-only (no unattended Move).
+      re-resolution probe; keep it attended-only (no unattended Move). **[DONE — worktree
+      34be1ad. Full Move (STEMS incl.) → reopen target RO → re-resolve every planned ref
+      binding, counting containers (SC-001 0→6), RefType (C1), VariantEntryTypesRS (C3), +
+      idempotent re-Move (SC-003). Casts via `_cast_lcm` (#28 layer 2). Compiles clean;
+      ATTENDED-ONLY, execution deferred to T025.]**
 - [ ] T025 **[ATTENDED / needs_human]** [US1][US2] Live `0 → N` proof (SC-001/002/003/004):
       restored target, attended Move `Ejagham Mini → Target`, FLExToolsMCP re-resolution
       confirms `LexEntryRef 0 → 6`, variant-type wired, re-Move 0-duplicate, out-of-closure
