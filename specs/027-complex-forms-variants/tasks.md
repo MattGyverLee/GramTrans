@@ -120,11 +120,18 @@ an empty entry-type where the source had one.
 - [x] T020 GREEN: flip `_report_dropped_entry_refs` (C4) in `src/gramtrans/Lib/categories.py`
       from report-all to report-only-un-reproduced; keep it called identically from
       `_walk_lex_entry_closure` (Move) and `_plan_entry_reference_decisions` (Preview).
-- [ ] T021 [P] Preview-parity test (C5): a Preview run followed by a Move run over the same
+- [x] T021 [P] Preview-parity test (C5): a Preview run followed by a Move run over the same
       `Ejagham Mini` selection produces the same created-ref set and the same dropped-record
-      set; Preview writes nothing (byte-unchanged; Principle III).
-- [ ] T022 [P] Empty-source regression (C7): a source with 0 `LexEntryRef` yields 0 new
-      objects and 0 new dropped records vs. a 024-only baseline (FR-011, SC-005).
+      set; Preview writes nothing (byte-unchanged; Principle III). **[DONE — 2 tests in
+      `tests/unit/test_027_never_silent.py`: `test_c5_preview_move_created_and_dropped_set_parity`
+      (6 all-in-closure variant refs → 6 created == planned, 0 dropped, Preview mutates
+      neither source nor target) + `test_c5_created_ref_set_is_disjoint_from_dropped_set`
+      (mixed in/out-of-closure → same partition both modes). Green.]**
+- [x] T022 [P] Empty-source regression (C7): a source with 0 `LexEntryRef` yields 0 new
+      objects and 0 new dropped records vs. a 024-only baseline (FR-011, SC-005). **[DONE — 2
+      tests in `tests/unit/test_027_never_silent.py`: `test_c7_empty_source_gathers_no_create_bindings`
+      (no binding keys added — byte-identical plan) + `test_c7_empty_source_creates_nothing_and_reports_nothing`
+      (0 created, 0 skips, 0 drops both modes). Green.]**
 
 ## Phase 7: Polish & Live Validation
 
