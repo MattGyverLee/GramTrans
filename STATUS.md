@@ -1,5 +1,65 @@
 # GramTrans — Session Handoff
 
+## ▶▶▶ Feature 027 — Complex Forms & Variants — SPURT 3 (US2/C3 + Phase 6 C4 + P1 fold) DONE; cycle-3 gate CONDITIONAL-APPROVED (2026-07-13)
+
+**Worktree** `../GramTrans-027-complex-forms-variants` on branch `027-complex-forms-variants`
+@ **`da06a5c`** (clean; NOT merged). **Handoff**:
+`specs/027-complex-forms-variants/.crew-handoff.json`. Cumulative tasks: **T001-T015 + T019-T020
+done** (Setup + Foundational + US1 MVP + US2/C3 + C4 drop-policy flip). Remaining: US3 (T016-T018),
+Phase 6 (T021-T022), Polish/live (T023-T027; T025 + US3-live are attended/needs_human).
+
+**Ralph-loop spurt 3 was committed by a prior agent as `da06a5c` but that agent died before
+running the gate; this spurt ran the deferred cycle-3 verification + QC gate over da06a5c and
+closed the checkpoint. VERDICT: CONDITIONAL APPROVE — gate PASSES, no remediation spurt before US3.**
+
+- **Verification: PASS (all 4 items), no blockers.** Offline suite **1 failed / 1570 passed /
+  9 skipped / 14 xfailed / 14 xpassed** — sole failure is the documented baseline
+  `test_wizard_pos_grammar_wiring` (non-regression). Targeted 027 suite **52 passed** exactly as
+  claimed. RED-before-GREEN confirmed genuine: reverting T015's GREEN hunk turns all **8/8**
+  `test_027_entry_type_resolve.py` tests RED (three-way disposition + both GOLD GUID-remap tests),
+  zero collateral; reverting T020's GREEN hunk turns the **3/3 discriminating** T019 tests RED
+  (the other 3 in that file are non-discriminating by design, correctly). Worktree restored
+  byte-identical to da06a5c.
+- **QC: 83/100 CONDITIONAL, no P0.** C3 three-way disposition (T015), Principle-I GOLD GUID-remap
+  enforced in production not just tested (T014), C4 drop-policy flip (T020), the P1 DRY fold
+  (`_safe_add_to_owner`, the exact cycle-2 recommendation, now with a branch test), and the 3 new
+  `ReferenceFieldSpec` rows + 5118 `ILexEntryTypeFactory` arm all PASS. Every new path degrades to
+  Skip/DroppedItemRecord, never crashes or goes silent.
+
+- **Two P1 audit-trail findings — FOLDED FORWARD (gating feature_complete, NOT US3):**
+  - **P1-a (leaf-pick scope):** `_entry_ref_is_reproducible` (categories.py:4410-4417) checks
+    intrinsic type-eligibility, not run-scoped `leaf_picks_for(...)` membership, so a
+    leaf-pick-narrowed run can under-report drops -> `compute_fidelity_by_guid` over-reports
+    fidelity for the owning entry. Not an overall silent loss (`_run_post_pass_a` still emits
+    `Skip(DEPENDENCY_UNRESOLVED)` on a different channel), but the per-object census is wrong in
+    that case. Min fix: documented-limitation note in research.md Decision 5 / C4 contract; ideal:
+    thread run selection through `_report_dropped_entry_refs`.
+  - **P1-b/c (stale audit map):** `tests/verification/fidelity_census.py` (LexEntry.EntryRefsOS +
+    all 5 LexEntryRef.* rows) and one inline comment (categories.py:4608-4611) still claim "no
+    LexEntryRef is ever created" — false post-027. Best refreshed in ONE pass **after US3**, since
+    US3 finalizes the same field family.
+- **Verification doc-gaps (bookkeeping, tied to T025):** the cited C3 read-only probe
+  `scratchpad/probe_c3_lists.py` does not exist on disk, and the "cycle-3 report" the commit points
+  to was never written — the only durable record of the MCP deviation is `.crew-handoff.json` +
+  `cycle3-verification.md`. Code is independently verified offline; the live list-shape claims
+  (ItemClsid=5118/Depth=127; ItemClsid=7/Depth=1) must be re-confirmed via **FLExToolsMCP** (per
+  repo rule) at or before T025, not left resting on prose.
+- Reports: `specs/027-complex-forms-variants/reviews/cycle3-verification.md`,
+  `specs/027-complex-forms-variants/reviews/cycle3-qc.md`.
+
+**Next checkpoint (spurt 4): Phase 5 US3 (T016-T018) then Phase 6 T021-T022.** US3 = extend
+C1/C3 to RefType=1 `complex_entry_types` -> `ComplexEntryTypesRS`: author T016/T017 RED
+(disposition + parametric parity with the variant path), then T018 GREEN (reuse the 5118 factory
+arm + generic `_apply_reference_fields` dispatch; NO new create path). Then T021 Preview/Move
+parity + T022 empty-source regression. Fold the P1-a limitation note into research.md and the
+P1-b/c fidelity_census refresh into a single follow-up commit before the feature-complete gate.
+
+**⚠️ NOT part of the autonomous spurts (attended / needs_human):** T025 (destructive live `0 → N`
+Move proof, SC-001/002/003/004; also the FLExToolsMCP re-confirmation of C3 list shapes) and the
+US3 complex-form live proof (T026 follow-up). Reaching those → emit `needs_human` and stop.
+
+---
+
 ## ▶▶▶ Feature 027 — Complex Forms & Variants — SPURT 2 (Phase 3 US1 MVP) DONE; gates GREEN (2026-07-13)
 
 **Worktree** `../GramTrans-027-complex-forms-variants` on branch `027-complex-forms-variants`

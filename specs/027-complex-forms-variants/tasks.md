@@ -84,12 +84,12 @@ lexemes, so `Ejagham Mini`'s 6 variant refs land on the target (`0 → 6`).
 `ShowComplexFormsInRS`) via 024's three-way disposition, concept↔GUID preserved.
 **Independent test**: quickstart §1 (C3 tests) + live SC-002.
 
-- [ ] T013 [P] [US2] RED: in `tests/unit/test_027_entry_type_resolve.py`, three-way
+- [x] T013 [P] [US2] RED: in `tests/unit/test_027_entry_type_resolve.py`, three-way
       disposition tests over the entry-type list — absent → create incl. ancestor chain;
       diverged custom → update; diverged shared/GOLD → link + report; identical → link.
-- [ ] T014 [P] [US2] RED: Principle-I test — a GOLD/reserved entry-type is GUID-remapped at
+- [x] T014 [P] [US2] RED: Principle-I test — a GOLD/reserved entry-type is GUID-remapped at
       creation and an existing target GOLD item is linked, never overwritten.
-- [ ] T015 [US2] GREEN: implement C3 resolution in `src/gramtrans/Lib/categories.py` —
+- [x] T015 [US2] GREEN: implement C3 resolution in `src/gramtrans/Lib/categories.py` —
       route `variant_entry_types` / `show_complex_forms_in` through
       `references.decide_reference`/`apply_reference` against the target lists; unresolved →
       `DroppedItemRecord`.
@@ -113,10 +113,10 @@ an empty entry-type where the source had one.
 
 ## Phase 6: Cross-cutting — drop policy & Preview parity
 
-- [ ] T019 RED: in `tests/unit/test_027_never_silent.py`, prove the C4 policy flip — an
+- [x] T019 RED: in `tests/unit/test_027_never_silent.py`, prove the C4 policy flip — an
       in-closure ref yields **0** `DroppedItemRecord` (reproduced); an out-of-closure
       component/type yields exactly **1** `DroppedItemRecord` (reported).
-- [ ] T020 GREEN: flip `_report_dropped_entry_refs` (C4) in `src/gramtrans/Lib/categories.py`
+- [x] T020 GREEN: flip `_report_dropped_entry_refs` (C4) in `src/gramtrans/Lib/categories.py`
       from report-all to report-only-un-reproduced; keep it called identically from
       `_walk_lex_entry_closure` (Move) and `_plan_entry_reference_decisions` (Preview).
 - [ ] T021 [P] Preview-parity test (C5): a Preview run followed by a Move run over the same

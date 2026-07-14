@@ -3,23 +3,29 @@
   "status": "in_progress",
   "worktree": "../GramTrans-027-complex-forms-variants",
   "branch": "027-complex-forms-variants",
-  "worktree_commit": "e8686c3",
+  "worktree_commit": "da06a5c",
   "merged": false,
-  "last_cycle": 2,
-  "spurts_completed": 2,
-  "tasks_done": ["T001", "T002", "T003", "T004", "T005", "T006", "T007", "T008", "T009", "T010", "T011", "T012"],
+  "last_cycle": 3,
+  "spurts_completed": 3,
+  "tasks_done": ["T001", "T002", "T003", "T004", "T005", "T006", "T007", "T008", "T009", "T010", "T011", "T012", "T013", "T014", "T015", "T019", "T020"],
   "gates": {
-    "verification": "PASS (4/4 items; RED-before-GREEN genuine; offline 1555 passed / 1 pre-existing baseline fail)",
-    "qc": "90/100 APPROVE (issue #28 cast/resolve guard PASS; no P0)"
+    "verification": "PASS (cycle 3 over da06a5c) — offline suite 1570 passed / 1 documented baseline fail (test_wizard_pos_grammar_wiring); targeted 027 suite 52 passed; T013/T014 (8/8) + T019 (3/3 discriminating) tripwires confirmed genuine RED-before-GREEN; worktree restored clean. No blockers.",
+    "qc": "83/100 CONDITIONAL (cycle 3 over da06a5c) — C3 three-way disposition (T015), GOLD GUID-remap (T014), C4 drop-policy flip (T020), P1 DRY fold, new ReferenceFieldSpec rows all PASS; no P0. Two P1 audit-trail findings folded forward (see open_items)."
   },
+  "gate_verdict_cycle3": "CONDITIONAL APPROVE — da06a5c's US2/C3 + C4 + P1-DRY code is correct and independently verified offline. No P0. Spurt 3 checkpoint CLOSED. The two P1s and two verification doc-gaps are folded forward as gating-for-feature-complete (NOT gating US3). No remediation spurt required before US3, per the established cycle-2 precedent of folding a P1 forward.",
+  "reconcile_note": "Prior agent committed spurt 3 (US2/C3 + Phase 6 C4 + P1 DRY fold) as da06a5c but died before ticking checkboxes / running the cycle-3 gate / updating STATUS.md + this handoff. Bookkeeping reconciled 2026-07-13; cycle-3 gate run and CONDITIONAL-APPROVED 2026-07-13.",
   "open_items": {
-    "P1_dry": "categories.py:5085-5092 inline Add-failure raise should reuse _safe_add_to_owner (categories.py:5956) + add one branch test; non-blocking, folded into spurt 3 alongside Phase 6 C4",
-    "P2_double_bookkeeping": "reproduced refs still reported dropped; resolved by C4 drop-policy flip (T020)"
+    "P1_dry": "RESOLVED in da06a5c — inline Add+raise at _run_entryref_create_pass replaced with _safe_add_to_owner + branch test.",
+    "P2_double_bookkeeping": "RESOLVED in da06a5c — C4 drop-policy flip (T019/T020) reproduces in-closure refs, reports only un-reproduced.",
+    "P1a_leafpick_scope": "OPEN — gating feature_complete, NOT US3. _entry_ref_is_reproducible (categories.py:4410-4417) checks INTRINSIC type-eligibility (_affix_type_of), not run-scoped selection.leaf_picks_for(...) membership, and its signature does not receive context/selection. A leaf-pick-narrowed run whose LexEntryRef references an excluded component is wrongly marked 'reproducible' -> no DroppedItemRecord -> compute_fidelity_by_guid over-reports fidelity for that entry. NOT a silent overall loss (_run_post_pass_a still emits Skip(DEPENDENCY_UNRESOLVED) via a different channel), but the per-object fidelity census this feature exists to compute is wrong in that scenario. Minimum fix: documented-limitation note in research.md Decision 5 / C4 contract. Ideal fix: thread run selection/pick-set through _report_dropped_entry_refs so membership (not just type eligibility) is checked.",
+    "P1bc_fidelity_census_stale": "OPEN — gating feature_complete, NOT US3. Best landed in ONE pass AFTER US3 (US3 finalizes the same LexEntryRef field family). tests/verification/fidelity_census.py CLASSIFICATION for the LexEntry.EntryRefsOS + LexEntryRef.* family (lines ~350-362, 622-662) still says 'no ILexEntryRefFactory create site exists' / 'no LexEntryRef is ever created' — false post-027 (create site at categories.py:5122). ComponentLexemesRS/PrimaryLexemesRS now reproduced in-closure (C1/C2); VariantEntryTypesRS/ComplexEntryTypesRS/ShowComplexFormsInRS now get CREATE/UPDATE/LINK disposition (C3), only falling to DROP_REPORTED in the diverged-protected/unresolved sub-case. Line-number citations also mechanically stale. Plus the duplicate inline stale comment at categories.py:4608-4611 (P1-c). Update bucket+site+note+line refs for the whole family in one follow-up.",
+    "P2_nits_cycle3": "OPTIONAL — categories.py:5086 defensive getattr(context,'source_handle') inconsistent with the direct-access norm this cycle established at 3610/4606; _OWNER_LABEL_FIELD has no LexEntryRef entry (blank owner_label on C3 dropped records, cosmetic); test_reference_create_paths.py:258-263 _ITEM_CLSID_FACTORY_CASES not extended with (5118,'ILexEntryTypeFactory') (covered end-to-end elsewhere).",
+    "mcp_deviation": "OPEN — bookkeeping tied to T025. da06a5c's C3 live-shape claims (VariantEntryTypesOA/ComplexEntryTypesOA ItemClsid=5118 Depth=127; PublicationTypesOA ItemClsid=7 Depth=1) rest on a read-only probe that DOES NOT EXIST on disk (scratchpad/probe_c3_lists.py absent in both repo and worktree), and the 'cycle-3 report' the commit message points to was never written (only .crew-handoff.json's mcp_deviation field + cycle3-verification.md record the deviation). Code is independently verified offline; live shape claims must be re-confirmed via FLExToolsMCP (per repo rule) at or before T025 rather than resting on prose. NON-BLOCKING for the gate."
   },
-  "next_checkpoint": "Checkpoint US2 (Phase 4, T013-T015) + Phase 6 C4 drop-policy flip (T019-T020), folding the P1 DRY fix",
-  "next_entry": "Author US2 RED tests T013 (three-way entry-type disposition) + T014 (GOLD GUID-remap Principle-I) first, then T015 GREEN (route variant_entry_types/show_complex_forms_in through references.decide_reference/apply_reference); then Phase 6 T019 RED + T020 GREEN flip of _report_dropped_entry_refs (C4), and refactor categories.py:5085-5092 to _safe_add_to_owner (P1).",
+  "next_checkpoint": "Phase 5 US3 (T016-T018): extend C1/C3 to RefType=1 complex_entry_types -> ComplexEntryTypesRS. Then Phase 6 T021-T022 (Preview/Move parity + empty-source regression). The two P1s land before the final feature-complete gate (fidelity_census update best done in one pass after US3).",
+  "next_entry": "Phase 5 US3: author T016/T017 RED (complex-form RefType=1 disposition + parametric parity with the variant path), then T018 GREEN (extend the existing create/resolve path to ComplexEntryTypesRS; no new create path — reuse the 5118 factory arm and the generic _apply_reference_fields dispatch). Then Phase 6 T021 Preview/Move parity + T022 empty-source regression. Fold P1a documented-limitation note into research.md Decision 5, and the P1b/c fidelity_census.py + inline-comment refresh into a single follow-up commit before the feature-complete gate.",
   "attended_only": {
-    "T025": "destructive live 0->N Move proof (SC-001/002/003/004) — needs_human, never unattended",
+    "T025": "destructive live 0->N Move proof (SC-001/002/003/004) — needs_human, never unattended; also re-confirm C3 list shapes via FLExToolsMCP to close mcp_deviation",
     "US3_live": "complex-form live proof (T026 follow-up) — needs_human"
   },
   "updated": "2026-07-13"
