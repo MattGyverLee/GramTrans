@@ -58,7 +58,10 @@ for MCP-indexer visibility (the indexer's static analysis doesn't follow inherit
 
 ### Install
 
-`pyproject.toml` declares `pyflexicon>=4.1`. Install from the local directory:
+`pyproject.toml` declares `pyflexicon>=4.1.1` (the floor at which
+`PhonFeatureOperations` implements `GetSyncableProperties`; below it,
+phonological-feature transfer raised `NotImplementedError`). Install from the
+local directory:
 
 ```powershell
 pip install -e D:/Github/_Projects/_LEX/flexlibs2
