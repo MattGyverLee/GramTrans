@@ -1,14 +1,44 @@
 # GramTrans — Session Handoff
 
-## ▶▶▶ Feature 026 — Texts & Wordforms — READY TO MERGE, HELD on attended live validation (2026-07-15)
+## ▶▶▶ Feature 026 — Texts & Wordforms — LIVE PROOF RUN: real defect found, NOT mergeable (2026-07-15)
+
+**Status: conflicts resolved + offline-GREEN, but the attended live proof FAILED US2/US3 —
+026 needs a fix before merge.** Full evidence:
+`specs/026-texts-wordforms/verification-log.md` (on the `026-texts-wordforms` worktree).
+
+**The CLR `run_module` runtime is UP** (was down 2026-07-12). Ran the deferred live validation
+(Ejagham Mini → disposable `Target`, `harness.restore`-restored) driving the real engine.
+
+- **US1 text structure: PASS + persisted** — texts `0 → 9`, 101 segments on fresh disk re-open.
+  (Drops = only the known `MoForm`/`CmTranslation` 024/025 backlog from STEMS.)
+- **US2/US3 analyses: FAIL — SILENT loss.** Source has **219 human-approved analyses / 540
+  `AnalysesRS` refs**; the Move reproduced **0 analyses and reported 0 drops.**
+- **Root cause (pinpointed live):** `wordforms._human_evaluation` (wordforms.py:246–264) relies
+  on `WfiAnalyses.GetHumanEvaluation` / a `GetHumanEvaluation`/`human_evaluation` attr — **none
+  exist on a live `IWfiAnalysis`** (`source.Wordforms.GetHumanEvaluation` → absent). So it returns
+  `None` for every analysis and `plan_analyses` (wordforms.py:337–343) skips each as "parser-only"
+  via `_log.debug` with **no `DroppedItemRecord`**. Same live-vs-fake divergence class as the 031
+  finding. Offline fakes expose the method, so unit tests passed.
+
+**⛔ FIX REQUIRED before 026 merge** (see verification-log.md §Fix): rework `_human_evaluation`
+to read live approval via `IWfiAnalysis.ApprovalStatusIcon` / `GetAgentOpinion(EvaluationsRC)`
+(keep the fake path); make a gate-miss on genuinely-evaluated data never-silent; add a
+live-shaped regression fake (no `GetHumanEvaluation`, only `ApprovalStatusIcon`/`EvaluationsRC`);
+then re-run this live proof (219 analyses expected, R2/R5 then exercisable). `Target` restored to
+clean. The main→026 conflict merge (`831eb68`) stands; only the analysis-gather fix + re-proof
+remain before merge.
+
+---
+
+### (superseded) Feature 026 — READY TO MERGE, HELD on attended live validation
 
 **Status: conflicts resolved, offline-GREEN, HELD for a live session.** The 026 worktree
 `../GramTrans-026-texts-wordforms` (branch `026-texts-wordforms`) was fully implemented (all 39
 tasks T001–T040 done, Phase 8 polish) but had diverged from `main` after 027 + 028 merged. This
 session brought it up to date and resolved the merge, but held the final merge-to-`main` per the
-user's decision, because the attended live-validation run **cannot be done in the current
-environment** (no flexicon/CLR runtime — same cause as the 6 `test_013_apply_syncable_signature`
-env-baseline failures).
+user's decision. *(The live-validation gate was then RUN — see the entry above; it surfaced the
+analysis-gather defect. My earlier claim that this environment had no CLR runtime was wrong: the
+FLExToolsMCP `run_module` path works.)*
 
 **Done this session:**
 - **Merged `main` → `026-texts-wordforms`** (merge commit **`831eb68`** on the worktree; branch now
