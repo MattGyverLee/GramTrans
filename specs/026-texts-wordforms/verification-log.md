@@ -174,4 +174,46 @@ text-apply gloss path to pin (a bounded next step).
 the verdict confirmation on a lexicon-complete target, and (minor) positional fidelity for
 punctuation / bare-wordform `AnalysesRS` slots.
 
+### Fix #6 (gloss Create signature) — US4 glosses now reproduce; + SC-005 idempotency finding
+
+A monkeypatch trace of `_apply_glosses` during a live Move pinned the gloss-apply gap:
+```
+[TRACE] calls=179 with_glosses=177 gl_ops_none=0 exc=283
+        exc_msg="TypeError: WfiGlossOperations.Create() missing 1 required positional argument: 'form'"
+```
+The live `WfiGlosses.Create(analysis, form, wsHandle=None)` requires the gloss form up front;
+`_apply_glosses` called `Create(analysis_obj)` alone, so all 283 creates raised `TypeError`
+(swallowed by `_safe`). **Fix #6:** create with the first mappable `(form, ws-handle)`, then
+`SetForm` the remaining writing systems; the offline `FakeWfiGlossOps.Create` was updated to the
+real 3-arg signature. Regression covered by `test_adjacent_data.py` (gloss reproduction).
+
+Re-proof (Ejagham Mini → Target): **WfiGlosses 0 → 282** persisted. Both originally-requested
+fixes are now proven end-to-end.
+
+**Live proof — final state (single Move, fresh disk open):**
+
+| Aspect | Result |
+|---|---|
+| Texts (US1) | 9 (persisted) ✓ |
+| Segments | 101 ✓ |
+| Analyses created (US2) | 179 ✓ |
+| `AnalysesRS` wired (R5) | 206 refs / 77 segments ✓ |
+| Glosses (US4) | 282 ✓ |
+| Verdicts (R2/FR-014) | 1 approved / 178 needs-review-no-verdict — correct given the target lexicon does not hold the referenced senses/MSAs (1532 morph-bundle drops); confirm HUMAN_APPROVED share rises on a lexicon-complete target |
+
+**NEW finding — SC-005 idempotency FAIL (not yet fixed):** a second Move against the
+already-populated target (no restore) grew WfiAnalyses **179 → 329** and WfiGlosses
+**282 → 522** (texts stayed 9). `apply_analyses` calls `wa_ops.Create(wordform)`
+unconditionally with no find-or-skip for an analysis already present on the target wordform, so
+re-runs duplicate analyses (and their glosses/bundles). Wordforms ARE deduped
+(`_find_or_create_wordform` uses `Find` first); analyses are not. **Fix needed before merge:**
+dedupe analyses by identity (e.g. skip when the target wordform already carries an equivalent
+analysis, or key an analysis-level find) so a re-Move is a no-op (SC-005). Distinct from the two
+gather/wiring fixes above.
+
+### Remaining before 026 merge
+1. **SC-005 idempotency:** analysis/gloss dedup on re-Move (above).
+2. **Verdict confirmation:** re-proof against a lexicon-complete target (expect more HUMAN_APPROVED).
+3. **Minor:** positional fidelity for punctuation / bare-wordform `AnalysesRS` slots.
+
 Target was restored to the clean backup after every run (left pristine).

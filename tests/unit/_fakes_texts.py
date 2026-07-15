@@ -446,9 +446,13 @@ class FakeWfiGlossOps:
     def GetHumanEvaluation(self, g):
         return getattr(g, "human_evaluation", None)
 
-    def Create(self, a):
+    def Create(self, a, form=None, wsHandle=None):
+        # Mirrors the real WfiGlossOperations.Create(analysis, form, wsHandle=None):
+        # the gloss form is required at creation.
         g = FakeGloss(guid="tgt-gloss")
         g.set_form = {}
+        if form is not None:
+            g.set_form[wsHandle] = form
         self.created.append(g)
         return g
 

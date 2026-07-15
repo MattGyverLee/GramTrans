@@ -646,7 +646,21 @@ def _apply_glosses(plan, target, analysis_obj, ctx, dropped) -> None:
     ws_map = dict(getattr(ctx, "_ws_map", None) or {})
     tgt_id2h = id_to_handle(target)
     for gplan in plan.glosses:
-        gloss = _texts._safe(lambda: gl_ops.Create(analysis_obj))
+        # The live `WfiGlosses.Create(analysis, form, wsHandle=None)` requires the
+        # gloss form up front (2026-07-15 live proof: calling Create(analysis)
+        # alone raised TypeError for all 283 glosses, swallowed by `_safe` -> 0
+        # glosses). Create with the first mappable (form, ws-handle), then SetForm
+        # the remaining writing systems.
+        first_form, first_h = _first_form_and_handle(gplan.forms, ws_map, tgt_id2h)
+        if not first_form:
+            dropped.append(DroppedItemRecord(
+                owner_kind="WfiGloss", owner_guid=gplan.source_guid or "?",
+                owner_label="", field_name="Form", item_name="",
+                item_guid="", reason="gloss form has no mappable writing system",
+            ))
+            continue
+        gloss = _texts._safe(
+            lambda f=first_form, hh=first_h: gl_ops.Create(analysis_obj, f, hh))
         if gloss is None:
             dropped.append(DroppedItemRecord(
                 owner_kind="WfiGloss", owner_guid=gplan.source_guid or "?",
@@ -654,6 +668,8 @@ def _apply_glosses(plan, target, analysis_obj, ctx, dropped) -> None:
                 item_guid="", reason="gloss create failed",
             ))
             continue
+        # Remaining writing systems (the first was set at Create; SetForm is
+        # idempotent for that WS, so re-setting it is harmless).
         for src_id, text in (gplan.forms or {}).items():
             tgt_id = ws_map.get(src_id, src_id) if ws_map else src_id
             h = tgt_id2h.get(tgt_id)
