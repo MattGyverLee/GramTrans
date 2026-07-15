@@ -1,15 +1,20 @@
 # GramTrans — Session Handoff
 
-## ▶▶▶ #28 MSA->slot producer port (FR-333) — FEATURE COMPLETE (all gates green + live proof PASS) (2026-07-15)
+## ▶▶▶ #28 MSA->slot producer port (FR-333) — DONE & MERGED (2026-07-15)
 
-**Branch/worktree:** `msa-slot-wiring-v2` @ `../GramTrans-msa-slot-wiring-v2`, HEAD `a4f3dae`
-(live proof) on fix `95cfb81` (`fix(preview): populate msa_slot_bindings via IMoInflAffMsa cast
-(FR-333, #28 MSA->slot leg)`). **No spec folder exists for this bug-fix** — STATUS.md +
-`.crew-handoff.json` on this branch are the durable handoff surface.
+**MERGED to `main` @ `a90f0a1`** (`--no-ff`, no conflicts, pushed to origin). Fix `95cfb81` +
+live-proof artifacts (`a4f3dae`). Worktree `../GramTrans-msa-slot-wiring-v2` removed. Merged-tree
+offline suite **1590 passed** modulo the documented `test_wizard_pos_grammar_wiring` baseline fail.
 
-**STATUS: `feature_complete`.** All offline crew gates GREEN and the attended live proof PASSES
-(the analog of 027's T025). Team Lead APPROVES merge, pending the outward-facing steps the main
-session confirms with the human (below).
+**Issues:** **#28 CLOSED** — both legs now proven live (`_run_post_pass_a`/LexEntryRef via 027;
+`_run_171_subpass`/MSA->slot here). Fast-follows filed: **#33** (selection-scope
+DEPENDENCY_UNRESOLVED noise on partial transfers), **#34** (live-cast-path unit coverage),
+**#35** (P2 cleanups) — all non-blocking.
+
+**Cleanup note:** the original stale worktree `../GramTrans-msa-slot-wiring` (branch
+`msa-slot-wiring` @ `7bbd052`, pre-025/027/031 base) is now SUPERSEDED — its FR-333 tip was ported
+here via `msa-slot-wiring-v2`. Safe to remove; its sibling tips (custom-field-ws, mbugwe-grammar-bugs)
+carry unrelated unmerged work.
 
 **✅ ATTENDED LIVE PROOF — PASS (2026-07-15, user-authorized, FLExToolsMCP active):**
 `Ejagham Mini -> Target` (restored from `Target 2026-07-06 0218.fwbackup`), driver
