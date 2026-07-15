@@ -1,7 +1,7 @@
 # Feature 026 — Texts & Wordforms — HANDOFF
 
-**Last updated:** 2026-07-15
-**Worktree:** `../GramTrans-026-texts-wordforms` on branch `026-texts-wordforms` @ **`4f99523`**
+**Last updated:** 2026-07-15 (session 2)
+**Worktree:** `../GramTrans-026-texts-wordforms` on branch `026-texts-wordforms` @ **`f4cfbee`**
 **Not merged to `main`.** Full evidence: [verification-log.md](./verification-log.md).
 
 ---
@@ -9,13 +9,19 @@
 ## TL;DR
 
 026 was fully implemented (T001–T040) but had **never been run end-to-end on live data** — it
-was unit-tested entirely against fakes. This session brought the branch up to date with `main`
-(027 + 028 had merged) and ran the attended live proof, which surfaced a **cascade of
-live-vs-fake defects** in the wordform/analysis path. **Six fixes** later, 026 reproduces
-texts + analyses + AnalysesRS wiring + glosses live. **Three items remain before merge**, the
-most important being an SC-005 idempotency bug.
+was unit-tested entirely against fakes. Session 1 brought the branch up to date with `main`
+(027 + 028 had merged) and ran the attended live proof, applying **six fixes**; it left an
+**SC-005 idempotency blocker** plus two smaller items.
 
-**Do NOT merge yet.** Finish the three remaining items below, then merge.
+**Session 2 (this session) FIXED and LIVE-PROVED SC-005.** A re-Move is now a byte-identical
+no-op. The blocker turned out to be *two* cascading idempotency gaps — analysis-level (fixed
+per the checklist) **and** paragraph/segment-level (`_apply_paragraphs` re-created structure on
+an existing text). The within-run dedup also corrected a latent over-production bug (the old
+per-segment `Create` duplicated shared analyses even in a single run: 179→**143** analyses,
+282→**231** glosses, with R5 wiring **206** and verdicts unchanged).
+
+**Remaining before merge:** items 2 (verdict happy-path breadth) and 3 (positional AnalysesRS)
+— both non-blocking; see the re-scoped checklist below.
 
 ---
 
@@ -70,39 +76,55 @@ Commit trail on the worktree: `df4b30e` (fix 1) → `24a6b0b` (2+3) → `c917d3a
 
 ---
 
-## ⛔ Remaining before merge (pickup checklist)
+## ✅ / ⛔ Remaining before merge (pickup checklist)
 
-### 1. SC-005 idempotency (HIGH — the blocker)
-A **second Move** against the already-populated target (no restore) grows
-**WfiAnalyses 179 → 329** and **WfiGlosses 282 → 522** (texts correctly stay 9). Root cause:
-`wordforms.apply_analyses` calls `wa_ops.Create(wordform)` **unconditionally** — no find-or-skip
-for an analysis already present on the target wordform. Wordforms dedupe
-(`_find_or_create_wordform` uses `Find`); analyses/glosses do not.
-- **Fix:** dedupe at the analysis level — skip (or match) when the target wordform already
-  carries an equivalent analysis (by source GUID / residue tag, or an analysis-level `Find`), so
-  a re-Move is a no-op. Cascade the skip to its morph bundles + glosses.
-- **Prove:** re-run the live proof twice; counts must be identical on run #2 (SC-005). Add an
-  offline regression driving `apply_analyses` twice over the same fakes → no duplication.
+### 1. SC-005 idempotency (HIGH — the blocker) — ✅ DONE & LIVE-PROVEN (session 2)
+Root cause was **two** cascading gaps, not one:
+- **Analysis level** — `wordforms.apply_analyses` called `wa_ops.Create(wordform)`
+  unconditionally. **Fixed** (commit `8691d67`): dedupe by source GUID within a run + a
+  structural fingerprint (effective verdict + morph-bundle forms + gloss forms) across runs;
+  the target carries no source GUID (Create mints a fresh one, there is no analysis-level
+  `Find`), so structure is the durable key. Verdict is in the fingerprint so an approved and a
+  disapproved analysis of the same empty form are not collapsed (would silently lose the deny).
+- **Text-structure level** — `texts._apply_paragraphs` re-created paragraphs/segments on an
+  existing text (disposition UPDATE), and segment/analysis/gloss creation all cascade from that
+  loop. **Fixed** (commit `f4cfbee`): skip when the target text already has paragraphs.
+- **LIVE PROOF** (Ejagham Mini → Target, fresh-disk reopen): Move #1 = Move #2 =
+  `{texts:9, segments:101, analyses:143, glosses:231}` — **identical** (was growing on the
+  re-run before). AnalysesRS slots wired = **206** (R5 unchanged); verdicts 1 approved / 142
+  no-verdict / 0 disapproved (FR-014 correct). Offline: **1706 passed**, 7-fail env baseline.
+- **Counts moved 179→143 / 282→231 vs session 1** because within-run dedup collapses a shared
+  analysis referenced from several segment occurrences — the old per-segment `Create`
+  over-produced duplicates even in a single run. Positional wiring (206) and verdict semantics
+  are unchanged, so this is a **correction, not a loss**.
 
-### 2. Verdict confirmation (MEDIUM)
-178/179 analyses are needs-review-no-verdict because the target lexicon does not hold the
-senses/MSAs the morph bundles reference (1532 drops). This is **correct per FR-014**, but the
-happy path (HUMAN_APPROVED written) is only exercised by 1 analysis here.
-- **Prove:** re-proof against a **lexicon-complete** target (one that already holds Ejagham
-  Mini's entries/senses, or select the full lexical closure so referents resolve) and confirm the
-  HUMAN_APPROVED share rises and morph bundles wire.
+### 2. Verdict confirmation (MEDIUM) — mechanism proven n=1; breadth optional
+142/143 analyses are needs-review-no-verdict because the target lexicon does not hold the
+senses/MSAs the morph bundles reference. This is **correct per FR-014**. The HUMAN_APPROVED
+happy path (ApproveAnalysis owned by the provisioned agent) IS exercised live — the 1 approved
+analysis persisted with `ApprovalStatusIcon == 1` on the fresh reopen — but only with n=1, and
+the **resolved-ref morph-bundle wiring** (`SetSense`/`SetMSA` on a referent that resolves) is
+therefore barely exercised live.
+- **Optional breadth:** re-proof against a **lexicon-complete** target (one already holding
+  Ejagham Mini's entries/senses) and confirm the HUMAN_APPROVED share rises and morph bundles
+  wire. Not a correctness blocker — the write mechanism is proven; this widens coverage of the
+  resolved-ref path.
 
-### 3. Positional `AnalysesRS` fidelity (LOW)
-`apply_alignment` wires the 206 analysis-kind slots but reports/skips punctuation (231) and bare
-wordform (103) tokens (`wordform_map` is keyed by analysis GUID, so bare wordforms don't match).
-The target `AnalysesRS` therefore isn't positionally complete vs. source (SC-006).
-- **Fix (optional for merge):** key a wordform map by the source wordform GUID for bare-wordform
-  tokens; decide punctuation-slot handling. Or scope out with a documented limitation.
+### 3. Positional `AnalysesRS` fidelity (LOW) — documented limitation
+`apply_alignment` wires the 206 analysis-kind slots (confirmed live) but reports/skips
+punctuation and bare-wordform tokens (`wordform_map` is keyed by analysis GUID, so bare
+wordforms don't match). The target `AnalysesRS` is therefore analysis-complete but not
+punctuation/bare-wordform-complete vs. source (SC-006).
+- **Scoped out for merge** as a documented limitation. To close later: key a wordform map by the
+  source wordform GUID for bare-wordform tokens; decide punctuation-slot handling.
 
 ### Then
-4. Re-run offline gate + census (`pytest tests/unit tests/verification -q`).
+4. Re-run offline gate + census (`pytest tests/unit tests/verification -q`). ✅ 1706 pass / 7-fail baseline.
 5. Consider a lex-crew review (026 uniquely never had one).
 6. Merge `026-texts-wordforms` → `main` (`--no-ff`); remove the worktree; update STATUS.md.
+
+**Session-2 commits on the worktree:** `8691d67` (analysis dedup) → `f4cfbee` (text-structure
+idempotency + this HANDOFF update).
 
 ---
 
