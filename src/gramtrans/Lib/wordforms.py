@@ -243,25 +243,79 @@ def _verdict_from_eval(evaluation) -> Optional[EvalVerdict]:
     return EvalVerdict.HUMAN_APPROVED
 
 
+class _ApprovalEval:
+    """Lightweight human-evaluation stand-in built from a live
+    `IWfiAnalysis.ApprovalStatusIcon`, carrying the `Approves` flag that
+    `_verdict_from_eval` reads. Only constructed for a genuine human opinion
+    (icon 1 = approved / 2 = disapproved); never for parser-only (icon 0)."""
+    __slots__ = ("Approves",)
+
+    def __init__(self, approves: bool):
+        self.Approves = approves
+
+
+def _live_human_evaluation(analysis):
+    """Human evaluation from the LIVE LCM surface, or None (FR-006 gate).
+
+    2026-07-15 live-proof fix: `WfiAnalyses.GetHumanEvaluation` and the
+    `GetHumanEvaluation()` / `human_evaluation` object hooks that the offline
+    fakes expose do NOT exist on a live `IWfiAnalysis`. Without a live path the
+    gate returned None for every real analysis, so `plan_analyses` skipped them
+    all as "parser-only" and 219 human-approved analyses were silently dropped
+    (SC-003 violation). The live human/default-agent opinion is read off
+    `IWfiAnalysis.ApprovalStatusIcon`: 1 = approved, 2 = disapproved, 0/other =
+    no human opinion (parser-only / unevaluated -> excluded, FR-008).
+
+    Reads the icon via a cast to `IWfiAnalysis` (required live -- the base
+    `IAnalysis` does not expose it); falls back to a duck-typed
+    `ApprovalStatusIcon` attribute when SIL.LCModel is unavailable (offline
+    live-shaped fakes). A bare wordform / gloss token that does not cast ->
+    None (no analysis-level human opinion)."""
+    icon = None
+    try:
+        from SIL.LCModel import IWfiAnalysis  # noqa: PLC0415
+        try:
+            icon = IWfiAnalysis(analysis).ApprovalStatusIcon
+        except Exception:
+            icon = None
+    except Exception:
+        icon = None
+    if icon is None:
+        icon = getattr(analysis, "ApprovalStatusIcon", None)
+    if icon == 1:
+        return _ApprovalEval(True)
+    if icon == 2:
+        return _ApprovalEval(False)
+    return None
+
+
 def _human_evaluation(source, analysis):
     """Return the analysis's human evaluation object, or None (the FR-006 gate).
 
-    Prefers `WfiAnalyses.GetHumanEvaluation`; tolerant of a duck-typed fake that
-    exposes `human_evaluation` / `GetHumanEvaluation` directly on the object."""
+    Order: (1) the fake `WfiAnalyses.GetHumanEvaluation` ops hook; (2) a fake
+    object exposing `GetHumanEvaluation()` / `human_evaluation`; (3) the LIVE
+    LCM surface via `_live_human_evaluation` (`IWfiAnalysis.ApprovalStatusIcon`).
+    Paths (1)/(2) keep the offline fakes working; path (3) is the 2026-07-15
+    live-proof fix (see `_live_human_evaluation` -- without it every live
+    analysis was silently dropped)."""
     wa_ops = getattr(source, "WfiAnalyses", None)
     if wa_ops is not None and hasattr(wa_ops, "GetHumanEvaluation"):
         try:
             return wa_ops.GetHumanEvaluation(analysis)
         except Exception:
             return None
-    # Fake fallbacks.
+    # Fake object fallbacks (offline duck-typed analyses).
     fn = getattr(analysis, "GetHumanEvaluation", None)
     if callable(fn):
         try:
             return fn()
         except Exception:
             return None
-    return getattr(analysis, "human_evaluation", None)
+    fake_attr = getattr(analysis, "human_evaluation", None)
+    if fake_attr is not None:
+        return fake_attr
+    # Live LCM surface (real IWfiAnalysis has none of the above).
+    return _live_human_evaluation(analysis)
 
 
 def _iter_segment_wordforms(source, segment):

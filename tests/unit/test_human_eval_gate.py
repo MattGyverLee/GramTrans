@@ -69,3 +69,53 @@ def test_verdicts_read_from_evaluation():
     by_guid = {p.source_guid: p.verdict for p in plans}
     assert by_guid["an-approved"] == EvalVerdict.HUMAN_APPROVED
     assert by_guid["an-denied"] == EvalVerdict.HUMAN_DENIED
+
+
+# ---------------------------------------------------------------------------
+# 2026-07-15 live-proof regression (verification-log.md): the FR-006 gate MUST
+# read a LIVE IWfiAnalysis via ApprovalStatusIcon, not only the fake
+# GetHumanEvaluation() / human_evaluation hooks. Live proof caught that
+# `WfiAnalyses.GetHumanEvaluation` is ABSENT on the live flexicon surface, so
+# every real analysis was gated out as parser-only and 219 human-approved
+# analyses were silently dropped. These fakes mimic the live shape (only
+# ApprovalStatusIcon, no eval hooks) -- the exact blind spot the offline fakes
+# could not previously express.
+# ---------------------------------------------------------------------------
+
+class _LiveShapedAnalysis:
+    """Live `IWfiAnalysis`-shaped double: exposes ONLY `ApprovalStatusIcon`
+    (1 approved / 2 disapproved / 0 no-opinion) -- NO `GetHumanEvaluation()`
+    method and NO `human_evaluation` attribute (both absent on real LCM)."""
+
+    def __init__(self, guid, icon):
+        self.Guid = guid
+        self.guid = guid
+        self.ApprovalStatusIcon = icon
+
+
+class _SourceNoHumanEvalOps:
+    """Source handle whose WfiAnalyses ops lack GetHumanEvaluation (like the
+    live flexicon FLExProject), forcing the gate onto the live path."""
+
+    WfiAnalyses = None
+    Wordforms = None
+
+
+def test_gate_reads_live_approval_status_icon():
+    src = _SourceNoHumanEvalOps()
+    approved = wordforms._human_evaluation(src, _LiveShapedAnalysis("a", 1))
+    denied = wordforms._human_evaluation(src, _LiveShapedAnalysis("d", 2))
+    parser = wordforms._human_evaluation(src, _LiveShapedAnalysis("p", 0))
+    assert approved is not None
+    assert wordforms._verdict_from_eval(approved) == EvalVerdict.HUMAN_APPROVED
+    assert denied is not None
+    assert wordforms._verdict_from_eval(denied) == EvalVerdict.HUMAN_DENIED
+    assert parser is None  # icon 0 -> excluded parser-only (FR-008), not a loss
+
+
+def test_gate_live_path_survives_source_without_wfianalyses_attr():
+    class _Bare:
+        pass
+    ev = wordforms._human_evaluation(_Bare(), _LiveShapedAnalysis("a", 1))
+    assert ev is not None
+    assert wordforms._verdict_from_eval(ev) == EvalVerdict.HUMAN_APPROVED

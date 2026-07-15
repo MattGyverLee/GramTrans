@@ -60,4 +60,42 @@ The offline unit tests passed because the fakes expose `GetHumanEvaluation` /
 4. Re-run this live proof (R2/R5 then exercisable): confirm 219 analyses reproduced,
    `AnalysesRS` order preserved, needs-review left no-opinion (R2), notes handling (R5).
 
-Target was restored to the clean backup after the run (left pristine).
+### Fix attempt #1 (gate) + re-proof — surfaced a SECOND, deeper layer
+
+Applied the gate fix: `wordforms._human_evaluation` now falls back to
+`_live_human_evaluation` reading `IWfiAnalysis.ApprovalStatusIcon` (1/2/0), with a
+duck-typed `ApprovalStatusIcon` fallback for offline live-shaped fakes; added regression
+tests (`test_gate_reads_live_approval_status_icon`,
+`test_gate_live_path_survives_source_without_wfianalyses_attr`). Offline suite
+**1698 passed** (7-fail env baseline unchanged). Re-ran the live Move — **still 0 analyses
+planned/reproduced**.
+
+Root cause of the residual gap (classified all 540 segment `AnalysesRS` tokens on Ejagham
+Mini):
+
+| token kind | count | note |
+|---|---|---|
+| **IWfiGloss** | **204** | human-glossed; owning `IWfiAnalysis` **approved** (icon 1 ×204) |
+| IAnalysis (uncast) | 231 | punctuation forms (non-analyses) |
+| IWfiWordform | 103 | bare unanalyzed baseline tokens |
+| IWfiAnalysis (direct) | 2 | directly-referenced approved analyses |
+
+**The human-approved content in a real FLEx interlinear is carried as `IWfiGloss` tokens
+(204 here), not bare `IWfiAnalysis` (only 2).** 026's `_iter_segment_wordforms` /
+`plan_analyses` treat each `Segment.AnalysesRS` token as an analysis and read approval via
+an `IWfiAnalysis` cast — which **fails on a gloss token**, so 206 human-approved tokens are
+excluded. The offline fakes modelled segment tokens as bare `IWfiAnalysis`, so this shape
+was never exercised.
+
+### Remaining work before 026 merge (larger than a hotfix)
+
+The gate fix (kept) is necessary but insufficient. 026's live analysis walk needs to
+**normalize segment tokens**: an `IWfiGloss` token → reproduce its owning `IWfiAnalysis`
+(+ the chosen gloss); an `IWfiAnalysis` token → as-is; `IWfiWordform` → bare/unanalyzed
+(no human analysis); punctuation → skip. Morph-bundle / category / gloss planning must then
+operate on the resolved owning analysis. This needs: (1) token-normalization in the walk,
+(2) offline fakes that model gloss tokens (not just bare analyses), (3) re-proof against
+this corpus (expect ~204 gloss-backed + 2 direct analyses reproduced), (4) then R2/R5.
+This is a design-level rework of the wordform walk, tracked here for a dedicated session.
+
+Target was restored to the clean backup after every run (left pristine).
