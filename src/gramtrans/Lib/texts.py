@@ -660,7 +660,7 @@ def apply_texts(plans, source, target, ctx, tag, report_sink,
     agent_decision = _wordforms.plan_agent(target, ctx)
     _wordforms.apply_agent(agent_decision, target, ctx)
 
-    _added = _updated = 0
+    _added = _updated = _already = 0
     for plan in plans:
         target_text = _resolve_or_create_text(plan, text_ops, ws_map, tgt_id2h, dropped)
         if target_text is None:
@@ -678,12 +678,15 @@ def apply_texts(plans, source, target, ctx, tag, report_sink,
         # Residue-tag the container (R8).
         _safe(lambda: apply_residue(target_text, default_vern_handle, tag, class_name="Text"))
 
-        _apply_paragraphs(plan, target, target_text, para_ops, seg_ops,
-                          ctx, tag, ws_map, tgt_id2h, default_vern_handle,
-                          _wordforms, apply_residue, resolver_cache, source, dropped)
+        already = _apply_paragraphs(plan, target, target_text, para_ops, seg_ops,
+                                    ctx, tag, ws_map, tgt_id2h, default_vern_handle,
+                                    _wordforms, apply_residue, resolver_cache, source, dropped)
+        if already:
+            _already += 1
     if report_sink is not None and hasattr(report_sink, "Info"):
         _safe(lambda: report_sink.Info(
-            f"[Move] Texts: {_added} added, {_updated} updated "
+            f"[Move] Texts: {_added} added, {_updated} updated, "
+            f"{_already} already reproduced (structure left as-is) "
             f"(dropped items so far: {len(dropped)})."))
     return None
 
@@ -821,8 +824,26 @@ def _raw_create_text_tag(target, target_text, tgt_seg, possibility):
 def _apply_paragraphs(plan, target, target_text, para_ops, seg_ops, ctx, tag,
                       ws_map, tgt_id2h, default_vern_handle, _wordforms,
                       apply_residue, resolver_cache, source, dropped):
+    """Reproduce the text's paragraphs/segments (+ analyses + alignment).
+
+    Returns True when the text was already reproduced by a prior run and its
+    structure is left as-is (SC-005 idempotent no-op); False when paragraphs
+    were created this run."""
     if para_ops is None or seg_ops is None:
-        return
+        return False
+    # Idempotency (SC-005): never re-append paragraphs/segments to a text a
+    # prior run already reproduced. Segment, analysis and gloss creation all
+    # cascade from this paragraph loop, so a re-Move against an already-
+    # populated target text must be a structural no-op. When the target text
+    # already carries paragraphs, its structure + analyses + alignment are
+    # present -- leave them as-is (surfaced in the run summary as "already
+    # present", never silently duplicated).
+    existing = _safe(lambda: list(para_ops.GetAll(target_text) or [])) or []
+    if existing:
+        _log.info("apply_texts: %r already reproduced (%d paragraph(s)); "
+                  "re-Move leaves its structure as-is (SC-005)",
+                  plan.title, len(existing))
+        return True
     for para_plan in plan.paragraphs:
         content = _first_mapped(para_plan.baseline, ws_map, tgt_id2h)
         if content is None:
@@ -873,6 +894,7 @@ def _apply_paragraphs(plan, target, target_text, para_ops, seg_ops, ctx, tag,
             # US5 (T035): per-segment text-markup tag references.
             _apply_segment_tags(seg_plan, target, target_text, tgt_seg,
                                 resolver_cache, tag, source, ws_map, dropped)
+    return False
 
 
 def source_of(ctx):

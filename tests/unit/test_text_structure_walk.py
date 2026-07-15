@@ -245,3 +245,37 @@ def test_apply_creates_text_paragraph_segment_and_translations():
     assert seg.free.get(2) == "the dog runs"
     assert seg.literal.get(2) == "dog run"
     assert any("Texts:" in m for m in sink.msgs)
+
+
+def test_reapply_texts_does_not_duplicate_paragraphs_or_segments():
+    # SC-005: a re-Move against an already-reproduced target text must not
+    # re-append its paragraphs/segments (segment/analysis/gloss creation all
+    # cascade from the paragraph loop).
+    source = _source_with_one_text()
+    target = _target()
+
+    # Run 1 — creates the text + 1 paragraph + 1 segment.
+    ctx1 = FakeCtx(source_handle=source, ws_map={})
+    d1 = []
+    plans1 = texts.plan_texts(_selection(), source, target, ctx1, {}, d1)
+    texts.apply_texts(plans1, source, target, ctx1, tag=object(),
+                      report_sink=_Sink(), resolver_cache={}, dropped=d1)
+    tgt_text = target.Texts._texts[-1]
+    assert len(tgt_text.paragraphs) == 1
+    assert len(tgt_text.paragraphs[0].segments) == 1
+
+    # Run 2 — same source, SAME target, fresh context. The text now matches by
+    # title (disposition UPDATE); paragraphs/segments must be left as-is.
+    ctx2 = FakeCtx(source_handle=source, ws_map={})
+    d2 = []
+    plans2 = texts.plan_texts(_selection(), source, target, ctx2, {}, d2)
+    assert plans2[0].disposition == ReferenceAction.UPDATE
+    sink2 = _Sink()
+    texts.apply_texts(plans2, source, target, ctx2, tag=object(),
+                      report_sink=sink2, resolver_cache={}, dropped=d2)
+
+    # No duplication: still exactly 1 text, 1 paragraph, 1 segment.
+    assert len(target.Texts._texts) == 1
+    assert len(tgt_text.paragraphs) == 1
+    assert len(tgt_text.paragraphs[0].segments) == 1
+    assert any("already reproduced" in m for m in sink2.msgs)
