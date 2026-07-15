@@ -1,0 +1,17 @@
+{
+  "workflow": "speckit",
+  "specName": "Conflict Mode Field Merge",
+  "branch": "",
+  "currentStep": "specify",
+  "status": "archived",
+  "history": [
+    {
+      "step": "specify",
+      "substep": null,
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-07-13T05:39:53.599Z"
+    }
+  ],
+  "telemetryInstanceId": "a9c3dd69-e895-4dd3-8bf4-f5221e062539"
+}

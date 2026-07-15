@@ -24,6 +24,7 @@ reads host-free, and record every RS/RC ``Add`` so ordering can be asserted.
 """
 from __future__ import annotations
 
+import sys
 import types
 
 import pytest
@@ -360,3 +361,486 @@ def test_171_skips_are_skip_instances() -> None:
     ctx = _ctx_171({"msa-missing": ["slot-1"]})
     skips = categories._run_171_subpass(ctx, _FakeTarget({}), tag=None)
     assert skips and all(isinstance(s, Skip) for s in skips)
+
+
+# ============================================================================
+# Live-repo fallback (issue #28) — both passes must resolve GUIDs through
+# `_resolve_target_by_guid`, which falls back to the LCM object repository on
+# a live flexicon FLExProject (which has NO `get_object_by_guid`). These tests
+# drive each pass end-to-end against a live-style target so the fallback branch
+# is exercised THROUGH the pass, not just via the resolver in isolation — the
+# coverage gap that let the 031-shaped bug ship in these two passes.
+# ============================================================================
+
+class _FakeRepo:
+    """LCM ICmObjectRepository stand-in: IsValidObjectId + GetObject over a map."""
+
+    def __init__(self, objects_by_guid=None) -> None:
+        self._objs = dict(objects_by_guid or {})
+
+    def IsValidObjectId(self, guid):
+        # guid arrives as the ("parsed", <str>) tuple from the stub Guid.Parse.
+        return self._key(guid) in self._objs
+
+    def GetObject(self, guid):
+        return self._objs.get(self._key(guid))
+
+    @staticmethod
+    def _key(guid):
+        return guid[1] if isinstance(guid, tuple) else guid
+
+
+class _FakeLiveTarget:
+    """Mirrors the live flexicon FLExProject: exposes ObjectRepository() but
+    NO get_object_by_guid, so `_resolve_target_by_guid` must take the live
+    LCM-repo fallback branch."""
+
+    def __init__(self, objects_by_guid=None) -> None:
+        self._repo = _FakeRepo(objects_by_guid)
+
+    def ObjectRepository(self, iface):
+        return self._repo
+
+
+@pytest.fixture
+def _stub_lcm_and_system():
+    """Stub SIL.LCModel + System so `_resolve_target_by_guid`'s live branch
+    imports resolve offline (mirrors test_031_infl_feature_linking)."""
+    fake_lcm = types.ModuleType("SIL.LCModel")
+    fake_lcm.ICmObjectRepository = object()
+    sys.modules.setdefault("SIL", types.ModuleType("SIL"))
+    original_lcm = sys.modules.get("SIL.LCModel")
+    sys.modules["SIL.LCModel"] = fake_lcm
+
+    fake_system = types.ModuleType("System")
+    fake_system.Guid = type(
+        "FakeGuid", (), {"Parse": staticmethod(lambda s: ("parsed", s))}
+    )
+    original_system = sys.modules.get("System")
+    sys.modules["System"] = fake_system
+
+    yield
+
+    if original_lcm is None:
+        sys.modules.pop("SIL.LCModel", None)
+    else:
+        sys.modules["SIL.LCModel"] = original_lcm
+    if original_system is None:
+        sys.modules.pop("System", None)
+    else:
+        sys.modules["System"] = original_system
+
+
+def test_171_wires_via_live_repo_fallback(_stub_lcm_and_system) -> None:
+    """_run_171_subpass wires MSA->slot on a live-style target (no getter),
+    proving it routes through the LCM-repo fallback (issue #28)."""
+    msa = _FakeTargetMSA("msa-1")
+    slot = _FakeObj("slot-1")
+    target = _FakeLiveTarget({"msa-1": msa, "slot-1": slot})
+    ctx = _ctx_171({"msa-1": ["slot-1"]})
+
+    skips = categories._run_171_subpass(ctx, target, tag=None)
+
+    assert skips == []
+    assert msa.SlotsRC.add_log == [slot]
+
+
+def test_post_pass_a_wires_via_live_repo_fallback(_stub_lcm_and_system) -> None:
+    """_run_post_pass_a wires LexEntryRef component/primary on a live-style
+    target (no getter), proving the LCM-repo fallback path (issue #28)."""
+    ref = _FakeEntryRef()
+    entry = _FakeTargetEntry("entry-1", entry_refs=[ref])
+    comp, prim = _FakeObj("comp"), _FakeObj("prim")
+    target = _FakeLiveTarget({"entry-1": entry, "comp": comp, "prim": prim})
+    ctx = _ctx_post_pass_a({
+        "entry-1": {
+            "ComponentLexemesRS": ["comp"],
+            "PrimaryLexemesRS": ["prim"],
+        }
+    })
+
+    skips = categories._run_post_pass_a(ctx, target, tag=None)
+
+    assert skips == []
+    assert ref.ComponentLexemesRS.add_log == [comp]
+    assert ref.PrimaryLexemesRS.add_log == [prim]
+
+
+# ============================================================================
+# Live-object CAST path (issue #28 layer 2) — `_resolve_target_by_guid` returns
+# a bare ICmObject on the live target, whose typed members (.SlotsRC,
+# .EntryRefsOS, .ComponentLexemesRS/.PrimaryLexemesRS) are invisible until the
+# object is cast to the declaring interface. MCP-confirmed: uncast
+# `.EntryRefsOS` -> None; `ILexEntry(obj).EntryRefsOS` -> the sequence. These
+# fakes reproduce that: a `_Bare` object hides typed members (attribute access
+# raises / getattr -> None, exactly like live pythonnet) and only the stubbed
+# interface cast surfaces the typed `_view`. Without the cast fix both passes
+# silently no-op (171 raises AttributeError -> swallowed; post-pass A wires 0).
+# ============================================================================
+
+class _Bare:
+    """Bare ICmObject stand-in: exposes .guid; typed members hidden until a
+    stubbed interface cast returns the matching `_view`."""
+
+    def __init__(self, guid, views=None) -> None:
+        self.guid = guid
+        self._views = dict(views or {})
+
+
+class _Typed:
+    """A cast 'view' exposing the typed members the interface declares."""
+
+    def __init__(self, guid, **members) -> None:
+        self.guid = guid
+        for k, v in members.items():
+            setattr(self, k, v)
+
+
+def _iface_cast(name):
+    """A stub SIL.LCModel interface: `IFoo(bare)` -> bare._views['IFoo']."""
+    def cast(obj):
+        return getattr(obj, "_views", {}).get(name, obj)
+    return cast
+
+
+@pytest.fixture
+def _stub_lcm_with_interfaces():
+    """Stub SIL.LCModel + System with the interface casts the passes use, so
+    `_cast_lcm` surfaces the typed view of a bare live object offline."""
+    fake_lcm = types.ModuleType("SIL.LCModel")
+    fake_lcm.ICmObjectRepository = object()
+    for iface in ("IMoInflAffMsa", "IMoInflAffixSlot", "ILexEntry", "ILexEntryRef"):
+        setattr(fake_lcm, iface, _iface_cast(iface))
+    sys.modules.setdefault("SIL", types.ModuleType("SIL"))
+    original_lcm = sys.modules.get("SIL.LCModel")
+    sys.modules["SIL.LCModel"] = fake_lcm
+
+    fake_system = types.ModuleType("System")
+    fake_system.Guid = type(
+        "FakeGuid", (), {"Parse": staticmethod(lambda s: ("parsed", s))}
+    )
+    original_system = sys.modules.get("System")
+    sys.modules["System"] = fake_system
+
+    yield
+
+    if original_lcm is None:
+        sys.modules.pop("SIL.LCModel", None)
+    else:
+        sys.modules["SIL.LCModel"] = original_lcm
+    if original_system is None:
+        sys.modules.pop("System", None)
+    else:
+        sys.modules["System"] = original_system
+
+
+def test_171_casts_bare_msa_and_slot(_stub_lcm_with_interfaces) -> None:
+    """171 sub-pass casts the bare resolved MSA/slot so SlotsRC is reachable;
+    without the cast, `bare.SlotsRC` would raise (silently swallowed live)."""
+    slot_view = _Typed("slot-1")
+    slot_bare = _Bare("slot-1", views={"IMoInflAffixSlot": slot_view})
+    msa_slots = _FakeRefSeq()
+    msa_view = _Typed("msa-1", SlotsRC=msa_slots)
+    msa_bare = _Bare("msa-1", views={"IMoInflAffMsa": msa_view})
+    target = _FakeLiveTarget({"msa-1": msa_bare, "slot-1": slot_bare})
+    ctx = _ctx_171({"msa-1": ["slot-1"]})
+
+    skips = categories._run_171_subpass(ctx, target, tag=None)
+
+    assert skips == []
+    assert msa_slots.add_log == [slot_view]  # the CAST slot was wired
+
+
+def test_post_pass_a_casts_bare_entry_and_ref(_stub_lcm_with_interfaces) -> None:
+    """post-pass A casts the bare resolved entry (-> EntryRefsOS) and each ref
+    (-> ComponentLexemesRS/PrimaryLexemesRS); without the casts getattr yields
+    None and the pass wires 0 (the live #28 layer-2 no-op)."""
+    comp_seq = _FakeRefSeq()
+    ref_view = _Typed("ref-1", ComponentLexemesRS=comp_seq,
+                      PrimaryLexemesRS=_FakeRefSeq())
+    ref_bare = _Bare("ref-1", views={"ILexEntryRef": ref_view})
+    entry_view = _Typed("entry-1", EntryRefsOS=[ref_bare])
+    entry_bare = _Bare("entry-1", views={"ILexEntry": entry_view})
+    comp = _FakeObj("comp")
+    target = _FakeLiveTarget({"entry-1": entry_bare, "comp": comp})
+    ctx = _ctx_post_pass_a({"entry-1": {"ComponentLexemesRS": ["comp"]}})
+
+    skips = categories._run_post_pass_a(ctx, target, tag=None)
+
+    assert skips == []
+    assert comp_seq.add_log == [comp]  # wired into the CAST ref's sequence
+
+
+# ---- _cast_lcm unit coverage ------------------------------------------------
+
+def test_cast_lcm_none_returns_none() -> None:
+    assert categories._cast_lcm(None, "ILexEntry") is None
+
+
+def test_cast_lcm_passthrough_when_interface_absent() -> None:
+    """No SIL.LCModel (or no such interface) -> object returned unchanged
+    (the offline duck-typed fake path)."""
+    fake = _FakeObj("x")
+    sys.modules.pop("SIL.LCModel", None)  # ensure import fails
+    assert categories._cast_lcm(fake, "ILexEntry") is fake
+
+
+def test_cast_lcm_invokes_interface_when_present(_stub_lcm_with_interfaces) -> None:
+    view = _Typed("v")
+    bare = _Bare("v", views={"ILexEntry": view})
+    assert categories._cast_lcm(bare, "ILexEntry") is view
+
+
+def test_cast_lcm_falls_back_when_cast_raises() -> None:
+    """A cast that raises (already-correct type / uncastable) -> return obj."""
+    fake_lcm = types.ModuleType("SIL.LCModel")
+
+    def _boom(_obj):
+        raise TypeError("cannot cast")
+
+    fake_lcm.ILexEntry = _boom
+    original = sys.modules.get("SIL.LCModel")
+    sys.modules["SIL.LCModel"] = fake_lcm
+    try:
+        obj = _FakeObj("y")
+        assert categories._cast_lcm(obj, "ILexEntry") is obj
+    finally:
+        if original is None:
+            sys.modules.pop("SIL.LCModel", None)
+        else:
+            sys.modules["SIL.LCModel"] = original
+
+
+# ============================================================================
+# T011 (027 US1, contract C1+C2) -- create-then-wire STEMS-tail integration.
+#
+# `_run_entryref_create_pass` (C1) creates the container FIRST, then
+# `_run_post_pass_a` (C2) -- previously UNREACHABLE (no create site existed;
+# see the "Cycle-16 lead adjudication" note above
+# `categories._report_dropped_entry_refs`) -- wires its component/primary
+# lexemes. These tests exercise BOTH passes in sequence over the SAME target
+# entry/plan, proving the STEMS-tail create-then-wire order
+# (`categories.stems_execute_action`) actually reproduces a fully-wired
+# `LexEntryRef` end-to-end, not just each pass in isolation.
+# ============================================================================
+
+class _FakeOwningSeq:
+    """Owning/reference sequence stand-in with `.Add` + iteration (used for
+    EntryRefsOS/ComponentLexemesRS/PrimaryLexemesRS alike in this section)."""
+
+    def __init__(self, initial=()) -> None:
+        self._items = list(initial)
+        self.add_log = []
+
+    def Add(self, obj):
+        self._items.append(obj)
+        self.add_log.append(obj)
+
+    def __iter__(self):
+        return iter(self._items)
+
+    def __len__(self):
+        return len(self._items)
+
+    @property
+    def Count(self):
+        return len(self._items)
+
+
+class _FakeCreatedEntryRef:
+    """What `factory.Create(guid)` returns before it is owned into
+    EntryRefsOS -- a fresh, empty LexEntryRef."""
+
+    def __init__(self, guid) -> None:
+        self.guid = guid
+        self.RefType = None
+        self.ComponentLexemesRS = _FakeOwningSeq()
+        self.PrimaryLexemesRS = _FakeOwningSeq()
+
+
+class _FakeCreateWireEntryRefFactory:
+    """Duck-typed raw ILexEntryRefFactory stand-in: records every guid passed
+    to Create (GUID-preservation, INV-1)."""
+
+    def __init__(self) -> None:
+        self.create_log = []
+
+    def Create(self, guid):
+        self.create_log.append(guid)
+        return _FakeCreatedEntryRef(guid)
+
+
+class _FakeCreateWireTargetEntry:
+    def __init__(self, guid: str, entry_refs=()) -> None:
+        self.guid = guid
+        self.EntryRefsOS = _FakeOwningSeq(initial=entry_refs)
+
+
+class _FakeCreateWireTarget:
+    """Target project handle: get_object_by_guid registry + GetFactory --
+    exercises BOTH passes against the SAME registry (create resolves the
+    entry via get_object_by_guid; wire resolves both the entry AND every
+    component lexeme via the same registry)."""
+
+    def __init__(self, objects_by_guid=None, factory=None) -> None:
+        self._objs = dict(objects_by_guid or {})
+        self._factory = factory if factory is not None else _FakeCreateWireEntryRefFactory()
+
+    def get_object_by_guid(self, guid):
+        return self._objs.get(guid)
+
+    def GetFactory(self, iface_token):
+        return self._factory
+
+
+@pytest.fixture
+def _stub_lcm_create_and_wire():
+    """Stub SIL.LCModel + System with `ILexEntryRefFactory` (identity cast,
+    matching `ILexEntryRefFactory(target.GetFactory(ILexEntryRefFactory))`)
+    plus identity `ILexEntry`/`ILexEntryRef` casts -- this section's fakes
+    are plain duck-typed objects (not `_Bare`/`_Typed`), so an identity cast
+    is sufficient; the `_Bare`/`_Typed` cast tripwire itself is covered by
+    `test_027_entryref_reproduction.py`."""
+    fake_lcm = types.ModuleType("SIL.LCModel")
+    fake_lcm.ILexEntryRefFactory = lambda raw: raw
+    fake_lcm.ILexEntry = lambda obj: obj
+    fake_lcm.ILexEntryRef = lambda obj: obj
+    fake_lcm.ICmObjectRepository = object()
+    sys.modules.setdefault("SIL", types.ModuleType("SIL"))
+    original_lcm = sys.modules.get("SIL.LCModel")
+    sys.modules["SIL.LCModel"] = fake_lcm
+
+    fake_system = types.ModuleType("System")
+    fake_system.Guid = type("FakeGuid", (), {"Parse": staticmethod(lambda s: s)})
+    original_system = sys.modules.get("System")
+    sys.modules["System"] = fake_system
+
+    yield
+
+    if original_lcm is None:
+        sys.modules.pop("SIL.LCModel", None)
+    else:
+        sys.modules["SIL.LCModel"] = original_lcm
+    if original_system is None:
+        sys.modules.pop("System", None)
+    else:
+        sys.modules["System"] = original_system
+
+
+def _ref_record(ref_guid, ref_type=0, components=(), primaries=()):
+    return {
+        "ref_guid": ref_guid,
+        "ref_type": ref_type,
+        "components": list(components),
+        "primaries": list(primaries),
+        "variant_entry_types": [],
+        "complex_entry_types": [],
+        "show_complex_forms_in": [],
+    }
+
+
+def _ctx_create_and_wire(entryref_create_bindings, lexentry_ref_bindings,
+                          in_plan_entries=None) -> RunContext:
+    ctx = _make_ctx()
+    plan = types.SimpleNamespace(
+        entryref_create_bindings={
+            k: list(v) for k, v in entryref_create_bindings.items()
+        },
+        lexentry_ref_bindings=dict(lexentry_ref_bindings),
+        identity_remap={},
+        in_plan_entries=dict(in_plan_entries or {}),
+    )
+    object.__setattr__(ctx, "_run_plan", plan)
+    object.__setattr__(ctx, "_dropped", [])
+    return ctx
+
+
+def _run_create_then_wire(ctx, target):
+    """The STEMS-tail order `stems_execute_action` now runs: C1 create
+    first, then C2 wire."""
+    create_skips = categories._run_entryref_create_pass(ctx, target, tag=None)
+    wire_skips = categories._run_post_pass_a(ctx, target, tag=None)
+    return create_skips, wire_skips
+
+
+def test_create_then_wire_full_flow(_stub_lcm_create_and_wire) -> None:
+    """C1 creates an empty variant container; C2 (now reachable) wires its
+    ComponentLexemesRS -- an end-to-end reproduction of the source ref."""
+    lex_a, lex_b = _FakeObj("lex-a"), _FakeObj("lex-b")
+    entry = _FakeCreateWireTargetEntry("entry-1")
+    factory = _FakeCreateWireEntryRefFactory()
+    target = _FakeCreateWireTarget(
+        {"entry-1": entry, "lex-a": lex_a, "lex-b": lex_b}, factory=factory)
+    ctx = _ctx_create_and_wire(
+        entryref_create_bindings={
+            "entry-1": [_ref_record("ref-1", ref_type=0,
+                                     components=["lex-a", "lex-b"])],
+        },
+        lexentry_ref_bindings={
+            "entry-1": {"ComponentLexemesRS": ["lex-a", "lex-b"],
+                        "PrimaryLexemesRS": []},
+        },
+    )
+
+    create_skips, wire_skips = _run_create_then_wire(ctx, target)
+
+    assert create_skips == []
+    assert wire_skips == []
+    assert factory.create_log == ["ref-1"]  # GUID preserved
+    assert len(entry.EntryRefsOS) == 1
+    new_ref = list(entry.EntryRefsOS)[0]
+    assert new_ref.guid == "ref-1"
+    assert new_ref.RefType == 0
+    assert new_ref.ComponentLexemesRS.add_log == [lex_a, lex_b]
+    assert new_ref.PrimaryLexemesRS.add_log == []
+
+
+def test_create_then_wire_preserves_source_order(_stub_lcm_create_and_wire) -> None:
+    """Component order in the source binding is preserved end-to-end through
+    create-then-wire (not just within `_run_post_pass_a` alone)."""
+    l1, l2, l3 = _FakeObj("l1"), _FakeObj("l2"), _FakeObj("l3")
+    entry = _FakeCreateWireTargetEntry("entry-1")
+    target = _FakeCreateWireTarget({"entry-1": entry, "l1": l1, "l2": l2, "l3": l3})
+    ctx = _ctx_create_and_wire(
+        entryref_create_bindings={
+            "entry-1": [_ref_record("ref-1", components=["l3", "l1", "l2"])],
+        },
+        lexentry_ref_bindings={
+            "entry-1": {"ComponentLexemesRS": ["l3", "l1", "l2"],
+                        "PrimaryLexemesRS": []},
+        },
+    )
+
+    _run_create_then_wire(ctx, target)
+
+    new_ref = list(entry.EntryRefsOS)[0]
+    assert new_ref.ComponentLexemesRS.add_log == [l3, l1, l2]
+
+
+def test_create_then_wire_idempotent_rerun(_stub_lcm_create_and_wire) -> None:
+    """A second create-then-wire pass over the SAME plan/target -- 0 new
+    LexEntryRef created (C1 GUID guard, INV-1), 0 new component memberships
+    (C2 membership guard) -- the SC-003 re-Move guarantee."""
+    lex_a = _FakeObj("lex-a")
+    entry = _FakeCreateWireTargetEntry("entry-1")
+    factory = _FakeCreateWireEntryRefFactory()
+    target = _FakeCreateWireTarget({"entry-1": entry, "lex-a": lex_a}, factory=factory)
+    ctx = _ctx_create_and_wire(
+        entryref_create_bindings={
+            "entry-1": [_ref_record("ref-1", components=["lex-a"])],
+        },
+        lexentry_ref_bindings={
+            "entry-1": {"ComponentLexemesRS": ["lex-a"], "PrimaryLexemesRS": []},
+        },
+    )
+
+    _run_create_then_wire(ctx, target)  # first run
+    create_skips_2, wire_skips_2 = _run_create_then_wire(ctx, target)  # re-run
+
+    assert create_skips_2 == []
+    assert wire_skips_2 == []
+    assert factory.create_log == ["ref-1"]  # NOT re-created on re-run
+    assert len(entry.EntryRefsOS) == 1
+    new_ref = list(entry.EntryRefsOS)[0]
+    assert new_ref.ComponentLexemesRS.add_log == [lex_a]  # NOT re-added
+    assert new_ref.ComponentLexemesRS.Count == 1

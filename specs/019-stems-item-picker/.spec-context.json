@@ -1,0 +1,17 @@
+{
+  "workflow": "speckit",
+  "specName": "Stems Item Picker",
+  "branch": "",
+  "currentStep": "specify",
+  "status": "archived",
+  "history": [
+    {
+      "step": "specify",
+      "substep": null,
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-07-13T02:52:56.632Z"
+    }
+  ],
+  "telemetryInstanceId": "3d0b8106-f315-46ba-8c7b-a075632a5cbd"
+}

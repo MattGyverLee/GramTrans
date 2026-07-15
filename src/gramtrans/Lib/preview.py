@@ -33,7 +33,9 @@ if __package__:
         SkipReason,
         WSMapping,
     )
+    from .ws_mapping import to_ws_map_dict
 else:
+    from ws_mapping import to_ws_map_dict  # type: ignore
     from models import (
         CategoryScope,
         CreateDefinitionAction,
@@ -167,6 +169,20 @@ def build_run_plan(
     _lexentry_ref_bindings: dict = {}
     object.__setattr__(context, '_msa_slot_bindings', _msa_slot_bindings)
     object.__setattr__(context, '_lexentry_ref_bindings', _lexentry_ref_bindings)
+    # Feature 027 (Complex Forms & Variants, US1/US2/US3, contract C1): the
+    # parallel, richer per-ref LexEntryRef CREATION binding accumulator --
+    # SAME threading convention as `_lexentry_ref_bindings` above, gathered
+    # by the SAME `_stash_entry_bindings` call site (extended) and consumed
+    # by the Move wiring post-pass `_run_entryref_create_pass` (the front
+    # half of the STEMS tail, immediately before `_run_post_pass_a`).
+    _entryref_create_bindings: dict = {}
+    object.__setattr__(context, '_entryref_create_bindings', _entryref_create_bindings)
+    # Feature 031 (US1, T009): feature->category link accumulator, written by
+    # `categories.gram_categories_plan_action` -> `_stash_feature_category_links`
+    # and consumed by the Move wiring post-pass (`_run_infl_feature_link_pass`,
+    # tail block on the last INFLECTION_FEATURES execute_action).
+    _feature_category_links: dict = {}
+    object.__setattr__(context, '_feature_category_links', _feature_category_links)
     # Phase 3c FR-338: thread the live Selection so entry-shaped leaf
     # plan_actions (AFFIXES/STEMS) can honor enable_overwrite by emitting a
     # PlannedOverwrite instead of a Skip when the target already has the GUID.
@@ -315,6 +331,65 @@ def build_run_plan(
         from categories import plan_all_lexical_relations  # type: ignore
     plan_all_lexical_relations(context, _resolver_cache, _dropped)
 
+    # Feature 025 (full reversals, US1 T018/T019): the reversal closure
+    # walk -- SAME single-final-pass timing as `plan_all_lexical_relations`
+    # immediately above, run once now that `context._copy_set` is fully
+    # settled. Every reversal `DroppedItemRecord` this produces is already
+    # in `_dropped` (folded into `dropped_items` below); `_reversal_decisions`
+    # carries the Add/Link decisions themselves for Preview rendering
+    # (`render_reversal_decisions`, below) before Move ever writes.
+    # T037 Finding 2 (Preview/Move parity, feature-025 cycle-10 remediation):
+    # thread the caller's WSMapping into `context._ws_map` -- the SAME
+    # ``{source_ws_id: target_ws_id}`` dict shape `transfer.execute` computes
+    # via this exact helper (`Lib/transfer.py:182`) and attaches to its own
+    # exec_ctx (`Lib/transfer.py:353`) BEFORE calling
+    # `reproduce_reversal_entries` -> `reversals.plan_reversals`. Without
+    # this, `reversals.plan_reversals`'s `getattr(ctx, "_ws_map", None) or {}`
+    # read (`Lib/reversals.py:443`) always fell back to `{}` (identity) here
+    # in Preview, so a non-identity mapping's reversal-index target WS could
+    # never be correctly predicted before Move ever writes. Set BEFORE
+    # `plan_reversal_decisions` (immediately below) so its whole reversal
+    # walk -- and any other reversal-path reader added later -- sees the
+    # real mapping.
+    object.__setattr__(context, '_ws_map', to_ws_map_dict(ws_mapping))
+
+    if __package__:
+        from .categories import plan_reversal_decisions
+    else:
+        from categories import plan_reversal_decisions  # type: ignore
+    _reversal_decisions = plan_reversal_decisions(context, _resolver_cache, _dropped)
+
+    # Feature 025 (full reversals, US3 T033): Part B `.fwdictconfig`
+    # configuration-view copy plan -- SAME "compute once in Preview, write
+    # once in Move" split as the reversal walk immediately above, but this
+    # is a plain file-I/O decision pass (`Lib/config_views.py.plan_config_
+    # views`), not an LCM closure walk. Fail-soft: `plan_config_views`
+    # resolves each project's on-disk directory (for BOTH source and
+    # target -- read-only, creates nothing) from its LCM cache path
+    # (`config_views.compute_config_dirs`, P0-1 feature-025 cycle-6
+    # remediation -- the plain, non-directory-creating path helper), which
+    # raises `ValueError` for a duck-typed test double that exposes none of
+    # the expected accessors
+    # (`Lib/ui/main_window.py._safe_path`'s `ProjectPath`/`ProjectFilename`/
+    # `ProjectFolder` convention, or the real `project.project.ProjectId
+    # .Path`) -- e.g. `tests/unit/test_preview_no_writes.py`'s `_FakeProject`.
+    # Swallowing that (and any other duck-typing gap) to an empty tuple
+    # mirrors this function's existing "errors-as-skips" posture for leaf
+    # categories above (`pieces = []` on enumerate_source failure) so a
+    # project handle that can't answer the config-view question simply
+    # contributes none, rather than aborting the whole Preview walk.
+    if __package__:
+        from .config_views import plan_config_views
+    else:
+        from config_views import plan_config_views  # type: ignore
+    try:
+        _config_view_records = plan_config_views(source, target)
+    except Exception:  # noqa: BLE001 -- fail-soft, see docstring above
+        _config_view_records = []
+    for _cv_record in _config_view_records:
+        if _cv_record.missing_refs:
+            _dropped.extend(_cv_record.missing_refs)
+
     # T023: rules missing-reference detection (018-rules-page US4/FR-014/FR-015).
     # Runs AFTER the leaf dispatch so 'in-flight' actions are fully enumerated.
     # Routes into the shared excluded_lossy list -> single Move gate (T024).
@@ -357,6 +432,11 @@ def build_run_plan(
         overwrites=tuple(overwrites),
         msa_slot_bindings=_msa_slot_bindings,
         lexentry_ref_bindings=_lexentry_ref_bindings,
+        # Feature 027 (US1/US2/US3, contract C1): gathered create bindings
+        # (see the accumulator attachment above).
+        entryref_create_bindings=_entryref_create_bindings,
+        # Feature 031 (US1, T009): gathered feature->category link bindings.
+        feature_category_links=_feature_category_links,
         excluded_lossy=tuple(excluded_lossy),
         # QC P1 (cycle-1 review, feature 024): carry the read-only resolver's
         # projected drops into the plan so Preview is symmetric with Move
@@ -366,6 +446,199 @@ def build_run_plan(
         # Feature 026 (T010): per-text transfer plans consumed by transfer.py's
         # TEXTS apply hook. Empty tuple when TEXTS is not selected.
         text_plans=tuple(_text_plans),
+        # Feature 025 (US1, T018/T019): the reversal closure walk's
+        # decision output (see the call site above).
+        reversal_decisions=tuple(_reversal_decisions),
+        # Feature 025 (US3, T033): the config-view copy plan (see the call
+        # site above); `missing_refs` on each record are already folded
+        # into `dropped_items` above.
+        config_view_records=tuple(_config_view_records),
+    )
+
+
+# ============================================================================
+# Feature 025 (full reversals, US1 T019) -- reversal-decision Preview rendering
+# ============================================================================
+
+def _render_one_reversal_decision(decision, indent: int) -> List[str]:
+    """One Add-entry line per `ReversalDecision`, recursing
+    `sub_entry_decisions` at increasing indent -- the sub-entry TREE shape
+    (R6) rendered as nested lines."""
+    pad = " " * indent
+    form = next(iter(decision.reversal_form_alts.values()), "") if decision.reversal_form_alts else "(no form)"
+    sense_count = len(decision.linked_sense_guids)
+    lines = [f"{pad}Add entry {form!r} -- links {sense_count} sense(s)"]
+    for sub in decision.sub_entry_decisions:
+        lines.extend(_render_one_reversal_decision(sub, indent=indent + 2))
+    return lines
+
+
+def render_reversal_decisions(plan: RunPlan) -> Tuple[str, ...]:
+    """T019 (US1, Principle III): render `plan.reversal_decisions` for the
+    Preview pane, grouped by per-writing-system target index (existing ->
+    'Link', to-create -> 'Add'), one Add-entry line per top-level entry
+    (recursing sub-entries) -- BEFORE Move ever writes.
+
+    Reversal `DroppedItemRecord`s are deliberately NOT duplicated here --
+    they already flow through the single unified 024 channel
+    (`RunPlan.dropped_items` / `RunReport.dropped_items`, rendered by
+    `report.render_text_summary`); this function renders only what WOULD be
+    added/linked, not what was dropped. Returns an empty tuple when the
+    plan has no reversal decisions at all (no rendering needed).
+
+    This is a plain-text rendering surface (mirrors `report.
+    render_text_summary`'s own line-based contract) -- wiring an actual
+    interactive PyQt widget onto it is a separate UI concern, not part of
+    this feature's US1 scope (`Lib/ui/main_window.py`/the stats panel can
+    call this the same way they already consume `report.render_text_summary`
+    for the run-report pane).
+    """
+    if not plan.reversal_decisions:
+        return ()
+    by_ws: dict = {}
+    for decision in plan.reversal_decisions:
+        by_ws.setdefault(decision.target_ws_id, []).append(decision)
+
+    lines: List[str] = []
+    for ws_id in sorted(by_ws):
+        group = by_ws[ws_id]
+        action = "Add" if group[0].target_index_ref is None else "Link"
+        lines.append(f"  Reversal index [{ws_id}] ({action}):")
+        for decision in group:
+            lines.extend(_render_one_reversal_decision(decision, indent=4))
+    return tuple(lines)
+
+
+# ============================================================================
+# Feature 025 (full reversals, US3 T033) -- config-view Preview rendering
+# ============================================================================
+
+_CONFIG_VIEW_ACTION_LABEL = {
+    "add": "Add",
+    "overwrite": "Overwrite",
+    "skip": "Skip (already up to date)",
+}
+
+
+def render_config_view_records(plan: RunPlan) -> Tuple[str, ...]:
+    """T033 (US3, Principle III): render `plan.config_view_records` for the
+    Preview pane, grouped by `kind` ("Dictionary" / "ReversalIndex"), one
+    line per `.fwdictconfig` file showing its planned Add/Overwrite/Skip
+    disposition -- BEFORE Move's `Lib/transfer.py.execute` calls
+    `Lib/config_views.py.apply_config_views`.
+
+    Missing-reference records (`ConfigViewRecord.missing_refs`) are
+    deliberately NOT duplicated here -- they already flow through the SAME
+    unified 024 dropped-items channel as every other drop in this codebase
+    (`RunPlan.dropped_items` / `RunReport.dropped_items`, rendered by
+    `report.render_text_summary`); this function renders only the
+    Add/Overwrite/Skip file dispositions themselves. Returns an empty tuple
+    when the plan has no config-view records at all (mirrors
+    `render_reversal_decisions`'s empty-plan posture).
+    """
+    if not plan.config_view_records:
+        return ()
+    by_kind: dict = {}
+    for record in plan.config_view_records:
+        by_kind.setdefault(record.kind, []).append(record)
+
+    lines: List[str] = []
+    lines.append("  Configuration views:")
+    for kind in sorted(by_kind):
+        lines.append(f"    {kind}:")
+        for record in by_kind[kind]:
+            label = _CONFIG_VIEW_ACTION_LABEL.get(record.action.value, record.action.value)
+            lines.append(f"      {label} {record.filename!r}")
+    return tuple(lines)
+
+
+# ============================================================================
+# P0-2 (feature 025 cycle-6 remediation) -- Preview surface composition
+# ============================================================================
+
+# ============================================================================
+# Feature 031 (US1, T010) -- feature->category link Preview rendering
+# ============================================================================
+
+def _target_pos_infl_feat_guids(target, pos_guid):
+    """Return the set of feature GUIDs already in a target POS's
+    InflectableFeatsRC, or None when the target can't answer (fail-soft ->
+    render as 'Link'). Used only to label already-linked pairs as SKIP (C1
+    DEDUP); never mutates the target."""
+    getter = getattr(target, "get_object_by_guid", None)
+    if getter is None:
+        return None
+    try:
+        pos = getter(pos_guid)
+    except Exception:  # noqa: BLE001
+        return None
+    if pos is None:
+        return None
+    pos_typed = pos
+    try:
+        from SIL.LCModel import IPartOfSpeech  # noqa: PLC0415
+        pos_typed = IPartOfSpeech(pos)
+    except Exception:  # noqa: BLE001
+        pos_typed = pos
+    feats_rc = getattr(pos_typed, "InflectableFeatsRC", None)
+    if feats_rc is None:
+        return None
+    out = set()
+    try:
+        for feat in feats_rc:
+            g = str(getattr(feat, "Guid", getattr(feat, "guid", ""))).lower()
+            if g:
+                out.add(g)
+    except (AttributeError, TypeError):
+        return None
+    return out
+
+
+def render_feature_category_links(plan: RunPlan) -> Tuple[str, ...]:
+    """T010 (US1, Principle III / VR-5 / SC-004): render `plan.feature_category_
+    links` for the Preview pane -- one row per (POS, feature) association with a
+    proposed action **Link**, or **SKIP (already linked)** when the pair is
+    already present in the target POS's InflectableFeatsRC (contract C1 DEDUP).
+
+    The number of Link rows equals the number of (POS, feature) pairs that the
+    Move wiring post-pass will write, so preview count == committed count.
+    Returns an empty tuple when the plan carries no links (mirrors
+    `render_reversal_decisions`)."""
+    links = getattr(plan, "feature_category_links", None) or {}
+    if not links:
+        return ()
+    target = getattr(getattr(plan, "context", None), "target_handle", None)
+    lines: List[str] = ["  Inflection feature -> category links:"]
+    for pos_guid in sorted(links):
+        present = _target_pos_infl_feat_guids(target, pos_guid)
+        for feature_guid in links[pos_guid]:
+            already = present is not None and str(feature_guid).lower() in present
+            action = "SKIP (already linked)" if already else "Link"
+            lines.append(f"    {action}  POS {pos_guid} <- feature {feature_guid}")
+    return tuple(lines)
+
+
+def render_preview_extra_lines(plan: RunPlan) -> Tuple[str, ...]:
+    """Compose the Preview-only extra lines -- the reversal Add/Link plan
+    (`render_reversal_decisions`), the config-view Add/Overwrite/Skip
+    list (`render_config_view_records`), and the feature->category link plan
+    (`render_feature_category_links`) -- that `Lib/ui/main_window.py.
+    _on_preview` displays alongside the existing stats-panel report text
+    BEFORE Move ever writes (Principle III).
+
+    Before this fix neither render function had any call site in the
+    codebase: `_on_preview` built a `RunReport` and called `self._stats.
+    set_report(report)`, which surfaces `RunPlan.dropped_items` only -- the
+    reversal Add/Link plan and the config-view Add/Overwrite/Skip list were
+    computed every Preview run (`build_run_plan`) but never shown to the
+    user. This is the single seam `_on_preview` now calls; each underlying
+    render fn already returns `()` for an empty plan, so this composition
+    is a clean no-op when the plan carries neither.
+    """
+    return (
+        tuple(render_reversal_decisions(plan))
+        + tuple(render_config_view_records(plan))
+        + tuple(render_feature_category_links(plan))
     )
 
 

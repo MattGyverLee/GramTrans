@@ -1,5 +1,880 @@
 # GramTrans — Session Handoff
 
+## ▶▶▶ Feature 028 — Affix-Allomorph Morphosyntax Fidelity — DONE & MERGED (2026-07-15)
+
+**MERGED to `main` @ `5cecdb2`** (`--no-ff`, no conflicts). Worktree
+`../GramTrans-028-affix-allomorph-morphosyntax` removed; branch `028-affix-allomorph-morphosyntax`
+deleted (merged). Merged-tree offline suite **1625 passed** at the documented **7-fail environment
+baseline** (6× `test_013_apply_syncable_signature` — flexicon tree absent in this env — + 1×
+`test_wizard_pos_grammar_wiring`); no new failures. **All 20 tasks (T001–T020) done.**
+
+**What shipped:** reproduces the four `MoAffixAllomorph`/`MoAffixForm` morphosyntactic-environment
+fields on cross-project Move, closing the 024-census DROP_REPORTED gap for affix allomorphs. Each
+field has a reproduce leg + read-only Preview twin in `Lib/owned.py`, dispatched via
+`reproduce_moaffix_msenv_data` / `_plan_moaffix_msenv_decisions`:
+- **US1** `MsEnvPartOfSpeechRA` — resolve/create target POS (`categories.resolve_or_create_target_pos`, R1).
+- **US2** `InflectionClassesRC` — resolve/create class under its owning POS (`resolve_or_create_inflection_class`, R5).
+- **US3** `MsEnvFeaturesOA` — deep-copy the owned `IFsFeatStruc`, resolve closed values by GUID (feature-031 machinery, R3; resolve-only, never creates a feature).
+- **US4** `PositionRS` — link infix-position envs in order, reusing the 024 environment path (R4).
+- **US5** — unified never-silent backstop; fidelity census flipped the four rows DROP_REPORTED → COPIED; retired the dead `_report_dropped_moaffix_msenv_fields` stub. Also added `fidelity_census.py` to pytest `python_files` so `pytest tests/verification/` collects it.
+
+**T019 attended live PASS (2026-07-15, user-directed).** Driven through the FLExTools host
+interpreter (subprocess — the dev shell has no flexicon): `scratchpad/build028_fixture.py --write`
+populated a constructed fixture on a disposable `Ejagham028Src` (restored from the Ejagham Mini
+backup; real Ejagham Mini untouched), then `scratchpad/run028_live.py` restored `Target` clean and
+ran the real `AFFIXES` engine. **`MsEnvPartOfSpeechRA` / `InflectionClassesRC` / `PositionRS` each
+`0→1`** (CREATE / CREATE / LINK), **idempotent re-Move** (0 new, counts stable), and **4 never-silent
+`DroppedItemRecord`s** (SC-003). `MsEnvFeaturesOA` correctly REPORT_DROPPED live — the leg is
+resolve-only (R3) and the closed feature wasn't in the target when the affix was processed; its
+positive deep-copy arm is proven by the 7 offline `test_028_msenv_feature_struct.py` tests. All four
+driver self-checks PASS. Full evidence:
+`specs/028-affix-allomorph-morphosyntax/verification-log.md`.
+
+**Disposable projects left on disk** (safe to delete): `Ejagham028Src` and the mutated `Target`
+(re-restore from `backups/Target 2026-07-06 0218.fwbackup` to reset).
+
+**Deferred follow-up (non-gating):** live positive `MsEnvFeaturesOA` deep-copy (seed the feature
+into the target first, then run the affix transfer); complex/open feature-value reproduction
+(spec Out of Scope, R3).
+
+---
+
+## ▶▶▶ Feature 027 — Complex Forms & Variants — DONE & MERGED (2026-07-14)
+
+**MERGED to `main` @ `4b8b4dc`** (`--no-ff`, no conflicts, pushed to origin). Worktree
+`../GramTrans-027-complex-forms-variants` removed; branch `027-complex-forms-variants` ref
+retained (merged). Merged-tree offline suite **1580 passed** modulo the documented
+`test_wizard_pos_grammar_wiring` baseline fail. **All 27 tasks (T001-T027) done.**
+
+**Issues**: **#30 CLOSED** (LexEntryRef containers now reproduced). **#28** commented (LexEntryRef
+leg proven live; its `_run_171_subpass` MSA->slot leg stays open, tracked by #31). **#32 filed** —
+US3 complex-form live `0->N` proof (needs a constructed fixture) + the deferred non-gating
+follow-ups (run-scoped leaf-pick fix, C3 Preview decide-only twin, cosmetic uncast label
+`categories.py:4398`, C3 list-shape MCP re-confirm, P2 test-fixture DRY).
+
+**Handoff**: `specs/027-complex-forms-variants/.crew-handoff.json` (`status: feature_complete`).
+
+**FINAL VERDICT: APPROVED — MERGE AUTHORIZED.** All crew quality gates are GREEN and the T025
+attended live `0 -> 6` proof PASSES at the fixed HEAD `02413b5`.
+
+- **All offline crew gates GREEN** (carried from cycles 5-7): verification PASS, QC 94/100 APPROVE,
+  domain 91/100 APPROVED, author 8/10 CONCERNS-not-blocking. Both merge-blocking P1s closed at
+  doc/comment/census scope in cycle 7.
+- **T025 attended live proof (needs_human) — RUN and RESOLVED.** Run #1 (`f1917fa`) proved the
+  `0 -> 6` reproduction (6 containers, RefType 6/6, 1 component wired each, variant-type 6/6,
+  idempotent) but surfaced a real **C4 defect**: 6 false-positive `DroppedItemRecord`s for
+  fully-reproduced refs. Root cause = the #28 layer-2 cast gap — `_entry_ref_is_reproducible` ran
+  `_affix_type_of` on uncast bare-`ICmObject` component members (`LexemeFormOA` read `None`).
+- **Cycle-8 fix (worktree `02413b5`) — BLESSED.** Surgical `_cast_lcm(m, "ILexEntry")` before
+  `_affix_type_of`, reusing the module's own idiom, plus a RED-first regression test
+  (`test_entry_ref_reproducible_casts_bare_component_before_affix_check`, `_Bare`/`_Typed` under
+  `_stub_lcm_full`) that closes the exact structural blind spot the offline fakes could not catch
+  (`_FakeEligibleEntry` exposed `LexemeFormOA` directly). Targeted 027 suite **61 passed** (+1);
+  full unit suite **1580 passed** modulo the documented `test_wizard_pos_grammar_wiring` baseline
+  fail; byte-compile clean. Sweep audit: fixed site + 3 siblings; 1 cosmetic-only residual
+  (uncast label at `categories.py:4398`, drop-count-neutral) deferred to T026.
+- **T025 re-run #2 (fixed HEAD `02413b5`) — FULLY CLEAN.** containers `0 -> 6`, RefType 6/6,
+  variant-type 6/6, components 6/6, **EntryRefsOS drops 0** (was 6), idempotent, exit 0. T025 GREEN.
+- **Bless rationale:** the live re-proof is the authoritative verification for a live-surfaced
+  defect; the new regression test locks the structural gap; the full offline suite is green. A
+  further crew cycle over a one-line cast would be a wasted cycle.
+
+**⛔ REMAINING (human-confirmed — main session executes with the human; NOT under an unattended loop):**
+1. **T026** — file the US3 complex-form live-proof follow-up issue (needs a constructed
+   complex-form fixture; parallel to #31's MSA->slot live source); update issue **#28** (LexEntryRef
+   leg now proven live); **close #30**. Optionally fold in the C3 MCP list-shape re-confirm
+   (`mcp_deviation`, non-gating) and the cosmetic `categories.py:4398` label cast.
+2. **T027** — merge `027-complex-forms-variants` -> `main` (`--no-ff`); remove the worktree; update
+   this STATUS.md. Merge the tree, then confirm the merged-tree offline suite matches (1580 passed
+   modulo the baseline fail).
+
+**Deferred post-merge follow-ups (non-gating):** run-scoped leaf-pick fix (only the doc note
+landed); author's C3 Preview decide-only twin; P2 test-fixture DRY; cycle-3 P2 nits; the stale
+`probe27_components.py` VERDICT string ("despite the 6 C4 drop reports" — scratchpad-only, live
+count is now 0).
+
+- Reports: `specs/027-complex-forms-variants/verification-log.md`,
+  `specs/027-complex-forms-variants/reviews/cycle{5-verification,5-qc,6-domain,6-author,6-qc,6-verification,7-programmer,8-programmer}.md`.
+
+---
+
+## ▶▶▶ Feature 027 — Complex Forms & Variants — MERGE GATE (cycle 7) — CREW APPROVAL GREEN; BLOCKED on T025 (needs_human) (2026-07-13)
+
+**Worktree** `../GramTrans-027-complex-forms-variants` on branch `027-complex-forms-variants`
+@ **`f1917fa`** (clean; NOT merged). Spec addendum on **`main` @ `ab4879d`**. **Handoff**:
+`specs/027-complex-forms-variants/.crew-handoff.json` (`status: needs_human`). Cumulative:
+**T001-T024 done**. Remaining: **T025** (attended live proof — needs_human), **T026** (file
+US3 live-proof follow-up issue), **T027** (merge — depends on T025 + crew approval).
+
+**MERGE VERDICT: crew approval GREEN — but the merge itself is HELD on T025.** Per tasks.md
+"T027 (merge) depends on T025 + crew approval." Crew approval is now granted (all offline gates
+green, both merge-blocking P1s closed); T025 (the attended live `0 → 6` proof) is `needs_human`
+and has NOT been run, so **the merge cannot proceed unattended**.
+
+- **All offline crew gates GREEN:** verification PASS (cycle 5) + QC 94/100 APPROVE (cycle 5) +
+  domain 91/100 APPROVED (cycle 6) + author 8/10 CONCERNS-not-blocking (cycle 6).
+- **Cycle-7 fix spurt (worktree `f1917fa`, main `ab4879d`) closed both merge-blocking P1s at
+  doc/comment/census scope — NO run-scoped logic changed:**
+  - **P1a (leaf-pick run-scope gap):** `_entry_ref_is_reproducible` docstring now caveats
+    intrinsic/type-scoped (not run-scoped) eligibility; research.md Decision 5 gained a
+    "Documented limitation (deferred post-merge)" addendum.
+  - **P1b/c (stale fidelity_census):** `tests/verification/fidelity_census.py` 6 LexEntryRef-family
+    rows now point at the real create site (`_create_entryref_container`/`_run_entryref_create_pass`)
+    with refreshed line-refs (4435/4535); stale inline comment corrected.
+  - Wording nit "GUID-remapped" → "GUID-preserved" fixed in contract C3 + T014 docstring.
+  - Prove: targeted 027 suite **60 passed**; fidelity_census guard suite **86 passed**;
+    byte-compile clean; diff scope confirmed doc/comment/census only.
+
+**⛔ ACTION REQUIRED (human, attended session) — remaining needs_human items:**
+1. **T025 live proof** — restore the disposable target, activate FLExToolsMCP, run
+   `scratchpad/run27_live.py` (Ejagham Mini → restored Target). Confirm `LexEntryRef 0 → 6`,
+   `VariantEntryTypesRS` wired, re-Move 0-duplicate, out-of-closure refs reported. Write evidence
+   to `specs/027-complex-forms-variants/verification-log.md`. **Never under an unattended loop.**
+2. **C3 live re-confirm (mcp_deviation)** — at/before T025, re-verify the three C3 list shapes
+   (`VariantEntryTypesOA`/`ComplexEntryTypesOA` ItemClsid=5118/Depth=127; `PublicationTypesOA`
+   ItemClsid=7/Depth=1) via FLExToolsMCP; the cited probe `scratchpad/probe_c3_lists.py` is absent.
+3. On PASS → file the **T026** US3 complex-form live-proof follow-up issue (update #28, close #30),
+   then **T027** merge `027-complex-forms-variants` → `main` (`--no-ff`) and remove the worktree.
+
+**Deferred post-merge follow-ups (non-gating):** (a) the PREFERRED run-scoped leaf-pick fix
+(thread run selection through `_report_dropped_entry_refs` so membership, not just intrinsic type
+eligibility, is checked — only the documented-limitation note landed); (b) author's C3 Preview
+decide-only twin (Principle III consistency, not correctness); (c) P2 test-fixture DRY
+(`tests/unit/_fixtures_lexentry_ref.py`); (d) cycle-3 P2 nits.
+
+- Reports: `specs/027-complex-forms-variants/reviews/cycle{5-verification,5-qc,6-domain,6-author,6-qc,6-verification,7-programmer}.md`.
+
+---
+
+## ▶▶▶ Feature 027 — Complex Forms & Variants — SPURT 4 (Phase 5 US3, T016-T018) DONE; cycle-5 gate APPROVED (2026-07-13)
+
+**Worktree** `../GramTrans-027-complex-forms-variants` on branch `027-complex-forms-variants`
+@ **`ec40a32`** (clean; NOT merged; diff base `da06a5c`). **Handoff**:
+`specs/027-complex-forms-variants/.crew-handoff.json`. Cumulative tasks: **T001-T020 done**
+(Setup + Foundational + US1 MVP + US2/C3 + US3 complex-form + C4 drop-policy flip). Remaining:
+Phase 6 (T021-T022), Polish/live (T023-T027; T025 + US3-live are attended/needs_human).
+
+**Ralph-loop spurt 4 (LEX crew, cycles 4-5) — US3 = extend C1/C3 to RefType=1 complex-form ->
+`ComplexEntryTypesRS`. This was a TEST-ONLY spurt (`ec40a32` = 194 insertions across 2 test
+files, src/ untouched) because the production path was already parametric. VERDICT: APPROVE —
+both gates GREEN, Phase 5 US3 checkpoint CLOSED, no remediation.**
+
+- **Verification: PASS (all 4 items), no blockers.** Diffstat confirms `src/` genuinely untouched
+  (`da06a5c..ec40a32` = 2 test files, 194 insertions, 0 deletions). Targeted 027 suite **50 passed**;
+  full suite **1575 passed / 1 documented baseline fail** (`test_wizard_pos_grammar_wiring`,
+  non-regression) **/ 9 skipped / 14 xfailed / 14 xpassed** — exact match to programmer's numbers.
+  Both tripwires independently reproduced from scratch and reverted to a byte-clean worktree:
+  narrowing the C2 wiring loop (`categories.py:5215`) to `ComponentLexemesRS` only breaks exactly
+  T016's `PrimaryLexemesRS` assertion; forcing `ComplexEntryTypesRS` into `type_skip`
+  unconditionally (`categories.py:5155-5156`) breaks exactly the 5 T017 disposition tests, each with
+  empty `ComplexEntryTypesRS` — genuine discriminators, not narrative artifacts.
+- **QC: 94/100 APPROVE, no P0/P1.** T016 (`test_027_entryref_reproduction.py`) genuinely pins
+  RefType=1 primary **subset** membership (strict list-equality, `lex_b` excluded), **independent
+  per-field source order** (primaries `c,a` vs components `a,b,c`), and **cross-field overlap** with
+  per-field membership guards — a real, previously-unexercised combination the sibling
+  phase3c test never covered. T017's four new tests mirror T013's variant matrix for
+  `ComplexEntryTypesRS` (absent->CREATE guid-preserved + landed in `ComplexEntryTypesOA.PossibilitiesOS`;
+  diverged-custom->UPDATE+LINK same object; diverged-GOLD->LINK+report, `Name` never overwritten,
+  `field_name=="ComplexEntryTypesRS"`; identical->LINK-only), plus a negative-path routing test that
+  `VariantEntryTypesOA` is never touched for a RefType=1 ref. **T018 "no production code needed"
+  independently verified genuine** against `categories.py:5026-5240` + `references.py:150-294,1000-1070`:
+  `ComplexEntryTypesRS -> ComplexEntryTypesOA` (NOT `VariantEntryTypesOA`); both share the
+  `ItemClsid=5118 -> ILexEntryTypeFactory` CREATE arm (list-shape-driven, not RefType-driven); the
+  only RefType-aware code is the single-point `type_skip` branch in `categories.py`; and the C2
+  wiring loop reads each field's own list with a per-field guard, so primaries are wired independently
+  of components (never assumes `primaries == components`).
+- **Two NEW P2 findings (test-fixture DRY only, non-blocking, non-gating):** `_FakeRefSeq` /
+  guid-only fake / `_ctx_create_and_wire` now duplicated near-identically across three test files;
+  this cycle added a third copy rather than sharing (and the same conceptual fake is named `_FakeObj`
+  in one file, `_FakeLexeme` in another). Suggested low-priority cleanup: extract
+  `tests/unit/_fixtures_lexentry_ref.py`. No functional risk. Folded forward.
+- **Carried-forward and still OPEN (gating feature_complete, NOT US3):** P1a (leaf-pick scope in
+  `_entry_ref_is_reproducible`, categories.py:4410-4417), P1b/c (stale `fidelity_census.py` audit map
+  + inline comment categories.py:4608-4611), and the `mcp_deviation` (C3 live list-shape claims must be
+  re-confirmed via FLExToolsMCP at/before T025). See `.crew-handoff.json` `open_items`.
+- Reports: `specs/027-complex-forms-variants/reviews/cycle5-verification.md`,
+  `specs/027-complex-forms-variants/reviews/cycle5-qc.md`.
+
+**Next checkpoint (spurt 5): Phase 6 T021-T022**, then the two folded-forward P1s in one pass before
+the feature-complete gate. T021 = Preview/Move parity for the RefType=1 complex-form path (mirror the
+variant-path parity coverage); T022 = empty-source regression (no complex-form refs -> no
+`ComplexEntryTypesRS` create/wire, byte-identical to a 024-only run). TDD RED-before-GREEN. Then fold
+the P1a documented-limitation note into research.md Decision 5 and refresh `fidelity_census.py`
+(create site now `categories.py:5122`; C1/C2 reproduce Component/Primary in-closure; C3 gives the
+three type/show fields CREATE/UPDATE/LINK disposition) + the stale inline comment, in a single
+follow-up commit.
+
+**⚠️ NOT part of the autonomous spurts (attended / needs_human):** T025 (destructive live `0 → N`
+Move proof, SC-001/002/003/004; also the FLExToolsMCP re-confirmation of C3 list shapes) and the
+US3 complex-form live proof (T026 follow-up). Reaching those → emit `needs_human` and stop.
+
+---
+
+## ▶▶▶ Feature 027 — Complex Forms & Variants — SPURT 3 (US2/C3 + Phase 6 C4 + P1 fold) DONE; cycle-3 gate CONDITIONAL-APPROVED (2026-07-13)
+
+**Worktree** `../GramTrans-027-complex-forms-variants` on branch `027-complex-forms-variants`
+@ **`da06a5c`** (clean; NOT merged). **Handoff**:
+`specs/027-complex-forms-variants/.crew-handoff.json`. Cumulative tasks: **T001-T015 + T019-T020
+done** (Setup + Foundational + US1 MVP + US2/C3 + C4 drop-policy flip). Remaining: US3 (T016-T018),
+Phase 6 (T021-T022), Polish/live (T023-T027; T025 + US3-live are attended/needs_human).
+
+**Ralph-loop spurt 3 was committed by a prior agent as `da06a5c` but that agent died before
+running the gate; this spurt ran the deferred cycle-3 verification + QC gate over da06a5c and
+closed the checkpoint. VERDICT: CONDITIONAL APPROVE — gate PASSES, no remediation spurt before US3.**
+
+- **Verification: PASS (all 4 items), no blockers.** Offline suite **1 failed / 1570 passed /
+  9 skipped / 14 xfailed / 14 xpassed** — sole failure is the documented baseline
+  `test_wizard_pos_grammar_wiring` (non-regression). Targeted 027 suite **52 passed** exactly as
+  claimed. RED-before-GREEN confirmed genuine: reverting T015's GREEN hunk turns all **8/8**
+  `test_027_entry_type_resolve.py` tests RED (three-way disposition + both GOLD GUID-remap tests),
+  zero collateral; reverting T020's GREEN hunk turns the **3/3 discriminating** T019 tests RED
+  (the other 3 in that file are non-discriminating by design, correctly). Worktree restored
+  byte-identical to da06a5c.
+- **QC: 83/100 CONDITIONAL, no P0.** C3 three-way disposition (T015), Principle-I GOLD GUID-remap
+  enforced in production not just tested (T014), C4 drop-policy flip (T020), the P1 DRY fold
+  (`_safe_add_to_owner`, the exact cycle-2 recommendation, now with a branch test), and the 3 new
+  `ReferenceFieldSpec` rows + 5118 `ILexEntryTypeFactory` arm all PASS. Every new path degrades to
+  Skip/DroppedItemRecord, never crashes or goes silent.
+
+- **Two P1 audit-trail findings — FOLDED FORWARD (gating feature_complete, NOT US3):**
+  - **P1-a (leaf-pick scope):** `_entry_ref_is_reproducible` (categories.py:4410-4417) checks
+    intrinsic type-eligibility, not run-scoped `leaf_picks_for(...)` membership, so a
+    leaf-pick-narrowed run can under-report drops -> `compute_fidelity_by_guid` over-reports
+    fidelity for the owning entry. Not an overall silent loss (`_run_post_pass_a` still emits
+    `Skip(DEPENDENCY_UNRESOLVED)` on a different channel), but the per-object census is wrong in
+    that case. Min fix: documented-limitation note in research.md Decision 5 / C4 contract; ideal:
+    thread run selection through `_report_dropped_entry_refs`.
+  - **P1-b/c (stale audit map):** `tests/verification/fidelity_census.py` (LexEntry.EntryRefsOS +
+    all 5 LexEntryRef.* rows) and one inline comment (categories.py:4608-4611) still claim "no
+    LexEntryRef is ever created" — false post-027. Best refreshed in ONE pass **after US3**, since
+    US3 finalizes the same field family.
+- **Verification doc-gaps (bookkeeping, tied to T025):** the cited C3 read-only probe
+  `scratchpad/probe_c3_lists.py` does not exist on disk, and the "cycle-3 report" the commit points
+  to was never written — the only durable record of the MCP deviation is `.crew-handoff.json` +
+  `cycle3-verification.md`. Code is independently verified offline; the live list-shape claims
+  (ItemClsid=5118/Depth=127; ItemClsid=7/Depth=1) must be re-confirmed via **FLExToolsMCP** (per
+  repo rule) at or before T025, not left resting on prose.
+- Reports: `specs/027-complex-forms-variants/reviews/cycle3-verification.md`,
+  `specs/027-complex-forms-variants/reviews/cycle3-qc.md`.
+
+**Next checkpoint (spurt 4): Phase 5 US3 (T016-T018) then Phase 6 T021-T022.** US3 = extend
+C1/C3 to RefType=1 `complex_entry_types` -> `ComplexEntryTypesRS`: author T016/T017 RED
+(disposition + parametric parity with the variant path), then T018 GREEN (reuse the 5118 factory
+arm + generic `_apply_reference_fields` dispatch; NO new create path). Then T021 Preview/Move
+parity + T022 empty-source regression. Fold the P1-a limitation note into research.md and the
+P1-b/c fidelity_census refresh into a single follow-up commit before the feature-complete gate.
+
+**⚠️ NOT part of the autonomous spurts (attended / needs_human):** T025 (destructive live `0 → N`
+Move proof, SC-001/002/003/004; also the FLExToolsMCP re-confirmation of C3 list shapes) and the
+US3 complex-form live proof (T026 follow-up). Reaching those → emit `needs_human` and stop.
+
+---
+
+## ▶▶▶ Feature 027 — Complex Forms & Variants — SPURT 2 (Phase 3 US1 MVP) DONE; gates GREEN (2026-07-13)
+
+**Worktree** `../GramTrans-027-complex-forms-variants` on branch `027-complex-forms-variants`
+@ **`e8686c3`** (clean; NOT merged). **Handoff**:
+`specs/027-complex-forms-variants/.crew-handoff.json`. Cumulative tasks: **T001-T012 done**
+(Phase 1 Setup + Phase 2 Foundational + Phase 3 US1 MVP). Remaining: US2 (T013-T015),
+US3 (T016-T018), Phase 6 cross-cutting (T019-T022), Polish/live (T023-T027).
+
+**Ralph-loop spurt 2 (LEX crew, cycle 2) — combined verification + QC gate over the US1 MVP
+offline slice. Both gates GREEN; US1 MVP checkpoint REACHED.**
+- **Verification: PASS (all 4 items).** RED-before-GREEN confirmed genuine via two independent
+  scratch-neuter proofs (full-neuter → all 9 tests RED; surgical removal of the
+  `_cast_lcm(target_entry,"ILexEntry")` line at categories.py:5047 → exactly the one predicted
+  test fails with the semantically-correct `Skip(EntryRefsOS unavailable)`). Offline suite
+  **1 failed / 1555 passed / 9 skipped / 14 xfailed / 14 xpassed** — sole failure is the
+  documented pre-existing baseline `test_wizard_pos_grammar_wiring`, NOT a 027 regression.
+  Integration scaffold skips clean (1 skipped, exit 0). 27/27 phase3c tests incl 3 genuine
+  C1-then-C2 integration tests (`_run_create_then_wire` against the SAME object graph).
+  Worktree left clean.
+- **QC: 90/100 APPROVE.** Issue #28 cast/resolve guard PASS — two-step `_resolve_target_by_guid`
+  → `_cast_lcm` idiom matches `_run_171_subpass`/`_run_post_pass_a` exactly, no bypass; GUID
+  idempotency (INV-1) PASS; error-degradation PASS. No P0.
+- **One P1 (DRY, non-blocking, FOLDED into next spurt):** `entry_refs.Add(new_ref)` at
+  categories.py:5085-5092 inline-duplicates the orphan-risk raise-on-Add-failure pattern
+  instead of reusing `_safe_add_to_owner` (categories.py:5956). The raise itself is the
+  established file-wide convention (10+ sites) for genuine Create-succeeded-but-Add-failed
+  corruption risk, NOT a "never crash" contract violation. Fix = replace with
+  `_safe_add_to_owner(new_ref, entry_refs, "ILexEntryRefFactory", ref_guid)` + one branch test.
+  Deferred to the next spurt (natural to land alongside the Phase 6 C4 create/drop rework).
+- **P2 double-bookkeeping (assessed, not a defect):** reproduced refs are currently created
+  AND still reported dropped (`_report_dropped_entry_refs`, categories.py:4393, called from
+  both Preview 3619 and Move 4580). This is the correctly-scoped C4/Phase-6 interim state,
+  resolved by the drop-policy flip in the next spurt.
+- Reports: `specs/027-complex-forms-variants/reviews/cycle2-verification.md`,
+  `specs/027-complex-forms-variants/reviews/cycle2-qc.md`.
+
+**Next checkpoint (spurt 3): Phase 4 US2 (T013-T015) + Phase 6 C4 drop-policy flip (T019-T020),
+folding the P1 DRY fix.** US2 = route `variant_entry_types`/`show_complex_forms_in` through
+024's `references.decide_reference`/`apply_reference` (three-way disposition; GOLD GUID-remap,
+never overwrite) so each reproduced ref carries a resolved entry-type. C4 = flip
+`_report_dropped_entry_refs` to reproduce-in-closure / report-only-out-of-closure, clearing the
+double-bookkeeping. TDD: RED tests (T013/T014; T019) before GREEN.
+
+**⚠️ NOT part of the autonomous spurts (attended / needs_human):** T025 (destructive live
+`0 → N` Move proof, SC-001/002/003/004) and the US3 complex-form live proof (T026 follow-up).
+Reaching those → emit `needs_human` and stop; never run a destructive live-LCM write unattended.
+
+---
+
+## ▶▶▶ Feature 031 — Inflection-Feature Linking — COMPLETE: merged to main after LEX-crew review (2026-07-13)
+
+**FEATURE COMPLETE.** All tasks T001–T026 done. Merged `031-fix-inflection-feature-linking`
+→ **`main` @ `aa56d3d`** (`--no-ff`); worktree + branch removed. Prevention-only scope
+(FR-011). Merged-tree offline suite: **1535 passed / 1 pre-existing baseline fail**
+(`test_wizard_pos_grammar_wiring`, unrelated — confirmed non-regression).
+
+**LEX-crew pre-merge review (2 cycles) — all gates green:**
+- Cycle 1: verification APPROVE (both fixes correct vs live LCM), domain APPROVED (skip+report
+  for complex features is correct; audit complete), QC BLOCK at 74/100 (pattern-audit gate +
+  2 broad-except P1s + missing fake-repo test).
+- Cycle 2 (fixes in `b5cd49b` code + `c8adb2f` spec): QC 92/100 gate CLEAR / APPROVE,
+  verification PASS. Final lex-lead verdict: **GO**.
+- Artifacts: `specs/031-fix-inflection-feature-linking/reviews/cycle{1,2}-*.md`.
+
+**What shipped:** US1 feature→category link wiring; US2 WS-mapped naming + feature dedup;
+US3 read-only diagnosis (`debug/diag_infl_features.py`); and the T024 live-found fixes
+(live GUID resolution via `_resolve_target_by_guid` → LCM object repo; non-closed-feature
+guard `UNSUPPORTED_LCM_TYPE`; log-before-swallow hardening).
+
+**Live T024 evidence (attended, Ejagham Mini → restored `Target`):** linked_features 0→3
+(== source), nameless_features 1→0, idempotent re-Move (4 feat / 35 val both runs), 0
+duplicate GUIDs, `FsComplexFeature` cleanly skipped. Driver: `scratchpad/run031_live.py`.
+
+**⚠️ HIGH-PRIORITY FOLLOW-UP (ticketed in `pattern-audit.md`, out of 031 scope):** the SAME
+unguarded-`get_object_by_guid`-on-live-target bug is latent in `_run_171_subpass`
+(categories.py:4894/4905) and `_run_post_pass_a` (categories.py:4954/4972) — those wiring
+passes likely silently no-op on a live target. Route them through `_resolve_target_by_guid`
++ add live regression. Second follow-up: full complex/open inflection-feature transfer.
+
+---
+
+## ▶▶▶ Feature 031 — Inflection-Feature Linking — Phase 5 (US3) DONE; live validation (T024) is the blocking gate (2026-07-13)
+
+**Phases 1-5 complete; Phase 6 offline parts done.** Worktree
+`031-fix-inflection-feature-linking` @ **`e376b39`** (NOT merged). Prevention-only
+scope (FR-011): no code path remediates already-polluted records.
+
+**T024 live validation (attended, user-authorized): `Ejagham Mini` → restored `Target`.**
+Driver `scratchpad/run031_live.py` (restore-from-backup → diagnose → Move → re-Move →
+diagnose). **First run FAILED and caught two real Phase 3-4 defects the offline mocked
+tests missed; both fixed (`9e41a1f`); re-run PASS:**
+- `linked_features 0 → 3` (== source): US1 link pass wired 0/13 because
+  `_run_infl_feature_link_pass` called `target.get_object_by_guid`, which the LIVE
+  flexicon `FLExProject` does NOT have (only the offline fakes do) → `AttributeError`
+  swallowed. Fixed with `_resolve_target_by_guid` (getter for fakes; LCM object repo
+  `project.ObjectRepository(ICmObjectRepository)` live, MCP-verified).
+- `nameless_features 1 → 0`: `inflection_features_execute_action` crashed casting a
+  source `FsComplexFeature` to `IFsClosedFeature`, leaving a nameless twin. Fixed with an
+  up-front type guard → `Skip(UNSUPPORTED_LCM_TYPE)`, creates nothing.
+- Idempotent re-Move (4 feat / 35 val both runs), 0 duplicate GUIDs. The 1 remaining
+  orphaned feature is correct (orphaned in the source too — we never invent links).
+
+**⚠️ Two follow-ups flagged (out of 031 scope) — see `pattern-audit.md`:**
+1. The SAME `get_object_by_guid` latent bug is in `_run_post_pass_a` (024) and
+   `_run_171_subpass` (msa-slot-wiring) — those wiring passes likely no-op on a live
+   target. Route through the shared resolver + add live regression.
+2. Full complex/open-feature transfer (currently skipped `UNSUPPORTED_LCM_TYPE`).
+
+**Remaining: T026** — merge `031-fix-inflection-feature-linking` → `main` and remove the
+worktree. Given the two fixes were unplanned Phase 3-4 bug fixes, consider a lex-crew
+review cycle before merge.
+
+---
+
+## ▶▶▶ Feature 031 — Inflection-Feature Linking — Phase 5 (US3) DONE; live validation (T024) is the blocking gate (2026-07-13)
+
+**Phases 1-5 complete; Phase 6 offline parts done.** Worktree
+`031-fix-inflection-feature-linking` @ **`e376b39`** (NOT merged). Prevention-only
+scope (FR-011): no code path remediates already-polluted records.
+
+**This session did (Phase 5 + Phase 6 offline, FlexTools MCP as source of truth):**
+1. **US3 read-only diagnosis** (T019-T021): `debug/diag_infl_features.py` — pure
+   `build_report(view)` classification core over a `ProjectView` facade
+   (offline-testable) + live `_LcmProjectView`. `main()` opens `writeEnabled=False`
+   and asserts a pre/post object-count snapshot is unchanged (READ-ONLY guard);
+   plain-ASCII output. 6 US3 tests pass (shape / counts / COMPLETE partition /
+   WS-map evidence / duplicate-GUID).
+2. **MCP navigation + casts validated read-only** (both runs certified read-only):
+   `Ejagham Mini` → 5 feat / 20 POS / 35 val → **3 linked + 2 orphaned = 5**
+   (COMPLETE holds), names read (`BantuPl`); `Ejagham Full GT-Test` → **clean**
+   (0 feat) — already restored. Target `etu=999000002` vs source `etu=999000003`
+   re-confirms the T004 WS-handle divergence behind Defect 2.
+3. **T023 full offline suite**: `1529 passed / 1 failed / 1 skipped` (+ 6 new US3).
+   The 1 failure (`test_wizard_pos_grammar_wiring::test_plan_emits_pos_action_for_picked_pos`)
+   is a **pre-existing baseline fail** — reproduced at clean HEAD `c3f89bf` with the
+   Phase-5 files stashed. NOT a 031 regression.
+4. **T022 pattern audit** (see `specs/031-fix-inflection-feature-linking/pattern-audit.md`):
+   the WS-handle-copy bug class has **3 SUSPECT siblings** — `stem_names_execute_action`
+   (categories.py:1388-1400), `slots_execute_action` (categories.py:5265-5276),
+   `_execute_gold_reserved_merge` (transfer.py:2392-2436). All OUT of 031 scope →
+   **file a follow-up spec** to apply the `ws_map` fix globally. All other
+   Name/Abbrev/Desc paths route through `ApplySyncableProperties(ws_map=...)` (SAFE).
+
+**Remaining (attended, needs_human):**
+1. **T024** — destructive live Move `Ejagham Mini` → clean/restored
+   `Ejagham Full GT-Test` (quickstart Steps 0-4); attach pre/post diagnosis reports +
+   Import Residue / `[GT-Tag]` evidence. **Restore the target from a clean backup
+   first; run attended; never under an unattended loop.**
+2. **T026** — merge `031-fix-inflection-feature-linking` → `main` after T024 passes;
+   remove the worktree.
+
+**Backlog (out of 031 critical path):** the 3 WS-handle sibling bugs above; the
+pre-existing `test_wizard_pos_grammar_wiring` failure.
+
+---
+
+## ▶▶▶ Feature 025 — Full Reversals — COMPLETE: live re-Move PASS + merged to main (2026-07-13)
+
+**FEATURE COMPLETE.** All 37 tasks (T001–T037) done, live-validated end-to-end, and
+**merged `025-full-reversals` → `main` @ `cb88b00`**. The single `needs_human` blocker is closed.
+Evidence: **[cycle14-verification-t037-remove.md](specs/025-full-reversals/reviews/cycle14-verification-t037-remove.md)**.
+
+**Attended session, this session did:**
+1. **Restored Target** from its clean pre-Move auto-backup `Target.bak` (0 reversal entries, empty
+   `en` index). Polluted fwdata preserved as `Target.fwdata.partialmove-evidence`. Guarded: no FLEx
+   GUI, no `.lock`.
+2. **Re-ran the T037 Phase-2 live Move** (`scratchpad/t037_move_driver.py`, Ejagham Mini → restored
+   Target, code @ `9d1266b`): 164 added / 0 skipped; `en` index `ab4d4345` reused (R4); 134
+   top-level + 10 sub-entries persisted (**144 on-disk `ReversalIndexEntry`**, confirmed on fresh
+   re-open). `en.fwdictconfig` SKIP; `PartsOfSpeechOA` untouched; 337 dropped = known 024-era backlog.
+3. **Verified — PASS:** all 10 sub-entries' post-Move `SensesRS` match the Preview plan **exactly**
+   (plan 9× `linked_senses=1` + 1× `=0` for `CLS8,14` w/ `dropped_sense_members=0`; actual 9×
+   `senses=1` + 1× `=0`). Pre-fix the same run left 9/10 silently at 0 → P0 fix `9d1266b` live-proven.
+4. **Merged to main @ `cb88b00`.** Merged-tree offline suite: **1 pre-existing baseline fail /
+   1510 passed / 9 skipped / 14 xfailed / 14 xpassed**. The 1 failure
+   (`test_wizard_pos_grammar_wiring::test_plan_emits_pos_action_for_picked_pos`) was confirmed
+   failing on both branch `9d1266b` AND main `e033565` independently — not a 025 regression.
+
+**Non-blocking backlog** (tracked in HANDOFF.md, out of critical path): S2/S3/S4-ADD/OVERWRITE
+fixtures; Findings 2/3 (024-era gaps); sentinel-prefix hardening; P1-1/P1-2 DRY; PyQt Preview-pane
+UI confirm. **Worktree `025-full-reversals` safe to remove.**
+
+---
+
+## ▶▶▶ Feature 025 — Full Reversals — P0 sub-entry fix landed + verified; RE-MOVE pending human -restore (2026-07-13)
+
+**STOPPING POINT.** Feature 025 is code-complete and offline-GREEN. See the consolidated
+**[HANDOFF.md](specs/025-full-reversals/HANDOFF.md)** for the single pickup point.
+
+**Worktree** `025-full-reversals` @ **`9d1266b`** (NOT merged). Attended session; Ralph loop cancelled.
+
+**Just landed:** the P0 silent sub-entry sense-loss bug (found by the T037 Phase-2 live Move) is
+**FIXED** (`9d1266b`) and **offline-verified** (cycle 13): `_create_sub_entry` now threads + links
+`first_sense`; 3 RED-confirmed regression tests; tripwire reproduces the exact `SensesRS=0` bug when
+reverted; full suite **1508 passed / 1 pre-existing fail**; top-level path untouched.
+
+**Remaining (attended, needs_human):**
+1. `-restore` **Target** in FieldWorks (it holds the partial Move — top-level OK, sub-entries empty).
+2. Re-run the T037 Phase-2 Move (`scratchpad/t037_move_driver.py`, Ejagham Mini → restored Target, @ `9d1266b`).
+3. Verify sub-entry `SensesRS` now matches the Preview plan.
+4. Merge `025-full-reversals` → main. Feature complete.
+
+**Non-blocking backlog** (in HANDOFF.md): sentinel-prefix hardening; Finding 2 (`_run_post_pass_a`
+dead `get_object_by_guid` + never-silent emit); Finding 3 (024 `MorphTypeRA`/`CmTranslation.TypeRA`/
+`LexExampleSentence.TranslationsOC` gaps); P1-1/P1-2; UI-pane confirm; live WS-Id re-confirm.
+
+---
+
+## ▶▶▶ Feature 025 — Full Reversals — T037 Phase 2 (live Move) RAN — Scenario 1 PARTIAL FAIL, P0 sub-entry bug (2026-07-13)
+
+**Attended session.** The destructive live Move (Ejagham Mini → **Target**) RAN, committed, and
+persisted (fresh re-open confirmed). Worktree `025-full-reversals` @ `b8d325d`.
+
+**⚠️ Target is now in a partially-broken state and MUST be `-restored` before any re-Move.**
+
+**Scenario 1 write-half: PARTIAL FAIL.**
+- **PASS:** 134/134 top-level reversal entries written to target `en` index (GUID `ab4d4345`
+  reused, R4); top-level single- AND multi-sense linking (foot/leg/palm frond = 2 senses);
+  `ReversalForm` text; sub-entry recursion **structure** (all 7 parents, exact counts);
+  `LangProject.PartsOfSpeechOA` untouched (13/13 identical); config `en.fwdictconfig` SKIP (no
+  write, no `.gtbak`); no crash / partial write / stuck lock (2nd attempt, exit 0).
+- **FAIL (P0, 025's own code — silent data loss):** every reversal **sub-entry** drops its linked
+  sense. `reversals.py::_apply_one_entry` computes `remaining_senses = target_senses[1:]` assuming
+  the create linked sense #1 — true for `_create_top_level_entry` (wrapper links it) but FALSE for
+  `_create_sub_entry` (links no sense). So a 1-sense sub-entry silently ends with empty `SensesRS`.
+  9/10 sampled sub-entries had `senses=0` where Preview predicted 1. No exception/DroppedItemRecord.
+
+**Two non-blocking findings also surfaced:** (2) `categories.py::_run_post_pass_a` calls a
+non-existent `FLExProject.get_object_by_guid` → `AttributeError`, logged WARN but not emitted as a
+dropped record (invisible to never-silent) — 024-era, fix/emit later; (3) the cycle-11 never-silent
+fix is **working as designed** — `dropped_items` grew 6→337, correctly surfacing pre-existing 024
+`MorphTypeRA`/`CmTranslation.TypeRA` divergences + `LexExampleSentence.TranslationsOC` gaps (backlog).
+
+**Next:** fix the P0 sub-entry sense-linking bug (TDD, `_create_sub_entry` links `first_sense` +
+regression that N-sense sub-entry → N in `SensesRS`), re-gate, then **re-Move against a
+freshly-`-restored` Target** to confirm sub-entry sense counts match the plan. Then merge to main.
+
+**Report:** [cycle12-verification-t037-move](specs/025-full-reversals/reviews/cycle12-verification-t037-move.md).
+
+---
+
+## ▶▶▶ Feature 025 — Full Reversals — T037 findings remediated + re-gate GREEN — Move authorized (2026-07-13)
+
+**Attended session.** Source **Ejagham Mini** → target **Target** (disposable, user-confirmed).
+Worktree `025-full-reversals` @ **`b8d325d`**. User chose "fix both findings, then Move".
+
+**Both T037 Phase-1 findings CLOSED (cycle 10 remediation, TDD) + re-gate GREEN (cycle 11):**
+- **Finding 1 (never-silent, 024-shared):** `references.py::_multistring_dict` resolver branch now
+  yields all-`str` keys (`(handle_to_id.get(wh) or str(wh))`) so `divergence_fingerprint` can't
+  raise; `categories.py::_plan_entry_reference_decisions` catch-all now emits a guarded
+  `DroppedItemRecord` (never-silent restored). TDD tripwire RED-confirmed.
+- **Finding 2 (025 Preview/Move parity):** `build_run_plan` sets `context._ws_map` via the same
+  `to_ws_map_dict` helper `transfer.execute` uses, before `plan_reversal_decisions`. TDD tripwire
+  RED-confirmed.
+- **Re-gate (3 parallel read-only reviewers):** QC APPROVE (both CLOSED); verification PASS (fresh
+  suite **1505 passed / 1 known pre-existing fail**, tripwires genuine RED, worktree clean, count
+  reconciled — the earlier ~1524 figure was stale/orphaned); domain **SAFE-WITH-FOLLOWUP** (a
+  bare-digit WS Id is forbidden by BCP-47, so the stringify collision is not realistic; fingerprint
+  contract preserved).
+
+**Non-blocking follow-ups (documented, not gating):** sentinel-prefix hardening for the fallback
+key; a live-MCP re-confirm of WS Id shapes (domain lacked live MCP); P1-1/P1-2 tech-debt.
+
+**Move AUTHORIZED (`status: ready_for_move`).** Next: run the attended live Move
+(`scratchpad/t037_driver.py --move`, Ejagham Mini → Target), capture post-state, verify Scenario 1
+write half, then merge `025-full-reversals` → main.
+
+**Reports:** [cycle10-programmer](specs/025-full-reversals/reviews/cycle10-programmer.md),
+[cycle11-qc](specs/025-full-reversals/reviews/cycle11-qc.md),
+[cycle11-verification](specs/025-full-reversals/reviews/cycle11-verification.md),
+[cycle11-domain](specs/025-full-reversals/reviews/cycle11-domain.md).
+
+---
+
+## ▶▶▶ Feature 025 — Full Reversals — T037 PHASE 1 (live read-only Preview) DONE — 2 bugs found, Move HELD (2026-07-12)
+
+**Attended session** (Ralph loop cancelled). Source **Ejagham Mini** → target **Target**
+(disposable/-restore-ready, user-confirmed). Worktree `025-full-reversals` @ `1a1849c`.
+Reusable headless driver: `scratchpad/t037_driver.py` (has `--move`, currently hard-refuses).
+
+**T037 Phase 1 = read-only Preview: PASS.** `build_run_plan` (SC-006 read-only held — Target
+byte-unchanged, no new source dirs): 164 actions, **134 top-level reversal Add decisions**
+(Link into the target's reused empty `en` index, R4), sub-entry recursion + `ReversalForm` carry
+verified, 1 config-view SKIP (byte-identical `en.fwdictconfig`), 6 dropped_items (all pre-existing
+`LexEntryRef` variant → 027, not reversal). **Scenario 1 verified end-to-end at Preview level.**
+S2/S3 not exercisable with this corpus (no reversal `PartOfSpeechRA`; identity WS); S4 partial
+(SKIP only); S5 partial + gap (Finding 1).
+
+**Two latent bugs surfaced (both pre-existing, exposed by the live run):**
+1. **Finding 1 — never-silent violation (024-era shared path, fidelity-critical):** ~164 stem
+   entries hit a `divergence_fingerprint` `TypeError` (mixed `int`/`str` keys) swallowed by a broad
+   `except` in `_plan_entry_reference_decisions` → returns `()` with **no `DroppedItemRecord`**.
+   Reference-field divergences silently discarded. Does NOT corrupt reversal decisions (separate
+   call) but violates FR-010/Principle III.
+2. **Finding 2 — 025 Preview/Move parity:** `build_run_plan` never sets `context._ws_map`, so
+   Preview's reversal walk always runs under identity WS (Move does set it). Harmless for this
+   identity-WS pair; a real gap under non-identity mappings.
+
+**Move HELD** pending decision: remediate findings first vs validate the reversal Move now
+(identity-WS corpus — Move would be correct for this data). See
+[cycle9-verification-t037-preview.md](specs/025-full-reversals/reviews/cycle9-verification-t037-preview.md).
+
+---
+
+## ▶▶▶ Feature 025 — Full Reversals — SPURT 7 (Phase 6 Polish offline) — NEEDS_HUMAN for T037 (2026-07-12)
+
+**Worktree**: `D:/Github/_Projects/_LEX/GramTrans-025-full-reversals` on branch
+`025-full-reversals` @ `1a1849c` (clean; NOT merged). **Handoff**:
+`specs/025-full-reversals/.crew-handoff.json` (`status: needs_human`). **Cumulative tasks:
+T001-T036 done; QC gate GREEN.** Only **T037** (live-MCP validation) + the worktree merge remain.
+
+### ⛔ ACTION REQUIRED (human, attended session)
+
+The Ralph loop has stopped at `needs_human`. The one remaining task, **T037**, is a
+**destructive-capable live-LCM write** against a real FLEx target and must NOT run unattended.
+To finish feature 025, a human must, with **FLExTools MCP active**:
+1. Confirm a **disposable, `-restore`-ready** target project is available (Ejagham Mini →
+   disposable `*-GT-Test`).
+2. Run **quickstart Scenarios 1-5** per
+   [specs/025-full-reversals/quickstart.md](specs/025-full-reversals/quickstart.md), recording
+   pre/post evidence per STATUS.md conventions.
+3. Once T037 passes, **merge worktree branch `025-full-reversals` (@ `1a1849c` or later) into
+   main** — the feature is then complete.
+
+**Ralph-loop spurt 7 (LEX crew, cycle 8)** — offline Phase 6 Polish, **DONE** (committed `1a1849c`):
+- **T034**: fidelity census extended 75→79 fields — `ReversalIndexEntry` added (`SensesRS`,
+  `PartOfSpeechRA`, `SubentriesOS`, `ReversalForm`), all classified `COPIED` with concrete
+  `reversals.py` code sites. Never-silent guard intact; OUT_OF_SCOPE/HANDLED_ELSEWHERE ledgers
+  unchanged. **ReversalForm decision (a)**: included via new `FieldSpec.kind == "MU"` (IMultiUnicode
+  value field) — grounded in the SC-003/FR-010 never-silent principle, NOT the 024 `Discussion`
+  silent-exclusion precedent.
+- **T035**: unified never-silent cross-cutting test — drives the real `plan_reversal_decisions` +
+  `plan_config_views` into ONE shared `dropped` list; asserts all three owner_kinds
+  (`ReversalIndexEntry`, `ReversalIndex`, `ConfigView`) with full identity + reason.
+- **T036**: empty-project regression gate — real `build_run_plan` over an empty project yields
+  empty reversal/config/dropped collections, no `ConfigurationSettings/` materializes, byte-identical
+  to a 024-only run.
+- **Suite**: 1524 passed / 1 known-fail / 76 skipped / 14 xfailed / 14 xpassed. The 1 failure is the
+  pre-existing baseline (`test_wizard_pos_grammar_wiring::test_plan_emits_pos_action_for_picked_pos`,
+  untouched) — NOT a 025 regression.
+
+**Settled GREEN (do NOT relitigate)**: items 1/2/5 + both P0s + all Polish offline tasks.
+**Deferred tech-debt (P1, non-blocking, tracked)**: P1-1 (reuse `RunPlan.reversal_decisions` at
+Move), P1-2 (DRY `_target_ws_ids`).
+
+**Report**: [cycle8-programmer](specs/025-full-reversals/reviews/cycle8-programmer.md).
+
+---
+
+## ▶▶▶ Feature 025 — Full Reversals — SPURT 6 (P0 remediation + gate re-check: GREEN) IN PROGRESS (2026-07-12)
+
+**Worktree**: `D:/Github/_Projects/_LEX/GramTrans-025-full-reversals` on branch
+`025-full-reversals` @ `930fe7c` (clean; NOT merged). **Handoff**:
+`specs/025-full-reversals/.crew-handoff.json`. Cumulative tasks: **T001-T033** (all three user
+stories). **QC GATE: GREEN** — both P0 blockers CLOSED. Remaining: Phase 6 Polish (T034-T037),
+then worktree merge.
+
+**Ralph-loop spurt 6 (LEX crew, cycles 6-7)** — remediation of the two spurt-5 P0 blockers, then a
+focused parallel gate re-check. **Gate verdict: GREEN** (independent QC + verification corroboration).
+
+**Cycle 6 (remediation, committed `930fe7c`)** — one TDD unit, failing test first per fix:
+- **P0-1 CLOSED**: `config_views` decision pass is now provably READ-ONLY. New pure
+  `compute_config_dirs` (path arithmetic, no `makedirs`) is called for both src+tgt in
+  `plan_config_views`; `resolve_config_dirs`/`makedirs` live only in `apply_config_views` (Move).
+  No longer touches the source tree. Docstrings/comment corrected.
+- **P0-2 CLOSED**: `render_preview_extra_lines` composes `render_reversal_decisions` +
+  `render_config_view_records` and is reached from `main_window._on_preview` ->
+  `StatsPanel.set_report(report, extra_lines)` — the reversal Add/Link plan + config-view
+  Add/Overwrite/Skip list ARE now shown before Move (Principle III genuinely holds). Move path
+  unaffected (`extra_lines` defaults to `()`). Previously-false docstrings corrected.
+- **Hardening**: regression test pinning `source=None` at the reversal category decide seam.
+
+**Cycle 7 (gate re-check, parallel lex-qc + lex-verification, read-only)**:
+- QC: both P0s traced CLOSED with file:line evidence.
+- Verification: all 3 new cycle-6 tests are genuine RED tripwires (broke each fix -> test failed ->
+  reverted). Worktree clean at `930fe7c`. Suite **1522 passed / 1 failed / 76 skipped / 14 xfailed
+  / 14 xpassed** — the 1 failure is the pre-existing baseline (`test_wizard_pos_grammar_wiring::
+  test_plan_emits_pos_action_for_picked_pos`, untouched); the 1522-vs-earlier count is benign drift.
+
+**Settled GREEN (do NOT relitigate)**: items 1/2/5 (cycle 5) + both P0s (cycles 6-7).
+**Deferred tech-debt (P1, non-blocking)**: P1-1 (reuse `RunPlan.reversal_decisions` at Move),
+P1-2 (DRY `_target_ws_ids`).
+
+**Next checkpoint (spurt 7): Phase 6 Polish** — T034 (census extension), T035 (unified never-silent
+cross-cutting assertion, still TODO), T036 (regression gate), **T037 (live-MCP quickstart —
+destructive-capable; reaching it -> `needs_human` unless a disposable `-restore`-ready target is
+confirmed)**. T034-T036 are offline/autonomous.
+
+**Reports**: cycle5-qc/verification, cycle6-programmer,
+[cycle7-qc](specs/025-full-reversals/reviews/cycle7-qc.md),
+[cycle7-verification](specs/025-full-reversals/reviews/cycle7-verification.md) (+ cycle1-4 programmer).
+
+---
+
+## ▶▶▶ Feature 025 — Full Reversals — SPURT 5 (QC + verification gate: RED) IN PROGRESS (2026-07-12)
+
+**Worktree**: `D:/Github/_Projects/_LEX/GramTrans-025-full-reversals` on branch
+`025-full-reversals` @ `d1f1283` (clean; cycle 5 was read-only, NO code changed; NOT merged).
+**Handoff**: `specs/025-full-reversals/.crew-handoff.json`. Cumulative tasks: **T001-T033** (all
+three user stories). **QC GATE: RED** — remediation required before Polish.
+
+**Ralph-loop spurt 5 (LEX crew, cycle 5)** — checkpoint = combined lex-qc + lex-verification gate
+over US1+US2+US3 (parallel, read-only). **Gate verdict: RED (QC 78/100).**
+
+**Settled GREEN (do NOT relitigate)** — 3 of 5 adjudicated items, QC + verification concur:
+- **Item 1**: US2 decide `source=None` vs apply `target=target_project` asymmetry is DELIBERATE
+  and correct (fingerprint tuple-shape symmetry; `source=None` keeps both sides positional).
+- **Item 2**: T021 per-index tripwire is genuine (poisoned Cache), not a tautology.
+- **Item 5**: config-view missing_refs use the single unified `dropped_items` channel.
+- Verification: suite 1494/1 reconciles; sole failure is the pre-existing baseline (authored in
+  ancestor `80586dd`), NOT a 025 regression.
+
+**Two P0 MUST-FIX blockers (why the gate is RED):**
+1. **P0-1** — `config_views.resolve_config_dirs` runs `os.makedirs` on **both source and target**
+   during Preview (mutates the SOURCE tree; violates `preview.py` READ-ONLY + contract "target
+   only"). `test_preview_no_writes.py`'s fake short-circuits before `makedirs` → coverage gap.
+2. **P0-2** — `render_reversal_decisions` + `render_config_view_records` are **dead code** (never
+   called from `Lib/ui/main_window.py`); the reversal Add/Link plan and config-view
+   Add/Overwrite/Skip list are never shown before Move (**Principle III violation**); docstrings
+   falsely claim compliance.
+
+**Hardening flagged (fold into remediation):** regression test pinning `source=None` (no test
+guards it today); P1-1 (Move recomputes `plan_reversals` vs reusing `RunPlan.reversal_decisions`);
+P1-2 (DRY `_target_ws_ids`).
+
+**Next checkpoint (spurt 6): remediation** — fix P0-1 (split path-computation from `makedirs`;
+Preview never touches source; defer `makedirs` to Move) + P0-2 (wire the render fns into the
+Preview pane; fix docstrings), TDD (failing test first for each). Then re-run the QC+verification
+gate to GREEN, then deferred Polish T034-T037 (incl. T035 cross-cutting never-silent assertion,
+still TODO, + live-MCP T037).
+
+**Reports**: [cycle5-qc](specs/025-full-reversals/reviews/cycle5-qc.md),
+[cycle5-verification](specs/025-full-reversals/reviews/cycle5-verification.md) (+ cycle1-4 programmer).
+
+---
+
+## ▶▶▶ Feature 025 — Full Reversals — SPURT 4 (Phase 5 US3) IN PROGRESS (2026-07-12)
+
+**Worktree**: `D:/Github/_Projects/_LEX/GramTrans-025-full-reversals` on branch
+`025-full-reversals` @ `d1f1283` (NOT yet merged to main). **Handoff**:
+`specs/025-full-reversals/.crew-handoff.json`. Cumulative tasks done: **T001-T033** —
+**all three user stories implemented** (US1 + US2 + US3). Remaining: combined QC +
+verification, then Polish (T034-T037), then worktree merge.
+
+**Ralph-loop spurt 4 (LEX crew, cycle 4)** — checkpoint = Phase 5 US3 (`.fwdictconfig`
+dictionary + reversal config-view file copy), **DONE** as one TDD unit (committed `d1f1283`):
+- **RED→GREEN**: 11 new `test_config_view_copy.py` tests failed collection (missing
+  `apply_config_views`) then GREEN after implementation.
+- **T031-T033**: `config_views.py` self-contained plain file I/O — `filecmp.cmp(shallow=False)`
+  for Add/Skip/Overwrite, `xml.etree.ElementTree` reference scan, `shutil.copy2` copy +
+  `.gtbak` backup before OVERWRITE; Preview/Move wiring in `preview.py`/`transfer.py`/`models.py`.
+- **Scope adherence**: `reversals.py`/`categories.py` (reversal LCM seam) UNTOUCHED (git diff
+  vs `d84fc0b` = 5 files). Plan pass writes no `.fwdictconfig` bytes (Principle III).
+- **No new regressions**: full suite 1494 passed / 9 skipped / 14 xfailed / 14 xpassed / **1
+  failed** — the 1 failure is the pre-existing baseline, unchanged.
+
+**Next checkpoint (spurt 5): combined lex-qc + lex-verification pass BEFORE Polish** (QC gates
+the write path before any live-MCP run). QC MUST adjudicate: (1) US2 decide-side `source=None`
+vs apply-side `target=target_project` asymmetry; (2) T021 per-index tripwire not defeated by the
+US2 apply path; (3) UI-wiring gap — `render_reversal_decisions` + `render_config_view_records`
+exist but are NOT called from `Lib/ui/main_window.py` (blocking vs follow-up); (4) US3
+Preview-mutation nuance — `resolve_config_dirs` `os.makedirs` scaffolds empty target subdirs
+during Preview vs `preview.py` READ-ONLY guarantee; (5) US3 missing-ref `owner_kind == "ConfigView"`
+flows into the unified 024 never-silent report. **Then** Polish T034-T037 (census, never-silent
+assertion, regression gate, live-MCP quickstart T037 — needs a disposable `-restore`-ready target
+or it trips `needs_human`).
+
+**Reports**: [cycle1](specs/025-full-reversals/reviews/cycle1-programmer.md),
+[cycle2](specs/025-full-reversals/reviews/cycle2-programmer.md),
+[cycle3](specs/025-full-reversals/reviews/cycle3-programmer.md),
+[cycle4](specs/025-full-reversals/reviews/cycle4-programmer.md).
+
+---
+
+## ▶▶▶ Feature 025 — Full Reversals — SPURT 3 (Phase 4 US2) IN PROGRESS (2026-07-12)
+
+**Worktree**: `D:/Github/_Projects/_LEX/GramTrans-025-full-reversals` on branch
+`025-full-reversals` @ `d84fc0b` (parent `48b2d75`). **Handoff**:
+`specs/025-full-reversals/.crew-handoff.json`. Cumulative tasks done: **T001-T027**
+(Phase 1+2 scaffold + US1 + US2). Remaining: US3 (T028-T033), Polish (T034-T037).
+
+**Ralph-loop spurt 3 (LEX crew, cycle 3)** — checkpoint = Phase 4 US2 (reversal categories
+resolve against the per-index `PartsOfSpeechOA` via the 024 three-way resolver), **DONE** as one
+TDD unit (committed `d84fc0b`):
+- **RED→GREEN**: T021-T024 tests confirmed RED against the US1 LINK-if-present stub, then GREEN.
+- **T025-T027**: `PartOfSpeechRA` now routes through `references.decide_reference`/`apply_reference`
+  against the target **reversal index's** `PartsOfSpeechOA` (CREATE+ancestors / UPDATE /
+  LINK+REPORT / LINK), shared per-run `resolver_cache`, dropped records enriched with
+  `ReversalIndexEntry` owner identity + `PartOfSpeechRA` field, flowing into the unified 024 report.
+- **Per-index binding intact**: `LangProject.PartsOfSpeechOA` never touched (T021 tripwire passes).
+  None-index guard reports `"target reversal category list absent"` (no crash).
+- **No new regressions**: full suite 1483 passed / 10 skipped / 14 xfailed / 14 xpassed / **1 failed**
+  — the 1 failure is the same **pre-existing baseline** (`test_wizard_pos_grammar_wiring.py::...::
+  test_plan_emits_pos_action_for_picked_pos`, verified via git stash), NOT a 025 regression.
+
+**Two load-bearing US2 deviations (in-line documented; MANDATORY QC line-items):**
+1. **Decide-side**: `_decide_reversal_category` calls `decide_reference` with `source=None` (a real
+   source against an index-shaped target breaks `_fields_identical` tuple-shape symmetry → spurious
+   UPDATE on byte-identical content).
+2. **Apply-side**: `_apply_pos_decision` passes `target=target_project` (real FLExProject) with a
+   per-call `ReferenceFieldSpec` (`dataclasses.replace` closing `target_list_path` over the resolved
+   `target_index.PartsOfSpeechOA`) — a bare `IReversalIndex` lacks `.GetFactory`/`.PossibilityLists`,
+   so a literal `target=target_index` would `AttributeError` and silently no-op every write.
+
+**Carry-forward**: (1) `preview.render_reversal_decisions` still not wired into UI Preview pane.
+(2) **QC recommendation**: run ONE combined lex-qc + lex-verification cycle over the full
+US1+US2+US3 surface immediately before Polish (incl. live MCP T037) — must adjudicate the two
+deviations above + the T021 tripwire.
+
+**Next checkpoint (spurt 4)**: Phase 5 US3 (T028-T033) — `.fwdictconfig` dictionary + reversal
+config-view file copy (Add/Overwrite/Skip + absent-reference reporting) in the independent
+`config_views.py`; do NOT modify US1/US2 code. TDD: T028-T030 tests first, then T031-T033.
+
+**Reports**: [cycle1](specs/025-full-reversals/reviews/cycle1-programmer.md),
+[cycle2](specs/025-full-reversals/reviews/cycle2-programmer.md),
+[cycle3](specs/025-full-reversals/reviews/cycle3-programmer.md).
+
+---
+
+## ▶▶▶ Feature 025 — Full Reversals — SPURT 2 (Phase 3 US1) IN PROGRESS (2026-07-12)
+
+**Worktree**: `D:/Github/_Projects/_LEX/GramTrans-025-full-reversals` on branch
+`025-full-reversals` @ `48b2d75`. **Handoff**: `specs/025-full-reversals/.crew-handoff.json`.
+Cumulative tasks done: **T001-T020** (Phase 1+2 scaffold + US1). Remaining: US2 (T021-T027),
+US3 (T028-T033), Polish (T034-T037).
+
+**Ralph-loop spurt 2 (LEX crew, cycle 2)** — checkpoint = Phase 3 US1 (reversal entries ride
+along with copied senses), **DONE** as one TDD unit:
+- **RED→GREEN honored**: T009-T013 (5 reversal-walk tests) confirmed genuine RED (missing
+  `plan_reversals` symbol) before any T014-T020 code, then GREEN — 5/5 pass.
+- **T014-T020**: `plan_reversals` (decision-only, closure-scoped to copied senses, WS-gated,
+  never-silent), recursive `SubentriesOS` sub-entry builder, `apply_reversals` (Move-only —
+  create index/entry, non-destructive `ReversalForm`, copied-only `SensesRS` links), residue
+  carriers, and `categories`/`preview`/`transfer` wiring into the unified 024 dropped-items pipe.
+- **No regressions**: full unit suite 1476/1477. The 1 failure
+  (`test_wizard_pos_grammar_wiring.py::...::test_plan_emits_pos_action_for_picked_pos`) is
+  **pre-existing at baseline `241dbeb`** (verified via git stash) — NOT introduced by 025.
+- **T005 shape resolved**: `ReversalFieldSpec` kept and made load-bearing; `REVERSAL_FIELD_MAP`
+  wraps all 4 rows as real instances. `ReversalDecision` gained `target_ws_id` for to-create indexes.
+- **US2 seam marked**: `reversals._resolve_reversal_category_link_if_present` (LINK-if-present
+  stub, `*** US2 SEAM ***`); `resolver_cache` already threaded through `plan_reversals`.
+
+**Carry-forward (not blockers)**: (1) `preview.render_reversal_decisions` is Lib-level, not yet
+wired into `Lib/ui/main_window.py` Preview pane — assign to a UI-wiring spurt. (2) Recommend a
+dedicated QC + verification cycle (incl. live MCP T037) after US2/US3 land.
+
+**Next checkpoint (spurt 3)**: Phase 4 US2 (T021-T027) — reversal categories resolve against the
+per-index `PartsOfSpeechOA` via the 024 three-way resolver, replacing the US1 stub. TDD:
+T021-T024 tests first, then T025-T027.
+
+**Reports**: [cycle1-programmer.md](specs/025-full-reversals/reviews/cycle1-programmer.md),
+[cycle2-programmer.md](specs/025-full-reversals/reviews/cycle2-programmer.md).
+
+---
+
+## ▶▶▶ Live integration tests 013 / 016 / 022 — RUN & GREEN (2026-07-13)
+
+Drove the real GramTrans engine live via FLExToolsMCP `flextools_run_module` (the
+flexicon-enabled process imports `C:\Github\GramTrans\src\gramtrans` directly) against
+`Ejagham Mini` → freshly-restored `Ejagham Full GT-Test`. Added three skip-by-default
+`@pytest.mark.integration` scaffolds (each collects → 1 skipped, exit 0 on bare pytest)
+and a `verification-log.md` per feature.
+
+- **016 Custom Fields (T024/T026)** — PASS. Source `LexSense.'Target Equivalent'`
+  (type 13) classified NEW, `MoForm.'Allomorph Comment'` IN_TARGET. Full transfer emitted
+  exactly 1 `CreateDefinitionAction` (for the NEW field, 0 for the IN_TARGET one); target
+  CF count 11→12; field present after a fresh reopen (create-early persisted, no flid-0);
+  re-run → both IN_TARGET → 0 new creates (idempotent, SC-009).
+  [scaffold](tests/integration/test_custom_fields_live.py) ·
+  [log](specs/016-custom-fields-wizard-tab/verification-log.md).
+- **013 SIMILAR MERGE write mode (T-S3c / T-S1)** — PASS. On a real target multistring:
+  MERGE (fill_gaps=True) preserves a non-empty target (conflict → target wins) and fills an
+  empty target from a non-empty source; OVERWRITE (fill_gaps=False) is source-wins. T-S1
+  emptiness predicate confirmed as `(existing.Text or "").strip()` (BaseOperations.py:306).
+  Planner-level SIMILAR threading stays unit-covered.
+  [scaffold](tests/integration/test_013_merge_live.py) ·
+  [log](specs/013-similar-resolution-transfer/verification-log.md).
+- **022 Disposition (T029)** — PASS with one FINDING. Disposition SKIP/UPDATE/OVERWRITE
+  correct (SC-004); UPDATE non-destructive proven live (diverged→source, empty-source
+  preserved, SC-002). **FINDING: SC-003 destructive-blank does NOT reproduce for
+  multistrings** — the fork's `_apply_props_loop` skips empty multistring text
+  unconditionally (`BaseOperations.py:291 if not text: continue`), so OVERWRITE cannot
+  blank a target multistring alt from an empty source (UPDATE ≡ OVERWRITE for that case).
+  Direct `set_String("")` DOES blank, so the capability exists; the write path guards it.
+  Encoded as `xfail(strict)` in the scaffold.
+  [scaffold](tests/integration/test_conflict_live.py) ·
+  [log](specs/022-disposition-model/verification-log.md).
+
+**Follow-ups filed (non-blocking):**
+1. **022 SC-003 reconcile** — decide whether OVERWRITE *should* blank multistrings from an
+   empty source. If yes, drop/relax the `if not text: continue` guard in the fork's
+   `_apply_props_loop` for the `fill_gaps=False` path (careful: it also protects the merge
+   path); then the `xfail(strict)` in `test_conflict_live.py` flips green. If the current
+   safety-positive behavior is intended, amend spec 022 SC-003/FR-004 to scope blanking to
+   non-multistring fields and downgrade the unit-test claim.
+2. **016 value-fill** — the create-early schema path is proven; the per-field value-fill
+   count was not asserted (fresh target already holds Ejagham Full entries by GUID). Assert
+   it with a source whose transferred sense carries a `'Target Equivalent'` value, or via a
+   stem-picker selection. `quickstart.md` (T023) still unwritten.
+3. **013 full round-trip** — a planner→executor SIMILAR round-trip on a hand-seeded
+   `SimilarResolution(X,"merge",Y)` needs a similar-but-different-GUID affix fixture (none
+   off-the-shelf in the Ejagham corpus).
+
+---
+
 ## ▶▶▶ Feature 025 — Full Reversals — SPURT 1 (Phase 1+2 scaffold) IN PROGRESS (2026-07-12)
 
 **Spec**: [specs/025-full-reversals/](specs/025-full-reversals/) — spec (stub) + plan +

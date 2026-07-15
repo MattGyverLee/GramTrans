@@ -35,7 +35,7 @@ Single project (FlexTools module). Source under `src/gramtrans/Lib/`, tests unde
 **Purpose**: Establish the new module files and test scaffolding referenced by the plan.
 
 - [ ] T001 Create empty module `src/gramtrans/Lib/reversals.py` with module docstring (Part A — reversal closure walk) and imports of the 024 reuse surface (`references`, `owned`, `report`, `protection`, `ws_mapping`).
-- [ ] T002 [P] Create empty module `src/gramtrans/Lib/config_views.py` with module docstring (Part B — `.fwdictconfig` file copy) and `import os`, `shutil`, `filecmp` for the file-I/O path.
+- [x] T002 [P] Create empty module `src/gramtrans/Lib/config_views.py` with module docstring (Part B — `.fwdictconfig` file copy) and `import os`, `shutil`, `filecmp` for the file-I/O path.
 - [ ] T003 [P] Create empty test files `tests/unit/test_reversal_walk.py`, `tests/unit/test_reversal_category_resolve.py`, and `tests/unit/test_config_view_copy.py` with pytest imports and a skipped placeholder each.
 
 ---
@@ -46,10 +46,10 @@ Single project (FlexTools module). Source under `src/gramtrans/Lib/`, tests unde
 
 **⚠️ CRITICAL**: No user story work can begin until this phase is complete.
 
-- [ ] T004 **024 dependency gate**: verify feature 024-lexicon-reference-fidelity has landed on this worktree — confirm `src/gramtrans/Lib/references.py` exposes `decide_reference`/`apply_reference` and `ReferenceFieldSpec`, `src/gramtrans/Lib/owned.py` exposes the recursive owned-child walk, and `src/gramtrans/Lib/report.py` exposes `DroppedItemRecord` + `FidelityStatus`. If any are absent, STOP: 025 cannot proceed until 024 is merged (plan.md "Hard dependency").
-- [ ] T005 [P] Add `ReversalFieldSpec` / `ReversalDecision` dataclasses to `src/gramtrans/Lib/models.py` per data-model.md (target index ref, `PartOfSpeechRA` ReferenceDecision, senses-to-link + dropped members, reversal-form alternatives, recursive sub-entry decisions).
-- [ ] T006 [P] Add `ConfigViewRecord` dataclass to `src/gramtrans/Lib/models.py` per data-model.md (`kind`, `filename`, `src_path`, `tgt_path`, `action` enum ADD|OVERWRITE|SKIP, `missing_refs: list[DroppedItemRecord]`).
-- [ ] T007 Register the new dropped-item `owner_kind` values (`"ReversalIndexEntry"`, `"ReversalIndex"`, `"ConfigView"`) wherever owner_kinds are enumerated/validated in `src/gramtrans/Lib/report.py` (extend existing 024 enumeration; do not fork the report channel).
+- [x] T004 **024 dependency gate**: verify feature 024-lexicon-reference-fidelity has landed on this worktree — confirm `src/gramtrans/Lib/references.py` exposes `decide_reference`/`apply_reference` and `ReferenceFieldSpec`, `src/gramtrans/Lib/owned.py` exposes the recursive owned-child walk, and `src/gramtrans/Lib/report.py` exposes `DroppedItemRecord` + `FidelityStatus`. If any are absent, STOP: 025 cannot proceed until 024 is merged (plan.md "Hard dependency").
+- [x] T005 [P] Add `ReversalFieldSpec` / `ReversalDecision` dataclasses to `src/gramtrans/Lib/models.py` per data-model.md (target index ref, `PartOfSpeechRA` ReferenceDecision, senses-to-link + dropped members, reversal-form alternatives, recursive sub-entry decisions).
+- [x] T006 [P] Add `ConfigViewRecord` dataclass to `src/gramtrans/Lib/models.py` per data-model.md (`kind`, `filename`, `src_path`, `tgt_path`, `action` enum ADD|OVERWRITE|SKIP, `missing_refs: list[DroppedItemRecord]`).
+- [x] T007 Register the new dropped-item `owner_kind` values (`"ReversalIndexEntry"`, `"ReversalIndex"`, `"ConfigView"`) wherever owner_kinds are enumerated/validated in `src/gramtrans/Lib/report.py` (extend existing 024 enumeration; do not fork the report channel).
 - [ ] T008 Define `REVERSAL_FIELD_MAP` in `src/gramtrans/Lib/reversals.py` per data-model.md: `PartOfSpeechRA` (atomic ref, hierarchical, `target_list_path = lambda tgt_index: tgt_index.PartsOfSpeechOA`), `SensesRS` (ref seq, re-wire to copied senses), `ReversalForm` (IMultiUnicode value copy), `SubentriesOS` (owned recurse). This is the completeness contract the census (T033) verifies.
 
 **Checkpoint**: 024 reuse surface confirmed, shared dataclasses + owner_kinds + field map in place — user stories can begin.
@@ -69,10 +69,10 @@ and sub-entries; an unmappable-WS index yields a `ReversalIndex` dropped record 
 
 ### Tests for User Story 1 ⚠️ (write first, must FAIL before implementation)
 
-- [ ] T009 [P] [US1] In `tests/unit/test_reversal_walk.py`: test entry discovery — `plan_reversals` gathers only entries whose `SensesRS` intersects the copied-sense set; an index with no such entries is excluded from the plan (closure scope R3).
-- [ ] T010 [P] [US1] In `tests/unit/test_reversal_walk.py`: test WS gate — a source index whose `WritingSystem` cannot be mapped to a target analysis WS produces exactly one `DroppedItemRecord` (owner_kind `ReversalIndex`, reason `writing system not mapped`) and is skipped (R4).
-- [ ] T011 [P] [US1] In `tests/unit/test_reversal_walk.py`: test partial `SensesRS` — an entry linking both copied and non-copied senses is planned with only the copied links, and each omitted member yields one `DroppedItemRecord` (owner_kind `ReversalIndexEntry`, reason `member not in copy set`) (R3 / 024 FR-008).
-- [ ] T012 [P] [US1] In `tests/unit/test_reversal_walk.py`: test `ReversalForm` non-destructive copy — populated source alternatives are written per mapped WS; an empty source alt never blanks a populated target alt (R6 / 024 FR-007).
+- [x] T009 [P] [US1] In `tests/unit/test_reversal_walk.py`: test entry discovery — `plan_reversals` gathers only entries whose `SensesRS` intersects the copied-sense set; an index with no such entries is excluded from the plan (closure scope R3).
+- [x] T010 [P] [US1] In `tests/unit/test_reversal_walk.py`: test WS gate — a source index whose `WritingSystem` cannot be mapped to a target analysis WS produces exactly one `DroppedItemRecord` (owner_kind `ReversalIndex`, reason `writing system not mapped`) and is skipped (R4).
+- [x] T011 [P] [US1] In `tests/unit/test_reversal_walk.py`: test partial `SensesRS` — an entry linking both copied and non-copied senses is planned with only the copied links, and each omitted member yields one `DroppedItemRecord` (owner_kind `ReversalIndexEntry`, reason `member not in copy set`) (R3 / 024 FR-008).
+- [x] T012 [P] [US1] In `tests/unit/test_reversal_walk.py`: test `ReversalForm` non-destructive copy — populated source alternatives are written per mapped WS; an empty source alt never blanks a populated target alt (R6 / 024 FR-007).
 - [ ] T013 [P] [US1] In `tests/unit/test_reversal_walk.py`: test `SubentriesOS` recursion — a source entry with nested sub-entries produces a recursive `ReversalDecision` tree; each sub-entry carries its own form and links (R6).
 
 ### Implementation for User Story 1

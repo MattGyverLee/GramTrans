@@ -1,90 +1,89 @@
-"""T034: R6 GUID preservation — integration scaffolds against Ejagham Mini -> Ejagham Full GT-Test."""
+"""T034 / R6: GUID preservation.
+
+Rewritten from the original fictional-API scaffold. The original asserted
+``plan.identity_remap == {}`` for the Ejagham pair — that is WRONG: per R6 and
+STATUS.md, GUID preservation holds only where the LCM factory accepts a
+``Create(Guid, ...)`` overload (POS / LexEntry / LexSense / leaf categories).
+The affix MSAs and allomorphs CANNOT preserve their GUID (the flexicon
+factories expose no Guid overload), so those get fresh target GUIDs that are
+captured in ``plan.identity_remap`` (FR-012). identity_remap is therefore
+EXPECTED to be non-empty on the Ejagham pair, not empty.
+
+What this module checks (from the plan alone, so it runs via the existing
+harness): identity_remap is well-formed and disjoint from the preserved set.
+Verifying that each preserved GUID actually resolves in the reopened target
+needs a harness reopen-and-fetch-object helper (``get_object_by_guid`` on a
+freshly reopened handle) that does not exist yet — see the skipped test below.
+
+SAFETY: SKIPS unless ``flexicon`` importable AND ``GRAMTRANS_E2E=1``.
+"""
 from __future__ import annotations
+
+import importlib.util
+import os
+import sys
+from pathlib import Path
 
 import pytest
 
-# All integration tests are marked so unit-only runs skip them:
-#   pytest -m 'not integration'
-# The marker is registered in pyproject.toml.
 pytestmark = pytest.mark.integration
 
+_FLEXICON_PRESENT = importlib.util.find_spec("flexicon") is not None
+_E2E_ENABLED = os.environ.get("GRAMTRANS_E2E") == "1"
 
-def test_every_planned_guid_appears_in_target_unchanged() -> None:
-    """R6: every source_guid from the RunPlan's actions appears in the target with that exact GUID after Move.
+if not _FLEXICON_PRESENT:
+    pytest.skip("flexicon not importable; needs a live FLEx host.", allow_module_level=True)
+if not _E2E_ENABLED:
+    pytest.skip("GRAMTRANS_E2E != 1; opt into the destructive live E2E run.", allow_module_level=True)
 
-    Requires:
-    - FlexTools host running this test (not raw pytest from CLI).
-    - Ejagham Mini at C:\\ProgramData\\SIL\\FieldWorks\\Projects\\Ejagham Mini
-    - Ejagham Full GT-Test freshly restored from backups/Ejagham Full.fwbackup
+_THIS_DIR = str(Path(__file__).parent)
+if _THIS_DIR not in sys.path:
+    sys.path.insert(0, _THIS_DIR)
 
-    Asserts: for every PlannedAction in the RunPlan, the target project contains
-    an object whose GUID string equals str(action.source_guid).  No GUID
-    remapping is expected for the Ejagham pair (identity_remap must be empty);
-    if identity_remap is non-empty the test fails with an informative message
-    listing the remapped pairs so the R6 assumption can be investigated.
-    """
-    pytest.skip(
-        "Integration test — requires FlexTools host. "
-        "Run via FlexTools MCP `flextools_run_module` or under the host directly."
+from harness import full_run, restore  # noqa: E402
+
+SOURCE_NAME = "Ejagham Mini"
+TARGET_NAME = "Ejagham Full GT-Test"
+TARGET_PATH = r"C:\ProgramData\SIL\FieldWorks\Projects\Ejagham Full GT-Test"
+
+
+def test_identity_remap_is_well_formed() -> None:
+    """R6/FR-012: identity_remap maps each remapped source GUID (a planned
+    action's source_guid) to a DISTINCT fresh target GUID, and every remapped
+    source is itself a planned action (nothing invented out of thin air)."""
+    try:
+        backup = restore.newest_backup()
+        restore.restore_target(TARGET_NAME, backup_path=backup)
+    except restore.RestoreError as exc:
+        pytest.skip(str(exc))
+
+    plan, _ = full_run.run_full_transfer(SOURCE_NAME, TARGET_NAME, TARGET_PATH)
+    remap = plan.identity_remap
+
+    planned_src_guids = {str(a.source_guid) for a in plan.actions}
+    for src_guid, tgt_guid in remap.items():
+        assert src_guid in planned_src_guids, (
+            f"identity_remap key {src_guid!r} is not a planned source GUID"
+        )
+        assert tgt_guid and tgt_guid != src_guid, (
+            f"identity_remap[{src_guid!r}] = {tgt_guid!r} is empty or not a remap"
+        )
+    # Fresh target GUIDs must be unique (no two source objects collapsed).
+    tgt_guids = list(remap.values())
+    assert len(tgt_guids) == len(set(tgt_guids)), (
+        f"identity_remap produced duplicate target GUIDs: {tgt_guids}"
     )
-
-    if False:
-        from gramtrans.Lib.api import (  # noqa: F401
-            bind_target,
-            compute_preview,
-            execute_move,
-            initialize_run,
-        )
-        from gramtrans.Lib.models import GrammarCategory  # noqa: F401
-
-        ctx = initialize_run(source_project_name="Ejagham Mini")
-        bind_target(ctx, target_name="Ejagham Full GT-Test")
-        preview_result = compute_preview(ctx, categories=list(GrammarCategory), include_closure=True)
-
-        assert preview_result.plan.identity_remap == {}, (
-            f"R6: unexpected identity_remap entries on the Ejagham pair: "
-            f"{preview_result.plan.identity_remap}"
-        )
-
-        execute_move(ctx, plan=preview_result.plan)
-
-        target_guids: set = ctx.target_project.all_object_guids()
-        for action in preview_result.plan.actions:
-            guid_str = str(action.source_guid)
-            assert guid_str in target_guids, (
-                f"R6: planned GUID {guid_str} ({action.category.name}) not found in target after Move"
-            )
+    # Preserved GUIDs = planned actions NOT in the remap. R6 expects the
+    # preserved set to dominate (only affix MSAs/allomorphs remap).
+    preserved = planned_src_guids - set(remap.keys())
+    assert preserved, "no GUIDs were preserved — R6 preservation path never fired"
 
 
-def test_no_identity_remap_entries_on_ejagham_pair() -> None:
-    """R6 identity_remap: the RunPlan produced for the Ejagham pair carries no identity_remap entries.
-
-    Requires:
-    - FlexTools host running this test (not raw pytest from CLI).
-    - Ejagham Mini at C:\\ProgramData\\SIL\\FieldWorks\\Projects\\Ejagham Mini
-    - Ejagham Full GT-Test freshly restored from backups/Ejagham Full.fwbackup
-
-    Asserts: preview_result.plan.identity_remap is an empty dict.  An
-    identity_remap entry would mean a GUID collision was detected — the target
-    already holds an object with that GUID — and the planner assigned a new
-    GUID.  This MUST NOT happen on a freshly-restored target (the throwaway was
-    never written to before the restore).  If this test fails, the restore
-    procedure or the collision-detection logic needs investigation.
-    """
-    pytest.skip(
-        "Integration test — requires FlexTools host. "
-        "Run via FlexTools MCP `flextools_run_module` or under the host directly."
-    )
-
-    if False:
-        from gramtrans.Lib.api import bind_target, compute_preview, initialize_run  # noqa: F401
-        from gramtrans.Lib.models import GrammarCategory  # noqa: F401
-
-        ctx = initialize_run(source_project_name="Ejagham Mini")
-        bind_target(ctx, target_name="Ejagham Full GT-Test")
-        preview_result = compute_preview(ctx, categories=list(GrammarCategory), include_closure=True)
-
-        assert preview_result.plan.identity_remap == {}, (
-            f"R6: identity_remap non-empty on freshly-restored target — "
-            f"GUID collisions detected: {list(preview_result.plan.identity_remap.keys())}"
-        )
+@pytest.mark.skip(
+    reason="Verifying each preserved GUID resolves in the reopened target needs "
+    "a harness reopen-and-fetch helper (get_object_by_guid on a fresh read-only "
+    "handle); full_run only exposes count-level reopen_and_count today. Add the "
+    "helper, then assert target presence of every preserved source_guid here."
+)
+def test_every_preserved_guid_present_in_reopened_target() -> None:  # pragma: no cover
+    ...

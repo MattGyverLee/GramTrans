@@ -1,106 +1,75 @@
-"""T031: Pre-existing target objects not modified + SC-004 — integration scaffolds against Ejagham Mini -> Ejagham Full GT-Test."""
+"""T031: Pre-existing target objects preserved across a Move (SC-004).
+
+Rewritten from the original fictional-API scaffold to drive the REAL engine
+through the shared live harness. Mirrors the guard + harness pattern from
+``test_full_workflow_e2e.py``.
+
+COVERAGE NOTE: the harness exposes count-level inventory
+(``full_run.reopen_and_count``), not a per-object byte snapshot. This module
+therefore verifies the count-level SC-004 guarantee — a Move only ADDS; it
+never destroys pre-existing objects (every counted collection grows or stays
+equal, and the target grows overall). The byte-level "no pre-existing field
+changed" guarantee needs an object-snapshot harness helper that does not exist
+yet; when it lands, add the diff assertion here.
+
+SAFETY: SKIPS unless ``flexicon`` importable AND ``GRAMTRANS_E2E=1`` (restores
++ mutates a real target).
+"""
 from __future__ import annotations
+
+import importlib.util
+import os
+import sys
+from pathlib import Path
 
 import pytest
 
-# All integration tests are marked so unit-only runs skip them:
-#   pytest -m 'not integration'
-# The marker is registered in pyproject.toml.
 pytestmark = pytest.mark.integration
 
+_FLEXICON_PRESENT = importlib.util.find_spec("flexicon") is not None
+_E2E_ENABLED = os.environ.get("GRAMTRANS_E2E") == "1"
 
-def test_pre_existing_objects_unchanged_after_move() -> None:
-    """SC-004: objects present in the target before the run are byte-identical after the run.
+if not _FLEXICON_PRESENT:
+    pytest.skip("flexicon not importable; needs a live FLEx host.", allow_module_level=True)
+if not _E2E_ENABLED:
+    pytest.skip("GRAMTRANS_E2E != 1; opt into the destructive live E2E run.", allow_module_level=True)
 
-    Requires:
-    - FlexTools host running this test (not raw pytest from CLI).
-    - Ejagham Mini at C:\\ProgramData\\SIL\\FieldWorks\\Projects\\Ejagham Mini
-    - Ejagham Full GT-Test freshly restored from backups/Ejagham Full.fwbackup
+_THIS_DIR = str(Path(__file__).parent)
+if _THIS_DIR not in sys.path:
+    sys.path.insert(0, _THIS_DIR)
 
-    Asserts: a pre-run snapshot of all target object GUIDs + serialised field
-    values is taken before execute_move(); a post-run snapshot is taken
-    immediately after.  For every GUID present in the pre-run snapshot the
-    post-run snapshot entry must be byte-identical.  No field on any
-    pre-existing object may change — not even Description fields used as
-    Carrier B residue storage, since Phase 0 appends only to newly-created
-    objects (FR-014).
-    """
-    pytest.skip(
-        "Integration test — requires FlexTools host. "
-        "Run via FlexTools MCP `flextools_run_module` or under the host directly."
+from harness import full_run, restore  # noqa: E402
+
+SOURCE_NAME = "Ejagham Mini"
+TARGET_NAME = "Ejagham Full GT-Test"
+TARGET_PATH = r"C:\ProgramData\SIL\FieldWorks\Projects\Ejagham Full GT-Test"
+
+
+def test_move_only_adds_never_destroys() -> None:
+    """SC-004 (count level): after a full Move, no counted collection in the
+    target shrinks and the target grows overall."""
+    try:
+        backup = restore.newest_backup()
+        restore.restore_target(TARGET_NAME, backup_path=backup)
+    except restore.RestoreError as exc:
+        pytest.skip(str(exc))
+
+    before = full_run.reopen_and_count(TARGET_NAME)
+    assert before, "baseline inventory empty; no accessor resolved"
+
+    plan, report = full_run.run_full_transfer(SOURCE_NAME, TARGET_NAME, TARGET_PATH)
+    assert plan is not None and report is not None
+
+    after = full_run.reopen_and_count(TARGET_NAME)
+    assert after, "post-run inventory empty"
+
+    # No pre-existing collection lost members.
+    for label, before_n in before.items():
+        assert after.get(label, 0) >= before_n, (
+            f"SC-004: '{label}' count shrank {before_n} -> {after.get(label)} "
+            f"(a Move must never destroy pre-existing objects)"
+        )
+    # And the transfer actually grew the target.
+    assert full_run.total_count(after) > full_run.total_count(before), (
+        f"target did not grow: before={before} after={after}"
     )
-
-    if False:
-        from gramtrans.Lib.api import (  # noqa: F401
-            bind_target,
-            compute_preview,
-            execute_move,
-            initialize_run,
-        )
-        from gramtrans.Lib.models import GrammarCategory  # noqa: F401
-
-        ctx = initialize_run(source_project_name="Ejagham Mini")
-        bind_target(ctx, target_name="Ejagham Full GT-Test")
-
-        # Snapshot pre-run: {guid_str: serialised_repr} for every existing object.
-        pre_snapshot: dict = ctx.target_project.snapshot_all_objects()
-
-        preview_result = compute_preview(ctx, categories=list(GrammarCategory), include_closure=True)
-        execute_move(ctx, plan=preview_result.plan)
-
-        post_snapshot: dict = ctx.target_project.snapshot_all_objects()
-
-        for guid, pre_repr in pre_snapshot.items():
-            assert guid in post_snapshot, f"SC-004: pre-existing object {guid} vanished after Move"
-            assert post_snapshot[guid] == pre_repr, (
-                f"SC-004: pre-existing object {guid} was modified during Move.\n"
-                f"  before: {pre_repr!r}\n"
-                f"  after:  {post_snapshot[guid]!r}"
-            )
-
-
-def test_snapshot_diff_equals_exactly_added_items() -> None:
-    """SC-004 diff shape: post-run snapshot minus pre-run snapshot equals exactly the set of added objects.
-
-    Requires:
-    - FlexTools host running this test (not raw pytest from CLI).
-    - Ejagham Mini at C:\\ProgramData\\SIL\\FieldWorks\\Projects\\Ejagham Mini
-    - Ejagham Full GT-Test freshly restored from backups/Ejagham Full.fwbackup
-
-    Asserts: the set of new GUIDs appearing in the post-run snapshot (keys
-    present in post but not pre) equals exactly the set of source_guid values
-    from the RunPlan's actions list.  No extra objects materialise; no planned
-    objects are missing.
-    """
-    pytest.skip(
-        "Integration test — requires FlexTools host. "
-        "Run via FlexTools MCP `flextools_run_module` or under the host directly."
-    )
-
-    if False:
-        from gramtrans.Lib.api import (  # noqa: F401
-            bind_target,
-            compute_preview,
-            execute_move,
-            initialize_run,
-        )
-        from gramtrans.Lib.models import GrammarCategory  # noqa: F401
-
-        ctx = initialize_run(source_project_name="Ejagham Mini")
-        bind_target(ctx, target_name="Ejagham Full GT-Test")
-
-        pre_snapshot: dict = ctx.target_project.snapshot_all_objects()
-
-        preview_result = compute_preview(ctx, categories=list(GrammarCategory), include_closure=True)
-        execute_move(ctx, plan=preview_result.plan)
-
-        post_snapshot: dict = ctx.target_project.snapshot_all_objects()
-
-        added_guids = {k for k in post_snapshot if k not in pre_snapshot}
-        planned_guids = {str(a.source_guid) for a in preview_result.plan.actions}
-
-        assert added_guids == planned_guids, (
-            f"SC-004 diff mismatch.\n"
-            f"  Extra (not planned): {added_guids - planned_guids}\n"
-            f"  Missing (planned but not found): {planned_guids - added_guids}"
-        )

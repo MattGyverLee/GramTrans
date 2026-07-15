@@ -56,6 +56,16 @@ extend-exclude = "tests/fixtures"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# Collect the standard `test_*.py` modules PLUS the model-driven fidelity
+# census (`tests/verification/fidelity_census.py`), whose filename does not
+# match the default pattern. Without this, `pytest tests/verification/ -q`
+# collects nothing (exit 5) even though the module holds real `test_*`
+# functions (028 T015 / FR-009). The exact filename keeps collection scoped
+# to that one non-`test_*` harness.
+python_files = [
+    "test_*.py",
+    "fidelity_census.py",
+]
 markers = [
     "integration: requires the FlexTools host + a live LCM project pair (use `-m 'not integration'` to skip)",
 ]

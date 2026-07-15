@@ -45,6 +45,7 @@ LCM API notes (discovered during implementation):
 """
 from __future__ import annotations
 
+import types
 from typing import Iterable, Tuple
 
 if __package__:
@@ -356,6 +357,10 @@ def gram_categories_plan_action(piece, context: RunContext, ws_mapping: WSMappin
             return target.POS.GetAll(recursive=True)
         return ()
 
+    # 031 US1 (C1): gather this POS's feature->category links for the Move
+    # wiring post-pass, whether the POS is created (ADD) or matched (SKIP).
+    _stash_feature_category_links(piece, context)
+
     result = _plan_gold_reserved_edit(
         piece, GrammarCategory.GRAM_CATEGORIES, context, _target_iter,
     )
@@ -529,6 +534,92 @@ def inflection_features_plan_action(piece, context: RunContext, ws_mapping: WSMa
     )
 
 
+def _ws_map_dict(ws_mapping):
+    """Normalize the execute-time `ws_mapping` arg into a
+    ``{source_ws_id: target_ws_id}`` dict.
+
+    At Move time transfer.execute passes the already-flattened dict
+    (`Lib/ws_mapping.py.to_ws_map_dict`); a WSMapping object (or None) is also
+    accepted so the function is callable directly in tests."""
+    if ws_mapping is None:
+        return {}
+    if isinstance(ws_mapping, dict):
+        return ws_mapping
+    if hasattr(ws_mapping, "entries"):
+        if __package__:
+            from .ws_mapping import to_ws_map_dict
+        else:
+            from ws_mapping import to_ws_map_dict  # type: ignore
+        return to_ws_map_dict(ws_mapping)
+    return {}
+
+
+def _tss_read_text(tss):
+    """Read `.Text` from an ITsString (via cast on the live runtime) or a
+    duck-typed fake offline. SIL-optional."""
+    try:
+        from SIL.LCModel.Core.KernelInterfaces import ITsString
+    except Exception:  # noqa: BLE001 -- offline: no pythonnet
+        return getattr(tss, "Text", tss)
+    return ITsString(tss).Text
+
+
+def _tss_make_string(text, handle):
+    """Build an ITsString for `text` on `handle` (live) or return the plain text
+    offline. SIL-optional."""
+    try:
+        from SIL.LCModel.Core.Text import TsStringUtils
+    except Exception:  # noqa: BLE001 -- offline: no pythonnet
+        return text
+    return TsStringUtils.MakeString(text, handle)
+
+
+def _copy_multistrings_ws_mapped(src_typed, new_typed, prop_names, *,
+                                 source, target, ws_map,
+                                 read_text=None, make_string=None):
+    """Copy each multistring property from `src_typed` to `new_typed`, writing
+    every value to the TARGET writing-system handle for its (mapped) WS Id --
+    never the raw source handle (031 US2, contract C3).
+
+    This is the explicit source->target handle-translation path mandated for
+    IFsSymFeatVal values (research.md T004-A: the flexicon Operations
+    GetSyncableProperties surface is unconfirmed for symbolic values). A source
+    WS with no target counterpart (after mapping) is skipped, so a string is
+    never written to a wrong/absent handle -- the WS-FIDELITY guarantee that
+    stops the bare-GUID-feature defect (research.md T004-B).
+
+    `read_text`/`make_string` isolate the SIL ITsString / TsStringUtils calls so
+    this stays import-safe and unit-testable offline; the live executor passes
+    the real callables (or lets these SIL-optional defaults resolve them)."""
+    if read_text is None:
+        read_text = _tss_read_text
+    if make_string is None:
+        make_string = _tss_make_string
+    ws_map = ws_map or {}
+    try:
+        src_id_by_handle = {ws.Handle: ws.Id for ws in source.WritingSystems.GetAll()}
+    except (AttributeError, TypeError):
+        src_id_by_handle = {}
+    try:
+        tgt_handle_by_id = {ws.Id: ws.Handle for ws in target.WritingSystems.GetAll()}
+    except (AttributeError, TypeError):
+        tgt_handle_by_id = {}
+    for prop_name in prop_names:
+        src_prop = getattr(src_typed, prop_name, None)
+        tgt_prop = getattr(new_typed, prop_name, None)
+        if src_prop is None or tgt_prop is None:
+            continue
+        for src_handle, src_id in src_id_by_handle.items():
+            text = read_text(src_prop.get_String(src_handle))
+            if not text:
+                continue
+            tgt_id = ws_map.get(src_id, src_id)  # identity when unmapped
+            tgt_handle = tgt_handle_by_id.get(tgt_id)
+            if tgt_handle is None:
+                continue  # no counterpart target WS -> skip (never wrong handle)
+            tgt_prop.set_String(tgt_handle, make_string(text, tgt_handle))
+
+
 def inflection_features_execute_action(action: PlannedAction, context: RunContext, ws_mapping: WSMapping, tag: ImportResidueTag):
     """Create an IFsClosedFeature in the target with GUID preserved.
 
@@ -539,6 +630,20 @@ def inflection_features_execute_action(action: PlannedAction, context: RunContex
 
     Values (IFsSymFeatVal) are co-created via CreateValue so they land
     in the same transaction.  Carrier B residue is applied.
+
+    031 US2: `Name`/`Abbreviation`/`Description` are copied through
+    writing-system mapping (contract C3) -- the feature via the flexicon
+    Operations `ApplySyncableProperties(..., ws_map=...)` surface (mirrors the
+    POS path, research.md T004-A), each IFsSymFeatVal value via the explicit
+    `_copy_multistrings_ws_mapped` handle-translation fallback (the Operations
+    surface is unconfirmed for symbolic values). The prior code wrote names with
+    the raw SOURCE handle, landing them on a wrong/absent target WS -- the
+    bare-GUID-feature defect (research.md T004-B).
+
+    031 US1: after the LAST INFLECTION_FEATURES action, the feature->category
+    wiring post-pass runs exactly once (via `_run_tail_once`), populating each
+    target POS `InflectableFeatsRC`. The tail is invoked from a `finally` so it
+    still fires when an individual feature action returns early or raises.
     """
     from SIL.LCModel import IFsClosedFeatureFactory, IFsClosedFeature, IFsSymFeatValFactory, IFsSymFeatVal
     from System import Guid as DotNetGuid
@@ -552,97 +657,141 @@ def inflection_features_execute_action(action: PlannedAction, context: RunContex
     target = context.target_handle
     src_guid = action.source_guid
 
-    # Locate source feature.
-    src_feat = None
-    for f in source.InflectionFeatures.FeatureGetAll():
-        if _guid_str_from(f) == src_guid:
-            src_feat = f
-            break
-    if src_feat is None:
-        return None
-
-    cache = getattr(target, "Cache")
-    ws = cache.DefaultAnalWs
-    feature_system = cache.LangProject.MsFeatureSystemOA
-    parsed_guid = DotNetGuid.Parse(src_guid)
-
-    sl = cache.ServiceLocator
-    factory = sl.GetService(IFsClosedFeatureFactory)
-
-    # Path A: 2-arg Create(Guid, featureSystem).
-    new_feat = None
     try:
-        new_feat = factory.Create(parsed_guid, feature_system)
-    except Exception:
-        new_feat = None
+        # Locate source feature.
+        src_feat = None
+        for f in source.InflectionFeatures.FeatureGetAll():
+            if _guid_str_from(f) == src_guid:
+                src_feat = f
+                break
+        if src_feat is None:
+            return None
 
-    if new_feat is None:
-        # Path B: Create(Guid) + Add.
+        # 031 US2 (T024 live finding): this create path only supports
+        # IFsClosedFeature. A non-closed IFsFeatDefn (e.g. IFsComplexFeature /
+        # IFsOpenFeature) crashed the `IFsClosedFeature(src_feat)` cast below and
+        # left a NAMELESS closed-feature twin in the target. Detect it up front,
+        # report it (UNSUPPORTED_LCM_TYPE -- no silent skip), and create nothing.
+        # Full complex/open-feature transfer is tracked as a follow-up.
         try:
-            new_feat = factory.Create(parsed_guid)
-        except Exception:
-            new_feat = factory.Create()
-        feature_system.FeaturesOC.Add(new_feat)
-
-    new_feat = IFsClosedFeature(new_feat)
-
-    # Apply syncable properties (Name, Abbreviation, Description).
-    # InflectionFeatureOperations.GetSyncableProperties works on IMoInflClass;
-    # for features we read properties directly.
-    src_feat_typed = IFsClosedFeature(src_feat)
-    from SIL.LCModel.Core.KernelInterfaces import ITsString
-    from SIL.LCModel.Core.Text import TsStringUtils
-    all_ws = {ws_obj.Id: ws_obj.Handle for ws_obj in source.WritingSystems.GetAll()}
-    for prop_name in ("Name", "Abbreviation", "Description"):
-        src_prop = getattr(src_feat_typed, prop_name, None)
-        tgt_prop = getattr(new_feat, prop_name, None)
-        if src_prop is None or tgt_prop is None:
-            continue
-        for ws_id, ws_handle in all_ws.items():
-            text = ITsString(src_prop.get_String(ws_handle)).Text
-            if text:
-                tgt_prop.set_String(ws_handle, TsStringUtils.MakeString(text, ws_handle))
-
-    # Co-create values (IFsSymFeatVal) with their canonical GUIDs.
-    # P0-A hardening: the 2-arg Create attaches automatically; the 1-arg
-    # path guards Add with _safe_add_to_owner.  No no-arg fallback --
-    # if Create(Guid) is unsupported on this LCM build we fail loud
-    # rather than silently produce GUID-misaligned values.
-    val_factory = sl.GetService(IFsSymFeatValFactory)
-    if hasattr(src_feat_typed, "ValuesOC"):
-        for src_val in src_feat_typed.ValuesOC:
-            val_guid = _guid_str_from(src_val)
-            parsed_val_guid = DotNetGuid.Parse(val_guid)
-            new_val = None
+            IFsClosedFeature(src_feat)
+        except Exception as _cast_exc:
             try:
-                new_val = val_factory.Create(parsed_val_guid, new_feat)
-            except Exception:
-                new_val = None
-            if new_val is None:
-                try:
-                    new_val = val_factory.Create(parsed_val_guid)
-                except Exception as e:
-                    raise RuntimeError(
-                        f"IFsSymFeatValFactory does not support Create(Guid); "
-                        f"cannot align value GUID {val_guid} on feature {src_guid}"
-                    ) from e
-                _safe_add_to_owner(new_val, new_feat.ValuesOC,
-                                   "IFsSymFeatValFactory", val_guid)
-            new_val = IFsSymFeatVal(new_val)
-            src_val_typed = IFsSymFeatVal(src_val)
-            for prop_name in ("Name", "Abbreviation", "Description"):
-                src_p = getattr(src_val_typed, prop_name, None)
-                tgt_p = getattr(new_val, prop_name, None)
-                if src_p is None or tgt_p is None:
-                    continue
-                for ws_id, ws_handle in all_ws.items():
-                    text = ITsString(src_p.get_String(ws_handle)).Text
-                    if text:
-                        tgt_p.set_String(ws_handle, TsStringUtils.MakeString(text, ws_handle))
+                _src_cls = src_feat.GetType().Name
+            except Exception:  # noqa: BLE001
+                _src_cls = type(src_feat).__name__
+            import logging as _logging
+            _logging.getLogger("gramtrans.Lib.categories").warning(
+                "inflection_features_execute_action: IFsClosedFeature(src_feat) "
+                "cast failed for source feature %s (class=%s) -- treating as "
+                "UNSUPPORTED_LCM_TYPE: %s",
+                src_guid, _src_cls, _cast_exc, exc_info=True,
+            )
+            exec_skips = getattr(context, "_exec_skips", None)
+            if exec_skips is not None:
+                exec_skips.append(Skip(
+                    category=GrammarCategory.INFLECTION_FEATURES,
+                    source_guid=src_guid,
+                    reason=SkipReason.UNSUPPORTED_LCM_TYPE,
+                    detail=(f"source feature {src_guid} is {_src_cls}, not "
+                            "IFsClosedFeature; complex/open feature transfer is "
+                            "not supported by this path"),
+                ))
+            return None
 
-    # Carrier B: Description-append on the feature.
-    apply_carrier_b(new_feat, ws, tag)
-    return new_feat
+        cache = getattr(target, "Cache")
+        ws = cache.DefaultAnalWs
+        feature_system = cache.LangProject.MsFeatureSystemOA
+        parsed_guid = DotNetGuid.Parse(src_guid)
+
+        sl = cache.ServiceLocator
+        factory = sl.GetService(IFsClosedFeatureFactory)
+
+        # Path A: 2-arg Create(Guid, featureSystem).
+        new_feat = None
+        try:
+            new_feat = factory.Create(parsed_guid, feature_system)
+        except Exception:
+            new_feat = None
+
+        if new_feat is None:
+            # Path B: Create(Guid) + guarded Add. No no-arg fallback -- if
+            # Create(Guid) is unsupported we fail loud rather than silently
+            # produce a fresh-GUID duplicate feature on re-run (031 US2, C4/VR-1;
+            # research.md R3 dedup). Mirrors the value path's fail-loud posture.
+            try:
+                new_feat = factory.Create(parsed_guid)
+            except Exception as e:
+                raise RuntimeError(
+                    f"IFsClosedFeatureFactory does not support Create(Guid); "
+                    f"cannot align feature GUID {src_guid} (a no-GUID create "
+                    f"would produce a duplicate feature on re-run)"
+                ) from e
+            _safe_add_to_owner(new_feat, feature_system.FeaturesOC,
+                               "IFsClosedFeatureFactory", src_guid)
+
+        new_feat = IFsClosedFeature(new_feat)
+
+        # Apply syncable properties (Name, Abbreviation, Description) with WS
+        # mapping via the Operations surface -- the same call the POS path uses
+        # (categories.py gram_categories create path). Falls back to the explicit
+        # handle-translation copy if that surface is unavailable on this build.
+        src_feat_typed = IFsClosedFeature(src_feat)
+        ws_map = _ws_map_dict(ws_mapping)
+        try:
+            src_props = source.InflectionFeatures.GetSyncableProperties(src_feat_typed)
+            target.InflectionFeatures.ApplySyncableProperties(
+                new_feat, src_props, ws_map=ws_map)
+        except Exception:
+            _copy_multistrings_ws_mapped(
+                src_feat_typed, new_feat, ("Name", "Abbreviation", "Description"),
+                source=source, target=target, ws_map=ws_map)
+
+        # Co-create values (IFsSymFeatVal) with their canonical GUIDs.
+        # P0-A hardening: the 2-arg Create attaches automatically; the 1-arg
+        # path guards Add with _safe_add_to_owner.  No no-arg fallback --
+        # if Create(Guid) is unsupported on this LCM build we fail loud
+        # rather than silently produce GUID-misaligned values.
+        val_factory = sl.GetService(IFsSymFeatValFactory)
+        if hasattr(src_feat_typed, "ValuesOC"):
+            for src_val in src_feat_typed.ValuesOC:
+                val_guid = _guid_str_from(src_val)
+                parsed_val_guid = DotNetGuid.Parse(val_guid)
+                new_val = None
+                try:
+                    new_val = val_factory.Create(parsed_val_guid, new_feat)
+                except Exception:
+                    new_val = None
+                if new_val is None:
+                    try:
+                        new_val = val_factory.Create(parsed_val_guid)
+                    except Exception as e:
+                        raise RuntimeError(
+                            f"IFsSymFeatValFactory does not support Create(Guid); "
+                            f"cannot align value GUID {val_guid} on feature {src_guid}"
+                        ) from e
+                    _safe_add_to_owner(new_val, new_feat.ValuesOC,
+                                       "IFsSymFeatValFactory", val_guid)
+                new_val = IFsSymFeatVal(new_val)
+                src_val_typed = IFsSymFeatVal(src_val)
+                # C3: values copy via the explicit ws-mapped handle translation
+                # (Operations GetSyncableProperties is unconfirmed for values).
+                _copy_multistrings_ws_mapped(
+                    src_val_typed, new_val, ("Name", "Abbreviation", "Description"),
+                    source=source, target=target, ws_map=ws_map)
+
+        # Carrier B: Description-append on the feature.
+        apply_carrier_b(new_feat, ws, tag)
+        return new_feat
+    finally:
+        # 031 US1 (T012, contract C2): wire feature->category links exactly once,
+        # on the last INFLECTION_FEATURES action (after every GRAM_CATEGORIES
+        # action has executed -- leaf-dispatch order). The `finally` guarantees
+        # the tail's per-call counter advances even on an early return / raise so
+        # the post-pass still fires on the final action.
+        _run_tail_once(context, target, tag, "_did_infl_feature_link_pass",
+                       GrammarCategory.INFLECTION_FEATURES,
+                       _run_infl_feature_link_pass)
 
 
 # ----- custom_fields (Phase 3b US2: detect-and-report, no creation) --------
@@ -2765,8 +2914,9 @@ def _affix_type_of(entry):
 
 
 def _binding_map(context, name):
-    """Return the live binding dict for `name` ("msa_slot_bindings" or
-    "lexentry_ref_bindings").
+    """Return the live binding dict for `name` ("msa_slot_bindings",
+    "lexentry_ref_bindings", "entryref_create_bindings", or
+    "feature_category_links").
 
     Preview.build_run_plan attaches `_msa_slot_bindings` / `_lexentry_ref_bindings`
     straight onto the RunContext for plan_action to stash into; transfer.execute
@@ -2783,12 +2933,18 @@ def _binding_map(context, name):
 
 def _stash_entry_bindings(entry, context):
     """Stash the deferred MSA->slot and EntryRef component bindings for an
-    entry being transferred (FR-333 17.1 sub-pass + FR-340 post-pass A).
+    entry being transferred (FR-333 17.1 sub-pass + FR-340 post-pass A; 027
+    US1/US2/US3 contract C1's `entryref_create_bindings`).
 
     Called from AFFIXES + STEMS plan_action. Only MSAs with a NON-EMPTY
     source `SlotsRC` and EntryRefs with non-empty component/primary sequences
-    produce a binding — an unbound affix (empty SlotsRC) never enters
-    `plan.msa_slot_bindings` (matches the Ejagham Mini `ro~-` case, T040)."""
+    produce a `lexentry_ref_bindings` entry — an unbound affix (empty
+    SlotsRC) never enters `plan.msa_slot_bindings` (matches the Ejagham Mini
+    `ro~-` case, T040). `entryref_create_bindings` (027) is populated
+    UNCONDITIONALLY for every `EntryRefsOS` member (even one with 0
+    components/primaries still needs its container created) -- see
+    data-model.md's binding extension and contract C1. READ-ONLY: this walks
+    the SOURCE entry's ref collection only; no target writes (Principle III)."""
     msa_map = _binding_map(context, "msa_slot_bindings")
     if msa_map is not None:
         for msa in getattr(entry, "MorphoSyntaxAnalysesOC", None) or []:
@@ -2798,20 +2954,94 @@ def _stash_entry_bindings(entry, context):
             msa_map[_guid_str_from(msa)] = [_guid_str_from(s) for s in slots]
 
     ref_map = _binding_map(context, "lexentry_ref_bindings")
-    if ref_map is not None:
+    create_map = _binding_map(context, "entryref_create_bindings")
+    if ref_map is not None or create_map is not None:
+        entry_guid = _guid_str_from(entry)
         for ref in getattr(entry, "EntryRefsOS", None) or []:
             comp = [_guid_str_from(x)
                     for x in (getattr(ref, "ComponentLexemesRS", None) or [])]
             prim = [_guid_str_from(x)
                     for x in (getattr(ref, "PrimaryLexemesRS", None) or [])]
-            if not comp and not prim:
-                continue
-            slot = ref_map.setdefault(
-                _guid_str_from(entry),
-                {"ComponentLexemesRS": [], "PrimaryLexemesRS": []},
-            )
-            slot["ComponentLexemesRS"].extend(comp)
-            slot["PrimaryLexemesRS"].extend(prim)
+            if ref_map is not None and (comp or prim):
+                slot = ref_map.setdefault(
+                    entry_guid,
+                    {"ComponentLexemesRS": [], "PrimaryLexemesRS": []},
+                )
+                slot["ComponentLexemesRS"].extend(comp)
+                slot["PrimaryLexemesRS"].extend(prim)
+            if create_map is not None:
+                ref_guid = _guid_str_from(ref)
+                if not ref_guid:
+                    continue
+                record = {
+                    "ref_guid": ref_guid,
+                    "ref_type": getattr(ref, "RefType", None),
+                    "components": comp,
+                    "primaries": prim,
+                    "variant_entry_types": list(
+                        getattr(ref, "VariantEntryTypesRS", None) or []),
+                    "complex_entry_types": list(
+                        getattr(ref, "ComplexEntryTypesRS", None) or []),
+                    "show_complex_forms_in": list(
+                        getattr(ref, "ShowComplexFormsInRS", None) or []),
+                }
+                create_map.setdefault(entry_guid, []).append(record)
+
+
+def _stash_feature_category_links(pos_piece, context):
+    """Gather feature->category links from a source POS's InflectableFeatsRC into
+    the run-plan's `feature_category_links` binding (031 US1, contract C1).
+
+    Called from `gram_categories_plan_action` for every in-scope POS (created or
+    matched). Records `{target_pos_guid: [feature_guid, ...]}` -- GUIDs are
+    preserved on transfer so target_pos_guid == source pos guid. Consumed by the
+    Move wiring post-pass `_run_infl_feature_link_pass` (registered via
+    `_run_tail_once`). Idempotent: a (pos, feature) pair already recorded is not
+    duplicated.
+
+    In-scope endpoints only: gathers nothing unless INFLECTION_FEATURES is
+    selected (no features transferred => no links to wire), and honors an
+    INFLECTION_FEATURES leaf-pick subset when one is present. Mirrors
+    `_stash_entry_bindings`."""
+    link_map = _binding_map(context, "feature_category_links")
+    if link_map is None:
+        return
+    selection = getattr(context, "_selection", None)
+    if selection is not None:
+        try:
+            if not selection.is_on(GrammarCategory.INFLECTION_FEATURES):
+                return
+        except (AttributeError, TypeError):
+            pass
+    picks = None
+    if selection is not None:
+        try:
+            picks = selection.leaf_picks_for(GrammarCategory.INFLECTION_FEATURES)
+        except (AttributeError, TypeError):
+            picks = None
+    pos_guid = _guid_str_from(pos_piece)
+    if not pos_guid:
+        return
+    # CAST DISCIPLINE (research.md T004-C): InflectableFeatsRC requires an
+    # IPartOfSpeech cast on the live LCM runtime; fakes fall through unchanged.
+    pos_typed = pos_piece
+    try:
+        from SIL.LCModel import IPartOfSpeech
+        pos_typed = IPartOfSpeech(pos_piece)
+    except Exception:
+        pos_typed = pos_piece
+    feats_rc = getattr(pos_typed, "InflectableFeatsRC", None)
+    if feats_rc is None:
+        return
+    for feat in feats_rc:
+        fg = _guid_str_from(feat)
+        if not fg:
+            continue
+        if picks is not None and fg not in picks:
+            continue
+        bucket = link_map.setdefault(pos_guid, [])
+        if fg not in bucket:
+            bucket.append(fg)
 
 
 def _entry_pos_deps(entry):
@@ -2841,6 +3071,354 @@ def _resolve_target_pos(target, src_pos_guid):
         if _guid_str_from(pos_obj) == src_pos_guid:
             return pos_obj
     return None
+
+
+# ---------------------------------------------------------------------------
+# Feature 028 (R1) -- reusable POS resolve-or-create for affix-MsEnv references.
+#
+# `owned.py`'s MsEnvPartOfSpeechRA leg (and the owning POS of an inflection
+# class) resolves/creates a target POS through THIS single path -- the same
+# `_resolve_target_pos` identity lookup + the same `IPartOfSpeechFactory`
+# create idiom `gram_categories_execute_action` uses (GUID preserved,
+# Name/Abbreviation/Description synced with the concept<->GUID remap, Carrier B
+# residue). No divergent POS-identity table is introduced (research R1). All
+# host-only bits (`SIL.LCModel`, `System.Guid`) degrade gracefully so the leg
+# is exercisable host-free by the 028 unit fakes; a live host takes the real
+# cast/parse paths unchanged.
+# ---------------------------------------------------------------------------
+
+
+def _pos_class_name(obj):
+    """Best-effort real `ClassName` for a POS-owner probe (host-free fallback
+    to a duck-typed `ClassName`/`class_name` attribute)."""
+    try:
+        from SIL.LCModel import ICmObject
+        return ICmObject(obj).ClassName
+    except Exception:
+        return getattr(obj, "ClassName", getattr(obj, "class_name", None))
+
+
+def _owner_is_pos(owner) -> bool:
+    """True when `owner` is (or duck-types as) an owning IPartOfSpeech -- i.e.
+    `src_pos` is a sub-POS whose parent must be resolved/created first."""
+    if owner is None:
+        return False
+    try:
+        from SIL.LCModel import IPartOfSpeech
+        IPartOfSpeech(owner)  # cast probe (live): raises if owner isn't a POS
+        return True
+    except Exception:
+        pass
+    return (_pos_class_name(owner) == "PartOfSpeech"
+            or hasattr(owner, "SubPossibilitiesOS"))
+
+
+def _get_pos_factory(target):
+    """`IPartOfSpeechFactory` off `target.GetFactory(...)`, fake-tolerant
+    (mirrors `owned._get_owned_factory`): the real interface-cast wrapper first
+    (correct overload resolution on a live host), falling back to the bare
+    string key a host-free test double is keyed by. `None` when no factory is
+    obtainable (caller reports the drop -- degrade, never crash)."""
+    try:
+        from SIL.LCModel import IPartOfSpeechFactory
+        iface = IPartOfSpeechFactory
+    except Exception:
+        iface = None
+    if iface is not None:
+        try:
+            return iface(target.GetFactory(iface))
+        except Exception:
+            pass
+    try:
+        return target.GetFactory("IPartOfSpeechFactory")
+    except Exception:
+        return None
+
+
+def target_has_pos_create_infra(target) -> bool:
+    """Read-only predicate for the Preview twin's CREATE-vs-REPORT parity
+    (G6): True iff a POS could be created in `target` (a factory is
+    obtainable)."""
+    return _get_pos_factory(target) is not None
+
+
+def _guid_arg_for_create(guid_str: str):
+    """`.NET Guid` for a factory `.Create(guid, owner)` call, falling back to
+    the raw string host-free (matches `owned._guid_for_create`)."""
+    try:
+        from System import Guid as DotNetGuid
+        return DotNetGuid.Parse(guid_str)
+    except Exception:
+        return guid_str
+
+
+def _sync_pos_properties(context, new_pos, src_pos, ws_mapping, tag) -> None:
+    """Best-effort Name/Abbreviation/Description sync + Carrier B residue on a
+    freshly-created POS -- the same `GetSyncableProperties` /
+    `ApplySyncableProperties(ws_map=...)` remap the closure path applies. Every
+    step is host-only and wrapped: host-free fakes skip it (props are a no-op
+    for a fake POS)."""
+    try:
+        props = context.source_handle.POS.GetSyncableProperties(src_pos)
+        context.target_handle.POS.ApplySyncableProperties(
+            new_pos, props, ws_map=ws_mapping)
+    except Exception:
+        pass
+    try:
+        if __package__:
+            from .residue import apply_carrier_b
+        else:
+            from residue import apply_carrier_b  # type: ignore
+        ws = getattr(getattr(context.target_handle, "Cache", None),
+                     "DefaultAnalWs", None)
+        apply_carrier_b(new_pos, ws, tag)
+    except Exception:
+        pass
+
+
+def resolve_or_create_target_pos(context, src_pos, ws_mapping, tag, _seen=None):
+    """Feature 028 (R1): resolve `src_pos` (a source IPartOfSpeech) in the
+    target by GUID, creating it -- and its ancestor POS chain -- when absent,
+    via the SAME `IPartOfSpeechFactory` path `gram_categories_execute_action`
+    uses (GUID preserved, props synced, concept<->GUID remap inherited, Carrier
+    B residue). Reuses `_resolve_target_pos` for identity so no divergent
+    POS-identity path is introduced.
+
+    Returns the target IPartOfSpeech, or `None` when the POS cannot be created
+    (no create infra, or an ancestor is uncreatable) -- degrades, never raises;
+    the caller emits the never-silent `DroppedItemRecord`."""
+    target = context.target_handle
+    pos_guid = _guid_str_from(src_pos)
+    if not pos_guid:
+        return None
+    existing = _resolve_target_pos(target, pos_guid)
+    if existing is not None:
+        return existing
+    _seen = _seen if _seen is not None else set()
+    if pos_guid in _seen:  # pathological owner cycle guard
+        return None
+    _seen.add(pos_guid)
+    factory = _get_pos_factory(target)
+    if factory is None:
+        return None
+    owner = getattr(src_pos, "Owner", None)
+    if _owner_is_pos(owner):
+        target_parent = resolve_or_create_target_pos(
+            context, owner, ws_mapping, tag, _seen)
+        if target_parent is None:
+            return None  # ancestor chain not resolvable/creatable
+        owner_arg = target_parent
+    else:
+        cache = getattr(target, "Cache", None)
+        owner_arg = None
+        if cache is not None:
+            try:
+                from SIL.LCModel import ICmPossibilityList
+                owner_arg = ICmPossibilityList(
+                    cache.LangProject.PartsOfSpeechOA)
+            except Exception:
+                owner_arg = getattr(getattr(cache, "LangProject", None),
+                                    "PartsOfSpeechOA", None)
+    try:
+        new_pos = factory.Create(_guid_arg_for_create(pos_guid), owner_arg)
+    except Exception:
+        return None
+    _sync_pos_properties(context, new_pos, src_pos, ws_mapping, tag)
+    return new_pos
+
+
+# ---------------------------------------------------------------------------
+# Feature 028 (R5) -- inflection-class resolve-or-create for affix
+# InflectionClassesRC references. A class is owned by a POS
+# (`IPartOfSpeech.InflectionClassesOC`) or nested under a parent class
+# (`IMoInflClass.SubclassesOC`). Resolution is closure-scoped (Principle V):
+# the class is created ONLY under an owning POS that is present in the target
+# (i.e. in the copied closure or pre-existing); an out-of-closure owning POS is
+# NOT invented -- the caller reports the class dropped (G8). Reuses the
+# `IMoInflClassFactory.Create(Guid)` idiom `inflection_classes_execute_action`
+# uses; host-only bits degrade gracefully for the 028 unit fakes.
+# ---------------------------------------------------------------------------
+
+
+def _owner_is_inflection_class(owner) -> bool:
+    if owner is None:
+        return False
+    try:
+        from SIL.LCModel import IMoInflClass
+        IMoInflClass(owner)  # cast probe (live)
+        return True
+    except Exception:
+        pass
+    return (_pos_class_name(owner) == "MoInflClass"
+            or hasattr(owner, "SubclassesOC"))
+
+
+def _search_inflection_classes(coll, class_guid):
+    """Depth-first search for `class_guid` across an InflectionClassesOC /
+    SubclassesOC tree."""
+    for ic in coll or []:
+        if _guid_str_from(ic) == class_guid:
+            return ic
+        found = _search_inflection_classes(
+            getattr(ic, "SubclassesOC", None), class_guid)
+        if found is not None:
+            return found
+    return None
+
+
+def _find_target_inflection_class(target, class_guid):
+    """Resolve an existing target `IMoInflClass` by GUID, scanning every target
+    POS's `InflectionClassesOC` (and nested `SubclassesOC`). `None` if absent."""
+    if not class_guid:
+        return None
+    for pos in _iter_pos(target):
+        pos_obj = _as_pos(pos)
+        found = _search_inflection_classes(
+            getattr(pos_obj, "InflectionClassesOC", None), class_guid)
+        if found is not None:
+            return found
+    return None
+
+
+def resolve_target_inflection_class(target, class_guid):
+    """Read-only resolve (Preview twin): existing target class by GUID, or
+    `None`."""
+    return _find_target_inflection_class(target, class_guid)
+
+
+def _owning_pos_of_class(src_class):
+    """Walk `src_class`'s owner chain up to the owning `IPartOfSpeech`
+    (through any number of parent classes), or `None` if the chain does not
+    terminate at a POS. Cycle-guarded."""
+    node = getattr(src_class, "Owner", None)
+    seen: set = set()
+    while node is not None:
+        g = _guid_str_from(node)
+        if g and g in seen:
+            return None
+        if g:
+            seen.add(g)
+        if _owner_is_pos(node):
+            return node
+        if _owner_is_inflection_class(node):
+            node = getattr(node, "Owner", None)
+            continue
+        return None
+    return None
+
+
+def _get_inflection_class_factory(target):
+    """`IMoInflClassFactory`, fake-tolerant (ServiceLocator on a live host,
+    then the `GetFactory` interface-cast / string-key fallbacks). `None` when
+    no factory is obtainable."""
+    try:
+        from SIL.LCModel import IMoInflClassFactory
+        iface = IMoInflClassFactory
+    except Exception:
+        iface = None
+    if iface is not None:
+        for getter in (
+            lambda: target.Cache.ServiceLocator.GetService(iface),
+            lambda: iface(target.GetFactory(iface)),
+        ):
+            try:
+                return getter()
+            except Exception:
+                continue
+    try:
+        return target.GetFactory("IMoInflClassFactory")
+    except Exception:
+        return None
+
+
+def can_create_inflection_class(target, src_class) -> bool:
+    """Read-only predicate for the Preview twin's CREATE-vs-REPORT parity (G6):
+    True iff the class could be created -- its owning POS is present in the
+    target (closure-scoped) AND a factory is obtainable."""
+    pos = _owning_pos_of_class(src_class)
+    if pos is None:
+        return False
+    if _resolve_target_pos(target, _guid_str_from(pos)) is None:
+        return False
+    return _get_inflection_class_factory(target) is not None
+
+
+def _sync_inflection_class_properties(context, new_ic, src_class, ws_mapping,
+                                      tag) -> None:
+    """Best-effort Name/Abbreviation/Description sync + Carrier B residue --
+    the same `InflectionFeatures` sync-ops `inflection_classes_execute_action`
+    applies; host-free fakes skip it."""
+    try:
+        props = context.source_handle.InflectionFeatures.GetSyncableProperties(
+            src_class)
+        context.target_handle.InflectionFeatures.ApplySyncableProperties(
+            new_ic, props, ws_map=ws_mapping)
+    except Exception:
+        pass
+    try:
+        if __package__:
+            from .residue import apply_carrier_b
+        else:
+            from residue import apply_carrier_b  # type: ignore
+        ws = getattr(getattr(context.target_handle, "Cache", None),
+                     "DefaultAnalWs", None)
+        apply_carrier_b(new_ic, ws, tag)
+    except Exception:
+        pass
+
+
+def resolve_or_create_inflection_class(context, src_class, ws_mapping, tag,
+                                       _seen=None):
+    """Feature 028 (R5/FR-002): resolve `src_class` in the target by GUID,
+    creating it under its owning POS's `InflectionClassesOC` (or a parent
+    class's `SubclassesOC`) when absent, GUID preserved, via
+    `IMoInflClassFactory.Create`. Closure-scoped: the owning POS is resolved
+    (never invented -- G8/Principle V); a class whose owning POS is neither
+    present nor in-closure returns `None` (caller reports it dropped).
+
+    Returns the target `IMoInflClass`, or `None` when unresolvable/uncreatable
+    -- degrades, never raises."""
+    target = context.target_handle
+    class_guid = _guid_str_from(src_class)
+    if not class_guid:
+        return None
+    existing = _find_target_inflection_class(target, class_guid)
+    if existing is not None:
+        return existing
+    _seen = _seen if _seen is not None else set()
+    if class_guid in _seen:  # pathological owner cycle guard
+        return None
+    _seen.add(class_guid)
+
+    owner = getattr(src_class, "Owner", None)
+    if _owner_is_pos(owner):
+        target_owner = _resolve_target_pos(target, _guid_str_from(owner))
+        owner_coll_attr = "InflectionClassesOC"
+    elif _owner_is_inflection_class(owner):
+        target_owner = resolve_or_create_inflection_class(
+            context, owner, ws_mapping, tag, _seen)
+        owner_coll_attr = "SubclassesOC"
+    else:
+        return None
+    if target_owner is None:
+        return None  # owning POS/class out-of-closure -> not invented (G8)
+
+    factory = _get_inflection_class_factory(target)
+    if factory is None:
+        return None
+    try:
+        new_ic = factory.Create(_guid_arg_for_create(class_guid))
+    except Exception:
+        return None
+    owner_coll = getattr(target_owner, owner_coll_attr, None)
+    if owner_coll is None:
+        return None
+    try:
+        owner_coll.Add(new_ic)
+    except (AttributeError, TypeError):
+        pass
+    _sync_inflection_class_properties(context, new_ic, src_class, ws_mapping, tag)
+    return new_ic
 
 
 def _resolve_possibility_by_guid(possibility_list, guid):
@@ -3479,12 +4057,42 @@ def _plan_entry_reference_decisions(src_entry, context, target):
         return tuple(records)
     except (AttributeError, TypeError, KeyError) as exc:
         import logging as _logging
+        # T037 Finding 1(b) (fidelity-critical, never-silent): the prior
+        # version of this handler logged a warning and `return ()`ed with NO
+        # `DroppedItemRecord` -- any real reference/owned-object decision
+        # this entry's closure would have produced (LINK/CREATE/UPDATE for
+        # every sense, allomorph, owned child) vanished with no trace in
+        # `RunPlan.dropped_items`, violating FR-010 / Principle III. Guard
+        # the GUID extraction itself (the same call this handler's own log
+        # line used unprotected before -- if THAT also raises, e.g. because
+        # the underlying exception came from a duck-typing gap on
+        # `src_entry` itself, we still must not let the except handler
+        # itself throw) and always append a best-effort report.
+        try:
+            entry_guid = _guid_str_from(src_entry)
+        except Exception:
+            entry_guid = ""
         _logging.getLogger("gramtrans.Lib.categories").warning(
             "_plan_entry_reference_decisions: %s on entry %s -- returning "
             "no reference decisions for this entry.",
-            type(exc).__name__, _guid_str_from(src_entry),
+            type(exc).__name__, entry_guid,
             exc_info=True,
         )
+        try:
+            dropped = getattr(context, "_dropped", None)
+        except Exception:
+            dropped = None
+        if dropped is not None:
+            _append_dropped_once(dropped, DroppedItemRecord(
+                owner_kind="LexEntry",
+                owner_guid=entry_guid,
+                owner_label="",
+                field_name="EntryReferenceDecisions",
+                item_name="",
+                item_guid=entry_guid,
+                reason=f"reference-decision planning failed: "
+                       f"{type(exc).__name__}: {exc}",
+            ))
         return ()
 
 
@@ -3981,6 +4589,73 @@ def plan_all_lexical_relations(context, resolver_cache, dropped) -> list:
     return records
 
 
+# ============================================================================
+# Feature 025 (full reversals, US1 T018) -- reversal closure single-final-pass
+# ============================================================================
+#
+# Mirrors `plan_all_lexical_relations`/`reproduce_all_lexical_relations`'s
+# single-final-pass timing exactly: called ONCE, after the leaf-dispatch
+# loop (AFFIXES/STEMS) has assembled the run's COMPLETE `context._copy_set`
+# -- every top-level entry, top-level sense, recursively-copied sub-sense,
+# and allomorph this run will ever copy is already registered by then.
+# `Lib/reversals.py.plan_reversals` only ever matches a
+# `ReversalIndexEntry.SensesRS` member's GUID against `copy_set`'s keys --
+# the entry/sub-sense/allomorph GUIDs mixed into that same dict are
+# harmless noise, never a false match (no two different LCM objects in a
+# project share a GUID). Call sites: `Lib/preview.py.build_run_plan` (Preview,
+# right after `plan_all_lexical_relations`) and `Lib/transfer.py.execute`
+# (Move, right after `reproduce_all_lexical_relations`).
+
+def plan_reversal_decisions(context, resolver_cache, dropped) -> tuple:
+    """Preview-mode (US1, T018): read-only reversal-closure decision pass.
+    Returns the tuple of `ReversalDecision` `Lib/preview.py.build_run_plan`
+    folds into `RunPlan.reversal_decisions` (T019) -- every reversal
+    `DroppedItemRecord` this walk produces already flows into the SAME
+    `dropped` collector every other Preview decision uses, so it reaches
+    `RunPlan.dropped_items` automatically."""
+    if __package__:
+        from . import reversals as _reversals
+    else:
+        import reversals as _reversals  # type: ignore
+    copy_set = getattr(context, "_copy_set", None) or {}
+    return tuple(_reversals.plan_reversals(
+        copy_set, context.source_handle, context.target_handle, context,
+        resolver_cache, dropped,
+    ))
+
+
+def reproduce_reversal_entries(context, tag, resolver_cache, dropped) -> None:
+    """Move-mode (US1, T018/T020) twin of `plan_reversal_decisions`:
+    recomputes the SAME decision walk against the run's fully-settled, REAL
+    `context._copy_set` (guid -> the actual created target object, not
+    Preview's `True` placeholder marker -- `Lib/reversals.py.apply_reversals`
+    needs the real target sense objects to link `SensesRS`), then applies
+    it. Called once from `Lib/transfer.py.execute`, right after
+    `reproduce_all_lexical_relations` -- reversal entries are written ONLY
+    here, in Move mode.
+
+    Principle III (P0-2, feature-025 cycle-6 remediation): the SAME Add/Link
+    decision this walk applies was already rendered on the Preview surface
+    the click before -- `Lib/ui/main_window.py._on_preview` calls
+    `Lib/preview.py.render_preview_extra_lines(plan)` (which wraps
+    `render_reversal_decisions`) and displays the result via `Lib/ui/
+    stats_panel.py.StatsPanel.set_report`'s `extra_lines` parameter, BEFORE
+    the user can click Move. Prior to that fix this docstring's claim was
+    FALSE: `render_reversal_decisions` had no call site anywhere, so no
+    reversal decision was ever shown before this function wrote it."""
+    if __package__:
+        from . import reversals as _reversals
+    else:
+        import reversals as _reversals  # type: ignore
+    copy_set = getattr(context, "_copy_set", None) or {}
+    decisions = _reversals.plan_reversals(
+        copy_set, context.source_handle, context.target_handle, context,
+        resolver_cache, dropped,
+    )
+    _reversals.apply_reversals(
+        decisions, context.target_handle, context, tag, resolver_cache, dropped)
+
+
 def _dispatch_msa_subclass(class_name):
     """Return the MSA subclass tag driving execute-time creation dispatch (E4).
 
@@ -4009,22 +4684,38 @@ def _class_name_of(obj):
 
 
 # ----------------------------------------------------------------------------
-# Cycle-16 lead adjudication -- LexEntry.EntryRefsOS: DROP_REPORTED.
+# 027 contract C4 -- LexEntry.EntryRefsOS: reproduce-in-closure / report-rest.
 # ----------------------------------------------------------------------------
 #
-# No code site anywhere in `Lib/*.py` calls `ILexEntryRefFactory` -- a copied
-# entry's `EntryRefsOS` is simply never populated on the target (routed to
-# 027-complex-forms-variants). `_run_post_pass_a` only WIRES
-# ComponentLexemesRS/PrimaryLexemesRS onto an EntryRef that already exists;
-# since none is ever created for a freshly-copied entry, it is unreachable.
-# Per the lead's ruling this cycle: report every un-reproduced `EntryRefsOS`
-# member (one `DroppedItemRecord` per `LexEntryRef`, naming the relationship
-# kind -- variant vs complex-form, from `RefType` -- plus its component +
-# variant/complex type). This SUBSUMES `LexEntryRef.{ComponentLexemesRS,
-# PrimaryLexemesRS, VariantEntryTypesRS, ComplexEntryTypesRS,
-# ShowComplexFormsInRS}` -- none of those 5 fields gets its own separate
-# `DroppedItemRecord` (they cannot exist without an un-reproduced
-# `LexEntryRef` in the first place).
+# HISTORY (cycle-16 lead adjudication, superseded this cycle): before 027, no
+# code site anywhere in `Lib/*.py` called `ILexEntryRefFactory` -- EntryRefsOS
+# was NEVER populated on the target, so every ref was unconditionally
+# reported dropped (report-all). 027's C1-C3
+# (`_run_entryref_create_pass`/`_run_post_pass_a`) now actually CREATE the
+# container and wire its components/primaries/entry-types, so report-all
+# would double-book a successfully reproduced ref as ALSO dropped (P2).
+#
+# POLICY (research.md Decision 5, contract C4): a ref is reproduced (0
+# records) iff every one of its ComponentLexemesRS/PrimaryLexemesRS members
+# is itself eligible for STEMS/AFFIXES transfer (`_affix_type_of(m)[0]` --
+# has LexemeFormOA + its MorphTypeRA, the SAME eligibility test this module
+# uses to classify every LexEntry into STEMS/AFFIXES) -- i.e. WILL exist on
+# the target once this transfer's STEMS/AFFIXES tail completes, regardless of
+# processing order (the create-then-wire tail runs once, after every
+# in-scope entry's closure has already been walked -- see
+# `stems_execute_action`'s `_run_tail_once` ordering -- so an order-dependent
+# "already on target right now" check would false-positive on a
+# not-yet-walked sibling entry). A ref with zero components/primaries is
+# trivially reproduced (nothing external to fail on). Entry-type/publication
+# (C3) resolution is NOT this function's concern -- `_run_entryref_create_pass`
+# routes those through `_decide_reference_fields`/`_apply_reference_fields`,
+# which already reports an unresolved type/publication item on its own; this
+# function reporting the SAME ref again would reintroduce the double-booking
+# this flip removes.
+#
+# A NOT-reproduced ref still gets exactly one `DroppedItemRecord` (naming the
+# relationship kind -- variant vs complex-form, from `RefType` -- plus its
+# component + variant/complex type), unchanged from the pre-027 shape.
 
 _LEX_ENTRY_REF_KIND_BY_TYPE = {0: "variant", 1: "complex-form"}
 
@@ -4064,19 +4755,59 @@ def _lex_entry_ref_identity_label(ref, kind: str) -> str:
     return f"{kind}: " + ", ".join(parts)
 
 
+def _entry_ref_is_reproducible(ref) -> bool:
+    """027 contract C4: True iff every ComponentLexemesRS/PrimaryLexemesRS
+    member of `ref` is itself STEMS/AFFIXES-eligible (`_affix_type_of`).
+    A ref with 0 components/primaries is trivially True.
+
+    CAVEAT (known limitation, deferred post-merge): this check is
+    INTRINSIC/type-scoped only -- it asks "could this member ever be
+    copied" (`_affix_type_of`), not "will this member actually be
+    copied on THIS run". It does not consult run-scoped leaf-pick
+    selection membership (`selection.leaf_picks_for`, selection.py
+    ~438-445), which further narrows what stems_enumerate_source /
+    affixes_enumerate_source actually enumerate on a leaf-pick-narrowed
+    run (categories.py ~5817-5838, ~5447). Consequently, on a run where
+    the user has narrowed the leaf-pick selection, a component/primary
+    that is structurally eligible but NOT selected for this run can be
+    misclassified here as reproducible ("will exist on the target"),
+    when in fact it will not exist on the target for this run. The
+    run-scoped fix (threading selection state into this check) is
+    tracked as a post-merge follow-up; see
+    specs/027-complex-forms-variants/research.md Decision 5 addendum.
+
+    #28 LAYER-2 CAST (cycle-8 hotfix): each member is a bare `ICmObject` on
+    live LCM -- `getattr(m, "LexemeFormOA", None)` is invisible until `m` is
+    cast to `ILexEntry` (same idiom as `_cast_lcm`'s other call sites in
+    this module). Without the cast every member reads as (False, ...),
+    every ref with a non-empty component/primary set is misjudged
+    out-of-closure, and `_report_dropped_entry_refs` emits a false-positive
+    `DroppedItemRecord` for every reproducible ref (T025 live finding: all
+    6 Ejagham Mini variant refs were fully reproduced yet all 6 were
+    reported dropped)."""
+    members = (list(getattr(ref, "ComponentLexemesRS", None) or [])
+               + list(getattr(ref, "PrimaryLexemesRS", None) or []))
+    return all(_affix_type_of(_cast_lcm(m, "ILexEntry"))[0] for m in members)
+
+
 def _report_dropped_entry_refs(src_entry, dropped) -> None:
-    """Emit one `DroppedItemRecord` per `LexEntryRef` owned by
-    `src_entry.EntryRefsOS` -- called identically from the Move path
+    """Emit one `DroppedItemRecord` per NOT-reproduced `LexEntryRef` owned
+    by `src_entry.EntryRefsOS` (027 contract C4 -- see the policy comment
+    above this function) -- called identically from the Move path
     (`_walk_lex_entry_closure`) and the Preview path
     (`_plan_entry_reference_decisions`), so the two drop sets are identical
-    by construction (there is no CREATE/LINK leg to diverge; both are
-    report-only -- no `ILexEntryRef` is ever created this cycle)."""
+    by construction. A ref whose components/primaries are all in-closure
+    (`_entry_ref_is_reproducible`) is silently skipped here -- C1-C3
+    reproduce it; a ref with an out-of-closure member gets exactly one
+    record, unchanged in shape from the pre-027 report-all behavior."""
     refs = list(getattr(src_entry, "EntryRefsOS", None) or [])
     if not refs:
         return
     owner_guid = _guid_str_from(src_entry)
     owner_label = _owner_label_for("LexEntry", src_entry)
     for ref in refs:
+        if _entry_ref_is_reproducible(ref):
+            continue
         kind = _lex_entry_ref_kind(ref)
         _append_dropped_once(dropped, DroppedItemRecord(
             owner_kind="LexEntry",
@@ -4086,9 +4817,9 @@ def _report_dropped_entry_refs(src_entry, dropped) -> None:
             item_name=_lex_entry_ref_identity_label(ref, kind),
             item_guid=_guid_str_from(ref),
             reason=(
-                f"LexEntryRef ({kind}) is not reproduced by feature 024's "
-                "lexicon transfer -- no ILexEntryRefFactory create site "
-                "exists (routed to 027-complex-forms-variants)"
+                f"LexEntryRef ({kind}) has a component/primary lexeme "
+                "outside this transfer's copy closure (never STEMS/AFFIXES "
+                "-eligible) -- not reproduced (027-complex-forms-variants)"
             ),
         ))
 
@@ -4247,9 +4978,12 @@ def _walk_lex_entry_closure(src_entry, context, tag, category, dropped=None):
         "LexEntry", src_entry, new_entry, target, tag, resolver_cache, dropped,
         ws_map=ws_map, source=context.source_handle, owner_guid=src_guid)
 
-    # Cycle-16 lead adjudication (DROP_REPORTED): EntryRefsOS is never
-    # reproduced (no ILexEntryRefFactory create site) -- report every
-    # un-reproduced LexEntryRef, never silently drop it. See
+    # 027-complex-forms-variants: EntryRefsOS is now reproduced for
+    # in-closure refs via the create-then-wire tail
+    # (`_run_entryref_create_pass` / `_create_entryref_container`, using
+    # `ILexEntryRefFactory`) -- this call reports the remainder: any
+    # `LexEntryRef` NOT reproducible per `_entry_ref_is_reproducible` is
+    # still DROP_REPORTED here, never silently dropped. See
     # `_report_dropped_entry_refs`'s own docstring.
     _report_dropped_entry_refs(src_entry, dropped)
 
@@ -4573,8 +5307,9 @@ def _run_171_subpass(context, target, tag=None):
 
     Reads `context._run_plan.msa_slot_bindings` (a `{src_msa_guid:
     [src_slot_guid, ...]}` dict) and `context._run_plan.identity_remap`.
-    Resolves each MSA via identity_remap then `target.get_object_by_guid`, then
-    each slot via `target.get_object_by_guid` (slots are GUID-preserved, E8).
+    Resolves each MSA via identity_remap then `_resolve_target_by_guid`, then
+    each slot via `_resolve_target_by_guid` (offline fakes: `get_object_by_guid`;
+    live: LCM object repository). Slots are GUID-preserved (E8).
 
     Returns a list of Skip(DEPENDENCY_UNRESOLVED) — one per unresolved MSA or
     per unresolved slot reference. Idempotent: an already-present slot on an
@@ -4590,7 +5325,7 @@ def _run_171_subpass(context, target, tag=None):
 
     for src_msa_guid, src_slot_guids in bindings.items():
         target_msa_guid = remap.get(src_msa_guid, src_msa_guid)
-        target_msa = target.get_object_by_guid(target_msa_guid)
+        target_msa = _resolve_target_by_guid(target, target_msa_guid)
         if target_msa is None:
             skips.append(Skip(
                 category=GrammarCategory.AFFIX_TEMPLATES,
@@ -4600,8 +5335,11 @@ def _run_171_subpass(context, target, tag=None):
                         "affix transfer"),
             ))
             continue
+        # Cast the live-resolved ICmObject so .SlotsRC is reachable (issue #28
+        # layer 2); fakes pass through unchanged.
+        target_msa = _cast_lcm(target_msa, "IMoInflAffMsa")
         for src_slot_guid in src_slot_guids:
-            target_slot = target.get_object_by_guid(src_slot_guid)
+            target_slot = _resolve_target_by_guid(target, src_slot_guid)
             if target_slot is None:
                 skips.append(Skip(
                     category=GrammarCategory.AFFIX_TEMPLATES,
@@ -4611,6 +5349,9 @@ def _run_171_subpass(context, target, tag=None):
                             "slot transfer"),
                 ))
                 continue
+            # SlotsRC is a typed collection of IMoInflAffixSlot; add the cast
+            # slot, not the bare ICmObject.
+            target_slot = _cast_lcm(target_slot, "IMoInflAffixSlot")
             slot_g = _guid_str_from(target_slot)
             already = any(
                 (existing is target_slot) or (_guid_str_from(existing) == slot_g)
@@ -4619,6 +5360,187 @@ def _run_171_subpass(context, target, tag=None):
             if already:
                 continue
             target_msa.SlotsRC.Add(target_slot)
+    return skips
+
+
+# ----- entry-ref container creation pass (027 US1/US3, contract C1) -------
+# contracts/entryref-reproduction.md C1. Runs as the FRONT HALF of the
+# STEMS-tail post-pass, immediately before `_run_post_pass_a` (C2) below,
+# inside the SAME `_run_tail_once` idempotency guard (research.md
+# Decision 6) -- a ref's components must already exist on the target before
+# C2 can wire them, and `_run_post_pass_a` needs a real container to exist
+# before it can find anything to wire (it was previously UNREACHABLE: see
+# the "Cycle-16 lead adjudication" note above `_report_dropped_entry_refs`).
+
+def _create_entryref_container(target, ref_guid):
+    """Create one target `LexEntryRef` with GUID preserved from `ref_guid`,
+    via the raw `ILexEntryRefFactory` (research.md Decision 1 -- flexicon has
+    no wrapper for this factory, so `ILexEntryRefFactory(target.GetFactory(
+    ILexEntryRefFactory))` is the sanctioned constitution-II fallback idiom,
+    same shape as this file's `ILexEntryTypeFactory`/`ILexEntryInflTypeFactory`
+    raw-factory call sites).
+
+    Returns `None` (never raises) when the interface/factory is unavailable
+    or `Create` fails, so the caller can degrade to report-only (contract C1
+    "Errors": Principle II graceful degrade, never crash the transfer)."""
+    try:
+        from SIL.LCModel import ILexEntryRefFactory
+        from System import Guid as DotNetGuid
+    except Exception:  # noqa: BLE001 -- no pythonnet / interface absent
+        return None
+    try:
+        factory = ILexEntryRefFactory(target.GetFactory(ILexEntryRefFactory))
+    except Exception:  # noqa: BLE001 -- GetFactory/cast unavailable
+        return None
+    try:
+        parsed_guid = DotNetGuid.Parse(str(ref_guid))
+        return factory.Create(parsed_guid)
+    except Exception:  # noqa: BLE001 -- Create(Guid) unsupported/failed
+        return None
+
+
+def _run_entryref_create_pass(context, target, tag=None):
+    """C1: create target `LexEntryRef` containers before C2
+    (`_run_post_pass_a`) wires their component/primary lexemes.
+
+    Reads `plan.entryref_create_bindings` (`{src_entry_guid: [ref_record,
+    ...]}`, data-model.md's extension, gathered read-only by
+    `_stash_entry_bindings`) and `plan.identity_remap`. Resolves the owning
+    entry via `_resolve_target_by_guid` (offline fakes: `get_object_by_guid`;
+    live: the LCM object repository, issue #28 layer 1) then
+    `_cast_lcm(..., "ILexEntry")` so `.EntryRefsOS` is reachable (issue #28
+    layer 2) -- the SAME two-step resolution idiom `_run_171_subpass` /
+    `_run_post_pass_a` use, closing the identical latent-bug shape flagged in
+    STATUS.md for this pass before it existed.
+
+    For each ref_record not yet reproduced on the target entry (GUID guard,
+    INV-1 -- idempotent re-Move, SC-003), creates the container via
+    `_create_entryref_container`, sets `RefType` (cast to `ILexEntryRef`
+    first), and owns it into `EntryRefsOS`. Does NOT wire
+    ComponentLexemesRS/PrimaryLexemesRS -- C2 owns that; this pass only
+    guarantees a cast, GUID-correct, RefType-correct container exists
+    (contract C1 "MUST NOT").
+
+    C3 (US2/US3, this cycle): immediately after RefType is set on a newly
+    created ref, resolves its entry-type / publication reference fields --
+    `VariantEntryTypesRS` (RefType==0 only), `ComplexEntryTypesRS`
+    (RefType==1 only), `ShowComplexFormsInRS` (always) -- through 024's
+    generic `_apply_reference_fields` dispatch (three-way disposition:
+    absent -> create incl. ancestor chain, GUID-preserved (not reassigned)
+    per Principle I; diverged custom -> update; diverged shared/GOLD ->
+    link + report, never overwritten; identical -> link). The per-ref source values come
+    straight off `rec["variant_entry_types"]`/`["complex_entry_types"]`/
+    `["show_complex_forms_in"]` (live SOURCE items, gathered by
+    `_stash_entry_bindings`) wrapped in a small synthetic namespace so the
+    generic `references.field_specs_for("LexEntryRef")` dispatch can read
+    them via plain `getattr` -- no separate C3-only code path. An
+    unresolved item (target list absent / unmapped item class) surfaces as
+    a `DroppedItemRecord`, never silently.
+
+    Returns a list of Skip(DEPENDENCY_UNRESOLVED) -- one per unresolved
+    owning entry (or one whose cast `EntryRefsOS` is still unreachable).
+    Absent `ILexEntryRefFactory`/interface degrades to report-only (one
+    `DroppedItemRecord` per un-created ref) rather than crashing (Principle
+    II) -- never silent (Principle V): the record is emitted, not swallowed."""
+    skips = []
+    dropped = getattr(context, "_dropped", None)
+    if dropped is None:
+        dropped = []
+    plan = getattr(context, "_run_plan", None)
+    if plan is not None:
+        bindings = getattr(plan, "entryref_create_bindings", None) or {}
+        remap = getattr(plan, "identity_remap", None) or {}
+    else:
+        bindings = _binding_map(context, "entryref_create_bindings") or {}
+        remap = getattr(context, "_identity_remap", None) or {}
+    # C3: fetched ONCE for the whole pass (not per-ref) so the GUID->resolved
+    # cache (FR-012 idempotency) is shared across every ref/entry this pass
+    # touches -- the same item referenced by two different refs resolves
+    # (and, on CREATE, is created) exactly once.
+    resolver_cache = _get_resolver_cache(context)
+    ws_map = getattr(context, "_ws_map", None)
+    source = getattr(context, "source_handle", None)
+
+    for src_entry_guid, ref_records in bindings.items():
+        target_entry_guid = remap.get(src_entry_guid, src_entry_guid)
+        target_entry = _resolve_target_by_guid(target, target_entry_guid)
+        if target_entry is None:
+            skips.append(Skip(
+                category=GrammarCategory.STEMS,
+                source_guid=src_entry_guid,
+                reason=SkipReason.DEPENDENCY_UNRESOLVED,
+                detail=(f"entry_guid={src_entry_guid} not in target for "
+                        "LexEntryRef creation"),
+            ))
+            continue
+        # Cast the live-resolved ICmObject so .EntryRefsOS is reachable
+        # (issue #28 layer 2); fakes pass through unchanged.
+        target_entry = _cast_lcm(target_entry, "ILexEntry")
+        entry_refs = getattr(target_entry, "EntryRefsOS", None)
+        if entry_refs is None:
+            skips.append(Skip(
+                category=GrammarCategory.STEMS,
+                source_guid=src_entry_guid,
+                reason=SkipReason.DEPENDENCY_UNRESOLVED,
+                detail=(f"EntryRefsOS unavailable on target entry "
+                        f"{target_entry_guid}"),
+            ))
+            continue
+        existing_guids = {
+            _guid_str_from(_cast_lcm(r, "ILexEntryRef")) for r in entry_refs
+        }
+        for rec in ref_records:
+            ref_guid = rec.get("ref_guid")
+            if not ref_guid:
+                continue
+            if ref_guid in existing_guids:
+                continue  # INV-1 idempotency guard -- already reproduced
+            new_ref = _create_entryref_container(target, ref_guid)
+            if new_ref is None:
+                ref_type = rec.get("ref_type")
+                _append_dropped_once(dropped, DroppedItemRecord(
+                    owner_kind="LexEntry",
+                    owner_guid=src_entry_guid,
+                    owner_label="",
+                    field_name="EntryRefsOS",
+                    item_name=_LEX_ENTRY_REF_KIND_BY_TYPE.get(
+                        ref_type, f"RefType={ref_type!r}"),
+                    item_guid=ref_guid,
+                    reason=(
+                        "ILexEntryRefFactory/interface unavailable -- "
+                        "LexEntryRef could not be created (degraded, "
+                        "not crashed -- Principle II)"
+                    ),
+                ))
+                continue
+            _safe_add_to_owner(new_ref, entry_refs, "ILexEntryRefFactory", ref_guid)
+            new_ref_typed = _cast_lcm(new_ref, "ILexEntryRef")
+            ref_type = rec.get("ref_type")
+            try:
+                new_ref_typed.RefType = ref_type
+            except (AttributeError, TypeError):
+                pass
+            # C3: resolve entry-type / publication references now that the
+            # container is owned and RefType-correct. `type_skip` excludes
+            # whichever of Variant-/ComplexEntryTypesRS doesn't apply to this
+            # RefType (contract C3: RefType==0 -> variant only, RefType==1 ->
+            # complex only); ShowComplexFormsInRS is always attempted.
+            type_skip = set()
+            if ref_type != 0:
+                type_skip.add("VariantEntryTypesRS")
+            if ref_type != 1:
+                type_skip.add("ComplexEntryTypesRS")
+            type_src = types.SimpleNamespace(
+                VariantEntryTypesRS=rec.get("variant_entry_types") or [],
+                ComplexEntryTypesRS=rec.get("complex_entry_types") or [],
+                ShowComplexFormsInRS=rec.get("show_complex_forms_in") or [],
+            )
+            _apply_reference_fields(
+                "LexEntryRef", type_src, new_ref_typed, target, tag,
+                resolver_cache, dropped, skip_fields=type_skip,
+                ws_map=ws_map, source=source, owner_guid=ref_guid,
+            )
+            existing_guids.add(ref_guid)
     return skips
 
 
@@ -4632,7 +5554,8 @@ def _run_post_pass_a(context, target, tag=None):
     Bindings shape: `{src_entry_guid: {"ComponentLexemesRS": [...],
     "PrimaryLexemesRS": [...]}}`. Each referenced lexeme resolves against (a)
     the in-plan creation list (`plan.in_plan_entries`), then (b)
-    `target.get_object_by_guid`. No fingerprint/name fallback (FR-340).
+    `_resolve_target_by_guid` (offline fakes: `get_object_by_guid`; live: LCM
+    object repository). No fingerprint/name fallback (FR-340).
 
     Returns Skip(DEPENDENCY_UNRESOLVED) — one per unresolved target entry and
     one per unresolved component lexeme. Idempotent via a membership guard;
@@ -4650,7 +5573,7 @@ def _run_post_pass_a(context, target, tag=None):
                    or getattr(context, "_in_plan_entries", None) or {})
 
     for src_entry_guid, ref_dict in bindings.items():
-        target_entry = target.get_object_by_guid(src_entry_guid)
+        target_entry = _resolve_target_by_guid(target, src_entry_guid)
         if target_entry is None:
             skips.append(Skip(
                 category=GrammarCategory.STEMS,
@@ -4660,7 +5583,11 @@ def _run_post_pass_a(context, target, tag=None):
                         "affixes+stems transfer"),
             ))
             continue
+        # Cast the live-resolved ICmObject so .EntryRefsOS is reachable (issue
+        # #28 layer 2); fakes pass through unchanged.
+        target_entry = _cast_lcm(target_entry, "ILexEntry")
         for target_ref in getattr(target_entry, "EntryRefsOS", None) or []:
+            target_ref = _cast_lcm(target_ref, "ILexEntryRef")
             for field_name in ("ComponentLexemesRS", "PrimaryLexemesRS"):
                 seq = getattr(target_ref, field_name, None)
                 if seq is None:
@@ -4668,7 +5595,7 @@ def _run_post_pass_a(context, target, tag=None):
                 for src_lex_guid in ref_dict.get(field_name, []):
                     target_lex = in_plan.get(src_lex_guid) if in_plan else None
                     if target_lex is None:
-                        target_lex = target.get_object_by_guid(src_lex_guid)
+                        target_lex = _resolve_target_by_guid(target, src_lex_guid)
                     if target_lex is None:
                         skips.append(Skip(
                             category=GrammarCategory.STEMS,
@@ -4686,6 +5613,155 @@ def _run_post_pass_a(context, target, tag=None):
                     if already:
                         continue
                     seq.Add(target_lex)
+    return skips
+
+
+# ----- feature->category link wiring post-pass (031 US1, contract C2) ------
+# contracts/feature-category-link.md. Runs as a tail block on the last
+# INFLECTION_FEATURES execute_action -- which, in leaf-dispatch order, runs
+# after every GRAM_CATEGORIES action (transfer.py `_LEAF_DISPATCH_CATEGORIES`),
+# so both endpoints (POS and feature) exist before wiring.
+
+def _resolve_target_by_guid(target, guid):
+    """Resolve a target object by GUID across offline fakes AND the live target.
+
+    Offline test doubles expose ``get_object_by_guid(guid)``. The live flexicon
+    ``FLExProject`` has NO such method (031 T024 live finding: the wiring passes
+    only ever ran against fakes) -- resolve via the LCM object repository, using
+    the project's own ``ObjectRepository`` accessor (the same idiom api.py uses
+    for IUndoStackManager). API verified read-only via FLExToolsMCP:
+    ``repo = project.ObjectRepository(ICmObjectRepository)``; guard with
+    ``IsValidObjectId(guid)`` then ``GetObject(guid)``. Returns None when the
+    GUID is absent from the target (caller emits Skip(DEPENDENCY_UNRESOLVED))."""
+    getter = getattr(target, "get_object_by_guid", None)
+    if callable(getter):
+        return getter(guid)
+    try:
+        from SIL.LCModel import ICmObjectRepository
+        from System import Guid as _DotNetGuid
+        repo = target.ObjectRepository(ICmObjectRepository)
+        parsed = _DotNetGuid.Parse(str(guid))
+        if not repo.IsValidObjectId(parsed):
+            return None
+        return repo.GetObject(parsed)
+    except Exception as exc:  # noqa: BLE001 -- absent repo / bad guid -> unresolved
+        import logging as _logging
+        _logging.getLogger("gramtrans.Lib.categories").warning(
+            "_resolve_target_by_guid: live LCM resolution failed for guid %s "
+            "-- treating as unresolved: %s",
+            guid, exc, exc_info=True,
+        )
+        return None
+
+
+def _cast_lcm(obj, iface_name):
+    """Cast a live LCM object to the named ``SIL.LCModel`` interface so its
+    typed members are reachable, returning offline fakes unchanged.
+
+    ``_resolve_target_by_guid`` returns a bare ``ICmObject`` on the live target
+    (``repo.GetObject`` is typed ``ICmObject``). pythonnet exposes ONLY the
+    static-type's members, so ``getattr(icmobject, "EntryRefsOS", None)`` is
+    ``None`` and ``icmobject.SlotsRC`` is invisible until the object is cast to
+    the interface that declares them -- e.g. ``ILexEntry(obj).EntryRefsOS`` or
+    ``IMoInflAffMsa(obj).SlotsRC`` (issue #28 layer 2; MCP-confirmed: uncast
+    ``.EntryRefsOS`` -> None, ``ILexEntry(obj).EntryRefsOS`` -> the sequence).
+    This is the same live-vs-fake divergence as ``_resolve_target_by_guid``: the
+    offline duck-typed fakes expose the members directly and are returned as-is
+    (the ``SIL.LCModel`` import / interface attr is absent under the test stub,
+    so both except branches pass the fake through untouched)."""
+    if obj is None:
+        return None
+    # Read the already-imported SIL.LCModel from sys.modules rather than
+    # re-importing: in a live run the resolver's `from SIL.LCModel import ...`
+    # has already loaded it, and re-`import`-ing can be intercepted by
+    # pythonnet's CLR meta-path finder (bypassing an offline test stub). If it
+    # is absent (no pythonnet), fall back to a plain import; either way a
+    # missing module/interface means the offline duck-typed fake path.
+    import sys as _sys
+    _lcm = _sys.modules.get("SIL.LCModel")
+    if _lcm is None:
+        try:
+            import SIL.LCModel as _lcm  # noqa: F811
+        except Exception:  # noqa: BLE001 -- no pythonnet -> fake path
+            return obj
+    iface = getattr(_lcm, iface_name, None)
+    if iface is None:
+        return obj
+    try:
+        return iface(obj)
+    except Exception:  # noqa: BLE001 -- already the right type, or an uncastable fake
+        return obj
+
+
+def _run_infl_feature_link_pass(context, target, tag=None):
+    """Wire IPartOfSpeech.InflectableFeatsRC from plan.feature_category_links
+    after both POS (GRAM_CATEGORIES) and features (INFLECTION_FEATURES) are
+    stable in the target.
+
+    Bindings shape: `{target_pos_guid: [feature_guid, ...]}` (gathered by
+    `_stash_feature_category_links`). Each endpoint resolves via
+    `_resolve_target_by_guid` (offline fakes: `get_object_by_guid`; live:
+    the LCM object repository) -- GUIDs are preserved on transfer, so no
+    fingerprint/name fallback is needed.
+
+    Returns a list of Skip(DEPENDENCY_UNRESOLVED) -- one per unresolved POS and
+    one per unresolved feature (VR-4: deferred, never a dangling write).
+    Idempotent via a membership guard (VR-3); order-independent (runs after both
+    endpoints exist)."""
+    skips = []
+    plan = getattr(context, "_run_plan", None)
+    if plan is not None:
+        bindings = getattr(plan, "feature_category_links", None) or {}
+    else:
+        bindings = _binding_map(context, "feature_category_links") or {}
+
+    for pos_guid, feature_guids in bindings.items():
+        target_pos = _resolve_target_by_guid(target, pos_guid)
+        if target_pos is None:
+            skips.append(Skip(
+                category=GrammarCategory.GRAM_CATEGORIES,
+                source_guid=pos_guid,
+                reason=SkipReason.DEPENDENCY_UNRESOLVED,
+                detail=(f"pos_guid={pos_guid} not in target after "
+                        "categories+features transfer"),
+            ))
+            continue
+        # CAST DISCIPLINE (research.md T004-C): InflectableFeatsRC requires an
+        # IPartOfSpeech cast on the live LCM runtime; fakes fall through.
+        pos_typed = target_pos
+        try:
+            from SIL.LCModel import IPartOfSpeech
+            pos_typed = IPartOfSpeech(target_pos)
+        except Exception:
+            pos_typed = target_pos
+        feats_rc = getattr(pos_typed, "InflectableFeatsRC", None)
+        if feats_rc is None:
+            skips.append(Skip(
+                category=GrammarCategory.GRAM_CATEGORIES,
+                source_guid=pos_guid,
+                reason=SkipReason.DEPENDENCY_UNRESOLVED,
+                detail=f"InflectableFeatsRC unavailable on target POS {pos_guid}",
+            ))
+            continue
+        for feature_guid in feature_guids:
+            target_feat = _resolve_target_by_guid(target, feature_guid)
+            if target_feat is None:
+                skips.append(Skip(
+                    category=GrammarCategory.INFLECTION_FEATURES,
+                    source_guid=feature_guid,
+                    reason=SkipReason.DEPENDENCY_UNRESOLVED,
+                    detail=(f"feature_guid={feature_guid} not in target after "
+                            "features transfer"),
+                ))
+                continue
+            feat_g = _guid_str_from(target_feat)
+            already = any(
+                (existing is target_feat) or (_guid_str_from(existing) == feat_g)
+                for existing in feats_rc
+            )
+            if already:
+                continue
+            feats_rc.Add(target_feat)
     return skips
 
 
@@ -5189,8 +6265,15 @@ def stems_plan_action(piece, context, ws_mapping):
 
 def stems_execute_action(action, context, ws_mapping, tag):
     """Owned-child closure write for the stem LexEntry (same closure as AFFIXES,
-    MSA dispatch including MoStemMsa). Tail block: run post-pass A once (on the
-    last stem) after all stem writes complete (FR-340)."""
+    MSA dispatch including MoStemMsa). Tail block: run the 027 create-then-wire
+    STEMS tail once (on the last stem) after all stem writes complete --
+    `_run_entryref_create_pass` (C1) creates each in-closure LexEntryRef
+    container FIRST, then `_run_post_pass_a` (C2, FR-340) wires its
+    ComponentLexemesRS/PrimaryLexemesRS -- `_run_post_pass_a` was previously
+    unreachable (no create site existed; see the "Cycle-16 lead adjudication"
+    note above `_report_dropped_entry_refs`) and is now reachable because C1
+    runs first, in the SAME tail, on the SAME `_run_tail_once` "last STEMS
+    action" timing (research.md Decision 6)."""
     source = context.source_handle
     target = context.target_handle
     src_guid = action.source_guid
@@ -5200,7 +6283,13 @@ def stems_execute_action(action, context, ws_mapping, tag):
         new_entry = _walk_lex_entry_closure(
             src_entry, context, tag, GrammarCategory.STEMS)
 
-    # Tail block (post-pass A) — run once after all stems complete.
+    # Tail block (front: entry-ref container creation, 027 US1/US3 contract
+    # C1) -- MUST run before _run_post_pass_a's wiring (C2): a ref's
+    # container has to exist before its component/primary lexemes can be
+    # wired into it.
+    _run_tail_once(context, target, tag, "_did_entryref_create_pass",
+                   GrammarCategory.STEMS, _run_entryref_create_pass)
+    # Tail block (post-pass A, C2) — run once after all stems complete.
     _run_tail_once(context, target, tag, "_did_post_pass_a",
                    GrammarCategory.STEMS, _run_post_pass_a)
     return new_entry
@@ -6617,6 +7706,7 @@ LEAF_CATEGORIES = {
 
 def for_category(category: GrammarCategory) -> dict:
     """Lookup the function bundle for a leaf category. Raises KeyError if
-    the category isn't a leaf (use `categories_affixes`, `categories_templates`,
-    or `categories_msas` for the heavy ones)."""
+    the category isn't a leaf. The heavy categories (affixes / templates /
+    MSAs) are transferred via the closure/plan path in `Lib/preview.py` +
+    `Lib/transfer.py` + `_create_msa_for_closure`, not through this registry."""
     return LEAF_CATEGORIES[category]

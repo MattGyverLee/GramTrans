@@ -1636,10 +1636,24 @@ def build_deps_inventory(
     stem_picks = stem_picks or frozenset()
 
     if target is not None:
-        _tgt_feat_guids, _tgt_class_guids, _tgt_stem_guids = \
-            _build_deps_target_sets(target)
+        # 031 US2 (contract C4 / research.md R3): classify FEATURE rows against
+        # the feature-level GUID set (all features in the target's feature
+        # system, incl. orphaned-but-present ones) and VALUE rows against the
+        # value-level set. Previously `_build_deps_target_sets`'s feat set (only
+        # features already linked via InflectableFeatsRC) classified both,
+        # mislabeling present features as `new` and re-creating them on re-run.
+        _bdts_feat, _tgt_class_guids, _tgt_stem_guids = _build_deps_target_sets(target)
+        # Feature-level set: the target's whole feature system (FeatureGetAll,
+        # authoritative in production -- catches orphaned-but-present features)
+        # UNION the POS-hierarchy-linked features from `_build_deps_target_sets`
+        # (a subset in production; the sole source when a project handle exposes
+        # only the POS hierarchy, e.g. self-target fakes). A feature present in
+        # EITHER is `in_target` -> never re-created (VR-1).
+        _tgt_feat_guids = set(_gather_target_infl_feature_guids(target)) | set(_bdts_feat)
+        _tgt_value_guids = set(_gather_target_infl_feat_guids(target))
     else:
         _tgt_feat_guids = set()
+        _tgt_value_guids = set()
         _tgt_class_guids = set()
         _tgt_stem_guids = set()
 
@@ -1759,10 +1773,18 @@ def build_deps_inventory(
     stem_names: List[DepRow] = []
 
     def _dep_status_feat(guid: str) -> Optional[str]:
-        """FR-009: classify an infl feature by GUID membership in target's feat set."""
+        """FR-009: classify an infl FEATURE (depth=0) by GUID membership in the
+        target's feature-level set (031 US2, contract C4)."""
         if target is None:
             return None
         return "in_target" if guid in _tgt_feat_guids else "new"
+
+    def _dep_status_value(guid: str) -> Optional[str]:
+        """FR-009: classify an infl feature VALUE (depth=1) by GUID membership in
+        the target's value-level set (031 US2, contract C4)."""
+        if target is None:
+            return None
+        return "in_target" if guid in _tgt_value_guids else "new"
 
     def _dep_status_class(guid: str) -> Optional[str]:
         """FR-009: classify an infl class by GUID membership in target's class set."""
@@ -1817,7 +1839,7 @@ def build_deps_inventory(
                         if vl is None:
                             vl = vg
                         infl_features.append(DepRow(guid=vg, label=vl, depth=1,
-                                                    status=_dep_status_feat(vg)))
+                                                    status=_dep_status_value(vg)))
                 except (AttributeError, TypeError):
                     pass
         except (AttributeError, TypeError):
@@ -3308,32 +3330,68 @@ def _gather_target_infl_feat_guids(target) -> FrozenSet[str]:
     call `.FeatureGetAll()`).  `.GetAll()` is the POS accessor and must NOT
     be used here.
 
-    Falls back to empty frozenset on any failure (safe default -- raises a
-    warning, never crashes).
+    031 US2 (contract C4): this is the VALUE-level set. Value dependency rows
+    (`depth=1`) classify `in_target` vs `new` against it; FEATURE rows
+    (`depth=0`) classify against `_gather_target_infl_feature_guids` (research.md
+    R3: previously both used this one set, mislabeling present features as new).
+
+    Offline-safe: uses the IFsClosedFeature cast only when the LCM runtime is
+    present (skipping IFsComplexFeature, which has no ValuesOC); otherwise reads
+    `.ValuesOC` directly off duck-typed objects. Empty frozenset on any failure.
     """
     guids: Set[str] = set()
     if target is None:
         return frozenset()
-    # Primary path: target.InflectionFeatures.FeatureGetAll() (flexicon accessor)
+    try:
+        feats = list(target.InflectionFeatures.FeatureGetAll())
+    except (AttributeError, TypeError):
+        return frozenset()
     try:
         from SIL.LCModel import IFsClosedFeature  # noqa: PLC0415 — lazy, absent in unit tests
-        for feat in target.InflectionFeatures.FeatureGetAll():
-            # Each IFsFeatDefn must be cast to IFsClosedFeature to expose ValuesOC.
-            # IFsComplexFeature (and any other non-closed variant) raises TypeError
-            # on the cast — skip those silently; they have no value-level GUIDs.
+    except Exception:  # noqa: BLE001
+        IFsClosedFeature = None
+    for feat in feats:
+        closed = feat
+        if IFsClosedFeature is not None:
+            # IFsComplexFeature (and any other non-closed variant) raises
+            # TypeError on the cast; fall back to the raw object -- a genuine
+            # IFsComplexFeature exposes no ValuesOC and is skipped just below,
+            # while a duck-typed test object keeps its ValuesOC.
             try:
                 closed = IFsClosedFeature(feat)
             except TypeError:
-                continue  # IFsComplexFeature or non-closed — no ValuesOC
-            vals = closed.ValuesOC
-            if vals is None:
-                continue
-            for v in vals:
-                g = _entry_types_guid(v)
-                if g:
-                    guids.add(g)
-    except Exception:  # noqa: BLE001
-        pass
+                closed = feat
+        vals = getattr(closed, "ValuesOC", None)
+        if not vals:
+            continue
+        for v in vals:
+            g = _entry_types_guid(v)
+            if g:
+                guids.add(g)
+    return frozenset(guids)
+
+
+def _gather_target_infl_feature_guids(target) -> FrozenSet[str]:
+    """Return the frozenset of inflection-FEATURE (definition) GUIDs in target.
+
+    Companion to `_gather_target_infl_feat_guids` (VALUE GUIDs). Feature
+    dependency rows (`depth=0`) classify `in_target` vs `new` against THIS set
+    (031 US2, contract C4 / VR-1; research.md R3). Takes each feature's own GUID
+    from target.InflectionFeatures.FeatureGetAll() — including features not yet
+    linked to any POS (exactly the orphaned-but-present case the fix must not
+    re-create). Offline-safe; empty frozenset on any failure.
+    """
+    guids: Set[str] = set()
+    if target is None:
+        return frozenset()
+    try:
+        feats = list(target.InflectionFeatures.FeatureGetAll())
+    except (AttributeError, TypeError):
+        return frozenset()
+    for feat in feats:
+        g = _entry_types_guid(feat)
+        if g:
+            guids.add(g)
     return frozenset(guids)
 
 

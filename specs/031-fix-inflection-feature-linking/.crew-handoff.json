@@ -1,0 +1,10 @@
+{
+  "feature": "031-fix-inflection-feature-linking",
+  "status": "feature_complete",
+  "last_cycle": 2,
+  "spurts_completed": 2,
+  "tasks_done": ["cycle1-conditional-3-actions", "cycle2-fix-recheck"],
+  "next_checkpoint": "merge-to-main",
+  "next_entry": "main session merges 031-fix-inflection-feature-linking -> main and removes the worktree",
+  "updated": "2026-07-13"
+}

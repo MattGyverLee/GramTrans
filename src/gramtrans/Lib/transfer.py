@@ -477,6 +477,41 @@ def execute(plan: RunPlan, source, target, report_sink, tag: ImportResidueTag,
                      _resolver_cache, _dropped)
         report_sink.Info(f"[Move] Texts walk applied {len(_text_plans)} text plan(s).")
 
+    # Feature 025 (full reversals, US1 T018/T020): the reversal closure
+    # walk's Move-mode twin -- SAME single-final-pass timing as
+    # `reproduce_all_lexical_relations` immediately above, over the SAME
+    # now-fully-settled `exec_ctx._copy_set` (real created target objects,
+    # not Preview's `True` placeholder). Reversal index/entry writes happen
+    # ONLY here, in Move mode, after the plan has already been shown to the
+    # user via Preview (Principle III) -- `Lib/preview.py.build_run_plan`
+    # never writes; this is the sole write path.
+    if __package__:
+        from .categories import reproduce_reversal_entries
+    else:
+        from categories import reproduce_reversal_entries  # type: ignore
+    reproduce_reversal_entries(exec_ctx, tag, _resolver_cache, _dropped)
+
+    # Feature 025 (full reversals, US3 T033): Part B `.fwdictconfig`
+    # configuration-view file copy -- the sole write path for config views
+    # (Preview's `Lib/preview.py.build_run_plan` only PLANS them via
+    # `config_views.plan_config_views`, never writes). Runs after every LCM
+    # write above (leaf-dispatch, lexical relations, reversals) so the
+    # config-view copy is the run's last step, matching its role as a
+    # sidecar/cosmetic file rather than model data. `plan.config_view_records`
+    # defaults to `()` for any plan built before this field existed, so this
+    # is a no-op for such a plan. `apply_config_views` appends every record's
+    # `missing_refs` into `_dropped` -- already-collected duplicates from
+    # Preview's own scan of the SAME records are harmless (missing_refs
+    # describe file-reference gaps, not model writes, so there is no
+    # "double execution" risk the OVERWRITE-loop comment above warns about;
+    # worst case is a cosmetic duplicate report line, and `_dropped` here is
+    # the same list threaded through this whole function, not a second one).
+    if __package__:
+        from .config_views import apply_config_views
+    else:
+        from config_views import apply_config_views  # type: ignore
+    apply_config_views(getattr(plan, "config_view_records", ()), _dropped)
+
     # Fold any tail-block skips (17.1 / post-pass A) into the report.
     if _exec_skips:
         extra_skips.extend(_exec_skips)

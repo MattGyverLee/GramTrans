@@ -173,6 +173,41 @@ REFERENCE_FIELD_MAP: tuple = (
         hierarchical=False,
     ),
 
+    # ---- LexEntryRef reference fields (027 US2/US3, contract C3) ----------
+    # Confirmed live via a read-only probe against Ejagham Mini (027 cycle-3,
+    # `scratchpad/probe_c3_lists.py` -- FLExToolsMCP itself is not exposed to
+    # this session; see the programmer's cycle-3 report for the deviation
+    # note): `LexDbOA.VariantEntryTypesOA` / `.ComplexEntryTypesOA` are both
+    # `ICmPossibilityList`, `ItemClsid=5118` (`LexEntryType`), `Depth=127`
+    # (hierarchical, same "flagged hierarchical even when flat in a given
+    # project" pattern as SenseTypes above). `.PublicationTypesOA` is
+    # `ItemClsid=7` (generic `CmPossibility`), `Depth=1` -- same list
+    # `PublishIn`/`DoNotPublishInRC`/`DoNotShowMainEntryInRC` already use
+    # above, confirming `ShowComplexFormsInRS` shares that home list despite
+    # its own field being a `RS` (sequence), not `RC` (collection) --
+    # cardinality is a per-FIELD LCM declaration, not a per-list property.
+    ReferenceFieldSpec(
+        owner_class="LexEntryRef",
+        field_name="VariantEntryTypesRS",
+        cardinality=ReferenceCardinality.SEQUENCE,
+        target_list_path=lambda target: _lp(target).LexDbOA.VariantEntryTypesOA,
+        hierarchical=True,
+    ),
+    ReferenceFieldSpec(
+        owner_class="LexEntryRef",
+        field_name="ComplexEntryTypesRS",
+        cardinality=ReferenceCardinality.SEQUENCE,
+        target_list_path=lambda target: _lp(target).LexDbOA.ComplexEntryTypesOA,
+        hierarchical=True,
+    ),
+    ReferenceFieldSpec(
+        owner_class="LexEntryRef",
+        field_name="ShowComplexFormsInRS",
+        cardinality=ReferenceCardinality.SEQUENCE,
+        target_list_path=lambda target: _lp(target).LexDbOA.PublicationTypesOA,
+        hierarchical=False,
+    ),
+
     # ---- Allomorph reference fields ---------------------------------------
     ReferenceFieldSpec(
         owner_class="MoForm",  # MoStemAllomorph / MoAffixAllomorph
@@ -297,12 +332,22 @@ def _multistring_dict(ms, handle_to_id: dict | None = None) -> dict:
             and/or a `_data` dict).
         handle_to_id: optional ``{ws_handle: ws_id}`` resolver. When given,
             each WS handle key is translated to its portable Id string via
-            this map (falling back to the raw handle for any handle absent
-            from the map). When `None` (the default), keys are the raw
-            handle/whatever `ms` itself exposes -- unchanged legacy shape,
-            used by callers that don't need Id-keyed output at all
-            (`_item_label`; `divergence_fingerprint` compares text VALUES
-            only and never looks at these keys, see its own docstring).
+            this map, falling back to the STRINGIFIED raw handle (`str(wh)`,
+            never the bare `int`) for any handle absent from the map --
+            T037 Finding 1(a) fix: the resolver branch's output MUST be
+            consistently str-keyed (never a mix of resolved str Ids and
+            unresolved int handles), because `divergence_fingerprint`'s
+            resolver-branch path (`tuple(sorted(snapshot.items()))`,
+            references.py ~505) raises `TypeError: '<' not supported between
+            instances of 'int' and 'str'` on a mixed-type-keyed dict -- the
+            live symptom that hit ~164 stem entries when a source item
+            populated a WS handle absent from its own project's
+            `WritingSystems.GetAll()` enumeration. When `None` (the
+            default), keys are the raw handle/whatever `ms` itself exposes
+            -- unchanged legacy shape, used by callers that don't need
+            Id-keyed output at all (`_item_label`; `divergence_fingerprint`'s
+            NO-resolver fallback compares text VALUES only and never looks
+            at these keys, see its own docstring).
 
     WS-keying hardening (this cycle): a real `ICmMultiString` has no Id
     concept of its own (only the project-level `WritingSystems` repo knows
@@ -323,7 +368,12 @@ def _multistring_dict(ms, handle_to_id: dict | None = None) -> dict:
                 tss, wh = res if isinstance(res, tuple) else (res, None)
                 text = getattr(tss, "Text", None)
                 if text:
-                    key = handle_to_id.get(wh, wh) if handle_to_id else wh
+                    # T037 Finding 1(a): when a resolver IS supplied, an
+                    # absent handle must fall back to a STRINGIFIED handle
+                    # (never the bare int) -- see this function's own
+                    # docstring for the mixed-int/str-key TypeError this
+                    # fixes in divergence_fingerprint's resolver branch.
+                    key = (handle_to_id.get(wh) or str(wh)) if handle_to_id else wh
                     out[key] = text
         except Exception:
             # QC P2 fix: a failure partway through (e.g. index i=3 of 10
@@ -338,7 +388,9 @@ def _multistring_dict(ms, handle_to_id: dict | None = None) -> dict:
     if isinstance(data, dict):
         for wh, text in data.items():
             if text:
-                key = handle_to_id.get(wh, wh) if handle_to_id else wh
+                # T037 Finding 1(a): same stringified-fallback fix as the
+                # StringCount branch above.
+                key = (handle_to_id.get(wh) or str(wh)) if handle_to_id else wh
                 out[key] = text
     return out
 
@@ -968,6 +1020,7 @@ def apply_reference(decision, target, owner_obj, spec: "ReferenceFieldSpec", cac
             ICmSemanticDomainFactory,
             ICmAnthroItemFactory,
             IMoMorphTypeFactory,
+            ILexEntryTypeFactory,
         )
         from System import Guid as DotNetGuid
 
@@ -979,13 +1032,17 @@ def apply_reference(decision, target, owner_obj, spec: "ReferenceFieldSpec", cac
         # items in a typed list (e.g. ItemClsid 66 = CmSemanticDomain would be
         # created as a bare clsid-7 CmPossibility). Mapping confirmed live on
         # Ejagham Mini across every list REFERENCE_FIELD_MAP currently drives:
-        # 66=CmSemanticDomain, 26=CmAnthroItem, 5042=MoMorphType, 7=generic
-        # CmPossibility (SenseTypes/UsageTypes/DomainTypes/DialectLabels/
-        # PublicationTypes/Languages/Status/TranslationTags).
+        # 66=CmSemanticDomain, 26=CmAnthroItem, 5042=MoMorphType, 5118=
+        # LexEntryType (027 US2/US3, VariantEntryTypesOA/ComplexEntryTypesOA --
+        # same `ILexEntryTypeFactory.Create(Guid)` 1-arg idiom
+        # `categories.complex_form_types_execute_action` already uses), 7=
+        # generic CmPossibility (SenseTypes/UsageTypes/DomainTypes/
+        # DialectLabels/PublicationTypes/Languages/Status/TranslationTags).
         factory_by_item_clsid = {
             66: ICmSemanticDomainFactory,
             26: ICmAnthroItemFactory,
             5042: IMoMorphTypeFactory,
+            5118: ILexEntryTypeFactory,
             7: ICmPossibilityFactory,
         }
         item_clsid = getattr(target_list, "ItemClsid", None)

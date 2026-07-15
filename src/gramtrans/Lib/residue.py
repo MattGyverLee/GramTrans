@@ -289,6 +289,40 @@ def apply_carrier_b(obj, ws, tag: ImportResidueTag, strict: bool = True) -> bool
 
 
 
+# ============================================================================
+# Feature 025 (full reversals) -- residue carrier registration (R7 / T017)
+# ============================================================================
+# `ReversalIndex` (liblcm MasterLCModel.xml class 52, base `CmMajorObject`)
+# exposes a `Description` MultiString like every other CmMajorObject --
+# Carrier B (`apply_carrier_b`) applies to it unchanged via the default
+# dispatch below; it is intentionally NOT added to `CARRIER_A_CLASSES`
+# because it has no `LiftResidue` field.
+#
+# `ReversalIndexEntry` (MasterLCModel.xml class 53, base bare `CmObject`
+# -- NOT `CmMajorObject`) has NEITHER `LiftResidue` NOR `Description`: its
+# only props are `Subentries`/`PartOfSpeech`/`ReversalForm`/`Senses`. This
+# is a genuine no-carrier case (confirmed via the liblcm class hierarchy,
+# not just "field absent on this particular test object"). Per research.md
+# R7, the fallback for a class with NO carrier at all is: don't attempt to
+# tag it (an attempt would hit `apply_carrier_b`'s strict `Description`-
+# absent `TypeError`) -- the creation itself, recorded via the run's
+# ordinary dropped/created accounting, is the audit trail instead.
+# `NO_RESIDUE_CARRIER_CLASSES` lets a caller (`reversals.apply_reversals`)
+# check this up front rather than relying on catching that exception.
+NO_RESIDUE_CARRIER_CLASSES = frozenset({"ReversalIndexEntry"})
+
+
+def has_residue_carrier(class_name: str) -> bool:
+    """True iff `class_name` has SOME residue carrier (Carrier A or B).
+
+    False for classes registered in `NO_RESIDUE_CARRIER_CLASSES` (R7) --
+    callers should skip `apply_residue` entirely for those (no field exists
+    to write to) rather than relying on `apply_carrier_b`'s strict
+    `TypeError` as the "no carrier" signal.
+    """
+    return class_name not in NO_RESIDUE_CARRIER_CLASSES
+
+
 def apply_residue(obj, ws, tag: ImportResidueTag, class_name: Optional[str] = None) -> None:
     """Dispatch to Carrier A or B based on the object's LCM class name.
 
