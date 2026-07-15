@@ -49,7 +49,7 @@ def main():
         ILangProject, ILexEntry, IMoAffixAllomorph, IMoAffixForm, IPhEnvironment,
         IPartOfSpeech, IMoInflClass, IFsClosedFeature, IFsSymFeatVal,
         IPartOfSpeechFactory, IMoInflClassFactory, IFsFeatStrucFactory,
-        IFsClosedValueFactory, IFsFeatStruc,
+        IFsClosedValueFactory, IFsFeatStruc, ICmPossibilityList,
     )
     from SIL.LCModel.Core.KernelInterfaces import ITsString  # noqa: F401
     import System
@@ -59,7 +59,7 @@ def main():
     proj.OpenProject(projectName=SOURCE, writeEnabled=WRITE)
     try:
         lp = ILangProject(proj.lp)
-        cache = proj.project.cache
+        cache = proj.Cache
         wsf = cache.WritingSystemFactory
         anal_ws = cache.DefaultAnalWs
         vern_ws = cache.DefaultVernWs
@@ -114,29 +114,38 @@ def main():
         _banner("WRITE fixture fields onto allomorph %s" % target_allo.Guid)
 
         def _run_write(action_desc, fn):
-            # LCM writes must be inside a UOW; flexicon exposes the cache's
-            # action handler. Mirror how the engine wraps mutations.
-            from SIL.LCModel.Infrastructure import NonUndoableUnitOfWorkHelper
-            NonUndoableUnitOfWorkHelper.Do(
-                action_desc, "undo", cache.ActionHandlerAccessor, System.Action(fn))
+            # flexicon's OpenProject(writeEnabled=True) already holds an active
+            # UnitOfWork (a nested NonUndoableUnitOfWorkHelper.Do raises "Nested
+            # tasks are not supported"), so mutate directly; CloseProject flushes.
+            fn()
 
-        # 1) MsEnvPartOfSpeechRA -> a new POS (GUID-preserved, absent in Target)
+        def _create_owned(fac):
+            """Create an owned child, trying the GUID overload then no-arg
+            (mirrors owned._create_owned_via_factory)."""
+            try:
+                return fac.Create(Guid.NewGuid())
+            except Exception:
+                return fac.Create()
+
+        # 1) MsEnvPartOfSpeechRA -> a new POS (absent in Target => CREATE). The
+        # 2-arg Create(Guid, list) overload auto-owns into the list (no .Add).
         pos_holder = {}
 
         def _mk_pos():
-            fac = cache.ServiceLocator.GetInstance[IPartOfSpeechFactory]()
-            new_pos = fac.Create(Guid.NewGuid(), lp.PartsOfSpeechOA)
-            new_pos.Name.set_String(anal_ws, NEW_POS_NAME)
-            pos_holder["pos"] = new_pos
-            target_allo.MsEnvPartOfSpeechRA = new_pos
+            fac = IPartOfSpeechFactory(proj.GetFactory(IPartOfSpeechFactory))
+            pos_list = ICmPossibilityList(lp.PartsOfSpeechOA)
+            pos = IPartOfSpeech(fac.Create(Guid.NewGuid(), pos_list))
+            pos.Name.set_String(anal_ws, NEW_POS_NAME)
+            pos_holder["pos"] = pos
+            target_allo.MsEnvPartOfSpeechRA = pos
         _run_write("028 fixture: MsEnvPartOfSpeechRA", _mk_pos)
         print("[WRITE] MsEnvPartOfSpeechRA -> new POS '%s' %s"
               % (NEW_POS_NAME, pos_holder["pos"].Guid))
 
         # 2) InflectionClassesRC -> a new class under that POS
         def _mk_infl():
-            fac = cache.ServiceLocator.GetInstance[IMoInflClassFactory]()
-            ic = fac.Create()
+            fac = IMoInflClassFactory(proj.GetFactory(IMoInflClassFactory))
+            ic = _create_owned(fac)
             pos_holder["pos"].InflectionClassesOC.Add(ic)
             IMoInflClass(ic).Name.set_String(anal_ws, NEW_INFLCLASS_NAME)
             target_form.InflectionClassesRC.Add(ic)
@@ -149,11 +158,11 @@ def main():
             symval = IFsSymFeatVal(vals[0])
 
             def _mk_feat():
-                fsfac = cache.ServiceLocator.GetInstance[IFsFeatStrucFactory]()
-                fs = fsfac.Create()
+                fsfac = IFsFeatStrucFactory(proj.GetFactory(IFsFeatStrucFactory))
+                fs = _create_owned(fsfac)
                 target_allo.MsEnvFeaturesOA = fs
-                cvfac = cache.ServiceLocator.GetInstance[IFsClosedValueFactory]()
-                cv = cvfac.Create()
+                cvfac = IFsClosedValueFactory(proj.GetFactory(IFsClosedValueFactory))
+                cv = _create_owned(cvfac)
                 IFsFeatStruc(fs).FeatureSpecsOC.Add(cv)
                 cv.FeatureRA = cf
                 cv.ValueRA = symval
