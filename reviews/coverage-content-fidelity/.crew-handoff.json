@@ -1,0 +1,36 @@
+{
+  "feature": "coverage-content-fidelity",
+  "part": "A (inflection_classes owner fix)",
+  "status": "feature_complete",
+  "branch": "coverage-content-fidelity-v2",
+  "head": "3044d26",
+  "worktree": "../GramTrans-coverage-content-fidelity-v2",
+  "last_cycle": 1,
+  "spurts_completed": 2,
+  "tasks_done": [
+    "fix bf70c0a: categories.py:1341 IMoInflClass -> target_pos.InflectionClassesOC (per-POS owner)",
+    "cycle-1 verification PASS (targeted 9/9, RED baseline reproduced, full suite clean modulo documented baseline fail)",
+    "cycle-1 qc 90/100 APPROVE (mis-owned-collection sweep CLEAN, pattern-audit gate confirmed)",
+    "cycle-1 domain APPROVED (ownership confirmed vs flexicon POSOperations.py:747; topo ordering + GetSyncableProperties OK)",
+    "reviews reorg c3ad933: scoped under reviews/coverage-content-fidelity/ (restores msa-slot root reviews)",
+    "attended live proof 3044d26 PASS: French-FLExTrans-Demo2025 -> restored Target; 0->5 under owner POS InflectionClassesOC, 0 in ProdRestrictOA.PossibilitiesOS, idempotent (5 ALREADY_PRESENT_BY_GUID)"
+  ],
+  "gates": {
+    "verification": "PASS",
+    "qc": "90/100 APPROVE",
+    "domain": "APPROVED",
+    "live_proof": "PASS (attended, first run, no probe bug)",
+    "p0": "none"
+  },
+  "next_checkpoint": "Part A merge to main --no-ff (main session confirms with human)",
+  "next_entry": "Human-confirmed outward steps: (1) merge coverage-content-fidelity-v2 Part A -> main --no-ff, preserving msa-slot's root reviews/ files (branch also carries reviews reorg scoping coverage under reviews/coverage-content-fidelity/); (2) file P1 stem_names_dependencies follow-up issue; (3) START Part B on the same worktree (do NOT remove worktree).",
+  "follow_ups": [
+    "P1: file follow-up issue -- stem_names_dependencies() returns () unconditionally despite being POS-owned (real latent bug, not fixed in Part A)",
+    "P2 (documented, deferred): SubclassesOC nested inflection-class handling -- 0 nested found across 5 live projects"
+  ],
+  "next_part": "Part B (Part A merged): port ec9891ae's 3 new content categories POS_INFLECTABLE_FEATS / FEATURE_STRUCT_TYPES / PHON_FEAT_TYPES + inflection_features complex/open features; SKIP exception_features (conflicts)",
+  "live_proof_source_project": "French-FLExTrans-Demo2025 (Verb owns ER/RE/IRREG/IR; Noun owns X_PL; total 5)",
+  "live_proof_log": "reviews/coverage-content-fidelity/live-proof.md",
+  "driver": "scratchpad/run_inflclass_live.py",
+  "updated": "2026-07-15"
+}

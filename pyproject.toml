@@ -15,7 +15,11 @@ dependencies = [
     # CLAUDE.md documents the install path; pip install -e D:/Github/_Projects/_LEX/flexicon
     # before installing this package. The LibLCM-direct implementation lives in a
     # separate post-Phase-2 sibling repository (constitution Principle IV) — not here.
-    "pyflexicon>=4.1",
+    # >=4.1.1: earliest version whose PhonFeatureOperations implements
+    # GetSyncableProperties/ApplySyncableProperties. Below it, phonological-
+    # feature transfer raised NotImplementedError (mbugwe Bug 3); guarding that
+    # in-tree was declined in favor of this floor (upstream owns the fix).
+    "pyflexicon>=4.1.1",
     "PyQt6>=6.4",
 ]
 
