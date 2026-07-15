@@ -999,3 +999,370 @@ def test_expected_model_fields_field_count() -> None:
         "ReversalIndexEntry": 4,
     }
     assert sum(counts.values()) == 79
+
+
+# ============================================================================
+# Feature 026 (texts-wordforms) census extension (T036, SC-003)
+# ============================================================================
+#
+# The SAME never-silent contract as the 024 census above, extended to the 7
+# interlinear-text / wordform-analysis classes 026 reproduces. Every REAL
+# owning/reference field on these classes must resolve to exactly one Bucket:
+# reproduced (COPIED) or surfaced as a loss (DROP_REPORTED / OUT_OF_SCOPE_
+# EXCLUDED with a tested, documented rationale) -- never a silent gap.
+#
+# Inventory provenance: the flexicon static API surface (FLExTools MCP
+# `get_object_api`, 2026-07-12), filtered to the owning/reference suffix set
+# {OA, OC, OS, RA, RC, RS}; scalar/string/bool/int content fields (Form,
+# Abbreviation, Source, Contents, BaselineText, FreeTranslation,
+# LiteralTranslation, SpellingStatus, ...) and virtual/derived helpers
+# (IText.AssociatedNotebookRecord, StTxtPara.Analyses/PreviousParagraph,
+# WfiWordform.Human*Analyses, WfiAnalysis.OccurrencesInTexts, ...) are OUT by
+# construction, exactly as the 024 census excludes non-{23..28} and virtual
+# fields. The live `IFwMetaDataCacheManaged.GetFields` re-verification (the
+# 024-grade provenance) is blocked on the CLR `run_module` path and is carried,
+# with R2/R5/R6, to T039 (probe-results.md).
+#
+# WfiGloss has NO owning/reference field of its own -- its only populated field
+# is the `Form` content multistring (reproduced via wordforms._apply_glosses,
+# human-eval-gated). It is listed with an empty field tuple so the class is
+# explicitly covered (its content is reproduced; there is nothing further to
+# classify), matching the plan's "7 classes" mandate.
+
+TEXTS_WORDFORMS_MODEL_FIELDS: dict[str, tuple[FieldSpec, ...]] = {
+    "Text": (
+        FieldSpec("Contents", "OA"),
+        FieldSpec("Genres", "RC"),
+        FieldSpec("MediaFiles", "OA"),
+    ),
+    "StTxtPara": (
+        FieldSpec("AnalyzedTextObjects", "OS"),
+        FieldSpec("Segments", "OS"),
+        FieldSpec("TextObjects", "RS"),
+        FieldSpec("Translations", "OC"),
+    ),
+    "Segment": (
+        FieldSpec("Analyses", "RS"),
+        FieldSpec("Notes", "OS"),
+        FieldSpec("MediaURI", "RA"),
+        FieldSpec("Speaker", "RA"),
+    ),
+    "WfiWordform": (
+        FieldSpec("Analyses", "OC"),
+    ),
+    "WfiAnalysis": (
+        FieldSpec("Category", "RA"),
+        FieldSpec("CompoundRuleApps", "RS"),
+        FieldSpec("Derivation", "OA"),
+        FieldSpec("Evaluations", "RC"),
+        FieldSpec("InflTemplateApps", "RS"),
+        FieldSpec("Meanings", "OC"),
+        FieldSpec("MorphBundles", "OS"),
+        FieldSpec("MsFeatures", "OA"),
+        FieldSpec("Stems", "RC"),
+    ),
+    "WfiMorphBundle": (
+        FieldSpec("InflType", "RA"),
+        FieldSpec("Morph", "RA"),
+        FieldSpec("Msa", "RA"),
+        FieldSpec("Sense", "RA"),
+    ),
+    "WfiGloss": (),
+}
+
+
+# 026 out-of-scope exclusions -- EXACTLY the fields the spec's Scale/Scope
+# section (and the user-locked clarifications) place outside v1: Data Notebook,
+# media/audio alignment (speaker, media URIs), and the parser-derived analysis
+# structures (feature/derivation/rule/template/stem apps) that are not the
+# human-curated content 026 transfers. Each MUST carry a rationale; the set is
+# asserted exact so nobody can silently park an in-scope field here (the 024
+# cycle-17 discipline, applied to 026).
+TEXTS_WORDFORMS_OUT_OF_SCOPE: frozenset[tuple[str, str]] = frozenset({
+    ("Text", "MediaFilesOA"),
+    ("StTxtPara", "TextObjectsRS"),
+    ("StTxtPara", "TranslationsOC"),
+    ("Segment", "MediaURIRA"),
+    ("Segment", "SpeakerRA"),
+    ("WfiAnalysis", "MsFeaturesOA"),
+    ("WfiAnalysis", "DerivationOA"),
+    ("WfiAnalysis", "CompoundRuleAppsRS"),
+    ("WfiAnalysis", "InflTemplateAppsRS"),
+    ("WfiAnalysis", "StemsRC"),
+})
+
+
+TEXTS_WORDFORMS_CLASSIFICATION: dict[tuple[str, str], Classification] = {
+    # ---- Text ------------------------------------------------------------
+    ("Text", "ContentsOA"): Classification(
+        Bucket.COPIED,
+        "texts.apply_texts -> _apply_paragraphs (ParagraphOperations.Create "
+        "under the created text builds its ContentsOA/StText; segments via "
+        "SegmentOperations.AppendSentence)",
+    ),
+    ("Text", "GenresRC"): Classification(
+        Bucket.COPIED,
+        "texts._decide_genres / _apply_genres via references.decide_reference/"
+        "apply_reference against LangProject.GenreListOA (create-allowed, "
+        "GUID-preserving, FR-005)",
+    ),
+    ("Text", "MediaFilesOA"): Classification(
+        Bucket.OUT_OF_SCOPE_EXCLUDED,
+        "TEXTS_WORDFORMS_OUT_OF_SCOPE",
+        note="rationale-class: spec-excluded-media -- media/audio files are "
+             "out of scope per spec Scale/Scope (media/audio alignment "
+             "excluded). Routed to a future media feature.",
+    ),
+
+    # ---- StTxtPara -------------------------------------------------------
+    ("StTxtPara", "SegmentsOS"): Classification(
+        Bucket.COPIED,
+        "texts._walk_paragraphs (segment walk) + _apply_paragraphs "
+        "(AppendSentence per source segment, positional align)",
+    ),
+    ("StTxtPara", "AnalyzedTextObjectsOS"): Classification(
+        Bucket.COPIED,
+        "texts._apply_paragraphs (the analyzed text objects ARE the segments + "
+        "their AnalysesRS tokens, produced by the same segment-create + "
+        "wordforms.apply_alignment walk)",
+    ),
+    ("StTxtPara", "TextObjectsRS"): Classification(
+        Bucket.OUT_OF_SCOPE_EXCLUDED,
+        "TEXTS_WORDFORMS_OUT_OF_SCOPE",
+        note="rationale-class: spec-excluded-embedded-objects -- references to "
+             "embedded picture/footnote text objects are out of scope "
+             "(pictures/footnotes/media not transferred).",
+    ),
+    ("StTxtPara", "TranslationsOC"): Classification(
+        Bucket.OUT_OF_SCOPE_EXCLUDED,
+        "TEXTS_WORDFORMS_OUT_OF_SCOPE",
+        note="rationale-class: spec-excluded-legacy-bt -- the whole-paragraph "
+             "back-translation is legacy; the in-scope translation carriers "
+             "are the segment-level FreeTranslation/LiteralTranslation "
+             "(FR-003/004), reproduced by _write_segment_fields.",
+    ),
+
+    # ---- Segment ---------------------------------------------------------
+    ("Segment", "AnalysesRS"): Classification(
+        Bucket.COPIED,
+        "wordforms.plan_alignment / apply_alignment (rebuilds the target "
+        "AnalysesRS in source token order via the raw LCM surface, R5/FR-012)",
+    ),
+    ("Segment", "NotesOS"): Classification(
+        Bucket.DROP_REPORTED,
+        "texts._apply_segment_notes -- one DroppedItemRecord per captured "
+        "segment note (never-silent). Notes ARE captured in the plan "
+        "(_capture_notes) but flexicon exposes no note-write wrapper and the "
+        "raw INoteFactory path is unconfirmed while the CLR run_module probe "
+        "is down.",
+        note="reproduction deferred to the R5-class live-probe pass (T039); "
+             "until then the note is surfaced as a drop, not silently lost.",
+    ),
+    ("Segment", "MediaURIRA"): Classification(
+        Bucket.OUT_OF_SCOPE_EXCLUDED,
+        "TEXTS_WORDFORMS_OUT_OF_SCOPE",
+        note="rationale-class: spec-excluded-media -- media URI / time-offset "
+             "alignment out of scope per spec Scale/Scope.",
+    ),
+    ("Segment", "SpeakerRA"): Classification(
+        Bucket.OUT_OF_SCOPE_EXCLUDED,
+        "TEXTS_WORDFORMS_OUT_OF_SCOPE",
+        note="rationale-class: spec-excluded-media -- speaker/media alignment "
+             "out of scope per spec Scale/Scope.",
+    ),
+
+    # ---- WfiWordform -----------------------------------------------------
+    ("WfiWordform", "AnalysesOC"): Classification(
+        Bucket.COPIED,
+        "wordforms.apply_analyses (find-or-create target wordform, "
+        "WfiAnalyses.Create per human-evaluated AnalysisPlan)",
+    ),
+
+    # ---- WfiAnalysis -----------------------------------------------------
+    ("WfiAnalysis", "CategoryRA"): Classification(
+        Bucket.COPIED,
+        "wordforms.resolve_or_report_category / _apply_category (resolve-or-"
+        "report against LangProject.PartsOfSpeechOA; an absent POS is left "
+        "unset + one DroppedItemRecord, never fabricated, FR-011)",
+    ),
+    ("WfiAnalysis", "MorphBundlesOS"): Classification(
+        Bucket.COPIED,
+        "wordforms.plan_morph_bundles / apply_morph_bundles (WfiMorphBundles."
+        "Create in source order; each ref wired by GUID identity, unresolved "
+        "-> DroppedItemRecord, FR-010/016)",
+    ),
+    ("WfiAnalysis", "MeaningsOC"): Classification(
+        Bucket.COPIED,
+        "wordforms.plan_glosses / _apply_glosses (WfiGloss children under the "
+        "human-evaluation gate, FR-008)",
+    ),
+    ("WfiAnalysis", "EvaluationsRC"): Classification(
+        Bucket.COPIED,
+        "wordforms._write_verdict -- ApproveAnalysis/RejectAnalysis creates the "
+        "human ICmAgentEvaluation owned by the run's provisioned agent "
+        "(FR-007/009); a needs-review approve is left no-verdict by design "
+        "(R2/FR-014)",
+    ),
+    ("WfiAnalysis", "MsFeaturesOA"): Classification(
+        Bucket.OUT_OF_SCOPE_EXCLUDED,
+        "TEXTS_WORDFORMS_OUT_OF_SCOPE",
+        note="rationale-class: spec-excluded-parser-derived -- the analysis "
+             "morphosyntactic feature structure is parser-derived, not the "
+             "human-curated content (verdict + morph bundles + glosses + "
+             "category) 026 transfers.",
+    ),
+    ("WfiAnalysis", "DerivationOA"): Classification(
+        Bucket.OUT_OF_SCOPE_EXCLUDED,
+        "TEXTS_WORDFORMS_OUT_OF_SCOPE",
+        note="rationale-class: spec-excluded-parser-derived -- parser-derived "
+             "derivation structure, out of scope.",
+    ),
+    ("WfiAnalysis", "CompoundRuleAppsRS"): Classification(
+        Bucket.OUT_OF_SCOPE_EXCLUDED,
+        "TEXTS_WORDFORMS_OUT_OF_SCOPE",
+        note="rationale-class: spec-excluded-parser-derived -- parser compound-"
+             "rule applications (derived), out of scope.",
+    ),
+    ("WfiAnalysis", "InflTemplateAppsRS"): Classification(
+        Bucket.OUT_OF_SCOPE_EXCLUDED,
+        "TEXTS_WORDFORMS_OUT_OF_SCOPE",
+        note="rationale-class: spec-excluded-parser-derived -- parser "
+             "inflectional-template applications (derived), out of scope.",
+    ),
+    ("WfiAnalysis", "StemsRC"): Classification(
+        Bucket.OUT_OF_SCOPE_EXCLUDED,
+        "TEXTS_WORDFORMS_OUT_OF_SCOPE",
+        note="rationale-class: spec-excluded-parser-derived -- parser stem "
+             "references (derived), out of scope.",
+    ),
+
+    # ---- WfiMorphBundle --------------------------------------------------
+    ("WfiMorphBundle", "MorphRA"): Classification(
+        Bucket.COPIED,
+        "wordforms.apply_morph_bundles _wire_ref('SetMorphType') -- GUID "
+        "identity lookup against the per-run target index (R4)",
+    ),
+    ("WfiMorphBundle", "MsaRA"): Classification(
+        Bucket.COPIED,
+        "wordforms.apply_morph_bundles _wire_ref('SetMSA') -- GUID identity "
+        "lookup against the per-run target index (R4)",
+    ),
+    ("WfiMorphBundle", "SenseRA"): Classification(
+        Bucket.COPIED,
+        "wordforms.apply_morph_bundles _wire_ref('SetSense') -- GUID identity "
+        "lookup against the per-run target index (R4)",
+    ),
+    ("WfiMorphBundle", "InflTypeRA"): Classification(
+        Bucket.COPIED,
+        "wordforms.apply_morph_bundles _wire_ref('SetInflType') -- GUID "
+        "identity lookup against the per-run target index (R4)",
+    ),
+}
+
+
+def classify_026_field(class_name: str, prop: str) -> Classification:
+    """Return the `Classification` for one REAL 026 field, or raise
+    `LookupError` naming the gap (SC-003 never-silent guard -- no default/silent
+    bucket, exactly like `classify_field` for the 024 classes)."""
+    key = (class_name, prop)
+    if key in TEXTS_WORDFORMS_CLASSIFICATION:
+        return TEXTS_WORDFORMS_CLASSIFICATION[key]
+    raise LookupError(
+        f"fidelity_census (026): REAL field {class_name}.{prop} has no bucket "
+        "classification. SC-003 never-silent: add a "
+        "TEXTS_WORDFORMS_CLASSIFICATION entry (COPIED / DROP_REPORTED / "
+        "OUT_OF_SCOPE_EXCLUDED with a rationale) for this field."
+    )
+
+
+def _all_026_real_fields() -> list[tuple[str, str]]:
+    return [
+        (class_name, field.prop)
+        for class_name, fields in TEXTS_WORDFORMS_MODEL_FIELDS.items()
+        for field in fields
+    ]
+
+
+@pytest.mark.parametrize(
+    "class_name, prop",
+    _all_026_real_fields(),
+    ids=[f"{c}.{p}" for c, p in _all_026_real_fields()],
+)
+def test_every_026_real_field_is_classified(class_name: str, prop: str) -> None:
+    """SC-003 guard (026 extension): every REAL owning/reference field on the 7
+    texts-wordforms classes must resolve to exactly one bucket. A newly-added
+    (or newly-discovered) unclassified model property fails here, naming the
+    class + field."""
+    classification = classify_026_field(class_name, prop)
+    assert classification.bucket in Bucket
+
+
+def test_026_out_of_scope_set_is_exact_and_carries_rationale() -> None:
+    """The 026 OUT_OF_SCOPE_EXCLUDED set is EXACTLY the spec-documented
+    exclusions (media/audio, embedded objects, legacy paragraph BT, and the
+    parser-derived analysis structures) -- nobody can silently park an in-scope
+    field here, and each entry carries a rationale (the 024 cycle-17 discipline,
+    applied to 026)."""
+    computed = frozenset(
+        key for key, c in TEXTS_WORDFORMS_CLASSIFICATION.items()
+        if c.bucket == Bucket.OUT_OF_SCOPE_EXCLUDED
+    )
+    assert computed == TEXTS_WORDFORMS_OUT_OF_SCOPE
+    for class_name, prop in TEXTS_WORDFORMS_OUT_OF_SCOPE:
+        c = classify_026_field(class_name, prop)
+        assert c.bucket == Bucket.OUT_OF_SCOPE_EXCLUDED
+        assert "rationale-class:" in c.note, (
+            f"{class_name}.{prop}: 026 OUT_OF_SCOPE_EXCLUDED entries must carry "
+            "a rationale-class string"
+        )
+
+
+def test_026_copied_fields_name_a_real_site() -> None:
+    """Every 026 COPIED field must name a concrete `texts.`/`wordforms.` code
+    site (not a bare bucket label) -- the census is a claim backed by a
+    reproduction site, per the 024 contract."""
+    for (class_name, prop), c in TEXTS_WORDFORMS_CLASSIFICATION.items():
+        if c.bucket == Bucket.COPIED:
+            assert "texts." in c.site or "wordforms." in c.site, (
+                f"{class_name}.{prop}: COPIED entry must cite a texts.py/"
+                f"wordforms.py site, got {c.site!r}"
+            )
+
+
+def test_026_drop_reported_fields_name_an_emission_site() -> None:
+    """Every 026 DROP_REPORTED field must name the function that emits its
+    DroppedItemRecord (never-silent -- the drop is a claim backed by a real
+    emission site)."""
+    for (class_name, prop), c in TEXTS_WORDFORMS_CLASSIFICATION.items():
+        if c.bucket == Bucket.DROP_REPORTED:
+            assert "." in c.site and c.site.strip(), (
+                f"{class_name}.{prop}: DROP_REPORTED entry must cite an "
+                f"emission site, got {c.site!r}"
+            )
+
+
+def test_026_guard_fires_for_unclassified_property() -> None:
+    """Proves the 026 never-silent guard actually fires: a fabricated 026
+    class/field pair absent from `TEXTS_WORDFORMS_CLASSIFICATION` must raise
+    `LookupError`, never silently resolve to a bucket."""
+    with pytest.raises(LookupError, match=r"WfiAnalysis\.NotARealFieldRA"):
+        classify_026_field("WfiAnalysis", "NotARealFieldRA")
+
+
+def test_026_expected_model_fields_field_count() -> None:
+    """Sanity check on the 026 captured inventory: 25 REAL owning/reference
+    fields across the 7 classes (3+4+4+1+9+4+0), matching the FLExTools MCP
+    static-surface snapshot (2026-07-12). WfiGloss contributes 0 (its only
+    populated field, Form, is a content multistring, not owning/reference)."""
+    counts = {name: len(fields)
+              for name, fields in TEXTS_WORDFORMS_MODEL_FIELDS.items()}
+    assert counts == {
+        "Text": 3,
+        "StTxtPara": 4,
+        "Segment": 4,
+        "WfiWordform": 1,
+        "WfiAnalysis": 9,
+        "WfiMorphBundle": 4,
+        "WfiGloss": 0,
+    }
+    assert sum(counts.values()) == 25

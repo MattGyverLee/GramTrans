@@ -3393,3 +3393,168 @@ def _gather_target_infl_feature_guids(target) -> FrozenSet[str]:
         if g:
             guids.add(g)
     return frozenset(guids)
+
+
+# ============================================================================
+# Text Inventory (Feature 026 texts-wordforms, T007)
+# ============================================================================
+#
+# Model-A per-text item picker (FR-001): a flat, checkable list of the source's
+# interlinear texts. Wordform analyses ride along as the closure of the picked
+# texts (FR-001a), so there is no separate wordform inventory here. Mirrors the
+# pure/frozen-dataclass + build_*_inventory + collapse_* idiom used by the affix
+# and phonology pickers; retains no LCM handles after build.
+
+
+@dataclass(frozen=True)
+class TextRow:
+    """One interlinear text as shown in the Model-A picker.
+
+    `status` is "new" | "in_target" | None (None when no target is bound),
+    computed by GUID membership against the target's texts (mirrors the affix
+    picker's NEW / IN TARGET status; texts are never SIMILAR-resolvable).
+    """
+    guid: str
+    title: str
+    abbreviation: str = ""
+    status: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class TextInventory:
+    """Top-level result of build_text_inventory. Pure/frozen; no LCM handles."""
+    texts: Tuple[TextRow, ...] = ()
+
+    def all_text_guids(self) -> FrozenSet[str]:
+        return frozenset(r.guid for r in self.texts)
+
+
+def _iter_project_texts(project):
+    """Best-effort enumeration of a project's interlinear texts.
+
+    The transfer walk (Lib/texts.py) uses ``TextOperations.GetAll()``; this
+    selection-side helper stays consistent with selection.py's raw-Cache idiom
+    and is duck-typed for unit tests. Tries the known LCM accessors in order
+    and returns the first that yields an iterable; [] on total failure (never
+    raises — an unreadable source renders an empty picker, not a crash).
+
+    [PROBE] Confirm the exact live accessor once the MCP run_module / CLR-init
+    path is restored (research R6 target-list-accessor probe); the interface
+    surface confirms IText enumeration but not which accessor the live handle
+    exposes first.
+    """
+    lp = None
+    try:
+        lp = project.Cache.LangProject
+    except (AttributeError, TypeError):
+        # Duck-typed test handles may expose LangProject directly.
+        lp = getattr(project, "LangProject", None)
+    if lp is None:
+        return []
+    for attr in ("Texts", "InterlinearTexts", "TextsOC"):
+        try:
+            coll = getattr(lp, attr, None)
+            if coll is None:
+                continue
+            return list(coll)
+        except (AttributeError, TypeError):
+            continue
+    return []
+
+
+def _text_title(text) -> str:
+    """Best-analysis title of an IText, or '(untitled text)'."""
+    text_c = _cast(text, "IText")
+    try:
+        t = text_c.Name.BestAnalysisAlternative.Text
+        if t and t not in ("***", ""):
+            return t
+    except (AttributeError, TypeError):
+        pass
+    return "(untitled text)"
+
+
+def _text_abbreviation(text) -> str:
+    """Abbreviation of an IText, or '' when unset."""
+    text_c = _cast(text, "IText")
+    try:
+        a = text_c.Abbreviation.BestAnalysisAlternative.Text
+        if a and a not in ("***", ""):
+            return a
+    except (AttributeError, TypeError):
+        pass
+    return ""
+
+
+def _text_guid(text) -> Optional[str]:
+    """Lower-cased GUID string of a text object, or None."""
+    for obj in (_cast(text, "IText"), text):
+        try:
+            g = obj.Guid
+            if g is not None:
+                return str(g).lower()
+        except (AttributeError, TypeError):
+            continue
+    return None
+
+
+def build_text_inventory(source, target=None) -> TextInventory:
+    """Build the Model-A text picker inventory from the source project (FR-001).
+
+    Parameters
+    ----------
+    source:
+        Duck-typed source handle exposing the project's interlinear texts (see
+        ``_iter_project_texts``).
+    target:
+        Optional target handle. When supplied, each row's ``status`` is "new" or
+        "in_target" by GUID membership; None for every row when target is None
+        (back-compat with headless/unbound callers).
+
+    Returns
+    -------
+    TextInventory
+        Rows in source enumeration order (stable, reproducible).
+    """
+    target_guids: Set[str] = set()
+    if target is not None:
+        for t in _iter_project_texts(target):
+            g = _text_guid(t)
+            if g is not None:
+                target_guids.add(g)
+
+    rows: List[TextRow] = []
+    for text in _iter_project_texts(source):
+        guid = _text_guid(text)
+        if guid is None:
+            continue
+        status = None
+        if target is not None:
+            status = "in_target" if guid in target_guids else "new"
+        rows.append(TextRow(
+            guid=guid,
+            title=_text_title(text),
+            abbreviation=_text_abbreviation(text),
+            status=status,
+        ))
+    return TextInventory(texts=tuple(rows))
+
+
+def collapse_text_picks(
+    checked_guids: Iterable[str],
+    inventory: TextInventory,
+) -> Selection:
+    """Collapse checked text GUIDs into a Selection (FR-001).
+
+    Intersects the checked set with the inventory's known text GUIDs (defensive,
+    mirroring ``collapse_pos_grouped``) and returns a Selection with
+    ``categories[TEXTS]=True`` and ``text_picks`` populated. An empty result
+    yields a Selection with TEXTS off (nothing to transfer).
+    """
+    deduped = frozenset(str(g).lower() for g in checked_guids) & inventory.all_text_guids()
+    if not deduped:
+        return Selection(categories={GrammarCategory.TEXTS: False})
+    return Selection(
+        categories={GrammarCategory.TEXTS: True},
+        text_picks=deduped,
+    )
