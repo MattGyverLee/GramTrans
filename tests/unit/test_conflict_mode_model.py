@@ -155,6 +155,7 @@ class TestLayer1DefaultTable:
             GrammarCategory.PHONOLOGICAL_RULES,
             GrammarCategory.PH_ENVIRONMENT,
             GrammarCategory.STRATA,  # reclassified to MULTI_INSTANCE
+            GrammarCategory.PHON_FEAT_TYPES,  # reclassified to MULTI_INSTANCE (Part B remediation)
         ]
         for cat in multi:
             assert _DEFAULT_CONFLICT_MODES[cat] == ConflictMode.UPDATE, (
@@ -173,7 +174,6 @@ class TestLayer1DefaultTable:
             GrammarCategory.POS,
             GrammarCategory.PHONOLOGICAL_FEATURES,
             GrammarCategory.SEMANTIC_DOMAINS,
-            GrammarCategory.PHON_FEAT_TYPES,
         ]
         for cat in gold:
             assert _DEFAULT_CONFLICT_MODES[cat] == ConflictMode.UPDATE, (

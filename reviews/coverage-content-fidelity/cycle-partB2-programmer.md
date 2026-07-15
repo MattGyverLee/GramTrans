@@ -64,6 +64,14 @@ branch's live idiom:
    test_conflict_mode_model.py:148` -- added to the `TestLayer1DefaultTable
    .test_multi_instance_default_update` explicit list, locking the Layer-1
    default assignment made in site 2.
+10. **(Correction, Part B remediation, 2026-07-15 -- missing from the
+    original list.)** `src/gramtrans/Lib/merge_preview.py:1153` --
+    `_CATEGORY_VALUE_TO_KEY["feature_struct_types"] = None` (explicit
+    no-standalone-per-item-preview entry, same posture as its
+    `"inflection_classes"` / `"exception_features"` neighbors). This site
+    was not touched by this sub-part's diff (the `None` mapping was already
+    present) but belongs in the registration-sites inventory for
+    completeness since it is a real dispatch point for this category.
 
 UI wizard files (`src/gramtrans/Lib/ui/main_window.py`,
 `src/gramtrans/Lib/ui/selection_wizard.py`) were **deliberately left untouched**:
@@ -178,9 +186,18 @@ collection.
   ... GRAM_CATEGORIES, INFLECTION_FEATURES, CUSTOM_FIELDS, INFLECTION_CLASSES,
   FEATURE_STRUCT_TYPES, STEM_NAMES, ...). This means `TypeRA` wiring will
   continue to degrade gracefully (left unset) for a *first* transfer run in a
-  target that has never seen the struct-type before, and will only resolve on
-  a **second** run (once `FEATURE_STRUCT_TYPES` has landed the type). This
-  ordering constraint was called out in the ec9891ae reference comment
+  target that has never seen the struct-type before, and -- correction
+  (Part B remediation, 2026-07-15) -- it does NOT converge on a second run
+  either: the idempotent GOLD `ALREADY_PRESENT_BY_GUID` skip never re-calls
+  `execute_action` for a struct-type that already exists by GUID in the
+  target, and the GOLD merge path has no `TypeRA` logic to run instead. So a
+  complex feature's `TypeRA` reference is left unset on the first run and
+  stays unset on every subsequent run, with no self-healing pass. This is
+  tracked as a post-merge follow-up requiring an explicit repair pass (a
+  two-phase shell/wire tail pass, analogous to the `InflectableFeatsRC`
+  tail-pass already used by `INFLECTION_FEATURES`), not something that
+  resolves on its own. This ordering constraint was called out in the
+  ec9891ae reference comment
   ("Must run AFTER inflection_features ... and BEFORE G1's MSA InflFeatsOA
   copy") but that reference did not resolve the intra-run TypeRA ordering
   either -- flagging for a future ordering fix (e.g. running

@@ -129,6 +129,15 @@ def _build_default_conflict_modes() -> dict:
         GrammarCategory.PH_ENVIRONMENT,
         # STRATA reclassified to MULTI_INSTANCE (StrataOS is an Owning SEQUENCE)
         GrammarCategory.STRATA,
+        # PHON_FEAT_TYPES (coverage-content-fidelity-v2 Part B remediation):
+        # reclassified from GOLD_RESERVED to MULTI_INSTANCE to match its
+        # structurally identical sibling FEATURE_STRUCT_TYPES, above. Under
+        # v7.0.0 both buckets resolve to ConflictMode.UPDATE, so this is a
+        # model-consistency correction with no runtime behavior change.
+        # PHON_FEAT_TYPES remains correctly absent from _GOLD_RESERVED_CATS
+        # and the _iterators maps (POS precedent) -- that is unaffected by
+        # this reclassification.
+        GrammarCategory.PHON_FEAT_TYPES,
         # Phase 0 / entry-level categories
         GrammarCategory.ENTRY,
         GrammarCategory.SENSE,
@@ -148,15 +157,6 @@ def _build_default_conflict_modes() -> dict:
         GrammarCategory.POS,
         GrammarCategory.PHONOLOGICAL_FEATURES,
         GrammarCategory.SEMANTIC_DOMAINS,
-        # PHON_FEAT_TYPES (coverage-content-fidelity-v2 Part B.4): per the
-        # STATUS handoff + the stale-branch ec9891ae port reference, this is
-        # GOLD_RESERVED -- despite being structurally IDENTICAL to its sibling
-        # FEATURE_STRUCT_TYPES (MULTI_INSTANCE, above). Under v7.0.0 both
-        # resolve to ConflictMode.UPDATE so runtime behavior is unaffected;
-        # the categorical split is flagged for domain review in the
-        # cycle-partB4-programmer.md report rather than silently deviating
-        # from the handoff.
-        GrammarCategory.PHON_FEAT_TYPES,
     }
     # SINGLETON_NONDELETABLE (ADD_NEW hidden -> LINK default)
     singleton = {
