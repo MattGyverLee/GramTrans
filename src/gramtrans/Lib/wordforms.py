@@ -678,6 +678,123 @@ def _apply_glosses(plan, target, analysis_obj, ctx, dropped) -> None:
     return None
 
 
+# ===========================================================================
+# SC-005 idempotency — analysis structural identity
+# ===========================================================================
+
+def _frozen_form_texts(ws_dict) -> frozenset:
+    """WS-agnostic form identity: the set of non-empty text values in a
+    `{ws_id: text}` dict. Text is copied verbatim source→target, so comparing
+    text values (not WS handles/ids) matches a plan's forms against the target's
+    reproduced forms regardless of WS mapping."""
+    return frozenset(t for t in (ws_dict or {}).values() if t)
+
+
+def _effective_verdict(plan) -> str:
+    """The verdict `_write_verdict` will actually stamp on the target — "A"
+    (approve), "D" (deny), or "N" (needs-review / no verdict). Mirrors
+    `_write_verdict` exactly so the plan's fingerprint matches what a prior run
+    wrote (needs-review is round-trip stable: 026 never creates the referents a
+    morph bundle needs, so re-planning yields the same downgrade)."""
+    if plan.verdict == EvalVerdict.HUMAN_APPROVED and not plan.needs_review:
+        return "A"
+    if plan.verdict == EvalVerdict.HUMAN_DENIED:
+        return "D"
+    return "N"
+
+
+_MISSING = object()
+
+
+def _target_verdict(analysis) -> str:
+    """The verdict already stamped on a target analysis — "A"/"D"/"N".
+
+    A duck-typed / fake target carries `.approved` (True/False/None); a live
+    `IWfiAnalysis` exposes it via `ApprovalStatusIcon` (1/2/0), the same accessor
+    the source-side gate reads."""
+    approved = getattr(analysis, "approved", _MISSING)
+    if approved is not _MISSING:
+        if approved is True:
+            return "A"
+        if approved is False:
+            return "D"
+        return "N"
+    icon = None
+    try:
+        from SIL.LCModel import IWfiAnalysis  # noqa: PLC0415
+        icon = IWfiAnalysis(analysis).ApprovalStatusIcon
+    except Exception:
+        icon = getattr(analysis, "ApprovalStatusIcon", None)
+    if icon == 1:
+        return "A"
+    if icon == 2:
+        return "D"
+    return "N"
+
+
+def _plan_analysis_fingerprint(plan):
+    """Structural fingerprint of an AnalysisPlan: (effective verdict, ordered
+    morph-bundle form sets, gloss form sets). This is what distinguishes two
+    analyses of the same wordform — their morpheme segmentation, chosen glosses,
+    and human verdict — and is reproducible on the target, where the created
+    analysis carries no source GUID (SC-005). The verdict is included so an
+    approved and a disapproved analysis of the same (empty) form are NOT
+    collapsed — that would silently lose the denied one (Principle I)."""
+    mb_fp = tuple(_frozen_form_texts(mb.form) for mb in (plan.morph_bundles or ()))
+    gl_fp = tuple(_frozen_form_texts(g.forms) for g in (plan.glosses or ()))
+    return (_effective_verdict(plan), mb_fp, gl_fp)
+
+
+def _obj_form_texts(obj, ops, handles) -> frozenset:
+    """The set of non-empty per-WS forms of a target morph bundle / gloss, read
+    through its ops `GetForm` across the target WS handles (mirrors how the plan
+    forms were written)."""
+    getter = getattr(ops, "GetForm", None) if ops is not None else None
+    if getter is None:
+        return frozenset()
+    out = set()
+    hs = handles or [None]
+    for h in hs:
+        text = _texts._safe(lambda hh=h: getter(obj, hh))
+        if text:
+            out.add(text)
+    return frozenset(out)
+
+
+def _target_analysis_fingerprint(analysis, wa_ops, mb_ops, gl_ops, handles):
+    """The same structural fingerprint as `_plan_analysis_fingerprint`, read off
+    an EXISTING target analysis (its reproduced morph bundles + glosses)."""
+    mbs = _texts._safe(lambda: list(wa_ops.GetMorphBundles(analysis) or [])) or []
+    mb_fp = tuple(_obj_form_texts(mb, mb_ops, handles) for mb in mbs)
+    gls = []
+    if hasattr(wa_ops, "GetGlosses"):
+        gls = _texts._safe(lambda: list(wa_ops.GetGlosses(analysis) or [])) or []
+    gl_fp = tuple(_obj_form_texts(g, gl_ops, handles) for g in gls)
+    return (_target_verdict(analysis), mb_fp, gl_fp)
+
+
+def _analysis_fp_index(ctx, cache, wordform, wa_ops, mb_ops, gl_ops, handles) -> dict:
+    """Return (seeding + caching once per wordform) the `fingerprint → analysis`
+    index of the analyses ALREADY on this target wordform.
+
+    Seeded from `WfiAnalyses.GetAll(wordform)` so a prior run's analyses are
+    recognised (cross-run idempotency); analyses created later this run are
+    added by the caller. A fresh wordform seeds empty → nothing is skipped."""
+    key = _guid_str(wordform) or str(id(wordform))
+    idx = cache.get(key)
+    if idx is not None:
+        return idx
+    idx = {}
+    existing = []
+    if wa_ops is not None and hasattr(wa_ops, "GetAll"):
+        existing = _texts._safe(lambda: list(wa_ops.GetAll(wordform) or [])) or []
+    for a in existing:
+        fp = _target_analysis_fingerprint(a, wa_ops, mb_ops, gl_ops, handles)
+        idx.setdefault(fp, a)
+    cache[key] = idx
+    return idx
+
+
 def apply_analyses(plans, source, target, ctx, tag, resolver_cache, dropped) -> None:
     """Move-mode — realize the AnalysisPlans on the target's wordforms.
 
@@ -690,6 +807,17 @@ def apply_analyses(plans, source, target, ctx, tag, resolver_cache, dropped) -> 
       NEEDS_REVIEW → write NO human evaluation (natural no-verdict state, R2).
     Records the source→target analysis/wordform map on ctx for alignment (R7).
     Residue-tags the wordform/analysis (Carrier B, R8).
+
+    Idempotent (SC-005). A wordform is deduped by form+WS (`Find`); an analysis
+    is deduped so a re-Move is a no-op:
+      - within a run, an analysis referenced from several segments is created
+        once (fast-path on its source GUID via `_wf_analysis_map`);
+      - across runs, an analysis whose STRUCTURE (morph-bundle forms + gloss
+        forms) already exists on the target wordform is skipped — the target
+        carries no source GUID, so structural identity is the only durable key
+        (`WfiAnalyses.Create(wordform)` mints a fresh GUID; there is no
+        analysis-level `Find`). Skipping cascades to the analysis's morph
+        bundles + glosses + verdict + residue.
     """
     if not plans:
         return None
@@ -700,15 +828,24 @@ def apply_analyses(plans, source, target, ctx, tag, resolver_cache, dropped) -> 
 
     wf_ops = getattr(target, "Wordforms", None)
     wa_ops = getattr(target, "WfiAnalyses", None)
+    mb_ops = getattr(target, "WfiMorphBundles", None)
+    gl_ops = getattr(target, "WfiGlosses", None)
     ws_map = dict(getattr(ctx, "_ws_map", None) or {})
     tgt_id2h = id_to_handle(target)
+    tgt_handles = list(tgt_id2h.values())
     default_analysis_handle = _default_analysis_handle(target)
     agent = getattr(ctx, "_wf_agent", None)
 
     analysis_map = _map_on_ctx(ctx, "_wf_analysis_map")
     wordform_map = _map_on_ctx(ctx, "_wf_wordform_map")
+    fp_index_cache = _map_on_ctx(ctx, "_wf_analysis_fp_index")
 
     for plan in plans:
+        # SC-005 fast-path: this exact source analysis was already reproduced
+        # earlier in THIS run (referenced from another segment) — no-op.
+        if plan.source_guid and plan.source_guid in analysis_map:
+            continue
+
         wordform = _find_or_create_wordform(plan, wf_ops, ws_map, tgt_id2h, dropped)
         if wordform is None:
             continue
@@ -718,6 +855,19 @@ def apply_analyses(plans, source, target, ctx, tag, resolver_cache, dropped) -> 
 
         if wa_ops is None:
             continue
+
+        # SC-005 cross-run dedup: skip when an equivalent analysis already
+        # exists on this target wordform (this or a prior run).
+        fp = _plan_analysis_fingerprint(plan)
+        fp_index = _analysis_fp_index(ctx, fp_index_cache, wordform, wa_ops,
+                                      mb_ops, gl_ops, tgt_handles)
+        existing = fp_index.get(fp)
+        if existing is not None:
+            analysis_map[plan.source_guid] = existing
+            _log.debug("apply_analyses: skip duplicate analysis (idempotent) %s",
+                       plan.source_guid)
+            continue
+
         analysis_obj = _texts._safe(lambda: wa_ops.Create(wordform))
         if analysis_obj is None:
             dropped.append(DroppedItemRecord(
@@ -727,6 +877,7 @@ def apply_analyses(plans, source, target, ctx, tag, resolver_cache, dropped) -> 
             ))
             continue
         analysis_map[plan.source_guid] = analysis_obj
+        fp_index[fp] = analysis_obj  # register so a later duplicate is skipped
 
         # Category (resolve-or-report). Only wire on a resolved (LINK/CREATE/
         # UPDATE→has target_item) decision; REPORT_DROPPED leaves it unset.

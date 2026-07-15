@@ -371,9 +371,19 @@ class FakeWfiAnalysisOps:
     def GetMorphBundles(self, a):
         return list(getattr(a, "morph_bundles", []))
 
+    def GetGlosses(self, a):
+        # SC-005: target analyses expose their (created) glosses so the
+        # structural-fingerprint dedup can recognise a re-Move.
+        return list(getattr(a, "glosses", []))
+
+    def GetAll(self, wordform):
+        # SC-005: enumerate the analyses already on a target wordform.
+        return list(getattr(wordform, "analyses", []))
+
     def Create(self, wordform):
         a = FakeAnalysis(guid="tgt-an")
         a.approved = None
+        a._owner_wordform = wordform
         wordform.analyses.append(a)
         self.created.append(a)
         return a
@@ -396,7 +406,13 @@ class FakeMorphBundleOps:
         return list(getattr(a, "morph_bundles", []))
 
     def GetForm(self, b, wsHandle=None):
-        return b.form.get(wsHandle)
+        # Source bundles carry `.form`; target bundles (created here) carry the
+        # reproduced text in `.set_form` (via SetForm). Read either so the
+        # SC-005 fingerprint can be reconstructed off a target bundle.
+        val = b.form.get(wsHandle)
+        if val is None:
+            val = getattr(b, "set_form", {}).get(wsHandle)
+        return val
 
     def GetMorph(self, b):
         return b.MorphRA
@@ -414,6 +430,11 @@ class FakeMorphBundleOps:
         b = FakeMorphBundle(guid="tgt-mb")
         b.set_form = {}
         b.wired = {}
+        # Attach to the owning target analysis so GetMorphBundles(a) sees it
+        # (SC-005 fingerprint reconstruction).
+        bundles = getattr(a, "morph_bundles", None)
+        if bundles is not None:
+            bundles.append(b)
         self.created.append(b)
         return b
 
@@ -441,7 +462,12 @@ class FakeWfiGlossOps:
         return list(getattr(a, "glosses", []))
 
     def GetForm(self, g, wsHandle=None):
-        return g.forms.get(wsHandle)
+        # Source glosses carry `.forms`; target glosses (created here) carry the
+        # reproduced text in `.set_form`. Read either for the SC-005 fingerprint.
+        val = g.forms.get(wsHandle)
+        if val is None:
+            val = getattr(g, "set_form", {}).get(wsHandle)
+        return val
 
     def GetHumanEvaluation(self, g):
         return getattr(g, "human_evaluation", None)
@@ -453,6 +479,11 @@ class FakeWfiGlossOps:
         g.set_form = {}
         if form is not None:
             g.set_form[wsHandle] = form
+        # Attach to the owning target analysis so GetGlosses(a) sees it
+        # (SC-005 fingerprint reconstruction).
+        glosses = getattr(a, "glosses", None)
+        if glosses is not None:
+            glosses.append(g)
         self.created.append(g)
         return g
 
