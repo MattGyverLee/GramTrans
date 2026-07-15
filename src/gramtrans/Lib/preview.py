@@ -379,6 +379,16 @@ def build_run_plan(
         if _cv_record.missing_refs:
             _dropped.extend(_cv_record.missing_refs)
 
+    # Phase 3c (FR-333): populate msa_slot_bindings from source affix entries.
+    # _stash_entry_bindings in categories.py uses getattr duck-typing which
+    # silently returns None for base-typed IMoMorphSynAnalysis refs from live
+    # LCM (pythonnet hides SlotsRC on the base interface). This explicit pass
+    # uses IMoInflAffMsa casting — the same approach as _msa_fingerprint — so
+    # it works for both live LCM and duck-typed fakes. It runs unconditionally
+    # after the leaf dispatch so all enumerated affix entries are covered,
+    # regardless of whether they were newly added or already present in target.
+    _populate_msa_slot_bindings(source, _msa_slot_bindings)
+
     # T023: rules missing-reference detection (018-rules-page US4/FR-014/FR-015).
     # Runs AFTER the leaf dispatch so 'in-flight' actions are fully enumerated.
     # Routes into the shared excluded_lossy list -> single Move gate (T024).
@@ -782,6 +792,152 @@ def _rules_missing_ref_warnings(
                     ))
         except Exception:  # noqa: BLE001
             pass
+
+
+# ============================================================================
+# Phase 3c (FR-333): MSA slot-binding population pass
+# ============================================================================
+
+def _populate_msa_slot_bindings(source, msa_slot_bindings: dict) -> None:
+    """Populate `msa_slot_bindings` from every inflectional affix MSA in source
+    that has non-empty SlotsRC.
+
+    Called from `build_run_plan` after the leaf dispatch loop.  The
+    categories.py `_stash_entry_bindings` helper uses `getattr` duck-typing
+    that silently returns None for base-typed `IMoMorphSynAnalysis` refs when
+    running against live LCM (pythonnet hides SlotsRC on the base interface).
+    This function uses `IMoInflAffMsa` casting — the same technique as
+    `_msa_fingerprint` — which works for both live LCM and duck-typed fakes.
+
+    Idempotent: re-running overwrites existing keys with the same values.
+    Non-inflectional MSAs (stem / deriv / unclassified) are skipped via the
+    try/except guard; an `IMoInflAffMsa` cast on a non-inflectional object
+    raises so we catch and skip cleanly.
+
+    Shape written: {src_msa_guid_str: [src_slot_guid_str, ...]}
+    Keys and values are lowercase GUID strings (no braces), matching the
+    format used by `_run_171_subpass` in categories.py.
+    """
+    if source is None:
+        return
+    # Iterate source LexEntries via the two paths _iter_lex_entries uses:
+    # live LCM (Cache.LangProject.LexDbOA) and flexicon/duck-typed handle
+    # (LangProject.LexDbOA or direct Cache.LangProject.LexDbOA).
+    lexdb = None
+    for nav in (
+        lambda h: h.Cache.LangProject.LexDbOA,
+        lambda h: h.LangProject.LexDbOA,
+    ):
+        try:
+            lexdb = nav(source)
+        except (AttributeError, TypeError):
+            lexdb = None
+        if lexdb is not None:
+            break
+    if lexdb is None:
+        return
+
+    entries = None
+    for attr in ("EntriesOC", "Entries"):
+        coll = getattr(lexdb, attr, None)
+        if coll is not None:
+            entries = coll
+            break
+    if entries is None:
+        return
+
+    # Determine whether to use LCM interface casts (live FLEx) or duck-typed
+    # attribute access (unit-test fakes).
+    #
+    # Strategy: try to import the three cast helpers.  If they are importable
+    # AND callable (not None stubs injected by test_entry_types_*.py), probe
+    # the first entry with ILexEntry().  If that cast raises TypeError it means
+    # the entries are duck-typed fakes (e.g. from flexicon's own test helpers
+    # that are available but cannot wrap plain Python objects), so we fall back
+    # to duck-typed access for all entries.  If the cast succeeds we are in
+    # live LCM mode and use interface casts throughout.
+    #
+    # This covers three scenarios:
+    #   A. No SIL.LCModel in sys.modules (ImportError) -> duck-typed.
+    #   B. SIL.LCModel stub with None types (unit tests) -> duck-typed.
+    #   C. flexicon loaded SIL.LCModel with real types but entries are fakes
+    #      (test_013_fill_gaps.py imports flexicon) -> probe fails -> duck-typed.
+    #   D. Live FlexTools session with real LCM objects -> LCM cast path.
+    _ILexEntry = None
+    _IMoInflAffMsa = None
+    _ICmObject = None
+    try:
+        from SIL.LCModel import ILexEntry as _ILE, IMoInflAffMsa as _IMIA, ICmObject as _ICO  # noqa: N813
+        if callable(_ILE) and callable(_IMIA) and callable(_ICO):
+            _ILexEntry, _IMoInflAffMsa, _ICmObject = _ILE, _IMIA, _ICO
+    except (ImportError, Exception):  # noqa: BLE001
+        pass
+
+    # If cast helpers are unavailable, go straight to duck-typed path.
+    if _ILexEntry is None:
+        _populate_msa_slot_bindings_duck(entries, msa_slot_bindings)
+        return
+
+    # Probe the first entry to distinguish live LCM from duck-typed fakes
+    # (scenario C above).  Convert to list once so we can iterate twice if
+    # needed without exhausting a generator.
+    entry_list = list(entries)
+    if entry_list:
+        try:
+            _ILexEntry(entry_list[0])
+        except TypeError:
+            # First entry is a duck-typed fake — treat all as duck-typed.
+            _populate_msa_slot_bindings_duck(entry_list, msa_slot_bindings)
+            return
+        except Exception:  # noqa: BLE001
+            # Some other error on the first entry; try LCM path anyway and let
+            # per-entry exception handling skip problem entries.
+            pass
+
+    for raw_entry in entry_list:
+        try:
+            entry = _ILexEntry(raw_entry)
+        except Exception:  # noqa: BLE001
+            continue
+        try:
+            msas = entry.MorphoSyntaxAnalysesOC
+        except (AttributeError, TypeError):
+            continue
+        for raw_msa in msas:
+            try:
+                ia = _IMoInflAffMsa(raw_msa)
+                msa_guid = str(_ICmObject(raw_msa).Guid).lower()
+                slot_guids = [str(_ICmObject(sl).Guid).lower() for sl in ia.SlotsRC]
+            except Exception:  # noqa: BLE001
+                # Not an IMoInflAffMsa (stem / deriv / unclassified) — skip.
+                continue
+            if slot_guids:
+                msa_slot_bindings[msa_guid] = slot_guids
+
+
+def _populate_msa_slot_bindings_duck(entries, msa_slot_bindings: dict) -> None:
+    """Duck-typed fallback for `_populate_msa_slot_bindings` when SIL.LCModel
+    is not importable (host-free unit tests).
+
+    Reads `.MorphoSyntaxAnalysesOC`, `.SlotsRC`, and `.guid` via `getattr`
+    so the host-free fakes in `test_categories_affixes.py` satisfy this path
+    without requiring live LCM.  Non-inflectional MSAs (no SlotsRC or empty
+    SlotsRC) are silently skipped.
+    """
+    for entry in entries:
+        for msa in getattr(entry, "MorphoSyntaxAnalysesOC", None) or []:
+            slots = list(getattr(msa, "SlotsRC", None) or [])
+            if not slots:
+                continue
+            msa_guid = getattr(msa, "guid", None)
+            if msa_guid is None:
+                continue
+            slot_guids = [
+                getattr(s, "guid", None) for s in slots
+                if getattr(s, "guid", None) is not None
+            ]
+            if slot_guids:
+                msa_slot_bindings[msa_guid] = slot_guids
 
 
 # ============================================================================

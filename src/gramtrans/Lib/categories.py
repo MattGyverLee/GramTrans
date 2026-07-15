@@ -2944,15 +2944,13 @@ def _stash_entry_bindings(entry, context):
     UNCONDITIONALLY for every `EntryRefsOS` member (even one with 0
     components/primaries still needs its container created) -- see
     data-model.md's binding extension and contract C1. READ-ONLY: this walks
-    the SOURCE entry's ref collection only; no target writes (Principle III)."""
-    msa_map = _binding_map(context, "msa_slot_bindings")
-    if msa_map is not None:
-        for msa in getattr(entry, "MorphoSyntaxAnalysesOC", None) or []:
-            slots = list(getattr(msa, "SlotsRC", None) or [])
-            if not slots:
-                continue
-            msa_map[_guid_str_from(msa)] = [_guid_str_from(s) for s in slots]
+    the SOURCE entry's ref collection only; no target writes (Principle III).
 
+    NOTE: `msa_slot_bindings` is populated exclusively by
+    `_populate_msa_slot_bindings` (preview.py) -- a duck-only branch used to
+    live here too, but it no-op'd on live LCM (base MSA interface hides
+    SlotsRC) and used a different guid formatter than the preview.py
+    producer's duck fallback, so it was removed (cycle-2, #28 QC-P1#2)."""
     ref_map = _binding_map(context, "lexentry_ref_bindings")
     create_map = _binding_map(context, "entryref_create_bindings")
     if ref_map is not None or create_map is not None:
