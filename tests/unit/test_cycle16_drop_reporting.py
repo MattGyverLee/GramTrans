@@ -25,13 +25,18 @@ Covers the two DROP_REPORTED emission sites the census gap identified:
    that split unchanged.
 
 2. `MoAffixAllomorph.{InflectionClassesRC, MsEnvFeaturesOA,
-   MsEnvPartOfSpeechRA, PositionRS}`
-   (`Lib/owned.py._report_dropped_moaffix_msenv_fields`, called identically
-   from `reproduce_allomorph_hung_data` (Move) and
-   `plan_allomorph_hung_data_decisions` (Preview)) -- one
-   `DroppedItemRecord` per POPULATED field on the source allomorph; vacuous
-   (zero records) for a `MoStemAllomorph` and for a `MoAffixAllomorph`
-   populating none of the 4.
+   MsEnvPartOfSpeechRA, PositionRS}` -- feature 028 REPRODUCED all four
+   (US1-US4); the cycle-16 field-level report stub they originally routed to
+   (`Lib/owned.py._report_dropped_moaffix_msenv_fields`) is now RETIRED (028
+   T016). Each field's own reproduce leg (dispatched via
+   `owned.reproduce_moaffix_msenv_data` (Move) /
+   `_plan_moaffix_msenv_decisions` (Preview), called from
+   `reproduce_allomorph_hung_data` / `plan_allomorph_hung_data_decisions`)
+   reports a `DroppedItemRecord` only when a value cannot be reproduced
+   (partial fidelity, never-silent). The tests below stay GREEN because those
+   report paths preserve the same never-silent guarantee against a bare
+   target: vacuous (zero records) for a `MoStemAllomorph` and for a
+   `MoAffixAllomorph` populating none of the 4.
 
 Both drop sites are, by construction, the SAME function called from both
 Move and Preview call sites (no separate CREATE/LINK decision exists for
@@ -303,6 +308,16 @@ def test_mostemallomorph_never_reports_msenv_fields():
 
 
 def test_moaffix_allomorph_all_four_fields_populated_move_reports_one_record_each():
+    """Never-silent backstop across all four fields, ROLLOUT-AWARE (028
+    incremental delivery): against a bare-`object()` target -- no POS/env/
+    feature infra -- NONE of the four fields can be reproduced, so every
+    populated field still yields exactly one `DroppedItemRecord` (the
+    never-silent guarantee holds throughout US1-US4). A field whose 028
+    reproduce leg has NOT yet landed (`owned._msenv_unreproduced_fields()`)
+    is reported by the cycle-16 report-only stub (its reason names the
+    028 feature); a field whose leg HAS landed
+    (`owned._MSENV_REPRODUCED_FIELDS`, e.g. US1's MsEnvPartOfSpeechRA) is
+    reported by that leg's own resolve-or-create-failed path."""
     src = _FakeMoAffixAllomorph(
         "allo-full",
         inflection_classes=[_FakeGuidObj("iclass-1")],
@@ -322,10 +337,13 @@ def test_moaffix_allomorph_all_four_fields_populated_move_reports_one_record_eac
         "PositionRS",
     }
     assert len(dropped) == 4
+    stub_fields = owned._msenv_unreproduced_fields()
     for rec in dropped:
         assert rec.owner_kind == "MoAffixAllomorph"
         assert rec.owner_guid == "allo-full"
-        assert "028-affix-allomorph-morphosyntax" in rec.reason
+        assert rec.reason  # never-silent: a non-empty reason is always present
+        if rec.field_name in stub_fields:
+            assert "028-affix-allomorph-morphosyntax" in rec.reason
 
 
 def test_moaffix_allomorph_partial_population_move_reports_only_populated_fields():

@@ -1387,19 +1387,23 @@ def _reproduce_one_apr(src_apr, apr_guid, member_fields, ctx, tag, copy_set,
 
 
 # ----------------------------------------------------------------------------
-# Cycle-16 lead adjudication -- MoAffixAllomorph MsEnv/inflection-class/
-# position fields: DROP_REPORTED (never reproduced, always surfaced).
+# MoAffixAllomorph MsEnv/inflection-class/position fields: REPRODUCED (028).
 # ----------------------------------------------------------------------------
 #
 # `InflectionClassesRC`, `MsEnvFeaturesOA`, `MsEnvPartOfSpeechRA`, `PositionRS`
-# are REAL `MoAffixAllomorph`-only fields (data-model.md/fidelity_census.py)
-# with NO reproduction code anywhere in `Lib/*.py` -- routed to
-# 028-affix-allomorph-morphosyntax. Per the lead's ruling this cycle, the
-# transfer must stop being silent about them: one `DroppedItemRecord` per
-# POPULATED field on the SOURCE allomorph (never per-item -- these are
-# reported as a field-level loss, not enumerated member-by-member). Vacuous
-# (zero records) for a `MoStemAllomorph` (the fields don't exist there) and
-# for a `MoAffixAllomorph` where none of the 4 happen to be populated.
+# are REAL `MoAffixAllomorph`-only fields (data-model.md/fidelity_census.py).
+# Cycle-16 first stopped the transfer being SILENT about them (one
+# `DroppedItemRecord` per populated field); feature 028 then REPRODUCED all
+# four (US1-US4). Each now has a real reproduce leg + Preview twin in this file
+# (`_reproduce_msenv_pos_ra`, `_reproduce_inflection_classes_rc`,
+# `_reproduce_msenv_features_oa`, `_reproduce_position_rs`), dispatched via
+# `reproduce_moaffix_msenv_data` / `_plan_moaffix_msenv_decisions`. The
+# never-silent guarantee survives as partial fidelity: an unresolvable
+# value/POS/class/environment is REPORT_DROPPED by its own leg while the
+# resolvable remainder is reproduced. The old field-level report-drop stub
+# (`_report_dropped_moaffix_msenv_fields`) is retired (T016) -- no field routes
+# to it any more. `_MOAFFIX_MSENV_FIELDS` remains the canonical field inventory
+# (used by `_is_moaffix_allomorph` host-free detection and `_MSENV_ALL_FIELDS`).
 
 _MOAFFIX_MSENV_FIELDS: tuple = (
     ("InflectionClassesRC", "collection"),
@@ -1425,51 +1429,628 @@ def _is_moaffix_allomorph(src_allo) -> bool:
                for field_name, _ in _MOAFFIX_MSENV_FIELDS)
 
 
-def _moaffix_msenv_populated_fields(src_allo) -> list:
-    """`[(field_name, value), ...]` for every one of the 4 MsEnv/inflection-
-    class/position fields that is actually POPULATED on `src_allo` (atomic:
-    not None; collection: non-empty) -- empty list for a non-`MoAffixAllomorph`
-    or an allomorph where none are set."""
-    if not _is_moaffix_allomorph(src_allo):
-        return []
-    populated: list = []
-    for field_name, shape in _MOAFFIX_MSENV_FIELDS:
-        value = getattr(src_allo, field_name, None)
-        if shape == "atomic":
-            if value is not None:
-                populated.append((field_name, value))
-            continue
+# ----------------------------------------------------------------------------
+# Feature 028 -- affix-MsEnv reproduction dispatch seam (T005).
+# ----------------------------------------------------------------------------
+#
+# `reproduce_allomorph_hung_data` (Move) and `plan_allomorph_hung_data_decisions`
+# (Preview) dispatch the four MsEnv/inflection-class/position fields through a
+# real reproduce leg + read-only Preview twin, mirroring the
+# `_reproduce_phone_env_rc` / `_plan_phone_env_rc_decisions` pair.
+#
+# Rollout history (028 tasks.md): each field's reproduce leg landed one user
+# story at a time (US1 MsEnvPartOfSpeechRA, US2 InflectionClassesRC,
+# US3 MsEnvFeaturesOA, US4 PositionRS). During the rollout, any field not yet
+# in `_MSENV_REPRODUCED_FIELDS` was report-dropped by a now-retired field-level
+# stub so the never-silent guarantee held throughout. All four have landed
+# (`_msenv_unreproduced_fields()` is now empty), so T016 retired that stub;
+# each leg owns its own partial-fidelity report path.
+
+# Field names (matching `_MOAFFIX_MSENV_FIELDS`) whose reproduce leg has landed
+# -- now all four (US1 T007, US2 T009, US3 T011, US4 T013). Kept as the rollout
+# invariant probe: `_msenv_unreproduced_fields()` MUST stay empty; if a future
+# edit drops a field out of this set, that field silently loses fidelity, which
+# the cycle-16 backstop test detects.
+_MSENV_REPRODUCED_FIELDS: frozenset = frozenset(
+    {"MsEnvPartOfSpeechRA", "InflectionClassesRC", "MsEnvFeaturesOA",
+     "PositionRS"})
+
+# Per-run dedup keys (SC-005/G4): source GUID -> resolved/created target item.
+_MSENV_POS_RESOLVED_KEY = "__owned_msenv_pos_resolved__"
+_MSENV_INFLCLASS_RESOLVED_KEY = "__owned_msenv_inflclass_resolved__"
+
+
+def _categories():
+    """Lazy `categories` import -- same load-order posture every other
+    `owned.py` -> `categories.py` call already documents."""
+    if __package__:
+        from . import categories as _c
+    else:
+        import categories as _c  # type: ignore
+    return _c
+
+
+def _cast_moaffix_allomorph(obj):
+    """`IMoAffixAllomorph(obj)` on a live host (the MCP-confirmed cast for
+    `MsEnvPartOfSpeechRA`/`MsEnvFeaturesOA`/`PositionRS`), pass-through for
+    host-free fakes."""
+    try:
+        from SIL.LCModel import IMoAffixAllomorph
+        return IMoAffixAllomorph(obj)
+    except Exception:
+        return obj
+
+
+def _cast_moaffix_form(obj):
+    """`IMoAffixForm(obj)` on a live host (the MCP-confirmed cast for
+    `InflectionClassesRC`, declared on the parent form), pass-through for
+    host-free fakes."""
+    try:
+        from SIL.LCModel import IMoAffixForm
+        return IMoAffixForm(obj)
+    except Exception:
+        return obj
+
+
+# ---- US1 (T007) -- MsEnvPartOfSpeechRA -------------------------------------
+
+def _resolve_or_create_msenv_pos(src_pos, ctx, tag, resolver_cache):
+    """Resolve/create the target POS for an affix-MsEnv POS reference, dedup'd
+    per run (G4/SC-005) via `resolver_cache`. Delegates to the single grammar
+    POS path (`categories.resolve_or_create_target_pos`, R1). Returns the
+    target POS, or `None` when it cannot be created."""
+    pos_guid = _references._guid_str(src_pos)
+    if not pos_guid:
+        return None
+    cache = resolver_cache.setdefault(_MSENV_POS_RESOLVED_KEY, {})
+    if pos_guid in cache:
+        return cache[pos_guid]
+    ws_map = getattr(ctx, "_ws_map", None)
+    target_pos = _categories().resolve_or_create_target_pos(
+        ctx, src_pos, ws_map, tag)
+    if target_pos is not None:
+        cache[pos_guid] = target_pos
+    return target_pos
+
+
+def _reproduce_msenv_pos_ra(src_allo, new_allo, ctx, tag, resolver_cache,
+                            dropped) -> None:
+    """Move leg for `MsEnvPartOfSpeechRA` (US1). Empty source -> no-op
+    (FR-005/G2). Resolves/creates the target POS and points the new allomorph
+    at it; an uncreatable POS is REPORT_DROPPED (never-silent, G1)."""
+    src_pos = getattr(_cast_moaffix_allomorph(src_allo),
+                      "MsEnvPartOfSpeechRA", None)
+    if src_pos is None:
+        return
+    target_pos = _resolve_or_create_msenv_pos(src_pos, ctx, tag, resolver_cache)
+    if target_pos is not None:
         try:
-            items = list(value) if value is not None else []
-        except TypeError:
-            items = []
-        if items:
-            populated.append((field_name, value))
-    return populated
+            _cast_moaffix_allomorph(new_allo).MsEnvPartOfSpeechRA = target_pos
+        except (AttributeError, TypeError):
+            pass
+        return
+    _append_dropped(dropped, DroppedItemRecord(
+        owner_kind="MoAffixAllomorph",
+        owner_guid=_references._guid_str(src_allo),
+        owner_label=_references._item_label(src_allo),
+        field_name="MsEnvPartOfSpeechRA",
+        item_name=_references._item_label(src_pos),
+        item_guid=_references._guid_str(src_pos),
+        reason="target POS not present and could not be created",
+    ))
 
 
-def _report_dropped_moaffix_msenv_fields(src_allo, dropped) -> None:
-    """DROP_REPORTED emission (Move + Preview twin call the SAME function --
-    there is no CREATE/LINK leg to diverge, both are report-only): one
-    `DroppedItemRecord` per populated field in `_MOAFFIX_MSENV_FIELDS`."""
-    populated = _moaffix_msenv_populated_fields(src_allo)
-    if not populated:
+def _plan_msenv_pos_ra(src_allo, ctx, dropped) -> list:
+    """Preview twin of `_reproduce_msenv_pos_ra` (G6): LINK when the POS is
+    already present, CREATE when absent-but-creatable, REPORT_DROPPED when
+    uncreatable. Writes nothing."""
+    src_pos = getattr(_cast_moaffix_allomorph(src_allo),
+                      "MsEnvPartOfSpeechRA", None)
+    if src_pos is None:
+        return []
+    owner_guid = _references._guid_str(src_allo)
+    pos_guid = _references._guid_str(src_pos)
+    pos_name = _references._item_label(src_pos)
+    target_pos = _resolve_target_pos_by_guid(ctx.target_handle, pos_guid)
+    if target_pos is not None:
+        return [ReferenceDecisionRecord(
+            owner_kind="MoAffixAllomorph", owner_guid=owner_guid,
+            field_name="MsEnvPartOfSpeechRA", action=ReferenceAction.LINK,
+            item_name=pos_name, item_guid=pos_guid)]
+    if _categories().target_has_pos_create_infra(ctx.target_handle):
+        return [ReferenceDecisionRecord(
+            owner_kind="MoAffixAllomorph", owner_guid=owner_guid,
+            field_name="MsEnvPartOfSpeechRA", action=ReferenceAction.CREATE,
+            item_name=pos_name, item_guid=pos_guid)]
+    _append_dropped(dropped, DroppedItemRecord(
+        owner_kind="MoAffixAllomorph", owner_guid=owner_guid,
+        owner_label=_references._item_label(src_allo),
+        field_name="MsEnvPartOfSpeechRA", item_name=pos_name,
+        item_guid=pos_guid,
+        reason="target POS not present and could not be created",
+    ))
+    return []
+
+
+# ---- US2 (T009) -- InflectionClassesRC (read from the IMoAffixForm parent) --
+
+_INFLCLASS_OUT_OF_CLOSURE_REASON = (
+    "inflection class's owning POS not present in target (out of closure)"
+)
+
+
+def _resolve_or_create_infl_class(src_class, ctx, tag, resolver_cache):
+    """Resolve/create the target inflection class for one InflectionClassesRC
+    member, dedup'd per run (G4/SC-005). Delegates to the single grammar
+    inflection-class path (`categories.resolve_or_create_inflection_class`,
+    R5), closure-scoped. Returns the target class, or `None` when its owning
+    POS is out-of-closure (caller reports)."""
+    class_guid = _references._guid_str(src_class)
+    if not class_guid:
+        return None
+    cache = resolver_cache.setdefault(_MSENV_INFLCLASS_RESOLVED_KEY, {})
+    if class_guid in cache:
+        return cache[class_guid]
+    ws_map = getattr(ctx, "_ws_map", None)
+    target_class = _categories().resolve_or_create_inflection_class(
+        ctx, src_class, ws_map, tag)
+    if target_class is not None:
+        cache[class_guid] = target_class
+    return target_class
+
+
+def _reproduce_inflection_classes_rc(src_allo, new_allo, ctx, tag,
+                                     resolver_cache, dropped) -> None:
+    """Move leg for `InflectionClassesRC` (US2). Read from the `IMoAffixForm`
+    parent. Empty source -> no-op (FR-005/G2). Each resolvable class is
+    linked/created (dedup) and added to the target's `InflectionClassesRC`
+    (LCM-direct `.Add`, the field being read-only through the wrapper); each
+    class whose owning POS is out-of-closure is REPORT_DROPPED (never-silent,
+    G1); resolvable classes are still added (partial fidelity)."""
+    src_form = _cast_moaffix_form(src_allo)
+    src_classes = list(getattr(src_form, "InflectionClassesRC", None) or [])
+    if not src_classes:
         return
     owner_guid = _references._guid_str(src_allo)
     owner_label = _references._item_label(src_allo)
-    for field_name, _value in populated:
+    new_coll = getattr(_cast_moaffix_form(new_allo), "InflectionClassesRC", None)
+    for src_class in src_classes:
+        target_class = _resolve_or_create_infl_class(
+            src_class, ctx, tag, resolver_cache)
+        if target_class is not None:
+            if new_coll is not None:
+                try:
+                    new_coll.Add(target_class)
+                except (AttributeError, TypeError):
+                    pass
+            continue
+        _append_dropped(dropped, DroppedItemRecord(
+            owner_kind="MoAffixAllomorph", owner_guid=owner_guid,
+            owner_label=owner_label, field_name="InflectionClassesRC",
+            item_name=_references._item_label(src_class),
+            item_guid=_references._guid_str(src_class),
+            reason=_INFLCLASS_OUT_OF_CLOSURE_REASON,
+        ))
+
+
+def _plan_inflection_classes_rc(src_allo, ctx, dropped) -> list:
+    """Preview twin of `_reproduce_inflection_classes_rc` (G6): per class LINK
+    when present, CREATE when absent-but-owning-POS-present, REPORT_DROPPED
+    when the owning POS is out-of-closure."""
+    src_form = _cast_moaffix_form(src_allo)
+    src_classes = list(getattr(src_form, "InflectionClassesRC", None) or [])
+    if not src_classes:
+        return []
+    owner_guid = _references._guid_str(src_allo)
+    owner_label = _references._item_label(src_allo)
+    cats = _categories()
+    target = ctx.target_handle
+    records: list = []
+    for src_class in src_classes:
+        class_guid = _references._guid_str(src_class)
+        class_name = _references._item_label(src_class)
+        if cats.resolve_target_inflection_class(target, class_guid) is not None:
+            records.append(ReferenceDecisionRecord(
+                owner_kind="MoAffixAllomorph", owner_guid=owner_guid,
+                field_name="InflectionClassesRC", action=ReferenceAction.LINK,
+                item_name=class_name, item_guid=class_guid))
+            continue
+        if cats.can_create_inflection_class(target, src_class):
+            records.append(ReferenceDecisionRecord(
+                owner_kind="MoAffixAllomorph", owner_guid=owner_guid,
+                field_name="InflectionClassesRC", action=ReferenceAction.CREATE,
+                item_name=class_name, item_guid=class_guid))
+            continue
+        _append_dropped(dropped, DroppedItemRecord(
+            owner_kind="MoAffixAllomorph", owner_guid=owner_guid,
+            owner_label=owner_label, field_name="InflectionClassesRC",
+            item_name=class_name, item_guid=class_guid,
+            reason=_INFLCLASS_OUT_OF_CLOSURE_REASON,
+        ))
+    return records
+
+# ---- US3 (T011) -- MsEnvFeaturesOA (owned atomic IFsFeatStruc) -------------
+
+_MSENV_FEATSTRUC_UNRESOLVABLE_REASON = (
+    "MsEnv feature value not present in target feature system, or its feature "
+    "is complex/open (non-closed -- out of scope): resolve-only, never created"
+)
+_MSENV_FEATSTRUC_UNCREATABLE_REASON = (
+    "target feature-structure factory not obtainable -- MsEnvFeaturesOA could "
+    "not be reproduced"
+)
+_MSENV_FEATSTRUC_UNREADABLE_REASON = (
+    "MsEnvFeaturesOA feature structure present but its feature specs could not "
+    "be enumerated -- reported rather than silently dropped"
+)
+
+
+def _cast_ifs_closed_value(spec):
+    """`IFsClosedValue(spec)` on a live host (the concrete feature-spec subtype
+    carrying `FeatureRA`/`ValueRA`), pass-through for host-free fakes."""
+    try:
+        from SIL.LCModel import IFsClosedValue
+        return IFsClosedValue(spec)
+    except Exception:
+        return spec
+
+
+def _resolve_msenv_closed_value(target, src_feat, src_val):
+    """Resolve one MsEnv feature-value spec against the target feature system
+    BY GUID, reusing feature 031's closed-feature machinery
+    (`Cache.LangProject.MsFeatureSystemOA.FeaturesOC` -> `IFsClosedFeature`
+    with `.ValuesOC` of `IFsSymFeatVal`; the same iteration idiom as
+    `categories.exception_features_execute_action`).
+
+    Returns `(target_feature, target_value)` when both resolve, else
+    `(None, None)`. A feature present but lacking `.ValuesOC` (complex/open,
+    non-closed) or a value GUID absent under the matched feature both yield
+    `(None, None)` -- the caller reports these (out of scope, never created)."""
+    feat_guid = _references._guid_str(src_feat)
+    val_guid = _references._guid_str(src_val)
+    if not feat_guid or not val_guid:
+        return None, None
+    try:
+        feature_system = target.Cache.LangProject.MsFeatureSystemOA
+    except (AttributeError, TypeError):
+        return None, None
+    for feat in getattr(feature_system, "FeaturesOC", None) or []:
+        if _references._guid_str(feat) != feat_guid:
+            continue
+        values = getattr(feat, "ValuesOC", None)
+        if values is None:  # complex/open feature -- out of scope (report)
+            return None, None
+        for val in values:
+            if _references._guid_str(val) == val_guid:
+                return feat, val
+        return None, None  # matched feature but value absent
+    return None, None
+
+
+def _read_msenv_feature_specs(src_fs):
+    """Read a source `IFsFeatStruc`'s `FeatureSpecsOC` as a list. Returns
+    `None` when the collection cannot be enumerated at all (a populated but
+    unreadable structure -- the caller reports it, never-silent), an empty
+    list for a genuinely empty structure (the caller no-ops -- never create an
+    empty structure), else the list of specs."""
+    specs = getattr(src_fs, "FeatureSpecsOC", None)
+    if specs is None:
+        return None
+    try:
+        return list(specs)
+    except TypeError:
+        return None
+
+
+def _partition_msenv_specs(specs, target):
+    """Partition feature-value `specs` into resolvable and unresolvable against
+    `target`'s feature system. Returns `(resolved, unresolved)` where
+    `resolved` is `[(src_spec, target_feat, target_val), ...]` and `unresolved`
+    is `[(src_feat, src_val), ...]` (the source feature/value to report).
+    Complex/open specs (no `ValueRA`) and values absent from the target land in
+    `unresolved`."""
+    resolved: list = []
+    unresolved: list = []
+    for spec in specs:
+        cv = _cast_ifs_closed_value(spec)
+        src_feat = getattr(cv, "FeatureRA", None)
+        src_val = getattr(cv, "ValueRA", None)
+        if src_val is None:  # complex/open spec (no closed value) -- report
+            unresolved.append((src_feat, src_val))
+            continue
+        target_feat, target_val = _resolve_msenv_closed_value(
+            target, src_feat, src_val)
+        if target_feat is not None and target_val is not None:
+            resolved.append((spec, target_feat, target_val))
+        else:
+            unresolved.append((src_feat, src_val))
+    return resolved, unresolved
+
+
+def _drop_msenv_spec(dropped, owner_guid, owner_label, src_feat, src_val):
+    """REPORT_DROPPED for one unresolvable/complex MsEnv feature-value spec
+    (never-silent, G1). Item identity is the value when present, else the
+    feature (a complex/open spec has no value)."""
+    item = src_val if src_val is not None else src_feat
+    _append_dropped(dropped, DroppedItemRecord(
+        owner_kind="MoAffixAllomorph", owner_guid=owner_guid,
+        owner_label=owner_label, field_name="MsEnvFeaturesOA",
+        item_name=_references._item_label(item),
+        item_guid=_references._guid_str(item),
+        reason=_MSENV_FEATSTRUC_UNRESOLVABLE_REASON,
+    ))
+
+
+def _drop_msenv_field(dropped, owner_guid, owner_label, src_fs, reason) -> None:
+    """Field-level REPORT_DROPPED for the whole `MsEnvFeaturesOA` (identity =
+    the source structure) -- used when the structure is present but cannot be
+    reproduced as a unit (specs unreadable, or factory unobtainable). Keeps the
+    never-silent guarantee (G1) and the cycle-16 rollout backstop."""
+    _append_dropped(dropped, DroppedItemRecord(
+        owner_kind="MoAffixAllomorph", owner_guid=owner_guid,
+        owner_label=owner_label, field_name="MsEnvFeaturesOA",
+        item_name=_references._item_label(src_fs),
+        item_guid=_references._guid_str(src_fs),
+        reason=reason,
+    ))
+
+
+def _reproduce_msenv_features_oa(src_allo, new_allo, ctx, tag, resolver_cache,
+                                 dropped) -> None:
+    """Move leg for `MsEnvFeaturesOA` (US3, R3). Empty/absent source (None, or
+    no `FeatureSpecsOC`) -> no-op: never create an empty structure, never blank
+    a populated target field (FR-005/G2/INV-2).
+
+    Present -> deep-copy the owned `IFsFeatStruc` into the new allomorph's
+    `MsEnvFeaturesOA`. Each feature-value spec is resolved/linked against the
+    target feature system BY GUID (feature 031's closed-feature machinery --
+    the feature/value already exist there; this leg links, never creates a
+    feature). A resolvable spec is reproduced; an unresolvable value or a
+    complex/open (non-closed) feature is REPORT_DROPPED while the resolvable
+    remainder is STILL reproduced (partial fidelity, never silent -- G1/INV-3).
+    When NOTHING resolves, no structure is created (never empty). Never raises:
+    per-spec failures are caught and reported."""
+    src_fs = getattr(_cast_moaffix_allomorph(src_allo), "MsEnvFeaturesOA", None)
+    if src_fs is None:
+        return
+    owner_guid = _references._guid_str(src_allo)
+    owner_label = _references._item_label(src_allo)
+    target = ctx.target_handle
+    specs = _read_msenv_feature_specs(src_fs)
+    if specs is None:  # present but unreadable -> never-silent field drop
+        _drop_msenv_field(dropped, owner_guid, owner_label, src_fs,
+                          _MSENV_FEATSTRUC_UNREADABLE_REASON)
+        return
+    if not specs:  # genuinely empty structure -> no-op (never create empty)
+        return
+    resolved, unresolved = _partition_msenv_specs(specs, target)
+    for src_feat, src_val in unresolved:
+        _drop_msenv_spec(dropped, owner_guid, owner_label, src_feat, src_val)
+    if not resolved:  # nothing resolvable -> never an empty struct
+        return
+    fs_factory = _get_owned_factory(target, "IFsFeatStrucFactory")
+    cv_factory = _get_owned_factory(target, "IFsClosedValueFactory")
+    if fs_factory is None or cv_factory is None:
+        # Every resolvable spec is lost with the (uncreatable) structure -- report
+        # the field once rather than silently drop (never-silent, G1).
+        _drop_msenv_field(dropped, owner_guid, owner_label, src_fs,
+                          _MSENV_FEATSTRUC_UNCREATABLE_REASON)
+        return
+    new_fs = _create_owned_via_factory(fs_factory, _references._guid_str(src_fs))
+    if new_fs is None:
+        return
+    try:
+        _cast_moaffix_allomorph(new_allo).MsEnvFeaturesOA = new_fs
+    except (AttributeError, TypeError):
+        return
+    new_coll = getattr(new_fs, "FeatureSpecsOC", None)
+    for src_spec, target_feat, target_val in resolved:
+        new_cv = _create_owned_via_factory(
+            cv_factory, _references._guid_str(src_spec))
+        if new_cv is None:
+            continue
+        try:
+            new_cv.FeatureRA = target_feat
+            new_cv.ValueRA = target_val
+        except (AttributeError, TypeError):
+            continue
+        if new_coll is not None:
+            try:
+                new_coll.Add(new_cv)
+            except (AttributeError, TypeError):
+                pass
+
+
+def _create_owned_via_factory(factory, guid_str):
+    """Create an owned child via a `.Create(guid)` factory, preserving the
+    source GUID for re-run determinism, falling back to the no-arg `.Create()`
+    overload host-free / when the guid overload is unavailable. `None` on any
+    failure (caller degrades, never crashes)."""
+    guid_arg = _guid_for_create(guid_str) if guid_str else None
+    if guid_arg is not None:
+        try:
+            return factory.Create(guid_arg)
+        except Exception:
+            pass
+    try:
+        return factory.Create()
+    except Exception:
+        return None
+
+
+def _plan_msenv_features_oa(src_allo, ctx, dropped) -> list:
+    """Preview twin of `_reproduce_msenv_features_oa` (G6/INV-6): one LINK
+    `ReferenceDecisionRecord` per resolvable feature-value spec (the leg links
+    the existing target feature/value -- it never creates one), plus identical
+    `DroppedItemRecord`s for unresolvable/complex specs. Empty/absent source ->
+    nothing. Writes nothing."""
+    src_fs = getattr(_cast_moaffix_allomorph(src_allo), "MsEnvFeaturesOA", None)
+    if src_fs is None:
+        return []
+    owner_guid = _references._guid_str(src_allo)
+    owner_label = _references._item_label(src_allo)
+    specs = _read_msenv_feature_specs(src_fs)
+    if specs is None:  # present but unreadable -> parity with Move's field drop
+        _drop_msenv_field(dropped, owner_guid, owner_label, src_fs,
+                          _MSENV_FEATSTRUC_UNREADABLE_REASON)
+        return []
+    if not specs:  # genuinely empty structure -> no-op
+        return []
+    resolved, unresolved = _partition_msenv_specs(specs, ctx.target_handle)
+    for src_feat, src_val in unresolved:
+        _drop_msenv_spec(dropped, owner_guid, owner_label, src_feat, src_val)
+    records: list = []
+    for _src_spec, target_feat, target_val in resolved:
+        records.append(ReferenceDecisionRecord(
+            owner_kind="MoAffixAllomorph", owner_guid=owner_guid,
+            field_name="MsEnvFeaturesOA", action=ReferenceAction.LINK,
+            item_name=_references._item_label(target_val),
+            item_guid=_references._guid_str(target_val)))
+    return records
+
+
+# ---- US4 (T013) -- PositionRS (ordered infix-position env references) ------
+
+def _reproduce_position_rs(src_allo, new_allo, ctx, dropped) -> None:
+    """Move leg for `PositionRS` (US4, R4). Ordered reference sequence of
+    `IPhEnvironment`, resolving against the SAME flat target environment list
+    as `PhoneEnvRC` (reuses `_target_phonological_environments`). Empty/absent
+    source -> no-op: never blank a populated target field (FR-005/G2).
+
+    Iterates the source positions IN SOURCE ORDER; each position is resolved
+    against the target environments BY GUID. Present -> appended (`.Add()`) to
+    the new allomorph's `PositionRS`, order preserved (INV-5/G5). Absent ->
+    REPORT_DROPPED and NEVER created (G7) -- a middle unresolvable position is
+    skipped without reordering or dropping the surviving positions. Never
+    raises: per-position failures are caught and reported."""
+    src_positions = list(
+        getattr(_cast_moaffix_allomorph(src_allo), "PositionRS", None) or [])
+    if not src_positions:
+        return
+    owner_guid = _references._guid_str(src_allo)
+    owner_label = _references._item_label(src_allo)
+    target_envs = _target_phonological_environments(ctx.target_handle)
+    new_coll = getattr(_cast_moaffix_allomorph(new_allo), "PositionRS", None)
+    for src_env in src_positions:
+        env_guid = _references._guid_str(src_env)
+        target_env = next(
+            (e for e in target_envs if _references._guid_str(e) == env_guid), None)
+        if target_env is not None:
+            if new_coll is not None:
+                try:
+                    new_coll.Add(target_env)
+                except (AttributeError, TypeError):
+                    pass
+            continue
+        label = _references._item_label(src_env) or env_guid
         _append_dropped(dropped, DroppedItemRecord(
             owner_kind="MoAffixAllomorph",
             owner_guid=owner_guid,
             owner_label=owner_label,
-            field_name=field_name,
-            item_name="",
-            item_guid="",
-            reason=(
-                f"{field_name} is not reproduced by feature 024's lexicon "
-                "transfer (routed to 028-affix-allomorph-morphosyntax)"
-            ),
+            field_name="PositionRS",
+            item_name=_references._item_label(src_env),
+            item_guid=env_guid,
+            reason=f"position environment {label} not present in target",
         ))
+
+
+def _plan_position_rs(src_allo, ctx, dropped) -> list:
+    """Preview twin of `_reproduce_position_rs` (G6/INV-6): one LINK
+    `ReferenceDecisionRecord` per resolvable position (in source order -- the
+    leg links the existing target environment, it never creates one), plus
+    identical `DroppedItemRecord`s for unresolvable positions. Empty/absent
+    source -> nothing. Writes nothing."""
+    src_positions = list(
+        getattr(_cast_moaffix_allomorph(src_allo), "PositionRS", None) or [])
+    if not src_positions:
+        return []
+    owner_guid = _references._guid_str(src_allo)
+    owner_label = _references._item_label(src_allo)
+    target_envs = _target_phonological_environments(ctx.target_handle)
+    records: list = []
+    for src_env in src_positions:
+        env_guid = _references._guid_str(src_env)
+        target_env = next(
+            (e for e in target_envs if _references._guid_str(e) == env_guid), None)
+        if target_env is not None:
+            records.append(ReferenceDecisionRecord(
+                owner_kind="MoAffixAllomorph", owner_guid=owner_guid,
+                field_name="PositionRS", action=ReferenceAction.LINK,
+                item_name=_references._item_label(src_env), item_guid=env_guid))
+            continue
+        label = _references._item_label(src_env) or env_guid
+        _append_dropped(dropped, DroppedItemRecord(
+            owner_kind="MoAffixAllomorph", owner_guid=owner_guid,
+            owner_label=owner_label, field_name="PositionRS",
+            item_name=_references._item_label(src_env), item_guid=env_guid,
+            reason=f"position environment {label} not present in target",
+        ))
+    return records
+
+
+# All four field names -- used to compute the not-yet-reproduced fallback set.
+_MSENV_ALL_FIELDS: frozenset = frozenset(
+    field_name for field_name, _shape in _MOAFFIX_MSENV_FIELDS
+)
+
+
+def _msenv_unreproduced_fields() -> frozenset:
+    """Field names still report-dropped (reproduce leg not yet landed)."""
+    return _MSENV_ALL_FIELDS - _MSENV_REPRODUCED_FIELDS
+
+
+def reproduce_moaffix_msenv_data(src_allo, new_allo, ctx, tag, resolver_cache,
+                                 dropped) -> None:
+    """028 Move leg -- reproduce the four `MoAffixAllomorph`/`MoAffixForm`
+    morphosyntactic-environment fields (`MsEnvPartOfSpeechRA`,
+    `InflectionClassesRC`, `MsEnvFeaturesOA`, `PositionRS`) onto `new_allo`.
+
+    Each field's reproduce leg is added here by US1-US4; a field whose leg has
+    not yet landed is report-dropped (see the rollout invariant above), so the
+    never-silent guarantee holds throughout. Vacuous for a `MoStemAllomorph`
+    or an unpopulated `MoAffixAllomorph`. MUST never raise -- every per-field
+    failure is caught and reported, matching this module's posture elsewhere."""
+    if not _is_moaffix_allomorph(src_allo):
+        return
+    # --- field reproduce legs land here (US1-US4) ---
+    if "MsEnvPartOfSpeechRA" in _MSENV_REPRODUCED_FIELDS:  # US1 (T007)
+        _reproduce_msenv_pos_ra(
+            src_allo, new_allo, ctx, tag, resolver_cache, dropped)
+    if "InflectionClassesRC" in _MSENV_REPRODUCED_FIELDS:  # US2 (T009)
+        _reproduce_inflection_classes_rc(
+            src_allo, new_allo, ctx, tag, resolver_cache, dropped)
+    if "MsEnvFeaturesOA" in _MSENV_REPRODUCED_FIELDS:  # US3 (T011)
+        _reproduce_msenv_features_oa(
+            src_allo, new_allo, ctx, tag, resolver_cache, dropped)
+    if "PositionRS" in _MSENV_REPRODUCED_FIELDS:  # US4 (T013)
+        _reproduce_position_rs(src_allo, new_allo, ctx, dropped)
+    # All four legs have landed (T016); each owns its own partial-fidelity
+    # report path, so there is no residual field-level report-drop stub.
+
+
+def _plan_moaffix_msenv_decisions(src_allo, ctx, resolver_cache, dropped) -> list:
+    """028 Preview twin of `reproduce_moaffix_msenv_data` (Principle III).
+
+    Read-only: emits the LINK/CREATE `ReferenceDecisionRecord`s each landed
+    field leg will act on (for `PlannedAction.reference_decisions`), plus the
+    report-drops for fields whose leg has not yet landed -- identical drop set
+    to the Move leg by construction. Returns the decision records; never
+    writes."""
+    records: list = []
+    if not _is_moaffix_allomorph(src_allo):
+        return records
+    # --- field decision legs land here (US1-US4) ---
+    if "MsEnvPartOfSpeechRA" in _MSENV_REPRODUCED_FIELDS:  # US1 (T007)
+        records.extend(_plan_msenv_pos_ra(src_allo, ctx, dropped))
+    if "InflectionClassesRC" in _MSENV_REPRODUCED_FIELDS:  # US2 (T009)
+        records.extend(_plan_inflection_classes_rc(src_allo, ctx, dropped))
+    if "MsEnvFeaturesOA" in _MSENV_REPRODUCED_FIELDS:  # US3 (T011)
+        records.extend(_plan_msenv_features_oa(src_allo, ctx, dropped))
+    if "PositionRS" in _MSENV_REPRODUCED_FIELDS:  # US4 (T013)
+        records.extend(_plan_position_rs(src_allo, ctx, dropped))
+    # All four legs have landed (T016); each owns its own partial-fidelity
+    # report path, so there is no residual field-level report-drop stub.
+    return records
 
 
 def reproduce_allomorph_hung_data(src_allo, new_allo, ctx, tag, resolver_cache,
@@ -1480,9 +2061,10 @@ def reproduce_allomorph_hung_data(src_allo, new_allo, ctx, tag, resolver_cache,
     `StemNamesOC`), and any ad-hoc prohibition rule (APR) referencing it
     (reproduce only when every member is in the run's copy set, else report
     each missing member -- see `contracts/owned-object-walk.md`). Also
-    reports (cycle-16 lead adjudication, never creates) any populated
-    `MoAffixAllomorph`-only MsEnv/inflection-class/position field --
-    `_report_dropped_moaffix_msenv_fields`.
+    reproduces the four `MoAffixAllomorph`/`MoAffixForm` MsEnv/inflection-
+    class/position fields via the feature-028 dispatch seam
+    (`reproduce_moaffix_msenv_data`); any field whose reproduce leg has not yet
+    landed is report-dropped by that seam (never silent).
 
     Never creates a phonological environment or a StemName from scratch
     (contract non-goals) -- both are REPORT-only when unresolvable. Never
@@ -1492,7 +2074,8 @@ def reproduce_allomorph_hung_data(src_allo, new_allo, ctx, tag, resolver_cache,
     _reproduce_phone_env_rc(src_allo, new_allo, ctx, dropped)
     _reproduce_stem_name_ra(src_allo, new_allo, ctx, dropped)
     _reproduce_aprs_for_allomorph(src_allo, ctx, tag, resolver_cache, dropped)
-    _report_dropped_moaffix_msenv_fields(src_allo, dropped)
+    reproduce_moaffix_msenv_data(
+        src_allo, new_allo, ctx, tag, resolver_cache, dropped)
 
 
 # ============================================================================
@@ -1616,14 +2199,16 @@ def plan_allomorph_hung_data_decisions(src_allo, ctx, resolver_cache, dropped) -
     allomorph currently being planned must already be a member of
     `ctx._copy_set` before this is called.
 
-    Cycle-16: also calls `_report_dropped_moaffix_msenv_fields` -- the SAME
-    report-only function the Move twin (`reproduce_allomorph_hung_data`)
-    calls, so Preview's drop set is identical to Move's for these 4 fields
-    by construction (no separate CREATE/LINK decision exists for them)."""
+    Feature 028: also calls `_plan_moaffix_msenv_decisions` -- the read-only
+    Preview twin of `reproduce_moaffix_msenv_data`, so Preview's decision/drop
+    set is identical to Move's for these 4 fields by construction (Principle
+    III). Fields whose reproduce leg has not yet landed are report-dropped
+    identically on both sides during the incremental rollout."""
     records: list = []
     records.extend(_plan_phone_env_rc_decisions(src_allo, ctx, dropped))
     records.extend(_plan_stem_name_ra_decision(src_allo, ctx, dropped))
     records.extend(_plan_aprs_for_allomorph_decisions(
         src_allo, ctx, resolver_cache, dropped))
-    _report_dropped_moaffix_msenv_fields(src_allo, dropped)
+    records.extend(_plan_moaffix_msenv_decisions(
+        src_allo, ctx, resolver_cache, dropped))
     return tuple(records)
