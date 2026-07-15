@@ -1501,10 +1501,13 @@ def _report_dropped_moaffix_msenv_fields(src_allo, dropped, only_fields=None) ->
 # Field names (matching `_MOAFFIX_MSENV_FIELDS`) whose reproduce leg has landed.
 # US1-US4 add to this set as each GREEN task completes.
 #   US1 (T007): MsEnvPartOfSpeechRA
-_MSENV_REPRODUCED_FIELDS: frozenset = frozenset({"MsEnvPartOfSpeechRA"})
+#   US2 (T009): InflectionClassesRC
+_MSENV_REPRODUCED_FIELDS: frozenset = frozenset(
+    {"MsEnvPartOfSpeechRA", "InflectionClassesRC"})
 
-# Per-run dedup key (SC-005/G4): source-POS GUID -> resolved/created target POS.
+# Per-run dedup keys (SC-005/G4): source GUID -> resolved/created target item.
 _MSENV_POS_RESOLVED_KEY = "__owned_msenv_pos_resolved__"
+_MSENV_INFLCLASS_RESOLVED_KEY = "__owned_msenv_inflclass_resolved__"
 
 
 def _categories():
@@ -1618,6 +1621,104 @@ def _plan_msenv_pos_ra(src_allo, ctx, dropped) -> list:
     ))
     return []
 
+
+# ---- US2 (T009) -- InflectionClassesRC (read from the IMoAffixForm parent) --
+
+_INFLCLASS_OUT_OF_CLOSURE_REASON = (
+    "inflection class's owning POS not present in target (out of closure)"
+)
+
+
+def _resolve_or_create_infl_class(src_class, ctx, tag, resolver_cache):
+    """Resolve/create the target inflection class for one InflectionClassesRC
+    member, dedup'd per run (G4/SC-005). Delegates to the single grammar
+    inflection-class path (`categories.resolve_or_create_inflection_class`,
+    R5), closure-scoped. Returns the target class, or `None` when its owning
+    POS is out-of-closure (caller reports)."""
+    class_guid = _references._guid_str(src_class)
+    if not class_guid:
+        return None
+    cache = resolver_cache.setdefault(_MSENV_INFLCLASS_RESOLVED_KEY, {})
+    if class_guid in cache:
+        return cache[class_guid]
+    ws_map = getattr(ctx, "_ws_map", None)
+    target_class = _categories().resolve_or_create_inflection_class(
+        ctx, src_class, ws_map, tag)
+    if target_class is not None:
+        cache[class_guid] = target_class
+    return target_class
+
+
+def _reproduce_inflection_classes_rc(src_allo, new_allo, ctx, tag,
+                                     resolver_cache, dropped) -> None:
+    """Move leg for `InflectionClassesRC` (US2). Read from the `IMoAffixForm`
+    parent. Empty source -> no-op (FR-005/G2). Each resolvable class is
+    linked/created (dedup) and added to the target's `InflectionClassesRC`
+    (LCM-direct `.Add`, the field being read-only through the wrapper); each
+    class whose owning POS is out-of-closure is REPORT_DROPPED (never-silent,
+    G1); resolvable classes are still added (partial fidelity)."""
+    src_form = _cast_moaffix_form(src_allo)
+    src_classes = list(getattr(src_form, "InflectionClassesRC", None) or [])
+    if not src_classes:
+        return
+    owner_guid = _references._guid_str(src_allo)
+    owner_label = _references._item_label(src_allo)
+    new_coll = getattr(_cast_moaffix_form(new_allo), "InflectionClassesRC", None)
+    for src_class in src_classes:
+        target_class = _resolve_or_create_infl_class(
+            src_class, ctx, tag, resolver_cache)
+        if target_class is not None:
+            if new_coll is not None:
+                try:
+                    new_coll.Add(target_class)
+                except (AttributeError, TypeError):
+                    pass
+            continue
+        _append_dropped(dropped, DroppedItemRecord(
+            owner_kind="MoAffixAllomorph", owner_guid=owner_guid,
+            owner_label=owner_label, field_name="InflectionClassesRC",
+            item_name=_references._item_label(src_class),
+            item_guid=_references._guid_str(src_class),
+            reason=_INFLCLASS_OUT_OF_CLOSURE_REASON,
+        ))
+
+
+def _plan_inflection_classes_rc(src_allo, ctx, dropped) -> list:
+    """Preview twin of `_reproduce_inflection_classes_rc` (G6): per class LINK
+    when present, CREATE when absent-but-owning-POS-present, REPORT_DROPPED
+    when the owning POS is out-of-closure."""
+    src_form = _cast_moaffix_form(src_allo)
+    src_classes = list(getattr(src_form, "InflectionClassesRC", None) or [])
+    if not src_classes:
+        return []
+    owner_guid = _references._guid_str(src_allo)
+    owner_label = _references._item_label(src_allo)
+    cats = _categories()
+    target = ctx.target_handle
+    records: list = []
+    for src_class in src_classes:
+        class_guid = _references._guid_str(src_class)
+        class_name = _references._item_label(src_class)
+        if cats.resolve_target_inflection_class(target, class_guid) is not None:
+            records.append(ReferenceDecisionRecord(
+                owner_kind="MoAffixAllomorph", owner_guid=owner_guid,
+                field_name="InflectionClassesRC", action=ReferenceAction.LINK,
+                item_name=class_name, item_guid=class_guid))
+            continue
+        if cats.can_create_inflection_class(target, src_class):
+            records.append(ReferenceDecisionRecord(
+                owner_kind="MoAffixAllomorph", owner_guid=owner_guid,
+                field_name="InflectionClassesRC", action=ReferenceAction.CREATE,
+                item_name=class_name, item_guid=class_guid))
+            continue
+        _append_dropped(dropped, DroppedItemRecord(
+            owner_kind="MoAffixAllomorph", owner_guid=owner_guid,
+            owner_label=owner_label, field_name="InflectionClassesRC",
+            item_name=class_name, item_guid=class_guid,
+            reason=_INFLCLASS_OUT_OF_CLOSURE_REASON,
+        ))
+    return records
+
 # All four field names -- used to compute the not-yet-reproduced fallback set.
 _MSENV_ALL_FIELDS: frozenset = frozenset(
     field_name for field_name, _shape in _MOAFFIX_MSENV_FIELDS
@@ -1646,6 +1747,9 @@ def reproduce_moaffix_msenv_data(src_allo, new_allo, ctx, tag, resolver_cache,
     if "MsEnvPartOfSpeechRA" in _MSENV_REPRODUCED_FIELDS:  # US1 (T007)
         _reproduce_msenv_pos_ra(
             src_allo, new_allo, ctx, tag, resolver_cache, dropped)
+    if "InflectionClassesRC" in _MSENV_REPRODUCED_FIELDS:  # US2 (T009)
+        _reproduce_inflection_classes_rc(
+            src_allo, new_allo, ctx, tag, resolver_cache, dropped)
     # Fields whose leg has not yet landed stay report-dropped (never-silent).
     _report_dropped_moaffix_msenv_fields(
         src_allo, dropped, only_fields=_msenv_unreproduced_fields())
@@ -1665,6 +1769,8 @@ def _plan_moaffix_msenv_decisions(src_allo, ctx, resolver_cache, dropped) -> lis
     # --- field decision legs land here (US1-US4) ---
     if "MsEnvPartOfSpeechRA" in _MSENV_REPRODUCED_FIELDS:  # US1 (T007)
         records.extend(_plan_msenv_pos_ra(src_allo, ctx, dropped))
+    if "InflectionClassesRC" in _MSENV_REPRODUCED_FIELDS:  # US2 (T009)
+        records.extend(_plan_inflection_classes_rc(src_allo, ctx, dropped))
     # Fields whose leg has not yet landed stay report-dropped (never-silent).
     _report_dropped_moaffix_msenv_fields(
         src_allo, dropped, only_fields=_msenv_unreproduced_fields())

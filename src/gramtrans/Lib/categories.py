@@ -3227,6 +3227,200 @@ def resolve_or_create_target_pos(context, src_pos, ws_mapping, tag, _seen=None):
     return new_pos
 
 
+# ---------------------------------------------------------------------------
+# Feature 028 (R5) -- inflection-class resolve-or-create for affix
+# InflectionClassesRC references. A class is owned by a POS
+# (`IPartOfSpeech.InflectionClassesOC`) or nested under a parent class
+# (`IMoInflClass.SubclassesOC`). Resolution is closure-scoped (Principle V):
+# the class is created ONLY under an owning POS that is present in the target
+# (i.e. in the copied closure or pre-existing); an out-of-closure owning POS is
+# NOT invented -- the caller reports the class dropped (G8). Reuses the
+# `IMoInflClassFactory.Create(Guid)` idiom `inflection_classes_execute_action`
+# uses; host-only bits degrade gracefully for the 028 unit fakes.
+# ---------------------------------------------------------------------------
+
+
+def _owner_is_inflection_class(owner) -> bool:
+    if owner is None:
+        return False
+    try:
+        from SIL.LCModel import IMoInflClass
+        IMoInflClass(owner)  # cast probe (live)
+        return True
+    except Exception:
+        pass
+    return (_pos_class_name(owner) == "MoInflClass"
+            or hasattr(owner, "SubclassesOC"))
+
+
+def _search_inflection_classes(coll, class_guid):
+    """Depth-first search for `class_guid` across an InflectionClassesOC /
+    SubclassesOC tree."""
+    for ic in coll or []:
+        if _guid_str_from(ic) == class_guid:
+            return ic
+        found = _search_inflection_classes(
+            getattr(ic, "SubclassesOC", None), class_guid)
+        if found is not None:
+            return found
+    return None
+
+
+def _find_target_inflection_class(target, class_guid):
+    """Resolve an existing target `IMoInflClass` by GUID, scanning every target
+    POS's `InflectionClassesOC` (and nested `SubclassesOC`). `None` if absent."""
+    if not class_guid:
+        return None
+    for pos in _iter_pos(target):
+        pos_obj = _as_pos(pos)
+        found = _search_inflection_classes(
+            getattr(pos_obj, "InflectionClassesOC", None), class_guid)
+        if found is not None:
+            return found
+    return None
+
+
+def resolve_target_inflection_class(target, class_guid):
+    """Read-only resolve (Preview twin): existing target class by GUID, or
+    `None`."""
+    return _find_target_inflection_class(target, class_guid)
+
+
+def _owning_pos_of_class(src_class):
+    """Walk `src_class`'s owner chain up to the owning `IPartOfSpeech`
+    (through any number of parent classes), or `None` if the chain does not
+    terminate at a POS. Cycle-guarded."""
+    node = getattr(src_class, "Owner", None)
+    seen: set = set()
+    while node is not None:
+        g = _guid_str_from(node)
+        if g and g in seen:
+            return None
+        if g:
+            seen.add(g)
+        if _owner_is_pos(node):
+            return node
+        if _owner_is_inflection_class(node):
+            node = getattr(node, "Owner", None)
+            continue
+        return None
+    return None
+
+
+def _get_inflection_class_factory(target):
+    """`IMoInflClassFactory`, fake-tolerant (ServiceLocator on a live host,
+    then the `GetFactory` interface-cast / string-key fallbacks). `None` when
+    no factory is obtainable."""
+    try:
+        from SIL.LCModel import IMoInflClassFactory
+        iface = IMoInflClassFactory
+    except Exception:
+        iface = None
+    if iface is not None:
+        for getter in (
+            lambda: target.Cache.ServiceLocator.GetService(iface),
+            lambda: iface(target.GetFactory(iface)),
+        ):
+            try:
+                return getter()
+            except Exception:
+                continue
+    try:
+        return target.GetFactory("IMoInflClassFactory")
+    except Exception:
+        return None
+
+
+def can_create_inflection_class(target, src_class) -> bool:
+    """Read-only predicate for the Preview twin's CREATE-vs-REPORT parity (G6):
+    True iff the class could be created -- its owning POS is present in the
+    target (closure-scoped) AND a factory is obtainable."""
+    pos = _owning_pos_of_class(src_class)
+    if pos is None:
+        return False
+    if _resolve_target_pos(target, _guid_str_from(pos)) is None:
+        return False
+    return _get_inflection_class_factory(target) is not None
+
+
+def _sync_inflection_class_properties(context, new_ic, src_class, ws_mapping,
+                                      tag) -> None:
+    """Best-effort Name/Abbreviation/Description sync + Carrier B residue --
+    the same `InflectionFeatures` sync-ops `inflection_classes_execute_action`
+    applies; host-free fakes skip it."""
+    try:
+        props = context.source_handle.InflectionFeatures.GetSyncableProperties(
+            src_class)
+        context.target_handle.InflectionFeatures.ApplySyncableProperties(
+            new_ic, props, ws_map=ws_mapping)
+    except Exception:
+        pass
+    try:
+        if __package__:
+            from .residue import apply_carrier_b
+        else:
+            from residue import apply_carrier_b  # type: ignore
+        ws = getattr(getattr(context.target_handle, "Cache", None),
+                     "DefaultAnalWs", None)
+        apply_carrier_b(new_ic, ws, tag)
+    except Exception:
+        pass
+
+
+def resolve_or_create_inflection_class(context, src_class, ws_mapping, tag,
+                                       _seen=None):
+    """Feature 028 (R5/FR-002): resolve `src_class` in the target by GUID,
+    creating it under its owning POS's `InflectionClassesOC` (or a parent
+    class's `SubclassesOC`) when absent, GUID preserved, via
+    `IMoInflClassFactory.Create`. Closure-scoped: the owning POS is resolved
+    (never invented -- G8/Principle V); a class whose owning POS is neither
+    present nor in-closure returns `None` (caller reports it dropped).
+
+    Returns the target `IMoInflClass`, or `None` when unresolvable/uncreatable
+    -- degrades, never raises."""
+    target = context.target_handle
+    class_guid = _guid_str_from(src_class)
+    if not class_guid:
+        return None
+    existing = _find_target_inflection_class(target, class_guid)
+    if existing is not None:
+        return existing
+    _seen = _seen if _seen is not None else set()
+    if class_guid in _seen:  # pathological owner cycle guard
+        return None
+    _seen.add(class_guid)
+
+    owner = getattr(src_class, "Owner", None)
+    if _owner_is_pos(owner):
+        target_owner = _resolve_target_pos(target, _guid_str_from(owner))
+        owner_coll_attr = "InflectionClassesOC"
+    elif _owner_is_inflection_class(owner):
+        target_owner = resolve_or_create_inflection_class(
+            context, owner, ws_mapping, tag, _seen)
+        owner_coll_attr = "SubclassesOC"
+    else:
+        return None
+    if target_owner is None:
+        return None  # owning POS/class out-of-closure -> not invented (G8)
+
+    factory = _get_inflection_class_factory(target)
+    if factory is None:
+        return None
+    try:
+        new_ic = factory.Create(_guid_arg_for_create(class_guid))
+    except Exception:
+        return None
+    owner_coll = getattr(target_owner, owner_coll_attr, None)
+    if owner_coll is None:
+        return None
+    try:
+        owner_coll.Add(new_ic)
+    except (AttributeError, TypeError):
+        pass
+    _sync_inflection_class_properties(context, new_ic, src_class, ws_mapping, tag)
+    return new_ic
+
+
 def _resolve_possibility_by_guid(possibility_list, guid):
     """Return the CmPossibility in `possibility_list` (an ICmPossibilityList)
     whose GUID matches `guid`, walking SubPossibilitiesOS recursively, or None.

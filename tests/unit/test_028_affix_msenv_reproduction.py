@@ -55,14 +55,32 @@ class _FakeGuid:
         self.guid = guid
 
 
+class _FakeAddList(list):
+    """List that also exposes the LCM-direct `.Add()` used to populate
+    read-only-through-wrapper collections (InflectionClassesRC/OC, PositionRS,
+    SubPossibilitiesOS)."""
+
+    def Add(self, item):
+        self.append(item)
+
+
 class _FakePOS(_FakeGuid):
     ClassName = "PartOfSpeech"
+
+    def __init__(self, guid, owner=None, inflection_classes=()):
+        super().__init__(guid)
+        self.Owner = owner
+        self.SubPossibilitiesOS = _FakeAddList()
+        self.InflectionClassesOC = _FakeAddList(inflection_classes)
+
+
+class _FakeInflClass(_FakeGuid):
+    ClassName = "MoInflClass"
 
     def __init__(self, guid, owner=None):
         super().__init__(guid)
         self.Owner = owner
-        self.SubPossibilitiesOS = []
-        self.InflectionClassesOC = []
+        self.SubclassesOC = _FakeAddList()
 
 
 class _FakePOSNamespace:
@@ -91,8 +109,21 @@ class _FakePOSFactory:
         new = _FakePOS(str(guid), owner=parent)
         self._registry.append(new)
         if parent is not None:
-            parent.SubPossibilitiesOS.append(new)
+            parent.SubPossibilitiesOS.Add(new)
         return new
+
+
+class _FakeInflClassFactory:
+    """`IMoInflClassFactory` double -- the 1-arg `Create(Guid)` overload
+    (caller `.Add()`s it under the owning POS's InflectionClassesOC / parent
+    class's SubclassesOC)."""
+
+    def __init__(self):
+        self.create_calls = []
+
+    def Create(self, guid):
+        self.create_calls.append(str(guid))
+        return _FakeInflClass(str(guid))
 
 
 class _FakePossibilityList:
@@ -112,20 +143,21 @@ class _FakeCache:
 
 
 class _FakeTarget:
-    def __init__(self, pos=(), pos_factory=None):
+    def __init__(self, pos=(), factories=None):
         self._registry = list(pos)
         self.Cache = _FakeCache()
         self.POS = _FakePOSNamespace(self._registry)
-        self._pos_factory = pos_factory
+        self._factories = dict(factories or {})
 
     def GetFactory(self, key):
-        if self._pos_factory is None:
-            raise KeyError(key)
-        return self._pos_factory
+        name = key if isinstance(key, str) else getattr(key, "__name__", str(key))
+        if name in self._factories:
+            return self._factories[name]
+        raise KeyError(name)
 
 
 class _FakeSource:
-    """Source handle -- the POS legs never read the source project directly
+    """Source handle -- these legs never read the source project directly
     (they read off the source allomorph object), so this is a bare stand-in."""
 
 
@@ -144,7 +176,7 @@ class _FakeNewAffixAllomorph(_FakeGuid):
     def __init__(self, guid, msenv_pos=None, inflection_classes=()):
         super().__init__(guid)
         self.MsEnvPartOfSpeechRA = msenv_pos
-        self.InflectionClassesRC = list(inflection_classes)
+        self.InflectionClassesRC = _FakeAddList(inflection_classes)
 
 
 class _FakeCtx:
@@ -156,16 +188,20 @@ class _FakeCtx:
 _TAG = "tag-028-msenv"
 
 
-def _make_target(pos=(), with_factory=True):
-    registry = list(pos)
-    factory = _FakePOSFactory(registry) if with_factory else None
-    target = _FakeTarget(pos=registry, pos_factory=factory)
-    # `_FakeTarget.__init__` copied `pos` into its own registry; rebind the
-    # factory to that same list so a created POS is resolvable afterwards.
-    if factory is not None:
-        factory._registry = target._registry
-        target.POS = _FakePOSNamespace(target._registry)
-    return target, factory
+def _make_target(pos=(), with_factory=True, infl_class_factory=False):
+    """Build a fake target. `with_factory` adds an `IPartOfSpeechFactory`
+    (bound to the target's live POS registry so a created POS resolves
+    afterwards); `infl_class_factory` adds an `IMoInflClassFactory`. Returns
+    `(target, pos_factory)`; the inflection-class factory (when requested) is
+    reachable as `target._factories["IMoInflClassFactory"]`."""
+    target = _FakeTarget(pos=pos)
+    pos_factory = None
+    if with_factory:
+        pos_factory = _FakePOSFactory(target._registry)
+        target._factories["IPartOfSpeechFactory"] = pos_factory
+    if infl_class_factory:
+        target._factories["IMoInflClassFactory"] = _FakeInflClassFactory()
+    return target, pos_factory
 
 
 # ============================================================================
@@ -327,3 +363,164 @@ def test_msenv_pos_ra_preview_move_parity():
         _FakeCtx(target3), {}, dropped3)
     assert not [r for r in recs3 if r.field_name == "MsEnvPartOfSpeechRA"]
     assert any(r.field_name == "MsEnvPartOfSpeechRA" for r in dropped3)
+
+
+# ============================================================================
+# T008 (US2) -- InflectionClassesRC reproduction (inflection-class references,
+# read from the IMoAffixForm parent; each class owned by a POS).
+# ============================================================================
+
+
+def test_infl_class_link_when_present():
+    """Inflection class already present in the target (under its owning POS's
+    InflectionClassesOC, by GUID) -> the new allomorph references it; no class
+    is created; nothing dropped (G2/LINK)."""
+    src_pos = _FakePOS("pos-ic-1")
+    src_class = _FakeInflClass("ic-1", owner=src_pos)
+    tgt_class = _FakeInflClass("ic-1")
+    tgt_pos = _FakePOS("pos-ic-1", inflection_classes=[tgt_class])
+    target, _ = _make_target(pos=[tgt_pos], with_factory=False,
+                             infl_class_factory=True)
+    factory = target._factories["IMoInflClassFactory"]
+    src_allo = _FakeAffixAllomorph("allo-ic-1", inflection_classes=[src_class])
+    new_allo = _FakeNewAffixAllomorph("allo-ic-1")
+
+    owned.reproduce_moaffix_msenv_data(
+        src_allo, new_allo, _FakeCtx(target), _TAG, {}, [])
+
+    assert list(new_allo.InflectionClassesRC) == [tgt_class]
+    assert factory.create_calls == []
+
+
+def test_infl_class_create_under_owning_pos_guid_preserved():
+    """Class absent, owning POS present in target, create infra present -> the
+    class is created under that POS's InflectionClassesOC (GUID preserved) and
+    the allomorph references it (CREATE/G3/US2 scenario 1)."""
+    src_pos = _FakePOS("pos-ic-2")
+    src_class = _FakeInflClass("ic-new", owner=src_pos)
+    tgt_pos = _FakePOS("pos-ic-2")  # owning POS in-closure, class absent
+    target, _ = _make_target(pos=[tgt_pos], with_factory=False,
+                             infl_class_factory=True)
+    factory = target._factories["IMoInflClassFactory"]
+    src_allo = _FakeAffixAllomorph("allo-ic-2", inflection_classes=[src_class])
+    new_allo = _FakeNewAffixAllomorph("allo-ic-2")
+    dropped: list = []
+
+    owned.reproduce_moaffix_msenv_data(
+        src_allo, new_allo, _FakeCtx(target), _TAG, {}, dropped)
+
+    assert factory.create_calls == ["ic-new"]
+    assert [c.guid for c in tgt_pos.InflectionClassesOC] == ["ic-new"]
+    assert [c.guid for c in new_allo.InflectionClassesRC] == ["ic-new"]
+    assert dropped == []
+
+
+def test_infl_class_report_when_owning_pos_out_of_closure():
+    """Owning POS neither present in the target nor in the copied closure ->
+    the class reference is REPORT_DROPPED (owner/field/item identity) and the
+    owning POS is NOT invented (G8/Principle V)."""
+    src_pos = _FakePOS("pos-absent")
+    src_class = _FakeInflClass("ic-orphan", owner=src_pos)
+    target, _ = _make_target(pos=[], with_factory=False,
+                             infl_class_factory=True)
+    factory = target._factories["IMoInflClassFactory"]
+    src_allo = _FakeAffixAllomorph("allo-ic-3", inflection_classes=[src_class])
+    new_allo = _FakeNewAffixAllomorph("allo-ic-3")
+    dropped: list = []
+
+    owned.reproduce_moaffix_msenv_data(
+        src_allo, new_allo, _FakeCtx(target), _TAG, {}, dropped)
+
+    assert factory.create_calls == []
+    assert list(new_allo.InflectionClassesRC) == []
+    assert len(dropped) == 1
+    rec = dropped[0]
+    assert rec.field_name == "InflectionClassesRC"
+    assert rec.owner_kind == "MoAffixAllomorph"
+    assert rec.owner_guid == "allo-ic-3"
+    assert rec.item_guid == "ic-orphan"
+
+
+def test_infl_class_dedup_shared_class_created_once():
+    """Two allomorphs referencing the same absent class (owning POS present)
+    -> created once (resolver_cache), both reference the same object (G4)."""
+    src_pos = _FakePOS("pos-ic-shared")
+    tgt_pos = _FakePOS("pos-ic-shared")
+    target, _ = _make_target(pos=[tgt_pos], with_factory=False,
+                             infl_class_factory=True)
+    factory = target._factories["IMoInflClassFactory"]
+    resolver_cache: dict = {}
+    ctx = _FakeCtx(target)
+
+    new_a = _FakeNewAffixAllomorph("allo-a")
+    owned.reproduce_moaffix_msenv_data(
+        _FakeAffixAllomorph(
+            "allo-a", inflection_classes=[_FakeInflClass("ic-shared", owner=src_pos)]),
+        new_a, ctx, _TAG, resolver_cache, [])
+    new_b = _FakeNewAffixAllomorph("allo-b")
+    owned.reproduce_moaffix_msenv_data(
+        _FakeAffixAllomorph(
+            "allo-b", inflection_classes=[_FakeInflClass("ic-shared", owner=src_pos)]),
+        new_b, ctx, _TAG, resolver_cache, [])
+
+    assert factory.create_calls == ["ic-shared"]
+    assert list(new_a.InflectionClassesRC) == list(new_b.InflectionClassesRC)
+    assert len(new_a.InflectionClassesRC) == 1
+
+
+def test_infl_class_empty_source_does_not_blank_target():
+    """Empty source InflectionClassesRC -> no write; a populated target
+    collection is not blanked (FR-005/G2)."""
+    existing = _FakeInflClass("ic-keep")
+    target, _ = _make_target(pos=[], with_factory=False, infl_class_factory=True)
+    factory = target._factories["IMoInflClassFactory"]
+    src_allo = _FakeAffixAllomorph("allo-ic-5", inflection_classes=[])
+    new_allo = _FakeNewAffixAllomorph("allo-ic-5", inflection_classes=[existing])
+    dropped: list = []
+
+    owned.reproduce_moaffix_msenv_data(
+        src_allo, new_allo, _FakeCtx(target), _TAG, {}, dropped)
+
+    assert list(new_allo.InflectionClassesRC) == [existing]
+    assert factory.create_calls == []
+    assert dropped == []
+
+
+def test_infl_class_preview_move_parity():
+    """Preview twin's decision matches the Move outcome (G6): LINK present,
+    CREATE absent-but-owning-POS-present, REPORT owning-POS-absent."""
+    # LINK
+    src_pos = _FakePOS("pos-p-link")
+    tgt_class = _FakeInflClass("ic-p-link")
+    tgt_pos = _FakePOS("pos-p-link", inflection_classes=[tgt_class])
+    target, _ = _make_target(pos=[tgt_pos], with_factory=False,
+                             infl_class_factory=True)
+    recs = owned._plan_moaffix_msenv_decisions(
+        _FakeAffixAllomorph(
+            "a", inflection_classes=[_FakeInflClass("ic-p-link", owner=src_pos)]),
+        _FakeCtx(target), {}, [])
+    ic_recs = [r for r in recs if r.field_name == "InflectionClassesRC"]
+    assert len(ic_recs) == 1 and ic_recs[0].action == ReferenceAction.LINK
+
+    # CREATE
+    tgt_pos2 = _FakePOS("pos-p-create")
+    target2, _ = _make_target(pos=[tgt_pos2], with_factory=False,
+                              infl_class_factory=True)
+    recs2 = owned._plan_moaffix_msenv_decisions(
+        _FakeAffixAllomorph(
+            "b", inflection_classes=[
+                _FakeInflClass("ic-p-new", owner=_FakePOS("pos-p-create"))]),
+        _FakeCtx(target2), {}, [])
+    ic_recs2 = [r for r in recs2 if r.field_name == "InflectionClassesRC"]
+    assert len(ic_recs2) == 1 and ic_recs2[0].action == ReferenceAction.CREATE
+
+    # REPORT (owning POS absent)
+    target3, _ = _make_target(pos=[], with_factory=False, infl_class_factory=True)
+    dropped3: list = []
+    recs3 = owned._plan_moaffix_msenv_decisions(
+        _FakeAffixAllomorph(
+            "c", inflection_classes=[
+                _FakeInflClass("ic-p-gone", owner=_FakePOS("pos-gone"))]),
+        _FakeCtx(target3), {}, dropped3)
+    assert not [r for r in recs3 if r.field_name == "InflectionClassesRC"]
+    assert any(r.field_name == "InflectionClassesRC" for r in dropped3)
