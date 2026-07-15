@@ -29,6 +29,9 @@ class GrammarCategory(enum.Enum):
     INFLECTION_FEATURES = "inflection_features"
     CUSTOM_FIELDS = "custom_fields"
     INFLECTION_CLASSES = "inflection_classes"
+    FEATURE_STRUCT_TYPES = "feature_struct_types"
+    POS_INFLECTABLE_FEATS = "pos_inflectable_feats"
+    PHON_FEAT_TYPES = "phon_feat_types"
     STEM_NAMES = "stem_names"
     EXCEPTION_FEATURES = "exception_features"
     VARIANT_TYPES = "variant_types"
@@ -123,6 +126,8 @@ def _build_default_conflict_modes() -> dict:
         GrammarCategory.INFLECTION_CLASSES,
         GrammarCategory.STEM_NAMES,
         GrammarCategory.EXCEPTION_FEATURES,
+        GrammarCategory.FEATURE_STRUCT_TYPES,
+        GrammarCategory.POS_INFLECTABLE_FEATS,
         GrammarCategory.ADHOC_COMPOUND_RULES,
         GrammarCategory.PHONEMES,
         GrammarCategory.NATURAL_CLASSES,
@@ -130,6 +135,15 @@ def _build_default_conflict_modes() -> dict:
         GrammarCategory.PH_ENVIRONMENT,
         # STRATA reclassified to MULTI_INSTANCE (StrataOS is an Owning SEQUENCE)
         GrammarCategory.STRATA,
+        # PHON_FEAT_TYPES (coverage-content-fidelity-v2 Part B remediation):
+        # reclassified from GOLD_RESERVED to MULTI_INSTANCE to match its
+        # structurally identical sibling FEATURE_STRUCT_TYPES, above. Under
+        # v7.0.0 both buckets resolve to ConflictMode.UPDATE, so this is a
+        # model-consistency correction with no runtime behavior change.
+        # PHON_FEAT_TYPES remains correctly absent from _GOLD_RESERVED_CATS
+        # and the _iterators maps (POS precedent) -- that is unaffected by
+        # this reclassification.
+        GrammarCategory.PHON_FEAT_TYPES,
         # Phase 0 / entry-level categories
         GrammarCategory.ENTRY,
         GrammarCategory.SENSE,

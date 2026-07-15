@@ -145,6 +145,8 @@ class TestLayer1DefaultTable:
             GrammarCategory.SLOTS,
             GrammarCategory.AFFIX_TEMPLATES,
             GrammarCategory.INFLECTION_CLASSES,
+            GrammarCategory.FEATURE_STRUCT_TYPES,
+            GrammarCategory.POS_INFLECTABLE_FEATS,
             GrammarCategory.STEM_NAMES,
             GrammarCategory.EXCEPTION_FEATURES,
             GrammarCategory.ADHOC_COMPOUND_RULES,
@@ -153,6 +155,7 @@ class TestLayer1DefaultTable:
             GrammarCategory.PHONOLOGICAL_RULES,
             GrammarCategory.PH_ENVIRONMENT,
             GrammarCategory.STRATA,  # reclassified to MULTI_INSTANCE
+            GrammarCategory.PHON_FEAT_TYPES,  # reclassified to MULTI_INSTANCE (Part B remediation)
         ]
         for cat in multi:
             assert _DEFAULT_CONFLICT_MODES[cat] == ConflictMode.UPDATE, (
