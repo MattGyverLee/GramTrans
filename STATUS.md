@@ -20,22 +20,30 @@
   via `_log.debug` with **no `DroppedItemRecord`**. Same live-vs-fake divergence class as the 031
   finding. Offline fakes expose the method, so unit tests passed.
 
-**⛔ FIX REQUIRED before 026 merge — TWO layers (worktree @ `df4b30e`):**
+**THREE live-proof fixes landed (worktree @ `24a6b0b`); analyses `0 → 179` created live. TWO
+layers remain before merge.**
 
-- **Layer 1 (FIXED):** `wordforms._human_evaluation` now reads live approval via
-  `IWfiAnalysis.ApprovalStatusIcon` (fallback path + offline live-shaped regression tests);
-  offline suite 1698 passed. Necessary but not sufficient.
-- **Layer 2 (LOGGED, deeper, NOT fixed):** the re-proof still reproduces **0 analyses**. Real
-  FLEx interlinear `Segment.AnalysesRS` tokens are mostly **`IWfiGloss`** (204/540 on Ejagham
-  Mini, owning analysis approved) + punctuation (231) + bare wordforms (103); only **2** are
-  direct `IWfiAnalysis`. 026's walk treats each token as an analysis and casts to
-  `IWfiAnalysis`, so it misses all 204 human-glossed tokens. Needs **token normalization**
-  (gloss → owning analysis + chosen gloss), gloss-modelling offline fakes, and a re-proof
-  (expect ~206 analyses). Design-level rework of the wordform walk — a dedicated session.
-  Full detail + hard token census in `specs/026-texts-wordforms/verification-log.md`.
+- **Fix 1 (gate):** `_human_evaluation` reads live approval via `IWfiAnalysis.ApprovalStatusIcon`.
+- **Fix 2 (gloss gather):** `_normalize_token_to_analysis` — a gloss `AnalysesRS` token resolves
+  to its owning analysis (deduped); plan gathers **179** analyses (was 0).
+- **Fix 3 (wordform grouping):** `_iter_segment_wordforms` groups by the analysis's owning
+  wordform, so the target wordform is created; Move now **creates all 179 analyses** (was 2).
+- Each fix has offline regression tests; suite **1700 passed** (7-fail env baseline). Live
+  re-proof: texts `0 → 9` persisted, WfiAnalyses `0 → 179`, `dropped_items 1532` (never-silent
+  now active). Real interlinear tokens are 204 `IWfiGloss` + 231 punctuation + 103 bare
+  wordforms + 2 direct `IWfiAnalysis` — the gloss case is dominant and was previously missed.
 
-`Target` restored to clean. The main→026 conflict merge (`831eb68`) stands; the gate fix is in
-(`df4b30e`); the gloss-token rework + re-proof remain before merge.
+**⛔ REMAINING before 026 merge** (see `specs/026-texts-wordforms/verification-log.md`):
+1. **Segment `AnalysesRS` re-wiring (R5):** only 2/179 created analyses are wired back into the
+   segments' token sequence — `apply_alignment` not re-linking live.
+2. **Gloss reproduction (US4):** 0 `WfiGloss` created live.
+3. **Verdict:** 178/179 no-opinion — *likely* the correct needs-review path (target lexicon
+   incomplete → morph-bundle refs unresolved → no-verdict, FR-014); confirm on a
+   lexicon-complete target.
+
+`Target` restored clean. The main→026 conflict merge (`831eb68`) stands; three fixes are in
+(`24a6b0b`); the AnalysesRS-wiring + gloss-reproduction fixes + a lexicon-complete re-proof
+remain before merge.
 
 ---
 
