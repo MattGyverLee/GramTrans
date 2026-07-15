@@ -158,17 +158,28 @@ owning POS. **Independent test**: quickstart Tier 1 class LINK/CREATE/REPORT + d
 **Goal**: deep-copy `MsEnvFeaturesOA` (owned `IFsFeatStruc`), resolving feature values.
 **Independent test**: quickstart Tier 1 deep-copy + feature-value resolution/report.
 
-- [ ] T010 [P] [US3] RED: in `tests/unit/test_028_msenv_feature_struct.py`, failing tests —
+- [x] T010 [P] [US3] RED: in `tests/unit/test_028_msenv_feature_struct.py`, failing tests —
       deep-copy of a feature structure with a resolvable closed-feature value (target allomorph
       owns an equivalent structure with matching values), REPORT_DROPPED for an unresolvable /
       complex-feature value with the resolvable remainder still reproduced (partial fidelity,
       never silent, `field_name="MsEnvFeaturesOA"`), and empty-source no-op (no empty structure
       created; populated target not blanked).
-- [ ] T011 [US3] GREEN: implement the `MsEnvFeaturesOA` leg in both dispatch functions in
+- [x] T011 [US3] GREEN: implement the `MsEnvFeaturesOA` leg in both dispatch functions in
       `src/gramtrans/Lib/owned.py` — deep-copy the owned `IFsFeatStruc` (owned-child discipline)
       reading via `IMoAffixAllomorph(obj)` cast, resolving feature-value references through
       feature 031's closed-feature machinery (R3); complex/open features → REPORT_DROPPED
       (spec Out of Scope). Remove `MsEnvFeaturesOA` from the T005 fallback. Confirm T010 GREEN.
+      **DONE** (worktree c72d254): `owned._reproduce_msenv_features_oa`/`_plan_msenv_features_oa`;
+      deep-copies the owned `IFsFeatStruc` via `IFsFeatStrucFactory`/`IFsClosedValueFactory`
+      (GUID preserved), resolving each `IFsClosedValue` spec's `FeatureRA`/`ValueRA` BY GUID
+      against `Cache.LangProject.MsFeatureSystemOA.FeaturesOC` (feature-031 machinery, the same
+      iteration `categories.exception_features_execute_action` uses — resolve/LINK only, never
+      creates a feature). Partial fidelity: resolvable specs reproduced, unresolvable/complex
+      (non-closed) values per-spec REPORT_DROPPED; nothing resolves → no empty structure created.
+      `MsEnvFeaturesOA` added to `owned._MSENV_REPRODUCED_FIELDS`. Present-but-unreadable vs
+      genuinely-empty `FeatureSpecsOC` distinguished (field-level drop vs no-op) to keep the
+      cycle-16 rollout backstop green. 7/7 targeted GREEN; full offline suite at the 7-fail
+      environment baseline.
 
 **Checkpoint**: US1–US3 independently functional.
 
@@ -179,17 +190,26 @@ owning POS. **Independent test**: quickstart Tier 1 class LINK/CREATE/REPORT + d
 **Goal**: reproduce `PositionRS` (ordered `IPhEnvironment` references), reusing the 024
 environment path. **Independent test**: quickstart Tier 1 order + LINK/REPORT + never-create.
 
-- [ ] T012 [P] [US4] RED: in `tests/unit/test_028_affix_msenv_reproduction.py`, failing tests
+- [x] T012 [P] [US4] RED: in `tests/unit/test_028_affix_msenv_reproduction.py`, failing tests
       for the position leg — LINK each position to the target env (present), order preserved
       for ≥2 positions, a middle unresolvable position REPORT_DROPPED
       (`field_name="PositionRS"`) **without reordering** the rest, and never-create-environment
       (absent env is reported, never created).
-- [ ] T013 [US4] GREEN: implement the `PositionRS` leg in both dispatch functions in
+- [x] T013 [US4] GREEN: implement the `PositionRS` leg in both dispatch functions in
       `src/gramtrans/Lib/owned.py`, iterating source order and reusing
       `owned._target_phonological_environments` + the `_reproduce_phone_env_rc` link-or-report
       logic (R4), appending to the target `PositionRS` in order. Remove `PositionRS` from the
       T005 fallback — the fallback is now empty and `_report_dropped_moaffix_msenv_fields`
       is dead for the four fields. Confirm T012 GREEN.
+      **DONE** (worktree 1676119): `owned._reproduce_position_rs`/`_plan_position_rs` — a faithful
+      mirror of the `_reproduce_phone_env_rc`/`_plan_phone_env_rc_decisions` pair (`PositionRS`
+      targets the SAME `IPhEnvironment` list, MCP-confirmed), read via `IMoAffixAllomorph(obj)`
+      cast, iterating source order and `.Add()`-appending resolved target envs (order preserved,
+      G5/INV-5); a middle unresolvable position is REPORT_DROPPED (`field_name="PositionRS"`,
+      `owner_kind="MoAffixAllomorph"`) without reordering the rest; NEVER creates an environment
+      (G7). `PositionRS` added to `owned._MSENV_REPRODUCED_FIELDS` — the T005 report-drop fallback
+      is now **empty** (`_msenv_unreproduced_fields()` == ∅; all four fields reproduced). 6/6
+      targeted GREEN; cycle-16 backstop still green; full offline suite at the 7-fail baseline.
 
 **Checkpoint**: all four fields reproduced; the T005 report-drop fallback covers nothing.
 
