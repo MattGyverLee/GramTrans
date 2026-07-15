@@ -288,6 +288,17 @@ never-silent.
       `specs/028-affix-allomorph-morphosyntax/verification-log.md`. **Never under an unattended
       loop** (Ejagham corpora are vacuous for these fields; mirrors 027's constructed-fixture
       proof). Reaching this task under a loop → emit `needs_human` and stop.
+      **STAGED, attended run PENDING** (user-directed session): environment staged —
+      disposable source `Ejagham028Src` restored from `backups/Ejagham Mini.fwbackup` (real
+      Ejagham Mini untouched); `Target` restored clean from `backups/Target 2026-07-06
+      0218.fwbackup`; FieldWorks 9 present. Added the double-gated skipping placeholder
+      `tests/integration/test_028_affix_msenv_live.py` (worktree 4fc9340, mirrors 027) and the
+      procedure + fixture spec + SC map in `verification-log.md`. **Not executed:** the
+      constructed-fixture build (raw-LCM affix entry + form + allomorph populating all four
+      fields) + the two-project engine Move must be run attended in the FLEx host where
+      `flexicon` is installed (it is NOT pip-installed in the dev/CI shell, and the full engine
+      run is impractical through the single-project MCP). Template driver:
+      `scratchpad/run031_live.py`. Fill the RESULTS section of `verification-log.md` on the run.
 - [ ] T020 Merge `028-affix-allomorph-morphosyntax` → `main` (`--no-ff`) after T019 passes and
       any crew review is green; remove the worktree; update STATUS.md. Confirm the merged-tree
       offline suite matches (modulo the baseline fail). File any deferred follow-ups
