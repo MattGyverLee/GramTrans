@@ -1,5 +1,48 @@
 # GramTrans — Session Handoff
 
+## ▶▶▶ Feature 026 — Texts & Wordforms — READY TO MERGE, HELD on attended live validation (2026-07-15)
+
+**Status: conflicts resolved, offline-GREEN, HELD for a live session.** The 026 worktree
+`../GramTrans-026-texts-wordforms` (branch `026-texts-wordforms`) was fully implemented (all 39
+tasks T001–T040 done, Phase 8 polish) but had diverged from `main` after 027 + 028 merged. This
+session brought it up to date and resolved the merge, but held the final merge-to-`main` per the
+user's decision, because the attended live-validation run **cannot be done in the current
+environment** (no flexicon/CLR runtime — same cause as the 6 `test_013_apply_syncable_signature`
+env-baseline failures).
+
+**Done this session:**
+- **Merged `main` → `026-texts-wordforms`** (merge commit **`831eb68`** on the worktree; branch now
+  0 behind `main`). Resolved 4 **additive** conflicts by keeping both sides:
+  `models.py` (`RunPlan.text_plans` + 025/031 fields), `preview.py` (`text_plans=` ctor arg +
+  025/031 render fns), `transfer.py` (026 texts apply-hook + 025 reversal/config-view hooks,
+  ordered texts→reversals→config-views-last), `tests/verification/fidelity_census.py` (024 total
+  assert `75`→**`79`** for the merged `counts` dict incl. `ReversalIndexEntry`; kept 026's separate
+  7-class section, `== 25`).
+- **Offline gate GREEN on the merged tree:** `tests/unit` + `tests/verification` = **1696 passed**,
+  35 skipped, 14 xfailed, 14 xpassed. The **7 failures are the environment baseline only**
+  (6 `test_013` flexicon-source-tree-absent + 1 documented `test_wizard_pos_grammar_wiring`) —
+  reproduced on untouched `main`, NOT a 026 regression. Census suite alone: 116 passed. Byte-compile
+  clean.
+
+**⛔ REMAINING before merge (needs a flexicon/CLR-equipped, attended session):**
+1. **Attended live validation** (constitution Verification gate) — run the deferred 026 live
+   `[PROBE]`s **R2** (needs-review analysis appearance) and **R5** (exact `AnalysesRS` write path /
+   `Segment.NotesOS` note write) against a disposable `-restore`-ready target, per
+   `specs/026-texts-wordforms/probe-results.md` + `quickstart.md`; attach pre/post Import Residue.
+   Never under an unattended loop. (026's own tasks.md designates the offline gate as *primary* and
+   these probes as non-blocking, but the constitution still requires a live per-phase verification.)
+2. **Optional crew review** — 026 has no `reviews/` / crew handoff, unlike 025/027/028/031. Consider
+   a lex-crew pass before merge.
+3. **Merge** `026-texts-wordforms` → `main` (`--no-ff`) after (1) passes; remove the worktree;
+   update this STATUS.md. Re-confirm the merged-tree offline suite still matches (1696 passed modulo
+   the 7-fail env baseline — or 1-fail baseline on a flexicon-installed machine).
+
+**Pickup:** `cd ../GramTrans-026-texts-wordforms` (branch already at `831eb68`, up to date with
+`main`); the merge is pre-resolved, so a flexicon session only needs the live proof + the
+`git checkout main && git merge --no-ff 026-texts-wordforms`.
+
+---
+
 ## ▶▶▶ Feature 028 — Affix-Allomorph Morphosyntax Fidelity — DONE & MERGED (2026-07-15)
 
 **MERGED to `main` @ `5cecdb2`** (`--no-ff`, no conflicts). Worktree
