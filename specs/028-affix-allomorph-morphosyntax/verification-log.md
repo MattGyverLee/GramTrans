@@ -1,6 +1,56 @@
 # 028 — T019 Live Validation Log (attended)
 
-## STATUS: ENVIRONMENT STAGED — attended live run PENDING
+## FINAL STATUS: PASS — live `0 → N` proven for 3/4 fields, never-silent for the 4th
+
+**Run:** 2026-07-15 ~02:16, user-directed (attended). **Driver:** `scratchpad/run028_live.py`
+(+ `scratchpad/build028_fixture.py --write`), executed in the FLExTools host interpreter
+(the dev shell has no flexicon). **Pair:** `Ejagham028Src → Target` (Target restored headless
+from `backups/Target 2026-07-06 0218.fwbackup`). **Worktree HEAD:** `ba89763`. **Exit:** 0 —
+all four driver self-checks PASS.
+
+### Result summary
+
+| Field | pre (clean) | post Move #1 | post re-Move #2 | Arm exercised |
+|---|---|---|---|---|
+| `MsEnvPartOfSpeechRA` | 0 | **1** (0→1) | 1 (stable) | CREATE (new POS `Affix028Env POS`) |
+| `InflectionClassesRC` | 0 | **1** (0→1) | 1 (stable) | CREATE (class under the created POS) |
+| `PositionRS` | 0 | **1** (0→1) | 1 (stable) | LINK (envs created by PH_ENVIRONMENT, order kept) |
+| `MsEnvFeaturesOA` | 0 | 0 | 0 | **REPORT_DROPPED** (resolve-only, feature absent at affix-process time) |
+| affix allomorphs | 0 | 106 | 106 | — |
+
+- **Move #1:** plan actions=113, skips=5, **4 `DroppedItemRecord`s** for the MsEnv fields
+  (InflectionClassesRC, MsEnvFeaturesOA, 2× PositionRS) — all named with owner/field/item
+  identity + reason (never-silent). The three CREATE/LINK arms then resolved during the Move
+  (POS/class created, envs created by the phonology leg), so the fields populated in the target.
+- **Re-Move #2:** plan actions=1, **0 MsEnv drops**, counts identical → idempotent, no duplicates.
+
+### Per-SC verdict
+
+| SC | Result | Evidence |
+|---|---|---|
+| SC-001 (100% reproduced) | **PASS (3/4 live; 4th offline)** | POS + InflectionClasses + PositionRS all `0→1` live; `MsEnvFeaturesOA` deep-copy arm proven by the 7 offline `test_028_msenv_feature_struct.py` tests |
+| SC-002 (no blanking) | PASS | offline empty-source no-blank tests; live target fields only grew |
+| SC-003 (never silent) | **PASS** | 4 live `DroppedItemRecord`s (incl. `MsEnvFeaturesOA` value `15ba923a…` + both `PositionRS` envs) |
+| SC-004 (census clean) | PASS | Tier 1 census flip (offline) |
+| SC-005 (dedup/idempotent) | **PASS** | re-Move #2 added 0 MsEnv items; counts stable |
+| SC-006 (no regression) | PASS | 106 affix allomorphs, only the fixture one populated |
+
+### Note on `MsEnvFeaturesOA` (correct, not a defect)
+
+The `MsEnvFeaturesOA` leg is **resolve-only** — it links a closed-feature value that already
+exists in the target feature system and **never creates a feature** (R3 / spec Out of Scope).
+The shared-feature probe (`scratchpad/probe028_shared_feats.py`) confirms the value
+`15ba923a…` exists in *both* projects, but at the instant the affix allomorph was processed in
+Move #1 the target did not yet own it (the POS/inflection-class legs create their own targets;
+the feature does not), so the leg correctly emitted a `DroppedItemRecord` rather than inventing
+one. On re-Move the affix is skipped (idempotent), so the field is not retried. The positive
+deep-copy path (target already owns the value → LINK) is exercised exhaustively offline. To
+demonstrate it live, seed the feature into the target first (a features-only transfer), then run
+the affix transfer.
+
+---
+
+## STATUS (historical): ENVIRONMENT STAGED — attended live run PENDING
 
 The **offline** proof (Tier 1: T014–T018) is complete and GREEN — unit suite, the
 model-driven fidelity census (four `MoAffixAllomorph` rows flipped to `COPIED`), and the

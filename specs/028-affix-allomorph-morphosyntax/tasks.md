@@ -281,7 +281,7 @@ never-silent.
       unclassified field); [3] full unit regression → 1539 passed at the 7-fail baseline (no new
       failures). SC-001/002/003/004/005/006 offline obligations satisfied (Tier 1 column of the
       quickstart success-criteria map).
-- [ ] T019 [needs_human] Attended live proof (quickstart Tier 2) — build the **constructed**
+- [x] T019 [needs_human] Attended live proof (quickstart Tier 2) — build the **constructed**
       non-Ejagham fixture (affix allomorph populating all four fields), `-restore` a disposable
       target, run Preview → Move → re-Move (idempotency) → forced-drop, verify the `0 → N`
       reproduction and order/dedup/never-silent per quickstart, and write evidence to
@@ -299,6 +299,15 @@ never-silent.
       `flexicon` is installed (it is NOT pip-installed in the dev/CI shell, and the full engine
       run is impractical through the single-project MCP). Template driver:
       `scratchpad/run031_live.py`. Fill the RESULTS section of `verification-log.md` on the run.
+      **DONE — LIVE PASS** (2026-07-15, user-directed, worktree ba89763): ran
+      `build028_fixture.py --write` + `run028_live.py` in the FLExTools host interpreter
+      (subprocess; dev shell has no flexicon). `Ejagham028Src → Target` (clean-restored):
+      `MsEnvPartOfSpeechRA`/`InflectionClassesRC`/`PositionRS` each **0→1** (CREATE/CREATE/LINK),
+      idempotent re-Move (0 new, counts stable), and **4 never-silent `DroppedItemRecord`s**
+      (SC-003). `MsEnvFeaturesOA` correctly REPORT_DROPPED live (resolve-only leg, R3 — the
+      feature isn't in target at affix-process time; positive deep-copy arm proven by the 7
+      offline tests). All four driver self-checks PASS. Full results in
+      [verification-log.md](verification-log.md).
 - [ ] T020 Merge `028-affix-allomorph-morphosyntax` → `main` (`--no-ff`) after T019 passes and
       any crew review is green; remove the worktree; update STATUS.md. Confirm the merged-tree
       offline suite matches (modulo the baseline fail). File any deferred follow-ups
