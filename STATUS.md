@@ -1,15 +1,34 @@
 # GramTrans — Session Handoff
 
-## ▶▶▶ #28 MSA->slot producer port (FR-333) — OFFLINE GATES GREEN, AWAITING ATTENDED LIVE PROOF (2026-07-15)
+## ▶▶▶ #28 MSA->slot producer port (FR-333) — FEATURE COMPLETE (all gates green + live proof PASS) (2026-07-15)
 
-**Branch/worktree:** `msa-slot-wiring-v2` @ `../GramTrans-msa-slot-wiring-v2`, HEAD `95cfb81`
-(`fix(preview): populate msa_slot_bindings via IMoInflAffMsa cast (FR-333, #28 MSA->slot leg)`).
-**No spec folder exists for this bug-fix** — STATUS.md + `.crew-handoff.json` on this branch are
-the durable handoff surface.
+**Branch/worktree:** `msa-slot-wiring-v2` @ `../GramTrans-msa-slot-wiring-v2`, HEAD `a4f3dae`
+(live proof) on fix `95cfb81` (`fix(preview): populate msa_slot_bindings via IMoInflAffMsa cast
+(FR-333, #28 MSA->slot leg)`). **No spec folder exists for this bug-fix** — STATUS.md +
+`.crew-handoff.json` on this branch are the durable handoff surface.
 
-**STATUS: `needs_human`.** All offline crew gates are GREEN; the merge is gated on an attended
-live proof (exactly like 027's T025). Do NOT merge and do NOT run the live proof under an
-unattended loop.
+**STATUS: `feature_complete`.** All offline crew gates GREEN and the attended live proof PASSES
+(the analog of 027's T025). Team Lead APPROVES merge, pending the outward-facing steps the main
+session confirms with the human (below).
+
+**✅ ATTENDED LIVE PROOF — PASS (2026-07-15, user-authorized, FLExToolsMCP active):**
+`Ejagham Mini -> Target` (restored from `Target 2026-07-06 0218.fwbackup`), driver
+`scratchpad/run_msa_slot_live.py` v2, exit 0. Producer yields **79** `msa_slot_bindings` on live
+LCM (was **0** pre-fix); Move populates `identity_remap` with all **79** MSA keys; consumer
+`_run_171_subpass` wires **79/79** affix-MSA `SlotsRC` (baseline **0 -> 79**, matches source; **0**
+`DEPENDENCY_UNRESOLVED` skips); idempotent re-Move stable **79/79** (0 net-new). All 5 acceptance
+checks PASS. Necessity confirmed by code: `categories.py:4899` creates `MoInflAffMsa` with
+`slots=None` (SlotsRC deferred), so the 17.1 sub-pass is the ONLY wiring mechanism. First-run
+consumer FAIL was diagnosed as a **DRIVER probe bug** (captured `identity_remap` from a pre-move
+preview, always empty) — NOT a fix defect; v2 driver + `diag_msa_slots.py` (79/79) +
+`diag_remap.py` confirm. Report: `../GramTrans-msa-slot-wiring-v2/reviews/live-proof.md`.
+
+**Outward-facing steps (main session confirms with the human BEFORE executing):**
+1. Merge `msa-slot-wiring-v2` -> `main` (`--no-ff`).
+2. Remove the worktree `../GramTrans-msa-slot-wiring-v2`.
+3. Update main `STATUS.md`.
+4. File the 3 non-blocking fast-follow issues (below).
+5. Comment on **#28** that the MSA->slot leg is now proven live.
 
 - **Offline crew gates — ALL GREEN:**
   - cycle-1 verification PASS + domain **85** + qc **72 -> fixed**
@@ -25,16 +44,6 @@ unattended loop.
   `entryref_create_bindings`, `feature_category_links`) untouched producers; test counts exact —
   `test_preview_msa_slot_bindings` **10/10**, full suite **1590 passed** with ONLY the documented
   `test_wizard_pos_grammar_wiring` baseline failure; both renamed tests pass. No regressions.
-
-**⛔ ATTENDED LIVE PROOF (needs_human — main session executes WITH the human, never under a loop):**
-Model on `027 scratchpad/run27_live.py`. Steps:
-1. Source `Ejagham Mini` -> a **restored disposable** target (attended, FLExToolsMCP active).
-2. Run the Move.
-3. Reopen the target **read-only**; probe that inflectional-affix MSA `SlotsRC` go from
-   **unwired -> wired** (count > 0 — domain evidenced ~12 bound MSAs for the Verb subset, up to
-   **83** project-wide).
-4. **Idempotent re-Move** must produce **0 net-new** slot wirings.
-Confirm the outcome, then authorize merge of `msa-slot-wiring-v2` -> `main`.
 
 **Fast-follow issues to file (non-blocking, per cycle-1 synthesis — confirm with human first):**
 1. **Selection-scope:** `_populate_msa_slot_bindings` scans the whole lexdb, causing false

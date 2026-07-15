@@ -1,9 +1,10 @@
 {
   "feature": "28-msa-slot-wiring-v2",
-  "status": "needs_human",
-  "last_cycle": 3,
-  "spurts_completed": 3,
+  "status": "feature_complete",
+  "last_cycle": 4,
+  "spurts_completed": 4,
   "commit_under_test": "95cfb81",
+  "live_proof_commit": "a4f3dae",
   "branch": "msa-slot-wiring-v2",
   "worktree": "../GramTrans-msa-slot-wiring-v2",
   "spec_folder": null,
@@ -16,21 +17,41 @@
     "cycle3_verification": "PASS (independent re-verify, 5/5)"
   },
   "gates_all_green": true,
+  "live_proof": {
+    "status": "PASS",
+    "run": "2026-07-15 attended (user-authorized), FLExToolsMCP active",
+    "pair": "Ejagham Mini -> Target (restored from Target 2026-07-06 0218.fwbackup)",
+    "producer_bindings": "79 MSAs / 79 slot refs on live LCM (was 0 pre-fix)",
+    "identity_remap_msa_keys": 79,
+    "consumer_wired": "79/79 affix-MSA SlotsRC (baseline 0 -> post 79)",
+    "dependency_unresolved_skips": 0,
+    "idempotent_re_move": "stable 79/79, 0 net-new",
+    "acceptance_checks": "5/5 PASS, exit 0",
+    "necessity": "categories.py:4899 creates MoInflAffMsa with slots=None (SlotsRC deferred); 17.1 sub-pass is the ONLY wiring mechanism",
+    "driver_bug_note": "first run's consumer FAIL was a DRIVER probe bug (captured identity_remap from pre-move preview, always empty); NOT a fix defect; v2 driver + diag_msa_slots.py (79/79) + diag_remap.py confirm",
+    "report": "../GramTrans-msa-slot-wiring-v2/reviews/live-proof.md"
+  },
   "tasks_done": [
     "cycle-1 verification/domain/qc",
     "cycle-2 fix (duck-only dead branch excised, producer consolidated)",
-    "cycle-3 independent re-verification PASS"
+    "cycle-3 independent re-verification PASS",
+    "cycle-4 attended live proof PASS (0->79 affix-MSA SlotsRC)"
   ],
-  "next_checkpoint": "attended live proof (needs_human)",
-  "next_entry": "Attended live proof: Ejagham Mini -> restored disposable target, Move, reopen read-only, probe infl-affix MSA SlotsRC unwired->wired (count>0, ~12 Verb / up to 83 project-wide), idempotent re-Move = 0 net-new. Model on 027 scratchpad/run27_live.py. Then authorize merge.",
-  "blocker": "Merge is gated on an attended live proof (FLExToolsMCP active, human present). Never run under an unattended loop. Main session confirms live proof + merge + GitHub issues with the human before executing.",
+  "next_checkpoint": "feature_complete",
+  "next_entry": "Outward-facing steps (main session confirms with human BEFORE executing): (1) merge msa-slot-wiring-v2 -> main --no-ff; (2) remove worktree; (3) update main STATUS.md; (4) file 3 non-blocking fast-follow issues; (5) comment on #28 that the MSA->slot leg is proven live.",
+  "blocker": null,
   "fast_follow_issues": [
-    "Selection-scope: _populate_msa_slot_bindings scans whole lexdb -> false Skip(DEPENDENCY_UNRESOLVED) on partial transfers",
-    "Live-cast-path unit coverage: all 10 tests hit only the duck fallback",
+    "Selection-scope: _populate_msa_slot_bindings scans whole lexdb -> false Skip(DEPENDENCY_UNRESOLVED) on partial transfers (full-project transfer unaffected)",
+    "Live-cast-path unit coverage: all 10 tests hit only the duck fallback; live proof is the cast-path evidence",
     "P2 nits: redundant (ImportError, Exception) tuple; split 115-line _populate_msa_slot_bindings"
   ],
   "reports": [
-    "../GramTrans-msa-slot-wiring-v2/reviews/cycle3-verification.md"
+    "../GramTrans-msa-slot-wiring-v2/reviews/cycle1-verification.md",
+    "../GramTrans-msa-slot-wiring-v2/reviews/cycle1-domain.md",
+    "../GramTrans-msa-slot-wiring-v2/reviews/cycle1-qc.md",
+    "../GramTrans-msa-slot-wiring-v2/reviews/cycle2-programmer.md",
+    "../GramTrans-msa-slot-wiring-v2/reviews/cycle3-verification.md",
+    "../GramTrans-msa-slot-wiring-v2/reviews/live-proof.md"
   ],
   "updated": "2026-07-15"
 }
