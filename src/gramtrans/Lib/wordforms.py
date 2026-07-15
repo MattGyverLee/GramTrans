@@ -341,41 +341,91 @@ def _iter_segment_wordforms(source, segment):
     seen = {}
     order = []
     for tok in tokens:
+        # Resolve the owning wordform via the token's ANALYSIS: a gloss token's
+        # owning wordform is found off its analysis (`GetOwningWordform(gloss)`
+        # does not resolve one), which is what lets the apply side capture the
+        # wordform form and find-or-create the target wordform (2026-07-15 live
+        # proof: without this, gloss-backed analyses grouped under the gloss,
+        # `GetForm` returned empty, and the target wordform could not be made).
+        analysis = _normalize_token_to_analysis(tok)
+        probe = analysis if analysis is not None else tok
         wf = None
         if wa_ops is not None:
             try:
-                wf = wa_ops.GetOwningWordform(tok)
+                wf = wa_ops.GetOwningWordform(probe)
             except Exception:
                 wf = None
         if wf is None:
-            wf = tok  # token itself is a bare wordform
+            wf = tok  # bare wordform / punctuation token
         key = _guid_str(wf)
         if key not in seen:
             seen[key] = []
             order.append((key, wf))
-        # Collect the token if it is an analysis (has a human-eval surface).
         seen[key].append(tok)
     for key, wf in order:
         yield wf, seen[key]
 
 
+def _normalize_token_to_analysis(token):
+    """Resolve a `Segment.AnalysesRS` token to the `IWfiAnalysis` to reproduce,
+    or None for a non-analysis token (bare wordform / punctuation).
+
+    Real FLEx interlinear segments reference the CHOSEN token per word, which is
+    most often an `IWfiGloss` (the linguist's chosen gloss) whose owning
+    `IWfiAnalysis` carries the human approval + morph bundles -- only
+    occasionally a bare `IWfiAnalysis`. (2026-07-15 live proof: 204 gloss tokens
+    vs 2 direct analysis tokens on Ejagham Mini; treating every token as an
+    analysis and casting to `IWfiAnalysis` missed all 204 glossed words.) Maps:
+    `IWfiAnalysis` -> itself; `IWfiGloss` -> its owning `IWfiAnalysis`;
+    `IWfiWordform` / `IPunctuationForm` / other -> None.
+
+    Offline duck-typed fallback (no SIL.LCModel): a fake gloss token exposes
+    `owning_analysis`; a token exposing `is_analysis == False` is a non-analysis
+    (skip); any other fake token is treated as the analysis itself -- back-compat
+    with the pre-existing fakes that model segment tokens as bare analyses."""
+    try:
+        from SIL.LCModel import IWfiAnalysis, IWfiGloss  # noqa: PLC0415
+    except Exception:
+        owning = getattr(token, "owning_analysis", None)
+        if owning is not None:
+            return owning
+        if getattr(token, "is_analysis", True) is False:
+            return None
+        return token
+    try:
+        return IWfiAnalysis(token)
+    except Exception:
+        pass
+    try:
+        gloss = IWfiGloss(token)
+    except Exception:
+        return None
+    try:
+        return IWfiAnalysis(gloss.Owner)
+    except Exception:
+        return None
+
+
 def plan_analyses(segment, source, target, ctx, resolver_cache, dropped) -> List:
     """Per-segment pure/decision pass → list of `models.AnalysisPlan`.
 
-    Keeps only analyses with a non-null human evaluation (FR-006); sets the
-    verdict from the eval's approve flag (FR-007); resolves CategoryRA via
-    `resolve_or_report_category` (FR-011); builds morph bundles (delegated) and
-    computes `needs_review` (an approve that lost ≥1 morpheme referent, FR-014;
-    a deny is never downgraded, FR-015); captures the WS-gated wordform form +
-    spelling status (FR-013). No writes. Glosses (US4, T030) are captured empty
-    here.
+    Normalizes each `Segment.AnalysesRS` token to its owning `IWfiAnalysis`
+    (`_normalize_token_to_analysis` -- a gloss token resolves to its analysis;
+    bare wordform / punctuation tokens are skipped), then keeps only analyses
+    with a non-null human evaluation (FR-006); sets the verdict from the eval's
+    approve flag (FR-007); resolves CategoryRA via `resolve_or_report_category`
+    (FR-011); builds morph bundles (delegated) and computes `needs_review` (an
+    approve that lost ≥1 morpheme referent, FR-014; a deny is never downgraded,
+    FR-015); captures the WS-gated wordform form + spelling status (FR-013). No
+    writes. A given analysis referenced by several gloss tokens is planned once
+    (per-wordform dedup by GUID).
     """
     ws_map = dict(getattr(ctx, "_ws_map", None) or {})
     tgt_ws_ids = target_ws_ids(target)
     wf_ops = getattr(source, "Wordforms", None)
     plans: List[AnalysisPlan] = []
 
-    for wordform, analyses in _iter_segment_wordforms(source, segment):
+    for wordform, tokens in _iter_segment_wordforms(source, segment):
         wf_form = {}
         if wf_ops is not None and hasattr(wf_ops, "GetForm"):
             wf_form = capture_per_ws(
@@ -387,7 +437,17 @@ def plan_analyses(segment, source, target, ctx, resolver_cache, dropped) -> List
         if wf_ops is not None and hasattr(wf_ops, "GetSpellingStatus"):
             spelling = _texts._safe(lambda: wf_ops.GetSpellingStatus(wordform))
 
-        for analysis in analyses:
+        seen_analyses = set()
+        for token in tokens:
+            analysis = _normalize_token_to_analysis(token)
+            if analysis is None:
+                # bare wordform / punctuation token — no human analysis.
+                continue
+            akey = _guid_str(analysis)
+            if akey in seen_analyses:
+                # same analysis reached via multiple gloss tokens — plan once.
+                continue
+            seen_analyses.add(akey)
             evaluation = _human_evaluation(source, analysis)
             if evaluation is None:
                 # FR-006: parser-only / un-evaluated — excluded (countable via

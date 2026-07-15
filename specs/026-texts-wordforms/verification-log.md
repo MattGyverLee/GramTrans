@@ -98,4 +98,40 @@ operate on the resolved owning analysis. This needs: (1) token-normalization in 
 this corpus (expect ~204 gloss-backed + 2 direct analyses reproduced), (4) then R2/R5.
 This is a design-level rework of the wordform walk, tracked here for a dedicated session.
 
+### Fix attempts #2 + #3 (gloss-token gather + wordform grouping) — big progress, two layers remain
+
+Two further fixes landed (both with offline regression tests; suite **1700 passed**, 7-fail
+env baseline):
+
+- **Fix #2 — gloss-token normalization** (`_normalize_token_to_analysis`, wired into
+  `plan_analyses`): a `Segment.AnalysesRS` token that is an `IWfiGloss` now resolves to its
+  owning `IWfiAnalysis` (deduped per wordform); bare-wordform / punctuation tokens skip.
+  → the plan now gathers **179 analyses** (was 0; 204 gloss + 2 direct tokens dedupe to 179).
+- **Fix #3 — owning-wordform grouping** (`_iter_segment_wordforms`): group each token by the
+  owning wordform of its *analysis* (not of the raw gloss token), so the wordform form is
+  captured and the target wordform can be found/created.
+  → the Move now **creates all 179 analyses** on Target (was 2).
+
+Re-proof after #2+#3 (Ejagham Mini → Target, fresh disk open):
+- texts `0 → 9` (persisted), **target WfiAnalyses = 179** (created), `dropped_items = 1532`
+  (never-silent now active over morph-bundle refs the target lexicon doesn't yet hold).
+
+**Two layers still NOT working live (tracked for a dedicated session):**
+1. **Segment `AnalysesRS` wiring (R5 alignment):** only **2/179** created analyses are wired
+   back into the segments' `AnalysesRS` token sequence (`segs_with_analyses = 2`). The
+   alignment/rebuild step (`apply_alignment` / `_analyses_rs`) is not re-linking the created
+   analyses into the target segments on live data.
+2. **Gloss reproduction (US4):** **0** `WfiGloss` created on Target — `_apply_glosses` /
+   `WfiGlosses.Create` not producing glosses live.
+3. **Verdict (likely correct-by-design, confirm):** 178/179 analyses are no-opinion, 1 approved.
+   This is *probably* the intended needs-review path (FR-014): the STEMS closure did not
+   reproduce every sense/MSA the morph bundles reference, so most analyses lost ≥1 referent and
+   are written no-verdict (the 1532 drops corroborate). Confirm against a target that already
+   holds the referenced lexicon, where more should land HUMAN_APPROVED.
+
+**Net:** 026's analysis reproduction went from **0 analyses (silent loss)** to **179 created +
+fully reported** across three fixes — the core gather + create path now works live. Remaining
+before merge: fix the segment-`AnalysesRS` re-wiring and gloss reproduction, then re-proof
+against a lexicon-complete target (R2/R5/US4 fully green), then merge.
+
 Target was restored to the clean backup after every run (left pristine).
