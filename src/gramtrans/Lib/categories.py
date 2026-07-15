@@ -1179,26 +1179,69 @@ def custom_fields_execute_action(action, context, ws_mapping, tag):
 
 # ----- inflection_classes --------------------------------------------------
 #
-# Inflection classes are IMoInflClass objects under
-# LangProject.MorphologicalDataOA.ProdRestrictOA.PossibilitiesOS.
+# Inflection classes are IMoInflClass objects owned PER-POS via
+# IPartOfSpeech.InflectionClassesOC (owning collection). This is the true LCM
+# owner -- confirmed via flexicon POSOperations.GetInflectionClasses(pos),
+# which returns `pos.InflectionClassesOC` (flexicon/code/Grammar/POSOperations.py).
+#
+# NOTE: flexicon's InflectionFeatureOperations.InflectionClassGetAll() /
+# InflectionClassCreate() read/write MorphologicalDataOA.ProdRestrictOA
+# .PossibilitiesOS instead -- that is the PRODUCTION-RESTRICTIONS (exception
+# features) possibility list, a different collection entirely, and is a
+# flexicon-side defect (out of scope for this repo -- flexicon is a separate
+# dependency package). GramTrans MUST NOT use that wrapper for enumeration or
+# for Add(); it walks IPartOfSpeech.InflectionClassesOC directly instead
+# (mirrors stem_names_* / slots_execute_action's per-POS owner pattern).
+#
+# GetSyncableProperties/ApplySyncableProperties on InflectionFeatures ARE
+# correct for IMoInflClass items (confirmed: the docstring and body of
+# InflectionFeatureOperations.GetSyncableProperties/ApplySyncableProperties
+# operate purely on the item's Name/Abbreviation/Description multistrings by
+# WS handle -- they do not depend on which collection the item was fetched
+# from -- and ApplySyncableProperties forwards ws_map for source->target WS
+# translation). Those two calls are kept unchanged; only enumeration/skip-
+# check/owner-Add are rewired to the POS-owned collection.
+#
 # No GOLD check (user-defined only).
-# Factory: IMoInflClassFactory.Create(Guid) + Add to ProdRestrictOA.PossibilitiesOS.
+# Factory: IMoInflClassFactory.Create(Guid) + target_pos.InflectionClassesOC.Add().
+
+
+def _inflection_classes_from_pos(pos_obj):
+    """Yield top-level IMoInflClass objects from a single IPartOfSpeech.
+
+    TODO(SubclassesOC): IMoInflClass can nest further classes via
+    ic.SubclassesOC. This helper enumerates top-level InflectionClassesOC
+    entries only; recursing into SubclassesOC is deferred pending domain-
+    oracle confirmation that nested subclasses are present in test projects
+    and are not already counted by POS.InflectionClassesOC.
+    """
+    for ic in getattr(pos_obj, "InflectionClassesOC", None) or ():
+        yield ic
+    # [SubclassesOC hook] Insert SubclassesOC recursion here once confirmed.
+
 
 def inflection_classes_enumerate_source(context: RunContext, selection: Selection):
-    """Walk source.InflectionFeatures.InflectionClassGetAll()."""
+    """Yield all top-level IMoInflClass objects from all POSes in source."""
     source = context.source_handle
-    if not hasattr(source, "InflectionFeatures"):
-        return ()
-    return list(source.InflectionFeatures.InflectionClassGetAll())
+    results = []
+    for pos in _iter_pos(source):
+        pos_obj = _as_pos(pos)
+        for ic in _inflection_classes_from_pos(pos_obj):
+            results.append(ic)
+    return results
 
 
 def inflection_classes_dependencies(piece):
-    """Inflection classes reference an owner POS (via InflectionClassesRC on
-    IPartOfSpeech), but in Phase 0 additive mode the class is created without
-    wiring that reference — the POS wiring is handled at the affix / MSA level.
-    Return empty so the closure walker treats this as a leaf.
-    """
-    return ()
+    """Inflection classes are owned by a POS (IPartOfSpeech.InflectionClassesOC),
+    so the owning POS must be created in the target before this piece is
+    executed. Yield a (GRAM_CATEGORIES, owner_pos_guid) edge so the closure
+    walker orders POS creation ahead of its inflection classes; empty when
+    the owner cannot be determined (duck-typed piece with no Owner)."""
+    owner = getattr(piece, "Owner", None)
+    if owner is None:
+        return ()
+    g = _guid_str_from(owner)
+    return ((GrammarCategory.GRAM_CATEGORIES, g),) if g else ()
 
 
 def inflection_classes_required_writing_systems(piece) -> Iterable[Tuple[str, WSKind]]:
@@ -1206,17 +1249,24 @@ def inflection_classes_required_writing_systems(piece) -> Iterable[Tuple[str, WS
 
 
 def inflection_classes_plan_action(piece, context: RunContext, ws_mapping: WSMapping):
-    """No GOLD check; emit PlannedAction or ALREADY_PRESENT_BY_GUID skip."""
+    """No GOLD check; emit PlannedAction or ALREADY_PRESENT_BY_GUID skip.
+
+    Presence is checked by walking every target POS's InflectionClassesOC
+    (same per-POS walk as enumerate_source), not the flat/wrong
+    ProdRestrictOA-backed InflectionClassGetAll() wrapper.
+    """
     src_guid = _guid_str_from(piece)
     target = context.target_handle
-    if hasattr(target, "InflectionFeatures"):
-        if _target_has_guid(target.InflectionFeatures.InflectionClassGetAll(), src_guid):
-            return Skip(
-                category=GrammarCategory.INFLECTION_CLASSES,
-                source_guid=src_guid,
-                reason=SkipReason.ALREADY_PRESENT_BY_GUID,
-                detail=f"Inflection class GUID {src_guid[:8]}... already present in target.",
-            )
+    for pos in _iter_pos(target):
+        pos_obj = _as_pos(pos)
+        for ic in _inflection_classes_from_pos(pos_obj):
+            if _guid_str_from(ic) == src_guid:
+                return Skip(
+                    category=GrammarCategory.INFLECTION_CLASSES,
+                    source_guid=src_guid,
+                    reason=SkipReason.ALREADY_PRESENT_BY_GUID,
+                    detail=f"Inflection class GUID {src_guid[:8]}... already present in target.",
+                )
     return PlannedAction(
         category=GrammarCategory.INFLECTION_CLASSES,
         source_guid=src_guid,
@@ -1226,10 +1276,18 @@ def inflection_classes_plan_action(piece, context: RunContext, ws_mapping: WSMap
 
 
 def inflection_classes_execute_action(action: PlannedAction, context: RunContext, ws_mapping: WSMapping, tag: ImportResidueTag):
-    """Create IMoInflClass in target with GUID preserved.
+    """Create IMoInflClass in target with GUID preserved, owned by the
+    same POS (by source GUID) that owns it in the source.
 
-    IMoInflClassFactory.Create(Guid) + ProdRestrictOA.PossibilitiesOS.Add().
-    ApplySyncableProperties syncs Name/Abbreviation/Description.
+    Requires the owner POS to already exist in the target (created earlier
+    in the same run via the GRAM_CATEGORIES dependency edge, or pre-existing).
+    If the owner POS cannot be resolved, returns None (dependency unresolved;
+    mirrors stem_names_execute_action / slots_execute_action -- the caller
+    logs/accounts for the miss rather than mis-owning or crashing).
+
+    IMoInflClassFactory.Create(Guid) + owner_pos.InflectionClassesOC.Add().
+    ApplySyncableProperties syncs Name/Abbreviation/Description (confirmed
+    correct for IMoInflClass -- see header note above).
     Carrier B residue.
     """
     from SIL.LCModel import IMoInflClassFactory, IMoInflClass
@@ -1244,17 +1302,28 @@ def inflection_classes_execute_action(action: PlannedAction, context: RunContext
     target = context.target_handle
     src_guid = action.source_guid
 
+    # Find the source inflection class and its owning POS's GUID.
     src_obj = None
-    for ic in source.InflectionFeatures.InflectionClassGetAll():
-        if _guid_str_from(ic) == src_guid:
-            src_obj = ic
+    src_owner_pos_guid = None
+    for pos in _iter_pos(source):
+        pos_obj = _as_pos(pos)
+        for ic in _inflection_classes_from_pos(pos_obj):
+            if _guid_str_from(ic) == src_guid:
+                src_obj = ic
+                src_owner_pos_guid = _guid_str_from(pos_obj)
+                break
+        if src_obj is not None:
             break
     if src_obj is None:
         return None
 
+    # Resolve the same POS (by source GUID) on the target side.
+    target_pos = _resolve_target_pos(target, src_owner_pos_guid)
+    if target_pos is None:
+        return None  # Owner POS not in target; dependency unresolved.
+
     cache = getattr(target, "Cache")
     ws = cache.DefaultAnalWs
-    morph_data = cache.LangProject.MorphologicalDataOA
 
     parsed_guid = DotNetGuid.Parse(src_guid)
     sl = cache.ServiceLocator
@@ -1269,7 +1338,7 @@ def inflection_classes_execute_action(action: PlannedAction, context: RunContext
             f"IMoInflClassFactory does not support Create(Guid); "
             f"cannot align GUID {src_guid}"
         ) from e
-    _safe_add_to_owner(new_ic, morph_data.ProdRestrictOA.PossibilitiesOS,
+    _safe_add_to_owner(new_ic, target_pos.InflectionClassesOC,
                        "IMoInflClassFactory", src_guid)
     new_ic = IMoInflClass(new_ic)
 
