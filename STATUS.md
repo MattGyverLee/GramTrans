@@ -1,5 +1,65 @@
 # GramTrans — Session Handoff
 
+## ============================================================
+## SESSION HANDOFF — 2026-07-15 (stale-branch reconciliation sweep + coverage port)
+## ============================================================
+
+**Theme this session:** reconcile every stale feature/bug branch against current
+`main` BEFORE acting (port-not-merge — the branches are 100+ commits behind so a
+plain merge would delete newer work), delete what's superseded, port what's
+genuinely missing, and gate every live-LCM change on an attended live proof.
+
+### MERGED to main this session (all pushed to origin)
+| Merge | What | Proof |
+|---|---|---|
+| `a90f0a1` | **#28 MSA→slot** (FR-333): `_populate_msa_slot_bindings` producer so affix-MSA `SlotsRC` actually wire on live (was dormant — getattr duck path no-opped on live LCM) | live 0→79, idempotent |
+| `ed19724` | **pyflexicon floor → >=4.1.1** (PhonFeatures `GetSyncableProperties`); dropped the now-inert mbugwe Bug 3 guard | n/a (dep policy) |
+| `15085cb` | **coverage Part A**: inflection_classes owner fix — `IMoInflClass` now added to per-POS `IPartOfSpeech.InflectionClassesOC` (was wrongly `ProdRestrictOA.PossibilitiesOS`) | live 0→5 under owner POS, 0 mis-owned, idempotent |
+
+### Issues
+- **CLOSED:** #28 (both legs proven live), #30 (LexEntryRef reproduction, via 027 earlier).
+- **OPEN (filed this session):** #32 (US3 complex-form live proof + deferred 027 items), #33 (msa-slot selection-scope noise), #34 (msa-slot live-cast unit coverage), #35 (msa-slot P2 nits), #36 (`stem_names_dependencies()` per-POS-ordering gap — same shape as the inflection_classes bug).
+
+### Branches pruned (reconciled → obsolete/superseded)
+`msa-slot-wiring` (ported→superseded), `custom-field-ws` (already on main, better),
+`mbugwe-grammar-bugs` (2 bugs already on main, bug 3 obsoleted by flexicon 4.1.1),
+`018-rules-page` (feature+spec on main), `019-stems-item-picker` (on main),
+`feature/007-selection-ui` (subsumed by 025/027/031), plus contained refs
+`024-custom-field-persist`, `027-complex-forms-variants`, `feature/010-phonology-selector`,
+and stale worktrees `020/021/024/025`. **Remaining branches:** `main`,
+`coverage-content-fidelity` (ORIGINAL — port source, keep until Part B merges),
+`coverage-content-fidelity-v2` (ACTIVE — Part B in progress).
+
+### ⏳ IN FLIGHT — coverage-content-fidelity Part B (3 new content categories)
+**Worktree:** `../GramTrans-coverage-content-fidelity-v2` (branch `coverage-content-fidelity-v2`,
+off main; Part A already merged to main via `15085cb`, branch continues for Part B).
+**Reviews live under `reviews/coverage-content-fidelity/`** (feature-scoped so the coverage
+merge never clobbers msa-slot's root `reviews/*.md` that are on main).
+
+Port source = stale commit `ec9891ae` (RE-IMPLEMENT against main, do NOT cherry-pick — ~124
+commits behind). **Key adaptation:** use main's `_copy_multistrings_ws_mapped(...ws_map=)`
+(categories.py:577), NOT ec9891ae's `_build_ws_pairs`/`_copy_multistring`. **SKIP** ec9891ae's
+`exception_features` rework (conflicts with main's `ExceptionFeaturesOC`).
+
+Sub-part status (sequential — all edit models.py/categories.py/preview.py/transfer.py/test_category_registry.py):
+1. **inflection_features complex/open features — DONE** (`2ab8a79`): FsComplexFeature→create+TypeRA-by-guid, FsOpenFeature→clean skip, FsClosedFeature unchanged. RED→GREEN, suite green modulo baseline.
+2. **FEATURE_STRUCT_TYPES — IN PROGRESS** (lex-programmer running): `IFsFeatStrucType` under `MsFeatureSystemOA.TypesOC` (top-level), `FeaturesRS.Add` resolved by guid vs `MsFeatureSystemOA.FeaturesOC`. MED risk.
+3. **POS_INFLECTABLE_FEATS — PENDING**: per-POS reference `IPartOfSpeech.InflectableFeatsRC.Add`, compound src_guid "pos::feat". MED.
+4. **PHON_FEAT_TYPES — PENDING**: `IFsFeatStrucType` under `PhFeatureSystemOA.TypesOC`, GOLD_RESERVED; also add `"phon_feat_types"` to merge_preview.py `_CATEGORY_VALUE_TO_KEY`. LOW-MED, standalone.
+
+**Registration checklist (every sub-part):** GrammarCategory enum (models.py) · LEAF_CATEGORIES (categories.py:7274) · BOTH dispatch tuples (preview.py:~226 + transfer.py:~300, identical order) · registry EXPECTED set (test_category_registry.py:22) · conflict-mode/GOLD sets (models.py:119/144).
+
+### ▶ PICKUP CHECKLIST (next session / continuation)
+1. Finish sub-parts 2→3→4 on the worktree (sequential; RED-first; each fully registered — grep the registry test to avoid half-registration).
+2. Then ONE consolidated Part B crew review via `/lex-lead` (verification + qc[blocking sweep] + domain) — NOT 4 separate cycles.
+3. **Attended live proof (needs_human):** `French-FLExTrans-Demo2025 → restored Target`, prove each new category transfers 0→N under its correct owner collection, idempotent. Model on `scratchpad/run_inflclass_live.py` / `run_msa_slot_live.py`. NEVER run unattended.
+4. On PASS: merge Part B → main `--no-ff` (preserve msa-slot root reviews), remove BOTH coverage worktrees + delete the original `coverage-content-fidelity` branch, update this STATUS.md.
+5. Full-suite baseline: `1594 passed` modulo the ONE documented pre-existing fail `test_wizard_pos_grammar_wiring.py::...test_plan_emits_pos_action_for_picked_pos` (flag any OTHER failure as a regression).
+
+**Recurring lesson:** every stale branch needed reconciliation before action — only ~half held real missing work; live proofs caught real bugs AND one driver-probe bug (msa-slot). Never blanket-merge a stale branch.
+
+---
+
 ## ▶▶▶ coverage-content-fidelity Part A (inflection_classes owner fix) — FEATURE_COMPLETE (all gates GREEN + LIVE PROOF PASS), MERGE-READY (2026-07-15)
 
 **Branch:** `coverage-content-fidelity-v2` @ `3044d26` (fix `bf70c0a` + reviews reorg `c3ad933` + live-proof `3044d26`).
