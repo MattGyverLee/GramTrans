@@ -459,8 +459,15 @@ def test_plan_action_stashes_entryref_component_bindings() -> None:
     }
 
 
-def test_plan_action_stashes_msa_slot_bindings_when_nonempty() -> None:
-    """An MSA with a non-empty SlotsRC stashes a binding for the 17.1 sub-pass."""
+def test_plan_action_does_not_stash_msa_slot_bindings() -> None:
+    """cycle-2 (#28 QC-P1#2): msa_slot_bindings now has a SINGLE producer,
+    `_populate_msa_slot_bindings` in preview.py (called once in
+    build_run_plan), NOT the per-entry AFFIXES/STEMS plan_action ->
+    _stash_entry_bindings path. That dead duck-only branch (no-op on live
+    LCM, divergent guid formatter from the preview.py duck fallback) was
+    removed; plan_action must leave the attached msa_slot_bindings dict
+    untouched. Coverage for the actual producer lives in
+    test_preview_msa_slot_bindings.py."""
     slot_a = types.SimpleNamespace(guid="slot-a")
     slot_b = types.SimpleNamespace(guid="slot-b")
     msa = _FakeStemMSA("msa-1", pos=_FakePOS("pos-noun"), slots=[slot_a, slot_b])
@@ -469,7 +476,7 @@ def test_plan_action_stashes_msa_slot_bindings_when_nonempty() -> None:
 
     _BUNDLE["plan_action"](piece=stem, context=ctx, ws_mapping=WSMapping())
 
-    assert msa_bindings == {"msa-1": ["slot-a", "slot-b"]}
+    assert msa_bindings == {}
 
 
 def test_plan_action_empty_slotsrc_stashes_no_binding() -> None:

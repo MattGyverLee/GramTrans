@@ -356,7 +356,15 @@ def test_plan_action_already_present_by_guid_skipped() -> None:
 # T024 stash — MSA->slot + EntryRef binding side effects
 # ============================================================================
 
-def test_plan_action_stashes_msa_slot_binding() -> None:
+def test_plan_action_does_not_stash_msa_slot_binding() -> None:
+    """cycle-2 (#28 QC-P1#2): msa_slot_bindings now has a SINGLE producer,
+    `_populate_msa_slot_bindings` in preview.py (called once in
+    build_run_plan), NOT the per-entry AFFIXES/STEMS plan_action ->
+    _stash_entry_bindings path. That dead duck-only branch (no-op on live
+    LCM, divergent guid formatter from the preview.py duck fallback) was
+    removed; plan_action must leave the attached msa_slot_bindings dict
+    untouched. Coverage for the actual producer lives in
+    test_preview_msa_slot_bindings.py."""
     msa = _MSA("m-bound", pos=_POS("pos-verb"),
                slots=[_Slot("slot-a"), _Slot("slot-b")])
     entry = _Entry("aff-bound", msas=[msa])
@@ -366,7 +374,7 @@ def test_plan_action_stashes_msa_slot_binding() -> None:
     result = _BUNDLE["plan_action"](entry, ctx, WSMapping())
 
     assert isinstance(result, PlannedAction)
-    assert msa_map == {"m-bound": ["slot-a", "slot-b"]}
+    assert msa_map == {}
 
 
 def test_plan_action_unbound_affix_stashes_no_binding() -> None:
