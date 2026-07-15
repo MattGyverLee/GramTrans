@@ -173,6 +173,7 @@ class TestLayer1DefaultTable:
             GrammarCategory.POS,
             GrammarCategory.PHONOLOGICAL_FEATURES,
             GrammarCategory.SEMANTIC_DOMAINS,
+            GrammarCategory.PHON_FEAT_TYPES,
         ]
         for cat in gold:
             assert _DEFAULT_CONFLICT_MODES[cat] == ConflictMode.UPDATE, (

@@ -31,6 +31,7 @@ class GrammarCategory(enum.Enum):
     INFLECTION_CLASSES = "inflection_classes"
     FEATURE_STRUCT_TYPES = "feature_struct_types"
     POS_INFLECTABLE_FEATS = "pos_inflectable_feats"
+    PHON_FEAT_TYPES = "phon_feat_types"
     STEM_NAMES = "stem_names"
     EXCEPTION_FEATURES = "exception_features"
     VARIANT_TYPES = "variant_types"
@@ -147,6 +148,15 @@ def _build_default_conflict_modes() -> dict:
         GrammarCategory.POS,
         GrammarCategory.PHONOLOGICAL_FEATURES,
         GrammarCategory.SEMANTIC_DOMAINS,
+        # PHON_FEAT_TYPES (coverage-content-fidelity-v2 Part B.4): per the
+        # STATUS handoff + the stale-branch ec9891ae port reference, this is
+        # GOLD_RESERVED -- despite being structurally IDENTICAL to its sibling
+        # FEATURE_STRUCT_TYPES (MULTI_INSTANCE, above). Under v7.0.0 both
+        # resolve to ConflictMode.UPDATE so runtime behavior is unaffected;
+        # the categorical split is flagged for domain review in the
+        # cycle-partB4-programmer.md report rather than silently deviating
+        # from the handoff.
+        GrammarCategory.PHON_FEAT_TYPES,
     }
     # SINGLETON_NONDELETABLE (ADD_NEW hidden -> LINK default)
     singleton = {

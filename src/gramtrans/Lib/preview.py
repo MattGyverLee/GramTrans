@@ -226,6 +226,10 @@ def build_run_plan(
     _LEAF_DISPATCH_CATEGORIES = (
         # Phase 3a (memo steps 2-5 + 5b)
         GrammarCategory.PHONOLOGICAL_FEATURES,
+        # PHON_FEAT_TYPES (Part B.4) MUST dispatch after PHONOLOGICAL_FEATURES
+        # so its FeaturesRS resolution finds defns already landed in target
+        # PhFeatureSystemOA.FeaturesOC.
+        GrammarCategory.PHON_FEAT_TYPES,
         GrammarCategory.PHONEMES,
         GrammarCategory.NATURAL_CLASSES,
         GrammarCategory.PH_ENVIRONMENT,

@@ -1152,6 +1152,7 @@ _CATEGORY_VALUE_TO_KEY: dict[str, "str | None"] = {
     "exception_features": None,
     "feature_struct_types": None,
     "pos_inflectable_feats": None,
+    "phon_feat_types": None,
     "complex_form_types": None,
     "adhoc_compound_rules": None,
     "semantic_domains": None,
