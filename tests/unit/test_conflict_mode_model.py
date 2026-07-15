@@ -146,6 +146,7 @@ class TestLayer1DefaultTable:
             GrammarCategory.AFFIX_TEMPLATES,
             GrammarCategory.INFLECTION_CLASSES,
             GrammarCategory.FEATURE_STRUCT_TYPES,
+            GrammarCategory.POS_INFLECTABLE_FEATS,
             GrammarCategory.STEM_NAMES,
             GrammarCategory.EXCEPTION_FEATURES,
             GrammarCategory.ADHOC_COMPOUND_RULES,

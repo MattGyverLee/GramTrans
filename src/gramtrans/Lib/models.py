@@ -30,6 +30,7 @@ class GrammarCategory(enum.Enum):
     CUSTOM_FIELDS = "custom_fields"
     INFLECTION_CLASSES = "inflection_classes"
     FEATURE_STRUCT_TYPES = "feature_struct_types"
+    POS_INFLECTABLE_FEATS = "pos_inflectable_feats"
     STEM_NAMES = "stem_names"
     EXCEPTION_FEATURES = "exception_features"
     VARIANT_TYPES = "variant_types"
@@ -119,6 +120,7 @@ def _build_default_conflict_modes() -> dict:
         GrammarCategory.STEM_NAMES,
         GrammarCategory.EXCEPTION_FEATURES,
         GrammarCategory.FEATURE_STRUCT_TYPES,
+        GrammarCategory.POS_INFLECTABLE_FEATS,
         GrammarCategory.ADHOC_COMPOUND_RULES,
         GrammarCategory.PHONEMES,
         GrammarCategory.NATURAL_CLASSES,

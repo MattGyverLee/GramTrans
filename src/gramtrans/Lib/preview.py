@@ -237,6 +237,7 @@ def build_run_plan(
         GrammarCategory.CUSTOM_FIELDS,
         GrammarCategory.INFLECTION_CLASSES,
         GrammarCategory.FEATURE_STRUCT_TYPES,
+        GrammarCategory.POS_INFLECTABLE_FEATS,
         GrammarCategory.STEM_NAMES,
         GrammarCategory.EXCEPTION_FEATURES,
         GrammarCategory.VARIANT_TYPES,

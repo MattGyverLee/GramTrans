@@ -1699,6 +1699,157 @@ def feature_struct_types_execute_action(
     return new_type
 
 
+# ----- pos_inflectable_feats (coverage-content-fidelity-v2 Part B.3) -------
+#
+# IPartOfSpeech.InflectableFeatsRC is an LcmReferenceCollection<IFsFeatDefn>
+# pointing at top-level inflection-feature DEFINITIONS (IFsClosedFeature /
+# IFsComplexFeature) that live in MsFeatureSystemOA.FeaturesOC. Part B.1
+# (inflection_features_execute_action) already lands those defns with
+# GUID-preserved identity, so this category is PURE REF-WIRING: resolve
+# each source defn to its target counterpart by GUID, then .Add() to the
+# target POS's InflectableFeatsRC. No new LCM object is created here, no
+# multistrings are copied, and no residue tag is applied (a reference-
+# collection entry carries no Description of its own to tag).
+#
+# Piece shape: (pos_guid_str, feat_defn_obj) -- mirrors the compound-guid
+# idiom used elsewhere for a POS-scoped wiring fact. Compound source_guid:
+# "pos_guid::feat_defn_guid".
+#
+# Not GOLD_RESERVED; classified MULTI_INSTANCE (matches the sibling
+# reference-wiring/create categories INFLECTION_CLASSES / FEATURE_STRUCT_TYPES
+# / EXCEPTION_FEATURES in models.py's default-conflict-mode table). The
+# add-if-absent-by-GUID semantics are idempotent regardless of ConflictMode;
+# UPDATE just means "add the wiring if missing," never a destructive rewrite.
+
+def pos_inflectable_feats_enumerate_source(context: RunContext, selection: Selection):
+    """Yield (pos_guid, feat_defn_obj) for every InflectableFeatsRC entry
+    across all source POSes."""
+    source = context.source_handle
+    results = []
+    for pos in _iter_pos(source):
+        concrete = pos.concrete if hasattr(pos, "concrete") else pos
+        pos_guid = _guid_str_from(concrete)
+        try:
+            from SIL.LCModel import IPartOfSpeech
+            pos_obj = IPartOfSpeech(concrete)
+            for feat in pos_obj.InflectableFeatsRC:
+                results.append((pos_guid, feat))
+        except Exception:
+            pass
+    return results
+
+
+def pos_inflectable_feats_dependencies(piece):
+    """No additional closure deps -- inflection_features (Part B.1) already
+    runs earlier in the same pass and lands the feature defns this category
+    resolves against."""
+    return ()
+
+
+def pos_inflectable_feats_required_writing_systems(piece) -> Iterable[Tuple[str, WSKind]]:
+    return ()
+
+
+def pos_inflectable_feats_plan_action(piece, context: RunContext, ws_mapping: WSMapping):
+    """Emit PlannedAction or ALREADY_PRESENT_BY_GUID skip.
+
+    `piece` is a (pos_guid_str, feat_defn_obj) tuple as yielded by
+    enumerate_source. source_guid is the compound "pos_guid::feat_guid".
+    """
+    if not (isinstance(piece, tuple) and len(piece) == 2):
+        return Skip(
+            category=GrammarCategory.POS_INFLECTABLE_FEATS,
+            source_guid="unknown",
+            reason=SkipReason.UNSUPPORTED_LCM_TYPE,
+            detail="pos_inflectable_feats piece must be (pos_guid, feat_obj) tuple.",
+        )
+    pos_guid, feat_obj = piece
+    feat_guid = _guid_str_from(feat_obj)
+    compound_guid = f"{pos_guid}::{feat_guid}"
+
+    # Check whether the target POS already has this feature defn wired.
+    target = context.target_handle
+    for pos in _iter_pos(target):
+        concrete = pos.concrete if hasattr(pos, "concrete") else pos
+        if _guid_str_from(concrete) != pos_guid:
+            continue
+        try:
+            from SIL.LCModel import IPartOfSpeech
+            pos_obj_tgt = IPartOfSpeech(concrete)
+            for existing_feat in pos_obj_tgt.InflectableFeatsRC:
+                if _guid_str_from(existing_feat) == feat_guid:
+                    return Skip(
+                        category=GrammarCategory.POS_INFLECTABLE_FEATS,
+                        source_guid=compound_guid,
+                        reason=SkipReason.ALREADY_PRESENT_BY_GUID,
+                        detail=(
+                            f"InflectableFeats defn {feat_guid[:8]}... already wired "
+                            f"to POS {pos_guid[:8]}... in target."
+                        ),
+                    )
+        except Exception:
+            pass
+
+    return PlannedAction(
+        category=GrammarCategory.POS_INFLECTABLE_FEATS,
+        source_guid=compound_guid,
+        intended_target_guid=compound_guid,
+        summary=f"InflectableFeat pos={pos_guid[:8]}... feat={feat_guid[:8]}...",
+    )
+
+
+def pos_inflectable_feats_execute_action(action: PlannedAction, context: RunContext, ws_mapping: WSMapping, tag: ImportResidueTag):
+    """Wire the IFsFeatDefn reference into the target POS's InflectableFeatsRC.
+
+    Resolution strategy: split the compound source_guid into (pos_guid,
+    feat_guid); resolve the target POS by pos_guid via
+    `target.POS.GetAll(recursive=True)`; resolve the target feature defn by
+    feat_guid in `MsFeatureSystemOA.FeaturesOC` (Part B.1 lands defns with
+    preserved GUIDs). If either resolution fails, logs and returns None --
+    no crash, no partial/orphan wiring.
+
+    No new LCM object is created. No residue tag applied (a reference-
+    collection entry has no Description of its own).
+    """
+    import logging as _logging
+
+    from SIL.LCModel import IPartOfSpeech
+
+    log = _logging.getLogger("gramtrans.Lib.categories")
+
+    target = context.target_handle
+    src_compound = action.source_guid
+    if "::" not in src_compound:
+        return None
+    pos_guid, feat_guid = src_compound.split("::", 1)
+
+    # Resolve the target POS by GUID.
+    target_pos = _resolve_target_pos(target, pos_guid)
+    if target_pos is None:
+        return None  # POS not yet in target.
+
+    # Resolve the target feature defn by GUID in MsFeatureSystemOA.FeaturesOC.
+    cache = getattr(target, "Cache")
+    feature_system = cache.LangProject.MsFeatureSystemOA
+    target_feat = None
+    for feat in feature_system.FeaturesOC:
+        if _guid_str_from(feat) == feat_guid:
+            target_feat = feat
+            break
+
+    if target_feat is None:
+        log.warning(
+            "pos_inflectable_feats_execute_action: source feat defn %s has no "
+            "matching target defn by GUID -- skipping (run inflection_features first).",
+            feat_guid,
+        )
+        return None
+
+    target_pos_obj = IPartOfSpeech(target_pos)
+    target_pos_obj.InflectableFeatsRC.Add(target_feat)
+    return target_feat
+
+
 # ----- stem_names ---------------------------------------------------------
 #
 # Stem names (IMoStemName) live under IPartOfSpeech.StemNamesOC.
@@ -7655,6 +7806,13 @@ LEAF_CATEGORIES = {
         "required_writing_systems": feature_struct_types_required_writing_systems,
         "plan_action": feature_struct_types_plan_action,
         "execute_action": feature_struct_types_execute_action,
+    },
+    GrammarCategory.POS_INFLECTABLE_FEATS: {
+        "enumerate_source": pos_inflectable_feats_enumerate_source,
+        "dependencies": pos_inflectable_feats_dependencies,
+        "required_writing_systems": pos_inflectable_feats_required_writing_systems,
+        "plan_action": pos_inflectable_feats_plan_action,
+        "execute_action": pos_inflectable_feats_execute_action,
     },
     GrammarCategory.STEM_NAMES: {
         "enumerate_source": stem_names_enumerate_source,
