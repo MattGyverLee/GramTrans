@@ -1,5 +1,52 @@
 # GramTrans — Session Handoff
 
+## ▶▶▶ coverage-content-fidelity Part A (inflection_classes owner fix) — OFFLINE GATES GREEN, AWAITING ATTENDED LIVE PROOF (2026-07-15)
+
+**Branch:** `coverage-content-fidelity-v2` @ `c3ad933` (fix `bf70c0a` + reviews reorg `c3ad933`).
+Worktree `../GramTrans-coverage-content-fidelity-v2`.
+
+**What landed:** `categories.py:1341` rewired `IMoInflClass` creation to be owned per-POS via
+`target_pos.InflectionClassesOC` (was mis-writing to `ProdRestrictOA.PossibilitiesOS`). One-off
+fix; commit body `bf70c0a` carries a "Pattern audit" section.
+
+**Offline crew gates — ALL GREEN (cycle 1):**
+- **verification** PASS — `test_categories_inflection_classes.py` 9/9 green with fix; RED baseline
+  reproduced (4/9 fail). Full unit suite 1594 passed / 8 skipped / 14 xfailed / 14 xpassed /
+  1 failed — the sole failure is the documented pre-existing `test_wizard_pos_grammar_wiring`
+  baseline (fails on unmodified baseline too). `py_compile` clean.
+  Report: `reviews/coverage-content-fidelity/cycle1-verification.md`
+- **qc** 90/100 APPROVE — independent mis-owned-collection sweep of all ~20 owner-add sites CLEAN;
+  no other site writes to `ProdRestrictOA.PossibilitiesOS` or any exception/restriction list.
+  Pattern-audit gate confirmed (orchestrator verified `bf70c0a` body has the section).
+  Report: `reviews/coverage-content-fidelity/cycle1-qc.md`
+- **domain** APPROVED — ownership CONFIRMED: `IMoInflClass` owned per-POS by
+  `IPartOfSpeech.InflectionClassesOC` (flexicon POSOperations.py:747); the flexicon
+  InflectionClassGetAll/Create using `ProdRestrictOA` is itself a flexicon-side defect. POS->class
+  topo ordering verified (closure.py Kahn emits owner POS first). GetSyncableProperties correct
+  for `IMoInflClass`.
+  Report: `reviews/coverage-content-fidelity/cycle1-domain.md`
+
+**No P0. Non-blocking follow-ups:**
+- **P1 (file a follow-up issue):** `stem_names_dependencies()` returns `()` unconditionally despite
+  being POS-owned — same shape as the class of bug just fixed, real latent bug, NOT fixed here.
+- **P2 (deferred, documented):** `SubclassesOC` nested-inflection-class handling — 0 nested classes
+  found across 5 live projects; TODO acceptable.
+
+**⏸ NEXT PICKUP — ATTENDED LIVE PROOF (needs_human, user-authorized, FLExToolsMCP active):**
+1. Restore a **disposable** target from a `.fwbackup` (never write to a not-yet-restored target).
+2. Transfer inflection classes from source **French-FLExTrans-Demo2025** (POS Verb owns 4 classes
+   ER/RE/IRREG/IR; Noun owns 1 X_PL; total **5**).
+3. Prove they land **0 -> 5** under the **owner POS's `InflectionClassesOC`** (NOT
+   `ProdRestrictOA.PossibilitiesOS`); confirm each class sits under its correct POS.
+4. Idempotent re-transfer stable (0 net-new).
+5. Model the driver on `scratchpad/run_msa_slot_live.py` (msa-slot live-proof driver).
+6. **Never run unattended.** Restore-then-write only; requires explicit user authorization at run time.
+
+**After Part A merges — Part B (separate spurt):** wire `ec9891ae`'s 3 new content categories.
+**SKIP `exception_features`** for Part B.
+
+---
+
 ## ▶▶▶ #28 MSA->slot producer port (FR-333) — DONE & MERGED (2026-07-15)
 
 **MERGED to `main` @ `a90f0a1`** (`--no-ff`, no conflicts, pushed to origin). Fix `95cfb81` +
