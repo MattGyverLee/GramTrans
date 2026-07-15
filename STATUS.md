@@ -200,6 +200,75 @@ into the target first, then run the affix transfer); complex/open feature-value 
 ---
 
 ## ============================================================
+## SESSION HANDOFF — 2026-07-15b (coverage Part B OFFLINE-COMPLETE — needs_human live proof is the next gate)
+## ============================================================
+
+**Status:** coverage-content-fidelity **Part B is code-complete and all OFFLINE gates
+are GREEN.** The ONLY remaining gate before merge is the **attended live proof
+(needs_human)** — do NOT merge until it PASSES.
+
+### Where things stand
+**Worktree:** `../GramTrans-coverage-content-fidelity-v2` (branch
+`coverage-content-fidelity-v2`), clean @ **`d3f501d`**. Part A already merged to main
+(`15085cb`); this branch carries Part B on top.
+
+**All 4 Part B sub-parts implemented (RED-first TDD, offline-only) + committed:**
+| Commit | Sub-part | What |
+|---|---|---|
+| `2ab8a79` (+report `8a2f530`) | B.1 inflection_features complex/open | FsComplexFeature→create+TypeRA-by-guid; FsOpenFeature→clean Skip(NEEDS_MANUAL); FsClosedFeature unchanged |
+| `e98f752` | B.2 FEATURE_STRUCT_TYPES | `IFsFeatStrucType` under `MsFeatureSystemOA.TypesOC`; FeaturesRS by guid vs `MsFeatureSystemOA.FeaturesOC`. multi_instance |
+| `dfcc626` | B.3 POS_INFLECTABLE_FEATS | ref-wiring `IPartOfSpeech.InflectableFeatsRC.Add`; compound src_guid `pos::feat`; defn resolved in `MsFeatureSystemOA.FeaturesOC`. multi_instance |
+| `ed7addf` | B.4 PHON_FEAT_TYPES | `IFsFeatStrucType` under `PhFeatureSystemOA.TypesOC`; FeaturesRS vs `PhFeatureSystemOA.FeaturesOC` |
+| `84c7f28` | cycle-2 remediation | reclassified PHON_FEAT_TYPES `gold_reserved`→`multi_instance` (domain+qc call; zero v7.0.0 behavior change) + 2 B.2 doc corrections |
+| `d3f501d` | review artifacts | all Part B review reports committed |
+
+**Full offline unit suite: 1642 passed** / 8 skipped / 14 xfailed / 14 xpassed, with
+the ONE documented pre-existing baseline fail `test_wizard_pos_grammar_wiring.py::...
+test_plan_emits_pos_action_for_picked_pos` (any OTHER failure = regression).
+
+**Consolidated Part B crew review — offline gates ALL GREEN** (reports under
+`reviews/coverage-content-fidelity/cycle-partB-{verification,qc,domain}.md` +
+`cycle-partB-remediation-{programmer,verification}.md`):
+- **verification** PASS — suite reproduced exactly, RED-first genuine on B.3, py_compile clean.
+- **qc** 92/100 APPROVE, no P0 — pattern/sweep clean (no owner-collection mis-write; B.3
+  wires resolved-by-guid target defn); registration matrix fully consistent; never-silent holds.
+- **domain** APPROVED — all 4 LCM-ownership PASS; concern #2(a) reclassify done; #2(b) map-absence BLESSED.
+
+### ▶ NEXT GATE — ATTENDED LIVE PROOF (needs_human) — DO NOT run unattended
+`French-FLExTrans-Demo2025 → restored Target`. Prove each of the 4 new categories
+transfers **0→N under its correct owner collection**, idempotent (re-Move = ALREADY_PRESENT
+skips). Model the driver on `scratchpad/run_inflclass_live.py` / `run_msa_slot_live.py`.
+GUID-based metric (resolution-independent — avoid the pre-move-remap probe pitfall).
+**FLExToolsMCP was NOT callable this session** — domain fell back to `ec9891ae`'s
+already-MCP-verified findings; the live proof MUST re-confirm LCM shapes via MCP.
+
+### ▶ ON LIVE PROOF PASS
+1. Merge `coverage-content-fidelity-v2` → `main` `--no-ff`. **PRESERVE** both msa-slot's
+   ROOT `reviews/*.md` AND Part A's `reviews/coverage-content-fidelity/cycle1-*.md`
+   (Part B reviews are deliberately named `cycle-partB-*.md` to avoid clobbering them).
+2. Remove BOTH coverage worktrees; delete the original `coverage-content-fidelity` branch.
+3. Update STATUS.md; confirm merged-tree suite still 1642 modulo baseline.
+4. **File 3 post-merge follow-up tickets:** (a) **TypeRA intra-run two-phase wiring pass** —
+   concern #1: complex-feature `TypeRA` is left PERMANENTLY unset when its struct-type
+   didn't exist on that run (idempotent GOLD skip never revisits it; a flat dispatch
+   reorder only flips which side breaks — needs a shell-create-then-tail-wire pass
+   mirroring the `InflectableFeatsRC`/`SlotsRC` 17.1 idiom); (b) `merge_preview.py
+   _closed_value_label` blanks `FsComplexValue` labels (display-only); (c) wizard
+   `_SCHEMA_CATEGORIES`/`_GOLD_RESERVED` sync for the 4 new categories.
+
+### Notes / lessons this session
+- **Filename-collision caught & fixed:** Part B reviewers initially wrote `cycle1-*.md`,
+  clobbering Part A's same-named reports (Part A verification report was restored from git;
+  Part B reports renamed `cycle-partB-*.md`). When adding a review cycle to a branch that
+  already has `cycleN-*.md`, namespace the new ones.
+- **`lex-qc`/`lex-domain` have no Write tool** — they return report bodies; the main session
+  must persist them to files for the path-relay loop.
+- The prior handoff's "sub-part 2 running in background" produced nothing committed — treat
+  background-agent claims as unverified until a commit exists.
+
+---
+
+## ============================================================
 ## SESSION HANDOFF — 2026-07-15 (stale-branch reconciliation sweep + coverage port)
 ## ============================================================
 
