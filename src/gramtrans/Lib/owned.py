@@ -1502,8 +1502,9 @@ def _report_dropped_moaffix_msenv_fields(src_allo, dropped, only_fields=None) ->
 # US1-US4 add to this set as each GREEN task completes.
 #   US1 (T007): MsEnvPartOfSpeechRA
 #   US2 (T009): InflectionClassesRC
+#   US3 (T011): MsEnvFeaturesOA
 _MSENV_REPRODUCED_FIELDS: frozenset = frozenset(
-    {"MsEnvPartOfSpeechRA", "InflectionClassesRC"})
+    {"MsEnvPartOfSpeechRA", "InflectionClassesRC", "MsEnvFeaturesOA"})
 
 # Per-run dedup keys (SC-005/G4): source GUID -> resolved/created target item.
 _MSENV_POS_RESOLVED_KEY = "__owned_msenv_pos_resolved__"
@@ -1719,6 +1720,246 @@ def _plan_inflection_classes_rc(src_allo, ctx, dropped) -> list:
         ))
     return records
 
+# ---- US3 (T011) -- MsEnvFeaturesOA (owned atomic IFsFeatStruc) -------------
+
+_MSENV_FEATSTRUC_UNRESOLVABLE_REASON = (
+    "MsEnv feature value not present in target feature system, or its feature "
+    "is complex/open (non-closed -- out of scope): resolve-only, never created"
+)
+_MSENV_FEATSTRUC_UNCREATABLE_REASON = (
+    "target feature-structure factory not obtainable -- MsEnvFeaturesOA could "
+    "not be reproduced"
+)
+_MSENV_FEATSTRUC_UNREADABLE_REASON = (
+    "MsEnvFeaturesOA feature structure present but its feature specs could not "
+    "be enumerated -- reported rather than silently dropped"
+)
+
+
+def _cast_ifs_closed_value(spec):
+    """`IFsClosedValue(spec)` on a live host (the concrete feature-spec subtype
+    carrying `FeatureRA`/`ValueRA`), pass-through for host-free fakes."""
+    try:
+        from SIL.LCModel import IFsClosedValue
+        return IFsClosedValue(spec)
+    except Exception:
+        return spec
+
+
+def _resolve_msenv_closed_value(target, src_feat, src_val):
+    """Resolve one MsEnv feature-value spec against the target feature system
+    BY GUID, reusing feature 031's closed-feature machinery
+    (`Cache.LangProject.MsFeatureSystemOA.FeaturesOC` -> `IFsClosedFeature`
+    with `.ValuesOC` of `IFsSymFeatVal`; the same iteration idiom as
+    `categories.exception_features_execute_action`).
+
+    Returns `(target_feature, target_value)` when both resolve, else
+    `(None, None)`. A feature present but lacking `.ValuesOC` (complex/open,
+    non-closed) or a value GUID absent under the matched feature both yield
+    `(None, None)` -- the caller reports these (out of scope, never created)."""
+    feat_guid = _references._guid_str(src_feat)
+    val_guid = _references._guid_str(src_val)
+    if not feat_guid or not val_guid:
+        return None, None
+    try:
+        feature_system = target.Cache.LangProject.MsFeatureSystemOA
+    except (AttributeError, TypeError):
+        return None, None
+    for feat in getattr(feature_system, "FeaturesOC", None) or []:
+        if _references._guid_str(feat) != feat_guid:
+            continue
+        values = getattr(feat, "ValuesOC", None)
+        if values is None:  # complex/open feature -- out of scope (report)
+            return None, None
+        for val in values:
+            if _references._guid_str(val) == val_guid:
+                return feat, val
+        return None, None  # matched feature but value absent
+    return None, None
+
+
+def _read_msenv_feature_specs(src_fs):
+    """Read a source `IFsFeatStruc`'s `FeatureSpecsOC` as a list. Returns
+    `None` when the collection cannot be enumerated at all (a populated but
+    unreadable structure -- the caller reports it, never-silent), an empty
+    list for a genuinely empty structure (the caller no-ops -- never create an
+    empty structure), else the list of specs."""
+    specs = getattr(src_fs, "FeatureSpecsOC", None)
+    if specs is None:
+        return None
+    try:
+        return list(specs)
+    except TypeError:
+        return None
+
+
+def _partition_msenv_specs(specs, target):
+    """Partition feature-value `specs` into resolvable and unresolvable against
+    `target`'s feature system. Returns `(resolved, unresolved)` where
+    `resolved` is `[(src_spec, target_feat, target_val), ...]` and `unresolved`
+    is `[(src_feat, src_val), ...]` (the source feature/value to report).
+    Complex/open specs (no `ValueRA`) and values absent from the target land in
+    `unresolved`."""
+    resolved: list = []
+    unresolved: list = []
+    for spec in specs:
+        cv = _cast_ifs_closed_value(spec)
+        src_feat = getattr(cv, "FeatureRA", None)
+        src_val = getattr(cv, "ValueRA", None)
+        if src_val is None:  # complex/open spec (no closed value) -- report
+            unresolved.append((src_feat, src_val))
+            continue
+        target_feat, target_val = _resolve_msenv_closed_value(
+            target, src_feat, src_val)
+        if target_feat is not None and target_val is not None:
+            resolved.append((spec, target_feat, target_val))
+        else:
+            unresolved.append((src_feat, src_val))
+    return resolved, unresolved
+
+
+def _drop_msenv_spec(dropped, owner_guid, owner_label, src_feat, src_val):
+    """REPORT_DROPPED for one unresolvable/complex MsEnv feature-value spec
+    (never-silent, G1). Item identity is the value when present, else the
+    feature (a complex/open spec has no value)."""
+    item = src_val if src_val is not None else src_feat
+    _append_dropped(dropped, DroppedItemRecord(
+        owner_kind="MoAffixAllomorph", owner_guid=owner_guid,
+        owner_label=owner_label, field_name="MsEnvFeaturesOA",
+        item_name=_references._item_label(item),
+        item_guid=_references._guid_str(item),
+        reason=_MSENV_FEATSTRUC_UNRESOLVABLE_REASON,
+    ))
+
+
+def _drop_msenv_field(dropped, owner_guid, owner_label, src_fs, reason) -> None:
+    """Field-level REPORT_DROPPED for the whole `MsEnvFeaturesOA` (identity =
+    the source structure) -- used when the structure is present but cannot be
+    reproduced as a unit (specs unreadable, or factory unobtainable). Keeps the
+    never-silent guarantee (G1) and the cycle-16 rollout backstop."""
+    _append_dropped(dropped, DroppedItemRecord(
+        owner_kind="MoAffixAllomorph", owner_guid=owner_guid,
+        owner_label=owner_label, field_name="MsEnvFeaturesOA",
+        item_name=_references._item_label(src_fs),
+        item_guid=_references._guid_str(src_fs),
+        reason=reason,
+    ))
+
+
+def _reproduce_msenv_features_oa(src_allo, new_allo, ctx, tag, resolver_cache,
+                                 dropped) -> None:
+    """Move leg for `MsEnvFeaturesOA` (US3, R3). Empty/absent source (None, or
+    no `FeatureSpecsOC`) -> no-op: never create an empty structure, never blank
+    a populated target field (FR-005/G2/INV-2).
+
+    Present -> deep-copy the owned `IFsFeatStruc` into the new allomorph's
+    `MsEnvFeaturesOA`. Each feature-value spec is resolved/linked against the
+    target feature system BY GUID (feature 031's closed-feature machinery --
+    the feature/value already exist there; this leg links, never creates a
+    feature). A resolvable spec is reproduced; an unresolvable value or a
+    complex/open (non-closed) feature is REPORT_DROPPED while the resolvable
+    remainder is STILL reproduced (partial fidelity, never silent -- G1/INV-3).
+    When NOTHING resolves, no structure is created (never empty). Never raises:
+    per-spec failures are caught and reported."""
+    src_fs = getattr(_cast_moaffix_allomorph(src_allo), "MsEnvFeaturesOA", None)
+    if src_fs is None:
+        return
+    owner_guid = _references._guid_str(src_allo)
+    owner_label = _references._item_label(src_allo)
+    target = ctx.target_handle
+    specs = _read_msenv_feature_specs(src_fs)
+    if specs is None:  # present but unreadable -> never-silent field drop
+        _drop_msenv_field(dropped, owner_guid, owner_label, src_fs,
+                          _MSENV_FEATSTRUC_UNREADABLE_REASON)
+        return
+    if not specs:  # genuinely empty structure -> no-op (never create empty)
+        return
+    resolved, unresolved = _partition_msenv_specs(specs, target)
+    for src_feat, src_val in unresolved:
+        _drop_msenv_spec(dropped, owner_guid, owner_label, src_feat, src_val)
+    if not resolved:  # nothing resolvable -> never an empty struct
+        return
+    fs_factory = _get_owned_factory(target, "IFsFeatStrucFactory")
+    cv_factory = _get_owned_factory(target, "IFsClosedValueFactory")
+    if fs_factory is None or cv_factory is None:
+        # Every resolvable spec is lost with the (uncreatable) structure -- report
+        # the field once rather than silently drop (never-silent, G1).
+        _drop_msenv_field(dropped, owner_guid, owner_label, src_fs,
+                          _MSENV_FEATSTRUC_UNCREATABLE_REASON)
+        return
+    new_fs = _create_owned_via_factory(fs_factory, _references._guid_str(src_fs))
+    if new_fs is None:
+        return
+    try:
+        _cast_moaffix_allomorph(new_allo).MsEnvFeaturesOA = new_fs
+    except (AttributeError, TypeError):
+        return
+    new_coll = getattr(new_fs, "FeatureSpecsOC", None)
+    for src_spec, target_feat, target_val in resolved:
+        new_cv = _create_owned_via_factory(
+            cv_factory, _references._guid_str(src_spec))
+        if new_cv is None:
+            continue
+        try:
+            new_cv.FeatureRA = target_feat
+            new_cv.ValueRA = target_val
+        except (AttributeError, TypeError):
+            continue
+        if new_coll is not None:
+            try:
+                new_coll.Add(new_cv)
+            except (AttributeError, TypeError):
+                pass
+
+
+def _create_owned_via_factory(factory, guid_str):
+    """Create an owned child via a `.Create(guid)` factory, preserving the
+    source GUID for re-run determinism, falling back to the no-arg `.Create()`
+    overload host-free / when the guid overload is unavailable. `None` on any
+    failure (caller degrades, never crashes)."""
+    guid_arg = _guid_for_create(guid_str) if guid_str else None
+    if guid_arg is not None:
+        try:
+            return factory.Create(guid_arg)
+        except Exception:
+            pass
+    try:
+        return factory.Create()
+    except Exception:
+        return None
+
+
+def _plan_msenv_features_oa(src_allo, ctx, dropped) -> list:
+    """Preview twin of `_reproduce_msenv_features_oa` (G6/INV-6): one LINK
+    `ReferenceDecisionRecord` per resolvable feature-value spec (the leg links
+    the existing target feature/value -- it never creates one), plus identical
+    `DroppedItemRecord`s for unresolvable/complex specs. Empty/absent source ->
+    nothing. Writes nothing."""
+    src_fs = getattr(_cast_moaffix_allomorph(src_allo), "MsEnvFeaturesOA", None)
+    if src_fs is None:
+        return []
+    owner_guid = _references._guid_str(src_allo)
+    owner_label = _references._item_label(src_allo)
+    specs = _read_msenv_feature_specs(src_fs)
+    if specs is None:  # present but unreadable -> parity with Move's field drop
+        _drop_msenv_field(dropped, owner_guid, owner_label, src_fs,
+                          _MSENV_FEATSTRUC_UNREADABLE_REASON)
+        return []
+    if not specs:  # genuinely empty structure -> no-op
+        return []
+    resolved, unresolved = _partition_msenv_specs(specs, ctx.target_handle)
+    for src_feat, src_val in unresolved:
+        _drop_msenv_spec(dropped, owner_guid, owner_label, src_feat, src_val)
+    records: list = []
+    for _src_spec, target_feat, target_val in resolved:
+        records.append(ReferenceDecisionRecord(
+            owner_kind="MoAffixAllomorph", owner_guid=owner_guid,
+            field_name="MsEnvFeaturesOA", action=ReferenceAction.LINK,
+            item_name=_references._item_label(target_val),
+            item_guid=_references._guid_str(target_val)))
+    return records
+
+
 # All four field names -- used to compute the not-yet-reproduced fallback set.
 _MSENV_ALL_FIELDS: frozenset = frozenset(
     field_name for field_name, _shape in _MOAFFIX_MSENV_FIELDS
@@ -1750,6 +1991,9 @@ def reproduce_moaffix_msenv_data(src_allo, new_allo, ctx, tag, resolver_cache,
     if "InflectionClassesRC" in _MSENV_REPRODUCED_FIELDS:  # US2 (T009)
         _reproduce_inflection_classes_rc(
             src_allo, new_allo, ctx, tag, resolver_cache, dropped)
+    if "MsEnvFeaturesOA" in _MSENV_REPRODUCED_FIELDS:  # US3 (T011)
+        _reproduce_msenv_features_oa(
+            src_allo, new_allo, ctx, tag, resolver_cache, dropped)
     # Fields whose leg has not yet landed stay report-dropped (never-silent).
     _report_dropped_moaffix_msenv_fields(
         src_allo, dropped, only_fields=_msenv_unreproduced_fields())
@@ -1771,6 +2015,8 @@ def _plan_moaffix_msenv_decisions(src_allo, ctx, resolver_cache, dropped) -> lis
         records.extend(_plan_msenv_pos_ra(src_allo, ctx, dropped))
     if "InflectionClassesRC" in _MSENV_REPRODUCED_FIELDS:  # US2 (T009)
         records.extend(_plan_inflection_classes_rc(src_allo, ctx, dropped))
+    if "MsEnvFeaturesOA" in _MSENV_REPRODUCED_FIELDS:  # US3 (T011)
+        records.extend(_plan_msenv_features_oa(src_allo, ctx, dropped))
     # Fields whose leg has not yet landed stay report-dropped (never-silent).
     _report_dropped_moaffix_msenv_fields(
         src_allo, dropped, only_fields=_msenv_unreproduced_fields())
