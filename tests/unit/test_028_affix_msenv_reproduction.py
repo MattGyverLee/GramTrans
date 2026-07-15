@@ -683,3 +683,153 @@ def test_position_rs_preview_move_parity():
     pos_drops = [r for r in dropped if r.field_name == "PositionRS"]
     assert len(pos_drops) == 1
     assert pos_drops[0].item_guid == "env-b"
+
+
+# ============================================================================
+# T014 (US5) -- unified never-silent backstop + no-regression across ALL four
+# field families, driven through the shared 028 dispatch entry points into ONE
+# `dropped` list. Proves SC-004/SC-006/FR-009: nothing is silently lost, and
+# the vacuous subjects (a `MoStemAllomorph`, an unpopulated `MoAffixAllomorph`)
+# emit zero records in BOTH the Move and Preview legs.
+#
+# The four legs all landed in US1-US4; this test formalizes the whole-object
+# guarantee they jointly satisfy. Against a bare target with NO resolution infra
+# (no POS registry, no feature system, no phonological EnvironmentsOS) NONE of
+# the four fields can be reproduced, so every populated field yields exactly one
+# `DroppedItemRecord` carrying owner + field + source identity.
+# ============================================================================
+
+
+class _FakeBareStruct(_FakeGuid):
+    """A source `MsEnvFeaturesOA` structure with no readable `FeatureSpecsOC`
+    -> the leg reports the whole field (identity = the structure GUID), the
+    fully-guarded no-infra path (INV-2/G1)."""
+
+    ClassName = "FsFeatStruc"
+
+
+class _FakeAllFourAffix(_FakeGuid):
+    """A `MoAffixAllomorph` populating all four MsEnv/inflection-class/position
+    families at once -- the whole-object never-silent subject."""
+
+    ClassName = "MoAffixAllomorph"
+
+    def __init__(self, guid):
+        super().__init__(guid)
+        self.MsEnvPartOfSpeechRA = _FakeGuid("pos-x")
+        self.InflectionClassesRC = [_FakeGuid("cls-x")]
+        self.MsEnvFeaturesOA = _FakeBareStruct("feat-x")
+        self.PositionRS = [_FakeGuid("env-x")]
+
+
+class _FakeStemAllo(_FakeGuid):
+    """A `MoStemAllomorph` -- the four fields do not exist on this subclass, so
+    `_is_moaffix_allomorph` gates it out (SC-006 vacuous case)."""
+
+    ClassName = "MoStemAllomorph"
+
+
+class _FakeUnpopulatedAffix(_FakeGuid):
+    """A `MoAffixAllomorph` with none of the four fields populated (SC-006)."""
+
+    ClassName = "MoAffixAllomorph"
+
+    def __init__(self, guid):
+        super().__init__(guid)
+        self.MsEnvPartOfSpeechRA = None
+        self.InflectionClassesRC = []
+        self.MsEnvFeaturesOA = None
+        self.PositionRS = []
+
+
+class _FakeBareCtx:
+    """Bare handles -- no resolution infra of any kind, so every field falls to
+    its leg's never-silent report path (mirrors the cycle-16 bare-target
+    backstop, exercised here through the 028 dispatch entry points directly)."""
+
+    def __init__(self):
+        self.source_handle = object()
+        self.target_handle = object()
+
+
+_EXPECTED_ITEM_GUID = {
+    "MsEnvPartOfSpeechRA": "pos-x",
+    "InflectionClassesRC": "cls-x",
+    "MsEnvFeaturesOA": "feat-x",
+    "PositionRS": "env-x",
+}
+
+
+def test_unified_never_silent_all_four_fields_move():
+    """All four populated fields, no target infra -> exactly one drop per field
+    in ONE shared list, each carrying owner + field + source identity and a
+    non-empty reason (SC-004/FR-009, never-silent across the whole object)."""
+    src_allo = _FakeAllFourAffix("allo-all4")
+    new_allo = _FakeNewAffixAllomorph("allo-all4")
+    dropped: list = []
+
+    owned.reproduce_moaffix_msenv_data(
+        src_allo, new_allo, _FakeBareCtx(), _TAG, {}, dropped)
+
+    assert len(dropped) == 4
+    assert {r.field_name for r in dropped} == set(_EXPECTED_ITEM_GUID)
+    for rec in dropped:
+        assert rec.owner_kind == "MoAffixAllomorph"
+        assert rec.owner_guid == "allo-all4"
+        assert rec.reason  # never-silent: a reason is always present
+        assert rec.item_guid == _EXPECTED_ITEM_GUID[rec.field_name]
+
+
+def test_unified_never_silent_move_preview_parity():
+    """The Preview twin reports the identical drop set as the Move leg for the
+    same all-four subject (G6/INV-6): same owner/field/item identity."""
+    def _key(records):
+        return sorted(
+            (r.owner_kind, r.owner_guid, r.field_name, r.item_guid)
+            for r in records)
+
+    move_dropped: list = []
+    owned.reproduce_moaffix_msenv_data(
+        _FakeAllFourAffix("allo-parity"), _FakeNewAffixAllomorph("allo-parity"),
+        _FakeBareCtx(), _TAG, {}, move_dropped)
+
+    preview_dropped: list = []
+    owned._plan_moaffix_msenv_decisions(
+        _FakeAllFourAffix("allo-parity"), _FakeBareCtx(), {}, preview_dropped)
+
+    assert _key(move_dropped) == _key(preview_dropped)
+    assert len(move_dropped) == 4
+
+
+def test_unified_vacuous_stem_allomorph_emits_nothing():
+    """SC-006: a `MoStemAllomorph` emits zero records in BOTH the Move and
+    Preview legs (the four fields do not exist on that subclass)."""
+    move_dropped: list = []
+    owned.reproduce_moaffix_msenv_data(
+        _FakeStemAllo("stem-1"), _FakeNewAffixAllomorph("stem-1"),
+        _FakeBareCtx(), _TAG, {}, move_dropped)
+    assert move_dropped == []
+
+    preview_dropped: list = []
+    recs = owned._plan_moaffix_msenv_decisions(
+        _FakeStemAllo("stem-1"), _FakeBareCtx(), {}, preview_dropped)
+    assert preview_dropped == []
+    assert recs == []
+
+
+def test_unified_vacuous_unpopulated_affix_emits_nothing():
+    """SC-006: an unpopulated `MoAffixAllomorph` emits zero records in BOTH the
+    Move and Preview legs (empty source -> no-op per field, FR-005/G2)."""
+    move_dropped: list = []
+    owned.reproduce_moaffix_msenv_data(
+        _FakeUnpopulatedAffix("affix-empty"),
+        _FakeNewAffixAllomorph("affix-empty"),
+        _FakeBareCtx(), _TAG, {}, move_dropped)
+    assert move_dropped == []
+
+    preview_dropped: list = []
+    recs = owned._plan_moaffix_msenv_decisions(
+        _FakeUnpopulatedAffix("affix-empty"), _FakeBareCtx(), {},
+        preview_dropped)
+    assert preview_dropped == []
+    assert recs == []

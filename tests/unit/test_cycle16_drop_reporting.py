@@ -25,13 +25,18 @@ Covers the two DROP_REPORTED emission sites the census gap identified:
    that split unchanged.
 
 2. `MoAffixAllomorph.{InflectionClassesRC, MsEnvFeaturesOA,
-   MsEnvPartOfSpeechRA, PositionRS}`
-   (`Lib/owned.py._report_dropped_moaffix_msenv_fields`, called identically
-   from `reproduce_allomorph_hung_data` (Move) and
-   `plan_allomorph_hung_data_decisions` (Preview)) -- one
-   `DroppedItemRecord` per POPULATED field on the source allomorph; vacuous
-   (zero records) for a `MoStemAllomorph` and for a `MoAffixAllomorph`
-   populating none of the 4.
+   MsEnvPartOfSpeechRA, PositionRS}` -- feature 028 REPRODUCED all four
+   (US1-US4); the cycle-16 field-level report stub they originally routed to
+   (`Lib/owned.py._report_dropped_moaffix_msenv_fields`) is now RETIRED (028
+   T016). Each field's own reproduce leg (dispatched via
+   `owned.reproduce_moaffix_msenv_data` (Move) /
+   `_plan_moaffix_msenv_decisions` (Preview), called from
+   `reproduce_allomorph_hung_data` / `plan_allomorph_hung_data_decisions`)
+   reports a `DroppedItemRecord` only when a value cannot be reproduced
+   (partial fidelity, never-silent). The tests below stay GREEN because those
+   report paths preserve the same never-silent guarantee against a bare
+   target: vacuous (zero records) for a `MoStemAllomorph` and for a
+   `MoAffixAllomorph` populating none of the 4.
 
 Both drop sites are, by construction, the SAME function called from both
 Move and Preview call sites (no separate CREATE/LINK decision exists for

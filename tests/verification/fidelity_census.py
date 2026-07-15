@@ -62,14 +62,16 @@ terminal buckets by the lead and are now real `CLASSIFICATION` entries:
 - `LexEntry.MainEntriesOrSensesRS` -> OUT_OF_SCOPE_EXCLUDED
   (rationale-class "read-only-derived-aggregate"; see above).
 - `MoAffixAllomorph.{InflectionClassesRC, MsEnvFeaturesOA,
-  MsEnvPartOfSpeechRA, PositionRS}` -> DROP_REPORTED. One
-  `DroppedItemRecord` per POPULATED field on a created `MoAffixAllomorph`
-  (`Lib/owned.py._report_dropped_moaffix_msenv_fields`, called from both
-  `reproduce_allomorph_hung_data` (Move) and
-  `plan_allomorph_hung_data_decisions` (Preview) -- Move == Preview by
-  construction, same function). Vacuous on Ejagham Mini (0/106 allomorphs
-  populate these) but honest for other projects. Routed to
-  028-affix-allomorph-morphosyntax for eventual reproduction.
+  MsEnvPartOfSpeechRA, PositionRS}` -> COPIED (028-affix-allomorph-
+  morphosyntax). Each field's reproduce leg lives in `Lib/owned.py`
+  (`_reproduce_msenv_pos_ra`, `_reproduce_inflection_classes_rc`,
+  `_reproduce_msenv_features_oa`, `_reproduce_position_rs`) with a read-only
+  Preview twin (`_plan_*`), dispatched via
+  `owned.reproduce_moaffix_msenv_data` / `_plan_moaffix_msenv_decisions`
+  (Move == Preview by construction). Partial fidelity is preserved: an
+  unresolvable value/POS/environment is still REPORT_DROPPED with the
+  resolvable remainder reproduced (never-silent). Vacuous on Ejagham Mini
+  (0/106 allomorphs populate these) but honest for other projects.
 
 Zero fields remain in `_UNCLASSIFIED_GAP_FIELDS` / xfail after this cycle.
 
@@ -588,44 +590,59 @@ CLASSIFICATION: dict[tuple[str, str], Classification] = {
         "categories._walk_entry_allomorphs._mk)",
     ),
     ("MoAffixAllomorph", "InflectionClassesRC"): Classification(
-        Bucket.DROP_REPORTED,
-        "owned._report_dropped_moaffix_msenv_fields (owned.py:1395), "
-        "called from reproduce_allomorph_hung_data (Move, owned.py:1419+) "
-        "and plan_allomorph_hung_data_decisions (Preview, owned.py:1563+), "
-        "themselves called from categories._walk_entry_allomorphs._mk "
-        "(Move) / categories._plan_entry_reference_decisions (Preview) -- "
-        "one DroppedItemRecord per populated MsEnv/inflection-class/"
-        "position field on a created MoAffixAllomorph",
-        note="cycle-16 lead adjudication: routed to "
-             "028-affix-allomorph-morphosyntax for eventual reproduction. "
-             "Vacuous on Ejagham Mini (0/106 allomorphs populate this).",
+        Bucket.COPIED,
+        "owned._reproduce_inflection_classes_rc (Move) / "
+        "owned._plan_inflection_classes_rc (Preview), dispatched via "
+        "owned.reproduce_moaffix_msenv_data / _plan_moaffix_msenv_decisions, "
+        "called from reproduce_allomorph_hung_data (Move) and "
+        "plan_allomorph_hung_data_decisions (Preview); resolves/creates each "
+        "class under its owning POS via "
+        "categories.resolve_or_create_inflection_class (R5)",
+        note="028-affix-allomorph-morphosyntax US2 (T009). A class whose "
+             "owning POS is out of closure is still REPORT_DROPPED "
+             "(partial fidelity, never-silent). Vacuous on Ejagham Mini "
+             "(0/106 allomorphs populate this).",
     ),
     ("MoAffixAllomorph", "MsEnvFeaturesOA"): Classification(
-        Bucket.DROP_REPORTED,
-        "owned._report_dropped_moaffix_msenv_fields (owned.py:1395), "
+        Bucket.COPIED,
+        "owned._reproduce_msenv_features_oa (Move) / "
+        "owned._plan_msenv_features_oa (Preview), dispatched via "
+        "owned.reproduce_moaffix_msenv_data / _plan_moaffix_msenv_decisions, "
         "called from reproduce_allomorph_hung_data (Move) and "
-        "plan_allomorph_hung_data_decisions (Preview)",
-        note="cycle-16 lead adjudication: routed to "
-             "028-affix-allomorph-morphosyntax for eventual reproduction. "
-             "Vacuous on Ejagham Mini (0/106 allomorphs populate this).",
+        "plan_allomorph_hung_data_decisions (Preview); deep-copies the owned "
+        "IFsFeatStruc, resolving each closed value by GUID against the target "
+        "feature system (feature-031 machinery, R3)",
+        note="028-affix-allomorph-morphosyntax US3 (T011). Unresolvable / "
+             "complex-open feature values are still REPORT_DROPPED with the "
+             "resolvable remainder reproduced (partial fidelity, "
+             "never-silent). Vacuous on Ejagham Mini (0/106 allomorphs "
+             "populate this).",
     ),
     ("MoAffixAllomorph", "MsEnvPartOfSpeechRA"): Classification(
-        Bucket.DROP_REPORTED,
-        "owned._report_dropped_moaffix_msenv_fields (owned.py:1395), "
-        "called from reproduce_allomorph_hung_data (Move) and "
-        "plan_allomorph_hung_data_decisions (Preview)",
-        note="cycle-16 lead adjudication: routed to "
-             "028-affix-allomorph-morphosyntax for eventual reproduction. "
+        Bucket.COPIED,
+        "owned._reproduce_msenv_pos_ra (Move) / owned._plan_msenv_pos_ra "
+        "(Preview), dispatched via owned.reproduce_moaffix_msenv_data / "
+        "_plan_moaffix_msenv_decisions, called from "
+        "reproduce_allomorph_hung_data (Move) and "
+        "plan_allomorph_hung_data_decisions (Preview); resolves/creates the "
+        "target POS via categories.resolve_or_create_target_pos (R1)",
+        note="028-affix-allomorph-morphosyntax US1/MVP (T007). An "
+             "uncreatable POS is still REPORT_DROPPED (never-silent). "
              "Vacuous on Ejagham Mini (0/106 allomorphs populate this).",
     ),
     ("MoAffixAllomorph", "PositionRS"): Classification(
-        Bucket.DROP_REPORTED,
-        "owned._report_dropped_moaffix_msenv_fields (owned.py:1395), "
-        "called from reproduce_allomorph_hung_data (Move) and "
-        "plan_allomorph_hung_data_decisions (Preview)",
-        note="cycle-16 lead adjudication: routed to "
-             "028-affix-allomorph-morphosyntax for eventual reproduction. "
-             "Vacuous on Ejagham Mini (0/106 allomorphs populate this).",
+        Bucket.COPIED,
+        "owned._reproduce_position_rs (Move) / owned._plan_position_rs "
+        "(Preview), dispatched via owned.reproduce_moaffix_msenv_data / "
+        "_plan_moaffix_msenv_decisions, called from "
+        "reproduce_allomorph_hung_data (Move) and "
+        "plan_allomorph_hung_data_decisions (Preview); links each source "
+        "position to the target IPhEnvironment in order, reusing the 024 "
+        "environment path (R4)",
+        note="028-affix-allomorph-morphosyntax US4 (T013). An unresolvable "
+             "position is REPORT_DROPPED without reordering the rest; an "
+             "environment is never created (never-silent). Vacuous on "
+             "Ejagham Mini (0/106 allomorphs populate this).",
     ),
 
     # ---- LexEntryRef (SUBSUMED by parent LexEntry.EntryRefsOS row) --------

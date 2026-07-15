@@ -1387,19 +1387,23 @@ def _reproduce_one_apr(src_apr, apr_guid, member_fields, ctx, tag, copy_set,
 
 
 # ----------------------------------------------------------------------------
-# Cycle-16 lead adjudication -- MoAffixAllomorph MsEnv/inflection-class/
-# position fields: DROP_REPORTED (never reproduced, always surfaced).
+# MoAffixAllomorph MsEnv/inflection-class/position fields: REPRODUCED (028).
 # ----------------------------------------------------------------------------
 #
 # `InflectionClassesRC`, `MsEnvFeaturesOA`, `MsEnvPartOfSpeechRA`, `PositionRS`
-# are REAL `MoAffixAllomorph`-only fields (data-model.md/fidelity_census.py)
-# with NO reproduction code anywhere in `Lib/*.py` -- routed to
-# 028-affix-allomorph-morphosyntax. Per the lead's ruling this cycle, the
-# transfer must stop being silent about them: one `DroppedItemRecord` per
-# POPULATED field on the SOURCE allomorph (never per-item -- these are
-# reported as a field-level loss, not enumerated member-by-member). Vacuous
-# (zero records) for a `MoStemAllomorph` (the fields don't exist there) and
-# for a `MoAffixAllomorph` where none of the 4 happen to be populated.
+# are REAL `MoAffixAllomorph`-only fields (data-model.md/fidelity_census.py).
+# Cycle-16 first stopped the transfer being SILENT about them (one
+# `DroppedItemRecord` per populated field); feature 028 then REPRODUCED all
+# four (US1-US4). Each now has a real reproduce leg + Preview twin in this file
+# (`_reproduce_msenv_pos_ra`, `_reproduce_inflection_classes_rc`,
+# `_reproduce_msenv_features_oa`, `_reproduce_position_rs`), dispatched via
+# `reproduce_moaffix_msenv_data` / `_plan_moaffix_msenv_decisions`. The
+# never-silent guarantee survives as partial fidelity: an unresolvable
+# value/POS/class/environment is REPORT_DROPPED by its own leg while the
+# resolvable remainder is reproduced. The old field-level report-drop stub
+# (`_report_dropped_moaffix_msenv_fields`) is retired (T016) -- no field routes
+# to it any more. `_MOAFFIX_MSENV_FIELDS` remains the canonical field inventory
+# (used by `_is_moaffix_allomorph` host-free detection and `_MSENV_ALL_FIELDS`).
 
 _MOAFFIX_MSENV_FIELDS: tuple = (
     ("InflectionClassesRC", "collection"),
@@ -1425,86 +1429,28 @@ def _is_moaffix_allomorph(src_allo) -> bool:
                for field_name, _ in _MOAFFIX_MSENV_FIELDS)
 
 
-def _moaffix_msenv_populated_fields(src_allo) -> list:
-    """`[(field_name, value), ...]` for every one of the 4 MsEnv/inflection-
-    class/position fields that is actually POPULATED on `src_allo` (atomic:
-    not None; collection: non-empty) -- empty list for a non-`MoAffixAllomorph`
-    or an allomorph where none are set."""
-    if not _is_moaffix_allomorph(src_allo):
-        return []
-    populated: list = []
-    for field_name, shape in _MOAFFIX_MSENV_FIELDS:
-        value = getattr(src_allo, field_name, None)
-        if shape == "atomic":
-            if value is not None:
-                populated.append((field_name, value))
-            continue
-        try:
-            items = list(value) if value is not None else []
-        except TypeError:
-            items = []
-        if items:
-            populated.append((field_name, value))
-    return populated
-
-
-def _report_dropped_moaffix_msenv_fields(src_allo, dropped, only_fields=None) -> None:
-    """DROP_REPORTED emission: one `DroppedItemRecord` per populated field in
-    `_MOAFFIX_MSENV_FIELDS`.
-
-    `only_fields` (028 T005): when given (a set/frozenset of field names),
-    report ONLY those populated fields -- used by the 028 dispatch seam to
-    report-drop just the fields whose reproduce leg has not yet landed, so the
-    never-silent guarantee holds throughout the incremental rollout (US1-US4).
-    `None` (default) reports every populated field, preserving the original
-    pre-028 behavior for any caller that still wants a full field-level drop."""
-    populated = _moaffix_msenv_populated_fields(src_allo)
-    if not populated:
-        return
-    owner_guid = _references._guid_str(src_allo)
-    owner_label = _references._item_label(src_allo)
-    for field_name, _value in populated:
-        if only_fields is not None and field_name not in only_fields:
-            continue
-        _append_dropped(dropped, DroppedItemRecord(
-            owner_kind="MoAffixAllomorph",
-            owner_guid=owner_guid,
-            owner_label=owner_label,
-            field_name=field_name,
-            item_name="",
-            item_guid="",
-            reason=(
-                f"{field_name} is not reproduced by feature 024's lexicon "
-                "transfer (routed to 028-affix-allomorph-morphosyntax)"
-            ),
-        ))
-
-
 # ----------------------------------------------------------------------------
 # Feature 028 -- affix-MsEnv reproduction dispatch seam (T005).
 # ----------------------------------------------------------------------------
 #
-# Replaces the report-only `_report_dropped_moaffix_msenv_fields` call in
 # `reproduce_allomorph_hung_data` (Move) and `plan_allomorph_hung_data_decisions`
-# (Preview) with a real reproduce leg + read-only Preview twin, mirroring the
+# (Preview) dispatch the four MsEnv/inflection-class/position fields through a
+# real reproduce leg + read-only Preview twin, mirroring the
 # `_reproduce_phone_env_rc` / `_plan_phone_env_rc_decisions` pair.
 #
-# Rollout invariant (028 tasks.md T005): each field's reproduce leg lands one
-# user story at a time (US1 MsEnvPartOfSpeechRA, US2 InflectionClassesRC,
-# US3 MsEnvFeaturesOA, US4 PositionRS). Every field NOT yet in
-# `_MSENV_REPRODUCED_FIELDS` is report-dropped via
-# `_report_dropped_moaffix_msenv_fields(only_fields=...)`, so the never-silent
-# guarantee holds throughout the transition and the full suite stays green.
-# At the T005 seam stage the set is empty -> behavior is byte-identical to the
-# pre-028 report-only stub.
+# Rollout history (028 tasks.md): each field's reproduce leg landed one user
+# story at a time (US1 MsEnvPartOfSpeechRA, US2 InflectionClassesRC,
+# US3 MsEnvFeaturesOA, US4 PositionRS). During the rollout, any field not yet
+# in `_MSENV_REPRODUCED_FIELDS` was report-dropped by a now-retired field-level
+# stub so the never-silent guarantee held throughout. All four have landed
+# (`_msenv_unreproduced_fields()` is now empty), so T016 retired that stub;
+# each leg owns its own partial-fidelity report path.
 
-# Field names (matching `_MOAFFIX_MSENV_FIELDS`) whose reproduce leg has landed.
-# US1-US4 add to this set as each GREEN task completes.
-#   US1 (T007): MsEnvPartOfSpeechRA
-#   US2 (T009): InflectionClassesRC
-#   US3 (T011): MsEnvFeaturesOA
-#   US4 (T013): PositionRS  -- all four landed; the report-drop fallback is now
-#               empty (`_report_dropped_moaffix_msenv_fields` covers nothing).
+# Field names (matching `_MOAFFIX_MSENV_FIELDS`) whose reproduce leg has landed
+# -- now all four (US1 T007, US2 T009, US3 T011, US4 T013). Kept as the rollout
+# invariant probe: `_msenv_unreproduced_fields()` MUST stay empty; if a future
+# edit drops a field out of this set, that field silently loses fidelity, which
+# the cycle-16 backstop test detects.
 _MSENV_REPRODUCED_FIELDS: frozenset = frozenset(
     {"MsEnvPartOfSpeechRA", "InflectionClassesRC", "MsEnvFeaturesOA",
      "PositionRS"})
@@ -2078,9 +2024,8 @@ def reproduce_moaffix_msenv_data(src_allo, new_allo, ctx, tag, resolver_cache,
             src_allo, new_allo, ctx, tag, resolver_cache, dropped)
     if "PositionRS" in _MSENV_REPRODUCED_FIELDS:  # US4 (T013)
         _reproduce_position_rs(src_allo, new_allo, ctx, dropped)
-    # Fields whose leg has not yet landed stay report-dropped (never-silent).
-    _report_dropped_moaffix_msenv_fields(
-        src_allo, dropped, only_fields=_msenv_unreproduced_fields())
+    # All four legs have landed (T016); each owns its own partial-fidelity
+    # report path, so there is no residual field-level report-drop stub.
 
 
 def _plan_moaffix_msenv_decisions(src_allo, ctx, resolver_cache, dropped) -> list:
@@ -2103,9 +2048,8 @@ def _plan_moaffix_msenv_decisions(src_allo, ctx, resolver_cache, dropped) -> lis
         records.extend(_plan_msenv_features_oa(src_allo, ctx, dropped))
     if "PositionRS" in _MSENV_REPRODUCED_FIELDS:  # US4 (T013)
         records.extend(_plan_position_rs(src_allo, ctx, dropped))
-    # Fields whose leg has not yet landed stay report-dropped (never-silent).
-    _report_dropped_moaffix_msenv_fields(
-        src_allo, dropped, only_fields=_msenv_unreproduced_fields())
+    # All four legs have landed (T016); each owns its own partial-fidelity
+    # report path, so there is no residual field-level report-drop stub.
     return records
 
 
