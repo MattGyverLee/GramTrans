@@ -1503,8 +1503,11 @@ def _report_dropped_moaffix_msenv_fields(src_allo, dropped, only_fields=None) ->
 #   US1 (T007): MsEnvPartOfSpeechRA
 #   US2 (T009): InflectionClassesRC
 #   US3 (T011): MsEnvFeaturesOA
+#   US4 (T013): PositionRS  -- all four landed; the report-drop fallback is now
+#               empty (`_report_dropped_moaffix_msenv_fields` covers nothing).
 _MSENV_REPRODUCED_FIELDS: frozenset = frozenset(
-    {"MsEnvPartOfSpeechRA", "InflectionClassesRC", "MsEnvFeaturesOA"})
+    {"MsEnvPartOfSpeechRA", "InflectionClassesRC", "MsEnvFeaturesOA",
+     "PositionRS"})
 
 # Per-run dedup keys (SC-005/G4): source GUID -> resolved/created target item.
 _MSENV_POS_RESOLVED_KEY = "__owned_msenv_pos_resolved__"
@@ -1960,6 +1963,85 @@ def _plan_msenv_features_oa(src_allo, ctx, dropped) -> list:
     return records
 
 
+# ---- US4 (T013) -- PositionRS (ordered infix-position env references) ------
+
+def _reproduce_position_rs(src_allo, new_allo, ctx, dropped) -> None:
+    """Move leg for `PositionRS` (US4, R4). Ordered reference sequence of
+    `IPhEnvironment`, resolving against the SAME flat target environment list
+    as `PhoneEnvRC` (reuses `_target_phonological_environments`). Empty/absent
+    source -> no-op: never blank a populated target field (FR-005/G2).
+
+    Iterates the source positions IN SOURCE ORDER; each position is resolved
+    against the target environments BY GUID. Present -> appended (`.Add()`) to
+    the new allomorph's `PositionRS`, order preserved (INV-5/G5). Absent ->
+    REPORT_DROPPED and NEVER created (G7) -- a middle unresolvable position is
+    skipped without reordering or dropping the surviving positions. Never
+    raises: per-position failures are caught and reported."""
+    src_positions = list(
+        getattr(_cast_moaffix_allomorph(src_allo), "PositionRS", None) or [])
+    if not src_positions:
+        return
+    owner_guid = _references._guid_str(src_allo)
+    owner_label = _references._item_label(src_allo)
+    target_envs = _target_phonological_environments(ctx.target_handle)
+    new_coll = getattr(_cast_moaffix_allomorph(new_allo), "PositionRS", None)
+    for src_env in src_positions:
+        env_guid = _references._guid_str(src_env)
+        target_env = next(
+            (e for e in target_envs if _references._guid_str(e) == env_guid), None)
+        if target_env is not None:
+            if new_coll is not None:
+                try:
+                    new_coll.Add(target_env)
+                except (AttributeError, TypeError):
+                    pass
+            continue
+        label = _references._item_label(src_env) or env_guid
+        _append_dropped(dropped, DroppedItemRecord(
+            owner_kind="MoAffixAllomorph",
+            owner_guid=owner_guid,
+            owner_label=owner_label,
+            field_name="PositionRS",
+            item_name=_references._item_label(src_env),
+            item_guid=env_guid,
+            reason=f"position environment {label} not present in target",
+        ))
+
+
+def _plan_position_rs(src_allo, ctx, dropped) -> list:
+    """Preview twin of `_reproduce_position_rs` (G6/INV-6): one LINK
+    `ReferenceDecisionRecord` per resolvable position (in source order -- the
+    leg links the existing target environment, it never creates one), plus
+    identical `DroppedItemRecord`s for unresolvable positions. Empty/absent
+    source -> nothing. Writes nothing."""
+    src_positions = list(
+        getattr(_cast_moaffix_allomorph(src_allo), "PositionRS", None) or [])
+    if not src_positions:
+        return []
+    owner_guid = _references._guid_str(src_allo)
+    owner_label = _references._item_label(src_allo)
+    target_envs = _target_phonological_environments(ctx.target_handle)
+    records: list = []
+    for src_env in src_positions:
+        env_guid = _references._guid_str(src_env)
+        target_env = next(
+            (e for e in target_envs if _references._guid_str(e) == env_guid), None)
+        if target_env is not None:
+            records.append(ReferenceDecisionRecord(
+                owner_kind="MoAffixAllomorph", owner_guid=owner_guid,
+                field_name="PositionRS", action=ReferenceAction.LINK,
+                item_name=_references._item_label(src_env), item_guid=env_guid))
+            continue
+        label = _references._item_label(src_env) or env_guid
+        _append_dropped(dropped, DroppedItemRecord(
+            owner_kind="MoAffixAllomorph", owner_guid=owner_guid,
+            owner_label=owner_label, field_name="PositionRS",
+            item_name=_references._item_label(src_env), item_guid=env_guid,
+            reason=f"position environment {label} not present in target",
+        ))
+    return records
+
+
 # All four field names -- used to compute the not-yet-reproduced fallback set.
 _MSENV_ALL_FIELDS: frozenset = frozenset(
     field_name for field_name, _shape in _MOAFFIX_MSENV_FIELDS
@@ -1994,6 +2076,8 @@ def reproduce_moaffix_msenv_data(src_allo, new_allo, ctx, tag, resolver_cache,
     if "MsEnvFeaturesOA" in _MSENV_REPRODUCED_FIELDS:  # US3 (T011)
         _reproduce_msenv_features_oa(
             src_allo, new_allo, ctx, tag, resolver_cache, dropped)
+    if "PositionRS" in _MSENV_REPRODUCED_FIELDS:  # US4 (T013)
+        _reproduce_position_rs(src_allo, new_allo, ctx, dropped)
     # Fields whose leg has not yet landed stay report-dropped (never-silent).
     _report_dropped_moaffix_msenv_fields(
         src_allo, dropped, only_fields=_msenv_unreproduced_fields())
@@ -2017,6 +2101,8 @@ def _plan_moaffix_msenv_decisions(src_allo, ctx, resolver_cache, dropped) -> lis
         records.extend(_plan_inflection_classes_rc(src_allo, ctx, dropped))
     if "MsEnvFeaturesOA" in _MSENV_REPRODUCED_FIELDS:  # US3 (T011)
         records.extend(_plan_msenv_features_oa(src_allo, ctx, dropped))
+    if "PositionRS" in _MSENV_REPRODUCED_FIELDS:  # US4 (T013)
+        records.extend(_plan_position_rs(src_allo, ctx, dropped))
     # Fields whose leg has not yet landed stay report-dropped (never-silent).
     _report_dropped_moaffix_msenv_fields(
         src_allo, dropped, only_fields=_msenv_unreproduced_fields())

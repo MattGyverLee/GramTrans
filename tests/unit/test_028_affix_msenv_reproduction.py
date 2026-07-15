@@ -164,19 +164,26 @@ class _FakeSource:
 class _FakeAffixAllomorph(_FakeGuid):
     ClassName = "MoAffixAllomorph"
 
-    def __init__(self, guid, msenv_pos=None, inflection_classes=None):
+    def __init__(self, guid, msenv_pos=None, inflection_classes=None,
+                 positions=None):
         super().__init__(guid)
         self.MsEnvPartOfSpeechRA = msenv_pos
         self.InflectionClassesRC = list(inflection_classes or [])
+        # PositionRS source shape (US4): a plain ordered list of env refs.
+        self.PositionRS = list(positions or [])
 
 
 class _FakeNewAffixAllomorph(_FakeGuid):
     ClassName = "MoAffixAllomorph"
 
-    def __init__(self, guid, msenv_pos=None, inflection_classes=()):
+    def __init__(self, guid, msenv_pos=None, inflection_classes=(),
+                 positions=()):
         super().__init__(guid)
         self.MsEnvPartOfSpeechRA = msenv_pos
         self.InflectionClassesRC = _FakeAddList(inflection_classes)
+        # PositionRS target shape (US4): read-only-through-wrapper RS populated
+        # via LCM-direct `.Add()`.
+        self.PositionRS = _FakeAddList(positions)
 
 
 class _FakeCtx:
@@ -524,3 +531,155 @@ def test_infl_class_preview_move_parity():
         _FakeCtx(target3), {}, dropped3)
     assert not [r for r in recs3 if r.field_name == "InflectionClassesRC"]
     assert any(r.field_name == "InflectionClassesRC" for r in dropped3)
+
+
+# ============================================================================
+# T012 (US4) -- PositionRS reproduction (ordered infix-position environment
+# references). Same target env list as PhoneEnvRC: link-or-report by GUID,
+# in source order, NEVER create an environment.
+# ============================================================================
+
+
+class _FakeEnv(_FakeGuid):
+    """A phonological environment (`IPhEnvironment`) in the target's flat
+    `EnvironmentsOS` sequence -- identified by GUID (PositionRS resolves by
+    GUID, the same way PhoneEnvRC does)."""
+
+    ClassName = "PhEnvironment"
+
+
+class _FakePhonData:
+    """`lp.PhonologicalDataOA` exposing the flat owned `EnvironmentsOS`
+    sequence PositionRS resolves against (the SAME list PhoneEnvRC uses)."""
+
+    def __init__(self, envs=()):
+        self.EnvironmentsOS = _FakeAddList(envs)
+
+
+def _make_position_target(envs=()):
+    """Fake target whose `Cache.LangProject.PhonologicalDataOA.EnvironmentsOS`
+    holds `envs` (the resolvable target environments). No POS/class factory is
+    wired -- PositionRS is link-or-report and never creates anything."""
+    target, _ = _make_target(pos=[], with_factory=False)
+    target.Cache.LangProject.PhonologicalDataOA = _FakePhonData(envs)
+    return target
+
+
+def test_position_rs_link_when_present():
+    """Each source position resolves to a target env by GUID -> appended to the
+    new allomorph's PositionRS; no env created; nothing dropped (G2/LINK)."""
+    envs = [_FakeEnv("env-1"), _FakeEnv("env-2")]
+    target = _make_position_target(envs)
+    src_allo = _FakeAffixAllomorph("allo-pos-1", positions=[_FakeEnv("env-1")])
+    new_allo = _FakeNewAffixAllomorph("allo-pos-1")
+    dropped: list = []
+
+    owned.reproduce_moaffix_msenv_data(
+        src_allo, new_allo, _FakeCtx(target), _TAG, {}, dropped)
+
+    # Linked to the actual target-project env object (by identity), not a copy.
+    assert list(new_allo.PositionRS) == [envs[0]]
+    assert list(target.Cache.LangProject.PhonologicalDataOA.EnvironmentsOS) == envs
+    assert dropped == []
+
+
+def test_position_rs_order_preserved():
+    """Three resolvable positions -> the new PositionRS holds them in the SAME
+    order as the source (INV-5/G5)."""
+    envs = [_FakeEnv("env-a"), _FakeEnv("env-b"), _FakeEnv("env-c")]
+    target = _make_position_target(envs)
+    src_allo = _FakeAffixAllomorph(
+        "allo-pos-2",
+        positions=[_FakeEnv("env-b"), _FakeEnv("env-a"), _FakeEnv("env-c")])
+    new_allo = _FakeNewAffixAllomorph("allo-pos-2")
+    dropped: list = []
+
+    owned.reproduce_moaffix_msenv_data(
+        src_allo, new_allo, _FakeCtx(target), _TAG, {}, dropped)
+
+    assert [e.guid for e in new_allo.PositionRS] == ["env-b", "env-a", "env-c"]
+    assert dropped == []
+
+
+def test_position_rs_middle_unresolvable_reported_without_reordering():
+    """Positions [A, B, C] where B is absent from target -> new PositionRS ==
+    [A, C] in order, and exactly one DroppedItemRecord for B (never-silent, G1;
+    a middle drop does NOT reorder or drop the survivors)."""
+    envs = [_FakeEnv("env-a"), _FakeEnv("env-c")]  # env-b absent
+    target = _make_position_target(envs)
+    src_allo = _FakeAffixAllomorph(
+        "allo-pos-3",
+        positions=[_FakeEnv("env-a"), _FakeEnv("env-b"), _FakeEnv("env-c")])
+    new_allo = _FakeNewAffixAllomorph("allo-pos-3")
+    dropped: list = []
+
+    owned.reproduce_moaffix_msenv_data(
+        src_allo, new_allo, _FakeCtx(target), _TAG, {}, dropped)
+
+    assert [e.guid for e in new_allo.PositionRS] == ["env-a", "env-c"]
+    assert len(dropped) == 1
+    rec = dropped[0]
+    assert rec.field_name == "PositionRS"
+    assert rec.owner_kind == "MoAffixAllomorph"
+    assert rec.owner_guid == "allo-pos-3"
+    assert rec.item_guid == "env-b"
+
+
+def test_position_rs_never_creates_environment():
+    """An absent env is REPORT_DROPPED and NO environment is added to the
+    target's EnvironmentsOS (G7 -- never create an environment)."""
+    envs = [_FakeEnv("present")]
+    target = _make_position_target(envs)
+    env_list = target.Cache.LangProject.PhonologicalDataOA.EnvironmentsOS
+    before = list(env_list)
+    src_allo = _FakeAffixAllomorph("allo-pos-4", positions=[_FakeEnv("absent")])
+    new_allo = _FakeNewAffixAllomorph("allo-pos-4")
+    dropped: list = []
+
+    owned.reproduce_moaffix_msenv_data(
+        src_allo, new_allo, _FakeCtx(target), _TAG, {}, dropped)
+
+    assert list(env_list) == before  # target env list unchanged (never created)
+    assert list(new_allo.PositionRS) == []
+    assert len(dropped) == 1
+    assert dropped[0].field_name == "PositionRS"
+    assert dropped[0].item_guid == "absent"
+
+
+def test_position_rs_empty_source_does_not_blank_target():
+    """Empty source PositionRS -> no write; a populated target PositionRS is
+    not blanked (FR-005/G2)."""
+    keep = _FakeEnv("keep")
+    target = _make_position_target([keep])
+    src_allo = _FakeAffixAllomorph("allo-pos-5", positions=[])
+    new_allo = _FakeNewAffixAllomorph("allo-pos-5", positions=[keep])
+    dropped: list = []
+
+    owned.reproduce_moaffix_msenv_data(
+        src_allo, new_allo, _FakeCtx(target), _TAG, {}, dropped)
+
+    assert list(new_allo.PositionRS) == [keep]
+    assert dropped == []
+
+
+def test_position_rs_preview_move_parity():
+    """Preview twin emits LINK decisions in source order for resolvable
+    positions and a drop record for the unresolvable one, matching the Move
+    outcome (G6)."""
+    envs = [_FakeEnv("env-a"), _FakeEnv("env-c")]  # env-b absent
+    target = _make_position_target(envs)
+    src_allo = _FakeAffixAllomorph(
+        "allo-pos-6",
+        positions=[_FakeEnv("env-a"), _FakeEnv("env-b"), _FakeEnv("env-c")])
+    dropped: list = []
+
+    recs = owned._plan_moaffix_msenv_decisions(
+        src_allo, _FakeCtx(target), {}, dropped)
+
+    pos_recs = [r for r in recs if r.field_name == "PositionRS"]
+    assert [r.action for r in pos_recs] == [
+        ReferenceAction.LINK, ReferenceAction.LINK]
+    assert [r.item_guid for r in pos_recs] == ["env-a", "env-c"]  # source order
+    pos_drops = [r for r in dropped if r.field_name == "PositionRS"]
+    assert len(pos_drops) == 1
+    assert pos_drops[0].item_guid == "env-b"
