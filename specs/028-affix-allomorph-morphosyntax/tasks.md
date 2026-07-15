@@ -221,21 +221,44 @@ environment path. **Independent test**: quickstart Tier 1 order + LINK/REPORT + 
 the model-driven census. **Independent test**: quickstart Tier 1 census flip + unified
 never-silent.
 
-- [ ] T014 [P] [US5] RED: unified never-silent + no-regression test (in
+- [x] T014 [P] [US5] RED: unified never-silent + no-regression test (in
       `tests/unit/test_028_affix_msenv_reproduction.py`) — drive all four field families into
       ONE shared `dropped` list and assert every unreproduced item yields a `DroppedItemRecord`
       with owner/field/source identity; plus a **vacuous** assertion (a `MoStemAllomorph` and an
       unpopulated `MoAffixAllomorph` emit zero records in BOTH the Move and Preview legs, SC-006).
-- [ ] T015 [US5] Flip the four `("MoAffixAllomorph", …)` rows in
+      **DONE** (worktree 466cdb6): 4 unified tests over the 028 dispatch entry points directly
+      (`test_unified_never_silent_all_four_fields_move` — one drop per field with owner/field/
+      source identity against a bare no-infra target; `..._move_preview_parity`;
+      `..._vacuous_stem_allomorph_emits_nothing`; `..._vacuous_unpopulated_affix_emits_nothing`).
+      Since all four legs already landed (US1-US4), these are GREEN backstops formalizing the
+      whole-object guarantee. 24/24 in the file pass.
+- [x] T015 [US5] Flip the four `("MoAffixAllomorph", …)` rows in
       `tests/verification/fidelity_census.py` from DROP_REPORTED to COPIED (each pointing at
       its concrete new `owned.py` code site), update the module header comment block and the
       `"MoAffixAllomorph": 6` count assertion (field set unchanged — only the bucket changes),
       and confirm the never-silent `classify_field` guard still raises on any unclassified
       field. Run `python -m pytest tests/verification/ -q` → GREEN (FR-009).
-- [ ] T016 [US5] Retire `_report_dropped_moaffix_msenv_fields` from `owned.py` (now dead for
+      **DONE** (worktree 466cdb6): four rows now `Bucket.COPIED`, each citing its
+      `_reproduce_*`/`_plan_*` leg + partial-fidelity note; module header block rewritten.
+      The `"MoAffixAllomorph": 6` assertion is a **field-inventory** count (bucket-independent) —
+      correctly unchanged. `classify_field` guard + `test_every_real_field_is_classified` +
+      `test_guard_fires_for_unclassified_property` all pass. 86/86 census tests GREEN.
+      **Invocation note:** `pytest tests/verification/ -q` collects nothing (exit 5) — the file
+      `fidelity_census.py` doesn't match pytest's default `python_files=test_*.py`, a
+      pre-existing harness detail. Pass the file explicitly
+      (`pytest tests/verification/fidelity_census.py -q`) → 86 passed, exit 0.
+- [x] T016 [US5] Retire `_report_dropped_moaffix_msenv_fields` from `owned.py` (now dead for
       the four fields) — delete it, or keep it ONLY as the explicitly-documented fallback for
       complex/open feature values that are out of scope (R3). Update the cycle-16 comment block
       to reflect that the four fields are now reproduced, not report-only.
+      **DONE** (worktree 466cdb6): DELETED the stub + its only caller
+      `_moaffix_msenv_populated_fields` (both dead — the `MsEnvFeaturesOA` leg reports
+      complex/open values through its OWN `_drop_msenv_spec`/`_drop_msenv_field`, not this
+      stub); removed the two now-no-op dispatch calls (`_msenv_unreproduced_fields()` is ∅);
+      rewrote the header + seam comment blocks and the cycle-16 backstop docstring to reflect
+      "reproduced, not report-only". Kept `_MSENV_REPRODUCED_FIELDS`/`_msenv_unreproduced_fields`
+      as the rollout invariant probe (used by the cycle-16 backstop test). No live refs to the
+      deleted symbols remain.
 
 **Checkpoint**: never-silent proven across all fields; census reflects COPIED.
 
@@ -243,10 +266,21 @@ never-silent.
 
 ## Phase 8: Polish & Cross-Cutting Concerns
 
-- [ ] T017 Run the full offline suite `python -m pytest tests/unit tests/verification -q`;
+- [x] T017 Run the full offline suite `python -m pytest tests/unit tests/verification -q`;
       confirm no new failures beyond the documented `test_wizard_pos_grammar_wiring` baseline.
-- [ ] T018 Run quickstart Tier 1 offline validation end-to-end (unit + census + full
+      **DONE** (worktree 466cdb6): `pytest tests/unit tests/verification/fidelity_census.py -q`
+      → 1625 passed, 35 skipped, 14 xfailed, 14 xpassed; **7 failed = the documented environment
+      baseline** (6 `test_013_apply_syncable_signature` [flexicon tree absent] + 1
+      `test_wizard_pos_grammar_wiring`). No new failures from Phase 7. (Census passed via explicit
+      file path per the T015 invocation note.)
+- [x] T018 Run quickstart Tier 1 offline validation end-to-end (unit + census + full
       regression) and record results in the task notes.
+      **DONE** (worktree 466cdb6): all three Tier 1 commands GREEN —
+      [1] `test_028_affix_msenv_reproduction.py` + `test_028_msenv_feature_struct.py` → 31 passed;
+      [2] fidelity census → 86 passed (four rows COPIED, `classify_field` guard passes, no
+      unclassified field); [3] full unit regression → 1539 passed at the 7-fail baseline (no new
+      failures). SC-001/002/003/004/005/006 offline obligations satisfied (Tier 1 column of the
+      quickstart success-criteria map).
 - [ ] T019 [needs_human] Attended live proof (quickstart Tier 2) — build the **constructed**
       non-Ejagham fixture (affix allomorph populating all four fields), `-restore` a disposable
       target, run Preview → Move → re-Move (idempotency) → forced-drop, verify the `0 → N`
