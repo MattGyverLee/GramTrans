@@ -1,6 +1,54 @@
 # GramTrans — Session Handoff
 
-## ▶▶▶ Feature 026 — Texts & Wordforms — LIVE PROOF RUN: real defect found, NOT mergeable (2026-07-15)
+## ▶▶▶ Feature 026 — Texts & Wordforms — DONE & MERGED (2026-07-15, session 2)
+
+**MERGED to `main` @ `9b7a7f8`** (`--no-ff`, no conflicts). Worktree
+`../GramTrans-026-texts-wordforms` (branch `026-texts-wordforms`) still present — safe to remove.
+Merged-tree offline suite **1706 passed** at the documented **7-fail environment baseline**
+(6× `test_013_apply_syncable_signature` — flexicon tree absent in this env — + 1×
+`test_wizard_pos_grammar_wiring`); no new failures.
+
+**What shipped:** reproduces interlinear texts + human-evaluated wordform analyses, morph-bundle
+identity wiring, `AnalysesRS` alignment (R5), word-level glosses, and text-markup tags under the
+Preview-before-Move, never-silent, non-destructive contract. Session 1 landed six live-vs-fake
+fixes (see the superseded entry below).
+
+**Session-2 closed the SC-005 idempotency blocker — LIVE-PROVEN.** The blocker was TWO cascading
+gaps, not one:
+- **Analysis level** (`8691d67`) — `wordforms.apply_analyses` created an analysis unconditionally.
+  Now deduped by source GUID within a run + a structural fingerprint (effective verdict +
+  morph-bundle forms + gloss forms) across runs. The target carries no source GUID (`Create`
+  mints a fresh one; no analysis-level `Find`), so structure is the durable key; verdict is in
+  the fingerprint so an approved + a disapproved analysis of the same empty form aren't collapsed
+  (would silently lose the deny).
+- **Text-structure level** (`f4cfbee`) — `texts._apply_paragraphs` re-created paragraphs/segments
+  on an existing text (segment/analysis/gloss creation all cascade from that loop). Now skips a
+  text that already has paragraphs.
+- **LIVE PROOF** (Ejagham Mini → Target, FLExToolsMCP run_module, fresh-disk reopen): Move #1 ==
+  Move #2 == `{texts:9, segments:101, analyses:143, glosses:231}` — **identical** (was growing on
+  the re-run before). AnalysesRS slots wired = **206** (R5 unchanged); verdicts 1 approved / 142
+  no-verdict / 0 disapproved (FR-014 correct). Target restored clean afterward.
+- **Counts moved 179→143 / 282→231 vs session 1**: within-run dedup collapses a shared analysis
+  referenced from several segment occurrences — the old per-segment `Create` over-produced
+  duplicates even in a single run. Positional wiring (206) and verdict semantics unchanged →
+  **a correction, not a loss**. Four new offline regression tests
+  (`test_analysis_idempotency.py`, `test_reapply_texts_...` in `test_text_structure_walk.py`).
+
+**Non-blocking remainders (documented, NOT gating — merge authorized per user):**
+1. **Item 2 (MEDIUM):** the HUMAN_APPROVED happy path is proven live but only n=1 (target lexicon
+   lacks the referenced senses/MSAs, so 142/143 are correctly needs-review). The resolved-ref
+   morph-bundle wiring (`SetSense`/`SetMSA`) is therefore thinly exercised live. Optional breadth:
+   re-proof against a lexicon-complete target.
+2. **Item 3 (LOW):** `AnalysesRS` is analysis-complete (206 slots) but not
+   punctuation/bare-wordform-complete vs source (SC-006). Documented limitation.
+
+**Remaining housekeeping:** remove the worktree `../GramTrans-026-texts-wordforms`; optionally a
+lex-crew review (026 never had one). Full evidence:
+`specs/026-texts-wordforms/HANDOFF.md` + `verification-log.md`.
+
+---
+
+### (superseded) Feature 026 — Texts & Wordforms — LIVE PROOF RUN: real defect found (2026-07-15)
 
 **Status: conflicts resolved + offline-GREEN, but the attended live proof FAILED US2/US3 —
 026 needs a fix before merge.** Full evidence:
