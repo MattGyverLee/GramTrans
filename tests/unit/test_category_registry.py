@@ -24,6 +24,7 @@ LEAF_CATEGORIES = {
     GrammarCategory.INFLECTION_FEATURES,
     GrammarCategory.CUSTOM_FIELDS,
     GrammarCategory.INFLECTION_CLASSES,
+    GrammarCategory.FEATURE_STRUCT_TYPES,
     GrammarCategory.STEM_NAMES,
     GrammarCategory.EXCEPTION_FEATURES,
     GrammarCategory.VARIANT_TYPES,

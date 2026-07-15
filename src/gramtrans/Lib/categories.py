@@ -1481,6 +1481,224 @@ def inflection_classes_execute_action(action: PlannedAction, context: RunContext
     return new_ic
 
 
+# ----- feature_struct_types (coverage-content-fidelity-v2 Part B.2) --------
+#
+# Deep-copy MsFeatureSystemOA.TypesOC (IFsFeatStrucType) from source to
+# target, GUID-preserved, then wire FeaturesRS by resolving each source
+# member IFsFeatDefn GUID against the target's MsFeatureSystemOA.FeaturesOC
+# (populated earlier in the same run by INFLECTION_FEATURES -- see the
+# TypeRA-wiring comment in inflection_features_execute_action, which
+# documents the reverse cross-sub-part dependency).
+#
+# Not GOLD_RESERVED (MULTI_INSTANCE, default UPDATE) -- unlike the sibling
+# PHON_FEAT_TYPES category (PhFeatureSystemOA.TypesOC), which is a later,
+# separate coverage sub-part and IS GOLD_RESERVED.
+#
+# Factory: IFsFeatStrucTypeFactory.Create(Guid) -- 1-arg only (no 2-arg
+# attach-on-create overload confirmed for this factory, unlike
+# IFsComplexFeatureFactory). Must Add() to TypesOC BEFORE writing any
+# multistrings (LCM NPEs on free-floating objects) -- mirrors
+# inflection_classes_execute_action / _safe_add_to_owner usage above.
+# FeaturesRS.Add() is guarded per-member: a member whose GUID has no target
+# counterpart in FeaturesOC is logged and skipped, never crashing the whole
+# type's transfer (partial wiring tolerated, matching the sibling
+# TypeRA-absent degrade-gracefully posture in inflection_features).
+
+def feature_struct_types_enumerate_source(context: RunContext, selection: Selection):
+    """Yield each IFsFeatStrucType from source MsFeatureSystemOA.TypesOC."""
+    source = context.source_handle
+    if source is None:
+        return ()
+    try:
+        cache = getattr(source, "Cache", None)
+        if cache is None:
+            return ()
+        types_oc = cache.LangProject.MsFeatureSystemOA.TypesOC
+        return list(types_oc)
+    except Exception:
+        return ()
+
+
+def feature_struct_types_dependencies(piece):
+    """No additional closure deps -- member defns are owned by FeaturesOC
+    (INFLECTION_FEATURES), not by this category."""
+    return ()
+
+
+def feature_struct_types_required_writing_systems(piece) -> Iterable[Tuple[str, WSKind]]:
+    return ()
+
+
+def feature_struct_types_plan_action(piece, context: RunContext, ws_mapping: WSMapping):
+    """No GOLD check; emit PlannedAction or ALREADY_PRESENT_BY_GUID skip.
+
+    GUID-preserved; skip if the target TypesOC already holds that GUID.
+    """
+    src_guid = _guid_str_from(piece)
+    if not src_guid:
+        return Skip(
+            category=GrammarCategory.FEATURE_STRUCT_TYPES,
+            source_guid="unknown",
+            reason=SkipReason.UNSUPPORTED_LCM_TYPE,
+            detail="feature_struct_types piece yielded no GUID.",
+        )
+    target = context.target_handle
+    try:
+        cache = getattr(target, "Cache", None)
+        if cache is not None:
+            types_oc = cache.LangProject.MsFeatureSystemOA.TypesOC
+            if _target_has_guid(types_oc, src_guid):
+                return Skip(
+                    category=GrammarCategory.FEATURE_STRUCT_TYPES,
+                    source_guid=src_guid,
+                    reason=SkipReason.ALREADY_PRESENT_BY_GUID,
+                    detail=f"FsFeatStrucType GUID {src_guid[:8]}... already present in target TypesOC.",
+                )
+    except Exception:
+        pass
+    return PlannedAction(
+        category=GrammarCategory.FEATURE_STRUCT_TYPES,
+        source_guid=src_guid,
+        intended_target_guid=src_guid,
+        summary=f"FsFeatStrucType guid={src_guid[:8]}...",
+    )
+
+
+def feature_struct_types_execute_action(
+    action: PlannedAction,
+    context: RunContext,
+    ws_mapping: WSMapping,
+    tag: ImportResidueTag,
+):
+    """Create IFsFeatStrucType in target TypesOC with GUID preserved.
+
+    1. Factory Create(Guid) (1-arg only).
+    2. TypesOC.Add() via `_safe_add_to_owner` BEFORE writing any
+       multistrings (LCM NPEs on free-floating objects).
+    3. Copy Name / Abbreviation / Description via
+       `_copy_multistrings_ws_mapped` (source->target WS handle
+       translation; never the raw source handle -- WS-FIDELITY, mirrors
+       the inflection_features complex-feature path).
+    4. Wire FeaturesRS: for each source member defn, resolve the target
+       defn by GUID in MsFeatureSystemOA.FeaturesOC and call
+       `FeaturesRS.Add()`. Any member whose GUID has no target
+       counterpart is logged and skipped (partial wiring tolerated).
+
+    Returns the newly created IFsFeatStrucType on success, None on failure.
+    """
+    import logging as _logging
+
+    if __package__:
+        from .residue import apply_carrier_b
+    else:
+        from residue import apply_carrier_b  # type: ignore
+
+    source = context.source_handle
+    target = context.target_handle
+    src_guid = action.source_guid
+    log = _logging.getLogger("gramtrans.Lib.categories")
+
+    # Locate source type.
+    src_type = None
+    try:
+        src_cache = getattr(source, "Cache")
+        for t in src_cache.LangProject.MsFeatureSystemOA.TypesOC:
+            if _guid_str_from(t) == src_guid:
+                src_type = t
+                break
+    except Exception:
+        pass
+    if src_type is None:
+        log.warning(
+            "feature_struct_types_execute_action: source type GUID %s not found.", src_guid
+        )
+        return None
+
+    # Target feature system.
+    try:
+        from System import Guid as DotNetGuid
+        from SIL.LCModel import IFsFeatStrucTypeFactory, IFsFeatStrucType
+    except ImportError as e:
+        log.warning(
+            "feature_struct_types_execute_action: LCM import failed: %s", e
+        )
+        return None
+
+    try:
+        tgt_cache = getattr(target, "Cache")
+        tgt_feature_system = tgt_cache.LangProject.MsFeatureSystemOA
+        sl = tgt_cache.ServiceLocator
+        factory = sl.GetService(IFsFeatStrucTypeFactory)
+        parsed_guid = DotNetGuid.Parse(src_guid)
+        new_type_raw = factory.Create(parsed_guid)
+        # MUST Add to TypesOC BEFORE writing Name/Abbreviation multistrings
+        # (LCM setters NPE on free-floating objects).
+        _safe_add_to_owner(new_type_raw, tgt_feature_system.TypesOC,
+                           "IFsFeatStrucTypeFactory", src_guid)
+        new_type = IFsFeatStrucType(new_type_raw)
+    except Exception as e:
+        log.error(
+            "feature_struct_types_execute_action: failed to create type %s: %r", src_guid, e
+        )
+        return None
+
+    # Copy Name / Abbreviation / Description multistrings (WS-mapped).
+    ws_map = _ws_map_dict(ws_mapping)
+    try:
+        src_typed = IFsFeatStrucType(src_type)
+        _copy_multistrings_ws_mapped(
+            src_typed, new_type, ("Name", "Abbreviation", "Description"),
+            source=source, target=target, ws_map=ws_map,
+        )
+    except Exception as e:
+        log.warning(
+            "feature_struct_types_execute_action: multistring copy failed for %s: %r",
+            src_guid, e,
+        )
+
+    # Wire FeaturesRS: resolve each source member defn by GUID in target FeaturesOC.
+    # Guarded per-member -- a member with no target counterpart is logged
+    # and skipped, never crashing the whole type's transfer.
+    try:
+        src_features_rs = getattr(IFsFeatStrucType(src_type), "FeaturesRS", None)
+        if src_features_rs is not None:
+            tgt_features_oc = list(tgt_feature_system.FeaturesOC)
+            for src_defn in src_features_rs:
+                defn_guid = _guid_str_from(src_defn)
+                if not defn_guid:
+                    continue
+                tgt_defn = _find_target_obj_by_guid(tgt_features_oc, defn_guid)
+                if tgt_defn is None:
+                    log.warning(
+                        "feature_struct_types_execute_action: source defn GUID %s "
+                        "has no target counterpart in FeaturesOC -- skipping member.",
+                        defn_guid,
+                    )
+                    continue
+                try:
+                    new_type.FeaturesRS.Add(tgt_defn)
+                except Exception as add_err:
+                    log.warning(
+                        "feature_struct_types_execute_action: FeaturesRS.Add() "
+                        "failed for defn %s in type %s: %r -- FeaturesRS left "
+                        "partially wired.",
+                        defn_guid, src_guid, add_err,
+                    )
+    except Exception as e:
+        log.warning(
+            "feature_struct_types_execute_action: FeaturesRS wiring failed for %s: %r",
+            src_guid, e,
+        )
+
+    try:
+        cache = getattr(target, "Cache")
+        apply_carrier_b(new_type, cache.DefaultAnalWs, tag)
+    except Exception:
+        pass
+
+    return new_type
+
+
 # ----- stem_names ---------------------------------------------------------
 #
 # Stem names (IMoStemName) live under IPartOfSpeech.StemNamesOC.
@@ -7430,6 +7648,13 @@ LEAF_CATEGORIES = {
         "required_writing_systems": inflection_classes_required_writing_systems,
         "plan_action": inflection_classes_plan_action,
         "execute_action": inflection_classes_execute_action,
+    },
+    GrammarCategory.FEATURE_STRUCT_TYPES: {
+        "enumerate_source": feature_struct_types_enumerate_source,
+        "dependencies": feature_struct_types_dependencies,
+        "required_writing_systems": feature_struct_types_required_writing_systems,
+        "plan_action": feature_struct_types_plan_action,
+        "execute_action": feature_struct_types_execute_action,
     },
     GrammarCategory.STEM_NAMES: {
         "enumerate_source": stem_names_enumerate_source,

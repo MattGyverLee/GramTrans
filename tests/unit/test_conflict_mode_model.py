@@ -145,6 +145,7 @@ class TestLayer1DefaultTable:
             GrammarCategory.SLOTS,
             GrammarCategory.AFFIX_TEMPLATES,
             GrammarCategory.INFLECTION_CLASSES,
+            GrammarCategory.FEATURE_STRUCT_TYPES,
             GrammarCategory.STEM_NAMES,
             GrammarCategory.EXCEPTION_FEATURES,
             GrammarCategory.ADHOC_COMPOUND_RULES,
