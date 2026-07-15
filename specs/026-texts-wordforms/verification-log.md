@@ -134,4 +134,44 @@ fully reported** across three fixes — the core gather + create path now works 
 before merge: fix the segment-`AnalysesRS` re-wiring and gloss reproduction, then re-proof
 against a lexicon-complete target (R2/R5/US4 fully green), then merge.
 
+### Fix attempts #4 (R5 AnalysesRS wiring) + #5 (gloss gate) — R5 done; gloss apply is a 3rd layer
+
+Two more fixes landed (offline suite **1702 passed**, 7-fail env baseline):
+
+- **Fix #4 — segment `AnalysesRS` wiring (R5):** `plan_alignment` now keys an ANALYSIS-kind
+  token (gloss or analysis) by its **owning-analysis GUID** (`_normalize_token_to_analysis`),
+  matching the `_wf_analysis_map` key `apply_analyses` records. Before, gloss tokens carried
+  the gloss GUID and never matched → only the 2 direct-analysis tokens wired.
+  → re-proof: `segs_with_analyses` **2 → 77**, `AnalysesRS refs wired` **2 → 206** (all 204
+  gloss + 2 direct tokens). **R5 wiring works.**
+- **Fix #5 — gloss human-eval gate:** `_gloss_human_evaluation` gains a live fallback
+  (`_live_gloss_human_evaluation`) — a live `IWfiGloss` has no `GetHumanEvaluation`, so it is
+  human content iff its owning `IWfiAnalysis` is human-evaluated (reuses `_live_human_evaluation`).
+  → the **plan now gathers 283 gloss plans** across 177/179 analyses (was 0).
+
+**Residual — gloss APPLY (3rd layer, NOT fixed):** despite 283 gloss plans in the plan, the
+Move persists **0 `WfiGloss`** on Target and emits **0 "gloss create failed" drops**. That
+paradox (non-empty `plan.glosses`, no creates, no drops) means the Move's text-apply path is
+**not materializing `plan.glosses`** — a plan-consumption gap in `apply_texts`/`apply_analyses`
+(the gathered gloss plans aren't reaching `_apply_glosses`, or `_apply_glosses`'s creates aren't
+persisting). `target.WfiGlosses.Create` exists and is callable. Needs a live write-trace of the
+text-apply gloss path to pin (a bounded next step).
+
+### Scorecard after 5 live-proof fixes (worktree)
+
+| Aspect | Before | After |
+|---|---|---|
+| Text structure (US1) | 9 texts | 9 texts (persisted) ✓ |
+| Analyses created | 0 (silent) | **179** ✓ |
+| `AnalysesRS` wired (R5) | 2 | **206** ✓ |
+| Glosses planned (US4 gather) | 0 | **283** ✓ |
+| Glosses persisted (US4 apply) | 0 | **0** ✗ (3rd layer) |
+| Verdicts | — | 1 approved / 178 no-opinion — *likely correct needs-review* (target lexicon incomplete → morph refs unresolved, 1532 drops); confirm on a lexicon-complete target |
+
+**Net across the whole session:** 026's texts/wordforms transfer went from silently losing all
+219 human-approved analyses to reproducing 179 analyses + wiring 206 segment slots + planning
+283 glosses, all with regression tests. Remaining before merge: the gloss-apply consumption gap,
+the verdict confirmation on a lexicon-complete target, and (minor) positional fidelity for
+punctuation / bare-wordform `AnalysesRS` slots.
+
 Target was restored to the clean backup after every run (left pristine).

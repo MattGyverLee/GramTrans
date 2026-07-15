@@ -89,6 +89,40 @@ def test_apply_alignment_non_destructive_on_rerun():
     assert target_seg.AnalysesRS.items == ["existing"]
 
 
+class FakeGlossToken:
+    """A segment AnalysesRS token that is a gloss (ClassName WfiGloss) whose
+    chosen content is its owning analysis. 2026-07-15 live-proof shape: real
+    interlinear segments reference gloss tokens far more than bare analyses."""
+
+    def __init__(self, guid, owning_analysis):
+        self.guid = guid
+        self.Guid = guid
+        self.ClassName = "WfiGloss"
+        self.owning_analysis = owning_analysis
+
+
+def test_gloss_token_alignment_keyed_by_owning_analysis_and_wires():
+    an = FakeAnalysis("an-1")
+    seg = _seg_with_tokens([FakeGlossToken("gloss-9", an)])
+    source = FakeProject(ws_list=[WS_VERN])
+    ctx = FakeCtx(source_handle=source)
+
+    tokens = wordforms.plan_alignment(seg, ctx, [])
+    # Gloss token classified ANALYSIS, keyed by the OWNING analysis guid (an-1),
+    # NOT the gloss token guid (gloss-9) -- so it matches _wf_analysis_map.
+    assert tokens[0].kind == AlignmentTokenKind.ANALYSIS
+    assert tokens[0].source_guid == "an-1"
+
+    tgt_analysis = object()
+    ctx._wf_analysis_map = {"an-1": tgt_analysis}
+    target_seg = FakeSegment(guid="tgt-seg")
+    dropped = []
+    wordforms.apply_alignment(target_seg, tokens, ctx, dropped)
+    # Wired (was dropped as "no referent" before the fix).
+    assert target_seg.AnalysesRS.items == [tgt_analysis]
+    assert dropped == []
+
+
 def test_missing_target_analysis_reported_not_silent():
     analysis = FakeAnalysis("an-1")
     seg = _seg_with_tokens([analysis])

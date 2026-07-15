@@ -163,3 +163,23 @@ def test_normalize_token_maps_gloss_and_skips_non_analysis():
     assert wordforms._normalize_token_to_analysis(_GlossToken(an)) is an
     assert wordforms._normalize_token_to_analysis(_NonAnalysisToken()) is None
     assert wordforms._normalize_token_to_analysis(an) is an  # bare analysis → itself
+
+
+class _LiveShapedGloss:
+    """Live IWfiGloss-shaped double: exposes ONLY `owning_analysis` (mirrors
+    gloss.Owner -> IWfiAnalysis) -- NO GetHumanEvaluation()/human_evaluation."""
+
+    def __init__(self, owning_analysis):
+        self.owning_analysis = owning_analysis
+
+
+def test_gloss_gate_reads_owning_analysis_approval_live_shape():
+    src = _SourceNoHumanEvalOps()  # no WfiGlosses.GetHumanEvaluation ops
+    approved = wordforms._gloss_human_evaluation(src, _LiveShapedGloss(_LiveShapedAnalysis("a", 1)))
+    denied = wordforms._gloss_human_evaluation(src, _LiveShapedGloss(_LiveShapedAnalysis("d", 2)))
+    parser = wordforms._gloss_human_evaluation(src, _LiveShapedGloss(_LiveShapedAnalysis("p", 0)))
+    assert approved is not None
+    assert wordforms._verdict_from_eval(approved) == EvalVerdict.HUMAN_APPROVED
+    assert denied is not None
+    assert wordforms._verdict_from_eval(denied) == EvalVerdict.HUMAN_DENIED
+    assert parser is None  # owning analysis has no human opinion -> gloss excluded

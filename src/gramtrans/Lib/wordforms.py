@@ -556,7 +556,41 @@ def _gloss_human_evaluation(source, gloss):
             return fn()
         except Exception:
             return None
-    return getattr(gloss, "human_evaluation", None)
+    fake_attr = getattr(gloss, "human_evaluation", None)
+    if fake_attr is not None:
+        return fake_attr
+    # Live LCM surface (real IWfiGloss has none of the above).
+    return _live_gloss_human_evaluation(gloss)
+
+
+def _live_gloss_human_evaluation(gloss):
+    """Human evaluation for a live `IWfiGloss`, or None (FR-008 gate).
+
+    2026-07-15 live-proof fix: `WfiGlosses.GetHumanEvaluation` and the
+    `GetHumanEvaluation()` / `human_evaluation` object hooks are absent on the
+    live surface (same divergence as the analysis gate), so 0 glosses were
+    reproduced. A live `IWfiGloss` carries no independent agent opinion; it is
+    human content iff its OWNING `IWfiAnalysis` is human-evaluated -- reuse
+    `_live_human_evaluation` on the owning analysis (icon 1/2 -> eval, else
+    None). Offline duck-typed fallback: a fake gloss exposing `owning_analysis`
+    or a direct `ApprovalStatusIcon`."""
+    try:
+        from SIL.LCModel import IWfiGloss, IWfiAnalysis  # noqa: PLC0415
+        try:
+            owner = IWfiAnalysis(IWfiGloss(gloss).Owner)
+            return _live_human_evaluation(owner)
+        except Exception:
+            return None
+    except Exception:
+        owning = getattr(gloss, "owning_analysis", None)
+        if owning is not None:
+            return _live_human_evaluation(owning)
+        icon = getattr(gloss, "ApprovalStatusIcon", None)
+        if icon == 1:
+            return _ApprovalEval(True)
+        if icon == 2:
+            return _ApprovalEval(False)
+        return None
 
 
 def plan_glosses(analysis, source, target, ctx, dropped) -> List:
@@ -936,11 +970,18 @@ def plan_alignment(segment, ctx, dropped) -> List:
         tokens = list(getattr(segment, "analyses_rs", None) or [])
     out: List[AlignmentToken] = []
     for tok in tokens:
-        out.append(AlignmentToken(
-            kind=_classify_token(source, tok),
-            source_guid=_guid_str(tok),
-            target_ref=None,
-        ))
+        kind = _classify_token(source, tok)
+        if kind == AlignmentTokenKind.ANALYSIS:
+            # A gloss/analysis token wires to the target analysis keyed by its
+            # OWNING analysis guid -- the same key `apply_analyses` records in
+            # `_wf_analysis_map`. The raw gloss token guid would never match.
+            # (2026-07-15 live proof: without this only the 2 direct-analysis
+            # tokens wired; all 204 gloss tokens dropped as "no referent".)
+            norm = _normalize_token_to_analysis(tok)
+            source_guid = _guid_str(norm) if norm is not None else _guid_str(tok)
+        else:
+            source_guid = _guid_str(tok)
+        out.append(AlignmentToken(kind=kind, source_guid=source_guid, target_ref=None))
     return out
 
 
