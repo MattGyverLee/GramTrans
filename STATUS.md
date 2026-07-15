@@ -1,5 +1,44 @@
 # GramTrans — Session Handoff
 
+## ▶▶▶ Feature 028 — Affix-Allomorph Morphosyntax Fidelity — DONE & MERGED (2026-07-15)
+
+**MERGED to `main` @ `5cecdb2`** (`--no-ff`, no conflicts). Worktree
+`../GramTrans-028-affix-allomorph-morphosyntax` removed; branch `028-affix-allomorph-morphosyntax`
+deleted (merged). Merged-tree offline suite **1625 passed** at the documented **7-fail environment
+baseline** (6× `test_013_apply_syncable_signature` — flexicon tree absent in this env — + 1×
+`test_wizard_pos_grammar_wiring`); no new failures. **All 20 tasks (T001–T020) done.**
+
+**What shipped:** reproduces the four `MoAffixAllomorph`/`MoAffixForm` morphosyntactic-environment
+fields on cross-project Move, closing the 024-census DROP_REPORTED gap for affix allomorphs. Each
+field has a reproduce leg + read-only Preview twin in `Lib/owned.py`, dispatched via
+`reproduce_moaffix_msenv_data` / `_plan_moaffix_msenv_decisions`:
+- **US1** `MsEnvPartOfSpeechRA` — resolve/create target POS (`categories.resolve_or_create_target_pos`, R1).
+- **US2** `InflectionClassesRC` — resolve/create class under its owning POS (`resolve_or_create_inflection_class`, R5).
+- **US3** `MsEnvFeaturesOA` — deep-copy the owned `IFsFeatStruc`, resolve closed values by GUID (feature-031 machinery, R3; resolve-only, never creates a feature).
+- **US4** `PositionRS` — link infix-position envs in order, reusing the 024 environment path (R4).
+- **US5** — unified never-silent backstop; fidelity census flipped the four rows DROP_REPORTED → COPIED; retired the dead `_report_dropped_moaffix_msenv_fields` stub. Also added `fidelity_census.py` to pytest `python_files` so `pytest tests/verification/` collects it.
+
+**T019 attended live PASS (2026-07-15, user-directed).** Driven through the FLExTools host
+interpreter (subprocess — the dev shell has no flexicon): `scratchpad/build028_fixture.py --write`
+populated a constructed fixture on a disposable `Ejagham028Src` (restored from the Ejagham Mini
+backup; real Ejagham Mini untouched), then `scratchpad/run028_live.py` restored `Target` clean and
+ran the real `AFFIXES` engine. **`MsEnvPartOfSpeechRA` / `InflectionClassesRC` / `PositionRS` each
+`0→1`** (CREATE / CREATE / LINK), **idempotent re-Move** (0 new, counts stable), and **4 never-silent
+`DroppedItemRecord`s** (SC-003). `MsEnvFeaturesOA` correctly REPORT_DROPPED live — the leg is
+resolve-only (R3) and the closed feature wasn't in the target when the affix was processed; its
+positive deep-copy arm is proven by the 7 offline `test_028_msenv_feature_struct.py` tests. All four
+driver self-checks PASS. Full evidence:
+`specs/028-affix-allomorph-morphosyntax/verification-log.md`.
+
+**Disposable projects left on disk** (safe to delete): `Ejagham028Src` and the mutated `Target`
+(re-restore from `backups/Target 2026-07-06 0218.fwbackup` to reset).
+
+**Deferred follow-up (non-gating):** live positive `MsEnvFeaturesOA` deep-copy (seed the feature
+into the target first, then run the affix transfer); complex/open feature-value reproduction
+(spec Out of Scope, R3).
+
+---
+
 ## ▶▶▶ Feature 027 — Complex Forms & Variants — DONE & MERGED (2026-07-14)
 
 **MERGED to `main` @ `4b8b4dc`** (`--no-ff`, no conflicts, pushed to origin). Worktree
