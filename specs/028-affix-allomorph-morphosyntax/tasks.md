@@ -92,18 +92,26 @@ report-dropped, but now through the new seam).
 **Goal**: reproduce `MsEnvPartOfSpeechRA` — resolve/create the target POS and reference it.
 **Independent test**: quickstart Tier 1 CREATE/LINK/REPORT for POS ref + Tier 2 step 4.
 
-- [ ] T006 [P] [US1] RED: in `tests/unit/test_028_affix_msenv_reproduction.py`, failing tests
+- [x] T006 [P] [US1] RED: in `tests/unit/test_028_affix_msenv_reproduction.py`, failing tests
       for the POS-ref leg over duck-typed fakes — CREATE (POS absent, ancestor chain
       resolvable → created with GUID preserved, allomorph references it), LINK (present &
       identical → referenced, no write), REPORT_DROPPED (unresolvable → `DroppedItemRecord`
       `field_name="MsEnvPartOfSpeechRA"`), empty-source no-op (populated target field not
       blanked), and Preview/Move parity (plan decision == move outcome).
-- [ ] T007 [US1] GREEN: implement the `MsEnvPartOfSpeechRA` leg in both
+- [x] T007 [US1] GREEN: implement the `MsEnvPartOfSpeechRA` leg in both
       `reproduce_moaffix_msenv_data` (Move) and `_plan_moaffix_msenv_decisions` (Preview) in
       `src/gramtrans/Lib/owned.py`, reading via the `IMoAffixAllomorph(obj)` cast and
       routing through `categories._resolve_target_pos` + the POS create-with-ancestors path
       (R1). Remove `MsEnvPartOfSpeechRA` from the T005 report-drop fallback. Confirm T006
       goes GREEN and the targeted suite passes.
+      **DONE** (worktree 65ec040): `owned._reproduce_msenv_pos_ra`/`_plan_msenv_pos_ra`;
+      new R1-faithful single POS path `categories.resolve_or_create_target_pos`
+      (reuses `_resolve_target_pos` for identity + the `gram_categories_execute_action`
+      `IPartOfSpeechFactory` create idiom — GUID preserved, props synced, ancestor chain,
+      Carrier B residue; fake-tolerant) + `target_has_pos_create_infra` for parity.
+      `MsEnvPartOfSpeechRA` added to `owned._MSENV_REPRODUCED_FIELDS`. 8/8 targeted GREEN;
+      full offline suite at the 7-fail environment baseline. The cycle-16 all-four
+      never-silent test was made rollout-aware (landed field now reported by its leg).
 
 **Checkpoint**: US1 fully functional and independently testable — MVP reproduce-leg +
 Preview-twin pattern proven.
@@ -115,17 +123,31 @@ Preview-twin pattern proven.
 **Goal**: reproduce `InflectionClassesRC` (read from the `IMoAffixForm` parent), scoped to the
 owning POS. **Independent test**: quickstart Tier 1 class LINK/CREATE/REPORT + dedup.
 
-- [ ] T008 [P] [US2] RED: in `tests/unit/test_028_affix_msenv_reproduction.py`, failing tests
+- [x] T008 [P] [US2] RED: in `tests/unit/test_028_affix_msenv_reproduction.py`, failing tests
       for the inflection-class leg — read via `IMoAffixForm(obj)` cast; LINK (class present by
       GUID), CREATE (absent, owning POS in-closure → created under that POS, GUID preserved,
       added to target `InflectionClassesRC`), REPORT_DROPPED (owning POS neither present nor
       in-closure → `field_name="InflectionClassesRC"`, per class), and dedup (two allomorphs
       sharing a class → one create via `resolver_cache`).
-- [ ] T009 [US2] GREEN: implement the `InflectionClassesRC` leg in both dispatch functions in
+- [x] T009 [US2] GREEN: implement the `InflectionClassesRC` leg in both dispatch functions in
       `src/gramtrans/Lib/owned.py`, reusing `categories._create_inflection_class` /
       `IMoInflClassFactory` (R5) and the grammar POS resolution for the owning POS (R1),
       closure-scoped (Principle V). Remove `InflectionClassesRC` from the T005 fallback.
       Confirm T008 GREEN.
+      **DONE** (worktree e5125ad): `owned._reproduce_inflection_classes_rc`/
+      `_plan_inflection_classes_rc`; new `categories.resolve_or_create_inflection_class`
+      (R5) — resolve by GUID under the owning POS's `InflectionClassesOC` (or a parent
+      class's `SubclassesOC`), create via `IMoInflClassFactory.Create` GUID-preserved; the
+      owning POS is **resolved, never invented** (G8/Principle V) — plus
+      `resolve_target_inflection_class` + `can_create_inflection_class` for parity.
+      `InflectionClassesRC` added to `owned._MSENV_REPRODUCED_FIELDS`. LCM-direct `.Add` into
+      the read-only-through-wrapper collection. 14/14 targeted GREEN; full offline suite at
+      the 7-fail environment baseline.
+      **Reuse note (R5 refinement):** the existing `inflection_classes_execute_action`
+      creates classes under `MorphologicalDataOA.ProdRestrictOA` (a different owner); 028
+      creates the affix-`InflectionClassesRC` member under its **owning POS's
+      `InflectionClassesOC`** per data-model.md, using the same `IMoInflClassFactory.Create`
+      idiom.
 
 **Checkpoint**: US1 + US2 both independently functional.
 
