@@ -621,7 +621,23 @@ def _copy_multistrings_ws_mapped(src_typed, new_typed, prop_names, *,
 
 
 def inflection_features_execute_action(action: PlannedAction, context: RunContext, ws_mapping: WSMapping, tag: ImportResidueTag):
-    """Create an IFsClosedFeature in the target with GUID preserved.
+    """Create an IFsFeatDefn subtype in the target with GUID preserved.
+
+    Dispatches on `src_feat.ClassName` (coverage-content-fidelity-v2 Part B
+    sub-part 1 -- complex/open inflection features):
+    - "FsClosedFeature" (or unknown/absent ClassName): the existing GOLD
+      Path A/B create + IFsSymFeatVal ValuesOC co-create logic, unchanged.
+    - "FsComplexFeature": creates an IFsComplexFeature via
+      IFsComplexFeatureFactory (Path A 2-arg Create(Guid, featureSystem),
+      falling back to Path B Create(Guid) + guarded Add). Copies
+      Name/Abbreviation/Description via the WS-mapped Operations surface
+      (falling back to `_copy_multistrings_ws_mapped`). Wires TypeRA by
+      GUID lookup in `MsFeatureSystemOA.TypesOC` if the target struct-type
+      already exists; otherwise leaves TypeRA unset (FEATURE_STRUCT_TYPES
+      is a LATER coverage sub-part -- graceful degradation, no crash).
+      No ValuesOC loop -- complex features have no symbolic values.
+    - "FsOpenFeature": documented clean skip (Skip(NEEDS_MANUAL)) -- open
+      features have no closed value set to sync; no crash, no orphan.
 
     Uses the 2-arg factory overload (Path A: Create(Guid, featureSystem))
     per the InflectionFeatureOperations._factory_create_attached pattern.
@@ -667,12 +683,133 @@ def inflection_features_execute_action(action: PlannedAction, context: RunContex
         if src_feat is None:
             return None
 
-        # 031 US2 (T024 live finding): this create path only supports
-        # IFsClosedFeature. A non-closed IFsFeatDefn (e.g. IFsComplexFeature /
-        # IFsOpenFeature) crashed the `IFsClosedFeature(src_feat)` cast below and
-        # left a NAMELESS closed-feature twin in the target. Detect it up front,
-        # report it (UNSUPPORTED_LCM_TYPE -- no silent skip), and create nothing.
-        # Full complex/open-feature transfer is tracked as a follow-up.
+        cache = getattr(target, "Cache")
+        ws = cache.DefaultAnalWs
+        feature_system = cache.LangProject.MsFeatureSystemOA
+        parsed_guid = DotNetGuid.Parse(src_guid)
+        sl = cache.ServiceLocator
+        ws_map = _ws_map_dict(ws_mapping)
+
+        src_class = getattr(src_feat, "ClassName", None)
+
+        # ------------------------------------------------------------
+        # COMPLEX FEATURE branch (coverage-content-fidelity-v2 Part B.1)
+        # ------------------------------------------------------------
+        if src_class == "FsComplexFeature":
+            try:
+                from SIL.LCModel import IFsComplexFeatureFactory, IFsComplexFeature
+            except Exception as _imp_exc:  # noqa: BLE001 -- offline/older LCM build
+                import logging as _logging
+                _logging.getLogger("gramtrans.Lib.categories").warning(
+                    "inflection_features_execute_action: IFsComplexFeatureFactory "
+                    "not importable -- skipping complex feature guid=%s: %s",
+                    src_guid, _imp_exc, exc_info=True,
+                )
+                exec_skips = getattr(context, "_exec_skips", None)
+                if exec_skips is not None:
+                    exec_skips.append(Skip(
+                        category=GrammarCategory.INFLECTION_FEATURES,
+                        source_guid=src_guid,
+                        reason=SkipReason.UNSUPPORTED_LCM_TYPE,
+                        detail=(f"IFsComplexFeatureFactory not importable on this "
+                                f"LCM build; cannot create complex feature {src_guid}"),
+                    ))
+                return None
+
+            complex_factory = sl.GetService(IFsComplexFeatureFactory)
+
+            # Path A: 2-arg Create(Guid, featureSystem) -- auto-attaches; do
+            # NOT call FeaturesOC.Add() afterward (double-attach risk).
+            new_feat_raw = None
+            try:
+                new_feat_raw = complex_factory.Create(parsed_guid, feature_system)
+            except Exception:
+                new_feat_raw = None
+
+            if new_feat_raw is None:
+                # Path B: Create(Guid) + guarded Add. Fail loud rather than
+                # silently produce a fresh-GUID duplicate on re-run (mirrors
+                # the closed-feature posture, C4/VR-1).
+                try:
+                    new_feat_raw = complex_factory.Create(parsed_guid)
+                except Exception as e:
+                    raise RuntimeError(
+                        f"IFsComplexFeatureFactory does not support "
+                        f"Create(Guid); cannot align complex feature GUID "
+                        f"{src_guid}"
+                    ) from e
+                _safe_add_to_owner(new_feat_raw, feature_system.FeaturesOC,
+                                   "IFsComplexFeatureFactory", src_guid)
+
+            new_feat = IFsComplexFeature(new_feat_raw)
+            src_feat_typed = IFsComplexFeature(src_feat)
+
+            # Name/Abbreviation/Description via the WS-mapped Operations
+            # surface, falling back to the explicit handle-translation copy
+            # (mirrors the closed-feature path immediately below).
+            try:
+                src_props = source.InflectionFeatures.GetSyncableProperties(src_feat_typed)
+                target.InflectionFeatures.ApplySyncableProperties(
+                    new_feat, src_props, ws_map=ws_map)
+            except Exception:
+                _copy_multistrings_ws_mapped(
+                    src_feat_typed, new_feat, ("Name", "Abbreviation", "Description"),
+                    source=source, target=target, ws_map=ws_map)
+
+            # Wire TypeRA by GUID if the target struct-type already exists.
+            # FEATURE_STRUCT_TYPES is a LATER coverage sub-part, so on a bare
+            # main checkout MsFeatureSystemOA.TypesOC is commonly empty --
+            # degrade gracefully (leave TypeRA unset) rather than crash.
+            src_type_ra = getattr(src_feat_typed, "TypeRA", None)
+            if src_type_ra is not None:
+                src_type_guid = _guid_str_from(src_type_ra)
+                wired = False
+                for tgt_type in getattr(feature_system, "TypesOC", ()) or ():
+                    if _guid_str_from(tgt_type) == src_type_guid:
+                        new_feat.TypeRA = tgt_type
+                        wired = True
+                        break
+                if not wired:
+                    import logging as _logging
+                    _logging.getLogger("gramtrans.Lib.categories").info(
+                        "inflection_features_execute_action: complex feature "
+                        "%s references struct-type %s not (yet) present in "
+                        "target MsFeatureSystemOA.TypesOC -- TypeRA left "
+                        "unset (FEATURE_STRUCT_TYPES coverage sub-part "
+                        "pending)", src_guid, src_type_guid,
+                    )
+
+            # NO ValuesOC loop -- complex features have no symbolic values.
+            apply_carrier_b(new_feat, ws, tag)
+            return new_feat
+
+        # ------------------------------------------------------------
+        # OPEN FEATURE branch -- documented clean skip; no crash, no orphan.
+        # Open features have no closed value set to sync.
+        # ------------------------------------------------------------
+        if src_class == "FsOpenFeature":
+            import logging as _logging
+            _logging.getLogger("gramtrans.Lib.categories").info(
+                "inflection_features_execute_action: FsOpenFeature has no "
+                "closed value set to sync -- skipping guid=%s", src_guid,
+            )
+            exec_skips = getattr(context, "_exec_skips", None)
+            if exec_skips is not None:
+                exec_skips.append(Skip(
+                    category=GrammarCategory.INFLECTION_FEATURES,
+                    source_guid=src_guid,
+                    reason=SkipReason.NEEDS_MANUAL,
+                    detail=(f"source feature {src_guid} is FsOpenFeature; open "
+                            "inflection features have no closed value set and "
+                            "are not supported by this transfer path"),
+                ))
+            return None
+
+        # ------------------------------------------------------------
+        # CLOSED FEATURE branch (default / existing GOLD working path).
+        # Any other/unknown ClassName also lands here; if the cast fails
+        # it is reported as UNSUPPORTED_LCM_TYPE below (no crash, no orphan).
+        # ------------------------------------------------------------
         try:
             IFsClosedFeature(src_feat)
         except Exception as _cast_exc:
@@ -699,12 +836,6 @@ def inflection_features_execute_action(action: PlannedAction, context: RunContex
                 ))
             return None
 
-        cache = getattr(target, "Cache")
-        ws = cache.DefaultAnalWs
-        feature_system = cache.LangProject.MsFeatureSystemOA
-        parsed_guid = DotNetGuid.Parse(src_guid)
-
-        sl = cache.ServiceLocator
         factory = sl.GetService(IFsClosedFeatureFactory)
 
         # Path A: 2-arg Create(Guid, featureSystem).
@@ -737,7 +868,7 @@ def inflection_features_execute_action(action: PlannedAction, context: RunContex
         # (categories.py gram_categories create path). Falls back to the explicit
         # handle-translation copy if that surface is unavailable on this build.
         src_feat_typed = IFsClosedFeature(src_feat)
-        ws_map = _ws_map_dict(ws_mapping)
+        # ws_map already computed above (shared by all ClassName branches).
         try:
             src_props = source.InflectionFeatures.GetSyncableProperties(src_feat_typed)
             target.InflectionFeatures.ApplySyncableProperties(

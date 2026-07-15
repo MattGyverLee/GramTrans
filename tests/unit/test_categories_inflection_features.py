@@ -5,12 +5,21 @@ Covers:
 - plan_action() GOLD-aware skip (CatalogSourceId non-empty)
 - plan_action() ALREADY_PRESENT_BY_GUID skip
 - plan_action() PlannedAction for non-GOLD new feature
-- execute_action() is LCM-bound — integration only
+- execute_action() ClassName dispatch: FsComplexFeature is created (not
+  skipped), FsClosedFeature regression guard, FsOpenFeature clean skip
+  (coverage-content-fidelity-v2 Part B sub-part 1).
+- execute_action() closed-feature Path A/B create is LCM-bound — integration
+  only.
 """
 from __future__ import annotations
 
+import sys
+import types
+import uuid
+
 import pytest
 
+import gramtrans.Lib.categories as _cat_mod
 from gramtrans.Lib import categories
 from gramtrans.Lib.models import (
     GrammarCategory,
@@ -309,4 +318,375 @@ def test_feature_and_value_guid_sets_are_distinct() -> None:
     assert "f-1" not in value_guids  # feature GUID is NOT in the value set
     assert "v-1" in value_guids
     assert "v-1" not in feat_guids
+
+
+# ============================================================================
+# execute_action() ClassName dispatch -- complex/open inflection features
+# (coverage-content-fidelity-v2 Part B sub-part 1)
+#
+# Prior main behavior: any non-IFsClosedFeature source (FsComplexFeature /
+# FsOpenFeature) failed the `IFsClosedFeature(src_feat)` cast and was
+# reported as Skip(UNSUPPORTED_LCM_TYPE) -- a silent content-fidelity drop.
+# These tests lock the fixed dispatch: FsComplexFeature is now CREATED (not
+# skipped); FsClosedFeature keeps working (regression guard); FsOpenFeature
+# is a clean, documented skip with no orphan LCM object.
+# ============================================================================
+
+_FEAT_GUID_B1 = str(uuid.uuid4()).lower()
+_TYPE_GUID_B1 = str(uuid.uuid4()).lower()
+
+
+class _FakeTsStringB1:
+    def __init__(self, text: str) -> None:
+        self.Text = text
+
+
+class _FakeMultiStringB1:
+    """Minimal duck-typed ITsMultiString: read/write are no-ops that never
+    raise, so the WS-mapped copy path (or its GetSyncableProperties-first
+    attempt) can run without touching real SIL types."""
+
+    def get_String(self, ws_handle):
+        return _FakeTsStringB1("")
+
+    def set_String(self, ws_handle, ts_string):
+        pass
+
+
+class _FakeComplexFeatureB1:
+    ClassName = "FsComplexFeature"
+
+    def __init__(self, guid: str, type_ra=None) -> None:
+        self.guid = guid
+        self.Name = _FakeMultiStringB1()
+        self.Abbreviation = _FakeMultiStringB1()
+        self.Description = _FakeMultiStringB1()
+        self.TypeRA = type_ra
+
+
+class _FakeOpenFeatureB1:
+    ClassName = "FsOpenFeature"
+
+    def __init__(self, guid: str) -> None:
+        self.guid = guid
+
+
+class _FakeValueB1:
+    def __init__(self, guid: str) -> None:
+        self.guid = guid
+        self.Name = _FakeMultiStringB1()
+        self.Abbreviation = _FakeMultiStringB1()
+        self.Description = _FakeMultiStringB1()
+
+
+class _FakeClosedFeatureB1:
+    ClassName = "FsClosedFeature"
+
+    def __init__(self, guid: str, values=()) -> None:
+        self.guid = guid
+        self.Name = _FakeMultiStringB1()
+        self.Abbreviation = _FakeMultiStringB1()
+        self.Description = _FakeMultiStringB1()
+        self.ValuesOC = list(values)
+
+
+class _FakeFeatStrucTypeB1:
+    def __init__(self, guid: str) -> None:
+        self.guid = guid
+
+
+class _FakeOCB1(list):
+    def Add(self, obj) -> None:
+        self.append(obj)
+
+
+class _FakeFeatureSystemB1:
+    def __init__(self, types_oc=(), features_oc=None) -> None:
+        self.TypesOC = list(types_oc)
+        self.FeaturesOC = _FakeOCB1() if features_oc is None else features_oc
+
+
+class _FakeNewComplexFeatB1:
+    def __init__(self) -> None:
+        self.Name = _FakeMultiStringB1()
+        self.Abbreviation = _FakeMultiStringB1()
+        self.Description = _FakeMultiStringB1()
+        self.TypeRA = None
+
+
+class _FakeNewClosedFeatB1:
+    def __init__(self) -> None:
+        self.Name = _FakeMultiStringB1()
+        self.Abbreviation = _FakeMultiStringB1()
+        self.Description = _FakeMultiStringB1()
+        self.ValuesOC = _FakeOCB1()
+
+
+class _FakeNewValueB1:
+    def __init__(self) -> None:
+        self.Name = _FakeMultiStringB1()
+        self.Abbreviation = _FakeMultiStringB1()
+        self.Description = _FakeMultiStringB1()
+
+
+class _FakeWSObjB1:
+    def __init__(self, ws_id: str, handle: int) -> None:
+        self.Id = ws_id
+        self.Handle = handle
+
+
+class _FakeWSOpsB1:
+    def __init__(self, ws_list=()) -> None:
+        self._ws_list = list(ws_list)
+
+    def GetAll(self):
+        return list(self._ws_list)
+
+
+class _FakeFactoryB1:
+    """Tracks every Create(*args) call and always returns the same object --
+    mirrors the live 2-arg-then-1-arg factory idiom without a real LCM host."""
+
+    def __init__(self, obj_to_return) -> None:
+        self._obj = obj_to_return
+        self.create_calls: list = []
+
+    def Create(self, *args):
+        self.create_calls.append(args)
+        return self._obj
+
+
+class _FakeServiceLocatorB1:
+    """Maps a factory-interface sentinel to its fake factory. A branch that
+    requests a factory NOT registered here raises KeyError -- catching any
+    accidental cross-branch dispatch (e.g. a closed feature erroneously
+    asking for IFsComplexFeatureFactory) as a loud test failure."""
+
+    def __init__(self, factory_map: dict) -> None:
+        self._factory_map = factory_map
+
+    def GetService(self, factory_type):
+        return self._factory_map[id(factory_type)]
+
+
+class _FakeCacheB1:
+    def __init__(self, feature_system, service_locator) -> None:
+        self.DefaultAnalWs = 1
+        self.LangProject = _FakeLangProjectB1(feature_system)
+        self.ServiceLocator = service_locator
+
+
+class _FakeLangProjectB1:
+    def __init__(self, feature_system) -> None:
+        self.MsFeatureSystemOA = feature_system
+
+
+class _FakeTgtProjectB1:
+    def __init__(self, feature_system, service_locator, ws_list=()) -> None:
+        self._cache = _FakeCacheB1(feature_system, service_locator)
+        self.WritingSystems = _FakeWSOpsB1(ws_list)
+
+    @property
+    def Cache(self):
+        return self._cache
+
+
+class _FakeInflFeatureOpsB1:
+    def __init__(self, feature) -> None:
+        self._feature = feature
+
+    def FeatureGetAll(self):
+        return [self._feature]
+
+
+class _FakeSrcProjectB1:
+    def __init__(self, feature, ws_list=()) -> None:
+        self.InflectionFeatures = _FakeInflFeatureOpsB1(feature)
+        self.WritingSystems = _FakeWSOpsB1(ws_list)
+
+
+def _ctx_b1(source, target) -> RunContext:
+    ctx = RunContext(
+        source_handle=source,
+        source_project_name="SrcProj",
+        source_project_path="/src",
+        target_handle=target,
+        target_project_name="TgtProj",
+        target_project_path="/tgt",
+        run_id="GT-20260715-010000",
+        started_at="2026-07-15T01:00:00",
+    )
+    object.__setattr__(ctx, "_exec_skips", [])
+    return ctx
+
+
+def _action_b1(guid: str) -> PlannedAction:
+    return PlannedAction(
+        category=GrammarCategory.INFLECTION_FEATURES,
+        source_guid=guid,
+        intended_target_guid=guid,
+        summary="test",
+    )
+
+
+@pytest.fixture()
+def _patch_lcm_b1(monkeypatch):
+    """Inject a fake SIL.LCModel/System so the function's internal
+    `from SIL.LCModel import ...` succeeds offline (no pythonnet host), and
+    no-op apply_carrier_b so residue logic doesn't need a real WS handle."""
+    fake_lcm = types.ModuleType("SIL.LCModel")
+    fake_lcm.IFsClosedFeatureFactory = object()
+    fake_lcm.IFsClosedFeature = lambda x: x
+    fake_lcm.IFsSymFeatValFactory = object()
+    fake_lcm.IFsSymFeatVal = lambda x: x
+    fake_lcm.IFsComplexFeatureFactory = object()
+    fake_lcm.IFsComplexFeature = lambda x: x
+
+    fake_kernel = types.ModuleType("SIL.LCModel.Core.KernelInterfaces")
+    fake_kernel.ITsString = lambda x: x
+    fake_text = types.ModuleType("SIL.LCModel.Core.Text")
+    fake_text.TsStringUtils = type("TsStringUtils", (), {
+        "MakeString": staticmethod(lambda text, ws: text)
+    })
+    fake_system = types.ModuleType("System")
+    fake_system.Guid = type("Guid", (), {"Parse": staticmethod(lambda s: s)})
+
+    injected = {
+        "SIL": types.ModuleType("SIL"),
+        "SIL.LCModel.Core": types.ModuleType("SIL.LCModel.Core"),
+        "SIL.LCModel": fake_lcm,
+        "SIL.LCModel.Core.KernelInterfaces": fake_kernel,
+        "SIL.LCModel.Core.Text": fake_text,
+        "System": fake_system,
+    }
+    originals = {key: sys.modules.get(key) for key in injected}
+    sys.modules.update(injected)
+
+    try:
+        import gramtrans.Lib.residue as _res_mod
+        monkeypatch.setattr(_res_mod, "apply_carrier_b", lambda feat, ws, tag: None)
+    except Exception:
+        pass
+
+    yield fake_lcm
+
+    for key, orig in originals.items():
+        if orig is None:
+            sys.modules.pop(key, None)
+        else:
+            sys.modules[key] = orig
+
+
+def test_execute_action_complex_feature_creates_object_not_skipped(_patch_lcm_b1) -> None:
+    """(a) FsComplexFeature -> feature IS created, not routed to the
+    Skip(UNSUPPORTED_LCM_TYPE) refusal. TypeRA wired when the target
+    struct-type is resolvable by GUID."""
+    fake_lcm = _patch_lcm_b1
+    src_type = _FakeFeatStrucTypeB1(guid=_TYPE_GUID_B1)
+    src_feat = _FakeComplexFeatureB1(guid=_FEAT_GUID_B1, type_ra=src_type)
+
+    tgt_type = _FakeFeatStrucTypeB1(guid=_TYPE_GUID_B1)
+    feat_sys = _FakeFeatureSystemB1(types_oc=[tgt_type])
+    new_complex_feat = _FakeNewComplexFeatB1()
+    complex_factory = _FakeFactoryB1(new_complex_feat)
+    sl = _FakeServiceLocatorB1({id(fake_lcm.IFsComplexFeatureFactory): complex_factory})
+
+    tgt_proj = _FakeTgtProjectB1(feat_sys, sl)
+    src_proj = _FakeSrcProjectB1(src_feat)
+    ctx = _ctx_b1(src_proj, tgt_proj)
+
+    result = categories.inflection_features_execute_action(
+        _action_b1(_FEAT_GUID_B1), ctx, WSMapping(), tag=None,
+    )
+
+    assert result is new_complex_feat, "complex feature was not created"
+    assert ctx._exec_skips == [], "complex feature must not be reported as a skip"
+    assert complex_factory.create_calls, "IFsComplexFeatureFactory.Create was not called"
+    assert result.TypeRA is tgt_type, "TypeRA not wired to matching target struct-type"
+
+
+def test_execute_action_complex_feature_type_ra_absent_degrades_gracefully(_patch_lcm_b1) -> None:
+    """Cross-sub-part dependency: FEATURE_STRUCT_TYPES (a later coverage
+    sub-part) may not have created the target struct-type yet. TypeRA must
+    be left unset -- no crash -- rather than fail the whole feature create."""
+    fake_lcm = _patch_lcm_b1
+    src_type = _FakeFeatStrucTypeB1(guid=_TYPE_GUID_B1)
+    src_feat = _FakeComplexFeatureB1(guid=_FEAT_GUID_B1, type_ra=src_type)
+
+    feat_sys = _FakeFeatureSystemB1(types_oc=())  # target struct-type absent
+    new_complex_feat = _FakeNewComplexFeatB1()
+    complex_factory = _FakeFactoryB1(new_complex_feat)
+    sl = _FakeServiceLocatorB1({id(fake_lcm.IFsComplexFeatureFactory): complex_factory})
+
+    tgt_proj = _FakeTgtProjectB1(feat_sys, sl)
+    src_proj = _FakeSrcProjectB1(src_feat)
+    ctx = _ctx_b1(src_proj, tgt_proj)
+
+    result = categories.inflection_features_execute_action(
+        _action_b1(_FEAT_GUID_B1), ctx, WSMapping(), tag=None,
+    )
+
+    assert result is new_complex_feat
+    assert result.TypeRA is None, "TypeRA must stay unset when target type absent"
+    assert ctx._exec_skips == []  # graceful degrade, not a skip
+
+
+def test_execute_action_closed_feature_still_works(_patch_lcm_b1) -> None:
+    """(b) Regression guard: FsClosedFeature keeps using the existing GOLD
+    Path A create + IFsSymFeatVal co-create -- untouched by the new
+    complex/open branches. IFsComplexFeatureFactory is deliberately NOT
+    registered in the service locator, so any accidental cross-branch
+    dispatch raises KeyError (a loud test failure)."""
+    fake_lcm = _patch_lcm_b1
+    val_guid = str(uuid.uuid4()).lower()
+    src_val = _FakeValueB1(guid=val_guid)
+    src_feat = _FakeClosedFeatureB1(guid=_FEAT_GUID_B1, values=(src_val,))
+
+    feat_sys = _FakeFeatureSystemB1()
+    new_closed_feat = _FakeNewClosedFeatB1()
+    new_val = _FakeNewValueB1()
+    closed_factory = _FakeFactoryB1(new_closed_feat)
+    value_factory = _FakeFactoryB1(new_val)
+    sl = _FakeServiceLocatorB1({
+        id(fake_lcm.IFsClosedFeatureFactory): closed_factory,
+        id(fake_lcm.IFsSymFeatValFactory): value_factory,
+    })
+
+    tgt_proj = _FakeTgtProjectB1(feat_sys, sl)
+    src_proj = _FakeSrcProjectB1(src_feat)
+    ctx = _ctx_b1(src_proj, tgt_proj)
+
+    result = categories.inflection_features_execute_action(
+        _action_b1(_FEAT_GUID_B1), ctx, WSMapping(), tag=None,
+    )
+
+    assert result is new_closed_feat
+    assert ctx._exec_skips == []
+    assert closed_factory.create_calls, "IFsClosedFeatureFactory.Create was not called"
+    assert value_factory.create_calls, "IFsSymFeatValFactory.Create was not called"
+
+
+def test_execute_action_open_feature_clean_skip(_patch_lcm_b1) -> None:
+    """(c) FsOpenFeature -> clean documented skip: returns None, attaches
+    nothing to FeaturesOC (no orphan), and records a single NEEDS_MANUAL
+    Skip for the category."""
+    src_feat = _FakeOpenFeatureB1(guid=_FEAT_GUID_B1)
+    feat_sys = _FakeFeatureSystemB1()
+    sl = _FakeServiceLocatorB1({})  # no factory should be requested at all
+
+    tgt_proj = _FakeTgtProjectB1(feat_sys, sl)
+    src_proj = _FakeSrcProjectB1(src_feat)
+    ctx = _ctx_b1(src_proj, tgt_proj)
+
+    result = categories.inflection_features_execute_action(
+        _action_b1(_FEAT_GUID_B1), ctx, WSMapping(), tag=None,
+    )
+
+    assert result is None, "FsOpenFeature should return None (clean skip)"
+    assert len(feat_sys.FeaturesOC) == 0, "FsOpenFeature must not attach anything to FeaturesOC"
+    assert len(ctx._exec_skips) == 1
+    skip = ctx._exec_skips[0]
+    assert skip.category == GrammarCategory.INFLECTION_FEATURES
+    assert skip.source_guid == _FEAT_GUID_B1
+    assert skip.reason == SkipReason.NEEDS_MANUAL
 
