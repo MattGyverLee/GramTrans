@@ -20,13 +20,22 @@
   via `_log.debug` with **no `DroppedItemRecord`**. Same live-vs-fake divergence class as the 031
   finding. Offline fakes expose the method, so unit tests passed.
 
-**⛔ FIX REQUIRED before 026 merge** (see verification-log.md §Fix): rework `_human_evaluation`
-to read live approval via `IWfiAnalysis.ApprovalStatusIcon` / `GetAgentOpinion(EvaluationsRC)`
-(keep the fake path); make a gate-miss on genuinely-evaluated data never-silent; add a
-live-shaped regression fake (no `GetHumanEvaluation`, only `ApprovalStatusIcon`/`EvaluationsRC`);
-then re-run this live proof (219 analyses expected, R2/R5 then exercisable). `Target` restored to
-clean. The main→026 conflict merge (`831eb68`) stands; only the analysis-gather fix + re-proof
-remain before merge.
+**⛔ FIX REQUIRED before 026 merge — TWO layers (worktree @ `df4b30e`):**
+
+- **Layer 1 (FIXED):** `wordforms._human_evaluation` now reads live approval via
+  `IWfiAnalysis.ApprovalStatusIcon` (fallback path + offline live-shaped regression tests);
+  offline suite 1698 passed. Necessary but not sufficient.
+- **Layer 2 (LOGGED, deeper, NOT fixed):** the re-proof still reproduces **0 analyses**. Real
+  FLEx interlinear `Segment.AnalysesRS` tokens are mostly **`IWfiGloss`** (204/540 on Ejagham
+  Mini, owning analysis approved) + punctuation (231) + bare wordforms (103); only **2** are
+  direct `IWfiAnalysis`. 026's walk treats each token as an analysis and casts to
+  `IWfiAnalysis`, so it misses all 204 human-glossed tokens. Needs **token normalization**
+  (gloss → owning analysis + chosen gloss), gloss-modelling offline fakes, and a re-proof
+  (expect ~206 analyses). Design-level rework of the wordform walk — a dedicated session.
+  Full detail + hard token census in `specs/026-texts-wordforms/verification-log.md`.
+
+`Target` restored to clean. The main→026 conflict merge (`831eb68`) stands; the gate fix is in
+(`df4b30e`); the gloss-token rework + re-proof remain before merge.
 
 ---
 
