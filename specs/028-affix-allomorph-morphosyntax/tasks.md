@@ -34,21 +34,26 @@ NOT `[P]` because they touch the same functions.
 
 ## Phase 1: Setup
 
-- [ ] T001 Create the implementation worktree `../GramTrans-028-affix-allomorph-morphosyntax`
+- [x] T001 Create the implementation worktree `../GramTrans-028-affix-allomorph-morphosyntax`
       on new branch `028-affix-allomorph-morphosyntax` from `main`; confirm
       `pip install -e D:/Github/_Projects/_LEX/flexlibs2` resolves and
       `python -m pytest tests/unit -q` is green modulo the known
       `test_wizard_pos_grammar_wiring` baseline fail.
-- [ ] T002 [P] Add import-smoke scaffold `tests/unit/test_028_affix_msenv_reproduction.py`
+      **Note (this environment):** flexicon is NOT pip-installed here, so the offline
+      baseline is **7 failures** = 6 `test_013_apply_syncable_signature` (assert against the
+      absent flexicon source tree `D:/Github/_Projects/_LEX/flexicon/...`) + 1 documented
+      `test_wizard_pos_grammar_wiring`. 028's tests use fakes and do not depend on the
+      flexicon tree; regression is measured against this 7-fail environment baseline.
+- [x] T002 [P] Add import-smoke scaffold `tests/unit/test_028_affix_msenv_reproduction.py`
       (collects clean; covers the POS-ref, inflection-class, and position families).
-- [ ] T003 [P] Add import-smoke scaffold `tests/unit/test_028_msenv_feature_struct.py`
+- [x] T003 [P] Add import-smoke scaffold `tests/unit/test_028_msenv_feature_struct.py`
       (collects clean; covers the `MsEnvFeaturesOA` deep-copy family).
 
 ## Phase 2: Foundational (blocking prerequisites)
 
 **⚠️ CRITICAL**: No user-story leg can begin until T004–T005 are complete.
 
-- [ ] T004 Gate task — confirm the reuse surface is present on the branch:
+- [x] T004 Gate task — confirm the reuse surface is present on the branch:
       `categories._resolve_target_pos` (+ the POS create-with-ancestors path /
       `transfer._create_pos_with_guid`), `categories._create_inflection_class` +
       `IMoInflClassFactory` create-with-GUID, `owned._target_phonological_environments`,
@@ -56,7 +61,17 @@ NOT `[P]` because they touch the same functions.
       closed-feature resolution entry point, and `models.DroppedItemRecord` /
       `ReferenceDecisionRecord`. Record a one-line PASS per item in task notes; if any is
       absent, STOP and escalate (design assumption R1/R3/R4/R5 broken).
-- [ ] T005 In `src/gramtrans/Lib/owned.py`, add the dispatch skeletons
+      **PASS** — all present: `categories._resolve_target_pos` (categories.py:3064);
+      `transfer._create_pos_with_guid` (transfer.py:762); `owned._target_phonological_environments`
+      (owned.py:1098); `owned._reproduce_phone_env_rc` (1109) / `_plan_phone_env_rc_decisions`
+      (1508); `models.DroppedItemRecord` (974) / `ReferenceDecisionRecord` (1100).
+      **Refinement:** inflection-class and closed-feature creation are **action-based**, not
+      standalone helpers — reuse `IMoInflClassFactory.Create(Guid)` via
+      `categories.inflection_classes_execute_action` (categories.py:1228) for US2, and
+      `IFsClosedFeatureFactory.Create(Guid, featureSystem)` via
+      `categories.inflection_features_execute_action` (categories.py:623) for US3. Non-blocking
+      for the seam; US2/US3 GREEN tasks reuse those factory idioms.
+- [x] T005 In `src/gramtrans/Lib/owned.py`, add the dispatch skeletons
       `reproduce_moaffix_msenv_data(src_allo, new_allo, ctx, tag, resolver_cache, dropped)`
       (Move) and `_plan_moaffix_msenv_decisions(src_allo, ctx, dropped)` (Preview twin), and
       wire them into `reproduce_allomorph_hung_data` and `plan_allomorph_hung_data_decisions`
