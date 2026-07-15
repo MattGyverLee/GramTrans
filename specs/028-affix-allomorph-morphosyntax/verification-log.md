@@ -23,7 +23,8 @@ the attended run.
 | Disposable **source** `Ejagham028Src` | Restored from `backups/Ejagham Mini.fwbackup` (headless zip-extract via `harness.restore.restore_target`). Leaves the real `Ejagham Mini` untouched. **Fixture not yet added.** |
 | Disposable **target** `Target` | Restored clean from `backups/Target 2026-07-06 0218.fwbackup`. |
 | FieldWorks 9 | Present at `C:\Program Files\SIL\FieldWorks 9\FieldWorks.exe`. |
-| Template driver | `scratchpad/run031_live.py` (feature 031 — 028's `MsEnvFeaturesOA` leg reuses its closed-feature machinery, R3). The 028 driver mirrors it with a focused Selection that walks affix entries + their allomorph hung-data. |
+| Fixture builder | `scratchpad/build028_fixture.py` — populates the four fields on one affix allomorph in `Ejagham028Src` (dry-run inventory by default; `--write` to mutate). **Untested in the dev shell** (flexicon absent); run + iterate attended. |
+| Live driver | `scratchpad/run028_live.py` — restores Target, runs the real `AFFIXES`-category engine (`Ejagham028Src → Target`), diagnoses 0→N + idempotency. Mirrors the proven `scratchpad/run031_live.py`. Gated on `GRAMTRANS_E2E=1`. |
 
 > The two restored projects are disposable scratch copies. Re-restore either from the
 > backups above to reset; delete `C:\ProgramData\SIL\FieldWorks\Projects\Ejagham028Src` when
@@ -50,10 +51,14 @@ from `Target`) so SC-003 (never-silent) can be exercised.
 
 ## Procedure (mirrors quickstart.md Tier 2 + the run031 driver)
 
-1. Confirm `Target` is closed in FLEx (no `.lock`); `restore.restore_target("Target", backup_path="backups/Target 2026-07-06 0218.fwbackup")`.
-2. **Preview** (`api.compute_preview`, read-only): confirm the plan shows CREATE for the POS +
-   inflection class, deep-copy for the feature structure, LINK for the positions' envs — and
-   **no writes** to `Target` on disk.
+0. **Build the fixture** (mutates the disposable source):
+   `python scratchpad/build028_fixture.py` (dry-run inventory — confirm the env/feature GUIDs),
+   then `python scratchpad/build028_fixture.py --write`.
+1. **Drive it**: `set GRAMTRANS_E2E=1 && python scratchpad/run028_live.py` — restores `Target`,
+   runs the `AFFIXES` engine, and prints the before/Move#1/re-Move#2 diagnosis. Steps 2–5 below
+   are what the driver automates; step 6 is manual.
+2. **Preview** (`api.compute_preview`, read-only): plan shows CREATE for the POS + inflection
+   class, deep-copy for the feature structure, LINK for the positions' envs — **no writes**.
 3. **Move** (`api.execute_move`): `Ejagham028Src → Target`.
 4. Reopen `Target` fresh and verify on the affix allomorph:
    - `MsEnvPartOfSpeechRA` → created POS (GUID preserved);
@@ -61,9 +66,14 @@ from `Target`) so SC-003 (never-silent) can be exercised.
    - `MsEnvFeaturesOA` → deep-copied structure, value resolved;
    - `PositionRS` → envs present **in source order**.
 5. **Re-Move** (no restore): 0 duplicate POS / classes / positions (dedup, SC-005).
-6. Force one unresolvable item → confirm a `DroppedItemRecord` names it (SC-003, never-silent).
+6. Force one unresolvable item (e.g. add a `PositionRS` env absent from `Target` via
+   `build028_fixture.py`, or point one at a fresh GUID) → confirm a `DroppedItemRecord` names it
+   (SC-003, never-silent).
 
-Run gate: `set GRAMTRANS_E2E=1` (double-gated so it never runs unattended).
+> **Caveat:** the driver + builder are **untested in the authoring shell** (flexicon is not
+> pip-installed there). Expect to iterate — especially on the cross-project resolvability of the
+> `MsEnvFeaturesOA` value and the `PositionRS` environments (they LINK only if `Target` shares
+> those GUIDs; otherwise they legitimately REPORT_DROPPED, which still proves never-silent).
 
 ---
 
