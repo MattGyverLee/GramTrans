@@ -1448,16 +1448,24 @@ def _moaffix_msenv_populated_fields(src_allo) -> list:
     return populated
 
 
-def _report_dropped_moaffix_msenv_fields(src_allo, dropped) -> None:
-    """DROP_REPORTED emission (Move + Preview twin call the SAME function --
-    there is no CREATE/LINK leg to diverge, both are report-only): one
-    `DroppedItemRecord` per populated field in `_MOAFFIX_MSENV_FIELDS`."""
+def _report_dropped_moaffix_msenv_fields(src_allo, dropped, only_fields=None) -> None:
+    """DROP_REPORTED emission: one `DroppedItemRecord` per populated field in
+    `_MOAFFIX_MSENV_FIELDS`.
+
+    `only_fields` (028 T005): when given (a set/frozenset of field names),
+    report ONLY those populated fields -- used by the 028 dispatch seam to
+    report-drop just the fields whose reproduce leg has not yet landed, so the
+    never-silent guarantee holds throughout the incremental rollout (US1-US4).
+    `None` (default) reports every populated field, preserving the original
+    pre-028 behavior for any caller that still wants a full field-level drop."""
     populated = _moaffix_msenv_populated_fields(src_allo)
     if not populated:
         return
     owner_guid = _references._guid_str(src_allo)
     owner_label = _references._item_label(src_allo)
     for field_name, _value in populated:
+        if only_fields is not None and field_name not in only_fields:
+            continue
         _append_dropped(dropped, DroppedItemRecord(
             owner_kind="MoAffixAllomorph",
             owner_guid=owner_guid,
@@ -1472,6 +1480,72 @@ def _report_dropped_moaffix_msenv_fields(src_allo, dropped) -> None:
         ))
 
 
+# ----------------------------------------------------------------------------
+# Feature 028 -- affix-MsEnv reproduction dispatch seam (T005).
+# ----------------------------------------------------------------------------
+#
+# Replaces the report-only `_report_dropped_moaffix_msenv_fields` call in
+# `reproduce_allomorph_hung_data` (Move) and `plan_allomorph_hung_data_decisions`
+# (Preview) with a real reproduce leg + read-only Preview twin, mirroring the
+# `_reproduce_phone_env_rc` / `_plan_phone_env_rc_decisions` pair.
+#
+# Rollout invariant (028 tasks.md T005): each field's reproduce leg lands one
+# user story at a time (US1 MsEnvPartOfSpeechRA, US2 InflectionClassesRC,
+# US3 MsEnvFeaturesOA, US4 PositionRS). Every field NOT yet in
+# `_MSENV_REPRODUCED_FIELDS` is report-dropped via
+# `_report_dropped_moaffix_msenv_fields(only_fields=...)`, so the never-silent
+# guarantee holds throughout the transition and the full suite stays green.
+# At the T005 seam stage the set is empty -> behavior is byte-identical to the
+# pre-028 report-only stub.
+
+# Field names (matching `_MOAFFIX_MSENV_FIELDS`) whose reproduce leg has landed.
+# US1-US4 add to this set as each GREEN task completes.
+_MSENV_REPRODUCED_FIELDS: frozenset = frozenset()
+
+# All four field names -- used to compute the not-yet-reproduced fallback set.
+_MSENV_ALL_FIELDS: frozenset = frozenset(
+    field_name for field_name, _shape in _MOAFFIX_MSENV_FIELDS
+)
+
+
+def _msenv_unreproduced_fields() -> frozenset:
+    """Field names still report-dropped (reproduce leg not yet landed)."""
+    return _MSENV_ALL_FIELDS - _MSENV_REPRODUCED_FIELDS
+
+
+def reproduce_moaffix_msenv_data(src_allo, new_allo, ctx, tag, resolver_cache,
+                                 dropped) -> None:
+    """028 Move leg -- reproduce the four `MoAffixAllomorph`/`MoAffixForm`
+    morphosyntactic-environment fields (`MsEnvPartOfSpeechRA`,
+    `InflectionClassesRC`, `MsEnvFeaturesOA`, `PositionRS`) onto `new_allo`.
+
+    Each field's reproduce leg is added here by US1-US4; a field whose leg has
+    not yet landed is report-dropped (see the rollout invariant above), so the
+    never-silent guarantee holds throughout. Vacuous for a `MoStemAllomorph`
+    or an unpopulated `MoAffixAllomorph`. MUST never raise -- every per-field
+    failure is caught and reported, matching this module's posture elsewhere."""
+    # --- field reproduce legs land here (US1-US4) ---
+    # (none yet at the T005 seam stage)
+    _report_dropped_moaffix_msenv_fields(
+        src_allo, dropped, only_fields=_msenv_unreproduced_fields())
+
+
+def _plan_moaffix_msenv_decisions(src_allo, ctx, resolver_cache, dropped) -> list:
+    """028 Preview twin of `reproduce_moaffix_msenv_data` (Principle III).
+
+    Read-only: emits the LINK/CREATE `ReferenceDecisionRecord`s each landed
+    field leg will act on (for `PlannedAction.reference_decisions`), plus the
+    report-drops for fields whose leg has not yet landed -- identical drop set
+    to the Move leg by construction. Returns the decision records; never
+    writes."""
+    records: list = []
+    # --- field decision legs land here (US1-US4) ---
+    # (none yet at the T005 seam stage)
+    _report_dropped_moaffix_msenv_fields(
+        src_allo, dropped, only_fields=_msenv_unreproduced_fields())
+    return records
+
+
 def reproduce_allomorph_hung_data(src_allo, new_allo, ctx, tag, resolver_cache,
                                    dropped) -> None:
     """T029 (US3, FR-009a) -- reproduce a copied allomorph's "hung" data:
@@ -1480,9 +1554,10 @@ def reproduce_allomorph_hung_data(src_allo, new_allo, ctx, tag, resolver_cache,
     `StemNamesOC`), and any ad-hoc prohibition rule (APR) referencing it
     (reproduce only when every member is in the run's copy set, else report
     each missing member -- see `contracts/owned-object-walk.md`). Also
-    reports (cycle-16 lead adjudication, never creates) any populated
-    `MoAffixAllomorph`-only MsEnv/inflection-class/position field --
-    `_report_dropped_moaffix_msenv_fields`.
+    reproduces the four `MoAffixAllomorph`/`MoAffixForm` MsEnv/inflection-
+    class/position fields via the feature-028 dispatch seam
+    (`reproduce_moaffix_msenv_data`); any field whose reproduce leg has not yet
+    landed is report-dropped by that seam (never silent).
 
     Never creates a phonological environment or a StemName from scratch
     (contract non-goals) -- both are REPORT-only when unresolvable. Never
@@ -1492,7 +1567,8 @@ def reproduce_allomorph_hung_data(src_allo, new_allo, ctx, tag, resolver_cache,
     _reproduce_phone_env_rc(src_allo, new_allo, ctx, dropped)
     _reproduce_stem_name_ra(src_allo, new_allo, ctx, dropped)
     _reproduce_aprs_for_allomorph(src_allo, ctx, tag, resolver_cache, dropped)
-    _report_dropped_moaffix_msenv_fields(src_allo, dropped)
+    reproduce_moaffix_msenv_data(
+        src_allo, new_allo, ctx, tag, resolver_cache, dropped)
 
 
 # ============================================================================
@@ -1616,14 +1692,16 @@ def plan_allomorph_hung_data_decisions(src_allo, ctx, resolver_cache, dropped) -
     allomorph currently being planned must already be a member of
     `ctx._copy_set` before this is called.
 
-    Cycle-16: also calls `_report_dropped_moaffix_msenv_fields` -- the SAME
-    report-only function the Move twin (`reproduce_allomorph_hung_data`)
-    calls, so Preview's drop set is identical to Move's for these 4 fields
-    by construction (no separate CREATE/LINK decision exists for them)."""
+    Feature 028: also calls `_plan_moaffix_msenv_decisions` -- the read-only
+    Preview twin of `reproduce_moaffix_msenv_data`, so Preview's decision/drop
+    set is identical to Move's for these 4 fields by construction (Principle
+    III). Fields whose reproduce leg has not yet landed are report-dropped
+    identically on both sides during the incremental rollout."""
     records: list = []
     records.extend(_plan_phone_env_rc_decisions(src_allo, ctx, dropped))
     records.extend(_plan_stem_name_ra_decision(src_allo, ctx, dropped))
     records.extend(_plan_aprs_for_allomorph_decisions(
         src_allo, ctx, resolver_cache, dropped))
-    _report_dropped_moaffix_msenv_fields(src_allo, dropped)
+    records.extend(_plan_moaffix_msenv_decisions(
+        src_allo, ctx, resolver_cache, dropped))
     return tuple(records)
