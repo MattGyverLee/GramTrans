@@ -33,17 +33,28 @@ layers remain before merge.**
   now active). Real interlinear tokens are 204 `IWfiGloss` + 231 punctuation + 103 bare
   wordforms + 2 direct `IWfiAnalysis` — the gloss case is dominant and was previously missed.
 
-**⛔ REMAINING before 026 merge** (see `specs/026-texts-wordforms/verification-log.md`):
-1. **Segment `AnalysesRS` re-wiring (R5):** only 2/179 created analyses are wired back into the
-   segments' token sequence — `apply_alignment` not re-linking live.
-2. **Gloss reproduction (US4):** 0 `WfiGloss` created live.
-3. **Verdict:** 178/179 no-opinion — *likely* the correct needs-review path (target lexicon
-   incomplete → morph-bundle refs unresolved → no-verdict, FR-014); confirm on a
-   lexicon-complete target.
+**FIVE live-proof fixes now landed (worktree @ `c917d3a`).** Latest two:
+- **Fix 4 (R5 AnalysesRS wiring):** `plan_alignment` keys analysis-kind tokens by owning-analysis
+  GUID → `segs_with_analyses` 2→**77**, `AnalysesRS` wired 2→**206**. **R5 done.**
+- **Fix 5 (gloss gate):** `_gloss_human_evaluation` live fallback → plan gathers **283** gloss
+  plans (was 0).
 
-`Target` restored clean. The main→026 conflict merge (`831eb68`) stands; three fixes are in
-(`24a6b0b`); the AnalysesRS-wiring + gloss-reproduction fixes + a lexicon-complete re-proof
-remain before merge.
+**Scorecard:** texts 9 (persisted) · analyses **0→179** · AnalysesRS wired **2→206** · glosses
+planned **0→283** · glosses persisted **0** (apply-side gap) · verdicts 1 approved/178 no-opinion
+(likely correct needs-review — incomplete target lexicon). All fixes have offline regression
+tests; suite **1702 passed** (7-fail env baseline).
+
+**⛔ REMAINING before 026 merge** (see `specs/026-texts-wordforms/verification-log.md`):
+1. **Gloss APPLY (3rd layer):** 283 gloss plans but 0 `WfiGloss` persisted + 0 create-failed
+   drops → the Move text-apply path isn't materializing `plan.glosses` (a plan-consumption gap;
+   `target.WfiGlosses.Create` exists). Needs a live write-trace of the apply gloss path.
+2. **Verdict confirmation:** re-proof against a target that already holds the referenced lexicon
+   (expect more HUMAN_APPROVED, fewer needs-review).
+3. **Minor:** positional fidelity for punctuation / bare-wordform `AnalysesRS` slots.
+
+`Target` restored clean. The main→026 conflict merge (`831eb68`) stands; five fixes are in
+(`c917d3a`). 026 went from silently losing all 219 human-approved analyses to reproducing 179 +
+wiring 206 + planning 283 glosses — the gloss-apply gap + verdict re-proof remain before merge.
 
 ---
 
