@@ -4,6 +4,15 @@
   "branch": "027-complex-forms-variants",
   "selectedAt": "2026-07-14T00:18:52.881Z",
   "currentStep": "specify",
-  "status": "draft",
-  "history": []
+  "status": "completed",
+  "history": [
+    {
+      "step": "specify",
+      "substep": null,
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-07-15T07:54:36.405Z"
+    }
+  ],
+  "telemetryInstanceId": "54573720-4c6e-4603-a71e-8d8f718fd048"
 }

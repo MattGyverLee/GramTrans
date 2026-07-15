@@ -1,0 +1,9 @@
+{
+  "workflow": "speckit",
+  "specName": "012-merge-preview-diff-engine",
+  "branch": "012-merge-preview-diff-engine",
+  "selectedAt": "2026-07-15T07:53:39.456Z",
+  "currentStep": "specify",
+  "status": "draft",
+  "history": []
+}

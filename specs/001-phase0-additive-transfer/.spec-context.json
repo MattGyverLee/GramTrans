@@ -4,6 +4,15 @@
   "branch": "001-phase0-additive-transfer",
   "selectedAt": "2026-06-22T04:15:41.764Z",
   "currentStep": "specify",
-  "status": "draft",
-  "history": []
+  "status": "completed",
+  "history": [
+    {
+      "step": "specify",
+      "substep": null,
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-07-15T07:52:29.170Z"
+    }
+  ],
+  "telemetryInstanceId": "5712c946-2c49-4de7-8b88-ff3e9fe0442c"
 }

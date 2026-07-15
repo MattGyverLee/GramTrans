@@ -4,6 +4,15 @@
   "branch": "002-phase1-overwrite",
   "selectedAt": "2026-06-22T04:27:51.456Z",
   "currentStep": "specify",
-  "status": "draft",
-  "history": []
+  "status": "completed",
+  "history": [
+    {
+      "step": "specify",
+      "substep": null,
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-07-15T07:52:41.893Z"
+    }
+  ],
+  "telemetryInstanceId": "eff75073-98c8-4149-9d64-4561f0534023"
 }

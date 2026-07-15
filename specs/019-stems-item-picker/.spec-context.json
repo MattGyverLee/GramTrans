@@ -3,7 +3,7 @@
   "specName": "Stems Item Picker",
   "branch": "",
   "currentStep": "specify",
-  "status": "archived",
+  "status": "completed",
   "history": [
     {
       "step": "specify",
@@ -11,6 +11,34 @@
       "kind": "complete",
       "by": "extension",
       "at": "2026-07-13T02:52:56.632Z"
+    },
+    {
+      "step": "specify",
+      "substep": null,
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-07-15T07:51:38.739Z"
+    },
+    {
+      "step": "specify",
+      "substep": null,
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-07-15T07:51:42.288Z"
+    },
+    {
+      "step": "specify",
+      "substep": null,
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-07-15T07:54:56.028Z"
+    },
+    {
+      "step": "specify",
+      "substep": null,
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-07-15T08:00:54.854Z"
     }
   ],
   "telemetryInstanceId": "3d0b8106-f315-46ba-8c7b-a075632a5cbd"

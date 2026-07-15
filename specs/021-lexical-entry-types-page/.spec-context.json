@@ -1,0 +1,17 @@
+{
+  "workflow": "speckit",
+  "specName": "Lexical Entry Types Page",
+  "branch": "",
+  "currentStep": "specify",
+  "status": "archived",
+  "history": [
+    {
+      "step": "specify",
+      "substep": null,
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-07-15T07:54:08.834Z"
+    }
+  ],
+  "telemetryInstanceId": "1d87896b-3a95-40d6-b7a2-c1eb2c683f99"
+}

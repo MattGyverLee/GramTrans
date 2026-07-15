@@ -1,0 +1,25 @@
+{
+  "workflow": "speckit",
+  "specName": "028-affix-allomorph-morphosyntax",
+  "branch": "028-affix-allomorph-morphosyntax",
+  "selectedAt": "2026-07-15T07:28:16.269Z",
+  "currentStep": "specify",
+  "status": "specifying",
+  "history": [
+    {
+      "step": "specify",
+      "substep": null,
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-07-15T07:28:28.685Z"
+    },
+    {
+      "step": "specify",
+      "substep": null,
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-07-15T07:50:51.524Z"
+    }
+  ],
+  "telemetryInstanceId": "66fb71fd-d659-4a8c-b3e4-0db7ea09376f"
+}

@@ -1,31 +1,32 @@
 {
   "workflow": "speckit",
-  "specName": "Phase3 Pipeline",
-  "branch": "",
+  "specName": "022-disposition-model",
+  "branch": "022-disposition-model",
+  "selectedAt": "2026-07-15T07:29:20.975Z",
   "currentStep": "specify",
-  "status": "completed",
+  "status": "specifying",
   "history": [
     {
       "step": "specify",
       "substep": null,
       "kind": "complete",
       "by": "extension",
-      "at": "2026-07-05T19:57:16.031Z"
+      "at": "2026-07-15T07:29:54.752Z"
     },
     {
       "step": "specify",
       "substep": null,
       "kind": "complete",
       "by": "extension",
-      "at": "2026-07-05T19:58:19.778Z"
+      "at": "2026-07-15T07:29:58.599Z"
     },
     {
       "step": "specify",
       "substep": null,
       "kind": "complete",
-      "by": "user",
-      "at": "2026-07-15T07:52:59.961Z"
+      "by": "extension",
+      "at": "2026-07-15T07:51:13.486Z"
     }
   ],
-  "telemetryInstanceId": "b60a4125-5c03-4641-948e-05c9df038077"
+  "telemetryInstanceId": "cd5622f2-6346-4fc3-b5c8-1a78c542e0ec"
 }

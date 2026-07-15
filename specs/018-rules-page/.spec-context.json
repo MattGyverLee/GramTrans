@@ -1,0 +1,18 @@
+{
+  "workflow": "speckit",
+  "specName": "018-rules-page",
+  "branch": "018-rules-page",
+  "selectedAt": "2026-07-15T07:30:01.563Z",
+  "currentStep": "specify",
+  "status": "archived",
+  "history": [
+    {
+      "step": "specify",
+      "substep": null,
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-07-15T08:00:14.457Z"
+    }
+  ],
+  "telemetryInstanceId": "d788d221-a0f1-4e78-a36e-37bad6a12b67"
+}

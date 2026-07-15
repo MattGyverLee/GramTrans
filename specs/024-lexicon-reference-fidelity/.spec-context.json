@@ -4,6 +4,15 @@
   "branch": "024-lexicon-reference-fidelity",
   "selectedAt": "2026-07-12T02:47:45.450Z",
   "currentStep": "specify",
-  "status": "draft",
-  "history": []
+  "status": "completed",
+  "history": [
+    {
+      "step": "specify",
+      "substep": null,
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-07-15T07:54:29.644Z"
+    }
+  ],
+  "telemetryInstanceId": "33e842f8-0659-4d8a-b6b9-c6671d2c661a"
 }
