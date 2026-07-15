@@ -1,5 +1,62 @@
 # GramTrans — Session Handoff
 
+## ▶▶▶ coverage-content-fidelity Part B — DONE & MERGED (2026-07-15) — LIVE-PROVEN
+
+**MERGED to `main` @ `878a37f`** (`--no-ff`, no conflicts). Branch
+`coverage-content-fidelity-v2` carried Part B on top of Part A (already on main
+via `15085cb`). Part B adds four grammar content categories to cross-project
+transfer: `inflection_features` complex/open, `feature_struct_types`,
+`pos_inflectable_feats`, `phon_feat_types`.
+
+**Attended live proof — PASS (needs_human gate cleared).** Driven via
+**FLExToolsMCP `run_module`** (write-enabled; per user direction this session,
+NOT the host interpreter). Driver `scratchpad/run_partB_live.py` reuses the
+MCP-injected `project` as the read-only SOURCE handle and restores + opens TARGET
+itself. GUID-based owner-collection metric, fresh read-only re-open per phase
+(`Mbugwe Lizzie -> restored Target`):
+
+| Category | Owner collection | Move#1 | re-Move#2 |
+|---|---|---|---|
+| B.1 complex inflection features | `MsFeatureSystemOA.FeaturesOC` | **0->4** | 4 stable |
+| B.2 feature_struct_types | `MsFeatureSystemOA.TypesOC` | **0->5** | 5 stable |
+| B.3 pos_inflectable_feats | per-POS `IPartOfSpeech.InflectableFeatsRC` | **0->6** | 6 stable |
+| B.4 phon_feat_types | `PhFeatureSystemOA.TypesOC` | **0->1** | 1 stable |
+
+12/12 acceptance checks PASS; re-Move#2 = 0 net-new (all `ALREADY_PRESENT_BY_GUID`)
+-> idempotent; open features stayed absent (clean skip); Target restored clean.
+**Source note:** the handoff named `French-FLExTrans-Demo2025`, but a read-only
+probe found it has 0 PH feature-struct types (can't prove B.4); `Mbugwe Lizzie`
+carries all four categories, so it was used as the read-only source (only TARGET
+written). Evidence: `reviews/coverage-content-fidelity/live-proof-partB.md`
+(commit `1de8fd1`).
+
+**Offline suite (merged tree):** Part B test files **58 passed / 1 skipped**;
+merge added **+48 passing tests, zero new failures**.
+**[WARN] Pre-existing (NOT introduced by this merge):** the full
+`tests/unit tests/verification` run shows **22 failures from cross-file test-order
+pollution** (026-family: `test_adjacent_data`, `test_analysis_idempotency`,
+`test_analysis_verdict`, `test_human_eval_gate`, `test_morph_bundle_wiring`,
+`test_residue_tagging_026`, `test_segment_alignment` + the documented
+`test_wizard_pos_grammar_wiring` baseline). All 22 pass in isolation (cluster =
+35/35 green) and are **identical on pre-merge `main` `05f8d5d`** (22 failed there
+too). This is a pre-existing suite-isolation bug on main, ticket-worthy, does NOT
+gate Part B.
+
+**Cleanup done:** both coverage worktrees removed; original `coverage-content-fidelity`
+branch deleted. **Follow-up tickets filed:** TypeRA intra-run two-phase wiring
+(concern #1, observed live), `merge_preview._closed_value_label` FsComplexValue
+blanking, wizard `_SCHEMA_CATEGORIES`/`_GOLD_RESERVED` sync for the 4 new
+categories, and the pre-existing 22-test suite-isolation pollution.
+
+**Live-proof lessons this session:** (1) MCP `run_module` captures `report.*`
+only — `print()` output is dropped; the driver routes through a reporter. (2) The
+MCP requires `get_object_api`/discovery before any `run_module`, even for a
+bootstrap that imports the worktree engine. (3) Point `run_module` at the SOURCE
+(never TARGET) so `harness.restore` isn't blocked by a locked `.fwdata`; reuse
+the injected `project` as the source handle to avoid a double-open.
+
+---
+
 ## ▶▶▶ Feature 026 — Texts & Wordforms — DONE & MERGED (2026-07-15, session 2)
 
 **MERGED to `main` @ `9b7a7f8`** (`--no-ff`, no conflicts). Worktree
