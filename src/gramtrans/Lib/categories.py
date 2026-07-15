@@ -3073,6 +3073,160 @@ def _resolve_target_pos(target, src_pos_guid):
     return None
 
 
+# ---------------------------------------------------------------------------
+# Feature 028 (R1) -- reusable POS resolve-or-create for affix-MsEnv references.
+#
+# `owned.py`'s MsEnvPartOfSpeechRA leg (and the owning POS of an inflection
+# class) resolves/creates a target POS through THIS single path -- the same
+# `_resolve_target_pos` identity lookup + the same `IPartOfSpeechFactory`
+# create idiom `gram_categories_execute_action` uses (GUID preserved,
+# Name/Abbreviation/Description synced with the concept<->GUID remap, Carrier B
+# residue). No divergent POS-identity table is introduced (research R1). All
+# host-only bits (`SIL.LCModel`, `System.Guid`) degrade gracefully so the leg
+# is exercisable host-free by the 028 unit fakes; a live host takes the real
+# cast/parse paths unchanged.
+# ---------------------------------------------------------------------------
+
+
+def _pos_class_name(obj):
+    """Best-effort real `ClassName` for a POS-owner probe (host-free fallback
+    to a duck-typed `ClassName`/`class_name` attribute)."""
+    try:
+        from SIL.LCModel import ICmObject
+        return ICmObject(obj).ClassName
+    except Exception:
+        return getattr(obj, "ClassName", getattr(obj, "class_name", None))
+
+
+def _owner_is_pos(owner) -> bool:
+    """True when `owner` is (or duck-types as) an owning IPartOfSpeech -- i.e.
+    `src_pos` is a sub-POS whose parent must be resolved/created first."""
+    if owner is None:
+        return False
+    try:
+        from SIL.LCModel import IPartOfSpeech
+        IPartOfSpeech(owner)  # cast probe (live): raises if owner isn't a POS
+        return True
+    except Exception:
+        pass
+    return (_pos_class_name(owner) == "PartOfSpeech"
+            or hasattr(owner, "SubPossibilitiesOS"))
+
+
+def _get_pos_factory(target):
+    """`IPartOfSpeechFactory` off `target.GetFactory(...)`, fake-tolerant
+    (mirrors `owned._get_owned_factory`): the real interface-cast wrapper first
+    (correct overload resolution on a live host), falling back to the bare
+    string key a host-free test double is keyed by. `None` when no factory is
+    obtainable (caller reports the drop -- degrade, never crash)."""
+    try:
+        from SIL.LCModel import IPartOfSpeechFactory
+        iface = IPartOfSpeechFactory
+    except Exception:
+        iface = None
+    if iface is not None:
+        try:
+            return iface(target.GetFactory(iface))
+        except Exception:
+            pass
+    try:
+        return target.GetFactory("IPartOfSpeechFactory")
+    except Exception:
+        return None
+
+
+def target_has_pos_create_infra(target) -> bool:
+    """Read-only predicate for the Preview twin's CREATE-vs-REPORT parity
+    (G6): True iff a POS could be created in `target` (a factory is
+    obtainable)."""
+    return _get_pos_factory(target) is not None
+
+
+def _guid_arg_for_create(guid_str: str):
+    """`.NET Guid` for a factory `.Create(guid, owner)` call, falling back to
+    the raw string host-free (matches `owned._guid_for_create`)."""
+    try:
+        from System import Guid as DotNetGuid
+        return DotNetGuid.Parse(guid_str)
+    except Exception:
+        return guid_str
+
+
+def _sync_pos_properties(context, new_pos, src_pos, ws_mapping, tag) -> None:
+    """Best-effort Name/Abbreviation/Description sync + Carrier B residue on a
+    freshly-created POS -- the same `GetSyncableProperties` /
+    `ApplySyncableProperties(ws_map=...)` remap the closure path applies. Every
+    step is host-only and wrapped: host-free fakes skip it (props are a no-op
+    for a fake POS)."""
+    try:
+        props = context.source_handle.POS.GetSyncableProperties(src_pos)
+        context.target_handle.POS.ApplySyncableProperties(
+            new_pos, props, ws_map=ws_mapping)
+    except Exception:
+        pass
+    try:
+        if __package__:
+            from .residue import apply_carrier_b
+        else:
+            from residue import apply_carrier_b  # type: ignore
+        ws = getattr(getattr(context.target_handle, "Cache", None),
+                     "DefaultAnalWs", None)
+        apply_carrier_b(new_pos, ws, tag)
+    except Exception:
+        pass
+
+
+def resolve_or_create_target_pos(context, src_pos, ws_mapping, tag, _seen=None):
+    """Feature 028 (R1): resolve `src_pos` (a source IPartOfSpeech) in the
+    target by GUID, creating it -- and its ancestor POS chain -- when absent,
+    via the SAME `IPartOfSpeechFactory` path `gram_categories_execute_action`
+    uses (GUID preserved, props synced, concept<->GUID remap inherited, Carrier
+    B residue). Reuses `_resolve_target_pos` for identity so no divergent
+    POS-identity path is introduced.
+
+    Returns the target IPartOfSpeech, or `None` when the POS cannot be created
+    (no create infra, or an ancestor is uncreatable) -- degrades, never raises;
+    the caller emits the never-silent `DroppedItemRecord`."""
+    target = context.target_handle
+    pos_guid = _guid_str_from(src_pos)
+    if not pos_guid:
+        return None
+    existing = _resolve_target_pos(target, pos_guid)
+    if existing is not None:
+        return existing
+    _seen = _seen if _seen is not None else set()
+    if pos_guid in _seen:  # pathological owner cycle guard
+        return None
+    _seen.add(pos_guid)
+    factory = _get_pos_factory(target)
+    if factory is None:
+        return None
+    owner = getattr(src_pos, "Owner", None)
+    if _owner_is_pos(owner):
+        target_parent = resolve_or_create_target_pos(
+            context, owner, ws_mapping, tag, _seen)
+        if target_parent is None:
+            return None  # ancestor chain not resolvable/creatable
+        owner_arg = target_parent
+    else:
+        cache = getattr(target, "Cache", None)
+        owner_arg = None
+        if cache is not None:
+            try:
+                from SIL.LCModel import ICmPossibilityList
+                owner_arg = ICmPossibilityList(
+                    cache.LangProject.PartsOfSpeechOA)
+            except Exception:
+                owner_arg = getattr(getattr(cache, "LangProject", None),
+                                    "PartsOfSpeechOA", None)
+    try:
+        new_pos = factory.Create(_guid_arg_for_create(pos_guid), owner_arg)
+    except Exception:
+        return None
+    _sync_pos_properties(context, new_pos, src_pos, ws_mapping, tag)
+    return new_pos
+
+
 def _resolve_possibility_by_guid(possibility_list, guid):
     """Return the CmPossibility in `possibility_list` (an ICmPossibilityList)
     whose GUID matches `guid`, walking SubPossibilitiesOS recursively, or None.

@@ -1500,7 +1500,123 @@ def _report_dropped_moaffix_msenv_fields(src_allo, dropped, only_fields=None) ->
 
 # Field names (matching `_MOAFFIX_MSENV_FIELDS`) whose reproduce leg has landed.
 # US1-US4 add to this set as each GREEN task completes.
-_MSENV_REPRODUCED_FIELDS: frozenset = frozenset()
+#   US1 (T007): MsEnvPartOfSpeechRA
+_MSENV_REPRODUCED_FIELDS: frozenset = frozenset({"MsEnvPartOfSpeechRA"})
+
+# Per-run dedup key (SC-005/G4): source-POS GUID -> resolved/created target POS.
+_MSENV_POS_RESOLVED_KEY = "__owned_msenv_pos_resolved__"
+
+
+def _categories():
+    """Lazy `categories` import -- same load-order posture every other
+    `owned.py` -> `categories.py` call already documents."""
+    if __package__:
+        from . import categories as _c
+    else:
+        import categories as _c  # type: ignore
+    return _c
+
+
+def _cast_moaffix_allomorph(obj):
+    """`IMoAffixAllomorph(obj)` on a live host (the MCP-confirmed cast for
+    `MsEnvPartOfSpeechRA`/`MsEnvFeaturesOA`/`PositionRS`), pass-through for
+    host-free fakes."""
+    try:
+        from SIL.LCModel import IMoAffixAllomorph
+        return IMoAffixAllomorph(obj)
+    except Exception:
+        return obj
+
+
+def _cast_moaffix_form(obj):
+    """`IMoAffixForm(obj)` on a live host (the MCP-confirmed cast for
+    `InflectionClassesRC`, declared on the parent form), pass-through for
+    host-free fakes."""
+    try:
+        from SIL.LCModel import IMoAffixForm
+        return IMoAffixForm(obj)
+    except Exception:
+        return obj
+
+
+# ---- US1 (T007) -- MsEnvPartOfSpeechRA -------------------------------------
+
+def _resolve_or_create_msenv_pos(src_pos, ctx, tag, resolver_cache):
+    """Resolve/create the target POS for an affix-MsEnv POS reference, dedup'd
+    per run (G4/SC-005) via `resolver_cache`. Delegates to the single grammar
+    POS path (`categories.resolve_or_create_target_pos`, R1). Returns the
+    target POS, or `None` when it cannot be created."""
+    pos_guid = _references._guid_str(src_pos)
+    if not pos_guid:
+        return None
+    cache = resolver_cache.setdefault(_MSENV_POS_RESOLVED_KEY, {})
+    if pos_guid in cache:
+        return cache[pos_guid]
+    ws_map = getattr(ctx, "_ws_map", None)
+    target_pos = _categories().resolve_or_create_target_pos(
+        ctx, src_pos, ws_map, tag)
+    if target_pos is not None:
+        cache[pos_guid] = target_pos
+    return target_pos
+
+
+def _reproduce_msenv_pos_ra(src_allo, new_allo, ctx, tag, resolver_cache,
+                            dropped) -> None:
+    """Move leg for `MsEnvPartOfSpeechRA` (US1). Empty source -> no-op
+    (FR-005/G2). Resolves/creates the target POS and points the new allomorph
+    at it; an uncreatable POS is REPORT_DROPPED (never-silent, G1)."""
+    src_pos = getattr(_cast_moaffix_allomorph(src_allo),
+                      "MsEnvPartOfSpeechRA", None)
+    if src_pos is None:
+        return
+    target_pos = _resolve_or_create_msenv_pos(src_pos, ctx, tag, resolver_cache)
+    if target_pos is not None:
+        try:
+            _cast_moaffix_allomorph(new_allo).MsEnvPartOfSpeechRA = target_pos
+        except (AttributeError, TypeError):
+            pass
+        return
+    _append_dropped(dropped, DroppedItemRecord(
+        owner_kind="MoAffixAllomorph",
+        owner_guid=_references._guid_str(src_allo),
+        owner_label=_references._item_label(src_allo),
+        field_name="MsEnvPartOfSpeechRA",
+        item_name=_references._item_label(src_pos),
+        item_guid=_references._guid_str(src_pos),
+        reason="target POS not present and could not be created",
+    ))
+
+
+def _plan_msenv_pos_ra(src_allo, ctx, dropped) -> list:
+    """Preview twin of `_reproduce_msenv_pos_ra` (G6): LINK when the POS is
+    already present, CREATE when absent-but-creatable, REPORT_DROPPED when
+    uncreatable. Writes nothing."""
+    src_pos = getattr(_cast_moaffix_allomorph(src_allo),
+                      "MsEnvPartOfSpeechRA", None)
+    if src_pos is None:
+        return []
+    owner_guid = _references._guid_str(src_allo)
+    pos_guid = _references._guid_str(src_pos)
+    pos_name = _references._item_label(src_pos)
+    target_pos = _resolve_target_pos_by_guid(ctx.target_handle, pos_guid)
+    if target_pos is not None:
+        return [ReferenceDecisionRecord(
+            owner_kind="MoAffixAllomorph", owner_guid=owner_guid,
+            field_name="MsEnvPartOfSpeechRA", action=ReferenceAction.LINK,
+            item_name=pos_name, item_guid=pos_guid)]
+    if _categories().target_has_pos_create_infra(ctx.target_handle):
+        return [ReferenceDecisionRecord(
+            owner_kind="MoAffixAllomorph", owner_guid=owner_guid,
+            field_name="MsEnvPartOfSpeechRA", action=ReferenceAction.CREATE,
+            item_name=pos_name, item_guid=pos_guid)]
+    _append_dropped(dropped, DroppedItemRecord(
+        owner_kind="MoAffixAllomorph", owner_guid=owner_guid,
+        owner_label=_references._item_label(src_allo),
+        field_name="MsEnvPartOfSpeechRA", item_name=pos_name,
+        item_guid=pos_guid,
+        reason="target POS not present and could not be created",
+    ))
+    return []
 
 # All four field names -- used to compute the not-yet-reproduced fallback set.
 _MSENV_ALL_FIELDS: frozenset = frozenset(
@@ -1524,8 +1640,13 @@ def reproduce_moaffix_msenv_data(src_allo, new_allo, ctx, tag, resolver_cache,
     never-silent guarantee holds throughout. Vacuous for a `MoStemAllomorph`
     or an unpopulated `MoAffixAllomorph`. MUST never raise -- every per-field
     failure is caught and reported, matching this module's posture elsewhere."""
+    if not _is_moaffix_allomorph(src_allo):
+        return
     # --- field reproduce legs land here (US1-US4) ---
-    # (none yet at the T005 seam stage)
+    if "MsEnvPartOfSpeechRA" in _MSENV_REPRODUCED_FIELDS:  # US1 (T007)
+        _reproduce_msenv_pos_ra(
+            src_allo, new_allo, ctx, tag, resolver_cache, dropped)
+    # Fields whose leg has not yet landed stay report-dropped (never-silent).
     _report_dropped_moaffix_msenv_fields(
         src_allo, dropped, only_fields=_msenv_unreproduced_fields())
 
@@ -1539,8 +1660,12 @@ def _plan_moaffix_msenv_decisions(src_allo, ctx, resolver_cache, dropped) -> lis
     to the Move leg by construction. Returns the decision records; never
     writes."""
     records: list = []
+    if not _is_moaffix_allomorph(src_allo):
+        return records
     # --- field decision legs land here (US1-US4) ---
-    # (none yet at the T005 seam stage)
+    if "MsEnvPartOfSpeechRA" in _MSENV_REPRODUCED_FIELDS:  # US1 (T007)
+        records.extend(_plan_msenv_pos_ra(src_allo, ctx, dropped))
+    # Fields whose leg has not yet landed stay report-dropped (never-silent).
     _report_dropped_moaffix_msenv_fields(
         src_allo, dropped, only_fields=_msenv_unreproduced_fields())
     return records

@@ -303,6 +303,16 @@ def test_mostemallomorph_never_reports_msenv_fields():
 
 
 def test_moaffix_allomorph_all_four_fields_populated_move_reports_one_record_each():
+    """Never-silent backstop across all four fields, ROLLOUT-AWARE (028
+    incremental delivery): against a bare-`object()` target -- no POS/env/
+    feature infra -- NONE of the four fields can be reproduced, so every
+    populated field still yields exactly one `DroppedItemRecord` (the
+    never-silent guarantee holds throughout US1-US4). A field whose 028
+    reproduce leg has NOT yet landed (`owned._msenv_unreproduced_fields()`)
+    is reported by the cycle-16 report-only stub (its reason names the
+    028 feature); a field whose leg HAS landed
+    (`owned._MSENV_REPRODUCED_FIELDS`, e.g. US1's MsEnvPartOfSpeechRA) is
+    reported by that leg's own resolve-or-create-failed path."""
     src = _FakeMoAffixAllomorph(
         "allo-full",
         inflection_classes=[_FakeGuidObj("iclass-1")],
@@ -322,10 +332,13 @@ def test_moaffix_allomorph_all_four_fields_populated_move_reports_one_record_eac
         "PositionRS",
     }
     assert len(dropped) == 4
+    stub_fields = owned._msenv_unreproduced_fields()
     for rec in dropped:
         assert rec.owner_kind == "MoAffixAllomorph"
         assert rec.owner_guid == "allo-full"
-        assert "028-affix-allomorph-morphosyntax" in rec.reason
+        assert rec.reason  # never-silent: a non-empty reason is always present
+        if rec.field_name in stub_fields:
+            assert "028-affix-allomorph-morphosyntax" in rec.reason
 
 
 def test_moaffix_allomorph_partial_population_move_reports_only_populated_fields():
