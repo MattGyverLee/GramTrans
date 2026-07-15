@@ -1,5 +1,54 @@
 # GramTrans — Session Handoff
 
+## ▶▶▶ #28 MSA->slot producer port (FR-333) — OFFLINE GATES GREEN, AWAITING ATTENDED LIVE PROOF (2026-07-15)
+
+**Branch/worktree:** `msa-slot-wiring-v2` @ `../GramTrans-msa-slot-wiring-v2`, HEAD `95cfb81`
+(`fix(preview): populate msa_slot_bindings via IMoInflAffMsa cast (FR-333, #28 MSA->slot leg)`).
+**No spec folder exists for this bug-fix** — STATUS.md + `.crew-handoff.json` on this branch are
+the durable handoff surface.
+
+**STATUS: `needs_human`.** All offline crew gates are GREEN; the merge is gated on an attended
+live proof (exactly like 027's T025). Do NOT merge and do NOT run the live proof under an
+unattended loop.
+
+- **Offline crew gates — ALL GREEN:**
+  - cycle-1 verification PASS + domain **85** + qc **72 -> fixed**
+  - cycle-2 fix (the two merge-blocking items closed: QC-P1 duck-only dead branch excised from
+    `categories.py._stash_entry_bindings`; producer consolidated)
+  - cycle-3 **independent re-verification PASS** — report at
+    `../GramTrans-msa-slot-wiring-v2/reviews/cycle3-verification.md`.
+- **cycle-3 verification confirmed (5/5):** HEAD `95cfb81`/clean tree; `py_compile` clean on
+  `categories.py` + `preview.py`; **SINGLE producer** for `msa_slot_bindings`
+  (`_populate_msa_slot_bindings` preview.py:801 live `IMoInflAffMsa` cast + duck fallback
+  `_populate_msa_slot_bindings_duck` preview.py:918), old duck-only branch confirmed removed,
+  sole consumer `_run_171_subpass` categories.py:4954; siblings (`lexentry_ref_bindings`,
+  `entryref_create_bindings`, `feature_category_links`) untouched producers; test counts exact —
+  `test_preview_msa_slot_bindings` **10/10**, full suite **1590 passed** with ONLY the documented
+  `test_wizard_pos_grammar_wiring` baseline failure; both renamed tests pass. No regressions.
+
+**⛔ ATTENDED LIVE PROOF (needs_human — main session executes WITH the human, never under a loop):**
+Model on `027 scratchpad/run27_live.py`. Steps:
+1. Source `Ejagham Mini` -> a **restored disposable** target (attended, FLExToolsMCP active).
+2. Run the Move.
+3. Reopen the target **read-only**; probe that inflectional-affix MSA `SlotsRC` go from
+   **unwired -> wired** (count > 0 — domain evidenced ~12 bound MSAs for the Verb subset, up to
+   **83** project-wide).
+4. **Idempotent re-Move** must produce **0 net-new** slot wirings.
+Confirm the outcome, then authorize merge of `msa-slot-wiring-v2` -> `main`.
+
+**Fast-follow issues to file (non-blocking, per cycle-1 synthesis — confirm with human first):**
+1. **Selection-scope:** `_populate_msa_slot_bindings` scans the whole lexdb, causing false
+   `Skip(DEPENDENCY_UNRESOLVED)` on partial transfers.
+2. **Live-cast-path unit coverage:** all 10 tests currently hit only the duck fallback; the live
+   `IMoInflAffMsa` cast path has no host-free coverage.
+3. **P2 nits:** redundant `(ImportError, Exception)` tuple; split the 115-line
+   `_populate_msa_slot_bindings` function.
+
+- Report: `../GramTrans-msa-slot-wiring-v2/reviews/cycle3-verification.md`.
+- Handoff json: `../GramTrans-msa-slot-wiring-v2/.crew-handoff.json`.
+
+---
+
 ## ▶▶▶ Feature 027 — Complex Forms & Variants — DONE & MERGED (2026-07-14)
 
 **MERGED to `main` @ `4b8b4dc`** (`--no-ff`, no conflicts, pushed to origin). Worktree

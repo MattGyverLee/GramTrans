@@ -1,0 +1,36 @@
+{
+  "feature": "28-msa-slot-wiring-v2",
+  "status": "needs_human",
+  "last_cycle": 3,
+  "spurts_completed": 3,
+  "commit_under_test": "95cfb81",
+  "branch": "msa-slot-wiring-v2",
+  "worktree": "../GramTrans-msa-slot-wiring-v2",
+  "spec_folder": null,
+  "durable_handoff_surface": "STATUS.md (no specs/ folder for this bug-fix)",
+  "offline_gates": {
+    "cycle1_verification": "PASS",
+    "cycle1_domain": 85,
+    "cycle1_qc": "72 -> fixed",
+    "cycle2_fix": "both merge-blocking items closed",
+    "cycle3_verification": "PASS (independent re-verify, 5/5)"
+  },
+  "gates_all_green": true,
+  "tasks_done": [
+    "cycle-1 verification/domain/qc",
+    "cycle-2 fix (duck-only dead branch excised, producer consolidated)",
+    "cycle-3 independent re-verification PASS"
+  ],
+  "next_checkpoint": "attended live proof (needs_human)",
+  "next_entry": "Attended live proof: Ejagham Mini -> restored disposable target, Move, reopen read-only, probe infl-affix MSA SlotsRC unwired->wired (count>0, ~12 Verb / up to 83 project-wide), idempotent re-Move = 0 net-new. Model on 027 scratchpad/run27_live.py. Then authorize merge.",
+  "blocker": "Merge is gated on an attended live proof (FLExToolsMCP active, human present). Never run under an unattended loop. Main session confirms live proof + merge + GitHub issues with the human before executing.",
+  "fast_follow_issues": [
+    "Selection-scope: _populate_msa_slot_bindings scans whole lexdb -> false Skip(DEPENDENCY_UNRESOLVED) on partial transfers",
+    "Live-cast-path unit coverage: all 10 tests hit only the duck fallback",
+    "P2 nits: redundant (ImportError, Exception) tuple; split 115-line _populate_msa_slot_bindings"
+  ],
+  "reports": [
+    "../GramTrans-msa-slot-wiring-v2/reviews/cycle3-verification.md"
+  ],
+  "updated": "2026-07-15"
+}
