@@ -44,17 +44,28 @@ planned **0→283** · glosses persisted **0** (apply-side gap) · verdicts 1 ap
 (likely correct needs-review — incomplete target lexicon). All fixes have offline regression
 tests; suite **1702 passed** (7-fail env baseline).
 
+**SIX live-proof fixes now landed (worktree @ `4f99523`). US4 glosses reproduce (0→282).**
+Fix 6: live `WfiGlosses.Create(analysis, form, wsHandle=None)` needs the form up front;
+`_apply_glosses` called `Create(analysis_obj)` alone → `TypeError` on all 283 glosses (swallowed
+by `_safe`). Now creates with the form; fake updated to the 3-arg signature.
+
+**Live proof — final state (single Move, fresh disk open):** texts **9** · segments **101** ·
+analyses **179** · `AnalysesRS` wired **206** · glosses **282** · verdicts 1 approved / 178
+needs-review (correct given incomplete target lexicon). Offline suite **1702 passed** (7-fail env
+baseline). Both originally-requested fixes (R5 wiring + glosses) proven end-to-end.
+
 **⛔ REMAINING before 026 merge** (see `specs/026-texts-wordforms/verification-log.md`):
-1. **Gloss APPLY (3rd layer):** 283 gloss plans but 0 `WfiGloss` persisted + 0 create-failed
-   drops → the Move text-apply path isn't materializing `plan.glosses` (a plan-consumption gap;
-   `target.WfiGlosses.Create` exists). Needs a live write-trace of the apply gloss path.
-2. **Verdict confirmation:** re-proof against a target that already holds the referenced lexicon
-   (expect more HUMAN_APPROVED, fewer needs-review).
+1. **SC-005 idempotency FAIL (newly found):** a second Move grows WfiAnalyses **179→329** and
+   WfiGlosses **282→522** (texts stay 9). `apply_analyses` Creates an analysis unconditionally
+   with no find/skip for one already on the target wordform → re-runs duplicate. Needs
+   analysis-level dedupe.
+2. **Verdict confirmation:** re-proof against a lexicon-complete target (expect more HUMAN_APPROVED).
 3. **Minor:** positional fidelity for punctuation / bare-wordform `AnalysesRS` slots.
 
-`Target` restored clean. The main→026 conflict merge (`831eb68`) stands; five fixes are in
-(`c917d3a`). 026 went from silently losing all 219 human-approved analyses to reproducing 179 +
-wiring 206 + planning 283 glosses — the gloss-apply gap + verdict re-proof remain before merge.
+`Target` restored clean. The main→026 conflict merge (`831eb68`) stands; six fixes are in
+(`4f99523`). 026 went from silently losing all 219 human-approved analyses to reproducing
+9 texts + 179 analyses + 206 wired slots + 282 glosses live — SC-005 idempotency dedupe +
+verdict re-proof remain before merge.
 
 ---
 
