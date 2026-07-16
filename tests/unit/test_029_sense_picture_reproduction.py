@@ -406,3 +406,29 @@ def test_us5_empty_source_leaves_populated_target_untouched():
     pictures.reproduce_sense_pictures(src_sense, new_sense, ctx, None, {}, [])
 
     assert new_sense.PicturesOS == [existing]
+
+
+# ============================================================================
+# T021 (SC-007) -- a populated source PicturesOS is never left empty-in-target
+# for reproducible pictures, with zero unexplained drops.
+# ============================================================================
+
+def test_sc007_populated_source_never_empty_in_target(tmp_path):
+    """SC-007: a sense carrying reproducible pictures ends with a populated
+    target PicturesOS and zero unexplained DroppedItemRecords (the census
+    row is COPIED, not DROP_REPORTED)."""
+    src_sense = _Sense("s", pictures=[
+        _Picture("p1", caption={1: "one"},
+                 file=_CmFile(abspath=_img(tmp_path, "a.jpg"))),
+        _Picture("p2", caption={1: "two"},
+                 file=_CmFile(abspath=_img(tmp_path, "b.jpg"))),
+    ])
+    new_sense = _Sense("t")
+
+    dropped = []
+    pictures.reproduce_sense_pictures(src_sense, new_sense, ctx=_make_ctx(),
+                                      tag=None, resolver_cache={}, dropped=dropped)
+
+    assert len(new_sense.PicturesOS) == len(src_sense.PicturesOS) == 2
+    picture_drops = [d for d in dropped if d.field_name == "PicturesOS"]
+    assert picture_drops == []  # zero unexplained drops for reproducible pictures
