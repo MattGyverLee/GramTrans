@@ -180,12 +180,12 @@ sense) and non-destructive empty-source (no-blank).
 `LinkedFiles` file set are identical after run 2 as after run 1; an empty source `PicturesOS` leaves
 a populated target untouched.
 
-- [ ] T016 [P] [US5] RED: in `test_029_sense_picture_reproduction.py`, author failing tests —
+- [X] T016 [P] [US5] RED: in `test_029_sense_picture_reproduction.py`, author failing tests —
       (a) a target sense already carrying a picture with a matching fingerprint (image
       filename+content-hash + caption) is NOT re-created on re-run (0 net-new picture/`CmFile`/file);
       (b) empty/absent source `PicturesOS` leaves a populated target `PicturesOS` untouched. Confirm
       RED.
-- [ ] T017 [US5] GREEN: implement the fingerprint skip in `reproduce_sense_pictures` (compute the
+- [X] T017 [US5] GREEN: implement the fingerprint skip in `reproduce_sense_pictures` (compute the
       source fingerprint; scan `new_sense.PicturesOS` for a match before creating) and the
       empty-source guard; ensure the Preview twin reports SKIP/no-op consistently. Make T016 pass.
 
