@@ -43,16 +43,16 @@ unattended loop.
 
 ## Phase 1: Setup
 
-- [ ] T001 Create the implementation worktree `../GramTrans-029-sense-pictures` on new branch
+- [X] T001 Create the implementation worktree `../GramTrans-029-sense-pictures` on new branch
       `029-sense-pictures` from `main`; confirm `pip install -e D:/Github/_Projects/_LEX/flexlibs2`
       resolves (live tier) and `python -m pytest tests/unit -q` is green modulo the documented
       environment baseline (6 `test_013_apply_syncable_signature` flexicon-tree-absent + 1
       `test_wizard_pos_grammar_wiring`). Record the exact baseline count in task notes; any OTHER
       failure = pre-existing, flag it.
-- [ ] T002 [P] Add import-smoke scaffold `tests/unit/test_029_sense_picture_reproduction.py`
+- [X] T002 [P] Add import-smoke scaffold `tests/unit/test_029_sense_picture_reproduction.py`
       (collects clean; covers the object-graph deep-copy + Preview/Move parity + idempotency +
       empty-source families).
-- [ ] T003 [P] Add import-smoke scaffold `tests/unit/test_029_picture_asset_copy.py`
+- [X] T003 [P] Add import-smoke scaffold `tests/unit/test_029_picture_asset_copy.py`
       (collects clean; covers asset copy / reuse-identical / rename-on-collision / missing-binary
       via a faked `AddPicture` seam + temp files — no live host).
 
@@ -60,7 +60,7 @@ unattended loop.
 
 **⚠️ CRITICAL**: No user-story leg can begin until T004–T006 are complete.
 
-- [ ] T004 Gate task — confirm the reuse surface is present: flexicon
+- [X] T004 Gate task — confirm the reuse surface is present: flexicon
       `LexSenseOperations.AddPicture` / `RenamePicture`, `MediaOperations.CopyToProject`,
       `FLExProject.GetLinkedFilesDir` (probe against installed `pyflexicon` per research R2's three
       sub-questions: does `AddPicture` copy the file, handle collisions, set only caption?);
@@ -69,7 +69,7 @@ unattended loop.
       (categories.py ~5866 sense loop; the preview.py sense loop); `models.DroppedItemRecord` /
       `ReferenceDecisionRecord` / `ReferenceAction`. Record a one-line PASS + line-ref per item; if
       any is absent, STOP and escalate (design assumption R2/R3/R6 broken).
-- [ ] T005 Create `src/gramtrans/Lib/pictures.py` with the two public entry points as no-op-safe
+- [X] T005 Create `src/gramtrans/Lib/pictures.py` with the two public entry points as no-op-safe
       skeletons — `reproduce_sense_pictures(src_sense, new_sense, ctx, tag, resolver_cache, dropped)`
       (Move) and `plan_sense_picture_decisions(src_sense, ctx, resolver_cache, dropped) -> list`
       (Preview twin) — plus the private asset-copy seam helpers (`_content_hash(path)`,
