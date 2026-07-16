@@ -155,16 +155,16 @@ the target.
 intended path are still created and exactly one `DroppedItemRecord` names the sense/picture/path; a
 fully-reproducible picture emits none.
 
-- [ ] T013 [P] [US4] RED: in `test_029_picture_asset_copy.py`, author failing tests — (a) missing
+- [X] T013 [P] [US4] RED: in `test_029_picture_asset_copy.py`, author failing tests — (a) missing
       source binary → `CmPicture` reproduced + `CmFile` wired at intended `InternalPath` (no bytes
       copied, via the raw-factory fallback) + exactly one `DroppedItemRecord`; (b) unreadable source
       / unwritable target → `DroppedItemRecord` (owner/field/identity/reason), no throw, no partial
       write; (c) parity — `plan_sense_picture_decisions` emits the identical drop set. Confirm RED.
-- [ ] T014 [US4] GREEN: implement the missing-binary fallback (`project.GetService(ICmPictureFactory
+- [X] T014 [US4] GREEN: implement the missing-binary fallback (`project.GetService(ICmPictureFactory
       /ICmFileFactory)` — create picture + `CmFile` with `InternalPath` set, copy no bytes) and the
       unreadable/unwritable report path in the seam; each emits via `_append_dropped`. Make T013's
       Move assertions pass.
-- [ ] T015 [US4] GREEN: mirror the same drops in `plan_sense_picture_decisions` so the Preview drop
+- [X] T015 [US4] GREEN: mirror the same drops in `plan_sense_picture_decisions` so the Preview drop
       set is identical by construction. Make T013's parity assertion pass.
 
 **Checkpoint**: every un-reproducible picture/asset is reported; nothing is silent (SC-004).
