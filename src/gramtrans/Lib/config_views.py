@@ -177,7 +177,7 @@ def _target_ws_ids(project) -> Optional[Set[str]]:
 
 
 def _custom_field_label(rec) -> Optional[str]:
-    """Best-effort label extraction from one `CustomFields.GetAllFields()`
+    """Best-effort label extraction from one `CustomFields.GetAllFields(cls)`
     row -- tolerates a bare string, a `(cls, field)`-shaped tuple/list (the
     2-tuple shape `Lib/categories.py._enumerate_custom_fields` already
     documents flexicon returning), or a field-record object exposing
@@ -193,19 +193,45 @@ def _custom_field_label(rec) -> Optional[str]:
     return getattr(rec, "Label", None) or getattr(rec, "Name", None) or getattr(rec, "name", None)
 
 
+# Custom-field owner classes FLEx allows fields on (mirrors
+# categories._CUSTOM_FIELD_OWNER_CLASSES). A `.fwdictconfig` custom-field
+# reference (`isCustomField="true" field="..."`) names a field on ONE of these,
+# so the target's custom-field surface is the union across all of them.
+_CUSTOM_FIELD_OWNER_CLASSES = ("LexEntry", "LexSense", "LexExampleSentence", "MoForm")
+
+
 def _target_custom_field_names(project) -> Optional[Set[str]]:
+    """Union of custom-field labels across the supported owner classes.
+
+    The live `CustomFieldOperations.GetAllFields(owner_class)` REQUIRES an
+    owner-class argument (confirmed via FLExToolsMCP get_object_api: it raises
+    on a None/omitted class); the shipping method is class-scoped, so a custom
+    field can only be enumerated per class. Calling it with no argument raised
+    `TypeError`, which the old `except` swallowed into `None` -- and `None`
+    means "surface unknown, don't report", so a config referencing a
+    target-absent custom field was silently copied (never-silent gap). Offline
+    fakes exposed a no-arg `GetAllFields()`, so unit tests never caught it.
+
+    Returns `None` only when EVERY class read fails (the surface is genuinely
+    unreadable, e.g. a duck double that can't answer) so no false-positive
+    drops are produced; otherwise the real (possibly empty) label set.
+    """
     cf_ops = getattr(project, "CustomFields", None)
     if cf_ops is None:
         return None
-    try:
-        names = set()
-        for rec in cf_ops.GetAllFields():
+    names: Set[str] = set()
+    any_class_ok = False
+    for cls in _CUSTOM_FIELD_OWNER_CLASSES:
+        try:
+            rows = list(cf_ops.GetAllFields(cls))
+        except Exception:  # noqa: BLE001 -- class unsupported / handle can't answer
+            continue
+        any_class_ok = True
+        for rec in rows:
             label = _custom_field_label(rec)
             if label:
                 names.add(label)
-        return names
-    except (AttributeError, TypeError):
-        return None
+    return names if any_class_ok else None
 
 
 def _target_style_names(project) -> Optional[Set[str]]:
