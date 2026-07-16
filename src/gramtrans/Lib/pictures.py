@@ -218,6 +218,155 @@ def _copy_layout_scalars(src_pic, new_pic) -> None:
             pass
 
 
+_ASSET_CACHE_KEY = "_picture_asset_cache"
+
+
+def _asset_cache(ctx) -> dict:
+    """Per-run content-hash -> target-`CmFile` dedup cache (SC-005). Stored on
+    `ctx` (mirrors `_copy_set`/`_ws_map`), so an image shared by K pictures is
+    copied once and its `CmFile` reused."""
+    if ctx is None:
+        return {}
+    cache = getattr(ctx, _ASSET_CACHE_KEY, None)
+    if cache is None:
+        cache = {}
+        try:
+            object.__setattr__(ctx, _ASSET_CACHE_KEY, cache)
+        except (AttributeError, TypeError):
+            pass
+    return cache
+
+
+def _target_pictures_dir(ctx) -> str:
+    """The target project's `LinkedFiles/Pictures` folder, or "" when
+    unresolvable. Never raises."""
+    target = _target_handle(ctx)
+    try:
+        root = target.GetLinkedFilesDir()
+    except (AttributeError, TypeError):
+        return ""
+    if not root:
+        return ""
+    return os.path.join(root, "Pictures")
+
+
+def _target_identical_file(source_path, ctx):
+    """Return the absolute path of a byte-identical file already in the target
+    Pictures folder (content-hash match), else "". Read-only; never raises."""
+    src_hash = _content_hash(source_path)
+    if not src_hash:
+        return ""
+    folder = _target_pictures_dir(ctx)
+    if not folder or not os.path.isdir(folder):
+        return ""
+    try:
+        for name in os.listdir(folder):
+            candidate = os.path.join(folder, name)
+            if os.path.isfile(candidate) and _content_hash(candidate) == src_hash:
+                return candidate
+    except OSError:
+        pass
+    return ""
+
+
+# ---- raw ICmPictureFactory / ICmFileFactory path (dedup reuse + US4 fallback)
+
+def _get_service(ctx, iface_name):
+    """Resolve an LCM factory by interface name via `target.GetService`. On a
+    live host imports the real interface from `SIL.LCModel`; host-free tests
+    serve a fake via `GetService("ICmPictureFactory")` (string key). None when
+    unavailable. Never raises."""
+    target = _target_handle(ctx)
+    getsvc = getattr(target, "GetService", None)
+    if getsvc is None:
+        return None
+    try:
+        import SIL.LCModel as _lcm
+        return getsvc(getattr(_lcm, iface_name))
+    except Exception:
+        try:
+            return getsvc(iface_name)
+        except Exception:
+            return None
+
+
+def _append_owned_picture(new_sense, picture) -> None:
+    coll = getattr(new_sense, "PicturesOS", None)
+    if coll is None:
+        return
+    add = getattr(coll, "Add", None)
+    if callable(add):
+        try:
+            add(picture)
+            return
+        except (AttributeError, TypeError):
+            pass
+    try:
+        coll.append(picture)
+    except (AttributeError, TypeError):
+        pass
+
+
+def _set_cmfile_internal_path(cmfile, internal_path) -> None:
+    if not internal_path:
+        return
+    try:
+        _cast_file(cmfile).InternalPath = internal_path
+    except (AttributeError, TypeError):
+        pass
+
+
+def _own_file_in_pictures_folder(ctx, cmfile) -> None:
+    """Best-effort: own a raw-created `CmFile` under the target's Local
+    Pictures `CmFolder` on a live host. No-op offline (fakes have no Cache)."""
+    target = _target_handle(ctx)
+    try:
+        folder = target.Cache.LangProject.PicturesOC[0]
+        folder.FilesOC.Add(cmfile)
+    except Exception:
+        pass
+
+
+def _create_picture_raw(ctx, new_sense, internal_path, existing_file=None):
+    """Raw `ICmPictureFactory` create -- wire the new `CmPicture` to
+    `existing_file` (dedup reuse, no bytes) or to a fresh `CmFile` whose
+    `InternalPath` is `internal_path` (missing-binary fallback, R5). Returns
+    the picture, or None when the factory is unavailable. Never raises."""
+    pic_factory = _picture_factory(ctx)
+    if pic_factory is None:
+        return None
+    try:
+        picture = pic_factory.Create()
+    except Exception:
+        return None
+    _append_owned_picture(new_sense, picture)
+    cmfile = existing_file
+    if cmfile is None:
+        file_factory = _file_factory(ctx)
+        if file_factory is not None:
+            try:
+                cmfile = file_factory.Create()
+            except Exception:
+                cmfile = None
+            if cmfile is not None:
+                _set_cmfile_internal_path(cmfile, internal_path)
+                _own_file_in_pictures_folder(ctx, cmfile)
+    if cmfile is not None:
+        try:
+            _cast_picture(picture).PictureFileRA = cmfile
+        except (AttributeError, TypeError):
+            pass
+    return picture
+
+
+def _picture_factory(ctx):
+    return _get_service(ctx, "ICmPictureFactory")
+
+
+def _file_factory(ctx):
+    return _get_service(ctx, "ICmFileFactory")
+
+
 def _add_picture_via_seam(ctx, new_sense, image_path):
     """Happy-path asset-copy + picture-creation seam:
     `target.Senses.AddPicture` creates the `CmPicture`, copies the image into
@@ -321,12 +470,31 @@ def _reproduce_one_picture(src_pic, src_sense, new_sense, ctx, tag,
     rename / missing-binary legs layer in via US2-US5."""
     src_file = getattr(src_pic, "PictureFileRA", None)
     source_path = _source_image_path(src_file, _source_handle(ctx))
-    new_pic = _add_picture_via_seam(ctx, new_sense, source_path)
-    if new_pic is None:
-        _report_picture_dropped(
-            dropped, src_sense, src_pic,
-            "picture could not be created in target (029)", ctx)
-        return
+    source_hash = _content_hash(source_path)
+    cache = _asset_cache(ctx)
+    if source_hash and source_hash in cache:
+        # US2 dedup (SC-005): the image was already copied this run -- reuse the
+        # cached target `CmFile`, create the picture with no second file copy.
+        new_pic = _create_picture_raw(
+            ctx, new_sense, None, existing_file=cache[source_hash])
+        if new_pic is None:
+            _report_picture_dropped(
+                dropped, src_sense, src_pic,
+                "picture could not be created in target (029)", ctx)
+            return
+    else:
+        # US2 happy path: `AddPicture` copies the image into the target
+        # LinkedFiles/Pictures folder and wires the `CmFile` in one call.
+        new_pic = _add_picture_via_seam(ctx, new_sense, source_path)
+        if new_pic is None:
+            _report_picture_dropped(
+                dropped, src_sense, src_pic,
+                "picture could not be created in target (029)", ctx)
+            return
+        if source_hash:
+            wired = getattr(new_pic, "PictureFileRA", None)
+            if wired is not None:
+                cache[source_hash] = wired
     _copy_picture_multistrings(src_pic, new_pic, ctx)
     _copy_layout_scalars(src_pic, new_pic)
 
@@ -351,13 +519,27 @@ def plan_sense_picture_decisions(src_sense, ctx, resolver_cache, dropped) -> lis
     if not src_pictures:
         return records
     owner_guid = _guid_str(src_sense)
+    seen_hashes: set = set()
     for src_pic in src_pictures:
         try:
+            src_file = getattr(src_pic, "PictureFileRA", None)
+            source_path = _source_image_path(src_file, _source_handle(ctx))
+            source_hash = _content_hash(source_path)
+            # US2/US3 LINK-vs-ADD: an asset already planned this run OR already
+            # byte-identical in the target folder is reused (LINK); otherwise a
+            # new copy is planned (CREATE). Read-only -- hashing is a read.
+            if source_hash and (source_hash in seen_hashes
+                                or _target_identical_file(source_path, ctx)):
+                action = ReferenceAction.LINK
+            else:
+                action = ReferenceAction.CREATE
+                if source_hash:
+                    seen_hashes.add(source_hash)
             records.append(ReferenceDecisionRecord(
                 owner_kind=_OWNER_KIND,
                 owner_guid=owner_guid,
                 field_name=_FIELD_NAME,
-                action=ReferenceAction.CREATE,
+                action=action,
                 item_name=_picture_label(src_pic, ctx),
                 item_guid=_guid_str(src_pic),
             ))
