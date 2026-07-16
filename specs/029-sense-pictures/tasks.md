@@ -224,12 +224,12 @@ triggers a de-duplicated-name copy with the rename reported; neither pre-existin
       AC1–AC8 (object/order, asset displays, dedup, collision reuse+rename, missing-binary wired+
       reported, idempotent re-Move, non-destructive, census clean). Write evidence to
       `specs/029-sense-pictures/verification-log.md`; restore `Target`. **NEVER unattended.**
-- [ ] T021 Flip the `("LexSense", "PicturesOS")` row in `tests/verification/fidelity_census.py`
+- [X] T021 Flip the `("LexSense", "PicturesOS")` row in `tests/verification/fidelity_census.py`
       from DROP_REPORTED → COPIED, citing `pictures.reproduce_sense_pictures` /
       `plan_sense_picture_decisions` as create sites; keep the never-silent guard; assert a census
       over a sense carrying pictures reports zero unexplained populated-in-source-but-empty-in-target
       `PicturesOS` (SC-007). Run `python -m pytest tests/verification/fidelity_census.py -q`.
-- [ ] T022 [P] Full offline gate: `python -m pytest tests/unit tests/verification -q`; confirm no
+- [X] T022 [P] Full offline gate: `python -m pytest tests/unit tests/verification -q`; confirm no
       new failures beyond the documented environment baseline; `python -m py_compile` (or byte-
       compile) `src/gramtrans/Lib/pictures.py` + `categories.py` + `preview.py` clean. Record counts.
 - [ ] T023 Merge `029-sense-pictures` → `main` (`--no-ff`) after T020 PASS + offline gate green;
