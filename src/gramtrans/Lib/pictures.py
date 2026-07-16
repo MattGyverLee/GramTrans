@@ -42,6 +42,7 @@ from __future__ import annotations
 import hashlib
 import os
 import shutil
+import tempfile
 
 if __package__:
     from .models import (
@@ -297,14 +298,11 @@ def _target_pictures_dir(ctx) -> str:
     return os.path.join(root, "Pictures")
 
 
-def _target_identical_file(source_path, ctx):
-    """Return the absolute path of a byte-identical file already in the target
-    Pictures folder (content-hash match), else "". Read-only; never raises."""
+def _identical_file_in_folder(source_path, folder) -> str:
+    """Absolute path of a byte-identical file (content-hash match) in `folder`,
+    else "". Read-only; never raises."""
     src_hash = _content_hash(source_path)
-    if not src_hash:
-        return ""
-    folder = _target_pictures_dir(ctx)
-    if not folder or not os.path.isdir(folder):
+    if not src_hash or not folder or not os.path.isdir(folder):
         return ""
     try:
         for name in os.listdir(folder):
@@ -314,6 +312,30 @@ def _target_identical_file(source_path, ctx):
     except OSError:
         pass
     return ""
+
+
+def _target_identical_file(source_path, ctx) -> str:
+    """Byte-identical file already in the target Pictures folder, else ""."""
+    return _identical_file_in_folder(source_path, _target_pictures_dir(ctx))
+
+
+def _dedup_name(folder, basename) -> str:
+    """A `<stem>_N<ext>` filename not present in `folder` (US3 collision
+    de-duplication)."""
+    stem, ext = os.path.splitext(basename)
+    i = 1
+    while True:
+        candidate = "%s_%d%s" % (stem, i, ext)
+        if not folder or not os.path.exists(os.path.join(folder, candidate)):
+            return candidate
+        i += 1
+
+
+def _rename_reason(basename, dedup_name) -> str:
+    return ("target already has a different file named %r -- source image "
+            "reproduced under the de-duplicated name %r (029-sense-pictures, "
+            "R3; pre-existing target file left unchanged)"
+            % (basename, dedup_name))
 
 
 # ---- raw ICmPictureFactory / ICmFileFactory path (dedup reuse + US4 fallback)
@@ -512,12 +534,41 @@ def _source_image_path(src_cmfile, source_handle):
 
 
 def _resolve_target_collision(source_path, target_folder):
-    """T005 stub (US3, T019). Decide the non-destructive destination for
-    `source_path` in `target_folder`: reuse an identical existing file, copy
-    under a de-duplicated name for a same-name/different-content clash, or a
-    plain copy when there is no collision. Returns a decision tuple; the
-    skeleton returns the no-collision plain-copy shape."""
-    return ("copy", os.path.basename(source_path or ""), None)
+    """Decide the non-destructive destination for `source_path` in
+    `target_folder` (US3, R3). Read-only; never raises. Returns a 3-tuple:
+    - ("reuse", basename, existing_abs) -- a byte-identical file is already
+      present; reuse it (no copy);
+    - ("rename", dedup_name, None)      -- a same-name/different-content file is
+      present; copy the source under `dedup_name` (never overwrite);
+    - ("copy", basename, None)          -- no collision; copy under `basename`.
+    """
+    basename = os.path.basename(source_path or "")
+    if not basename:
+        return ("copy", basename, None)
+    identical = _identical_file_in_folder(source_path, target_folder)
+    if identical:
+        return ("reuse", basename, identical)
+    if target_folder and os.path.isfile(os.path.join(target_folder, basename)):
+        return ("rename", _dedup_name(target_folder, basename), None)
+    return ("copy", basename, None)
+
+
+def _copy_asset_renamed(ctx, new_sense, source_path, dedup_name):
+    """Copy `source_path` into the target Pictures folder under `dedup_name`
+    (never clobbering the same-name pre-existing file) by staging a copy with
+    the de-duplicated basename and handing that to `AddPicture` (which keeps the
+    basename). Returns the new picture, or None on failure. Never raises."""
+    staging_dir = None
+    try:
+        staging_dir = tempfile.mkdtemp(prefix="gt029_")
+        staging = os.path.join(staging_dir, dedup_name)
+        shutil.copy2(source_path, staging)
+        return _add_picture_via_seam(ctx, new_sense, staging)
+    except Exception:
+        return None
+    finally:
+        if staging_dir:
+            shutil.rmtree(staging_dir, ignore_errors=True)
 
 
 # ============================================================================
@@ -596,9 +647,26 @@ def _reproduce_one_picture(src_pic, src_sense, new_sense, ctx, tag,
         new_pic = _create_picture_raw(
             ctx, new_sense, None, existing_file=cache[source_hash])
     else:
-        # US2 happy path: `AddPicture` copies the image into the target
-        # LinkedFiles/Pictures folder and wires the `CmFile` in one call.
-        new_pic = _add_picture_via_seam(ctx, new_sense, source_path)
+        # US3 collision resolution ahead of the copy (R3, non-destructive).
+        target_folder = _target_pictures_dir(ctx)
+        action, name, existing = _resolve_target_collision(
+            source_path, target_folder)
+        if action == "reuse":
+            # A byte-identical file is already in the target folder -- wire a
+            # `CmFile` at THAT file's intended path, no re-copy.
+            intended = os.path.join("Pictures", os.path.basename(existing))
+            new_pic = _create_picture_raw(
+                ctx, new_sense, intended, existing_file=None)
+        elif action == "rename":
+            # A same-name/different-content file is present -- copy under a
+            # de-duplicated name (never overwrite) and report the rename.
+            new_pic = _copy_asset_renamed(ctx, new_sense, source_path, name)
+            if new_pic is not None:
+                _report_picture_dropped(
+                    dropped, src_sense, src_pic,
+                    _rename_reason(os.path.basename(source_path), name), ctx)
+        else:  # "copy" -- no collision
+            new_pic = _add_picture_via_seam(ctx, new_sense, source_path)
         if new_pic is not None and source_hash:
             wired = getattr(new_pic, "PictureFileRA", None)
             if wired is not None:
@@ -662,16 +730,28 @@ def plan_sense_picture_decisions(src_sense, ctx, resolver_cache, dropped) -> lis
                 continue
             else:  # status == "ok"
                 source_hash = _content_hash(source_path)
-                # US2/US3 LINK-vs-ADD: an asset already planned this run OR
-                # already byte-identical in the target folder is reused (LINK);
-                # otherwise a new copy is planned (CREATE). Read-only.
-                if source_hash and (source_hash in seen_hashes
-                                    or _target_identical_file(source_path, ctx)):
+                # US2/US3 LINK-vs-ADD (read-only): an asset already planned this
+                # run OR byte-identical in the target folder is reused (LINK);
+                # a same-name/different-content clash plans a renamed CREATE
+                # (with the identical rename note the Move leg reports, so the
+                # drop set stays identical); otherwise a plain CREATE.
+                if source_hash and source_hash in seen_hashes:
                     action = ReferenceAction.LINK
                 else:
-                    action = ReferenceAction.CREATE
-                    if source_hash:
-                        seen_hashes.add(source_hash)
+                    target_folder = _target_pictures_dir(ctx)
+                    col_action, name, _existing = _resolve_target_collision(
+                        source_path, target_folder)
+                    if col_action == "reuse":
+                        action = ReferenceAction.LINK
+                    else:
+                        action = ReferenceAction.CREATE
+                        if source_hash:
+                            seen_hashes.add(source_hash)
+                        if col_action == "rename":
+                            _report_picture_dropped(
+                                dropped, src_sense, src_pic,
+                                _rename_reason(
+                                    os.path.basename(source_path), name), ctx)
             records.append(ReferenceDecisionRecord(
                 owner_kind=_OWNER_KIND,
                 owner_guid=owner_guid,

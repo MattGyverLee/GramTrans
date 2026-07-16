@@ -376,3 +376,76 @@ def test_us4_preview_move_drop_parity(tmp_path):
     assert _key(move_dropped) == _key(preview_dropped)
     # exactly the missing + unreadable pictures are dropped (good one is not)
     assert {d.item_guid for d in move_dropped} == {"pm", "pb"}
+
+
+# ============================================================================
+# Phase 7 US3 (T018) -- content-aware, non-destructive collision handling.
+# ============================================================================
+
+def test_us3_identical_target_file_reused_no_recopy(tmp_path):
+    """T018: a byte-identical file already in the target Pictures folder is
+    reused (no re-copy); the picture is wired to it and the pre-existing file
+    is byte-unchanged."""
+    ctx, tgt_senses, src_linked, tgt_linked = _build(tmp_path)
+    src_img = _write(os.path.join(src_linked, "Pictures", "dog.jpg"), b"DOG")
+    seeded = _write(os.path.join(tgt_linked, "Pictures", "dog.jpg"), b"DOG")
+    pic = _Picture("p", caption={1: "dog"},
+                   file=_CmFile(internal="Pictures/dog.jpg", abspath=src_img))
+    src_sense = _Sense("s", pictures=[pic])
+    new_sense = _Sense("t")
+
+    pictures.reproduce_sense_pictures(src_sense, new_sense, ctx, None, {}, [])
+
+    assert tgt_senses.copy_count == 0  # reused, no re-copy
+    assert len(new_sense.PicturesOS) == 1
+    assert new_sense.PicturesOS[0].PictureFileRA.InternalPath == \
+        os.path.join("Pictures", "dog.jpg")
+    with open(seeded, "rb") as fh:
+        assert fh.read() == b"DOG"  # pre-existing file untouched
+
+
+def test_us3_same_name_different_content_renamed_and_reported(tmp_path):
+    """T018: a same-name/different-content target file is never overwritten;
+    the source lands under a de-duplicated name and the rename is reported."""
+    ctx, tgt_senses, src_linked, tgt_linked = _build(tmp_path)
+    src_img = _write(os.path.join(src_linked, "Pictures", "dog.jpg"),
+                     b"SOURCE-DOG")
+    seeded = _write(os.path.join(tgt_linked, "Pictures", "dog.jpg"),
+                    b"OTHER-DOG")
+    pic = _Picture("p", caption={1: "dog"},
+                   file=_CmFile(internal="Pictures/dog.jpg", abspath=src_img))
+    src_sense = _Sense("s", pictures=[pic])
+    new_sense = _Sense("t")
+
+    dropped = []
+    pictures.reproduce_sense_pictures(src_sense, new_sense, ctx, None, {}, dropped)
+
+    with open(seeded, "rb") as fh:
+        assert fh.read() == b"OTHER-DOG"  # pre-existing file byte-unchanged
+    files = sorted(os.listdir(os.path.join(tgt_linked, "Pictures")))
+    assert "dog.jpg" in files
+    deduped = [f for f in files if f != "dog.jpg"]
+    assert len(deduped) == 1  # source copied under a de-duplicated name
+    with open(os.path.join(tgt_linked, "Pictures", deduped[0]), "rb") as fh:
+        assert fh.read() == b"SOURCE-DOG"
+    assert new_sense.PicturesOS[0].PictureFileRA.InternalPath == \
+        os.path.join("Pictures", deduped[0])
+    notes = [d for d in dropped
+             if "de-dup" in d.reason.lower() or "rename" in d.reason.lower()]
+    assert len(notes) == 1  # the rename is reported
+
+
+def test_us3_preview_plans_link_for_identical_target_file(tmp_path):
+    """T019: Preview plans LINK (reuse) for a picture whose asset is
+    byte-identical to an existing target file -- read-only, nothing copied."""
+    ctx, tgt_senses, src_linked, tgt_linked = _build(tmp_path)
+    src_img = _write(os.path.join(src_linked, "Pictures", "dog.jpg"), b"DOG")
+    _write(os.path.join(tgt_linked, "Pictures", "dog.jpg"), b"DOG")
+    pic = _Picture("p", caption={1: "dog"},
+                   file=_CmFile(internal="Pictures/dog.jpg", abspath=src_img))
+    src_sense = _Sense("s", pictures=[pic])
+
+    decisions = pictures.plan_sense_picture_decisions(src_sense, ctx, {}, [])
+
+    assert [d.action for d in decisions] == [ReferenceAction.LINK]
+    assert tgt_senses.copy_count == 0
