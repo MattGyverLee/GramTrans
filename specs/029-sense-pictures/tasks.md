@@ -202,11 +202,11 @@ same-name/different-content copied under a de-duplicated name (reported); never 
 same-name/different-content file; the identical one is reused (no re-copy) and the different one
 triggers a de-duplicated-name copy with the rename reported; neither pre-existing file is modified.
 
-- [ ] T018 [P] [US3] RED: in `test_029_picture_asset_copy.py`, author failing tests — identical
+- [X] T018 [P] [US3] RED: in `test_029_picture_asset_copy.py`, author failing tests — identical
       target content → reuse existing `CmFile`, no re-copy; same-name/different-content → source
       copied under a de-duplicated name via `RenamePicture`, a report line notes the rename, and the
       pre-existing target file is byte-unchanged. Confirm RED.
-- [ ] T019 [US3] GREEN: implement `_resolve_target_collision` (content-hash compare → reuse |
+- [X] T019 [US3] GREEN: implement `_resolve_target_collision` (content-hash compare → reuse |
       dedup-rename | plain-copy) and wire it into the seam ahead of `AddPicture`; surface the rename
       as a report/`DroppedItemRecord`-style note. Extend `plan_sense_picture_decisions` to plan the
       LINK-reuse vs. renamed-ADD read-only. Make T018 pass.
