@@ -50,11 +50,22 @@ class _FakeWSCollection:
 
 
 class _FakeCustomFields:
+    """Mirrors the live `CustomFieldOperations`: `GetAllFields` REQUIRES an
+    `owner_class` argument (a no-arg call raises `TypeError`, exactly as it does
+    against real flexicon -- the divergence that silently dropped custom-field
+    missing-ref reporting until it was caught by the config-view live proof).
+    Fixture fields are modeled as entry-level; class assignment is irrelevant to
+    the R9 name-based scan, which unions labels across all owner classes."""
+
+    _OWNER_CLASSES = ("LexEntry", "LexSense", "LexExampleSentence", "MoForm")
+
     def __init__(self, names):
         self._names = list(names)
 
-    def GetAllFields(self):
-        return list(self._names)
+    def GetAllFields(self, owner_class):
+        if owner_class not in self._OWNER_CLASSES:
+            raise ValueError("unknown owner class: %r" % (owner_class,))
+        return list(self._names) if owner_class == "LexEntry" else []
 
 
 class _FakeProject:
@@ -228,6 +239,33 @@ def test_missing_ref_scan_reports_ws_field_and_style(tmp_path):
         assert m.owner_kind == "ConfigView"
         assert m.owner_label == "fr.fwdictconfig"
         assert m.reason  # non-empty, per DroppedItemRecord.__post_init__
+
+
+def test_missing_ref_scan_does_not_report_present_custom_field(tmp_path):
+    """Positive path for the owner-class enumeration fix: a custom field the
+    target DOES hold must NOT be reported. Guards against a regression where
+    `_target_custom_field_names` returns None/empty unconditionally (which
+    would make the absent-field test pass vacuously). The target's custom-field
+    surface is only readable via `GetAllFields(owner_class)` per owner class --
+    the exact live contract a no-arg call could never satisfy."""
+    src_dir = tmp_path / "Source"
+    tgt_dir = tmp_path / "Target"
+    _write(_rev_dir(src_dir), "fr.fwdictconfig", _CONFIG_WITH_MISSING_REFS)
+
+    # Target HAS 'MyCustomField' (+ the WS/style the config needs), so ONLY the
+    # 'de' Option-id WS should remain missing -- the custom field must not.
+    src = _FakeProject(src_dir, ws_ids=["fr", "de"])
+    tgt = _FakeProject(
+        tgt_dir, ws_ids=["fr"], custom_fields=["MyCustomField"],
+        styles=["Missing-Style"],
+    )
+
+    records = plan_config_views(src, tgt)
+    by_field = {(m.field_name, m.item_name) for m in records[0].missing_refs}
+    assert ("field", "MyCustomField") not in by_field
+    assert ("style", "Missing-Style") not in by_field
+    assert ("writingSystem", "fr") not in by_field
+    assert ("writingSystem", "de") in by_field  # this one really is absent
 
 
 def test_missing_ref_scan_ignores_ws_magic_tokens(tmp_path):

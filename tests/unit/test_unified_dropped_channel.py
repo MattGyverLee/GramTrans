@@ -104,11 +104,20 @@ class _FakeReversalIndex:
 # ============================================================================
 
 class _FakeCustomFields:
+    """Mirrors the live `CustomFieldOperations.GetAllFields(owner_class)`: the
+    argument is REQUIRED (a no-arg call raises `TypeError`, as it does against
+    real flexicon). Fixture fields are modeled as entry-level; the R9 scan
+    unions labels across owner classes, so class assignment is irrelevant."""
+
+    _OWNER_CLASSES = ("LexEntry", "LexSense", "LexExampleSentence", "MoForm")
+
     def __init__(self, names) -> None:
         self._names = list(names)
 
-    def GetAllFields(self):
-        return list(self._names)
+    def GetAllFields(self, owner_class):
+        if owner_class not in self._OWNER_CLASSES:
+            raise ValueError("unknown owner class: %r" % (owner_class,))
+        return list(self._names) if owner_class == "LexEntry" else []
 
 
 # ============================================================================
