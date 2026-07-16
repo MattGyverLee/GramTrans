@@ -76,7 +76,7 @@ unattended loop.
       `_source_image_path(src_cmfile, src_handle)`, `_resolve_target_collision(...)`) as stubs, all
       guarded to never raise (module posture per contract G7). Empty/absent source `PicturesOS` →
       return with no effect.
-- [ ] T006 Wire the dispatch seam (no behavior yet beyond the skeleton): in
+- [X] T006 Wire the dispatch seam (no behavior yet beyond the skeleton): in
       `categories._walk_lex_entry_closure`'s sense loop call `pictures.reproduce_sense_pictures(...)`
       (lazy import, same idiom as the `owned` import) and REMOVE the `PicturesOS` entry from
       `_SENSE_SCOPE_GAP_FIELDS` so `_report_dropped_sense_scope_gaps` no longer double-reports it
