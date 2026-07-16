@@ -2,8 +2,8 @@
   "workflow": "speckit",
   "specName": "Sense Pictures",
   "branch": "main",
-  "currentStep": "plan",
-  "status": "planned",
+  "currentStep": "tasks",
+  "status": "ready-to-implement",
   "history": [
     {
       "step": "specify",
@@ -18,6 +18,13 @@
       "kind": "start",
       "by": "extension",
       "at": "2026-07-16T23:04:13.421Z"
+    },
+    {
+      "step": "tasks",
+      "substep": null,
+      "kind": "start",
+      "by": "extension",
+      "at": "2026-07-16T23:14:41.562Z"
     }
   ]
 }
