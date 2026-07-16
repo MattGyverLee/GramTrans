@@ -109,6 +109,133 @@ def _append_dropped(dropped, record) -> None:
 
 
 # ============================================================================
+# Small read helpers (host-free; SIL-optional).
+# ============================================================================
+
+def _source_handle(ctx):
+    return getattr(ctx, "source_handle", None) if ctx is not None else None
+
+
+def _target_handle(ctx):
+    return getattr(ctx, "target_handle", None) if ctx is not None else None
+
+
+def _guid_str(obj) -> str:
+    try:
+        return _references._guid_str(obj)
+    except Exception:
+        return ""
+
+
+def _picture_owner_label(src_sense) -> str:
+    try:
+        return _references._item_label(src_sense) or ""
+    except Exception:
+        return ""
+
+
+def _read_text(tss) -> str:
+    """`.Text` off an ITsString (live) or a plain str (offline fakes), never
+    the `***` empty placeholder."""
+    text = getattr(tss, "Text", tss)
+    if text is None or text == "***":
+        return ""
+    return text
+
+
+def _best_multistring_text(multistr, source_handle) -> str:
+    """Best non-empty alternative of a source multistring, read across the
+    source project's writing-system handles. "" when none / unreadable."""
+    if multistr is None:
+        return ""
+    try:
+        for ws in source_handle.WritingSystems.GetAll():
+            text = _read_text(multistr.get_String(ws.Handle))
+            if text:
+                return text
+    except (AttributeError, TypeError):
+        pass
+    return ""
+
+
+def _picture_label(src_pic, ctx) -> str:
+    """Best-effort display label for a picture -- its caption, else "" (a
+    `CmPicture` has no `.Name`)."""
+    return _best_multistring_text(
+        getattr(src_pic, "Caption", None), _source_handle(ctx))
+
+
+def _report_picture_dropped(dropped, src_sense, src_pic, reason, ctx=None) -> None:
+    _append_dropped(dropped, DroppedItemRecord(
+        owner_kind=_OWNER_KIND,
+        owner_guid=_guid_str(src_sense),
+        owner_label=_picture_owner_label(src_sense),
+        field_name=_FIELD_NAME,
+        item_name=_picture_label(src_pic, ctx),
+        item_guid=_guid_str(src_pic),
+        reason=reason,
+    ))
+
+
+# ============================================================================
+# Object-graph copy (US1): caption/description ws-mapped + layout scalars.
+# ============================================================================
+
+def _copy_picture_multistrings(src_pic, new_pic, ctx) -> None:
+    """Copy `Caption`/`Description` across all writing systems, ws-mapped, via
+    024's `categories._copy_multistrings_ws_mapped` (source->target handle
+    translation). Lazy import to avoid a module load-order cycle."""
+    source = _source_handle(ctx)
+    target = _target_handle(ctx)
+    if source is None or target is None:
+        return
+    ws_map = getattr(ctx, "_ws_map", None)
+    if __package__:
+        from . import categories as _categories
+    else:  # pragma: no cover
+        import categories as _categories  # type: ignore
+    try:
+        _categories._copy_multistrings_ws_mapped(
+            src_pic, new_pic, _MULTISTRING_FIELDS,
+            source=source, target=target, ws_map=ws_map)
+    except (AttributeError, TypeError):
+        pass
+
+
+def _copy_layout_scalars(src_pic, new_pic) -> None:
+    """Copy the five layout scalars (enum/Int32) verbatim -- cast both sides to
+    `ICmPicture` on the live host (pass-through offline)."""
+    src = _cast_picture(src_pic)
+    dst = _cast_picture(new_pic)
+    for name in _LAYOUT_SCALARS:
+        try:
+            value = getattr(src, name)
+        except (AttributeError, TypeError):
+            continue
+        try:
+            setattr(dst, name, value)
+        except (AttributeError, TypeError):
+            pass
+
+
+def _add_picture_via_seam(ctx, new_sense, image_path):
+    """Happy-path asset-copy + picture-creation seam:
+    `target.Senses.AddPicture` creates the `CmPicture`, copies the image into
+    the target LinkedFiles/Pictures folder, and wires the `CmFile` in one call.
+    Caption is passed as None -- full caption fidelity comes from the
+    subsequent ws-mapped multistring copy. Returns the new picture, or None on
+    any failure (caller reports)."""
+    target = _target_handle(ctx)
+    senses = getattr(target, "Senses", None)
+    if senses is None:
+        return None
+    try:
+        return senses.AddPicture(new_sense, image_path, None, None)
+    except Exception:
+        return None
+
+
+# ============================================================================
 # Private asset-copy seam (T005 stubs; filled in by US2-US5).
 # ============================================================================
 
@@ -176,7 +303,32 @@ def reproduce_sense_pictures(src_sense, new_sense, ctx, tag, resolver_cache,
         return
     if not src_pictures:
         return
-    # --- per-picture reproduce legs land here (US1-US5) ---
+    for src_pic in src_pictures:
+        try:
+            _reproduce_one_picture(
+                src_pic, src_sense, new_sense, ctx, tag, resolver_cache, dropped)
+        except Exception:  # noqa: BLE001 -- module posture G7: never raise
+            _report_picture_dropped(
+                dropped, src_sense, src_pic,
+                "unexpected error reproducing picture (029)", ctx)
+
+
+def _reproduce_one_picture(src_pic, src_sense, new_sense, ctx, tag,
+                           resolver_cache, dropped) -> None:
+    """Reproduce a single `CmPicture` onto `new_sense`: create it (+ copy the
+    backing asset via the seam), then copy caption/description ws-mapped and
+    the layout scalars. US1 covers the object graph; the asset copy / reuse /
+    rename / missing-binary legs layer in via US2-US5."""
+    src_file = getattr(src_pic, "PictureFileRA", None)
+    source_path = _source_image_path(src_file, _source_handle(ctx))
+    new_pic = _add_picture_via_seam(ctx, new_sense, source_path)
+    if new_pic is None:
+        _report_picture_dropped(
+            dropped, src_sense, src_pic,
+            "picture could not be created in target (029)", ctx)
+        return
+    _copy_picture_multistrings(src_pic, new_pic, ctx)
+    _copy_layout_scalars(src_pic, new_pic)
 
 
 # ============================================================================
@@ -198,5 +350,19 @@ def plan_sense_picture_decisions(src_sense, ctx, resolver_cache, dropped) -> lis
         return records
     if not src_pictures:
         return records
-    # --- per-picture decision legs land here (US1-US5) ---
+    owner_guid = _guid_str(src_sense)
+    for src_pic in src_pictures:
+        try:
+            records.append(ReferenceDecisionRecord(
+                owner_kind=_OWNER_KIND,
+                owner_guid=owner_guid,
+                field_name=_FIELD_NAME,
+                action=ReferenceAction.CREATE,
+                item_name=_picture_label(src_pic, ctx),
+                item_guid=_guid_str(src_pic),
+            ))
+        except Exception:  # noqa: BLE001 -- read-only twin; never raise
+            _report_picture_dropped(
+                dropped, src_sense, src_pic,
+                "unexpected error planning picture decision (029)", ctx)
     return records
