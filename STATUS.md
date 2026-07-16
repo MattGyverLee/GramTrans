@@ -1,5 +1,35 @@
 # GramTrans — Session Handoff
 
+## ▶▶▶ Config-View Copy (025 S4) — LIVE-PROVEN + real bug fixed & MERGED (2026-07-16)
+
+**MERGED to `main` @ `063859f`** (`--no-ff`). Closed the S4 live-proof gap for the
+Dictionary/Reversal **configuration-view** copy (`Lib/config_views.py`, the
+`.fwdictconfig` export configs — user's actual "copy the Reversal & Dictionary
+configs" target, already shipped in 025 US3 but only SKIP-path-proven).
+
+**Live proof — 17/17 PASS via FLExToolsMCP `run_module`** against a real `Target`
+handle (`EjaghamCfgSrc` → `Target`, both disposable/restored; real Ejagham Mini
+untouched). Constructed fixture forced every path: **ADD** (Dictionary config the
+target lacks), **OVERWRITE** (differing reversal config + `.gtbak` backup of
+pristine bytes), **missing_refs** (WS + style + custom field, vs the live target
+sets), idempotent re-plan → **SKIP** with refs still reported. Evidence:
+`specs/025-full-reversals/reviews/live-proof-configviews.md`; standalone driver
+`scratchpad/run_configview_live.py`.
+
+**Real live-vs-fake bug found & fixed** (`5aaaa0c`): `_target_custom_field_names`
+called `CustomFieldOperations.GetAllFields()` no-arg; the live method needs
+`owner_class` (verified via MCP `get_object_api`), so it raised → swallowed to
+`None` → "don't report" → a config referencing a target-absent **custom field was
+silently copied** (never-silent breach). Offline fakes had a no-arg `GetAllFields`,
+hiding it. Fix enumerates the 4 owner classes and unions labels. Regression lock:
+both config-view fakes now require `owner_class` (a no-arg reversion fails the
+suite) + new positive-path test. **Pattern audit:** only no-arg `GetAllFields()`
+in `src/`; the other two callers already pass the class. Offline config-view
+cluster 76 passed; full unit suite = documented 22-fail suite-isolation baseline,
+no new failures. `Target` restored clean.
+
+---
+
 ## ▶▶▶ coverage-content-fidelity Part B — DONE & MERGED (2026-07-15) — LIVE-PROVEN
 
 **MERGED to `main` @ `878a37f`** (`--no-ff`, no conflicts). Branch
