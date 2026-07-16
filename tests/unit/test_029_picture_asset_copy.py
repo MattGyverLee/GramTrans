@@ -286,3 +286,93 @@ def test_us2_preview_plans_add_then_link_for_shared_image(tmp_path):
     # read-only: nothing copied
     assert tgt_senses.copy_count == 0
     assert not os.path.exists(os.path.join(tgt_linked, "Pictures", "shared.jpg"))
+
+
+# ============================================================================
+# Phase 5 US4 (T013) -- never-silent filesystem failures.
+# ============================================================================
+
+def test_us4_missing_source_binary_wires_cmfile_and_reports(tmp_path):
+    """T013(a): a missing source image still yields a CmPicture + a CmFile
+    wired at the intended InternalPath (no bytes copied, raw-factory fallback)
+    plus exactly one DroppedItemRecord naming the sense/picture."""
+    ctx, tgt_senses, src_linked, tgt_linked = _build(tmp_path)
+    gone = os.path.join(src_linked, "Pictures", "gone.jpg")  # never created
+    src_file = _CmFile(internal="Pictures/gone.jpg", abspath=gone)
+    pic = _Picture("p-missing", caption={1: "lost dog"}, file=src_file)
+    src_sense = _Sense("s", pictures=[pic])
+    new_sense = _Sense("t")
+
+    dropped = []
+    pictures.reproduce_sense_pictures(src_sense, new_sense, ctx, None, {}, dropped)
+
+    assert len(new_sense.PicturesOS) == 1
+    wired = new_sense.PicturesOS[0].PictureFileRA
+    assert wired is not None
+    assert wired.InternalPath == "Pictures/gone.jpg"
+    assert tgt_senses.copy_count == 0  # no bytes copied
+    assert not os.path.exists(os.path.join(tgt_linked, "Pictures", "gone.jpg"))
+    pic_drops = [d for d in dropped
+                 if d.field_name == "PicturesOS" and d.item_guid == "p-missing"]
+    assert len(pic_drops) == 1
+    assert "missing" in pic_drops[0].reason.lower()
+
+
+def test_us4_unreadable_source_reports_no_partial_write(tmp_path):
+    """T013(b): an unreadable source (here a directory masquerading as the
+    image path -- exists but cannot be read as a file) is reported, with no
+    throw and no partial target write and no picture reproduced."""
+    ctx, tgt_senses, src_linked, tgt_linked = _build(tmp_path)
+    baddir = os.path.join(src_linked, "Pictures", "weird.jpg")
+    os.makedirs(baddir, exist_ok=True)  # a dir, not a file
+    src_file = _CmFile(internal="Pictures/weird.jpg", abspath=baddir)
+    pic = _Picture("p-bad", caption={1: "x"}, file=src_file)
+    src_sense = _Sense("s", pictures=[pic])
+    new_sense = _Sense("t")
+
+    dropped = []
+    pictures.reproduce_sense_pictures(src_sense, new_sense, ctx, None, {}, dropped)
+
+    assert new_sense.PicturesOS == []  # no partial picture
+    assert tgt_senses.copy_count == 0
+    assert not os.path.exists(os.path.join(tgt_linked, "Pictures", "weird.jpg"))
+    pic_drops = [d for d in dropped if d.item_guid == "p-bad"]
+    assert len(pic_drops) == 1
+
+
+def test_us4_preview_move_drop_parity(tmp_path):
+    """T013(c): the Preview drop set is identical to the Move drop set for a
+    mix of good / missing / unreadable pictures (by construction)."""
+    ctx, tgt_senses, src_linked, tgt_linked = _build(tmp_path)
+    good = _write(os.path.join(src_linked, "Pictures", "good.jpg"))
+    gone = os.path.join(src_linked, "Pictures", "gone.jpg")  # missing
+    baddir = os.path.join(src_linked, "Pictures", "bad.jpg")
+    os.makedirs(baddir, exist_ok=True)  # unreadable
+    src_sense = _Sense("s", pictures=[
+        _Picture("pg", caption={1: "good"},
+                 file=_CmFile(internal="Pictures/good.jpg", abspath=good)),
+        _Picture("pm", caption={1: "missing"},
+                 file=_CmFile(internal="Pictures/gone.jpg", abspath=gone)),
+        _Picture("pb", caption={1: "bad"},
+                 file=_CmFile(internal="Pictures/bad.jpg", abspath=baddir)),
+    ])
+    new_sense = _Sense("t")
+
+    move_dropped = []
+    pictures.reproduce_sense_pictures(
+        src_sense, new_sense, ctx, None, {}, move_dropped)
+
+    preview_ctx, _, _, _ = _build(tmp_path / "preview")
+    # point the preview ctx's source at the SAME source files
+    preview_ctx.source_handle = ctx.source_handle
+    preview_dropped = []
+    pictures.plan_sense_picture_decisions(
+        src_sense, preview_ctx, {}, preview_dropped)
+
+    def _key(ds):
+        return sorted((d.owner_guid, d.field_name, d.item_guid, d.reason)
+                      for d in ds)
+
+    assert _key(move_dropped) == _key(preview_dropped)
+    # exactly the missing + unreadable pictures are dropped (good one is not)
+    assert {d.item_guid for d in move_dropped} == {"pm", "pb"}

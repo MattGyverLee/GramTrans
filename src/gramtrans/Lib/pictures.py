@@ -401,6 +401,46 @@ def _content_hash(path) -> str:
         return ""
 
 
+def _intended_internal_path(src_cmfile, source_path) -> str:
+    """The portable target `InternalPath` for a picture's image -- the source
+    `CmFile.InternalPath` (portable, relative) when set, else
+    `Pictures/<basename>`. Used by the missing-binary fallback (R5)."""
+    internal = getattr(src_cmfile, "InternalPath", None) if src_cmfile else None
+    if internal:
+        return internal
+    base = os.path.basename(source_path or "")
+    return os.path.join("Pictures", base) if base else ""
+
+
+def _source_status(source_path) -> str:
+    """Classify a resolved source image path, read-only (parity between Move and
+    Preview by construction, R5/R6):
+    - "unresolved" -- no path (no `CmFile` / empty path);
+    - "missing"    -- path set but not on disk;
+    - "unreadable" -- on disk but cannot be read as a file (content hash "");
+    - "ok"         -- on disk and readable.
+    """
+    if not source_path:
+        return "unresolved"
+    if not os.path.exists(source_path):
+        return "missing"
+    if _content_hash(source_path) == "":
+        return "unreadable"
+    return "ok"
+
+
+def _missing_reason(intended_path) -> str:
+    return ("source image missing on disk -- CmPicture + CmFile wired at the "
+            "intended path %r, no bytes copied (029-sense-pictures, R5)"
+            % (intended_path or "",))
+
+
+def _unreadable_reason(source_path) -> str:
+    return ("source image unreadable or target folder unwritable (%r) -- "
+            "picture not reproduced (029-sense-pictures, R5)"
+            % (source_path or "<unresolved>",))
+
+
 def _source_image_path(src_cmfile, source_handle):
     """Resolve the absolute source image path for a picture's `CmFile` --
     `AbsoluteInternalPath` when set, else `source LinkedFilesRootDir` joined
@@ -470,6 +510,30 @@ def _reproduce_one_picture(src_pic, src_sense, new_sense, ctx, tag,
     rename / missing-binary legs layer in via US2-US5."""
     src_file = getattr(src_pic, "PictureFileRA", None)
     source_path = _source_image_path(src_file, _source_handle(ctx))
+    status = _source_status(source_path)
+
+    if status == "missing":
+        # US4 (R5): reproduce the object graph + wire a `CmFile` at the intended
+        # target path (no bytes) so the picture self-heals once the linguist
+        # supplies the file; report the missing binary (never silent).
+        intended = _intended_internal_path(src_file, source_path)
+        new_pic = _create_picture_raw(ctx, new_sense, intended, existing_file=None)
+        _report_picture_dropped(
+            dropped, src_sense, src_pic, _missing_reason(intended), ctx)
+        if new_pic is None:
+            return
+        _copy_picture_multistrings(src_pic, new_pic, ctx)
+        _copy_layout_scalars(src_pic, new_pic)
+        return
+
+    if status in ("unreadable", "unresolved"):
+        # US4 (R5): unreadable source / unresolvable path -> report, no partial
+        # write, no picture.
+        _report_picture_dropped(
+            dropped, src_sense, src_pic, _unreadable_reason(source_path), ctx)
+        return
+
+    # status == "ok": the source image is on disk and readable.
     source_hash = _content_hash(source_path)
     cache = _asset_cache(ctx)
     if source_hash and source_hash in cache:
@@ -477,24 +541,20 @@ def _reproduce_one_picture(src_pic, src_sense, new_sense, ctx, tag,
         # cached target `CmFile`, create the picture with no second file copy.
         new_pic = _create_picture_raw(
             ctx, new_sense, None, existing_file=cache[source_hash])
-        if new_pic is None:
-            _report_picture_dropped(
-                dropped, src_sense, src_pic,
-                "picture could not be created in target (029)", ctx)
-            return
     else:
         # US2 happy path: `AddPicture` copies the image into the target
         # LinkedFiles/Pictures folder and wires the `CmFile` in one call.
         new_pic = _add_picture_via_seam(ctx, new_sense, source_path)
-        if new_pic is None:
-            _report_picture_dropped(
-                dropped, src_sense, src_pic,
-                "picture could not be created in target (029)", ctx)
-            return
-        if source_hash:
+        if new_pic is not None and source_hash:
             wired = getattr(new_pic, "PictureFileRA", None)
             if wired is not None:
                 cache[source_hash] = wired
+    if new_pic is None:
+        # A readable source that still failed to copy -> unwritable target (or
+        # another write-time failure). Report; no partial write.
+        _report_picture_dropped(
+            dropped, src_sense, src_pic, _unreadable_reason(source_path), ctx)
+        return
     _copy_picture_multistrings(src_pic, new_pic, ctx)
     _copy_layout_scalars(src_pic, new_pic)
 
@@ -524,17 +584,33 @@ def plan_sense_picture_decisions(src_sense, ctx, resolver_cache, dropped) -> lis
         try:
             src_file = getattr(src_pic, "PictureFileRA", None)
             source_path = _source_image_path(src_file, _source_handle(ctx))
-            source_hash = _content_hash(source_path)
-            # US2/US3 LINK-vs-ADD: an asset already planned this run OR already
-            # byte-identical in the target folder is reused (LINK); otherwise a
-            # new copy is planned (CREATE). Read-only -- hashing is a read.
-            if source_hash and (source_hash in seen_hashes
-                                or _target_identical_file(source_path, ctx)):
-                action = ReferenceAction.LINK
-            else:
+            status = _source_status(source_path)
+            if status == "missing":
+                # US4 parity: Move still CREATEs the picture (CmFile at the
+                # intended path, no bytes) and reports -- mirror both here.
+                intended = _intended_internal_path(src_file, source_path)
+                _report_picture_dropped(
+                    dropped, src_sense, src_pic, _missing_reason(intended), ctx)
                 action = ReferenceAction.CREATE
-                if source_hash:
-                    seen_hashes.add(source_hash)
+            elif status in ("unreadable", "unresolved"):
+                # US4 parity: Move reproduces no picture -> emit only the drop,
+                # no decision.
+                _report_picture_dropped(
+                    dropped, src_sense, src_pic,
+                    _unreadable_reason(source_path), ctx)
+                continue
+            else:  # status == "ok"
+                source_hash = _content_hash(source_path)
+                # US2/US3 LINK-vs-ADD: an asset already planned this run OR
+                # already byte-identical in the target folder is reused (LINK);
+                # otherwise a new copy is planned (CREATE). Read-only.
+                if source_hash and (source_hash in seen_hashes
+                                    or _target_identical_file(source_path, ctx)):
+                    action = ReferenceAction.LINK
+                else:
+                    action = ReferenceAction.CREATE
+                    if source_hash:
+                        seen_hashes.add(source_hash)
             records.append(ReferenceDecisionRecord(
                 owner_kind=_OWNER_KIND,
                 owner_guid=owner_guid,

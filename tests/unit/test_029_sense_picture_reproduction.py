@@ -227,11 +227,23 @@ def _make_ctx(target_senses=None):
     return _Ctx(src, tgt)
 
 
+def _img(tmp_path, name, data=None):
+    """Write a real temp source image so path resolution + content hashing are
+    exercised for real (a picture's source file genuinely exists on disk); the
+    object-graph fakes never actually copy it. Distinct `data` per name keeps
+    content hashes distinct."""
+    import os as _os
+    p = tmp_path / name
+    with open(str(p), "wb") as fh:
+        fh.write(data if data is not None else ("IMG-" + name).encode())
+    return str(p)
+
+
 # ============================================================================
 # Phase 3 US1 (T007) -- the CmPicture object deep-copy.
 # ============================================================================
 
-def test_us1_caption_description_ws_mapped_and_layout_scalars_copied():
+def test_us1_caption_description_ws_mapped_and_layout_scalars_copied(tmp_path):
     """T007: reproduce copies Caption/Description across all writing systems
     (ws-mapped src handle -> tgt handle for the same Id) and the five layout
     scalars verbatim onto the created target picture."""
@@ -239,7 +251,7 @@ def test_us1_caption_description_ws_mapped_and_layout_scalars_copied():
         "src-pic-1",
         caption={1: "a dog", 2: "un chien"},
         description={1: "a friendly dog"},
-        file=_CmFile(abspath="/src/LinkedFiles/Pictures/dog.jpg"),
+        file=_CmFile(abspath=_img(tmp_path, "dog.jpg")),
         layout={"LayoutPos": 3, "LocationMin": 1, "LocationMax": 5,
                 "LocationRangeType": 2, "ScaleFactor": 50},
     )
@@ -264,14 +276,14 @@ def test_us1_caption_description_ws_mapped_and_layout_scalars_copied():
     assert dropped == []
 
 
-def test_us1_multi_picture_order_preserved():
+def test_us1_multi_picture_order_preserved(tmp_path):
     """T007: multiple source pictures reproduce in source `PicturesOS` order."""
     p1 = _Picture("p1", caption={1: "first"},
-                  file=_CmFile(abspath="/src/a.jpg"))
+                  file=_CmFile(abspath=_img(tmp_path, "a.jpg")))
     p2 = _Picture("p2", caption={1: "second"},
-                  file=_CmFile(abspath="/src/b.jpg"))
+                  file=_CmFile(abspath=_img(tmp_path, "b.jpg")))
     p3 = _Picture("p3", caption={1: "third"},
-                  file=_CmFile(abspath="/src/c.jpg"))
+                  file=_CmFile(abspath=_img(tmp_path, "c.jpg")))
     src_sense = _Sense("s", pictures=[p1, p2, p3])
     new_sense = _Sense("t")
     ctx = _make_ctx()
@@ -286,11 +298,13 @@ def test_us1_multi_picture_order_preserved():
 # Phase 3 US1 (T009) -- Preview twin object leg + Move/Preview parity.
 # ============================================================================
 
-def test_us1_preview_emits_one_add_decision_per_picture():
+def test_us1_preview_emits_one_add_decision_per_picture(tmp_path):
     """T009: the Preview twin emits one CREATE ReferenceDecisionRecord per
     source picture (owner=sense, field=PicturesOS), read-only."""
-    p1 = _Picture("p1", caption={1: "a dog"}, file=_CmFile(abspath="/src/a.jpg"))
-    p2 = _Picture("p2", caption={1: "a cat"}, file=_CmFile(abspath="/src/b.jpg"))
+    p1 = _Picture("p1", caption={1: "a dog"},
+                  file=_CmFile(abspath=_img(tmp_path, "a.jpg")))
+    p2 = _Picture("p2", caption={1: "a cat"},
+                  file=_CmFile(abspath=_img(tmp_path, "b.jpg")))
     src_sense = _Sense("s", pictures=[p1, p2])
     ctx = _make_ctx()
 
@@ -306,13 +320,13 @@ def test_us1_preview_emits_one_add_decision_per_picture():
     assert {d.item_guid for d in decisions} == {"p1", "p2"}
 
 
-def test_us1_preview_move_parity_count():
+def test_us1_preview_move_parity_count(tmp_path):
     """T009 parity: the Preview CREATE-decision count equals the Move
     create count for the same source sense."""
     src_sense = _Sense("s", pictures=[
-        _Picture("p1", file=_CmFile(abspath="/src/a.jpg")),
-        _Picture("p2", file=_CmFile(abspath="/src/b.jpg")),
-        _Picture("p3", file=_CmFile(abspath="/src/c.jpg")),
+        _Picture("p1", file=_CmFile(abspath=_img(tmp_path, "a.jpg"))),
+        _Picture("p2", file=_CmFile(abspath=_img(tmp_path, "b.jpg"))),
+        _Picture("p3", file=_CmFile(abspath=_img(tmp_path, "c.jpg"))),
     ])
     new_sense = _Sense("t")
 
