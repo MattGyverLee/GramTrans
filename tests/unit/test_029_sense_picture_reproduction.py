@@ -340,3 +340,69 @@ def test_us1_preview_move_parity_count(tmp_path):
         1 for d in decisions if d.action == ReferenceAction.CREATE)
 
     assert preview_creates == move_creates == 3
+
+
+# ============================================================================
+# Phase 6 US5 (T016) -- idempotency (structural fingerprint) + non-destructive
+# empty source.
+# ============================================================================
+
+def test_us5_matching_fingerprint_not_recreated(tmp_path):
+    """T016(a): a target sense already carrying a picture whose fingerprint
+    (image filename + content hash + caption) matches the source picture is NOT
+    re-created on re-run -- 0 net-new picture/CmFile/file."""
+    img = _img(tmp_path, "dog.jpg")
+    src_pic = _Picture(
+        "src", caption={1: "a dog"},
+        file=_CmFile(internal="Pictures/dog.jpg", abspath=img))
+    # A structurally-identical picture already on the target sense (prior run):
+    # same image bytes (same file), same caption in the target WS.
+    existing = _Picture(
+        "existing", caption={11: "a dog"},
+        file=_CmFile(internal="Pictures/dog.jpg", abspath=img))
+    new_sense = _Sense("t", pictures=[existing])
+    src_sense = _Sense("s", pictures=[src_pic])
+
+    senses = _SensesOps()
+    ctx = _Ctx(_Project(_SRC_WS), _Project(_TGT_WS, senses_ops=senses))
+
+    dropped = []
+    pictures.reproduce_sense_pictures(src_sense, new_sense, ctx, None, {}, dropped)
+
+    assert len(new_sense.PicturesOS) == 1  # existing only; no net-new
+    assert new_sense.PicturesOS[0] is existing
+    assert senses.add_calls == []  # AddPicture never called on re-run
+
+
+def test_us5_distinct_caption_same_image_is_still_reproduced(tmp_path):
+    """T016(a) boundary: an image match with a DIFFERENT caption is a distinct
+    picture (not a fingerprint match) -- it IS reproduced."""
+    img = _img(tmp_path, "dog.jpg")
+    src_pic = _Picture(
+        "src", caption={1: "a running dog"},
+        file=_CmFile(internal="Pictures/dog.jpg", abspath=img))
+    existing = _Picture(
+        "existing", caption={11: "a sleeping dog"},
+        file=_CmFile(internal="Pictures/dog.jpg", abspath=img))
+    new_sense = _Sense("t", pictures=[existing])
+    src_sense = _Sense("s", pictures=[src_pic])
+
+    senses = _SensesOps()
+    ctx = _Ctx(_Project(_SRC_WS), _Project(_TGT_WS, senses_ops=senses))
+
+    pictures.reproduce_sense_pictures(src_sense, new_sense, ctx, None, {}, [])
+
+    assert len(new_sense.PicturesOS) == 2  # existing + the newly reproduced one
+
+
+def test_us5_empty_source_leaves_populated_target_untouched():
+    """T016(b): an empty/absent source PicturesOS leaves a populated target
+    PicturesOS untouched (non-destructive, never blank -- FR-006)."""
+    existing = _Picture("existing", caption={11: "keep me"})
+    new_sense = _Sense("t", pictures=[existing])
+    src_sense = _Sense("s", pictures=[])
+    ctx = _make_ctx()
+
+    pictures.reproduce_sense_pictures(src_sense, new_sense, ctx, None, {}, [])
+
+    assert new_sense.PicturesOS == [existing]

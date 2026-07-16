@@ -235,10 +235,13 @@ def test_move_and_preview_drop_sets_identical_for_sense_scope_gaps():
     categories._plan_entry_reference_decisions(entry, ctx, target=object())
 
     def _scope_gap_fields(records):
+        # PicturesOS parity is now proven by the feature-029 tests (the pictures
+        # seam wired into both loops); `_report_dropped_sense_scope_gaps` covers
+        # only AppendixesRC/ThesaurusItemsRC (routed to 030).
         return sorted(
             (r.owner_guid, r.field_name, r.item_guid, r.item_name, r.reason)
             for r in records
-            if r.field_name in ("AppendixesRC", "ThesaurusItemsRC", "PicturesOS")
+            if r.field_name in ("AppendixesRC", "ThesaurusItemsRC")
         )
 
     assert _scope_gap_fields(move_dropped) == _scope_gap_fields(preview_dropped)

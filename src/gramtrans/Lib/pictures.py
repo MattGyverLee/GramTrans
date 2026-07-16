@@ -218,6 +218,53 @@ def _copy_layout_scalars(src_pic, new_pic) -> None:
             pass
 
 
+# ============================================================================
+# Idempotency by structural fingerprint (US5, R4): a reproduced `CmPicture`
+# carries no source GUID (AddPicture mints a fresh one), so identity is
+# (image filename + content hash + caption), scoped to the owning target sense.
+# ============================================================================
+
+def _picture_fingerprint(filename, content_hash, caption) -> tuple:
+    return (os.path.basename(filename or ""), content_hash or "", caption or "")
+
+
+def _source_fingerprint(src_pic, source_path, ctx) -> tuple:
+    src_file = getattr(src_pic, "PictureFileRA", None)
+    internal = getattr(src_file, "InternalPath", None) if src_file else None
+    return _picture_fingerprint(
+        internal or source_path,
+        _content_hash(source_path),
+        _best_multistring_text(getattr(src_pic, "Caption", None),
+                               _source_handle(ctx)))
+
+
+def _target_fingerprint(tgt_pic, ctx) -> tuple:
+    tgt_file = getattr(tgt_pic, "PictureFileRA", None)
+    internal = getattr(tgt_file, "InternalPath", None) if tgt_file else None
+    abspath = getattr(tgt_file, "AbsoluteInternalPath", None) if tgt_file else None
+    return _picture_fingerprint(
+        internal,
+        _content_hash(abspath),
+        _best_multistring_text(getattr(tgt_pic, "Caption", None),
+                               _target_handle(ctx)))
+
+
+def _target_has_fingerprint(new_sense, fingerprint, ctx) -> bool:
+    """True iff a picture with `fingerprint` already exists on `new_sense`
+    (idempotency skip -- SC-006). Never raises."""
+    try:
+        existing = list(getattr(new_sense, "PicturesOS", None) or [])
+    except (AttributeError, TypeError):
+        return False
+    for tgt_pic in existing:
+        try:
+            if _target_fingerprint(tgt_pic, ctx) == fingerprint:
+                return True
+        except (AttributeError, TypeError):
+            continue
+    return False
+
+
 _ASSET_CACHE_KEY = "_picture_asset_cache"
 
 
@@ -510,6 +557,13 @@ def _reproduce_one_picture(src_pic, src_sense, new_sense, ctx, tag,
     rename / missing-binary legs layer in via US2-US5."""
     src_file = getattr(src_pic, "PictureFileRA", None)
     source_path = _source_image_path(src_file, _source_handle(ctx))
+
+    # US5 idempotency (SC-006): a structurally-identical picture already on the
+    # target sense (image identity + caption) is not re-created on re-run.
+    if _target_has_fingerprint(
+            new_sense, _source_fingerprint(src_pic, source_path, ctx), ctx):
+        return
+
     status = _source_status(source_path)
 
     if status == "missing":
@@ -584,6 +638,13 @@ def plan_sense_picture_decisions(src_sense, ctx, resolver_cache, dropped) -> lis
         try:
             src_file = getattr(src_pic, "PictureFileRA", None)
             source_path = _source_image_path(src_file, _source_handle(ctx))
+            # NOTE (US5): the Preview twin plans from the SOURCE sense only (its
+            # signature carries no target sense), so it cannot consult the
+            # target sense's existing pictures for the idempotency SKIP the Move
+            # leg applies on re-run. Preview therefore plans CREATE/LINK for
+            # every source picture (what WOULD be added to a fresh target);
+            # Move's fingerprint skip is the re-run no-op. This mirrors the
+            # 024/028 Preview twins, which likewise plan from source.
             status = _source_status(source_path)
             if status == "missing":
                 # US4 parity: Move still CREATEs the picture (CmFile at the
