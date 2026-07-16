@@ -99,15 +99,15 @@ stories now fill in real reproduction.
 **Independent Test**: copy a sense owning a captioned picture (image copy faked/stubbed); target
 sense owns a `CmPicture` with the same caption + layout fields at the same position.
 
-- [ ] T007 [P] [US1] RED: in `test_029_sense_picture_reproduction.py`, author failing tests for
+- [X] T007 [P] [US1] RED: in `test_029_sense_picture_reproduction.py`, author failing tests for
       the object deep-copy — caption + description multistrings (all WS, ws-mapped), the five layout
       scalars copied, and multi-picture source ORDER preserved in target `PicturesOS`. Use a
       `_FakeSense`/`_FakePicture` with a stubbed asset seam so no file I/O occurs. Confirm RED.
-- [ ] T008 [US1] GREEN: implement the `CmPicture` object reproduction in
+- [X] T008 [US1] GREEN: implement the `CmPicture` object reproduction in
       `pictures.reproduce_sense_pictures` — iterate `src_sense.PicturesOS` in order, create each
       picture on `new_sense` (via the seam), copy caption/description ws-mapped and the layout
       scalars (cast via `cast_to_concrete`). Make T007 pass.
-- [ ] T009 [US1] GREEN: implement the Preview twin object leg in `plan_sense_picture_decisions` —
+- [X] T009 [US1] GREEN: implement the Preview twin object leg in `plan_sense_picture_decisions` —
       one `ReferenceAction.ADD` `ReferenceDecisionRecord` per source picture (owner=sense,
       field=`PicturesOS`, item=picture caption/identity), read-only. Add a parity assertion in
       `test_029_sense_picture_reproduction.py` (Preview decision count == Move create count).
@@ -127,17 +127,17 @@ against the source `LinkedFilesRootDir`.
 from the target; the (faked) copy seam is invoked with the resolved source path and the target
 `CmPicture.PictureFileRA` → `CmFile` resolves.
 
-- [ ] T010 [P] [US2] RED: in `test_029_picture_asset_copy.py`, author failing tests that an ADD
+- [X] T010 [P] [US2] RED: in `test_029_picture_asset_copy.py`, author failing tests that an ADD
       picture invokes the asset-copy seam with the correctly resolved source path (source
       `LinkedFilesRootDir` ⨝ `CmFile.InternalPath`/`AbsoluteInternalPath`) and wires a target
       `CmFile`; and that an image shared by two source pictures is copied ONCE (dedup) with the
       `CmFile` reused. Fake `AddPicture` + temp files. Confirm RED.
-- [ ] T011 [US2] GREEN: implement the asset-copy happy path in the seam — call
+- [X] T011 [US2] GREEN: implement the asset-copy happy path in the seam — call
       `LexSenseOperations.AddPicture(new_sense, resolved_source_path, caption, wsHandle)`; if it sets
       only the caption, set layout scalars on the returned picture afterward (fold into T008's copy);
       maintain a per-run content-hash → target-`CmFile` cache on `ctx` for dedup (SC-005). Make T010
       pass.
-- [ ] T012 [US2] GREEN: extend `plan_sense_picture_decisions` so a picture whose asset will be
+- [X] T012 [US2] GREEN: extend `plan_sense_picture_decisions` so a picture whose asset will be
       newly copied plans `ADD` and one whose asset already exists identically plans `LINK` (reuse) —
       computed read-only via `_content_hash` over candidate target files. Add a parity test.
 
