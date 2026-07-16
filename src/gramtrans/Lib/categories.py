@@ -4824,10 +4824,22 @@ def _plan_entry_reference_decisions(src_entry, context, target):
             # Cycle-17 correction (DROP_REPORTED, never silent): SAME
             # report-only function the Move path's sense loop calls -- no
             # separate Preview decision logic exists for AppendixesRC/
-            # ThesaurusItemsRC/PicturesOS (no CREATE/LINK leg, nothing is
-            # ever created either mode), so Move's and Preview's drop sets
-            # are identical by construction.
+            # ThesaurusItemsRC (no CREATE/LINK leg, nothing is ever created
+            # either mode), so Move's and Preview's drop sets are identical by
+            # construction.
             _report_dropped_sense_scope_gaps(src_sense, dropped)
+            # Feature 029 (T006): read-only Preview twin of the Move sense
+            # loop's `pictures.reproduce_sense_pictures` call -- emits the
+            # ADD/LINK `ReferenceDecisionRecord` per source picture (plus the
+            # identical drop set, by construction) into the reference-decision
+            # set feeding `PlannedAction.reference_decisions`. Lazy import (same
+            # idiom as the `owned` import above).
+            if __package__:
+                from . import pictures as _pictures
+            else:
+                import pictures as _pictures  # type: ignore
+            records.extend(_pictures.plan_sense_picture_decisions(
+                src_sense, context, resolver_cache, dropped))
         allomorphs = []
         lf = getattr(src_entry, "LexemeFormOA", None)
         if lf is not None:
@@ -5645,11 +5657,13 @@ _SENSE_SCOPE_GAP_FIELDS = (
         "list (legacy, dynamic-owner) -- not reproduced by feature 024's "
         "lexicon transfer (routed to 030-sense-appendix-thesaurus-refs)",
     ),
-    (
-        "PicturesOS",
-        "CmPicture (-> CmFile -> disk file) is not reproduced by feature "
-        "024's lexicon transfer (routed to 029-sense-pictures)",
-    ),
+    # Feature 029 (T006): `PicturesOS` was REMOVED from this tuple -- a copied
+    # sense's pictures (`CmPicture` object graph + backing image asset) are now
+    # reproduced by the `Lib/pictures.py` seam (`reproduce_sense_pictures` /
+    # `plan_sense_picture_decisions`), wired into the Move sense loop in
+    # `_walk_lex_entry_closure` and the Preview sense loop in
+    # `_plan_entry_reference_decisions`. Only `AppendixesRC` /
+    # `ThesaurusItemsRC` remain report-dropped here (routed to 030).
 )
 
 
@@ -5864,10 +5878,21 @@ def _walk_lex_entry_closure(src_entry, context, tag, category, dropped=None):
             "LexSense", src_sense, new_sense, target, tag, resolver_cache, dropped,
             ws_map=ws_map, source=context.source_handle, owner_guid=s_guid)
         # Cycle-17 correction (DROP_REPORTED, never silent): AppendixesRC,
-        # ThesaurusItemsRC, PicturesOS are never reproduced -- report every
-        # referenced item. See `_report_dropped_sense_scope_gaps`'s own
-        # docstring (same function called from Preview's sense loop below).
+        # ThesaurusItemsRC are never reproduced -- report every referenced
+        # item. See `_report_dropped_sense_scope_gaps`'s own docstring (same
+        # function called from Preview's sense loop below).
         _report_dropped_sense_scope_gaps(src_sense, dropped)
+        # Feature 029 (T006): reproduce this sense's pictures -- the CmPicture
+        # object graph + each backing image asset into the target LinkedFiles
+        # folder (previously a DROP_REPORTED scope-gap; PicturesOS was removed
+        # from `_SENSE_SCOPE_GAP_FIELDS` above). Lazy import (same idiom as the
+        # `owned` import) to avoid a module load-order cycle. Never raises.
+        if __package__:
+            from . import pictures as _pictures
+        else:
+            import pictures as _pictures  # type: ignore
+        _pictures.reproduce_sense_pictures(
+            src_sense, new_sense, context, tag, resolver_cache, dropped)
         # Feature 024 (T031, US3, FR-008): register the sense into
         # `context._copy_set` (same convention as the entry above) --
         # registration only; lexical-relation discovery for this sense

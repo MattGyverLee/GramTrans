@@ -159,10 +159,18 @@ def test_thesaurus_item_emits_one_dropped_record_per_referenced_item():
 
 
 # ============================================================================
-# (c) LexSense.PicturesOS -- DROP_REPORTED
+# (c) LexSense.PicturesOS -- feature 029: NO LONGER drop-reported here.
+#     `_report_dropped_sense_scope_gaps` reports only AppendixesRC /
+#     ThesaurusItemsRC (routed to 030); PicturesOS is reproduced by the
+#     `pictures.reproduce_sense_pictures` / `plan_sense_picture_decisions`
+#     seam, so it must be REMOVED from `_SENSE_SCOPE_GAP_FIELDS` (T006).
 # ============================================================================
 
-def test_picture_emits_one_dropped_record_per_picture():
+def test_picture_no_longer_reported_by_scope_gap_function():
+    """T006: after wiring the 029 seam, `_report_dropped_sense_scope_gaps`
+    emits NO drop for `PicturesOS` (a sense owning only pictures produces an
+    empty drop set from this function -- the pictures route through the new
+    seam instead)."""
     pic1 = _FakePicture("pic-1")
     pic2 = _FakePicture("pic-2")
     pic3 = _FakePicture("pic-3")
@@ -171,11 +179,8 @@ def test_picture_emits_one_dropped_record_per_picture():
     dropped: list = []
     categories._report_dropped_sense_scope_gaps(sense, dropped)
 
-    assert {r.item_guid for r in dropped} == {"pic-1", "pic-2", "pic-3"}
-    assert len(dropped) == 3
-    for rec in dropped:
-        assert rec.field_name == "PicturesOS"
-        assert "029-sense-pictures" in rec.reason
+    assert dropped == []
+    assert "PicturesOS" not in dict(categories._SENSE_SCOPE_GAP_FIELDS)
 
 
 # ============================================================================
@@ -212,6 +217,9 @@ def test_move_and_preview_drop_sets_identical_for_sense_scope_gaps():
     the identical scope-gap drop set for the same source entry/sense."""
     ap1 = _FakeAppendix("appendix-parity")
     ti1 = _FakeGuidObj("thes-parity", name="Parity Item")
+    # A picture is present on the sense but is NO LONGER a scope-gap drop
+    # (feature 029 reproduces it) -- the parity set is AppendixesRC +
+    # ThesaurusItemsRC only.
     pic1 = _FakePicture("pic-parity")
     sense = _FakeSourceSense(
         "sense-parity", gloss="parity-word",
@@ -234,4 +242,4 @@ def test_move_and_preview_drop_sets_identical_for_sense_scope_gaps():
         )
 
     assert _scope_gap_fields(move_dropped) == _scope_gap_fields(preview_dropped)
-    assert len(move_dropped) == 3
+    assert len(move_dropped) == 2  # AppendixesRC + ThesaurusItemsRC (PicturesOS -> 029)
