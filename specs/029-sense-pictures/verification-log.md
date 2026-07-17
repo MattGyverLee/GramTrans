@@ -86,9 +86,9 @@ FLExToolsMCP:
   deleted; no residue; all fixture write attempts aborted in their unit-of-work
   (the NRE rolled them back), so nothing was committed to any project.
 
-**Escalation**: file/track the flexicon `MediaOperations.CopyToProject`
-`CmFile.set_InternalPath` NRE against the `pyflexicon` build on this host; the
-attended AC1–AC8 proof is gated on a runtime where `AddPicture` works.
+**Escalation**: filed as [MattGyverLee/flexicon#226](https://github.com/MattGyverLee/flexicon/issues/226)
+(root cause in [flexicon-bug-report.md](flexicon-bug-report.md)). The attended
+AC1–AC8 proof is gated on a `pyflexicon` build where `AddPicture` works.
 
 ## T020 — why it remains a human step
 

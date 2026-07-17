@@ -5,6 +5,7 @@
 **Severity**: High — the entire "add an image/media file to the project" surface is unusable; it raises a .NET `NullReferenceException` on every call.
 **Reproducibility**: 100% (reproduced on two independent projects).
 **Found by**: GramTrans feature 029 (sense-pictures) attended live proof, 2026-07-16.
+**Filed upstream**: [MattGyverLee/flexicon#226](https://github.com/MattGyverLee/flexicon/issues/226)
 
 ---
 
