@@ -1282,39 +1282,45 @@ def _list_name_key(lst) -> str:
 def _iter_target_possibility_lists(target):
     """Yield the target's discoverable `ICmPossibilityList`s for the Name
     fallback: a fake target's `possibility_lists` iterable when present, else
-    the standard singleton-owned lists via the accessors 024 already uses.
-    Never raises; skips any accessor that is absent/None."""
+    every DISTINCT list DERIVED from `REFERENCE_FIELD_MAP` itself (cycle-2
+    fix) -- rather than a separately hand-maintained accessor tuple that can
+    (and did) silently drift out of sync with the closed dispatch table. This
+    closes a latent gap where `TranslationTagsOA` (`CmTranslation.TypeRA`),
+    `LexDbOA.VariantEntryTypesOA` and `LexDbOA.ComplexEntryTypesOA` were
+    MISSING from the old hardcoded set -- a thesaurus item owned by one of
+    those lists would DROP-report instead of Name-match LINK.
+
+    Each `spec.target_list_path` is called with `target` exactly like the
+    024 resolver does; any row whose accessor raises (e.g. a real
+    `MoForm.StemNameRA` row whose `target_list_path` is `None`, or a project
+    missing an optional owned object) or whose result is not itself a
+    `PossibilitiesOS`-bearing list (e.g. `MoForm.PhoneEnvRC` ->
+    `PhonologicalDataOA.EnvironmentsOS`, a flat owned sequence with no
+    `PossibilitiesOS` nesting) is naturally skipped -- no special-casing
+    needed, the `hasattr` guard alone excludes both. Distinct lists are
+    de-duplicated by `id()` since several rows in the map legitimately share
+    the same underlying list (e.g. `PublishIn`/`DoNotPublishInRC` both ->
+    `PublicationTypesOA`). Never raises; skips any row whose accessor is
+    `None` or fails."""
     fake = getattr(target, "possibility_lists", None)
     if fake is not None:
         for lst in fake:
             yield lst
         return
-    try:
-        from SIL.LCModel import ILangProject
-        lp = ILangProject(target.Cache.LangProject)
-    except Exception:
-        return
-    lexdb = getattr(lp, "LexDbOA", None)
-    accessors = (
-        lambda: lp.SemanticDomainListOA,
-        lambda: lp.AnthroListOA,
-        lambda: lp.StatusOA,
-        lambda: lexdb.SenseTypesOA,
-        lambda: lexdb.UsageTypesOA,
-        lambda: lexdb.DomainTypesOA,
-        lambda: lexdb.DialectLabelsOA,
-        lambda: lexdb.PublicationTypesOA,
-        lambda: lexdb.LanguagesOA,
-        lambda: lexdb.MorphTypesOA,
-        lambda: lexdb.ExtendedNoteTypesOA,
-    )
-    for get in accessors:
+    seen: set = set()
+    for spec in REFERENCE_FIELD_MAP:
+        if spec.target_list_path is None:
+            continue
         try:
-            lst = get()
+            lst = spec.target_list_path(target)
         except Exception:
             continue
-        if lst is not None:
-            yield lst
+        if lst is None or not hasattr(lst, "PossibilitiesOS"):
+            continue
+        if id(lst) in seen:
+            continue
+        seen.add(id(lst))
+        yield lst
 
 
 def _target_list_by_name(target, src_list):

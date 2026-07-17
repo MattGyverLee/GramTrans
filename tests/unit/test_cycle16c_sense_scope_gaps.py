@@ -34,6 +34,9 @@ Move/Preview parity.
 """
 from __future__ import annotations
 
+import sys
+import types
+
 from gramtrans.Lib import categories
 from gramtrans.Lib import references
 from gramtrans.Lib.models import DroppedItemRecord
@@ -334,6 +337,131 @@ def test_B_empty_source_no_write_no_drop():
     assert dropped == []
 
 
+def _install_fake_lcm_for_owner_flid(monkeypatch):
+    """Inject a fake `SIL.LCModel` exposing identity-cast `ICmObject`/
+    `ICmPossibilityList`/`ILangProject`/`ILexDb` so `_target_list_by_owner_flid`
+    (the PRIMARY owner+flid matcher) resolves against fakes instead of a live
+    LCM host. Mirrors the `_install_fake_lcm` pattern in
+    `tests/unit/test_reference_create_paths.py`. Reverted automatically by
+    `monkeypatch` at test teardown -- never leaks into other tests."""
+
+    class _IdentityCast:
+        def __new__(cls, obj):
+            return obj
+
+    class ICmObject(_IdentityCast):
+        pass
+
+    class ICmPossibilityList(_IdentityCast):
+        pass
+
+    class ILangProject(_IdentityCast):
+        pass
+
+    class ILexDb(_IdentityCast):
+        pass
+
+    fake_lcm = types.ModuleType("SIL.LCModel")
+    fake_lcm.ICmObject = ICmObject
+    fake_lcm.ICmPossibilityList = ICmPossibilityList
+    fake_lcm.ILangProject = ILangProject
+    fake_lcm.ILexDb = ILexDb
+
+    monkeypatch.setitem(
+        sys.modules, "SIL", sys.modules.get("SIL") or types.ModuleType("SIL")
+    )
+    monkeypatch.setitem(sys.modules, "SIL.LCModel", fake_lcm)
+    return fake_lcm
+
+
+class _FakeOwnerFlidLexDb:
+    def __init__(self, hvo):
+        self.Hvo = hvo
+
+
+class _FakeOwnerFlidLangProject:
+    def __init__(self, lexdb):
+        self.LexDbOA = lexdb
+
+
+class _FakeDomainDataByFlid:
+    """Fake `Cache.DomainDataByFlid` -- only `get_ObjectProp` is exercised
+    by `_target_list_by_owner_flid`."""
+
+    def __init__(self, table):
+        self._table = table  # {(owner_hvo, flid): list_hvo}
+
+    def get_ObjectProp(self, hvo, flid):
+        return self._table.get((hvo, flid))
+
+
+class _FakeObjectRepository:
+    def __init__(self, objects):
+        self._objects = objects  # {hvo: obj}
+
+    def GetObject(self, hvo):
+        return self._objects[hvo]
+
+
+class _FakeServiceLocator:
+    def __init__(self, repo):
+        self.ObjectRepository = repo
+
+
+class _FakeOwnerFlidCache:
+    def __init__(self, lang_project, domain_data, service_locator):
+        self.LangProject = lang_project
+        self.DomainDataByFlid = domain_data
+        self.ServiceLocator = service_locator
+
+
+class _FakeOwnerFlidTarget:
+    def __init__(self, cache):
+        self.Cache = cache
+
+
+def test_B_owner_flid_primary_matcher_hit_wins_over_name_fallback(monkeypatch):
+    """QC-P1 (cycle-2): the PRIMARY dynamic-owner matcher
+    (`_target_list_by_owner_flid`, owner-class + `OwningFlid`) must resolve
+    BEFORE the Name fallback. Every other Section B fake sets `owner=object()`
+    so only the Name-match path was proven offline -- the authoritative
+    owner+flid path was only live-proven. This builds a minimal owner+flid
+    duck-typed shape (`ICmObject`/`ILangProject`/`ILexDb` identity-cast,
+    `Cache.DomainDataByFlid.get_ObjectProp` + `Cache.ServiceLocator.
+    ObjectRepository.GetObject`) so the resolver hits the owner+flid branch.
+    The Name-fallback candidate is a DIFFERENT list object (also named
+    "Thes") registered on `target.possibility_lists`, so this test FAILS if
+    the resolver silently falls through to the Name match instead of the
+    owner+flid hit."""
+    _install_fake_lcm_for_owner_flid(monkeypatch)
+
+    FLID = 5005
+    LEXDB_HVO = 42
+    LIST_HVO = 777
+
+    owner_flid_list = _FakePossList("owner-flid-list", name="Thes")
+    name_fallback_list = _FakePossList("name-fallback-list", name="Thes")
+
+    lexdb = _FakeOwnerFlidLexDb(LEXDB_HVO)
+    lang_project = _FakeOwnerFlidLangProject(lexdb)
+    domain_data = _FakeDomainDataByFlid({(LEXDB_HVO, FLID): LIST_HVO})
+    service_locator = _FakeServiceLocator(
+        _FakeObjectRepository({LIST_HVO: owner_flid_list}))
+    cache = _FakeOwnerFlidCache(lang_project, domain_data, service_locator)
+    target = _FakeOwnerFlidTarget(cache)
+    # The Name-fallback surface is ALSO present, so this test would still
+    # find A hit via Name if the owner+flid path were (wrongly) skipped.
+    target.possibility_lists = [name_fallback_list]
+
+    src_owner = types.SimpleNamespace(ClassName="LexDb")
+    src_list = _FakePossList("src-list", name="Thes", flid=FLID, owner=src_owner)
+
+    result = references.mirror_possibility_list_to_target(src_list, target)
+
+    assert result is owner_flid_list
+    assert result is not name_fallback_list
+
+
 def test_B_shared_item_across_senses_resolves_to_same_target_no_dup():
     # Two senses reference the same item; each resolves (LINKs) to the SAME
     # existing target item with no duplication (G-B6). (The resolver cache
@@ -388,3 +516,33 @@ def test_move_and_preview_drop_sets_identical_for_sense_scope_gaps():
     assert len(move) == 3  # appendix + thesaurus + picture all dropped
     assert {f for f, _, _ in move} == {
         "AppendixesRC", "ThesaurusItemsRC", "PicturesOS"}
+
+
+def test_move_and_preview_parity_for_link_success_thesaurus_item():
+    """Verification-parity gap (cycle-2): the Section B Move==Preview parity
+    check above only exercises the DROP branch. This covers the LINK-SUCCESS
+    branch -- target already owns the matching item (via the Name-mirrored
+    list, same B-link fake setup as `test_B_link_present_in_mirrored_list`)
+    -- so Move and Preview must agree on the link decision (both produce an
+    empty drop set), differing only in that Preview never writes."""
+    tgt_item = _FakePossItem("item-1", name="Animal")
+    tgt_list = _FakePossList("tgt", name="Thes", items=[tgt_item])
+    target = _FakeTarget(possibility_lists=[tgt_list])
+
+    def _run(new_sense):
+        src_list = _FakePossList("src", name="Thes", flid=42, owner=object())
+        src_item = _FakePossItem("item-1", name="Animal", owner=src_list)
+        sense = _FakeSourceSense("s", thesaurus_items=[src_item])
+        dropped: list = []
+        categories._resolve_sense_thesaurus_items(
+            sense, new_sense, target, {}, dropped, tag=None)
+        return dropped
+
+    move_target_sense = _FakeTargetSense()
+    move_dropped = _run(move_target_sense)
+    preview_dropped = _run(None)
+
+    assert move_dropped == preview_dropped == []
+    # Move actually links the resolved target item; Preview's non-write is
+    # already implicit (new_sense=None never raised above).
+    assert list(move_target_sense.ThesaurusItemsRC) == [tgt_item]
