@@ -1,5 +1,45 @@
 # GramTrans — Session Handoff
 
+## ▶▶▶ Feature 030 — Sense Appendix & Thesaurus Refs — MERGED (2026-07-16)
+
+**MERGED to `main`** (`--no-ff`, worktree branch `030-sense-appendix-thesaurus-refs`
+@ `92a9e64`). Promotes the two `LexSense` reference fields feature 024 DROP_REPORTed
+to **COPIED**, never-silent preserved:
+
+- **Section A `AppendixesRC`** (bespoke owned `LexAppendix`, not a possibility list) =
+  **link-by-GUID only** (`categories._resolve_sense_appendixes`): link to the target's
+  own appendix by GUID; absent → DROP_REPORT (never create it, never reproduce its
+  owned `IStText`).
+- **Section B `ThesaurusItemsRC`** (generic `CmPossibility`, legacy/dynamic-owner) =
+  **dynamic-owner resolver** (`references.resolve_thesaurus_item`): walk `.Owner` to the
+  owning `ICmPossibilityList`, mirror to the target by **owner-class + OwningFlid**
+  (never by list-GUID — live-confirmed those differ per project), then delegate
+  create/link/update to 024's `decide_reference`/`apply_reference` via a synthetic
+  `ReferenceFieldSpec`. Unresolvable → DROP_REPORT.
+
+**Both fields vacuous-live across all 79 on-disk projects** ("thesaurus" absent from
+every `.fwdata`), so live proof used read-only MCP for the LCM primitives (list
+discriminator, multi-hop `.Owner` walk, `AppendixesOC` scan, owner+flid inputs — all
+confirmed on `Ejagham Full`); full end-to-end LINK + thesaurus CREATE arm remain a
+**constructed write-enabled fixture** task (per 024 convention). See
+`specs/030-sense-appendix-thesaurus-refs/validation-status.md`.
+
+**LEX crew review APPROVED (2 cycles).** cycle-1 four-lens (verify/QC/domain/simplify):
+domain 91/100 both sections PASS, QC 84/100 no silent-loss, simplify proportionate.
+cycle-2 fix: derived `_iter_target_possibility_lists` from `REFERENCE_FIELD_MAP` (closed
+a latent Name-fallback gap — `TranslationTagsOA`/`VariantEntryTypesOA`/
+`ComplexEntryTypesOA` were missing) + added primary owner+flid HIT test + LINK-success
+Move==Preview parity. Verification: 19/19 + 116/116, **zero regressions** (22 failures
+byte-identical to clean main). Reviews under
+`specs/030-sense-appendix-thesaurus-refs/reviews/`.
+
+**Deferred (follow-up ticket, non-blocking):** 3 P2s — hardcoded `hierarchical=True` in
+`build_thesaurus_spec` (census-only field); broad-except drop-reason text could mislead
+triage; appendix drop `item_name=""` (LexAppendix has no Name). Plus the constructed-
+fixture write-arm live proof above.
+
+---
+
 ## ▶▶▶ Config-View Copy (025 S4) — LIVE-PROVEN + real bug fixed & MERGED (2026-07-16)
 
 **MERGED to `main` @ `063859f`** (`--no-ff`). Closed the S4 live-proof gap for the
