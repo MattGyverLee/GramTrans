@@ -1169,3 +1169,238 @@ def apply_reference(decision, target, owner_obj, spec: "ReferenceFieldSpec", cac
         return created_item
 
     return None
+
+
+# ============================================================================
+# Feature 030 (US2) -- dynamic-owner thesaurus resolver
+# ============================================================================
+#
+# `LexSense.ThesaurusItemsRC` targets a generic `CmPossibility` with NO fixed
+# home list (legacy, dynamic-owner), so it cannot be a static
+# `REFERENCE_FIELD_MAP` row. 030 discovers the owning `ICmPossibilityList`
+# per item by walking `.Owner`, mirrors it onto the target by owner-class +
+# `OwningFlid` (both LCM-model-stable), then delegates the item's
+# create/link/update/report to the SAME `decide_reference`/`apply_reference`
+# 024 machinery via a synthetic per-item `ReferenceFieldSpec`.
+#
+# Possibility-list GUIDs are NOT stable across projects (live-confirmed 030
+# research Finding 3: source SemanticDomainList c924bfce != target 90aa3d0a),
+# so the owning list is NEVER matched by its GUID -- only by owner+flid, with a
+# Name fallback for custom-owned lists.
+
+_OWNER_WALK_DEPTH_CAP = 32
+
+
+def _cast_possibility_list(obj):
+    """Return `obj` cast to `ICmPossibilityList`, or None if it is not one.
+
+    A node is confirmed to be a possibility list only when the (cast) object
+    actually exposes `PossibilitiesOS` -- a `CmPossibility` has
+    `SubPossibilitiesOS`, not `PossibilitiesOS`, so this cleanly distinguishes
+    the two. The `PossibilitiesOS` post-check is required (not just the cast):
+    real pythonnet raises on a bad interface cast, but a test's identity-cast
+    `SIL.LCModel` stub returns ANY object unchanged, so the cast succeeding is
+    not by itself proof the object is a list."""
+    try:
+        from SIL.LCModel import ICmPossibilityList
+        casted = ICmPossibilityList(obj)
+    except Exception:
+        casted = obj  # real: non-list cast raised; stub-absent: use obj directly
+    return casted if hasattr(casted, "PossibilitiesOS") else None
+
+
+def discover_owning_possibility_list(item):
+    """Walk `item.Owner` upward to the owning `ICmPossibilityList` (030 US2,
+    research Finding 4). Returns the owning list or None. Never raises.
+
+    The first hop (the item itself) is a `CmPossibility`, not a list, so the
+    loop naturally steps to `.Owner` until the first successful list cast --
+    depth-capped and null-owner-guarded so it can never spin."""
+    if item is None:
+        return None
+    try:
+        from SIL.LCModel import ICmObject
+        cur = ICmObject(item)
+    except Exception:
+        cur = item  # fakes / offline
+    for _ in range(_OWNER_WALK_DEPTH_CAP):
+        as_list = _cast_possibility_list(cur)
+        if as_list is not None:
+            return as_list
+        owner = getattr(cur, "Owner", None)
+        if owner is None:
+            return None
+        cur = owner
+    return None
+
+
+def _target_singleton_owner(target, owner_class_name):
+    """The target's unique owner object for a singleton owner class
+    (`LangProject` / `LexDb`); None for any other class (custom-owned lists
+    fall through to the Name match). Never raises."""
+    try:
+        from SIL.LCModel import ILangProject, ILexDb
+        lp = ILangProject(target.Cache.LangProject)
+        if owner_class_name == "LangProject":
+            return lp
+        if owner_class_name == "LexDb":
+            return ILexDb(lp.LexDbOA)
+    except Exception:
+        return None
+    return None
+
+
+def _target_list_by_owner_flid(target, src_owner, flid):
+    """Mirror the source list's location onto the target: same owner class +
+    same `OwningFlid` (both model-stable) -> the equivalent target list.
+    Returns the target `ICmPossibilityList` or None. Never raises."""
+    try:
+        from SIL.LCModel import ICmObject, ICmPossibilityList
+        owner_class = ICmObject(src_owner).ClassName
+    except Exception:
+        return None
+    tgt_owner = _target_singleton_owner(target, owner_class)
+    if tgt_owner is None:
+        return None
+    try:
+        sda = target.Cache.DomainDataByFlid
+        hvo = sda.get_ObjectProp(tgt_owner.Hvo, flid)
+        if not hvo:
+            return None
+        obj = target.Cache.ServiceLocator.ObjectRepository.GetObject(hvo)
+        return ICmPossibilityList(obj)
+    except Exception:
+        return None
+
+
+def _list_name_key(lst) -> str:
+    """Lowercased best-alt Name of a possibility list, or "" -- the Name-match
+    fallback key (research Finding 3)."""
+    return _item_label(lst).strip().lower()
+
+
+def _iter_target_possibility_lists(target):
+    """Yield the target's discoverable `ICmPossibilityList`s for the Name
+    fallback: a fake target's `possibility_lists` iterable when present, else
+    the standard singleton-owned lists via the accessors 024 already uses.
+    Never raises; skips any accessor that is absent/None."""
+    fake = getattr(target, "possibility_lists", None)
+    if fake is not None:
+        for lst in fake:
+            yield lst
+        return
+    try:
+        from SIL.LCModel import ILangProject
+        lp = ILangProject(target.Cache.LangProject)
+    except Exception:
+        return
+    lexdb = getattr(lp, "LexDbOA", None)
+    accessors = (
+        lambda: lp.SemanticDomainListOA,
+        lambda: lp.AnthroListOA,
+        lambda: lp.StatusOA,
+        lambda: lexdb.SenseTypesOA,
+        lambda: lexdb.UsageTypesOA,
+        lambda: lexdb.DomainTypesOA,
+        lambda: lexdb.DialectLabelsOA,
+        lambda: lexdb.PublicationTypesOA,
+        lambda: lexdb.LanguagesOA,
+        lambda: lexdb.MorphTypesOA,
+        lambda: lexdb.ExtendedNoteTypesOA,
+    )
+    for get in accessors:
+        try:
+            lst = get()
+        except Exception:
+            continue
+        if lst is not None:
+            yield lst
+
+
+def _target_list_by_name(target, src_list):
+    """Fallback: a target possibility list whose Name matches `src_list`'s, or
+    None. Never raises."""
+    want = _list_name_key(src_list)
+    if not want:
+        return None
+    for cand in _iter_target_possibility_lists(target):
+        if _list_name_key(cand) == want:
+            return cand
+    return None
+
+
+def mirror_possibility_list_to_target(src_list, target):
+    """Find the target's equivalent of `src_list` by owner-class + `OwningFlid`
+    (primary), falling back to a Name match (030 US2, research Finding 3).
+    NEVER matches by list GUID (list GUIDs differ per project). Returns the
+    target `ICmPossibilityList` or None. Never raises."""
+    if src_list is None:
+        return None
+    flid = getattr(src_list, "OwningFlid", None)
+    owner = getattr(src_list, "Owner", None)
+    if flid and owner is not None:
+        tgt = _target_list_by_owner_flid(target, owner, flid)
+        if tgt is not None:
+            return tgt
+    return _target_list_by_name(target, src_list)
+
+
+def build_thesaurus_spec(target_list) -> "ReferenceFieldSpec":
+    """Synthetic per-item `ReferenceFieldSpec` for a thesaurus reference whose
+    owning list has already been discovered + mirrored to `target_list`. Built
+    at resolve time (not import time) because the target list is dynamic, so
+    `target_list_path` closes over the resolved list rather than an accessor."""
+    return ReferenceFieldSpec(
+        owner_class="LexSense",
+        field_name="ThesaurusItemsRC",
+        cardinality=ReferenceCardinality.COLLECTION,
+        target_list_path=lambda _target: target_list,
+        hierarchical=True,
+    )
+
+
+def _thesaurus_drop(src_item, reason) -> "ReferenceDecision":
+    """A REPORT_DROPPED decision carrying a 030-specific `DroppedItemRecord`
+    (never-silent) for a thesaurus item whose owning list could not be
+    discovered/mirrored."""
+    return ReferenceDecision(
+        action=ReferenceAction.REPORT_DROPPED,
+        source_item=src_item,
+        dropped=DroppedItemRecord(
+            owner_kind="LexSense",
+            owner_guid="",
+            owner_label="",
+            field_name="ThesaurusItemsRC",
+            item_name=_item_label(src_item),
+            item_guid=_guid_str(src_item),
+            reason=reason,
+        ),
+    )
+
+
+def resolve_thesaurus_item(src_item, target, cache: dict, source=None):
+    """Resolve one `LexSense.ThesaurusItemsRC` `CmPossibility` (030 US2,
+    contracts/thesaurus-dynamic-owner.md). Returns `(decision, spec)`:
+
+    - `(None, None)` when `src_item` is None (FR-007 no-op).
+    - `(REPORT_DROPPED decision, None)` when the owning list cannot be
+      discovered on the source or mirrored onto the target (FR-005, G-B3).
+    - `(decide_reference(...) decision, spec)` otherwise -- the item's
+      create/link/update/report is delegated unchanged to 024's resolver via
+      the synthetic `spec` (FR-004). Never raises on discovery/mirror."""
+    if src_item is None:
+        return None, None
+    src_list = discover_owning_possibility_list(src_item)
+    if src_list is None:
+        return _thesaurus_drop(
+            src_item,
+            "owning CmPossibilityList not found on source item "
+            "(030 dynamic-owner)"), None
+    tgt_list = mirror_possibility_list_to_target(src_list, target)
+    if tgt_list is None:
+        return _thesaurus_drop(
+            src_item,
+            "owning CmPossibilityList has no equivalent in target "
+            "(030 dynamic-owner)"), None
+    spec = build_thesaurus_spec(tgt_list)
+    return decide_reference(src_item, target, spec, cache, source=source), spec
