@@ -2,8 +2,8 @@
   "workflow": "speckit",
   "specName": "Sense Appendix & Thesaurus References",
   "branch": "main",
-  "currentStep": "tasks",
-  "status": "ready-to-implement",
+  "currentStep": "implement",
+  "status": "implemented",
   "history": [
     {
       "step": "specify",
@@ -25,6 +25,13 @@
       "kind": "start",
       "by": "extension",
       "at": "2026-07-16T23:17:39.609Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "kind": "start",
+      "by": "extension",
+      "at": "2026-07-17T00:30:28.597Z"
     }
   ]
 }
