@@ -49,6 +49,47 @@ Confirmed live via FLExToolsMCP (`flexicon`, read-only, project `Ejagham Mini`,
   LocationRangeType/ScaleFactor/PictureFileRA, all `requires_cast`),
   `ICmFile` (InternalPath/AbsoluteInternalPath/OriginalPath/Name).
 
+## Live attempt on temporary copies (2026-07-16)
+
+Per direction to run the proof on throwaway copies (no backup/restore needed),
+I created disposable project copies on disk and drove the live host via
+FLExToolsMCP:
+
+- **Copies created** — `Ejagham029Src` and `Ejagham029Tgt` (folder copy +
+  `.fwdata` renamed to match), both discoverable by the MCP; real `Ejagham
+  Mini` / `Target` / `Ejagham028Src` left untouched.
+- **Worktree code imports + runs live** — `sys.path`-inserting the worktree
+  `src` and `from gramtrans.Lib import pictures, models` succeeds in the MCP
+  runtime; `reproduce_sense_pictures` / `plan_sense_picture_decisions` /
+  `_resolve_target_collision` are all present. So feature-029 code loads against
+  the live host.
+- **BLOCKER — flexicon `AddPicture` is broken in this runtime.** Constructing
+  the picture fixture requires `project.Senses.AddPicture(...)`, which calls
+  `MediaOperations.CopyToProject` → `CmFile.set_InternalPath`, and that C#
+  setter throws a **.NET `System.NullReferenceException`**:
+  ```
+  MediaOperations.py line 190:  new_media.InternalPath = file_path.strip()
+  System.NullReferenceException: Object reference not set to an instance of an object.
+     at SIL.LCModel.DomainImpl.CmFile.set_InternalPath(String value)
+  ```
+  This reproduced on **both** an `Ejagham028Src`-derived copy and a
+  `Target`-derived copy, and setting `LangProject.LinkedFilesRootDir` +
+  pre-creating `LinkedFiles/Pictures` did not help. It is an **environment /
+  flexicon-build defect in `CopyToProject`**, independent of feature 029.
+- **Impact.** The same `AddPicture` seam is feature 029's Move-leg happy path,
+  so live asset copying cannot be exercised in this runtime. Per contract G7 the
+  module catches the failure and routes it to the never-silent report path
+  (no crash), but the positive AC2/AC3/AC4 asset-copy assertions cannot be
+  demonstrated live until the flexicon `CopyToProject` NRE is fixed (or the
+  proof is run on a healthy FLEx host).
+- **Cleanup done** — both disposable copies and the temp image files were
+  deleted; no residue; all fixture write attempts aborted in their unit-of-work
+  (the NRE rolled them back), so nothing was committed to any project.
+
+**Escalation**: file/track the flexicon `MediaOperations.CopyToProject`
+`CmFile.set_InternalPath` NRE against the `pyflexicon` build on this host; the
+attended AC1–AC8 proof is gated on a runtime where `AddPicture` works.
+
 ## T020 — why it remains a human step
 
 The attended live proof (quickstart Tier 2) cannot be executed by the
