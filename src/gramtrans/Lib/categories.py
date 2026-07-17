@@ -4821,12 +4821,15 @@ def _plan_entry_reference_decisions(src_entry, context, target):
             # senses loop above.
             records.extend(_owned.plan_owned_object_decisions(
                 src_sense, context, resolver_cache, dropped))
-            # Cycle-17 correction (DROP_REPORTED, never silent): SAME
-            # report-only function the Move path's sense loop calls -- no
-            # separate Preview decision logic exists for AppendixesRC/
-            # ThesaurusItemsRC/PicturesOS (no CREATE/LINK leg, nothing is
-            # ever created either mode), so Move's and Preview's drop sets
-            # are identical by construction.
+            # Feature 030 (Preview, new_sense=None -> no writes): Section A
+            # appendix link-by-GUID and Section B thesaurus dynamic-owner
+            # resolver run their decision/drop pass here so the Preview drop
+            # set matches Move by construction (FR-008). PicturesOS remains an
+            # unconditional drop via `_report_dropped_sense_scope_gaps`.
+            _resolve_sense_appendixes(src_sense, None, target, dropped)
+            _resolve_sense_thesaurus_items(
+                src_sense, None, target, resolver_cache, dropped,
+                tag=None, ws_map=None, source=source)
             _report_dropped_sense_scope_gaps(src_sense, dropped)
         allomorphs = []
         lf = getattr(src_entry, "LexemeFormOA", None)
@@ -5625,26 +5628,20 @@ def _report_dropped_entry_refs(src_entry, dropped) -> None:
 
 
 # ----------------------------------------------------------------------------
-# Cycle-17 correction: LexSense.{AppendixesRC, ThesaurusItemsRC, PicturesOS}
-# -- never-silent DROP_REPORTED (corrects a prior lead ruling that had
-# silently parked these 4 fields in OUT_OF_SCOPE_EXCLUDED; ExtendedNoteOS,
-# the 4th field that ruling covered, is now COPIED -- see
-# `Lib/owned.py.OWNED_OBJECT_MAP`'s LexSense.ExtendedNoteOS row).
+# LexSense sense-scope-gap fields -- never-silent DROP_REPORTED.
+#
+# Cycle-17 (024) parked LexSense.{AppendixesRC, ThesaurusItemsRC, PicturesOS}
+# here as unconditional drops. Feature 030 promotes the first two to COPIED
+# (Section A appendix link-by-GUID -> `_resolve_sense_appendixes`; Section B
+# thesaurus dynamic-owner resolver -> `_resolve_sense_thesaurus_items`), so
+# only `PicturesOS` remains an unconditional drop (routed to 029). The two
+# promoted fields still emit a `DroppedItemRecord` for anything they cannot
+# reproduce (an appendix absent from the target; a thesaurus item whose owning
+# list can't be discovered/mirrored) -- never silent -- but that happens
+# inside their own resolvers, not here.
 # ----------------------------------------------------------------------------
 
 _SENSE_SCOPE_GAP_FIELDS = (
-    (
-        "AppendixesRC",
-        "LexAppendix is a bespoke owned class (LexDb.AppendixesOC), not a "
-        "possibility list -- not reproduced by feature 024's lexicon "
-        "transfer (routed to 030-sense-appendix-thesaurus-refs)",
-    ),
-    (
-        "ThesaurusItemsRC",
-        "thesaurus items are a generic CmPossibility with no fixed home "
-        "list (legacy, dynamic-owner) -- not reproduced by feature 024's "
-        "lexicon transfer (routed to 030-sense-appendix-thesaurus-refs)",
-    ),
     (
         "PicturesOS",
         "CmPicture (-> CmFile -> disk file) is not reproduced by feature "
@@ -5654,14 +5651,15 @@ _SENSE_SCOPE_GAP_FIELDS = (
 
 
 def _report_dropped_sense_scope_gaps(src_sense, dropped) -> None:
-    """Emit one `DroppedItemRecord` per item referenced by
-    `src_sense.AppendixesRC` / `.ThesaurusItemsRC` / `.PicturesOS` -- called
-    identically from the Move path (`_walk_lex_entry_closure`'s sense loop)
-    and the Preview path (`_plan_entry_reference_decisions`'s sense loop),
-    so the two drop sets are identical by construction (there is no
-    CREATE/LINK leg to diverge for any of the three fields; none is ever
-    reproduced this cycle -- see `tests/verification/fidelity_census.py`'s
-    cycle-17 CLASSIFICATION rows for the full rationale)."""
+    """Emit one `DroppedItemRecord` per item referenced by the remaining
+    unconditional sense-scope-gap fields (`_SENSE_SCOPE_GAP_FIELDS`, now just
+    `PicturesOS`) -- called identically from the Move path
+    (`_walk_lex_entry_closure`'s sense loop) and the Preview path
+    (`_plan_entry_reference_decisions`'s sense loop), so the two drop sets are
+    identical by construction (there is no CREATE/LINK leg to diverge for
+    PicturesOS; it is never reproduced -- see 029). AppendixesRC and
+    ThesaurusItemsRC are handled by their own 030 resolvers, wired alongside
+    this call at both sites."""
     owner_guid = _guid_str_from(src_sense)
     owner_label = _owner_label_for("LexSense", src_sense)
     for field_name, reason in _SENSE_SCOPE_GAP_FIELDS:
@@ -5688,6 +5686,130 @@ def _references_item_label(item) -> str:
     else:
         import references as _references  # type: ignore
     return _references._item_label(item)
+
+
+# ----------------------------------------------------------------------------
+# Feature 030 Section A -- LexSense.AppendixesRC link-by-GUID
+# (contracts/appendix-link-by-guid.md)
+# ----------------------------------------------------------------------------
+
+def _iter_target_appendixes(target):
+    """Yield the target project's owned `ILexAppendix`es (`LexDb.AppendixesOC`),
+    or a fake target's `appendixes` iterable when present. Never raises; an
+    absent/inaccessible collection yields nothing."""
+    fake = getattr(target, "appendixes", None)
+    if fake is not None:
+        for ap in fake:
+            yield ap
+        return
+    try:
+        from SIL.LCModel import ILangProject, ILexDb
+        lexdb = ILexDb(ILangProject(target.Cache.LangProject).LexDbOA)
+        for ap in lexdb.AppendixesOC:
+            yield ap
+    except Exception:
+        return
+
+
+def _target_appendix_by_guid(target, guid):
+    """Return the target's owned `ILexAppendix` whose GUID matches `guid`
+    (030 Section A link-by-GUID), or None. Linear scan of `LexDb.AppendixesOC`
+    (0 in every real project on record) -- never raises, and never uses
+    `Repository.GetObject` (which throws on an absent GUID)."""
+    if not guid:
+        return None
+    for ap in _iter_target_appendixes(target):
+        if _guid_str_from(ap) == guid:
+            return ap
+    return None
+
+
+def _resolve_sense_appendixes(src_sense, new_sense, target, dropped) -> None:
+    """030 Section A (contracts/appendix-link-by-guid.md): link each source
+    `AppendixesRC` reference to a target-owned `LexAppendix` by GUID; if the
+    target does not own it, emit a `DroppedItemRecord` (never create it, never
+    reproduce its owned `IStText`).
+
+    Called from BOTH sense loops: Move passes the created `new_sense` (links
+    are written onto `new_sense.AppendixesRC`); Preview passes `new_sense=None`
+    (drops only, no write). The drop decision depends solely on target
+    ownership, so Preview and Move produce the identical drop set by
+    construction (FR-008, G-A5). Never raises (fail-soft)."""
+    owner_guid = _guid_str_from(src_sense)
+    owner_label = _owner_label_for("LexSense", src_sense)
+    for src_ap in list(getattr(src_sense, "AppendixesRC", None) or []):
+        guid = _guid_str_from(src_ap)
+        tgt_ap = _target_appendix_by_guid(target, guid)
+        if tgt_ap is None:
+            _append_dropped_once(dropped, DroppedItemRecord(
+                owner_kind="LexSense",
+                owner_guid=owner_guid,
+                owner_label=owner_label,
+                field_name="AppendixesRC",
+                item_name=_references_item_label(src_ap),
+                item_guid=guid,
+                reason=(
+                    "no LexAppendix with this GUID in target "
+                    "LexDb.AppendixesOC (030 link-by-GUID scope; not created)"
+                ),
+            ))
+            continue
+        if new_sense is None:
+            continue  # Preview: present-by-GUID needs no record and no write
+        try:
+            coll = getattr(new_sense, "AppendixesRC", None)
+            if coll is not None and not _collection_already_has(coll, tgt_ap):
+                coll.Add(tgt_ap)
+        except (AttributeError, TypeError):
+            pass
+
+
+# ----------------------------------------------------------------------------
+# Feature 030 Section B -- LexSense.ThesaurusItemsRC dynamic-owner resolver
+# (contracts/thesaurus-dynamic-owner.md)
+# ----------------------------------------------------------------------------
+
+def _resolve_sense_thesaurus_items(src_sense, new_sense, target, resolver_cache,
+                                   dropped, tag, ws_map=None, source=None) -> None:
+    """030 Section B (contracts/thesaurus-dynamic-owner.md): resolve each
+    source `ThesaurusItemsRC` `CmPossibility` via the dynamic-owner resolver
+    (`references.resolve_thesaurus_item`) and, in Move mode (`new_sense` set),
+    write the resolved item onto `new_sense.ThesaurusItemsRC`; in Preview mode
+    (`new_sense=None`) record drops only. An item whose owning list cannot be
+    discovered on the source or mirrored onto the target emits a
+    `DroppedItemRecord` (never silent, FR-005/G-B3). A shared item resolves once
+    via `resolver_cache` (G-B6). Never raises (fail-soft)."""
+    if __package__:
+        from . import references as _references
+    else:
+        import references as _references  # type: ignore
+    owner_guid = _guid_str_from(src_sense)
+    for src_item in list(getattr(src_sense, "ThesaurusItemsRC", None) or []):
+        decision, spec = _references.resolve_thesaurus_item(
+            src_item, target, resolver_cache, source=source)
+        if decision is None:
+            continue
+        if decision.dropped is not None:
+            _append_dropped_once(
+                dropped,
+                _enrich_dropped("LexSense", owner_guid, src_sense, decision.dropped),
+            )
+        if spec is None or new_sense is None:
+            # spec is None  -> unresolvable list (drop already recorded).
+            # new_sense None -> Preview (no write). Either way, nothing added.
+            continue
+        resolved, ok = _call_apply_reference(
+            _references, decision, target, None, spec, resolver_cache,
+            tag, ws_map, source, dropped, "LexSense", owner_guid, src_sense,
+        )
+        if not ok or resolved is None:
+            continue
+        try:
+            coll = getattr(new_sense, "ThesaurusItemsRC", None)
+            if coll is not None and not _collection_already_has(coll, resolved):
+                coll.Add(resolved)
+        except (AttributeError, TypeError):
+            pass
 
 
 def _walk_lex_entry_closure(src_entry, context, tag, category, dropped=None):
@@ -5863,10 +5985,16 @@ def _walk_lex_entry_closure(src_entry, context, tag, category, dropped=None):
         _apply_reference_fields(
             "LexSense", src_sense, new_sense, target, tag, resolver_cache, dropped,
             ws_map=ws_map, source=context.source_handle, owner_guid=s_guid)
-        # Cycle-17 correction (DROP_REPORTED, never silent): AppendixesRC,
-        # ThesaurusItemsRC, PicturesOS are never reproduced -- report every
-        # referenced item. See `_report_dropped_sense_scope_gaps`'s own
-        # docstring (same function called from Preview's sense loop below).
+        # Feature 030 (Move, new_sense set -> writes onto the created sense):
+        # Section A appendix link-by-GUID and Section B thesaurus dynamic-owner
+        # resolver reproduce these two fields (or DROP_REPORT what they cannot,
+        # never silent). PicturesOS remains an unconditional drop via
+        # `_report_dropped_sense_scope_gaps`. Called from the identical point in
+        # the Preview sense loop above with new_sense=None (FR-008 parity).
+        _resolve_sense_appendixes(src_sense, new_sense, target, dropped)
+        _resolve_sense_thesaurus_items(
+            src_sense, new_sense, target, resolver_cache, dropped,
+            tag=tag, ws_map=ws_map, source=context.source_handle)
         _report_dropped_sense_scope_gaps(src_sense, dropped)
         # Feature 024 (T031, US3, FR-008): register the sense into
         # `context._copy_set` (same convention as the entry above) --

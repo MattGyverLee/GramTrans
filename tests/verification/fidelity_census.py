@@ -94,19 +94,23 @@ buckets are:
   `references.REFERENCE_FIELD_MAP` row -> `lp.LexDbOA.ExtendedNoteTypesOA`
   (generic `ICmPossibilityFactory`, ItemClsid 7 -- no new typed-factory
   mapping needed).
-- `LexSense.AppendixesRC` -> DROP_REPORTED (was silently excluded).
-  `LexAppendix` is a bespoke OWNED class in `LexDb.AppendixesOC` (NOT a
-  possibility list -- confirmed via reflection: `ILexAppendix` has only
-  `ContentsOA : IStText`) -- the generic resolver does not apply.
-  `categories._report_dropped_sense_scope_gaps` emits one
-  `DroppedItemRecord` per referenced appendix. Routed to
-  030-sense-appendix-thesaurus-refs.
-- `LexSense.ThesaurusItemsRC` -> DROP_REPORTED (was silently excluded).
-  Generic `CmPossibility` (confirmed via reflection:
+- `LexSense.AppendixesRC` -> COPIED (feature 030 Section A; was cycle-17
+  DROP_REPORTED). `LexAppendix` is a bespoke OWNED class in
+  `LexDb.AppendixesOC` (NOT a possibility list -- confirmed via reflection:
+  `ILexAppendix` has only `ContentsOA : IStText`), so the generic resolver
+  does not apply. `categories._resolve_sense_appendixes` LINKs a referenced
+  appendix to the target's own copy by GUID; an appendix the target does not
+  own is DROP_REPORTED (never created; its owned IStText never reproduced --
+  out of scope for 030). Never-silent preserved.
+- `LexSense.ThesaurusItemsRC` -> COPIED (feature 030 Section B; was cycle-17
+  DROP_REPORTED). Generic `CmPossibility` (confirmed via reflection:
   `ILcmReferenceCollection<ICmPossibility>`) with no fixed home list
-  (legacy, dynamic-owner) -- no dynamic-owner resolution attempted. Same
-  emission function as AppendixesRC. Routed to
-  030-sense-appendix-thesaurus-refs.
+  (legacy, dynamic-owner). `categories._resolve_sense_thesaurus_items` ->
+  `references.resolve_thesaurus_item` discovers the owning
+  `ICmPossibilityList` by walking `.Owner`, mirrors it to the target by
+  owner-class+OwningFlid (never by list GUID -- those differ per project),
+  then create/link/updates via the 024 resolver. An item whose owning list
+  can't be discovered/mirrored is DROP_REPORTED (never silent, FR-005).
 - `LexSense.PicturesOS` -> DROP_REPORTED (was silently excluded). Owns
   `CmPicture` -> `CmFile` -> disk file (confirmed via reflection:
   `ICmPicture.PictureFileRA : ICmFile`) -- never creates a `CmPicture`/
@@ -315,7 +319,8 @@ class Classification:
 # data-loss point). The 4 LexSense fields formerly parked here
 # (AppendixesRC, ThesaurusItemsRC, ExtendedNoteOS, PicturesOS) violated
 # SC-003/FR-010 (silent exclusion) -- they are now real terminal buckets
-# (ExtendedNoteOS -> COPIED; the other 3 -> DROP_REPORTED). See this
+# (ExtendedNoteOS -> COPIED; AppendixesRC + ThesaurusItemsRC -> COPIED via
+# feature 030; only PicturesOS -> DROP_REPORTED, routed to 029). See this
 # module's "CYCLE-17 CENSUS CORRECTION" docstring section.
 # ----------------------------------------------------------------------------
 OUT_OF_SCOPE_EXCLUDED_FIELDS: frozenset[tuple[str, str]] = frozenset({
@@ -445,16 +450,19 @@ CLASSIFICATION: dict[tuple[str, str], Classification] = {
         "categories._apply_reference_fields('LexSense', ...)",
     ),
     ("LexSense", "AppendixesRC"): Classification(
-        Bucket.DROP_REPORTED,
-        "categories._report_dropped_sense_scope_gaps (categories.py), "
-        "called from _walk_lex_entry_closure's sense loop (Move) and "
-        "_plan_entry_reference_decisions's sense loop (Preview) -- one "
-        "DroppedItemRecord per referenced LexAppendix",
-        note="cycle-17 lead correction (was wrongly OUT_OF_SCOPE_EXCLUDED, "
-             "a SILENT bucket -- violated SC-003/FR-010): LexAppendix is a "
-             "bespoke owned class (LexDb.AppendixesOC), not a possibility "
-             "list -- the generic resolver does not apply. Routed to "
-             "030-sense-appendix-thesaurus-refs for eventual reproduction.",
+        Bucket.COPIED,
+        "categories._resolve_sense_appendixes (categories.py), called from "
+        "_walk_lex_entry_closure's sense loop (Move) and "
+        "_plan_entry_reference_decisions's sense loop (Preview) -- links each "
+        "referenced LexAppendix to the target's own copy by GUID "
+        "(_target_appendix_by_guid over LexDb.AppendixesOC)",
+        note="feature 030 Section A (link-by-GUID): LexAppendix is a bespoke "
+             "owned class (LexDb.AppendixesOC), not a possibility list, so the "
+             "generic resolver does not apply. If the target already owns the "
+             "appendix by GUID it is LINKed; if absent it is DROP_REPORTED "
+             "(never created, its owned IStText never reproduced -- that is "
+             "out of scope for 030). Never-silent preserved. Was cycle-17 "
+             "DROP_REPORTED (unconditional).",
     ),
     ("LexSense", "DialectLabelsRS"): Classification(
         Bucket.COPIED,
@@ -536,16 +544,20 @@ CLASSIFICATION: dict[tuple[str, str], Classification] = {
         "categories._apply_reference_fields('LexSense', ...)",
     ),
     ("LexSense", "ThesaurusItemsRC"): Classification(
-        Bucket.DROP_REPORTED,
-        "categories._report_dropped_sense_scope_gaps (categories.py), "
-        "called from _walk_lex_entry_closure's sense loop (Move) and "
-        "_plan_entry_reference_decisions's sense loop (Preview) -- one "
-        "DroppedItemRecord per referenced thesaurus item",
-        note="cycle-17 lead correction (was wrongly OUT_OF_SCOPE_EXCLUDED, "
-             "a SILENT bucket -- violated SC-003/FR-010): generic "
-             "CmPossibility with no fixed home list (legacy, dynamic-owner) "
-             "-- no dynamic-owner resolution attempted. Routed to "
-             "030-sense-appendix-thesaurus-refs for eventual reproduction.",
+        Bucket.COPIED,
+        "categories._resolve_sense_thesaurus_items (categories.py) -> "
+        "references.resolve_thesaurus_item, called from "
+        "_walk_lex_entry_closure's sense loop (Move) and "
+        "_plan_entry_reference_decisions's sense loop (Preview) -- discovers "
+        "each item's owning ICmPossibilityList by walking .Owner, mirrors it "
+        "to the target by owner-class+OwningFlid, then create/link/updates via "
+        "the 024 resolver (decide_reference/apply_reference)",
+        note="feature 030 Section B (dynamic-owner): generic CmPossibility "
+             "with no fixed home list (legacy, dynamic-owner). The owning list "
+             "is discovered per item and mirrored to the target (never by list "
+             "GUID -- list GUIDs differ per project); an item whose owning "
+             "list can't be discovered/mirrored is DROP_REPORTED (never "
+             "silent, FR-005). Was cycle-17 DROP_REPORTED (unconditional).",
     ),
     ("LexSense", "UsageTypesRC"): Classification(
         Bucket.COPIED,
@@ -901,7 +913,8 @@ def test_out_of_scope_excluded_list_is_exact() -> None:
     `LexEntry.MainEntriesOrSensesRS` (cycle-16 ruling). The 4 LexSense
     fields formerly parked here (a SILENT bucket -- violated SC-003/FR-010)
     are now real terminal buckets: `ExtendedNoteOS` -> COPIED;
-    `AppendixesRC`/`ThesaurusItemsRC`/`PicturesOS` -> DROP_REPORTED."""
+    `AppendixesRC` + `ThesaurusItemsRC` -> COPIED (feature 030);
+    `PicturesOS` -> DROP_REPORTED (029)."""
     assert OUT_OF_SCOPE_EXCLUDED_FIELDS == frozenset({
         ("LexEntry", "MainEntriesOrSensesRS"),
     })
