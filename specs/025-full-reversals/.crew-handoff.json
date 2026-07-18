@@ -156,8 +156,8 @@
   ],
   "tasks_remaining": [],
   "all_user_stories_implemented": true,
-  "next_checkpoint": "PyQt Preview-pane UI confirm (render_reversal_decisions / render_config_view_records) -- the last remaining 025 backlog item.",
-  "next_entry": "clsid-5049 reversal-category CREATE hotfix is DONE: offline-green + tripwire + QC APPROVE 95/100 + attended live Move end-to-end PASS + merged to main @ c490f90. Remaining 025 backlog: PyQt Preview-pane UI confirm (deferred; headless drivers already proved the decision data). Disposable fixtures Ejagham025Src + Target.pre025bak retained.",
+  "next_checkpoint": "NONE -- clsid-5049 hotfix merged @ c490f90 and the PyQt Preview-pane UI render test merged @ f5e7eb2. All 025 S2/S3/UI backlog items closed.",
+  "next_entry": "025 fully closed (2026-07-18): S3 live-proven; S2 P0 (clsid-5049 reversal-category CREATE) fixed + live-proven end-to-end + merged @ c490f90; PyQt Preview-pane UI render confirmed via offscreen StatsPanel widget tests merged @ f5e7eb2. Disposable fixtures Ejagham025Src + Target.pre025bak retained for future re-runs.",
   "carry_forward_settled_green": [
     "Items 1/2/5 (cycle 5) + both P0s (cycles 6-7): CLOSED. Do NOT relitigate.",
     "ReversalForm census decision (a): included via FieldSpec.kind == 'MU' (IMultiUnicode value field), classified COPIED \u2014 grounded in the SC-003/FR-010 never-silent principle; NOT the 024 Discussion silent-exclusion precedent."

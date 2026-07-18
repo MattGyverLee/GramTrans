@@ -89,9 +89,10 @@ Run against **Ejagham Mini → Target** (disposable, user-confirmed). Reusable d
   ~72 `LexExampleSentence.TranslationsOC` gaps (`FLExProject` has no attribute `Translations`).
 - **P1-1** reuse `RunPlan.reversal_decisions` at Move instead of recomputing; **P1-2** DRY
   `_target_ws_ids` (reversals.py == config_views.py).
-- **UI wiring** — `render_reversal_decisions` / `render_config_view_records` are surfaced via
-  `render_preview_extra_lines` → `main_window._on_preview`; confirm in the actual PyQt Preview pane
-  during a GUI run (headless driver bypasses the UI).
+- ~~**UI wiring** — confirm in the actual PyQt Preview pane during a GUI run.~~ **DONE
+  (2026-07-18, merged @ `f5e7eb2`):** offscreen-Qt `StatsPanel` widget tests in
+  `tests/unit/test_preview_surfacing.py` assert the reversal Add/Link plan + config-view
+  list reach the `_extra_view` pane (shown when populated, hidden when empty).
 - **Live re-confirm of WS Id/handle shapes** (domain cycle 11 relied on recorded evidence, lacked live MCP).
 
 ## Reports (chronological)
