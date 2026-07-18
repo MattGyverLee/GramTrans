@@ -243,6 +243,16 @@ def _install_fake_lcm(monkeypatch) -> types.ModuleType:
     # too, even tests (like this one) that never exercise clsid 5118.
     fake_lcm.ILexEntryTypeFactory = ILexEntryTypeFactory
 
+    # 025 P0 (reversal categories, ItemClsid 5049 = PartOfSpeech): identity
+    # cast for `IPartOfSpeechFactory` -- NOT yet in the production
+    # `factory_by_item_clsid` map (that IS the bug), but every fake stub of
+    # this module needs the attribute available so a test can supply it as
+    # `target.GetFactory`'s return value once/if the map gains the entry.
+    class IPartOfSpeechFactory(_IdentityCast):
+        pass
+
+    fake_lcm.IPartOfSpeechFactory = IPartOfSpeechFactory
+
     fake_system = types.ModuleType("System")
     fake_system.Guid = types.SimpleNamespace(Parse=lambda s: s)
 
@@ -397,3 +407,185 @@ def test_create_ancestor_walk_driven_by_owning_possibility_not_static_hierarchic
         "expected the full root->leaf chain (parent, leaf) even though "
         f"spec.hierarchical=False; got {decision.ancestors_to_create!r}"
     )
+
+
+# ============================================================================
+# P0 (feature 025-full-reversals) -- ItemClsid 5049 (PartOfSpeech, a
+# reversal category) has NO 1-arg `Create(Guid)` overload on
+# `IPartOfSpeechFactory`; only owner-taking overloads exist:
+# `Create(Guid, ICmPossibilityList owner)` (root) and
+# `Create(Guid, IPartOfSpeech owner)` (child, auto-owned under
+# `owner.SubPossibilitiesOS`). Confirmed live this session -- see
+# scratchpad/build025_fixture.py's `fac.Create(guid, en_poslist)` /
+# `fac.Create(guid, parent)` calls and
+# specs/025-full-reversals/reviews/live-proof-s2s3-reversal-fixtures.md.
+# The generic create-then-add idiom at `apply_reference`'s CREATE arm
+# (`factory.Create(parsed_guid)` then a separate `_add_to_owner(...)`
+# call) cannot work for this clsid: it has no 1-arg overload to call in
+# the first place, and 5049 is not even present in `factory_by_item_clsid`
+# today, so the fail-loud "unmapped item class" branch fires first.
+# ============================================================================
+
+class _FakeReversalPOS:
+    """Fake `IPartOfSpeech` reversal-category item: stands in for both a
+    ROOT category (owned by the index's `PartsOfSpeechOA` list) and a
+    CHILD category (owned by a parent `IPartOfSpeech`). Exposes
+    `SubPossibilitiesOS` so a child can be auto-owned under it, mirroring
+    the real owner-taking `Create(Guid, IPartOfSpeech owner)` overload."""
+
+    def __init__(self, guid: str) -> None:
+        self.Guid = guid
+        self.guid = guid
+        self.Owner = None
+        self.SubPossibilitiesOS = _FakeCollection()
+
+
+class _FakeReversalIndexPOSList:
+    """Fake per-index `PartsOfSpeechOA` (ItemClsid 5049) -- the ONLY legal
+    home for a reversal category (R5: creation must never touch
+    `LangProject.PartsOfSpeechOA`, modeled below as a SEPARATE,
+    independently-asserted fake)."""
+
+    def __init__(self) -> None:
+        self.ItemClsid = 5049
+        self.PossibilitiesOS = _FakeCollection()
+
+
+class _FakeLangProjectPOSList:
+    """A SEPARATE fake standing in for `LangProject.PartsOfSpeechOA`. The
+    test asserts nothing is ever added to this collection -- R5's
+    never-touch-LangProject guarantee for reversal categories."""
+
+    def __init__(self) -> None:
+        self.ItemClsid = 5049
+        self.PossibilitiesOS = _FakeCollection()
+
+
+class _FakeIPartOfSpeechFactoryOwnerOnly:
+    """Faithful stand-in for the REAL `IPartOfSpeechFactory` contract:
+    there is NO 1-arg `Create(Guid)` overload at all -- only
+    `Create(Guid, owner)` where `owner` is either the index's
+    `ICmPossibillityList` (root) or a parent `IPartOfSpeech` (child).
+    Calling with a single positional arg (today's `references.py`
+    create-then-add idiom, `factory.Create(parsed_guid)`) raises
+    `TypeError` -- exactly what a real 1-arg .NET overload-resolution miss
+    looks like from Python. The factory itself performs ownership (unlike
+    the generic `ICmPossibilityFactory.Create(Guid)` + separate
+    `_add_to_owner` idiom): a root is appended to `owner.PossibilitiesOS`,
+    a child to `owner.SubPossibilitiesOS`.
+    """
+
+    def Create(self, guid, owner=None):
+        if owner is None:
+            raise TypeError(
+                "IPartOfSpeechFactory.Create(Guid) has no 1-arg overload -- "
+                "owner (ICmPossibilityList root or IPartOfSpeech parent) "
+                "is required"
+            )
+        new_pos = _FakeReversalPOS(str(guid))
+        new_pos.Owner = owner
+        if isinstance(owner, _FakeReversalPOS):
+            owner.SubPossibilitiesOS.Add(new_pos)
+        else:
+            owner.PossibilitiesOS.Add(new_pos)
+        return new_pos
+
+
+class _FakeTargetForReversalPOS(_FakeTarget):
+    """`GetFactory` returns the owner-only `IPartOfSpeechFactory` stub for
+    the `IPartOfSpeechFactory` key, and the generic `_FakeFactory` for any
+    other key (matching real `FLExProject.GetFactory`'s per-interface
+    dispatch)."""
+
+    def __init__(self, ipos_factory_key) -> None:
+        super().__init__()
+        self._ipos_factory_key = ipos_factory_key
+        self.ipos_factory = _FakeIPartOfSpeechFactoryOwnerOnly()
+
+    def GetFactory(self, key):
+        self.requested_factory_keys.append(key)
+        if key is self._ipos_factory_key:
+            return self.ipos_factory
+        return _FakeFactory()
+
+
+def test_create_path_reversal_category_hierarchical_owner_taking_factory(monkeypatch):
+    """P0 (feature 025-full-reversals): a 2-level reversal-category chain
+    (`parent` -> `child`, ItemClsid 5049) must be created via
+    `IPartOfSpeechFactory`'s owner-taking `Create` overloads -- root via
+    `Create(guid, <index's PartsOfSpeechOA list>)`, child via
+    `Create(guid, <created parent POS>)` -- and the resulting CHILD must:
+
+    1. land in the TARGET REVERSAL INDEX's OWN `PartsOfSpeechOA`
+       (`target_list.PossibilitiesOS`), never `LangProject.PartsOfSpeechOA`
+       (R5 -- asserted via a wholly separate, untouched
+       `_FakeLangProjectPOSList` fake);
+    2. become the entry's `PartOfSpeechRA` (the `owner_obj` `setattr` at
+       the end of `apply_reference`'s CREATE arm).
+
+    Dry trace against today's `references.py`: `factory_by_item_clsid`
+    (CREATE arm, ~line 1041) has no entry for `item_clsid=5049` at all --
+    `factory_iface` resolves to `None` and the fail-loud "unmapped item
+    class" branch raises `UnmappedItemClassError` before the factory is
+    ever consulted, so this test fails via that exception, never reaching
+    the assertions below. (A hypothetical partial fix that added
+    `5049: IPartOfSpeechFactory` to the map WITHOUT also replacing the
+    generic `factory.Create(parsed_guid)` 1-arg call with the owner-taking
+    overloads would instead fail via this fake's `TypeError`, since the
+    fake has no 1-arg overload to satisfy either -- this test remains RED
+    against either half-fix.)
+    """
+    fake_lcm = _install_fake_lcm(monkeypatch)
+    from gramtrans.Lib import residue as residue_mod
+    monkeypatch.setattr(residue_mod, "apply_residue", lambda *a, **k: None)
+
+    target_list = _FakeReversalIndexPOSList()  # the reversal index's OWN list
+    lang_project_list = _FakeLangProjectPOSList()  # must stay untouched (R5)
+
+    parent_src = _FakeCreatedItem("77777777-7777-7777-7777-777777777777")
+    child_src = _FakeCreatedItem("88888888-8888-8888-8888-888888888888")
+
+    spec = ReferenceFieldSpec(
+        owner_class="ReversalIndexEntry",
+        field_name="PartOfSpeechRA",
+        cardinality=ReferenceCardinality.ATOMIC,
+        target_list_path=lambda target: target_list,
+        hierarchical=True,
+    )
+    decision = ReferenceDecision(
+        action=ReferenceAction.CREATE,
+        ancestors_to_create=(parent_src, child_src),
+        source_item=child_src,
+    )
+    target = _FakeTargetForReversalPOS(fake_lcm.IPartOfSpeechFactory)
+
+    class _FakeEntry:
+        PartOfSpeechRA = None
+
+    entry = _FakeEntry()
+
+    result = references.apply_reference(decision, target, entry, spec, {}, tag=None)
+
+    # -- created-child identity and entry wiring --
+    assert result is not None
+    assert references._guid_str(result) == str(child_src.Guid).lower()
+    assert entry.PartOfSpeechRA is result, (
+        "entry.PartOfSpeechRA must be wired to the created child POS"
+    )
+
+    # -- placement: TARGET INDEX's own list, never LangProject (R5) --
+    assert len(lang_project_list.PossibilitiesOS) == 0, (
+        "LangProject.PartsOfSpeechOA must never be touched for a reversal "
+        "category CREATE"
+    )
+    assert len(target_list.PossibilitiesOS) == 1, (
+        "the root category must land in the reversal index's OWN "
+        "PartsOfSpeechOA.PossibilitiesOS"
+    )
+    root = list(target_list.PossibilitiesOS)[0]
+    assert references._guid_str(root) == str(parent_src.Guid).lower()
+    assert len(root.SubPossibilitiesOS) == 1, (
+        "the child category must be auto-owned under the created root "
+        "via Create(guid, parent) -- never appended to the flat list"
+    )
+    assert list(root.SubPossibilitiesOS)[0] is result
