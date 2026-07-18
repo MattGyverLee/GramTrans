@@ -14,12 +14,18 @@ here without a live QApplication).
 """
 from __future__ import annotations
 
+import os
+
+import pytest
+
 from gramtrans.Lib.models import (
     ConfigViewAction,
     ConfigViewRecord,
     ReversalDecision,
     RunContext,
+    RunMode,
     RunPlan,
+    RunReport,
     Selection,
     WSMapping,
 )
@@ -129,3 +135,73 @@ def test_render_preview_extra_lines_is_reversal_lines_then_config_view_lines():
     reversal_idx = next(i for i, l in enumerate(lines) if "Reversal index" in l)
     config_idx = next(i for i, l in enumerate(lines) if "Configuration views:" in l)
     assert reversal_idx < config_idx
+
+
+# ---------------------------------------------------------------------------
+# UI wiring half (the piece the module docstring flags as "not exercised here
+# without a live QApplication"): drive the REAL StatsPanel widget offscreen and
+# prove the composed extra lines actually reach its _extra_view pane. Closes the
+# 025 "PyQt Preview-pane UI confirm" backlog item.
+# ---------------------------------------------------------------------------
+
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+
+@pytest.fixture(scope="session")
+def qapp():
+    QtWidgets = pytest.importorskip("PyQt6.QtWidgets")
+    app = QtWidgets.QApplication.instance()
+    if app is None:
+        app = QtWidgets.QApplication([])
+    return app
+
+
+def _report() -> RunReport:
+    # Empty per_category + no skips satisfies the FR-018 __post_init__ invariant.
+    return RunReport(context=_ctx(), mode=RunMode.PREVIEW)
+
+
+def test_stats_panel_widget_shows_reversal_and_config_extra_lines(qapp):
+    """The actual PyQt StatsPanel widget must display the composed reversal
+    Add/Link plan + config-view list in its `_extra_view` pane when a Preview
+    plan carries them (Principle III -- shown BEFORE Move writes)."""
+    from gramtrans.Lib.ui.stats_panel import StatsPanel
+
+    decision = ReversalDecision(
+        source_entry_guid="entry-guid-1",
+        target_index_ref=None,
+        target_ws_id="en",
+        linked_sense_guids=("sense-guid-1",),
+        reversal_form_alts={"en": "person"},
+    )
+    cv = ConfigViewRecord(
+        kind="ReversalIndex",
+        filename="en.fwdictconfig",
+        src_path="/x",
+        tgt_path="/y",
+        action=ConfigViewAction.ADD,
+        missing_refs=[],
+    )
+    plan = _plan(reversal_decisions=(decision,), config_view_records=(cv,))
+    extra = render_preview_extra_lines(plan)
+
+    panel = StatsPanel()
+    panel.set_report(_report(), extra)
+
+    shown = panel._extra_view.toPlainText()
+    assert not panel._extra_view.isHidden()  # pane revealed
+    assert "Reversal index [en] (Add):" in shown
+    assert "person" in shown
+    assert "Configuration views:" in shown
+    assert "ReversalIndex:" in shown
+    assert "en.fwdictconfig" in shown
+
+
+def test_stats_panel_widget_hides_extra_pane_when_no_preview_lines(qapp):
+    """Move-mode / empty-plan posture: with no extra lines the `_extra_view`
+    pane stays hidden (nothing to preview)."""
+    from gramtrans.Lib.ui.stats_panel import StatsPanel
+
+    panel = StatsPanel()
+    panel.set_report(_report(), ())
+    assert panel._extra_view.isHidden()
