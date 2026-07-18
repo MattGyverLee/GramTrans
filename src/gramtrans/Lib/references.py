@@ -1021,6 +1021,7 @@ def apply_reference(decision, target, owner_obj, spec: "ReferenceFieldSpec", cac
             ICmAnthroItemFactory,
             IMoMorphTypeFactory,
             ILexEntryTypeFactory,
+            IPartOfSpeechFactory,
         )
         from System import Guid as DotNetGuid
 
@@ -1038,12 +1039,25 @@ def apply_reference(decision, target, owner_obj, spec: "ReferenceFieldSpec", cac
         # `categories.complex_form_types_execute_action` already uses), 7=
         # generic CmPossibility (SenseTypes/UsageTypes/DomainTypes/
         # DialectLabels/PublicationTypes/Languages/Status/TranslationTags).
+        # 5049 = PartOfSpeech -- a reversal category (ReversalIndex.
+        # PartsOfSpeechOA, R5-scoped to the TARGET index's own list, never
+        # LangProject.PartsOfSpeechOA). `IPartOfSpeechFactory` has NO 1-arg
+        # `Create(Guid)` overload at all -- only owner-taking overloads
+        # (`Create(Guid, ICmPossibilityList)` for a root, `Create(Guid,
+        # IPartOfSpeech)` for a child, which auto-owns under the parent's
+        # `SubPossibilitiesOS`). Confirmed live: scratchpad/build025_fixture.py's
+        # `fac.Create(guid, en_poslist)` / `fac.Create(guid, parent)`. This is
+        # therefore handled as a SEPARATE owner-taking branch below (see
+        # `item_clsid == 5049` special-case in the ancestor loop) -- it is
+        # NEVER routed through the generic create-then-`_add_to_owner` idiom
+        # the other rows in this map share.
         factory_by_item_clsid = {
             66: ICmSemanticDomainFactory,
             26: ICmAnthroItemFactory,
             5042: IMoMorphTypeFactory,
             5118: ILexEntryTypeFactory,
             7: ICmPossibilityFactory,
+            5049: IPartOfSpeechFactory,
         }
         item_clsid = getattr(target_list, "ItemClsid", None)
         factory_iface = factory_by_item_clsid.get(item_clsid)
@@ -1074,17 +1088,33 @@ def apply_reference(decision, target, owner_obj, spec: "ReferenceFieldSpec", cac
                 created_item = existing
             else:
                 parsed_guid = DotNetGuid.Parse(anc_guid)
-                new_obj = factory.Create(parsed_guid)
-                if parent_target_item is None:
-                    _add_to_owner(
-                        new_obj, ICmPossibilityList(target_list).PossibilitiesOS,
-                        "ICmPossibilityFactory", anc_guid,
+                if item_clsid == 5049:
+                    # `IPartOfSpeechFactory` has no 1-arg `Create(Guid)` --
+                    # the owner-taking overload performs ownership itself
+                    # (root -> the index's OWN `PartsOfSpeechOA` list, child
+                    # -> the just-created parent `IPartOfSpeech`, auto-owned
+                    # under its `SubPossibilitiesOS`). There is NO separate
+                    # `_add_to_owner` call here -- doing so would be either
+                    # redundant (factory already added it) or, worse, a
+                    # second/wrong-collection add.
+                    owner = (
+                        ICmPossibilityList(target_list)
+                        if parent_target_item is None
+                        else parent_target_item
                     )
+                    new_obj = factory.Create(parsed_guid, owner)
                 else:
-                    _add_to_owner(
-                        new_obj, ICmPossibility(parent_target_item).SubPossibilitiesOS,
-                        "ICmPossibilityFactory", anc_guid,
-                    )
+                    new_obj = factory.Create(parsed_guid)
+                    if parent_target_item is None:
+                        _add_to_owner(
+                            new_obj, ICmPossibilityList(target_list).PossibilitiesOS,
+                            "ICmPossibilityFactory", anc_guid,
+                        )
+                    else:
+                        _add_to_owner(
+                            new_obj, ICmPossibility(parent_target_item).SubPossibilitiesOS,
+                            "ICmPossibilityFactory", anc_guid,
+                        )
                 # CREATE-path content audit (this cycle, LEAD decision):
                 # possibility Name/Abbreviation/Description are copied as
                 # FULL multi-WS (Id-keyed dicts), NOT best-alt -- a freshly

@@ -271,7 +271,7 @@ def _stub_lcm_full():
         setattr(fake_lcm, iface, (lambda raw: raw))
     for iface in ("ICmPossibilityFactory", "ICmSemanticDomainFactory",
                   "ICmAnthroItemFactory", "IMoMorphTypeFactory",
-                  "ILexEntryTypeFactory"):
+                  "ILexEntryTypeFactory", "IPartOfSpeechFactory"):
         setattr(fake_lcm, iface, (lambda raw: raw))
     sys.modules.setdefault("SIL", types.ModuleType("SIL"))
     original_lcm = _install_module("SIL.LCModel", fake_lcm)
