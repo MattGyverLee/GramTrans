@@ -368,6 +368,9 @@ def _install_fake_lcm(monkeypatch) -> types.ModuleType:
     class ILexEntryTypeFactory(_IdentityCast):
         pass
 
+    class IPartOfSpeechFactory(_IdentityCast):
+        pass
+
     fake_lcm = types.ModuleType("SIL.LCModel")
     fake_lcm.ICmPossibilityFactory = ICmPossibilityFactory
     fake_lcm.ICmPossibility = ICmPossibility
@@ -379,6 +382,11 @@ def _install_fake_lcm(monkeypatch) -> types.ModuleType:
     # `from SIL.LCModel import (...)` -- see test_reference_create_paths.py's
     # sibling fixture for the same addition.
     fake_lcm.ILexEntryTypeFactory = ILexEntryTypeFactory
+    # 025 P0 (contract, reversal categories, ItemClsid 5049): same
+    # unconditional import in the CREATE arm needs this attribute even
+    # though this fixture's own `_FakePosList` defaults to item_clsid=7
+    # (generic CmPossibility), never exercising the 5049 branch itself.
+    fake_lcm.IPartOfSpeechFactory = IPartOfSpeechFactory
 
     fake_system = types.ModuleType("System")
     fake_system.Guid = types.SimpleNamespace(Parse=lambda s: s)
