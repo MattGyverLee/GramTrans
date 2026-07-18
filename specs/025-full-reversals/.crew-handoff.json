@@ -2,12 +2,17 @@
   "feature": "025-full-reversals",
   "created": "2026-07-12",
   "updated": "2026-07-18",
-  "status": "needs_human",
-  "blocker": "Follow-up P0 hotfix (reversal-category CREATE, clsid 5049) is OFFLINE-GREEN + tripwire-confirmed + QC APPROVE 95/100 on worktree 025-fix-reversal-pos-create (commit 752a60c), but the only end-to-end live proof is an attended DESTRUCTIVE Move (Ejagham025Src -> Target) requiring human authorization. Read-only Preview cannot exercise this fix (bug/fix are in the MOVE/apply path). Do not run unattended; do not merge until the attended Move passes.",
+  "status": "feature_complete",
+  "blocker": null,
   "spurt": 10,
   "last_cycle": 2,
   "note_status": "Feature 025 body was feature_complete + merged @ cb88b00 (see feature_complete_history). This handoff is REOPENED for a follow-up P0 hotfix on a separate branch, not yet merged.",
-  "feature_complete_history": { "status": "feature_complete", "updated": "2026-07-13", "spurt": 9, "last_cycle": 14 },
+  "feature_complete_history": {
+    "status": "feature_complete",
+    "updated": "2026-07-13",
+    "spurt": 9,
+    "last_cycle": 14
+  },
   "hotfix_reversal_pos_create": {
     "status": "OFFLINE-GREEN, awaits attended DESTRUCTIVE Move + merge",
     "date": "2026-07-18",
@@ -20,20 +25,28 @@
     "verification": "cycle2-verification.md: suite 1719 passed / 22 pre-existing (no new regressions); target test test_create_path_reversal_category_hierarchical_owner_taking_factory GREEN; revert tripwire RED-on-revert CONFIRMED (UnmappedItemClassError 5049), re-green on restore, worktree clean.",
     "qc": "cycle2-qc.md: APPROVE 95/100, no P0/P1. Pattern-audit gate PASS (030 thesaurus dynamic-owner routes through the same shared apply_reference CREATE-arm dispatch). P2: 5049 special-case is hand-rolled not table-driven (acceptable for hotfix; ticket if 3rd owner-taking clsid appears).",
     "load_bearing_proof": "Offline unit test (GREEN) + revert tripwire. A read-only Preview CANNOT exercise this fix: bug/fix are in execute_move -> apply_reversals -> _apply_pos_decision -> apply_reference CREATE arm; compute_preview already planned pos_action=create before the fix.",
-    "next_human_step": "Run attended DESTRUCTIVE Move Ejagham025Src -> Target (FLExToolsMCP + planted fixtures + Target backup ready); confirm created reversal category lands in the index's own PartsOfSpeechOA with R5 untouched; then merge 025-fix-reversal-pos-create -> main.",
     "deferred_after_fix": "PyQt Preview-pane UI confirm.",
-    "reports": ["p0-reversal-pos-create-cycle2-programmer.md", "cycle2-qc.md", "cycle2-verification.md"]
+    "reports": [
+      "p0-reversal-pos-create-cycle2-programmer.md",
+      "cycle2-qc.md",
+      "cycle2-verification.md"
+    ],
+    "merged_to_main_commit": "c490f90",
+    "branch_merged": "025-fix-reversal-pos-create (752a60c fix + c617790 RED test)",
+    "live_move_proof": "Attended destructive Move Ejagham025Src -> Target with the worktree build (provenance-guarded references.__file__ under the worktree): Rev025 Parent (211cfd23) -> Rev025 Child (e2039765) chain CREATED by GUID in the target en-index's OWN PartsOfSpeechOA; person entry links the created child; 1/134 entries carry a category link (exactly the fixture); R5 untouched (no Rev025 in LangProject); fr index skipped. Before the fix: 0/134. Target restored clean from Target.pre025bak afterward. Post-merge: test_reference_create_paths.py 7 passed on main."
   },
   "merged_to_main_commit": "cb88b00",
   "checkpoint_completed": "T037 Phase-2 live re-Move PASS (cycle 14): Target restored from clean Target.bak, destructive Move re-run @ 9d1266b (164 added/0 skipped; en index ab4d4345 reused R4; 134 top-level + 10 sub persisted = 144 on-disk), P0 sub-entry sense-loss fix VERIFIED (all 10 sub-entries' SensesRS match Preview plan exactly: 9x=1, 1x=0 for CLS8,14 legitimately senseless). Merged 025-full-reversals -> main @ cb88b00.",
   "qc_gate": "GREEN offline + LIVE-VALIDATED. Merged-tree suite: 1 pre-existing baseline fail (confirmed on branch 9d1266b AND main e033565 independently) / 1510 passed / 9 skipped / 14 xfailed / 14 xpassed.",
-  "blocker": null,
   "t037_phase2_fix": {
     "commit": "9d1266b",
     "fix": "reversals.py::_create_sub_entry now takes first_sense and links it via _link_remaining_senses; _apply_one_entry passes first_sense to both create paths so remaining_senses = target_senses[1:] is correct for sub-entries too. Top-level path unchanged.",
     "tests": "3 regression tests in test_reversal_category_resolve.py (1-sense sub -> 1; N-sense sub -> N; 0-sense sub stays 0 + top-level 1/2 unchanged). RED-confirmed pre-fix (Test A got 0).",
     "verification": "cycle13-verification.md: PASS all 5 items; tripwire reproduces SensesRS=0 when reverted; suite 1 failed / 1508 passed / 9 skipped / 14 xfailed / 14 xpassed; worktree clean at 9d1266b.",
-    "reports": ["cycle13-programmer.md", "cycle13-verification.md"]
+    "reports": [
+      "cycle13-programmer.md",
+      "cycle13-verification.md"
+    ]
   },
   "t037_phase2_remove": {
     "status": "PASS (cycle 14, live-validated)",
@@ -48,27 +61,32 @@
   "t037_phase2": {
     "status": "SUPERSEDED by t037_phase2_remove (was PARTIAL FAIL pre-fix)",
     "ran": "transfer.execute committed + persisted (fresh re-open confirmed). 134/134 top-level reversal entries written to target en index (GUID ab4d4345 reused, R4); top-level single+multi-sense linking PASS (foot/leg/palm frond = 2 senses); ReversalForm PASS; sub-entry recursion STRUCTURE PASS (all 7 parents, exact counts); LangProject.PartsOfSpeechOA untouched (13/13); config en.fwdictconfig SKIP (no write, no .gtbak).",
-    "FAIL": "sub-entry sense-linking: 9/10 sampled sub-entries have senses=0 where Preview correctly predicted 1 — silent data loss.",
+    "FAIL": "sub-entry sense-linking: 9/10 sampled sub-entries have senses=0 where Preview correctly predicted 1 \u2014 silent data loss.",
     "driver": "scratchpad/t037_move_driver.py",
     "log": "scratchpad/t037_move.log",
     "report": "specs/025-full-reversals/reviews/cycle12-verification-t037-move.md",
-    "note": "First attempt crashed pre-write on a UnicodeEncodeError (cp1252 console printing a non-ASCII gloss) BEFORE execute — no write; driver patched (UTF-8 stdout + PID-aware stale-lock precheck) and re-run clean."
+    "note": "First attempt crashed pre-write on a UnicodeEncodeError (cp1252 console printing a non-ASCII gloss) BEFORE execute \u2014 no write; driver patched (UTF-8 stdout + PID-aware stale-lock precheck) and re-run clean."
   },
   "t037_phase2_findings": [
-    "P0 (BLOCKING, 025's own code): reversals.py::_apply_one_entry (~807-839) computes remaining_senses = target_senses[1:] assuming the create linked sense #1 — true for _create_top_level_entry (wrapper Create(index, text, first_sense) links it) but FALSE for _create_sub_entry (raw factory + SubentriesOS.Add, links NO sense and never receives first_sense). So a 1-sense sub-entry drops its only sense silently (no exception/DroppedItemRecord/warning). Fix: give _create_sub_entry a first_sense param and link it (mirror top-level), OR have the create fns report whether they consumed first_sense so remaining_senses is computed per-branch. Add regression: sub-entry with N senses -> exactly N in SensesRS after apply_reversals.",
+    "P0 (BLOCKING, 025's own code): reversals.py::_apply_one_entry (~807-839) computes remaining_senses = target_senses[1:] assuming the create linked sense #1 \u2014 true for _create_top_level_entry (wrapper Create(index, text, first_sense) links it) but FALSE for _create_sub_entry (raw factory + SubentriesOS.Add, links NO sense and never receives first_sense). So a 1-sense sub-entry drops its only sense silently (no exception/DroppedItemRecord/warning). Fix: give _create_sub_entry a first_sense param and link it (mirror top-level), OR have the create fns report whether they consumed first_sense so remaining_senses is computed per-branch. Add regression: sub-entry with N senses -> exactly N in SensesRS after apply_reversals.",
     "Finding 2 (non-blocking, 024-era): categories.py::_run_post_pass_a (~4750) calls non-existent FLExProject.get_object_by_guid -> AttributeError, caught by transfer.execute per-action try/except and logged as WARN but NOT emitted as a DroppedItemRecord (invisible to never-silent). Fix/remove the dead call and/or emit a dropped record.",
-    "Finding 3 (non-blocking, working-as-designed): the cycle-11 never-silent fix now correctly surfaces pre-existing 024 gaps — dropped_items grew 6 -> 265(Preview)/337(post): mostly MoForm.MorphTypeRA + CmTranslation.TypeRA 'shared-default diverged', plus ~72 LexExampleSentence.TranslationsOC 'FLExProject has no attribute Translations'. Backlog, not a regression."
+    "Finding 3 (non-blocking, working-as-designed): the cycle-11 never-silent fix now correctly surfaces pre-existing 024 gaps \u2014 dropped_items grew 6 -> 265(Preview)/337(post): mostly MoForm.MorphTypeRA + CmTranslation.TypeRA 'shared-default diverged', plus ~72 LexExampleSentence.TranslationsOC 'FLExProject has no attribute Translations'. Backlog, not a regression."
   ],
   "t037_findings_remediation": {
     "commit": "b8d325d",
     "finding1_closed": "references.py _multistring_dict resolver branch all-str keys (references.py:341,358 -> (handle_to_id.get(wh) or str(wh))); categories.py _plan_entry_reference_decisions catch-all now emits a guarded DroppedItemRecord via _append_dropped_once (never-silent restored). +TDD tripwires confirmed RED.",
     "finding2_closed": "preview.build_run_plan sets object.__setattr__(context,'_ws_map', to_ws_map_dict(ws_mapping)) before plan_reversal_decisions, mirroring transfer.execute -> Preview/Move WS parity for reversals. +TDD tripwire confirmed RED.",
     "regate": "cycle11: QC APPROVE (both CLOSED); verification PASS (suite 1505 pass/1 known-fail, tripwires genuine RED, worktree clean); domain SAFE-WITH-FOLLOWUP (bare-digit WS Id forbidden by BCP-47, non-blocking sentinel-prefix follow-up).",
-    "reports": ["cycle10-programmer.md", "cycle11-qc.md", "cycle11-verification.md", "cycle11-domain.md"]
+    "reports": [
+      "cycle10-programmer.md",
+      "cycle11-qc.md",
+      "cycle11-verification.md",
+      "cycle11-domain.md"
+    ]
   },
   "non_blocking_followups": [
-    "sentinel-prefix hardening f'~unresolved~{wh}' for the _multistring_dict fallback key (domain cycle11) — near-zero regression cost, makes fallback key-space provably disjoint from any legal WS Id.",
-    "live-MCP re-confirm of WS Id/handle shapes (domain cycle11 tool caveat — reviewer lacked live FLExToolsMCP, reused recorded live evidence).",
+    "sentinel-prefix hardening f'~unresolved~{wh}' for the _multistring_dict fallback key (domain cycle11) \u2014 near-zero regression cost, makes fallback key-space provably disjoint from any legal WS Id.",
+    "live-MCP re-confirm of WS Id/handle shapes (domain cycle11 tool caveat \u2014 reviewer lacked live FLExToolsMCP, reused recorded live evidence).",
     "P1-1 (reuse RunPlan.reversal_decisions at Move) and P1-2 (DRY _target_ws_ids)."
   ],
   "t037_phase1": {
@@ -79,10 +97,10 @@
     "driver": "scratchpad/t037_driver.py (reusable, has --move flag that currently hard-refuses)",
     "log": "scratchpad/t037_run1.log",
     "report": "specs/025-full-reversals/reviews/cycle9-verification-t037-preview.md",
-    "scenario_coverage": "S1 SUPPORTED (Preview verified); S2 NOT-EXERCISABLE (no reversal entry has PartOfSpeechRA in this corpus); S3 NOT-EXERCISABLE (identity WS, no unmapped index); S4 PARTIAL (SKIP path only — no ADD/OVERWRITE/missing_refs in this corpus); S5 PARTIAL + gap (Finding 1)."
+    "scenario_coverage": "S1 SUPPORTED (Preview verified); S2 NOT-EXERCISABLE (no reversal entry has PartOfSpeechRA in this corpus); S3 NOT-EXERCISABLE (identity WS, no unmapped index); S4 PARTIAL (SKIP path only \u2014 no ADD/OVERWRITE/missing_refs in this corpus); S5 PARTIAL + gap (Finding 1)."
   },
   "t037_findings": [
-    "FINDING 1 (never-silent violation, 024-era shared path, fidelity-critical): ~164 stem entries hit TypeError in references.py::divergence_fingerprint (sorted() over mixed int/str keys from _multistring_dict when a WS handle is absent from handle_to_id); swallowed by broad except in categories.py::_plan_entry_reference_decisions (~3480-3488) that returns () with NO DroppedItemRecord. Reference-field divergences silently discarded — contradicts FR-010/Principle III never-silent. Does NOT corrupt reversal decisions (separate call) but is a real completeness gap. Fix: make _multistring_dict keys consistently str (never mixed) AND emit a DroppedItemRecord from the catch-all.",
+    "FINDING 1 (never-silent violation, 024-era shared path, fidelity-critical): ~164 stem entries hit TypeError in references.py::divergence_fingerprint (sorted() over mixed int/str keys from _multistring_dict when a WS handle is absent from handle_to_id); swallowed by broad except in categories.py::_plan_entry_reference_decisions (~3480-3488) that returns () with NO DroppedItemRecord. Reference-field divergences silently discarded \u2014 contradicts FR-010/Principle III never-silent. Does NOT corrupt reversal decisions (separate call) but is a real completeness gap. Fix: make _multistring_dict keys consistently str (never mixed) AND emit a DroppedItemRecord from the catch-all.",
     "FINDING 2 (025 Preview/Move parity, 025's own code): preview.build_run_plan never sets context._ws_map, so plan_reversals (reversals.py:443 ws_map = getattr(ctx,'_ws_map',None) or {}) always runs under identity WS in Preview; transfer.execute DOES set it (transfer.py:353). Preview can't predict Move for reversals under a non-identity WSMapping. Harmless for Ejagham Mini->Target (shared en/etu). Fix: build_run_plan should object.__setattr__(context,'_ws_map', to_ws_map_dict(ws_mapping)) before plan_reversal_decisions, mirroring execute."
   ],
   "worktree": {
@@ -93,16 +111,56 @@
     "merged_to_main": true,
     "merge_commit": "cb88b00"
   },
-  "dependency_024": { "gate": "T004", "status": "PASS" },
+  "dependency_024": {
+    "gate": "T004",
+    "status": "PASS"
+  },
   "tasks_total": 37,
-  "tasks_done": ["T001","T002","T003","T004","T005","T006","T007","T008","T009","T010","T011","T012","T013","T014","T015","T016","T017","T018","T019","T020","T021","T022","T023","T024","T025","T026","T027","T028","T029","T030","T031","T032","T033","T034","T035","T036"],
+  "tasks_done": [
+    "T001",
+    "T002",
+    "T003",
+    "T004",
+    "T005",
+    "T006",
+    "T007",
+    "T008",
+    "T009",
+    "T010",
+    "T011",
+    "T012",
+    "T013",
+    "T014",
+    "T015",
+    "T016",
+    "T017",
+    "T018",
+    "T019",
+    "T020",
+    "T021",
+    "T022",
+    "T023",
+    "T024",
+    "T025",
+    "T026",
+    "T027",
+    "T028",
+    "T029",
+    "T030",
+    "T031",
+    "T032",
+    "T033",
+    "T034",
+    "T035",
+    "T036"
+  ],
   "tasks_remaining": [],
   "all_user_stories_implemented": true,
-  "next_checkpoint": "Attended DESTRUCTIVE Move Ejagham025Src -> Target to end-to-end-validate the clsid-5049 hotfix (752a60c), then merge 025-fix-reversal-pos-create -> main.",
-  "next_entry": "HUMAN-AUTHORIZED step: run the attended destructive Move (see hotfix_reversal_pos_create.next_human_step), confirm the created reversal category lands in the target index's own PartsOfSpeechOA (R5 untouched), then merge the hotfix branch. Deferred behind it: PyQt Preview-pane UI confirm. (Feature-025 body itself was complete + merged @ cb88b00; non-blocking backlog unchanged.)",
+  "next_checkpoint": "PyQt Preview-pane UI confirm (render_reversal_decisions / render_config_view_records) -- the last remaining 025 backlog item.",
+  "next_entry": "clsid-5049 reversal-category CREATE hotfix is DONE: offline-green + tripwire + QC APPROVE 95/100 + attended live Move end-to-end PASS + merged to main @ c490f90. Remaining 025 backlog: PyQt Preview-pane UI confirm (deferred; headless drivers already proved the decision data). Disposable fixtures Ejagham025Src + Target.pre025bak retained.",
   "carry_forward_settled_green": [
     "Items 1/2/5 (cycle 5) + both P0s (cycles 6-7): CLOSED. Do NOT relitigate.",
-    "ReversalForm census decision (a): included via FieldSpec.kind == 'MU' (IMultiUnicode value field), classified COPIED — grounded in the SC-003/FR-010 never-silent principle; NOT the 024 Discussion silent-exclusion precedent."
+    "ReversalForm census decision (a): included via FieldSpec.kind == 'MU' (IMultiUnicode value field), classified COPIED \u2014 grounded in the SC-003/FR-010 never-silent principle; NOT the 024 Discussion silent-exclusion precedent."
   ],
   "deferred_tech_debt_p1": [
     "P1-1: Move recomputes plan_reversals instead of reusing RunPlan.reversal_decisions (Preview/Move divergence risk).",

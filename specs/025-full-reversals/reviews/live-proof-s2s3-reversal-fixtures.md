@@ -121,3 +121,30 @@ not in `{66,26,5042,5118,7}` hits the same dead end. Enumerate every
   `render_reversal_decisions` / `render_config_view_records` (separate GUI run).
 - S2's LINK+diverged and REPORT_DROPPED-absent-list arms remain fake-only
   (Target's `en` index has 0 categories, so only the CREATE arm was live-reachable).
+
+---
+
+## RESOLUTION (2026-07-18) — Finding 1 fixed + live-proven, merged @ `c490f90`
+
+Finding 1 was fixed via a LEX crew cycle (worktree `025-fix-reversal-pos-create`):
+
+- **Sweep audit** (`cycle1-domain.md`): 23/23 `REFERENCE_FIELD_MAP` rows safe; clsid
+  5049 the only live miss, plus one latent 030 thesaurus dynamic-owner sibling the
+  same patch covers.
+- **Fix** (`752a60c`): `references.py` CREATE arm now dispatches clsid 5049 →
+  `IPartOfSpeechFactory`'s **owner-taking** `Create` (root `Create(guid, list)`,
+  child `Create(guid, parent)`), bypassing the create-then-add idiom. Chain lands in
+  the target reversal index's own `PartsOfSpeechOA` (never `LangProject`'s / R5).
+- **Gates**: offline suite 1719 passed / 22 pre-existing (no new); RED→GREEN with a
+  revert tripwire (RED-on-revert confirmed); QC APPROVE 95/100 (`cycle2-qc.md`,
+  `cycle2-verification.md`).
+- **Attended live Move re-validation** (worktree build, provenance-guarded): the
+  `Rev025 Parent → Rev025 Child` chain is now **CREATED by GUID** in the target
+  `en`-index's own category list, `person` links the created child, **1/134** entries
+  carry a category link (was **0/134**), R5 untouched, `fr` skipped. Target restored
+  clean from `Target.pre025bak`.
+- **Merged** `025-fix-reversal-pos-create` → `main` @ `c490f90`;
+  `test_reference_create_paths.py` 7 passed on main post-merge.
+
+**S2 is now live-proven end-to-end.** Remaining 025 backlog: the PyQt Preview-pane UI
+render check (deferred).
