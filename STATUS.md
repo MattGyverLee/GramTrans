@@ -1,5 +1,49 @@
 # GramTrans — Session Handoff
 
+## ▶▶▶ Feature 025 HOTFIX — reversal-category CREATE (clsid 5049) — OFFLINE-GREEN, awaits attended Move (2026-07-18)
+
+**Follow-up P0 discovered after 025 merged.** The reversal-category CREATE arm did
+not dispatch clsid **5049** (`IPartOfSpeech`) to its owner-taking factory, so a new
+reversal category could not be created in a target reversal index's own
+`PartsOfSpeechOA`. Fixed on a dedicated worktree (NOT yet merged):
+
+- **Worktree:** `D:/Github/_Projects/_LEX/GramTrans-025-fix-reversal-pos-create`
+- **Branch:** `025-fix-reversal-pos-create`, fix commit **`752a60c`**
+- **Fix:** CREATE arm now maps `5049 -> IPartOfSpeechFactory` and calls the
+  owner-taking overload (root `Create(guid, ICmPossibilityList(target_list))`, child
+  `Create(guid, parent IPartOfSpeech)`), bypassing `_add_to_owner`. Lands in the
+  target reversal index's own `PartsOfSpeechOA` (R5 `LangProject.PartsOfSpeechOA`
+  untouched). `references.py` ~1091-1105.
+
+**Offline gates GREEN (cycle-2 crew review):**
+- Verification: suite **1719 passed / 22 pre-existing failures** (baseline unchanged,
+  no new regressions); target test
+  `test_create_path_reversal_category_hierarchical_owner_taking_factory` GREEN.
+  **Revert tripwire CONFIRMED** — reverting only the CREATE-arm fix reproduces
+  `UnmappedItemClassError: unmapped item class 5049 for CREATE`, then re-green on
+  restore. Load-bearing, not a no-op.
+- QC: **APPROVE 95/100**, no P0/P1. Pattern-audit gate PASS (030 thesaurus
+  dynamic-owner path routes through the SAME shared `apply_reference` CREATE-arm
+  dispatch — covered structurally). One P2 (5049 is a hand-rolled special-case, not a
+  table-driven owner-taking dispatch — acceptable for a hotfix; ticket if a 3rd
+  owner-taking clsid appears).
+
+**Why the offline test is the load-bearing proof:** a read-only Preview CANNOT
+exercise this fix — the bug/fix live in the MOVE/apply path
+(`execute_move -> apply_reversals -> _apply_pos_decision -> apply_reference` CREATE
+arm). `compute_preview` already planned `pos_action=create` BEFORE the fix. The
+offline unit test (GREEN + tripwire) is the regression proof.
+
+**BLOCKED on human authorization (needs_human):** the only end-to-end live proof is
+the **attended DESTRUCTIVE Move** `Ejagham025Src -> Target`. Main session has
+FLExToolsMCP + planted fixtures + a Target backup ready. Do NOT run unattended.
+Pickup after that: re-confirm the created category lands in the index's own
+`PartsOfSpeechOA`, then merge `025-fix-reversal-pos-create -> main`. Deferred behind
+it: the PyQt Preview-pane UI confirm.
+
+Reviews: `specs/025-full-reversals/reviews/p0-reversal-pos-create-cycle2-programmer.md`,
+`cycle2-qc.md`, `cycle2-verification.md`.
+
 ## ▶▶▶ Feature 030 — Sense Appendix & Thesaurus Refs — MERGED (2026-07-16)
 
 **MERGED to `main`** (`--no-ff`, worktree branch `030-sense-appendix-thesaurus-refs`
