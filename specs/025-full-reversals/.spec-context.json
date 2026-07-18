@@ -3,7 +3,30 @@
   "specName": "025-full-reversals",
   "branch": "025-full-reversals",
   "selectedAt": "2026-07-13T03:41:55.416Z",
-  "currentStep": "specify",
-  "status": "draft",
-  "history": []
+  "currentStep": "implement",
+  "status": "implemented",
+  "history": [
+    {
+      "step": "implement",
+      "substep": null,
+      "kind": "start",
+      "by": "user",
+      "at": "2026-07-18T03:32:02.542Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "kind": "start",
+      "by": "extension",
+      "at": "2026-07-18T03:32:15.655Z"
+    },
+    {
+      "step": "implement",
+      "substep": "run-tests",
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-07-18T03:33:41.000Z"
+    }
+  ],
+  "telemetryInstanceId": "09c15dea-4f71-40d8-9302-b5a74a21b83a"
 }

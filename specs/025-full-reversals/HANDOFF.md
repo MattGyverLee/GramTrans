@@ -72,8 +72,8 @@ Run against **Ejagham Mini → Target** (disposable, user-confirmed). Reusable d
 | Scenario | Offline | Live (T037) |
 |---|---|---|
 | S1 reversal ride-along | ✅ | Preview ✅; Move top-level ✅; **sub-entry sense re-Move ✅ (cycle 14)** |
-| S2 per-index category resolve | ✅ | Not exercisable — no reversal `PartOfSpeechRA` in Ejagham Mini (needs fixture) |
-| S3 WS gate | ✅ | Not exercisable — identity `en`/`etu` WS pair (needs unmapped-WS fixture) |
+| S2 per-index category resolve | ✅ | **Fixture built (2026-07-18, `Ejagham025Src`): Preview ✅ CREATE; Move ❌ — real P0 found (reversal category CREATE never lands: `references.py` `factory_by_item_clsid` missing clsid 5049/PartOfSpeech). See `reviews/live-proof-s2s3-reversal-fixtures.md`** |
+| S3 WS gate | ✅ | **Fixture built (2026-07-18, `Ejagham025Src` `fr` index): Preview ✅ + Move ✅ — 1 `ReversalIndex` "writing system not mapped" drop, `fr` skipped on disk. See `reviews/live-proof-s2s3-reversal-fixtures.md`** |
 | S4 config views | ✅ | ✅ **ADD / OVERWRITE / `.gtbak` / `missing_refs`(WS+style+custom-field) / idempotent-SKIP all live-proven 17/17 via FLExToolsMCP (2026-07-16)** — surfaced + fixed a real live-vs-fake bug (custom-field missing-ref silently dropped; `GetAllFields` needs `owner_class`). See `reviews/live-proof-configviews.md` |
 | S5 unified never-silent | ✅ | ✅ (channel confirmed; now surfacing real 024 gaps — see backlog) |
 
