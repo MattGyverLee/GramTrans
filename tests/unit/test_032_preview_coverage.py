@@ -1,0 +1,435 @@
+"""Feature 032 — Preview coverage completion (US1 blank, US2 thin, US3 regression guard).
+
+Offline, Qt-free, LCM-free. Uses duck-typed fakes and plain-dict multistrings
+(``_ms_to_dict`` accepts a plain dict directly). Live behaviour was separately
+proven read-only via FLExToolsMCP against ``Ejagham Mini`` (texts / writing
+systems / complex form types) and ``Mbugwe Lizzie HCPractice`` (ad hoc rules,
+slots, phonological features, phonological rules); see
+specs/032-preview-coverage-completion/research.md (T004) and
+contracts/adhoc-loss-probe.md is out of P1 scope.
+
+Covers:
+- T005  bounded excerpt / bounded list helpers (FR-018)
+- T007  US1 props-shape for Text / Writing System / Complex Form Type / Ad hoc
+- T008  US1 non-blank result for a populated fixture
+- T009  US1 create-case (source-only) + graceful degradation (read failure)
+- T010  dispatch registration (four categories resolve to a non-None reader)
+- T016  US2 enrichment: Phon Feature {Type, Values}, Phon Rule {Structure}, Slot {Affixes}
+- T017  US2 bounded Slot affix list (FR-018)
+- T022  US3 Natural Class Members/Features delivery is load-bearing (absent
+        without the enrich step, present with it — on identical fixture data)
+"""
+from __future__ import annotations
+
+import pytest
+
+from gramtrans.Lib import merge_preview as mp
+from gramtrans.Lib.merge_preview import (
+    _CATEGORY_VALUE_TO_KEY,
+    _DEDICATED_READERS,
+    _bounded_excerpt,
+    _bounded_list,
+    _enrich_natural_class,
+    _enrich_phon_feature,
+    _enrich_phon_rule,
+    _enrich_slot,
+    _resolve_category_key,
+    props_for,
+)
+
+
+# ===========================================================================
+# Duck-typed fakes
+# ===========================================================================
+
+
+class FakeGuidObj:
+    """Object whose GUID is read via the `.guid` fallback in `_obj_guid`."""
+
+    def __init__(self, guid, **attrs):
+        self.guid = guid
+        for k, v in attrs.items():
+            setattr(self, k, v)
+
+
+class FakeTextOps:
+    def __init__(self, texts, name_by_guid, paras_by_guid):
+        self._texts = texts
+        self._names = name_by_guid
+        self._paras = paras_by_guid
+
+    def GetAll(self):
+        return self._texts
+
+    def GetName(self, text):
+        return self._names.get(text.guid, "")
+
+    def GetParagraphs(self, text):
+        return self._paras.get(text.guid, [])
+
+
+class FakeSegOps:
+    def __init__(self, segs_by_para, baseline_by_seg):
+        self._segs = segs_by_para
+        self._baselines = baseline_by_seg
+
+    def GetAll(self, para):
+        return self._segs.get(para.guid, [])
+
+    def GetBaselineText(self, seg):
+        return self._baselines.get(seg.guid, "")
+
+
+class FakeTextHandle:
+    def __init__(self, text_ops, seg_ops=None):
+        self.Texts = text_ops
+        if seg_ops is not None:
+            self.Segments = seg_ops
+
+
+class FakeWs:
+    def __init__(self, ws_id, name):
+        self.Id = ws_id
+        self.DisplayLabel = name
+
+
+class FakeWsOps:
+    def __init__(self, all_ws, vern_ws):
+        self._all = all_ws
+        self._vern = vern_ws
+
+    def GetAll(self):
+        return self._all
+
+    def GetVernacular(self):
+        return self._vern
+
+
+class FakeWsHandle:
+    def __init__(self, ws_ops):
+        self.WritingSystems = ws_ops
+
+
+# ===========================================================================
+# T005 — bounded excerpt / list helpers (FR-018)
+# ===========================================================================
+
+
+class TestBounding:
+    def test_short_string_not_truncated(self):
+        excerpt, truncated = _bounded_excerpt("short baseline")
+        assert excerpt == "short baseline"
+        assert truncated is False
+
+    def test_long_string_truncated_with_flag(self):
+        long = "x" * 500
+        excerpt, truncated = _bounded_excerpt(long)
+        assert truncated is True
+        assert len(excerpt) <= mp._EXCERPT_CHAR_LIMIT + 1  # + ellipsis
+        assert excerpt.endswith("…")
+
+    def test_empty_string(self):
+        assert _bounded_excerpt("") == ("", False)
+        assert _bounded_excerpt(None) == ("", False)
+
+    def test_short_list_not_truncated(self):
+        lst, truncated = _bounded_list(["a", "b", "c"])
+        assert lst == ["a", "b", "c"]
+        assert truncated is False
+
+    def test_long_list_truncated(self):
+        items = [str(i) for i in range(100)]
+        lst, truncated = _bounded_list(items)
+        assert truncated is True
+        assert len(lst) == mp._LIST_ITEM_LIMIT
+
+
+# ===========================================================================
+# T010 — dispatch registration (four blank categories now resolve)
+# ===========================================================================
+
+
+class TestDispatchRegistration:
+    @pytest.mark.parametrize(
+        "category",
+        ["texts", "writing_systems_check", "complex_form_types", "adhoc_compound_rules"],
+    )
+    def test_category_resolves_to_reader(self, category):
+        key = _resolve_category_key(category)
+        assert key is not None, f"{category} should no longer map to None"
+        assert key in _DEDICATED_READERS, f"{category} should have a dedicated reader"
+
+    def test_map_no_longer_blanks_the_four(self):
+        for cat in ("texts", "writing_systems_check", "complex_form_types",
+                    "adhoc_compound_rules"):
+            assert _CATEGORY_VALUE_TO_KEY.get(cat) is not None
+
+
+# ===========================================================================
+# US1 — Text reader (T007/T008/T009)
+# ===========================================================================
+
+
+class TestTextReader:
+    def _handle(self, baseline="1 nnat nnyone 2 anat mbane"):
+        text = FakeGuidObj("text-1")
+        para = FakeGuidObj("para-1")
+        seg = FakeGuidObj("seg-1")
+        text_ops = FakeTextOps([text], {"text-1": "W Noun Interrogatives"},
+                               {"text-1": [para]})
+        seg_ops = FakeSegOps({"para-1": [seg]}, {"seg-1": baseline})
+        return FakeTextHandle(text_ops, seg_ops)
+
+    def test_text_populated_non_blank(self):
+        props = props_for(self._handle(), "texts", "text-1")
+        assert props  # non-empty (SC-001)
+        assert props["Title"] == "W Noun Interrogatives"
+        assert "nnat" in props["Baseline"]
+        assert "Truncated" not in props  # short baseline
+
+    def test_text_baseline_truncated(self):
+        props = props_for(self._handle(baseline="w " * 400), "texts", "text-1")
+        assert props["Truncated"] == "baseline excerpt truncated"
+        assert props["Baseline"].endswith("…")
+
+    def test_text_title_only_when_no_baseline(self):
+        """Create-case / empty-baseline: show what exists, assert nothing absent."""
+        text = FakeGuidObj("text-2")
+        text_ops = FakeTextOps([text], {"text-2": "Empty Text"}, {"text-2": []})
+        props = props_for(FakeTextHandle(text_ops), "texts", "text-2")
+        assert props == {"Title": "Empty Text"}
+
+    def test_text_missing_returns_none(self):
+        text_ops = FakeTextOps([], {}, {})
+        assert props_for(FakeTextHandle(text_ops), "texts", "nope") is None
+
+    def test_text_read_failure_degrades_to_none_not_raise(self):
+        class Exploding:
+            @property
+            def Texts(self):
+                raise RuntimeError("boom")
+
+        # props_for wraps the dedicated reader — never raises.
+        assert props_for(Exploding(), "texts", "x") is None
+
+
+# ===========================================================================
+# US1 — Writing System reader (T007/T008)
+# ===========================================================================
+
+
+class TestWritingSystemReader:
+    def _handle(self):
+        en = FakeWs("en", "English")
+        etu = FakeWs("etu", "Etung")
+        etu_ipa = FakeWs("etu-fonipa", "Etung (IPA)")
+        return FakeWsHandle(FakeWsOps([en, etu, etu_ipa], [etu, etu_ipa]))
+
+    def test_ws_analysis_primary(self):
+        props = props_for(self._handle(), "writing_systems_check", "en")
+        assert props["Name"] == "English"
+        assert props["Code"] == "en"
+        assert props["Kind"] == "analysis"
+        assert props["Rank"] == "primary"
+        assert props["MapsTo"] == "unresolved"
+
+    def test_ws_vernacular_primary(self):
+        props = props_for(self._handle(), "writing_systems_check", "etu")
+        assert props["Kind"] == "vernacular"
+        assert props["Rank"] == "primary"
+
+    def test_ws_sub_variant_rank(self):
+        props = props_for(self._handle(), "writing_systems_check", "etu-fonipa")
+        assert props["Kind"] == "vernacular"
+        assert props["Rank"] == "sub"
+
+    def test_ws_unknown_id_returns_none(self):
+        assert props_for(self._handle(), "writing_systems_check", "zz") is None
+
+
+# ===========================================================================
+# US1 — Complex Form Type reader (T007) — finder monkeypatched
+# ===========================================================================
+
+
+class TestComplexFormTypeReader:
+    def test_cft_name_abbrev_reverse(self, monkeypatch):
+        node = FakeGuidObj(
+            "cft-1",
+            Name={"en": "Compound"},
+            Abbreviation={"en": "cmp"},
+            Description={"en": "A compound complex form."},
+            ReverseName={"en": "component of"},
+            ReverseAbbr={"en": "comp. of"},
+        )
+        monkeypatch.setattr(mp, "_find_complex_form_type_by_guid",
+                            lambda handle, guid: node if guid == "cft-1" else None)
+        props = props_for(object(), "complex_form_types", "cft-1")
+        assert props["Name"] == {"en": "Compound"}
+        assert props["Abbreviation"] == {"en": "cmp"}
+        assert props["ReverseName"] == {"en": "component of"}
+        assert props["ReverseAbbr"] == {"en": "comp. of"}
+
+    def test_cft_missing_returns_none(self, monkeypatch):
+        monkeypatch.setattr(mp, "_find_complex_form_type_by_guid",
+                            lambda handle, guid: None)
+        assert props_for(object(), "complex_form_types", "x") is None
+
+
+# ===========================================================================
+# US1 — Ad hoc / Compound rule reader (T007) — finder monkeypatched
+# ===========================================================================
+
+
+class TestAdhocReader:
+    def test_adhoc_referenced_elements(self, monkeypatch):
+        rule = FakeGuidObj(
+            "rule-1",
+            ClassName="MoMorphAdhocProhib",
+            MorphemesRS=[FakeGuidObj("m1", LongName="Noun"),
+                         FakeGuidObj("m2", LongName="Affix in np slot")],
+        )
+        monkeypatch.setattr(mp, "_find_adhoc_rule_by_guid",
+                            lambda handle, guid: rule if guid == "rule-1" else None)
+        props = props_for(object(), "adhoc_compound_rules", "rule-1")
+        assert props["ReferencedElements"] == ["Noun", "Affix in np slot"]
+
+    def test_adhoc_identity_fallback_never_blank(self, monkeypatch):
+        """A rule with no name and no readable refs still yields its class type
+        so the pane is never blank (FR-011)."""
+        rule = FakeGuidObj("rule-2", ClassName="MoEndoCompound")
+        monkeypatch.setattr(mp, "_find_adhoc_rule_by_guid",
+                            lambda handle, guid: rule)
+        props = props_for(object(), "adhoc_compound_rules", "rule-2")
+        assert props == {"Type": "MoEndoCompound"}
+
+    def test_adhoc_bounded_reference_list(self, monkeypatch):
+        rule = FakeGuidObj(
+            "rule-3", ClassName="MoMorphAdhocProhib",
+            MorphemesRS=[FakeGuidObj(f"m{i}", LongName=f"morph{i}") for i in range(60)],
+        )
+        monkeypatch.setattr(mp, "_find_adhoc_rule_by_guid", lambda h, g: rule)
+        props = props_for(object(), "adhoc_compound_rules", "rule-3")
+        assert len(props["ReferencedElements"]) == mp._LIST_ITEM_LIMIT
+        assert props["Truncated"] == "referenced-element list truncated"
+
+
+# ===========================================================================
+# US2 — thin-category enrichers (T016/T017)
+# ===========================================================================
+
+
+class TestPhonFeatureEnrich:
+    def test_type_and_values(self):
+        obj = FakeGuidObj(
+            "pf-1",
+            ValuesOC=[FakeGuidObj("v1", Abbreviation={"en": "+"}),
+                      FakeGuidObj("v2", Abbreviation={"en": "-"})],
+        )
+        raw = {"Name": {"en": "back"}}
+        _enrich_phon_feature(obj, raw)
+        assert raw["Values"] == ["+", "-"]
+        assert raw["Type"] == "closed"
+
+    def test_no_values_leaves_label_level(self):
+        obj = FakeGuidObj("pf-2", ValuesOC=[])
+        raw = {"Name": {"en": "novalues"}}
+        _enrich_phon_feature(obj, raw)
+        assert "Values" not in raw
+        assert raw == {"Name": {"en": "novalues"}}
+
+
+class TestPhonRuleEnrich:
+    def test_structure_summary(self):
+        obj = FakeGuidObj(
+            "pr-1",
+            StrucDescOS=[object(), object()],
+            RightHandSidesOS=[object()],
+            Direction=0,
+            OrderNumber=3,
+        )
+        raw = {"Name": {"en": "make y-initial stems"}}
+        _enrich_phon_rule(obj, raw)
+        assert "2 context(s)" in raw["Structure"]
+        assert "1 RHS" in raw["Structure"]
+        assert "direction=0" in raw["Structure"]
+        assert "order=3" in raw["Structure"]
+
+    def test_two_rules_same_name_distinguishable(self):
+        r1 = FakeGuidObj("a", StrucDescOS=[object()], RightHandSidesOS=[object()],
+                         Direction=0, OrderNumber=1)
+        r2 = FakeGuidObj("b", StrucDescOS=[object()], RightHandSidesOS=[object()],
+                         Direction=0, OrderNumber=2)
+        raw1, raw2 = {}, {}
+        _enrich_phon_rule(r1, raw1)
+        _enrich_phon_rule(r2, raw2)
+        assert raw1["Structure"] != raw2["Structure"]  # FR-006
+
+
+class TestSlotEnrich:
+    def test_affixes_surface(self):
+        obj = FakeGuidObj("slot-1",
+                          Affixes=[FakeGuidObj("a1", LongName="Affix in (aug) slot")])
+        raw = {"Name": {"en": "aug"}, "Optional": True}
+        _enrich_slot(obj, raw)
+        assert raw["Affixes"] == ["Affix in (aug) slot"]
+
+    def test_affix_list_bounded(self):
+        obj = FakeGuidObj(
+            "slot-2",
+            Affixes=[FakeGuidObj(f"a{i}", LongName=f"affix{i}") for i in range(60)],
+        )
+        raw = {"Name": {"en": "big"}}
+        _enrich_slot(obj, raw)
+        assert len(raw["Affixes"]) == mp._LIST_ITEM_LIMIT
+        assert raw["Truncated"] == "affix list truncated"
+
+
+# ===========================================================================
+# US3 — Natural Class Members/Features delivery is load-bearing (T022, SC-003)
+# ===========================================================================
+
+
+class FakePhoneme:
+    """Duck-typed phoneme: `_phoneme_label` reads Name (dict) first."""
+
+    def __init__(self, grapheme):
+        self.Name = {"en": grapheme}
+
+
+class FakeSegmentNC:
+    """Segment-based NC: `_natural_class_members` casts to IPhNCSegments (no-op
+    headless) then reads SegmentsRC."""
+
+    def __init__(self, graphemes):
+        self.SegmentsRC = [FakePhoneme(g) for g in graphemes]
+
+
+class TestNaturalClassRegressionGuard:
+    def test_members_absent_before_and_present_after_enrich(self):
+        """On identical fixture data: the resolved dict has NO Members until the
+        delivery step (`_enrich_natural_class`) runs, and HAS them after. This
+        pins the regression fix as load-bearing (SC-003, FR-008).
+
+        NOTE (T023 live-pin): the segment-based Natural Class preview already
+        delivers Members on `main` for the Ejagham Mini pair — the described
+        regression does not reproduce on the covered path. This guard therefore
+        pins the delivery contract so any future change that drops Members from
+        render fails here.
+        """
+        nc = FakeSegmentNC(["bh", "ch", "r", "g", "l"])
+        raw = {"Name": {"en": "Consonants"}, "Abbreviation": {"en": "C"}}
+        # BEFORE the delivery step: members are resolvable but not in the dict.
+        assert "Members" not in raw
+        # AFTER: the enrich step delivers them onto the render dict.
+        _enrich_natural_class(nc, raw)
+        assert raw["Members"] == ["bh", "ch", "r", "g", "l"]
+
+    def test_members_survive_prop_filter(self):
+        """A non-empty Members list is not dropped by `_filter_props` (the
+        candidate downstream drop point, R1)."""
+        nc = FakeSegmentNC(["m", "n"])
+        raw = {"Name": {"en": "Nasals"}}
+        _enrich_natural_class(nc, raw)
+        filtered = mp._filter_props(raw)
+        assert filtered.get("Members") == ["m", "n"]
