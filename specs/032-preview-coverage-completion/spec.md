@@ -8,6 +8,15 @@
 
 **Input**: User description: "Preview coverage completion for grammar categories in the GramTrans selection wizard's per-item Merge-Preview pane, plus a WS-mapping default and an Ad hoc transfer-loss investigation."
 
+## Clarifications
+
+### Session 2026-07-19
+
+- Q: How should a source sub-writing-system be matched to a target sub-writing-system to pick the US4 default? → A: By the subtag suffix *relative to each side's primary vernacular* (e.g. source primary `eja` + sub `eja-fonipa` → target primary `abc` + sub `abc-fonipa`), so IPA/phonetic, audio, and script variants line up across related languages that have different base language subtags.
+- Q: If the US5 investigation finds Ad hoc rule reproduction is feasible, is it built here or deferred? → A: This feature delivers only the root-cause characterization plus never-silent user-facing reporting of any loss; actual reproduction, if warranted, is a separate follow-up spec (US5 stays non-blocking).
+- Q: What verification does the Definition of Done require, given US1–US4 are read-only? → A: US1–US4 DoD = offline tests + a read-only live-render proof via FLExToolsMCP (open real projects, render the panes / exercise the WS default, assert content), with NO attended destructive Move; US5 uses a read-only probe. No `needs_human` Move gate, because nothing writes.
+- Q: How much baseline content should the US1 Texts preview show? → A: The text's title plus a bounded, readable excerpt of the vernacular baseline (first paragraph/segments up to a limit), with a truncation indicator when cut.
+
 ## User Scenarios & Testing *(mandatory)*
 
 A linguist preparing a cross-project grammar transfer uses the selection wizard. On
@@ -40,7 +49,7 @@ category-appropriate detail (not blank, not an error).
 1. **Given** a source project with writing systems and a selected WS row, **When** I view its preview, **Then** I see the writing system's identity and role (e.g. name, code, vernacular/analysis, primary vs sub) and how it maps into the target.
 2. **Given** a source with complex form types, **When** I select one, **Then** I see its name, abbreviation, and the defining detail a user needs to recognize it (e.g. type/patterns), diffed against the target if a matching type exists.
 3. **Given** a source with ad hoc / compound rules, **When** I select one, **Then** I see the rule's identity and the elements it references (the morphemes/classes involved), diffed against the target.
-4. **Given** a source with interlinear texts, **When** I select one, **Then** I see a baseline preview of the text (e.g. title and a readable excerpt of the baseline/vernacular content).
+4. **Given** a source with interlinear texts, **When** I select one, **Then** I see the text's title plus a bounded, readable excerpt of the vernacular baseline content (first paragraph/segments up to a limit), with a truncation indicator when the excerpt is cut.
 
 ### User Story 2 - See enough detail on thin-pane categories (Priority: P1)
 
@@ -100,7 +109,7 @@ sub→sub) and the step can be confirmed without manual edits when the correspon
 **Acceptance Scenarios**:
 
 1. **Given** a source primary vernacular WS and a target with its own primary vernacular WS, **When** the mapping step opens, **Then** that source row defaults to the target primary vernacular (not "choose", not "create").
-2. **Given** source sub-writing-systems, **When** the mapping step opens, **Then** each defaults to a corresponding target sub-writing-system of the primary vernacular where one exists.
+2. **Given** source sub-writing-systems, **When** the mapping step opens, **Then** each defaults to the target sub-writing-system whose subtag suffix (relative to the target primary vernacular) matches the source sub's suffix relative to the source primary vernacular — e.g. source `eja-fonipa` → target `abc-fonipa` — even though the base language subtags differ.
 3. **Given** a source writing system with no corresponding target writing system, **When** the mapping step opens, **Then** that row is left for the user to resolve (no false default), and confirm remains gated until it is resolved.
 
 ### User Story 5 - Characterize Ad hoc rule transfer loss (Priority: P2)
@@ -140,7 +149,7 @@ root-cause and scope decision.
 - **FR-001**: The per-item Preview pane MUST present item-specific detail for **Writing Systems**, so a selected writing system no longer renders a blank pane.
 - **FR-002**: The Preview pane MUST present item-specific detail for **Complex Form Types**, so a selected complex form type no longer renders a blank pane.
 - **FR-003**: The Preview pane MUST present item-specific detail for **Ad hoc / Compound rules**, so a selected ad hoc/compound rule no longer renders a blank pane.
-- **FR-004**: The Preview pane MUST present a **baseline text preview** for **Texts**, so a selected text no longer renders a blank pane.
+- **FR-004**: The Preview pane MUST present a **baseline text preview** for **Texts** — the title plus a bounded excerpt of the vernacular baseline (first paragraph/segments up to a limit) with a truncation indicator — so a selected text no longer renders a blank pane.
 - **FR-005**: The Preview pane for **Phonological Features** MUST show the feature's type and its permissible values in addition to name/abbreviation/description.
 - **FR-006**: The Preview pane for **Phonological Rules** MUST show the rule's structural content (the segments/context that define the rule), not only name and description.
 - **FR-007**: The Preview pane for **Slots** in the morpheme/morph skeleton MUST show the affixes occupying the slot, not only the slot's name and optionality.
@@ -149,10 +158,10 @@ root-cause and scope decision.
 - **FR-010**: All new and enriched previews MUST be **read-only**: they MUST NOT write to either project and MUST NOT alter the Move plan.
 - **FR-011**: When enrichment content cannot be read from a live item, the preview MUST degrade to the best available label-level detail rather than a blank pane, and MUST log the failure rather than surface broken output.
 - **FR-012**: The writing-system mapping step MUST default the source **Primary** writing system to the target's **primary vernacular** writing system when such a target exists.
-- **FR-013**: The writing-system mapping step MUST default source **sub**-writing-systems to the corresponding target sub-writing-systems of the primary vernacular where an unambiguous correspondence exists.
+- **FR-013**: The writing-system mapping step MUST default source **sub**-writing-systems to the target sub-writing-system whose subtag suffix relative to the target primary vernacular matches the source sub's subtag suffix relative to the source primary vernacular (suffix-based correspondence across differing base language subtags). Where more than one target sub shares the suffix, or none does, the correspondence is treated as not unambiguous (see FR-015).
 - **FR-014**: The writing-system mapping default MUST be a real target mapping — it MUST NOT default a row to "create new" or "skip".
 - **FR-015**: Where no unambiguous target correspondence exists for a source writing system, the mapping step MUST leave that row unresolved and MUST keep confirmation gated until the user resolves it (no false auto-mapping).
-- **FR-016**: The system MUST produce documented, evidence-backed characterization of the **Ad hoc rule transfer loss**, including root cause and a scope decision (reproduce vs. documented limitation).
+- **FR-016**: The system MUST produce documented, evidence-backed characterization of the **Ad hoc rule transfer loss**, including root cause. Reproduction of ad hoc/compound rules is **out of scope for this feature**; if the characterization shows reproduction is warranted, it MUST be recorded as a recommendation for a separate follow-up feature rather than built here.
 - **FR-017**: If Ad hoc/compound rule content is lost during Move within the chosen scope, the loss MUST be reported to the user explicitly (never-silent), consistent with the project's never-silent contract.
 - **FR-018**: Preview content that could be unbounded (long texts, large member/affix lists) MUST be presented as a bounded, readable excerpt/summary and MUST indicate when content has been truncated.
 - **FR-019**: All preview detail and writing-system role information MUST be derived from the actual project data (verified against live projects), not assumed; the source of truth for each category's shape MUST be confirmed against the live data model.
@@ -179,6 +188,7 @@ root-cause and scope decision.
 - **SC-005**: No preview action writes to any project or changes the Move plan (Preview-before-Move and non-destructive contracts hold).
 - **SC-006**: The Ad hoc rule transfer-loss investigation yields a written root cause plus an explicit scope decision, and any in-scope residual loss is surfaced to the user rather than silent.
 - **SC-007**: Preview rendering remains free of UI-toolkit coupling in the diff/render core (the existing Qt-free constraint on the render layer is preserved).
+- **SC-008**: US1–US4 are validated by offline tests plus a **read-only live-render proof** (real projects opened via the live data tooling, panes rendered / WS default exercised, content asserted) with **no destructive Move**; US5 is validated by a read-only probe. No user story requires an attended write-enabled Move proof, because none of them write to a project.
 
 ## Assumptions
 
@@ -186,6 +196,7 @@ root-cause and scope decision.
 - The eight categories' live data shapes will be **verified against live projects via the FLExTools MCP** (Ejagham Mini / Ejagham Full GT-Test and other read-only test projects) rather than by code inspection alone, per project rules.
 - The existing per-item Preview architecture (two-stage category dispatch, GUID-keyed caching, source-vs-target diff, live-LCM reads) is retained; this feature extends its coverage rather than replacing it.
 - The never-silent, Preview-before-Move, and non-destructive constitution principles govern all work here.
-- US5 (Ad hoc loss) may legitimately conclude as a **documented limitation** rather than new reproduction behavior; the deliverable is the characterization + user-facing honesty, not necessarily full reproduction.
+- US5 (Ad hoc loss) delivers a **characterization + never-silent user-facing reporting** of any loss; reproduction is explicitly out of scope for this feature (deferred to a follow-up if warranted).
+- Because US1–US4 are read-only (they render previews / set a UI default and never write to a project), their Definition of Done is offline tests + a read-only live-render proof; the project's attended `needs_human` destructive-Move gate does not apply to this feature.
 - Existing categories that already render rich previews (POS, entries/stems/affixes, senses, allomorphs, phonemes, environments, etc.) are out of scope except where they share a fix path with a targeted category.
 - The Move/apply engine's correctness for categories other than Ad hoc rules is out of scope for this feature.
