@@ -1,0 +1,16 @@
+{
+  "workflow": "speckit",
+  "specName": "Preview Coverage Completion for Grammar Categories",
+  "branch": "main",
+  "currentStep": "specify",
+  "status": "specified",
+  "history": [
+    {
+      "step": "specify",
+      "substep": null,
+      "kind": "start",
+      "by": "extension",
+      "at": "2026-07-19T22:32:16.823Z"
+    }
+  ]
+}
