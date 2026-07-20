@@ -73,6 +73,7 @@ if __package__:
     from ..merge_preview import MergePreviewService, OVERWRITE, MERGE_KEEP, NEW
     from ..models import SimilarResolution
     from ..report import RunReport
+    from ..ws_mapping import default_ws_choices
 else:
     import api as gt_api  # type: ignore
     from models import (  # type: ignore
@@ -117,6 +118,7 @@ else:
     from merge_preview import MergePreviewService, OVERWRITE, MERGE_KEEP, NEW  # type: ignore
     from models import SimilarResolution  # type: ignore  (already imported above but needs bare-name alias)
     from report import RunReport  # type: ignore
+    from ws_mapping import default_ws_choices  # type: ignore
 
 
 # ---------------------------------------------------------------------------
@@ -254,6 +256,9 @@ class _PageProjectWS(QtWidgets.QWizardPage):
         self._row_state: dict = {}
         # Track which analysis rows are still "linked" to their vernacular twin.
         self._analysis_linked: set = set()  # set of ws_id strings
+        # Feature 032 US4: {source_ws_id: target_ws_id} related-languages MAP
+        # defaults, computed in _populate_ws_tables once the target is bound.
+        self._ws_map_defaults: dict = {}
 
         self.setTitle("Step 1 of 10: Project + Writing Systems")
         self.setSubTitle(
@@ -386,6 +391,25 @@ class _PageProjectWS(QtWidgets.QWizardPage):
         vern_ids, anal_ids = _enumerate_ws_by_kind(self._host)
         dual_ids = set(vern_ids) & set(anal_ids)
 
+        # Feature 032 US4 (FR-012..FR-015): pre-compute the related-languages
+        # correspondence defaults (source primary -> target primary vernacular;
+        # source sub -> target sub by subtag suffix) so a source WS that has no
+        # identical target Id still defaults to MAP-to-its-correspondent instead
+        # of CREATE. Only confident (unambiguous) correspondences appear here;
+        # everything else falls back to the CREATE default below (FR-015).
+        # {source_ws_id: target_ws_id} for MAP choices only.
+        self._ws_map_defaults = {}
+        target = getattr(self._context, "target_handle", None) if self._context is not None else None
+        if target is not None:
+            try:
+                # default_ws_choices returns only WSChoice.MAP rows (never
+                # CREATE/SKIP -- FR-014), so target_ws_id is the correspondent.
+                for c in default_ws_choices(self._host, target):
+                    if c.target_ws_id:
+                        self._ws_map_defaults[c.source_ws_id] = c.target_ws_id
+            except Exception:  # noqa: BLE001 -- defaulting is best-effort; never block the page
+                self._ws_map_defaults = {}
+
         # Reset state.
         self._row_state.clear()
         self._analysis_linked = set(dual_ids)  # start linked for dual-role WSes
@@ -417,11 +441,25 @@ class _PageProjectWS(QtWidgets.QWizardPage):
             choice_cb.addItem("MAP to existing target WS", self._CHOICE_MAP)
             choice_cb.addItem("CREATE new target WS", self._CHOICE_CREATE)
             choice_cb.addItem("SKIP (drop objects using this WS)", self._CHOICE_SKIP)
-            # Pre-select MAP if a same-tag target WS exists.
+            # Feature 032 US4: resolve the default target for this row.
+            #   1. identical target Id present -> MAP to it (self, common case);
+            #   2. else a confident related-languages correspondence exists
+            #      (primary->primary or sub->sub by subtag suffix) -> MAP to that
+            #      target (FR-012..FR-014 -- "Match", never "create new");
+            #   3. else no confident target -> CREATE (source tag as proposed name).
+            map_default = getattr(self, "_ws_map_defaults", {}).get(ws_id)
             if ws_id in self._target_ws_ids:
-                choice_cb.setCurrentIndex(self._CHOICE_MAP)
+                default_choice = self._CHOICE_MAP
+                default_target = ws_id
+            elif map_default:
+                default_choice = self._CHOICE_MAP
+                default_target = map_default
             else:
-                choice_cb.setCurrentIndex(self._CHOICE_CREATE)
+                default_choice = self._CHOICE_CREATE
+                default_target = ws_id  # CREATE: use source tag as proposed name
+
+            # Pre-select the resolved choice.
+            choice_cb.setCurrentIndex(default_choice)
             table.setCellWidget(row, 1, choice_cb)
 
             # Col 2: target WS combo (editable; used for MAP).
@@ -430,11 +468,7 @@ class _PageProjectWS(QtWidgets.QWizardPage):
             tgt_cb.addItem("")
             for t in self._target_ws_ids:
                 tgt_cb.addItem(t)
-            # Pre-populate with same-tag if available.
-            if ws_id in self._target_ws_ids:
-                tgt_cb.setCurrentText(ws_id)
-            else:
-                tgt_cb.setCurrentText(ws_id)  # CREATE: use source tag as proposed name
+            tgt_cb.setCurrentText(default_target)
             table.setCellWidget(row, 2, tgt_cb)
 
             # Initialize row state.
