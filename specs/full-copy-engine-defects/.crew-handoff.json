@@ -1,0 +1,33 @@
+{
+  "feature": "full-copy-engine-defects",
+  "status": "needs_human",
+  "last_cycle": 4,
+  "spurts_completed": 4,
+  "worktree": "D:/Github/_Projects/_LEX/GramTrans-fullcopy-defects",
+  "branch": "fullcopy-defects",
+  "commits": [
+    "844f465 fix(texts): finding #1 + #2",
+    "aeab54b fix(owned): finding #3 redundant TranslationsOC row deletion",
+    "0ad9cf4 fix(reversals): P1 sibling of finding #2 — dedup ReversalIndexEntry create sites + regression tests; body corrects 844f465 false 'no siblings' audit claim"
+  ],
+  "tasks_done": [
+    "finding1-texts",
+    "finding2-idempotency-texts",
+    "finding3-owned-translations",
+    "P1-reversals-dedup",
+    "cycle4-verification-PASS"
+  ],
+  "gates": {
+    "verification": "PASS (cycle4) — new reversals tests fail without src hunk / pass with it; cycle-3 148-test set 148/148; full offline suite zero new regressions (27 failed/1972 passed worktree vs byte-identical 27 failing IDs on main)",
+    "qc": "PASS — both blocking items resolved: pattern-audit sections present in all commit bodies incl. 0ad9cf4 correction; reversals P1 fixed in-PR",
+    "domain_pattern_audit": "PASS — audits confirmed in commit bodies"
+  },
+  "deferred_followups": [
+    "P2 flexicon-internals coupling smoke test — DECIDED-DEFERRED (follow-up ticket)",
+    "ExtendedNoteOS gap — documented gap, deferred follow-up"
+  ],
+  "next_checkpoint": "attended destructive live Move re-proof",
+  "next_entry": "HUMAN-GATED: run Move #1 then Move #2 (idempotency) against pilots Ejagham Mini / Esperanto / Mbugwe Lizzie HCPractice using the new per-category instrumentation to capture the 146-by-category breakdown; each target must be backed up / -restore-able first. Then merge fullcopy-defects -> main.",
+  "blocker": "Live-LCM re-proof is a DESTRUCTIVE write and must be human-authorized; do not run unattended.",
+  "updated": "2026-07-20"
+}

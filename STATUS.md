@@ -1,5 +1,44 @@
 # GramTrans — Session Handoff
 
+## ▶▶▶ full-copy-engine-defects — OFFLINE-GREEN, awaits attended live Move re-proof (2026-07-20)
+
+**Four full-copy engine defect fixes on worktree, NOT merged to main.**
+
+- **Worktree:** `D:/Github/_Projects/_LEX/GramTrans-fullcopy-defects`
+- **Branch:** `fullcopy-defects`
+- **Commits (3):**
+  - `844f465` fix(texts): finding #1 + finding #2 (idempotency)
+  - `aeab54b` fix(owned): finding #3 — redundant `TranslationsOC` row deletion
+  - `0ad9cf4` fix(reversals): P1 sibling of finding #2 — new `_find_existing_entry_by_form`
+    dedup at BOTH `ReversalIndexEntry` create sites (`_create_top_level_entry` scans
+    `EntriesOC`, `_create_sub_entry` scans `SubentriesOS`) + 2 regression tests. Commit
+    body corrects 844f465's false "no siblings" audit claim.
+
+**Offline gates GREEN (cycle-4 crew review):**
+- Verification: **PASS.** Both new reversals tests fail without 0ad9cf4's src hunk and
+  pass with it (genuine guard, confirmed by revert/restore). Cycle-3 148-test targeted
+  set still 148/148. Full offline suite: worktree **27 failed / 1972 passed** vs main
+  **27 failed / 1961 passed** — the 27 failing IDs are byte-identical (all pre-existing,
+  none touch reversals); +11 pass delta = the 9 cycle-3 + 2 cycle-4 new tests. Zero new
+  regressions. Report: `specs/full-copy-engine-defects/reviews/cycle4-verification.md`.
+- QC: **PASS.** Both prior blocking items resolved — pattern-audit sections confirmed
+  present in all commit bodies (incl. the 0ad9cf4 correction); reversals P1 fixed in-PR.
+
+**Deferred follow-ups (documented, not blocking):**
+- P2 flexicon-internals coupling smoke test — DECIDED-DEFERRED (ticket as follow-up).
+- `ExtendedNoteOS` gap — documented gap, deferred follow-up.
+
+**BLOCKED on human authorization (needs_human):** the remaining proof is an **attended
+DESTRUCTIVE live Move re-proof**. Run **Move #1 then Move #2** (idempotency) against the
+three pilots **Ejagham Mini / Esperanto / Mbugwe Lizzie HCPractice**, using the new
+per-category instrumentation to capture the **146-by-category** breakdown. Each target
+must be backed up / `-restore`-able first. Do NOT run unattended. Pickup after that:
+confirm the by-category breakdown + idempotency (Move #2 adds nothing), then merge
+`fullcopy-defects -> main`.
+
+Machine state: `specs/full-copy-engine-defects/.crew-handoff.json`.
+Reviews: `specs/full-copy-engine-defects/reviews/` (cycle1–4).
+
 ## ▶▶▶ Feature 025 HOTFIX — reversal-category CREATE (clsid 5049) — OFFLINE-GREEN, awaits attended Move (2026-07-18)
 
 **Follow-up P0 discovered after 025 merged.** The reversal-category CREATE arm did
