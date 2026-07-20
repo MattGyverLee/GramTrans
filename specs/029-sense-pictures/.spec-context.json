@@ -3,7 +3,7 @@
   "specName": "Sense Pictures",
   "branch": "main",
   "currentStep": "implement",
-  "status": "implementing",
+  "status": "completed",
   "history": [
     {
       "step": "specify",
@@ -193,6 +193,13 @@
       "kind": "complete",
       "by": "extension",
       "at": "2026-07-16T23:50:32.677Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "kind": "complete",
+      "by": "human",
+      "at": "2026-07-20T01:56:59.930Z"
     }
   ],
   "currentTask": "T020"
