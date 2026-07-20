@@ -257,7 +257,16 @@ class FakeTextOps:
                 return t
         return None
 
+    def Exists(self, name):
+        target = (name or "").strip()
+        return any(t.name == target for t in self._texts)
+
     def Create(self, name, genre=None):
+        # Mirrors the real TextOperations.Create: raises when a text with
+        # this name already exists (flexicon TextOperations.py:149-150) --
+        # the Site-1 duplicate-name collision fixture exercises this guard.
+        if self.Exists(name):
+            raise ValueError(f"A text with the name '{name}' already exists.")
         t = FakeText(guid="tgt-" + name, name=name)
         self._texts.append(t)
         self.created.append(("text", name))
