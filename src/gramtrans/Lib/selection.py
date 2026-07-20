@@ -2267,7 +2267,7 @@ def _phon_label(obj, *, phoneme: bool = False) -> str:
     return runs_to_text(_phon_runs(obj, phoneme=phoneme))
 
 
-def _phon_is_empty(obj, *, phoneme: bool) -> bool:
+def _phon_is_empty(obj, *, phoneme: bool, category=None) -> bool:
     """True when a phonology item has no usable content in any field.
 
     Such items — typically dangling phonemes left behind by a BasicIPAInfo
@@ -2275,7 +2275,16 @@ def _phon_is_empty(obj, *, phoneme: bool) -> bool:
     GT-Test target) — are silently skipped from the inventory. For a phoneme,
     'content' spans the grapheme (Name in any WS), the IPA symbol, and the
     Description ('refer to as'); for every other category only the Name applies.
+
+    EXCEPTION — phonological rules: a rule's content is its structural
+    description (StrucDescOS / right-hand sides), NOT its Name. FLEx routinely
+    leaves rules unnamed (they display by their structural description), so a
+    Name-only emptiness test wrongly dropped every unnamed rule from the
+    inventory — making it un-previewable AND silently excluding it from
+    transfer. A rule is therefore never treated as empty here.
     """
+    if category == GrammarCategory.PHONOLOGICAL_RULES:
+        return False
     if _phon_name_text(obj, phoneme=phoneme):
         return False
     if phoneme and (_phon_ipa(obj) or _phon_description(obj)):
@@ -2351,6 +2360,7 @@ class PhonologyInventory:
 
 def _phon_target_sets(target, accessor: str, *,
                       phoneme: bool = False,
+                      category=None,
                       ) -> Tuple[Set[str], Set[str], Dict[str, str]]:
     """Return (guids, labels, label_to_guid) for one category in the target.
 
@@ -2374,7 +2384,7 @@ def _phon_target_sets(target, accessor: str, *,
         return guids, labels, {}
     try:
         for obj in getattr(target, accessor).GetAll():
-            if _phon_is_empty(obj, phoneme=phoneme):
+            if _phon_is_empty(obj, phoneme=phoneme, category=category):
                 continue  # dangling empty — never a match source
             g = _phon_guid(obj)
             guids.add(g)
@@ -2445,7 +2455,7 @@ def build_phonology_inventory(source, target=None) -> PhonologyInventory:
     for category, accessor, label in _PHON_CATEGORY_ACCESSORS:
         is_phoneme = category == GrammarCategory.PHONEMES
         tgt_guids, tgt_labels, tgt_label_to_guid = _phon_target_sets(
-            target, accessor, phoneme=is_phoneme)
+            target, accessor, phoneme=is_phoneme, category=category)
         rows: List[PhonologyRow] = []
         cat_guids: Set[str] = set()
         objs: List[object] = []
@@ -2455,7 +2465,7 @@ def build_phonology_inventory(source, target=None) -> PhonologyInventory:
             except (AttributeError, TypeError):
                 items = []
             for obj in items:
-                if _phon_is_empty(obj, phoneme=is_phoneme):
+                if _phon_is_empty(obj, phoneme=is_phoneme, category=category):
                     continue  # empty in all fields — silently skip (FR: dangling)
                 g = _phon_guid(obj)
                 cat_guids.add(g)
