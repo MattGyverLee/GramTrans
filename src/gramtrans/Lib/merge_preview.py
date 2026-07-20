@@ -2356,13 +2356,67 @@ def _enrich_phon_feature(obj: Any, raw: dict[str, Any]) -> None:
         raw.setdefault("Type", "closed")
 
 
+def _affix_msa_label(msa: Any) -> str:
+    """Label an occupying-slot affix by its owning entry's lexeme form,
+    homograph number, and gloss -- e.g. ``-i2 'PST'`` -- rather than the MSA's
+    generic ``LongName`` ('Affix in <slot> slot ...').
+
+    Navigates the affix MSA -> owning ``ILexEntry`` (lexeme form + homograph
+    number) and the sense that references this MSA (gloss). Falls back to the
+    generic morpheme label whenever the owning entry/sense cannot be resolved
+    (graceful degradation, FR-011)."""
+    owner = getattr(msa, "Owner", None)
+    entry = _lcm_cast(owner, "ILexEntry") if owner is not None else None
+    if entry is None:
+        return _morpheme_ref_label(msa)
+    # Lexeme form (vernacular), falling back to the entry headword.
+    form = ""
+    lf = getattr(entry, "LexemeFormOA", None)
+    if lf is not None:
+        form = _best_analysis_text(getattr(lf, "Form", None))
+    if not form:
+        hw = getattr(entry, "HeadWord", None)
+        form = getattr(hw, "Text", None) or ""
+    form = (form or "").strip()
+    if not form:
+        return _morpheme_ref_label(msa)
+    # Homograph number (0 => none; FLEx renders it directly after the form).
+    try:
+        hn = int(getattr(entry, "HomographNumber", 0) or 0)
+    except (TypeError, ValueError):
+        hn = 0
+    # Gloss: prefer the sense that references THIS MSA, else the first sense.
+    gloss = ""
+    try:
+        senses = list(getattr(entry, "SensesOS", None) or [])
+    except Exception:
+        senses = []
+    chosen = None
+    for s in senses:
+        ref = getattr(s, "MorphoSyntaxAnalysisRA", None)
+        if ref is not None and _guid_eq(_obj_guid(ref), _obj_guid(msa)):
+            chosen = s
+            break
+    if chosen is None and senses:
+        chosen = senses[0]
+    if chosen is not None:
+        gloss = _best_analysis_text(getattr(chosen, "Gloss", None)).strip()
+    label = f"{form}{hn}" if hn else form
+    if gloss:
+        label += f" '{gloss}'"
+    return label
+
+
 def _enrich_slot(obj: Any, raw: dict[str, Any]) -> None:
-    """Add a bounded ``Affixes`` list (occupying affix MSAs) to a slot (FR-007)."""
+    """Add a bounded ``Affixes`` list (occupying affix MSAs) to a slot (FR-007).
+
+    Each affix is labelled by lexeme form + homograph number + gloss
+    (``_affix_msa_label``) so the pane identifies the actual affix entries."""
     slot = _lcm_cast(obj, "IMoInflAffixSlot")
     labels: list[str] = []
     try:
         for msa in getattr(slot, "Affixes", None) or []:
-            lbl = _morpheme_ref_label(msa)
+            lbl = _affix_msa_label(msa)
             if lbl:
                 labels.append(lbl)
     except Exception as _e:
