@@ -1,0 +1,39 @@
+{
+  "workflow": "speckit",
+  "specName": "031-fix-inflection-feature-linking",
+  "branch": "031-fix-inflection-feature-linking",
+  "selectedAt": "2026-07-18T03:23:54.052Z",
+  "currentStep": "tasks",
+  "status": "ready-to-implement",
+  "history": [
+    {
+      "step": "analyze",
+      "substep": null,
+      "kind": "start",
+      "by": "extension",
+      "at": "2026-07-18T03:24:31.821Z"
+    },
+    {
+      "step": "analyze",
+      "substep": null,
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-07-18T03:29:26.162Z"
+    },
+    {
+      "step": "tasks",
+      "substep": null,
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-07-18T03:30:14.501Z"
+    },
+    {
+      "step": "analyze",
+      "substep": null,
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-07-18T03:31:47.477Z"
+    }
+  ],
+  "telemetryInstanceId": "bd09454e-1f7b-4478-8635-36dc6313b7cd"
+}

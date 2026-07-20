@@ -3,7 +3,7 @@
   "specName": "Sense Appendix & Thesaurus References",
   "branch": "main",
   "currentStep": "implement",
-  "status": "implemented",
+  "status": "completed",
   "history": [
     {
       "step": "specify",
@@ -32,6 +32,13 @@
       "kind": "start",
       "by": "extension",
       "at": "2026-07-17T00:30:28.597Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-07-18T03:23:38.704Z"
     }
   ]
 }
