@@ -36,6 +36,8 @@ from gramtrans.Lib.merge_preview import (
     _resolve_category_key,
     props_for,
 )
+from gramtrans.Lib.models import GrammarCategory
+from gramtrans.Lib.selection import _phon_is_empty
 
 
 # ===========================================================================
@@ -487,3 +489,118 @@ class TestNaturalClassRegressionGuard:
         _enrich_natural_class(nc, raw)
         filtered = mp._filter_props(raw)
         assert filtered.get("Members") == ["m", "n"]
+
+
+# ===========================================================================
+# Content-aware phonology item-drop predicate (_phon_is_empty, DESIGN A)
+#
+# Principle: "Empty items should only be items with no syncable fields AND
+# no child/linked objects." A name-only emptiness test wrongly dropped
+# well-formed but unnamed phonemes/environments/natural classes/features that
+# carry real content in other fields; conversely a truly-empty item (no name,
+# no linked/child content) must still be dropped — this is the load-bearing
+# dangling-BasicIPAInfo-catalog case (32 unreferenced empties, Ejagham Full
+# GT-Test).
+# ===========================================================================
+
+
+def _analysis_name(text):
+    """Fake `.Name` exposing only `.BestAnalysisAlternative.Text` (non-phoneme
+    categories name themselves in the analysis WS; see `_phon_name_text`)."""
+    return FakeGuidObj("name", BestAnalysisAlternative=FakeGuidObj("alt", Text=text))
+
+
+def _vernacular_name(text):
+    """Fake phoneme `.Name` exposing `.BestVernacularAlternative.Text` (the
+    grapheme WS phonemes are read from first; see `_phon_name_text`)."""
+    return FakeGuidObj("name", BestVernacularAlternative=FakeGuidObj("alt", Text=text))
+
+
+class TestPhonIsEmptyContentAware:
+    # --- phonemes ---------------------------------------------------------
+
+    def test_phoneme_codes_only_retained(self):
+        obj = FakeGuidObj("ph-1", CodesOS=[FakeGuidObj("code")])
+        assert _phon_is_empty(obj, phoneme=True,
+                               category=GrammarCategory.PHONEMES) is False
+
+    def test_phoneme_features_only_retained(self):
+        obj = FakeGuidObj("ph-2", FeaturesOA=FakeGuidObj("fs"))
+        assert _phon_is_empty(obj, phoneme=True,
+                               category=GrammarCategory.PHONEMES) is False
+
+    def test_phoneme_truly_empty_dropped(self):
+        """Dangling BasicIPAInfo catalog phoneme: no grapheme, IPA,
+        description, codes, or features — the load-bearing regression guard.
+        """
+        obj = FakeGuidObj("ph-3")
+        assert _phon_is_empty(obj, phoneme=True,
+                               category=GrammarCategory.PHONEMES) is True
+
+    def test_phoneme_named_retained(self):
+        obj = FakeGuidObj("ph-4", Name=_vernacular_name("r"))
+        assert _phon_is_empty(obj, phoneme=True,
+                               category=GrammarCategory.PHONEMES) is False
+
+    # --- environments -------------------------------------------------------
+
+    def test_environment_strucrep_only_retained(self):
+        obj = FakeGuidObj("env-1", StringRepresentation=FakeGuidObj("s", Text="/_[V]"))
+        assert _phon_is_empty(obj, phoneme=False,
+                               category=GrammarCategory.PH_ENVIRONMENT) is False
+
+    def test_environment_nameless_no_strucrep_dropped(self):
+        obj = FakeGuidObj("env-2")
+        assert _phon_is_empty(obj, phoneme=False,
+                               category=GrammarCategory.PH_ENVIRONMENT) is True
+
+    def test_environment_named_retained(self):
+        obj = FakeGuidObj("env-3", Name=_analysis_name("word-final"))
+        assert _phon_is_empty(obj, phoneme=False,
+                               category=GrammarCategory.PH_ENVIRONMENT) is False
+
+    # --- natural classes ------------------------------------------------
+
+    def test_natural_class_segments_only_retained(self):
+        obj = FakeGuidObj("nc-1", SegmentsRC=[FakeGuidObj("s1")])
+        assert _phon_is_empty(obj, phoneme=False,
+                               category=GrammarCategory.NATURAL_CLASSES) is False
+
+    def test_natural_class_features_only_retained(self):
+        obj = FakeGuidObj("nc-2", FeaturesOA=FakeGuidObj("fs"))
+        assert _phon_is_empty(obj, phoneme=False,
+                               category=GrammarCategory.NATURAL_CLASSES) is False
+
+    def test_natural_class_empty_dropped(self):
+        obj = FakeGuidObj("nc-3")
+        assert _phon_is_empty(obj, phoneme=False,
+                               category=GrammarCategory.NATURAL_CLASSES) is True
+
+    def test_natural_class_named_retained(self):
+        obj = FakeGuidObj("nc-4", Name=_analysis_name("Vowels"))
+        assert _phon_is_empty(obj, phoneme=False,
+                               category=GrammarCategory.NATURAL_CLASSES) is False
+
+    # --- phonological features -----------------------------------------
+
+    def test_phon_feature_values_only_retained(self):
+        obj = FakeGuidObj("pf-1", ValuesOC=[FakeGuidObj("v1")])
+        assert _phon_is_empty(obj, phoneme=False,
+                               category=GrammarCategory.PHONOLOGICAL_FEATURES) is False
+
+    def test_phon_feature_empty_dropped(self):
+        obj = FakeGuidObj("pf-2")
+        assert _phon_is_empty(obj, phoneme=False,
+                               category=GrammarCategory.PHONOLOGICAL_FEATURES) is True
+
+    def test_phon_feature_named_retained(self):
+        obj = FakeGuidObj("pf-3", Name=_analysis_name("back"))
+        assert _phon_is_empty(obj, phoneme=False,
+                               category=GrammarCategory.PHONOLOGICAL_FEATURES) is False
+
+    # --- rules always retained -------------------------------------------
+
+    def test_rule_always_retained_even_when_nameless(self):
+        obj = FakeGuidObj("rule-1")
+        assert _phon_is_empty(obj, phoneme=False,
+                               category=GrammarCategory.PHONOLOGICAL_RULES) is False
