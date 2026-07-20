@@ -31,13 +31,30 @@ from _fakes_affix import (
 # Stem MSA + feature / inflection-class stubs
 # ---------------------------------------------------------------------------
 
-class FakeFeatStruc:
-    """Duck-typed IFsFeatStruc (MoStemMsa.MsFeaturesOA is a single one)."""
+class FakeClosedValue:
+    """Duck-typed IFsClosedValue: a FeatureSpecsOC member pointing at the
+    closed-feature DEFINITION it constrains (``FeatureRA``)."""
 
-    def __init__(self, guid: str, name: str = "feat"):
+    def __init__(self, feature_defn):
+        self.FeatureRA = feature_defn
+        self.ClassName = "FsClosedValue"
+
+
+class FakeFeatStruc:
+    """Duck-typed IFsFeatStruc (MoStemMsa.MsFeaturesOA is a single one).
+
+    A real IFsFeatStruc is an OWNED per-MSA feature bundle: it has NO readable
+    Name and its content lives in ``FeatureSpecsOC`` (IFsClosedValue specs, each
+    referencing a closed-feature DEFINITION). ``build_deps_inventory`` resolves
+    those definitions rather than surfacing the bundle itself, so this fake
+    exposes ``FeatureSpecsOC`` and deliberately carries no usable Name.
+    """
+
+    def __init__(self, guid: str, feature_defns=None):
         self.Guid = guid
-        self.Name = FakeMultiUnicode(name)
         self.ClassName = "FsFeatStruc"
+        # No readable Name/Abbreviation (matches live FsFeatStruc).
+        self.FeatureSpecsOC = [FakeClosedValue(d) for d in (feature_defns or [])]
 
 
 class FakeStemInflClass:

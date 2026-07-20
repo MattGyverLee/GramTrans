@@ -147,12 +147,19 @@ class TestStemMsaDispatch:
         assert "sbad" in _all_guids(stem_inv)
 
     def test_stem_msa_reads_ms_features_into_deps(self):
-        feat = FakeFeatStruc("feat-x", "Aspect")
+        # A stem MSA's MsFeatures bundle (IFsFeatStruc) is an owned, NAMELESS
+        # per-MSA object. The dependency surfaced must be the closed-feature
+        # DEFINITION it references (named), NOT the raw bundle GUID -- surfacing
+        # the bundle produced bare-GUID rows (031 Defect-2 class).
+        defn = FakeInflFeature("feat-def", "Aspect")
+        struct = FakeFeatStruc("struct-guid", feature_defns=[defn])
         pn = make_pos_with_slots("pn", "n", "Noun")
-        s1 = make_stem_entry("s1", "dog", pn, glosses=["dog"], ms_features=feat)
+        s1 = make_stem_entry("s1", "dog", pn, glosses=["dog"], ms_features=struct)
         src = make_source([s1], [pn])
         deps = build_deps_inventory(src, frozenset(), stem_picks=frozenset(["s1"]))
-        assert "feat-x" in [r.guid for r in deps.infl_features]
+        guids = [r.guid for r in deps.infl_features]
+        assert "feat-def" in guids, "referenced closed-feature definition must surface"
+        assert "struct-guid" not in guids, "raw IFsFeatStruc bundle must NOT surface"
 
     def test_null_inflection_class_is_noop(self):
         # InflectionClassRA is None (Ejagham 0/2444 case): no exception, no dep.

@@ -1604,9 +1604,13 @@ def build_deps_inventory(
     dependency pulled once).
 
     ExceptionFeaturesOC is NOT read: that property does not exist on the live
-    LCM runtime (hasattr False). Exception-features are per-entry
-    (``MoStemMsa.MsFeaturesOA``, a single ``IFsFeatStruc``) and, for stems, are
-    walked here directly from the stem MSA.
+    LCM runtime (hasattr False). Exception/inflection features are per-entry
+    (``MoStemMsa.MsFeaturesOA``, a single owned ``IFsFeatStruc`` bundle). The
+    bundle is NEVER surfaced as a dependency row itself -- it has no Name and
+    would render as a bare GUID, and it rides along (owned) with the stem MSA
+    when the entry transfers. Instead its ``FeatureSpecsOC`` is resolved to the
+    named closed-feature DEFINITIONS it references, which dedupe against the
+    POS ``InflectableFeatsRC`` rows.
 
     CAST DISCIPLINE: every LCM collection access goes through _cast against the
     declared base interface.  Fakes pass through unchanged; live LCM objects
@@ -1623,11 +1627,12 @@ def build_deps_inventory(
     stem_picks:
         Optional frozenset of stem entry_guid strings (019). ``None``/empty
         leaves affix behaviour byte-stable. For each picked stem the walk reads
-        ``MoStemMsa.PartOfSpeechRA`` (POS dep collections), the single
-        ``MoStemMsa.MsFeaturesOA`` (exception/inflection feature), and the
-        None-guarded ``MoStemMsa.InflectionClassRA`` (additive to
-        ``POS.InflectionClassesOC``). A stem MSA is NEVER cast to IMoInflAffMsa
-        and ``SlotsRC`` is never read (FR-013).
+        ``MoStemMsa.PartOfSpeechRA`` (POS dep collections), resolves the single
+        ``MoStemMsa.MsFeaturesOA`` bundle to the closed-feature DEFINITIONS it
+        references (never the raw bundle), and the None-guarded
+        ``MoStemMsa.InflectionClassRA`` (additive to ``POS.InflectionClassesOC``).
+        A stem MSA is NEVER cast to IMoInflAffMsa and ``SlotsRC`` is never read
+        (FR-013).
 
     Returns
     -------
@@ -1736,17 +1741,39 @@ def build_deps_inventory(
                         picked_pos_objects[pg] = pos
             except (AttributeError, TypeError):
                 pass
-            # MsFeaturesOA -> SINGLE IFsFeatStruc (None-guarded).
+            # MsFeaturesOA -> SINGLE IFsFeatStruc (None-guarded). This is an
+            # OWNED per-MSA feature BUNDLE (ClassID FsFeatStruc, owned via
+            # MoStemMsa.MsFeatures), NOT a feature DEFINITION: it has no Name,
+            # so surfacing the raw struct produced bare-GUID "Inflection
+            # Features" rows and mislabeled owned bundles as transferable
+            # features (031 Defect-2 class). Resolve it to the closed-feature
+            # DEFINITIONS it references via FeatureSpecsOC -> FsClosedValue
+            # .FeatureRA; those are named and dedupe against the POS
+            # InflectableFeatsRC path (which already covers them). The bundle
+            # itself is never a standalone dependency -- it rides along, owned,
+            # with the stem MSA when the entry is transferred.
             try:
                 feat = msa_c.MsFeaturesOA
                 if feat is not None:
                     feat_c = _cast(feat, "IFsFeatStruc")
                     try:
-                        fg = str(feat_c.Guid).lower()
+                        specs = list(feat_c.FeatureSpecsOC)
                     except (AttributeError, TypeError):
-                        fg = None
-                    if fg:
-                        stem_extra_feats.setdefault(fg, feat_c)
+                        specs = []
+                    for spec in specs:
+                        spec_c = _cast(spec, "IFsClosedValue")
+                        try:
+                            defn = spec_c.FeatureRA
+                        except (AttributeError, TypeError):
+                            defn = None
+                        if defn is None:
+                            continue
+                        try:
+                            dg = str(defn.Guid).lower()
+                        except (AttributeError, TypeError):
+                            dg = None
+                        if dg:
+                            stem_extra_feats.setdefault(dg, defn)
             except (AttributeError, TypeError):
                 pass
             # InflectionClassRA -> IMoInflClass (READ-IF-PRESENT, None-guarded).
@@ -1798,50 +1825,63 @@ def build_deps_inventory(
             return None
         return "in_target" if guid in _tgt_stem_guids else "new"
 
+    def _emit_closed_feature(feat) -> None:
+        """Emit a feature DEFINITION row (depth=0) plus its value rows (depth=1),
+        deduped by GUID against ``seen_feats``.
+
+        ``feat`` is an IFsClosedFeature (a feature DEFINITION) -- from a POS's
+        InflectableFeatsRC or resolved from a stem MSA's MsFeatures bundle. Its
+        values (IFsSymFeatVal in ValuesOC) are appended at depth=1. Never emits
+        an IFsFeatStruc bundle (which has no Name and would fall back to a raw
+        GUID label).
+        """
+        feat_c = _cast(feat, "IFsClosedFeature")
+        try:
+            fg = str(feat_c.Guid).lower()
+        except (AttributeError, TypeError):
+            try:
+                fg = str(feat.Guid).lower()
+            except (AttributeError, TypeError):
+                return
+        if fg in seen_feats:
+            return
+        seen_feats.add(fg)
+        fl = _feat_label(feat_c)
+        if fl is None:
+            fl = fg
+        infl_features.append(DepRow(guid=fg, label=fl, depth=0,
+                                    status=_dep_status_feat(fg)))
+        # Append child values (IFsSymFeatVal) at depth=1
+        try:
+            for val in feat_c.ValuesOC:
+                val_c = _cast(val, "IFsSymFeatVal")
+                try:
+                    vg = str(val_c.Guid).lower()
+                except (AttributeError, TypeError):
+                    try:
+                        vg = str(val.Guid).lower()
+                    except (AttributeError, TypeError):
+                        continue
+                vl = _feat_label(val_c)
+                if vl is None:
+                    vl = vg
+                infl_features.append(DepRow(guid=vg, label=vl, depth=1,
+                                            status=_dep_status_value(vg)))
+        except (AttributeError, TypeError):
+            pass
+
     for pg, pos in picked_pos_objects.items():
         # CAST DISCIPLINE: cast to IPartOfSpeech before reading dep collections
         pos_c = _cast(pos, "IPartOfSpeech")
 
         # InflectableFeatsRC — items are IFsClosedFeature (feature DEFINITIONS),
-        # NOT IFsFeatStruc.  Cast to IFsClosedFeature so .Name/.Abbreviation and
-        # .ValuesOC are accessible.  Each value (IFsSymFeatVal) is appended at depth=1.
+        # NOT IFsFeatStruc.  _emit_closed_feature casts to IFsClosedFeature so
+        # .Name/.Abbreviation and .ValuesOC are accessible; each value
+        # (IFsSymFeatVal) is appended at depth=1.
         try:
             feats_rc = pos_c.InflectableFeatsRC
             for feat in feats_rc:
-                feat_c = _cast(feat, "IFsClosedFeature")
-                try:
-                    fg = str(feat_c.Guid).lower()
-                except (AttributeError, TypeError):
-                    try:
-                        fg = str(feat.Guid).lower()
-                    except (AttributeError, TypeError):
-                        continue
-                if fg in seen_feats:
-                    continue
-                seen_feats.add(fg)
-                fl = _feat_label(feat_c)
-                if fl is None:
-                    fl = fg
-                infl_features.append(DepRow(guid=fg, label=fl, depth=0,
-                                            status=_dep_status_feat(fg)))
-                # Append child values (IFsSymFeatVal) at depth=1
-                try:
-                    for val in feat_c.ValuesOC:
-                        val_c = _cast(val, "IFsSymFeatVal")
-                        try:
-                            vg = str(val_c.Guid).lower()
-                        except (AttributeError, TypeError):
-                            try:
-                                vg = str(val.Guid).lower()
-                            except (AttributeError, TypeError):
-                                continue
-                        vl = _feat_label(val_c)
-                        if vl is None:
-                            vl = vg
-                        infl_features.append(DepRow(guid=vg, label=vl, depth=1,
-                                                    status=_dep_status_value(vg)))
-                except (AttributeError, TypeError):
-                    pass
+                _emit_closed_feature(feat)
         except (AttributeError, TypeError):
             pass
 
@@ -1893,16 +1933,13 @@ def build_deps_inventory(
 
     # --- Per-stem features / infl classes read directly off the stem MSA ---
     # Additive to the POS-derived collections; deduplicated by GUID against
-    # the same seen_* sets so a shared dep is emitted once.
-    for fg, feat_c in stem_extra_feats.items():
-        if fg in seen_feats:
-            continue
-        seen_feats.add(fg)
-        fl = _feat_label(feat_c)
-        if fl is None:
-            fl = fg
-        infl_features.append(DepRow(guid=fg, label=fl,
-                                    status=_dep_status_feat(fg)))
+    # the same seen_* sets so a shared dep is emitted once. ``stem_extra_feats``
+    # holds closed-feature DEFINITIONS resolved from each stem MSA's MsFeatures
+    # bundle (never the raw IFsFeatStruc), so _emit_closed_feature renders them
+    # named -- with their values -- and dedupes against the InflectableFeatsRC
+    # rows above (the referenced defns are usually already present there).
+    for _fg, feat_c in stem_extra_feats.items():
+        _emit_closed_feature(feat_c)
 
     for ig, icls_c in stem_extra_classes.items():
         if ig in seen_classes:
