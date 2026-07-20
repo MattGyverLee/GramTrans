@@ -37,7 +37,11 @@ from gramtrans.Lib.merge_preview import (
     props_for,
 )
 from gramtrans.Lib.models import GrammarCategory
-from gramtrans.Lib.selection import _phon_is_empty
+from gramtrans.Lib.selection import (
+    _nonempty_seq,
+    _phon_is_empty,
+    _phon_strucrep_text,
+)
 
 
 # ===========================================================================
@@ -598,9 +602,90 @@ class TestPhonIsEmptyContentAware:
         assert _phon_is_empty(obj, phoneme=False,
                                category=GrammarCategory.PHONOLOGICAL_FEATURES) is False
 
+    def test_phoneme_description_only_retained(self):
+        """Phoneme with only a Description ('refer to as') — no grapheme/IPA/
+        codes/features — is still content, so retained."""
+        obj = FakeGuidObj("ph-5", Description=FakeGuidObj(
+            "d", BestAnalysisAlternative=FakeGuidObj("alt", Text="a mid vowel")))
+        assert _phon_is_empty(obj, phoneme=True,
+                               category=GrammarCategory.PHONEMES) is False
+
+    # --- unknown / None category: legacy Name-only fallback --------------
+
+    def test_unknown_category_named_retained(self):
+        obj = FakeGuidObj("x-1", Name=_analysis_name("thing"))
+        assert _phon_is_empty(obj, phoneme=False, category=None) is False
+
+    def test_unknown_category_nameless_dropped(self):
+        obj = FakeGuidObj("x-2")
+        assert _phon_is_empty(obj, phoneme=False, category=None) is True
+
     # --- rules always retained -------------------------------------------
 
     def test_rule_always_retained_even_when_nameless(self):
         obj = FakeGuidObj("rule-1")
         assert _phon_is_empty(obj, phoneme=False,
                                category=GrammarCategory.PHONOLOGICAL_RULES) is False
+
+
+class _CountSeq:
+    """Sequence exposing `.Count` but NOT `len()` — mimics an LCM
+    ref/owning collection (the branch a plain list never exercises)."""
+
+    def __init__(self, n):
+        self._n = n
+
+    @property
+    def Count(self):
+        return self._n
+
+
+class _IterOnly:
+    """Iterable with neither `len()` nor `.Count` (generator-like)."""
+
+    def __init__(self, items):
+        self._items = list(items)
+
+    def __iter__(self):
+        return iter(self._items)
+
+
+class TestNonemptySeq:
+    """Direct coverage of `_nonempty_seq`'s three measurement branches."""
+
+    def test_none_is_empty(self):
+        assert _nonempty_seq(None) is False
+
+    def test_len_branch(self):
+        assert _nonempty_seq([]) is False
+        assert _nonempty_seq(["a"]) is True
+
+    def test_count_branch(self):
+        assert _nonempty_seq(_CountSeq(0)) is False
+        assert _nonempty_seq(_CountSeq(3)) is True
+
+    def test_iterator_branch(self):
+        assert _nonempty_seq(_IterOnly([])) is False
+        assert _nonempty_seq(_IterOnly([1])) is True
+
+
+class TestPhonStrucrepText:
+    """Direct coverage of `_phon_strucrep_text`, incl. the sentinel fallback."""
+
+    def test_direct_text(self):
+        obj = FakeGuidObj("e", StringRepresentation=FakeGuidObj("s", Text="/_[V]"))
+        assert _phon_strucrep_text(obj) == "/_[V]"
+
+    def test_sentinel_text_falls_back_to_best_analysis(self):
+        rep = FakeGuidObj("s", Text="***",
+                          BestAnalysisAlternative=FakeGuidObj("alt", Text="/_#"))
+        obj = FakeGuidObj("e", StringRepresentation=rep)
+        assert _phon_strucrep_text(obj) == "/_#"
+
+    def test_no_strucrep_is_empty(self):
+        assert _phon_strucrep_text(FakeGuidObj("e")) == ""
+
+    def test_sentinel_and_no_fallback_is_empty(self):
+        rep = FakeGuidObj("s", Text="***")
+        obj = FakeGuidObj("e", StringRepresentation=rep)
+        assert _phon_strucrep_text(obj) == ""
