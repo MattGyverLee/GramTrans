@@ -130,3 +130,55 @@ This is precisely why the task is tagged `needs_human` / "NEVER unattended".
 
 Once AC1–AC8 PASS, mark T020 `[X]` and proceed to **T023** (merge
 `029-sense-pictures` → `main` `--no-ff`, remove the worktree, update STATUS.md).
+
+---
+
+## T020 attended live proof — PASS (2026-07-19, driven via FLExToolsMCP + harness)
+
+**Fixture** (constructed): disposable source `Ejagham029Src` (restored from the
+`Ejagham Mini` backup); clean `Target` (restored from backup). Four pictures
+added to the stem sense `ndík` 'rope' (guid `8a27cb7e-…`) via
+`LexSenseOperations.AddPicture`:
+1. `eja029_a.png` — captioned "rope (coil)" + layout scalar `ScaleFactor=50`.
+2. `eja029_b.png` — captioned "rope (knot)".
+3. `eja029_b_1.png` (byte-identical to #2) — captioned "rope (knot, alt)" → dedup.
+4. `eja029_c.png` — captioned "rope (frayed)"; backing file then **deleted** from
+   disk → missing-binary.
+
+`Target` `LinkedFiles/Pictures` pre-seeded with (a) a byte-identical copy of
+`eja029_a.png` (reuse) and (b) a same-name/different-content `eja029_b.png`
+(rename). Real STEMS/AFFIXES transfer driven `Ejagham029Src → Target` via the
+harness (`build_full_selection` incl. STEMS; 352 actions).
+
+### Bug found + fixed (this is why the attended proof exists)
+
+First run: reuse and missing-binary pictures threw
+`SIL.LCModel.LcmObjectUninitializedException: Using unowned object in reference
+property` at `CmPicture.SetPictureFileRA`. Root cause: `_create_picture_raw`'s
+`_own_file_in_pictures_folder` did `LangProject.PicturesOC[0]`, but a **clean
+target has an empty `PicturesOC`**, so the freshly-created `CmFile` was never
+owned and wiring it as a reference failed. Offline fakes don't model folder
+ownership, so 138 unit tests passed while the live path was broken.
+
+**Fix** (`fix(029): own CmFile in Pictures CmFolder before wiring PictureFileRA`,
+mirrors flexicon #226): get-or-create the "Local Pictures" `CmFolder` via
+`ICmFolderFactory` and own the `CmFile` there **before** setting `InternalPath` /
+assigning `PictureFileRA`; harden `_set_cmfile_internal_path` against non-
+AttributeError/TypeError .NET exceptions (G7 never-raise).
+
+### Acceptance (fresh read-only reopen of `Target`) — ALL PASS
+
+| AC | Evidence |
+|----|----------|
+| AC1 object/order/caption/layout | 4 `CmPicture`s in order; captions match; pic1 `ScaleFactor=50` preserved |
+| AC2 asset resolves | `PictureFileRA → CmFile.InternalPath` resolves for present files |
+| AC3 dedup | pics 2 & 3 → one file `Pictures\eja029_b_1.png` (one `CmFile`) |
+| AC4 collision | identical `eja029_a.png` **reused** (no 2nd file); same-name/diff `eja029_b.png` → source landed as `eja029_b_1.png`, pre-seed untouched, rename **reported** |
+| AC5 missing binary | pic4 `CmPicture`+`CmFile` wired at `Pictures\eja029_c.png`, no bytes, **reported** |
+| AC6 idempotent | re-run: picture count stays 4; 0 new files/`CmFile`s |
+| AC7 non-destructive | pre-seeded `eja029_a.png` (reused) and `eja029_b.png` (rename target) unchanged |
+| AC8 census | target sense `PicturesOS` populated; zero unexplained empty-in-target |
+
+Offline gate re-confirmed green after the fix (138 picture/census tests).
+`Target` restored clean afterward; disposable `Ejagham029Src` left on disk for
+cleanup. **T020 PASS → T023 merge completed.**

@@ -217,7 +217,7 @@ triggers a de-duplicated-name copy with the rename reported; neither pre-existin
 
 ## Phase 8: Polish & Cross-Cutting
 
-- [ ] T020 [US-live] **Attended live proof (needs_human)** — build a constructed fixture with real
+- [X] T020 [US-live] **Attended live proof (needs_human)** — build a constructed fixture with real
       image files on a disposable source (`Ejagham029Src`, restored from backup; real Ejagham Mini
       untouched) per [quickstart.md](quickstart.md) Tier 2; restore `Target` clean; run the real
       STEMS/AFFIXES engine via FLExToolsMCP `run_module` (drive at the SOURCE handle). Confirm
@@ -232,7 +232,7 @@ triggers a de-duplicated-name copy with the rename reported; neither pre-existin
 - [X] T022 [P] Full offline gate: `python -m pytest tests/unit tests/verification -q`; confirm no
       new failures beyond the documented environment baseline; `python -m py_compile` (or byte-
       compile) `src/gramtrans/Lib/pictures.py` + `categories.py` + `preview.py` clean. Record counts.
-- [ ] T023 Merge `029-sense-pictures` → `main` (`--no-ff`) after T020 PASS + offline gate green;
+- [X] T023 Merge `029-sense-pictures` → `main` (`--no-ff`) after T020 PASS + offline gate green;
       remove the worktree; update `STATUS.md`. (Outward-facing — confirm with the human first.)
 
 ---
