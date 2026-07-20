@@ -1058,7 +1058,9 @@ def _unwrap(obj):
 
 def _slot_name(slot) -> str:
     from SIL.LCModel import IMoInflAffixSlot
-    return IMoInflAffixSlot(_unwrap(slot)).Name.BestAnalysisAlternative.Text
+    txt = IMoInflAffixSlot(_unwrap(slot)).Name.BestAnalysisAlternative.Text
+    # "***" is FLEx's empty-alternative sentinel; never write it as a real Name.
+    return "" if txt in (None, "***") else txt
 
 
 def _ref_seq_contains(ref_seq, obj) -> bool:

@@ -1556,11 +1556,15 @@ def _coerce_cf_value(value: Any) -> Any:
     try:
         # ITsString exposes .Text directly (empty ITsString -> None/"").
         if hasattr(value, "Text"):
-            return value.Text
+            t = value.Text
+            return None if t == "***" else t
         # Multi-string carrier fallback: reduce to the best analysis alternative.
         best = getattr(value, "BestAnalysisAlternative", None)
         if best is not None:
-            return getattr(best, "Text", None)
+            t = getattr(best, "Text", None)
+            # "***" is FLEx's empty-alternative sentinel -> treat as no value so
+            # _is_empty_value/_filter_props suppress it instead of displaying it.
+            return None if t == "***" else t
     except Exception as _e:
         logging.debug("_coerce_cf_value: could not normalize %r: %s", type(value), _e)
     return value
@@ -1568,19 +1572,25 @@ def _coerce_cf_value(value: Any) -> Any:
 
 # R-b: Empty-value suppression helpers
 def _is_empty_value(v: Any) -> bool:
-    """Return True if v is None, empty string, empty dict, or all-whitespace multistring."""
+    """Return True if v is None, empty string, empty dict, or all-whitespace multistring.
+
+    FLEx's "***" empty-alternative sentinel is treated as empty here too, as a
+    display-side backstop: it should already be filtered at each Best*Alternative
+    read site, but suppressing it here guarantees it never reaches the pane even
+    if a future reader forgets to strip it.
+    """
+    def _blank(s: Any) -> bool:
+        return s is None or (isinstance(s, str) and (s.strip() == "" or s.strip() == "***"))
+
     if v is None:
         return True
     if isinstance(v, str):
-        return v.strip() == ""
+        return _blank(v)
     if isinstance(v, dict):
         if len(v) == 0:
             return True
-        # multistring: all ws values empty/whitespace
-        return all(
-            (val is None or (isinstance(val, str) and val.strip() == ""))
-            for val in v.values()
-        )
+        # multistring: all ws values empty/whitespace/sentinel
+        return all(_blank(val) for val in v.values())
     return False
 
 
@@ -2716,18 +2726,19 @@ def _best_analysis_text(prop: Any) -> str:
         return prop
     if isinstance(prop, dict):
         return next(iter(prop.values()), "") if prop else ""
-    try:
-        best = getattr(prop, "BestAnalysisAlternative", None)
-        if best is not None:
-            return getattr(best, "Text", None) or ""
-    except Exception:
-        pass
-    try:
-        best = getattr(prop, "BestVernacularAlternative", None)
-        if best is not None:
-            return getattr(best, "Text", None) or ""
-    except Exception:
-        pass
+    # FLEx returns the sentinel "***" from a Best*Alternative when that WS class
+    # has no content (e.g. a vernacular-only affix lexeme form has no analysis
+    # alternative). Treat "***" as empty so the analysis->vernacular fallthrough
+    # actually fires; otherwise vernacular-only forms render as "***".
+    for alt in ("BestAnalysisAlternative", "BestVernacularAlternative"):
+        try:
+            best = getattr(prop, alt, None)
+            if best is not None:
+                t = getattr(best, "Text", None)
+                if t and t != "***":
+                    return t
+        except Exception:
+            continue
     return ""
 
 

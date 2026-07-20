@@ -2060,4 +2060,6 @@ def _unwrap(obj):
 
 def _slot_name(slot) -> str:
     from SIL.LCModel import IMoInflAffixSlot  # lazy
-    return IMoInflAffixSlot(_unwrap(slot)).Name.BestAnalysisAlternative.Text
+    txt = IMoInflAffixSlot(_unwrap(slot)).Name.BestAnalysisAlternative.Text
+    # "***" is FLEx's empty-alternative sentinel; an unnamed slot has no name.
+    return "" if txt in (None, "***") else txt
