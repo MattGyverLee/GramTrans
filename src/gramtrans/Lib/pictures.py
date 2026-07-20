@@ -381,16 +381,42 @@ def _set_cmfile_internal_path(cmfile, internal_path) -> None:
         return
     try:
         _cast_file(cmfile).InternalPath = internal_path
-    except (AttributeError, TypeError):
+    except Exception:  # noqa: BLE001 -- G7 never-raise; a .NET NRE here is not
+        # AttributeError/TypeError. The caller owns the file first (see
+        # _create_picture_raw) so this should not fire, but stay defensive.
         pass
 
 
 def _own_file_in_pictures_folder(ctx, cmfile) -> None:
     """Best-effort: own a raw-created `CmFile` under the target's Local
-    Pictures `CmFolder` on a live host. No-op offline (fakes have no Cache)."""
+    Pictures `CmFolder`, creating that folder if the project has none yet.
+
+    In LibLCM a `CmFile` must live in a `CmFolder` before it can be set as a
+    reference (else `SetPictureFileRA` raises `LcmObjectUninitializedException`
+    on the unowned file -- same hazard as flexicon #226). A clean target has an
+    EMPTY `LangProject.PicturesOC`, so `PicturesOC[0]` is not safe; get-or-create
+    the "Local Pictures" folder exactly as flexicon MediaOperations does.
+    No-op offline (fakes have no Cache)."""
     target = _target_handle(ctx)
     try:
-        folder = target.Cache.LangProject.PicturesOC[0]
+        cache = target.Cache
+        lp = cache.LangProject
+    except Exception:
+        return
+    try:
+        folder = None
+        for f in lp.PicturesOC:
+            folder = f
+            break
+        if folder is None:
+            from SIL.LCModel import ICmFolderFactory
+            from SIL.LCModel.Core.Text import TsStringUtils
+            ff = cache.ServiceLocator.GetService(ICmFolderFactory)
+            folder = ff.Create()
+            lp.PicturesOC.Add(folder)
+            ws = cache.DefaultAnalWs
+            folder.Name.set_String(
+                ws, TsStringUtils.MakeString("Local Pictures", ws))
         folder.FilesOC.Add(cmfile)
     except Exception:
         pass
@@ -418,8 +444,12 @@ def _create_picture_raw(ctx, new_sense, internal_path, existing_file=None):
             except Exception:
                 cmfile = None
             if cmfile is not None:
-                _set_cmfile_internal_path(cmfile, internal_path)
+                # Own the CmFile under the Pictures CmFolder BEFORE setting its
+                # InternalPath: on a live host, setting InternalPath on an
+                # unowned CmFile raises System.NullReferenceException (same
+                # ordering hazard as flexicon #226). Ownership must come first.
                 _own_file_in_pictures_folder(ctx, cmfile)
+                _set_cmfile_internal_path(cmfile, internal_path)
     if cmfile is not None:
         try:
             _cast_picture(picture).PictureFileRA = cmfile
