@@ -582,13 +582,45 @@ def _ensure_target_index(decision: "ReversalDecision", target, tag, resolver_cac
     return new_index
 
 
-def _create_top_level_entry(target, target_index, primary_text, first_sense, decision, dropped):
-    """Create `decision`'s target entry via `ReversalIndexEntryOperations.
-    Create(index, form, sense)` -- the confirmed-live wrapper (research.md
-    R1). Does NOT preserve the source GUID (the wrapper's `Create` has no
-    guid parameter -- contract's own "where the create path allows" hedge).
-    Reports (never silently skips) when there is no populated form alt to
-    create from at all."""
+def _find_existing_entry_by_form(entries, target, ws_id, text):
+    """Identity match for a `ReversalIndexEntry`: its `ReversalForm` alt in
+    `ws_id` equals `text` (case-sensitive, exact) -- mirrors FLEx's own
+    per-index form uniqueness. `entries` is any iterable of live/duck-typed
+    `IReversalIndexEntry`-shaped objects (`target_index.EntriesOC` or a
+    parent entry's `SubentriesOS`).
+
+    Reads `ReversalForm` via the SAME idiom `_reversal_form_alts` already
+    uses for source entries (`references._multistring_dict` + `references.
+    _project_handle_to_id`), never a new string-access path. Returns `None`
+    (never raises) when `text` is falsy or no entry matches."""
+    if not text:
+        return None
+    handle_to_id = references._project_handle_to_id(target)
+    for entry in entries:
+        alts = references._multistring_dict(
+            getattr(entry, "ReversalForm", None), handle_to_id or None)
+        if alts.get(ws_id) == text:
+            return entry
+    return None
+
+
+def _create_top_level_entry(target, target_index, primary_ws_id, primary_text, first_sense,
+                             decision, dropped):
+    """Create -- or REUSE, if an entry with the same `ReversalForm` already
+    exists on `target_index` (dedup: repeat-Move idempotency, mirroring
+    texts.py finding #2's "form/structural fingerprint IS identity, no
+    GUID-preserving Create overload exists" fix) -- `decision`'s target
+    entry via `ReversalIndexEntryOperations.Create(index, form, sense)`, the
+    confirmed-live wrapper (research.md R1). Does NOT preserve the source
+    GUID on the CREATE path (the wrapper's `Create` has no guid parameter --
+    contract's own "where the create path allows" hedge). Reports (never
+    silently skips) when there is no populated form alt to create from at
+    all.
+
+    On REUSE, `first_sense` is NOT linked by the create call (there is no
+    create call) -- the caller (`_apply_one_entry`) links it explicitly
+    afterwards via `_link_remaining_senses`, so both the create and reuse
+    paths leave `first_sense` linked before returning."""
     if not primary_text:
         dropped.append(DroppedItemRecord(
             owner_kind="ReversalIndexEntry",
@@ -600,6 +632,12 @@ def _create_top_level_entry(target, target_index, primary_text, first_sense, dec
             reason="no reversal form alt to create entry from",
         ))
         return None
+    existing = _find_existing_entry_by_form(
+        getattr(target_index, "EntriesOC", None) or [], target, primary_ws_id, primary_text)
+    if existing is not None:
+        if first_sense is not None:
+            _link_remaining_senses(existing, [first_sense])
+        return existing
     try:
         return target.ReversalEntries.Create(target_index, primary_text, first_sense)
     except Exception as exc:
@@ -643,7 +681,17 @@ def _create_sub_entry(target, parent_entry, primary_ws_id, primary_text, first_s
     mechanism every other sense-Add in this module uses (never inventing a
     second linking path) -- makes the top-level and sub-entry branches
     consume `first_sense` identically, so the single `remaining_senses`
-    slice back in `_apply_one_entry` is correct for both."""
+    slice back in `_apply_one_entry` is correct for both.
+
+    Dedup (repeat-Move idempotency, same shape as `_create_top_level_entry`
+    -- texts.py finding #2's "form IS identity, no GUID-preserving Create
+    overload exists" fix): before falling back to the raw factory, scans
+    `parent_entry.SubentriesOS` for an entry whose `ReversalForm` alt in
+    `primary_ws_id` already equals `primary_text`, and REUSEs it instead of
+    creating a duplicate. `first_sense` is linked on BOTH the create and
+    reuse paths (the create path already does so explicitly below; the
+    reuse path does so here) so the caller's `remaining_senses` slice stays
+    correct either way."""
     if not primary_text:
         dropped.append(DroppedItemRecord(
             owner_kind="ReversalIndexEntry",
@@ -655,6 +703,12 @@ def _create_sub_entry(target, parent_entry, primary_ws_id, primary_text, first_s
             reason="no reversal form alt to create sub-entry from",
         ))
         return None
+    existing = _find_existing_entry_by_form(
+        getattr(parent_entry, "SubentriesOS", None) or [], target, primary_ws_id, primary_text)
+    if existing is not None:
+        if first_sense is not None:
+            _link_remaining_senses(existing, [first_sense])
+        return existing
     try:
         factory = owned._get_owned_factory(target, "IReversalIndexEntryFactory")
         new_sub = factory.Create()
@@ -848,7 +902,7 @@ def _apply_one_entry(decision: "ReversalDecision", target, ctx, tag, resolver_ca
         if target_index is None:
             return None
         new_entry = _create_top_level_entry(
-            target, target_index, primary_text, first_sense, decision, dropped)
+            target, target_index, primary_ws_id, primary_text, first_sense, decision, dropped)
     else:
         new_entry = _create_sub_entry(
             target, parent_target_entry, primary_ws_id, primary_text, first_sense,
