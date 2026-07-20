@@ -313,12 +313,16 @@ class TestValueToKeyTranslation:
 
     # B) ------------------------------------------------------------------
     def test_every_mapped_nonNone_key_is_in_real_table(self):
-        """Every non-None mapping in _CATEGORY_VALUE_TO_KEY targets a real table key."""
+        """Every non-None mapping in _CATEGORY_VALUE_TO_KEY targets a real
+        dispatch surface: the ops table (_PROPS_TABLE) OR, for feature-032's
+        four previously-blank categories, a dedicated reader (_DEDICATED_READERS).
+        """
+        from gramtrans.Lib.merge_preview import _DEDICATED_READERS
         for value, key in _CATEGORY_VALUE_TO_KEY.items():
             if key is not None:
-                assert key in _PROPS_TABLE, (
+                assert key in _PROPS_TABLE or key in _DEDICATED_READERS, (
                     f"_CATEGORY_VALUE_TO_KEY[{value!r}] = {key!r} "
-                    f"but {key!r} is not in _PROPS_TABLE"
+                    f"but {key!r} is in neither _PROPS_TABLE nor _DEDICATED_READERS"
                 )
 
     # C) ------------------------------------------------------------------

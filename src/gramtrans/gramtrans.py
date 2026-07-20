@@ -73,7 +73,11 @@ from conflict import (
     build_session_from_resolutions,
     collect_overwrite_conflicts,
 )
-from ws_mapping import detect_ws_mismatches, fold_choices_into_ws_mapping
+from ws_mapping import (
+    default_ws_choices,
+    detect_ws_mismatches,
+    fold_choices_into_ws_mapping,
+)
 
 # Flag-gated diagnostic logging (GRAMTRANS_DEBUG). Strict no-op when off.
 try:
@@ -395,6 +399,18 @@ def phase2_interactive_move(
         mismatches = detect_ws_mismatches(source, project)
         ws_choices = ()
         ws_mapping = WSMapping(entries=())
+        # Feature 032 US4 (FR-012..FR-015): pre-fill related-languages defaults
+        # (primary->primary, sub->sub by subtag suffix). Confident correspondences
+        # seed the mapping so a clean related-languages pair confirms with no
+        # manual edits; ambiguous/absent rows are omitted and stay gated for the
+        # resolver to collect.
+        ws_defaults = default_ws_choices(source, project)
+        if ws_defaults:
+            ws_mapping = fold_choices_into_ws_mapping(ws_defaults, ws_mapping)
+            report.Info(
+                f"[Phase 2] Pre-filled {len(ws_defaults)} writing-system "
+                "default mapping(s) from related-languages correspondence."
+            )
         if mismatches:
             report.Info(f"[Phase 2] {len(mismatches)} writing-system mismatch(es) detected.")
             if ws_resolver is None:

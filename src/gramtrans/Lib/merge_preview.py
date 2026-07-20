@@ -1145,16 +1145,20 @@ _CATEGORY_VALUE_TO_KEY: dict[str, "str | None"] = {
     # Abbreviation + Description are all IMultiUnicode/IMultiString — the gap
     # direct-read path already handles these via _direct_read_gap).
     "variant_types": "variant_type",
+    # Feature 032 (US1): four previously-blank categories now resolve to a
+    # dedicated reader (see _DEDICATED_READERS). Identity keys — they are their
+    # own reader key, dispatched in props_for BEFORE the ops table.
+    "texts": "texts",
+    "writing_systems_check": "writing_systems_check",
+    "complex_form_types": "complex_form_types",
+    "adhoc_compound_rules": "adhoc_compound_rules",
     # explicit None — no standalone per-item preview:
     "msa": None,
-    "writing_systems_check": None,
     "inflection_classes": None,
     "exception_features": None,
     "feature_struct_types": None,
     "pos_inflectable_feats": None,
     "phon_feat_types": None,
-    "complex_form_types": None,
-    "adhoc_compound_rules": None,
     "semantic_domains": None,
     "custom_fields": None,
 }
@@ -1217,6 +1221,33 @@ def props_for(
     resolved = _resolve_category_key(category)
     if resolved is None:
         return None
+
+    # -- Dedicated readers (feature 032, US1) ---------------------------------
+    # Four previously-blank categories have no GetSyncableProperties path: Text
+    # (IStText baseline), Writing System (identity/role), Complex Form Type
+    # (ILexEntryType possibility), and Ad hoc/Compound rule (morpheme refs).
+    # Each resolves via a dedicated reader returning a plain props dict; the
+    # whole read is wrapped so a cast/attribute failure degrades to whatever
+    # label-level content the reader already gathered, never a blank pane or a
+    # raise (FR-011). Checked BEFORE the ops table so these keys need no
+    # (ops_attr, finder, …) tuple.
+    reader = _DEDICATED_READERS.get(resolved)
+    if reader is not None:
+        try:
+            raw = reader(handle, guid, owner_guid)
+        except Exception as _exc:
+            logging.warning(
+                "props_for: dedicated reader failed for category=%r guid=%r: %s: %s",
+                resolved, guid, type(_exc).__name__, _exc,
+            )
+            return None
+        if raw is None:
+            return None
+        filtered = _filter_props(raw)
+        if meta_out is not None:
+            meta_out.update(_grammar_scalar_meta(list(filtered.keys())))
+        return filtered
+
     entry = table.get(resolved)
     if entry is None:
         return None
@@ -1252,6 +1283,13 @@ def props_for(
             raw = _direct_read_gap(obj, include_optional_bool=include_bool, ws_defs=_ws_defs(handle))
             if raw is None:
                 return None
+            # Feature 032 (US2): enrich thin gap categories beyond the label
+            # fields. Each enricher is graceful (FR-011): a failed cast/read
+            # leaves `raw` at label level rather than raising or blanking.
+            if resolved == "phon_feature":
+                _enrich_phon_feature(obj, raw)
+            elif resolved == "slot":
+                _enrich_slot(obj, raw)
             # R-b + R-c filtering applied after direct-read; custom fields not
             # applicable to gap categories (no GetAllFields equivalent).
             filtered = _filter_props(raw)
@@ -1301,6 +1339,13 @@ def props_for(
         if resolved == "phoneme":
             _enrich_phoneme(obj, raw)
 
+        # Phonological rule (feature 032, US2): GetSyncableProperties returns
+        # only Name/Description; surface a bounded structural summary
+        # (contexts / RHS / direction / order) so same-named rules are
+        # distinguishable (FR-006).
+        if resolved == "phon_rule":
+            _enrich_phon_rule(obj, raw)
+
         # R-a: append custom fields (never replaces standard fields; exception-safe)
         _append_custom_fields(handle, obj, resolved, raw)
 
@@ -1348,6 +1393,25 @@ def _get_ops(handle: Any, ops_attr: str | None, category: str) -> Any:
     return getattr(handle, ops_attr, None)
 
 
+def _phon_feature_system(handle: Any) -> Any:
+    """Resolve the project's phonological feature system (IFsFeatureSystem).
+
+    Owned by ``LangProject.PhFeatureSystemOA``. Cast the LangProject to
+    ``ILangProject`` (guarded — absent in headless fakes) so the owned-attribute
+    access resolves; returns None on any failure.
+    """
+    try:
+        lp = handle.Cache.LangProject
+    except Exception:
+        return None
+    try:
+        from SIL.LCModel import ILangProject  # lazy; absent in headless tests
+        lp = ILangProject(lp)
+    except Exception:
+        pass
+    return getattr(lp, "PhFeatureSystemOA", None)
+
+
 def _find_gap_object(handle: Any, category: str, guid: str, owner_guid: str) -> Any:
     """Attempt to locate a gap-category object by GUID using duck-typed traversal."""
     # For duck-typed fakes in tests, try direct GUID lookup on a dict-like handle
@@ -1384,11 +1448,19 @@ def _find_gap_object(handle: Any, category: str, guid: str, owner_guid: str) -> 
             pass
         return None
     if category == "phon_feature":
-        # PhonologicalFeatures: IFsClosedFeature in the feature system
+        # PhonologicalFeatures: IFsClosedFeature owned by the phonological
+        # feature system, LangProject.PhFeatureSystemOA.FeaturesOC. The older
+        # PhonologicalFeatureSystem / FeatureSystem handle attributes do not
+        # exist on the flexicon project handle (feature 032: live-verified the
+        # GUID enumerated by project.PhonFeatures.GetAll matches
+        # PhFeatureSystemOA.FeaturesOC), so resolve the system via the LCM cache
+        # with a guarded ILangProject cast; the old attributes stay as fallbacks.
         try:
             fs = getattr(handle, "PhonologicalFeatureSystem", None) or getattr(
                 handle, "FeatureSystem", None
             )
+            if fs is None:
+                fs = _phon_feature_system(handle)
             if fs is None:
                 return None
             for feat in getattr(fs, "FeaturesOC", ()):
@@ -1661,6 +1733,22 @@ _GRAMMAR_FIELD_ORDER: dict[str, int] = {
     "Members": 3,
     "Features": 4,
     "Values": 5,
+    # Feature 032: new/enriched category fields, kept adjacent to Name so the
+    # defining content leads the pane (FLEx-like order). Truncation indicators
+    # sort just after the field they qualify.
+    "Title": 0,          # Text: title is its Name-equivalent
+    "Code": 6,           # Writing System
+    "Kind": 7,           # Writing System
+    "Rank": 8,           # Writing System
+    "MapsTo": 9,         # Writing System
+    "Type": 10,          # Phon Feature / Complex Form Type
+    "ReverseName": 11,   # Complex Form Type
+    "ReverseAbbr": 12,   # Complex Form Type
+    "Structure": 13,     # Phonological Rule
+    "Affixes": 14,       # Slot
+    "ReferencedElements": 15,  # Ad hoc / Compound rule
+    "Baseline": 16,      # Text baseline excerpt
+    "Truncated": 17,     # bounded-excerpt / bounded-list indicator
 }
 _GRAMMAR_FIELD_UNKNOWN_ORDER = 50
 
@@ -1890,6 +1978,434 @@ def _enrich_phoneme(ph: Any, raw: dict[str, Any]) -> None:
         raw["Features"] = labels
     else:
         raw.pop("Features", None)
+
+
+# ============================================================================
+# Feature 032: shared bounding (T005), US1 dedicated readers, US2 enrichers
+# ============================================================================
+# All reads are duck-typed + guarded so headless fakes and edge objects never
+# raise; every reader returns a plain props dict (scalar str / {ws_id: text} /
+# list[str]) consumable unchanged by diff_props (FR-009), degrades to whatever
+# label-level content it gathered on a cast/attribute failure (FR-011), and
+# writes nothing (FR-010).
+
+_EXCERPT_CHAR_LIMIT = 280   # Text baseline excerpt cap (FR-018)
+_LIST_ITEM_LIMIT = 25       # Slot affix / ad-hoc reference / NC member cap (FR-018)
+
+
+def _bounded_excerpt(text: Any, limit: int = _EXCERPT_CHAR_LIMIT) -> tuple[str, bool]:
+    """Return ``(excerpt, truncated)`` for a possibly-long string (FR-018).
+
+    Shared by the Text baseline reader; the truncation flag drives an explicit
+    ``Truncated`` companion field so a cut is always visible, never silent.
+    """
+    if not text:
+        return "", False
+    s = str(text)
+    if len(s) <= limit:
+        return s, False
+    return s[:limit].rstrip() + "…", True
+
+
+def _bounded_list(items: Any, limit: int = _LIST_ITEM_LIMIT) -> tuple[list, bool]:
+    """Return ``(bounded_list, truncated)`` for a possibly-long list (FR-018).
+
+    Shared by the Slot affix list and the Ad hoc/Compound rule referenced-element
+    list so neither dumps an unbounded collection into the pane.
+    """
+    try:
+        lst = list(items)
+    except Exception:
+        return [], False
+    if len(lst) <= limit:
+        return lst, False
+    return lst[:limit], True
+
+
+def _default_vern_handle_for(handle: Any) -> Any:
+    """Best-effort default vernacular WS handle for a project handle, or None."""
+    try:
+        return handle.GetDefaultVernacularWSHandle()
+    except Exception:
+        return None
+
+
+# ---- US1: Text (IText/IStText) baseline reader -----------------------------
+
+
+def _find_text_by_guid(handle: Any, guid: str) -> Any:
+    """Locate an IText in the project by GUID (via ``Texts.GetAll``)."""
+    text_ops = getattr(handle, "Texts", None)
+    if text_ops is None:
+        return None
+    try:
+        for t in (text_ops.GetAll() or []):
+            if _guid_eq(_obj_guid(t), guid):
+                return _unwrap(t)
+    except Exception as _e:
+        logging.debug("_find_text_by_guid: enumeration failed: %s", _e)
+    return None
+
+
+def _text_baseline_excerpt(handle: Any, text: Any) -> str:
+    """Concatenate a text's vernacular baseline (segment text preferred).
+
+    Reuses the same read surface as ``Lib/texts.py`` (``Texts.GetParagraphs`` →
+    ``Segments.GetBaselineText`` → paragraph ``GetText``). Stops early once the
+    excerpt cap is reached so a large text never walks unbounded.
+    """
+    text_ops = getattr(handle, "Texts", None)
+    para_ops = getattr(handle, "Paragraphs", None)
+    seg_ops = getattr(handle, "Segments", None)
+    if text_ops is None:
+        return ""
+    try:
+        paragraphs = list(text_ops.GetParagraphs(text) or [])
+    except Exception:
+        paragraphs = []
+    parts: list[str] = []
+    vern_handle = _default_vern_handle_for(handle)
+    for para in paragraphs:
+        segs = []
+        if seg_ops is not None:
+            try:
+                segs = list(seg_ops.GetAll(para) or [])
+            except Exception:
+                segs = []
+        for seg in segs:
+            try:
+                bt = seg_ops.GetBaselineText(seg)
+            except Exception:
+                bt = None
+            if bt and bt != "***":
+                parts.append(str(bt))
+        if not segs and para_ops is not None:
+            try:
+                pt = para_ops.GetText(para, vern_handle)
+            except Exception:
+                pt = None
+            if pt and pt != "***":
+                parts.append(str(pt))
+        if sum(len(p) for p in parts) > _EXCERPT_CHAR_LIMIT:
+            break
+    return " ".join(parts).strip()
+
+
+def _read_text(handle: Any, guid: str, owner_guid: str = "") -> dict[str, Any] | None:
+    """Text preview: ``{Title, Baseline (bounded), Truncated?}`` (FR-004, FR-018)."""
+    text = _find_text_by_guid(handle, guid)
+    if text is None:
+        return None
+    text_ops = getattr(handle, "Texts", None)
+    result: dict[str, Any] = {}
+    title = None
+    try:
+        title = text_ops.GetName(text) if text_ops is not None else None
+    except Exception:
+        title = None
+    if title and title != "***":
+        result["Title"] = str(title)
+    baseline = _text_baseline_excerpt(handle, text)
+    if baseline:
+        excerpt, truncated = _bounded_excerpt(baseline)
+        result["Baseline"] = excerpt
+        if truncated:
+            result["Truncated"] = "baseline excerpt truncated"
+    return result or None
+
+
+# ---- US1: Writing System identity/role reader ------------------------------
+
+
+def _ws_display_name(ws: Any) -> str:
+    """Best-effort display name for a writing-system object."""
+    for attr in ("DisplayLabel", "LanguageName", "Name"):
+        v = getattr(ws, attr, None)
+        if isinstance(v, str) and v.strip():
+            return v.strip()
+    lang = getattr(ws, "Language", None)
+    nm = getattr(lang, "Name", None) if lang is not None else None
+    if isinstance(nm, str) and nm.strip():
+        return nm.strip()
+    return ""
+
+
+def _read_writing_system(handle: Any, guid: str, owner_guid: str = "") -> dict[str, Any] | None:
+    """Writing System preview: ``{Name, Code, Kind, Rank, MapsTo}`` (FR-001).
+
+    A WS is identified by its language tag (``Id``), not an ICmObject GUID, so
+    the lookup keys on ``Id`` first (GUID fallback is defensive). ``MapsTo`` is
+    the US4 concern (P2) and renders ``"unresolved"`` here.
+    """
+    ws_ops = getattr(handle, "WritingSystems", None)
+    if ws_ops is None:
+        return None
+    try:
+        all_ws = list(ws_ops.GetAll() or [])
+    except Exception:
+        all_ws = []
+    key = str(guid).lower()
+    target = None
+    for ws in all_ws:
+        if str(getattr(ws, "Id", "")).lower() == key:
+            target = ws
+            break
+    if target is None:
+        for ws in all_ws:
+            if _obj_guid(ws) == key:
+                target = ws
+                break
+    if target is None:
+        return None
+    # Vernacular membership by Id (kind).
+    vern_ids: set = set()
+    try:
+        vern_ids = {str(getattr(w, "Id", "")).lower()
+                    for w in (ws_ops.GetVernacular() or [])}
+    except Exception:
+        vern_ids = set()
+    tid = str(getattr(target, "Id", "")).lower()
+    result: dict[str, Any] = {}
+    name = _ws_display_name(target)
+    if name:
+        result["Name"] = name
+    code = getattr(target, "Id", None)
+    if code:
+        result["Code"] = str(code)
+    result["Kind"] = "vernacular" if tid in vern_ids else "analysis"
+    # Rank: a tag with no "-" variant subtag is the base/primary; a variant
+    # (e.g. eja-fonipa) is a sub writing system.
+    result["Rank"] = "sub" if "-" in tid else "primary"
+    result["MapsTo"] = "unresolved"  # US4 (P2) — not resolved in P1
+    return result
+
+
+# ---- US1: Complex Form Type (ILexEntryType) reader -------------------------
+
+
+def _find_complex_form_type_by_guid(handle: Any, guid: str) -> Any:
+    """Locate an ILexEntryType under ``LexDbOA.ComplexEntryTypesOA`` by GUID."""
+    try:
+        if __package__:
+            from .categories import _walk_possibilities_via_lexdb  # Qt-free
+        else:
+            from categories import _walk_possibilities_via_lexdb  # type: ignore
+        for node in _walk_possibilities_via_lexdb(handle, "ComplexEntryTypesOA"):
+            if _guid_eq(_obj_guid(node), guid):
+                return _unwrap(node)
+    except Exception as _e:
+        logging.debug("_find_complex_form_type_by_guid: walk failed: %s", _e)
+    return None
+
+
+def _read_complex_form_type(handle: Any, guid: str, owner_guid: str = "") -> dict[str, Any] | None:
+    """Complex Form Type preview: Name/Abbreviation/Description + Reverse*
+    pattern detail (FR-002). Diff-compatible with a matching target type."""
+    node = _find_complex_form_type_by_guid(handle, guid)
+    if node is None:
+        return None
+    ws_defs = _ws_defs(handle)
+    raw = _direct_read_gap(node, include_optional_bool=False, ws_defs=ws_defs) or {}
+    for fld in ("ReverseName", "ReverseAbbr"):
+        prop = getattr(node, fld, None)
+        if prop is None:
+            continue
+        try:
+            d = _ms_to_dict(prop, ws_defs)
+        except Exception:
+            d = {}
+        if d:
+            raw[fld] = d
+    return raw or None
+
+
+# ---- US1: Ad hoc / Compound rule reader ------------------------------------
+
+
+def _morpheme_ref_label(obj: Any) -> str:
+    """Best-effort human label for a referenced morpheme / allomorph / MSA."""
+    if obj is None:
+        return ""
+    for attr in ("LongName", "ShortName"):
+        v = getattr(obj, attr, None)
+        if isinstance(v, str) and v.strip():
+            return v.strip()
+    form = getattr(obj, "Form", None)
+    if form is not None:
+        t = _best_analysis_text(form)
+        if t:
+            return t
+    owner = getattr(obj, "Owner", None)
+    hw = getattr(owner, "HeadWord", None) if owner is not None else None
+    t = getattr(hw, "Text", None) if hw is not None else None
+    if isinstance(t, str) and t.strip():
+        return t.strip()
+    return _short_guid(obj)
+
+
+def _adhoc_referenced_labels(rule: Any) -> list[str]:
+    """Resolve a rule's referenced morphemes/allomorphs/MSAs to labels.
+
+    Covers the ad-hoc prohibition slots (``FirstMorphemeRA`` + ``MorphemesRS`` +
+    ``RestOfMorphsRS`` + ``AllomorphsRS``) and the compound-rule MSA slots
+    (``Left/Right/To/OverridingMsaOA``). Missing slots are skipped, never fatal.
+    """
+    out: list[str] = []
+    for attr in ("FirstMorphemeRA", "LeftMsaOA", "RightMsaOA", "ToMsaOA",
+                 "OverridingMsaOA"):
+        obj = getattr(rule, attr, None)
+        if obj is not None:
+            lbl = _morpheme_ref_label(obj)
+            if lbl:
+                out.append(lbl)
+    for attr in ("MorphemesRS", "RestOfMorphsRS", "AllomorphsRS"):
+        coll = getattr(rule, attr, None)
+        if coll is None:
+            continue
+        try:
+            for m in coll:
+                lbl = _morpheme_ref_label(m)
+                if lbl:
+                    out.append(lbl)
+        except Exception as _e:
+            logging.debug("_adhoc_referenced_labels: %s read failed: %s", attr, _e)
+    return out
+
+
+def _find_adhoc_rule_by_guid(handle: Any, guid: str) -> Any:
+    """Locate an ad-hoc prohibition / compound rule by GUID.
+
+    Reuses ``categories._rules_enumerate_all`` (which recurses
+    ``AdhocCoProhibitionsOC`` + ``CompoundRulesOS`` and casts each element to its
+    concrete subclass, so subclass-only reference slots are visible).
+    """
+    try:
+        if __package__:
+            from .categories import _rules_enumerate_all  # Qt-free
+        else:
+            from categories import _rules_enumerate_all  # type: ignore
+        for r in _rules_enumerate_all(handle):
+            if _guid_eq(_obj_guid(r), guid):
+                return r  # already concrete-cast + unwrapped by the enumerator
+    except Exception as _e:
+        logging.debug("_find_adhoc_rule_by_guid: enumeration failed: %s", _e)
+    return None
+
+
+def _read_adhoc_compound_rule(handle: Any, guid: str, owner_guid: str = "") -> dict[str, Any] | None:
+    """Ad hoc / Compound rule preview: identity + bounded ReferencedElements
+    (FR-003, FR-011, FR-018). Referenced targets outside the closure are still
+    described by whatever label resolves; they never crash the reader."""
+    rule = _find_adhoc_rule_by_guid(handle, guid)
+    if rule is None:
+        return None
+    result: dict[str, Any] = {}
+    nm = getattr(rule, "Name", None)
+    if nm is not None:
+        try:
+            d = _ms_to_dict(nm, _ws_defs(handle))
+        except Exception:
+            d = {}
+        if d:
+            result["Name"] = d
+    refs = _adhoc_referenced_labels(rule)
+    if refs:
+        bounded, truncated = _bounded_list(refs)
+        result["ReferencedElements"] = bounded
+        if truncated:
+            result["Truncated"] = "referenced-element list truncated"
+    if not result:
+        cls = str(getattr(rule, "ClassName", "") or "")
+        if cls:
+            result["Type"] = cls  # last-resort identity so the pane is never blank
+    return result or None
+
+
+# Dedicated-reader dispatch (feature 032, US1). Keyed by the resolved category
+# key; consulted in props_for before the ops table.
+_DEDICATED_READERS: dict[str, Any] = {
+    "texts": _read_text,
+    "writing_systems_check": _read_writing_system,
+    "complex_form_types": _read_complex_form_type,
+    "adhoc_compound_rules": _read_adhoc_compound_rule,
+}
+
+
+# ---- US2: thin-category enrichers ------------------------------------------
+
+
+def _enrich_phon_feature(obj: Any, raw: dict[str, Any]) -> None:
+    """Add ``{Type, Values}`` to a phonological feature's props (FR-005).
+
+    Reads the closed feature's permissible symbolic values (``ValuesOC``) on top
+    of the gap Name/Abbreviation/Description already in ``raw``.
+    """
+    closed = _lcm_cast(obj, "IFsClosedFeature")
+    values: list[str] = []
+    try:
+        for val in getattr(closed, "ValuesOC", None) or []:
+            sv = _lcm_cast(val, "IFsSymFeatVal")
+            label = (_best_analysis_text(getattr(sv, "Abbreviation", None))
+                     or _best_analysis_text(getattr(sv, "Name", None)))
+            if label:
+                values.append(label)
+    except Exception as _e:
+        logging.debug("_enrich_phon_feature: values read failed: %s", _e)
+    if values:
+        raw["Values"] = values
+        raw.setdefault("Type", "closed")
+
+
+def _enrich_slot(obj: Any, raw: dict[str, Any]) -> None:
+    """Add a bounded ``Affixes`` list (occupying affix MSAs) to a slot (FR-007)."""
+    slot = _lcm_cast(obj, "IMoInflAffixSlot")
+    labels: list[str] = []
+    try:
+        for msa in getattr(slot, "Affixes", None) or []:
+            lbl = _morpheme_ref_label(msa)
+            if lbl:
+                labels.append(lbl)
+    except Exception as _e:
+        logging.debug("_enrich_slot: affix read failed: %s", _e)
+    if labels:
+        bounded, truncated = _bounded_list(labels)
+        raw["Affixes"] = bounded
+        if truncated:
+            raw["Truncated"] = "affix list truncated"
+
+
+def _enrich_phon_rule(obj: Any, raw: dict[str, Any]) -> None:
+    """Add a bounded structural ``Structure`` summary to a phonological rule
+    (FR-006) so same-named rules are distinguishable.
+
+    Summary elements: number of structural-description contexts, number of
+    right-hand sides, application direction, and ordering number — the content
+    that differentiates two rules that share a Name.
+    """
+    seg = _lcm_cast(obj, "IPhSegmentRule")
+    reg = _lcm_cast(obj, "IPhRegularRule")
+    parts: list[str] = []
+    try:
+        struc = list(getattr(seg, "StrucDescOS", None) or [])
+        if struc:
+            parts.append(f"{len(struc)} context(s)")
+    except Exception as _e:
+        logging.debug("_enrich_phon_rule: StrucDescOS read failed: %s", _e)
+    try:
+        rhs = list(getattr(reg, "RightHandSidesOS", None) or [])
+        if rhs:
+            parts.append(f"{len(rhs)} RHS")
+    except Exception as _e:
+        logging.debug("_enrich_phon_rule: RightHandSidesOS read failed: %s", _e)
+    for attr, label in (("Direction", "direction"), ("OrderNumber", "order")):
+        try:
+            v = getattr(seg, attr, None)
+            if v is not None:
+                parts.append(f"{label}={int(v)}")
+        except Exception:
+            pass
+    if parts:
+        raw["Structure"] = parts
 
 
 def _find_inflection_feature_or_value(handle: Any, guid: str) -> Any:
