@@ -4824,13 +4824,26 @@ def _plan_entry_reference_decisions(src_entry, context, target):
             # Feature 030 (Preview, new_sense=None -> no writes): Section A
             # appendix link-by-GUID and Section B thesaurus dynamic-owner
             # resolver run their decision/drop pass here so the Preview drop
-            # set matches Move by construction (FR-008). PicturesOS remains an
-            # unconditional drop via `_report_dropped_sense_scope_gaps`.
+            # set matches Move by construction (FR-008). Feature 029 reproduces
+            # PicturesOS via its own Preview twin below; nothing remains an
+            # unconditional drop in `_report_dropped_sense_scope_gaps`.
             _resolve_sense_appendixes(src_sense, None, target, dropped)
             _resolve_sense_thesaurus_items(
                 src_sense, None, target, resolver_cache, dropped,
                 tag=None, ws_map=None, source=source)
             _report_dropped_sense_scope_gaps(src_sense, dropped)
+            # Feature 029 (T006): read-only Preview twin of the Move sense
+            # loop's `pictures.reproduce_sense_pictures` call -- emits the
+            # ADD/LINK `ReferenceDecisionRecord` per source picture (plus the
+            # identical drop set, by construction) into the reference-decision
+            # set feeding `PlannedAction.reference_decisions`. Lazy import (same
+            # idiom as the `owned` import above).
+            if __package__:
+                from . import pictures as _pictures
+            else:
+                import pictures as _pictures  # type: ignore
+            records.extend(_pictures.plan_sense_picture_decisions(
+                src_sense, context, resolver_cache, dropped))
         allomorphs = []
         lf = getattr(src_entry, "LexemeFormOA", None)
         if lf is not None:
@@ -5642,11 +5655,14 @@ def _report_dropped_entry_refs(src_entry, dropped) -> None:
 # ----------------------------------------------------------------------------
 
 _SENSE_SCOPE_GAP_FIELDS = (
-    (
-        "PicturesOS",
-        "CmPicture (-> CmFile -> disk file) is not reproduced by feature "
-        "024's lexicon transfer (routed to 029-sense-pictures)",
-    ),
+    # Feature 030 removed AppendixesRC / ThesaurusItemsRC from this tuple (they
+    # are now reproduced-or-DROP_REPORTED by the 030 appendix/thesaurus
+    # resolvers), and feature 029 removed PicturesOS (now reproduced by the
+    # `Lib/pictures.py` seam -- `reproduce_sense_pictures` /
+    # `plan_sense_picture_decisions`). All three resolvers are wired at both the
+    # Move sense loop (`_walk_lex_entry_closure`) and the Preview sense loop
+    # (`_plan_entry_reference_decisions`), so no field remains an unconditional
+    # scope-gap drop here.
 )
 
 
@@ -5988,14 +6004,25 @@ def _walk_lex_entry_closure(src_entry, context, tag, category, dropped=None):
         # Feature 030 (Move, new_sense set -> writes onto the created sense):
         # Section A appendix link-by-GUID and Section B thesaurus dynamic-owner
         # resolver reproduce these two fields (or DROP_REPORT what they cannot,
-        # never silent). PicturesOS remains an unconditional drop via
-        # `_report_dropped_sense_scope_gaps`. Called from the identical point in
-        # the Preview sense loop above with new_sense=None (FR-008 parity).
+        # never silent). Feature 029 reproduces PicturesOS via the seam below.
+        # Called from the identical point in the Preview sense loop above with
+        # new_sense=None (FR-008 parity).
         _resolve_sense_appendixes(src_sense, new_sense, target, dropped)
         _resolve_sense_thesaurus_items(
             src_sense, new_sense, target, resolver_cache, dropped,
             tag=tag, ws_map=ws_map, source=context.source_handle)
         _report_dropped_sense_scope_gaps(src_sense, dropped)
+        # Feature 029 (T006): reproduce this sense's pictures -- the CmPicture
+        # object graph + each backing image asset into the target LinkedFiles
+        # folder (previously a DROP_REPORTED scope-gap; PicturesOS was removed
+        # from `_SENSE_SCOPE_GAP_FIELDS` above). Lazy import (same idiom as the
+        # `owned` import) to avoid a module load-order cycle. Never raises.
+        if __package__:
+            from . import pictures as _pictures
+        else:
+            import pictures as _pictures  # type: ignore
+        _pictures.reproduce_sense_pictures(
+            src_sense, new_sense, context, tag, resolver_cache, dropped)
         # Feature 024 (T031, US3, FR-008): register the sense into
         # `context._copy_set` (same convention as the entry above) --
         # registration only; lexical-relation discovery for this sense

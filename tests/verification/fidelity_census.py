@@ -111,11 +111,14 @@ buckets are:
   owner-class+OwningFlid (never by list GUID -- those differ per project),
   then create/link/updates via the 024 resolver. An item whose owning list
   can't be discovered/mirrored is DROP_REPORTED (never silent, FR-005).
-- `LexSense.PicturesOS` -> DROP_REPORTED (was silently excluded). Owns
-  `CmPicture` -> `CmFile` -> disk file (confirmed via reflection:
-  `ICmPicture.PictureFileRA : ICmFile`) -- never creates a `CmPicture`/
-  `CmFile` or copies a file. Same emission function. Routed to
-  029-sense-pictures.
+- `LexSense.PicturesOS` -> COPIED (feature 029-sense-pictures; was cycle-17
+  DROP_REPORTED, before that silently excluded). Each `CmPicture` is
+  reproduced (Caption/Description ws-mapped + layout scalars, in order) and
+  its backing image copied into the target LinkedFiles Pictures folder
+  (`pictures.reproduce_sense_pictures` / `plan_sense_picture_decisions`).
+  The never-silent guard is preserved: a picture/asset that cannot be
+  reproduced (missing/unreadable/unwritable image) still emits a
+  `DroppedItemRecord` (029 US4).
 
 `LexEntry.MainEntriesOrSensesRS` is UNCHANGED (cycle-16 ruling,
 rationale-class "read-only-derived-aggregate") and is now the ONLY entry
@@ -507,15 +510,21 @@ CLASSIFICATION: dict[tuple[str, str], Classification] = {
         Bucket.HANDLED_ELSEWHERE, _MSA_HANDLING_SITE,
     ),
     ("LexSense", "PicturesOS"): Classification(
-        Bucket.DROP_REPORTED,
-        "categories._report_dropped_sense_scope_gaps (categories.py), "
-        "called from _walk_lex_entry_closure's sense loop (Move) and "
-        "_plan_entry_reference_decisions's sense loop (Preview) -- one "
-        "DroppedItemRecord per picture",
-        note="cycle-17 lead correction (was wrongly OUT_OF_SCOPE_EXCLUDED, "
-             "a SILENT bucket -- violated SC-003/FR-010): CmPicture -> "
-             "CmFile -> disk file is never created/copied. Routed to "
-             "029-sense-pictures for eventual reproduction.",
+        Bucket.COPIED,
+        "pictures.reproduce_sense_pictures (Lib/pictures.py), called from "
+        "_walk_lex_entry_closure's sense loop (Move); Preview twin "
+        "pictures.plan_sense_picture_decisions called from "
+        "_plan_entry_reference_decisions's sense loop -- each CmPicture "
+        "reproduced (Caption/Description ws-mapped + layout scalars, in "
+        "order) and its backing image copied into the target LinkedFiles "
+        "Pictures folder (LexSenseOperations.AddPicture / RenamePicture / "
+        "raw ICmPictureFactory fallback)",
+        note="feature 029-sense-pictures (T021): flipped DROP_REPORTED -> "
+             "COPIED. Removed from categories._SENSE_SCOPE_GAP_FIELDS (T006). "
+             "The never-silent guard is preserved: a picture/asset that cannot "
+             "be reproduced (missing/unreadable/unwritable image) still emits a "
+             "DroppedItemRecord (US4). AppendixesRC/ThesaurusItemsRC remain "
+             "DROP_REPORTED (routed to 030).",
     ),
     ("LexSense", "SemanticDomainsRC"): Classification(
         Bucket.COPIED,
@@ -914,7 +923,7 @@ def test_out_of_scope_excluded_list_is_exact() -> None:
     fields formerly parked here (a SILENT bucket -- violated SC-003/FR-010)
     are now real terminal buckets: `ExtendedNoteOS` -> COPIED;
     `AppendixesRC` + `ThesaurusItemsRC` -> COPIED (feature 030);
-    `PicturesOS` -> DROP_REPORTED (029)."""
+    `PicturesOS` -> COPIED (feature 029)."""
     assert OUT_OF_SCOPE_EXCLUDED_FIELDS == frozenset({
         ("LexEntry", "MainEntriesOrSensesRS"),
     })

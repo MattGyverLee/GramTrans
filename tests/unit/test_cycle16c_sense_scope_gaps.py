@@ -162,22 +162,40 @@ class _FakeSourceEntry(_FakeGuidObj):
 
 
 # ============================================================================
-# PicturesOS -- the sole remaining unconditional DROP_REPORTED scope gap
+# Scope-gap reporter -- feature 029 (PicturesOS) and 030 (AppendixesRC /
+# ThesaurusItemsRC) each reproduce their field, so NOTHING remains an
+# unconditional DROP_REPORTED scope gap here.
 # ============================================================================
 
-def test_pictures_emit_one_dropped_record_each():
-    sense = _FakeSourceSense(
-        "sense-pics", pictures=[_FakePicture("pic-1"), _FakePicture("pic-2")])
+def test_picture_no_longer_reported_by_scope_gap_function():
+    """T006: after wiring the 029 seam, `_report_dropped_sense_scope_gaps`
+    emits NO drop for `PicturesOS` (a sense owning only pictures produces an
+    empty drop set from this function -- the pictures route through the new
+    seam instead)."""
+    pic1 = _FakePicture("pic-1")
+    pic2 = _FakePicture("pic-2")
+    pic3 = _FakePicture("pic-3")
+    sense = _FakeSourceSense("sense-3", pictures=[pic1, pic2, pic3])
+
     dropped: list = []
     categories._report_dropped_sense_scope_gaps(sense, dropped)
-    assert {r.item_guid for r in dropped} == {"pic-1", "pic-2"}
-    assert all(r.field_name == "PicturesOS" for r in dropped)
-    assert all("029-sense-pictures" in r.reason for r in dropped)
+
+    assert dropped == []
+    assert "PicturesOS" not in dict(categories._SENSE_SCOPE_GAP_FIELDS)
+
+
+def test_sense_with_no_scope_gap_fields_emits_nothing():
+    sense = _FakeSourceSense("sense-4")
+
+    dropped: list = []
+    categories._report_dropped_sense_scope_gaps(sense, dropped)
+
+    assert dropped == []
 
 
 def test_report_dropped_sense_scope_gaps_no_longer_touches_appendix_or_thesaurus():
-    """The unconditional reporter now covers PicturesOS only -- appendix and
-    thesaurus are handled by their own 030 resolvers."""
+    """The unconditional reporter emits nothing now -- pictures are reproduced
+    by the 029 seam and appendix/thesaurus by their own 030 resolvers."""
     sense = _FakeSourceSense(
         "sense-x", appendixes=[_FakeAppendix("a")],
         thesaurus_items=[_FakePossItem("t", name="T")])
@@ -491,8 +509,10 @@ def test_B_shared_item_across_senses_resolves_to_same_target_no_dup():
 def test_move_and_preview_drop_sets_identical_for_sense_scope_gaps():
     """The Move sense loop (new_sense set) and the Preview sense loop
     (new_sense=None) must produce the identical scope-gap drop set. Here every
-    field is UNRESOLVABLE (target owns nothing), so both modes drop all three;
-    the Move writes go nowhere but the drop sets coincide (FR-008)."""
+    field is UNRESOLVABLE (target owns nothing), so both modes drop the two
+    030-routed fields (appendix + thesaurus); pictures are reproduced by the
+    029 seam (not this reporter), so they are NOT in this drop set. The Move
+    writes go nowhere but the drop sets coincide (FR-008)."""
     ap = _FakeAppendix("ap-parity")
     src_list = _FakePossList("src", name="Custom", flid=42, owner=object())
     ti = _FakePossItem("thes-parity", name="Parity", owner=src_list)
@@ -513,9 +533,10 @@ def test_move_and_preview_drop_sets_identical_for_sense_scope_gaps():
     move = _run(_FakeTargetSense())
     preview = _run(None)
     assert move == preview
-    assert len(move) == 3  # appendix + thesaurus + picture all dropped
+    assert len(move) == 2  # appendix + thesaurus dropped (030); picture
+    # is reproduced by the 029 seam, so it is NOT in the scope-gap drop set.
     assert {f for f, _, _ in move} == {
-        "AppendixesRC", "ThesaurusItemsRC", "PicturesOS"}
+        "AppendixesRC", "ThesaurusItemsRC"}
 
 
 def test_move_and_preview_parity_for_link_success_thesaurus_item():
