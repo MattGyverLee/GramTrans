@@ -396,23 +396,23 @@ def _closest_sub(src_suffix: str, tgt_subs):
 def closest_ws_defaults(source, target) -> dict:
     """Best-effort WS correspondence for the selection wizard (user policy).
 
-    Maps, per WS kind (vernacular, then analysis):
+    Per WS kind (vernacular, then analysis):
       * source **primary** -> target **primary** of the same kind (always, even
         across differing base language subtags, e.g. ``eja`` -> ``abc``);
-      * each source **sub/variant** WS -> the **closest** target variant of the
-        same kind, by subtag suffix (``-fonipa`` -> ``-fonipa``; nearest shared
-        suffix otherwise).
+      * source **variants** are matched **one-to-one** to target variants,
+        closest first (exact subtag suffix, then nearest shared suffix), top-down
+        -- each target variant is consumed at most once;
+      * when the source has **more variants than the target** (or the target has
+        none), the leftover source variants are proposed as **new** target WSs
+        created **under the target primary's base language subtag** -- the source
+        suffix is rebased onto the target base (``eja-x-emic`` -> create
+        ``abc-x-emic``), never onto the source base, so a language is not split
+        across two base subtags.
 
-    Unlike ``default_ws_choices`` (which only maps *unambiguous* suffix matches
-    and leaves everything else unresolved), this always picks the closest
-    available target so the user can confirm-then-adjust rather than re-map by
-    hand. A source WS is omitted only when the target has no WS of its kind (or
-    no variant to match a source variant) at all -- the wizard then falls back
-    to CREATE for that row.
-
-    Returns ``{source_ws_id: target_ws_id}``. Identity rows (source Id already
-    present in the target) are omitted because the wizard maps those to
-    themselves directly.
+    Returns ``{source_ws_id: (choice, target_ws_id)}`` where ``choice`` is
+    ``"map"`` (an existing target WS) or ``"create"`` (a new WS to add under the
+    target primary base). Identity rows (source Id already present in the target)
+    are omitted -- the wizard maps those to themselves directly.
     """
     src_ws = _enumerate_ws(source)
     tgt_ws = _enumerate_ws(target)
@@ -427,21 +427,56 @@ def closest_ws_defaults(source, target) -> dict:
             continue
         src_base = src_primary["id"].split("-", 1)[0]
         tgt_base = tgt_primary["id"].split("-", 1)[0]
-        tgt_subs = [
+
+        # primary -> primary (skip identity; wizard maps it to itself)
+        if src_primary["id"] not in tgt_ids:
+            out[src_primary["id"]] = ("map", tgt_primary["id"])
+
+        # source variants (top-down order), excluding the primary and any that
+        # already exist identically in the target.
+        src_vars = [
+            (w["id"], _subtag_suffix(w["id"], src_base))
+            for w in src_k
+            if w["id"] != src_primary["id"] and w["id"] not in tgt_ids
+        ]
+        # available target variants (consumed one-to-one below).
+        avail = [
             (w["id"], _subtag_suffix(w["id"], tgt_base))
             for w in tgt_k
             if w["id"] != tgt_primary["id"]
         ]
-        for w in src_k:
-            sid = w["id"]
-            if sid in tgt_ids:
-                continue  # identity -- wizard maps it to itself
-            if sid == src_primary["id"]:
-                out[sid] = tgt_primary["id"]  # primary -> primary (always)
+        used: set = set()
+
+        # Pass 1: exact-suffix matches, one-to-one.
+        for sid, suf in src_vars:
+            if sid in out:
                 continue
-            best = _closest_sub(_subtag_suffix(sid, src_base), tgt_subs)
-            if best is not None:
-                out[sid] = best  # variant -> closest target variant
+            for tid, tsuf in avail:
+                if tid not in used and tsuf == suf:
+                    out[sid] = ("map", tid)
+                    used.add(tid)
+                    break
+
+        # Pass 2: closest remaining target variant, one-to-one, top-down.
+        for sid, suf in src_vars:
+            if sid in out:
+                continue
+            remaining = [(tid, tsuf) for tid, tsuf in avail if tid not in used]
+            if not remaining:
+                break
+            best = _closest_sub(suf, remaining)
+            out[sid] = ("map", best)
+            used.add(best)
+
+        # Pass 3: leftovers -> CREATE under the target primary base (rebase the
+        # source suffix onto tgt_base; never split the language onto src_base).
+        for sid, suf in src_vars:
+            if sid in out:
+                continue
+            proposed = (tgt_base + suf) if suf else tgt_base
+            # If the rebased tag already exists in the target, map to it rather
+            # than propose a duplicate create.
+            out[sid] = ("map", proposed) if proposed in tgt_ids else ("create", proposed)
     return out
 
 

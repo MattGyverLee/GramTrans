@@ -436,19 +436,25 @@ class _PageProjectWS(QtWidgets.QWizardPage):
             choice_cb.addItem("MAP to existing target WS", self._CHOICE_MAP)
             choice_cb.addItem("CREATE new target WS", self._CHOICE_CREATE)
             choice_cb.addItem("SKIP (drop objects using this WS)", self._CHOICE_SKIP)
-            # Feature 032 US4: resolve the default target for this row.
+            # Feature 032 US4: resolve the default choice + target for this row.
             #   1. identical target Id present -> MAP to it (self, common case);
-            #   2. else a confident related-languages correspondence exists
-            #      (primary->primary or sub->sub by subtag suffix) -> MAP to that
-            #      target (FR-012..FR-014 -- "Match", never "create new");
-            #   3. else no confident target -> CREATE (source tag as proposed name).
-            map_default = getattr(self, "_ws_map_defaults", {}).get(ws_id)
+            #   2. else closest_ws_defaults proposes a correspondence:
+            #        ("map", tid)    -> MAP to the matched target WS;
+            #        ("create", tid) -> CREATE a new WS, rebased under the target
+            #                           primary base (don't split the language);
+            #   3. else no proposal at all -> CREATE with the source tag.
+            proposal = getattr(self, "_ws_map_defaults", {}).get(ws_id)
             if ws_id in self._target_ws_ids:
                 default_choice = self._CHOICE_MAP
                 default_target = ws_id
-            elif map_default:
-                default_choice = self._CHOICE_MAP
-                default_target = map_default
+            elif proposal is not None:
+                pchoice, ptarget = proposal
+                if pchoice == "create":
+                    default_choice = self._CHOICE_CREATE
+                    default_target = ptarget  # rebased tag, e.g. abc-x-emic
+                else:
+                    default_choice = self._CHOICE_MAP
+                    default_target = ptarget
             else:
                 default_choice = self._CHOICE_CREATE
                 default_target = ws_id  # CREATE: use source tag as proposed name
