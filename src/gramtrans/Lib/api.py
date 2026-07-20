@@ -620,6 +620,94 @@ def _ensure_custom_fields(proj, create_actions: list) -> list:
     return created
 
 
+def _ensure_writing_systems(proj, source, plan) -> list:
+    """Create target writing systems flagged ``create_in_target=True`` in the
+    plan's WSMapping, BEFORE any value write.
+
+    Without this, a source WS the target lacks (audio ``*-Zxxx-x-audio``, IPA
+    ``*-fonipa``, a related-language variant, …) is mapped by
+    ``to_ws_map_dict`` to a target Id that does not exist, so every
+    ``ApplySyncableProperties`` call SILENTLY DROPS that WS's content and the
+    field lands empty (never-silent breach). Live-confirmed: copying a project
+    with an audio WS into a clean target created 0 writing systems.
+
+    Mirrors the custom-field schema pre-pass (``_ensure_custom_fields``): a
+    writing system is a project-level schema-ish object, so creation is an
+    in-memory metadata mutation (``WritingSystemOperations.Create``) followed by
+    a ``_persist_without_close`` checkpoint that writes the WS store to disk
+    before any value write -- the SAME exclusive-write + checkpoint discipline
+    AddCustomField needs. Idempotent (skips a tag that already ``Exists``) and
+    fail-soft per WS (one bad tag never aborts the others or the Move). Returns
+    the list of created language tags.
+    """
+    ws_mapping = getattr(plan, "ws_mapping", None)
+    entries = getattr(ws_mapping, "entries", None) or ()
+    to_create = [
+        e for e in entries
+        if getattr(e, "create_in_target", False) and getattr(e, "target_ws_id", "")
+    ]
+    if not to_create:
+        return []
+    if __package__:
+        from .models import WSKind
+    else:
+        from models import WSKind  # type: ignore
+    try:
+        from flexicon import WritingSystemOperations
+    except Exception as exc:  # noqa: BLE001
+        _log.warning(
+            "_ensure_writing_systems: WritingSystemOperations unavailable (%s); "
+            "cannot create %d target WS(s) -- their content will be dropped",
+            exc, len(to_create),
+        )
+        return []
+
+    tgt_ops = WritingSystemOperations(proj)
+    try:
+        src_ops = WritingSystemOperations(source) if source is not None else None
+    except Exception:  # noqa: BLE001
+        src_ops = None
+
+    def _src_display_name(source_ws_id: str, fallback: str) -> str:
+        if src_ops is None:
+            return fallback
+        try:
+            for w in src_ops.GetAll():
+                if str(getattr(w, "Id", "")) == str(source_ws_id):
+                    dn = src_ops.GetDisplayName(w)
+                    return dn or fallback
+        except Exception:  # noqa: BLE001
+            pass
+        return fallback
+
+    created: list = []
+    for e in to_create:
+        tag = str(e.target_ws_id)
+        try:
+            if tgt_ops.Exists(tag):
+                _log.debug("_ensure_writing_systems: WS %r already present; skip", tag)
+                continue
+        except Exception:  # noqa: BLE001
+            pass  # Exists() failure -> attempt Create and let it guard
+        is_vern = getattr(e, "source_ws_kind", WSKind.VERNACULAR) == WSKind.VERNACULAR
+        name = _src_display_name(getattr(e, "source_ws_id", ""), tag)
+        try:
+            tgt_ops.Create(tag, name, is_vernacular=is_vern)
+            created.append(tag)
+            _log.info(
+                "_ensure_writing_systems: created target WS %r (name=%r, vernacular=%s)",
+                tag, name, is_vern,
+            )
+        except Exception as exc:  # noqa: BLE001 -- one bad tag must not abort the Move
+            _log.warning(
+                "_ensure_writing_systems: could not create WS %r: %s: %s",
+                tag, type(exc).__name__, exc,
+            )
+    if created:
+        _persist_without_close(proj, "writing-system store write")
+    return created
+
+
 def execute_move(context: RunContext, plan: RunPlan) -> RunReport:
     """Execute the plan against the target. PRECONDITION: caller has verified
     the plan was produced from the current Selection/WSMapping (UI
@@ -687,6 +775,18 @@ def execute_move(context: RunContext, plan: RunPlan) -> RunReport:
         # context keeps the one true handle, so the wizard cleanup in
         # gramtrans._run_gui closes the right object.
         _ensure_custom_fields(context.target_handle, create_actions)
+
+    # Writing-system pre-pass (same exclusive-write + checkpoint discipline as
+    # the custom-field schema pre-pass above): materialize every WSMapping entry
+    # flagged create_in_target=True BEFORE transfer.execute runs, so source
+    # WS-tagged content (audio / IPA / related-language variants) routes into a
+    # real target WS instead of being silently dropped by ApplySyncableProperties.
+    created_ws = _ensure_writing_systems(
+        context.target_handle, context.source_handle, plan
+    )
+    if created_ws:
+        _log.info("execute_move: created %d target writing system(s): %s",
+                  len(created_ws), ", ".join(created_ws))
 
     # We need a `report_sink` with .Info / .Warning / .Error / .Blank — the
     # UI passes the FlexTools report object through. For programmatic API

@@ -5,9 +5,11 @@ current Selection requires, and a user-supplied `WSMapping`, decide whether
 the mapping is complete and 1:1.
 
 Mapping materialization into the target (creating WSs flagged
-`create_in_target=True`) is implemented at runtime in `Lib/transfer.py`'s
-pre-step; this module is the read-only validator and stays import-safe
-without flexicon / pythonnet.
+`create_in_target=True`) is implemented at runtime by
+`Lib/api.py`'s `_ensure_writing_systems` pre-pass (invoked from `execute_move`
+before `transfer.execute`, alongside the custom-field schema pre-pass); this
+module is the read-only validator and stays import-safe without flexicon /
+pythonnet.
 """
 from __future__ import annotations
 
