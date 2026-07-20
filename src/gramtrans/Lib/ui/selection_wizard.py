@@ -2807,7 +2807,10 @@ class _PageRules(QtWidgets.QWizardPage):
         self._tree.setHeaderLabels(["Rule", "Target"])
         self._tree.header().setStretchLastSection(True)
         self._tree.setAlternatingRowColors(True)
-        layout.addWidget(self._tree, 1)
+        self._pane = MergePreviewPane(self)
+        splitter = _make_tree_pane_splitter(self._tree, self._pane)
+        layout.addWidget(splitter, 1)
+        self._preview_service = None
 
     # ------------------------------------------------------------------
     def initializePage(self) -> None:
@@ -2843,6 +2846,38 @@ class _PageRules(QtWidgets.QWizardPage):
             self._tree.resizeColumnToContents(col)
         self._tree.itemChanged.connect(self._on_item_changed)
         self._refresh_whole_block()
+
+        # Feature 032 US1: per-rule preview pane (adhoc_compound_rules reader).
+        self._preview_service = MergePreviewService(source, target)
+        self._pane.set_context(
+            self._preview_service, WsFontRegistry.from_project(source), []
+        )
+        self._pane.clear()
+        if self._tree.receivers(self._tree.currentItemChanged) == 0:
+            self._tree.currentItemChanged.connect(self._on_tree_selection_changed)
+
+    def _on_tree_selection_changed(self, current, previous) -> None:
+        """Build a display-only PreviewRequest from the selected rule row."""
+        if current is None or current.data(0, _RULES_KIND_ROLE) != "item":
+            self._pane.clear()
+            return
+        source_guid = current.data(0, _RULES_GUID_ROLE) or ""
+        status = current.data(0, _RULES_STATUS_ROLE) or ""
+        if status == "IN TARGET":
+            target_guid, mode = source_guid, _ET_MODE_OVERWRITE
+        else:
+            target_guid, mode = "", _ET_MODE_NEW
+        request = PreviewRequest(
+            category=GrammarCategory.ADHOC_COMPOUND_RULES.value,
+            source_guid=source_guid,
+            target_guid=target_guid,
+            status=status,
+            mode=mode,
+            resolvable=False,
+            current_resolution=None,
+            owner_guid="",
+        )
+        self._pane.show_item(request)
 
     def _populate_tree(self, inventory) -> None:
         """One tristate group per category (count on header); item rows checked."""
@@ -3904,7 +3939,10 @@ class _PageTexts(QtWidgets.QWizardPage):
         self._text_tree.setHeaderLabels(["Text", "Abbrev.", "Target"])
         self._text_tree.setAlternatingRowColors(True)
         self._text_tree.setRootIsDecorated(False)
-        layout.addWidget(self._text_tree, 1)
+        self._pane = MergePreviewPane(self)
+        splitter = _make_tree_pane_splitter(self._text_tree, self._pane)
+        layout.addWidget(splitter, 1)
+        self._preview_service = None
         btn_row = QtWidgets.QHBoxLayout()
         select_all = QtWidgets.QPushButton("Select all", self)
         select_none = QtWidgets.QPushButton("Select none", self)
@@ -3970,6 +4008,41 @@ class _PageTexts(QtWidgets.QWizardPage):
             return
         self.populate_text_list(inventory)
 
+        # Feature 032 US1: per-text preview pane (texts reader -> Title/Baseline).
+        self._preview_service = MergePreviewService(source, target)
+        self._pane.set_context(
+            self._preview_service, WsFontRegistry.from_project(source), []
+        )
+        self._pane.clear()
+        if self._text_tree.receivers(self._text_tree.currentItemChanged) == 0:
+            self._text_tree.currentItemChanged.connect(self._on_text_selection_changed)
+
+    def _on_text_selection_changed(self, current, previous) -> None:
+        """Build a display-only PreviewRequest from the selected text row."""
+        if current is None:
+            self._pane.clear()
+            return
+        source_guid = current.data(0, _GUID_ROLE) or ""
+        if not source_guid:
+            self._pane.clear()
+            return
+        status = current.data(0, _ITEM_STATUS_ROLE) or ""
+        if status == "in_target":
+            target_guid, mode = source_guid, OVERWRITE
+        else:
+            target_guid, mode = "", NEW
+        request = PreviewRequest(
+            category=GrammarCategory.TEXTS.value,
+            source_guid=source_guid,
+            target_guid=target_guid,
+            status=status,
+            mode=mode,
+            resolvable=False,
+            current_resolution=None,
+            owner_guid="",
+        )
+        self._pane.show_item(request)
+
     def populate_text_list(self, inventory) -> None:
         """Populate the checkable text list from a TextInventory.
 
@@ -3985,6 +4058,7 @@ class _PageTexts(QtWidgets.QWizardPage):
             )
             item.setData(0, _GUID_ROLE, row.guid)
             item.setData(0, _ITEM_CAT_ROLE, GrammarCategory.TEXTS)
+            item.setData(0, _ITEM_STATUS_ROLE, row.status or "")
             item.setFlags(item.flags() | QtCore.Qt.ItemFlag.ItemIsUserCheckable)
             item.setCheckState(0, QtCore.Qt.CheckState.Checked)
         for col in range(3):
