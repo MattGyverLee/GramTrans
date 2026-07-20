@@ -2136,16 +2136,41 @@ def build_selection(picker: PickerState,
 def _phon_guid(obj) -> str:
     """Lower-cased GUID for a phonology object.
 
-    IDENTICAL normalization to categories.py `_guid_str_from` so the builder
+    MUST match categories.py `_guid_str_from` normalization so the builder
     (which stores `row.guid`) and the leaf-dispatch trim filter (which compares
     `_guid_str_from(item)`) agree on both sides (spec 010 GUID-normalization
-    invariant, P0). Real LCM path via ICmObject; fake fallback via `.guid`.
+    invariant, P0).
+
+    Handles three object shapes (mirrors `_guid_str_from`):
+      1. Raw LCM objects        -> cast via ICmObject.
+      2. flexicon wrapper objects (e.g. the `PhonologicalRule` items yielded by
+         `PhonRules.GetAll()`) that are NOT castable to ICmObject but hold the
+         underlying LCM object as `._obj` and expose a PascalCase `.Guid`.
+         Without this branch such wrappers fell through to `""`, so every
+         phonological rule row got an empty GUID -> blank preview pane (the
+         `props_for(..., "")` lookup matched nothing).
+      3. fake / duck-typed test objects exposing a lowercase `.guid`.
     """
     try:
         from SIL.LCModel import ICmObject  # lazy — absent in unit tests
-        return str(ICmObject(obj).Guid).lower()
     except Exception:  # noqa: BLE001
-        return str(getattr(obj, "guid", "")).lower()
+        ICmObject = None
+    if ICmObject is not None:
+        try:
+            return str(ICmObject(obj).Guid).lower()
+        except Exception:  # noqa: BLE001
+            pass
+        inner = getattr(obj, "_obj", None)
+        if inner is not None:
+            try:
+                return str(ICmObject(inner).Guid).lower()
+            except Exception:  # noqa: BLE001
+                pass
+    for attr in ("guid", "Guid"):
+        val = getattr(obj, attr, None)
+        if val:
+            return str(val).lower()
+    return ""
 
 
 def _phon_ipa(obj) -> str:
@@ -2680,12 +2705,13 @@ class RulesInventory:
 # ---------------------------------------------------------------------------
 
 def _rule_guid(obj) -> str:
-    """Normalized GUID for a rule object (mirrors _phon_guid)."""
-    try:
-        from SIL.LCModel import ICmObject  # noqa: F401 -- lazy, absent in unit tests
-        return str(ICmObject(obj).Guid).lower()
-    except Exception:  # noqa: BLE001
-        return str(getattr(obj, "guid", "")).lower()
+    """Normalized GUID for a rule object (mirrors _phon_guid).
+
+    Handles flexicon wrapper objects (not ICmObject-castable; expose `._obj`
+    and PascalCase `.Guid`) as well as raw LCM objects and duck-typed fakes,
+    so wrapper-yielding rule collections never produce an empty GUID.
+    """
+    return _phon_guid(obj)
 
 
 def _rule_label(obj) -> str:
