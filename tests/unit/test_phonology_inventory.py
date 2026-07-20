@@ -47,6 +47,58 @@ def test_all_rows_preselected():
     assert all(r.preselected for g in inv.groups for r in g.rows)
 
 
+def test_orphan_natural_classes_predeselected():
+    """An orphan NC opens UNCHECKED; a referenced NC stays on.
+
+    Orphan-hood is injected (the live builder derives it from LCM
+    ReferringObjects; fakes can't, so tests pass the set explicitly). FLEx
+    strands a "Created automatically for rule X" NC whenever a rule context is
+    re-saved, so those dead classes should not ride along on a Move by default.
+    """
+    p1 = FakePhoneme("ph1", "p")
+    used_nc = FakeNC("nc_used", "C", segments=[p1])
+    orphan_nc = FakeNC("nc_orphan", "Created automatically for rule \"gone\"",
+                       segments=[p1])
+    src = FakePhonSource(phonemes=[p1], ncs=[used_nc, orphan_nc])
+
+    inv = build_phonology_inventory(src, orphan_nc_guids=frozenset({"nc_orphan"}))
+    nc_rows = {r.guid: r for r in inv.group_for(GC.NATURAL_CLASSES).rows}
+    assert nc_rows["nc_used"].preselected is True
+    assert nc_rows["nc_orphan"].preselected is False
+    # non-NC rows are unaffected — phonemes still open preselected.
+    assert all(r.preselected for r in inv.group_for(GC.PHONEMES).rows)
+
+
+def test_no_orphans_means_all_preselected():
+    """Empty orphan set (or the None default with no LCM) => every NC checked."""
+    p1 = FakePhoneme("ph1", "p")
+    nc1 = FakeNC("nc1", "C", segments=[p1])
+    nc2 = FakeNC("nc2", "V", segments=[p1])
+    src = FakePhonSource(phonemes=[p1], ncs=[nc1, nc2])
+    # Explicit empty set and the None default (no LCM in tests) behave the same.
+    for kwargs in ({"orphan_nc_guids": frozenset()}, {}):
+        inv = build_phonology_inventory(src, **kwargs)
+        assert all(r.preselected for r in inv.group_for(GC.NATURAL_CLASSES).rows)
+
+
+def test_orphan_predeselect_collapses_to_leaf_pick_subset():
+    """Opening with the orphan unchecked collapses to a trimmed NC subset."""
+    p1 = FakePhoneme("ph1", "p")
+    used_nc = FakeNC("nc_used", "C", segments=[p1])
+    orphan_nc = FakeNC("nc_orphan", "junk", segments=[p1])
+    src = FakePhonSource(phonemes=[p1], ncs=[used_nc, orphan_nc])
+
+    inv = build_phonology_inventory(src, orphan_nc_guids=frozenset({"nc_orphan"}))
+    # simulate the page's initial check state = each row's `preselected`.
+    checked = {
+        g.category: {r.guid for r in g.rows if r.preselected}
+        for g in inv.groups
+    }
+    out = collapse_phonology(inv, checked)
+    assert out["categories"][GC.NATURAL_CLASSES] is True
+    assert out["leaf_item_picks"][GC.NATURAL_CLASSES] == frozenset({"nc_used"})
+
+
 def test_empty_category_renders_not_errors():
     src = FakePhonSource(phonemes=[FakePhoneme("ph1", "p")])  # only phonemes
     inv = build_phonology_inventory(src)

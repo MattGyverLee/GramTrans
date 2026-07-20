@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import collections
 import logging as _logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Callable, Dict, FrozenSet, Iterable, List, Optional, Set, Tuple
 
 from gramtrans.Lib.ws_fonts import LabelRun, WsRole, runs_to_text
@@ -2292,28 +2292,106 @@ def _phon_label(obj, *, phoneme: bool = False) -> str:
     return runs_to_text(_phon_runs(obj, phoneme=phoneme))
 
 
+def _nonempty_seq(x) -> bool:
+    """True when `x` is a non-empty sequence-like value; tolerates None.
+
+    Handles plain lists/tuples, LCM ref/owning sequences (FDO `ISilDataAccess`
+    collections expose `.Count` but not always `len()`), and iterables without
+    a size hint. Any object we cannot safely measure is treated as empty
+    rather than raising — content-detection must never crash the inventory
+    build.
+    """
+    if x is None:
+        return False
+    try:
+        return len(x) > 0
+    except TypeError:
+        pass
+    count = getattr(x, "Count", None)
+    if isinstance(count, int):
+        return count > 0
+    try:
+        for _ in x:
+            return True
+        return False
+    except (TypeError, AttributeError):
+        return False
+
+
+def _phon_strucrep_text(obj) -> str:
+    """Environment's StringRepresentation text (e.g. '/_[V]'), or ''.
+
+    Mirrors the multistring-alternative pattern used by `_phon_name_text` /
+    `_phon_description`: try `.Text` directly, then `.BestAnalysisAlternative
+    .Text`; the '***' empty sentinel and blank string both map to ''.
+    """
+    rep = getattr(obj, "StringRepresentation", None)
+    if rep is None:
+        return ""
+    try:
+        t = rep.Text
+    except Exception:  # noqa: BLE001
+        t = None
+    if not t or t in ("***", ""):
+        alt = getattr(rep, "BestAnalysisAlternative", None)
+        try:
+            t = alt.Text if alt is not None else None
+        except Exception:  # noqa: BLE001
+            t = None
+    if t and t not in ("***", ""):
+        return str(t).strip()
+    return ""
+
+
 def _phon_is_empty(obj, *, phoneme: bool, category=None) -> bool:
-    """True when a phonology item has no usable content in any field.
+    """True when a phonology item has no syncable content AND no linked/child
+    objects — i.e. it would carry nothing forward on transfer.
 
     Such items — typically dangling phonemes left behind by a BasicIPAInfo
     catalog import (observed as 32 unreferenced empties in the Ejagham Full
-    GT-Test target) — are silently skipped from the inventory. For a phoneme,
-    'content' spans the grapheme (Name in any WS), the IPA symbol, and the
-    Description ('refer to as'); for every other category only the Name applies.
+    GT-Test target) — are silently skipped from the inventory. 'Content' is
+    category-specific, since each category's syncable/linked fields differ:
 
-    EXCEPTION — phonological rules: a rule's content is its structural
-    description (StrucDescOS / right-hand sides), NOT its Name. FLEx routinely
-    leaves rules unnamed (they display by their structural description), so a
-    Name-only emptiness test wrongly dropped every unnamed rule from the
-    inventory — making it un-previewable AND silently excluding it from
-    transfer. A rule is therefore never treated as empty here.
+      * PHONOLOGICAL_RULES — always retained. A rule's content is its
+        structural description (StrucDescOS / right-hand sides), NOT its
+        Name; FLEx routinely leaves rules unnamed (they display by their
+        structural description), so a Name-only test wrongly dropped every
+        unnamed rule — making it un-previewable AND silently excluding it
+        from transfer.
+      * PHONEMES — Name (grapheme, any WS) OR BasicIPASymbol OR Description
+        OR a non-empty CodesOS OR a FeaturesOA feature-structure object.
+      * PH_ENVIRONMENT — Name OR StringRepresentation text.
+      * NATURAL_CLASSES — Name OR a non-empty SegmentsRC OR a FeaturesOA
+        feature-structure object.
+      * PHONOLOGICAL_FEATURES — Name OR a non-empty ValuesOC.
+      * anything else / unknown category — Name only (legacy fallback).
     """
     if category == GrammarCategory.PHONOLOGICAL_RULES:
         return False
     if _phon_name_text(obj, phoneme=phoneme):
         return False
-    if phoneme and (_phon_ipa(obj) or _phon_description(obj)):
-        return False
+    if phoneme:
+        if _phon_ipa(obj) or _phon_description(obj):
+            return False
+        if _nonempty_seq(getattr(obj, "CodesOS", None)):
+            return False
+        if getattr(obj, "FeaturesOA", None) is not None:
+            return False
+        return True
+    if category == GrammarCategory.PH_ENVIRONMENT:
+        if _phon_strucrep_text(obj):
+            return False
+        return True
+    if category == GrammarCategory.NATURAL_CLASSES:
+        if _nonempty_seq(getattr(obj, "SegmentsRC", None)):
+            return False
+        if getattr(obj, "FeaturesOA", None) is not None:
+            return False
+        return True
+    if category == GrammarCategory.PHONOLOGICAL_FEATURES:
+        if _nonempty_seq(getattr(obj, "ValuesOC", None)):
+            return False
+        return True
     return True
 
 
@@ -2465,11 +2543,55 @@ def _rule_context_refs(rule) -> List[object]:
     return refs
 
 
-def build_phonology_inventory(source, target=None) -> PhonologyInventory:
+def compute_orphan_nc_guids(source) -> FrozenSet[str]:
+    """Return normalized GUIDs of source natural classes with ZERO referrers.
+
+    An orphan natural class is one that nothing points at
+    (``ICmObject.ReferringObjects.Count == 0``) — the authoritative LCM
+    back-reference. We use it rather than re-walking rule structure because the
+    NC contexts a rule owns nest inside ``PhSequenceContext.MembersRS`` /
+    ``PhSegRuleRHS.StrucChangeOS`` in shapes a shallow walk misses (live-proven:
+    a rule-structure walk found 15 of the 83 real ``PhSimpleContextNC`` refs and
+    mislabelled every used NC an orphan). ``ReferringObjects`` reproduced the
+    exact 60/113 orphan split on ``Mbugwe LizzieHC practice``.
+
+    Lazily imports ``ICmObject`` exactly like ``_phon_guid`` and degrades to an
+    EMPTY set whenever LCM is unavailable (unit-test fakes) or any per-item read
+    fails — so a failure means "pre-deselect nothing" (every row stays checked),
+    never a spurious deselect. GUIDs are normalized via ``_phon_guid`` so they
+    compare equal to ``PhonologyRow.guid``.
+    """
+    if source is None or not hasattr(source, "NaturalClasses"):
+        return frozenset()
+    try:
+        from SIL.LCModel import ICmObject  # lazy — absent in unit tests
+    except Exception:  # noqa: BLE001
+        return frozenset()
+    try:
+        ncs = list(source.NaturalClasses.GetAll())
+    except (AttributeError, TypeError):
+        return frozenset()
+    orphans: Set[str] = set()
+    for nc in ncs:
+        try:
+            if ICmObject(nc).ReferringObjects.Count == 0:
+                orphans.add(_phon_guid(nc))
+        except Exception:  # noqa: BLE001
+            continue
+    return frozenset(orphans)
+
+
+def build_phonology_inventory(source, target=None, *,
+                              orphan_nc_guids: Optional[FrozenSet[str]] = None,
+                              ) -> PhonologyInventory:
     """Enumerate the five phonology categories + reference maps (data-model.md).
 
-    Pure/read-only. All items preselected. Target-status is by-GUID
-    (in_target) else new; None when no target bound. Reference maps classify
+    Read-only. All items preselected EXCEPT orphan natural classes — NCs that
+    nothing references open UNCHECKED (see step 5). Orphan-hood comes from
+    `orphan_nc_guids`; when None (the live default) it is computed from the
+    source via `compute_orphan_nc_guids` (LCM `ReferringObjects`). Tests inject
+    an explicit set. Target-status is by-GUID (in_target) else new; None when no
+    target bound. Reference maps classify
     each reference by membership in the phoneme/NC/feature GUID sets, so no
     LCM type-checks are needed and the logic works for fakes and live objects.
     """
@@ -2577,6 +2699,31 @@ def build_phonology_inventory(source, target=None) -> PhonologyInventory:
             rule_ncs[rg] = frozenset(ncs)
         if phs:
             rule_phonemes[rg] = frozenset(phs)
+
+    # 5. Pre-deselect ORPHAN natural classes. FLEx auto-creates a fresh
+    #    "Created automatically for rule X" natural class every time a rule's
+    #    context is (re-)saved and strands the previous copy, so a source can
+    #    accumulate dozens of NCs nothing references. An orphan NC opens
+    #    UNCHECKED so a Move does not drag dead weight into the target; the user
+    #    can re-check any they still want. Orphan-hood is the authoritative LCM
+    #    `ReferringObjects.Count == 0` (see `compute_orphan_nc_guids`) — NOT a
+    #    re-walk of rule structure, which misses NC contexts nested in
+    #    PhSequenceContext/StrucChange and would mislabel every used NC an
+    #    orphan (live-proven on Mbugwe LizzieHC practice).
+    if orphan_nc_guids is None:
+        orphan_nc_guids = compute_orphan_nc_guids(source)
+    for _i, _grp in enumerate(groups):
+        if _grp.category != GrammarCategory.NATURAL_CLASSES:
+            continue
+        groups[_i] = PhonologyCategoryGroup(
+            category=_grp.category,
+            label=_grp.label,
+            rows=tuple(
+                replace(r, preselected=(r.guid not in orphan_nc_guids))
+                for r in _grp.rows
+            ),
+        )
+        break
 
     return PhonologyInventory(
         groups=tuple(groups),
