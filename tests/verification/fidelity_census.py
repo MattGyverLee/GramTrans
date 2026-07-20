@@ -488,10 +488,14 @@ CLASSIFICATION: dict[tuple[str, str], Classification] = {
     ("LexSense", "ExamplesOS"): Classification(
         Bucket.COPIED,
         "owned.OWNED_OBJECT_MAP[owner_class=LexSense, owning_field="
-        "ExamplesOS] (+ each example's TranslationsOC / PublishIn / "
-        "DoNotPublishInRC via _EXAMPLE_REF_SPECS), reached via "
-        "owned.walk_owned_children(...) unfiltered from "
-        "categories._walk_lex_entry_closure's sense loop",
+        "ExamplesOS] (+ each example's PublishIn / DoNotPublishInRC via "
+        "_EXAMPLE_REF_SPECS), reached via owned.walk_owned_children(...) "
+        "unfiltered from categories._walk_lex_entry_closure's sense loop. "
+        "NOTE (full-copy-engine-defects finding #3): each example's own "
+        "TranslationsOC is COPIED too, but NOT via this owned.py row -- a "
+        "prior cycle's now-deleted OwnedObjectSpec row duplicated what "
+        "flexicon's Examples-level ExampleOperations.GetSyncableProperties/"
+        "ApplySyncableProperties sync already owns end-to-end.",
     ),
     ("LexSense", "ExtendedNoteOS"): Classification(
         Bucket.COPIED,

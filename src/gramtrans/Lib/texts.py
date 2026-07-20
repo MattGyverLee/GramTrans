@@ -28,6 +28,7 @@ flexicon accessors (grounded live via FLExTools MCP static surface, 2026-07-12):
 """
 from __future__ import annotations
 
+import hashlib
 import logging
 from typing import List, Optional
 
@@ -353,33 +354,100 @@ def _decide_segment_tags(tags, source, target, resolver_cache, dropped):
     return tuple(decisions)
 
 
-def _text_disposition(target, src_guid: str, title: str):
+def _text_disposition(target, src_guid: str, title: str, source=None, source_text=None):
     """ADD / UPDATE-shaped disposition for one source text (FR-021).
 
-    GUID match against the target's texts first, else `Texts.Find(title)`. A
-    match → UPDATE (non-destructive re-run, never a duplicate); no match → ADD
-    (modeled as CREATE). Returns (action, target_guid_or_None).
+    GUID match against the target's texts first, else a title match
+    (`Texts.Find(title)`) when the text has a title. Untitled texts (empty
+    title — the common shape for glossed/interlinear practice texts) can
+    never match by title, so a titled-only fallback silently re-CREATEs them
+    on every Move (non-idempotent). For an empty title, fall back to a
+    STRUCTURAL FINGERPRINT match instead: (paragraph count, hash of the
+    text's first non-empty baseline string) against each existing target
+    text's own fingerprint (`_text_fingerprint`). A match → UPDATE
+    (non-destructive re-run, never a duplicate); no match → ADD (modeled as
+    CREATE). Returns (action, target_guid_or_None).
     """
     text_ops = getattr(target, "Texts", None)
     if text_ops is None:
         return ReferenceAction.CREATE, None
-    # GUID-first identity.
     try:
-        for t in (text_ops.GetAll() or []):
-            if _guid_str(t) == src_guid:
-                return ReferenceAction.UPDATE, src_guid
+        all_targets = list(text_ops.GetAll() or [])
     except Exception:
-        pass
-    # Title fallback (GUID not preserved by a prior run).
-    find = getattr(text_ops, "Find", None)
-    if find is not None and title:
-        try:
-            match = find(title)
-        except Exception:
-            match = None
-        if match is not None:
-            return ReferenceAction.UPDATE, _guid_str(match)
+        all_targets = []
+    # GUID-first identity.
+    for t in all_targets:
+        if _guid_str(t) == src_guid:
+            return ReferenceAction.UPDATE, src_guid
+    if title:
+        # Title fallback (GUID not preserved by a prior run).
+        find = getattr(text_ops, "Find", None)
+        if find is not None:
+            try:
+                match = find(title)
+            except Exception:
+                match = None
+            if match is not None:
+                return ReferenceAction.UPDATE, _guid_str(match)
+    else:
+        # Empty title: no name to match on. Fall back to a structural
+        # fingerprint so an untitled source text still matches the target
+        # text a prior Move already reproduced (idempotency).
+        src_fp = _text_fingerprint(source, source_text) if source is not None else None
+        if src_fp is not None:
+            for t in all_targets:
+                if _text_fingerprint(target, t) == src_fp:
+                    return ReferenceAction.UPDATE, _guid_str(t)
     return ReferenceAction.CREATE, None
+
+
+def _text_fingerprint(project, text) -> Optional[tuple]:
+    """Structural fingerprint for one text: (paragraph count, sha1 of its
+    first non-empty baseline string), or None when there is nothing to
+    fingerprint (no baseline text found anywhere in the text).
+
+    Used by `_text_disposition`'s empty-title fallback to recognize a target
+    text a prior Move already reproduced, when the source text carries no
+    title to match on (empty/blank-titled glossed/interlinear practice
+    texts — finding #2's non-idempotency). Prefers a segment's baseline text
+    (`Segments.GetBaselineText`, the live content for interlinear texts);
+    falls back to the paragraph's own `Contents` (`Paragraphs.GetText`) when
+    the text has no segments yet. Never raises.
+    """
+    if project is None or text is None:
+        return None
+    para_ops = getattr(project, "Paragraphs", None)
+    if para_ops is None:
+        return None
+    try:
+        paras = list(para_ops.GetAll(text) or [])
+    except Exception:
+        return None
+    seg_ops = getattr(project, "Segments", None)
+    first_text = ""
+    for para in paras:
+        if seg_ops is not None:
+            try:
+                segs = list(seg_ops.GetAll(para) or [])
+            except Exception:
+                segs = []
+            for seg in segs:
+                baseline = _safe(lambda s=seg: seg_ops.GetBaselineText(s))
+                if baseline and baseline.strip():
+                    first_text = baseline.strip()
+                    break
+        if first_text:
+            break
+        para_text = _safe(lambda p=para: para_ops.GetText(p))
+        if para_text and para_text.strip():
+            first_text = para_text.strip()
+            break
+    if not first_text:
+        # No baseline text anywhere -- nothing distinctive to fingerprint;
+        # matching on paragraph count alone would risk merging unrelated
+        # blank texts, so decline to fingerprint-match at all.
+        return None
+    return (len(paras), hashlib.sha1(first_text.encode("utf-8")).hexdigest())
 
 
 def _decide_genres(source_text, source, target, resolver_cache, dropped):
@@ -585,7 +653,8 @@ def plan_texts(selection, source, target, ctx, resolver_cache, dropped) -> List:
             is_translated = None
         source_text_str = _best_str(text_ops, text, "GetSource") or ""
 
-        action, target_guid = _text_disposition(target, src_guid, title)
+        action, target_guid = _text_disposition(
+            target, src_guid, title, source=source, source_text=text)
         genre_decisions = _decide_genres(text, source, target, resolver_cache, dropped)
         tags_by_seg = _tags_by_begin_segment(source, text)
         paragraphs = _walk_paragraphs(
@@ -708,8 +777,34 @@ def _resolve_or_create_text(plan, text_ops, ws_map, tgt_id2h, dropped):
         except Exception:
             pass
     # ADD: create by name. Genre attached separately (create with None genre).
+    name = plan.title or "(untitled)"
+    # Site-1 duplicate-name collision (finding #1): `TextOperations.Create`
+    # requires a UNIQUE name and raises the generic `FP_ParameterError("A
+    # text with the name '...' already exists.")` otherwise -- e.g. two
+    # distinct source texts sharing a title, or a name-normalization gap
+    # between this Create and the disposition-time `Find` (:_text_disposition)
+    # that missed the match. That generic exception used to surface as a
+    # misleading "text create failed" drop, silently discarding the whole
+    # text. Check `Exists(name)` first; on a hit, reuse the existing text
+    # (treat it as an UPDATE-by-name) instead of letting Create blow up.
+    exists = getattr(text_ops, "Exists", None)
+    if exists is not None:
+        try:
+            already_exists = exists(name)
+        except Exception:
+            already_exists = False
+        if already_exists:
+            find = getattr(text_ops, "Find", None)
+            existing = None
+            if find is not None:
+                try:
+                    existing = find(name)
+                except Exception:
+                    existing = None
+            if existing is not None:
+                return existing
     try:
-        return text_ops.Create(plan.title or "(untitled)", None)
+        return text_ops.Create(name, None)
     except Exception as e:  # never silent
         dropped.append(DroppedItemRecord(
             owner_kind="Text", owner_guid=plan.source_guid or "?",
@@ -821,6 +916,47 @@ def _raw_create_text_tag(target, target_text, tgt_seg, possibility):
     return tag_obj
 
 
+def _raw_create_blank_paragraph(target, target_text, ws_handle):
+    """Raw-LCM idiom for a blank paragraph (FIX 3, Site-2 finding #1).
+
+    `ParagraphOperations.Create` raises `FP_ParameterError("Content cannot
+    be empty")` on blank content (ParagraphOperations.py:169) — a guard meant
+    for the interactive API, not for faithfully reproducing a source
+    paragraph that is genuinely blank (common between segments/headers in
+    glossed & interlinear practice texts). Reproduces `Create`'s OWN internal
+    raw path (ParagraphOperations.py:182-190) to bypass just that guard:
+    `IStTxtParaFactory.Create()` -> own it under the text's
+    `ContentsOA.ParagraphsOS` -> set `Contents` to an empty TsString.
+    Wrapped by `_safe` at the call site so an unconfirmed accessor degrades
+    to a reported drop rather than aborting the walk."""
+    from SIL.LCModel import IText, IStTxtParaFactory  # lazy — absent offline
+    from SIL.LCModel.Core.Text import TsStringUtils
+    text_obj = IText(target_text)
+    factory = IStTxtParaFactory(target.GetFactory(IStTxtParaFactory))
+    para = factory.Create()
+    text_obj.ContentsOA.ParagraphsOS.Add(para)
+    para.Contents = TsStringUtils.MakeString("", ws_handle)
+    return para
+
+
+def _create_paragraph(para_ops, target, target_text, content, ws_handle):
+    """Create one target paragraph, faithfully reproducing a blank source
+    paragraph instead of letting `ParagraphOperations.Create`'s empty-content
+    guard cascade into a generic "paragraph create failed" drop (and, in turn,
+    into Segment/alignment "no copied target referent" drops downstream).
+
+    Non-blank content still goes through the normal `ParagraphOperations.Create`
+    (residue-tagging, `_TransactionCM`, etc. all apply). Blank content is
+    created via `_raw_create_blank_paragraph`. Returns None (never raises) when
+    even the raw path fails — the caller reports that as a distinct,
+    non-generic drop reason (the paragraph truly has no mappable content and
+    no confirmed raw-create surface).
+    """
+    if content and content.strip():
+        return para_ops.Create(target_text, content, ws_handle)
+    return _safe(lambda: _raw_create_blank_paragraph(target, target_text, ws_handle))
+
+
 def _apply_paragraphs(plan, target, target_text, para_ops, seg_ops, ctx, tag,
                       ws_map, tgt_id2h, default_vern_handle, _wordforms,
                       apply_residue, resolver_cache, source, dropped):
@@ -853,13 +989,24 @@ def _apply_paragraphs(plan, target, target_text, para_ops, seg_ops, ctx, tag,
                 for s in para_plan.segments
             ).strip()
         try:
-            new_para = para_ops.Create(target_text, content or "", default_vern_handle)
+            new_para = _create_paragraph(para_ops, target, target_text, content, default_vern_handle)
         except Exception as e:
             dropped.append(DroppedItemRecord(
                 owner_kind="StTxtPara", owner_guid=para_plan.source_guid or "?",
                 owner_label=plan.title, field_name="Create",
                 item_name=(content or "")[:60], item_guid="",
                 reason=f"paragraph create failed: {type(e).__name__}",
+            ))
+            continue
+        if new_para is None:
+            # A genuinely blank source paragraph whose raw-create fallback
+            # also failed (no confirmed write surface) — a DISTINCT reason
+            # from the generic exception label above, per FIX 3.
+            dropped.append(DroppedItemRecord(
+                owner_kind="StTxtPara", owner_guid=para_plan.source_guid or "?",
+                owner_label=plan.title, field_name="Create",
+                item_name="", item_guid="",
+                reason="paragraph has no mappable baseline text",
             ))
             continue
         _safe(lambda: apply_residue(new_para, default_vern_handle, tag, class_name="StTxtPara"))

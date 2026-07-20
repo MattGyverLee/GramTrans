@@ -4,9 +4,27 @@ Contract: `specs/024-lexicon-reference-fidelity/contracts/owned-object-walk.md`.
 
 This module owns the ``OWNED_OBJECT_MAP`` (data-model.md ``OwnedObjectSpec``
 rows -- Sense.``ExamplesOS`` w/ example ``DoNotPublishInRC``/``PublishIn``,
-Example.``TranslationsOC`` w/ translation ``TypeRA``, Entry.``PronunciationsOS``,
-Entry.``EtymologyOS`` w/ ``LanguageRS``, Sense.``SensesOS`` recursing into
-sub-senses) plus ``walk_owned_children`` (T028), the walk function that
+Entry.``PronunciationsOS``, Entry.``EtymologyOS`` w/ ``LanguageRS``,
+Sense.``SensesOS`` recursing into sub-senses) plus ``walk_owned_children``
+(T028), the walk function that
+
+NOTE (full-copy-engine-defects cycle, finding #3): there is NO
+``LexExampleSentence.TranslationsOC`` row in this table. A prior cycle added
+one, but it was redundant with -- and actively harmful alongside -- the
+Examples-level sync: flexicon's ``ExampleOperations.GetSyncableProperties``/
+``ApplySyncableProperties`` already owns ``TranslationsOC`` end-to-end (it is
+part of the example's OWN syncable-properties surface, not a separate owned
+child needing its own factory call here). Having a second row in this table
+caused `walk_owned_children`'s unconditional recursion into every created
+child (see this module's own note on that below) to re-match the row,
+`ICmTranslationFactory.Create(...)` a SECOND, duplicate, near-empty
+``ICmTranslation``, and then attempt a syncable-properties pass against a
+``Translations`` namespace/attribute that does not exist on the live
+``ExampleOperations`` surface, producing a false-positive "dropped" record
+on top of the duplicate object. Do not re-add this row without a real gap in
+the Examples-level sync to justify it. (A genuinely separate, still-open
+gap: ``LexSense.ExtendedNoteOS`` has no flexicon ops surface of its own --
+tracked as a follow-up, out of scope for this fix.)
 reproduces a copied entry's/sense's owned children under the target, routing
 every child reference field back through `Lib/references.py`'s resolver.
 
@@ -75,10 +93,16 @@ _log = logging.getLogger("gramtrans.Lib.owned")
 # `child_refs` for LexExampleSentence's own DoNotPublishInRC/PublishIn are
 # NOT registered in `references.REFERENCE_FIELD_MAP` (that table only has the
 # LexSense/LexEntry rows for those field names) -- new rows for them are
-# defined here instead. CmTranslation.TypeRA and LexEtymology.LanguageRS ARE
-# already registered rows in `REFERENCE_FIELD_MAP` -- reused verbatim via
-# `field_specs_for` rather than redefined, so there is exactly one
-# `target_list_path` lambda per field in the whole codebase.
+# defined here instead. LexEtymology.LanguageRS IS already a registered row
+# in `REFERENCE_FIELD_MAP` -- reused verbatim via `field_specs_for` rather
+# than redefined, so there is exactly one `target_list_path` lambda per
+# field in the whole codebase.
+#
+# NB: there is deliberately no `_TRANSLATION_REF_SPECS` / CmTranslation row
+# here -- see this module's docstring note above (full-copy-engine-defects
+# finding #3): `ExampleOperations` already owns `TranslationsOC` end-to-end
+# at the Examples-sync level, so a second, walk-driven creation path here
+# was a redundant duplicate-object bug, not a missing feature.
 
 _EXAMPLE_REF_SPECS: tuple = (
     ReferenceFieldSpec(
@@ -97,7 +121,6 @@ _EXAMPLE_REF_SPECS: tuple = (
     ),
 )
 
-_TRANSLATION_REF_SPECS: tuple = _references.field_specs_for("CmTranslation")
 _ETYMOLOGY_REF_SPECS: tuple = _references.field_specs_for("LexEtymology")
 _EXTENDED_NOTE_REF_SPECS: tuple = _references.field_specs_for("LexExtendedNote")
 
@@ -115,17 +138,6 @@ OWNED_OBJECT_MAP: tuple = (
         child_refs=_EXAMPLE_REF_SPECS,
         recurse=False,
         create_kind=OwnedCreateKind.OWNER_TAKING,
-    ),
-    OwnedObjectSpec(
-        owner_class="LexExampleSentence",
-        owning_field="TranslationsOC",
-        factory="ICmTranslationFactory",
-        child_refs=_TRANSLATION_REF_SPECS,
-        recurse=False,
-        # ICmTranslationFactory has NO (guid, owner) overload -- only
-        # Create(owner, translationType[, guid]), type required up front.
-        create_kind=OwnedCreateKind.OWNER_PLUS_TYPE,
-        type_ref_field="TypeRA",
     ),
     OwnedObjectSpec(
         owner_class="LexEntry",
@@ -810,8 +822,9 @@ def walk_owned_children(src_owner, new_owner, ctx, tag, resolver_cache, dropped,
     walked and `.Add()`-ed in `src_owner`'s own iteration order).
 
     Every created child is then walked AGAIN, recursively, for its OWN
-    owned children (e.g. an example's `TranslationsOC`) regardless of
-    `spec.recurse` -- that flag controls only whether the child ALSO gets
+    owned children (e.g. an `ExtendedNoteOS` note's own `ExamplesOS`)
+    regardless of `spec.recurse` -- that flag controls only whether the
+    child ALSO gets
     the full top-level-sense reference-field treatment
     (`_apply_full_sense_reference_fields`, sub-senses only), not whether its
     own owned collections are walked.

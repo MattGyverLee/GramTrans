@@ -480,8 +480,19 @@ class _FakeApplyReversalEntry:
 
 
 class _FakeApplySettableMultiString:
+    """Fake settable `ReversalForm` multistring for apply-side entries.
+    Unlike the earlier write-only stub, this ALSO stores what it's given
+    (in `_data`, the SAME attribute `references._multistring_dict`'s
+    fallback branch reads) so a dedup re-scan of `EntriesOC`/`SubentriesOS`
+    on a SECOND `apply_reversals` call can read back what a FIRST call
+    wrote -- needed for the repeat-Move idempotency regression tests
+    below."""
+
+    def __init__(self) -> None:
+        self._data: dict = {}
+
     def set_string(self, ws_id, text) -> None:
-        pass
+        self._data[ws_id] = text
 
 
 class _FakeReversalEntriesOps:
@@ -490,6 +501,7 @@ class _FakeReversalEntriesOps:
 
     def Create(self, index, form, sense):
         entry = _FakeApplyReversalEntry()
+        entry.ReversalForm.set_string(getattr(index, "WritingSystem", "en") or "en", form)
         if sense is not None:
             # Mirrors the real `ReversalIndexEntryOperations.Create(index,
             # form, sense)` wrapper: the single `sense` param IS linked onto
@@ -499,6 +511,14 @@ class _FakeReversalEntriesOps:
             # would be meaningless.
             entry.SensesRS.Add(sense)
         self.created.append(entry)
+        # Mirrors real `ReversalIndexEntryOperations.Create`'s live effect:
+        # the new entry is attached to `index.EntriesOC` -- needed so a
+        # SECOND `apply_reversals` run against the SAME `target_index` can
+        # find (and reuse) it via `_find_existing_entry_by_form`'s
+        # `EntriesOC` scan.
+        entries_oc = getattr(index, "EntriesOC", None)
+        if entries_oc is not None:
+            entries_oc.append(entry)
         return entry
 
 
@@ -535,8 +555,16 @@ class _FakeApplyTarget:
 
 
 class _FakeApplyReversalIndex:
-    def __init__(self, pos_list) -> None:
+    def __init__(self, pos_list, writing_system="en") -> None:
         self.PartsOfSpeechOA = pos_list
+        self.WritingSystem = writing_system
+        # Dedup regression tests (P1 fix) need a real, mutable `EntriesOC`
+        # that `_FakeReversalEntriesOps.Create` appends new entries onto and
+        # `_find_existing_entry_by_form` scans on a repeat `apply_reversals`
+        # run -- a plain list is sufficient (no `.Add()` needed here, unlike
+        # `SubentriesOS`, since only `Create` -- not `_create_sub_entry` --
+        # writes to it).
+        self.EntriesOC: list = []
 
 
 def _make_import_residue_tag():
@@ -841,3 +869,124 @@ def test_sub_entry_zero_sense_stays_zero_and_top_level_unaffected():
     linked_two = list(entry_two.SensesRS)
     assert len(linked_two) == 2
     assert sense_top2a in linked_two and sense_top2b in linked_two
+
+
+# ============================================================================
+# P1 regression (QC cycle-3 re-audit): `_create_top_level_entry`/
+# `_create_sub_entry` had NO pre-create existence check, so every re-Move of
+# the SAME decisions against a target that already has the entries (no
+# GUID-preserving Create overload exists, exactly the same shape as
+# texts.py finding #2, commit 844f465 -- which wrongly claimed reversals.py
+# had no sibling of that shape) duplicated every entry. `_find_existing_
+# entry_by_form` now scans `EntriesOC`/`SubentriesOS` for a `ReversalForm`
+# alt match (form IS identity, mirroring wordforms.py's Find(form, handle)
+# dedup) before creating, and reuses the match instead.
+# ============================================================================
+
+def test_repeat_apply_reversals_top_level_does_not_duplicate():
+    """A SECOND `apply_reversals` run over the SAME decision against a
+    target that already has the top-level entry (from the first run) must
+    NOT create a duplicate -- `target_index.EntriesOC` stays at length 1,
+    and the reused entry ends up with its sense correctly linked (no
+    duplicate SensesRS members either)."""
+    target_index = _FakeApplyReversalIndex(_FakePosList())
+    target = _FakeApplyTarget()
+    sense = _FakeSense("s1")
+
+    decision = ReversalDecision(
+        source_entry_guid="e1",
+        target_index_ref=target_index,
+        target_ws_id="en",
+        pos_decision=None,
+        linked_sense_guids=("s1",),
+        reversal_form_alts={"en": "run"},
+    )
+
+    ctx = _FakeCtx(copy_set={"s1": sense})
+    resolver_cache: dict = {}
+    dropped: list = []
+    tag = _make_import_residue_tag()
+
+    # First run: creates the entry.
+    reversals.apply_reversals([decision], target, ctx, tag, resolver_cache, dropped)
+    assert len(target.ReversalEntries.created) == 1
+    assert len(target_index.EntriesOC) == 1
+
+    # Second run: SAME decision, SAME target -- must reuse, not duplicate.
+    reversals.apply_reversals([decision], target, ctx, tag, resolver_cache, dropped)
+
+    assert len(target_index.EntriesOC) == 1, (
+        "second apply_reversals run duplicated the top-level entry "
+        f"(EntriesOC={target_index.EntriesOC!r})"
+    )
+    # No SECOND wrapper-Create call happened either.
+    assert len(target.ReversalEntries.created) == 1
+
+    reused_entry = target_index.EntriesOC[0]
+    linked = list(reused_entry.SensesRS)
+    assert len(linked) == 1, (
+        f"expected the reused entry's sense to stay linked exactly once, "
+        f"got {linked!r}"
+    )
+    assert linked[0] is sense
+
+
+def test_repeat_apply_reversals_sub_entry_does_not_duplicate():
+    """Same guarantee, one level down: a SECOND run over a decision tree
+    whose sub-entry already exists on the target parent's `SubentriesOS`
+    must NOT create a duplicate sub-entry, and the reused sub-entry's sense
+    stays correctly linked."""
+    target_index = _FakeApplyReversalIndex(_FakePosList())
+    target = _FakeApplyTarget()
+    sense_sub = _FakeSense("s-sub")
+
+    top_decision = ReversalDecision(
+        source_entry_guid="e-top",
+        target_index_ref=target_index,
+        target_ws_id="en",
+        pos_decision=None,
+        linked_sense_guids=(),
+        reversal_form_alts={"en": "topform"},
+        sub_entry_decisions=(
+            ReversalDecision(
+                source_entry_guid="e-sub",
+                target_index_ref=target_index,
+                target_ws_id="en",
+                pos_decision=None,
+                linked_sense_guids=("s-sub",),
+                reversal_form_alts={"en": "subform"},
+            ),
+        ),
+    )
+
+    ctx = _FakeCtx(copy_set={"s-sub": sense_sub})
+    resolver_cache: dict = {}
+    dropped: list = []
+    tag = _make_import_residue_tag()
+
+    # First run: creates the top-level entry + its sub-entry.
+    reversals.apply_reversals([top_decision], target, ctx, tag, resolver_cache, dropped)
+    assert len(target_index.EntriesOC) == 1
+    top_entry_first_run = target_index.EntriesOC[0]
+    assert len(list(top_entry_first_run.SubentriesOS)) == 1
+
+    # Second run: SAME decision tree, SAME target.
+    reversals.apply_reversals([top_decision], target, ctx, tag, resolver_cache, dropped)
+
+    assert len(target_index.EntriesOC) == 1, (
+        "second apply_reversals run duplicated the top-level entry"
+    )
+    top_entry = target_index.EntriesOC[0]
+    sub_entries = list(top_entry.SubentriesOS)
+    assert len(sub_entries) == 1, (
+        f"second apply_reversals run duplicated the sub-entry, got "
+        f"{sub_entries!r}"
+    )
+
+    sub_entry = sub_entries[0]
+    linked = list(sub_entry.SensesRS)
+    assert len(linked) == 1, (
+        f"expected the reused sub-entry's sense to stay linked exactly "
+        f"once (no duplicate), got {linked!r}"
+    )
+    assert linked[0] is sense_sub
