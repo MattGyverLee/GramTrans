@@ -4,11 +4,18 @@ Covers the `OwnedObjectSpec` rows in
 `specs/024-lexicon-reference-fidelity/data-model.md` and the behavior
 contract in `specs/024-lexicon-reference-fidelity/contracts/owned-object-walk.md`:
 
-- Sense.``ExamplesOS`` (ordered owned) via ``ILexExampleSentenceFactory``,
-  each example owning ``TranslationsOC`` (unordered owned, ``ICmTranslation``)
-  via ``ICmTranslationFactory``; child ref ``ICmTranslation.TypeRA`` ->
-  ``lp.TranslationTagsOA``. Examples also carry ref fields
-  ``DoNotPublishInRC``/``PublishIn`` -> ``PublicationTypesOA``.
+- Sense.``ExamplesOS`` (ordered owned) via ``ILexExampleSentenceFactory``.
+  Examples also carry ref fields ``DoNotPublishInRC``/``PublishIn`` ->
+  ``PublicationTypesOA``.
+- Regression (full-copy-engine-defects finding #3): there is deliberately NO
+  ``OwnedObjectSpec`` row for ``LexExampleSentence.TranslationsOC`` any more.
+  A prior cycle's row duplicated what flexicon's Examples-level sync
+  (``ExampleOperations.GetSyncableProperties``/``ApplySyncableProperties``)
+  already reproduces end-to-end, creating a second, near-empty
+  ``ICmTranslation`` via ``ICmTranslationFactory`` AND a false-positive
+  "dropped" record. `test_examples_reproduced_ordered_with_publication_refs`
+  proves `walk_owned_children` never touches `TranslationsOC` or calls
+  `ICmTranslationFactory` at all.
 - Entry.``PronunciationsOS`` (ordered owned) via ``ILexPronunciationFactory``.
 - Entry.``EtymologyOS`` (ordered owned) via ``ILexEtymologyFactory``; ref
   ``ILexEtymology.LanguageRS`` (seq) -> ``lp.LexDbOA.LanguagesOA``.
@@ -18,44 +25,47 @@ contract in `specs/024-lexicon-reference-fidelity/contracts/owned-object-walk.md
 - FR-009: anything unreproducible appends exactly one `DroppedItemRecord`
   to the `dropped` collector -- never silent.
 
-Per-factory create shape (fixed this cycle): `walk_owned_children` no
+Per-factory create shape (fixed a prior cycle): `walk_owned_children` no
 longer drives every `OWNED_OBJECT_MAP` row through one uniform
 `factory.Create(guid, new_owner)` call. MCP verification against a live
-Ejagham Mini project confirmed that uniform shape was wrong for 3 of the 5
+Ejagham Mini project confirmed that uniform shape was wrong for some of the
 owned-child factories:
 
-  - `ICmTranslationFactory` has NO `(guid, owner)` overload -- only
-    `Create(owner, translationType)` / `Create(owner, translationType, guid)`,
-    with the type required UP FRONT. `OwnedObjectSpec.create_kind ==
-    OWNER_PLUS_TYPE` resolves `TypeRA` via the resolver BEFORE create.
   - `ILexPronunciationFactory` / `ILexEtymologyFactory` have only
     `Create()` / `Create(Guid)` -- no owner parameter; the caller must
     separately `.Add()` the unowned result to the owning collection
     (`create_kind == UNOWNED_THEN_ADD`).
 
+`_FakeTranslationFactory`/`ICmTranslationFactory` are kept below as a
+NEGATIVE fixture only (full-copy-engine-defects finding #3): there is no
+`OwnedObjectSpec` row driving that factory any more, and
+`test_examples_reproduced_ordered_with_publication_refs` asserts it is
+never invoked and `TranslationsOC` is left untouched by the walk --
+`OwnedCreateKind.OWNER_PLUS_TYPE` dispatch code stays in `Lib/owned.py` as
+generic (currently row-less) infrastructure, proven here only via this
+negative assertion.
+
 The fakes below model each factory's REAL signature (see the
 "Child factories" section) and reject the wrong arity/shape, proving
-`test_examples_reproduced_ordered_with_translations_and_publication_refs`,
-`test_pronunciations_reproduced_under_entry_ordered`, and
+`test_pronunciations_reproduced_under_entry_ordered` and
 `test_etymology_reproduced_under_entry_with_language_rs_resolved` GREEN
 against the per-`create_kind` dispatch in `Lib/owned.py`'s
-`_create_owned_child`/`_create_owner_plus_type_child` (translations/
-pronunciations/etymologies each now create via their own real signature,
-never via the old uniform `Create(guid, owner)`).
+`_create_owned_child`/`_create_owner_plus_type_child` (pronunciations/
+etymologies each create via their own real signature, never via the old
+uniform `Create(guid, owner)`).
 `test_recursive_sub_senses_reproduced_ordered_with_own_ref_fields_resolved`
 (sub-senses, OWNER_TAKING like examples) is unaffected by this cycle's fix
 and stays PASSING throughout.
 
 Fake style: modeled on `test_reference_resolver.py`'s `_FakePossibility` /
 `_FakeMultiString` / `_FakeTargetList` (reused here, same shape, for the
-child reference fields -- translation `TypeRA`, example
-`DoNotPublishInRC`/`PublishIn`, etymology `LanguageRS`) plus
-`test_reference_create_paths.py`'s `_FakeCollection` (`.Add()` + iterable,
-reused here as `_FakeOwningCollection` for every owned/reference collection
-on a freshly-created target-side object) and `Lib/categories.py`'s
-production `_walk_lex_entry_closure` shape for `ctx` (`context.source_handle`,
-`context.target_handle`, `context._ws_map`) and the
-`context.source_handle.<X>.GetSyncableProperties` /
+child reference fields -- example `DoNotPublishInRC`/`PublishIn`, etymology
+`LanguageRS`) plus `test_reference_create_paths.py`'s `_FakeCollection`
+(`.Add()` + iterable, reused here as `_FakeOwningCollection` for every
+owned/reference collection on a freshly-created target-side object) and
+`Lib/categories.py`'s production `_walk_lex_entry_closure` shape for `ctx`
+(`context.source_handle`, `context.target_handle`, `context._ws_map`) and
+the `context.source_handle.<X>.GetSyncableProperties` /
 `target.<X>.ApplySyncableProperties` sync-ops pattern.
 """
 from __future__ import annotations
@@ -517,32 +527,37 @@ _TAG = "tag-owned-walk"
 
 
 # ============================================================================
-# Case 1 -- Sense.ExamplesOS (ordered) + each example's TranslationsOC +
-# example ref fields DoNotPublishInRC/PublishIn
+# Case 1 -- Sense.ExamplesOS (ordered) + example ref fields
+# DoNotPublishInRC/PublishIn. Also proves the full-copy-engine-defects
+# finding #3 regression: an example carrying source-side TranslationsOC must
+# NOT get a second, `walk_owned_children`-driven translation created --
+# that content is already fully owned by the Examples-level
+# ExampleOperations.GetSyncableProperties/ApplySyncableProperties sync
+# (exercised elsewhere, not by this module), and a duplicate here was the
+# defect being fixed.
 # ============================================================================
 
-def test_examples_reproduced_ordered_with_translations_and_publication_refs():
-    type_guid = "type-guid-1"
+def test_examples_reproduced_ordered_with_publication_refs():
     pub_guid = "pub-guid-1"
-    target_type_item = _FakePossibility(type_guid, name="Free")
     target_pub_item = _FakePossibility(pub_guid, name="Main Dictionary")
-    source_type_item = _FakePossibility(type_guid, name="Free")
     source_pub_item = _FakePossibility(pub_guid, name="Main Dictionary")
 
-    tr1 = _FakeTranslation("tr-1", text="the free translation", type_ra=source_type_item)
+    # ex1 carries a source-side translation -- present on the SOURCE object
+    # exactly as flexicon's own Examples-level sync would see it, but
+    # `walk_owned_children` must never touch it: no OwnedObjectSpec row
+    # drives TranslationsOC any more (finding #3).
+    tr1 = _FakeTranslation("tr-1", text="the free translation")
     ex1 = _FakeExample(
         "ex-1", text="first example", translations=(tr1,),
         publish_in=(source_pub_item,),
     )
-    tr2 = _FakeTranslation("tr-2", text="second translation")
-    ex2 = _FakeExample("ex-2", text="second example", translations=(tr2,))
+    ex2 = _FakeExample("ex-2", text="second example")
 
     src_sense = _FakeSourceSense("src-sense-1", gloss="water", examples=(ex1, ex2))
     new_sense = _NewSense()
 
     source_handle = _FakeProject()
     target_handle = _FakeProject(
-        translation_tags=_FakeTargetList([target_type_item]),
         publication_types=_FakeTargetList([target_pub_item]),
     )
     ctx = _FakeContext(source_handle, target_handle)
@@ -560,17 +575,21 @@ def test_examples_reproduced_ordered_with_translations_and_publication_refs():
     assert (new_ex1, {"_marker": "ex-1"}) in [
         (obj, props) for obj, props, _ws in target_handle.Examples.apply_calls
     ]
-    # The example's own TranslationsOC reproduced, GUID preserved, TypeRA
-    # resolved via the resolver BEFORE create (LINK against the matching
-    # target translation-tag item) and passed straight into
-    # `ICmTranslationFactory.Create(owner, translationType, guid)` --
-    # never set afterward via `setattr` on an already-created translation
-    # (there is no such overload).
-    assert len(new_ex1.TranslationsOC) == 1
-    assert new_ex1.TranslationsOC[0].Guid == "tr-1"
-    assert new_ex1.TranslationsOC[0].TypeRA is target_type_item
     # DoNotPublishInRC/PublishIn routed through the resolver.
     assert target_pub_item in list(new_ex1.PublishIn)
+
+    # Regression (finding #3): `walk_owned_children` never creates a
+    # duplicate translation -- `ICmTranslationFactory` (still registered in
+    # `_FakeProject._factories` as a negative fixture) is never even
+    # requested via `GetService`, and the new example's own `TranslationsOC`
+    # (still populated by `_FakeExampleFactory` as an empty owning
+    # collection, matching production) stays empty.
+    assert "ICmTranslationFactory" not in target_handle.requested_services
+    assert len(new_ex1.TranslationsOC) == 0
+    # And no false-positive "dropped" record was emitted for translations
+    # either -- the only field this sense's example data could plausibly
+    # drop is PublishIn, which resolved cleanly above.
+    assert dropped == []
 
 
 # ============================================================================
