@@ -355,6 +355,96 @@ def default_ws_choices(source, target):
     return tuple(choices)
 
 
+def _primary_of(ws_list):
+    """Primary WS of a same-kind list: the bare (no ``-``) tag, else the
+    shortest-Id (deterministic tie-break). ``None`` for an empty list.
+
+    Unlike ``_primary_vernacular`` this does NOT filter by kind -- the caller
+    passes an already-kind-filtered list, so it works for vernacular OR analysis.
+    """
+    if not ws_list:
+        return None
+    for w in ws_list:
+        if "-" not in w["id"]:
+            return w
+    return min(ws_list, key=lambda w: (len(w["id"]), w["id"]))
+
+
+def _common_prefix_len(a: str, b: str) -> int:
+    n = 0
+    for x, y in zip(a, b):
+        if x != y:
+            break
+        n += 1
+    return n
+
+
+def _closest_sub(src_suffix: str, tgt_subs):
+    """Pick the closest target sub Id for ``src_suffix`` from ``tgt_subs`` (a
+    list of ``(target_id, target_suffix)``). Exact-suffix match wins; otherwise
+    the longest shared suffix prefix; deterministic tie-break by target Id.
+    Returns ``None`` only when ``tgt_subs`` is empty."""
+    best = None
+    best_key = None
+    for tid, tsuf in sorted(tgt_subs, key=lambda t: t[0]):
+        key = (tsuf == src_suffix, _common_prefix_len(src_suffix, tsuf))
+        if best_key is None or key > best_key:
+            best_key, best = key, tid
+    return best
+
+
+def closest_ws_defaults(source, target) -> dict:
+    """Best-effort WS correspondence for the selection wizard (user policy).
+
+    Maps, per WS kind (vernacular, then analysis):
+      * source **primary** -> target **primary** of the same kind (always, even
+        across differing base language subtags, e.g. ``eja`` -> ``abc``);
+      * each source **sub/variant** WS -> the **closest** target variant of the
+        same kind, by subtag suffix (``-fonipa`` -> ``-fonipa``; nearest shared
+        suffix otherwise).
+
+    Unlike ``default_ws_choices`` (which only maps *unambiguous* suffix matches
+    and leaves everything else unresolved), this always picks the closest
+    available target so the user can confirm-then-adjust rather than re-map by
+    hand. A source WS is omitted only when the target has no WS of its kind (or
+    no variant to match a source variant) at all -- the wizard then falls back
+    to CREATE for that row.
+
+    Returns ``{source_ws_id: target_ws_id}``. Identity rows (source Id already
+    present in the target) are omitted because the wizard maps those to
+    themselves directly.
+    """
+    src_ws = _enumerate_ws(source)
+    tgt_ws = _enumerate_ws(target)
+    tgt_ids = {w["id"] for w in tgt_ws}
+    out: dict = {}
+    for kind in (WSKind.VERNACULAR, WSKind.ANALYSIS):
+        src_k = [w for w in src_ws if w["kind"] == kind]
+        tgt_k = [w for w in tgt_ws if w["kind"] == kind]
+        src_primary = _primary_of(src_k)
+        tgt_primary = _primary_of(tgt_k)
+        if src_primary is None or tgt_primary is None:
+            continue
+        src_base = src_primary["id"].split("-", 1)[0]
+        tgt_base = tgt_primary["id"].split("-", 1)[0]
+        tgt_subs = [
+            (w["id"], _subtag_suffix(w["id"], tgt_base))
+            for w in tgt_k
+            if w["id"] != tgt_primary["id"]
+        ]
+        for w in src_k:
+            sid = w["id"]
+            if sid in tgt_ids:
+                continue  # identity -- wizard maps it to itself
+            if sid == src_primary["id"]:
+                out[sid] = tgt_primary["id"]  # primary -> primary (always)
+                continue
+            best = _closest_sub(_subtag_suffix(sid, src_base), tgt_subs)
+            if best is not None:
+                out[sid] = best  # variant -> closest target variant
+    return out
+
+
 def fold_choices_into_ws_mapping(choices, base_mapping):
     """T036 / FR-210 -- convert WSMappingChoice tuple into WSMappingEntry
     rows and merge into `base_mapping`.

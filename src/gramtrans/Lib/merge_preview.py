@@ -1152,6 +1152,9 @@ _CATEGORY_VALUE_TO_KEY: dict[str, "str | None"] = {
     "writing_systems_check": "writing_systems_check",
     "complex_form_types": "complex_form_types",
     "adhoc_compound_rules": "adhoc_compound_rules",
+    # Feature 032 follow-up: custom fields now render their definition via a
+    # dedicated reader (synthetic cf:<owner>:<name> id). Was None (blank pane).
+    "custom_fields": "custom_fields",
     # explicit None — no standalone per-item preview:
     "msa": None,
     "inflection_classes": None,
@@ -1160,7 +1163,6 @@ _CATEGORY_VALUE_TO_KEY: dict[str, "str | None"] = {
     "pos_inflectable_feats": None,
     "phon_feat_types": None,
     "semantic_domains": None,
-    "custom_fields": None,
 }
 
 
@@ -1749,6 +1751,11 @@ _GRAMMAR_FIELD_ORDER: dict[str, int] = {
     "ReferencedElements": 15,  # Ad hoc / Compound rule
     "Baseline": 16,      # Text baseline excerpt
     "Truncated": 17,     # bounded-excerpt / bounded-list indicator
+    # Custom field definition fields (feature 032 follow-up): Name leads (order
+    # 0 above), then Owner class, then Type/WritingSystem/List.
+    "Owner": 3,          # Custom field owner class (Entry/Sense/Example/Allomorph)
+    "WritingSystem": 11, # Custom field WsSelector label
+    "List": 12,          # Custom field possibility-list name
 }
 _GRAMMAR_FIELD_UNKNOWN_ORDER = 50
 
@@ -2321,6 +2328,106 @@ def _read_adhoc_compound_rule(handle: Any, guid: str, owner_guid: str = "") -> d
     return result or None
 
 
+# -- Custom-field preview (feature 032 follow-up) ----------------------------
+# Custom fields have no LCM Guid / GetSyncableProperties path: the wizard keys
+# each row on a synthetic ``cf:<owner_class>:<name>`` id (see
+# categories._CustomFieldRecord).  The reader resolves that id back to the record
+# via the SAME enumerator the wizard tab uses, so the source and target sides
+# diff on the identical (owner_class, name) identity the wizard classifies on
+# (NEW vs IN_TARGET, FR-009).  All reads are guarded (FR-011).
+_CF_OWNER_LABELS = {
+    "LexEntry": "Entry",
+    "LexSense": "Sense",
+    "LexExampleSentence": "Example",
+    "MoForm": "Allomorph",
+}
+# FLEx WritingSystemServices magic WsSelector constants (negative) -> label.
+_CF_WS_SELECTOR_LABELS = {
+    -1: "Analysis (first)",
+    -2: "Vernacular (first)",
+    -3: "Analysis (all)",
+    -4: "Vernacular (all)",
+    -5: "Analysis / Vernacular",
+    -6: "Vernacular / Analysis",
+}
+# CellarPropertyType ints whose value is writing-system-bearing (Text /
+# MultiString / MultiUnicode) -- only these carry a meaningful WsSelector.
+_CF_STRING_TYPES = frozenset({13, 14, 16})
+
+
+def _cf_ws_selector_label(handle: Any, ws_selector: int) -> str:
+    """Human label for a custom field's WsSelector; '' when not meaningful."""
+    if not ws_selector:
+        return ""
+    if ws_selector in _CF_WS_SELECTOR_LABELS:
+        return _CF_WS_SELECTOR_LABELS[ws_selector]
+    if ws_selector > 0:  # a specific WS handle -> resolve to its Id
+        try:
+            for wid, wh in _ws_defs(handle):
+                if wh == ws_selector:
+                    return wid
+        except Exception:  # noqa: BLE001
+            pass
+        return f"WS {ws_selector}"
+    return ""
+
+
+def _cf_list_label(handle: Any, list_root_guid: str) -> str:
+    """Best-effort possibility-list name for a list-type custom field's root
+    GUID; falls back to '' (the Type label already says 'List item')."""
+    if not list_root_guid:
+        return ""
+    try:
+        import System  # noqa: PLC0415
+        from SIL.LCModel import ICmObjectRepository, ICmMajorObject  # noqa: PLC0415
+        repo = handle.Cache.ServiceLocator.GetInstance(ICmObjectRepository)
+        obj = repo.GetObject(System.Guid(str(list_root_guid)))
+        txt = ICmMajorObject(obj).Name.BestAnalysisAlternative.Text
+        if txt and txt != "***":
+            return txt
+    except Exception:  # noqa: BLE001 -- no live LCM / unresolvable root
+        pass
+    return ""
+
+
+def _read_custom_field(handle: Any, guid: str, owner_guid: str = "") -> dict[str, Any] | None:
+    """Custom field preview: the field's definition -- owner class, name, value
+    type, writing system (for string types), and possibility list (for list
+    types).  ``guid`` is the synthetic ``cf:<owner>:<name>`` id."""
+    if not guid or not str(guid).startswith("cf:"):
+        return None
+    try:
+        if __package__:
+            from .categories import _enumerate_custom_fields, custom_field_type_label
+        else:
+            from categories import _enumerate_custom_fields, custom_field_type_label  # type: ignore
+    except Exception:  # noqa: BLE001
+        return None
+    rec = None
+    try:
+        for r in _enumerate_custom_fields(handle):
+            if r.guid == guid:
+                rec = r
+                break
+    except Exception:  # noqa: BLE001
+        return None
+    if rec is None:
+        return None
+    result: dict[str, Any] = {
+        "Name": rec.name,
+        "Owner": _CF_OWNER_LABELS.get(rec.owner_class, rec.owner_class),
+        "Type": custom_field_type_label(rec.field_type),
+    }
+    if rec.field_type in _CF_STRING_TYPES:
+        ws_label = _cf_ws_selector_label(handle, getattr(rec, "ws_selector", 0))
+        if ws_label:
+            result["WritingSystem"] = ws_label
+    list_label = _cf_list_label(handle, getattr(rec, "list_root_guid", "") or "")
+    if list_label:
+        result["List"] = list_label
+    return result
+
+
 # Dedicated-reader dispatch (feature 032, US1). Keyed by the resolved category
 # key; consulted in props_for before the ops table.
 _DEDICATED_READERS: dict[str, Any] = {
@@ -2328,6 +2435,7 @@ _DEDICATED_READERS: dict[str, Any] = {
     "writing_systems_check": _read_writing_system,
     "complex_form_types": _read_complex_form_type,
     "adhoc_compound_rules": _read_adhoc_compound_rule,
+    "custom_fields": _read_custom_field,
 }
 
 

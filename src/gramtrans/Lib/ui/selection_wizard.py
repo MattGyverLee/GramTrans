@@ -73,7 +73,7 @@ if __package__:
     from ..merge_preview import MergePreviewService, OVERWRITE, MERGE_KEEP, NEW
     from ..models import SimilarResolution
     from ..report import RunReport
-    from ..ws_mapping import default_ws_choices
+    from ..ws_mapping import closest_ws_defaults
 else:
     import api as gt_api  # type: ignore
     from models import (  # type: ignore
@@ -118,7 +118,7 @@ else:
     from merge_preview import MergePreviewService, OVERWRITE, MERGE_KEEP, NEW  # type: ignore
     from models import SimilarResolution  # type: ignore  (already imported above but needs bare-name alias)
     from report import RunReport  # type: ignore
-    from ws_mapping import default_ws_choices  # type: ignore
+    from ws_mapping import closest_ws_defaults  # type: ignore
 
 
 # ---------------------------------------------------------------------------
@@ -391,22 +391,17 @@ class _PageProjectWS(QtWidgets.QWizardPage):
         vern_ids, anal_ids = _enumerate_ws_by_kind(self._host)
         dual_ids = set(vern_ids) & set(anal_ids)
 
-        # Feature 032 US4 (FR-012..FR-015): pre-compute the related-languages
-        # correspondence defaults (source primary -> target primary vernacular;
-        # source sub -> target sub by subtag suffix) so a source WS that has no
-        # identical target Id still defaults to MAP-to-its-correspondent instead
-        # of CREATE. Only confident (unambiguous) correspondences appear here;
-        # everything else falls back to the CREATE default below (FR-015).
-        # {source_ws_id: target_ws_id} for MAP choices only.
+        # Feature 032 US4: pre-compute the best-effort correspondence defaults --
+        # source primary vernacular/analysis -> target primary of the same kind,
+        # and each source variant -> the CLOSEST target variant of the same kind
+        # (by subtag suffix). A source WS with no identical target Id thus
+        # defaults to MAP-to-its-correspondent instead of CREATE.
+        # {source_ws_id: target_ws_id}.
         self._ws_map_defaults = {}
         target = getattr(self._context, "target_handle", None) if self._context is not None else None
         if target is not None:
             try:
-                # default_ws_choices returns only WSChoice.MAP rows (never
-                # CREATE/SKIP -- FR-014), so target_ws_id is the correspondent.
-                for c in default_ws_choices(self._host, target):
-                    if c.target_ws_id:
-                        self._ws_map_defaults[c.source_ws_id] = c.target_ws_id
+                self._ws_map_defaults = closest_ws_defaults(self._host, target) or {}
             except Exception:  # noqa: BLE001 -- defaulting is best-effort; never block the page
                 self._ws_map_defaults = {}
 
@@ -2499,6 +2494,7 @@ class _PageCustomFields(QtWidgets.QWizardPage):
         )
         self._mirroring: bool = False
         self._records: list = []   # list[_CustomFieldRecord]
+        self._preview_service = None
         self._build_ui()
 
     def _build_ui(self) -> None:
@@ -2513,7 +2509,11 @@ class _PageCustomFields(QtWidgets.QWizardPage):
         self._tree.setHeaderLabels(["Field (type)", "Status"])
         self._tree.header().setStretchLastSection(True)
         self._tree.setAlternatingRowColors(True)
-        layout.addWidget(self._tree, 1)
+        # Feature 032 follow-up: merge-preview pane docked right, mirroring the
+        # phonology page, so selecting a custom field shows its definition.
+        self._pane = MergePreviewPane(self)
+        splitter = _make_tree_pane_splitter(self._tree, self._pane)
+        layout.addWidget(splitter, 1)
 
     # ------------------------------------------------------------------
     def initializePage(self) -> None:
@@ -2522,6 +2522,56 @@ class _PageCustomFields(QtWidgets.QWizardPage):
             self._tree.itemChanged.disconnect(self._on_item_changed)
         self._populate_from_source()
         self._tree.itemChanged.connect(self._on_item_changed)
+
+        # Feature 032 follow-up: wire the preview pane (source-vs-target diff of
+        # the field definition). Best-effort; a missing source leaves it blank.
+        source = self._get_source()
+        if source is not None:
+            target = self._get_target()
+            self._preview_service = MergePreviewService(source, target)
+            self._pane.set_context(
+                self._preview_service, WsFontRegistry.from_project(source), []
+            )
+            self._pane.clear()
+            if self._tree.receivers(self._tree.currentItemChanged) == 0:
+                self._tree.currentItemChanged.connect(self._on_tree_selection_changed)
+
+    # ------------------------------------------------------------------
+    def _on_tree_selection_changed(self, current, previous) -> None:
+        """Build a display-only PreviewRequest from the selected custom-field row.
+
+        Custom-field rows are never resolvable (no similar-affix header). A field
+        already in the target (IN_TARGET) diffs against it (OVERWRITE mode); a
+        new field renders all-added (NEW mode). Both sides resolve the synthetic
+        cf:<owner>:<name> id via the dedicated reader in merge_preview.
+        """
+        if current is None:
+            self._pane.clear()
+            return
+        if current.data(0, _CF_KIND_ROLE) != "item":
+            self._pane.clear()
+            return
+        guid = current.data(0, _CF_GUID_ROLE) or ""
+        status = current.data(0, _CF_STATUS_ROLE) or ""
+        if status == "IN_TARGET":
+            target_guid = guid  # same synthetic id resolves on the target side
+            mode = OVERWRITE
+            status_str = "in_target"
+        else:
+            target_guid = ""
+            mode = NEW
+            status_str = "new"
+        request = PreviewRequest(
+            category=GrammarCategory.CUSTOM_FIELDS.value,
+            source_guid=guid,
+            target_guid=target_guid,
+            status=status_str,
+            mode=mode,
+            resolvable=False,
+            current_resolution=None,
+            owner_guid="",
+        )
+        self._pane.show_item(request)
 
     def _populate_from_source(self) -> None:
         """Enumerate source custom fields and build the four-level tree."""
