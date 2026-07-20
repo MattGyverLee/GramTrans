@@ -339,31 +339,65 @@ class TestPhonFeatureEnrich:
         assert raw == {"Name": {"en": "novalues"}}
 
 
+class _FakeSeq(list):
+    """List that also answers the LCM sequence protocol (.Count / .ToArray())."""
+    @property
+    def Count(self):
+        return len(self)
+
+    def ToArray(self):
+        return list(self)
+
+
+def _seg_ctx(symbol):
+    """A fake PhSimpleContextSeg whose terminal unit's code renders `symbol`."""
+    tu = FakeGuidObj("tu-" + symbol,
+                     CodesOS=_FakeSeq([FakeGuidObj("code", Representation={"en": symbol})]))
+    return FakeGuidObj("ctx-" + symbol,
+                       ClassName="PhSimpleContextSeg", FeatureStructureRA=tu)
+
+
 class TestPhonRuleEnrich:
-    def test_structure_summary(self):
+    def test_renders_readable_rule_string(self):
+        # k -> g (segment input, segment output), no environment.
+        rhs = FakeGuidObj("rhs", ClassName="PhSegRuleRHS",
+                          StrucChangeOS=[_seg_ctx("g")],
+                          LeftContextOA=None, RightContextOA=None)
         obj = FakeGuidObj(
             "pr-1",
-            StrucDescOS=[object(), object()],
-            RightHandSidesOS=[object()],
-            Direction=0,
-            OrderNumber=3,
+            StrucDescOS=[_seg_ctx("k")],
+            RightHandSidesOS=[rhs],
+            Direction=0, OrderNumber=3,
         )
-        raw = {"Name": {"en": "make y-initial stems"}}
+        raw = {"Name": {"en": "palatalisation"}}
         _enrich_phon_rule(obj, raw)
-        assert "2 context(s)" in raw["Structure"]
-        assert "1 RHS" in raw["Structure"]
+        # The pane now shows the actual transformation, not just counts.
+        assert raw["Rule"] == "k → g"
+        # Metadata (direction/order) accompanies the readable rule.
         assert "direction=0" in raw["Structure"]
         assert "order=3" in raw["Structure"]
 
+    def test_deletion_renders_empty_output(self):
+        rhs = FakeGuidObj("rhs", ClassName="PhSegRuleRHS",
+                          StrucChangeOS=[],  # deletion: no output
+                          LeftContextOA=None, RightContextOA=None)
+        obj = FakeGuidObj("pr-del", StrucDescOS=[_seg_ctx("a")],
+                          RightHandSidesOS=[rhs], Direction=0, OrderNumber=1)
+        raw = {}
+        _enrich_phon_rule(obj, raw)
+        assert raw["Rule"] == "a → ∅"  # a -> null
+
     def test_two_rules_same_name_distinguishable(self):
-        r1 = FakeGuidObj("a", StrucDescOS=[object()], RightHandSidesOS=[object()],
+        r1 = FakeGuidObj("a", StrucDescOS=[_seg_ctx("k")],
+                         RightHandSidesOS=[FakeGuidObj("r", StrucChangeOS=[_seg_ctx("g")])],
                          Direction=0, OrderNumber=1)
-        r2 = FakeGuidObj("b", StrucDescOS=[object()], RightHandSidesOS=[object()],
+        r2 = FakeGuidObj("b", StrucDescOS=[_seg_ctx("p")],
+                         RightHandSidesOS=[FakeGuidObj("r", StrucChangeOS=[_seg_ctx("b")])],
                          Direction=0, OrderNumber=2)
         raw1, raw2 = {}, {}
         _enrich_phon_rule(r1, raw1)
         _enrich_phon_rule(r2, raw2)
-        assert raw1["Structure"] != raw2["Structure"]  # FR-006
+        assert raw1["Rule"] != raw2["Rule"]  # FR-006: distinguishable by content
 
 
 class TestSlotEnrich:

@@ -2546,34 +2546,175 @@ def _enrich_slot(obj: Any, raw: dict[str, Any]) -> None:
             raw["Truncated"] = "affix list truncated"
 
 
-def _enrich_phon_rule(obj: Any, raw: dict[str, Any]) -> None:
-    """Add a bounded structural ``Structure`` summary to a phonological rule
-    (FR-006) so same-named rules are distinguishable.
+def _phon_seg_symbol(tu: Any) -> str:
+    """Grapheme/symbol for a terminal unit (phoneme or boundary marker).
 
-    Summary elements: number of structural-description contexts, number of
-    right-hand sides, application direction, and ordering number — the content
-    that differentiates two rules that share a Name.
+    Prefers the first code's Representation (the actual grapheme, stored
+    vernacular), then the Name. Empty on failure."""
+    if tu is None:
+        return "?"
+    try:
+        codes = getattr(tu, "CodesOS", None)
+        if codes is not None and getattr(codes, "Count", 0) > 0:
+            rep = getattr(codes.ToArray()[0], "Representation", None)
+            t = _best_analysis_text(rep)
+            if t:
+                return t
+    except Exception:
+        pass
+    return _best_analysis_text(getattr(tu, "Name", None)) or "?"
+
+
+def _render_feature_struct(fs: Any) -> str:
+    """Render an IFsFeatStruc as a "[+nas, -voice, back:2]" feature bundle."""
+    specs_out: list[str] = []
+    try:
+        for spec in getattr(fs, "FeatureSpecsOC", None) or []:
+            if getattr(spec, "ClassName", "") == "FsClosedValue":
+                cv = _lcm_cast(spec, "IFsClosedValue")
+                f = (_best_analysis_text(getattr(getattr(cv, "FeatureRA", None), "Abbreviation", None))
+                     or _best_analysis_text(getattr(getattr(cv, "FeatureRA", None), "Name", None)))
+                v = (_best_analysis_text(getattr(getattr(cv, "ValueRA", None), "Abbreviation", None))
+                     or _best_analysis_text(getattr(getattr(cv, "ValueRA", None), "Name", None)))
+                if f and v in ("+", "-"):
+                    specs_out.append(f"{v}{f}")
+                elif f:
+                    specs_out.append(f"{f}:{v}" if v else f)
+    except Exception as _e:
+        logging.debug("_render_feature_struct failed: %s", _e)
+    return "[" + ", ".join(specs_out) + "]" if specs_out else "[]"
+
+
+def _render_phon_ctx(ctx: Any, depth: int = 0) -> str:
+    """Render one phonological rule context (segment / NC / boundary / sequence)
+    as FLEx-style text. Recurses into sequence contexts (bounded depth)."""
+    if ctx is None or depth > 6:
+        return ""
+    cls = getattr(ctx, "ClassName", "")
+    try:
+        if cls == "PhSimpleContextSeg":
+            tu = getattr(_lcm_cast(ctx, "IPhSimpleContextSeg"), "FeatureStructureRA", None)
+            return _phon_seg_symbol(tu)
+        if cls == "PhSimpleContextBdry":
+            b = getattr(_lcm_cast(ctx, "IPhSimpleContextBdry"), "FeatureStructureRA", None)
+            return _phon_seg_symbol(b)
+        if cls == "PhSimpleContextNC":
+            nc = getattr(_lcm_cast(ctx, "IPhSimpleContextNC"), "FeatureStructureRA", None)
+            if nc is None:
+                return "[NC?]"
+            nccls = getattr(nc, "ClassName", "")
+            # A feature-based NC has no useful name — render its feature bundle.
+            if nccls == "PhNCFeatures":
+                fs = getattr(_lcm_cast(nc, "IPhNCFeatures"), "FeaturesOA", None)
+                if fs is not None:
+                    return _render_feature_struct(fs)
+            # Prefer a meaningful abbreviation/name; skip FLEx's auto-generated
+            # "Created automatically for rule ..." placeholder (uninformative).
+            abbr = (_best_analysis_text(getattr(nc, "Abbreviation", None))
+                    or _best_analysis_text(getattr(nc, "Name", None)))
+            meaningful = abbr if (abbr and not abbr.startswith("Created automatically")) else None
+            if meaningful:
+                return f"[{meaningful}]"
+            # Segment-based NC with no useful name: list its member segments.
+            if nccls == "PhNCSegments":
+                try:
+                    segs = list(getattr(_lcm_cast(nc, "IPhNCSegments"), "SegmentsRC", None) or [])
+                    syms = [_phon_seg_symbol(s) for s in segs[:8]]
+                    if syms:
+                        more = " …" if len(segs) > 8 else ""
+                        return "{" + " ".join(syms) + more + "}"
+                except Exception:
+                    pass
+            return "[NC]"
+        if cls == "PhSequenceContext":
+            members = getattr(_lcm_cast(ctx, "IPhSequenceContext"), "MembersRS", None) or []
+            return " ".join(_render_phon_ctx(m, depth + 1) for m in members).strip()
+        if cls == "PhIterationContext":
+            it = _lcm_cast(ctx, "IPhIterationContext")
+            inner = _render_phon_ctx(getattr(it, "MemberRA", None), depth + 1)
+            return f"({inner})*" if inner else "(...)*"
+        if cls == "PhVariable":
+            return "α"  # alpha variable
+    except Exception as _e:
+        logging.debug("_render_phon_ctx(%s) failed: %s", cls, _e)
+    return f"<{cls}>" if cls else ""
+
+
+def _render_rule_structure(seg: Any, reg: Any) -> list[str]:
+    """Render a phonological rule as FLEx-style "LHS -> RHS / env" line(s).
+
+    One line per right-hand side (usually one). Empty output renders as the
+    deletion sentinel; a rule with no matched context degrades gracefully.
+    """
+    try:
+        lhs = " ".join(
+            _render_phon_ctx(c) for c in (getattr(seg, "StrucDescOS", None) or [])
+        ).strip() or "∅"
+    except Exception:
+        return []
+    lines: list[str] = []
+    try:
+        rhss = list(getattr(reg, "RightHandSidesOS", None) or [])
+    except Exception:
+        rhss = []
+    if not rhss:
+        return [f"{lhs} → {lhs}"]  # no RHS: structural-description-only rule
+    for rhs in rhss:
+        rhs = _lcm_cast(rhs, "IPhSegRuleRHS")
+        try:
+            out = " ".join(
+                _render_phon_ctx(c) for c in (getattr(rhs, "StrucChangeOS", None) or [])
+            ).strip() or "∅"  # empty output = deletion
+        except Exception:
+            out = "?"
+        left = _render_phon_ctx(getattr(rhs, "LeftContextOA", None))
+        right = _render_phon_ctx(getattr(rhs, "RightContextOA", None))
+        env = f"{left} __ {right}".strip()
+        line = f"{lhs} → {out}"
+        if env and env != "__":
+            line += f" / {env}"
+        lines.append(line)
+    return lines
+
+
+def _enrich_phon_rule(obj: Any, raw: dict[str, Any]) -> None:
+    """Render a phonological rule's actual structural content (FR-006).
+
+    Produces a FLEx-style ``Rule`` line (e.g. ``a → ∅ / __ a #``) so the
+    pane shows what the rule *does*, not merely counts. Falls back to a bounded
+    count summary (contexts / RHS / direction / order) only when the structural
+    render yields nothing, so same-named rules stay distinguishable and the
+    pane is never blank.
     """
     seg = _lcm_cast(obj, "IPhSegmentRule")
     reg = _lcm_cast(obj, "IPhRegularRule")
+
+    rule_lines = _render_rule_structure(seg, reg)
+    if rule_lines:
+        raw["Rule"] = rule_lines if len(rule_lines) > 1 else rule_lines[0]
+
+    # Compact metadata summary (kept alongside the readable rule).
     parts: list[str] = []
-    try:
-        struc = list(getattr(seg, "StrucDescOS", None) or [])
-        if struc:
-            parts.append(f"{len(struc)} context(s)")
-    except Exception as _e:
-        logging.debug("_enrich_phon_rule: StrucDescOS read failed: %s", _e)
-    try:
-        rhs = list(getattr(reg, "RightHandSidesOS", None) or [])
-        if rhs:
-            parts.append(f"{len(rhs)} RHS")
-    except Exception as _e:
-        logging.debug("_enrich_phon_rule: RightHandSidesOS read failed: %s", _e)
     for attr, label in (("Direction", "direction"), ("OrderNumber", "order")):
         try:
             v = getattr(seg, attr, None)
             if v is not None:
                 parts.append(f"{label}={int(v)}")
+        except Exception:
+            pass
+    if not rule_lines:
+        # Structural render failed -> keep the old count summary so the pane
+        # still distinguishes same-named rules rather than showing nothing.
+        try:
+            struc = list(getattr(seg, "StrucDescOS", None) or [])
+            if struc:
+                parts.insert(0, f"{len(struc)} context(s)")
+        except Exception:
+            pass
+        try:
+            rhs = list(getattr(reg, "RightHandSidesOS", None) or [])
+            if rhs:
+                parts.insert(1, f"{len(rhs)} RHS")
         except Exception:
             pass
     if parts:
