@@ -242,6 +242,119 @@ def detect_ws_mismatches(source, target):
     return tuple(out)
 
 
+# ============================================================================
+# Feature 032 US4 (FR-012..FR-015) -- related-languages default correspondence
+# ============================================================================
+
+def _primary_vernacular(ws_descriptors):
+    """Return the descriptor of the primary vernacular WS, or None.
+
+    The primary vernacular is the map anchor (contracts/ws-mapping-default.md):
+    the vernacular WS whose Id is the bare base language subtag (no extension,
+    e.g. ``eja`` rather than ``eja-fonipa``).  When no vernacular WS is bare,
+    fall back to the shortest-Id vernacular (deterministic tie-break by Id).
+    Returns None when the side has no vernacular WS at all (FR-015: target
+    with no primary vernacular leaves the primary row unresolved).
+    """
+    vern = [w for w in ws_descriptors if w["kind"] == WSKind.VERNACULAR]
+    if not vern:
+        return None
+    for w in vern:
+        if "-" not in w["id"]:
+            return w
+    return min(vern, key=lambda w: (len(w["id"]), w["id"]))
+
+
+def _subtag_suffix(ws_id: str, primary_base: str) -> str:
+    """Subtag suffix of ``ws_id`` relative to ``primary_base`` (FR-013).
+
+    ``eja-fonipa`` relative to primary base ``eja`` -> ``-fonipa``;
+    ``eja`` relative to ``eja`` -> ```` (the primary itself).  When ``ws_id``
+    does not extend ``primary_base`` (a differing base language on the same
+    side), the suffix is everything after this Id's own base subtag, so that
+    ``def-fonipa`` still yields ``-fonipa`` -- which is what lets an ambiguous
+    (>1 target sub sharing a suffix) case be detected and left unresolved.
+    """
+    if ws_id == primary_base:
+        return ""
+    if ws_id.startswith(primary_base + "-"):
+        return ws_id[len(primary_base):]
+    parts = ws_id.split("-", 1)
+    return "-" + parts[1] if len(parts) > 1 else ""
+
+
+def default_ws_choices(source, target):
+    """FR-012..FR-015 -- pre-fill related-languages WS correspondence.
+
+    Returns a tuple of ``WSMappingChoice`` rows (all ``WSChoice.MAP``, never
+    CREATE/SKIP -- FR-014) for the source vernacular WSs that are *not* already
+    present in the target by identity and for which a confident target
+    correspondence exists:
+
+    * **Primary -> primary** (FR-012): the source primary vernacular defaults to
+      the target primary vernacular, even across differing base subtags
+      (``eja`` -> ``abc``).
+    * **Sub -> sub by suffix** (FR-013): each source sub WS defaults to the
+      *unique* target sub WS sharing its subtag suffix relative to each side's
+      primary base (``eja-fonipa`` -> ``abc-fonipa`` via shared ``-fonipa``).
+
+    Rows with no confident correspondence -- target has no primary vernacular,
+    zero target subs share the suffix, or >1 target sub shares it -- get NO
+    choice and are simply omitted (FR-015).  Omitted rows keep
+    ``is_complete`` / ``validate`` failing until the user resolves them, so
+    confirmation stays gated; the caller seeds these defaults into the mapping
+    and the WS wizard collects the remainder.
+    """
+    if __package__:
+        from .models import WSMappingChoice, WSChoice
+    else:
+        from models import WSMappingChoice, WSChoice
+    src_ws = _enumerate_ws(source)
+    tgt_ws = _enumerate_ws(target)
+    tgt_ids = {w["id"] for w in tgt_ws}
+
+    src_primary = _primary_vernacular(src_ws)
+    tgt_primary = _primary_vernacular(tgt_ws)
+    src_base = src_primary["id"].split("-", 1)[0] if src_primary else None
+    tgt_base = tgt_primary["id"].split("-", 1)[0] if tgt_primary else None
+
+    # Index target vernacular sub WSs by their suffix relative to target base.
+    tgt_sub_by_suffix: dict = {}
+    if tgt_primary and tgt_base:
+        for w in tgt_ws:
+            if w["kind"] != WSKind.VERNACULAR or w["id"] == tgt_primary["id"]:
+                continue
+            tgt_sub_by_suffix.setdefault(
+                _subtag_suffix(w["id"], tgt_base), []
+            ).append(w["id"])
+
+    choices = []
+    for sw in src_ws:
+        if sw["id"] in tgt_ids:
+            continue  # already present by identity -- not a mismatch
+        if sw["kind"] != WSKind.VERNACULAR:
+            continue  # analysis defaults are identity-only; no correspondence guess
+        if src_primary is None or tgt_primary is None:
+            continue  # missing primary vernacular on either side -> unresolved (FR-015)
+        if sw["id"] == src_primary["id"]:
+            choices.append(WSMappingChoice(
+                source_ws_id=sw["id"],
+                source_ws_kind=sw["kind"],
+                choice=WSChoice.MAP,
+                target_ws_id=tgt_primary["id"],
+            ))
+            continue
+        matches = tgt_sub_by_suffix.get(_subtag_suffix(sw["id"], src_base), [])
+        if len(matches) == 1:  # unique correspondence only (FR-013); 0 or >1 -> unresolved
+            choices.append(WSMappingChoice(
+                source_ws_id=sw["id"],
+                source_ws_kind=sw["kind"],
+                choice=WSChoice.MAP,
+                target_ws_id=matches[0],
+            ))
+    return tuple(choices)
+
+
 def fold_choices_into_ws_mapping(choices, base_mapping):
     """T036 / FR-210 -- convert WSMappingChoice tuple into WSMappingEntry
     rows and merge into `base_mapping`.

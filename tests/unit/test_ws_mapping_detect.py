@@ -13,9 +13,13 @@ from gramtrans.Lib.models import (
     WSMismatch,
 )
 from gramtrans.Lib.ws_mapping import (
+    default_ws_choices,
     detect_ws_mismatches,
     fold_choices_into_ws_mapping,
+    is_complete,
+    required_ws_set,
     _similarity_rank,
+    _subtag_suffix,
 )
 
 
@@ -212,3 +216,68 @@ def test_fold_does_not_double_register():
     )
     out = fold_choices_into_ws_mapping([duplicate], base)
     assert len(out.entries) == 1
+
+
+# ============================================================================
+# Feature 032 US4 (T026 / T029) -- ambiguity / no-correspondence -> unresolved
+# ============================================================================
+
+def _required(source, target):
+    return required_ws_set(
+        (m.source_ws_id, m.source_ws_kind) for m in detect_ws_mismatches(source, target)
+    )
+
+
+def _assert_row_gated(source, target, unresolved_src_id):
+    """The unresolved source WS gets no default and keeps confirmation gated:
+    folding the (non-CREATE/SKIP) defaults still leaves is_complete False."""
+    choices = default_ws_choices(source, target)
+    assert unresolved_src_id not in {c.source_ws_id for c in choices}
+    # FR-014: a default is never CREATE/SKIP.
+    assert all(c.choice == WSChoice.MAP for c in choices)
+    mapping = fold_choices_into_ws_mapping(choices, WSMapping(entries=()))
+    assert is_complete(mapping, _required(source, target)) is False
+
+
+def test_subtag_suffix_relative_to_primary_base():
+    assert _subtag_suffix("eja-fonipa", "eja") == "-fonipa"
+    assert _subtag_suffix("eja", "eja") == ""
+    # differing base language: suffix is everything after this id's own base
+    assert _subtag_suffix("def-fonipa", "abc") == "-fonipa"
+
+
+def test_default_target_no_primary_vernacular_leaves_primary_unresolved():
+    """FR-015: target with no primary vernacular -> primary row unresolved."""
+    source = _FakeProject([_v("eja"), _v("eja-fonipa")])
+    target = _FakeProject([_a("en")])  # no vernacular WS at all
+    assert default_ws_choices(source, target) == ()
+    _assert_row_gated(source, target, "eja")
+
+
+def test_default_no_target_sub_sharing_suffix_leaves_sub_unresolved():
+    """FR-015: no target sub shares the source sub's suffix -> row unresolved
+    (primary still pre-fills)."""
+    source = _FakeProject([_v("eja"), _v("eja-fonipa")])
+    target = _FakeProject([_v("abc"), _v("abc-Latn")])  # no -fonipa sub
+    mapped = {c.source_ws_id: c.target_ws_id for c in default_ws_choices(source, target)}
+    assert mapped == {"eja": "abc"}  # primary maps, sub does not
+    _assert_row_gated(source, target, "eja-fonipa")
+
+
+def test_default_multiple_target_subs_sharing_suffix_are_ambiguous():
+    """FR-015: >1 target sub shares the suffix -> not unambiguous -> unresolved."""
+    source = _FakeProject([_v("eja"), _v("eja-fonipa")])
+    # abc-fonipa and def-fonipa both reduce to the -fonipa suffix -> ambiguous.
+    target = _FakeProject([_v("abc"), _v("abc-fonipa"), _v("def-fonipa")])
+    mapped = {c.source_ws_id: c.target_ws_id for c in default_ws_choices(source, target)}
+    assert mapped == {"eja": "abc"}
+    _assert_row_gated(source, target, "eja-fonipa")
+
+
+def test_default_never_create_or_skip():
+    """FR-014: even when a source WS has no correspondence, the defaulter never
+    substitutes a CREATE or SKIP disposition -- it simply omits the row."""
+    source = _FakeProject([_v("eja"), _v("eja-fonipa")])
+    target = _FakeProject([_v("abc")])  # primary only, no subs
+    for c in default_ws_choices(source, target):
+        assert c.choice == WSChoice.MAP
