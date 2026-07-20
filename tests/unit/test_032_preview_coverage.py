@@ -387,6 +387,26 @@ class TestPhonRuleEnrich:
         _enrich_phon_rule(obj, raw)
         assert raw["Rule"] == "a → ∅"  # a -> null
 
+    def test_renders_alpha_variable_features(self):
+        # Assimilation: output copies the 'back' feature as an α-variable from
+        # the environment; the SAME constraint object gets the SAME letter.
+        fc = FakeGuidObj("fc-back", FeatureRA=FakeGuidObj("f", Abbreviation={"en": "back"}))
+        out_nc = FakeGuidObj("nc-out", ClassName="PhNCFeatures", FeaturesOA=None)
+        out_ctx = FakeGuidObj("ctx-out", ClassName="PhSimpleContextNC",
+                              FeatureStructureRA=out_nc, PlusConstrRS=[fc], MinusConstrRS=[])
+        env_nc = FakeGuidObj("nc-env", ClassName="PhNCFeatures", FeaturesOA=None)
+        env_ctx = FakeGuidObj("ctx-env", ClassName="PhSimpleContextNC",
+                              FeatureStructureRA=env_nc, PlusConstrRS=[fc], MinusConstrRS=[])
+        rhs = FakeGuidObj("rhs", StrucChangeOS=[out_ctx],
+                          LeftContextOA=None, RightContextOA=env_ctx)
+        obj = FakeGuidObj("pr-asm", StrucDescOS=[_seg_ctx("N")],
+                          RightHandSidesOS=[rhs], Direction=0, OrderNumber=1)
+        raw = {}
+        _enrich_phon_rule(obj, raw)
+        # Feature name appears WITH its variable, same letter in change + env.
+        assert "αback" in raw["Rule"]
+        assert raw["Rule"].count("αback") == 2  # matched agreement
+
     def test_two_rules_same_name_distinguishable(self):
         r1 = FakeGuidObj("a", StrucDescOS=[_seg_ctx("k")],
                          RightHandSidesOS=[FakeGuidObj("r", StrucChangeOS=[_seg_ctx("g")])],

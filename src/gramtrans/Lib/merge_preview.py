@@ -2585,9 +2585,64 @@ def _render_feature_struct(fs: Any) -> str:
     return "[" + ", ".join(specs_out) + "]" if specs_out else "[]"
 
 
-def _render_phon_ctx(ctx: Any, depth: int = 0) -> str:
+_GREEK_VARS = "αβγδεζηθικλμνξοπρστυφχψω"
+
+
+def _feat_abbr(fc: Any) -> str:
+    """Feature abbreviation/name for a PhFeatureConstraint's FeatureRA."""
+    feat = getattr(fc, "FeatureRA", None)
+    if feat is None:
+        return "?"
+    return (_best_analysis_text(getattr(feat, "Abbreviation", None))
+            or _best_analysis_text(getattr(feat, "Name", None)) or "?")
+
+
+def _constraint_var(fc: Any, var_map: dict | None) -> str:
+    """Assign (and reuse) a Greek variable letter for a feature constraint.
+
+    The SAME PhFeatureConstraint object (by GUID) referenced from both the
+    change and the environment gets the SAME letter, so agreement reads
+    correctly (e.g. `αplace` in the target matches `αplace` in the trigger).
+    """
+    letter = "α"
+    if var_map is not None:
+        key = _obj_guid(fc) or id(fc)
+        if key not in var_map:
+            var_map[key] = _GREEK_VARS[len(var_map) % len(_GREEK_VARS)]
+        letter = var_map[key]
+    return f"{letter}{_feat_abbr(fc)}"
+
+
+def _render_nc_context(sc: Any, nc: Any, var_map: dict | None) -> str:
+    """Render a natural-class context: fixed feature specs plus any α-variable
+    feature constraints (PlusConstrRS / MinusConstrRS on the context)."""
+    parts: list[str] = []
+    # Fixed features from a feature-based NC.
+    if getattr(nc, "ClassName", "") == "PhNCFeatures":
+        fs = getattr(_lcm_cast(nc, "IPhNCFeatures"), "FeaturesOA", None)
+        if fs is not None:
+            inner = _render_feature_struct(fs)
+            if inner not in ("[]", ""):
+                parts.append(inner.strip("[]"))
+    # Variable feature constraints (agreement / assimilation) live on the context.
+    try:
+        for fc in getattr(sc, "PlusConstrRS", None) or []:
+            parts.append(_constraint_var(fc, var_map))
+        for fc in getattr(sc, "MinusConstrRS", None) or []:
+            parts.append("-" + _constraint_var(fc, var_map))
+    except Exception as _e:
+        logging.debug("_render_nc_context constraints failed: %s", _e)
+    if parts:
+        return "[" + ", ".join(p for p in parts if p) + "]"
+    return ""
+
+
+def _render_phon_ctx(ctx: Any, depth: int = 0, var_map: dict | None = None) -> str:
     """Render one phonological rule context (segment / NC / boundary / sequence)
-    as FLEx-style text. Recurses into sequence contexts (bounded depth)."""
+    as FLEx-style text. Recurses into sequence contexts (bounded depth).
+
+    ``var_map`` (constraint-GUID -> Greek letter) is shared across the whole
+    rule render so α-variables match between the change and its environment."""
     if ctx is None or depth > 6:
         return ""
     cls = getattr(ctx, "ClassName", "")
@@ -2599,15 +2654,14 @@ def _render_phon_ctx(ctx: Any, depth: int = 0) -> str:
             b = getattr(_lcm_cast(ctx, "IPhSimpleContextBdry"), "FeatureStructureRA", None)
             return _phon_seg_symbol(b)
         if cls == "PhSimpleContextNC":
-            nc = getattr(_lcm_cast(ctx, "IPhSimpleContextNC"), "FeatureStructureRA", None)
+            sc = _lcm_cast(ctx, "IPhSimpleContextNC")
+            nc = getattr(sc, "FeatureStructureRA", None)
             if nc is None:
                 return "[NC?]"
-            nccls = getattr(nc, "ClassName", "")
-            # A feature-based NC has no useful name — render its feature bundle.
-            if nccls == "PhNCFeatures":
-                fs = getattr(_lcm_cast(nc, "IPhNCFeatures"), "FeaturesOA", None)
-                if fs is not None:
-                    return _render_feature_struct(fs)
+            # Fixed features + α-variable constraints (handles assimilation).
+            rendered = _render_nc_context(sc, nc, var_map)
+            if rendered:
+                return rendered
             # Prefer a meaningful abbreviation/name; skip FLEx's auto-generated
             # "Created automatically for rule ..." placeholder (uninformative).
             abbr = (_best_analysis_text(getattr(nc, "Abbreviation", None))
@@ -2616,7 +2670,7 @@ def _render_phon_ctx(ctx: Any, depth: int = 0) -> str:
             if meaningful:
                 return f"[{meaningful}]"
             # Segment-based NC with no useful name: list its member segments.
-            if nccls == "PhNCSegments":
+            if getattr(nc, "ClassName", "") == "PhNCSegments":
                 try:
                     segs = list(getattr(_lcm_cast(nc, "IPhNCSegments"), "SegmentsRC", None) or [])
                     syms = [_phon_seg_symbol(s) for s in segs[:8]]
@@ -2628,13 +2682,13 @@ def _render_phon_ctx(ctx: Any, depth: int = 0) -> str:
             return "[NC]"
         if cls == "PhSequenceContext":
             members = getattr(_lcm_cast(ctx, "IPhSequenceContext"), "MembersRS", None) or []
-            return " ".join(_render_phon_ctx(m, depth + 1) for m in members).strip()
+            return " ".join(_render_phon_ctx(m, depth + 1, var_map) for m in members).strip()
         if cls == "PhIterationContext":
             it = _lcm_cast(ctx, "IPhIterationContext")
-            inner = _render_phon_ctx(getattr(it, "MemberRA", None), depth + 1)
+            inner = _render_phon_ctx(getattr(it, "MemberRA", None), depth + 1, var_map)
             return f"({inner})*" if inner else "(...)*"
         if cls == "PhVariable":
-            return "α"  # alpha variable
+            return "α"  # bare alpha variable
     except Exception as _e:
         logging.debug("_render_phon_ctx(%s) failed: %s", cls, _e)
     return f"<{cls}>" if cls else ""
@@ -2646,9 +2700,13 @@ def _render_rule_structure(seg: Any, reg: Any) -> list[str]:
     One line per right-hand side (usually one). Empty output renders as the
     deletion sentinel; a rule with no matched context degrades gracefully.
     """
+    # Shared across the whole rule so an α-variable in the change matches the
+    # same constraint in the environment (agreement / assimilation).
+    var_map: dict = {}
     try:
         lhs = " ".join(
-            _render_phon_ctx(c) for c in (getattr(seg, "StrucDescOS", None) or [])
+            _render_phon_ctx(c, var_map=var_map)
+            for c in (getattr(seg, "StrucDescOS", None) or [])
         ).strip() or "∅"
     except Exception:
         return []
@@ -2663,12 +2721,13 @@ def _render_rule_structure(seg: Any, reg: Any) -> list[str]:
         rhs = _lcm_cast(rhs, "IPhSegRuleRHS")
         try:
             out = " ".join(
-                _render_phon_ctx(c) for c in (getattr(rhs, "StrucChangeOS", None) or [])
+                _render_phon_ctx(c, var_map=var_map)
+                for c in (getattr(rhs, "StrucChangeOS", None) or [])
             ).strip() or "∅"  # empty output = deletion
         except Exception:
             out = "?"
-        left = _render_phon_ctx(getattr(rhs, "LeftContextOA", None))
-        right = _render_phon_ctx(getattr(rhs, "RightContextOA", None))
+        left = _render_phon_ctx(getattr(rhs, "LeftContextOA", None), var_map=var_map)
+        right = _render_phon_ctx(getattr(rhs, "RightContextOA", None), var_map=var_map)
         env = f"{left} __ {right}".strip()
         line = f"{lhs} → {out}"
         if env and env != "__":
