@@ -162,10 +162,35 @@ def _enumerate_ws(project):
     if project is None:
         return ()
     out = []
+    ws_ops = getattr(project, "WritingSystems", None)
+    if ws_ops is None:
+        return ()
     try:
-        ws_defs = list(project.WritingSystems.GetAll())
+        ws_defs = list(ws_ops.GetAll())
     except (AttributeError, TypeError):
         return ()
+    # WS kind classification. The live WS descriptor
+    # (CoreWritingSystemDefinition) exposes NO ``IsVernacular`` attribute, so the
+    # legacy per-descriptor probe silently defaulted EVERY WS to VERNACULAR
+    # (live-confirmed: analysis WS like ``en``/``es`` were mis-tagged vernacular,
+    # corrupting primary-vernacular detection and the related-language defaults).
+    # Prefer the project's own vernacular membership
+    # (``WritingSystems.GetVernacular()``); a WS in that set is VERNACULAR,
+    # everything else ANALYSIS (dual-role WSs resolve to VERNACULAR, the correct
+    # precedence for primary-vernacular logic). Fall back to the legacy
+    # ``IsVernacular`` probe only when GetVernacular is unavailable/empty -- the
+    # host-free unit-test fakes expose IsVernacular but not GetVernacular.
+    vern_ids = None
+    getv = getattr(ws_ops, "GetVernacular", None)
+    if callable(getv):
+        try:
+            vern_ids = {
+                str(getattr(w, "Id", None) or getattr(w, "id", ""))
+                for w in getv()
+            }
+            vern_ids.discard("")
+        except (AttributeError, TypeError):
+            vern_ids = None
     for wd in ws_defs:
         try:
             ws_id = wd.Id
@@ -175,14 +200,17 @@ def _enumerate_ws(project):
             handle = wd.Handle
         except AttributeError:
             handle = getattr(wd, "handle", None)
-        # WS kind: best-effort.  flexicon descriptors carry IsVernacular;
-        # default to VERNACULAR when unavailable.
-        kind = WSKind.VERNACULAR
-        try:
-            if not wd.IsVernacular:
-                kind = WSKind.ANALYSIS
-        except AttributeError:
-            pass
+        if vern_ids:  # authoritative membership from the project
+            kind = WSKind.VERNACULAR if str(ws_id) in vern_ids else WSKind.ANALYSIS
+        else:
+            # Legacy fallback (test fakes / no GetVernacular): probe IsVernacular,
+            # default VERNACULAR when even that attribute is absent.
+            kind = WSKind.VERNACULAR
+            try:
+                if not wd.IsVernacular:
+                    kind = WSKind.ANALYSIS
+            except AttributeError:
+                pass
         if ws_id:
             out.append({"id": str(ws_id), "kind": kind, "handle": handle})
     return tuple(out)
