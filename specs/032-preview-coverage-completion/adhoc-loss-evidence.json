@@ -1,0 +1,82 @@
+{
+  "source": "Esperanto",
+  "target": "Ejagham Full GT-Test",
+  "source_ws_ids": [
+    "en",
+    "fr",
+    "eo"
+  ],
+  "target_ws_ids": [
+    "en",
+    "etu"
+  ],
+  "totals": {
+    "source_rules": 5,
+    "present_in_target": 0,
+    "absent_in_target": 5,
+    "rules_with_unresolved_deps": 5,
+    "ws_drop_hypothesis_confirmed": false
+  },
+  "rules": [
+    {
+      "guid": "7d50cd03-3248-4543-9128-3304560cd4e8",
+      "class": "MoEndoCompound",
+      "present_in_target": false,
+      "dep_count": 1,
+      "deps_absent": [
+        "18272880-7952-4318-bf69-02e5c73c9ead"
+      ],
+      "name_ws_carried": [
+        "en"
+      ],
+      "name_ws_dropped": []
+    },
+    {
+      "guid": "54ed8df3-a0e2-44a5-977d-5c874bff62e3",
+      "class": "MoEndoCompound",
+      "present_in_target": false,
+      "dep_count": 2,
+      "deps_absent": [
+        "10cf5edf-f4b1-4098-a549-295550ba56b1",
+        "f93523fb-cbee-4c4c-9ad7-b9e121ef99fb"
+      ],
+      "name_ws_carried": [],
+      "name_ws_dropped": []
+    },
+    {
+      "guid": "48ed9e8f-3694-4af2-934b-5091433e4012",
+      "class": "MoEndoCompound",
+      "present_in_target": false,
+      "dep_count": 2,
+      "deps_absent": [
+        "10cf5edf-f4b1-4098-a549-295550ba56b1",
+        "f93523fb-cbee-4c4c-9ad7-b9e121ef99fb"
+      ],
+      "name_ws_carried": [],
+      "name_ws_dropped": []
+    },
+    {
+      "guid": "ae2350fe-64e7-4a71-bc3d-4e6a2ca82b38",
+      "class": "MoEndoCompound",
+      "present_in_target": false,
+      "dep_count": 1,
+      "deps_absent": [
+        "f93523fb-cbee-4c4c-9ad7-b9e121ef99fb"
+      ],
+      "name_ws_carried": [],
+      "name_ws_dropped": []
+    },
+    {
+      "guid": "2209ca61-35b8-4a34-9927-3047a215862d",
+      "class": "MoEndoCompound",
+      "present_in_target": false,
+      "dep_count": 2,
+      "deps_absent": [
+        "22294894-09d1-465e-8ff6-ed7c1b153cdd",
+        "f93523fb-cbee-4c4c-9ad7-b9e121ef99fb"
+      ],
+      "name_ws_carried": [],
+      "name_ws_dropped": []
+    }
+  ]
+}

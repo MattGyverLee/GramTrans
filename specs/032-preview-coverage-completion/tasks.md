@@ -127,14 +127,14 @@ description: "Task list for Preview Coverage Completion for Grammar Categories"
 
 ### Tests for User Story 4 (write first, ensure FAIL before implementation) ⚠️
 
-- [ ] T025 [P] [US4] Add the clean-correspondence test in `tests/unit/test_ws_mapping.py`: a related-languages pair pre-fills primary->primary and every sub->sub (incl. `eja-fonipa`->`abc-fonipa`) and confirms with no manual edits (SC-004, FR-012/FR-013)
-- [ ] T026 [P] [US4] Add the ambiguity/no-correspondence tests in `tests/unit/test_ws_mapping_detect.py`: target with no primary vernacular, no target sub sharing the suffix, and >1 target sub sharing the suffix each leave the row unresolved with confirm gated; verify default is never "create"/"skip" (FR-014, FR-015)
+- [X] T025 [P] [US4] Add the clean-correspondence test in `tests/unit/test_ws_mapping.py`: a related-languages pair pre-fills primary->primary and every sub->sub (incl. `eja-fonipa`->`abc-fonipa`) and confirms with no manual edits (SC-004, FR-012/FR-013)
+- [X] T026 [P] [US4] Add the ambiguity/no-correspondence tests in `tests/unit/test_ws_mapping_detect.py`: target with no primary vernacular, no target sub sharing the suffix, and >1 target sub sharing the suffix each leave the row unresolved with confirm gated; verify default is never "create"/"skip" (FR-014, FR-015)
 
 ### Implementation for User Story 4
 
-- [ ] T027 [US4] Introduce the primary-vernacular concept and `subtag_suffix` in `_enumerate_ws` (~158) in `src/gramtrans/Lib/ws_mapping.py`: identify each side's primary vernacular WS and compute each sub WS's suffix relative to its side's primary base subtag
-- [ ] T028 [US4] Implement the suffix-correspondence defaulting in `detect_ws_mismatches` (~213) / `fold_choices` (~245) in `src/gramtrans/Lib/ws_mapping.py`: primary->primary (FR-012); sub->sub by matching suffix across differing base subtags (FR-013); default is always a real target Id, never CREATE/SKIP (FR-014)
-- [ ] T029 [US4] Enforce unresolved-row gating in `src/gramtrans/Lib/ws_mapping.py`: zero/ambiguous suffix match or missing target primary vernacular leaves the row unresolved and keeps `is_complete`/`validate` failing until the user resolves it (FR-015)
+- [X] T027 [US4] Introduce the primary-vernacular concept and `subtag_suffix` in `_enumerate_ws` (~158) in `src/gramtrans/Lib/ws_mapping.py`: identify each side's primary vernacular WS and compute each sub WS's suffix relative to its side's primary base subtag
+- [X] T028 [US4] Implement the suffix-correspondence defaulting in `detect_ws_mismatches` (~213) / `fold_choices` (~245) in `src/gramtrans/Lib/ws_mapping.py`: primary->primary (FR-012); sub->sub by matching suffix across differing base subtags (FR-013); default is always a real target Id, never CREATE/SKIP (FR-014)
+- [X] T029 [US4] Enforce unresolved-row gating in `src/gramtrans/Lib/ws_mapping.py`: zero/ambiguous suffix match or missing target primary vernacular leaves the row unresolved and keeps `is_complete`/`validate` failing until the user resolves it (FR-015)
 
 **Checkpoint**: WS defaults pre-fill on clean pairs and refuse to guess on ambiguity; T025-T026 pass.
 
@@ -148,10 +148,10 @@ description: "Task list for Preview Coverage Completion for Grammar Categories"
 
 ### Implementation for User Story 5
 
-- [ ] T030 [US5] Implement the read-only probe `debug/probe_adhoc_loss.py`: enumerate source ad hoc/compound rules and, on a target that already received all stems/affixes, characterize per-rule which portion is present vs absent; writes nothing to either project (SC-008, FR-016)
-- [ ] T031 [US5] Confirm or refute the leading hypothesis in the probe output — `to_ws_map_dict` (`src/gramtrans/Lib/ws_mapping.py` ~66-85) silently dropping source WSs whose mapped target Id is absent — as it applies to the ad-hoc transfer path (research.md R5)
-- [ ] T032 [US5] Produce the evidence + root-cause + scope-decision artifact under `specs/032-preview-coverage-completion/` (reproduction warranted -> follow-up-feature recommendation, OR loss unavoidable -> documented known limitation) per contracts/adhoc-loss-probe.md (FR-016, SC-006)
-- [ ] T033 [US5] If in-scope loss is confirmed, wire never-silent reporting through `src/gramtrans/Lib/report.py` so the loss surfaces on the post-run statistics/report surface, consistent with the never-silent contract (FR-017)
+- [X] T030 [US5] Implement the read-only probe `debug/probe_adhoc_loss.py`: enumerate source ad hoc/compound rules and, on a target that already received all stems/affixes, characterize per-rule which portion is present vs absent; writes nothing to either project (SC-008, FR-016)
+- [X] T031 [US5] Confirm or refute the leading hypothesis in the probe output — `to_ws_map_dict` (`src/gramtrans/Lib/ws_mapping.py` ~66-85) silently dropping source WSs whose mapped target Id is absent — as it applies to the ad-hoc transfer path (research.md R5)
+- [X] T032 [US5] Produce the evidence + root-cause + scope-decision artifact under `specs/032-preview-coverage-completion/` (reproduction warranted -> follow-up-feature recommendation, OR loss unavoidable -> documented known limitation) per contracts/adhoc-loss-probe.md (FR-016, SC-006)
+- [X] T033 [US5] If in-scope loss is confirmed, wire never-silent reporting through `src/gramtrans/Lib/report.py` so the loss surfaces on the post-run statistics/report surface, consistent with the never-silent contract (FR-017) — **NO-OP (condition not met)**: the probe refuted the R5 WS-drop hypothesis; the ad-hoc reference-loss vector is already never-silent via the category-agnostic `skips`/`excluded_lossy`/`dropped_items` channels in `report.py`, so no new wiring is required. See [adhoc-loss-findings.md](adhoc-loss-findings.md).
 
 **Checkpoint**: US5 yields a root cause + scope decision; any in-scope loss is never-silent.
 
