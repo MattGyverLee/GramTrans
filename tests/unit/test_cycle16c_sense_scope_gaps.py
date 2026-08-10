@@ -612,6 +612,31 @@ def test_42a_thesaurus_spec_hierarchical_conservative_when_depth_unknown():
         _FakeDepthList("junk", "not-a-number")).hierarchical is True
 
 
+def test_42a_depth_read_survives_an_uncast_object(monkeypatch):
+    """Live (FLExTools MCP, Ejagham Mini): `Depth` is ABSENT on an uncast
+    `ICmObject` and reappears after `ICmPossibilityList(...)`. Both real call
+    paths already hand over a cast list, but the derivation casts anyway so a
+    bare `ICmObject` does not silently degrade to the conservative default.
+    Here the identity-cast stub stands in for that cast, and the flat `Depth`
+    must still be read through it."""
+    _install_fake_lcm_for_owner_flid(monkeypatch)
+    flat = _FakeDepthList("flat", 1, name="Thes")
+    assert references.build_thesaurus_spec(flat).hierarchical is False
+
+
+def test_42a_annotation_defs_shape_depth_zero_but_nested_stays_hierarchical():
+    """Regression guard from the live probe: `LangProject.AnnotationDefsOA` is
+    `Depth == 0` yet 3 of its 4 top items carry children. Treating 0 as flat
+    would have been WRONG, so this pins 0 -> hierarchical against a
+    nested-but-Depth-0 shape rather than only against a bare 0."""
+    child = _FakePossItem("kid", name="Kid")
+    parent = _FakePossItem("top", name="Top")
+    parent.SubPossibilitiesOS = [child]
+    nested_depth0 = _FakeDepthList("annotation-defs", 0, name="Annotation Definitions",
+                                   items=[parent])
+    assert references.build_thesaurus_spec(nested_depth0).hierarchical is True
+
+
 def test_42a_derivation_does_not_change_the_create_ancestor_decision():
     """Guard on the reason the hardcode was harmless: `decide_reference`'s
     CREATE-ancestor chain is driven by the live `OwningPossibility` walk, NOT

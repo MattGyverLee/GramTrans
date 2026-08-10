@@ -1435,14 +1435,39 @@ def _list_is_hierarchical(lst) -> bool:
     `CmPossibilityList.Depth` (LCM `Integer`, min 0 / max 127 per liblcm
     `MasterLCModel.xml`) instead of a hardcoded guess (issue #42).
 
-    FLEx writes `1` for a flat list and `127` for an unbounded tree (liblcm
-    sets `AnthroListOA.Depth = 127` / `revIndex.PartsOfSpeechOA.Depth = 127`
-    and `prf.Depth = 1`); `0`/absent occurs on real projects for lists whose
-    depth was never set. Only an explicit `1` is treated as flat -- 0, 127,
-    absent and unreadable all stay hierarchical, which is the conservative
-    reading AND the value 030 previously hardcoded, so no behaviour changes
-    for the fakes or for any list that does not say it is flat. Never raises.
-    """
+    Only an explicit `Depth == 1` is treated as flat; 0, 127, absent and
+    unreadable all stay hierarchical -- the conservative reading AND the value
+    030 previously hardcoded, so nothing changes for the fakes or for any list
+    that does not positively say it is flat. Never raises.
+
+    Live-validated on `Ejagham Mini` over all 28 reachable possibility lists
+    (FLExTools MCP, 2026-08-10):
+
+    - `Depth == 1` lists (SenseTypes, MorphTypes, Roles, Status, ...): **0 of
+      them actually have nesting** -- every one reports
+      `tops_with_children = 0`, so "1 means flat" holds live, not just in the
+      liblcm sources (`prf.Depth = 1`).
+    - `Depth == 127` lists are the trees (Anthro, SemanticDomain,
+      PartsOfSpeech) but SOME are flat in a given project (Education,
+      ComplexEntryTypes, Locations) -- exactly the "flagged hierarchical even
+      when flat here" case the `decide_reference` comment describes, and the
+      reason this flag must never gate the CREATE-ancestor walk.
+    - `Depth == 0` occurs live AND can genuinely nest: `AnnotationDefsOA` is
+      `Depth=0` with 3 of 4 top items carrying children. Treating 0 as flat
+      would therefore have been WRONG; hierarchical is correct for it.
+
+    The cast is not decoration: live, `Depth` is absent on an uncast
+    `ICmObject` and reappears after `ICmPossibilityList(...)` (it disappears
+    and returns together with `PossibilitiesOS`). Both real call paths already
+    hand us a cast list -- `_target_list_by_owner_flid` returns
+    `ICmPossibilityList(obj)`, and `_iter_target_possibility_lists`' own
+    `hasattr(..., "PossibilitiesOS")` guard admits only objects exposing the
+    same interface -- but casting here keeps the read correct for any future
+    caller that passes a bare `ICmObject` instead of silently falling back to
+    the conservative default."""
+    casted = _cast_possibility_list(lst)
+    if casted is not None:
+        lst = casted
     try:
         return int(getattr(lst, "Depth", 0) or 0) != 1
     except (TypeError, ValueError):
