@@ -5709,35 +5709,100 @@ def _references_item_label(item) -> str:
 # (contracts/appendix-link-by-guid.md)
 # ----------------------------------------------------------------------------
 
-def _iter_target_appendixes(target):
+_APPENDIX_LABEL_MAX = 60
+
+
+def _appendix_label(appendix) -> str:
+    """Human-legible label for a `LexAppendix` in a transfer report (issue #42).
+
+    `LexAppendix` carries NO `.Name` -- its ONLY property is
+    `Contents : StText` (atomic owning; verified against liblcm
+    `MasterLCModel.xml`), so `_references_item_label` returns "" and a linguist
+    reading the report saw an appendix drop identified by raw GUID alone. This
+    returns a whitespace-collapsed, truncated snippet of the first non-empty
+    `ContentsOA` paragraph purely to IDENTIFY the appendix in the report; it
+    only READS the text and never reproduces it into the target, which is what
+    030 deliberately excluded. "" when the contents are empty or unreadable
+    (the caller still emits the drop, with the GUID, either way). Never
+    raises."""
+    try:
+        paras = getattr(
+            getattr(appendix, "ContentsOA", None), "ParagraphsOS", None) or []
+        for para in paras:
+            text = getattr(getattr(para, "Contents", None), "Text", None)
+            if not text:
+                continue
+            snippet = " ".join(str(text).split())
+            if not snippet:
+                continue  # whitespace-only paragraph is not a label
+            if len(snippet) > _APPENDIX_LABEL_MAX:
+                snippet = snippet[:_APPENDIX_LABEL_MAX].rstrip() + "..."
+            return snippet
+    except (AttributeError, TypeError):
+        return ""
+    return ""
+
+
+def _iter_target_appendixes(target, errors=None):
     """Yield the target project's owned `ILexAppendix`es (`LexDb.AppendixesOC`),
     or a fake target's `appendixes` iterable when present. Never raises; an
-    absent/inaccessible collection yields nothing."""
+    absent/inaccessible collection yields nothing.
+
+    An UNEXPECTED failure (not one of the "no LCM host / no such property"
+    shapes in `references._EXPECTED_LOOKUP_ERRORS`) is logged with a traceback
+    and appended to the optional `errors` list, so the caller's drop reason can
+    say target presence is UNKNOWN instead of asserting the appendix is absent
+    (issue #42). The collection is materialised INSIDE the `try` so a failure
+    part-way through iterating it is caught here rather than surfacing in the
+    consumer."""
     fake = getattr(target, "appendixes", None)
     if fake is not None:
         for ap in fake:
             yield ap
         return
+    if __package__:
+        from . import references as _references
+    else:
+        import references as _references  # type: ignore
     try:
         from SIL.LCModel import ILangProject, ILexDb
         lexdb = ILexDb(ILangProject(target.Cache.LangProject).LexDbOA)
-        for ap in lexdb.AppendixesOC:
-            yield ap
-    except Exception:
+        owned = list(lexdb.AppendixesOC)
+    except _references._EXPECTED_LOOKUP_ERRORS:
         return
+    except Exception as exc:  # noqa: BLE001 -- recorded, not swallowed
+        _references._note_lookup_error(errors, "target LexDb.AppendixesOC", exc)
+        return
+    for ap in owned:
+        yield ap
 
 
-def _target_appendix_by_guid(target, guid):
+def _target_appendix_by_guid(target, guid, errors=None):
     """Return the target's owned `ILexAppendix` whose GUID matches `guid`
     (030 Section A link-by-GUID), or None. Linear scan of `LexDb.AppendixesOC`
     (0 in every real project on record) -- never raises, and never uses
-    `Repository.GetObject` (which throws on an absent GUID)."""
+    `Repository.GetObject` (which throws on an absent GUID). `errors` is passed
+    through to `_iter_target_appendixes` (issue #42)."""
     if not guid:
         return None
-    for ap in _iter_target_appendixes(target):
+    for ap in _iter_target_appendixes(target, errors=errors):
         if _guid_str_from(ap) == guid:
             return ap
     return None
+
+
+def _appendix_drop_reason(scan_errors) -> str:
+    """Drop reason for an appendix the target does not link -- distinguishing
+    "the target does not own this GUID" from "the AppendixesOC scan raised, so
+    target presence is UNKNOWN" (issue #42). Both are never-silent drops; only
+    the triage text differs."""
+    if scan_errors:
+        return (
+            "target LexDb.AppendixesOC could not be read -- presence is "
+            "UNKNOWN, not confirmed absent (030 link-by-GUID scope; not "
+            "created): " + "; ".join(scan_errors))
+    return ("no LexAppendix with this GUID in target LexDb.AppendixesOC "
+            "(030 link-by-GUID scope; not created)")
 
 
 def _resolve_sense_appendixes(src_sense, new_sense, target, dropped) -> None:
@@ -5755,19 +5820,19 @@ def _resolve_sense_appendixes(src_sense, new_sense, target, dropped) -> None:
     owner_label = _owner_label_for("LexSense", src_sense)
     for src_ap in list(getattr(src_sense, "AppendixesRC", None) or []):
         guid = _guid_str_from(src_ap)
-        tgt_ap = _target_appendix_by_guid(target, guid)
+        scan_errors: list = []
+        tgt_ap = _target_appendix_by_guid(target, guid, errors=scan_errors)
         if tgt_ap is None:
             _append_dropped_once(dropped, DroppedItemRecord(
                 owner_kind="LexSense",
                 owner_guid=owner_guid,
                 owner_label=owner_label,
                 field_name="AppendixesRC",
-                item_name=_references_item_label(src_ap),
+                # `LexAppendix` has no `.Name`; label it by a snippet of its
+                # own contents so the report is not GUID-only (issue #42).
+                item_name=_appendix_label(src_ap),
                 item_guid=guid,
-                reason=(
-                    "no LexAppendix with this GUID in target "
-                    "LexDb.AppendixesOC (030 link-by-GUID scope; not created)"
-                ),
+                reason=_appendix_drop_reason(scan_errors),
             ))
             continue
         if new_sense is None:

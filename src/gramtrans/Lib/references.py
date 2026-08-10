@@ -1264,10 +1264,42 @@ def discover_owning_possibility_list(item):
     return None
 
 
-def _target_singleton_owner(target, owner_class_name):
+# ---- target-lookup failure vs genuine absence (issue #42) ------------------
+#
+# The target-side mirror helpers below answer "does the target have this?" by
+# returning None. A blanket `except Exception` made that None mean BOTH "the
+# target genuinely does not have it" and "the lookup itself blew up", so the
+# resulting `DroppedItemRecord.reason` read as target-missing even when the
+# true cause was a COM/LCM failure. These helpers stay fail-soft (they still
+# never raise -- a partial transfer must not become a crash), but they now
+# separate the two: the EXPECTED shapes below mean "not present / not
+# applicable" and return None quietly, while anything else is logged with a
+# traceback AND appended to the caller's optional `errors` accumulator so the
+# drop reason can say the presence is UNKNOWN rather than absent.
+
+# ImportError  : no `SIL.LCModel` host at all (offline / unit-test context).
+# AttributeError, TypeError : the object does not carry the property/shape the
+#                            lookup needs (fakes, absent optional owned objs).
+# ValueError   : a malformed value reached a cast/conversion.
+_EXPECTED_LOOKUP_ERRORS = (ImportError, AttributeError, TypeError, ValueError)
+
+
+def _note_lookup_error(errors, where: str, exc: BaseException) -> None:
+    """Record an UNEXPECTED target-lookup exception (issue #42). Always logged
+    with a traceback -- never silent -- even when the caller passed no
+    accumulator; `errors` (when given) additionally carries a short rendering
+    up to whoever builds the `DroppedItemRecord.reason`."""
+    _log.warning("%s: unexpected target-lookup failure: %r",
+                 where, exc, exc_info=True)
+    if errors is not None:
+        errors.append("%s: %s: %s" % (where, type(exc).__name__, exc))
+
+
+def _target_singleton_owner(target, owner_class_name, errors=None):
     """The target's unique owner object for a singleton owner class
     (`LangProject` / `LexDb`); None for any other class (custom-owned lists
-    fall through to the Name match). Never raises."""
+    fall through to the Name match). Never raises; an unexpected failure is
+    logged and recorded in `errors` (issue #42)."""
     try:
         from SIL.LCModel import ILangProject, ILexDb
         lp = ILangProject(target.Cache.LangProject)
@@ -1275,21 +1307,28 @@ def _target_singleton_owner(target, owner_class_name):
             return lp
         if owner_class_name == "LexDb":
             return ILexDb(lp.LexDbOA)
-    except Exception:
+    except _EXPECTED_LOOKUP_ERRORS:
+        return None
+    except Exception as exc:  # noqa: BLE001 -- recorded, not swallowed
+        _note_lookup_error(errors, "target singleton owner %r" % owner_class_name, exc)
         return None
     return None
 
 
-def _target_list_by_owner_flid(target, src_owner, flid):
+def _target_list_by_owner_flid(target, src_owner, flid, errors=None):
     """Mirror the source list's location onto the target: same owner class +
     same `OwningFlid` (both model-stable) -> the equivalent target list.
-    Returns the target `ICmPossibilityList` or None. Never raises."""
+    Returns the target `ICmPossibilityList` or None. Never raises; an
+    unexpected failure is logged and recorded in `errors` (issue #42)."""
     try:
         from SIL.LCModel import ICmObject, ICmPossibilityList
         owner_class = ICmObject(src_owner).ClassName
-    except Exception:
+    except _EXPECTED_LOOKUP_ERRORS:
         return None
-    tgt_owner = _target_singleton_owner(target, owner_class)
+    except Exception as exc:  # noqa: BLE001 -- recorded, not swallowed
+        _note_lookup_error(errors, "source list owner class", exc)
+        return None
+    tgt_owner = _target_singleton_owner(target, owner_class, errors=errors)
     if tgt_owner is None:
         return None
     try:
@@ -1299,7 +1338,11 @@ def _target_list_by_owner_flid(target, src_owner, flid):
             return None
         obj = target.Cache.ServiceLocator.ObjectRepository.GetObject(hvo)
         return ICmPossibilityList(obj)
-    except Exception:
+    except _EXPECTED_LOOKUP_ERRORS:
+        return None
+    except Exception as exc:  # noqa: BLE001 -- recorded, not swallowed
+        _note_lookup_error(
+            errors, "target list by owner %s + flid %r" % (owner_class, flid), exc)
         return None
 
 
@@ -1365,33 +1408,66 @@ def _target_list_by_name(target, src_list):
     return None
 
 
-def mirror_possibility_list_to_target(src_list, target):
+def mirror_possibility_list_to_target(src_list, target, errors=None):
     """Find the target's equivalent of `src_list` by owner-class + `OwningFlid`
     (primary), falling back to a Name match (030 US2, research Finding 3).
     NEVER matches by list GUID (list GUIDs differ per project). Returns the
-    target `ICmPossibilityList` or None. Never raises."""
+    target `ICmPossibilityList` or None. Never raises.
+
+    `errors` (optional list) accumulates UNEXPECTED lookup failures from the
+    primary owner+flid matcher so a caller building a drop reason can tell
+    "the target has no such list" from "we could not find out" (issue #42).
+    The Name fallback is still attempted after a failed primary lookup -- a
+    hit there is a real answer and leaves the recorded error informational."""
     if src_list is None:
         return None
     flid = getattr(src_list, "OwningFlid", None)
     owner = getattr(src_list, "Owner", None)
     if flid and owner is not None:
-        tgt = _target_list_by_owner_flid(target, owner, flid)
+        tgt = _target_list_by_owner_flid(target, owner, flid, errors=errors)
         if tgt is not None:
             return tgt
     return _target_list_by_name(target, src_list)
+
+
+def _list_is_hierarchical(lst) -> bool:
+    """Whether `lst` is a tree-shaped possibility list, read from the LIVE
+    `CmPossibilityList.Depth` (LCM `Integer`, min 0 / max 127 per liblcm
+    `MasterLCModel.xml`) instead of a hardcoded guess (issue #42).
+
+    FLEx writes `1` for a flat list and `127` for an unbounded tree (liblcm
+    sets `AnthroListOA.Depth = 127` / `revIndex.PartsOfSpeechOA.Depth = 127`
+    and `prf.Depth = 1`); `0`/absent occurs on real projects for lists whose
+    depth was never set. Only an explicit `1` is treated as flat -- 0, 127,
+    absent and unreadable all stay hierarchical, which is the conservative
+    reading AND the value 030 previously hardcoded, so no behaviour changes
+    for the fakes or for any list that does not say it is flat. Never raises.
+    """
+    try:
+        return int(getattr(lst, "Depth", 0) or 0) != 1
+    except (TypeError, ValueError):
+        return True
 
 
 def build_thesaurus_spec(target_list) -> "ReferenceFieldSpec":
     """Synthetic per-item `ReferenceFieldSpec` for a thesaurus reference whose
     owning list has already been discovered + mirrored to `target_list`. Built
     at resolve time (not import time) because the target list is dynamic, so
-    `target_list_path` closes over the resolved list rather than an accessor."""
+    `target_list_path` closes over the resolved list rather than an accessor.
+
+    `hierarchical` is DERIVED from the mirrored list's live `Depth`
+    (`_list_is_hierarchical`) rather than hardcoded: the flag is
+    documentation/census-only (`decide_reference`'s CREATE-ancestor logic is
+    driven by the live `OwningPossibility` chain, see the comment there), but
+    this spec is forwarded through the same machinery as the accurate
+    `REFERENCE_FIELD_MAP` rows, so it should not carry a synthetic value
+    (issue #42)."""
     return ReferenceFieldSpec(
         owner_class="LexSense",
         field_name="ThesaurusItemsRC",
         cardinality=ReferenceCardinality.COLLECTION,
         target_list_path=lambda _target: target_list,
-        hierarchical=True,
+        hierarchical=_list_is_hierarchical(target_list),
     )
 
 
@@ -1414,6 +1490,20 @@ def _thesaurus_drop(src_item, reason) -> "ReferenceDecision":
     )
 
 
+def _mirror_failure_reason(errors) -> str:
+    """Drop reason for a thesaurus item whose owning list could not be mirrored
+    -- distinguishing "the target has no equivalent list" from "the lookup
+    raised, so target presence is UNKNOWN" (issue #42). Both are still
+    never-silent drops; only the triage text differs."""
+    if errors:
+        return (
+            "owning CmPossibilityList lookup FAILED against target -- presence "
+            "is UNKNOWN, not confirmed absent (030 dynamic-owner): "
+            + "; ".join(errors))
+    return ("owning CmPossibilityList has no equivalent in target "
+            "(030 dynamic-owner)")
+
+
 def resolve_thesaurus_item(src_item, target, cache: dict, source=None):
     """Resolve one `LexSense.ThesaurusItemsRC` `CmPossibility` (030 US2,
     contracts/thesaurus-dynamic-owner.md). Returns `(decision, spec)`:
@@ -1432,11 +1522,10 @@ def resolve_thesaurus_item(src_item, target, cache: dict, source=None):
             src_item,
             "owning CmPossibilityList not found on source item "
             "(030 dynamic-owner)"), None
-    tgt_list = mirror_possibility_list_to_target(src_list, target)
+    mirror_errors: list = []
+    tgt_list = mirror_possibility_list_to_target(
+        src_list, target, errors=mirror_errors)
     if tgt_list is None:
-        return _thesaurus_drop(
-            src_item,
-            "owning CmPossibilityList has no equivalent in target "
-            "(030 dynamic-owner)"), None
+        return _thesaurus_drop(src_item, _mirror_failure_reason(mirror_errors)), None
     spec = build_thesaurus_spec(tgt_list)
     return decide_reference(src_item, target, spec, cache, source=source), spec

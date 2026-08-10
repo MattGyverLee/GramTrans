@@ -567,3 +567,265 @@ def test_move_and_preview_parity_for_link_success_thesaurus_item():
     # Move actually links the resolved target item; Preview's non-write is
     # already implicit (new_sense=None never raised above).
     assert list(move_target_sense.ThesaurusItemsRC) == [tgt_item]
+
+
+# ============================================================================
+# Issue #42 -- deferred 030 P2 polish
+# ============================================================================
+
+# ---- #42a: `hierarchical` derived from the live list `Depth`, not hardcoded --
+
+class _FakeDepthList(_FakePossList):
+    """`_FakePossList` plus the live `CmPossibilityList.Depth` the derivation
+    reads (LCM Integer, min 0 / max 127)."""
+
+    def __init__(self, guid, depth, **kw):
+        super().__init__(guid, **kw)
+        self.Depth = depth
+
+
+def test_42a_thesaurus_spec_hierarchical_derived_from_depth_flat():
+    """`Depth == 1` is FLEx's flat list (liblcm `prf.Depth = 1`) -> the
+    synthetic spec must report `hierarchical=False`, not the old hardcoded
+    True."""
+    spec = references.build_thesaurus_spec(_FakeDepthList("flat", 1))
+    assert spec.hierarchical is False
+    assert spec.field_name == "ThesaurusItemsRC"
+
+
+def test_42a_thesaurus_spec_hierarchical_derived_from_depth_tree():
+    """`Depth == 127` is FLEx's unbounded tree (liblcm `AnthroListOA.Depth =
+    127`) -> hierarchical."""
+    assert references.build_thesaurus_spec(
+        _FakeDepthList("tree", 127)).hierarchical is True
+
+
+def test_42a_thesaurus_spec_hierarchical_conservative_when_depth_unknown():
+    """`Depth == 0` (seen on real projects for never-set lists), an absent
+    `Depth`, and a non-numeric `Depth` all stay hierarchical -- the
+    conservative reading AND the value 030 hardcoded, so nothing regresses."""
+    assert references.build_thesaurus_spec(
+        _FakeDepthList("unset", 0)).hierarchical is True
+    assert references.build_thesaurus_spec(
+        _FakePossList("no-depth-attr")).hierarchical is True
+    assert references.build_thesaurus_spec(
+        _FakeDepthList("junk", "not-a-number")).hierarchical is True
+
+
+def test_42a_derivation_does_not_change_the_create_ancestor_decision():
+    """Guard on the reason the hardcode was harmless: `decide_reference`'s
+    CREATE-ancestor chain is driven by the live `OwningPossibility` walk, NOT
+    by `spec.hierarchical`. A flat-Depth list must therefore still produce the
+    same decision as a tree-Depth one for the same item."""
+    def _decide(depth):
+        tgt_list = _FakeDepthList("tgt", depth, name="Thes", items=[])
+        src_item = _FakePossItem("only-item", name="Animal")
+        spec = references.build_thesaurus_spec(tgt_list)
+        return references.decide_reference(src_item, _FakeTarget(), spec, {})
+
+    flat, tree = _decide(1), _decide(127)
+    assert flat.action == tree.action
+    assert [_guid_of(a) for a in flat.ancestors_to_create] == \
+           [_guid_of(a) for a in tree.ancestors_to_create]
+
+
+def _guid_of(obj):
+    return getattr(obj, "Guid", None)
+
+
+# ---- #42b: lookup FAILURE is distinguished from genuine target absence ------
+
+class _ExplodingAppendixTarget:
+    """Target whose `Cache` access raises a NON-expected exception (stand-in
+    for a live COM/LCM failure), so `_iter_target_appendixes` must take the
+    record-and-log branch rather than the quiet return."""
+
+    class _Boom(Exception):
+        pass
+
+    @property
+    def Cache(self):
+        raise _ExplodingAppendixTarget._Boom("COM failure reading LexDb")
+
+
+def test_42b_appendix_lookup_failure_reason_says_unknown_not_absent(
+        caplog, monkeypatch):
+    """A raising `AppendixesOC` scan must NOT be reported with the
+    "no LexAppendix with this GUID in target" text -- that asserts absence the
+    code never established. The drop is still emitted (never-silent) and the
+    exception is logged with a traceback. (The fake `SIL.LCModel` is installed
+    so the scan gets PAST the import and reaches the raising `Cache` -- without
+    it the ImportError is the expected/quiet shape instead.)"""
+    _install_fake_lcm_for_owner_flid(monkeypatch)
+    sense = _FakeSourceSense("s", appendixes=[_FakeAppendix("ap-G")])
+    dropped: list = []
+    with caplog.at_level("WARNING"):
+        categories._resolve_sense_appendixes(
+            sense, _FakeTargetSense(), _ExplodingAppendixTarget(), dropped)
+
+    assert len(dropped) == 1                       # never silent
+    reason = dropped[0].reason
+    assert "UNKNOWN" in reason
+    assert "not confirmed absent" in reason
+    assert "no LexAppendix with this GUID" not in reason
+    assert "COM failure reading LexDb" in reason   # real cause surfaced
+    logged = [r for r in caplog.records if "AppendixesOC" in r.getMessage()]
+    assert logged and logged[0].exc_info is not None   # traceback attached
+
+
+def test_42b_appendix_genuine_absence_keeps_the_absent_wording():
+    """The ordinary "target simply does not own it" case must keep its original
+    reason -- the #42b split must not relabel every drop as UNKNOWN."""
+    sense = _FakeSourceSense("s", appendixes=[_FakeAppendix("ap-G")])
+    dropped: list = []
+    categories._resolve_sense_appendixes(
+        sense, _FakeTargetSense(), _FakeTarget(appendixes=[]), dropped)
+
+    assert len(dropped) == 1
+    assert "no LexAppendix with this GUID" in dropped[0].reason
+    assert "UNKNOWN" not in dropped[0].reason
+
+
+def test_42b_expected_lookup_shapes_stay_quiet(caplog):
+    """A target with no `Cache` at all (AttributeError -- the offline/fake
+    shape) is EXPECTED: it must return the absent wording with no warning
+    logged, so the new branch does not spam the log for normal unit-test and
+    offline usage."""
+    sense = _FakeSourceSense("s", appendixes=[_FakeAppendix("ap-G")])
+    dropped: list = []
+    with caplog.at_level("WARNING"):
+        categories._resolve_sense_appendixes(
+            sense, _FakeTargetSense(), object(), dropped)
+
+    assert len(dropped) == 1
+    assert "no LexAppendix with this GUID" in dropped[0].reason
+    assert caplog.records == []
+
+
+class _ExplodingFlidTarget:
+    """Target whose owner+flid lookup raises a non-expected exception."""
+
+    class _Boom(Exception):
+        pass
+
+    def __init__(self):
+        self.possibility_lists = []   # Name fallback present but finds nothing
+
+    @property
+    def Cache(self):
+        raise _ExplodingFlidTarget._Boom("COM failure reading DomainDataByFlid")
+
+
+def test_42b_thesaurus_mirror_failure_reason_says_unknown_not_absent(monkeypatch):
+    """Same split on the Section B side: when the owner+flid mirror raises, the
+    thesaurus drop reason must not claim the target has no equivalent list."""
+    _install_fake_lcm_for_owner_flid(monkeypatch)
+    src_list = _FakePossList("src", name="Thes", flid=5005,
+                             owner=types.SimpleNamespace(ClassName="LexDb"))
+    item = _FakePossItem("t-1", name="Animal", owner=src_list)
+    sense = _FakeSourceSense("s", thesaurus_items=[item])
+    dropped: list = []
+
+    categories._resolve_sense_thesaurus_items(
+        sense, _FakeTargetSense(), _ExplodingFlidTarget(), {}, dropped, tag=None)
+
+    assert len(dropped) == 1
+    reason = dropped[0].reason
+    assert "UNKNOWN" in reason and "not confirmed absent" in reason
+    assert "has no equivalent in target" not in reason
+    assert "COM failure reading DomainDataByFlid" in reason
+
+
+def test_42b_thesaurus_genuine_absence_keeps_the_absent_wording():
+    """The plain no-equivalent-list case keeps its original reason."""
+    src_list = _FakePossList("src", name="Custom", flid=42, owner=object())
+    item = _FakePossItem("t-1", name="Animal", owner=src_list)
+    sense = _FakeSourceSense("s", thesaurus_items=[item])
+    dropped: list = []
+
+    categories._resolve_sense_thesaurus_items(
+        sense, _FakeTargetSense(), _FakeTarget(possibility_lists=[]), {},
+        dropped, tag=None)
+
+    assert len(dropped) == 1
+    assert "has no equivalent in target" in dropped[0].reason
+    assert "UNKNOWN" not in dropped[0].reason
+
+
+def test_42b_name_fallback_still_wins_after_a_failed_primary_lookup(monkeypatch):
+    """A raising owner+flid lookup must not short-circuit the Name fallback --
+    a Name hit is a real answer, so there is NO drop at all even though an
+    error was recorded along the way."""
+    _install_fake_lcm_for_owner_flid(monkeypatch)
+    tgt_item = _FakePossItem("t-1", name="Animal")
+    tgt_list = _FakePossList("tgt", name="Thes", items=[tgt_item])
+    target = _ExplodingFlidTarget()
+    target.possibility_lists = [tgt_list]
+
+    src_list = _FakePossList("src", name="Thes", flid=5005,
+                             owner=types.SimpleNamespace(ClassName="LexDb"))
+    item = _FakePossItem("t-1", name="Animal", owner=src_list)
+    sense = _FakeSourceSense("s", thesaurus_items=[item])
+    new_sense = _FakeTargetSense()
+    dropped: list = []
+
+    categories._resolve_sense_thesaurus_items(
+        sense, new_sense, target, {}, dropped, tag=None)
+
+    assert dropped == []
+    assert list(new_sense.ThesaurusItemsRC) == [tgt_item]
+
+
+# ---- #42c: appendix drops carry a human-legible label, not a bare GUID -----
+
+class _FakeStTxtPara:
+    def __init__(self, text):
+        self.Contents = types.SimpleNamespace(Text=text)
+
+
+class _FakeLabelledAppendix(_FakeAppendix):
+    """`LexAppendix` shape with its ONLY real property, `ContentsOA : IStText`
+    (`ParagraphsOS` -> `IStTxtPara.Contents.Text`)."""
+
+    def __init__(self, guid, paragraphs=()):
+        super().__init__(guid)
+        self.ContentsOA = types.SimpleNamespace(
+            ParagraphsOS=[_FakeStTxtPara(t) for t in paragraphs])
+
+
+def test_42c_appendix_label_from_first_nonempty_paragraph():
+    ap = _FakeLabelledAppendix("ap-1", paragraphs=["", "  ", "Appendix A: Loanwords"])
+    assert categories._appendix_label(ap) == "Appendix A: Loanwords"
+
+
+def test_42c_appendix_label_collapses_whitespace_and_truncates():
+    long_text = "Verb  paradigms\tfor the  Ejagham noun classes, full listing"
+    ap = _FakeLabelledAppendix("ap-2", paragraphs=[long_text + " and more here"])
+    label = categories._appendix_label(ap)
+    assert "  " not in label and "\t" not in label
+    assert label.endswith("...")
+    assert len(label) <= categories._APPENDIX_LABEL_MAX + 3
+    assert label.startswith("Verb paradigms for the")
+
+
+def test_42c_appendix_label_empty_when_no_contents():
+    """No `ContentsOA`, an empty `ParagraphsOS`, and blank paragraph text all
+    fail soft to "" -- the drop still carries the GUID."""
+    assert categories._appendix_label(_FakeAppendix("ap-3")) == ""
+    assert categories._appendix_label(_FakeLabelledAppendix("ap-4")) == ""
+    assert categories._appendix_label(
+        _FakeLabelledAppendix("ap-5", paragraphs=["", None])) == ""
+
+
+def test_42c_appendix_drop_record_carries_the_label():
+    """End-to-end: the dropped-item record for an appendix the target does not
+    own is no longer identified by GUID alone."""
+    sense = _FakeSourceSense(
+        "s", appendixes=[_FakeLabelledAppendix("ap-G", paragraphs=["Loanwords"])])
+    dropped: list = []
+    categories._resolve_sense_appendixes(
+        sense, _FakeTargetSense(), _FakeTarget(appendixes=[]), dropped)
+
+    assert len(dropped) == 1
+    assert dropped[0].item_name == "Loanwords"
+    assert dropped[0].item_guid == "ap-g"
