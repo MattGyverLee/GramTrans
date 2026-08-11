@@ -1,6 +1,6 @@
 # Feature 030 — Live-Validation Status
 
-**As of:** 2026-08-10 (originally 2026-07-16; updated for
+**As of:** 2026-08-11 (originally 2026-07-16; updated for
 [issue #42](https://github.com/MattGyverLee/GramTrans/issues/42)).
 
 Both 030 fields are **vacuous-live across all 79 on-disk projects** (see
@@ -11,7 +11,7 @@ offline-proven, what is live-confirmed, and what remains fixture-only.
 
 ## Offline-proven (green, zero regressions)
 
-`tests/unit/test_cycle16c_sense_scope_gaps.py` (34 tests: 20 from 030 + **14 added for
+`tests/unit/test_cycle16c_sense_scope_gaps.py` (38 tests: 20 from 030 + **18 added for
 issue #42**) + `tests/verification/fidelity_census.py` (116 green). Full suite:
 **27 failures, byte-identical to clean `main`** (verified by stash-and-rerun on
 2026-08-10: baseline `27 failed / 1859 passed`, with #42 `27 failed / 1873 passed` —
@@ -90,6 +90,42 @@ than taken from the liblcm sources alone:
   confirming the appendix label must come from `ContentsOA`.
 - `LexDb.AppendixesOC count = 0`, re-confirming the vacuous-live finding.
 
+## Section A — LIVE-PROVEN on a constructed write-enabled fixture (2026-08-11)
+
+Run on the disposable target **`Ejagham Full GT-Test`** (FLExTools MCP, `write_enabled=True`,
+Phase-1 `undoable=False`). GT-Test has an **empty lexicon** (0 `LexEntry` / 0 `LexSense`,
+302 `CmPossibility`), so the fixture created its own entry+sense plus one `LexAppendix`
+carrying a real 84-char `ContentsOA` paragraph, then drove the **actual** resolver
+functions against live LCM. A pre-write `.fwdata` snapshot was taken and restored
+afterwards; the target is **byte-identical** to its pre-fixture state (`cmp` clean).
+
+| Scenario | Result |
+|---|---|
+| `_appendix_label` on a real `LexAppendix` (#42c) | `'Appendix A: Ejagham loanword strata and their noun-class ref...'` — 63 chars (60 + `...`), so **truncation exercised live**. Was `''` before the fix. |
+| `_target_appendix_by_guid` on a **NON-EMPTY** `AppendixesOC` | real GUID → **FOUND**, bogus GUID → **MISS**, `errors=[]` both ways. (030 had only ever proven the *empty*-collection case.) |
+| A-present **LINK**, Move mode onto a real sense | **0 drops**; `AppendixesRC = 1` — the dedup guard held, the link was not re-added. |
+| A-absent **DROP** | **1 drop** carrying the live label (not a bare GUID), correct absent-wording reason, ghost **not** linked, `AppendixesOC` still 1 — **never creates**. |
+
+### A real bug this live pass caught
+
+The uncast paragraph read in `_appendix_label` was **broken on every real project** and
+could never have been caught offline. `StText.ParagraphsOS` is typed `IStPara`, which does
+**not** carry `.Contents` — that lives on the `IStTxtPara` subtype — so the live read raised
+`AttributeError: 'IStPara' object has no attribute 'Contents'`, and the `getattr` fallback
+turned that into a silent `""`. The #42c label would have been empty in production while
+the offline fakes (which expose `.Contents` directly) passed happily.
+
+Fixed with `categories._as_st_txt_para` (cast, fail-soft) and pinned by two regression
+tests whose fake **withholds** `.Contents` exactly as `IStPara` does — verified to FAIL
+against the uncast implementation, so they are genuine guards rather than tautologies.
+Swept the codebase: `texts.py:937` is the only other `ParagraphsOS` site and it is safe
+(its paragraph comes straight from `IStTxtParaFactory`, already correctly typed).
+
+> Note: `FLExProject.Transaction` logs *"no LCM rollback API found — transactions will
+> execute but rollback on failure is not available"* in Phase 1. Partial writes therefore
+> persist on mid-script failure (observed: an aborted run left 1 entry + 1 appendix behind).
+> A pre-write snapshot is mandatory, not optional, for live fixture work.
+
 ## Fixture-only — deferred (not a defect)
 
 Requires a **constructed fixture** (write-enabled) because no project on record
@@ -97,7 +133,6 @@ populates either field:
 
 | Path | Why fixture-only |
 |------|------------------|
-| Section A end-to-end LINK through a real GramTrans transfer | `LexDb.AppendixesOC` = 0 and no sense references an appendix anywhere |
 | Section B thesaurus CREATE arm (item absent in mirrored target list, created with ancestor chain) through a real transfer | 0 `ThesaurusItemsRC` populated anywhere; "thesaurus" absent from every `.fwdata` |
 
 Per the 024 convention ([024 validation-status.md](../024-lexicon-reference-fidelity/validation-status.md)):
@@ -106,8 +141,8 @@ the gap is a fixture-availability limitation. Constructing the write-enabled fix
 disposable target (quickstart.md Part 2) and capturing pre/post evidence is the remaining
 QA task before this row is cleared.
 
-**Still open after issue #42 (2026-08-10).** Both rows above remain fixture-only and are
-the sole unresolved #42 item. They are blocked on more than target availability: because
+**Still open after issue #42 (2026-08-11).** Section A is now **cleared** (see the live
+section above). The remaining Section B row is the sole unresolved #42 item. They are blocked on more than target availability: because
 the fields are 0-populated *everywhere*, the fixture needs a **write-enabled source**
 project — appendixes seeded into `LexDb.AppendixesOC` with senses referencing them, and
 thesaurus items seeded into a possibility list with senses referencing those. That is a

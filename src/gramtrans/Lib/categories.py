@@ -5712,6 +5712,28 @@ def _references_item_label(item) -> str:
 _APPENDIX_LABEL_MAX = 60
 
 
+def _as_st_txt_para(para):
+    """Cast an `IStPara` from `ParagraphsOS` up to `IStTxtPara`.
+
+    `StText.ParagraphsOS` is typed `IStPara`, which does NOT carry `.Contents`
+    -- that property lives on the `IStTxtPara` subtype. Live-confirmed on
+    `Ejagham Full GT-Test` (2026-08-11): reading `ParagraphsOS[0].Contents`
+    without this cast raises `AttributeError: 'IStPara' object has no attribute
+    'Contents'`, so the uncast read in `_appendix_label` would have silently
+    produced "" on every real project -- defeating the label entirely while
+    passing offline (fakes expose `.Contents` directly).
+
+    Mirrors `references._cast_possibility_list`'s posture: a real pythonnet cast
+    raises on a non-`IStTxtPara` paragraph and an offline/stub environment has
+    no `SIL.LCModel` at all, so either way fall back to the object itself and
+    let the caller's `getattr` decide. Never raises."""
+    try:
+        from SIL.LCModel import IStTxtPara  # lazy -- absent offline
+        return IStTxtPara(para)
+    except Exception:
+        return para
+
+
 def _appendix_label(appendix) -> str:
     """Human-legible label for a `LexAppendix` in a transfer report (issue #42).
 
@@ -5729,7 +5751,10 @@ def _appendix_label(appendix) -> str:
         paras = getattr(
             getattr(appendix, "ContentsOA", None), "ParagraphsOS", None) or []
         for para in paras:
-            text = getattr(getattr(para, "Contents", None), "Text", None)
+            # `.Contents` is on IStTxtPara, not the IStPara that ParagraphsOS
+            # is typed as -- see `_as_st_txt_para` (live-confirmed).
+            text = getattr(getattr(_as_st_txt_para(para), "Contents", None),
+                           "Text", None)
             if not text:
                 continue
             snippet = " ".join(str(text).split())

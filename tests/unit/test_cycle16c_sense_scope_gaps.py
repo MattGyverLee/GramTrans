@@ -818,6 +818,59 @@ class _FakeLabelledAppendix(_FakeAppendix):
             ParagraphsOS=[_FakeStTxtPara(t) for t in paragraphs])
 
 
+class _FakeIStPara:
+    """A paragraph as `ParagraphsOS` really types it live: `IStPara`, which has
+    NO `.Contents` -- that property is on the `IStTxtPara` subtype. The text is
+    reachable ONLY through the cast."""
+
+    def __init__(self, text):
+        self._txt = text          # deliberately NOT exposed as .Contents
+
+
+def _install_fake_st_txt_para_cast(monkeypatch):
+    """Fake `SIL.LCModel.IStTxtPara` that turns an `IStPara`-shaped object into
+    one exposing `.Contents.Text`, mimicking the real pythonnet up-cast."""
+
+    class IStTxtPara:
+        def __new__(cls, para):
+            if not isinstance(para, _FakeIStPara):
+                raise TypeError("not an IStTxtPara")
+            return types.SimpleNamespace(
+                Contents=types.SimpleNamespace(Text=para._txt))
+
+    fake = types.ModuleType("SIL.LCModel")
+    fake.IStTxtPara = IStTxtPara
+    monkeypatch.setitem(
+        sys.modules, "SIL", sys.modules.get("SIL") or types.ModuleType("SIL"))
+    monkeypatch.setitem(sys.modules, "SIL.LCModel", fake)
+
+
+def test_42c_label_reads_through_the_IStPara_to_IStTxtPara_cast(monkeypatch):
+    """Regression for a bug the LIVE run caught (2026-08-11, GT-Test): reading
+    `ParagraphsOS[0].Contents` WITHOUT casting raises `AttributeError: 'IStPara'
+    object has no attribute 'Contents'` on real LCM, so the uncast version of
+    `_appendix_label` returned "" on every real project -- while passing offline,
+    because the plain fakes expose `.Contents` directly.
+
+    This fake withholds `.Contents` exactly as `IStPara` does, so it FAILS
+    against the uncast implementation and passes only with the cast."""
+    _install_fake_st_txt_para_cast(monkeypatch)
+    ap = _FakeAppendix("ap-live")
+    ap.ContentsOA = types.SimpleNamespace(
+        ParagraphsOS=[_FakeIStPara("Appendix A: Loanwords")])
+
+    assert categories._appendix_label(ap) == "Appendix A: Loanwords"
+
+
+def test_42c_label_cast_failure_falls_back_without_raising(monkeypatch):
+    """A paragraph the cast REJECTS must not blow up the label -- it degrades to
+    the uncast object (whose `.Contents` may then be absent) and yields ""."""
+    _install_fake_st_txt_para_cast(monkeypatch)
+    ap = _FakeAppendix("ap-odd")
+    ap.ContentsOA = types.SimpleNamespace(ParagraphsOS=[object()])
+    assert categories._appendix_label(ap) == ""
+
+
 def test_42c_appendix_label_from_first_nonempty_paragraph():
     ap = _FakeLabelledAppendix("ap-1", paragraphs=["", "  ", "Appendix A: Loanwords"])
     assert categories._appendix_label(ap) == "Appendix A: Loanwords"
