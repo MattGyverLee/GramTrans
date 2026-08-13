@@ -728,6 +728,14 @@ class RunPlan:
     # STEMS.execute_action (post-pass A). Ephemeral per run; not
     # serialised into the run snapshot.
     msa_slot_bindings: dict = field(default_factory=dict)  # Guid -> list[Guid]
+    # Feature 033: inflection-feature structures assigned to affix MSAs
+    # (IMoInflAffMsa.InflFeatsOA). Deferred to the same 17.1 sub-pass that
+    # wires SlotsRC, because the referenced IFsClosedFeature/IFsSymFeatVal must
+    # already exist in target (INFLECTION_FEATURES runs in the same Move).
+    # Shape: {src_msa_guid: {"struc_guid": str, "type_guid": str,
+    #                        "specs": [{"spec_guid","feature","value"}, ...]}}
+    # Ephemeral per run; not serialised into the run snapshot.
+    msa_infl_feat_bindings: dict = field(default_factory=dict)
     # Phase 3c (FR-340): LexEntryRef component-lexeme bindings deferred
     # to post-pass A. Shape: {src_entry_guid: {"ComponentLexemesRS": [...],
     # "PrimaryLexemesRS": [...]}}.

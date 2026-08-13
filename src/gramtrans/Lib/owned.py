@@ -1874,21 +1874,37 @@ def _reproduce_msenv_features_oa(src_allo, new_allo, ctx, tag, resolver_cache,
                 pass
 
 
-def _create_owned_via_factory(factory, guid_str):
+def _create_owned_via_factory(factory, guid_str, kind="owned child"):
     """Create an owned child via a `.Create(guid)` factory, preserving the
     source GUID for re-run determinism, falling back to the no-arg `.Create()`
     overload host-free / when the guid overload is unavailable. `None` on any
-    failure (caller degrades, never crashes)."""
+    failure (caller degrades, never crashes).
+
+    This is the canonical GUID-preserving creation helper for the engine: a
+    transferred object MUST keep its source GUID, so that a target object
+    holding that GUID is recognisably the same object on a later run. Any
+    fallback to a minted identity is LOGGED (feature 033) -- unjustified GUID
+    loss is a defect, and a logged reason is what makes a given loss justified.
+    """
     guid_arg = _guid_for_create(guid_str) if guid_str else None
     if guid_arg is not None:
         try:
             return factory.Create(guid_arg)
-        except Exception:
-            pass
+        except Exception as exc:  # noqa: BLE001 -- overload absent / GUID taken
+            _log_guid_fallback(kind, guid_str, exc)
     try:
         return factory.Create()
     except Exception:
         return None
+
+
+def _log_guid_fallback(kind, guid, exc):
+    """Record WHY a source GUID could not be preserved (feature 033)."""
+    import logging as _logging
+    _logging.getLogger("gramtrans.Lib.owned").warning(
+        "%s: Create(Guid=%s) failed (%s: %s); falling back to a NEW identity. "
+        "The source GUID could not be preserved for this object.",
+        kind, guid, type(exc).__name__, exc)
 
 
 def _plan_msenv_features_oa(src_allo, ctx, dropped) -> list:
