@@ -37,13 +37,56 @@ Commit `d8576e0` covers the GramTrans half of the above.
 
 ---
 
+## AUDIT RE-RUN — DONE 2026-08-15. One offender left: `Segment`.
+
+Ran `debug/audit_guid_preservation.py` (Ejagham Mini -> restored Target,
+`PYTHONPATH`-shadowed flexicon). Move: 188 actions / 188 added / 213 dropped.
+**Offenders 2 -> 1; total minted 225 -> 101.** Result:
+`scratchpad/guid_audit.json` (prior run kept as `guid_audit_PREV.json`).
+
+| class | new (prev -> now) | minted (prev -> now) | verdict |
+|---|---|---|---|
+| WfiWordform | 124 -> 124 | **124 -> 0** | FIXED |
+| WfiAnalysis | 23 -> **143** | 0 -> 0 | genuine now |
+| WfiGloss | 35 -> **231** | 0 -> 0 | genuine now |
+| WfiMorphBundle | 46 -> **283** | 0 -> 0 | genuine now |
+| StTxtPara / Text / StText | 119 / 9 / 9 | 0 | holds |
+| MoAffixAllomorph | 106 | 0 | holds |
+| **Segment** | 101 | **101** | **STILL MINTING** |
+
+The stale-numbers trap is cleared: analyses/glosses/bundles now create at their
+real counts (143/231/283, matching STATUS.md) **and** preserve every GUID, so
+those `minted=0` rows are real rather than an artifact of suppressed creation.
+
+### `Segment` — hypothesis CONFIRMED
+
+`preserved=0` (not merely low) is the decisive evidence. flexicon #239 added
+`guid=` to `Segments.AppendSentence` and live-verified it, so a single reached
+call would have preserved at least one GUID. Zero preserved means the call
+never fires: at `texts.py:1071-1075` the code reads
+`tgt_segments = seg_ops.GetAll(new_para)` and only calls `AppendSentence(...,
+guid=)` when `tgt_segments[idx] is None`. Setting the paragraph `Contents`
+makes LCM auto-segment, so the slot is always already filled — by a
+LCM-minted segment whose GUID is immutable post-create.
+
+**Not yet decided** (see OPEN ITEMS): either build a create-segments-first path
+(delete the auto-created segments, then `ISegmentFactory.Create(guid)` + own
+under `SegmentsOS` with correct offsets), or accept it as a **justified,
+logged** loss. Note the practical blast radius is bounded: text-level
+idempotency is protected by a different mechanism — the `f4cfbee` guard that
+skips a text already having paragraphs — not by segment GUID identity.
+
+---
+
 ## IN FLIGHT — code written, **NOT yet re-verified live**
 
 The texts/wordforms wiring is committed but its live numbers are **stale**: the only
 completed audit ran while the wordform bug below was active, which suppressed
 analysis/gloss/bundle creation and made the numbers look better than they were.
 
-- [ ] **RE-RUN THE AUDIT.** This is the blocking next step.
+- [x] **RE-RUN THE AUDIT** — DONE 2026-08-15, see the section above. The
+      texts/wordforms wiring is now live-verified: every class preserves its
+      GUIDs, and `Segment` is the sole remaining offender.
       ```powershell
       cd D:\Github\_Projects\_LEX\GramTrans-033-affix-msa
       $env:PYTHONPATH="D:\Github\_Projects\_LEX\flexicon"
@@ -85,12 +128,17 @@ Offenders 8 -> 2, minted 1019 -> 225. Re-measure before trusting any of it.
 
 ## OPEN ITEMS
 
-- [ ] **`Segment` GUIDs (101 minted).** Hypothesis, UNCONFIRMED: setting paragraph
-      `Contents` makes LCM auto-segment, so `seg_ops.AppendSentence` is never
-      reached (the code only calls it when `tgt_seg is None`) and the `guid=`
-      never applies. LCM GUIDs are immutable post-create, so if confirmed this
-      may be unfixable through this path. Either find a create-segments-first
-      path, or document it as a **justified** loss with a logged reason.
+- [ ] **`Segment` GUIDs (101 minted).** Hypothesis **CONFIRMED 2026-08-15** —
+      see the audit section above for the `preserved=0` reasoning. LCM
+      auto-segments on `Contents` set, so `AppendSentence(..., guid=)` at
+      `texts.py:1075` is never reached and LCM GUIDs are immutable
+      post-create. **Decision still open**: build a create-segments-first path
+      (delete the auto-created segments, then `ISegmentFactory.Create(guid)` +
+      own under `SegmentsOS` at the correct offsets) — untried and it fights
+      LCM's own segmentation, so it needs a live spike before committing —
+      **or** accept it as a justified loss and emit the logged reason the
+      invariant requires (currently the loss is silent, which is the part
+      that is out of contract regardless of which way this goes).
 - [ ] **`MoStemAllomorph` untested.** Audit shows `new=0 / missing=187` because
       STEMS is excluded from `build_full_selection()`. It routes through the same
       `_mk` helper that was fixed, so it *should* inherit the fix — unproven.
