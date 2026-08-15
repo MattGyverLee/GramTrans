@@ -927,6 +927,50 @@ def _create_text_tag(target, target_text, tgt_seg, possibility, tt_ops,
     return created
 
 
+def _log_segment_guid_loss(tgt_segments, seg_plans, text_label) -> int:
+    """Record that N segments could not keep their source GUIDs (033).
+
+    The 033 invariant allows a GUID loss that is **justified and logged**; what
+    it forbids is a SILENT one. This is the logged half for segments.
+
+    Why the loss happens: `_create_paragraph` sets the paragraph's `Contents`,
+    and LCM auto-segments on that write. By the time the alignment loop runs,
+    every positional slot is already filled, so `AppendSentence(..., guid=)` --
+    the only GUID-preserving path -- never fires, and LCM GUIDs are immutable
+    once created. Measured live 2026-08-15: 101 of 104 segments, 0 preserved.
+
+    Deliberately NOT a `DroppedItemRecord`: the segment IS reproduced (baseline,
+    translations, notes, analyses and `AnalysesRS` all land on it) -- only its
+    identity differs. Filing these as drops would inflate the single unified
+    never-silent drop channel with non-drops and corrupt the drop metric the
+    fidelity census and full-copy stress test read.
+
+    One aggregated WARNING per paragraph rather than one per segment: at ~101
+    per run the per-segment form would bury the log it is meant to inform.
+    Returns the number of lost GUIDs (0 = nothing logged).
+    """
+    lost = 0
+    for idx, seg_plan in enumerate(seg_plans):
+        if idx >= len(tgt_segments):
+            break
+        src_guid = (getattr(seg_plan, "source_guid", "") or "").lower()
+        if not src_guid:
+            continue
+        if _guid_str(tgt_segments[idx]) != src_guid:
+            lost += 1
+    if lost:
+        _log.warning(
+            "texts: %d segment(s) in %r kept a NEW identity instead of the "
+            "source GUID. Reason: LCM auto-segments when paragraph Contents is "
+            "set, so the positional slot is already filled and "
+            "AppendSentence(guid=) never runs; LCM GUIDs are immutable after "
+            "create. The segments themselves ARE reproduced -- only their "
+            "identity differs -- so they are not reported as dropped items. "
+            "See specs/033-guid-preservation/TODO.md (Segment).",
+            lost, text_label or "<untitled>")
+    return lost
+
+
 def _raw_create_text_tag(target, target_text, tgt_seg, possibility,
                          src_tag_guid=""):
     """Raw-LCM per-segment `ITextTag` creation (R6 [PROBE]/T039).
@@ -1068,6 +1112,10 @@ def _apply_paragraphs(plan, target, target_text, para_ops, seg_ops, ctx, tag,
             tgt_segments = list(seg_ops.GetAll(new_para) or [])
         except Exception:
             tgt_segments = []
+        # 033: LCM auto-segmented these, so their GUIDs are minted, not the
+        # source ones. A justified loss -- but never a silent one.
+        _safe(lambda: _log_segment_guid_loss(
+            tgt_segments, para_plan.segments, plan.title))
         for idx, seg_plan in enumerate(para_plan.segments):
             tgt_seg = tgt_segments[idx] if idx < len(tgt_segments) else None
             if tgt_seg is None:

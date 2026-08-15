@@ -228,3 +228,60 @@ def test_text_tag_create_preserves_source_tag_guid():
     assert "src_tag_guid" in sig.parameters, (
         "_raw_create_text_tag must accept the source tag GUID so the created "
         "ITextTag can preserve it (033 invariant)")
+
+
+# ============================================================================
+# Segment GUID loss -- justified, but it must be LOGGED, never silent (033).
+#
+# LCM auto-segments when a paragraph's `Contents` is set, so the positional
+# slot is already filled and `AppendSentence(..., guid=)` -- the only
+# GUID-preserving path -- never fires. LCM GUIDs are immutable post-create, so
+# the loss stands until/unless a create-segments-first path is built. The
+# invariant permits a loss that is justified AND logged; what it forbids is
+# silence.
+# ============================================================================
+
+def test_segment_guid_loss_is_logged_not_silent(caplog):
+    """An auto-created segment whose GUID differs from its source must produce
+    a WARNING naming the count and the reason."""
+    import logging
+
+    class _Seg:
+        def __init__(self, guid):
+            self.Guid = guid
+            self.guid = guid
+
+    auto = [_Seg("auto-guid-a"), _Seg("auto-guid-b")]
+    plans = [_SegPlan("src-seg-1"), _SegPlan("src-seg-2")]
+
+    with caplog.at_level(logging.WARNING, logger="gramtrans.Lib.texts"):
+        texts._log_segment_guid_loss(auto, plans, "Text One")
+
+    joined = " ".join(r.getMessage() for r in caplog.records)
+    assert "2" in joined, "the count of lost segment GUIDs must be reported"
+    assert "auto-segment" in joined.lower() or "auto_segment" in joined.lower(), (
+        "the logged reason must explain WHY the GUID was not preserved")
+
+
+def test_segment_guid_loss_silent_when_guids_were_preserved(caplog):
+    """No warning when the target segments already carry their source GUIDs --
+    the log must not cry wolf once a create-segments-first path lands."""
+    import logging
+
+    class _Seg:
+        def __init__(self, guid):
+            self.Guid = guid
+            self.guid = guid
+
+    preserved = [_Seg("src-seg-1"), _Seg("src-seg-2")]
+    plans = [_SegPlan("src-seg-1"), _SegPlan("src-seg-2")]
+
+    with caplog.at_level(logging.WARNING, logger="gramtrans.Lib.texts"):
+        texts._log_segment_guid_loss(preserved, plans, "Text One")
+
+    assert not caplog.records, "no GUID was lost; nothing should be logged"
+
+
+class _SegPlan:
+    def __init__(self, source_guid):
+        self.source_guid = source_guid
