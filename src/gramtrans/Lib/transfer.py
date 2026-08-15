@@ -1530,8 +1530,14 @@ def _create_allomorph_with_guid(target, new_entry, src_guid: str, src_allo, sour
     """Create IMoAffixAllomorph via flexicon's LexiconAddAllomorph wrapper
     (which handles the LibLCM Create signature internally).
 
-    GUID preservation: LCM allomorph factories don't accept a Guid; new GUID
-    is recorded in `identity_remap` per FR-012.
+    GUID preservation (033): the source GUID IS preserved, via
+    `owned._create_owned_via_factory`. The previous claim here -- that "LCM
+    allomorph factories don't accept a Guid" -- was false: the 033 audit
+    preserved 106/106 affix-allomorph GUIDs through exactly this factory's
+    `Create(Guid)` overload. (Same false-docstring class as the MSA one
+    corrected in d8576e0.) `identity_remap` is still recorded per FR-012, and
+    now normally maps a GUID to itself; it diverges only on a LOGGED fallback
+    to a minted identity.
 
     Phase 0 Layer 3 is structural-only — lexeme Form text content is NOT
     transferred (flexicon's ApplySyncableProperties had ITsString conversion
@@ -1542,11 +1548,13 @@ def _create_allomorph_with_guid(target, new_entry, src_guid: str, src_allo, sour
 
     # Without ApplySyncableProperties, we can't easily recover the source
     # form text; create the allomorph as a bare structural placeholder.
-    # Try the factory.Create() first — works for some LCM versions.
+    try:  # module-local import: transfer.py's established lazy-import idiom
+        from .owned import _create_owned_via_factory
+    except ImportError:  # pragma: no cover - bare-script sys.path convention
+        from owned import _create_owned_via_factory  # type: ignore
     factory = IMoAffixAllomorphFactory(target.GetFactory(IMoAffixAllomorphFactory))
-    try:
-        new_allo = factory.Create()
-    except TypeError:
+    new_allo = _create_owned_via_factory(factory, src_guid, "MoAffixAllomorph")
+    if new_allo is None:
         report_sink.Warning(
             f"  [L3] IMoAffixAllomorphFactory.Create() unavailable; skipping allomorph {src_guid[:8]}"
         )

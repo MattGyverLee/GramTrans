@@ -1582,6 +1582,14 @@ class SegmentPlan:
     analyses: tuple = ()       # tuple[AnalysisPlan, ...] — human-evaluated only
     alignment: tuple = ()      # tuple[AlignmentToken, ...] — AnalysesRS reproduction
     tag_decisions: tuple = ()  # tuple[ReferenceDecision, ...] — per-segment text-markup tags (US5)
+    # 033: the source ITextTag GUIDs, positionally parallel to `tag_decisions`.
+    # A DISTINCT field on purpose: a tag decision carries the identity of the
+    # referenced TagRA *possibility*, NOT of the owning ITextTag. Reusing the
+    # decision's GUID here would stamp the possibility's identity onto the tag
+    # object — the exact confusion that produced the wordform/analysis bug
+    # (see specs/033-guid-preservation/TODO.md, "how the worst bug got in").
+    # An absent/short entry MINTS rather than falling back to another GUID.
+    tag_source_guids: tuple = ()
 
 
 @dataclass(frozen=True)

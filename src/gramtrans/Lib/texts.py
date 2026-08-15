@@ -43,6 +43,7 @@ if __package__:
         TextTransferPlan,
     )
     from . import references as _references
+    from . import owned as _owned
 else:  # pragma: no cover - executed only when run as a bare script
     from models import (  # type: ignore
         DroppedItemRecord,
@@ -54,6 +55,7 @@ else:  # pragma: no cover - executed only when run as a bare script
         TextTransferPlan,
     )
     import references as _references  # type: ignore
+    import owned as _owned  # type: ignore
 
 _log = logging.getLogger("gramtrans.Lib.texts")
 
@@ -332,11 +334,18 @@ def _decide_segment_tags(tags, source, target, resolver_cache, dropped):
 
     Create-allowed (a tag absent from the target list is CREATEd, GUID-
     preserving); an unresolvable tag (target list absent) is a REPORT_DROPPED
-    decision carrying its own DroppedItemRecord. Never raises."""
+    decision carrying its own DroppedItemRecord. Never raises.
+
+    Returns `(decisions, source_tag_guids)` — the second tuple is positionally
+    parallel to the first and carries each owning source `ITextTag`'s OWN GUID
+    (033), which the decision itself does not (it identifies the referenced
+    possibility).
+    """
     if not tags:
-        return ()
+        return (), ()
     spec = _tag_spec()
     decisions = []
+    src_guids = []
     for tag in tags:
         poss = getattr(tag, "TagRA", None)
         if poss is None:
@@ -349,9 +358,10 @@ def _decide_segment_tags(tags, source, target, resolver_cache, dropped):
         if decision is None:
             continue
         decisions.append(decision)
+        src_guids.append(_guid_str(tag))
         if decision.dropped is not None:
             dropped.append(decision.dropped)
-    return tuple(decisions)
+    return tuple(decisions), tuple(src_guids)
 
 
 def _text_disposition(target, src_guid: str, title: str, source=None, source_text=None):
@@ -553,7 +563,7 @@ def _walk_paragraphs(source_text, source, target, ctx, ws_map, tgt_ws_ids,
             alignment = tuple(_wordforms.plan_alignment(seg, ctx, dropped))
 
             # US5 (T034): per-segment text-markup tag references.
-            tag_decisions = _decide_segment_tags(
+            tag_decisions, tag_source_guids = _decide_segment_tags(
                 tags_by_seg.get(seg_guid, ()), source, target,
                 resolver_cache, dropped)
 
@@ -566,6 +576,7 @@ def _walk_paragraphs(source_text, source, target, ctx, ws_map, tgt_ws_ids,
                 analyses=analyses,
                 alignment=alignment,
                 tag_decisions=tag_decisions,
+                tag_source_guids=tag_source_guids,
             ))
         para_plans.append(ParagraphPlan(
             source_guid=para_guid,
@@ -871,7 +882,11 @@ def _apply_segment_tags(seg_plan, target, target_text, tgt_seg, resolver_cache,
         return
     spec = _tag_spec()
     tt_ops = getattr(target, "TextTags", None)
-    for decision in seg_plan.tag_decisions:
+    # 033: positionally parallel source ITextTag GUIDs. A short/absent tuple
+    # yields "" for that index, which MINTS a fresh identity (logged) rather
+    # than borrowing some other object's GUID.
+    src_tag_guids = getattr(seg_plan, "tag_source_guids", ()) or ()
+    for idx, decision in enumerate(seg_plan.tag_decisions):
         if getattr(decision, "action", None) == ReferenceAction.REPORT_DROPPED:
             continue  # unresolvable — already reported (FR-017/023)
         possibility = _safe(lambda d=decision: _references.apply_reference(
@@ -882,12 +897,13 @@ def _apply_segment_tags(seg_plan, target, target_text, tgt_seg, resolver_cache,
             possibility = getattr(decision, "target_item", None)
         if possibility is None:
             continue
+        src_tag_guid = src_tag_guids[idx] if idx < len(src_tag_guids) else ""
         _create_text_tag(target, target_text, tgt_seg, possibility, tt_ops,
-                         seg_plan, dropped)
+                         seg_plan, dropped, src_tag_guid=src_tag_guid)
 
 
 def _create_text_tag(target, target_text, tgt_seg, possibility, tt_ops,
-                     seg_plan, dropped):
+                     seg_plan, dropped, src_tag_guid=""):
     """Create one per-segment `ITextTag` wired to `possibility` (US5).
 
     Prefers a duck-typed `target.TextTags.Create` (offline seam / any future
@@ -900,7 +916,8 @@ def _create_text_tag(target, target_text, tgt_seg, possibility, tt_ops,
         created = _safe(lambda: tt_ops.Create(target_text, possibility, tgt_seg, tgt_seg))
         if created is not None:
             return created
-    created = _safe(lambda: _raw_create_text_tag(target, target_text, tgt_seg, possibility))
+    created = _safe(lambda: _raw_create_text_tag(
+        target, target_text, tgt_seg, possibility, src_tag_guid=src_tag_guid))
     if created is None:
         dropped.append(DroppedItemRecord(
             owner_kind="TextTag", owner_guid=seg_plan.source_guid or "?",
@@ -910,18 +927,27 @@ def _create_text_tag(target, target_text, tgt_seg, possibility, tt_ops,
     return created
 
 
-def _raw_create_text_tag(target, target_text, tgt_seg, possibility):
+def _raw_create_text_tag(target, target_text, tgt_seg, possibility,
+                         src_tag_guid=""):
     """Raw-LCM per-segment `ITextTag` creation (R6 [PROBE]/T039).
 
     No flexicon wrapper exists for text-markup tags, so this is the Principle II
     fallback: create via `ITextTagFactory`, own it under the text's
     `IStText.TagsOC`, and wire `TagRA` + begin/end segment. Wrapped by `_safe`
     at the call site so an unconfirmed accessor degrades to a reported drop
-    rather than aborting the walk."""
+    rather than aborting the walk.
+
+    `src_tag_guid` is the OWNING source `ITextTag`'s own GUID (033) — never the
+    referenced possibility's — so a re-run recognises the tag it already made.
+    Empty mints a fresh identity, and the helper logs that it did."""
     from SIL.LCModel import IStText, ITextTagFactory  # lazy — absent offline
     contents = target.Texts.GetContents(target_text)
     st_text = IStText(contents)
-    tag_obj = ITextTagFactory(target.GetFactory(ITextTagFactory)).Create()
+    tag_obj = _owned._create_owned_via_factory(
+        ITextTagFactory(target.GetFactory(ITextTagFactory)),
+        src_tag_guid, "TextTag")
+    if tag_obj is None:
+        return None
     st_text.TagsOC.Add(tag_obj)
     tag_obj.TagRA = possibility
     tag_obj.BeginSegmentRA = tgt_seg
