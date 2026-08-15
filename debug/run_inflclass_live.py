@@ -16,7 +16,7 @@ Source French-FLExTrans-Demo2025 (domain-confirmed): POS Verb owns 4 (ER/RE/IRRE
 POS Noun owns 1 (X_PL); total 5.
 
 ATTENDED-ONLY: live restore + destructive Move. NEVER run under an unattended loop.
-Run from the worktree:  python scratchpad/run_inflclass_live.py
+Run from the worktree:  python debug/run_inflclass_live.py
 ASCII-only output (Windows-terminal safe).
 """
 from __future__ import annotations

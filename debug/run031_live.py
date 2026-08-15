@@ -5,7 +5,7 @@ Restores Target from the clean backup, then drives the REAL engine
 capturing the read-only diagnosis before/after and after an idempotent re-run.
 
 ASCII-only output (Windows-terminal safe). Run from the worktree:
-    python scratchpad/run031_live.py
+    python debug/run031_live.py
 """
 from __future__ import annotations
 

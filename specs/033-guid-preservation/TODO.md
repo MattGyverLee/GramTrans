@@ -7,7 +7,7 @@ GUID loss must be **justified and logged**, never silent.
 
 **Branch**: `033-fix-affix-msa-guid-inflfeats`
 **Worktree**: `D:\Github\_Projects\_LEX\GramTrans-033-affix-msa`
-**Measuring tool**: `scratchpad/audit_guid_preservation.py` (committed) — restores a
+**Measuring tool**: `debug/audit_guid_preservation.py` (committed) — restores a
 clean Target, full Move, then per-class `preserved` vs `minted` over
 `ICmObjectRepository.AllInstances()`. `minted > 0` = invariant violated.
 
@@ -48,7 +48,7 @@ analysis/gloss/bundle creation and made the numbers look better than they were.
       cd D:\Github\_Projects\_LEX\GramTrans-033-affix-msa
       $env:PYTHONPATH="D:\Github\_Projects\_LEX\flexicon"
       $env:GT_BACKUP="D:\Github\_Projects\_LEX\GramTrans\backups\Target 2026-07-06 0218.fwbackup"
-      python scratchpad/audit_guid_preservation.py
+      python debug/audit_guid_preservation.py
       ```
       **Blocked 2026-08-14**: `Target.fwdata.lock` was 0.5 min old (4 FieldWorks
       processes running). Do NOT delete the lock or run against a held project —

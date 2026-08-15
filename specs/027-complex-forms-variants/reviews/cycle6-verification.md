@@ -91,7 +91,7 @@ Result: **13 files changed, 2739 insertions(+), 42 deletions(-)** — matches
 expected exactly.
 
 Files touched:
-- `scratchpad/run27_live.py` (+279) — new live driver script (not production code)
+- `debug/run27_live.py` (+279) — new live driver script (not production code)
 - `src/gramtrans/Lib/categories.py` (+325/-…) — production, expected
 - `src/gramtrans/Lib/models.py` (+24) — production, expected
 - `src/gramtrans/Lib/preview.py` (+11) — production, expected
@@ -112,7 +112,7 @@ Production code is confined to `categories.py`, `models.py`, `preview.py`,
 
 ## Item 5 — Live driver byte-compile
 
-Command: `python -m py_compile scratchpad/run27_live.py` → succeeded with no
+Command: `python -m py_compile debug/run27_live.py` → succeeded with no
 output/errors (byte-compiled cleanly). The script was NOT executed (T025 is
 attended/needs_human, per instructions). The resulting `scratchpad/__pycache__`
 artifact is git-ignored (confirmed via `git status -s` showing no new entries

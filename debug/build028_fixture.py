@@ -15,8 +15,8 @@ has something non-vacuous to reproduce (Ejagham corpora populate 0/106).
     Target backup shares those GUIDs with the source. Confirm the live GUIDs
     (run the read-only inventory block first) and adjust as needed. ASCII-only.
 
-Run:  python scratchpad/build028_fixture.py           # dry-run (inventory only)
-      python scratchpad/build028_fixture.py --write    # actually mutate SOURCE
+Run:  python debug/build028_fixture.py           # dry-run (inventory only)
+      python debug/build028_fixture.py --write    # actually mutate SOURCE
 """
 from __future__ import annotations
 
@@ -187,7 +187,7 @@ def main():
         else:
             print("[SKIP] PositionRS -- source has <2 environments.")
 
-        print("\n[DONE] fixture written. Now run: python scratchpad/run028_live.py")
+        print("\n[DONE] fixture written. Now run: python debug/run028_live.py")
         return 0
     finally:
         try:

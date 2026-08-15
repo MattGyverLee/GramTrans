@@ -22,7 +22,7 @@ preview's empty identity_remap and wrongly resolved 0). Acceptance: target
 wired count 0 -> N == source wired count, idempotent across a re-Move.
 
 ATTENDED-ONLY: live restore + destructive Move. NEVER run under an unattended
-loop. Run from the worktree:  python scratchpad/run_msa_slot_live.py
+loop. Run from the worktree:  python debug/run_msa_slot_live.py
 ASCII-only output (Windows-terminal safe).
 """
 from __future__ import annotations

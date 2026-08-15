@@ -1,7 +1,7 @@
 # Live Validation Log — #28 MSA->slot producer port (FR-333)
 
 **Run:** 2026-07-15, attended (user-authorized) · **HEAD:** `95cfb81`
-**Driver:** `scratchpad/run_msa_slot_live.py` (v2, project-wide count) · exit 0
+**Driver:** `debug/run_msa_slot_live.py` (v2, project-wide count) · exit 0
 **Pair:** `Ejagham Mini -> Target` (Target restored from `Target 2026-07-06 0218.fwbackup`)
 
 ## FINAL: PASS
@@ -43,8 +43,8 @@ GUID-preserved, so a stale/empty remap can never resolve them. The corrected
 driver (v2) uses a GUID-resolution-independent project-wide count of affix MSAs
 with non-empty SlotsRC and reads the move-populated remap for diagnostics —
 confirming 79 MSA keys land in `identity_remap` and the consumer emits 0 skips.
-Cross-checked independently by `scratchpad/diag_msa_slots.py` (target 79/79) and
-`scratchpad/diag_remap.py` (preview-time remap empty, as expected).
+Cross-checked independently by `debug/diag_msa_slots.py` (target 79/79) and
+`debug/diag_remap.py` (preview-time remap empty, as expected).
 
 ## Fast-follow (non-blocking, unchanged from cycle-1)
 

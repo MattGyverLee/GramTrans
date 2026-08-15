@@ -8,7 +8,7 @@ tracked as T025 in tasks.md.
 
 SAFETY: this is an ATTENDED / needs_human artifact. SKIPS unless flexicon is
 importable AND GRAMTRANS_E2E=1 -- never runs under an unattended Ralph loop
-(spec 027 tasks.md T025 constraint). See `scratchpad/run27_live.py` for the
+(spec 027 tasks.md T025 constraint). See `debug/run27_live.py` for the
 attended restore -> diagnose -> Move -> re-Move -> diagnose driver.
 
 Run it (attended only, freshly-restored target):
@@ -79,13 +79,13 @@ def test_variant_entry_refs_reproduce_0_to_6(source, target):
     """SC-001/002/003: attended live `0 -> 6` LexEntryRef proof.
 
     Placeholder for T025 -- the full restore -> diagnose -> Move -> re-Move ->
-    diagnose sequence lives in `scratchpad/run27_live.py` (attended-only, never
+    diagnose sequence lives in `debug/run27_live.py` (attended-only, never
     under an unattended loop). This test asserts the fixture pair opens; the
     real proof is captured in
     `specs/027-complex-forms-variants/verification-log.md` per T025.
     """
     pytest.skip(
         "T025 (attended live 0->N proof) is run manually via "
-        "scratchpad/run27_live.py, never under an automated/unattended loop; "
+        "debug/run27_live.py, never under an automated/unattended loop; "
         "see specs/027-complex-forms-variants/verification-log.md."
     )

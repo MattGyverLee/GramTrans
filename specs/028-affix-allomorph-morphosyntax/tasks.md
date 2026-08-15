@@ -298,7 +298,7 @@ never-silent.
       fields) + the two-project engine Move must be run attended in the FLEx host where
       `flexicon` is installed (it is NOT pip-installed in the dev/CI shell, and the full engine
       run is impractical through the single-project MCP). Template driver:
-      `scratchpad/run031_live.py`. Fill the RESULTS section of `verification-log.md` on the run.
+      `debug/run031_live.py`. Fill the RESULTS section of `verification-log.md` on the run.
       **DONE — LIVE PASS** (2026-07-15, user-directed, worktree ba89763): ran
       `build028_fixture.py --write` + `run028_live.py` in the FLExTools host interpreter
       (subprocess; dev shell has no flexicon). `Ejagham028Src → Target` (clean-restored):
