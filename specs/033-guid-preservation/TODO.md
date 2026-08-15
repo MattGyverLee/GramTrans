@@ -69,12 +69,16 @@ guid=)` when `tgt_segments[idx] is None`. Setting the paragraph `Contents`
 makes LCM auto-segment, so the slot is always already filled — by a
 LCM-minted segment whose GUID is immutable post-create.
 
-**Not yet decided** (see OPEN ITEMS): either build a create-segments-first path
-(delete the auto-created segments, then `ISegmentFactory.Create(guid)` + own
-under `SegmentsOS` with correct offsets), or accept it as a **justified,
-logged** loss. Note the practical blast radius is bounded: text-level
-idempotency is protected by a different mechanism — the `f4cfbee` guard that
-skips a text already having paragraphs — not by segment GUID identity.
+**DECIDED 2026-08-15 — Option B taken** (`819ca5d`): accepted as a justified
+loss, now LOGGED per paragraph rather than silent. Option A
+(create-segments-first) stays open and unattempted — see OPEN ITEMS for the
+offset-range trap that makes the naive version wrong.
+
+The practical blast radius is bounded either way: text-level idempotency is
+protected by a different mechanism — the `f4cfbee` guard that skips a text
+already having paragraphs — not by segment GUID identity. So re-runs do not
+duplicate; what is lost is segment GUID-addressability, which any future
+source→target segment matching must work around positionally.
 
 ---
 
@@ -128,17 +132,35 @@ Offenders 8 -> 2, minted 1019 -> 225. Re-measure before trusting any of it.
 
 ## OPEN ITEMS
 
-- [ ] **`Segment` GUIDs (101 minted).** Hypothesis **CONFIRMED 2026-08-15** —
-      see the audit section above for the `preserved=0` reasoning. LCM
-      auto-segments on `Contents` set, so `AppendSentence(..., guid=)` at
-      `texts.py:1075` is never reached and LCM GUIDs are immutable
-      post-create. **Decision still open**: build a create-segments-first path
-      (delete the auto-created segments, then `ISegmentFactory.Create(guid)` +
-      own under `SegmentsOS` at the correct offsets) — untried and it fights
-      LCM's own segmentation, so it needs a live spike before committing —
-      **or** accept it as a justified loss and emit the logged reason the
-      invariant requires (currently the loss is silent, which is the part
-      that is out of contract regardless of which way this goes).
+- [x] **`Segment` GUIDs (101 minted) — no longer SILENT.** Option B done,
+      commit `819ca5d`. Hypothesis **CONFIRMED 2026-08-15** (see the audit
+      section above for the `preserved=0` reasoning): LCM auto-segments on
+      `Contents` set, so `AppendSentence(..., guid=)` at `texts.py:1075` is
+      never reached, and LCM GUIDs are immutable post-create.
+      `texts._log_segment_guid_loss` now emits one aggregated WARNING per
+      paragraph with the count and the reason, so the loss is **justified and
+      logged** — which is what the invariant requires. Deliberately NOT a
+      `DroppedItemRecord`: the segment IS reproduced (baseline, translations,
+      notes, analyses, `AnalysesRS`), only its identity differs, and filing
+      ~101 non-drops per run would corrupt the drop metric the fidelity census
+      and full-copy stress test read. The helper stays silent when GUIDs WERE
+      preserved, so it will not cry wolf once/if Option A lands.
+
+- [ ] **Option A — create-segments-first (OPEN, unattempted).** Build the
+      paragraph EMPTY and `AppendSentence(text, guid=source_guid)` per source
+      segment so `Contents` accumulates, instead of setting `Contents`
+      wholesale and letting LCM slice it.
+      **Trap for whoever takes this:** segments are offset ranges INTO
+      `Contents`, not text containers of their own, so the naive "set
+      `Contents`, `Delete()` the auto-segments, re-append" would very likely
+      DOUBLE the paragraph text. The API surface exists
+      (`SegmentOperations.Delete` / `AppendSentence(guid=)` /
+      `ReparseParagraph` / `ValidateSegments`), but this needs a **live spike**
+      before it is trusted: `AppendSentence` may itself re-trigger parsing, a
+      later `ReparseParagraph` could re-mint, and the pass must stay ahead of
+      analysis wiring. It sits on the path that just went green
+      (143 analyses / 231 glosses / 283 bundles all preserving), so it was
+      deliberately not bundled with B.
 - [ ] **`MoStemAllomorph` untested.** Audit shows `new=0 / missing=187` because
       STEMS is excluded from `build_full_selection()`. It routes through the same
       `_mk` helper that was fixed, so it *should* inherit the fix — unproven.
