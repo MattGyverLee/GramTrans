@@ -24,7 +24,8 @@ for the spec / plan / tasks.
 ## flexicon dependency
 
 GramTrans runtime depends on **flexicon** (dist name `pyflexicon`), a standalone
-independent package — it is NOT a fork or patch of stock flexlibs2. flexicon natively
+independent package — it is NOT a fork or patch of stock `flexlibs`
+(cdfarrow/flexlibs). flexicon natively
 provides the `GetSyncableProperties` writing-system enumeration and the
 `ApplySyncableProperties(item, props, ws_map=None)` method. The 8 Grammar Operations
 subclasses declare `ApplySyncableProperties` overrides for MCP-indexer visibility.

@@ -39,7 +39,8 @@ and merge back to `main` when the work is validated.
 ## flexicon dependency
 
 GramTrans runtime depends on **flexicon** (dist name `pyflexicon`), a standalone
-independent package — it is NOT a fork or patch of stock flexlibs2. flexicon natively
+independent package — it is NOT a fork or patch of stock `flexlibs`
+(cdfarrow/flexlibs, the upstream the constitution calls "flexlibs1"). flexicon natively
 provides both the `GetSyncableProperties` writing-system enumeration (via
 `project.WritingSystems.GetAll()`) and the `ApplySyncableProperties(item, props,
 ws_map=None)` method on `BaseOperations`.

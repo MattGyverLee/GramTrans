@@ -123,8 +123,8 @@ removed.
   fallback when no Operations wrapper covers a specific LCM surface;
   `CastingOperations.cast_to_concrete(obj)` is used when polymorphic property access
   requires casting (per MCP polymorphic-casting validator). `pyproject.toml` declares
-  `pyflexicon>=4.1`. The flexiconpackage name resolves via a deprecation shim (removal
-  targeted flexicon v5.0.0); new code MUST use flexicon imports. The install path is at
+  `pyflexicon>=4.3.1`. The legacy `flexlibs2` package name resolves via a deprecation
+  shim (removal targeted flexicon v5.0.0); new code MUST use flexicon imports. The install path is at
   `D:/Github/_Projects/_LEX/flexicon` (the disk directory is literally named `flexicon`
   and MUST NOT be renamed); install and override inventory are documented in the repo README
   and [CLAUDE.md](../../CLAUDE.md).
@@ -277,9 +277,9 @@ default is the only safe semantics; opt-out lets advanced users override.
 - **Runtime API flavor:**
   - **flexicon (pyflexicon)** — the Pythonic Operations-class API, a standalone independent
     package providing `GetSyncableProperties` and `ApplySyncableProperties` natively.
-    Imported directly by module files (`pyflexicon>=4.1`). No adapter indirection. The
-    flexicon package name resolves via a deprecation shim; new code MUST use flexicon
-    imports.
+    Imported directly by module files (`pyflexicon>=4.3.1`). No adapter indirection. The
+    legacy `flexlibs2` package name resolves via a deprecation shim; new code MUST use
+    flexicon imports.
   - **LibLCM** — NOT consumed in this repo. The LibLCM-direct port is a separate
     post-Phase-2 sibling repository that re-implements the same spec.
   - **flexlibs1** — NOT used.
