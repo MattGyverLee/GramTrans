@@ -485,6 +485,7 @@ def plan_analyses(segment, source, target, ctx, resolver_cache, dropped) -> List
             plans.append(AnalysisPlan(
                 source_guid=_guid_str(analysis),
                 wordform_form=wf_form,
+                wordform_guid=_guid_str(wordform),
                 spelling_status=spelling,
                 verdict=verdict,
                 category_decision=category_decision,
@@ -660,7 +661,8 @@ def _apply_glosses(plan, target, analysis_obj, ctx, dropped) -> None:
             ))
             continue
         gloss = _texts._safe(
-            lambda f=first_form, hh=first_h: gl_ops.Create(analysis_obj, f, hh))
+            lambda f=first_form, hh=first_h: gl_ops.Create(
+                analysis_obj, f, hh, guid=gplan.source_guid or None))
         if gloss is None:
             dropped.append(DroppedItemRecord(
                 owner_kind="WfiGloss", owner_guid=gplan.source_guid or "?",
@@ -795,6 +797,54 @@ def _analysis_fp_index(ctx, cache, wordform, wa_ops, mb_ops, gl_ops, handles) ->
     return idx
 
 
+def _resolve_by_guid(target, guid_str, expect_class="WfiAnalysis"):
+    """Return the target object carrying `guid_str`, or None (feature 033).
+
+    `expect_class` is a REQUIRED safety check, not a nicety: GUIDs are unique
+    across the whole project, so a lookup that ignores type will happily return
+    an object of the wrong class if some other creation path mis-assigned the
+    identity. That exact mistake (an analysis GUID stamped onto a wordform)
+    caused this lookup to report "analysis already present" and silently skip
+    256 of 279 analyses. A class mismatch now returns None.
+
+    Analyses now transfer under their SOURCE GUID, so a target object holding
+    that GUID is exactly this analysis -- the durable identity key that
+    structural fingerprinting was standing in for while GUIDs were being
+    regenerated. Tolerates both the live LCM shape (object repository) and the
+    duck-typed offline fakes (`get_object_by_guid`), and never raises: an
+    unresolvable GUID simply falls through to the fingerprint path.
+    """
+    if not guid_str or target is None:
+        return None
+    def _typed(obj):
+        if obj is None or not expect_class:
+            return obj
+        actual = getattr(obj, "ClassName", None)
+        if actual is None:                      # duck fake without ClassName
+            return obj
+        return obj if actual == expect_class else None
+
+    getter = getattr(target, "get_object_by_guid", None)
+    if getter is not None:
+        try:
+            return _typed(getter(guid_str))
+        except Exception:  # noqa: BLE001
+            return None
+    try:
+        from SIL.LCModel import ICmObjectRepository
+        from System import Guid as _DotNetGuid
+    except ImportError:
+        return None
+    try:
+        repo = target.Cache.ServiceLocator.GetService(ICmObjectRepository)
+        parsed = _DotNetGuid.Parse(guid_str)
+        if not repo.IsValidObjectId(parsed):
+            return None
+        return _typed(repo.GetObject(parsed))
+    except Exception:  # noqa: BLE001 -- absent / malformed -> fingerprint path
+        return None
+
+
 def apply_analyses(plans, source, target, ctx, tag, resolver_cache, dropped) -> None:
     """Move-mode — realize the AnalysisPlans on the target's wordforms.
 
@@ -856,8 +906,18 @@ def apply_analyses(plans, source, target, ctx, tag, resolver_cache, dropped) -> 
         if wa_ops is None:
             continue
 
-        # SC-005 cross-run dedup: skip when an equivalent analysis already
-        # exists on this target wordform (this or a prior run).
+        # SC-005 cross-run dedup, GUID FIRST (033). Analyses now transfer under
+        # their SOURCE GUID, so a target object holding that GUID *is* this
+        # analysis -- the durable, exact key. The structural fingerprint below
+        # stays as a fallback for LEGACY targets whose analyses were created
+        # before GUID preservation and therefore carry no source identity.
+        existing = _resolve_by_guid(target, plan.source_guid)
+        if existing is not None:
+            analysis_map[plan.source_guid] = existing
+            _log.debug("apply_analyses: skip analysis already present by GUID %s",
+                       plan.source_guid)
+            continue
+
         fp = _plan_analysis_fingerprint(plan)
         fp_index = _analysis_fp_index(ctx, fp_index_cache, wordform, wa_ops,
                                       mb_ops, gl_ops, tgt_handles)
@@ -868,7 +928,8 @@ def apply_analyses(plans, source, target, ctx, tag, resolver_cache, dropped) -> 
                        plan.source_guid)
             continue
 
-        analysis_obj = _texts._safe(lambda: wa_ops.Create(wordform))
+        analysis_obj = _texts._safe(
+            lambda: wa_ops.Create(wordform, guid=plan.source_guid or None))
         if analysis_obj is None:
             dropped.append(DroppedItemRecord(
                 owner_kind="WfiAnalysis", owner_guid=plan.source_guid or "?",
@@ -948,7 +1009,13 @@ def _find_or_create_wordform(plan, wf_ops, ws_map, tgt_id2h, dropped):
     found = _texts._safe(lambda: wf_ops.Find(form, handle))
     if found is not None:
         return found
-    return _texts._safe(lambda: wf_ops.Create(form, handle))
+    # GUID-preserved (033). Find-by-form still runs first: a wordform IS its
+    # surface form, so an existing target wordform is the same wordform even
+    # under a different GUID, and reusing it is correct.
+    # NOTE: the WORDFORM's own guid, never plan.source_guid (the ANALYSIS's).
+    return _texts._safe(
+        lambda: wf_ops.Create(
+            form, handle, guid=getattr(plan, "wordform_guid", "") or None))
 
 
 def _first_form_and_handle(ws_dict, ws_map, tgt_id2h):
@@ -1062,7 +1129,8 @@ def apply_morph_bundles(analysis_obj, plans, target, ctx, dropped) -> None:
     tgt_id2h = id_to_handle(target)
 
     for plan in plans:
-        bundle = _texts._safe(lambda: mb_ops.Create(analysis_obj))
+        bundle = _texts._safe(
+            lambda p=plan: mb_ops.Create(analysis_obj, guid=p.source_guid or None))
         if bundle is None:
             dropped.append(DroppedItemRecord(
                 owner_kind="WfiMorphBundle", owner_guid=plan.source_guid or "?",

@@ -645,6 +645,13 @@ def plan_texts(selection, source, target, ctx, resolver_cache, dropped) -> List:
         if picks and src_guid not in picks:
             continue
 
+        # Feature 033: capture the owned IStText contents GUID so the target's
+        # contents object is created under the SAME identity (read-only here).
+        try:
+            src_contents_guid = _guid_str(text.ContentsOA) if text.ContentsOA is not None else ""
+        except Exception:  # noqa: BLE001 -- absent/duck fake
+            src_contents_guid = ""
+
         title = _best_str(text_ops, text, "GetName")
         abbrev = _best_str(text_ops, text, "GetAbbreviation")
         try:
@@ -665,6 +672,7 @@ def plan_texts(selection, source, target, ctx, resolver_cache, dropped) -> List:
 
         plans.append(TextTransferPlan(
             source_guid=src_guid,
+            contents_guid=src_contents_guid,
             title=title,
             disposition=action,
             genre_decisions=genre_decisions,
@@ -804,7 +812,12 @@ def _resolve_or_create_text(plan, text_ops, ws_map, tgt_id2h, dropped):
             if existing is not None:
                 return existing
     try:
-        return text_ops.Create(name, None)
+        # GUID-preserved (033): the Text and its owned StText contents both
+        # carry their source identity, so a re-run resolves them instead of
+        # minting a second copy.
+        return text_ops.Create(name, None,
+                               guid=plan.source_guid or None,
+                               contents_guid=getattr(plan, "contents_guid", None) or None)
     except Exception as e:  # never silent
         dropped.append(DroppedItemRecord(
             owner_kind="Text", owner_guid=plan.source_guid or "?",
@@ -916,7 +929,7 @@ def _raw_create_text_tag(target, target_text, tgt_seg, possibility):
     return tag_obj
 
 
-def _raw_create_blank_paragraph(target, target_text, ws_handle):
+def _raw_create_blank_paragraph(target, target_text, ws_handle, guid=None):
     """Raw-LCM idiom for a blank paragraph (FIX 3, Site-2 finding #1).
 
     `ParagraphOperations.Create` raises `FP_ParameterError("Content cannot
@@ -933,13 +946,22 @@ def _raw_create_blank_paragraph(target, target_text, ws_handle):
     from SIL.LCModel.Core.Text import TsStringUtils
     text_obj = IText(target_text)
     factory = IStTxtParaFactory(target.GetFactory(IStTxtParaFactory))
-    para = factory.Create()
+    # GUID-preserved (033): mirrors ParagraphOperations.Create's guid= support
+    # so the blank-paragraph bypass does not silently regenerate identity.
+    parsed = None
+    if guid:
+        try:
+            from System import Guid as _DotNetGuid
+            parsed = _DotNetGuid.Parse(str(guid))
+        except Exception:  # noqa: BLE001 -- malformed -> fall back to a new GUID
+            parsed = None
+    para = factory.Create(parsed) if parsed is not None else factory.Create()
     text_obj.ContentsOA.ParagraphsOS.Add(para)
     para.Contents = TsStringUtils.MakeString("", ws_handle)
     return para
 
 
-def _create_paragraph(para_ops, target, target_text, content, ws_handle):
+def _create_paragraph(para_ops, target, target_text, content, ws_handle, guid=None):
     """Create one target paragraph, faithfully reproducing a blank source
     paragraph instead of letting `ParagraphOperations.Create`'s empty-content
     guard cascade into a generic "paragraph create failed" drop (and, in turn,
@@ -953,8 +975,9 @@ def _create_paragraph(para_ops, target, target_text, content, ws_handle):
     no confirmed raw-create surface).
     """
     if content and content.strip():
-        return para_ops.Create(target_text, content, ws_handle)
-    return _safe(lambda: _raw_create_blank_paragraph(target, target_text, ws_handle))
+        return para_ops.Create(target_text, content, ws_handle, guid=guid)
+    return _safe(lambda: _raw_create_blank_paragraph(
+        target, target_text, ws_handle, guid))
 
 
 def _apply_paragraphs(plan, target, target_text, para_ops, seg_ops, ctx, tag,
@@ -989,7 +1012,9 @@ def _apply_paragraphs(plan, target, target_text, para_ops, seg_ops, ctx, tag,
                 for s in para_plan.segments
             ).strip()
         try:
-            new_para = _create_paragraph(para_ops, target, target_text, content, default_vern_handle)
+            new_para = _create_paragraph(
+                para_ops, target, target_text, content, default_vern_handle,
+                guid=para_plan.source_guid or None)
         except Exception as e:
             dropped.append(DroppedItemRecord(
                 owner_kind="StTxtPara", owner_guid=para_plan.source_guid or "?",
@@ -1021,8 +1046,9 @@ def _apply_paragraphs(plan, target, target_text, para_ops, seg_ops, ctx, tag,
             tgt_seg = tgt_segments[idx] if idx < len(tgt_segments) else None
             if tgt_seg is None:
                 base = _first_mapped(seg_plan.baseline, ws_map, tgt_id2h) or ""
-                tgt_seg = _safe(lambda b=base: seg_ops.AppendSentence(
-                    new_para, b, default_vern_handle))
+                tgt_seg = _safe(lambda b=base, sp=seg_plan: seg_ops.AppendSentence(
+                    new_para, b, default_vern_handle,
+                    guid=sp.source_guid or None))
                 if tgt_seg is None:
                     dropped.append(DroppedItemRecord(
                         owner_kind="Segment", owner_guid=seg_plan.source_guid or "?",

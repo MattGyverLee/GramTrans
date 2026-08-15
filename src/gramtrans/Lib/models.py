@@ -1539,6 +1539,12 @@ class AnalysisPlan:
     """
     source_guid: str           # source IWfiAnalysis GUID (preserved on create where permitted)
     wordform_form: dict = field(default_factory=dict)  # WS-id -> surface form (WS-gated)
+    # Feature 033: GUID of the source IWfiWordform that OWNS this analysis.
+    # Distinct from source_guid (the analysis's own GUID) -- conflating the two
+    # stamps the analysis's identity onto the wordform, which then makes a
+    # GUID lookup for the analysis resolve to the wordform and silently skip
+    # the analysis entirely. Empty string means "unknown; mint a new GUID".
+    wordform_guid: str = ""
     spelling_status: Any = None  # reproduced onto the target wordform (FR-013)
     verdict: Optional["EvalVerdict"] = None
     category_decision: Optional["ReferenceDecision"] = None  # CategoryRA (resolve-or-report)
@@ -1595,6 +1601,10 @@ class TextTransferPlan:
     FR-022), else None on ADD.
     """
     source_guid: str           # source IText GUID
+    # Feature 033: GUID of the source text's owned IStText contents, so the
+    # target's contents object is created under the SAME identity as the source
+    # rather than a minted one (flexicon Texts.Create(..., contents_guid=)).
+    contents_guid: str = ""
     title: str = ""            # best-analysis title, for the report/Preview line
     disposition: Optional["ReferenceAction"] = None  # ADD/UPDATE/SKIP-shaped
     genre_decisions: tuple = ()  # tuple[ReferenceDecision, ...] — GenresRC (create-allowed)

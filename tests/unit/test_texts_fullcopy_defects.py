@@ -315,7 +315,7 @@ def test_create_paragraph_prefers_raw_path_only_when_content_blank(monkeypatch):
     para_ops_calls = []
 
     class _ParaOps:
-        def Create(self, text, content, ws_handle):
+        def Create(self, text, content, ws_handle, guid=None):
             para_ops_calls.append(content)
             return types.SimpleNamespace(Contents=content)
 
