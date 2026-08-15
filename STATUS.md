@@ -137,7 +137,7 @@ target lacks), **OVERWRITE** (differing reversal config + `.gtbak` backup of
 pristine bytes), **missing_refs** (WS + style + custom field, vs the live target
 sets), idempotent re-plan → **SKIP** with refs still reported. Evidence:
 `specs/025-full-reversals/reviews/live-proof-configviews.md`; standalone driver
-`scratchpad/run_configview_live.py`.
+`debug/run_configview_live.py`.
 
 **Real live-vs-fake bug found & fixed** (`5aaaa0c`): `_target_custom_field_names`
 called `CustomFieldOperations.GetAllFields()` no-arg; the live method needs
@@ -163,7 +163,7 @@ transfer: `inflection_features` complex/open, `feature_struct_types`,
 
 **Attended live proof — PASS (needs_human gate cleared).** Driven via
 **FLExToolsMCP `run_module`** (write-enabled; per user direction this session,
-NOT the host interpreter). Driver `scratchpad/run_partB_live.py` reuses the
+NOT the host interpreter). Driver `debug/run_partB_live.py` reuses the
 MCP-injected `project` as the read-only SOURCE handle and restores + opens TARGET
 itself. GUID-based owner-collection metric, fresh read-only re-open per phase
 (`Mbugwe Lizzie -> restored Target`):
@@ -389,9 +389,9 @@ field has a reproduce leg + read-only Preview twin in `Lib/owned.py`, dispatched
 - **US5** — unified never-silent backstop; fidelity census flipped the four rows DROP_REPORTED → COPIED; retired the dead `_report_dropped_moaffix_msenv_fields` stub. Also added `fidelity_census.py` to pytest `python_files` so `pytest tests/verification/` collects it.
 
 **T019 attended live PASS (2026-07-15, user-directed).** Driven through the FLExTools host
-interpreter (subprocess — the dev shell has no flexicon): `scratchpad/build028_fixture.py --write`
+interpreter (subprocess — the dev shell has no flexicon): `debug/build028_fixture.py --write`
 populated a constructed fixture on a disposable `Ejagham028Src` (restored from the Ejagham Mini
-backup; real Ejagham Mini untouched), then `scratchpad/run028_live.py` restored `Target` clean and
+backup; real Ejagham Mini untouched), then `debug/run028_live.py` restored `Target` clean and
 ran the real `AFFIXES` engine. **`MsEnvPartOfSpeechRA` / `InflectionClassesRC` / `PositionRS` each
 `0→1`** (CREATE / CREATE / LINK), **idempotent re-Move** (0 new, counts stable), and **4 never-silent
 `DroppedItemRecord`s** (SC-003). `MsEnvFeaturesOA` correctly REPORT_DROPPED live — the leg is
@@ -447,7 +447,7 @@ test_plan_emits_pos_action_for_picked_pos` (any OTHER failure = regression).
 ### ▶ NEXT GATE — ATTENDED LIVE PROOF (needs_human) — DO NOT run unattended
 `French-FLExTrans-Demo2025 → restored Target`. Prove each of the 4 new categories
 transfers **0→N under its correct owner collection**, idempotent (re-Move = ALREADY_PRESENT
-skips). Model the driver on `scratchpad/run_inflclass_live.py` / `run_msa_slot_live.py`.
+skips). Model the driver on `debug/run_inflclass_live.py` / `run_msa_slot_live.py`.
 GUID-based metric (resolution-independent — avoid the pre-move-remap probe pitfall).
 **FLExToolsMCP was NOT callable this session** — domain fell back to `ec9891ae`'s
 already-MCP-verified findings; the live proof MUST re-confirm LCM shapes via MCP.
@@ -530,7 +530,7 @@ Sub-part status (sequential — all edit models.py/categories.py/preview.py/tran
 ### ▶ PICKUP CHECKLIST (next session / continuation)
 1. Finish sub-parts 2→3→4 on the worktree (sequential; RED-first; each fully registered — grep the registry test to avoid half-registration).
 2. Then ONE consolidated Part B crew review via `/lex-lead` (verification + qc[blocking sweep] + domain) — NOT 4 separate cycles.
-3. **Attended live proof (needs_human):** `French-FLExTrans-Demo2025 → restored Target`, prove each new category transfers 0→N under its correct owner collection, idempotent. Model on `scratchpad/run_inflclass_live.py` / `run_msa_slot_live.py`. NEVER run unattended.
+3. **Attended live proof (needs_human):** `French-FLExTrans-Demo2025 → restored Target`, prove each new category transfers 0→N under its correct owner collection, idempotent. Model on `debug/run_inflclass_live.py` / `run_msa_slot_live.py`. NEVER run unattended.
 4. On PASS: merge Part B → main `--no-ff` (preserve msa-slot root reviews), remove BOTH coverage worktrees + delete the original `coverage-content-fidelity` branch, update this STATUS.md.
 5. Full-suite baseline: `1594 passed` modulo the ONE documented pre-existing fail `test_wizard_pos_grammar_wiring.py::...test_plan_emits_pos_action_for_picked_pos` (flag any OTHER failure as a regression).
 
@@ -549,7 +549,7 @@ first run, no probe bug. All 5 source inflection classes land **0 -> 5** under t
 collection `ProdRestrictOA.PossibilitiesOS`; Move#1 plan had 5 INFLECTION_CLASSES actions / 0 skips;
 idempotent re-Move = 5 ALREADY_PRESENT_BY_GUID skips (stable 5/0). GUID-based, resolution-independent
 metric (not subject to the pre-move-remap probe pitfall). Exit 0.
-Log: `reviews/coverage-content-fidelity/live-proof.md` · driver `scratchpad/run_inflclass_live.py`.
+Log: `reviews/coverage-content-fidelity/live-proof.md` · driver `debug/run_inflclass_live.py`.
 
 **⏭ OUTWARD-FACING STEPS (main session confirms with human before executing):**
 1. Merge `coverage-content-fidelity-v2` Part A -> `main` `--no-ff`. **NOTE:** this branch also carries a
@@ -610,7 +610,7 @@ carry unrelated unmerged work.
 
 **✅ ATTENDED LIVE PROOF — PASS (2026-07-15, user-authorized, FLExToolsMCP active):**
 `Ejagham Mini -> Target` (restored from `Target 2026-07-06 0218.fwbackup`), driver
-`scratchpad/run_msa_slot_live.py` v2, exit 0. Producer yields **79** `msa_slot_bindings` on live
+`debug/run_msa_slot_live.py` v2, exit 0. Producer yields **79** `msa_slot_bindings` on live
 LCM (was **0** pre-fix); Move populates `identity_remap` with all **79** MSA keys; consumer
 `_run_171_subpass` wires **79/79** affix-MSA `SlotsRC` (baseline **0 -> 79**, matches source; **0**
 `DEPENDENCY_UNRESOLVED` skips); idempotent re-Move stable **79/79** (0 net-new). All 5 acceptance
@@ -743,7 +743,7 @@ and has NOT been run, so **the merge cannot proceed unattended**.
 
 **⛔ ACTION REQUIRED (human, attended session) — remaining needs_human items:**
 1. **T025 live proof** — restore the disposable target, activate FLExToolsMCP, run
-   `scratchpad/run27_live.py` (Ejagham Mini → restored Target). Confirm `LexEntryRef 0 → 6`,
+   `debug/run27_live.py` (Ejagham Mini → restored Target). Confirm `LexEntryRef 0 → 6`,
    `VariantEntryTypesRS` wired, re-Move 0-duplicate, out-of-closure refs reported. Write evidence
    to `specs/027-complex-forms-variants/verification-log.md`. **Never under an unattended loop.**
 2. **C3 live re-confirm (mcp_deviation)** — at/before T025, re-verify the three C3 list shapes
@@ -957,7 +957,7 @@ guard `UNSUPPORTED_LCM_TYPE`; log-before-swallow hardening).
 
 **Live T024 evidence (attended, Ejagham Mini → restored `Target`):** linked_features 0→3
 (== source), nameless_features 1→0, idempotent re-Move (4 feat / 35 val both runs), 0
-duplicate GUIDs, `FsComplexFeature` cleanly skipped. Driver: `scratchpad/run031_live.py`.
+duplicate GUIDs, `FsComplexFeature` cleanly skipped. Driver: `debug/run031_live.py`.
 
 **⚠️ HIGH-PRIORITY FOLLOW-UP (ticketed in `pattern-audit.md`, out of 031 scope):** the SAME
 unguarded-`get_object_by_guid`-on-live-target bug is latent in `_run_171_subpass`
@@ -974,7 +974,7 @@ passes likely silently no-op on a live target. Route them through `_resolve_targ
 scope (FR-011): no code path remediates already-polluted records.
 
 **T024 live validation (attended, user-authorized): `Ejagham Mini` → restored `Target`.**
-Driver `scratchpad/run031_live.py` (restore-from-backup → diagnose → Move → re-Move →
+Driver `debug/run031_live.py` (restore-from-backup → diagnose → Move → re-Move →
 diagnose). **First run FAILED and caught two real Phase 3-4 defects the offline mocked
 tests missed; both fixed (`9e41a1f`); re-run PASS:**
 - `linked_features 0 → 3` (== source): US1 link pass wired 0/13 because

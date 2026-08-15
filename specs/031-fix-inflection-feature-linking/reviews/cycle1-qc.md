@@ -44,8 +44,8 @@ Cast-and-discard type-probe idiom is acceptable for pythonnet/LCM interop (match
 **P1** `TestResolveTargetByGuid` — 2 of 3 tests re-exercise the pre-existing fake-getter
 dispatch; none use a fake `ICmObjectRepository` double, so the new logic (`Guid.Parse` →
 `IsValidObjectId` → `GetObject`) is proven only by the attended, unrepeatable
-`scratchpad/run031_live.py`. A cheap fake repo class would close this.
-**P2** `scratchpad/run031_live.py` fine to keep (matches t037 convention) but hardcodes a
+`debug/run031_live.py`. A cheap fake repo class would close this.
+**P2** `debug/run031_live.py` fine to keep (matches t037 convention) but hardcodes a
 dated backup filename + `Target` path — confirm backup exists before reuse; not a blocker.
 
 ## Final Assessment

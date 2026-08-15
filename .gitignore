@@ -100,3 +100,6 @@ Temp/
 # Anything else dropped into backups/ during local experimentation:
 backups/*.tmp
 backups/scratch/
+
+# Ephemeral working files. Durable drivers/probes live in debug/.
+scratchpad/

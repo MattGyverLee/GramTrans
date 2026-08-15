@@ -14,7 +14,7 @@ tasks.md T019 constraint). Ejagham Mini/Full are VACUOUS for these four fields
 on a disposable source (mirrors feature 027's constructed complex-form proof).
 
 The attended restore -> fixture -> Preview -> Move -> re-Move -> forced-drop
-sequence is driven manually (template: `scratchpad/run031_live.py`, which 028's
+sequence is driven manually (template: `debug/run031_live.py`, which 028's
 MsEnvFeaturesOA leg reuses for closed-feature resolution). Evidence is captured
 in `specs/028-affix-allomorph-morphosyntax/verification-log.md`.
 

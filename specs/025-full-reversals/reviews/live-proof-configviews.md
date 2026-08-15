@@ -24,7 +24,7 @@ real flexicon handles.
   views only needs the source folder path — no LCM). `config_views.plan_config_
   views` / `apply_config_views` called directly (the Preview→Move wiring at
   `preview.py:392` / `transfer.py:519` is already engine-proven by the S4 SKIP
-  result). Also runnable standalone via `scratchpad/run_configview_live.py`.
+  result). Also runnable standalone via `debug/run_configview_live.py`.
 
 ## Result — 17/17 PASS
 

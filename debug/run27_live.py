@@ -22,7 +22,7 @@ would read as `None`.
 
 ATTENDED-ONLY: this performs a live restore + destructive Move. NEVER run it
 under an unattended loop (repo live-safety protocol). Run from the worktree:
-    python scratchpad/run27_live.py
+    python debug/run27_live.py
 
 ASCII-only output (Windows-terminal safe).
 """

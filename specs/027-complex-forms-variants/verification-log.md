@@ -36,7 +36,7 @@ same factory dispatch the shapes underpin.
 
 ## Run #1 (DEFECTIVE — superseded, kept for the record)
 
-**Run:** 2026-07-13 ~23:32, attended (user-directed) · **Driver:** `scratchpad/run27_live.py`
+**Run:** 2026-07-13 ~23:32, attended (user-directed) · **Driver:** `debug/run27_live.py`
 **Pair:** `Ejagham Mini → Target` (Target restored from `Target 2026-07-06 0218.fwbackup`)
 **Worktree HEAD:** `f1917fa` · **Exit:** 0 (driver self-checks all PASS)
 
@@ -58,7 +58,7 @@ same factory dispatch the shapes underpin.
 
 - **SC-001 `0 → 6`**: all 6 `Ejagham Mini` variant `LexEntryRef`s reproduced on the
   target — container created (GUID-preserved), `RefType=0`, **1 component lexeme wired
-  each** (confirmed by `scratchpad/probe27_components.py`, reopen + `_cast_lcm`).
+  each** (confirmed by `debug/probe27_components.py`, reopen + `_cast_lcm`).
 - **SC-002**: each reproduced ref carries a resolved variant-type (6/6).
 - **SC-003 idempotent**: re-Move creates 0 net-new containers (stable at 6).
 - The live path exercises `_resolve_target_by_guid` + `_cast_lcm` end-to-end — the #28

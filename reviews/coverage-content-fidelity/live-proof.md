@@ -1,6 +1,6 @@
 # Live Validation Log — inflection_classes owner-fix (coverage Part A)
 
-**Run:** 2026-07-15, attended (user-authorized) · driver `scratchpad/run_inflclass_live.py` · exit 0
+**Run:** 2026-07-15, attended (user-authorized) · driver `debug/run_inflclass_live.py` · exit 0
 **Pair:** `French-FLExTrans-Demo2025 -> Target` (Target restored from `Target 2026-07-06 0218.fwbackup`)
 **HEAD:** bf70c0a (fix) on branch coverage-content-fidelity-v2
 

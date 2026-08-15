@@ -6,15 +6,15 @@ entries + their allomorph hung-data, where owned.reproduce_moaffix_msenv_data
 fires), capturing a read-only diagnosis of the four MsEnv/inflection-class/
 position fields before/after and after an idempotent re-run.
 
-PREREQ: run `python scratchpad/build028_fixture.py --write` FIRST so the source
+PREREQ: run `python debug/build028_fixture.py --write` FIRST so the source
 affix allomorph populates all four fields (Ejagham is vacuous otherwise).
 
 !!! UNTESTED IN THE AUTHORING ENVIRONMENT (flexicon not installed there).
-    Mirrors scratchpad/run031_live.py, which IS a proven template. Run ATTENDED
+    Mirrors debug/run031_live.py, which IS a proven template. Run ATTENDED
     in the FLEx host and iterate; record results in
     specs/028-affix-allomorph-morphosyntax/verification-log.md. ASCII-only.
 
-Run:  set GRAMTRANS_E2E=1 && python scratchpad/run028_live.py
+Run:  set GRAMTRANS_E2E=1 && python debug/run028_live.py
 """
 from __future__ import annotations
 

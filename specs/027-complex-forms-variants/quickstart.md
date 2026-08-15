@@ -40,8 +40,8 @@ Run `build_run_plan` (Preview) over `Ejagham Mini` and assert:
 
 ## 3. Live `0 → N` proof (attended, needs_human) — SC-001
 
-Driver: `scratchpad/run27_live.py` (restore → diagnose → Move → re-Move → diagnose), modeled
-on `scratchpad/run031_live.py` + the `run28_live.py` FLExToolsMCP re-resolution probe.
+Driver: `debug/run27_live.py` (restore → diagnose → Move → re-Move → diagnose), modeled
+on `debug/run031_live.py` + the `run28_live.py` FLExToolsMCP re-resolution probe.
 
 Steps (all attended):
 1. **Restore** the target from a clean backup (0 `LexEntryRef` on target). Confirm no FLEx

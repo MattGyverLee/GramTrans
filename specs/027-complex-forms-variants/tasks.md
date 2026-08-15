@@ -142,7 +142,7 @@ an empty entry-type where the source had one.
       C4 flip (`_entry_ref_is_reproducible` → False) fails T019 + both T021 C5 tests; reverting
       C1 (`_create_entryref_container` → None) fails T007-T009 + T021 created-set parity. Source
       tree restored clean after each revert.]**
-- [x] T024 [P] Author `scratchpad/run27_live.py` (restore → diagnose → Move → re-Move →
+- [x] T024 [P] Author `debug/run27_live.py` (restore → diagnose → Move → re-Move →
       diagnose), modeled on `run031_live.py` + the `run28_live.py` FLExToolsMCP
       re-resolution probe; keep it attended-only (no unattended Move). **[DONE — worktree
       34be1ad. Full Move (STEMS incl.) → reopen target RO → re-resolve every planned ref

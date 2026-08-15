@@ -2,8 +2,8 @@
 
 ## FINAL STATUS: PASS — live `0 → N` proven for 3/4 fields, never-silent for the 4th
 
-**Run:** 2026-07-15 ~02:16, user-directed (attended). **Driver:** `scratchpad/run028_live.py`
-(+ `scratchpad/build028_fixture.py --write`), executed in the FLExTools host interpreter
+**Run:** 2026-07-15 ~02:16, user-directed (attended). **Driver:** `debug/run028_live.py`
+(+ `debug/build028_fixture.py --write`), executed in the FLExTools host interpreter
 (the dev shell has no flexicon). **Pair:** `Ejagham028Src → Target` (Target restored headless
 from `backups/Target 2026-07-06 0218.fwbackup`). **Worktree HEAD:** `ba89763`. **Exit:** 0 —
 all four driver self-checks PASS.
@@ -39,7 +39,7 @@ all four driver self-checks PASS.
 
 The `MsEnvFeaturesOA` leg is **resolve-only** — it links a closed-feature value that already
 exists in the target feature system and **never creates a feature** (R3 / spec Out of Scope).
-The shared-feature probe (`scratchpad/probe028_shared_feats.py`) confirms the value
+The shared-feature probe (`debug/probe028_shared_feats.py`) confirms the value
 `15ba923a…` exists in *both* projects, but at the instant the affix allomorph was processed in
 Move #1 the target did not yet own it (the POS/inflection-class legs create their own targets;
 the feature does not), so the leg correctly emitted a `DroppedItemRecord` rather than inventing
@@ -73,8 +73,8 @@ the attended run.
 | Disposable **source** `Ejagham028Src` | Restored from `backups/Ejagham Mini.fwbackup` (headless zip-extract via `harness.restore.restore_target`). Leaves the real `Ejagham Mini` untouched. **Fixture not yet added.** |
 | Disposable **target** `Target` | Restored clean from `backups/Target 2026-07-06 0218.fwbackup`. |
 | FieldWorks 9 | Present at `C:\Program Files\SIL\FieldWorks 9\FieldWorks.exe`. |
-| Fixture builder | `scratchpad/build028_fixture.py` — populates the four fields on one affix allomorph in `Ejagham028Src` (dry-run inventory by default; `--write` to mutate). **Untested in the dev shell** (flexicon absent); run + iterate attended. |
-| Live driver | `scratchpad/run028_live.py` — restores Target, runs the real `AFFIXES`-category engine (`Ejagham028Src → Target`), diagnoses 0→N + idempotency. Mirrors the proven `scratchpad/run031_live.py`. Gated on `GRAMTRANS_E2E=1`. |
+| Fixture builder | `debug/build028_fixture.py` — populates the four fields on one affix allomorph in `Ejagham028Src` (dry-run inventory by default; `--write` to mutate). **Untested in the dev shell** (flexicon absent); run + iterate attended. |
+| Live driver | `debug/run028_live.py` — restores Target, runs the real `AFFIXES`-category engine (`Ejagham028Src → Target`), diagnoses 0→N + idempotency. Mirrors the proven `debug/run031_live.py`. Gated on `GRAMTRANS_E2E=1`. |
 
 > The two restored projects are disposable scratch copies. Re-restore either from the
 > backups above to reset; delete `C:\ProgramData\SIL\FieldWorks\Projects\Ejagham028Src` when
@@ -102,9 +102,9 @@ from `Target`) so SC-003 (never-silent) can be exercised.
 ## Procedure (mirrors quickstart.md Tier 2 + the run031 driver)
 
 0. **Build the fixture** (mutates the disposable source):
-   `python scratchpad/build028_fixture.py` (dry-run inventory — confirm the env/feature GUIDs),
-   then `python scratchpad/build028_fixture.py --write`.
-1. **Drive it**: `set GRAMTRANS_E2E=1 && python scratchpad/run028_live.py` — restores `Target`,
+   `python debug/build028_fixture.py` (dry-run inventory — confirm the env/feature GUIDs),
+   then `python debug/build028_fixture.py --write`.
+1. **Drive it**: `set GRAMTRANS_E2E=1 && python debug/run028_live.py` — restores `Target`,
    runs the `AFFIXES` engine, and prints the before/Move#1/re-Move#2 diagnosis. Steps 2–5 below
    are what the driver automates; step 6 is manual.
 2. **Preview** (`api.compute_preview`, read-only): plan shows CREATE for the POS + inflection

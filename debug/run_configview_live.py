@@ -33,7 +33,7 @@ PREREQ: none -- the driver stages its own fixture into a disposable source
 Neither the real Ejagham Mini nor Ejagham Full GT-Test is touched.
 
 Run (in the FLEx host interpreter, ATTENDED):
-    set GRAMTRANS_E2E=1 && python scratchpad/run_configview_live.py
+    set GRAMTRANS_E2E=1 && python debug/run_configview_live.py
 
 ASCII-only output (Windows-terminal safe). NEVER under an unattended loop.
 """

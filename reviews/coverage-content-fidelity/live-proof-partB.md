@@ -6,7 +6,7 @@
 **Run:** 2026-07-15 ~10:30, user-authorized (attended). **Execution path:**
 FLExToolsMCP `run_module` (flexicon in-process), NOT the FLExTools host
 interpreter — per user direction this session. **Driver:**
-`scratchpad/run_partB_live.py` (Main-shaped; reuses the MCP-injected `project`
+`debug/run_partB_live.py` (Main-shaped; reuses the MCP-injected `project`
 as the read-only SOURCE handle, restores + opens TARGET itself).
 **Worktree HEAD:** `d3f501d`. **Exit:** 0 — driver return code 0, all 12
 acceptance checks PASS.
@@ -74,7 +74,7 @@ run. `Mbugwe Lizzie` opened read-only only (source untouched).
 
 ### Reproduce
 
-`scratchpad/run_partB_live.py`, driven via FLExToolsMCP `run_module`
+`debug/run_partB_live.py`, driven via FLExToolsMCP `run_module`
 (`project_name="Mbugwe Lizzie"`, `write_enabled=True`, `confirmed=True`), with
 `drv.SOURCE="Mbugwe Lizzie"` and `drv.SELECTED_CAT_NAMES` = the grammar-only
 subset (WRITING_SYSTEMS_CHECK, GRAM_CATEGORIES, POS, INFLECTION_FEATURES,
