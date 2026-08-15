@@ -54,6 +54,15 @@ analysis/gloss/bundle creation and made the numbers look better than they were.
       processes running). Do NOT delete the lock or run against a held project —
       the audit restores Target as its first destructive step. Close FLEx first.
 
+      **Status 2026-08-15**: 3 FieldWorks processes are still up, but they hold
+      `Mbugwe LizzieHC practice`, `Claude-Swahili` and `Mayanau-Bena-Yungur Toy`
+      — **none holds Target**. What remains is a STALE `Target.fwdata.lock`
+      (~77 min old, no owning process). Still blocked on the **editable
+      flexicon install** below: `import flexicon` resolves to site-packages,
+      which lacks `_CreateWithGuid`, so a run without `PYTHONPATH` shadowing
+      gets the old flexicon and every `guid=` kwarg raises `TypeError` —
+      swallowed into a generic "create failed" drop.
+
       Confirm per class: `WfiWordform`, `WfiAnalysis`, `WfiGloss`,
       `WfiMorphBundle`, `Text`, `StText`, `StTxtPara`, `Segment`.
       Compare the **`new` column** against a prior run, not just `minted` — a
@@ -92,11 +101,28 @@ Offenders 8 -> 2, minted 1019 -> 225. Re-measure before trusting any of it.
       ahead of it. KEEP it for now as a legacy fallback: targets populated by
       earlier runs carry minted GUIDs and have no source identity to match on.
       Remove once no supported target predates GUID preservation.
-- [ ] **Sweep the remaining bare `.Create()` sites** not covered by the audit
-      because the fixture has no such data:
-      `pictures.py:415,434,443` (CmFolder/CmPicture/CmFile), `reversals.py:714`,
-      `texts.py` TextTag (`_raw_create_text_tag`), `transfer.py:1548` (allomorph).
-      Each should route through `owned._create_owned_via_factory`.
+- [x] **Sweep the remaining bare `.Create()` sites** — DONE, commit `8804a2a`
+      (offline only; the live audit fixture still carries none of this data, so
+      these legs remain **live-unproven**). Routed through
+      `owned._create_owned_via_factory`: `pictures._create_picture_raw`
+      (CmPicture **and** its backing CmFile, threaded from
+      `_reproduce_one_picture` at all three raw call sites),
+      `reversals._create_sub_entry`, `texts._raw_create_text_tag`,
+      `transfer._create_allomorph_with_guid` (whose docstring falsely claimed
+      allomorph factories take no Guid — the audit had already preserved
+      106/106 through that same overload).
+      New `SegmentPlan.tag_source_guids`, a **distinct** field parallel to
+      `tag_decisions`: a tag decision identifies the referenced `TagRA`
+      *possibility*, not the owning `ITextTag`, so reusing it would repeat the
+      wordform/analysis GUID confusion below. 6 RED-first tests in
+      `tests/unit/test_033_bare_create_guid_sweep.py`; suite 27 failed / 1989
+      passed with the 27 IDs byte-identical to baseline (zero regressions).
+      **Pattern audit:** `categories.py:6736`/`6766` and `texts.py:984` already
+      preserve GUIDs (they hand-roll the same try-then-log-fallback logic —
+      a consolidation opportunity, not a defect, and not mechanical because of
+      their duck-path branches). `pictures.py:417` (the "Local Pictures"
+      `CmFolder`) is EXEMPT and now commented as such: a target-side container
+      with no source counterpart.
 - [ ] **`_safe`/`except Exception` masks API mismatches.** A wrong kwarg against
       live flexicon surfaces as a generic "create failed" drop, not a loud error.
       This made the fake-signature break present as `IndexError: list index out of
