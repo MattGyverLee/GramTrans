@@ -32,19 +32,25 @@ subclasses declare `ApplySyncableProperties` overrides for MCP-indexer visibilit
 ### Install (developer workflow)
 
 ```powershell
-# 1. Locate flexicon (present locally at this path — directory is named flexlibs2
-#    and MUST NOT be renamed):
-#    D:\Github\_Projects\_LEX\flexlibs2
+# 1. Locate flexicon (present locally at this path):
+#    D:\Github\_Projects\_LEX\flexicon
 
 # 2. Install GramTrans's own deps + flexicon:
-pip install -e D:/Github/_Projects/_LEX/flexlibs2
+pip install -e D:/Github/_Projects/_LEX/flexicon
 pip install -e .
 
-# 3. Copy or symlink src/gramtrans/ into your FlexTools modules directory
+# 3. Confirm flexicon resolves to the working tree, not a stale
+#    site-packages copy:
+python -c "import flexicon; print(flexicon.__file__)"
+
+# 4. Copy or symlink src/gramtrans/ into your FlexTools modules directory
 #    (the path depends on your FlexTools install).
 ```
 
-`pyproject.toml` declares `pyflexicon>=4.1`.
+`pyproject.toml` declares `pyflexicon>=4.3.1` — the floor carrying the
+GUID-preserving create surface (flexicon PR #239). Below it the `guid=` kwargs
+raise `TypeError`, which the engine swallows into a generic "create failed"
+drop, so transfers silently regenerate identities instead of failing loudly.
 
 See [CLAUDE.md](CLAUDE.md#flexicon-dependency) for the full install details and
 MCP-indexer override inventory.

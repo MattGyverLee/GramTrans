@@ -58,17 +58,27 @@ for MCP-indexer visibility (the indexer's static analysis doesn't follow inherit
 
 ### Install
 
-`pyproject.toml` declares `pyflexicon>=4.1.1` (the floor at which
-`PhonFeatureOperations` implements `GetSyncableProperties`; below it,
-phonological-feature transfer raised `NotImplementedError`). Install from the
-local directory:
+`pyproject.toml` declares `pyflexicon>=4.3.1` — the floor carrying the
+GUID-preserving create surface feature 033 depends on
+(`BaseOperations._CreateWithGuid` plus the optional `guid=` kwarg on
+`Texts.Create`/`Paragraphs.Create`/`Segments.AppendSentence`/`Wordforms.Create`/
+`WfiAnalyses.Create`/`WfiGlosses.Create`/`WfiMorphBundles.Create`, flexicon
+PR #239). Install from the local directory:
 
 ```powershell
-pip install -e D:/Github/_Projects/_LEX/flexlibs2
+pip install -e D:/Github/_Projects/_LEX/flexicon
 ```
 
-> **Editor note:** The disk directory is literally named `flexlibs2` and MUST NOT be
-> renamed to `flexicon` — the install command above references it by that exact path.
+Verify it resolves to the working tree rather than a stale site-packages copy:
+
+```powershell
+python -c "import flexicon; print(flexicon.__file__)"   # must NOT be site-packages
+```
+
+> **Why the floor matters:** on an older flexicon every `guid=` kwarg raises
+> `TypeError`, which the engine's `_safe`/`except Exception` wrappers swallow
+> into a generic "create failed" drop. A too-low flexicon therefore makes the
+> transfer *silently* regenerate identities instead of failing loudly.
 
 ### Constitution authority
 
