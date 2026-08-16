@@ -47,6 +47,7 @@ src/gramtrans/
     selfcheck.py                   # FR-036/FR-037 report rendering
     errors.py                      # plain-language messages for every prerequisite failure
   Lib/
+    gate.py                        # NEW (exception 6) — ConfirmationGate protocol + AlwaysSatisfiedGate
     api.py                         # MODIFIED (exception 4) — projects_root on the stub
     ui/selection_wizard.py         # MODIFIED (exceptions 2, 3, 5) — gate consult + copy
 build/                             # NEW
@@ -103,7 +104,7 @@ beyond those enumerated here.
 
 FR-020 requires every unavoidable change to shared code to be enumerated and
 individually justified here; SC-014 makes an unlisted change a defect. This list
-is the complete set. All five are additive or textual, and none alters a
+is the complete set. All six are additive or textual, and none alters a
 FlexTools code path's behaviour.
 
 | # | File | Change | Justification | Why FlexTools is unaffected |
@@ -113,6 +114,7 @@ FlexTools code path's behaviour.
 | 3 | `src/gramtrans/Lib/ui/selection_wizard.py` | `_PageFinish` subtitle: the literal "changes can be undone in FLEx with Ctrl+Z" becomes gate-supplied text. FlexTools' gate supplies the current sentence verbatim; the standalone's supplies the irreversibility warning. | FR-027 forbids the application claiming a Move can be undone; that sentence is false in the standalone. | The FlexTools-supplied string is byte-identical to today's. |
 | 4 | `src/gramtrans/Lib/api.py` | Add optional `projects_root: str = ""` to `RunContextStub` and an optional `projects_root` kwarg to `initialize_run`; `list_target_candidates` uses `stub.projects_root or <existing literal default>`. | FR-001: the projects location must come from what FieldWorks records, not a hard-coded path. The standalone injects the registry-derived value. | The FlexTools path never passes it, so the existing `C:\ProgramData\SIL\FieldWorks\Projects` default still applies — identical candidate list. |
 | 5 | `src/gramtrans/Lib/ui/target_picker.py` | Reword one label: "The current FlexTools project is always the SOURCE (read-only)" → "The project chosen as SOURCE is opened read-only." | The current wording is false in the standalone and would confuse a user who has never installed FlexTools. | Same meaning, same dialog, same controls, same flow — a reworded static label is not a new dialog, prompt, or step (SC-013). |
+| 6 | `src/gramtrans/Lib/gate.py` | **New file** under shared code: the `ConfirmationGate` structural protocol, `AlwaysSatisfiedGate`, and the `FLEXTOOLS_FINISH_SUBTITLE` literal that exception 3 moves out of the wizard. | [contracts/host-shell.md](contracts/host-shell.md) §1 — the wizard's *default* gate must not reach into `gramtrans.standalone`, which the FR-016 import direction forbids outright. Exceptions 1, 2 and 3 all resolve `None` to this default, so it has to live where both `gramtrans.py` and `Lib/ui/selection_wizard.py` can already see it. | Nothing imports it until exceptions 1–3 land, and when they do it reproduces today's behaviour exactly: `confirm()` returns `True` with no dialog and no I/O, and `finish_page_subtitle()` returns the current `_PageFinish` string byte for byte. The module imports only `typing`. |
 
 Explicitly **not** changed, and each is a deliberate finding rather than an
 oversight:
