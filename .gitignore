@@ -8,11 +8,23 @@ __pycache__/
 
 # Distribution / packaging
 .Python
-build/
 dist/
 *.egg-info/
 *.egg
 MANIFEST
+# NOTE: a bare `build/` used to live here for setuptools output. Feature 034
+# makes `build/` a *tracked source directory* (the PyInstaller/Inno packaging
+# definition), so the ignore is now scoped to the transient trees inside it
+# plus the setuptools leftovers that still land at the same path.
+build/.venv-build/
+build/build/
+build/dist/
+build/lib/
+build/bdist.*/
+
+# Generated at build time from `git describe` (research R10, FR-049); the
+# shell falls back to gramtrans.__version__ when it is absent.
+src/gramtrans/_buildinfo.py
 
 # Virtual environments
 .venv/
