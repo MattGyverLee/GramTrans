@@ -258,6 +258,14 @@ class RunContextStub:
     source_project_path: str
     run_id: str
     started_at: str
+    # Feature 034 exception 4 (FR-001): where this host says FLEx projects
+    # live. Last and defaulted so every existing positional construction is
+    # unaffected. Empty means "use the caller's default", which is how the
+    # FlexTools path keeps the historical
+    # C:\ProgramData\SIL\FieldWorks\Projects literal -- see
+    # list_target_candidates. The standalone fills it from what FieldWorks
+    # itself records, so a relocated projects directory is honoured.
+    projects_root: str = ""
 
 
 @dataclass(frozen=True)
@@ -305,12 +313,18 @@ class PreviewStale(Exception):
 # ============================================================================
 
 def initialize_run(host_handle, *, source_project_name: str,
-                   source_project_path: str = "") -> RunContextStub:
-    """Build a partial RunContext from the FlexTools host's open project.
+                   source_project_path: str = "",
+                   projects_root: str = "") -> RunContextStub:
+    """Build a partial RunContext from the host's open source project.
 
     The host hands us its already-open project handle (the source per
     Clarification Q2). We mint the run_id + started_at now so they are
     stable across the WS mapping + preview + Move sequence.
+
+    `projects_root` (feature 034 exception 4, FR-001) is where this host says
+    FLEx projects live. FlexTools does not pass it and gets the historical
+    default; the standalone passes the registry-derived location so a
+    relocated projects directory is honoured.
     """
     import datetime
     now = datetime.datetime.now()
@@ -320,6 +334,7 @@ def initialize_run(host_handle, *, source_project_name: str,
         source_project_path=source_project_path,
         run_id="GT-" + now.strftime("%Y%m%d-%H%M%S"),
         started_at=now.strftime("%Y-%m-%dT%H:%M:%S"),
+        projects_root=projects_root,
     )
 
 
@@ -327,12 +342,18 @@ def list_target_candidates(stub: RunContextStub,
                            projects_root: str = r"C:\ProgramData\SIL\FieldWorks\Projects",
                            ) -> List[TargetCandidate]:
     """Enumerate FLEx projects in the standard directory (research.md R5),
-    excluding the source project by path."""
+    excluding the source project by path.
+
+    Feature 034 exception 4: the stub's `projects_root` wins when set. It is
+    empty on every FlexTools run, so that path still walks the positional
+    default and gets an identical candidate list.
+    """
     candidates: List[TargetCandidate] = []
-    if not os.path.isdir(projects_root):
+    root = getattr(stub, "projects_root", "") or projects_root
+    if not os.path.isdir(root):
         return candidates
-    for name in sorted(os.listdir(projects_root)):
-        path = os.path.join(projects_root, name)
+    for name in sorted(os.listdir(root)):
+        path = os.path.join(root, name)
         if not os.path.isdir(path):
             continue
         # FLEx projects are directories containing a <name>.fwdata file.
@@ -403,15 +424,25 @@ def bind_target(stub: RunContextStub, choice: TargetCandidate) -> RunContext:
     surfaces as a `TargetUnavailable` — the caller (UI) returns to the
     picker.
     """
+    # Feature 034 T028/FR-028, FR-029: these strings are shown to the user
+    # verbatim by the wizard's QMessageBox, so they are written for a linguist
+    # rather than for a developer -- they name the project and say what to do.
+    # The text lives here rather than in `gramtrans.standalone.errors` because
+    # the FR-016 import direction forbids shared code depending on the shell;
+    # the shell's own copies of these messages add the log-file path, which
+    # this layer has no way to know.
     if stub.source_project_name == choice.project_name:
         raise SameProjectError(
-            f"Source and target are the same project ({choice.project_name!r}); "
-            "Phase 0 refuses to run (FR-019)."
+            f"The source and the target are the same project "
+            f"({choice.project_name!r}). GramTrans copies grammar from one "
+            "project into another, so it needs two different projects. Choose "
+            "a different target."
         )
     if stub.source_project_path and os.path.normcase(stub.source_project_path).rstrip(os.sep) == os.path.normcase(choice.project_path).rstrip(os.sep):
         raise SameProjectError(
-            f"Source and target paths resolve to the same project; refusing "
-            "to advance (FR-019)."
+            f"The source and the target are the same project on disk "
+            f"({choice.project_path}), even though the names differ. GramTrans "
+            "needs two different projects. Choose a different target."
         )
 
     try:
@@ -436,8 +467,16 @@ def bind_target(stub: RunContextStub, choice: TargetCandidate) -> RunContext:
     try:
         target.OpenProject(projectName=choice.project_name, writeEnabled=True)
     except Exception as exc:  # noqa: BLE001 — LCM raises a variety of types
+        # FR-029: name *which* project is locked and what to do, rather than
+        # surfacing the raw LCM text. The "even for a Preview" sentence is
+        # here because `bind_target` opens the target write-enabled in both
+        # modes, and "but I only ran a Preview" is the objection this gets.
         raise TargetUnavailable(
-            f"Target {choice.project_name!r} is unavailable: {exc!s}"
+            f"GramTrans could not open the target project "
+            f"{choice.project_name!r} because something else is using it.\n\n"
+            f"Close {choice.project_name!r} in FieldWorks Language Explorer and "
+            "try again. The target must be closed even for a Preview.\n\n"
+            f"Details: {exc!s}"
         ) from exc
 
     # Persist diagnostics: the target is opened writeEnabled=True but with NO

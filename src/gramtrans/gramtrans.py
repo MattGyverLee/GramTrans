@@ -128,7 +128,8 @@ DEFAULT_SOURCE_PROJECT = "Ejagham Mini"
 # Entry point
 # ============================================================================
 
-def MainFunction(project, report, modifyAllowed):
+def MainFunction(project, report, modifyAllowed, *,
+                 confirmation_gate=None, projects_root=""):
     """Standard FlexTools entry.
 
     Args:
@@ -138,6 +139,20 @@ def MainFunction(project, report, modifyAllowed):
             source is `DEFAULT_SOURCE_PROJECT`.
         report: report.Info / .Warning / .Error / .Blank for log output.
         modifyAllowed: True when FlexTools is running write-enabled.
+        confirmation_gate: feature 034 exception 1, keyword-only. The host's
+            answer to "may I write?", consulted once by the wizard immediately
+            before a Move. `None` resolves to `Lib/gate.AlwaysSatisfiedGate`,
+            which says yes with no dialog and no I/O -- so a FlexTools call
+            with three positional arguments behaves exactly as it did before
+            the parameter existed (SC-013). The standalone supplies a gate
+            that demands the target's name typed exactly, because that host
+            has no undo stack to fall back on.
+        projects_root: feature 034 exception 4, keyword-only. Where this host
+            says FLEx projects live. Empty (the FlexTools case) keeps
+            `list_target_candidates`' historical
+            C:\\ProgramData\\SIL\\FieldWorks\\Projects default; the standalone
+            passes what FieldWorks itself records, so a relocated projects
+            directory is honoured (FR-001).
 
     Primary path (T057): opens the GramTrans PyQt main window dialog (FR-002
     picker + category toggles + Preview/Move). The host's open project is the
@@ -161,7 +176,9 @@ def MainFunction(project, report, modifyAllowed):
         return
 
     try:
-        _run_gui(project, report, modifyAllowed, QtWidgets)
+        _run_gui(project, report, modifyAllowed, QtWidgets,
+                 confirmation_gate=confirmation_gate,
+                 projects_root=projects_root)
     except Exception as e:  # noqa: BLE001 — FlexTools silences raw exceptions
         report.Error(f"[GramTrans] GUI fatal: {e}")
         import traceback
@@ -179,7 +196,8 @@ def _try_import_qt():
         return None
 
 
-def _run_gui(project, report, modifyAllowed, QtWidgets):
+def _run_gui(project, report, modifyAllowed, QtWidgets, *,
+             confirmation_gate=None, projects_root=""):
     """Launch the GramTrans PyQt main window. The host's open project is the
     source; the user picks the target inside the dialog.
 
@@ -191,6 +209,19 @@ def _run_gui(project, report, modifyAllowed, QtWidgets):
     # Honor GRAMTRANS_DEBUG on the export path (idempotent, no-op when off).
     _enable_debug_logging()
     _log.debug("_run_gui: entry  modifyAllowed=%s", modifyAllowed)
+
+    # Feature 034 exception 1: resolve the host's confirmation gate once, here,
+    # so there is exactly one place that knows `None` means "the FlexTools
+    # default". Under FlexTools that is AlwaysSatisfiedGate and the run
+    # proceeds exactly as it always has. Which gate is in force is logged
+    # because "the Move happened with no prompt" is otherwise indistinguishable
+    # from "the gate was wired wrong".
+    try:
+        from gate import resolve_gate  # flat (Lib/ on sys.path)
+    except ImportError:
+        from gramtrans.Lib.gate import resolve_gate
+    gate = resolve_gate(confirmation_gate)
+    _log.debug("_run_gui: confirmation gate = %s", type(gate).__name__)
 
     # Phase 3c: use the SelectionWizard (replaces main_window.MainWindow).
     # Flat import (Lib/ui on sys.path) so the dual-mode guard takes its flat
@@ -214,6 +245,7 @@ def _run_gui(project, report, modifyAllowed, QtWidgets):
         report,
         modifyAllowed,
         source_project_name=source_name,
+        projects_root=projects_root,
     )
     try:
         wizard.exec()

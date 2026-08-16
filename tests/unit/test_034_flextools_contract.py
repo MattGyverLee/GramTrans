@@ -99,6 +99,69 @@ def test_main_function_accepts_three_positional_arguments():
         )
 
 
+def test_confirmation_gate_is_keyword_only_and_defaults_to_none():
+    """T023 / exception 1 — the new parameter cannot be reached positionally.
+
+    Keyword-only is the whole safety property: a fourth positional parameter
+    would silently absorb an argument from a host calling a future
+    `MainFunction(project, report, modifyAllowed, something)`.
+    """
+    entry = _entry_module()
+    sig = inspect.signature(entry.MainFunction)
+
+    gate_param = sig.parameters["confirmation_gate"]
+    assert gate_param.kind is inspect.Parameter.KEYWORD_ONLY
+    assert gate_param.default is None
+
+    root_param = sig.parameters["projects_root"]
+    assert root_param.kind is inspect.Parameter.KEYWORD_ONLY
+    assert root_param.default == ""
+
+
+def test_the_resolved_default_gate_is_satisfied_without_ui():
+    """T023 — `None` resolves to a gate that says yes with no dialog and no I/O.
+
+    This is the assertion that makes "FlexTools is unchanged" checkable rather
+    than asserted: the parameter exists, and its default reproduces the
+    previous behaviour exactly.
+    """
+    from gramtrans.Lib.gate import AlwaysSatisfiedGate, resolve_gate
+
+    resolved = resolve_gate(None)
+    assert isinstance(resolved, AlwaysSatisfiedGate)
+    assert resolved.confirm("any target name") is True
+
+
+def test_run_gui_accepts_the_gate_and_root_keyword_only():
+    """The thread from `MainFunction` to `_run_gui` exists and keeps the shape."""
+    entry = _entry_module()
+    sig = inspect.signature(entry._run_gui)
+    for name, default in (("confirmation_gate", None), ("projects_root", "")):
+        param = sig.parameters[name]
+        assert param.kind is inspect.Parameter.KEYWORD_ONLY
+        assert param.default == default
+
+
+def test_selection_wizard_keeps_its_parameter_order_and_names():
+    """Exception 2/4 are additive: nothing existing moved or was renamed."""
+    pytest.importorskip("PyQt6")
+    import os
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from gramtrans.Lib.ui.selection_wizard import SelectionWizard
+
+    sig = inspect.signature(SelectionWizard.__init__)
+    names = list(sig.parameters)
+    assert names[:5] == [
+        "self", "host_project", "report_sink", "modify_allowed",
+        "source_project_name",
+    ], f"the wizard's leading parameters changed: {names[:5]}"
+    assert sig.parameters["source_project_name"].kind is inspect.Parameter.KEYWORD_ONLY
+    root = sig.parameters["projects_root"]
+    assert root.kind is inspect.Parameter.KEYWORD_ONLY
+    assert root.default == ""
+
+
 def test_default_source_project_and_headless_fallback_still_exist():
     """Exception list, "Explicitly not changed": these stay put.
 

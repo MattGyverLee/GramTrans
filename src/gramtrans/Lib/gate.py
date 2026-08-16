@@ -23,7 +23,6 @@ from __future__ import annotations
 
 from typing import Protocol, runtime_checkable
 
-
 # The `_PageFinish` subtitle as it stood before feature 034 made it
 # gate-supplied (`Lib/ui/selection_wizard.py`, exception 3). Byte-identical is
 # the whole point: `test_034_flextools_contract.py` compares the FlexTools

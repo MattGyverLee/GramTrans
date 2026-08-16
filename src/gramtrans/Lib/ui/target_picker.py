@@ -44,9 +44,13 @@ class TargetPickerDialog(QtWidgets.QDialog):
         self.resize(520, 380)
 
         layout = QtWidgets.QVBoxLayout(self)
+        # Feature 034 exception 5: the old wording named FlexTools, which is
+        # false in the standalone host and confusing to a user who has never
+        # installed it. Same meaning, same dialog, same controls, same flow --
+        # a reworded static label is not a new dialog, prompt or step (SC-013).
         label = QtWidgets.QLabel(
             "Choose the production project to transfer grammar pieces INTO.\n"
-            "The current FlexTools project is always the SOURCE (read-only).",
+            "The project chosen as SOURCE is opened read-only.",
             self,
         )
         label.setWordWrap(True)

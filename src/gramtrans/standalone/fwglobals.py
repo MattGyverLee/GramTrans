@@ -61,6 +61,7 @@ __all__ = [
     "short_version",
     "long_version",
     "supported_versions",
+    "mark_uninitialized",
     "reset_for_tests",
 ]
 
@@ -103,10 +104,19 @@ def mark_initialized() -> None:
     _initialized = True
 
 
-def reset_for_tests() -> None:
-    """Clear the initialised flag. Tests only."""
+def mark_uninitialized() -> None:
+    """Clear the initialised flag.
+
+    Called by `HostSession.release()` after `FLExCleanup()`, so a subsequent
+    read cannot quietly succeed against a runtime that has been shut down, and
+    by tests that need a clean slate.
+    """
     global _initialized
     _initialized = False
+
+
+#: Readability alias for test code, where the intent is "reset the module".
+reset_for_tests = mark_uninitialized
 
 
 def probe():

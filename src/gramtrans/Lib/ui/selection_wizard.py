@@ -4635,6 +4635,11 @@ class SelectionWizard(QtWidgets.QWizard):
         report_sink:  FlexTools report object (.Info / .Warning / .Error / .Blank).
         modify_allowed: True when FlexTools is running write-enabled.
         source_project_name: display name of the source project.
+        projects_root: feature 034 exception 4 (FR-001) -- where the host says
+            FLEx projects live. Keyword-only and defaulted, so the FlexTools
+            call is unchanged and `list_target_candidates` keeps its historical
+            C:\\ProgramData\\SIL\\FieldWorks\\Projects default. The standalone
+            passes the location FieldWorks itself records.
     """
 
     def __init__(
@@ -4645,6 +4650,7 @@ class SelectionWizard(QtWidgets.QWizard):
         *,
         source_project_name: str,
         parent: Optional[QtWidgets.QWidget] = None,
+        projects_root: str = "",
     ) -> None:
         super().__init__(parent)
         self._host = host_project
@@ -4668,6 +4674,7 @@ class SelectionWizard(QtWidgets.QWizard):
             host_handle=host_project,
             source_project_name=source_project_name,
             source_project_path=_safe_path(host_project),
+            projects_root=projects_root,
         )
 
         # Create pages.
