@@ -100,6 +100,82 @@ than eyeballed.
 
 ---
 
+## T029 — US1 live parity, `Ejagham Mini` → `Ejagham Full GT-Test` (SC-002, SC-004, SC-005)
+
+**Date**: 2026-08-17 · **Verdict**: **PASS**.
+
+`tests/integration/test_034_standalone_preview_live.py` — 4 passed. Numbers
+from the same run, captured directly:
+
+```
+projects_root (FWProjectsDir) : C:\ProgramData\SIL\FieldWorks\Projects\
+FieldWorks                    : 9.3.10 | Version: 9.3.10.1448  2026-07-09 (64 bit)
+
+path A  (FlexTools-shaped stub)   stub.projects_root = ''
+        candidates=83  actions=16  skips=0
+        per-category (added, skipped) = affix_templates (7, 0), slots (9, 0)
+
+path B  (HostSession stub)        stub.projects_root = 'C:\ProgramData\SIL\FieldWorks\Projects\'
+        candidates=83  actions=16  skips=0
+        per-category (added, skipped) = affix_templates (7, 0), slots (9, 0)
+
+PLAN FINGERPRINTS EQUAL   : True      (16 actions compared by category+GUID+summary)
+REPORT COUNTS EQUAL       : True
+CANDIDATE LISTS EQUAL     : True      (83 names, identical)
+SOURCE OFFERED AS TARGET  : False     (US1 acceptance scenario 3)
+```
+
+**SC-002 (parity)**: the two hosts planned the identical transfer. The *only*
+input that differed is `projects_root` — empty on the FlexTools path, so
+`list_target_candidates` walked its historical
+`C:\ProgramData\SIL\FieldWorks\Projects` literal; registry-derived on the
+standalone path. On this machine those resolve to the same directory, which is
+why the candidate lists match exactly; a relocated install is what the
+injection exists for, and is covered by unit test
+`test_034_projects_root_injection.py`.
+
+**SC-004 (a Preview writes nothing)**: `Ejagham Full GT-Test.fwdata` sha256
+
+```
+before : 13c5a96fba560ae86b29893798f5bcf1cd0d631d19d36f50bef9a1ecfad74c7f
+after  : 13c5a96fba560ae86b29893798f5bcf1cd0d631d19d36f50bef9a1ecfad74c7f
+```
+
+byte-for-byte identical across both hosts' Preview runs.
+
+**SC-005 (both projects released)**: the source's `.fwdata.lock` is absent
+after every exit path tested — normal close, a doubled `release()`, a failure
+between bind and release, and the context-manager exit — and a **fresh
+subprocess** re-opened the source write-enabled afterwards.
+
+### Two measurement notes that changed the implementation
+
+**Re-opening write-enabled in-process is not a valid release check.** The
+first version of the SC-005 test re-opened the source with `writeEnabled=True`
+after `release()` and failed. A fresh process opens the same project
+write-enabled without complaint, and the `.fwdata.lock` file is gone — so
+nothing was leaked. LCM keeps per-process state that refuses a second
+write-open of an already-used project. The test now checks the lock file
+(process-independent, and exactly what "FLEx can open it again" means) plus a
+subprocess re-open.
+
+**`FLExCleanup()` is process-global.** A second call throws
+`System.InvalidOperationException: The SLDR has not been initialized` from
+`Sldr.Cleanup()`. Production runs one session per process, so this never
+fires there — but it is why `HostSession.release()` wraps the call in
+try/except rather than letting it propagate through the one code path that
+must always complete.
+
+**Unrelated noise, recorded so nobody chases it**: pytest reports
+`Windows fatal exception: access violation` on any run that touches flexicon.
+It is pre-existing and nothing to do with this feature — a bare
+`python -c "import faulthandler; faulthandler.enable(); import flexicon;
+flexicon.FLExInitialize()"` reproduces it with no GramTrans code loaded. It is
+faulthandler observing an access violation the CLR handles internally; exit
+code is 0 and every test passes.
+
+---
+
 ## T012 — research R1 is wrong for flexicon 4.3.1 (correction)
 
 **Date**: 2026-08-17 · **Verdict**: the predicted trap does **not** exist; a
