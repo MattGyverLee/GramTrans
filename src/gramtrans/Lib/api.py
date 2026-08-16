@@ -143,13 +143,19 @@ def _persist_without_close(proj, what: str) -> None:
     WriteCommitWork writes the <AdditionalFields> element), so no
     CloseProject() is needed to make a schema write durable.
 
-    flexicon's non-undoable open (the mode every GramTrans handle uses) holds
-    an ambient NonUndoableTask from OpenProject onward, and
+    flexicon's non-undoable open (the mode every GramTrans handle uses)
+    normally holds an ambient NonUndoableTask from OpenProject onward, and
     UnitOfWorkService.Save() throws "Commit at wrong place" (and rolls back!)
     while any task is open. So the persist step is the same triplet
     CloseProject() runs minus the deadlock-prone Dispose():
     EndNonUndoableTask -> IUndoStackManager.Save -> BeginNonUndoableTask
     (restoring the ambient-task invariant CloseProject expects later).
+
+    That ambient task is an ASSUMPTION about flexicon's open mode, not a
+    guarantee, so each step is guarded: flexicon's `undoable=True` mode opens
+    no session-long task at all, and its per-operation transaction CMs can
+    close the ambient one in the default mode too. We end only if a task is
+    actually open, and re-open only what we ourselves closed.
 
     Everything runs on the CALLER'S thread (LCM thread affinity: event
     handlers raised during Save marshal to the opening thread via
@@ -194,7 +200,39 @@ def _persist_without_close(proj, what: str) -> None:
             parts.append(f"commit_thread_reflect_failed={exc!r}")
         return " ".join(str(p) for p in parts)
 
-    mca.EndNonUndoableTask()
+    # The ambient task is an ASSUMPTION about flexicon's open mode, not a
+    # guarantee -- so verify rather than assert. flexicon's write-path
+    # transaction work (branch `write-path-transactions-b1-b3`) adds an
+    # `undoable=True` mode in which OpenProject opens NO session-long task
+    # ("each UndoableOperation wraps its own"), and its per-operation
+    # transaction CMs can close the ambient one in the default mode too.
+    # Calling End unconditionally then raises
+    #   System.InvalidOperationException: Cannot end task that has not been
+    #   started
+    # and aborts the whole run. See flexicon issue filed alongside this.
+    try:
+        mca.EndNonUndoableTask()
+    except Exception as exc:  # noqa: BLE001 -- .NET InvalidOperationException
+        # The envelope is GONE: a rollback somewhere left the undo FSM in
+        # ReadyForBeginTask (flexicon FLExProject.AbortSession documents this
+        # exact state). We must stop here, LOUDLY, because neither recovery
+        # works and both corrupt the run:
+        #   * continue without re-opening -> every later write dies with
+        #     "Not in the right state to register a change";
+        #   * re-open blindly -> an unbalanced extra task, so CloseProject's
+        #     single End leaves one open, Save() throws "Commit at wrong
+        #     place" AND ROLLS BACK -- the whole transfer is silently lost
+        #     (observed: Target.fwdata reverted from Target.bak).
+        # Compensating correctly needs the task depth, which flexicon does not
+        # expose. See flexicon issue #243.
+        raise RuntimeError(
+            f"cannot persist {what}: flexicon's non-undoable session envelope "
+            f"is gone ({type(exc).__name__}: {exc}). A rollback destroyed it "
+            "and it cannot be safely restored from here -- re-opening it "
+            "unbalanced makes CloseProject's Save() roll the transfer back. "
+            "This is flexicon #243; GramTrans needs a released flexicon "
+            "(pyflexicon>=4.3.1) rather than an in-progress write-path branch."
+        ) from exc
     try:
         _watched_call(
             usm.Save, _SCHEMA_CLOSE_TIMEOUT_S, f"Save() for {what}",
@@ -203,7 +241,9 @@ def _persist_without_close(proj, what: str) -> None:
     finally:
         # Always restore the ambient task, even if Save raised -- the handle
         # stays usable and CloseProject()'s EndNonUndoableTask still has a
-        # task to end.
+        # task to end. Balanced by construction: we only reach here when the
+        # End above succeeded (otherwise we raised), so this Begin restores
+        # exactly one task, never a surplus one.
         mca.BeginNonUndoableTask()
     _log.debug(
         "_persist_without_close: checkpoint for %s persisted (handle id=%s)",

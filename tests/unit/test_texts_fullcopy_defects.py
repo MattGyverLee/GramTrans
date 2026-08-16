@@ -331,3 +331,54 @@ def test_create_paragraph_prefers_raw_path_only_when_content_blank(monkeypatch):
     assert result2 is not None
     assert result2 in target_text.ContentsOA.ParagraphsOS
     assert para_ops_calls == ["hello"]
+
+
+# ===========================================================================
+# flexicon#242 workaround -- paragraph whitespace must survive the transfer.
+#
+# flexicon's ParagraphOperations.Create strips its `content` before writing
+# Contents (an interactive-API convenience applied to faithful reproduction),
+# so a source paragraph 'ka ' lands as 'ka' -- silently. Until upstream ships
+# a fix, GramTrans routes such paragraphs through its own raw path, which
+# writes Contents VERBATIM.
+# ===========================================================================
+
+def test_create_paragraph_uses_raw_path_when_wrapper_would_strip(monkeypatch):
+    """Content with meaningful surrounding whitespace must NOT go through
+    para_ops.Create (which strips); it must be written verbatim."""
+    _install_fake_lcm_paragraph_factory(monkeypatch)
+    target_text = _FakeRawTargetText()
+    target = _FakeRawTarget()
+    para_ops_calls = []
+
+    class _ParaOps:
+        def Create(self, text, content, ws_handle, guid=None):
+            para_ops_calls.append(content)
+            # mirror the real wrapper's lossy behaviour
+            return types.SimpleNamespace(Contents=content.strip())
+
+    para = texts._create_paragraph(
+        _ParaOps(), target, target_text, "ka ", 1)
+
+    assert para is not None
+    assert para_ops_calls == [], (
+        "the stripping wrapper must be bypassed for whitespace-bearing content")
+    assert para.Contents.text == "ka ", "trailing whitespace must survive"
+
+
+def test_create_paragraph_keeps_wrapper_when_nothing_would_be_stripped(monkeypatch):
+    """No surrounding whitespace -> keep the normal wrapper path, so the
+    workaround stays as narrow as possible."""
+    _install_fake_lcm_paragraph_factory(monkeypatch)
+    target_text = _FakeRawTargetText()
+    target = _FakeRawTarget()
+    para_ops_calls = []
+
+    class _ParaOps:
+        def Create(self, text, content, ws_handle, guid=None):
+            para_ops_calls.append(content)
+            return types.SimpleNamespace(Contents=content)
+
+    texts._create_paragraph(_ParaOps(), target, target_text, "hello", 1)
+
+    assert para_ops_calls == ["hello"]

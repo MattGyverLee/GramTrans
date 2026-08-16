@@ -1123,16 +1123,33 @@ def _raw_create_text_tag(target, target_text, tgt_seg, possibility,
 
 
 def _raw_create_blank_paragraph(target, target_text, ws_handle, guid=None):
-    """Raw-LCM idiom for a blank paragraph (FIX 3, Site-2 finding #1).
+    """Back-compat alias: a blank paragraph is just verbatim empty content."""
+    return _raw_create_paragraph(target, target_text, "", ws_handle, guid)
 
-    `ParagraphOperations.Create` raises `FP_ParameterError("Content cannot
-    be empty")` on blank content (ParagraphOperations.py:169) — a guard meant
-    for the interactive API, not for faithfully reproducing a source
-    paragraph that is genuinely blank (common between segments/headers in
-    glossed & interlinear practice texts). Reproduces `Create`'s OWN internal
-    raw path (ParagraphOperations.py:182-190) to bypass just that guard:
-    `IStTxtParaFactory.Create()` -> own it under the text's
-    `ContentsOA.ParagraphsOS` -> set `Contents` to an empty TsString.
+
+def _raw_create_paragraph(target, target_text, content, ws_handle, guid=None):
+    """Raw-LCM paragraph create that writes `content` VERBATIM.
+
+    Reproduces `ParagraphOperations.Create`'s OWN internal raw path
+    (`IStTxtParaFactory.Create()` -> own under the text's
+    `ContentsOA.ParagraphsOS` -> set `Contents`) in order to bypass two
+    interactive-API conveniences in the wrapper that are wrong for faithful
+    reproduction:
+
+    1. **Blank content** (FIX 3, Site-2 finding #1) — the wrapper raises
+       `FP_ParameterError("Content cannot be empty")`, but a genuinely blank
+       source paragraph is common between segments/headers in glossed &
+       interlinear practice texts, and must be reproduced as-is.
+    2. **Whitespace stripping** (flexicon#242) — the wrapper does
+       `content.strip()` and then writes the STRIPPED value
+       (`ParagraphOperations.py:171`), so a source paragraph `'ká '` lands as
+       `'ká'`. Silently: no exception, no drop record. Measured live on
+       Ejagham Mini as 44 paragraphs + 41 segment baselines altered.
+
+    Both are the same class of defect — a guard/convenience meant for a human
+    typing text, applied to a client copying it. Writing `Contents` directly
+    is the only way to be byte-faithful until upstream ships flexicon#242.
+
     Wrapped by `_safe` at the call site so an unconfirmed accessor degrades
     to a reported drop rather than aborting the walk."""
     from SIL.LCModel import IText, IStTxtParaFactory  # lazy — absent offline
@@ -1150,7 +1167,8 @@ def _raw_create_blank_paragraph(target, target_text, ws_handle, guid=None):
             parsed = None
     para = factory.Create(parsed) if parsed is not None else factory.Create()
     text_obj.ContentsOA.ParagraphsOS.Add(para)
-    para.Contents = TsStringUtils.MakeString("", ws_handle)
+    # VERBATIM -- no strip(). This is the whole point of the raw path.
+    para.Contents = TsStringUtils.MakeString(content or "", ws_handle)
     return para
 
 
@@ -1160,17 +1178,42 @@ def _create_paragraph(para_ops, target, target_text, content, ws_handle, guid=No
     guard cascade into a generic "paragraph create failed" drop (and, in turn,
     into Segment/alignment "no copied target referent" drops downstream).
 
-    Non-blank content still goes through the normal `ParagraphOperations.Create`
-    (residue-tagging, `_TransactionCM`, etc. all apply). Blank content is
-    created via `_raw_create_blank_paragraph`. Returns None (never raises) when
-    even the raw path fails — the caller reports that as a distinct,
-    non-generic drop reason (the paragraph truly has no mappable content and
-    no confirmed raw-create surface).
+    Content goes through the normal `ParagraphOperations.Create` (residue
+    tagging, `_TransactionCM`, etc. all apply) EXCEPT in the two cases where
+    that wrapper would not reproduce the source faithfully:
+
+    - blank content — the wrapper's empty-content guard rejects it;
+    - content with meaningful leading/trailing whitespace — the wrapper
+      strips it and writes the stripped value (flexicon#242), losing it
+      silently.
+
+    Those route through `_raw_create_paragraph`, which writes `Contents`
+    verbatim. The condition is deliberately narrow (`content != stripped`)
+    so the overwhelming majority of paragraphs keep the wrapper's behaviour
+    unchanged; revert this branch once flexicon#242 ships.
+
+    Returns None (never raises) when even the raw path fails — the caller
+    reports that as a distinct, non-generic drop reason (the paragraph truly
+    has no mappable content and no confirmed raw-create surface).
     """
     if content and content.strip():
+        if content != content.strip():
+            # flexicon#242: the wrapper would silently drop the surrounding
+            # whitespace. Write it verbatim instead.
+            raw = _safe(lambda: _raw_create_paragraph(
+                target, target_text, content, ws_handle, guid))
+            if raw is not None:
+                return raw
+            # Raw surface unavailable (host-free/older LCM): fall through to
+            # the wrapper rather than lose the paragraph entirely -- a
+            # stripped paragraph beats no paragraph, and it is logged.
+            _log.warning(
+                "texts: paragraph raw-create unavailable; falling back to the "
+                "stripping wrapper, so leading/trailing whitespace in %r will "
+                "be lost (flexicon#242).", content[:40])
         return para_ops.Create(target_text, content, ws_handle, guid=guid)
-    return _safe(lambda: _raw_create_blank_paragraph(
-        target, target_text, ws_handle, guid))
+    return _safe(lambda: _raw_create_paragraph(
+        target, target_text, content or "", ws_handle, guid))
 
 
 def _apply_paragraphs(plan, target, target_text, para_ops, seg_ops, ctx, tag,
