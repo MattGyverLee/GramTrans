@@ -3,7 +3,7 @@
   "specName": "Standalone Windows Application (no FlexTools required)",
   "branch": "main",
   "currentStep": "implement",
-  "status": "implementing",
+  "status": "completed",
   "history": [
     {
       "step": "specify",
@@ -106,6 +106,429 @@
       "kind": "complete",
       "by": "ai",
       "at": "2026-08-16T21:52:44.265Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T005",
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-16T21:53:50.723Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T006",
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-16T21:58:39.705Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T007",
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-16T21:58:39.964Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T008",
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-16T21:58:40.221Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T009",
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-16T21:58:40.497Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T010",
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-16T22:13:18.555Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T011",
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-16T22:13:18.802Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T012",
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-16T22:13:19.056Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T013",
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-16T22:17:15.639Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T014",
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-16T22:17:15.897Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T015",
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-16T22:17:16.146Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T016",
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-16T22:39:33.369Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T017",
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-16T22:39:33.603Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T018",
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-16T22:39:33.840Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T019",
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-16T22:39:34.086Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T020",
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-16T22:39:34.322Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T021",
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-16T22:39:34.560Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T022",
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-16T22:39:34.798Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T023",
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-16T22:39:35.063Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T024",
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-16T22:39:35.305Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T025",
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-16T22:39:35.541Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T026",
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-16T22:39:35.790Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T027",
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-16T22:39:36.050Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T028",
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-16T22:39:36.328Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T029",
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-16T22:39:36.604Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T030",
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-16T22:46:55.469Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T031",
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-16T22:46:55.701Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T032",
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-16T22:46:55.934Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T033",
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-16T22:46:56.163Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T034",
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-16T22:46:56.408Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T035",
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-16T22:46:56.644Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T036",
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-16T22:46:56.906Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T037",
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-16T22:46:57.137Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T038",
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-16T23:00:06.339Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T039",
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-16T23:00:06.586Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T040",
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-16T23:00:06.983Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T041",
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-16T23:00:07.276Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T044",
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-16T23:00:07.551Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T045",
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-16T23:00:07.808Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T048",
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-16T23:00:08.068Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T049",
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-16T23:00:08.323Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T050",
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-16T23:00:08.574Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T051",
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-16T23:00:08.832Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T052",
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-16T23:00:09.092Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T055",
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-16T23:00:09.349Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T053",
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-16T23:04:35.305Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T054",
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-16T23:04:35.575Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T042",
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-16T23:30:06.712Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T043",
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-16T23:30:06.974Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T046",
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-16T23:30:07.493Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T047",
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-16T23:30:07.769Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T056",
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-16T23:30:08.039Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-08-16T23:30:08.403Z"
     }
   ],
   "approach": "Ship the standalone as a host shell (src/gramtrans/standalone/) that reproduces what FlexTools hands the module - an open source project, a report sink, modifyAllowed - and calls the unchanged MainFunction. Freeze it with one PyInstaller spec producing an Inno Setup installer plus a best-effort onefile, built in a throwaway venv from a hash-pinned build-only lock so pyproject floors stay untouched. Non-regression is enforced by five enumerated shared-code exceptions, all additive with FlexTools-preserving defaults, plus a CI gate that runs from the first commit.",
@@ -132,6 +555,41 @@
       "decision": "Exact pins live only in build/requirements.lock (hash-pinned, consumed by a throwaway venv); pyproject.toml keeps its version floors.",
       "why": "FR-019/FR-041 keep FlexTools installs unconstrained by this feature, and FR-042 rules out resolving anything from the build machine. Hashes make SC-008 checkable rather than hoped-for.",
       "rejected": "Pinning in pyproject.toml (constrains every FlexTools install), and substituting a stand-in flextoolslib shim for the six FTM_* names (a fork of host metadata that can drift; rejected by the spec assumptions)."
+    },
+    {
+      "decision": "SC-011 is enforced as a non-regression check against a pinned baseline of 27 known failures, not as a bare pytest step",
+      "why": "27 tests under features 026/029 already fail on a clean main. A gate step that is red from the feature's first commit enforces nothing and gets ignored, which is the exact failure FR-021 (continuously during development) exists to prevent. The wrapper fails on any NEW failure and on any baseline entry that starts passing, so the list can only shrink and only deliberately.",
+      "rejected": "A bare `pytest -m \"not integration\"` step as tasks.md literally specified, or fixing the 27 (another feature's work)"
+    },
+    {
+      "decision": "FR-031 (FieldWorks missing) is detected around `import flexicon`, not around FLExInitialize()",
+      "why": "Measured on flexicon 4.3.1: FLExInit.py calls InitialiseFWGlobals() at module scope and it raises when the registry key is absent, with nothing guarding it -- so the import itself fails and FLExInitialize() is never reached. Research R1 had this backwards.",
+      "rejected": "The contract's original ordering, which put the FieldWorks-missing check on FLExInitialize()"
+    },
+    {
+      "decision": "projects_root is threaded MainFunction -> _run_gui -> SelectionWizard -> initialize_run, widening exception rows 1 and 2",
+      "why": "Exception 4 made RunContextStub.projects_root injectable, but the shell never calls initialize_run -- SelectionWizard.__init__ does. The value has to travel the same path as confirmation_gate. Same files, same additive keyword-only defaulted shape.",
+      "rejected": "A module-level default in gt_api set by the shell -- hidden global state shared by both hosts"
+    },
+    {
+      "decision": "FR-028/FR-029 are rendered as plain language at the raise site in Lib/api.py rather than at a new render site",
+      "why": "The wizard already shows str(e) for SameProjectError and TargetUnavailable, so the smallest change that stops raw developer text reaching a user is to write the exception text in plain language. Not imported from gramtrans.standalone.errors, because FR-016 forbids shared code depending on the shell.",
+      "rejected": "Intercepting the exceptions in the shell, which would mean re-implementing the wizard's error dialogs"
+    },
+    {
+      "decision": "build/requirements.lock pins PyQt6 <6.8 (6.7.1 / Qt6 6.7.3)",
+      "why": "PyQt6 6.11.0 raises ImportError: DLL load failed while importing QtCore on this platform -- measured unfrozen in a clean venv, with both the matched 6.11.0 and the 6.11.1 that PyQt6's own too-loose pin resolves to. 6.7.1 is what every test and every live parity run used, and a build lock exists to ship the versions that were validated. pyproject.toml keeps its >=6.4 floor: the ceiling constrains the artifact, not FlexTools installs.",
+      "rejected": "Letting the lock float to the newest PyQt6, which produces an artifact whose UI cannot start"
+    },
+    {
+      "decision": "HostSession.release() does not clear the fwglobals initialised flag",
+      "why": "FLExCleanup() ends the SLDR/ICU session, but the FieldWorks globals were read from the registry at import and remain true. Clearing the flag made a later read raise a startup-ordering error that was simply false.",
+      "rejected": "Treating the flag as session-scoped, which broke every test that used a HostSession and then read fwglobals"
+    },
+    {
+      "decision": "SC-005 is verified against the .fwdata.lock file plus a subprocess re-open, not by re-opening write-enabled in-process",
+      "why": "Measured: LCM keeps per-process state that fails a second write-open of an already-used project even after every handle is closed and the lock file is gone. The in-process check reports leaks that are not there.",
+      "rejected": "Re-opening the source with writeEnabled=True in the test process"
     }
   ],
   "step_summaries": {
@@ -141,6 +599,9 @@
     },
     "tasks": {
       "summary": "Fifty-six tasks in seven phases. Phase 2 now also contains T012, which converts the research-R1 flexicon-globals trap from a review habit into a CI failure: a sole accessor module, a None-means-runtime-failed mapping so the bug cannot present as a false \"FieldWorks not installed\", and an AST ban wired into the regression gate so it guards Phases 3-6 as they are written. Every FR-001..FR-054 maps to at least one task."
+    },
+    "implement": {
+      "summary": "Shipped the standalone Windows host: shell, Move gate, reproducible build producing two smoke-tested artifacts, diagnostics, and the v8.0.0 constitution amendment -- 56/56 tasks, gate green locally, FlexTools path provably unchanged"
     }
   },
   "telemetryInstanceId": "87ca72d1-2840-4cf1-95a9-a72a78ef9771",
@@ -151,12 +612,19 @@
         "T020",
         "T024",
         "T025"
+      ],
+      "tests": [
+        "tests/unit/test_034_projects_root_injection.py",
+        "tests/integration/test_034_standalone_preview_live.py::test_the_injected_root_is_what_fieldworks_records"
       ]
     },
     "FR-002": {
       "tasks": [
         "T014",
         "T024"
+      ],
+      "tests": [
+        "tests/unit/test_034_source_chooser.py"
       ]
     },
     "FR-003": {
@@ -169,6 +637,10 @@
       "tasks": [
         "T014",
         "T024"
+      ],
+      "tests": [
+        "tests/unit/test_034_source_chooser.py::test_nothing_is_selected_on_construction",
+        "tests/unit/test_034_source_chooser.py::test_nothing_is_remembered_between_constructions"
       ]
     },
     "FR-005": {
@@ -176,6 +648,10 @@
         "T014",
         "T024",
         "T045"
+      ],
+      "tests": [
+        "tests/unit/test_034_source_chooser.py::test_no_shell_module_names_a_concrete_project",
+        "tests/unit/test_034_source_chooser.py::test_no_shell_module_can_reach_the_headless_fallback"
       ]
     },
     "FR-006": {
@@ -219,6 +695,9 @@
     "FR-013": {
       "tasks": [
         "T026"
+      ],
+      "tests": [
+        "tests/integration/test_034_standalone_preview_live.py::test_the_session_releases_both_projects_on_every_exit_path"
       ]
     },
     "FR-014": {
@@ -237,6 +716,9 @@
       "tasks": [
         "T002",
         "T008"
+      ],
+      "tests": [
+        "tests/unit/test_034_flextools_contract.py::test_shared_code_never_imports_the_standalone_shell"
       ]
     },
     "FR-017": {
@@ -244,6 +726,10 @@
         "T005",
         "T034",
         "T036"
+      ],
+      "tests": [
+        "tests/unit/test_034_gate_default.py",
+        "tests/integration/test_034_move_gate_live.py"
       ]
     },
     "FR-018": {
@@ -260,11 +746,17 @@
       "tasks": [
         "T007",
         "T009"
+      ],
+      "tests": [
+        ".github/scripts/check_shared_exceptions.py"
       ]
     },
     "FR-021": {
       "tasks": [
         "T010"
+      ],
+      "tests": [
+        ".github/workflows/regression.yml"
       ]
     },
     "FR-022": {
@@ -277,18 +769,28 @@
       "tasks": [
         "T030",
         "T033"
+      ],
+      "tests": [
+        "tests/unit/test_034_standalone_gate.py::test_near_misses_do_not_satisfy_the_gate",
+        "tests/unit/test_034_standalone_gate.py::test_proceed_is_not_the_default_button"
       ]
     },
     "FR-024": {
       "tasks": [
         "T032",
         "T034"
+      ],
+      "tests": [
+        "tests/integration/test_034_move_gate_live.py::test_a_preview_never_consults_the_gate"
       ]
     },
     "FR-025": {
       "tasks": [
         "T030",
         "T034"
+      ],
+      "tests": [
+        "tests/integration/test_034_move_gate_live.py::test_a_refused_move_writes_nothing_and_leaves_the_page_intact"
       ]
     },
     "FR-026": {
@@ -301,11 +803,18 @@
         "T031",
         "T033",
         "T055"
+      ],
+      "tests": [
+        "tests/unit/test_034_gate_text_content.py::test_no_ctrl_z_claim_anywhere",
+        "tests/unit/test_034_gate_text_content.py::test_no_affirmative_undo_claim"
       ]
     },
     "FR-028": {
       "tasks": [
         "T028"
+      ],
+      "tests": [
+        "tests/unit/test_034_source_chooser.py::test_the_chosen_source_is_absent_from_the_target_candidates"
       ]
     },
     "FR-029": {
@@ -317,6 +826,9 @@
       "tasks": [
         "T024",
         "T055"
+      ],
+      "tests": [
+        "tests/unit/test_034_source_chooser.py::test_the_screen_warns_that_the_target_must_be_closed_even_for_a_preview"
       ]
     },
     "FR-031": {
@@ -343,6 +855,9 @@
       "tasks": [
         "T019",
         "T024"
+      ],
+      "tests": [
+        "tests/unit/test_034_source_chooser.py::test_an_unopenable_project_is_reported_by_name_and_the_rest_stay_selectable"
       ]
     },
     "FR-035": {
@@ -356,11 +871,17 @@
         "T048",
         "T049",
         "T051"
+      ],
+      "tests": [
+        "tests/unit/test_034_prereq_report.py::test_every_failing_check_in_a_real_report_has_a_remedy"
       ]
     },
     "FR-037": {
       "tasks": [
         "T049"
+      ],
+      "tests": [
+        "tests/unit/test_034_prereq_report.py::test_the_rendered_block_is_ascii_and_carries_the_required_lines"
       ]
     },
     "FR-038": {
@@ -393,6 +914,10 @@
     "FR-043": {
       "tasks": [
         "T040"
+      ],
+      "tests": [
+        "build/rthook_isolate.py",
+        "build/smoke/run_smoke.py"
       ]
     },
     "FR-044": {
@@ -404,18 +929,28 @@
     "FR-045": {
       "tasks": [
         "T045"
+      ],
+      "tests": [
+        "build/smoke/run_smoke.py::check_7_no_fieldworks_assembly_bundled"
       ]
     },
     "FR-046": {
       "tasks": [
         "T041",
         "T044"
+      ],
+      "tests": [
+        "build/gramtrans.spec"
       ]
     },
     "FR-047": {
       "tasks": [
         "T045",
         "T046"
+      ],
+      "tests": [
+        "build/smoke/run_smoke.py",
+        "build/build.py"
       ]
     },
     "FR-048": {
@@ -426,6 +961,10 @@
     "FR-049": {
       "tasks": [
         "T043"
+      ],
+      "tests": [
+        "tests/unit/test_034_prereq_report.py",
+        "build/smoke/run_smoke.py::check_1_starts_and_exits"
       ]
     },
     "FR-050": {
@@ -447,6 +986,9 @@
     "FR-053": {
       "tasks": [
         "T054"
+      ],
+      "tests": [
+        ".specify/memory/constitution.md"
       ]
     },
     "FR-054": {
@@ -454,10 +996,13 @@
         "T031",
         "T033",
         "T055"
+      ],
+      "tests": [
+        "tests/unit/test_034_gate_text_content.py::test_the_warning_carries_the_send_receive_recovery_path"
       ]
     }
   },
-  "currentTask": "T004",
+  "currentTask": "T056",
   "task_summaries": {
     "T001": {
       "status": "DONE",
@@ -487,6 +1032,452 @@
       "files": [
         ".gitignore"
       ]
+    },
+    "T005": {
+      "status": "DONE",
+      "did": "Added Lib/gate.py: ConfirmationGate structural protocol, AlwaysSatisfiedGate, resolve_gate helper and the byte-identical FLEXTOOLS_FINISH_SUBTITLE literal; imports only typing",
+      "files": [
+        "src/gramtrans/Lib/gate.py"
+      ]
+    },
+    "T006": {
+      "status": "DONE",
+      "did": "Wrote test_034_gate_default.py: confirm() True, byte-identical subtitle vs an inline copy of today's literal, protocol conformance, AST import ban, and a subprocess run with PyQt6 blocked at the meta-path",
+      "files": [
+        "tests/unit/test_034_gate_default.py"
+      ]
+    },
+    "T007": {
+      "status": "DONE",
+      "did": "Added shared-code exception row 6 (Lib/gate.py) to plan.md and listed it in the Project Structure block; committed to main",
+      "files": [
+        "specs/034-standalone-windows-app/plan.md"
+      ]
+    },
+    "T008": {
+      "status": "DONE",
+      "did": "Wrote test_034_flextools_contract.py with the assertions true today: module imports, six FTM_* keys, three positional MainFunction params, DEFAULT_SOURCE_PROJECT/_headless_phase0 retained, and a per-file AST scan proving no shared module imports gramtrans.standalone",
+      "files": [
+        "tests/unit/test_034_flextools_contract.py"
+      ]
+    },
+    "T009": {
+      "status": "DONE",
+      "did": "Wrote .github/scripts/check_shared_exceptions.py: parses the plan's exception table, diffs main...HEAD, fails on any unlisted change under Lib/ or gramtrans.py; verified PASS locally",
+      "files": [
+        ".github/scripts/check_shared_exceptions.py"
+      ]
+    },
+    "T010": {
+      "status": "DONE",
+      "did": "Wrote .github/workflows/regression.yml (the repo's first workflow) plus check_suite_baseline.py + known-failures.txt; all four gate steps verified green locally",
+      "files": [
+        ".github/workflows/regression.yml",
+        ".github/scripts/check_suite_baseline.py",
+        ".github/known-failures.txt"
+      ]
+    },
+    "T011": {
+      "status": "DONE",
+      "did": "Packaging spike PASS: PyInstaller onedir freeze of FLExInitialize + open-one-project ran clean; clr_loader ClrLoader.dll + Python.Runtime.dll auto-collected, no .runtimeconfig.json needed (netfx not coreclr); R7 retired",
+      "files": [
+        "specs/034-standalone-windows-app/probe-results.md",
+        "specs/034-standalone-windows-app/research.md"
+      ]
+    },
+    "T012": {
+      "status": "DONE",
+      "did": "Added standalone/fwglobals.py (sole accessor, typed FR-031/FR-033 split) and test_034_fwglobals_only.py (4-rule AST ban wired into the gate); corrected research R1, which was backwards for flexicon 4.3.1",
+      "files": [
+        "src/gramtrans/standalone/fwglobals.py",
+        "tests/unit/test_034_fwglobals_only.py",
+        "specs/034-standalone-windows-app/contracts/host-shell.md",
+        "specs/034-standalone-windows-app/contracts/cli-and-selfcheck.md"
+      ]
+    },
+    "T013": {
+      "status": "DONE",
+      "did": "Wrote test_034_projects_root_injection.py: injected root wins, precedence over the positional arg, source still excluded, and the FlexTools fallback half (empty projects_root -> historical literal)",
+      "files": [
+        "tests/unit/test_034_projects_root_injection.py"
+      ]
+    },
+    "T014": {
+      "status": "DONE",
+      "did": "Wrote test_034_source_chooser.py: FR-005 reachability scan (no project literal, no _headless_phase0 reference anywhere in the shell) plus the FR-002/FR-004 chooser contract -- nothing preselected, disabled-until-chosen, no last-used memory, FR-030 warning, empty/unopenable messages, and source absent from target candidates",
+      "files": [
+        "tests/unit/test_034_source_chooser.py"
+      ]
+    },
+    "T015": {
+      "status": "DONE",
+      "did": "Wrote test_034_standalone_preview_live.py (integration): the same Selection through a FlexTools-style stub and a HostSession stub, comparing plan and RunReport fingerprints, plus a sha256 of the target .fwdata before/after (SC-004) and a release-on-every-exit-path check",
+      "files": [
+        "tests/integration/test_034_standalone_preview_live.py"
+      ]
+    },
+    "T016": {
+      "status": "DONE",
+      "did": "Exception 4: projects_root on RunContextStub + initialize_run; list_target_candidates uses stub.projects_root or the historical literal",
+      "files": [
+        "src/gramtrans/Lib/api.py"
+      ]
+    },
+    "T017": {
+      "status": "DONE",
+      "did": "Exception 5: target picker label reworded off 'the current FlexTools project' to 'The project chosen as SOURCE is opened read-only.'",
+      "files": [
+        "src/gramtrans/Lib/ui/target_picker.py"
+      ]
+    },
+    "T018": {
+      "status": "DONE",
+      "did": "Exception 1: keyword-only confirmation_gate=None and projects_root='' on MainFunction, threaded into _run_gui; gate resolved once via Lib/gate.resolve_gate and logged",
+      "files": [
+        "src/gramtrans/gramtrans.py",
+        "src/gramtrans/Lib/ui/selection_wizard.py"
+      ]
+    },
+    "T019": {
+      "status": "DONE",
+      "did": "standalone/errors.py: one plain-language message per prerequisite and guard-rail failure, FR-031/FR-033 kept unmistakable and mapped by exception TYPE not string match; every message names the log file",
+      "files": [
+        "src/gramtrans/standalone/errors.py"
+      ]
+    },
+    "T020": {
+      "status": "DONE",
+      "did": "standalone/prereq.py: PrerequisiteCheck/PrerequisiteReport with a FAIL-needs-remedy invariant in __post_init__, all FieldWorks values read through fwglobals, no winreg of our own",
+      "files": [
+        "src/gramtrans/standalone/prereq.py"
+      ]
+    },
+    "T021": {
+      "status": "DONE",
+      "did": "standalone/logsink.py: the four-method sink teed to the view and %LOCALAPPDATA%\\GramTrans\\logs\\gramtrans-<run_id>.log; an unwritable log is reported, never fatal",
+      "files": [
+        "src/gramtrans/standalone/logsink.py"
+      ]
+    },
+    "T022": {
+      "status": "DONE",
+      "did": "standalone/report_view.py: live log pane, log path in the header, Save-to-file and Copy-to-clipboard; renders the sink rather than keeping its own copy",
+      "files": [
+        "src/gramtrans/standalone/report_view.py"
+      ]
+    },
+    "T023": {
+      "status": "DONE",
+      "did": "Extended the contract test with the exception-1 assertions: gate and projects_root keyword-only with their defaults, the resolved default is a silent AlwaysSatisfiedGate, and the wizard's leading parameters are unmoved",
+      "files": [
+        "tests/unit/test_034_flextools_contract.py"
+      ]
+    },
+    "T024": {
+      "status": "DONE",
+      "did": "standalone/source_picker.py: the source chooser -- AllProjectNames enumeration, nothing pre-selected, disabled until chosen, nothing persisted, FR-030 stated before selection, per-project unopenable and empty-list messages",
+      "files": [
+        "src/gramtrans/standalone/source_picker.py"
+      ]
+    },
+    "T025": {
+      "status": "DONE",
+      "did": "standalone/app.py: HostSession with the contract-6 startup order (UI toolkit, import flexicon, FLExInitialize, then fwglobals reads), read-only source, modify_allowed as a class constant True, and build_stub() injecting fwglobals.projects_dir()",
+      "files": [
+        "src/gramtrans/standalone/app.py"
+      ]
+    },
+    "T026": {
+      "status": "DONE",
+      "did": "HostSession.release() wired to every exit path and idempotent; verified live via .fwdata.lock across normal close, double release, mid-run failure and context-manager exit, plus a subprocess re-open",
+      "files": [
+        "src/gramtrans/standalone/app.py",
+        "tests/integration/test_034_standalone_preview_live.py"
+      ]
+    },
+    "T027": {
+      "status": "DONE",
+      "did": "standalone/__main__.py: entry point taking no arguments, any argument an error with exit code 2, and a finally that releases on every path",
+      "files": [
+        "src/gramtrans/standalone/__main__.py"
+      ]
+    },
+    "T028": {
+      "status": "DONE",
+      "did": "FR-028/FR-029 rendered as plain language at the raise site in api.py instead of surfacing raw developer text; plan exception row 4 widened to cover it",
+      "files": [
+        "src/gramtrans/Lib/api.py",
+        "specs/034-standalone-windows-app/plan.md"
+      ]
+    },
+    "T029": {
+      "status": "DONE",
+      "did": "Ran the live parity test against Ejagham Mini -> Ejagham Full GT-Test and recorded the evidence: identical plans/reports/candidate lists, target .fwdata sha256 unchanged, source lock released on every exit path",
+      "files": [
+        "specs/034-standalone-windows-app/probe-results.md"
+      ]
+    },
+    "T030": {
+      "status": "DONE",
+      "did": "Wrote test_034_standalone_gate.py: an 11-case near-miss table (case folding, leading/trailing space, tab, off-by-one, one-letter case), proceed not default and autoDefault off, Cancel and unsatisfied-but-accepted both False, and confirm() never raises",
+      "files": [
+        "tests/unit/test_034_standalone_gate.py"
+      ]
+    },
+    "T031": {
+      "status": "DONE",
+      "did": "Wrote test_034_gate_text_content.py: FR-022 irreversibility scoped to the application, backup instruction, FR-054 Send/Receive recovery; FR-027 checked by requiring every undo mention to be negated, with a would-it-fire test for the matcher",
+      "files": [
+        "tests/unit/test_034_gate_text_content.py"
+      ]
+    },
+    "T032": {
+      "status": "DONE",
+      "did": "Wrote test_034_move_gate_live.py: drives the real _PageFinish with execute_move/compute_preview recorded -- Move consults the gate exactly once and in order before the write, a refusal writes nothing and keeps the cached plan, Preview never consults it, and the FlexTools default adds no step",
+      "files": [
+        "tests/integration/test_034_move_gate_live.py"
+      ]
+    },
+    "T033": {
+      "status": "DONE",
+      "did": "standalone/gate.py: StandaloneConfirmationGate + MoveConfirmationDialog -- FR-022/FR-054 warning, exact-match field, disabled non-default proceed with autoDefault off, Cancel False, irreversibility subtitle with no undo claim, confirm() defended so it cannot raise",
+      "files": [
+        "src/gramtrans/standalone/gate.py"
+      ]
+    },
+    "T034": {
+      "status": "DONE",
+      "did": "Exception 2: _PageFinish consults gate.confirm(target_name) once, immediately before gt_api.execute_move and after the EXCLUDED-LOSSY dialog; SelectionWizard gained keyword-only confirmation_gate and _run_gui now passes the resolved gate through",
+      "files": [
+        "src/gramtrans/Lib/ui/selection_wizard.py",
+        "src/gramtrans/gramtrans.py"
+      ]
+    },
+    "T035": {
+      "status": "DONE",
+      "did": "Exception 3: _PageFinish takes its subtitle from gate.finish_page_subtitle(); contract test pins the FlexTools default byte-identical and proves the indirection is real",
+      "files": [
+        "src/gramtrans/Lib/ui/selection_wizard.py",
+        "tests/unit/test_034_flextools_contract.py"
+      ]
+    },
+    "T036": {
+      "status": "DONE",
+      "did": "HostSession constructs StandaloneConfirmationGate and passes it to MainFunction -- the first call site to supply the parameter; the gate is kept so last_decision/last_target_name survive the run",
+      "files": [
+        "src/gramtrans/standalone/app.py"
+      ]
+    },
+    "T037": {
+      "status": "DONE",
+      "did": "FR-026 partial-failure reporting: errors.move_failed_partway (may-be-modified, run_id as the residue tag, log path, no rollback offered) plus HostSession.partial_failure_message() gated on confirmed-Move AND a reported error, shown by __main__ after the wizard closes",
+      "files": [
+        "src/gramtrans/standalone/errors.py",
+        "src/gramtrans/standalone/app.py",
+        "src/gramtrans/standalone/__main__.py"
+      ]
+    },
+    "T038": {
+      "status": "DONE",
+      "did": "Generated build/requirements.lock via uv pip compile --generate-hashes from a new requirements.in (18 pinned components), with a header recording that flexlibs1 and cdfutils arrive transitively via flextoolslib, are inert at runtime, and are still shipped components under FR-052/FR-053; pyproject.toml untouched",
+      "files": [
+        "build/requirements.in",
+        "build/requirements.lock"
+      ]
+    },
+    "T039": {
+      "status": "DONE",
+      "did": "build/hiddenimports.py: globs Lib/**/*.py into flat + package names (generated, never hand-listed), plus a build-time third-party and stdlib flat-name collision check; verified PASS",
+      "files": [
+        "build/hiddenimports.py"
+      ]
+    },
+    "T040": {
+      "status": "DONE",
+      "did": "build/rthook_isolate.py: PyInstaller runtime hook scrubbing PYTHONPATH/PYTHONHOME/PYTHONSTARTUP and asserting sys.prefix resolves inside the bundle, failing with a sentence rather than a traceback",
+      "files": [
+        "build/rthook_isolate.py"
+      ]
+    },
+    "T041": {
+      "status": "DONE",
+      "did": "build/gramtrans.spec: exactly one Analysis feeding both COLLECT (onedir) and a onefile EXE, consuming the generated hiddenimports and the isolation hook, with the collision check fatal at spec-parse time",
+      "files": [
+        "build/gramtrans.spec"
+      ]
+    },
+    "T044": {
+      "status": "DONE",
+      "did": "build/installer.iss: Inno Setup over the onedir tree producing GramTrans-Setup-<version>.exe with a Start Menu entry and uninstaller; per-user by default, unsigned by design (FR-051), and it does not delete the retained logs",
+      "files": [
+        "build/installer.iss"
+      ]
+    },
+    "T045": {
+      "status": "DONE",
+      "did": "build/smoke/run_smoke.py: the eight contract checks with SKIP reported separately from PASS so a skipped check can never be mistaken for a passing one",
+      "files": [
+        "build/smoke/run_smoke.py"
+      ]
+    },
+    "T048": {
+      "status": "DONE",
+      "did": "Wrote test_034_prereq_report.py: overall-verdict logic, UNKNOWN not failing the report, the FAIL-needs-remedy invariant proven unconstructible-without, the live-module-attribute R1 behavioural guard, and the FR-037 ASCII/copyable block assertions",
+      "files": [
+        "tests/unit/test_034_prereq_report.py"
+      ]
+    },
+    "T049": {
+      "status": "DONE",
+      "did": "standalone/selfcheck.py: renders PrerequisiteReport as the single ASCII block of the contract -- PASS/FAIL/UNKNOWN prefixes, hanging-indented fields, remedy under every FAIL, VERDICT footer and the log path",
+      "files": [
+        "src/gramtrans/standalone/selfcheck.py"
+      ]
+    },
+    "T050": {
+      "status": "DONE",
+      "did": "Argument handling: --self-check and --version are the only accepted flags, anything else is an error naming them; exit codes 0 pass/normal, 1 self-check failed or startup blocked, 2 invalid arguments. Verified live: --version and --self-check both exit 0 with a 9-of-9 PASS block",
+      "files": [
+        "src/gramtrans/standalone/__main__.py"
+      ]
+    },
+    "T051": {
+      "status": "DONE",
+      "did": "standalone/window.py: the application window -- report view as the central widget, Help > Self-check... opening a copyable/savable dialog that re-runs the checks fresh, and Help > About; the route that matters for users who will not open a terminal",
+      "files": [
+        "src/gramtrans/standalone/window.py"
+      ]
+    },
+    "T052": {
+      "status": "DONE",
+      "did": "Log-file location surfaced in the status bar as a permanent widget, in the report view header, in Help > About and in the self-check block",
+      "files": [
+        "src/gramtrans/standalone/window.py",
+        "src/gramtrans/standalone/report_view.py"
+      ]
+    },
+    "T055": {
+      "status": "DONE",
+      "did": "build/RELEASE-NOTES.md: unsigned artifact and the exact SmartScreen/browser/antivirus wording and remedy, the GPL-v3 binary licence and why it is stricter than the MIT source, FieldWorks 9 as a user prerequisite, target-closed-even-for-Preview, and the no-undo plus backup and Send/Receive recovery guidance",
+      "files": [
+        "build/RELEASE-NOTES.md"
+      ]
+    },
+    "T053": {
+      "status": "DONE",
+      "did": "FR-039 review of the report sink, done against live plan output rather than by inspection: engine summaries carry object class + GUID + headword/slot-name (e.g. \"AffixSlot guid=a3af0f1c...\", \"LexEntry 'x'\"), and no gloss, definition, example or field content. Headwords are what identify the object to a user in FLEx, so this is the FR-039 level; the sink writes the stream verbatim because a sink that dropped lines would make the log lie about the run",
+      "files": [
+        "src/gramtrans/standalone/logsink.py"
+      ]
+    },
+    "T054": {
+      "status": "DONE",
+      "did": "Constitution v8.0.0 (MAJOR): Principle II gains the one-standalone-artifact exception naming the bundled components; Principle III gains a scoped, compensated undo exception. Sync Impact Report records the rationale, the rejected options, and the CI enforcement that bounds the carve-out",
+      "files": [
+        ".specify/memory/constitution.md",
+        "specs/034-standalone-windows-app/plan.md"
+      ]
+    },
+    "T042": {
+      "status": "DONE",
+      "did": "build/build.py: the seven ordered steps with a fresh venv, PYTHONNOUSERSITE and cleared PYTHONPATH/PYTHONHOME for every child, and --require-hashes --no-cache-dir with no fallback; the smoke test runs with the OUTER interpreter so the venv stays exactly what the lock pins",
+      "files": [
+        "build/build.py"
+      ]
+    },
+    "T043": {
+      "status": "DONE",
+      "did": "Version stamping: build.py writes src/gramtrans/_buildinfo.py from git describe + short SHA + ISO timestamp, prereq._app_version reads it and falls back to gramtrans.__version__ plus '(source checkout)'; surfaced in --version, the window title, Help > About and the self-check block. Verified frozen: 'GramTrans 80baab1 (built ...)'",
+      "files": [
+        "build/build.py",
+        "src/gramtrans/standalone/prereq.py"
+      ]
+    },
+    "T046": {
+      "status": "DONE",
+      "did": "Per-artifact manifest (kind, support status, source commit, branch, built_at, smoke verdict, resolved components) plus the release rule: a FAIL blocks that artifact and a failing portable returns 0 with a warning so it cannot block the installer",
+      "files": [
+        "build/build.py"
+      ]
+    },
+    "T047": {
+      "status": "DONE",
+      "did": "SC-008 demonstrated: two builds of commit 80baab1, identical 18-component sets, built_at the only differing manifest field; recorded in probe-results.md",
+      "files": [
+        "specs/034-standalone-windows-app/probe-results.md"
+      ]
+    },
+    "T056": {
+      "status": "DONE",
+      "did": "SC-001..SC-014 sweep recorded with evidence per criterion. SC-009 newly measured (frozen exe vs a hostile PYTHONPATH/PYTHONHOME/PYTHONSTARTUP: all three scrubbed, 9 of 9 PASS, nothing hostile imported). SC-001 and SC-007 recorded as NOT MEASURED -- they need a person. SC-012 PASS locally but UNVERIFIED in CI. SC-011's pre-existing-failures caveat stated in full",
+      "files": [
+        "specs/034-standalone-windows-app/probe-results.md"
+      ]
     }
-  }
+  },
+  "verified": [
+    {
+      "what": "Regression gate, all four steps, run locally on the final tree",
+      "command": "check_suite_baseline.py; pytest test_034_flextools_contract.py; check_shared_exceptions.py; pytest test_034_fwglobals_only.py",
+      "result": "PASS - no new failures vs the 27-entry baseline; 50 contract tests; 5 shared files all enumerated; 64 ban tests",
+      "warnings": [
+        "27 pre-existing failures under features 026/029 on a clean main, baselined not fixed",
+        "the workflow itself has never executed on GitHub - the branch is unpushed"
+      ]
+    },
+    {
+      "what": "US1 live parity and lock release against Ejagham Mini -> Ejagham Full GT-Test",
+      "command": "pytest -m integration tests/integration/test_034_standalone_preview_live.py",
+      "result": "PASS - identical plan and RunReport fingerprints from both hosts, target .fwdata sha256 unchanged, source lock released on every exit path",
+      "warnings": [
+        "Windows fatal exception: access violation under faulthandler is pre-existing - plain flexicon.FLExInitialize() reproduces it with no GramTrans code loaded"
+      ]
+    },
+    {
+      "what": "Move-gate ordering against the real _PageFinish",
+      "command": "pytest -m integration tests/integration/test_034_move_gate_live.py",
+      "result": "PASS - confirm() then execute_move in that order, refusal writes nothing, Preview never consults the gate, FlexTools default adds no step"
+    },
+    {
+      "what": "Full release build, both artifacts, from a clean commit",
+      "command": "python build/build.py",
+      "result": "PASS - onedir 8 of 8 smoke checks, portable 5 of 8 with 3 inspection checks correctly skipped",
+      "warnings": [
+        "Inno Setup absent on this machine so the supported installer wrapper was not produced"
+      ]
+    },
+    {
+      "what": "SC-008 reproducibility",
+      "command": "python build/build.py twice on commit 80baab1, diff the manifests",
+      "result": "PASS - identical 18-component sets, built_at the only differing field"
+    },
+    {
+      "what": "SC-009 hostile Python environment",
+      "command": "PYTHONPATH/PYTHONHOME/PYTHONSTARTUP -> a dir of raising api.py, models.py, report.py etc; GramTrans.exe --self-check",
+      "result": "PASS - all three scrubbed and reported, VERDICT: PASS (9 of 9), nothing hostile imported"
+    }
+  ],
+  "concerns": [
+    {
+      "note": "The regression workflow has never executed on GitHub. The branch 034-standalone-windows-app is unpushed and this repository had no Actions history before this feature. Every step was verified locally, but SC-012 (no commit merges with a red gate) cannot be called measured until the branch is pushed and the workflow goes green.",
+      "step": "implement"
+    },
+    {
+      "note": "Inno Setup (ISCC.exe) is not installed on this machine, so GramTrans-Setup-<version>.exe -- the SUPPORTED artifact -- has never been produced. The onedir program it wraps is fully smoke-tested; the wrapper is not. A release build must run where ISCC.exe is available.",
+      "step": "implement"
+    },
+    {
+      "note": "SC-001 (download to completed preview in under 10 minutes, unassisted) and SC-007 (90% of support cases resolved without a round-trip) are user-observation criteria and are recorded as NOT MEASURED rather than assumed green. Both need a real person who has not seen the application before.",
+      "step": "implement"
+    },
+    {
+      "note": "27 tests under features 026 (texts/wordforms) and 029 (sense pictures) plus one wizard POS-closure test fail on a clean main and are baselined, not fixed. Out of scope for 034, but the baseline is a standing debt: it should shrink, and .github/known-failures.txt fails the build if any entry starts passing so it cannot rot silently.",
+      "step": "implement"
+    },
+    {
+      "note": "PyQt6 is pinned <6.8 in the build lock because 6.11 does not load on this platform at all. That was measured on ONE machine (Windows 11 26200, Python 3.12.7). If the ceiling turns out to be machine-specific rather than a genuine Qt 6.11 platform requirement, the pin is more conservative than it needs to be -- worth re-testing on a second machine before it calcifies.",
+      "step": "implement"
+    }
+  ],
+  "last_action": "all 56 tasks done; gate green locally (4/4); onedir artifact 8/8 smoke; SC-008 and SC-009 measured; blockers: unpushed CI, no Inno Setup, SC-001/SC-007 need a person"
 }
