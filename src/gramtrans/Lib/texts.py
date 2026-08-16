@@ -927,6 +927,129 @@ def _create_text_tag(target, target_text, tgt_seg, possibility, tt_ops,
     return created
 
 
+def _segment_factory(target):
+    """`ISegmentFactory`, or None host-free. Seam for tests. Never raises."""
+    try:
+        from SIL.LCModel import ISegmentFactory  # lazy — absent offline
+    except Exception:  # noqa: BLE001
+        return None
+    try:
+        return target.GetFactory(ISegmentFactory)
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _segment_begin_offset(seg):
+    """A segment's `BeginOffset` as int, or None. `BeginOffset` is read-only on
+    `ISegment` (MCP-confirmed), which is why segments must be POSITIONED at
+    creation via the factory overload rather than moved afterward. Seam for
+    tests. Never raises."""
+    try:
+        from SIL.LCModel import ISegment  # lazy — absent offline
+        return int(ISegment(seg).BeginOffset)
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        return int(getattr(seg, "BeginOffset"))
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _rebuild_segments_with_source_guids(target, seg_ops, new_para, seg_plans,
+                                        tgt_segments, text_label):
+    """033 Option A — give the auto-created segments their SOURCE GUIDs.
+
+    LCM auto-segments when a paragraph's `Contents` is set, minting identities
+    (see `_log_segment_guid_loss`). This re-creates each of those segments at
+    its OWN existing offset via
+
+        ISegmentFactory.Create(IStTxtPara owner, int initialOffset,
+                               LcmCache cache, Guid guid)
+
+    (MCP-confirmed overload) so the segment keeps its source identity.
+
+    Why this shape, and not the two obvious alternatives:
+
+    - NOT create-empty-then-`AppendSentence`: that wrapper auto-inserts a
+      ". " sentence terminator when the paragraph does not already end in
+      .!? (and a " " when it does), and strips its input. Building a
+      paragraph that way FABRICATES punctuation absent from the source and
+      corrupts the baseline — far worse than a minted GUID.
+    - NOT create-then-assign-offset: `ISegment.BeginOffset` is read-only, so
+      a segment cannot be repositioned after creation.
+
+    Reusing each auto-segment's own offset (rather than the source's) keeps
+    the offsets guaranteed-valid for THIS target's `Contents` and leaves the
+    positional pairing exactly as the caller's alignment loop already had it;
+    only identity changes. `Contents` is never touched, so the text is
+    untouched by construction.
+
+    Conservative by design — returns the rebuilt list, or None to keep the
+    caller's existing segments unchanged (host-free, missing factory,
+    incomplete identity, already-preserved, or ANY failure). On a partial
+    failure the paragraph is left to the caller's fallback, and the caller
+    still logs the loss, so the never-silent contract holds either way.
+    """
+    pairs = min(len(tgt_segments), len(seg_plans))
+    if pairs <= 0:
+        return None
+    guids = [(getattr(seg_plans[i], "source_guid", "") or "") for i in range(pairs)]
+    if not all(guids):
+        return None  # incomplete identity — do not disturb a working paragraph
+    if all(_guid_str(tgt_segments[i]) == guids[i].lower() for i in range(pairs)):
+        return None  # already preserved (e.g. a future create-first path)
+    factory = _segment_factory(target)
+    if factory is None:
+        return None  # host-free / no factory — caller keeps auto segments
+    cache = getattr(target, "Cache", None)
+    if cache is None:
+        return None
+    offsets = [_segment_begin_offset(tgt_segments[i]) for i in range(pairs)]
+    if any(o is None for o in offsets):
+        return None
+    parsed = [_parse_dotnet_guid(g) for g in guids]
+    if any(p is None for p in parsed):
+        return None
+    # Delete first: a segment cannot be repositioned, so the auto-created one
+    # must go before its replacement can occupy the same offset.
+    for i in range(pairs):
+        try:
+            seg_ops.Delete(tgt_segments[i])
+        except Exception as exc:  # noqa: BLE001
+            _log.warning(
+                "texts: segment GUID rebuild aborted in %r (delete failed at "
+                "index %d: %s); keeping the auto-created segments.",
+                text_label or "<untitled>", i, exc)
+            return None
+    rebuilt = []
+    for i in range(pairs):
+        try:
+            rebuilt.append(factory.Create(new_para, offsets[i], cache, parsed[i]))
+        except Exception as exc:  # noqa: BLE001
+            _log.error(
+                "texts: segment GUID rebuild FAILED in %r at index %d (%s). "
+                "%d of %d segments were re-created; the paragraph text is "
+                "untouched, but its segmentation is now incomplete. "
+                "Re-run against a freshly restored target.",
+                text_label or "<untitled>", i, exc, len(rebuilt), pairs)
+            return rebuilt or None
+    _log.info(
+        "texts: re-created %d segment(s) in %r carrying their source GUIDs "
+        "(033 Option A).", len(rebuilt), text_label or "<untitled>")
+    return rebuilt
+
+
+def _parse_dotnet_guid(guid_str):
+    """`System.Guid` for `guid_str`, or None (host-free / malformed)."""
+    if not guid_str:
+        return None
+    try:
+        from System import Guid as _DotNetGuid  # lazy — absent offline
+        return _DotNetGuid.Parse(str(guid_str))
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def _log_segment_guid_loss(tgt_segments, seg_plans, text_label) -> int:
     """Record that N segments could not keep their source GUIDs (033).
 
@@ -1112,8 +1235,18 @@ def _apply_paragraphs(plan, target, target_text, para_ops, seg_ops, ctx, tag,
             tgt_segments = list(seg_ops.GetAll(new_para) or [])
         except Exception:
             tgt_segments = []
-        # 033: LCM auto-segmented these, so their GUIDs are minted, not the
-        # source ones. A justified loss -- but never a silent one.
+        # 033 Option A: LCM auto-segmented these under minted identities.
+        # Re-create them at their own offsets carrying the source GUIDs. Must
+        # run BEFORE the loop below, which wires fields/analyses/AnalysesRS
+        # onto these very segment objects. Conservative: returns None (keep
+        # the auto segments) host-free or on any failure.
+        _rebuilt = _safe(lambda: _rebuild_segments_with_source_guids(
+            target, seg_ops, new_para, para_plan.segments, tgt_segments,
+            plan.title))
+        if _rebuilt:
+            tgt_segments = list(_rebuilt) + tgt_segments[len(_rebuilt):]
+        # Option B backstop: whatever identity the segments ended up with, a
+        # GUID that could NOT be preserved is logged, never silent.
         _safe(lambda: _log_segment_guid_loss(
             tgt_segments, para_plan.segments, plan.title))
         for idx, seg_plan in enumerate(para_plan.segments):

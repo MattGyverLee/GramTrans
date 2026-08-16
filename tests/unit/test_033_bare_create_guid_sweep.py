@@ -285,3 +285,129 @@ def test_segment_guid_loss_silent_when_guids_were_preserved(caplog):
 class _SegPlan:
     def __init__(self, source_guid):
         self.source_guid = source_guid
+
+
+# ============================================================================
+# Option A -- re-create auto-segmented segments carrying their source GUIDs.
+#
+# LCM positions a segment at creation (`ISegment.BeginOffset` is read-only), so
+# the only route is the factory overload
+#   ISegmentFactory.Create(owner, initialOffset, cache, guid)
+# applied at each auto-segment's OWN offset. `Contents` is never touched, so
+# the paragraph text cannot be disturbed.
+# ============================================================================
+
+class _AutoSeg:
+    def __init__(self, guid, offset):
+        self.Guid = guid
+        self.guid = guid
+        self.BeginOffset = offset
+
+
+class _SegFactory:
+    def __init__(self, fail_at=None):
+        self.calls = []
+        self._fail_at = fail_at
+
+    def Create(self, owner, initial_offset, cache, guid):
+        if self._fail_at is not None and len(self.calls) == self._fail_at:
+            raise RuntimeError("factory boom")
+        self.calls.append((owner, initial_offset, guid))
+        return _AutoSeg(guid, initial_offset)
+
+
+class _SegOps:
+    def __init__(self):
+        self.deleted = []
+
+    def Delete(self, seg):
+        self.deleted.append(seg)
+
+
+class _SegTarget:
+    Cache = object()
+
+
+def _patch_seams(monkeypatch, factory):
+    monkeypatch.setattr(texts, "_segment_factory", lambda target: factory)
+    monkeypatch.setattr(texts, "_parse_dotnet_guid",
+                        lambda g: ("GUID:" + g) if g else None)
+
+
+def test_option_a_recreates_segments_with_source_guids(monkeypatch):
+    """Each auto-created segment is deleted and re-created at its OWN offset
+    carrying the source GUID."""
+    factory = _SegFactory()
+    _patch_seams(monkeypatch, factory)
+    auto = [_AutoSeg("auto-a", 0), _AutoSeg("auto-b", 12)]
+    plans = [_SegPlan("src-seg-1"), _SegPlan("src-seg-2")]
+    seg_ops = _SegOps()
+
+    out = texts._rebuild_segments_with_source_guids(
+        _SegTarget(), seg_ops, "PARA", plans, auto, "Text One")
+
+    assert out is not None and len(out) == 2
+    assert len(seg_ops.deleted) == 2, "auto segments must be deleted first"
+    # positioned at the ORIGINAL offsets, with the SOURCE identities
+    assert [c[1] for c in factory.calls] == [0, 12]
+    assert [c[2] for c in factory.calls] == ["GUID:src-seg-1", "GUID:src-seg-2"]
+
+
+def test_option_a_noop_when_guids_already_preserved(monkeypatch):
+    """Must not churn segments that already carry their source GUIDs."""
+    factory = _SegFactory()
+    _patch_seams(monkeypatch, factory)
+    auto = [_AutoSeg("src-seg-1", 0), _AutoSeg("src-seg-2", 12)]
+    plans = [_SegPlan("src-seg-1"), _SegPlan("src-seg-2")]
+    seg_ops = _SegOps()
+
+    out = texts._rebuild_segments_with_source_guids(
+        _SegTarget(), seg_ops, "PARA", plans, auto, "Text One")
+
+    assert out is None
+    assert seg_ops.deleted == [] and factory.calls == []
+
+
+def test_option_a_declines_when_any_source_guid_missing(monkeypatch):
+    """Incomplete identity must NOT disturb a working paragraph."""
+    factory = _SegFactory()
+    _patch_seams(monkeypatch, factory)
+    auto = [_AutoSeg("auto-a", 0), _AutoSeg("auto-b", 12)]
+    plans = [_SegPlan("src-seg-1"), _SegPlan("")]
+    seg_ops = _SegOps()
+
+    out = texts._rebuild_segments_with_source_guids(
+        _SegTarget(), seg_ops, "PARA", plans, auto, "Text One")
+
+    assert out is None
+    assert seg_ops.deleted == [] and factory.calls == []
+
+
+def test_option_a_declines_host_free(monkeypatch):
+    """No LCM factory (offline) -> keep the auto segments, delete nothing."""
+    monkeypatch.setattr(texts, "_segment_factory", lambda target: None)
+    seg_ops = _SegOps()
+
+    out = texts._rebuild_segments_with_source_guids(
+        _SegTarget(), seg_ops, "PARA",
+        [_SegPlan("src-seg-1")], [_AutoSeg("auto-a", 0)], "Text One")
+
+    assert out is None
+    assert seg_ops.deleted == []
+
+
+def test_option_a_partial_failure_is_loud(monkeypatch, caplog):
+    """A mid-rebuild factory failure must ERROR (segmentation now incomplete),
+    never pass silently."""
+    import logging
+    factory = _SegFactory(fail_at=1)
+    _patch_seams(monkeypatch, factory)
+    auto = [_AutoSeg("auto-a", 0), _AutoSeg("auto-b", 12)]
+    plans = [_SegPlan("src-seg-1"), _SegPlan("src-seg-2")]
+
+    with caplog.at_level(logging.ERROR, logger="gramtrans.Lib.texts"):
+        texts._rebuild_segments_with_source_guids(
+            _SegTarget(), _SegOps(), "PARA", plans, auto, "Text One")
+
+    assert any(r.levelno >= logging.ERROR for r in caplog.records), (
+        "an incomplete rebuild must be reported loudly")
