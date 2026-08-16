@@ -1,6 +1,62 @@
 <!--
 Sync Impact Report
 ==================
+Version change: 7.0.0 -> 8.0.0
+Bump rationale: MAJOR -- the scope of two principles is qualified, one of them
+  NON-NEGOTIABLE. Per the versioning policy, "a principle is ... made non-binding"
+  in a defined case is a MAJOR change even when the carve-out is narrow. Recording
+  it as MINOR would understate what a reader needs to know.
+
+Amendment: feature 034 (Standalone Windows Application), FR-053, Question 1
+  Option C, as chosen by the owner. Two clauses added:
+
+  * Principle II gains a narrow exception sanctioning exactly ONE standalone
+    Windows host artifact and the components it bundles (PyQt6,
+    pythonnet/clr_loader, flextoolslib, and flextoolslib's transitive flexlibs1
+    and cdfutils). This overrides, for that artifact alone, both the "no optional
+    dependencies beyond flexicon and PyQt" clause and the "flexlibs1 is NOT used"
+    clause. Any future second delivery channel needs its own amendment.
+
+  * Principle III gains an undo exception against that same artifact alone. FLEx's
+    undo stack is a property of the host session; a separate process cannot create
+    one FLEx would honour, so "wherever LCM permits" does not stretch to cover it.
+    The Preview mandate is untouched and in fact strengthened (FR-012 requires the
+    wizard to open in Preview precisely because the standalone removes the
+    host-level write backstop), Import Residue tagging stays mandatory, and the
+    compensating control is an explicit confirmation gate: an irreversibility
+    warning, a backup instruction, the Send/Receive recovery path, and the target
+    project's name typed exactly, with the proceed control disabled until it
+    matches and never bound as the dialog's default button.
+
+Principles modified: II (narrow second-artifact exception), III (undo exception,
+  scoped and compensated).
+Principles unchanged: I, IV, V. Both general constraints keep full force for every
+  other delivery -- which matters, because Principle II's dependency clause is what
+  has kept this module's dependency surface small.
+
+Rejected alternatives (spec.md Question 1): A -- broader than the evidence supports;
+  B -- leaves the undo tension unaddressed in the text; D -- leaves a NON-NEGOTIABLE
+  principle visibly contradicted by a shipped artifact.
+
+Enforcement added alongside this amendment, so the carve-out is bounded in code as
+  well as in prose:
+  * .github/workflows/regression.yml runs on every push -- the FlexTools-path
+    contract, the shared-code exception subset check, and the FieldWorks-globals
+    accessor ban.
+  * The shared-code changes are enumerated in specs/034-standalone-windows-app/
+    plan.md and an unlisted one fails CI (SC-014).
+  * The bundled set is pinned in build/requirements.lock; adding to it is a change
+    to what this exception sanctions.
+
+Templates: no changes required. .specify/templates/plan-template.md's Constitution
+  Check section is principle-agnostic and already accommodates a recorded violation
+  with a Complexity Tracking entry, which is how feature 034's plan carries this.
+
+Deferred: none.
+
+--- Previous report (v6.0.0 -> v7.0.0), retained for history ---
+Sync Impact Report (v7.0.0)
+===========================
 Version change: 6.0.0 → 7.0.0
 Bump rationale: MAJOR — Principle I (FLEx Domain Fidelity) redefined. The protected
   invariant for GOLD / reserved items is changed from "GOLD-item field immutability"
@@ -139,6 +195,30 @@ removed.
 - **The FlexTools host MUST NOT be assumed to have any optional dependencies beyond
   flexicon (pyflexicon) and PyQt.** The module MUST degrade gracefully (skip + report) if
   flexicon is unexpectedly unavailable.
+- **Narrow exception — exactly ONE standalone Windows host artifact** (amendment
+  v8.0.0, feature 034, FR-053, Question 1 Option C). A second delivery artifact is
+  sanctioned: a frozen Windows application that supplies what the FlexTools host
+  supplies (an open source project, a report sink, the write-permission flag, and a
+  run wrapper) so a linguist with FieldWorks but no FlexTools can run the same
+  transfer. This artifact MAY bundle the components it needs to be self-contained —
+  **PyQt6, pythonnet/clr_loader, flextoolslib, and flextoolslib's transitive
+  flexlibs1 and cdfutils** — notwithstanding the "no optional dependencies beyond
+  flexicon and PyQt" clause above and the "flexlibs1 is NOT used" clause. Bundled
+  flexlibs1 and cdfutils are inert: nothing imports them at runtime, and the module
+  continues to import flexicon explicitly.
+
+  The exception is deliberately narrow and does **not** generalise:
+  - The **FlexTools-hosted module remains the primary artifact**, and remains
+    unchanged. Feature 034's shared-code changes are enumerated, individually
+    justified, and enforced in CI as a subset check; an unlisted shared-code change
+    is a defect.
+  - Exactly **one** such artifact is sanctioned. **Any future second delivery
+    channel requires its own amendment**, on its own evidence.
+  - The clause above keeps full force for every other delivery, which matters
+    because it is what has kept this module's dependency surface small.
+  - The bundled set is the enumerated list, pinned in `build/requirements.lock`.
+    Adding a component to that list is a change to what this exception sanctions
+    and is to be argued on the merits, not absorbed silently by a lock refresh.
 
 **Note on the FLExToolsMCP.** The FLExToolsMCP is an *author-side* assistant used to
 generate, scaffold, and discover patterns for the code in this repo. It is **not** a
@@ -164,6 +244,34 @@ Preview output MUST list, per item: source GUID, target match (by GUID then fing
 proposed action (Add / Link / Update / Overwrite / Skip / Ignore), and the dependency closure that will be
 pulled along. Move Mode MUST be undoable through FLEx's standard undo stack wherever LCM
 permits, and MUST tag newly created entries in Import Residue.
+
+**Undo exception — the standalone Windows host artifact only** (amendment v8.0.0,
+feature 034, FR-053). The undo clause cannot be met by the one standalone artifact
+Principle II sanctions: FLEx's undo stack is a property of the *host session*, and a
+separate process cannot create one FLEx would honour. "Wherever LCM permits" does not
+stretch to cover this, so it is recorded as an exception rather than read as
+satisfied.
+
+The exception is scoped and compensated:
+- It applies to **that artifact alone**. Inside FlexTools the undo clause is
+  unchanged and still binding, and `Ctrl+Z` still undoes a run.
+- The **Preview mandate is not weakened — it is strengthened.** Both modes exist,
+  Preview is the default, the wizard opens in Preview, and Move stays behind a
+  completed dry run. FR-012 requires the Preview default *precisely because* the
+  standalone removes the host-level write backstop.
+- The compensating control is an explicit, host-supplied **confirmation gate**: a
+  modal stating that the write cannot be undone from within the application, the
+  instruction to back up the target first, the Send/Receive recovery path, and the
+  target project's name typed exactly — with the proceed control disabled until it
+  matches and never bound as the dialog's default button.
+- Import Residue tagging is **unchanged and still mandatory**; it is what makes a
+  partial write findable when there is no undo.
+- **No in-app rollback and no automatic pre-run backup.** Both were considered and
+  rejected: a partial rollback of an LCM write set is a far larger correctness risk
+  than a confirmation gate, and an implicit backup invites reliance on a mechanism
+  whose failure mode is silent.
+- Claiming in UI or documentation that a Move in this artifact can be undone is
+  forbidden (FR-027), and is enforced by test.
 
 **One-time validation-spike clause** (recorded for honesty, not licence to repeat): the
 Layer 1 + Layer 2 work documented in `STATUS.md` (Verb POS, Verb template, 4 slots copied
@@ -350,4 +458,4 @@ This constitution supersedes ad-hoc development practices for the GramTrans modu
   `Transfer FLEx Grammar Module.md` are advisory and MUST be reconciled with this
   constitution when they conflict.
 
-**Version**: 7.0.0 | **Ratified**: 2026-06-15 | **Last Amended**: 2026-07-08
+**Version**: 8.0.0 | **Ratified**: 2026-06-15 | **Last Amended**: 2026-08-17

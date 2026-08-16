@@ -77,6 +77,10 @@ direction, not by distance: nothing under `gramtrans.py` or `Lib/` imports
 ## Constitution Check
 
 Assessed against [constitution v7.0.0](../../.specify/memory/constitution.md).
+**Resolved 2026-08-17**: the two recorded violations below are now sanctioned by
+the v8.0.0 amendment (T054) — Principle II's one-standalone-artifact exception and
+Principle III's scoped undo exception. Both entries are kept as written so the
+reasoning that produced the amendment stays legible.
 
 | Principle | Assessment |
 |---|---|
