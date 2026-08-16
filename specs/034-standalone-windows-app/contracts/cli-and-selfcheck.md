@@ -65,11 +65,26 @@ A `[FAIL]` line MUST be followed by a `remedy:` line naming the concrete next
 step — install FieldWorks 9, close the project in FLEx, and so on (FR-036,
 SC-006). No check may fail without one.
 
-**Reading rule (normative)**: every FieldWorks value is read from
-`flexicon.code.FLExGlobals` *after* `FLExInitialize()`. The
-`flexicon.FWProjectsDir` / `flexicon.FWCodeDir` re-exports bind at package
-import, before initialisation, and stay `None` — a self-check reading them
-reports a false `[FAIL]` on a healthy machine (research R1).
+**Reading rule (normative)**: every FieldWorks value is read from the
+`flexicon.code.FLExGlobals` **module attribute**, at call time, after
+`FLExInitialize()`, and through `standalone/fwglobals.py` — which is the only
+module permitted to name those symbols (`tests/unit/test_034_fwglobals_only.py`
+enforces it in the regression gate).
+
+Research R1 justified this by predicting the `flexicon.FWProjectsDir` /
+`flexicon.FWCodeDir` re-exports stay `None`. **They do not**: measured on
+flexicon 4.3.1 they are populated before `FLExInitialize()` is called, because
+`InitialiseFWGlobals()` runs at import scope. The rule is unchanged — the
+re-exports are snapshots bound once at package import, and the accessor is what
+makes the FR-031 / FR-033 split enforceable — but the failure it guards against
+is staleness, not `None`. What R1 got backwards matters more: on a machine
+without FieldWorks, `import flexicon` **raises**, so the FieldWorks-missing
+check happens at the import, not at the initialise. See
+[probe-results.md](../probe-results.md) §T012.
+
+A FieldWorks value that reads back `None` or empty after initialisation is
+reported as the **language-model runtime** failure (FR-033), never as
+"FieldWorks is not installed" (FR-031).
 
 ## 3. Prerequisite failure messages (FR-031 to FR-034)
 

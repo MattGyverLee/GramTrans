@@ -35,10 +35,10 @@ Single project. Shell code under `src/gramtrans/standalone/`, shared code under
 **Purpose**: create the working tree and the empty structure the rest of the
 feature fills in. No behaviour.
 
-- [ ] T001 Create the implementation worktree: `git worktree add ../GramTrans-034-standalone-windows-app -b 034-standalone-windows-app` from `main`. All subsequent code tasks run there; `specs/` edits stay on `main`.
-- [ ] T002 [P] Create the shell package skeleton `src/gramtrans/standalone/__init__.py` — docstring only, exporting nothing yet. It MUST NOT import anything from `gramtrans.gramtrans` or `gramtrans.Lib` at module scope (direction of the FR-016 boundary).
-- [ ] T003 [P] Create the packaging tree `build/` and `build/smoke/` with a `build/README.md` naming the four entry points from [contracts/build-and-release.md](contracts/build-and-release.md) §1.
-- [ ] T004 [P] Add to `.gitignore`: `src/gramtrans/_buildinfo.py` (generated, research R10), `build/.venv-build/`, `build/build/`, `build/dist/`.
+- [x] T001 Create the implementation worktree: `git worktree add ../GramTrans-034-standalone-windows-app -b 034-standalone-windows-app` from `main`. All subsequent code tasks run there; `specs/` edits stay on `main`.
+- [x] T002 [P] Create the shell package skeleton `src/gramtrans/standalone/__init__.py` — docstring only, exporting nothing yet. It MUST NOT import anything from `gramtrans.gramtrans` or `gramtrans.Lib` at module scope (direction of the FR-016 boundary).
+- [x] T003 [P] Create the packaging tree `build/` and `build/smoke/` with a `build/README.md` naming the four entry points from [contracts/build-and-release.md](contracts/build-and-release.md) §1.
+- [x] T004 [P] Add to `.gitignore`: `src/gramtrans/_buildinfo.py` (generated, research R10), `build/.venv-build/`, `build/build/`, `build/dist/`.
 
 ---
 

@@ -116,13 +116,27 @@ Run before any project is opened, in this order:
 1. **UI toolkit** — import `PyQt6.QtWidgets` and construct a `QApplication`. On
    failure, stop with a plain-language message. The module's no-interface
    fallback MUST NOT be entered (FR-006), which is what makes FR-005 hold.
-2. **`flexicon.FLExInitialize()`** — on failure, map to the FieldWorks-missing
-   (FR-031), version-unsupported (FR-032) or runtime-load-failed (FR-033)
-   message. Never a traceback.
-3. **Post-init reads** — `flexicon.code.FLExGlobals.FWCodeDir`,
+2. **`import flexicon`** — *this*, not `FLExInitialize()`, is where a missing
+   FieldWorks presents. Verified on flexicon 4.3.1: `FLExInit.py` calls
+   `InitialiseFWGlobals()` at module scope, that function raises when the
+   registry key or `FieldWorks.exe` is absent, and nothing guards the call — so
+   the import itself fails and `FLExInitialize()` is never reached. Map an
+   import failure to FieldWorks-missing (FR-031). See
+   [probe-results.md](../probe-results.md) §T012.
+3. **`flexicon.FLExInitialize()`** — registry helper, ICU and SLDR init. On
+   failure, map to runtime-load-failed (FR-033). Never a traceback.
+4. **Post-init reads** — `flexicon.code.FLExGlobals.FWCodeDir`,
    `.FWProjectsDir`, `.FWShortVersion`, `.FWLongVersion`,
-   `.FW_SUPPORTED_VERSIONS`. **Never** the `flexicon.*` re-exports, which bind
-   before initialisation and remain `None` (research R1).
+   `.FW_SUPPORTED_VERSIONS`, through `standalone/fwglobals.py` and nowhere
+   else. Read the **module attribute** at call time, never the `flexicon.*`
+   re-export. Research R1 justified this by claiming the re-exports stay
+   `None`; measured, they do not — they are populated before
+   `FLExInitialize()`. The rule stands anyway, because the re-exports are
+   *snapshots* bound once at package import, and because one accessor is what
+   lets the FR-031 / FR-033 split be enforced rather than remembered.
+   A value that reads back `None` or empty here maps to FR-033, **never**
+   FR-031. Version-unsupported (FR-032) is decided from `FWShortVersion`
+   against `FW_SUPPORTED_VERSIONS` at this step.
 4. **Preview warning** — state on the source-picker screen, before selection,
    that the target must be closed in FLEx *even for a Preview* (FR-030).
 
