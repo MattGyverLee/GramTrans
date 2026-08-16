@@ -36,12 +36,29 @@ range for FR-032; the shell reports it rather than defining its own.
 
 **Gotcha [load-bearing]**: `flexicon/__init__.py` does
 `from .code.FLExGlobals import FWProjectsDir, FWCodeDir, FWShortVersion, ...`.
-That binds the names **at package import time, before `FLExInitialize()` runs**,
-so `flexicon.FWProjectsDir` is `None` and *stays* `None` after initialization.
-The shell and the self-check MUST read the module attributes
-(`flexicon.code.FLExGlobals.FWProjectsDir`) post-init, never the re-exported
-package names. A self-check that reads the package names would silently report
-"not detected" on a perfectly healthy machine.
+That binds the names **at package import time**. The shell and the self-check
+MUST read the module attributes (`flexicon.code.FLExGlobals.FWProjectsDir`)
+post-init, never the re-exported package names — the re-exports are snapshots,
+and a reader wired to one cannot see a later rebind.
+
+> **CORRECTION (2026-08-17, measured on flexicon 4.3.1 — T011/T012).** The
+> paragraph above originally claimed the re-exports are `None` and *stay*
+> `None`, so a self-check reading them would report "not detected" on a healthy
+> machine. **That is not what 4.3.1 does.** `FLExInit.py` calls
+> `InitialiseFWGlobals()` at *module scope* (line 44, indent 0), and
+> `flexicon/__init__.py` imports `.code.FLExInit` before `.code.FLExGlobals`,
+> so the re-exports are populated before `FLExInitialize()` is ever called.
+> Measured: `flexicon.FWCodeDir is flexicon.code.FLExGlobals.FWCodeDir` → `True`,
+> both `'C:\Program Files\SIL\FieldWorks 9\'`, pre-init.
+>
+> The consequence runs the other way, and is bigger: `InitialiseFWGlobals()`
+> **raises** when FieldWorks is absent, and nothing guards the call — so
+> **`import flexicon` itself fails** on such a machine and `FLExInitialize()` is
+> never reached. FR-031 detection therefore wraps the import, not the
+> initialise. The module-attribute reading rule survives on the snapshot
+> argument; `standalone/fwglobals.py` (T012) is its sole implementation and an
+> AST ban in the regression gate enforces it. Full evidence in
+> [probe-results.md](probe-results.md) §T012.
 
 **Alternatives considered**:
 - *Own `winreg` probe in the shell.* Rejected: duplicates R1, and can report a
@@ -183,6 +200,17 @@ user as the opaque "nothing happened" FR-033 exists to prevent.
 
 **Alternatives considered**: none viable — flexicon's entire LCM access is
 pythonnet. This is a risk to retire early, not a choice to make.
+
+> **RETIRED (2026-08-17 — T011).** A `--onedir` freeze of a program doing
+> nothing but `import flexicon` / `FLExInitialize()` / open one project ran
+> clean: `VERDICT: PASS`, 84 projects enumerated, `Ejagham Mini` opened and
+> closed. `pyinstaller-hooks-contrib` collects `ClrLoader.dll` (amd64 + x86)
+> and `Python.Runtime.dll` with no configuration from us. The
+> `.runtimeconfig.json` worry is moot: no such file exists in `clr_loader`
+> 0.2.10 or `pythonnet` 3.0.5, because it is a .NET Core artifact and this
+> stack runs on **.NET Framework 4.8**. Also confirmed for free: no FieldWorks
+> or LibLCM assembly lands in the bundle (FR-045). Evidence in
+> [probe-results.md](probe-results.md) §T011.
 
 ## R8. Dependency lock — build-only, hash-pinned, fresh venv
 

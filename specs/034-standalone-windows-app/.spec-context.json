@@ -74,6 +74,38 @@
       "kind": "start",
       "by": "extension",
       "at": "2026-08-16T21:50:49.229Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T001",
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-16T21:51:34.518Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T002",
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-16T21:52:43.770Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T003",
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-16T21:52:44.015Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T004",
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-16T21:52:44.265Z"
     }
   ],
   "approach": "Ship the standalone as a host shell (src/gramtrans/standalone/) that reproduces what FlexTools hands the module - an open source project, a report sink, modifyAllowed - and calls the unchanged MainFunction. Freeze it with one PyInstaller spec producing an Inno Setup installer plus a best-effort onefile, built in a throwaway venv from a hash-pinned build-only lock so pyproject floors stay untouched. Non-regression is enforced by five enumerated shared-code exceptions, all additive with FlexTools-preserving defaults, plus a CI gate that runs from the first commit.",
@@ -422,6 +454,38 @@
         "T031",
         "T033",
         "T055"
+      ]
+    }
+  },
+  "currentTask": "T004",
+  "task_summaries": {
+    "T001": {
+      "status": "DONE",
+      "did": "Created the 034-standalone-windows-app worktree at ../GramTrans-034-standalone-windows-app off main",
+      "files": [
+        "(git worktree)"
+      ]
+    },
+    "T002": {
+      "status": "DONE",
+      "did": "Created the shell package skeleton: docstring-only __init__.py that imports nothing at module scope (FR-016 direction)",
+      "files": [
+        "src/gramtrans/standalone/__init__.py"
+      ]
+    },
+    "T003": {
+      "status": "DONE",
+      "did": "Created build/ and build/smoke/ with a README naming the four build.py entry points and the seven ordered steps",
+      "files": [
+        "build/README.md",
+        "build/smoke/.gitkeep"
+      ]
+    },
+    "T004": {
+      "status": "DONE",
+      "did": "Scoped the stale bare build/ ignore to the transient trees and added _buildinfo.py so build/ can be tracked source",
+      "files": [
+        ".gitignore"
       ]
     }
   }
