@@ -13,7 +13,7 @@
 
 ## Requirement Completeness
 
-- [ ] No [NEEDS CLARIFICATION] markers remain
+- [x] No [NEEDS CLARIFICATION] markers remain
 - [x] Requirements are testable and unambiguous
 - [x] Success criteria are measurable
 - [x] Success criteria are technology-agnostic (no implementation details)
@@ -94,19 +94,18 @@
   therefore Principle II **and** Principle III, not Principle II alone.
   Question 1 now offers four options spanning both.
 
-- **One checklist item is deliberately open**: two `[NEEDS CLARIFICATION]`
-  decisions remain, both raised as Open Questions in the spec.
-  - **Question 1 (governance, blocking release not planning)**: whether to amend
-    the constitution to admit a second delivery artifact and to address
-    Principle III's undo clause, or record an argued finding that neither
-    principle is violated. Tracked as FR-053. Planning can proceed; release
-    cannot.
-  - **Question 2 (safety, scope-affecting)**: how the application should treat a
-    Send/Receive target, given there is no undo and no backup. Option A (refuse)
-    and Option B (warn harder) differ in scope; Option C is the status quo.
-
-  These were retained rather than defaulted because both are genuine decisions
-  for the project owner: Question 1 is a governance act only the owner can take,
-  and Question 2 trades a user's workflow against a team-wide data-loss risk.
+- **Both open questions resolved at the start of `/speckit.plan`** (2026-08-16),
+  by the project owner:
+  - **Question 1 (governance) → Option C, narrow amendment.** Amend Principle II
+    to sanction exactly one standalone Windows host artifact and the components
+    it bundles; note the Principle III undo exception against that artifact
+    alone. Both general constraints keep their force. Tracked as FR-053; blocks
+    release, not planning.
+  - **Question 2 (Send/Receive) → custom answer: state the recovery path, do not
+    detect or restrict.** The safe procedure — Send/Receive before running, and
+    on a bad run delete the local project and receive again — holds equally
+    under FlexTools, so it is not a standalone-specific safeguard. No detection,
+    no second gate, no refusal. Captured as FR-054, and the corresponding Out of
+    Scope line was narrowed to say so.
 
 - Items marked incomplete require spec updates before `/speckit-clarify` or `/speckit-plan`

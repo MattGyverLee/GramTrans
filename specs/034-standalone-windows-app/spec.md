@@ -374,6 +374,12 @@ may be built, and each is independently checkable.*
   partial work can be found, and direct the user to the log file.
 - **FR-027**: The application MUST NOT claim, imply, or document that a Move
   can be undone from within the application.
+- **FR-054**: The warning of FR-022 MUST name the recovery path for a target
+  under Send/Receive control: Send/Receive before running, and if the run goes
+  wrong, delete the local copy and receive again. The application MUST NOT
+  detect Send/Receive control, treat such a target differently, or refuse it —
+  this guidance is equally true under FlexTools and is stated, not enforced.
+  (Resolves Question 2.)
 
 ### Guard rails and error handling
 
@@ -476,9 +482,16 @@ may be built, and each is independently checkable.*
   This feature MUST NOT be released against an unamended constitution on the
   basis of an unrecorded reading. Note that Principle III's *other* mandate —
   two execution modes with Preview as the default — is satisfied and is
-  reinforced by FR-012. [NEEDS CLARIFICATION: amend the constitution to admit a
-  standalone host artifact and to address the undo clause, or record an argued
-  finding that neither principle is violated? See Question 1.]
+  reinforced by FR-012.
+
+  **Resolved (Question 1, Option C — narrow amendment).** Before release the
+  constitution MUST be amended to (a) sanction exactly one standalone Windows
+  host artifact as a second delivery channel for this module, including the
+  additional components that artifact bundles, and (b) record the undo
+  exception against that artifact alone. Both general constraints — the
+  FlexTools-hosted module shape and the Move-undoability mandate — keep their
+  full force for every other delivery; any future second channel requires its
+  own amendment.
 
 ### Key Entities
 
@@ -619,8 +632,9 @@ may be built, and each is independently checkable.*
 - Replacing or deprecating the FlexTools module.
 - Any repository-wide refactor of the module's import convention (FR-018).
 - Removing or altering the module's no-interface fallback path.
-- Supporting projects under Send/Receive beyond whatever the resolution to
-  Question 2 requires.
+- Detecting, special-casing, or refusing a target project under Send/Receive
+  control (resolution of Question 2 — the recovery path is documented in the
+  FR-022 warning, not enforced by machinery).
 
 ## Open Questions
 
@@ -654,7 +668,12 @@ address both principles or only Principle II?
 | D | Amend nothing; record an argued finding that the module is unchanged and the binary merely supplies a host, so neither principle is violated | No constitution churn. Weakest position if challenged later, and leaves a NON-NEGOTIABLE principle in visible tension with a shipped artifact. |
 | Custom | Provide your own answer | Describe the governance path you want taken. |
 
-**Your choice**: _[Awaiting decision]_
+**Your choice**: **Option C — narrow amendment** (recorded 2026-08-16). Amend
+Principle II to sanction exactly one standalone Windows host artifact (and the
+components it bundles) as a second delivery channel, and note the Principle III
+undo exception against that artifact alone. Both general constraints keep their
+force; a future second channel needs its own amendment. Tracked by FR-053;
+blocks release, not planning.
 
 ---
 
@@ -675,4 +694,10 @@ that is under Send/Receive control?
 | C | Ignore — treat all targets identically | Simplest; a user can silently push un-reviewed grammar to a shared repository with no undo. |
 | Custom | Provide your own answer | Describe the treatment you want. |
 
-**Your choice**: _[Awaiting decision]_
+**Your choice**: **Custom — state the recovery path, do not detect or restrict**
+(recorded 2026-08-16). The safe procedure for a Send/Receive target is to
+Send/Receive *before* running the tool; if the run goes wrong, delete the local
+project and receive again (over USB or the internet). That is true whether the
+tool runs under FlexTools or standalone, so it is not a standalone-specific
+safeguard: no detection, no second gate, no refusal. The guidance is carried in
+the FR-022 warning text and the release documentation. Captured as FR-054.

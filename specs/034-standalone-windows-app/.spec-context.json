@@ -2,8 +2,8 @@
   "workflow": "speckit",
   "specName": "Standalone Windows Application (no FlexTools required)",
   "branch": "main",
-  "currentStep": "specify",
-  "status": "specified",
+  "currentStep": "implement",
+  "status": "implementing",
   "history": [
     {
       "step": "specify",
@@ -11,6 +11,418 @@
       "kind": "start",
       "by": "extension",
       "at": "2026-08-16T15:05:32.338Z"
+    },
+    {
+      "step": "plan",
+      "substep": "research",
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-16T20:31:23.913Z"
+    },
+    {
+      "step": "plan",
+      "substep": "design",
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-16T20:35:03.016Z"
+    },
+    {
+      "step": "plan",
+      "substep": null,
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-16T20:36:04.176Z"
+    },
+    {
+      "step": "plan",
+      "substep": null,
+      "kind": "start",
+      "by": "extension",
+      "at": "2026-08-16T20:36:22.519Z"
+    },
+    {
+      "step": "plan",
+      "substep": null,
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-08-16T21:23:03.417Z"
+    },
+    {
+      "step": "tasks",
+      "substep": null,
+      "kind": "start",
+      "by": "extension",
+      "at": "2026-08-16T21:23:03.426Z"
+    },
+    {
+      "step": "tasks",
+      "substep": "generate",
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-16T21:30:01.646Z"
+    },
+    {
+      "step": "tasks",
+      "substep": null,
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-16T21:30:01.966Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "kind": "start",
+      "by": "extension",
+      "at": "2026-08-16T21:50:49.229Z"
     }
-  ]
+  ],
+  "approach": "Ship the standalone as a host shell (src/gramtrans/standalone/) that reproduces what FlexTools hands the module - an open source project, a report sink, modifyAllowed - and calls the unchanged MainFunction. Freeze it with one PyInstaller spec producing an Inno Setup installer plus a best-effort onefile, built in a throwaway venv from a hash-pinned build-only lock so pyproject floors stay untouched. Non-regression is enforced by five enumerated shared-code exceptions, all additive with FlexTools-preserving defaults, plus a CI gate that runs from the first commit.",
+  "decisions": [
+    {
+      "decision": "The Move confirmation gate is a host-supplied duck-typed object threaded through MainFunction -> SelectionWizard -> _PageFinish as one keyword-only parameter defaulting to AlwaysSatisfiedGate.",
+      "why": "FR-017 needs the gate reachable from the wizard but owned by the host; a permissive default makes the FlexTools path byte-identical (SC-013) with no new dialog or step.",
+      "rejected": "Embedding the gate in the wizard (gives every FlexTools user a redundant blocking dialog), and having the shell construct SelectionWizard directly (forks the QApplication setup, fatal-exception funnel and FR-013 target cleanup that MainFunction owns)."
+    },
+    {
+      "decision": "{\"decision\": \"The shell does no registry access of its own; it calls flexicon.FLExInitialize() and reads flexicon.code.FLExGlobals module attributes post-init.\", \"why\": \"InitialiseFWGlobals already probes HKCU/HKLM SOFTWARE\\SIL\\FieldWorks\\9, validates FieldWorks.exe, appends only FWCodeDir to sys.path and reads the version from FieldWorks itself - which is the whole of FR-001/031/032/033/044. The package-level re-exports (flexicon.FWProjectsDir) bind before init and stay None, so they must never be read.\", \"rejected\": \"An own winreg probe in the shell - duplicates the logic and can report a code dir different from the one whose assemblies were actually loaded.\"}"
+    },
+    {
+      "decision": "Keep the flat site.addsitedir import convention and absorb it in packaging: generate hiddenimports by globbing Lib/**/*.py and declaring every module under BOTH its flat top-level name and its gramtrans.Lib.* package name.",
+      "why": "FR-018 forbids the import refactor and 31 files carry if __package__ dual-mode guards; PyInstaller FrozenImporter resolves top-level names from the archive directly, so the guards keep taking their flat branch. Generation rather than a hand-list means a new helper needs no build-file edit.",
+      "rejected": "Shipping Lib/ as --add-data and relying on addsitedir at runtime (ships source, defers every import error to runtime), and refactoring the imports (forbidden outright by FR-018)."
+    },
+    {
+      "decision": "Constitution reconciliation takes Question 1 Option C (narrow amendment) and Send/Receive takes the owner custom answer: state the recovery path, do not detect or restrict.",
+      "why": "Option C sanctions exactly one standalone Windows host artifact and the components it bundles, and records the Principle III undo exception against that artifact alone, so both general constraints keep their force. The S/R procedure (S/R first; on a bad run delete the local project and receive again) is equally true under FlexTools, so detection machinery in the standalone alone would imply otherwise and add a mis-detection failure mode for nothing.",
+      "rejected": "Options A/B/D for governance; and detect-and-refuse or detect-and-warn for Send/Receive targets."
+    },
+    {
+      "decision": "Exact pins live only in build/requirements.lock (hash-pinned, consumed by a throwaway venv); pyproject.toml keeps its version floors.",
+      "why": "FR-019/FR-041 keep FlexTools installs unconstrained by this feature, and FR-042 rules out resolving anything from the build machine. Hashes make SC-008 checkable rather than hoped-for.",
+      "rejected": "Pinning in pyproject.toml (constrains every FlexTools install), and substituting a stand-in flextoolslib shim for the six FTM_* names (a fork of host metadata that can drift; rejected by the spec assumptions)."
+    }
+  ],
+  "step_summaries": {
+    "plan": {
+      "summary": "Plan, research, data model and three contracts written; both open questions resolved and encoded back into spec.md; non-regression pinned to five enumerated shared-code exceptions.",
+      "key_finding": "flexicon already implements FieldWorks discovery, version validation and the sys.path addition (FR-001/031/032/044) in InitialiseFWGlobals - but its package-level re-exports (flexicon.FWProjectsDir) bind before FLExInitialize() and stay None, so the shell and self-check must read flexicon.code.FLExGlobals module attributes post-init or report a false failure on a healthy machine."
+    },
+    "tasks": {
+      "summary": "Fifty-six tasks in seven phases. Phase 2 now also contains T012, which converts the research-R1 flexicon-globals trap from a review habit into a CI failure: a sole accessor module, a None-means-runtime-failed mapping so the bug cannot present as a false \"FieldWorks not installed\", and an AST ban wired into the regression gate so it guards Phases 3-6 as they are written. Every FR-001..FR-054 maps to at least one task."
+    }
+  },
+  "telemetryInstanceId": "87ca72d1-2840-4cf1-95a9-a72a78ef9771",
+  "coverage": {
+    "FR-001": {
+      "tasks": [
+        "T016",
+        "T020",
+        "T024",
+        "T025"
+      ]
+    },
+    "FR-002": {
+      "tasks": [
+        "T014",
+        "T024"
+      ]
+    },
+    "FR-003": {
+      "tasks": [
+        "T016",
+        "T024"
+      ]
+    },
+    "FR-004": {
+      "tasks": [
+        "T014",
+        "T024"
+      ]
+    },
+    "FR-005": {
+      "tasks": [
+        "T014",
+        "T024",
+        "T045"
+      ]
+    },
+    "FR-006": {
+      "tasks": [
+        "T025",
+        "T045"
+      ]
+    },
+    "FR-007": {
+      "tasks": [
+        "T025"
+      ]
+    },
+    "FR-008": {
+      "tasks": [
+        "T021"
+      ]
+    },
+    "FR-009": {
+      "tasks": [
+        "T022"
+      ]
+    },
+    "FR-010": {
+      "tasks": [
+        "T022"
+      ]
+    },
+    "FR-011": {
+      "tasks": [
+        "T025",
+        "T050"
+      ]
+    },
+    "FR-012": {
+      "tasks": [
+        "T025",
+        "T034"
+      ]
+    },
+    "FR-013": {
+      "tasks": [
+        "T026"
+      ]
+    },
+    "FR-014": {
+      "tasks": [
+        "T025",
+        "T026"
+      ]
+    },
+    "FR-015": {
+      "tasks": [
+        "T008",
+        "T009"
+      ]
+    },
+    "FR-016": {
+      "tasks": [
+        "T002",
+        "T008"
+      ]
+    },
+    "FR-017": {
+      "tasks": [
+        "T005",
+        "T034",
+        "T036"
+      ]
+    },
+    "FR-018": {
+      "tasks": [
+        "T039"
+      ]
+    },
+    "FR-019": {
+      "tasks": [
+        "T038"
+      ]
+    },
+    "FR-020": {
+      "tasks": [
+        "T007",
+        "T009"
+      ]
+    },
+    "FR-021": {
+      "tasks": [
+        "T010"
+      ]
+    },
+    "FR-022": {
+      "tasks": [
+        "T031",
+        "T033"
+      ]
+    },
+    "FR-023": {
+      "tasks": [
+        "T030",
+        "T033"
+      ]
+    },
+    "FR-024": {
+      "tasks": [
+        "T032",
+        "T034"
+      ]
+    },
+    "FR-025": {
+      "tasks": [
+        "T030",
+        "T034"
+      ]
+    },
+    "FR-026": {
+      "tasks": [
+        "T037"
+      ]
+    },
+    "FR-027": {
+      "tasks": [
+        "T031",
+        "T033",
+        "T055"
+      ]
+    },
+    "FR-028": {
+      "tasks": [
+        "T028"
+      ]
+    },
+    "FR-029": {
+      "tasks": [
+        "T019"
+      ]
+    },
+    "FR-030": {
+      "tasks": [
+        "T024",
+        "T055"
+      ]
+    },
+    "FR-031": {
+      "tasks": [
+        "T012",
+        "T019",
+        "T020"
+      ]
+    },
+    "FR-032": {
+      "tasks": [
+        "T019",
+        "T020"
+      ]
+    },
+    "FR-033": {
+      "tasks": [
+        "T012",
+        "T019",
+        "T020"
+      ]
+    },
+    "FR-034": {
+      "tasks": [
+        "T019",
+        "T024"
+      ]
+    },
+    "FR-035": {
+      "tasks": [
+        "T019"
+      ]
+    },
+    "FR-036": {
+      "tasks": [
+        "T020",
+        "T048",
+        "T049",
+        "T051"
+      ]
+    },
+    "FR-037": {
+      "tasks": [
+        "T049"
+      ]
+    },
+    "FR-038": {
+      "tasks": [
+        "T021",
+        "T052"
+      ]
+    },
+    "FR-039": {
+      "tasks": [
+        "T053"
+      ]
+    },
+    "FR-040": {
+      "tasks": [
+        "T041",
+        "T042"
+      ]
+    },
+    "FR-041": {
+      "tasks": [
+        "T038"
+      ]
+    },
+    "FR-042": {
+      "tasks": [
+        "T042"
+      ]
+    },
+    "FR-043": {
+      "tasks": [
+        "T040"
+      ]
+    },
+    "FR-044": {
+      "tasks": [
+        "T012",
+        "T020"
+      ]
+    },
+    "FR-045": {
+      "tasks": [
+        "T045"
+      ]
+    },
+    "FR-046": {
+      "tasks": [
+        "T041",
+        "T044"
+      ]
+    },
+    "FR-047": {
+      "tasks": [
+        "T045",
+        "T046"
+      ]
+    },
+    "FR-048": {
+      "tasks": [
+        "T045"
+      ]
+    },
+    "FR-049": {
+      "tasks": [
+        "T043"
+      ]
+    },
+    "FR-050": {
+      "tasks": [
+        "T041"
+      ]
+    },
+    "FR-051": {
+      "tasks": [
+        "T055"
+      ]
+    },
+    "FR-052": {
+      "tasks": [
+        "T038",
+        "T055"
+      ]
+    },
+    "FR-053": {
+      "tasks": [
+        "T054"
+      ]
+    },
+    "FR-054": {
+      "tasks": [
+        "T031",
+        "T033",
+        "T055"
+      ]
+    }
+  }
 }
