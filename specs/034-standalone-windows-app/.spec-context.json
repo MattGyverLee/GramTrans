@@ -1,0 +1,16 @@
+{
+  "workflow": "speckit",
+  "specName": "Standalone Windows Application (no FlexTools required)",
+  "branch": "main",
+  "currentStep": "specify",
+  "status": "specified",
+  "history": [
+    {
+      "step": "specify",
+      "substep": null,
+      "kind": "start",
+      "by": "extension",
+      "at": "2026-08-16T15:05:32.338Z"
+    }
+  ]
+}
