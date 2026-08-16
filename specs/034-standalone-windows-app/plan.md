@@ -109,12 +109,33 @@ FlexTools code path's behaviour.
 
 | # | File | Change | Justification | Why FlexTools is unaffected |
 |---|---|---|---|---|
-| 1 | `src/gramtrans/gramtrans.py` | Add keyword-only `confirmation_gate=None` to `MainFunction`, pass through `_run_gui`. `None` → `AlwaysSatisfiedGate()`. | FR-017: the gate must be host-supplied, and `MainFunction` is the host boundary. | FlexTools calls with three positional args; the default reproduces today's "no prompt" behaviour exactly. `run_gui_harness.py` also unchanged. |
-| 2 | `src/gramtrans/Lib/ui/selection_wizard.py` | Add keyword-only `confirmation_gate=None` to `SelectionWizard.__init__`; `_PageFinish._on_move` consults `gate.confirm(target_name)` immediately before `gt_api.execute_move`, after the existing EXCLUDED-LOSSY dialog. | FR-017: the wizard must *request* confirmation without *owning* it. | The default gate returns `True` without UI, so the FlexTools sequence is unchanged — no new dialog, no new step (SC-013). |
+| 1 | `src/gramtrans/gramtrans.py` | Add keyword-only `confirmation_gate=None` **and `projects_root=""`** to `MainFunction`, pass both through `_run_gui`. `None` → `AlwaysSatisfiedGate()`. | FR-017: the gate must be host-supplied, and `MainFunction` is the host boundary. FR-001: so must the projects root — see the amendment note below. | FlexTools calls with three positional args; the defaults reproduce today's "no prompt" behaviour and today's candidate list exactly. `run_gui_harness.py` also unchanged. |
+| 2 | `src/gramtrans/Lib/ui/selection_wizard.py` | Add keyword-only `confirmation_gate=None` **and `projects_root=""`** to `SelectionWizard.__init__`; pass `projects_root` into its `gt_api.initialize_run` call; `_PageFinish._on_move` consults `gate.confirm(target_name)` immediately before `gt_api.execute_move`, after the existing EXCLUDED-LOSSY dialog. | FR-017: the wizard must *request* confirmation without *owning* it. FR-001: the wizard is what actually calls `initialize_run`, so it is what has to carry the root. | The default gate returns `True` without UI and an empty root keeps the historical literal, so the FlexTools sequence is unchanged — no new dialog, no new step (SC-013). |
 | 3 | `src/gramtrans/Lib/ui/selection_wizard.py` | `_PageFinish` subtitle: the literal "changes can be undone in FLEx with Ctrl+Z" becomes gate-supplied text. FlexTools' gate supplies the current sentence verbatim; the standalone's supplies the irreversibility warning. | FR-027 forbids the application claiming a Move can be undone; that sentence is false in the standalone. | The FlexTools-supplied string is byte-identical to today's. |
-| 4 | `src/gramtrans/Lib/api.py` | Add optional `projects_root: str = ""` to `RunContextStub` and an optional `projects_root` kwarg to `initialize_run`; `list_target_candidates` uses `stub.projects_root or <existing literal default>`. | FR-001: the projects location must come from what FieldWorks records, not a hard-coded path. The standalone injects the registry-derived value. | The FlexTools path never passes it, so the existing `C:\ProgramData\SIL\FieldWorks\Projects` default still applies — identical candidate list. |
+| 4 | `src/gramtrans/Lib/api.py` | Add optional `projects_root: str = ""` to `RunContextStub` and an optional `projects_root` kwarg to `initialize_run`; `list_target_candidates` uses `stub.projects_root or <existing literal default>`. **Plus**: reword the `SameProjectError` and `TargetUnavailable` message text from developer notation to the plain-language FR-028/FR-029 wording. | FR-001: the projects location must come from what FieldWorks records, not a hard-coded path. FR-028/FR-029: the wizard shows these strings to the user verbatim, and "Phase 0 refuses to run (FR-019)" is not a sentence any user can act on. | The FlexTools path never passes `projects_root`, so the existing `C:\ProgramData\SIL\FieldWorks\Projects` default still applies — identical candidate list. The exception *types* and the conditions that raise them are unchanged; only the human-readable text differs, which is the same class of change as exception 5. |
 | 5 | `src/gramtrans/Lib/ui/target_picker.py` | Reword one label: "The current FlexTools project is always the SOURCE (read-only)" → "The project chosen as SOURCE is opened read-only." | The current wording is false in the standalone and would confuse a user who has never installed FlexTools. | Same meaning, same dialog, same controls, same flow — a reworded static label is not a new dialog, prompt, or step (SC-013). |
 | 6 | `src/gramtrans/Lib/gate.py` | **New file** under shared code: the `ConfirmationGate` structural protocol, `AlwaysSatisfiedGate`, and the `FLEXTOOLS_FINISH_SUBTITLE` literal that exception 3 moves out of the wizard. | [contracts/host-shell.md](contracts/host-shell.md) §1 — the wizard's *default* gate must not reach into `gramtrans.standalone`, which the FR-016 import direction forbids outright. Exceptions 1, 2 and 3 all resolve `None` to this default, so it has to live where both `gramtrans.py` and `Lib/ui/selection_wizard.py` can already see it. | Nothing imports it until exceptions 1–3 land, and when they do it reproduces today's behaviour exactly: `confirm()` returns `True` with no dialog and no I/O, and `finish_page_subtitle()` returns the current `_PageFinish` string byte for byte. The module imports only `typing`. |
+
+### Amendment (2026-08-17, during T016/T018/T028)
+
+Two rows above were widened once implementation reached them. Both stay inside
+the already-enumerated files, and both keep the additive, keyword-only,
+defaulted shape:
+
+1. **`projects_root` has to be threaded, not just accepted.** Exception 4 makes
+   `RunContextStub.projects_root` injectable, but the shell never calls
+   `initialize_run` — `SelectionWizard.__init__` does. So the value has to
+   travel `MainFunction` → `_run_gui` → `SelectionWizard` → `initialize_run`,
+   exactly alongside `confirmation_gate`. Rows 1 and 2 now say so. The
+   alternative — a module-level default in `gt_api` set by the shell — was
+   rejected as hidden global state that both hosts would share.
+2. **T028 is a wording change in `api.py`, not a new render site.** The wizard
+   already shows `str(e)` for `SameProjectError` and `TargetUnavailable`. FR-028
+   and FR-029 ask for plain language naming the project; the smallest way to get
+   it is to write the exception text in plain language at the raise site. It is
+   *not* imported from `gramtrans.standalone.errors`, because FR-016 forbids
+   shared code depending on the shell — the shell keeps its own copies, which
+   additionally carry the log-file path this layer cannot know.
 
 Explicitly **not** changed, and each is a deliberate finding rather than an
 oversight:
