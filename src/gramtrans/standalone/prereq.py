@@ -191,6 +191,7 @@ def _fieldworks_checks() -> List[PrerequisiteCheck]:
         ))
         for name, expected in (
             ("Language-model runtime", "initialises without error"),
+            ("Projects enumerated", "at least one FieldWorks project"),
             ("FieldWorks version", "a supported major version"),
             ("FieldWorks code location", "an existing directory"),
             ("FieldWorks projects location", "an existing directory"),
@@ -225,6 +226,7 @@ def _fieldworks_checks() -> List[PrerequisiteCheck]:
             ),
         ))
         for name, expected in (
+            ("Projects enumerated", "at least one FieldWorks project"),
             ("FieldWorks version", "a supported major version"),
             ("FieldWorks code location", "an existing directory"),
             ("FieldWorks projects location", "an existing directory"),
@@ -246,6 +248,7 @@ def _fieldworks_checks() -> List[PrerequisiteCheck]:
         verdict=Verdict.PASS,
     ))
 
+    checks.append(_check_projects_enumerated(flexicon))
     checks.append(_check_version(fwglobals))
     checks.append(_check_directory(
         fwglobals, "FieldWorks code location", fwglobals.code_dir,
@@ -260,6 +263,47 @@ def _fieldworks_checks() -> List[PrerequisiteCheck]:
         "folder, or restore it if it was moved or deleted.",
     ))
     return checks
+
+
+def _check_projects_enumerated(flexicon) -> PrerequisiteCheck:
+    """Can we actually list projects? (smoke check 3, FR-048)
+
+    Distinct from "the projects directory exists": this exercises the whole
+    LCM path — `AllProjectNames()` goes through `FwDirectoryFinder`, which
+    means assemblies loaded, CLR alive, and FieldWorks' own idea of where
+    projects live. It is the cheapest end-to-end proof that the runtime works,
+    and inside a frozen bundle it is the check that catches a hook that failed
+    to collect a native DLL.
+
+    Zero projects is `UNKNOWN`, not `FAIL`: a machine with FieldWorks and no
+    projects yet is unusual but not broken, and the remedy is not GramTrans's
+    to give.
+    """
+    try:
+        names = list(flexicon.AllProjectNames())
+    except Exception as exc:  # noqa: BLE001
+        return PrerequisiteCheck(
+            name="Projects enumerated",
+            detected=f"could not list projects ({type(exc).__name__}: {exc})",
+            expected="at least one FieldWorks project",
+            verdict=Verdict.FAIL,
+            remedy=(
+                "GramTrans could reach FieldWorks but not its project list. "
+                "Open FieldWorks Language Explorer once, then try again; send "
+                "this report and the log file if it does not help."
+            ),
+        )
+    if not names:
+        return PrerequisiteCheck(
+            name="Projects enumerated",
+            detected="0",
+            expected="at least one FieldWorks project",
+            verdict=Verdict.UNKNOWN,
+        )
+    return PrerequisiteCheck(
+        name="Projects enumerated", detected=str(len(names)),
+        expected="at least one FieldWorks project", verdict=Verdict.PASS,
+    )
 
 
 def _check_version(fwglobals) -> PrerequisiteCheck:

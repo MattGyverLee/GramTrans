@@ -1,20 +1,27 @@
 """Entry point: ``python -m gramtrans.standalone`` / ``GramTrans.exe``.
 
-Argument handling proper is T050 (`contracts/cli-and-selfcheck.md` §1); for now
-this accepts **no** arguments at all, and says so for anything it is given.
-That is not a placeholder — it is the requirement. FR-011 forbids a mode
-toggle, and "no headless transfer interface" rules out `--source`, `--target`,
-`--move` and `--preview`. The developer harness's `--source` / `--move`
-switches are deliberately not carried over: this host's write permission is a
-constant `True`, and the thing that decides whether a write happens is the
-confirmation gate, not the command line.
+`contracts/cli-and-selfcheck.md` §1.
 
-The flow is deliberately linear, and every exit goes through `release()`:
+    GramTrans.exe                 launch the application
+    GramTrans.exe --self-check    print the prerequisite report and exit
+    GramTrans.exe --version       print the stamped version and exit
 
-    prerequisites -> choose source -> hand to MainFunction -> release
+Those two flags are the **only** ones accepted, and that is a requirement
+rather than an omission. FR-011 forbids a mode toggle, so there is no
+read-only switch; "no headless transfer interface" rules out ``--source``,
+``--target``, ``--move`` and ``--preview``. The developer harness
+(`run_gui_harness.py`) has ``--source`` and ``--move`` switches and they are
+deliberately not carried over: this host's write permission is a constant
+``True``, and what decides whether a write happens is the confirmation gate,
+not the command line. A flag that could start a Move without a human present
+would route straight around the thing US2 exists to build.
 
-Exit codes (the subset T050 will complete): ``0`` normal, ``2`` invalid
-arguments.
+Anything else is an error naming the two valid flags — not silently ignored. A
+user who typed ``--preview`` needs to be told there is no such thing, not left
+believing the run they got was the run they asked for.
+
+Exit codes: ``0`` normal exit or self-check passed; ``1`` self-check failed, or
+a prerequisite stopped the application starting; ``2`` invalid arguments.
 """
 from __future__ import annotations
 
@@ -22,23 +29,78 @@ import sys
 from typing import List, Optional
 
 USAGE = (
-    "GramTrans takes no command-line arguments.\n"
-    "Run it with no arguments to start the application."
+    "Usage:\n"
+    "  GramTrans                 start the application\n"
+    "  GramTrans --self-check    print a diagnostic report and exit\n"
+    "  GramTrans --version       print the version and exit\n"
 )
+
+EXIT_OK = 0
+EXIT_FAILED = 1
+EXIT_BAD_ARGS = 2
 
 
 def main(argv: Optional[List[str]] = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
-    if argv:
-        # Wrong arguments are an error, not a silently ignored extra: a user
-        # who typed `--preview` needs to be told there is no such thing, not
-        # left believing the run they got was the run they asked for.
-        print(f"[ERROR] Unrecognised argument(s): {' '.join(argv)}", file=sys.stderr)
-        print(USAGE, file=sys.stderr)
-        return 2
 
-    return run_application()
+    if not argv:
+        return run_application()
 
+    if len(argv) == 1 and argv[0] == "--version":
+        return print_version()
+
+    if len(argv) == 1 and argv[0] == "--self-check":
+        return run_self_check()
+
+    print(f"[ERROR] Unrecognised argument(s): {' '.join(argv)}\n", file=sys.stderr)
+    print(USAGE, file=sys.stderr)
+    return EXIT_BAD_ARGS
+
+
+# ---------------------------------------------------------------------------
+# --version
+# ---------------------------------------------------------------------------
+
+def print_version() -> int:
+    """FR-049. Reads the stamped `_buildinfo`, falling back on a source checkout."""
+    from gramtrans.standalone.prereq import _app_version
+
+    print(f"GramTrans {_app_version()}")
+    return EXIT_OK
+
+
+# ---------------------------------------------------------------------------
+# --self-check
+# ---------------------------------------------------------------------------
+
+def run_self_check() -> int:
+    """Print the block and exit `0` PASS / `1` FAIL.
+
+    Creates a real `LogSink` first, so the block reports the log location the
+    application would actually use — and so the self-check itself is logged.
+    A diagnostic that leaves no trace of having been run is one less thing a
+    support conversation can rely on.
+    """
+    from gramtrans.standalone import selfcheck
+    from gramtrans.standalone.logsink import LogSink, make_run_id
+
+    run_id, _started = make_run_id()
+    sink = LogSink(run_id)
+    try:
+        text, report = selfcheck.produce(
+            log_path=sink.log_path, log_error=sink.file_error
+        )
+        print(text)
+        for line in text.splitlines():
+            sink.Info(line)
+        return EXIT_OK if report.overall.value == "PASS" else EXIT_FAILED
+    finally:
+        sink.close()
+
+
+# ---------------------------------------------------------------------------
+# The application
+# ---------------------------------------------------------------------------
 
 def run_application() -> int:
     from gramtrans.standalone.app import HostSession, StartupError
@@ -49,7 +111,7 @@ def run_application() -> int:
             app = session.start()
         except StartupError as exc:
             _show_fatal(exc.message)
-            return 1
+            return EXIT_FAILED
 
         from PyQt6 import QtWidgets
 
@@ -57,6 +119,14 @@ def run_application() -> int:
             SourcePickerDialog,
             enumerate_projects,
         )
+        from gramtrans.standalone.window import GramTransWindow
+
+        # The window opens before the source is chosen, so the report view and
+        # the Help menu exist for the whole session -- including while the
+        # modal wizard is up, and after it closes.
+        window = GramTransWindow(session)
+        window.show()
+        app.processEvents()
 
         try:
             names = enumerate_projects()
@@ -64,24 +134,25 @@ def run_application() -> int:
             from gramtrans.standalone import errors
 
             _show_fatal(errors.describe_startup_failure(exc, session.log_path))
-            return 1
+            return EXIT_FAILED
 
-        picker = SourcePickerDialog(names)
+        picker = SourcePickerDialog(names, parent=window)
         if picker.exec() != QtWidgets.QDialog.DialogCode.Accepted:
             # Cancel is a normal exit -- and still goes through release().
-            return 0
+            return EXIT_OK
 
         chosen = picker.selected_project_name()
         if chosen is None:
-            return 0
+            return EXIT_OK
 
         try:
             session.bind_source(chosen)
         except StartupError as exc:
             _show_fatal(exc.message)
-            return 1
+            return EXIT_FAILED
 
         session.run()
+        window.refresh()
 
         # FR-026: if the user confirmed a Move and the run reported an error,
         # say plainly that the target may be partially modified and how to
@@ -91,8 +162,10 @@ def run_application() -> int:
         if partial:
             _show_fatal(partial)
 
-        _ = app
-        return 0
+        # The window stays up after the run so the report is still readable
+        # (FR-009). Closing it ends the session, and the `finally` releases.
+        app.exec()
+        return EXIT_OK
     finally:
         # FR-013 / SC-005: normal close, cancel, error and failed run all
         # release both projects. This `finally` is the single place that is

@@ -46,12 +46,29 @@ _BANNED_NAMES = frozenset(
 )
 
 
+#: Directories under a scanned root that are not ours to police.
+#:
+#: `build/` is a tracked source tree AND the place PyInstaller writes its
+#: throwaway venv and output. Once a build has run, `build/.venv-build/Lib/
+#: site-packages/` holds flexicon, flexlibs and flextoolslib — which read the
+#: FieldWorks globals directly, because that is their job. Scanning them turned
+#: the ban into seven failures about other people's code. The rule is about
+#: **our** modules; generated and vendored trees are excluded by name.
+_NOT_OURS = {"__pycache__", ".venv-build", "dist", "site-packages"}
+
+
 def _python_files():
     seen = []
     for root in _SCANNED_ROOTS:
         if root.is_dir():
             seen.extend(sorted(root.rglob("*.py")))
-    return [p for p in seen if "__pycache__" not in p.parts]
+    return [
+        p for p in seen
+        if not (_NOT_OURS & set(p.parts))
+        # `build/build/` is PyInstaller's work directory; the repo's own
+        # sources never sit two `build` levels deep.
+        and p.parts.count("build") < 2
+    ]
 
 
 def _rel(path: Path) -> str:
