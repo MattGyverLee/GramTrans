@@ -474,15 +474,35 @@ def bind_target(stub: RunContextStub, choice: TargetCandidate) -> RunContext:
 
     target = FLExProject()
     try:
-        target.OpenProject(projectName=choice.project_name, writeEnabled=True)
+        # `undoable=False` is passed EXPLICITLY and is load-bearing: it selects
+        # flexicon's "Phase 1" open, where OpenProject holds one session-long
+        # NonUndoableTask that every GramTrans write rides on, and which
+        # `_persist_without_close`'s End -> Save -> Begin triplet is built
+        # around. flexicon 4.4.0 flipped this default to `undoable=True`
+        # ("Phase 2": no session envelope, each UndoableOperation opens its
+        # own task), which silently broke that contract -- OpenProject then
+        # never opens the envelope, so EndNonUndoableTask() raises "Cannot end
+        # task that has not been started" on the first checkpoint and the run
+        # dies. Do NOT drop this argument to "take the default"; adopting
+        # Phase 2 means restructuring every write into an UndoableOperation.
+        try:
+            target.OpenProject(
+                projectName=choice.project_name, writeEnabled=True,
+                undoable=False)
+        except TypeError:
+            # flexicon predating the `undoable=` parameter: its only mode IS
+            # Phase 1, so the plain call already gives us what we asked for.
+            target.OpenProject(
+                projectName=choice.project_name, writeEnabled=True)
     except Exception as exc:  # noqa: BLE001 — LCM raises a variety of types
         raise TargetUnavailable(
             f"Target {choice.project_name!r} is unavailable: {exc!s}"
         ) from exc
 
-    # Persist diagnostics: the target is opened writeEnabled=True but with NO
-    # `undoable=` argument, so flexicon's default (undoable=False) applies. A
-    # non-undoable open changes how/whether CloseProject persists writes.
+    # Persist diagnostics: the target is opened writeEnabled=True with an
+    # EXPLICIT undoable=False (see above -- never rely on flexicon's default,
+    # which flipped in 4.4.0). A non-undoable open changes how/whether
+    # CloseProject persists writes.
     _log.debug(
         "bind_target: opened %r writeEnabled=True, undoable=<default False> "
         "(no undoable= arg passed); handle id=%s",
