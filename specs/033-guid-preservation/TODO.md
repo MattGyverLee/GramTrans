@@ -37,6 +37,19 @@ Commit `d8576e0` covers the GramTrans half of the above.
 
 ---
 
+## ✅ AUDIT FULLY PASSES (2026-08-15, after Option A `8cad0d7`)
+
+**0 minted GUIDs across all 26 object-creating classes; audit exits [PASS].**
+`Segment` — the last offender — now preserves 101/101. Run with the editable
+flexicon and **no `PYTHONPATH` shadow**, so it also confirms a normal run
+resolves the right flexicon. Text fidelity verified unchanged by A/B (see the
+separate whitespace finding below, which is pre-existing and not 033's).
+
+The section below records the intermediate run that still had `Segment`
+outstanding; kept for the before/after trail.
+
+---
+
 ## AUDIT RE-RUN — DONE 2026-08-15. One offender left: `Segment`.
 
 Ran `debug/audit_guid_preservation.py` (Ejagham Mini -> restored Target,
@@ -130,6 +143,34 @@ Offenders 8 -> 2, minted 1019 -> 225. Re-measure before trusting any of it.
 
 ---
 
+## NEW FINDING — paragraph trailing whitespace is silently stripped (NOT 033)
+
+Found by `debug/check_text_fidelity.py` while proving Option A did not disturb
+the text. **Pre-existing and unrelated to 033** — proven by A/B: the Option A
+and non-Option-A targets score IDENTICALLY (60 paragraphs identical / 44
+differing, 45 segment baselines identical / 41 differing, 3 count mismatches).
+
+Every difference is lost trailing whitespace: source `'ká '` → target `'ká'`.
+**Root cause is upstream in flexicon**, `ParagraphOperations.Create:170`:
+
+```python
+content_str = content.strip() if isinstance(content, str) else str(content)
+...
+para.Contents = TsStringUtils.MakeString(content_str, wsHandle)
+```
+
+An interactive-API convenience applied to faithful reproduction — the same
+family as the `FP_ParameterError("Content cannot be empty")` guard GramTrans
+already works around via `_raw_create_blank_paragraph`.
+
+- [ ] File a flexicon issue: `Create` should not strip when reproducing
+      (an opt-out kwarg, or no strip at all with the empty-check done on a
+      stripped COPY).
+- [ ] GramTrans side: until upstream changes, either route paragraph creation
+      through the raw path that sets `Contents` verbatim, **or** emit a
+      `DroppedItemRecord` — right now the loss is SILENT, which breaches the
+      same never-silent contract 033 exists to enforce.
+
 ## OPEN ITEMS
 
 - [x] **`Segment` GUIDs (101 minted) — no longer SILENT.** Option B done,
@@ -146,21 +187,19 @@ Offenders 8 -> 2, minted 1019 -> 225. Re-measure before trusting any of it.
       and full-copy stress test read. The helper stays silent when GUIDs WERE
       preserved, so it will not cry wolf once/if Option A lands.
 
-- [ ] **Option A — create-segments-first (OPEN, unattempted).** Build the
-      paragraph EMPTY and `AppendSentence(text, guid=source_guid)` per source
-      segment so `Contents` accumulates, instead of setting `Contents`
-      wholesale and letting LCM slice it.
-      **Trap for whoever takes this:** segments are offset ranges INTO
-      `Contents`, not text containers of their own, so the naive "set
-      `Contents`, `Delete()` the auto-segments, re-append" would very likely
-      DOUBLE the paragraph text. The API surface exists
-      (`SegmentOperations.Delete` / `AppendSentence(guid=)` /
-      `ReparseParagraph` / `ValidateSegments`), but this needs a **live spike**
-      before it is trusted: `AppendSentence` may itself re-trigger parsing, a
-      later `ReparseParagraph` could re-mint, and the pass must stay ahead of
-      analysis wiring. It sits on the path that just went green
-      (143 analyses / 231 glosses / 283 bundles all preserving), so it was
-      deliberately not bundled with B.
+- [x] **Option A — DONE and LIVE-PROVEN**, commit `8cad0d7`. Segment now
+      preserves **101/101**; the whole audit reports **0 minted** across 26
+      object-creating classes (**[PASS]**, exit 0).
+      Mechanism: keep setting `Contents` wholesale, then re-create each
+      auto-created segment **at its own existing offset** via
+      `ISegmentFactory.Create(owner, initialOffset, cache, guid)`.
+      Two dead ends, documented in-code so they are not re-attempted:
+      **`AppendSentence` auto-inserts a `". "` terminator** (and strips its
+      input), so building a paragraph that way fabricates punctuation absent
+      from the source; and **`ISegment.BeginOffset` is READ-ONLY**, so a
+      segment cannot be repositioned after creation — positioning must happen
+      at construction, which is why the 4-arg overload is the only route.
+      A/B tripwire: stashing the change reproduces `minted=101` exactly.
 - [ ] **`MoStemAllomorph` untested.** Audit shows `new=0 / missing=187` because
       STEMS is excluded from `build_full_selection()`. It routes through the same
       `_mk` helper that was fixed, so it *should* inherit the fix — unproven.
