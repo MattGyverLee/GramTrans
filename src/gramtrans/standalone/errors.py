@@ -34,6 +34,7 @@ __all__ = [
     "project_cannot_be_opened",
     "migration_required",
     "same_project",
+    "move_failed_partway",
     "no_projects_found",
     "describe_startup_failure",
 ]
@@ -173,6 +174,43 @@ def same_project(project_name: str, log_path: Optional[str] = None) -> str:
         "two different projects. Choose a different target.",
         log_path,
     )
+
+
+def move_failed_partway(
+    target_project_name: str, run_id: str, log_path: Optional[str] = None,
+    detail: str = "",
+) -> str:
+    """FR-026 — a Move that raised partway. Three facts, no false comfort.
+
+    `contracts/cli-and-selfcheck.md` §5. It states that the target **may be**
+    partially modified (not "was" — we do not know how far the write got, and
+    claiming precision we do not have is worse than admitting the uncertainty),
+    names the `run_id` as the tag to search for in FLEx's Import Residue, and
+    gives the log path.
+
+    It MUST NOT offer, imply, or document a rollback (FR-027). There is no
+    rollback: a partial LCM write set cannot be reversed from outside the
+    session that made it, and the closest thing to one — telling the user to
+    restore their backup — is already covered by the gate's warning. The
+    residue tag is what makes the damage *findable*, which is the honest thing
+    this host can offer.
+    """
+    body = (
+        f"The Move into {target_project_name!r} stopped before it finished.\n\n"
+        "The target project may be partially modified. GramTrans cannot undo "
+        "what was already written.\n\n"
+        "Everything this run created is tagged with:\n"
+        f"    {run_id}\n"
+        "Search for that tag in FieldWorks Language Explorer (it appears in "
+        "the Import Residue field, and in the Description of objects that have "
+        "one) to see exactly what was added.\n\n"
+        "If you made a backup before starting, restoring it is the cleanest "
+        "way back. If the project uses Send/Receive, deleting your local copy "
+        "and receiving it again will also return it to its pre-run state."
+    )
+    if detail:
+        body += f"\n\nWhat went wrong: {detail}"
+    return _with_log(body, log_path)
 
 
 def no_projects_found(projects_root: str, log_path: Optional[str] = None) -> str:

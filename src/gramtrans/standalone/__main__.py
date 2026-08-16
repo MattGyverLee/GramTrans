@@ -82,6 +82,15 @@ def run_application() -> int:
             return 1
 
         session.run()
+
+        # FR-026: if the user confirmed a Move and the run reported an error,
+        # say plainly that the target may be partially modified and how to
+        # find what was written. Shown after the wizard closes, because until
+        # then the user is still looking at the run.
+        partial = session.partial_failure_message()
+        if partial:
+            _show_fatal(partial)
+
         _ = app
         return 0
     finally:

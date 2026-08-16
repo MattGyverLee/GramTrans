@@ -85,6 +85,7 @@ class HostSession:
         self.source_project_name = ""
         self._flexicon = None
         self._qapp = None
+        self._confirmation_gate = None
 
     # -- properties --------------------------------------------------------
 
@@ -295,13 +296,59 @@ class HostSession:
             raise
 
     def _gate(self):
-        """The host's confirmation gate.
+        """The host's confirmation gate — the first call site that supplies one.
 
-        `None` until T033/T036 land, which resolves to the always-satisfied
-        default — correct for Preview, and Move stays behind the wizard's
-        existing dry-run requirement in the meantime.
+        Built lazily and kept, so `gate.last_decision` is readable after the
+        run: "the Move happened" and "the user confirmed it" then have separate
+        evidence in the log, which is what a partial-failure report (FR-026)
+        needs to be trustworthy.
         """
-        return None
+        if self._confirmation_gate is None:
+            from gramtrans.standalone.gate import StandaloneConfirmationGate
+
+            self._confirmation_gate = StandaloneConfirmationGate()
+        return self._confirmation_gate
+
+    @property
+    def gate(self):
+        return self._confirmation_gate
+
+    # -- FR-026 ------------------------------------------------------------
+
+    def partial_failure_message(self) -> Optional[str]:
+        """The FR-026 message, or `None` if this run does not warrant one.
+
+        Warranted when **both**: the user confirmed a Move through the gate,
+        and the run reported an error. Neither alone is enough — a confirmed
+        Move that succeeded needs no warning, and an error on a Preview cannot
+        have modified anything.
+
+        This is an inference rather than a caught exception, and deliberately
+        so. The write happens inside the wizard, and `MainFunction` funnels any
+        exception into `report.Error(...)` by design — reaching in to intercept
+        it would mean the shell re-implementing the host boundary that FR-015
+        forbids it to fork. Inference is also why the message says the target
+        "may be" partially modified: that is genuinely all we know, and
+        claiming more precision than we have is the failure mode to avoid here.
+        """
+        from gramtrans.standalone import errors
+
+        gate = self._confirmation_gate
+        if gate is None or getattr(gate, "last_decision", None) is not True:
+            return None
+        if not any(line.startswith("[ERROR]") for line in self.report_sink.lines()):
+            return None
+        return errors.move_failed_partway(
+            self._confirmed_target or "the target project",
+            self.run_id,
+            self.log_path,
+        )
+
+    @property
+    def _confirmed_target(self) -> str:
+        """The project name the user typed into the gate, if any."""
+        gate = self._confirmation_gate
+        return getattr(gate, "last_target_name", "") if gate else ""
 
     # -- release (FR-013, SC-005) -----------------------------------------
 

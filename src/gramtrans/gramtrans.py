@@ -246,6 +246,7 @@ def _run_gui(project, report, modifyAllowed, QtWidgets, *,
         modifyAllowed,
         source_project_name=source_name,
         projects_root=projects_root,
+        confirmation_gate=gate,
     )
     try:
         wizard.exec()

@@ -162,6 +162,56 @@ def test_selection_wizard_keeps_its_parameter_order_and_names():
     assert root.default == ""
 
 
+def test_the_finish_page_subtitle_is_unchanged_for_flextools():
+    """T035 / exception 3, SC-013 — the page still reads exactly as it did.
+
+    The subtitle became gate-supplied so the standalone could stop claiming a
+    Move is undoable. Under FlexTools the claim is true, so the page must be
+    byte-identical to what it was before the indirection existed. Constructed
+    with no gate, which is what `SelectionWizard` does for FlexTools.
+    """
+    pytest.importorskip("PyQt6")
+    import os
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PyQt6 import QtWidgets
+
+    from gramtrans.Lib.ui import selection_wizard as sw
+
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    _ = app
+
+    page = sw._PageFinish(report_sink=None, modify_allowed=True)
+    assert page.subTitle() == (
+        "Click 'Execute Move' to write all planned actions to the target project. "
+        "This is the only write point -- changes can be undone in FLEx with Ctrl+Z."
+    )
+
+
+def test_the_finish_page_takes_its_subtitle_from_the_gate():
+    """The indirection is real, not a literal that happens to match."""
+    pytest.importorskip("PyQt6")
+    import os
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PyQt6 import QtWidgets
+
+    from gramtrans.Lib.ui import selection_wizard as sw
+
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    _ = app
+
+    class _Gate:
+        def confirm(self, target_project_name):
+            return True
+
+        def finish_page_subtitle(self):
+            return "SUPPLIED BY THE HOST"
+
+    page = sw._PageFinish(None, True, confirmation_gate=_Gate())
+    assert page.subTitle() == "SUPPLIED BY THE HOST"
+
+
 def test_default_source_project_and_headless_fallback_still_exist():
     """Exception list, "Explicitly not changed": these stay put.
 

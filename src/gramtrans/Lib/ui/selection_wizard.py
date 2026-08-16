@@ -120,6 +120,11 @@ else:
     from report import RunReport  # type: ignore
     from ws_mapping import closest_ws_defaults  # type: ignore
 
+if __package__:
+    from ..gate import resolve_gate as _resolve_gate
+else:
+    from gate import resolve_gate as _resolve_gate  # type: ignore
+
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -4465,18 +4470,23 @@ class _PageFinish(QtWidgets.QWizardPage):
     4. Shows the RunReport (MOVE) in the StatsPanel.
     """
 
-    def __init__(self, report_sink, modify_allowed: bool, parent=None):
+    def __init__(self, report_sink, modify_allowed: bool, parent=None,
+                 confirmation_gate=None):
         super().__init__(parent)
         self._report_sink = report_sink
         self._modify_allowed = modify_allowed
         self._move_done = False
-        # DR-1: cached plan is the sole freshness gate for the dry-run flow.
-        self._cached_plan = None
+        # Feature 034 exceptions 2 and 3. The gate answers two questions for
+        # this page: what the subtitle says about reversibility, and whether a
+        # Move may proceed. `None` resolves to the FlexTools default, whose
+        # subtitle is byte-identical to the literal that used to be inline
+        # here and whose confirm() returns True with no UI (SC-013).
+        self._gate = _resolve_gate(confirmation_gate)
         self.setTitle("Step 10 of 10: Finish / Move")
-        self.setSubTitle(
-            "Click 'Execute Move' to write all planned actions to the target project. "
-            "This is the only write point -- changes can be undone in FLEx with Ctrl+Z."
-        )
+        # Exception 3: gate-supplied, because "changes can be undone in FLEx
+        # with Ctrl+Z" is true under FlexTools and false in the standalone,
+        # and FR-027 forbids the application claiming otherwise.
+        self.setSubTitle(self._gate.finish_page_subtitle())
         self._build_ui()
         # DR-1: Move starts disabled unconditionally; enabled only after dry run.
         self._move_btn.setEnabled(False)
@@ -4604,6 +4614,20 @@ class _PageFinish(QtWidgets.QWizardPage):
             if answer != QtWidgets.QMessageBox.StandardButton.Yes:
                 return  # User cancelled -- no write occurs.
 
+        # Feature 034 exception 2 (FR-017, FR-024): the host's confirmation
+        # gate, consulted ONCE, immediately before the write and after the
+        # EXCLUDED-LOSSY dialog -- so a user who backs out of that one is
+        # never asked to type a project name they have already decided not to
+        # write to. Under FlexTools this returns True with no UI, so the
+        # sequence here is unchanged. A False return aborts with no write and
+        # leaves the wizard and every selection intact (FR-025).
+        #
+        # Preview never reaches this line: it is on the Move path only, which
+        # is what FR-024 requires.
+        target_name = getattr(context, "target_project_name", "") or ""
+        if not self._gate.confirm(target_name):
+            return  # Gate refused -- no write occurs.
+
         try:
             report = gt_api.execute_move(context, plan)
         except gt_api.PreviewStale as e:
@@ -4640,6 +4664,13 @@ class SelectionWizard(QtWidgets.QWizard):
             call is unchanged and `list_target_candidates` keeps its historical
             C:\\ProgramData\\SIL\\FieldWorks\\Projects default. The standalone
             passes the location FieldWorks itself records.
+        confirmation_gate: feature 034 exceptions 2 and 3 (FR-017) -- the
+            host's answer to "may I write?", consulted once by `_PageFinish`
+            immediately before `gt_api.execute_move` and never on the Preview
+            path. Also supplies the Finish page's subtitle, because whether a
+            Move can be undone is a fact about the host, not about the wizard.
+            `None` resolves to `Lib/gate.AlwaysSatisfiedGate`: True with no UI,
+            and today's subtitle byte for byte (SC-013).
     """
 
     def __init__(
@@ -4651,6 +4682,7 @@ class SelectionWizard(QtWidgets.QWizard):
         source_project_name: str,
         parent: Optional[QtWidgets.QWidget] = None,
         projects_root: str = "",
+        confirmation_gate=None,
     ) -> None:
         super().__init__(parent)
         self._host = host_project
@@ -4708,7 +4740,9 @@ class SelectionWizard(QtWidgets.QWizard):
         self._page_rules = _PageRules()
         self._page_texts = _PageTexts()        # Feature 026 texts-wordforms
         self._page_preview = _PagePreview()
-        self._page_finish = _PageFinish(report_sink, modify_allowed)
+        self._page_finish = _PageFinish(
+            report_sink, modify_allowed, confirmation_gate=confirmation_gate
+        )
 
         self.addPage(self._page_project_ws)    # index 0
         self.addPage(self._page_custom_fields) # index 1
