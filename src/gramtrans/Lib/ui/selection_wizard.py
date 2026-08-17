@@ -386,15 +386,14 @@ class _PageProjectWS(QtWidgets.QWizardPage):
         scroll.setWidget(scroll_container)
         layout.addWidget(scroll, 1)
 
-        note = QtWidgets.QLabel(
-            "[NOTE] Writing-system choice is made ONCE here, project-level.\n"
-            "The per-category WS handshake from earlier phases is retired.\n"
-            "Vernacular is lead: analysis rows with the same WS tag default to "
-            "the vernacular choice and are independently overridable.",
-            self,
-        )
-        note.setWordWrap(True)
-        layout.addWidget(note)
+        # No developer note under the tables. What used to be here -- that the
+        # WS choice is project-level and made once, that the per-category
+        # handshake is retired, and that vernacular leads its same-tag analysis
+        # row -- is design commentary addressed to whoever maintains this page.
+        # Two of the three describe a *previous* design a user never saw, and
+        # the third describes behaviour the linked rows already demonstrate.
+        # It lives in this class's docstring instead, which is where a
+        # maintainer looks and a linguist does not.
 
     def _make_ws_table(self, parent) -> "QtWidgets.QTableWidget":
         """Create a QTableWidget with columns: Source WS | Choice | Target WS."""
