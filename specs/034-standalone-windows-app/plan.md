@@ -108,7 +108,7 @@ beyond those enumerated here.
 
 FR-020 requires every unavoidable change to shared code to be enumerated and
 individually justified here; SC-014 makes an unlisted change a defect. This list
-is the complete set. All six are additive or textual, and none alters a
+is the complete set. All ten are additive or textual, and none alters a
 FlexTools code path's behaviour.
 
 | # | File | Change | Justification | Why FlexTools is unaffected |
@@ -119,6 +119,10 @@ FlexTools code path's behaviour.
 | 4 | `src/gramtrans/Lib/api.py` | Add optional `projects_root: str = ""` to `RunContextStub` and an optional `projects_root` kwarg to `initialize_run`; `list_target_candidates` uses `stub.projects_root or <existing literal default>`. **Plus**: reword the `SameProjectError` and `TargetUnavailable` message text from developer notation to the plain-language FR-028/FR-029 wording. | FR-001: the projects location must come from what FieldWorks records, not a hard-coded path. FR-028/FR-029: the wizard shows these strings to the user verbatim, and "Phase 0 refuses to run (FR-019)" is not a sentence any user can act on. | The FlexTools path never passes `projects_root`, so the existing `C:\ProgramData\SIL\FieldWorks\Projects` default still applies — identical candidate list. The exception *types* and the conditions that raise them are unchanged; only the human-readable text differs, which is the same class of change as exception 5. |
 | 5 | `src/gramtrans/Lib/ui/target_picker.py` | Reword one label: "The current FlexTools project is always the SOURCE (read-only)" → "The project chosen as SOURCE is opened read-only." | The current wording is false in the standalone and would confuse a user who has never installed FlexTools. | Same meaning, same dialog, same controls, same flow — a reworded static label is not a new dialog, prompt, or step (SC-013). |
 | 6 | `src/gramtrans/Lib/gate.py` | **New file** under shared code: the `ConfirmationGate` structural protocol, `AlwaysSatisfiedGate`, and the `FLEXTOOLS_FINISH_SUBTITLE` literal that exception 3 moves out of the wizard. | [contracts/host-shell.md](contracts/host-shell.md) §1 — the wizard's *default* gate must not reach into `gramtrans.standalone`, which the FR-016 import direction forbids outright. Exceptions 1, 2 and 3 all resolve `None` to this default, so it has to live where both `gramtrans.py` and `Lib/ui/selection_wizard.py` can already see it. | Nothing imports it until exceptions 1–3 land, and when they do it reproduces today's behaviour exactly: `confirm()` returns `True` with no dialog and no I/O, and `finish_page_subtitle()` returns the current `_PageFinish` string byte for byte. The module imports only `typing`. |
+| 7 | `src/gramtrans/gramtrans.py` | Add keyword-only `source_binder=None` to `MainFunction`, pass it through `_run_gui` into `SelectionWizard`. `_run_gui` tolerates `project is None` (no `ProjectName()` call, and it logs "source: chosen on step 1"); `MainFunction` reports plainly instead of entering the headless fallback when PyQt6 is missing *and* there is no open project to be the fallback's target. | FR-002 as amended (2026-08-17, below): the source chooser moves onto the wizard's step 1, so the host's *binder* — not an already-open handle — is what crosses the boundary. `MainFunction` is that boundary, exactly as for exception 1. | FlexTools passes three positional arguments and no `source_binder`; `project` is never `None`, so both new branches are unreachable and the wizard is constructed with the same arguments as before. |
+| 8 | `src/gramtrans/Lib/ui/selection_wizard.py` | Keyword-only `source_binder=None` on `SelectionWizard.__init__` and on `_PageProjectWS`. When it is not `None`: step 1's Source row grows a "Pick source project..." button mirroring the Target row's, the Target button starts disabled until a source exists, re-picking the source releases a bound target, and the page's subtitle names both choices. When it is `None`, none of that is built. | FR-002/FR-003 as amended: the two selectors must sit on the same step, in matching controls. Placing the choice here rather than before the wizard is the whole point — three windows opening at once (log window, chooser, wizard) is what this replaces. | The `None` default builds no button, opens no dialog, leaves the Target button enabled, and keeps the Source label ("… (open in FlexTools)") and the step-1 subtitle byte-identical — asserted in `tests/unit/test_034_step1_source_picker.py`. |
+| 9 | `src/gramtrans/Lib/api.py` | Add `SourceCandidate` and `list_source_candidates(projects_root, exclude_names, exclude_paths)`; factor the existing project walk and the path-identity comparison out of `list_target_candidates` into `_walk_flex_projects` / `_same_project_path`, and name the historical default root as `_DEFAULT_PROJECTS_ROOT`. | The source list has to obey the same rule as the target list — same definition of "a project", same root, same order — or the two pickers disagree about what exists. `exclude_*` is the other half of the same-project rule (a bound target must not be offered as a source). | `list_target_candidates` keeps its name, signature, default value and results; the helper it now calls is the code it already ran inline. `list_source_candidates` has no FlexTools caller — nothing constructs a `source_binder` there. |
+| 10 | `src/gramtrans/Lib/ui/source_picker.py` | **New file** under shared code: `SourcePickerDialog`, the twin of `target_picker.py` (same controls, same disabled-until-chosen rule, same `mark_unopenable` behaviour), carrying the FR-030 "close the target in FLEx, even for a Preview" guidance. Moved out of `gramtrans/standalone/source_picker.py`, which is deleted. | Step 1 is what opens it, and `Lib/ui/` may not import `gramtrans.standalone` (FR-016) — the same reason exception 6 puts `gate.py` under `Lib/`. Keeping it beside `target_picker.py` is also what keeps the two dialogs behaving identically. | Nothing on the FlexTools path constructs it: `_PageProjectWS` only reaches the import when a `source_binder` was supplied. It imports `PyQt6` and `..api` and nothing else. |
 
 ### Amendment (2026-08-17, during T016/T018/T028)
 
@@ -151,6 +155,35 @@ oversight:
 - No import-convention refactor anywhere (FR-018) — packaging absorbs the flat
   convention instead (research R6).
 - `pyproject.toml` dependency floors are untouched (FR-019/FR-041).
+
+### Amendment (2026-08-17, post-completion) — the source chooser moves to step 1
+
+Rows 7–10 were added after the feature was first marked complete, from live
+use: launching the application opened the log window, a modal source chooser
+and the wizard at once, and the modal read as a third window with no obvious
+relationship to the other two. The chooser is now the Source row of the
+wizard's step 1, beside the Target row that was always there.
+
+The shape this takes is the same one exceptions 1–3 already established, and
+deliberately so: the host supplies a *capability* (`source_binder`, alongside
+`confirmation_gate` and `projects_root`), the shared wizard decides when to ask,
+and `None` reproduces FlexTools byte for byte. The alternative — the shell
+driving the wizard's page 1 from outside — would need the shell to reach into
+`Lib/ui/`, which is the coupling FR-015 and FR-016 exist to prevent.
+
+Two consequences worth naming:
+
+1. **`gramtrans/standalone/source_picker.py` is deleted**, and its dialog moves
+   to `Lib/ui/source_picker.py` (row 10). It has to: `Lib/ui/` cannot import the
+   shell (FR-016), and the wizard is what opens the dialog now. What stays in
+   the shell is the half that is genuinely host-specific — `HostSession.bind_source`
+   opening the project read-only and `release()` closing it (FR-007/FR-013).
+2. **Source enumeration changes mechanism**, from `flexicon.AllProjectNames()`
+   to the same directory walk the target list has always used, rooted at the
+   `projects_root` the shell already derives from `FWProjectsDir`. FR-001 is
+   still met (the root comes from what FieldWorks records, not a hard-coded
+   path) and the two pickers can no longer disagree about which projects exist
+   — which they could before, having asked two different questions.
 
 ## Phasing
 

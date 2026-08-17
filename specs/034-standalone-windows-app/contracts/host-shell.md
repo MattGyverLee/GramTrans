@@ -50,30 +50,51 @@ must not reach into `gramtrans.standalone`.
 ## 2. `MainFunction` — unchanged for FlexTools, extended for the shell
 
 ```python
-def MainFunction(project, report, modifyAllowed, *, confirmation_gate=None): ...
+def MainFunction(project, report, modifyAllowed, *, confirmation_gate=None,
+                 projects_root="", source_binder=None): ...
 ```
 
 | Rule | |
 |---|---|
 | FlexTools calls | `MainFunction(project, report, modifyAllowed)` — three positional args, exactly as today. |
 | `confirmation_gate=None` | Resolves to `AlwaysSatisfiedGate()`. This is what makes FlexTools byte-identical (SC-013). |
-| The shell calls | `MainFunction(source_handle, report_sink, True, confirmation_gate=StandaloneConfirmationGate(...))`. |
-| Threading | `MainFunction` → `_run_gui` → `SelectionWizard(..., confirmation_gate=gate)` → `_PageFinish`. |
+| `source_binder=None` | The source is the host's open `project`, as today. |
+| The shell calls | `MainFunction(None, report_sink, True, confirmation_gate=StandaloneConfirmationGate(...), projects_root=..., source_binder=session.bind_source)` — `project` is `None` because nothing is open yet: step 1 asks. |
+| Threading | `MainFunction` → `_run_gui` → `SelectionWizard(..., confirmation_gate=gate, source_binder=binder)` → `_PageFinish` / `_PageProjectWS`. |
 | Not changed | The `docs` dict, the three positional parameter names, the no-interface fallback, `DEFAULT_SOURCE_PROJECT`, `_headless_phase0`. |
 
-## 3. `SelectionWizard` — one new keyword-only parameter
+## 3. `SelectionWizard` — new keyword-only parameters
 
 ```python
 SelectionWizard(
     host_project, report_sink, modify_allowed, *,
     source_project_name: str,
     parent=None,
-    confirmation_gate=None,      # NEW
+    projects_root="",            # NEW (exception 4)
+    confirmation_gate=None,      # NEW (exception 2)
+    source_binder=None,          # NEW (exception 8)
 )
 ```
 
-`None` → `AlwaysSatisfiedGate()`. Parameter order and every existing name are
-unchanged.
+`None` → `AlwaysSatisfiedGate()` and a host-supplied source respectively.
+Parameter order and every existing name are unchanged.
+
+### 3a. `source_binder` — who chooses, who opens, who closes
+
+```python
+source_binder: Callable[[str], object]     # project name -> open read-only handle
+```
+
+| Rule | |
+|---|---|
+| Who calls it | `_PageProjectWS._on_pick_source`, once per accepted choice. |
+| What it returns | An open, **read-only** `FLExProject` handle (FR-007). |
+| Who owns the handle | The **host**. It opened it, so it closes it — the shell's `release()` (FR-013). Re-binding closes the handle it replaces. |
+| On failure | Raise. The page shows a plain-language message naming the project (FR-034) and binds nothing; the rest of the list stays choosable. |
+| Enumeration | Not the binder's job. The page lists projects through `Lib/api.list_source_candidates(projects_root, exclude_names, exclude_paths)` — the same walk and the same root as the target list. |
+| Same project | The target list excludes the source (`list_target_candidates`); the source list excludes a bound target (`exclude_*`); `bind_target` refuses by name *and* by path as the backstop. |
+| Changing the source | Releases a bound target (`CloseProject()`) and clears the WS mapping, after asking. The mapping describes a pair; it cannot outlive either half. |
+| `run_id` | Survives a re-pick — it is stamped into every residue tag a Move writes. |
 
 ## 4. `Lib/api` — projects root becomes injectable
 
@@ -93,6 +114,14 @@ def initialize_run(host_handle, *, source_project_name, source_project_path="",
 def list_target_candidates(stub, projects_root=r"C:\ProgramData\SIL\FieldWorks\Projects"):
     root = stub.projects_root or projects_root
     ...
+
+# NEW (exception 9) -- the source half of the same question.
+@dataclass(frozen=True)
+class SourceCandidate:
+    project_name: str
+    project_path: str
+
+def list_source_candidates(projects_root="", exclude_names=(), exclude_paths=()): ...
 ```
 
 - The FlexTools path passes nothing → the existing literal default applies →
@@ -137,8 +166,10 @@ Run before any project is opened, in this order:
    A value that reads back `None` or empty here maps to FR-033, **never**
    FR-031. Version-unsupported (FR-032) is decided from `FWShortVersion`
    against `FW_SUPPORTED_VERSIONS` at this step.
-4. **Preview warning** — state on the source-picker screen, before selection,
-   that the target must be closed in FLEx *even for a Preview* (FR-030).
+4. **Preview warning** — state in the source picker, before selection, that the
+   target must be closed in FLEx *even for a Preview* (FR-030). The picker is
+   opened from the wizard's step 1, so this is the first thing the user reads
+   about either project.
 
 ## 7. Forbidden in the standalone
 
