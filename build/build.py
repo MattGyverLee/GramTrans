@@ -25,9 +25,9 @@ Seven ordered steps, and the order is the point:
    blocks that artifact, and a failing `portable` MUST NOT block the
    `installer` (SC-010).
 
-The build machine needs Python and git. Inno Setup (`ISCC.exe`) is needed for
-the installer; without it the onedir tree is still produced and the installer
-step reports why it was skipped.
+The build machine needs Python and git. Inno Setup (`ISCC.exe`, major 6 or 7 --
+whichever is installed, newest wins) is needed for the installer; without it the
+onedir tree is still produced and the installer step reports why it was skipped.
 """
 from __future__ import annotations
 
@@ -214,26 +214,57 @@ def freeze(targets: List[str]) -> None:
 # Installer (T044)
 # ---------------------------------------------------------------------------
 
+def _iscc_rank(exe: Path):
+    """Sort key for a discovered `ISCC.exe`: newer major wins, then 64-bit.
+
+    Directory names look like `Inno Setup 6` / `Inno Setup 7`. An unparsable
+    tail sorts last rather than crashing the build -- a compiler we cannot
+    rank is still better than no compiler at all.
+    """
+    tail = exe.parent.name.rsplit(" ", 1)[-1]
+    major = int(tail) if tail.isdigit() else -1
+    is_64bit = 0 if "(x86)" in str(exe) else 1
+    return (major, is_64bit)
+
+
 def find_iscc() -> Optional[str]:
+    """Locate the Inno Setup compiler: PATH first, then the default installs.
+
+    The install directory is versioned (`Inno Setup 6`, `Inno Setup 7`, ...)
+    and Inno Setup supports installing majors side by side, so the directories
+    are globbed rather than listed and the highest version wins. Hardcoding a
+    major is how this build quietly stops producing the SUPPORTED artifact the
+    day the build machine upgrades: `build_installer` only warns, so the run
+    still exits 0 with the installer missing.
+
+    Inno Setup does not put itself on PATH, so the PATH probe is really an
+    escape hatch for a build machine with a non-default install.
+    """
     found = shutil.which("ISCC") or shutil.which("iscc")
     if found:
         return found
-    for candidate in (
-        r"C:\Program Files (x86)\Inno Setup 6\ISCC.exe",
-        r"C:\Program Files\Inno Setup 6\ISCC.exe",
-    ):
-        if Path(candidate).is_file():
-            return candidate
-    return None
+    candidates = [
+        exe
+        for root in (r"C:\Program Files", r"C:\Program Files (x86)")
+        if Path(root).is_dir()
+        for exe in Path(root).glob("Inno Setup */ISCC.exe")
+        if exe.is_file()
+    ]
+    if not candidates:
+        return None
+    return str(max(candidates, key=_iscc_rank))
 
 
 def build_installer(info: Dict[str, str]) -> Optional[Path]:
     iscc = find_iscc()
     if iscc is None:
-        print("[WARN] Inno Setup (ISCC.exe) not found -- the onedir tree was "
-              "produced but the installer was not. The installer is the "
-              "SUPPORTED artifact, so a release build must have it.")
+        print(r"[WARN] Inno Setup (ISCC.exe) not found on PATH or under "
+              r"'C:\Program Files[ (x86)]\Inno Setup <n>\' -- the onedir tree "
+              "was produced but the installer was not. The installer is the "
+              "SUPPORTED artifact, so a release build must have it. Install "
+              "Inno Setup from https://jrsoftware.org/isdl.php.")
         return None
+    print(f"[INFO] Inno Setup compiler: {iscc}")
     run([iscc, f"/DAppVersion={info['version']}", f"/DRepoRoot={REPO_ROOT}",
          str(INSTALLER_ISS)], cwd=BUILD_DIR)
     produced = DIST / f"{APP_NAME}-Setup-{info['version']}.exe"

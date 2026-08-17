@@ -359,6 +359,55 @@ def _check_directory(fwglobals, name, reader, expected, remedy) -> PrerequisiteC
     )
 
 
+def _check_transfer_engine() -> PrerequisiteCheck:
+    """Import the shared transfer module — the one thing nothing else imports.
+
+    `HostSession.run()` imports `gramtrans.gramtrans` lazily, at the moment the
+    user leaves the source picker. So an import that fails only in a *bundle*
+    fails several clicks in, as an unhandled exception, long after the
+    self-check has said everything is fine.
+
+    That is not hypothetical. The first portable build crashed exactly here:
+    the module's `from flextoolslib import *` reaches
+    `flextoolslib.code.UIGlobal`, which constructs a .NET `System.Drawing.Icon`
+    from `Flextools.ico` at import time, and the packaging collected the
+    distribution metadata but not the data files. Every other check passed, and
+    the smoke test passed too, because nothing in either imports this module
+    inside the bundle — check 5 runs against the source tree, and checks 6-8
+    skip entirely for onefile.
+
+    Doing the import here is the cheapest fix for that whole class: it runs
+    inside the frozen artifact, on both targets, through the one diagnostic
+    that already has to pass.
+    """
+    expected = "gramtrans.gramtrans imports, and exposes MainFunction"
+    remedy = (
+        "GramTrans could not load its own transfer module, which normally "
+        "means this copy is incomplete. Reinstall GramTrans; do not copy "
+        "individual files between installations. If the FieldWorks check "
+        "above also failed, fix that first -- this check cannot pass without "
+        "FieldWorks. Include this whole block if you report it."
+    )
+    try:
+        from gramtrans.gramtrans import MainFunction
+    except Exception as exc:  # noqa: BLE001 — any import failure is the finding
+        return PrerequisiteCheck(
+            name="Transfer engine",
+            detected=f"{type(exc).__name__}: {exc}",
+            expected=expected, verdict=Verdict.FAIL, remedy=remedy,
+        )
+    if not callable(MainFunction):
+        return PrerequisiteCheck(
+            name="Transfer engine",
+            detected=f"MainFunction is {type(MainFunction).__name__}, not callable",
+            expected=expected, verdict=Verdict.FAIL, remedy=remedy,
+        )
+    return PrerequisiteCheck(
+        name="Transfer engine", detected="loaded; MainFunction present",
+        expected=expected, verdict=Verdict.PASS,
+    )
+
+
 def _check_components() -> PrerequisiteCheck:
     """What is actually installed, for comparison with `build/requirements.lock`.
 
@@ -416,6 +465,10 @@ def run_checks(log_path: str = "", log_error: Optional[str] = None,
 
     checks: List[PrerequisiteCheck] = [_check_ui_toolkit()]
     checks.extend(_fieldworks_checks())
+    # After the FieldWorks checks on purpose: importing the transfer module
+    # pulls in flexicon, so on a machine without FieldWorks it fails too.
+    # Rendered below them, the reader meets the cause before the consequence.
+    checks.append(_check_transfer_engine())
     checks.append(_check_components())
     checks.append(_check_log_location(log_path, log_error))
 

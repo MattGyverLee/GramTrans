@@ -48,7 +48,7 @@ HIDDEN = _hi.hidden_imports()
 # reporting "Bundled components: none found" on a perfectly good artifact.
 # Exactly the class of false negative FR-036 exists to prevent, and it is only
 # visible in a frozen build, which is why the smoke test asserts it (check 6).
-from PyInstaller.utils.hooks import copy_metadata  # noqa: E402
+from PyInstaller.utils.hooks import collect_data_files, copy_metadata  # noqa: E402
 
 METADATA = []
 for _dist in ("pyflexicon", "PyQt6", "PyQt6-Qt6", "pyqt6-sip", "pythonnet",
@@ -61,6 +61,35 @@ for _dist in ("pyflexicon", "PyQt6", "PyQt6-Qt6", "pyqt6-sip", "pythonnet",
         # component blocks the release. Failing the freeze on a metadata
         # lookup would hide the more useful, more specific smoke failure.
         print(f"[WARN] no metadata collected for {_dist}: {_exc}")
+
+# Package *data* files, which are a different thing from the metadata above and
+# are equally not collected by default. PyInstaller bundles `.py` modules; a
+# non-Python file sitting next to them is invisible to the analysis unless it
+# is asked for by name.
+#
+# This is not cosmetic. `flextoolslib/code/UIGlobal.py` does, at module scope:
+#
+#     ApplicationIcon = Icon(os.path.join(ICON_PATH0, "Flextools.ico"))
+#
+# -- a .NET `System.Drawing.Icon` constructed at *import* time. `gramtrans.py`
+# does `from flextoolslib import *` for the FlexTools host names (FR-021 keeps
+# that import exactly where it is), which reaches UIGlobal, which needs the
+# .ico to exist on disk. Unfrozen it always does, so this failure mode is
+# invisible outside a bundle: the first portable build raised
+# `Could not find a part of the path '...\_MEI...\flextoolslib\'` from a .NET
+# stack frame, which names neither PyInstaller nor the missing file.
+#
+# flexicon and flexlibs are collected for the same reason rather than a
+# demonstrated one -- both ship data files beside their modules, and the
+# failure they would produce is this same unreadable .NET traceback.
+PACKAGE_DATA = []
+for _pkg in ("flextoolslib", "flexicon", "flexlibs"):
+    try:
+        _found = collect_data_files(_pkg)
+        PACKAGE_DATA += _found
+        print(f"[INFO] collected {len(_found)} data files for {_pkg}")
+    except Exception as _exc:  # noqa: BLE001
+        print(f"[WARN] no data files collected for {_pkg}: {_exc}")
 
 # Which targets to emit. Parsed from PyInstaller's post-`--` argv so one spec
 # serves all three invocations without duplicating the Analysis.
@@ -75,7 +104,7 @@ a = Analysis(                                  # noqa: F821
     pathex=[str(SRC), str(SRC / "gramtrans" / "Lib"),
             str(SRC / "gramtrans" / "Lib" / "ui")],
     binaries=[],
-    datas=METADATA,
+    datas=METADATA + PACKAGE_DATA,
     hiddenimports=HIDDEN,
     hookspath=[],
     hooksconfig={},

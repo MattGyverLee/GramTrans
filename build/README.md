@@ -26,6 +26,21 @@ artifact; emit a per-artifact manifest.
 A build that cannot satisfy the install step **from the lock alone** fails.
 It never falls back to the build machine's environment (FR-042).
 
+## What the build machine needs
+
+Python 3.12 and git. [Inno Setup](https://jrsoftware.org/isdl.php) — **major 6
+or 7**, either edition — is needed for the installer, and a release build must
+have it, because the installer is the supported artifact.
+
+`build.py` finds `ISCC.exe` on `PATH` first, then globs
+`C:\Program Files[ (x86)]\Inno Setup <n>\ISCC.exe` and takes the highest major
+(64-bit edition preferred at equal major). Inno Setup supports installing 6 and
+7 side by side; if both are present, 7 is used. Without any of them the onedir
+tree is still produced, the installer is skipped with a `[WARN]`, and the run
+still exits 0 — so check the printed artifact table, not just the exit code.
+
+`--lock` additionally needs [`uv`](https://docs.astral.sh/uv/) on `PATH`.
+
 ## Files
 
 | File | Role |

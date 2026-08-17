@@ -166,11 +166,48 @@ def run_application() -> int:
         # (FR-009). Closing it ends the session, and the `finally` releases.
         app.exec()
         return EXIT_OK
+    except Exception as exc:  # noqa: BLE001 — the last-resort funnel
+        return _handle_unexpected(session, exc)
     finally:
         # FR-013 / SC-005: normal close, cancel, error and failed run all
         # release both projects. This `finally` is the single place that is
         # true for every one of them.
         session.release()
+
+
+def _handle_unexpected(session, exc: BaseException) -> int:
+    """Last resort: an unexpected exception must still reach the log.
+
+    Without this the exception escapes `main()` and is caught by PyInstaller's
+    bootloader, which shows its own "Failed to execute script '__main__'"
+    dialog carrying a raw traceback, and writes **nothing** to our log. That is
+    the worst available combination: `RELEASE-NOTES.md` tells the user to send
+    the log file when something breaks, and for this class of failure the log
+    would end at the last thing that went *right* -- which is precisely what
+    the first portable build did, stopping at "Session released." while the
+    real failure was a missing bundled data file.
+
+    So the traceback goes to the log, where support can read it, and the user
+    gets the same plain sentence every other failure gives them. The mapper is
+    reused rather than reimplemented: an unexpected exception is by definition
+    the case its fall-through branch already handles.
+    """
+    import traceback
+
+    from gramtrans.standalone import errors
+
+    detail = traceback.format_exc()
+    try:
+        session.report_sink.Error(
+            f"[GramTrans] Unhandled {type(exc).__name__}: {exc}"
+        )
+        for line in detail.rstrip().splitlines():
+            session.report_sink.Error(line)
+    except Exception:  # noqa: BLE001 — the dialog below is the part that matters
+        print(detail, file=sys.stderr)
+
+    _show_fatal(errors.describe_startup_failure(exc, session.log_path))
+    return EXIT_FAILED
 
 
 def _show_fatal(message: str) -> None:

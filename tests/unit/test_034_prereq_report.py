@@ -221,3 +221,99 @@ def test_a_passing_check_gets_no_remedy_line():
 
     text = render(PrerequisiteReport(checks=[_check("Fine")]))
     assert "remedy:" not in text
+
+
+# ---------------------------------------------------------------------------
+# The transfer-engine check — the packaging gap the smoke test cannot see
+# ---------------------------------------------------------------------------
+
+def _swap_entry_module(replacement):
+    """Put `replacement` at `gramtrans.gramtrans`, returning a restore callable.
+
+    Manipulating `sys.modules` rather than patching the check: the point is to
+    exercise the real `from gramtrans.gramtrans import MainFunction`, which is
+    the statement that failed in the bundle. A patched-out import would prove
+    only that the wrapper catches what we told it to raise.
+    """
+    import sys
+
+    key = "gramtrans.gramtrans"
+    original = sys.modules.get(key)
+
+    def restore():
+        if original is None:
+            sys.modules.pop(key, None)
+        else:
+            sys.modules[key] = original
+
+    if replacement is None:
+        sys.modules.pop(key, None)
+    else:
+        sys.modules[key] = replacement
+    return restore
+
+
+def test_the_transfer_engine_check_is_present_and_passes_on_this_machine():
+    """The regression guard for the first portable build's crash.
+
+    That build had a green self-check and a green smoke test, and still could
+    not reach its own wizard: nothing imported the shared entry module inside
+    the bundle. This check is what makes that condition visible, so its mere
+    presence in the report is the thing worth pinning.
+    """
+    report = run_checks(log_path="")
+    engine = next(
+        (c for c in report.checks if c.name == "Transfer engine"), None
+    )
+    assert engine is not None, (
+        "the self-check no longer imports the shared transfer module — the "
+        "packaging failure it exists to catch is invisible again"
+    )
+    assert engine.verdict is Verdict.PASS, engine.detected
+
+
+def test_the_transfer_engine_check_is_ordered_after_the_fieldworks_checks():
+    """Cause before consequence: importing the engine pulls in flexicon.
+
+    On a machine with no FieldWorks both fail, and a reader who meets the
+    engine failure first is sent to reinstall GramTrans over what is really a
+    missing prerequisite.
+    """
+    names = [c.name for c in run_checks(log_path="").checks]
+    assert "Transfer engine" in names and "FieldWorks installed" in names
+    assert names.index("FieldWorks installed") < names.index("Transfer engine")
+
+
+def test_a_broken_entry_module_fails_the_check_with_a_remedy():
+    """An import that raises — the shape of the missing-data-file bug."""
+    import types
+
+    module = types.ModuleType("gramtrans.gramtrans")  # no MainFunction
+    restore = _swap_entry_module(module)
+    try:
+        from gramtrans.standalone.prereq import _check_transfer_engine
+
+        check = _check_transfer_engine()
+        assert check.verdict is Verdict.FAIL
+        assert check.remedy.strip(), "FR-036: a FAIL must name a next step"
+        assert "MainFunction" in check.detected
+    finally:
+        restore()
+
+
+def test_a_non_callable_mainfunction_fails_rather_than_passing_quietly():
+    """Importable but wrong is still broken, and must not read as PASS."""
+    import types
+
+    module = types.ModuleType("gramtrans.gramtrans")
+    module.MainFunction = "not a function"
+    restore = _swap_entry_module(module)
+    try:
+        from gramtrans.standalone.prereq import _check_transfer_engine
+
+        check = _check_transfer_engine()
+        assert check.verdict is Verdict.FAIL
+        assert "not callable" in check.detected
+        assert check.remedy.strip()
+    finally:
+        restore()
