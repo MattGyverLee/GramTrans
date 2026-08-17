@@ -223,6 +223,8 @@ def scan_one(name: str) -> dict:
         "status": "error",
         "reason": "",
         "class_counts": {},
+        "writing_systems": {},
+        "nesting_depth": {},
         "n_classes": 0,
         "n_objects": 0,
         "open_seconds": None,
@@ -245,6 +247,28 @@ def scan_one(name: str) -> dict:
         proj.OpenProject(projectName=name, writeEnabled=False)
         result["open_seconds"] = round(time.time() - t0, 2)
 
+        # Writing-system breadth. Class counts are blind to this, and the
+        # sweep's WS-mapped fidelity requirement can only be exercised by a
+        # project carrying several -- so it is captured explicitly.
+        ws = {"total": None, "vernacular": None, "analysis": None,
+              "tags": [], "error": ""}
+        try:
+            wso = proj.WritingSystems
+            allws = list(wso.GetAll() or [])
+            ws["total"] = len(allws)
+            ws["vernacular"] = len(list(wso.GetVernacular() or []))
+            ws["analysis"] = len(list(wso.GetAnalysis() or []))
+            tags = []
+            for w in allws:
+                try:
+                    tags.append(str(wso.GetLanguageTag(w)))
+                except Exception:  # noqa: BLE001
+                    tags.append("<unreadable>")
+            ws["tags"] = sorted(tags)
+        except Exception as exc:  # noqa: BLE001 -- recorded, never silent
+            ws["error"] = "%s: %s" % (type(exc).__name__, exc)
+        result["writing_systems"] = ws
+
         t1 = time.time()
         sl = proj.project.ServiceLocator
         repo = (sl.GetInstance[ICmObjectRepository]()
@@ -252,6 +276,33 @@ def scan_one(name: str) -> dict:
                 else sl.GetService(ICmObjectRepository))
         counts: dict[str, int] = {}
         total = 0
+        # Structural depth, via the owner chain only (ClassName + Owner are the
+        # two members already proven reachable). Set-cover over class PRESENCE
+        # cannot see nesting -- a project with reversals-inside-reversals and one
+        # with a flat reversal list look identical to it, yet only the former
+        # exercises both the top-level and sub-entry creation paths, which are
+        # known to disagree about identity.
+        depth = {"reversal_entry": 0, "sense": 0, "possibility": 0}
+
+        def _owner_depth(o, stop_classes, cap=24):
+            d = 0
+            cur = o
+            while d < cap:
+                try:
+                    cur = cur.Owner
+                except Exception:  # noqa: BLE001
+                    return d
+                if cur is None:
+                    return d
+                try:
+                    cn2 = cur.ClassName
+                except Exception:  # noqa: BLE001
+                    return d
+                if cn2 in stop_classes:
+                    return d
+                d += 1
+            return d
+
         for obj in repo.AllInstances():
             try:
                 cn = obj.ClassName
@@ -259,6 +310,16 @@ def scan_one(name: str) -> dict:
                 cn = "<unreadable-class>"
             counts[cn] = counts.get(cn, 0) + 1
             total += 1
+            if cn == "ReversalIndexEntry":
+                depth["reversal_entry"] = max(
+                    depth["reversal_entry"], _owner_depth(obj, {"ReversalIndex"}))
+            elif cn == "LexSense":
+                depth["sense"] = max(
+                    depth["sense"], _owner_depth(obj, {"LexEntry"}))
+            elif cn in ("CmPossibility", "CmSemanticDomain", "CmAnthroItem"):
+                depth["possibility"] = max(
+                    depth["possibility"], _owner_depth(obj, {"CmPossibilityList"}))
+        result["nesting_depth"] = depth
         result["walk_seconds"] = round(time.time() - t1, 2)
         result["class_counts"] = dict(sorted(counts.items()))
         result["n_classes"] = len(counts)
