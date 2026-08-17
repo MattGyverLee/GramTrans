@@ -1568,9 +1568,11 @@ K could not express: an exemption whose justification is a dependency's
 missing capability rather than an ordinary loss; a class of target-side
 object that records the transfer tool's own act rather than any source
 object; a class constrained by a natural key the census must respect
-alongside, or instead of, identity; and a run's own evidentiary intent. Each
-requirement below is cross-referenced from the existing requirement it
-amends, and vice versa.*
+alongside, or instead of, identity; and a run's own evidentiary intent. A
+later review added a fifth: a class that owns further objects of its own
+class, whose depth the comparator's own recursion can silently fail to
+reach. Each requirement below is cross-referenced from the requirement it
+amends — existing or introduced here — and vice versa.*
 
 - **FR-182 (capability-conditional exemption, inverted trigger)**: An
   allowlist or exemption entry whose written justification is the absence of
@@ -1624,13 +1626,26 @@ amends, and vice versa.*
 - **FR-185 (natural-key identity, a third basis)**: A class that carries a
   stable per-instance identifier but is additionally constrained by a
   natural key that is unique by construction — such as the per-writing-
-  system reversal container (one per writing-system tag) or the top-level
-  reversal entry (keyed by its reversal form) — MUST be admitted to a third,
+  system reversal container (one per writing-system tag), the top-level
+  reversal entry (keyed by its reversal form), or the wordform (keyed by the
+  pair of writing system and form) — MUST be admitted to a third,
   separately named identity basis, NATURAL-KEY IDENTITY, distinct from both
   direct identifier comparison and the no-stable-identifier basis of FR-090.
   This basis is admitted ONLY by enumeration on its own git-tracked roster
   (the Natural-Key Identity Roster), whose entries each name the natural key
-  used and the reason identity cannot be authoritative for that class. This
+  used and the reason identity cannot be authoritative for that class. The
+  roster MUST enumerate the wordform class on its (writing system, form)
+  key: reusing an existing target wordform for a source wordform of the same
+  form in the same writing system is correct behaviour, and it is by far the
+  highest-volume instance of this basis, so omitting it from the roster would
+  make this basis's own harness error fire on correct behaviour. Writing
+  systems themselves MUST NOT be admitted to this roster: their one-per-tag
+  correspondence is already established by the run's pre-run writing-system
+  mapping, and a second, later-firing basis for the same correspondence would
+  be redundant and could disagree with it. Matching for any class on this
+  roster is additionally governed by the identity-first ordering rule of
+  FR-186, and every match it makes is additionally governed by the
+  IDENTITY-SUBSTITUTION accounting rule of FR-187. This
   basis MUST NOT be expressed by widening FR-090, which exists to forbid
   exactly the general fallback this would create — "an identifier exists but
   another key is preferred" — and FR-090's existing teeth are preserved
@@ -1678,6 +1693,35 @@ amends, and vice versa.*
   non-admissible by construction rather than by recollection, and it carries
   no precondition of its own about when a sweep may be run — FR-166 and
   FR-167 already carry that constraint in full.
+- **FR-189 (structural depth and per-parent degree)**: For every in-scope
+  class whose objects may own further objects of the same class — such as
+  sub-senses, reversal sub-entries, and possibility sub-items — the sweep
+  MUST enumerate SOURCE children recursively at every node until no further
+  children exist there, never to a fixed or assumed depth; MUST record, per
+  class and per side, the maximum nesting depth actually reached, as a field
+  on the run's artifact; and MUST compare, for every matched parent, the
+  NUMBER of its direct children on each side, independently of and in
+  addition to whether each individual child matched. A per-parent
+  child-count disagreement MUST fail the run even when every child actually
+  visited compared clean, and a class whose recorded target-side maximum
+  depth is lower than its recorded source-side maximum depth MUST be a
+  VACUOUS result for that class. Rationale: the vacuity guards of FR-095 and
+  FR-096 are defined per CLASS, not per nesting level, so if the
+  comparator's own recursion stops one level early, both sides report zero
+  objects at that depth, the per-class aggregate counts stay dominated by
+  the shallower levels, and every object actually visited compares perfectly
+  — while a linguist sees an entry that should show five senses render
+  fewer. The measurement's own recursion is the defect, and it hides itself.
+  Per-parent degree is a cheaper and independent signal from per-child
+  identity, and catches recursion defects and silent re-parenting exactly
+  where the walk itself is at fault: the same corroboration rationale
+  already behind FR-094 and FR-098. This guard MUST NOT be treated as
+  satisfied by the ordered-sequence comparisons of FR-059, FR-079, FR-082,
+  and FR-083, which do establish degree for ordered fields but cannot
+  observe a level the walk never reached. The corpus MUST retain at least
+  one project exhibiting same-class nesting deeper than one level for every
+  such class, and where no available project does, that class's depth
+  behavior MUST be reported NOT-EVALUATED rather than clean.
 
 ## Key Entities *(include if feature involves data)*
 
@@ -1703,7 +1747,9 @@ amends, and vice versa.*
   capability fingerprint, baseline backup identity, effective diagnostic
   level, excluded categories, per-class IDENTITY-SUBSTITUTION counts
   (FR-187), the identity-first ordering basis used where applicable
-  (FR-186), and its recorded run intent, BASELINE or GATE (FR-188).
+  (FR-186), per-class per-side maximum nesting depth reached and per-parent
+  child-count comparison outcomes (FR-189), and its recorded run intent,
+  BASELINE or GATE (FR-188).
 - **Capability Fingerprint**: the pinned, git-tracked expectation of the
   transfer engine dependency's introspected behavior, used by the preflight.
   Attributes: introspected symbol set, expected values, a summary hash.
@@ -1806,6 +1852,12 @@ amends, and vice versa.*
 - **SC-016**: No corpus-level fidelity claim is ever issued on the basis of
   an artifact recording the BASELINE run intent; every such claim traces
   only to artifacts recording the GATE intent, per FR-188.
+- **SC-017**: Every class capable of same-class nesting carries, on every
+  artifact, a recorded per-side maximum depth reached and per-parent
+  child-count comparison outcomes; zero runs report a clean result for such
+  a class while its recorded target-side maximum depth is lower than its
+  source-side maximum depth, and zero runs report a clean result for a
+  parent whose child count differs between the two sides, per FR-189.
 
 ## Non-Goals / Deferred
 

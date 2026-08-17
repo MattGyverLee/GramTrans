@@ -1,5 +1,50 @@
 # GramTrans — Session Handoff
 
+## ▶▶▶ Feature 035 fullsweep-fidelity — SPEC RATIFIED at 189 FR / 17 SC (2026-08-18)
+
+**Spurt 5 closed. `specs/035-fullsweep-fidelity/spec.md` is RATIFIED.** Section P
+(the identity/intent amendment section) is settled; spec.md is now stable input
+for the driver build.
+
+Landed this spurt:
+- Cycle-5 structural QC re-derived the spec independently from commit f47d302:
+  8/8 checks PASS. FR-001..FR-181 unchanged element-wise; FR-182..FR-188 and
+  SC-015/016 correctly appended; the three prohibitions (FR-125/132/133)
+  byte-identical, so none was weakened.
+- Cycle-5 domain review: all four identity rulings PASS against FLEx/LCM
+  semantics (tool-owned identity, evaluation-state-not-agent-identity, the
+  reversal natural keys, wordform reuse by (WS, form)).
+- Lead rulings applied as a single bounded edit (no sixth review cycle):
+  - **FR-189 NEW** — structural depth and per-parent degree. Recurse until no
+    further SOURCE children exist at any node; record per-class per-side maximum
+    depth on the artifact; compare per-parent child COUNT independently of
+    per-child identity. Closes the self-blind-recursion vacuity: FR-095/FR-096
+    guard per CLASS, not per nesting LEVEL, so a walk that stops one level early
+    reports zero on both sides and compares perfectly clean.
+  - **SC-017 NEW** — the measurable form of FR-189.
+  - **FR-185 AMENDED** — WORDFORM added to the Natural-Key Identity Roster on
+    its (writing system, form) key (highest-volume case; omitting it would make
+    the basis's own harness error fire on correct behaviour). Writing systems
+    explicitly EXCLUDED from that roster — the pre-run WS mapping already
+    establishes that correspondence. FR-185 now cross-references FR-186/FR-187,
+    closing the QC P2 that FR-186 had no inbound requirement reference.
+- Corpus prescan is built, committed and run: 84 projects, zero failures,
+  read-only, all source fingerprints unchanged.
+
+**Next pickup (spurt 6):** corpus ordering must carry THREE orthogonal axes —
+class presence, writing-system breadth, structural depth — not presence alone.
+Greedy set-cover on presence discarded Yi Sichuan, which is the ONLY project of
+84 with nested reversals (7 indexes, 25,116 entries, two levels deep) and the
+widest WS spread (7). FR-189 now makes retaining it mandatory, so the selection
+requirement must be brought in line. The sweep driver skeleton continues against
+the settled groups (A, B, C, D, K, L) with the comparator verdict taxonomy left
+as a documented extension point.
+
+**Open caveat:** FLExToolsMCP was unavailable to the domain reviewer for the
+third time in five cycles. The identity rulings rest on documented LCM semantics,
+not live queries; points needing a live check are flagged inline in
+`specs/035-fullsweep-fidelity/reviews/cycle5-domain-identity.md`.
+
 ## ▶▶▶ full-copy-engine-defects — OFFLINE-GREEN, awaits attended live Move re-proof (2026-07-20)
 
 **Four full-copy engine defect fixes on worktree, NOT merged to main.**

@@ -1,0 +1,23 @@
+{
+  "feature": "035-fullsweep-fidelity",
+  "status": "in_progress",
+  "last_cycle": 5,
+  "spurts_completed": 5,
+  "tasks_done": [
+    "cycle5-structural-qc-8of8-pass",
+    "cycle5-domain-identity-4of4-pass",
+    "FR-189-structural-depth-and-per-parent-degree",
+    "SC-017",
+    "FR-185-wordform-on-roster-writing-systems-excluded",
+    "FR-186-inbound-crossref-closed",
+    "spec-ratified-189FR-17SC",
+    "corpus-prescan-built-committed-run-84-projects"
+  ],
+  "next_checkpoint": "corpus-selection-three-axis + driver skeleton against settled groups",
+  "next_entry": "Bring the corpus-selection requirement in line with FR-189: selection must range over three orthogonal axes (class presence, writing-system breadth, structural depth), and must retain Yi Sichuan, the only project of 84 with nested reversals and the widest WS spread, which presence-only greedy set-cover discards.",
+  "spec_ratified": true,
+  "spec_shape": "FR-001..FR-189 contiguous, SC-001..SC-017 contiguous, verified programmatically",
+  "open_caveat": "FLExToolsMCP unavailable to lex-domain for the third time in five cycles; identity rulings rest on documented LCM semantics, live-check points flagged inline in reviews/cycle5-domain-identity.md",
+  "coverage_limit": "appendix, stratum, and one rule subclass exist in no project on this machine; must report NOT-EVALUATED, never clean",
+  "updated": "2026-08-18"
+}
