@@ -1723,6 +1723,48 @@ amends — existing or introduced here — and vice versa.*
   such class, and where no available project does, that class's depth
   behavior MUST be reported NOT-EVALUATED rather than clean.
 
+### Q. Corpus selection across coverage axes
+
+FR-189 makes the corpus's structural depth load-bearing: a corpus that has
+been narrowed until no project nests a recursive class beyond one level
+renders that guard vacuous without any requirement noticing. Selection is
+therefore no longer a scheduling preference — it is a precondition of several
+guards being able to fire at all, and it needs requirements of its own.
+
+- **FR-190**: Corpus ordering and batch composition MUST range over at least
+  three orthogonal coverage axes — the set of object classes present, writing-
+  system breadth (vernacular and analysis), and structural depth of recursive
+  same-class hierarchies — and MUST NOT be derived from any single axis. The
+  reason is demonstrated rather than hypothetical: an ordering that maximises
+  class presence alone discards the project that is the sole carrier of
+  multi-level recursive nesting and of the widest writing-system spread,
+  precisely because that project contributes no class the corpus lacks. An
+  axis a selection does not range over is an axis on which its results say
+  nothing.
+- **FR-191**: A run over any SUBSET of the derived corpus — a batch, a re-run
+  of invalidated projects, or a time-boxed smoke pass — MUST record, per axis,
+  the subset's maximum observed value alongside the full corpus's, and MUST
+  report as NOT-EVALUATED every claim whose supporting axis value the subset
+  does not reach. In particular, where the subset's deepest same-class nesting
+  for a recursive class falls below the corpus's, FR-189's depth guard is
+  VACUOUS for that class in that run and MUST NOT be reported as clean. A
+  subset that silently inherits a full corpus's claims is the same defect as a
+  reduced-coverage pass reporting zero mismatches as a pass (FR-137).
+- **FR-192**: The per-axis maxima of FR-190 and FR-191 MUST be measured from
+  the corpus itself by a read-only survey, and MUST NOT be asserted from
+  project names, file sizes, folder layout, or prior belief about what a
+  project contains. This is required by observation, not caution: name-based
+  selection in this project has already mistaken two empty shell directories
+  for real projects whose real counterparts differ only in word order and
+  spacing, and a hand-built project table omitted a real project outright.
+  A survey feeding selection MUST itself obey the write-safety requirements of
+  Group B, since it opens every source in the corpus.
+- **FR-193**: The selection axes and the measured maxima MUST be recorded on
+  the run artifact, so that a reader can tell which axes a given run actually
+  exercised without re-deriving them. A run whose artifact does not record its
+  axis coverage MUST NOT be admissible for the corpus-level fidelity claim of
+  FR-166, on the same terms as a run missing a guard result (FR-105).
+
 ## Key Entities *(include if feature involves data)*
 
 - **Source Project**: a read-only FLEx project drawn from the derived
