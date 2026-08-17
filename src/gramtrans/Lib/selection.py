@@ -652,7 +652,8 @@ def _build_deps_target_sets(
     return (target_feat_guids, target_class_guids, target_stem_guids)
 
 
-def build_pos_grouped_inventory(source, target=None, want_affix: bool = True
+def build_pos_grouped_inventory(source, target=None, want_affix: bool = True,
+                                *, progress=None
                                 ) -> PosGroupedAffixInventory:
     """Build a PosGroupedAffixInventory from the source project.
 
@@ -673,6 +674,14 @@ def build_pos_grouped_inventory(source, target=None, want_affix: bool = True
         with prior behaviour. ``False`` yields the STEM inventory grouped by
         ``MoStemMsa.PartOfSpeechRA``; only the ``MoStemMsa`` MSA arm is read and
         non-``MoStemMsa`` arms on a stem entry are skipped, not recast (FR-013).
+    progress:
+        Keyword-only, defaulted (036 FR-022/FR-045).  ``None`` -- the default --
+        is the no-op: no sink is allocated, nothing is timed, and the walk runs
+        and returns byte-identically to before this parameter existed.  A
+        duck-typed ProgressSink (``Lib/progress.py``; deliberately NOT imported
+        here so this module stays importable headless) gets one ``tick()`` per
+        lexical entry visited, from inside the walk so the window keeps
+        repainting during a long enumeration (FR-014, SC-002).
 
     Returns
     -------
@@ -711,6 +720,12 @@ def build_pos_grouped_inventory(source, target=None, want_affix: bool = True
     no_analysis_rows: List[AffixRow] = []
 
     for entry in selected_entries:
+        # 036 FR-014: one tick per lexical entry -- the declared unit for affix /
+        # stem enumeration -- taken at the top of the dominant walk so every
+        # `continue` path below still counts as work performed (SC-001b).
+        # `progress is None` is the whole no-op cost of FR-045.
+        if progress is not None:
+            progress.tick()
         try:
             guid = str(entry.Guid).lower()
         except (AttributeError, TypeError):
@@ -1238,6 +1253,8 @@ def build_skeleton_inventory(
     source,
     affix_picks: FrozenSet[str],
     target=None,
+    *,
+    progress=None,
 ) -> SkeletonInventory:
     """Derive the morphology skeleton from the source and the affix picks.
 
@@ -1262,6 +1279,17 @@ def build_skeleton_inventory(
         frozenset of entry_guid strings the user has selected.
     target:
         Optional target handle for target-status computation.
+    progress:
+        Keyword-only, defaulted (036 FR-022/FR-045).  ``None`` -- the default --
+        is the no-op: the walk runs and returns byte-identically to before this
+        parameter existed.  A duck-typed ProgressSink gets one ``tick()`` per
+        lexical entry visited.  NOTE this builder makes THREE passes over the
+        entry list (slot_affix_map, pos_affix_map, pos_any_affixes), and all
+        three tick: the alternative -- ticking only the first -- would leave the
+        window unpumped for two thirds of the operation (SC-002).  The caller's
+        total must therefore be 3x the entry count for a determinate bar; with a
+        plain entry count the sink overruns and degrades to indeterminate, which
+        is the documented QtProgressSink behaviour.
 
     Returns
     -------
@@ -1285,6 +1313,9 @@ def build_skeleton_inventory(
         entries = []
 
     for entry in entries:
+        # 036 FR-014 pass 1/3: tick per lexical entry (the declared unit).
+        if progress is not None:
+            progress.tick()
         entry_c = _cast(entry, "ILexEntry")
         # Filter to affix entries
         try:
@@ -1346,6 +1377,9 @@ def build_skeleton_inventory(
     # which POSes have picked affixes. Walk entries again.
     pos_affix_map: Dict[str, Set[str]] = {}
     for entry in entries:
+        # 036 FR-014 pass 2/3: same unit, second traversal of the same list.
+        if progress is not None:
+            progress.tick()
         entry_c = _cast(entry, "ILexEntry")
         try:
             form_obj = entry_c.LexemeFormOA
@@ -1390,6 +1424,9 @@ def build_skeleton_inventory(
     # entries at all is excluded entirely).
     pos_any_affixes: Set[str] = set()
     for entry in entries:
+        # 036 FR-014 pass 3/3: same unit, third traversal of the same list.
+        if progress is not None:
+            progress.tick()
         entry_c = _cast(entry, "ILexEntry")
         try:
             form_obj = entry_c.LexemeFormOA
@@ -1590,6 +1627,8 @@ def build_deps_inventory(
     affix_picks: FrozenSet[str],
     target=None,
     stem_picks: Optional[FrozenSet[str]] = None,
+    *,
+    progress=None,
 ) -> DepsInventory:
     """Derive grammatical dependencies from the source and the picked items.
 
@@ -1633,6 +1672,13 @@ def build_deps_inventory(
         ``MoStemMsa.InflectionClassRA`` (additive to ``POS.InflectionClassesOC``).
         A stem MSA is NEVER cast to IMoInflAffMsa and ``SlotsRC`` is never read
         (FR-013).
+    progress:
+        Keyword-only, defaulted (036 FR-022/FR-045).  ``None`` -- the default --
+        is the no-op: the walk runs and returns byte-identically to before this
+        parameter existed.  A duck-typed ProgressSink gets one ``tick()`` per
+        lexical entry visited.  The affix and stem walks below are the two halves
+        of one partition of the entry list, so the two tick sites together fire
+        exactly once per entry -- matching the declared "entry count" total.
 
     Returns
     -------
@@ -1680,6 +1726,10 @@ def build_deps_inventory(
 
     # --- Affix picks: walk affix MSA arms for their attaches-to POS ---
     for entry in affix_entries:
+        # 036 FR-014: tick per lexical entry (declared unit); this walk plus the
+        # stem walk below cover the entry list exactly once between them.
+        if progress is not None:
+            progress.tick()
         try:
             guid = str(entry.Guid).lower()
         except (AttributeError, TypeError):
@@ -1712,6 +1762,9 @@ def build_deps_inventory(
 
     # --- Stem picks: walk MoStemMsa for POS + per-stem features / infl class ---
     for entry in stem_entries:
+        # 036 FR-014: the stem half of the same per-entry unit.
+        if progress is not None:
+            progress.tick()
         try:
             guid = str(entry.Guid).lower()
         except (AttributeError, TypeError):
@@ -2627,6 +2680,7 @@ def compute_orphan_nc_guids(source) -> FrozenSet[str]:
 
 def build_phonology_inventory(source, target=None, *,
                               orphan_nc_guids: Optional[FrozenSet[str]] = None,
+                              progress=None,
                               ) -> PhonologyInventory:
     """Enumerate the five phonology categories + reference maps (data-model.md).
 
@@ -2638,6 +2692,13 @@ def build_phonology_inventory(source, target=None, *,
     target bound. Reference maps classify
     each reference by membership in the phoneme/NC/feature GUID sets, so no
     LCM type-checks are needed and the logic works for fakes and live objects.
+
+    ``progress`` is keyword-only and defaulted (036 FR-022/FR-045): ``None`` --
+    the default -- is the no-op, and the walk runs and returns byte-identically
+    to before the parameter existed.  A duck-typed ProgressSink gets one
+    ``tick()`` per possibility-list ITEM (the declared unit), fired in the
+    per-item loop nested inside the per-category loop, so the total is the sum of
+    the five categories' list counts.
     """
     # 1. Enumerate rows per category + collect per-category GUID sets.
     groups: List[PhonologyCategoryGroup] = []
@@ -2656,6 +2717,11 @@ def build_phonology_inventory(source, target=None, *,
             except (AttributeError, TypeError):
                 items = []
             for obj in items:
+                # 036 FR-014: one tick per list item -- the declared unit -- at
+                # the per-item level, not the per-category level above, so the
+                # bar advances with the work and not five times per project.
+                if progress is not None:
+                    progress.tick()
                 if _phon_is_empty(obj, phoneme=is_phoneme, category=category):
                     continue  # empty in all fields — silently skip (FR: dangling)
                 g = _phon_guid(obj)
@@ -3067,7 +3133,7 @@ _COMPOUND_SUBCLASSES = frozenset((
 # Morphology rules are ordinary items and are never filtered by GOLD status.
 
 
-def build_rules_inventory(source, target=None) -> RulesInventory:
+def build_rules_inventory(source, target=None, *, progress=None) -> RulesInventory:
     """Build a RulesInventory from source (read-only).
 
     Walks both OS collections (recursing IMoAdhocProhibGr.MembersOC) and
@@ -3081,6 +3147,14 @@ def build_rules_inventory(source, target=None) -> RulesInventory:
         FLExProject handle (or duck-typed equivalent). May be None.
     target :
         Optional target project handle. When None, target_status is blank.
+    progress :
+        Keyword-only, defaulted (036 FR-022/FR-045).  ``None`` -- the default --
+        is the no-op and the walk is byte-identical to before.  A duck-typed
+        ProgressSink gets one ``tick()`` per list ITEM (the declared unit) from
+        inside both the ad-hoc and compound walks; the two are disjoint
+        collections, so together they equal the combined list count.  The ticks
+        sit inside the existing ``except Exception`` guards, which is safe: the
+        sink contract is that ``tick`` never raises.
 
     Returns
     -------
@@ -3099,6 +3173,9 @@ def build_rules_inventory(source, target=None) -> RulesInventory:
     if source is not None:
         try:
             for obj, parent_group_guid in _rules_walk_adhoc(source):
+                # 036 FR-014: one tick per ad-hoc list item (declared unit).
+                if progress is not None:
+                    progress.tick()
                 # v7.0.0 GOLD unlock: no GOLD-based functional filtering. (Rules
                 # are not catalog-backed and never carry a meaningful GOLD flag,
                 # so this filter was defensive/dead in any case.)
@@ -3127,6 +3204,9 @@ def build_rules_inventory(source, target=None) -> RulesInventory:
     if source is not None:
         try:
             for obj in _rules_walk_compound(source):
+                # 036 FR-014: one tick per compound list item (same unit).
+                if progress is not None:
+                    progress.tick()
                 # v7.0.0 GOLD unlock: no GOLD-based functional filtering (see above).
                 class_name = _rule_class_name(obj)
                 if class_name not in _COMPOUND_SUBCLASSES:
@@ -3400,7 +3480,8 @@ _ET_CATEGORY_ACCESSORS = [
 ]
 
 
-def build_entry_types_inventory(source, target=None) -> EntryTypesInventory:
+def build_entry_types_inventory(source, target=None, *,
+                                progress=None) -> EntryTypesInventory:
     """Enumerate the two entry-type categories + inflection-feat dep maps.
 
     Pure/read-only. ALL items are enumerated and preselected (v7.0.0 GOLD unlock:
@@ -3413,6 +3494,15 @@ def build_entry_types_inventory(source, target=None) -> EntryTypesInventory:
     Reference maps:
       variant_infl_feat_deps: variant_type_guid -> frozenset[infl_feat_val_guid]
       (for FR-010 missing-ref derivation at Move gate).
+
+    ``progress`` is keyword-only and defaulted (036 FR-022/FR-045): ``None`` --
+    the default -- is the no-op and the walk is byte-identical to before.  A
+    duck-typed ProgressSink gets one ``tick()`` per list ITEM (the declared
+    unit), fired in the per-node loop, not the per-category loop.  Note the node
+    list is already flattened by ``_walk_entry_type_nodes`` (sub-possibilities
+    included), so a caller's total taken from a top-level ``PossibilitiesOS.Count``
+    under-counts a nested list and the sink overruns -- documented, and handled by
+    QtProgressSink degrading to indeterminate rather than showing over 100%.
     """
     groups: List[EntryTypesCategoryGroup] = []
     infl_feat_deps: Dict[str, FrozenSet[str]] = {}
@@ -3431,6 +3521,10 @@ def build_entry_types_inventory(source, target=None) -> EntryTypesInventory:
 
         rows: List[EntryTypesRow] = []
         for node, depth in nodes:
+            # 036 FR-014: one tick per list item (declared unit), at the node
+            # level rather than the enclosing per-category level.
+            if progress is not None:
+                progress.tick()
             g = _entry_types_guid(node)
             if not g:
                 continue
@@ -3725,7 +3819,7 @@ def _text_guid(text) -> Optional[str]:
     return None
 
 
-def build_text_inventory(source, target=None) -> TextInventory:
+def build_text_inventory(source, target=None, *, progress=None) -> TextInventory:
     """Build the Model-A text picker inventory from the source project (FR-001).
 
     Parameters
@@ -3737,6 +3831,13 @@ def build_text_inventory(source, target=None) -> TextInventory:
         Optional target handle. When supplied, each row's ``status`` is "new" or
         "in_target" by GUID membership; None for every row when target is None
         (back-compat with headless/unbound callers).
+    progress:
+        Keyword-only, defaulted (036 FR-022/FR-045).  ``None`` -- the default --
+        is the no-op and the walk is byte-identical to before.  A duck-typed
+        ProgressSink gets one ``tick()`` per SOURCE text (the declared unit), so
+        the total is the source text count.  The target pre-pass above is
+        deliberately NOT ticked: its length is the target's text count, which is
+        not the total the caller declares.
 
     Returns
     -------
@@ -3752,6 +3853,10 @@ def build_text_inventory(source, target=None) -> TextInventory:
 
     rows: List[TextRow] = []
     for text in _iter_project_texts(source):
+        # 036 FR-014: one tick per text -- the declared unit for texts
+        # enumeration -- matching a TextsNumberOfTexts() total.
+        if progress is not None:
+            progress.tick()
         guid = _text_guid(text)
         if guid is None:
             continue
