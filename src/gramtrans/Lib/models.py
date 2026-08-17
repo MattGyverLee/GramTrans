@@ -728,6 +728,14 @@ class RunPlan:
     # STEMS.execute_action (post-pass A). Ephemeral per run; not
     # serialised into the run snapshot.
     msa_slot_bindings: dict = field(default_factory=dict)  # Guid -> list[Guid]
+    # Feature 033: inflection-feature structures assigned to affix MSAs
+    # (IMoInflAffMsa.InflFeatsOA). Deferred to the same 17.1 sub-pass that
+    # wires SlotsRC, because the referenced IFsClosedFeature/IFsSymFeatVal must
+    # already exist in target (INFLECTION_FEATURES runs in the same Move).
+    # Shape: {src_msa_guid: {"struc_guid": str, "type_guid": str,
+    #                        "specs": [{"spec_guid","feature","value"}, ...]}}
+    # Ephemeral per run; not serialised into the run snapshot.
+    msa_infl_feat_bindings: dict = field(default_factory=dict)
     # Phase 3c (FR-340): LexEntryRef component-lexeme bindings deferred
     # to post-pass A. Shape: {src_entry_guid: {"ComponentLexemesRS": [...],
     # "PrimaryLexemesRS": [...]}}.
@@ -1531,6 +1539,12 @@ class AnalysisPlan:
     """
     source_guid: str           # source IWfiAnalysis GUID (preserved on create where permitted)
     wordform_form: dict = field(default_factory=dict)  # WS-id -> surface form (WS-gated)
+    # Feature 033: GUID of the source IWfiWordform that OWNS this analysis.
+    # Distinct from source_guid (the analysis's own GUID) -- conflating the two
+    # stamps the analysis's identity onto the wordform, which then makes a
+    # GUID lookup for the analysis resolve to the wordform and silently skip
+    # the analysis entirely. Empty string means "unknown; mint a new GUID".
+    wordform_guid: str = ""
     spelling_status: Any = None  # reproduced onto the target wordform (FR-013)
     verdict: Optional["EvalVerdict"] = None
     category_decision: Optional["ReferenceDecision"] = None  # CategoryRA (resolve-or-report)
@@ -1568,6 +1582,14 @@ class SegmentPlan:
     analyses: tuple = ()       # tuple[AnalysisPlan, ...] — human-evaluated only
     alignment: tuple = ()      # tuple[AlignmentToken, ...] — AnalysesRS reproduction
     tag_decisions: tuple = ()  # tuple[ReferenceDecision, ...] — per-segment text-markup tags (US5)
+    # 033: the source ITextTag GUIDs, positionally parallel to `tag_decisions`.
+    # A DISTINCT field on purpose: a tag decision carries the identity of the
+    # referenced TagRA *possibility*, NOT of the owning ITextTag. Reusing the
+    # decision's GUID here would stamp the possibility's identity onto the tag
+    # object — the exact confusion that produced the wordform/analysis bug
+    # (see specs/033-guid-preservation/TODO.md, "how the worst bug got in").
+    # An absent/short entry MINTS rather than falling back to another GUID.
+    tag_source_guids: tuple = ()
 
 
 @dataclass(frozen=True)
@@ -1587,6 +1609,10 @@ class TextTransferPlan:
     FR-022), else None on ADD.
     """
     source_guid: str           # source IText GUID
+    # Feature 033: GUID of the source text's owned IStText contents, so the
+    # target's contents object is created under the SAME identity as the source
+    # rather than a minted one (flexicon Texts.Create(..., contents_guid=)).
+    contents_guid: str = ""
     title: str = ""            # best-analysis title, for the report/Preview line
     disposition: Optional["ReferenceAction"] = None  # ADD/UPDATE/SKIP-shaped
     genre_decisions: tuple = ()  # tuple[ReferenceDecision, ...] — GenresRC (create-allowed)

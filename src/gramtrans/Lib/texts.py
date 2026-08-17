@@ -43,6 +43,7 @@ if __package__:
         TextTransferPlan,
     )
     from . import references as _references
+    from . import owned as _owned
 else:  # pragma: no cover - executed only when run as a bare script
     from models import (  # type: ignore
         DroppedItemRecord,
@@ -54,6 +55,7 @@ else:  # pragma: no cover - executed only when run as a bare script
         TextTransferPlan,
     )
     import references as _references  # type: ignore
+    import owned as _owned  # type: ignore
 
 _log = logging.getLogger("gramtrans.Lib.texts")
 
@@ -332,11 +334,18 @@ def _decide_segment_tags(tags, source, target, resolver_cache, dropped):
 
     Create-allowed (a tag absent from the target list is CREATEd, GUID-
     preserving); an unresolvable tag (target list absent) is a REPORT_DROPPED
-    decision carrying its own DroppedItemRecord. Never raises."""
+    decision carrying its own DroppedItemRecord. Never raises.
+
+    Returns `(decisions, source_tag_guids)` — the second tuple is positionally
+    parallel to the first and carries each owning source `ITextTag`'s OWN GUID
+    (033), which the decision itself does not (it identifies the referenced
+    possibility).
+    """
     if not tags:
-        return ()
+        return (), ()
     spec = _tag_spec()
     decisions = []
+    src_guids = []
     for tag in tags:
         poss = getattr(tag, "TagRA", None)
         if poss is None:
@@ -349,9 +358,10 @@ def _decide_segment_tags(tags, source, target, resolver_cache, dropped):
         if decision is None:
             continue
         decisions.append(decision)
+        src_guids.append(_guid_str(tag))
         if decision.dropped is not None:
             dropped.append(decision.dropped)
-    return tuple(decisions)
+    return tuple(decisions), tuple(src_guids)
 
 
 def _text_disposition(target, src_guid: str, title: str, source=None, source_text=None):
@@ -553,7 +563,7 @@ def _walk_paragraphs(source_text, source, target, ctx, ws_map, tgt_ws_ids,
             alignment = tuple(_wordforms.plan_alignment(seg, ctx, dropped))
 
             # US5 (T034): per-segment text-markup tag references.
-            tag_decisions = _decide_segment_tags(
+            tag_decisions, tag_source_guids = _decide_segment_tags(
                 tags_by_seg.get(seg_guid, ()), source, target,
                 resolver_cache, dropped)
 
@@ -566,6 +576,7 @@ def _walk_paragraphs(source_text, source, target, ctx, ws_map, tgt_ws_ids,
                 analyses=analyses,
                 alignment=alignment,
                 tag_decisions=tag_decisions,
+                tag_source_guids=tag_source_guids,
             ))
         para_plans.append(ParagraphPlan(
             source_guid=para_guid,
@@ -645,6 +656,13 @@ def plan_texts(selection, source, target, ctx, resolver_cache, dropped) -> List:
         if picks and src_guid not in picks:
             continue
 
+        # Feature 033: capture the owned IStText contents GUID so the target's
+        # contents object is created under the SAME identity (read-only here).
+        try:
+            src_contents_guid = _guid_str(text.ContentsOA) if text.ContentsOA is not None else ""
+        except Exception:  # noqa: BLE001 -- absent/duck fake
+            src_contents_guid = ""
+
         title = _best_str(text_ops, text, "GetName")
         abbrev = _best_str(text_ops, text, "GetAbbreviation")
         try:
@@ -665,6 +683,7 @@ def plan_texts(selection, source, target, ctx, resolver_cache, dropped) -> List:
 
         plans.append(TextTransferPlan(
             source_guid=src_guid,
+            contents_guid=src_contents_guid,
             title=title,
             disposition=action,
             genre_decisions=genre_decisions,
@@ -804,7 +823,12 @@ def _resolve_or_create_text(plan, text_ops, ws_map, tgt_id2h, dropped):
             if existing is not None:
                 return existing
     try:
-        return text_ops.Create(name, None)
+        # GUID-preserved (033): the Text and its owned StText contents both
+        # carry their source identity, so a re-run resolves them instead of
+        # minting a second copy.
+        return text_ops.Create(name, None,
+                               guid=plan.source_guid or None,
+                               contents_guid=getattr(plan, "contents_guid", None) or None)
     except Exception as e:  # never silent
         dropped.append(DroppedItemRecord(
             owner_kind="Text", owner_guid=plan.source_guid or "?",
@@ -858,7 +882,11 @@ def _apply_segment_tags(seg_plan, target, target_text, tgt_seg, resolver_cache,
         return
     spec = _tag_spec()
     tt_ops = getattr(target, "TextTags", None)
-    for decision in seg_plan.tag_decisions:
+    # 033: positionally parallel source ITextTag GUIDs. A short/absent tuple
+    # yields "" for that index, which MINTS a fresh identity (logged) rather
+    # than borrowing some other object's GUID.
+    src_tag_guids = getattr(seg_plan, "tag_source_guids", ()) or ()
+    for idx, decision in enumerate(seg_plan.tag_decisions):
         if getattr(decision, "action", None) == ReferenceAction.REPORT_DROPPED:
             continue  # unresolvable — already reported (FR-017/023)
         possibility = _safe(lambda d=decision: _references.apply_reference(
@@ -869,12 +897,13 @@ def _apply_segment_tags(seg_plan, target, target_text, tgt_seg, resolver_cache,
             possibility = getattr(decision, "target_item", None)
         if possibility is None:
             continue
+        src_tag_guid = src_tag_guids[idx] if idx < len(src_tag_guids) else ""
         _create_text_tag(target, target_text, tgt_seg, possibility, tt_ops,
-                         seg_plan, dropped)
+                         seg_plan, dropped, src_tag_guid=src_tag_guid)
 
 
 def _create_text_tag(target, target_text, tgt_seg, possibility, tt_ops,
-                     seg_plan, dropped):
+                     seg_plan, dropped, src_tag_guid=""):
     """Create one per-segment `ITextTag` wired to `possibility` (US5).
 
     Prefers a duck-typed `target.TextTags.Create` (offline seam / any future
@@ -887,7 +916,8 @@ def _create_text_tag(target, target_text, tgt_seg, possibility, tt_ops,
         created = _safe(lambda: tt_ops.Create(target_text, possibility, tgt_seg, tgt_seg))
         if created is not None:
             return created
-    created = _safe(lambda: _raw_create_text_tag(target, target_text, tgt_seg, possibility))
+    created = _safe(lambda: _raw_create_text_tag(
+        target, target_text, tgt_seg, possibility, src_tag_guid=src_tag_guid))
     if created is None:
         dropped.append(DroppedItemRecord(
             owner_kind="TextTag", owner_guid=seg_plan.source_guid or "?",
@@ -897,18 +927,194 @@ def _create_text_tag(target, target_text, tgt_seg, possibility, tt_ops,
     return created
 
 
-def _raw_create_text_tag(target, target_text, tgt_seg, possibility):
+def _segment_factory(target):
+    """`ISegmentFactory`, or None host-free. Seam for tests. Never raises."""
+    try:
+        from SIL.LCModel import ISegmentFactory  # lazy — absent offline
+    except Exception:  # noqa: BLE001
+        return None
+    try:
+        return target.GetFactory(ISegmentFactory)
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _segment_begin_offset(seg):
+    """A segment's `BeginOffset` as int, or None. `BeginOffset` is read-only on
+    `ISegment` (MCP-confirmed), which is why segments must be POSITIONED at
+    creation via the factory overload rather than moved afterward. Seam for
+    tests. Never raises."""
+    try:
+        from SIL.LCModel import ISegment  # lazy — absent offline
+        return int(ISegment(seg).BeginOffset)
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        return int(getattr(seg, "BeginOffset"))
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _rebuild_segments_with_source_guids(target, seg_ops, new_para, seg_plans,
+                                        tgt_segments, text_label):
+    """033 Option A — give the auto-created segments their SOURCE GUIDs.
+
+    LCM auto-segments when a paragraph's `Contents` is set, minting identities
+    (see `_log_segment_guid_loss`). This re-creates each of those segments at
+    its OWN existing offset via
+
+        ISegmentFactory.Create(IStTxtPara owner, int initialOffset,
+                               LcmCache cache, Guid guid)
+
+    (MCP-confirmed overload) so the segment keeps its source identity.
+
+    Why this shape, and not the two obvious alternatives:
+
+    - NOT create-empty-then-`AppendSentence`: that wrapper auto-inserts a
+      ". " sentence terminator when the paragraph does not already end in
+      .!? (and a " " when it does), and strips its input. Building a
+      paragraph that way FABRICATES punctuation absent from the source and
+      corrupts the baseline — far worse than a minted GUID.
+    - NOT create-then-assign-offset: `ISegment.BeginOffset` is read-only, so
+      a segment cannot be repositioned after creation.
+
+    Reusing each auto-segment's own offset (rather than the source's) keeps
+    the offsets guaranteed-valid for THIS target's `Contents` and leaves the
+    positional pairing exactly as the caller's alignment loop already had it;
+    only identity changes. `Contents` is never touched, so the text is
+    untouched by construction.
+
+    Conservative by design — returns the rebuilt list, or None to keep the
+    caller's existing segments unchanged (host-free, missing factory,
+    incomplete identity, already-preserved, or ANY failure). On a partial
+    failure the paragraph is left to the caller's fallback, and the caller
+    still logs the loss, so the never-silent contract holds either way.
+    """
+    pairs = min(len(tgt_segments), len(seg_plans))
+    if pairs <= 0:
+        return None
+    guids = [(getattr(seg_plans[i], "source_guid", "") or "") for i in range(pairs)]
+    if not all(guids):
+        return None  # incomplete identity — do not disturb a working paragraph
+    if all(_guid_str(tgt_segments[i]) == guids[i].lower() for i in range(pairs)):
+        return None  # already preserved (e.g. a future create-first path)
+    factory = _segment_factory(target)
+    if factory is None:
+        return None  # host-free / no factory — caller keeps auto segments
+    cache = getattr(target, "Cache", None)
+    if cache is None:
+        return None
+    offsets = [_segment_begin_offset(tgt_segments[i]) for i in range(pairs)]
+    if any(o is None for o in offsets):
+        return None
+    parsed = [_parse_dotnet_guid(g) for g in guids]
+    if any(p is None for p in parsed):
+        return None
+    # Delete first: a segment cannot be repositioned, so the auto-created one
+    # must go before its replacement can occupy the same offset.
+    for i in range(pairs):
+        try:
+            seg_ops.Delete(tgt_segments[i])
+        except Exception as exc:  # noqa: BLE001
+            _log.warning(
+                "texts: segment GUID rebuild aborted in %r (delete failed at "
+                "index %d: %s); keeping the auto-created segments.",
+                text_label or "<untitled>", i, exc)
+            return None
+    rebuilt = []
+    for i in range(pairs):
+        try:
+            rebuilt.append(factory.Create(new_para, offsets[i], cache, parsed[i]))
+        except Exception as exc:  # noqa: BLE001
+            _log.error(
+                "texts: segment GUID rebuild FAILED in %r at index %d (%s). "
+                "%d of %d segments were re-created; the paragraph text is "
+                "untouched, but its segmentation is now incomplete. "
+                "Re-run against a freshly restored target.",
+                text_label or "<untitled>", i, exc, len(rebuilt), pairs)
+            return rebuilt or None
+    _log.info(
+        "texts: re-created %d segment(s) in %r carrying their source GUIDs "
+        "(033 Option A).", len(rebuilt), text_label or "<untitled>")
+    return rebuilt
+
+
+def _parse_dotnet_guid(guid_str):
+    """`System.Guid` for `guid_str`, or None (host-free / malformed)."""
+    if not guid_str:
+        return None
+    try:
+        from System import Guid as _DotNetGuid  # lazy — absent offline
+        return _DotNetGuid.Parse(str(guid_str))
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _log_segment_guid_loss(tgt_segments, seg_plans, text_label) -> int:
+    """Record that N segments could not keep their source GUIDs (033).
+
+    The 033 invariant allows a GUID loss that is **justified and logged**; what
+    it forbids is a SILENT one. This is the logged half for segments.
+
+    Why the loss happens: `_create_paragraph` sets the paragraph's `Contents`,
+    and LCM auto-segments on that write. By the time the alignment loop runs,
+    every positional slot is already filled, so `AppendSentence(..., guid=)` --
+    the only GUID-preserving path -- never fires, and LCM GUIDs are immutable
+    once created. Measured live 2026-08-15: 101 of 104 segments, 0 preserved.
+
+    Deliberately NOT a `DroppedItemRecord`: the segment IS reproduced (baseline,
+    translations, notes, analyses and `AnalysesRS` all land on it) -- only its
+    identity differs. Filing these as drops would inflate the single unified
+    never-silent drop channel with non-drops and corrupt the drop metric the
+    fidelity census and full-copy stress test read.
+
+    One aggregated WARNING per paragraph rather than one per segment: at ~101
+    per run the per-segment form would bury the log it is meant to inform.
+    Returns the number of lost GUIDs (0 = nothing logged).
+    """
+    lost = 0
+    for idx, seg_plan in enumerate(seg_plans):
+        if idx >= len(tgt_segments):
+            break
+        src_guid = (getattr(seg_plan, "source_guid", "") or "").lower()
+        if not src_guid:
+            continue
+        if _guid_str(tgt_segments[idx]) != src_guid:
+            lost += 1
+    if lost:
+        _log.warning(
+            "texts: %d segment(s) in %r kept a NEW identity instead of the "
+            "source GUID. Reason: LCM auto-segments when paragraph Contents is "
+            "set, so the positional slot is already filled and "
+            "AppendSentence(guid=) never runs; LCM GUIDs are immutable after "
+            "create. The segments themselves ARE reproduced -- only their "
+            "identity differs -- so they are not reported as dropped items. "
+            "See specs/033-guid-preservation/TODO.md (Segment).",
+            lost, text_label or "<untitled>")
+    return lost
+
+
+def _raw_create_text_tag(target, target_text, tgt_seg, possibility,
+                         src_tag_guid=""):
     """Raw-LCM per-segment `ITextTag` creation (R6 [PROBE]/T039).
 
     No flexicon wrapper exists for text-markup tags, so this is the Principle II
     fallback: create via `ITextTagFactory`, own it under the text's
     `IStText.TagsOC`, and wire `TagRA` + begin/end segment. Wrapped by `_safe`
     at the call site so an unconfirmed accessor degrades to a reported drop
-    rather than aborting the walk."""
+    rather than aborting the walk.
+
+    `src_tag_guid` is the OWNING source `ITextTag`'s own GUID (033) — never the
+    referenced possibility's — so a re-run recognises the tag it already made.
+    Empty mints a fresh identity, and the helper logs that it did."""
     from SIL.LCModel import IStText, ITextTagFactory  # lazy — absent offline
     contents = target.Texts.GetContents(target_text)
     st_text = IStText(contents)
-    tag_obj = ITextTagFactory(target.GetFactory(ITextTagFactory)).Create()
+    tag_obj = _owned._create_owned_via_factory(
+        ITextTagFactory(target.GetFactory(ITextTagFactory)),
+        src_tag_guid, "TextTag")
+    if tag_obj is None:
+        return None
     st_text.TagsOC.Add(tag_obj)
     tag_obj.TagRA = possibility
     tag_obj.BeginSegmentRA = tgt_seg
@@ -916,45 +1122,98 @@ def _raw_create_text_tag(target, target_text, tgt_seg, possibility):
     return tag_obj
 
 
-def _raw_create_blank_paragraph(target, target_text, ws_handle):
-    """Raw-LCM idiom for a blank paragraph (FIX 3, Site-2 finding #1).
+def _raw_create_blank_paragraph(target, target_text, ws_handle, guid=None):
+    """Back-compat alias: a blank paragraph is just verbatim empty content."""
+    return _raw_create_paragraph(target, target_text, "", ws_handle, guid)
 
-    `ParagraphOperations.Create` raises `FP_ParameterError("Content cannot
-    be empty")` on blank content (ParagraphOperations.py:169) — a guard meant
-    for the interactive API, not for faithfully reproducing a source
-    paragraph that is genuinely blank (common between segments/headers in
-    glossed & interlinear practice texts). Reproduces `Create`'s OWN internal
-    raw path (ParagraphOperations.py:182-190) to bypass just that guard:
-    `IStTxtParaFactory.Create()` -> own it under the text's
-    `ContentsOA.ParagraphsOS` -> set `Contents` to an empty TsString.
+
+def _raw_create_paragraph(target, target_text, content, ws_handle, guid=None):
+    """Raw-LCM paragraph create that writes `content` VERBATIM.
+
+    Reproduces `ParagraphOperations.Create`'s OWN internal raw path
+    (`IStTxtParaFactory.Create()` -> own under the text's
+    `ContentsOA.ParagraphsOS` -> set `Contents`) in order to bypass two
+    interactive-API conveniences in the wrapper that are wrong for faithful
+    reproduction:
+
+    1. **Blank content** (FIX 3, Site-2 finding #1) — the wrapper raises
+       `FP_ParameterError("Content cannot be empty")`, but a genuinely blank
+       source paragraph is common between segments/headers in glossed &
+       interlinear practice texts, and must be reproduced as-is.
+    2. **Whitespace stripping** (flexicon#242) — the wrapper does
+       `content.strip()` and then writes the STRIPPED value
+       (`ParagraphOperations.py:171`), so a source paragraph `'ká '` lands as
+       `'ká'`. Silently: no exception, no drop record. Measured live on
+       Ejagham Mini as 44 paragraphs + 41 segment baselines altered.
+
+    Both are the same class of defect — a guard/convenience meant for a human
+    typing text, applied to a client copying it. Writing `Contents` directly
+    is the only way to be byte-faithful until upstream ships flexicon#242.
+
     Wrapped by `_safe` at the call site so an unconfirmed accessor degrades
     to a reported drop rather than aborting the walk."""
     from SIL.LCModel import IText, IStTxtParaFactory  # lazy — absent offline
     from SIL.LCModel.Core.Text import TsStringUtils
     text_obj = IText(target_text)
     factory = IStTxtParaFactory(target.GetFactory(IStTxtParaFactory))
-    para = factory.Create()
+    # GUID-preserved (033): mirrors ParagraphOperations.Create's guid= support
+    # so the blank-paragraph bypass does not silently regenerate identity.
+    parsed = None
+    if guid:
+        try:
+            from System import Guid as _DotNetGuid
+            parsed = _DotNetGuid.Parse(str(guid))
+        except Exception:  # noqa: BLE001 -- malformed -> fall back to a new GUID
+            parsed = None
+    para = factory.Create(parsed) if parsed is not None else factory.Create()
     text_obj.ContentsOA.ParagraphsOS.Add(para)
-    para.Contents = TsStringUtils.MakeString("", ws_handle)
+    # VERBATIM -- no strip(). This is the whole point of the raw path.
+    para.Contents = TsStringUtils.MakeString(content or "", ws_handle)
     return para
 
 
-def _create_paragraph(para_ops, target, target_text, content, ws_handle):
+def _create_paragraph(para_ops, target, target_text, content, ws_handle, guid=None):
     """Create one target paragraph, faithfully reproducing a blank source
     paragraph instead of letting `ParagraphOperations.Create`'s empty-content
     guard cascade into a generic "paragraph create failed" drop (and, in turn,
     into Segment/alignment "no copied target referent" drops downstream).
 
-    Non-blank content still goes through the normal `ParagraphOperations.Create`
-    (residue-tagging, `_TransactionCM`, etc. all apply). Blank content is
-    created via `_raw_create_blank_paragraph`. Returns None (never raises) when
-    even the raw path fails — the caller reports that as a distinct,
-    non-generic drop reason (the paragraph truly has no mappable content and
-    no confirmed raw-create surface).
+    Content goes through the normal `ParagraphOperations.Create` (residue
+    tagging, `_TransactionCM`, etc. all apply) EXCEPT in the two cases where
+    that wrapper would not reproduce the source faithfully:
+
+    - blank content — the wrapper's empty-content guard rejects it;
+    - content with meaningful leading/trailing whitespace — the wrapper
+      strips it and writes the stripped value (flexicon#242), losing it
+      silently.
+
+    Those route through `_raw_create_paragraph`, which writes `Contents`
+    verbatim. The condition is deliberately narrow (`content != stripped`)
+    so the overwhelming majority of paragraphs keep the wrapper's behaviour
+    unchanged; revert this branch once flexicon#242 ships.
+
+    Returns None (never raises) when even the raw path fails — the caller
+    reports that as a distinct, non-generic drop reason (the paragraph truly
+    has no mappable content and no confirmed raw-create surface).
     """
     if content and content.strip():
-        return para_ops.Create(target_text, content, ws_handle)
-    return _safe(lambda: _raw_create_blank_paragraph(target, target_text, ws_handle))
+        if content != content.strip():
+            # flexicon#242: the wrapper would silently drop the surrounding
+            # whitespace. Write it verbatim instead.
+            raw = _safe(lambda: _raw_create_paragraph(
+                target, target_text, content, ws_handle, guid))
+            if raw is not None:
+                return raw
+            # Raw surface unavailable (host-free/older LCM): fall through to
+            # the wrapper rather than lose the paragraph entirely -- a
+            # stripped paragraph beats no paragraph, and it is logged.
+            _log.warning(
+                "texts: paragraph raw-create unavailable; falling back to the "
+                "stripping wrapper, so leading/trailing whitespace in %r will "
+                "be lost (flexicon#242).", content[:40])
+        return para_ops.Create(target_text, content, ws_handle, guid=guid)
+    return _safe(lambda: _raw_create_paragraph(
+        target, target_text, content or "", ws_handle, guid))
 
 
 def _apply_paragraphs(plan, target, target_text, para_ops, seg_ops, ctx, tag,
@@ -989,7 +1248,9 @@ def _apply_paragraphs(plan, target, target_text, para_ops, seg_ops, ctx, tag,
                 for s in para_plan.segments
             ).strip()
         try:
-            new_para = _create_paragraph(para_ops, target, target_text, content, default_vern_handle)
+            new_para = _create_paragraph(
+                para_ops, target, target_text, content, default_vern_handle,
+                guid=para_plan.source_guid or None)
         except Exception as e:
             dropped.append(DroppedItemRecord(
                 owner_kind="StTxtPara", owner_guid=para_plan.source_guid or "?",
@@ -1017,12 +1278,27 @@ def _apply_paragraphs(plan, target, target_text, para_ops, seg_ops, ctx, tag,
             tgt_segments = list(seg_ops.GetAll(new_para) or [])
         except Exception:
             tgt_segments = []
+        # 033 Option A: LCM auto-segmented these under minted identities.
+        # Re-create them at their own offsets carrying the source GUIDs. Must
+        # run BEFORE the loop below, which wires fields/analyses/AnalysesRS
+        # onto these very segment objects. Conservative: returns None (keep
+        # the auto segments) host-free or on any failure.
+        _rebuilt = _safe(lambda: _rebuild_segments_with_source_guids(
+            target, seg_ops, new_para, para_plan.segments, tgt_segments,
+            plan.title))
+        if _rebuilt:
+            tgt_segments = list(_rebuilt) + tgt_segments[len(_rebuilt):]
+        # Option B backstop: whatever identity the segments ended up with, a
+        # GUID that could NOT be preserved is logged, never silent.
+        _safe(lambda: _log_segment_guid_loss(
+            tgt_segments, para_plan.segments, plan.title))
         for idx, seg_plan in enumerate(para_plan.segments):
             tgt_seg = tgt_segments[idx] if idx < len(tgt_segments) else None
             if tgt_seg is None:
                 base = _first_mapped(seg_plan.baseline, ws_map, tgt_id2h) or ""
-                tgt_seg = _safe(lambda b=base: seg_ops.AppendSentence(
-                    new_para, b, default_vern_handle))
+                tgt_seg = _safe(lambda b=base, sp=seg_plan: seg_ops.AppendSentence(
+                    new_para, b, default_vern_handle,
+                    guid=sp.source_guid or None))
                 if tgt_seg is None:
                     dropped.append(DroppedItemRecord(
                         owner_kind="Segment", owner_guid=seg_plan.source_guid or "?",

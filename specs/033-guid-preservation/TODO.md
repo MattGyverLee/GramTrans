@@ -5,6 +5,11 @@ GUID unless that GUID already exists in the target; a target object carrying the
 source GUID is the same object, so link/dedup instead of minting a new one.* Any
 GUID loss must be **justified and logged**, never silent.
 
+**Status**: **MERGED TO `main` 2026-08-17** (merge commit on `main`, branch tip
+`2d6765b`). What remains open is listed under OPEN ITEMS below; none of it
+blocked the merge, and the `undoable` fix made the merge urgent — `main` could
+not complete a Move without it.
+
 **Branch**: `033-fix-affix-msa-guid-inflfeats`
 **Worktree**: `D:\Github\_Projects\_LEX\GramTrans-033-affix-msa`
 **Measuring tool**: `debug/audit_guid_preservation.py` (committed) — restores a
@@ -163,13 +168,22 @@ An interactive-API convenience applied to faithful reproduction — the same
 family as the `FP_ParameterError("Content cannot be empty")` guard GramTrans
 already works around via `_raw_create_blank_paragraph`.
 
-- [ ] File a flexicon issue: `Create` should not strip when reproducing
-      (an opt-out kwarg, or no strip at all with the empty-check done on a
-      stripped COPY).
-- [ ] GramTrans side: until upstream changes, either route paragraph creation
-      through the raw path that sets `Contents` verbatim, **or** emit a
-      `DroppedItemRecord` — right now the loss is SILENT, which breaches the
-      same never-silent contract 033 exists to enforce.
+- [x] **FIXED UPSTREAM — flexicon #242.** Filed and landed; `Create` no longer
+      strips when reproducing.
+- [x] **GramTrans side needs nothing.** The upstream fix removed the loss at
+      source, so no raw-path reroute and no `DroppedItemRecord` are required —
+      the never-silent contract is not breached because there is no longer a
+      silent loss. Live-proven in commit `6dc7257`, which records the first
+      real exercise of the flexicon #242 fix:
+
+      | fidelity metric | before -> after |
+      |---|---|
+      | paragraph contents identical | 60 -> 104 |
+      | paragraph contents DIFFERING | 44 -> **0** |
+      | segment baselines identical | 45 -> 89 |
+      | segment baselines DIFFERING | 41 -> **0** |
+      | count mismatches | 3 -> **0** |
+      | target texts | 0 -> 9 (the earlier PASS was VACUOUS) |
 
 ## OPEN ITEMS
 
@@ -239,23 +253,40 @@ already works around via `_raw_create_blank_paragraph`.
 
 ---
 
-## ENVIRONMENT — must fix before any of this works outside tests
+## ENVIRONMENT — all three RESOLVED (verified 2026-08-17)
 
-- [ ] **flexicon install is NOT editable.** `pyflexicon 4.3.0` is a plain copy in
-      `D:\Apps\anaconda3\Lib\site-packages\flexicon`, which does **not** have
-      `_CreateWithGuid`. Every test so far used `PYTHONPATH` shadowing. Until
-      this is fixed, a normal GramTrans run gets the old flexicon and the `guid=`
-      kwargs raise `TypeError` — swallowed into generic drops (see above).
-      ```powershell
-      pip uninstall -y pyflexicon
-      pip install -e D:/Github/_Projects/_LEX/flexicon
-      python -c "import flexicon; print(flexicon.__file__)"   # must NOT be site-packages
-      ```
-- [ ] **`CLAUDE.md` is stale**: says install from `D:/Github/_Projects/_LEX/flexlibs2`
-      and that the directory "MUST NOT be renamed to flexicon" — it *has* been
-      renamed, so the documented command fails. Fix the path and drop the note.
-- [ ] **`pyproject.toml`** pins `pyflexicon>=4.1.1`; needs a floor bump once a
-      release carries `guid=`.
+- [x] **flexicon install IS editable now.** Verified: `import flexicon` resolves
+      to `D:\Github\_Projects\_LEX\flexicon\flexicon\__init__.py`, not
+      site-packages, so `PYTHONPATH` shadowing is no longer needed and the
+      `guid=` kwargs reach a flexicon that has `_CreateWithGuid`.
+- [x] **`CLAUDE.md` is current.** It now documents
+      `pip install -e D:/Github/_Projects/_LEX/flexicon`, the `pyflexicon>=4.3.1`
+      floor and why the floor is load-bearing; the `flexlibs2` path and the
+      "MUST NOT be renamed" note are gone.
+- [x] **`pyproject.toml` floor bumped** to `pyflexicon>=4.3.1`, the release
+      carrying the `guid=` create surface (flexicon PR #239).
+
+### NEW — a floor bump cannot express the `undoable` contract
+
+Worth knowing before anyone reaches for `pyproject.toml` to solve this class of
+problem again. flexicon flipped `OpenProject`'s `undoable` default:
+
+```
+OpenProject(self, projectName, writeEnabled=False, undoable=True, ui=None)
+```
+
+verified by runtime signature inspection on 2026-08-17 — **while still
+reporting `flexicon.version == "4.3.1"`**. The version string did not move with
+the breaking change, so:
+
+* `pyflexicon>=4.3.1` is satisfied by both the old and the new behaviour and can
+  neither express nor detect the difference;
+* FLExToolsMCP's index also reports 4.3.1 with `undoable=False`, so it will
+  mislead on this point until reindexed — prefer runtime inspection here.
+
+The only reliable guard is `api.py` passing `undoable=False` **explicitly**
+(commit `6dc7257`), with a `TypeError` fallback for a flexicon predating the
+parameter. Do not "simplify" that back to the default.
 
 ---
 

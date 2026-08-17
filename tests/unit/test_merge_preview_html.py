@@ -12,6 +12,7 @@ All tests pure — no Qt, no LCM.
 from __future__ import annotations
 
 from gramtrans.Lib.merge_preview import (
+    DIFF_PALETTE,
     OVERWRITE,
     DiffSegment,
     FieldDiff,
@@ -163,20 +164,20 @@ class TestColorStrikeIndent:
         seg = DiffSegment(text="new text", kind=SegmentKind.ADDED, ws_role=None)
         preview = _make_preview("F", [seg])
         html_out = to_html(preview, WsFontRegistry.empty())
-        assert "color:#1a7f1a" in html_out
+        assert f"color:{DIFF_PALETTE['added']}" in html_out
 
     def test_removed_is_red_with_strikethrough(self):
         seg = DiffSegment(text="old text", kind=SegmentKind.REMOVED, ws_role=None)
         preview = _make_preview("F", [seg])
         html_out = to_html(preview, WsFontRegistry.empty())
-        assert "color:#cc0000" in html_out
+        assert f"color:{DIFF_PALETTE['removed']}" in html_out
         assert "line-through" in html_out
 
     def test_note_is_gray_italic(self):
         seg = DiffSegment(text="(note)", kind=SegmentKind.NOTE, ws_role=None)
         preview = _make_preview("F", [seg])
         html_out = to_html(preview, WsFontRegistry.empty())
-        assert "color:#888888" in html_out
+        assert f"color:{DIFF_PALETTE['note']}" in html_out
         assert "italic" in html_out
 
     def test_indent_produces_margin(self):
@@ -232,7 +233,7 @@ class TestWsCodeAndReplacement:
         assert html_out.count(">etu</sub>") == 1   # WS code NOT duplicated
         assert "→" in html_out                 # replacement arrow
         assert "line-through" in html_out           # old struck through
-        assert "color:#1a7f1a" in html_out          # new is green
+        assert f"color:{DIFF_PALETTE['added']}" in html_out   # new in the added colour
         assert "old" in html_out and "new" in html_out
 
     def test_plain_str_replacement_has_arrow_no_ws_code(self):

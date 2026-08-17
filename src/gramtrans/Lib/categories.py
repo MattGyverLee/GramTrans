@@ -6186,8 +6186,14 @@ def _walk_entry_allomorphs(src_entry, new_entry, context, tag, identity_remap, d
                          else IMoAffixAllomorphFactory)
         try:
             factory = factory_iface(target.GetFactory(factory_iface))
-            new_allo = factory.Create()
+            # GUID-preserved (033): this used to be a bare Create(), which
+            # regenerated the identity of EVERY transferred allomorph (106/106
+            # on the Ejagham Mini sweep).
+            new_allo = create_with_guid(
+                factory, _guid_str_from(src_allo), subclass or "allomorph")
         except Exception:
+            return
+        if new_allo is None:
             return
         if is_lexeme_form and entry_ie.LexemeFormOA is None:
             entry_ie.LexemeFormOA = new_allo
@@ -6239,14 +6245,123 @@ def _walk_entry_allomorphs(src_entry, new_entry, context, tag, identity_remap, d
         _mk(alt, False)
 
 
-def _create_msa_for_closure(src_msa, new_sense, new_entry, context, tag, identity_remap):
-    """Create the target MSA for a sense via the MSAOperations flexicon wrappers
-    (E4 subclass dispatch). GUID is not preservable for MSAs; the new GUID is
-    recorded in identity_remap so the 17.1 sub-pass can resolve SlotsRC targets.
+def create_with_guid(factory, src_guid, kind):
+    """Create an object through `factory`, PRESERVING `src_guid`.
 
-    MVP live paths: MoInflAffMsa (CreateInflAff, slots=None) and MoStemMsa
-    (CreateStem + StratumRA wiring). Returns the new MSA, or None when the
-    subclass is unsupported (NEEDS_MANUAL) or POS is unresolved."""
+    The project-wide invariant: a transferred object keeps its source GUID, so
+    a target object holding that GUID is recognisably the same object on any
+    later run (that is what makes dedup/link possible at all). Nearly every LCM
+    factory exposes a `Create(Guid)` overload for exactly this.
+
+    Falls back to `Create()` -- a NEW identity -- only when the GUID is
+    unparseable, the overload is absent, or the GUID is already taken, and
+    always logs the reason. Unjustified GUID loss is a defect; a logged
+    fallback is the justification.
+
+    Returns the new object, or None if even the fallback failed.
+
+    Delegates to `owned._create_owned_via_factory`, the engine's canonical
+    implementation, so there is exactly one GUID-preservation policy.
+    """
+    if __package__:
+        from . import owned as _owned
+    else:
+        import owned as _owned  # type: ignore
+    return _owned._create_owned_via_factory(factory, src_guid, kind)
+
+
+def _parse_guid(guid_str):
+    """Parse a GUID string into a System.Guid, or None when unparseable /
+    pythonnet is absent (offline duck-typed tests)."""
+    if not guid_str:
+        return None
+    try:
+        from System import Guid as DotNetGuid
+    except ImportError:
+        return None
+    try:
+        return DotNetGuid.Parse(guid_str)
+    except Exception:  # noqa: BLE001 -- malformed GUID
+        return None
+
+
+# Factory interface name per MSA subclass. All four expose Create(Guid) --
+# verified live against LCM 11.0.0 (scratchpad/probe_msa_factories.py).
+_MSA_FACTORY_BY_SUBCLASS = {
+    "MoInflAffMsa": "IMoInflAffMsaFactory",
+    "MoStemMsa": "IMoStemMsaFactory",
+    "MoDerivAffMsa": "IMoDerivAffMsaFactory",
+    "MoUnclassifiedAffixMsa": "IMoUnclassifiedAffixMsaFactory",
+}
+
+
+def _create_msa_with_guid(target, new_entry, new_sense, subclass, src_guid, pos_fields):
+    """Create a GUID-preserved MSA owned by `new_entry`, pointed at by
+    `new_sense`, with `pos_fields` applied.
+
+    Returns the new MSA, or None to signal "fall back to the flexicon wrapper"
+    (offline fakes, missing factory, GUID collision). Every None return that
+    stems from a live failure is logged with its reason via
+    `_log_guid_fallback`, so an unpreserved GUID is always accounted for.
+    """
+    parsed = _parse_guid(src_guid)
+    if parsed is None:
+        return None   # offline/duck path -- wrapper handles it
+    cache = getattr(target, "Cache", None)
+    if cache is None:
+        return None
+    iface_name = _MSA_FACTORY_BY_SUBCLASS.get(subclass)
+    if iface_name is None:
+        return None
+    import sys as _sys
+    _lcm = _sys.modules.get("SIL.LCModel")
+    if _lcm is None:
+        try:
+            import SIL.LCModel as _lcm  # noqa: F811
+        except Exception:  # noqa: BLE001
+            return None
+    factory_iface = getattr(_lcm, iface_name, None)
+    ilexentry = getattr(_lcm, "ILexEntry", None)
+    if factory_iface is None or ilexentry is None:
+        return None
+    try:
+        factory = cache.ServiceLocator.GetService(factory_iface)
+        new_msa = factory.Create(parsed)
+    except Exception as exc:  # noqa: BLE001 -- GUID taken / overload absent
+        _log_guid_fallback(subclass, src_guid, exc)
+        return None
+    try:
+        # MSAs are owned by the ENTRY; the sense only references one.
+        ilexentry(new_entry).MorphoSyntaxAnalysesOC.Add(new_msa)
+        for attr, value in pos_fields.items():
+            setattr(new_msa, attr, value)
+        new_sense.MorphoSyntaxAnalysisRA = new_msa
+    except Exception as exc:  # noqa: BLE001
+        _log_guid_fallback(subclass, src_guid, exc)
+        return None
+    return new_msa
+
+
+def _create_msa_for_closure(src_msa, new_sense, new_entry, context, tag, identity_remap):
+    """Create the target MSA for a sense, PRESERVING the source GUID.
+
+    Feature 033. This used to route through the flexicon MSAOperations wrappers
+    (`CreateInflAff`/`CreateStem`/...), none of which accept a GUID, so every
+    transferred MSA was minted with a fresh identity and the old GUID was merely
+    recorded in identity_remap. That was a defect, not a design choice: the LCM
+    factories DO expose `Create(Guid)` (probed live on LCM 11.0.0 for all four
+    MSA factories), and this same file already relies on that overload for
+    compound-rule-owned MSAs (`_create_owned_msa`).
+
+    So: create via `<IMoXFactory>.Create(Guid)`, attach to the entry's
+    MorphoSyntaxAnalysesOC, wire the POS fields, and point the sense at it --
+    the work the flexicon wrapper was doing, minus the identity loss. If the
+    GUID overload is unavailable or the GUID is already taken, fall back to the
+    flexicon wrapper and LOG the reason (GUID loss must be justified, never
+    silent), still recording the new GUID in identity_remap.
+
+    Returns the new MSA, or None when the subclass is unsupported
+    (NEEDS_MANUAL) or POS is unresolved."""
     from SIL.LCModel import ICmObject
     if __package__:
         from .residue import apply_residue
@@ -6294,24 +6409,40 @@ def _create_msa_for_closure(src_msa, new_sense, new_entry, context, tag, identit
         if tgt_pos is None:
             return None
         # slots=None: SlotsRC deferred to the 17.1 sub-pass (FR-333).
-        new_msa = target.MSA.CreateInflAff(new_sense, tgt_pos, slots=None)
+        new_msa = _create_msa_with_guid(
+            target, new_entry, new_sense, subclass, src_g,
+            {"PartOfSpeechRA": tgt_pos})
+        if new_msa is None:
+            new_msa = target.MSA.CreateInflAff(new_sense, tgt_pos, slots=None)
     elif subclass == "MoStemMsa":
         tgt_pos = _resolve_or_none("PartOfSpeechRA", "PartOfSpeechRA")
         if tgt_pos is None:
             return None
-        new_msa = target.MSA.CreateStem(new_sense, tgt_pos)
+        new_msa = _create_msa_with_guid(
+            target, new_entry, new_sense, subclass, src_g,
+            {"PartOfSpeechRA": tgt_pos})
+        if new_msa is None:
+            new_msa = target.MSA.CreateStem(new_sense, tgt_pos)
         _wire_stratum(src_msa, new_msa, target)
     elif subclass == "MoDerivAffMsa":
         from_pos = _resolve_or_none("FromPartOfSpeechRA", "FromPartOfSpeechRA")
         to_pos = _resolve_or_none("ToPartOfSpeechRA", "ToPartOfSpeechRA")
         if from_pos is None or to_pos is None:
             return None
-        new_msa = target.MSA.CreateDerivAff(new_sense, from_pos, to_pos)
+        new_msa = _create_msa_with_guid(
+            target, new_entry, new_sense, subclass, src_g,
+            {"FromPartOfSpeechRA": from_pos, "ToPartOfSpeechRA": to_pos})
+        if new_msa is None:
+            new_msa = target.MSA.CreateDerivAff(new_sense, from_pos, to_pos)
     elif subclass == "MoUnclassifiedAffixMsa":
         tgt_pos = _resolve_or_none("PartOfSpeechRA", "PartOfSpeechRA")
         if tgt_pos is None:
             return None
-        new_msa = target.MSA.CreateUnclassifiedAffix(new_sense, tgt_pos)
+        new_msa = _create_msa_with_guid(
+            target, new_entry, new_sense, subclass, src_g,
+            {"PartOfSpeechRA": tgt_pos})
+        if new_msa is None:
+            new_msa = target.MSA.CreateUnclassifiedAffix(new_sense, tgt_pos)
 
     if new_msa is None:
         return None
@@ -6405,7 +6536,255 @@ def _run_171_subpass(context, target, tag=None):
             if already:
                 continue
             target_msa.SlotsRC.Add(target_slot)
+
+    skips.extend(_wire_msa_infl_feats(context, target, plan))
     return skips
+
+
+def _wire_msa_infl_feats(context, target, plan):
+    """Wire IMoInflAffMsa.InflFeatsOA from plan.msa_infl_feat_bindings.
+
+    Feature 033. Runs inside the 17.1 sub-pass, which is already sequenced
+    after both the affix MSAs and the INFLECTION_FEATURES transfer, so the
+    IFsClosedFeature / IFsSymFeatVal endpoints referenced by each spec exist in
+    target by the time we resolve them.
+
+    Mirrors the SlotsRC contract above:
+      * GUID-preserved -- the IFsFeatStruc and each IFsClosedValue are created
+        with the SOURCE GUIDs via `Create(Guid)` so a re-run resolves the same
+        objects rather than minting new ones.
+      * Idempotent -- an MSA that already carries a feature structure with the
+        expected (feature, value) pairs is left untouched.
+      * Never silent -- an unresolvable feature or value yields a
+        Skip(DEPENDENCY_UNRESOLVED), never a dangling or partial write
+        (FR-007's deferral rule: a later run completes it once both endpoints
+        exist).
+
+    Returns a list of Skip.
+    """
+    skips = []
+    if plan is not None:
+        bindings = getattr(plan, "msa_infl_feat_bindings", None) or {}
+        remap = getattr(plan, "identity_remap", None) or {}
+    else:
+        bindings = _binding_map(context, "msa_infl_feat_bindings") or {}
+        remap = getattr(context, "_identity_remap", None) or {}
+    if not bindings:
+        return skips
+
+    def _skip(guid, detail):
+        return Skip(
+            category=GrammarCategory.AFFIXES,
+            source_guid=guid,
+            reason=SkipReason.DEPENDENCY_UNRESOLVED,
+            detail=detail,
+        )
+
+    for src_msa_guid, binding in bindings.items():
+        target_msa_guid = remap.get(src_msa_guid, src_msa_guid)
+        target_msa = _resolve_target_by_guid(target, target_msa_guid)
+        if target_msa is None:
+            skips.append(_skip(
+                src_msa_guid,
+                f"msa_guid={src_msa_guid} not in target; InflFeats deferred"))
+            continue
+        target_msa = _cast_lcm(target_msa, "IMoInflAffMsa")
+
+        # Resolve every endpoint BEFORE creating anything, so a partially
+        # resolvable structure defers whole rather than landing half-written.
+        resolved = []
+        unresolved = False
+        for row in binding.get("specs", ()):
+            feat_guid, val_guid = row.get("feature", ""), row.get("value", "")
+            if not feat_guid or not val_guid:
+                skips.append(_skip(
+                    src_msa_guid,
+                    f"spec {row.get('spec_guid', '')} on msa={src_msa_guid} is "
+                    "not a closed value (complex/negated); not transferred"))
+                unresolved = True
+                continue
+            tgt_feat = _resolve_target_by_guid(target, feat_guid)
+            tgt_val = _resolve_target_by_guid(target, val_guid)
+            if tgt_feat is None or tgt_val is None:
+                which = "feature" if tgt_feat is None else "value"
+                missing = feat_guid if tgt_feat is None else val_guid
+                skips.append(_skip(
+                    missing,
+                    f"{which}_guid={missing} not in target; InflFeats for "
+                    f"msa={src_msa_guid} deferred"))
+                unresolved = True
+                continue
+            resolved.append((row.get("spec_guid", ""),
+                             _cast_lcm(tgt_feat, "IFsClosedFeature"),
+                             _cast_lcm(tgt_val, "IFsSymFeatVal")))
+        if unresolved or not resolved:
+            continue
+
+        # Idempotency guard: already carrying exactly these pairs -> no-op.
+        existing = _existing_infl_feat_pairs(target_msa)
+        wanted = {(_guid_str_from(f), _guid_str_from(v)) for _, f, v in resolved}
+        if existing == wanted:
+            continue
+
+        struc = _get_or_create_feat_struc(
+            target, target_msa, binding.get("struc_guid", ""),
+            binding.get("type_guid", ""))
+        if struc is None:
+            skips.append(_skip(
+                src_msa_guid,
+                f"could not create InflFeats structure for msa={src_msa_guid}"))
+            continue
+        for spec_guid, tgt_feat, tgt_val in resolved:
+            if (_guid_str_from(tgt_feat), _guid_str_from(tgt_val)) in existing:
+                continue
+            if not _add_closed_value(target, struc, spec_guid, tgt_feat, tgt_val):
+                skips.append(_skip(
+                    spec_guid,
+                    f"could not create IFsClosedValue {spec_guid} on "
+                    f"msa={src_msa_guid}"))
+    return skips
+
+
+def _lcm_factory(target, iface_name):
+    """Return the named LCM factory service from the target's cache, or None
+    when pythonnet / the interface / the cache is unavailable (offline fakes)."""
+    cache = getattr(target, "Cache", None)
+    if cache is None:
+        return None
+    import sys as _sys
+    _lcm = _sys.modules.get("SIL.LCModel")
+    if _lcm is None:
+        try:
+            import SIL.LCModel as _lcm  # noqa: F811
+        except Exception:  # noqa: BLE001
+            return None
+    iface = getattr(_lcm, iface_name, None)
+    if iface is None:
+        return None
+    try:
+        return cache.ServiceLocator.GetService(iface)
+    except Exception:  # noqa: BLE001
+        return None
+
+
+class _AddList(list):
+    """list with LCM's .Add() so duck stand-ins accept the same call shape."""
+
+    def Add(self, item):  # noqa: N802 -- mirrors the LCM collection API
+        self.append(item)
+
+
+class _DuckFeatStruc:
+    """Offline stand-in for IFsFeatStruc (host-free tests only)."""
+
+    def __init__(self, guid=""):
+        self.guid = guid
+        self.FeatureSpecsOC = _AddList()
+        self.TypeRA = None
+
+
+class _DuckClosedValue:
+    """Offline stand-in for IFsClosedValue (host-free tests only)."""
+
+    def __init__(self, guid=""):
+        self.guid = guid
+        self.FeatureRA = None
+        self.ValueRA = None
+
+
+def _existing_infl_feat_pairs(target_msa):
+    """{(feature_guid, value_guid)} already on an MSA's InflFeatsOA."""
+    out = set()
+    struc = getattr(target_msa, "InflFeatsOA", None)
+    if struc is None:
+        return out
+    for spec in getattr(_cast_lcm(struc, "IFsFeatStruc"), "FeatureSpecsOC", None) or []:
+        cv = _cast_lcm(spec, "IFsClosedValue")
+        out.add((_guid_str_from(getattr(cv, "FeatureRA", None)),
+                 _guid_str_from(getattr(cv, "ValueRA", None))))
+    return out
+
+
+def _get_or_create_feat_struc(target, target_msa, struc_guid, type_guid):
+    """Return the MSA's InflFeatsOA, creating it GUID-preserved if absent.
+
+    Uses `IFsFeatStrucFactory.Create(Guid)` -- probed live on LCM 11.0.0 -- then
+    assigns it to InflFeatsOA (an owning-atomic property, so assignment IS the
+    ownership transfer). Falls back to `Create()` only if the GUID overload is
+    unavailable or the GUID is already taken, so a collision degrades to a new
+    identity rather than aborting the whole affix."""
+    existing = getattr(target_msa, "InflFeatsOA", None)
+    if existing is not None:
+        return _cast_lcm(existing, "IFsFeatStruc")
+    factory = _lcm_factory(target, "IFsFeatStrucFactory")
+    if factory is None:
+        # Offline duck path (host-free tests): no LCM factory available, so
+        # build the same SHAPE the live branch produces. Unreachable live --
+        # a live target always has pythonnet + the factory.
+        struc = _DuckFeatStruc(struc_guid)
+    else:
+        struc = None
+        parsed = _parse_guid(struc_guid) if struc_guid else None
+        if parsed is not None:
+            try:
+                struc = factory.Create(parsed)
+            except Exception as exc:  # noqa: BLE001 -- GUID taken / no overload
+                _log_guid_fallback("IFsFeatStruc", struc_guid, exc)
+                struc = None
+        if struc is None:
+            try:
+                struc = factory.Create()
+            except Exception:  # noqa: BLE001
+                return None
+    target_msa.InflFeatsOA = struc
+    if type_guid:
+        tgt_type = _resolve_target_by_guid(target, type_guid)
+        if tgt_type is not None:
+            try:
+                struc.TypeRA = _cast_lcm(tgt_type, "IFsFeatStrucType")
+            except Exception:  # noqa: BLE001 -- type is optional
+                pass
+    return struc
+
+
+def _add_closed_value(target, struc, spec_guid, tgt_feat, tgt_val):
+    """Create one GUID-preserved IFsClosedValue on `struc`. True on success."""
+    factory = _lcm_factory(target, "IFsClosedValueFactory")
+    if factory is None:
+        cv = _DuckClosedValue(spec_guid)   # offline duck path; see above
+    else:
+        cv = None
+        parsed = _parse_guid(spec_guid) if spec_guid else None
+        if parsed is not None:
+            try:
+                cv = factory.Create(parsed)
+            except Exception as exc:  # noqa: BLE001
+                _log_guid_fallback("IFsClosedValue", spec_guid, exc)
+                cv = None
+        if cv is None:
+            try:
+                cv = factory.Create()
+            except Exception:  # noqa: BLE001
+                return False
+    try:
+        struc.FeatureSpecsOC.Add(cv)
+        cv = _cast_lcm(cv, "IFsClosedValue")
+        cv.FeatureRA = tgt_feat
+        cv.ValueRA = tgt_val
+    except Exception:  # noqa: BLE001
+        return False
+    return True
+
+
+def _log_guid_fallback(kind, guid, exc):
+    """Record WHY a GUID could not be preserved. GUID loss is a defect unless
+    justified, so every fallback to a minted identity leaves a reason in the
+    log rather than happening silently."""
+    import logging as _logging
+    _logging.getLogger("gramtrans.Lib.categories").warning(
+        "%s: Create(Guid=%s) failed (%s: %s); falling back to a NEW identity. "
+        "The source GUID could not be preserved for this object.",
+        kind, guid, type(exc).__name__, exc)
 
 
 # ----- entry-ref container creation pass (027 US1/US3, contract C1) -------

@@ -261,13 +261,16 @@ class FakeTextOps:
         target = (name or "").strip()
         return any(t.name == target for t in self._texts)
 
-    def Create(self, name, genre=None):
+    def Create(self, name, genre=None, guid=None, contents_guid=None):
         # Mirrors the real TextOperations.Create: raises when a text with
         # this name already exists (flexicon TextOperations.py:149-150) --
         # the Site-1 duplicate-name collision fixture exercises this guard.
+        # `guid`/`contents_guid` mirror the flexicon guid-preserving Create
+        # (feature 033); the requested GUID wins so tests can assert identity.
         if self.Exists(name):
             raise ValueError(f"A text with the name '{name}' already exists.")
-        t = FakeText(guid="tgt-" + name, name=name)
+        t = FakeText(guid=guid or ("tgt-" + name), name=name)
+        t.contents_guid = contents_guid
         self._texts.append(t)
         self.created.append(("text", name))
         return t
@@ -292,8 +295,9 @@ class FakeParagraphOps:
     def GetText(self, p, wsHandle=None):
         return p.text_by_handle.get(wsHandle)
 
-    def Create(self, text, content, wsHandle=None):
-        p = FakeParagraph(guid="tgt-para", text_by_handle={wsHandle: content})
+    def Create(self, text, content, wsHandle=None, guid=None):
+        p = FakeParagraph(guid=guid or "tgt-para",
+                          text_by_handle={wsHandle: content})
         text.paragraphs.append(p)
         self.created.append(("para", content))
         return p
@@ -321,8 +325,8 @@ class FakeSegmentOps:
     def GetAnalyses(self, s):
         return list(getattr(s, "analyses_rs", []))
 
-    def AppendSentence(self, p, text, wsHandle=None):
-        seg = FakeSegment(guid="tgt-seg", baseline=text)
+    def AppendSentence(self, p, text, wsHandle=None, guid=None):
+        seg = FakeSegment(guid=guid or "tgt-seg", baseline=text)
         p.segments.append(seg)
         return seg
 
@@ -356,8 +360,9 @@ class FakeWordformOps:
                 return wf
         return None
 
-    def Create(self, form, wsHandle=None):
-        wf = FakeWordform(guid="tgt-wf-" + str(form), form_by_handle={wsHandle: form})
+    def Create(self, form, wsHandle=None, guid=None):
+        wf = FakeWordform(guid=guid or ("tgt-wf-" + str(form)),
+                          form_by_handle={wsHandle: form})
         self._wf.append(wf)
         self.created.append(form)
         return wf
@@ -389,8 +394,8 @@ class FakeWfiAnalysisOps:
         # SC-005: enumerate the analyses already on a target wordform.
         return list(getattr(wordform, "analyses", []))
 
-    def Create(self, wordform):
-        a = FakeAnalysis(guid="tgt-an")
+    def Create(self, wordform, guid=None):
+        a = FakeAnalysis(guid=guid or "tgt-an")
         a.approved = None
         a._owner_wordform = wordform
         wordform.analyses.append(a)
@@ -435,8 +440,8 @@ class FakeMorphBundleOps:
     def GetInflType(self, b):
         return b.InflTypeRA
 
-    def Create(self, a):
-        b = FakeMorphBundle(guid="tgt-mb")
+    def Create(self, a, guid=None):
+        b = FakeMorphBundle(guid=guid or "tgt-mb")
         b.set_form = {}
         b.wired = {}
         # Attach to the owning target analysis so GetMorphBundles(a) sees it
@@ -481,10 +486,10 @@ class FakeWfiGlossOps:
     def GetHumanEvaluation(self, g):
         return getattr(g, "human_evaluation", None)
 
-    def Create(self, a, form=None, wsHandle=None):
-        # Mirrors the real WfiGlossOperations.Create(analysis, form, wsHandle=None):
-        # the gloss form is required at creation.
-        g = FakeGloss(guid="tgt-gloss")
+    def Create(self, a, form=None, wsHandle=None, guid=None):
+        # Mirrors the real WfiGlossOperations.Create(analysis, form,
+        # wsHandle=None, guid=None): the gloss form is required at creation.
+        g = FakeGloss(guid=guid or "tgt-gloss")
         g.set_form = {}
         if form is not None:
             g.set_form[wsHandle] = form
