@@ -52,11 +52,54 @@
 
 **Iteration 2** — all items pass. No [NEEDS CLARIFICATION] markers remain.
 
+**Iteration 3 (post-`/speckit-clarify`, same day)** — checkbox states unchanged at
+16/16, but three items were passing on weaker evidence than the marks implied, and
+clarification is what actually earned them:
+
+- *Requirements are testable and unambiguous* — FR-014 and FR-019 turned on a
+  "responsiveness threshold" that was never given a value, so neither could be
+  passed or failed as written. Now 500 ms (FR-019a), and reframed: the trigger is
+  **anticipated** duration first (FR-014a, FR-014c), with elapsed time as the
+  fallback for work whose size cannot be known in advance (FR-014b). The
+  requester's own framing drove this — the operator's question is "how long will I
+  wait?", not "how long has it been?".
+- *Success criteria are measurable* — SC-009 required "no description exceeds two
+  lines" without saying at what width or text scale, which at the 900 px floor
+  with maximum text would have silently mandated gutting the copy. Now budgeted at
+  the default width and scale (FR-013), with FR-013a absorbing extra lines
+  elsewhere.
+- *All functional requirements have clear acceptance criteria* — FR-033's
+  "separated structurally" and FR-024's green scope were both open enough to
+  build two different things from. Now one entry per line (FR-033, FR-035) and
+  green on striping/buttons/focus with the selection highlight staying blue
+  (FR-024a).
+
+Two contradictions introduced by the new answers were found and removed rather
+than left to be discovered during planning:
+
+- The "colour-mode switch mid-wait" edge case became unreachable once wizard input
+  is blocked during a wait (FR-018). Rewritten to say so, and to require the
+  indicator be drawn from the active palette rather than hard-coded.
+- One-affix-per-line makes any cap on the list costlier in vertical space, so
+  FR-037 now requires a truncated list to disclose its true total. A silently
+  truncated list would let an operator judge a slot on a fraction of its contents
+  — a worse failure than the quote soup US4 exists to fix.
+
 ## Notes
 
-- Two decisions in this spec were confirmed with the requester rather than
-  assumed: the minimum-width floor and the placement of the zoom/colour-mode
-  controls. Both are recorded in the spec's Assumptions section.
+- **Eight decisions in this spec were confirmed with the requester rather than
+  assumed**, all recorded in the spec's Assumptions section and, for the six from
+  the clarify session, in `## Clarifications`: the minimum-width floor and
+  side-by-side retention; the placement of the zoom/colour-mode controls; the
+  500 ms threshold; predictive-before-elapsed triggering; input blocked during a
+  wait; the two-line copy budget's measurement basis; the green accent's surface
+  scope; and one-affix-per-line.
+- **What is deliberately left to the plan**: the exact green hex values, and which
+  specific operations qualify for up-front (determinate) progress. Both are bounded
+  by tests the spec already requires — the contrast floors and colour-distance
+  checks (FR-026, FR-027, SC-008a) for the first, and FR-014d's prohibition on
+  paying for prediction with a slower operation for the second. These are design
+  and discovery work, not open questions.
 - One assumption is worth re-reading before planning: **the green accents have no
   prior state to restore.** The repository's history contains no green accent
   palette — the current theme was the first the application owned and was

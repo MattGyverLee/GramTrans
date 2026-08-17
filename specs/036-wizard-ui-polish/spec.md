@@ -25,6 +25,17 @@ Because the items are independent, they are specified as independent stories.
 Shipping any single one is a real improvement; shipping none of the others does
 not block it.
 
+## Clarifications
+
+### Session 2026-08-17
+
+- Q: How long may an operation run before a progress indicator must appear? → A: 500 ms — as a fallback trigger only; see the next bullet
+- Q: Should the indicator be triggered by elapsed time, or by how long the operation is expected to take? → A: Expected duration decides. Where the cost is knowable up front, the indicator appears before the work starts and states the scale of the work; the 500 ms elapsed-time rule is the fallback for operations whose cost cannot be predicted
+- Q: During a wait that shows an indicator, what must the operator be able to do? → A: The window keeps repainting and stays movable; wizard input is blocked until the operation ends
+- Q: At what window width and text scale is the two-line budget for step descriptions measured? → A: At the default width and text scale. Narrower or larger-text windows may wrap to a third line, which the layout must absorb without clipping
+- Q: Which dark-mode surfaces get the green accent? → A: Alternating row striping, buttons, and the focus indicator. The selection highlight stays blue, so a selected row remains readable against green striping
+- Q: How should the affixes in a slot preview be presented? → A: One affix per line, with form and gloss separated by whitespace or alignment rather than punctuation
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Know the wizard is working, not hung (Priority: P1)
@@ -33,8 +44,10 @@ A linguist opens the wizard against a large project and advances to a page that
 must enumerate grammar from the lexical database. The window greys out and stops
 repainting for 40 seconds. Nothing tells them whether the tool is working or has
 died, so they kill it — and lose the selections they had already made. With this
-story, every wait shows a visible, moving indicator naming what is being loaded,
-so the operator waits instead of guessing.
+story, every wait shows a visible, moving indicator naming what is being loaded
+and — wherever the size of the job is knowable before it starts — how much of it
+there is. The operator's real question is not "how long has this been going?" but
+"how long will I be waiting?", and the indicator is there to answer that one.
 
 **Why this priority**: This is the only item on the list that causes users to
 lose work. An unreadable label is an annoyance; an apparently-hung window is a
@@ -43,25 +56,33 @@ a frozen app is to kill it. It is also the item that gets *worse* as projects ge
 bigger, which is the direction real usage runs.
 
 **Independent Test**: Drive the wizard against a project large enough for a
-perceptible wait on a page that enumerates grammar. Confirm that an indicator
-appears, that it visibly animates or advances for the whole wait, that it names
-the operation, and that it disappears when the page is ready. No other story
-needs to be implemented for this to be testable.
+perceptible wait on a page that enumerates grammar. Confirm the indicator appears
+at the start of the work rather than half a second into it, that it states how much
+work there is, that it advances for the whole wait, that it names the operation,
+and that it disappears when the page is ready. No other story needs to be
+implemented for this to be testable.
 
 **Acceptance Scenarios**:
 
-1. **Given** a project whose grammar enumeration takes longer than the
-   responsiveness threshold, **When** the operator advances to a page that must
-   enumerate it, **Then** a progress indicator appears naming the operation and
-   remains visible and visibly active until the page is populated.
+1. **Given** a project whose grammar enumeration is known in advance to be large
+   enough to take longer than 500 milliseconds, **When** the operator advances to
+   the page that enumerates it, **Then** the indicator is already on screen when
+   the work begins — the operator never sees a still window first.
+1a. **Given** an operation whose size cannot be established in advance, **When**
+   it runs past 500 milliseconds, **Then** the indicator appears at that point,
+   names the operation, and stays until the operation ends.
 2. **Given** an operation whose total unit count can be established without
    itself being slow, **When** that operation runs, **Then** the indicator shows
-   determinate progress (units completed out of total).
+   determinate progress — units completed out of the total — so the operator can
+   judge how much longer it will take.
 3. **Given** an operation whose total cannot be established cheaply, **When**
-   that operation runs, **Then the** indicator is indeterminate but still
+   that operation runs, **Then** the indicator is indeterminate but still
    visibly animating, and still names the operation.
-4. **Given** an operation that completes faster than the responsiveness
-   threshold, **When** it runs, **Then** no indicator flashes on screen.
+3a. **Given** any operation covered by this story, **When** the indicator is up,
+   **Then** the window continues to repaint and can be moved, and no wizard
+   control accepts input until the operation ends.
+4. **Given** an operation that is neither predicted to be slow nor runs past 500
+   milliseconds, **When** it runs, **Then** no indicator flashes on screen.
 5. **Given** a wait in progress, **When** the operator moves or resizes the
    window, **Then** the window repaints — it is never reported as "Not
    Responding" by the operating system.
@@ -173,18 +194,21 @@ present that does not belong to the linguistic data itself.
 **Acceptance Scenarios**:
 
 1. **Given** a slot occupied by several affixes, **When** the operator selects
-   it, **Then** each affix is presented as its own visually separate entry.
+   it, **Then** each affix occupies its own line.
 2. **Given** that affix list, **When** the operator reads it, **Then** no
    programmatic quoting has been added around the entries — the only quote
    characters shown are ones present in the linguistic data itself.
 3. **Given** an affix whose display label combines a form and a gloss, **When**
-   it is shown, **Then** form and gloss are distinguishable from each other
-   without relying on nested quote characters.
+   it is shown, **Then** form and gloss are separated by whitespace or alignment,
+   with no added punctuation between them.
 4. **Given** an empty slot, **When** the operator selects it, **Then** the
    preview says so plainly rather than showing an empty punctuation artifact.
+4a. **Given** a slot with more affixes than the preview will list, **When** the
+   operator selects it, **Then** the preview states that the list is truncated and
+   how many affixes the slot actually holds.
 5. **Given** any other list-valued field shown anywhere in the preview, **When**
-   it is rendered, **Then** it follows the same rule — entries are separated
-   structurally, not by added quote characters.
+   it is rendered, **Then** it follows the same rule — one entry per line, no
+   added quote characters.
 
 ---
 
@@ -276,7 +300,7 @@ width.
 ### User Story 7 - Green accents in dark mode (Priority: P3)
 
 Before light mode was introduced, dark mode carried green accents — alternating
-row striping, button and selection colouring — that made lists easy to track
+row striping, button and focus colouring — that made lists easy to track
 across and gave the tool its own identity. The current dark palette is
 blue-accented with barely-visible row striping. With this story dark mode gets
 its green accent family back, without giving up the contrast floors the current
@@ -286,9 +310,10 @@ palette established.
 from stronger row striping. Nothing is wrong or unreadable today.
 
 **Independent Test**: Switch to dark mode and inspect a populated tree, a set of
-buttons, and a selected row. Confirm the accents read as green, that alternating
-rows are clearly distinguishable from each other, and that measured contrast
-still meets the palette's existing floors.
+buttons, and a selected row. Confirm striping, buttons and focus read as green,
+that the selection stays blue and remains readable over the striping, that
+alternating rows are clearly distinguishable from each other, and that measured
+contrast still meets the palette's existing floors.
 
 **Acceptance Scenarios**:
 
@@ -296,7 +321,10 @@ still meets the palette's existing floors.
    tree, **Then** alternating rows are distinguishable from one another at a
    glance and the striping reads as a green tint.
 2. **Given** dark mode is active, **When** the operator views buttons and the
-   selection highlight, **Then** their accent colouring reads as green.
+   focus indicator, **Then** their accent colouring reads as green.
+2a. **Given** dark mode is active and a row is selected in a striped tree,
+   **When** the operator looks at it, **Then** the selection is blue, is plainly
+   distinguishable from the green striping beneath it, and its text is readable.
 3. **Given** the dark palette after this change, **When** its contrast is
    measured, **Then** every text-on-background pair still meets the contrast
    floor the palette already enforces, and the enforcement remains automated.
@@ -335,21 +363,37 @@ off.
 4. **Given** the operator changes the text size or the window width, **When**
    descriptions are redrawn, **Then** they wrap or unwrap to suit, and remain
    fully readable at every supported combination.
-5. **Given** a description longer than two lines' worth of text, **When** it is
-   shown, **Then** it is shortened to fit two lines rather than silently
-   overflowing — two lines is the budget, not a starting point.
+5. **Given** a description longer than two lines at the default width and text
+   scale, **When** the copy is reviewed, **Then** it is shortened to fit two lines
+   there — two lines at the default is the budget, not a starting point.
+6. **Given** a description that fits two lines at the default, **When** the window
+   is narrowed to 900 pixels or the text scale is raised, **Then** it may wrap to a
+   third line, and that extra line is absorbed without clipping the description,
+   overlapping the zoom and colour-mode controls, or pushing page content off
+   screen.
 
 ---
 
 ### Edge Cases
 
 - **A wait that finishes instantly.** An operation that completes below the
-  responsiveness threshold must not flash an indicator on and off; a visible
+  500-millisecond threshold must not flash an indicator on and off; a visible
   flicker is worse than no indicator.
 - **A wait that never finishes.** If an operation hangs indefinitely, the
-  indicator keeps animating and the window keeps repainting. It must remain
-  possible for the operator to abandon the wizard by closing the window, and
-  doing so must not leave a project handle open.
+  indicator keeps animating and the window keeps repainting. Because wizard input
+  is blocked (FR-018), the operator's only remaining exit is the operating
+  system's own — closing or killing the window. That path must not leave a project
+  handle open. Making a hung operation gracefully abandonable from inside the
+  application requires cancellation, which is explicitly out of scope.
+- **A predicted wait that turns out to be fast.** If a job's size predicted a long
+  wait but it finishes almost immediately, the indicator will have been shown for a
+  very short time. That is accepted: an indicator that appears and resolves quickly
+  is honest about what was attempted, and is not the flicker FR-019 prohibits —
+  FR-019 governs operations that were never predicted slow in the first place.
+- **A fast operation that turns out to be slow.** The converse — a job whose size
+  predicted speed but which runs long anyway — must still be caught by the
+  elapsed-time fallback (FR-014b). The two triggers are not exclusive; whichever
+  fires first governs.
 - **Nested waits.** If one operation triggers another, the operator sees one
   indicator describing the current work, not a stack of competing dialogs.
 - **A determinate total that turns out to be wrong.** If the counted total is
@@ -369,14 +413,20 @@ off.
   apostrophes. Removing *added* quoting must not remove or alter quoting that is
   part of the data.
 - **A very long affix list in a slot.** A slot occupied by many affixes must
-  remain scannable and must not make the preview pane grow without bound.
+  remain scannable and must not make the preview pane grow without bound. Because
+  each affix now takes a whole line, any cap reached must be stated along with the
+  true total — a silently truncated list would let the operator judge a slot on a
+  fraction of its contents, which is a worse failure than the quote soup this story
+  set out to fix.
 - **Dry run, then a change that does not alter the plan.** Any selection change
   after a dry run re-disables Execute. Re-enabling requires a fresh dry run even
   if the operator believes nothing material changed — the guard errs toward
   requiring another look.
-- **Colour-mode switch mid-wait.** Toggling light/dark while an operation is in
-  flight must repaint the indicator in the new palette rather than leaving it in
-  the old one.
+- **Colour-mode switch mid-wait.** Not reachable: the colour-mode control is a
+  wizard control, and wizard input is blocked while an indicator is up (FR-018).
+  The indicator therefore only ever needs to render in the palette that was active
+  when it appeared. It must still be drawn from the active palette rather than
+  hard-coded, so that a wait entered in dark mode shows a dark indicator.
 
 ## Requirements *(mandatory)*
 
@@ -397,7 +447,8 @@ off.
   supported window width and any supported text scale. Overlap of the step
   description is the specific failure this requirement exists to prevent: the
   controls and the description MUST reserve separate space, so that a description
-  growing to its full two-line budget (FR-013) cannot run underneath them.
+  grown to its full wrapped height — however many lines that takes at the current
+  width and text scale (FR-013a) — cannot run underneath them.
 - **FR-005**: Relocating those controls MUST preserve every existing capability:
   increase, decrease, reset to the default size, the current-percentage readout,
   the light/dark toggle, and all existing keyboard shortcuts.
@@ -424,15 +475,34 @@ off.
 - **FR-012**: A step description too long for one line MUST wrap to a second
   line rather than being truncated; a description that fits MUST remain on one
   line without reserving a blank second line.
-- **FR-013**: Step descriptions MUST fit within two lines at every supported
-  combination of window width and text scale; any description that would exceed
-  two lines MUST be shortened rather than allowed to overflow.
+- **FR-013**: Step descriptions MUST fit within two lines **at the default window
+  width and default text scale**; any description exceeding that budget MUST be
+  shortened. This is a copy-length budget, measured once at the default, not a
+  guarantee at every size.
+- **FR-013a**: At narrower widths or larger text scales a description MAY wrap
+  beyond two lines. The layout MUST absorb the extra line or lines without
+  clipping the description, overlapping the zoom and colour-mode controls
+  (FR-004), or pushing page content off screen.
 
 **Progress feedback (item 3)**
 
-- **FR-014**: Any operation that reads or writes the lexical database and may
-  exceed the responsiveness threshold MUST present a visible progress indicator
-  for the duration of the wait.
+- **FR-014**: Any operation that reads or writes the lexical database MUST present
+  a visible progress indicator when either trigger fires, whichever comes first:
+  - **FR-014a — anticipated cost (primary).** Where the size of the work can be
+    established before it begins, and that size predicts a wait longer than 500
+    milliseconds, the indicator MUST appear *before* the work starts. The operator
+    is told what is coming rather than being made to wait to find out.
+  - **FR-014b — elapsed time (fallback).** Where the size of the work cannot be
+    established in advance, the indicator MUST appear once the operation has run
+    for 500 milliseconds.
+- **FR-014c**: For any operation whose size is knowable in advance, the indicator
+  MUST state the scale of the work — how much there is to do — not merely that
+  work is happening. "How long we will wait" is the question the indicator exists
+  to answer; "how long it has been" is not a sufficient answer to it.
+- **FR-014d**: The prediction MUST NOT cost more than it saves. An operation
+  qualifies for FR-014a only where its size is already known or obtainable at
+  negligible cost; establishing size MUST NOT itself introduce a perceptible
+  wait (see FR-016 and the matching assumption).
 - **FR-015**: The indicator MUST name the operation in terms the operator can
   recognise, not in internal or technical vocabulary.
 - **FR-016**: When the total unit count for an operation can be established
@@ -441,11 +511,18 @@ off.
 - **FR-017**: When the total cannot be established cheaply, the indicator MUST be
   indeterminate but MUST still animate visibly, so that "working" is
   distinguishable from "stopped".
-- **FR-018**: The application window MUST continue to repaint and MUST NOT be
-  reported as unresponsive by the operating system for the duration of any such
-  wait.
-- **FR-019**: An operation completing below the responsiveness threshold MUST NOT
-  display an indicator at all.
+- **FR-018**: The application window MUST continue to repaint, and MUST NOT be
+  reported as unresponsive by the operating system, for the duration of any such
+  wait. Wizard input MUST be blocked while an indicator is up: the window remains
+  movable, resizable, and repainting, but no wizard control accepts input until
+  the operation ends. This is what keeps a wait from becoming a re-entrant read of
+  the lexical database.
+- **FR-019**: An operation that neither predicts a long wait (FR-014a) nor runs
+  past 500 milliseconds (FR-014b) MUST NOT display an indicator at all — no flash,
+  no flicker.
+- **FR-019a**: The 500-millisecond threshold MUST be one project-wide value
+  declared in a single place, used both as the elapsed-time fallback and as the
+  bar an anticipated wait must clear, and not tuned per operation.
 - **FR-020**: When an operation ends — successfully, by failure, or by the
   operator abandoning the wizard — the indicator MUST be dismissed, and a failure
   MUST be surfaced to the operator as a message.
@@ -460,8 +537,12 @@ off.
 
 **Dark-mode accents (item 4)**
 
-- **FR-024**: Dark mode MUST use a green accent family for interactive and
-  selection chrome, including buttons and the selection highlight.
+- **FR-024**: Dark mode MUST use a green accent family for alternating row
+  striping, buttons, and the focus indicator.
+- **FR-024a**: The dark-mode selection highlight MUST remain blue. Selection and
+  row striping are drawn on top of one another in a tree, so they MUST stay
+  different hues, and a selected row MUST remain clearly readable against a
+  green-striped one.
 - **FR-025**: Dark-mode alternating row striping MUST be distinguishable at a
   glance on populated lists and trees and MUST read as a green tint.
 - **FR-026**: The dark palette MUST continue to meet the contrast floors the
@@ -497,17 +578,21 @@ off.
 
 **Slot affix legibility (item 8)**
 
-- **FR-033**: List-valued fields in the preview display MUST separate their
-  entries structurally, and MUST NOT add quote characters around entries.
+- **FR-033**: List-valued fields in the preview display MUST place each entry on
+  its own line, and MUST NOT add quote characters around entries.
 - **FR-034**: Quote and apostrophe characters that are part of the linguistic
   data MUST be preserved exactly; only added programmatic quoting may be
   removed.
 - **FR-035**: An affix label combining a form with a gloss MUST distinguish the
-  two without relying on nested quote characters.
+  two by whitespace or alignment, not by quote characters or other punctuation
+  added for the purpose.
 - **FR-036**: An empty list-valued field MUST be presented as explicitly empty
   rather than as an empty punctuation artifact.
 - **FR-037**: A slot occupied by many affixes MUST remain scannable and MUST NOT
-  cause the preview pane to grow without bound.
+  cause the preview pane to grow without bound. One-entry-per-line trades vertical
+  space for legibility, so where the list is capped the cap MUST be disclosed to
+  the operator — a truncated list MUST say that it is truncated and how many
+  entries exist, never silently show the first few as though they were all.
 
 **Finish-page guard (item 9)**
 
@@ -541,12 +626,20 @@ off.
   and a description. Position and total are derived from the declared flow, never
   written per page.
 - **Progress report**: What the operator is shown during a wait — an operation
-  name, and either a completed-against-total pair or an indeterminate marker.
-- **Palette accent set**: The colours a mode uses for interactive and selection
-  chrome and for row striping, distinct from the semantic colours that carry
+  name, and either a completed-against-total pair or an indeterminate marker. Its
+  purpose is to answer "how much longer?", so where a total is known it is part of
+  the report from the first frame, not filled in as work proceeds.
+- **Anticipated size**: A count, known or cheaply obtainable before an operation
+  begins, that both predicts whether the wait warrants an indicator (FR-014a) and
+  supplies the total the report displays (FR-014c, FR-016). Where no such count
+  exists, the operation falls back to elapsed-time triggering and an indeterminate
+  report.
+- **Palette accent set**: The colours a mode uses for row striping, buttons and
+  focus — distinct both from the selection highlight, which is tracked separately
+  because it is drawn over striping, and from the semantic colours that carry
   meaning.
 - **Preview list field**: A field whose value is a sequence of labels shown in the
-  preview display, rendered as separated entries rather than as a quoted
+  preview display, rendered one entry per line rather than as a quoted
   collection.
 - **Dry-run result**: The previewed plan the operator has seen, valid only for the
   selection state that produced it and invalidated by any change to it.
@@ -555,10 +648,17 @@ off.
 
 ### Measurable Outcomes
 
-- **SC-001**: No wait longer than the responsiveness threshold anywhere in the
-  wizard leaves the operator without a visible, active indicator — verified
-  against the largest available test project across every operation enumerated in
-  FR-023.
+- **SC-001**: No wait longer than 500 milliseconds anywhere in the wizard leaves
+  the operator without a visible, active indicator — verified against the largest
+  available test project across every operation enumerated in FR-023.
+- **SC-001a**: No operation that is neither predicted slow nor exceeds 500
+  milliseconds displays an indicator, verified by driving each FR-023 operation
+  against a project small enough to finish under the threshold and confirming
+  nothing appears.
+- **SC-001b**: For every FR-023 operation whose size is knowable in advance, the
+  indicator is on screen before the work starts and states the total amount of
+  work — measured by confirming the operator never observes a still window ahead
+  of the indicator, and that the total shown matches the work actually performed.
 - **SC-002**: The operating system never reports the wizard as unresponsive
   during any operation, measured across a full end-to-end run on the largest
   available test project.
@@ -573,18 +673,24 @@ off.
   the default and the largest supported text scale, with tree-and-preview pages
   still side by side at the floor.
 - **SC-005a**: The zoom and colour-mode controls never overlap the step title or
-  the step description, verified at 900 pixels with a two-line description at the
-  largest supported text scale — the worst case for both.
+  the step description, verified at 900 pixels and the largest supported text
+  scale using the longest description in the wizard — the worst case for both.
 - **SC-006**: An operator asked to identify which affixes occupy a given slot can
-  read them off the preview correctly on first attempt, with no quote characters
-  present other than those in the data.
+  read them off the preview correctly on first attempt — one affix per line, with
+  no quote characters present other than those in the data.
 - **SC-007**: No sequence of actions on the Finish page can reach a write without
   a successful dry run of the current selection state having been shown first.
-- **SC-008**: Dark-mode alternating rows and accent chrome read as green, and
-  every measured contrast pair still meets the palette's existing floors, with
-  the measurement automated.
-- **SC-009**: No step description is truncated at any supported combination of
-  window width and text scale, and none exceeds two lines.
+- **SC-008**: Dark-mode alternating rows, buttons and focus read as green while
+  the selection highlight remains blue, and every measured contrast pair still
+  meets the palette's existing floors, with the measurement automated.
+- **SC-008a**: A selected row in a striped tree is distinguishable from the
+  striping under it in dark mode, and the accent green is distinguishable from the
+  diff display's "added" green — both verified as explicit colour-distance checks
+  rather than by eye.
+- **SC-009**: No step description exceeds two lines at the default window width
+  and text scale, and no step description is truncated at any supported
+  combination of width and text scale — including the 900-pixel floor at the
+  largest scale, where extra wrapped lines are permitted but clipping is not.
 - **SC-010**: The window title contains no internal phase or milestone label.
 - **SC-011**: For an identical set of selections, the objects transferred and
   their content are unchanged from before this feature — the whole feature is
@@ -605,10 +711,30 @@ off.
 - **Green applies to dark mode only.** The request named dark mode specifically.
   Light mode keeps its current accent family, and the two modes are allowed to
   differ in accent hue.
-- **"Responsiveness threshold" means a short, single fixed delay** before an
-  indicator appears — long enough that fast operations show nothing, short enough
-  that the operator never wonders. It is one project-wide value, not a per-
-  operation tuning exercise.
+- **Green covers striping, buttons and focus — not selection, confirmed with the
+  requester.** The selection highlight stays blue (FR-024a) because selection is
+  drawn over striping in a tree; making both green would put the two most
+  frequently co-occurring surfaces in the same hue. It also sidesteps the tightest
+  contrast target in the palette, which is highlighted text on the highlight
+  colour.
+- **The exact green is left to the plan.** The spec fixes which surfaces are green
+  and the constraints the hue must satisfy — the existing contrast floors (FR-026)
+  and measurable distance from the diff display's "added" green (FR-027, SC-008a)
+  — but not the hex values. Choosing them is design work bounded by those tests,
+  and the tests are what make the choice checkable.
+- **The threshold is 500 milliseconds, and it is predictive first, confirmed with
+  the requester.** The operator's question is "how long will I be waiting?", not
+  "how long has this been going?" — so where the size of a job is knowable before
+  it starts, the indicator appears up front and states the scale of the work
+  (FR-014a, FR-014c). Elapsed time is only the fallback for jobs whose size cannot
+  be known in advance (FR-014b). 500 ms is one project-wide value (FR-019a) that
+  serves as both the fallback delay and the bar an anticipated wait must clear.
+- **Prediction is free or it does not happen.** FR-014d forbids buying a better
+  progress display with a slower operation. In practice this means an operation
+  qualifies for up-front display only where a count it already has — or can get at
+  negligible cost — predicts the wait. Where no such count exists, the elapsed-time
+  fallback is the correct and sufficient answer, and no extra pass may be added to
+  manufacture one.
 - **Determinate progress is opportunistic.** An operation gets a real meter only
   where the total is already known or trivially countable. Nowhere does this
   feature justify an extra enumeration pass purely to populate a progress bar —
@@ -628,6 +754,11 @@ off.
   renders sequence entries through a representation that quotes strings, and
   affix labels separately wrap their gloss in quotes. Both are display concerns.
   No stored data is affected, and FR-034 exists to keep it that way.
+- **Affixes go one per line, confirmed with the requester**, with form and gloss
+  separated by whitespace or alignment rather than punctuation (FR-033, FR-035).
+  This costs vertical space in the preview pane, which is why FR-037 requires any
+  cap on the list to be disclosed rather than silent — trading legibility for a
+  quietly truncated list would replace one misreading with a worse one.
 - **The minimum-width floor is 900 pixels, confirmed with the requester**, and is
   a single project-wide value applying to the wizard window as a whole rather than
   being negotiated per page. 900 was chosen so the wizard occupies half of a
@@ -667,7 +798,14 @@ off.
 - Any change to what is enumerated, planned, or written — see FR-045.
 - Cancelling a long-running operation mid-flight. This feature makes waits
   *visible*; making them *interruptible* is a separate concern with its own
-  consistency questions and is not specified here.
+  consistency questions and is not specified here. FR-018's input blocking is the
+  direct consequence: with no cancellation, there is nothing useful for a wizard
+  control to do during a wait, and allowing input would only invite re-entrant
+  database access.
+- Estimating and displaying a remaining *time* ("about 30 seconds left"). FR-014c
+  requires the indicator to state the scale of the *work*, which is knowable;
+  converting that into a duration requires a throughput model this feature does
+  not build.
 - Persisting window size or position between sessions.
 - Reworking the content of any step beyond the project/writing-system split and
   the two-line description budget.
