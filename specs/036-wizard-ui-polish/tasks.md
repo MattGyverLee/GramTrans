@@ -43,15 +43,15 @@ stay importable without a `QApplication`, exactly as `Lib/merge_preview.py` is
 
 **Wave 1 — single task (tests first):**
 
-- [ ] **T002** Failing unit tests for the Qt-free progress surface: `PROGRESS_THRESHOLD_MS == 500` and declared in exactly one place (FR-019a), `predicted_ms(total_units, units_per_second)`, `warrants_indicator(None, rate) is False` (FR-014d), `NullSink` methods are no-ops, `reporting()` calls `end` through a normal exit *and* through an exception (FR-020), `end` is idempotent, `tick` never raises after `end`, and `SourceCounts` returns `None` (conservative "unknown") rather than raising when a count is unavailable · `tests/unit/test_036_progress_sink.py`
+- [x] **T002** Failing unit tests for the Qt-free progress surface: `PROGRESS_THRESHOLD_MS == 500` and declared in exactly one place (FR-019a), `predicted_ms(total_units, units_per_second)`, `warrants_indicator(None, rate) is False` (FR-014d), `NullSink` methods are no-ops, `reporting()` calls `end` through a normal exit *and* through an exception (FR-020), `end` is idempotent, `tick` never raises after `end`, and `SourceCounts` returns `None` (conservative "unknown") rather than raising when a count is unavailable · `tests/unit/test_036_progress_sink.py`
 
 **⟶ Wait for Wave 1 to finish, then:**
 
-- [ ] **T003** Create the Qt-free progress module: `PROGRESS_THRESHOLD_MS = 500`, the `ProgressSink` Protocol (`begin`/`tick`/`end`), `NullSink`, `predicted_ms`, `warrants_indicator`, and the `reporting` context manager · `src/gramtrans/Lib/progress.py`
+- [x] **T003** Create the Qt-free progress module: `PROGRESS_THRESHOLD_MS = 500`, the `ProgressSink` Protocol (`begin`/`tick`/`end`), `NullSink`, `predicted_ms`, `warrants_indicator`, and the `reporting` context manager · `src/gramtrans/Lib/progress.py`
 
 **⟶ Wait for T003 (same file), then:**
 
-- [ ] **T004** Add the cheap source-count cache to the same module: `SourceCounts`, filled once when a source binds, exposing `LexiconNumberOfEntries()`, `TextsNumberOfTexts()` and possibility-list `.Count` values (custom fields, phoneme sets / natural classes / phonological rules, variant & complex-form types, ad-hoc prohibitions). O(1) reads only — never a counting pass (FR-014d) — and `None` when a count cannot be had cheaply · `src/gramtrans/Lib/progress.py`
+- [x] **T004** Add the cheap source-count cache to the same module: `SourceCounts`, filled once when a source binds, exposing `LexiconNumberOfEntries()`, `TextsNumberOfTexts()` and possibility-list `.Count` values (custom fields, phoneme sets / natural classes / phonological rules, variant & complex-form types, ad-hoc prohibitions). O(1) reads only — never a counting pass (FR-014d) — and `None` when a count cannot be had cheaply · `src/gramtrans/Lib/progress.py`
 
 **Checkpoint**: `import gramtrans.Lib.progress` succeeds with no `QApplication`;
 T002 is green; one count layer exists for both US1 totals and US2 predicates.
@@ -141,7 +141,7 @@ and is gone when the page is ready.
 
 - [ ] **T017** [P] [US1] Create the Qt sink: `QtProgressSink` (one modal indicator for the whole application, no cancel affordance, `tick` advances the bar *and* pumps the event loop with throttling so a million-tick walk does not live in the event loop, overrun ⇒ indeterminate, nested labels on a stack with one dialog), plus `deferred()` using `setMinimumDuration(PROGRESS_THRESHOLD_MS)` and `immediate()` (FR-014a/b, FR-017, FR-018, FR-021, SC-002) · `src/gramtrans/Lib/ui/progress_indicator.py`
 - [ ] **T018** [P] [US1] Add one keyword-only `progress=None` parameter to each of the seven inventory builders and tick from *inside* each walk at `:655,1237,1588,2628,3070,3403,3728` — no positional signature changes, and `progress=None` runs exactly as today and returns the identical inventory (FR-022, FR-045) · `src/gramtrans/Lib/selection.py`
-- [ ] **T019** [P] [US1] Declare the per-operation `units_per_second` calibration table — the only per-operation number, with the 500 ms threshold left untouched (FR-019a, data-model §3) · `src/gramtrans/Lib/progress.py`
+- [x] **T019** [P] [US1] Declare the per-operation `units_per_second` calibration table — the only per-operation number, with the 500 ms threshold left untouched (FR-019a, data-model §3) · `src/gramtrans/Lib/progress.py`
 
 **⟶ Wait for Wave 2 to finish, then (all three edit the wizard module, so each is its own wave):**
 

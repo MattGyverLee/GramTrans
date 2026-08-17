@@ -105,6 +105,38 @@
       "kind": "complete",
       "by": "ai",
       "at": "2026-08-17T20:59:25.685Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T002",
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-17T21:01:07.272Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T003",
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-17T21:01:20.296Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T004",
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-17T21:01:35.849Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T019",
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-17T21:01:36.139Z"
     }
   ],
   "telemetryInstanceId": "19488acc-ad0e-46bf-9a7e-aceb9721c6ba",
@@ -595,7 +627,7 @@
       ]
     }
   },
-  "currentTask": "T046",
+  "currentTask": "T019",
   "task_summaries": {
     "T001": {
       "status": "DONE",
@@ -616,6 +648,34 @@
       "did": "Turned the dark accent family green (alternate_base/button/hover/pressed/focus); focus ring still the sole 2px consumer of the focus token; highlight, semantics and LIGHT_PALETTE untouched",
       "files": [
         "src/gramtrans/Lib/ui/theme.py"
+      ]
+    },
+    "T002": {
+      "status": "DONE",
+      "did": "Failing-first unit tests for the toolkit-free progress surface: 56 tests covering the single 500ms threshold declaration, predicted_ms/warrants_indicator, NullSink no-ops, reporting() end-on-exception, tick-after-end, and SourceCounts returning None instead of raising or counting",
+      "files": [
+        "tests/unit/test_036_progress_sink.py"
+      ]
+    },
+    "T003": {
+      "status": "DONE",
+      "did": "Created the toolkit-free Lib/progress.py: PROGRESS_THRESHOLD_MS=500 (sole declaration), runtime-checkable ProgressSink Protocol, slotted NullSink plus NULL_SINK singleton, predicted_ms, warrants_indicator (None total => False), and the reporting context manager that ends through any exit and never masks the caller's exception",
+      "files": [
+        "src/gramtrans/Lib/progress.py"
+      ]
+    },
+    "T004": {
+      "status": "DONE",
+      "did": "Added SourceCounts to Lib/progress.py: a bind-time snapshot of the nine cheap source counts (LexiconNumberOfEntries, TextsNumberOfTexts, custom-field definitions, phoneme sets / natural classes / phonological rules, variant & complex-form types, ad-hoc prohibitions) plus phonology/entry_types/rules aggregates -- O(1) property reads only, .Count and len() never iteration, and None for any count that cannot be had cheaply",
+      "files": [
+        "src/gramtrans/Lib/progress.py"
+      ]
+    },
+    "T019": {
+      "status": "DONE",
+      "did": "Declared UNITS_PER_SECOND, the single per-operation calibration table keyed to all 13 FR-023 rows (None for the two bind rows, which are elapsed-triggered) -- documented as placeholders for T048 to recalibrate, with the 500ms threshold deliberately kept out of it",
+      "files": [
+        "src/gramtrans/Lib/progress.py"
       ]
     }
   }
