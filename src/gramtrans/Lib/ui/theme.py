@@ -64,10 +64,20 @@ DARK = "dark"
 #: Additive (not compounding) so the readout lands on round tens: 100, 110,
 #: 120, 130 ... A step of -10 would reach 0%, hence the clamp below.
 FONT_STEP_INCREMENT = 0.10
-#: Step clamp.  -3 => 70% (below this, labels clip); +15 => 250% (Qt starts
-#: laying out wizard pages taller than a 1080p screen beyond this).
+#: Step clamp.  -3 => 70% (below this, labels clip); +10 => 200%.
+#:
+#: 200%, not 250%: this scale is applied ON TOP OF the operating system's own
+#: display scaling, and an operator who needs large text is already running the
+#: OS at 125% or more.  Treating our 250% as a size the layout must survive
+#: therefore meant guaranteeing roughly 300% effective -- a budget no page can
+#: meet without reflowing, and one no real operator asks for.  Capping here
+#: buys back the layout headroom instead of spending it on an unreachable case.
+#:
+#: This is the value "the largest supported text scale" resolves to throughout
+#: feature 036 (FR-032, SC-005, SC-005a, SC-009), so the geometry harness reads
+#: it from here rather than restating a number.
 MIN_FONT_STEP = -3
-MAX_FONT_STEP = 15
+MAX_FONT_STEP = 10
 
 _ENV_DISABLE = "GRAMTRANS_NO_THEME"
 _SETTINGS_ORG = "SIL"

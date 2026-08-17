@@ -188,7 +188,7 @@ def text_scale(scale: float) -> Iterator[QtGui.QFont]:
     pixel-sized font silently discards the pixel size. The previous font
     object is restored on the way out -- including on an exception -- so a
     failing geometry assertion cannot leave every later Qt test running at
-    250% text.
+    the maximum text scale.
 
     Yields the scaled font, which is occasionally useful for a QFontMetrics
     computation in the caller.

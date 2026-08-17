@@ -219,7 +219,10 @@ class TestFontScale:
         assert manager.font_scale == pytest.approx(1.0)
         assert manager.font_percent() == 100
 
-    @pytest.mark.parametrize("step", [-3, -1, 0, 1, 3, 10, 15])
+    # The top of the range is MAX_FONT_STEP itself, not a literal: linearity is
+    # a claim about every SUPPORTED step, and a hard-coded step above the clamp
+    # tests the clamp instead (which test_set_font_step_clamps already covers).
+    @pytest.mark.parametrize("step", [MIN_FONT_STEP, -1, 0, 1, 3, 5, MAX_FONT_STEP])
     def test_scale_is_linear_in_the_step(self, manager, step):
         manager.set_font_step(step)
         assert manager.font_step == step
@@ -227,7 +230,10 @@ class TestFontScale:
 
     @pytest.mark.parametrize("step,percent", [
         (-3, 70), (-2, 80), (-1, 90), (0, 100),
-        (1, 110), (2, 120), (3, 130), (4, 140), (5, 150), (15, 250),
+        # (10, 200) is the ceiling, not an arbitrary large step: MAX_FONT_STEP
+        # caps at 200% because this scale multiplies the OS display scaling an
+        # operator who needs large text is already running (see theme.py:67).
+        (1, 110), (2, 120), (3, 130), (4, 140), (5, 150), (10, 200),
     ])
     def test_percent_walks_in_round_tens(self, manager, step, percent):
         """No compounding: the readout is 100/110/120/130, not 100/110/121/133."""
