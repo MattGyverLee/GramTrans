@@ -13,6 +13,11 @@ Two halves, matching the two ways that can go wrong:
 * **The chooser itself (FR-002/FR-004)** — nothing pre-selected, advance
   disabled until a deliberate choice, nothing persisted, and the chosen source
   gone from the target list.
+
+The chooser now lives in shared UI (`Lib/ui/source_picker.py`) and is opened
+from the wizard's step 1, beside the target's picker, instead of as a modal
+before the window (exception 7). What it must guarantee did not change, so
+these assertions did not either — only where the class is imported from.
 """
 from __future__ import annotations
 
@@ -134,11 +139,24 @@ def test_the_reachability_matcher_would_fire():
 _PROJECTS = ["Alpha", "Beta", "Gamma"]
 
 
+def _candidates(names=_PROJECTS):
+    from gramtrans.Lib.api import SourceCandidate
+
+    return [
+        SourceCandidate(project_name=n, project_path=os.path.join("X:", n))
+        for n in names
+    ]
+
+
+def _dialog(names=_PROJECTS):
+    from gramtrans.Lib.ui.source_picker import SourcePickerDialog
+
+    return SourcePickerDialog(_candidates(names))
+
+
 @pytest.fixture()
 def chooser(qapp):
-    from gramtrans.standalone.source_picker import SourcePickerDialog
-
-    return SourcePickerDialog(list(_PROJECTS))
+    return _dialog()
 
 
 def test_the_list_is_populated_from_the_enumerated_projects(chooser):
@@ -169,13 +187,11 @@ def test_clearing_the_selection_re_disables_the_advance_control(chooser):
 
 def test_nothing_is_remembered_between_constructions(qapp):
     """No last-used memory: FR-004 has no "default" and no "previous"."""
-    from gramtrans.standalone.source_picker import SourcePickerDialog
-
-    first = SourcePickerDialog(list(_PROJECTS))
+    first = _dialog()
     first.select_by_name("Gamma")
     assert first.selected_project_name() == "Gamma"
 
-    second = SourcePickerDialog(list(_PROJECTS))
+    second = _dialog()
     assert second.selected_project_name() is None
     assert second.advance_enabled() is False
 
@@ -192,9 +208,7 @@ def test_the_screen_warns_that_the_target_must_be_closed_even_for_a_preview(choo
 
 
 def test_an_empty_project_list_gets_its_own_message_not_an_empty_dialog(qapp):
-    from gramtrans.standalone.source_picker import SourcePickerDialog
-
-    dlg = SourcePickerDialog([])
+    dlg = _dialog([])
     assert dlg.advance_enabled() is False
     assert dlg.is_empty() is True
     assert dlg.empty_message()
@@ -202,9 +216,7 @@ def test_an_empty_project_list_gets_its_own_message_not_an_empty_dialog(qapp):
 
 def test_an_unopenable_project_is_reported_by_name_and_the_rest_stay_selectable(qapp):
     """FR-034: one bad project does not take the dialog down with it."""
-    from gramtrans.standalone.source_picker import SourcePickerDialog
-
-    dlg = SourcePickerDialog(list(_PROJECTS))
+    dlg = _dialog()
     dlg.mark_unopenable("Beta", "the project is open in FLEx")
 
     assert "Beta" in dlg.unopenable_message()

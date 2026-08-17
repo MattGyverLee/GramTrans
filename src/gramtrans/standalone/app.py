@@ -5,10 +5,18 @@ a `modifyAllowed` flag, and a run wrapper. This class is all four, for a host
 that has none of them.
 
 ```
-CREATED -> PREREQ_OK -> SOURCE_BOUND -> RUNNING -> RELEASED
-   |           |             |            |
-   +-----------+-------------+------------+--> FAILED -> RELEASED
+CREATED -> PREREQ_OK -> RUNNING -> RELEASED
+   |           |           |
+   +-----------+-----------+--> FAILED -> RELEASED
 ```
+
+`SOURCE_BOUND` sits between `PREREQ_OK` and `RUNNING` for a caller that binds
+a source *before* running (the parity test does, and `build_stub` needs one).
+The application itself no longer takes that route: the source is chosen on
+step 1 of the wizard, beside the target, so `bind_source` is called from inside
+`RUNNING` and leaves the state alone. Opening a modal project chooser *before*
+the wizard meant three windows appearing at once with no obvious order to them,
+and the wizard's step 1 is already the screen that asks this question.
 
 `RELEASED` is reachable from every state and is always reached (FR-013,
 SC-005). Two FLEx projects left locked by a crashed transfer tool is a bad
@@ -39,7 +47,7 @@ from __future__ import annotations
 
 import enum
 import logging
-from typing import List, Optional
+from typing import Optional
 
 _log = logging.getLogger(__name__)
 
@@ -173,11 +181,12 @@ class HostSession:
         return StartupError(message, cause)
 
     # -- source selection --------------------------------------------------
-
-    def list_projects(self) -> List[str]:
-        from gramtrans.standalone.source_picker import enumerate_projects
-
-        return enumerate_projects()
+    #
+    # Enumeration is not here. The wizard's step 1 lists projects through
+    # `Lib/api.list_source_candidates(projects_root)` -- the same directory rule
+    # and the same root the target list has always used, so the two lists cannot
+    # disagree about what a project is or where they live. What stays the
+    # shell's business is *opening* one, below, and closing it in `release()`.
 
     def bind_source(self, project_name: str):
         """Open the chosen project **read-only** (FR-007).
@@ -186,6 +195,14 @@ class HostSession:
         engine reads it and the wizard never opens it for write, but the
         source is the user's other real project and a read-only handle makes
         "we did not touch it" a property of the open rather than a promise.
+
+        This is also what the wizard's step-1 source picker calls, through the
+        `source_binder` it is handed: the picker chooses, the session opens, so
+        the handle stays owned by the thing that has to release it (FR-013).
+        Re-picking is therefore normal here, and closes the previous source
+        first -- otherwise a user who changed their mind would leave a
+        read-only handle open for the rest of the process with nothing holding
+        a reference to it.
         """
         from gramtrans.standalone import errors
 
@@ -195,6 +212,7 @@ class HostSession:
                 "the session was not started", self.log_path,
             ))
 
+        self._close_source()
         handle = self._flexicon.FLExProject()
         try:
             handle.OpenProject(projectName=project_name, writeEnabled=False)
@@ -206,9 +224,31 @@ class HostSession:
 
         self.source_handle = handle
         self.source_project_name = project_name
-        self.state = SessionState.SOURCE_BOUND
+        # Do not walk the state machine backwards: the wizard binds the source
+        # from *inside* the run, so RUNNING is already the further state.
+        if self.state is not SessionState.RUNNING:
+            self.state = SessionState.SOURCE_BOUND
         self.report_sink.Info(f"  Source (read-only): {project_name!r}")
         return handle
+
+    def _close_source(self) -> None:
+        """Close the currently-open source handle, if any. Never raises.
+
+        Shared by `release()` and by a re-pick in `bind_source`, so both routes
+        out of a source handle are the same code and cannot diverge.
+        """
+        if self.source_handle is None:
+            return
+        try:
+            self.source_handle.CloseProject()
+            self.report_sink.Info("[GramTrans] Source project closed.")
+        except Exception as exc:  # noqa: BLE001
+            self.report_sink.Warning(
+                f"[GramTrans] Could not close the source project: {exc}"
+            )
+            _log.exception("_close_source: CloseProject() raised")
+        finally:
+            self.source_handle = None
 
     def _open_failed(self, project_name: str, exc: BaseException) -> Exception:
         """FR-034 / FR-035 — attributed to the project, by type where it matters."""
@@ -274,13 +314,20 @@ class HostSession:
         the debug-logging hook, the fatal-exception funnel and the
         target-handle `CloseProject()` that FR-013 depends on. Re-implementing
         those here is the forking FR-015 forbids.
+
+        `source_binder=self.bind_source` is what lets the source be chosen on
+        step 1 instead of in a modal before the window: the wizard picks, this
+        session opens read-only, and the handle stays owned by the object whose
+        `release()` closes it. `self.source_handle` is therefore normally `None`
+        at this point, and that is expected -- a caller that bound a source
+        first (the parity test) simply passes it through instead.
         """
         from gramtrans.gramtrans import MainFunction
         from gramtrans.standalone import fwglobals
 
-        if self.state is not SessionState.SOURCE_BOUND:
+        if self.state not in (SessionState.PREREQ_OK, SessionState.SOURCE_BOUND):
             raise RuntimeError(
-                f"run() requires a bound source; state is {self.state.value}"
+                f"run() requires a started session; state is {self.state.value}"
             )
         self.state = SessionState.RUNNING
         try:
@@ -290,6 +337,7 @@ class HostSession:
                 self.MODIFY_ALLOWED,
                 confirmation_gate=self._gate(),
                 projects_root=fwglobals.projects_dir(),
+                source_binder=self.bind_source,
             )
         except Exception:
             self.state = SessionState.FAILED
@@ -363,17 +411,7 @@ class HostSession:
         if self.state is SessionState.RELEASED:
             return
 
-        if self.source_handle is not None:
-            try:
-                self.source_handle.CloseProject()
-                self.report_sink.Info("[GramTrans] Source project closed.")
-            except Exception as exc:  # noqa: BLE001
-                self.report_sink.Warning(
-                    f"[GramTrans] Could not close the source project: {exc}"
-                )
-                _log.exception("release: CloseProject() raised")
-            finally:
-                self.source_handle = None
+        self._close_source()
 
         if self._flexicon is not None:
             try:

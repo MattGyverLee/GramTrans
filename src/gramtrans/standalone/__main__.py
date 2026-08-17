@@ -113,43 +113,18 @@ def run_application() -> int:
             _show_fatal(exc.message)
             return EXIT_FAILED
 
-        from PyQt6 import QtWidgets
-
-        from gramtrans.standalone.source_picker import (
-            SourcePickerDialog,
-            enumerate_projects,
-        )
         from gramtrans.standalone.window import GramTransWindow
 
-        # The window opens before the source is chosen, so the report view and
-        # the Help menu exist for the whole session -- including while the
-        # modal wizard is up, and after it closes.
+        # Two windows, in a fixed order: this one, which holds the report view
+        # and the Help menu for the whole session, and then the wizard on top of
+        # it. Both project choices are made on the wizard's step 1 -- the source
+        # beside the target, through `HostSession.bind_source` as the wizard's
+        # source binder. There is deliberately no third window before them: a
+        # modal project chooser racing the main window and the wizard gave the
+        # user three things at once and no order to read them in.
         window = GramTransWindow(session)
         window.show()
         app.processEvents()
-
-        try:
-            names = enumerate_projects()
-        except Exception as exc:  # noqa: BLE001
-            from gramtrans.standalone import errors
-
-            _show_fatal(errors.describe_startup_failure(exc, session.log_path))
-            return EXIT_FAILED
-
-        picker = SourcePickerDialog(names, parent=window)
-        if picker.exec() != QtWidgets.QDialog.DialogCode.Accepted:
-            # Cancel is a normal exit -- and still goes through release().
-            return EXIT_OK
-
-        chosen = picker.selected_project_name()
-        if chosen is None:
-            return EXIT_OK
-
-        try:
-            session.bind_source(chosen)
-        except StartupError as exc:
-            _show_fatal(exc.message)
-            return EXIT_FAILED
 
         session.run()
         window.refresh()

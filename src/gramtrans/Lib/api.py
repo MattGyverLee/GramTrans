@@ -58,6 +58,13 @@ else:
 
 _log = logging.getLogger(__name__)
 
+# Where FLEx projects live on a default FieldWorks install. The historical
+# `list_target_candidates` default, named once so the source list (feature 034
+# exception 7) cannot drift to a different fallback. A host that knows better
+# -- the standalone, which reads what FieldWorks itself records -- overrides it
+# via `RunContextStub.projects_root` / the `projects_root` argument.
+_DEFAULT_PROJECTS_ROOT = r"C:\ProgramData\SIL\FieldWorks\Projects"
+
 # Anti-deadlock diagnostics for LCM calls that can block cross-process.
 #
 # FLExProject.CloseProject() "saves pending changes and disposes the LCM object"
@@ -280,6 +287,24 @@ class TargetCandidate:
 
 
 @dataclass(frozen=True)
+class SourceCandidate:
+    """One entry in the source-picker list.
+
+    Feature 034 exception 7: deliberately the same two fields, in the same
+    order, as `TargetCandidate`. The two pickers answer the same question about
+    different roles, and the wizard's step 1 now presents them as a matched
+    pair of rows -- so anything that made the two candidate types differ would
+    show up as the two dialogs behaving differently about the same thing.
+    """
+    project_name: str
+    project_path: str
+
+    def __post_init__(self) -> None:
+        if not self.project_name:
+            raise ValueError("SourceCandidate.project_name must be non-empty")
+
+
+@dataclass(frozen=True)
 class RequiredWSMapping:
     """The set of source (ws_id, kind) pairs the current Selection touches —
     returned by `compute_preview` when the user hasn't supplied a mapping
@@ -339,7 +364,7 @@ def initialize_run(host_handle, *, source_project_name: str,
 
 
 def list_target_candidates(stub: RunContextStub,
-                           projects_root: str = r"C:\ProgramData\SIL\FieldWorks\Projects",
+                           projects_root: str = _DEFAULT_PROJECTS_ROOT,
                            ) -> List[TargetCandidate]:
     """Enumerate FLEx projects in the standard directory (research.md R5),
     excluding the source project by path.
@@ -350,23 +375,77 @@ def list_target_candidates(stub: RunContextStub,
     """
     candidates: List[TargetCandidate] = []
     root = getattr(stub, "projects_root", "") or projects_root
-    if not os.path.isdir(root):
-        return candidates
-    for name in sorted(os.listdir(root)):
-        path = os.path.join(root, name)
-        if not os.path.isdir(path):
-            continue
-        # FLEx projects are directories containing a <name>.fwdata file.
-        fwdata = os.path.join(path, f"{name}.fwdata")
-        if not os.path.isfile(fwdata):
-            continue
+    for name, path in _walk_flex_projects(root):
         # Exclude source if paths match (case-insensitive on Windows).
-        if stub.source_project_path and os.path.normcase(stub.source_project_path).rstrip(os.sep) == os.path.normcase(path).rstrip(os.sep):
+        if _same_project_path(stub.source_project_path, path):
             continue
         if stub.source_project_name and name == stub.source_project_name:
             continue
         candidates.append(TargetCandidate(project_name=name, project_path=path))
     return candidates
+
+
+def list_source_candidates(
+    projects_root: str = "",
+    exclude_names: Tuple[str, ...] = (),
+    exclude_paths: Tuple[str, ...] = (),
+) -> List[SourceCandidate]:
+    """Enumerate FLEx projects offerable as the SOURCE (feature 034 exception 7).
+
+    The deliberate mirror of `list_target_candidates`: same directory rule
+    (a `<name>/<name>.fwdata` pair), same root, same sort order. A host that
+    has no source of its own -- the standalone -- asks for this list on step 1
+    of the wizard; FlexTools never calls it, because FlexTools *is* the source.
+
+    `projects_root` empty falls back to the same historical
+    `C:\\ProgramData\\SIL\\FieldWorks\\Projects` literal
+    `list_target_candidates` defaults to, so the two lists cannot silently
+    disagree about where projects live.
+
+    `exclude_names` / `exclude_paths` are how "you cannot pick the project you
+    already bound as the target" is expressed. Excluding rather than
+    disabling matches what `list_target_candidates` already does for the
+    source, and keeps the same-project rule symmetric in both directions --
+    `bind_target` still refuses it by name *and* by path as the backstop.
+    """
+    root = projects_root or _DEFAULT_PROJECTS_ROOT
+    banned_names = {n for n in exclude_names if n}
+    candidates: List[SourceCandidate] = []
+    for name, path in _walk_flex_projects(root):
+        if name in banned_names:
+            continue
+        if any(_same_project_path(p, path) for p in exclude_paths):
+            continue
+        candidates.append(SourceCandidate(project_name=name, project_path=path))
+    return candidates
+
+
+def _walk_flex_projects(root: str) -> List[Tuple[str, str]]:
+    """`(name, path)` for every FLEx project directory under `root`, sorted.
+
+    The one place that knows what a FLEx project looks like on disk (research
+    R5: a directory holding a same-named `.fwdata` file), so the source list
+    and the target list cannot drift apart.
+    """
+    out: List[Tuple[str, str]] = []
+    if not root or not os.path.isdir(root):
+        return out
+    for name in sorted(os.listdir(root)):
+        path = os.path.join(root, name)
+        if not os.path.isdir(path):
+            continue
+        if not os.path.isfile(os.path.join(path, f"{name}.fwdata")):
+            continue
+        out.append((name, path))
+    return out
+
+
+def _same_project_path(a: str, b: str) -> bool:
+    """Case- and trailing-separator-insensitive path identity (Windows)."""
+    if not a or not b:
+        return False
+    return (os.path.normcase(a).rstrip(os.sep)
+            == os.path.normcase(b).rstrip(os.sep))
 
 
 def _disable_project_sharing(project_path: str, project_name: str) -> bool:
