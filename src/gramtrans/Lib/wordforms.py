@@ -845,6 +845,54 @@ def _resolve_by_guid(target, guid_str, expect_class="WfiAnalysis"):
         return None
 
 
+def _log_analysis_fp_fallback(fallback_hits, guid_hits, total) -> int:
+    """Record that N analyses were matched STRUCTURALLY, not by source GUID (033).
+
+    Why this is worth a WARNING rather than the `_log.debug` it used to be.
+    `_resolve_by_guid` returning None has two causes that are indistinguishable
+    at the call site:
+
+      * a LEGACY target, populated before GUID preservation, whose analyses
+        carry no source identity -- expected, and the reason the structural
+        fingerprint path still exists;
+      * GUID preservation itself having BROKEN -- e.g. an upstream signature
+        change makes `guid=` silently ignored rather than raising.
+
+    In the second case the fingerprint path absorbs the regression and the run
+    still reports success. That is the exact failure shape 033's LESSON section
+    describes (the wordform/analysis GUID confusion produced 23 analyses instead
+    of 143, invisible because a dedup path swallowed it), and the same shape as
+    the flexicon `undoable` default flip -- a silent upstream change absorbed by
+    a permissive wrapper. The fallback is not wrong to exist; it was wrong to be
+    QUIET.
+
+    Deliberately NOT a `DroppedItemRecord`: nothing is dropped -- the analysis is
+    correctly deduped, just by shape instead of identity. Filing these as drops
+    would corrupt the drop metric the fidelity census and the full-copy stress
+    driver read.
+
+    One aggregated WARNING per `apply_analyses` call, and SILENT when there were
+    no fallback hits, so a healthy modern target never sees it -- the same
+    cry-wolf discipline as `texts._log_segment_guid_loss`. Returns the number of
+    fallback hits (0 = nothing logged), which is also the metric that makes
+    retiring this path a measurable decision instead of a judgement call: when
+    it reads 0 across every supported target, the path is provably dead code.
+    """
+    if not fallback_hits:
+        return 0
+    _log.warning(
+        "wordforms: %d of %d analyses were matched by STRUCTURAL fingerprint, "
+        "not by source GUID (%d matched by GUID). On a target populated since "
+        "GUID preservation landed this should read 0, so a non-zero count means "
+        "EITHER the target is legacy (expected -- its analyses carry no source "
+        "identity) OR GUID preservation has regressed and this fallback is "
+        "silently absorbing it. Check a fresh restored target: if the count is "
+        "still non-zero there, it is a regression, not legacy data. "
+        "See specs/033-guid-preservation/TODO.md (structural-dedup workaround).",
+        fallback_hits, total, guid_hits)
+    return fallback_hits
+
+
 def apply_analyses(plans, source, target, ctx, tag, resolver_cache, dropped) -> None:
     """Move-mode — realize the AnalysisPlans on the target's wordforms.
 
@@ -862,12 +910,17 @@ def apply_analyses(plans, source, target, ctx, tag, resolver_cache, dropped) -> 
     is deduped so a re-Move is a no-op:
       - within a run, an analysis referenced from several segments is created
         once (fast-path on its source GUID via `_wf_analysis_map`);
-      - across runs, an analysis whose STRUCTURE (morph-bundle forms + gloss
-        forms) already exists on the target wordform is skipped — the target
-        carries no source GUID, so structural identity is the only durable key
-        (`WfiAnalyses.Create(wordform)` mints a fresh GUID; there is no
-        analysis-level `Find`). Skipping cascades to the analysis's morph
-        bundles + glosses + verdict + residue.
+      - across runs, GUID FIRST (033): analyses now transfer under their SOURCE
+        GUID, so a target object holding that GUID *is* this analysis — the
+        exact, durable key. Only when that lookup finds nothing does the
+        STRUCTURAL fingerprint (morph-bundle forms + gloss forms) decide, which
+        covers LEGACY targets populated before GUID preservation, whose
+        analyses carry no source identity. Fallback hits are counted and
+        reported in aggregate by `_log_analysis_fp_fallback` so that path
+        cannot quietly absorb a GUID-preservation regression.
+
+      Either way, skipping cascades to the analysis's morph bundles + glosses +
+      verdict + residue.
     """
     if not plans:
         return None
@@ -890,6 +943,13 @@ def apply_analyses(plans, source, target, ctx, tag, resolver_cache, dropped) -> 
     wordform_map = _map_on_ctx(ctx, "_wf_wordform_map")
     fp_index_cache = _map_on_ctx(ctx, "_wf_analysis_fp_index")
 
+    # 033: how each cross-run match was made. Counted so the structural
+    # fallback cannot absorb a GUID-preservation regression in silence --
+    # see `_log_analysis_fp_fallback`.
+    guid_hits = 0
+    fp_fallback_hits = 0
+    considered = 0
+
     for plan in plans:
         # SC-005 fast-path: this exact source analysis was already reproduced
         # earlier in THIS run (referenced from another segment) — no-op.
@@ -911,8 +971,10 @@ def apply_analyses(plans, source, target, ctx, tag, resolver_cache, dropped) -> 
         # analysis -- the durable, exact key. The structural fingerprint below
         # stays as a fallback for LEGACY targets whose analyses were created
         # before GUID preservation and therefore carry no source identity.
+        considered += 1
         existing = _resolve_by_guid(target, plan.source_guid)
         if existing is not None:
+            guid_hits += 1
             analysis_map[plan.source_guid] = existing
             _log.debug("apply_analyses: skip analysis already present by GUID %s",
                        plan.source_guid)
@@ -923,6 +985,10 @@ def apply_analyses(plans, source, target, ctx, tag, resolver_cache, dropped) -> 
                                       mb_ops, gl_ops, tgt_handles)
         existing = fp_index.get(fp)
         if existing is not None:
+            # Matched by SHAPE, not identity. Counted and warned about in
+            # aggregate below: on a modern target this should never fire, so a
+            # non-zero tally is either legacy data or a silent regression.
+            fp_fallback_hits += 1
             analysis_map[plan.source_guid] = existing
             _log.debug("apply_analyses: skip duplicate analysis (idempotent) %s",
                        plan.source_guid)
@@ -957,6 +1023,8 @@ def apply_analyses(plans, source, target, ctx, tag, resolver_cache, dropped) -> 
             wordform, default_analysis_handle, tag, class_name="WfiWordform"))
         _texts._safe(lambda: apply_residue(
             analysis_obj, default_analysis_handle, tag, class_name="WfiAnalysis"))
+
+    _log_analysis_fp_fallback(fp_fallback_hits, guid_hits, considered)
     return None
 
 
