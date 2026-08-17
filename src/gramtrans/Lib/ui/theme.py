@@ -208,13 +208,15 @@ DARK_PALETTE = Palette(
     # base a subtler pair left an unchecked radio almost invisible.
     border="#4A515A",
     border_strong="#6C7480",
-    # Pale mint rather than the mid-green the accent family suggests, and the
-    # reason is measurable: the ring must stay DeltaE76 >= 25 from the semantic
-    # `diff_added` green below, and `diff_added` is frozen.  Every mid-green at
-    # this lightness lands within ~20 of it (a mid mint measured 8.8 -- the same
-    # colour, perceptually), so the separation has to come from lightness plus a
-    # chroma drop.  This value: 12.1:1 on #22262B, DeltaE76 29.2 from diff_added.
-    focus="#A8F5D2",
+    # Neon green, and it is the ring's job to be the loudest green on screen:
+    # the muted accent family above says "this is chrome", the ring says "this
+    # is where your keyboard is".  A saturated green also puts the most distance
+    # between the ring and the frozen semantic `diff_added` below, which is the
+    # one measurement that constrains this token (FR-027): DeltaE76 65.0, versus
+    # a floor of 25 -- a mid mint would have measured 8.8, the same colour
+    # perceptually, which is why the obvious green is the wrong one here.
+    # 11.2:1 on #22262B.
+    focus="#39FF14",
     # Blue on purpose in a green scheme -- see the header note.  Not darkened
     # further either: white-on-selection is 4.9:1 (AA), and a darker blue would
     # buy text contrast at the cost of the selection band's own contrast against
