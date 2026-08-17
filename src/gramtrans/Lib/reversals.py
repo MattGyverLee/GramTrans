@@ -711,7 +711,13 @@ def _create_sub_entry(target, parent_entry, primary_ws_id, primary_text, first_s
         return existing
     try:
         factory = owned._get_owned_factory(target, "IReversalIndexEntryFactory")
-        new_sub = factory.Create()
+        # 033: a transferred sub-entry keeps its source GUID, so a later run
+        # recognises it as the same object instead of minting a duplicate.
+        # Any fallback to a new identity is logged by the helper.
+        new_sub = owned._create_owned_via_factory(
+            factory, decision.source_entry_guid, "ReversalIndexEntry")
+        if new_sub is None:
+            raise RuntimeError("IReversalIndexEntryFactory create returned None")
         parent_entry.SubentriesOS.Add(new_sub)
     except Exception as exc:
         _log.warning(

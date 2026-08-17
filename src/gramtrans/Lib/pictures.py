@@ -49,11 +49,13 @@ if __package__:
         DroppedItemRecord, ReferenceAction, ReferenceDecisionRecord,
     )
     from . import references as _references
+    from . import owned as _owned
 else:  # pragma: no cover - exercised only under the FlexTools sys.path convention
     from models import (  # type: ignore
         DroppedItemRecord, ReferenceAction, ReferenceDecisionRecord,
     )
     import references as _references  # type: ignore
+    import owned as _owned  # type: ignore
 
 
 # The five layout scalars carried verbatim (data-model.md / research R1). Enum
@@ -412,6 +414,11 @@ def _own_file_in_pictures_folder(ctx, cmfile) -> None:
             from SIL.LCModel import ICmFolderFactory
             from SIL.LCModel.Core.Text import TsStringUtils
             ff = cache.ServiceLocator.GetService(ICmFolderFactory)
+            # 033 EXEMPT (deliberate, do not "fix"): this "Local Pictures"
+            # CmFolder is a TARGET-SIDE CONTAINER get-or-created to match
+            # flexicon MediaOperations -- it is not a transferred object and
+            # has no source counterpart whose GUID could be preserved. The
+            # GUID invariant covers objects copied from the source.
             folder = ff.Create()
             lp.PicturesOC.Add(folder)
             ws = cache.DefaultAnalWs
@@ -422,27 +429,33 @@ def _own_file_in_pictures_folder(ctx, cmfile) -> None:
         pass
 
 
-def _create_picture_raw(ctx, new_sense, internal_path, existing_file=None):
+def _create_picture_raw(ctx, new_sense, internal_path, existing_file=None,
+                        src_pic_guid=None, src_file_guid=None):
     """Raw `ICmPictureFactory` create -- wire the new `CmPicture` to
     `existing_file` (dedup reuse, no bytes) or to a fresh `CmFile` whose
     `InternalPath` is `internal_path` (missing-binary fallback, R5). Returns
-    the picture, or None when the factory is unavailable. Never raises."""
+    the picture, or None when the factory is unavailable. Never raises.
+
+    GUID preservation (feature 033): both the `CmPicture` and its backing
+    `CmFile` are TRANSFERRED objects, so each keeps its source GUID via
+    `owned._create_owned_via_factory` -- a target object wearing the source
+    GUID is recognisably the same object on a later run. Any fallback to a
+    minted identity is logged there; it is never silent.
+    """
     pic_factory = _picture_factory(ctx)
     if pic_factory is None:
         return None
-    try:
-        picture = pic_factory.Create()
-    except Exception:
+    picture = _owned._create_owned_via_factory(
+        pic_factory, src_pic_guid, "CmPicture")
+    if picture is None:
         return None
     _append_owned_picture(new_sense, picture)
     cmfile = existing_file
     if cmfile is None:
         file_factory = _file_factory(ctx)
         if file_factory is not None:
-            try:
-                cmfile = file_factory.Create()
-            except Exception:
-                cmfile = None
+            cmfile = _owned._create_owned_via_factory(
+                file_factory, src_file_guid, "CmFile")
             if cmfile is not None:
                 # Own the CmFile under the Pictures CmFolder BEFORE setting its
                 # InternalPath: on a live host, setting InternalPath on an
@@ -638,6 +651,9 @@ def _reproduce_one_picture(src_pic, src_sense, new_sense, ctx, tag,
     rename / missing-binary legs layer in via US2-US5."""
     src_file = getattr(src_pic, "PictureFileRA", None)
     source_path = _source_image_path(src_file, _source_handle(ctx))
+    # 033: the source identities the raw-factory legs must preserve.
+    src_pic_guid = _guid_str(src_pic)
+    src_file_guid = _guid_str(src_file) if src_file is not None else ""
 
     # US5 idempotency (SC-006): a structurally-identical picture already on the
     # target sense (image identity + caption) is not re-created on re-run.
@@ -652,7 +668,9 @@ def _reproduce_one_picture(src_pic, src_sense, new_sense, ctx, tag,
         # target path (no bytes) so the picture self-heals once the linguist
         # supplies the file; report the missing binary (never silent).
         intended = _intended_internal_path(src_file, source_path)
-        new_pic = _create_picture_raw(ctx, new_sense, intended, existing_file=None)
+        new_pic = _create_picture_raw(
+            ctx, new_sense, intended, existing_file=None,
+            src_pic_guid=src_pic_guid, src_file_guid=src_file_guid)
         _report_picture_dropped(
             dropped, src_sense, src_pic, _missing_reason(intended), ctx)
         if new_pic is None:
@@ -675,7 +693,8 @@ def _reproduce_one_picture(src_pic, src_sense, new_sense, ctx, tag,
         # US2 dedup (SC-005): the image was already copied this run -- reuse the
         # cached target `CmFile`, create the picture with no second file copy.
         new_pic = _create_picture_raw(
-            ctx, new_sense, None, existing_file=cache[source_hash])
+            ctx, new_sense, None, existing_file=cache[source_hash],
+            src_pic_guid=src_pic_guid)
     else:
         # US3 collision resolution ahead of the copy (R3, non-destructive).
         target_folder = _target_pictures_dir(ctx)
@@ -686,7 +705,8 @@ def _reproduce_one_picture(src_pic, src_sense, new_sense, ctx, tag,
             # `CmFile` at THAT file's intended path, no re-copy.
             intended = os.path.join("Pictures", os.path.basename(existing))
             new_pic = _create_picture_raw(
-                ctx, new_sense, intended, existing_file=None)
+                ctx, new_sense, intended, existing_file=None,
+                src_pic_guid=src_pic_guid, src_file_guid=src_file_guid)
         elif action == "rename":
             # A same-name/different-content file is present -- copy under a
             # de-duplicated name (never overwrite) and report the rename.

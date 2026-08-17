@@ -150,13 +150,19 @@ def _persist_without_close(proj, what: str) -> None:
     WriteCommitWork writes the <AdditionalFields> element), so no
     CloseProject() is needed to make a schema write durable.
 
-    flexicon's non-undoable open (the mode every GramTrans handle uses) holds
-    an ambient NonUndoableTask from OpenProject onward, and
+    flexicon's non-undoable open (the mode every GramTrans handle uses)
+    normally holds an ambient NonUndoableTask from OpenProject onward, and
     UnitOfWorkService.Save() throws "Commit at wrong place" (and rolls back!)
     while any task is open. So the persist step is the same triplet
     CloseProject() runs minus the deadlock-prone Dispose():
     EndNonUndoableTask -> IUndoStackManager.Save -> BeginNonUndoableTask
     (restoring the ambient-task invariant CloseProject expects later).
+
+    That ambient task is an ASSUMPTION about flexicon's open mode, not a
+    guarantee, so each step is guarded: flexicon's `undoable=True` mode opens
+    no session-long task at all, and its per-operation transaction CMs can
+    close the ambient one in the default mode too. We end only if a task is
+    actually open, and re-open only what we ourselves closed.
 
     Everything runs on the CALLER'S thread (LCM thread affinity: event
     handlers raised during Save marshal to the opening thread via
@@ -201,7 +207,39 @@ def _persist_without_close(proj, what: str) -> None:
             parts.append(f"commit_thread_reflect_failed={exc!r}")
         return " ".join(str(p) for p in parts)
 
-    mca.EndNonUndoableTask()
+    # The ambient task is an ASSUMPTION about flexicon's open mode, not a
+    # guarantee -- so verify rather than assert. flexicon's write-path
+    # transaction work (branch `write-path-transactions-b1-b3`) adds an
+    # `undoable=True` mode in which OpenProject opens NO session-long task
+    # ("each UndoableOperation wraps its own"), and its per-operation
+    # transaction CMs can close the ambient one in the default mode too.
+    # Calling End unconditionally then raises
+    #   System.InvalidOperationException: Cannot end task that has not been
+    #   started
+    # and aborts the whole run. See flexicon issue filed alongside this.
+    try:
+        mca.EndNonUndoableTask()
+    except Exception as exc:  # noqa: BLE001 -- .NET InvalidOperationException
+        # The envelope is GONE: a rollback somewhere left the undo FSM in
+        # ReadyForBeginTask (flexicon FLExProject.AbortSession documents this
+        # exact state). We must stop here, LOUDLY, because neither recovery
+        # works and both corrupt the run:
+        #   * continue without re-opening -> every later write dies with
+        #     "Not in the right state to register a change";
+        #   * re-open blindly -> an unbalanced extra task, so CloseProject's
+        #     single End leaves one open, Save() throws "Commit at wrong
+        #     place" AND ROLLS BACK -- the whole transfer is silently lost
+        #     (observed: Target.fwdata reverted from Target.bak).
+        # Compensating correctly needs the task depth, which flexicon does not
+        # expose. See flexicon issue #243.
+        raise RuntimeError(
+            f"cannot persist {what}: flexicon's non-undoable session envelope "
+            f"is gone ({type(exc).__name__}: {exc}). A rollback destroyed it "
+            "and it cannot be safely restored from here -- re-opening it "
+            "unbalanced makes CloseProject's Save() roll the transfer back. "
+            "This is flexicon #243; GramTrans needs a released flexicon "
+            "(pyflexicon>=4.3.1) rather than an in-progress write-path branch."
+        ) from exc
     try:
         _watched_call(
             usm.Save, _SCHEMA_CLOSE_TIMEOUT_S, f"Save() for {what}",
@@ -210,7 +248,9 @@ def _persist_without_close(proj, what: str) -> None:
     finally:
         # Always restore the ambient task, even if Save raised -- the handle
         # stays usable and CloseProject()'s EndNonUndoableTask still has a
-        # task to end.
+        # task to end. Balanced by construction: we only reach here when the
+        # End above succeeded (otherwise we raised), so this Begin restores
+        # exactly one task, never a surplus one.
         mca.BeginNonUndoableTask()
     _log.debug(
         "_persist_without_close: checkpoint for %s persisted (handle id=%s)",
@@ -544,7 +584,26 @@ def bind_target(stub: RunContextStub, choice: TargetCandidate) -> RunContext:
 
     target = FLExProject()
     try:
-        target.OpenProject(projectName=choice.project_name, writeEnabled=True)
+        # `undoable=False` is passed EXPLICITLY and is load-bearing: it selects
+        # flexicon's "Phase 1" open, where OpenProject holds one session-long
+        # NonUndoableTask that every GramTrans write rides on, and which
+        # `_persist_without_close`'s End -> Save -> Begin triplet is built
+        # around. flexicon 4.4.0 flipped this default to `undoable=True`
+        # ("Phase 2": no session envelope, each UndoableOperation opens its
+        # own task), which silently broke that contract -- OpenProject then
+        # never opens the envelope, so EndNonUndoableTask() raises "Cannot end
+        # task that has not been started" on the first checkpoint and the run
+        # dies. Do NOT drop this argument to "take the default"; adopting
+        # Phase 2 means restructuring every write into an UndoableOperation.
+        try:
+            target.OpenProject(
+                projectName=choice.project_name, writeEnabled=True,
+                undoable=False)
+        except TypeError:
+            # flexicon predating the `undoable=` parameter: its only mode IS
+            # Phase 1, so the plain call already gives us what we asked for.
+            target.OpenProject(
+                projectName=choice.project_name, writeEnabled=True)
     except Exception as exc:  # noqa: BLE001 — LCM raises a variety of types
         # FR-029: name *which* project is locked and what to do, rather than
         # surfacing the raw LCM text. The "even for a Preview" sentence is
@@ -558,12 +617,14 @@ def bind_target(stub: RunContextStub, choice: TargetCandidate) -> RunContext:
             f"Details: {exc!s}"
         ) from exc
 
-    # Persist diagnostics: the target is opened writeEnabled=True but with NO
-    # `undoable=` argument, so flexicon's default (undoable=False) applies. A
-    # non-undoable open changes how/whether CloseProject persists writes.
+    # Persist diagnostics: the target is opened writeEnabled=True with an
+    # EXPLICIT undoable=False (see above -- never rely on flexicon's default,
+    # which flipped in 4.4.0). A non-undoable open changes how/whether
+    # CloseProject persists writes.
     _log.debug(
-        "bind_target: opened %r writeEnabled=True, undoable=<default False> "
-        "(no undoable= arg passed); handle id=%s",
+        "bind_target: opened %r writeEnabled=True, undoable=False passed "
+        "EXPLICITLY (never the flexicon default, which flipped to True in "
+        "4.4.0); handle id=%s",
         choice.project_name, id(target),
     )
 

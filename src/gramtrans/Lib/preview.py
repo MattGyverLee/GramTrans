@@ -169,6 +169,12 @@ def build_run_plan(
     _lexentry_ref_bindings: dict = {}
     object.__setattr__(context, '_msa_slot_bindings', _msa_slot_bindings)
     object.__setattr__(context, '_lexentry_ref_bindings', _lexentry_ref_bindings)
+    # Feature 033: InflFeatsOA-on-affix-MSA accumulator. Same threading
+    # convention as `_msa_slot_bindings` above; populated by
+    # `_populate_msa_infl_feat_bindings` after the leaf dispatch and consumed
+    # by the 17.1 sub-pass (`categories._run_171_subpass`).
+    _msa_infl_feat_bindings: dict = {}
+    object.__setattr__(context, '_msa_infl_feat_bindings', _msa_infl_feat_bindings)
     # Feature 027 (Complex Forms & Variants, US1/US2/US3, contract C1): the
     # parallel, richer per-ref LexEntryRef CREATION binding accumulator --
     # SAME threading convention as `_lexentry_ref_bindings` above, gathered
@@ -406,6 +412,14 @@ def build_run_plan(
     # regardless of whether they were newly added or already present in target.
     _populate_msa_slot_bindings(source, _msa_slot_bindings)
 
+    # Feature 033: gather the inflection-feature STRUCTURES assigned to affix
+    # MSAs (IMoInflAffMsa.InflFeatsOA). Same rationale as the slot pass above:
+    # the base IMoMorphSynAnalysis interface hides InflFeatsOA under pythonnet,
+    # so this needs an explicit IMoInflAffMsa cast rather than duck getattr.
+    # Runs unconditionally after the leaf dispatch so every enumerated affix is
+    # covered whether it was newly added or already present.
+    _populate_msa_infl_feat_bindings(source, _msa_infl_feat_bindings)
+
     # T023: rules missing-reference detection (018-rules-page US4/FR-014/FR-015).
     # Runs AFTER the leaf dispatch so 'in-flight' actions are fully enumerated.
     # Routes into the shared excluded_lossy list -> single Move gate (T024).
@@ -447,6 +461,8 @@ def build_run_plan(
         identity_remap=identity_remap,
         overwrites=tuple(overwrites),
         msa_slot_bindings=_msa_slot_bindings,
+        # Feature 033: gathered InflFeatsOA bindings for affix MSAs.
+        msa_infl_feat_bindings=_msa_infl_feat_bindings,
         lexentry_ref_bindings=_lexentry_ref_bindings,
         # Feature 027 (US1/US2/US3, contract C1): gathered create bindings
         # (see the accumulator attachment above).
@@ -953,6 +969,162 @@ def _populate_msa_slot_bindings(source, msa_slot_bindings: dict) -> None:
                 continue
             if slot_guids:
                 msa_slot_bindings[msa_guid] = slot_guids
+
+
+def _iter_source_entries(source):
+    """Yield source LexEntries via the same two navigations
+    `_populate_msa_slot_bindings` uses (live LCM vs duck-typed handle).
+    Returns an empty list when the lexicon is unreachable."""
+    if source is None:
+        return []
+    lexdb = None
+    for nav in (
+        lambda h: h.Cache.LangProject.LexDbOA,
+        lambda h: h.LangProject.LexDbOA,
+    ):
+        try:
+            lexdb = nav(source)
+        except (AttributeError, TypeError):
+            lexdb = None
+        if lexdb is not None:
+            break
+    if lexdb is None:
+        return []
+    for attr in ("EntriesOC", "Entries"):
+        coll = getattr(lexdb, attr, None)
+        if coll is not None:
+            return list(coll)
+    return []
+
+
+def _populate_msa_infl_feat_bindings(source, bindings: dict) -> None:
+    """Populate `bindings` from every affix MSA in source carrying a non-empty
+    `InflFeatsOA` feature structure (feature 033).
+
+    This is the missing half of the affix transfer: `_create_msa_for_closure`
+    creates the target MSA with its POS, and the 17.1 sub-pass wires SlotsRC,
+    but the inflection-feature VALUES assigned to the affix were never read from
+    source at all -- so every affix arrived with an empty feature cell.
+
+    Shape written, keyed by source MSA GUID:
+        {"struc_guid": str,          # IFsFeatStruc GUID (GUID-preserved)
+         "type_guid": str,           # IFsFeatStrucType GUID ("" when unset)
+         "specs": [{"spec_guid": str, "feature": str, "value": str}, ...]}
+
+    Only IFsClosedValue specs are captured; complex/negated/disjunctive values
+    are recorded with an empty "value" so the consumer can report them rather
+    than silently dropping them (never-silent, FR-023).
+
+    Idempotent: re-running overwrites existing keys with the same values.
+    """
+    entry_list = _iter_source_entries(source)
+    if not entry_list:
+        return
+
+    _ILexEntry = _IMoInflAffMsa = _ICmObject = None
+    _IFsFeatStruc = _IFsClosedValue = None
+    try:
+        from SIL.LCModel import (  # noqa: N813
+            ILexEntry as _ILE, IMoInflAffMsa as _IMIA, ICmObject as _ICO,
+            IFsFeatStruc as _IFS, IFsClosedValue as _IFCV,
+        )
+        if all(callable(x) for x in (_ILE, _IMIA, _ICO, _IFS, _IFCV)):
+            _ILexEntry, _IMoInflAffMsa, _ICmObject = _ILE, _IMIA, _ICO
+            _IFsFeatStruc, _IFsClosedValue = _IFS, _IFCV
+    except (ImportError, Exception):  # noqa: BLE001
+        pass
+
+    if _ILexEntry is None:
+        _populate_msa_infl_feat_bindings_duck(entry_list, bindings)
+        return
+
+    # Probe for duck-typed fakes exactly as the slot pass does (scenario C).
+    try:
+        _ILexEntry(entry_list[0])
+    except TypeError:
+        _populate_msa_infl_feat_bindings_duck(entry_list, bindings)
+        return
+    except Exception:  # noqa: BLE001
+        pass
+
+    def _g(obj):
+        try:
+            return str(_ICmObject(obj).Guid).lower()
+        except Exception:  # noqa: BLE001
+            return ""
+
+    for raw_entry in entry_list:
+        try:
+            entry = _ILexEntry(raw_entry)
+            msas = entry.MorphoSyntaxAnalysesOC
+        except (AttributeError, TypeError, Exception):  # noqa: BLE001
+            continue
+        for raw_msa in msas:
+            try:
+                struc = _IMoInflAffMsa(raw_msa).InflFeatsOA
+            except Exception:  # noqa: BLE001 -- stem/deriv/unclassified MSA
+                continue
+            if struc is None:
+                continue
+            try:
+                specs = list(_IFsFeatStruc(struc).FeatureSpecsOC)
+            except Exception:  # noqa: BLE001
+                continue
+            if not specs:
+                continue
+            rows = []
+            for spec in specs:
+                feat_guid = value_guid = ""
+                try:
+                    cv = _IFsClosedValue(spec)
+                    feat_guid = _g(cv.FeatureRA) if cv.FeatureRA is not None else ""
+                    value_guid = _g(cv.ValueRA) if cv.ValueRA is not None else ""
+                except Exception:  # noqa: BLE001 -- complex / negated value
+                    feat_guid = _g(getattr(spec, "FeatureRA", None) or spec)
+                rows.append({"spec_guid": _g(spec), "feature": feat_guid,
+                             "value": value_guid})
+            struc_type = None
+            try:
+                struc_type = _IFsFeatStruc(struc).TypeRA
+            except Exception:  # noqa: BLE001
+                struc_type = None
+            bindings[_g(raw_msa)] = {
+                "struc_guid": _g(struc),
+                "type_guid": _g(struc_type) if struc_type is not None else "",
+                "specs": rows,
+            }
+
+
+def _populate_msa_infl_feat_bindings_duck(entries, bindings: dict) -> None:
+    """Duck-typed fallback for `_populate_msa_infl_feat_bindings` (host-free
+    unit tests). Reads `.InflFeatsOA`, `.FeatureSpecsOC`, `.FeatureRA`,
+    `.ValueRA` and `.guid` via getattr so the fakes in
+    `test_categories_affixes.py` satisfy this path without live LCM."""
+    for entry in entries:
+        for msa in getattr(entry, "MorphoSyntaxAnalysesOC", None) or []:
+            struc = getattr(msa, "InflFeatsOA", None)
+            if struc is None:
+                continue
+            specs = list(getattr(struc, "FeatureSpecsOC", None) or [])
+            if not specs:
+                continue
+            msa_guid = getattr(msa, "guid", None)
+            if msa_guid is None:
+                continue
+            rows = []
+            for spec in specs:
+                feat = getattr(spec, "FeatureRA", None)
+                val = getattr(spec, "ValueRA", None)
+                rows.append({
+                    "spec_guid": getattr(spec, "guid", "") or "",
+                    "feature": (getattr(feat, "guid", "") or "") if feat is not None else "",
+                    "value": (getattr(val, "guid", "") or "") if val is not None else "",
+                })
+            bindings[msa_guid] = {
+                "struc_guid": getattr(struc, "guid", "") or "",
+                "type_guid": (getattr(getattr(struc, "TypeRA", None), "guid", "") or ""),
+                "specs": rows,
+            }
 
 
 def _populate_msa_slot_bindings_duck(entries, msa_slot_bindings: dict) -> None:
