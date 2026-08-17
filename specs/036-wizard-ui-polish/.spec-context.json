@@ -2,8 +2,8 @@
   "workflow": "speckit",
   "specName": "Wizard UI Polish Pass",
   "branch": "main",
-  "currentStep": "tasks",
-  "status": "ready-to-implement",
+  "currentStep": "implement",
+  "status": "implementing",
   "history": [
     {
       "step": "specify",
@@ -74,6 +74,21 @@
       "kind": "complete",
       "by": "ai",
       "at": "2026-08-17T20:39:23.766Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "kind": "start",
+      "by": "extension",
+      "at": "2026-08-17T20:45:26.720Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T001",
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-17T20:54:21.568Z"
     }
   ],
   "telemetryInstanceId": "19488acc-ad0e-46bf-9a7e-aceb9721c6ba",
@@ -561,6 +576,16 @@
         "T018",
         "T029",
         "T047"
+      ]
+    }
+  },
+  "currentTask": "T001",
+  "task_summaries": {
+    "T001": {
+      "status": "DONE",
+      "did": "Added tests/unit/_ui_geometry.py -- offscreen geometry harness: wizard_at(width, scale), visible_rects/rect_in via mapTo, overlaps (peer-only), clipped, horizontal_scrollbars, wrapped_line_count; scale applied to the QApplication font because GRAMTRANS_NO_THEME=1 leaves no theme installed",
+      "files": [
+        "tests/unit/_ui_geometry.py"
       ]
     }
   }

@@ -28,7 +28,7 @@ to **fail first**.
 
 **Wave 1 — single task:**
 
-- [ ] **T001** Add the shared offscreen geometry harness — build the wizard at a given window width and text scale, walk the visible widgets of a page, and return their rects so a test can assert non-intersection, non-clipping, and absence of a horizontal scrollbar · `tests/unit/_ui_geometry.py`
+- [x] **T001** Add the shared offscreen geometry harness — build the wizard at a given window width and text scale, walk the visible widgets of a page, and return their rects so a test can assert non-intersection, non-clipping, and absence of a horizontal scrollbar · `tests/unit/_ui_geometry.py`
 
 Used by US3 (SC-005), US6 (SC-005a) and US8 (SC-009); built once here so the
 900 px × largest-text-scale case is expressed one way in all three.
