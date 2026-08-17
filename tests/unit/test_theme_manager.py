@@ -561,6 +561,15 @@ _CONTRAST_PAIRS = (
     ("button_text", "button", 4.5),        # button label on the recoloured face
     ("focus", "window", 4.5),              # the 2px ring against the page
     ("text", "alternate_base", 7.0),       # body text on a striped row
+    # A DISABLED label still has to be legible -- "unavailable" is information,
+    # and FR-039/FR-044 make the wizard say WHY Execute is unavailable, which is
+    # worthless if the words cannot be read. Both surfaces are load-bearing and
+    # neither was measured before: `button` is where a disabled label usually
+    # sits (Execute Move), and `header_bg` is the theme bar, whose zoom buttons
+    # disable themselves at the scale limits. These were the two worst ratios in
+    # either palette (3.9 and 3.1 dark, 3.1 and 3.1 light).
+    ("disabled_text", "button", 4.5),
+    ("disabled_text", "header_bg", 4.5),
 )
 
 
@@ -730,7 +739,12 @@ _LIGHT_FROZEN = {
     "header_text": "#12151A",
     "tooltip_text": "#12151A",
     "muted_text": "#4E545B",
-    "disabled_text": "#7A8189",
+    # Moved (was #7A8189) -- the ONE light member feature 036 changed, and not an
+    # accent change: a neutral grey darkened to a neutral grey for legibility,
+    # after measuring 3.1:1 on a button face. The freeze exists to stop the green
+    # accent family bleeding into light mode, and no hue moved here, so its
+    # intent is intact. Guarded going forward by the disabled_text contrast pairs.
+    "disabled_text": "#5C6369",
     "bright_text": "#A8000F",
     "button": "#E3E6EB",
     "button_text": "#12151A",

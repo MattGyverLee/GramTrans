@@ -156,7 +156,11 @@ LIGHT_PALETTE = Palette(
     header_text="#12151A",       # 14.2:1 on #DFE3E9
     tooltip_text="#12151A",
     muted_text="#4E545B",        # 7.7:1 on #FFFFFF
-    disabled_text="#7A8189",     # 3.6:1 -- disabled only; never load-bearing
+    # 4.9:1 on the button face, 6.1:1 on base.  The old #7A8189 measured 3.1:1
+    # on a button and 3.1:1 on the header bar -- the worst disabled contrast in
+    # either scheme.  Darker, not lighter, because this is the light mode: the
+    # direction that dims a label is toward the background in both cases.
+    disabled_text="#5C6369",
     bright_text="#A8000F",
     button="#E3E6EB",
     button_text="#12151A",
@@ -207,7 +211,12 @@ DARK_PALETTE = Palette(
     header_text="#E9EDF2",       # 11.5:1 on #2A2F35
     tooltip_text="#E9EDF2",
     muted_text="#AAB2BB",        # 8.0:1 on #191C20
-    disabled_text="#858D96",     # 4.5:1 -- disabled only; never load-bearing
+    # 6.6:1 on base, and -- the number that actually mattered and was never
+    # measured -- 5.1:1 on the BUTTON face.  The old #858D96 was picked against
+    # `base` (5.1:1 there) but a disabled label mostly sits on a button, where it
+    # measured only 3.9:1 and read as a smudge rather than as text.  Still just
+    # 45% of the enabled label's 11.2:1, so it reads as plainly disabled.
+    disabled_text="#9AA2AA",
     bright_text="#FF8A8A",
     button="#26332B",            # 11.2:1 for button_text
     button_text="#E9EDF2",
