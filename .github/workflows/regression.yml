@@ -1,0 +1,77 @@
+# FR-021 / SC-012 — the regression gate.
+#
+# The repository's first workflow. FR-021 asks for a gate that runs
+# *continuously during development, not once at release*, and SC-012 measures
+# it across the whole branch: no commit may merge with this red. It therefore
+# landed in the feature's foundational phase, before any shell code, so every
+# later commit is measured by it.
+#
+# Live-LCM integration tests are deliberately absent: a hosted runner has no
+# FieldWorks install, so `-m "not integration"` is the honest scope here. The
+# parity evidence for SC-002 comes from local runs against the
+# `Ejagham Mini` -> `Ejagham Full GT-Test` pair, recorded in probe-results.md.
+name: regression
+
+on:
+  push:
+    branches:
+      - 034-standalone-windows-app
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  gate:
+    # Windows because the feature is Windows-only (FR-050) and because
+    # pyflexicon's pythonnet backend expects a .NET runtime.
+    runs-on: windows-latest
+
+    env:
+      # PyQt6 imports and a QApplication constructs on a runner with no
+      # display only under the offscreen platform plugin. FR-006's startup
+      # assertion is exercised in the unit suite, so this has to work.
+      QT_QPA_PLATFORM: offscreen
+      PYTHONIOENCODING: utf-8
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The shared-code exception check diffs `main...HEAD`; a shallow
+          # clone has no merge base to diff against.
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+          python -m pip install flextoolslib
+
+      # 1. SC-011 — the existing suite does not regress.
+      #    Not a bare `pytest` step: 27 tests under features 026/029 already
+      #    fail on `main` and have nothing to do with this feature, so a bare
+      #    step would be red from the feature's first commit and would enforce
+      #    nothing. The wrapper fails on any failure outside
+      #    `.github/known-failures.txt`, and on any baseline entry that starts
+      #    passing, so the list cannot rot. See that file's header.
+      - name: Unit suite (no new failures)
+        run: python .github/scripts/check_suite_baseline.py
+
+      # 2. SC-013 / FR-016 — the FlexTools path is unchanged.
+      #    Run again on its own so a failure here is unmistakable in the log
+      #    even though step 1 already collected it.
+      - name: FlexTools-path contract
+        run: python -m pytest tests/unit/test_034_flextools_contract.py -q
+
+      # 3. FR-020 / SC-014 — no unlisted shared-code change.
+      - name: Shared-code exception check
+        run: python .github/scripts/check_shared_exceptions.py
+
+      # 4. Research R1 containment — one module may name the FieldWorks
+      #    globals, and it is not this one.
+      - name: FieldWorks-globals accessor ban
+        run: python -m pytest tests/unit/test_034_fwglobals_only.py -q

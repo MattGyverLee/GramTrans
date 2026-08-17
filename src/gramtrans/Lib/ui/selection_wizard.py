@@ -67,6 +67,7 @@ if __package__:
     )
     from ..ws_fonts import WsFontRegistry, WsRole
     from .stats_panel import StatsPanel
+    from .source_picker import SourcePickerDialog
     from .target_picker import TargetPickerDialog
     from .ws_font_delegate import attach_ws_font_delegate, set_ws_runs
     from .merge_preview_pane import MergePreviewPane, PreviewRequest, _action_to_mode
@@ -113,6 +114,7 @@ else:
     )
     from ws_fonts import WsFontRegistry, WsRole  # type: ignore
     from stats_panel import StatsPanel  # type: ignore
+    from source_picker import SourcePickerDialog  # type: ignore
     from target_picker import TargetPickerDialog  # type: ignore
     from ws_font_delegate import attach_ws_font_delegate, set_ws_runs  # type: ignore
     from merge_preview_pane import MergePreviewPane, PreviewRequest, _action_to_mode  # type: ignore
@@ -121,6 +123,11 @@ else:
     from models import SimilarResolution  # type: ignore  (already imported above but needs bare-name alias)
     from report import RunReport  # type: ignore
     from ws_mapping import closest_ws_defaults  # type: ignore
+
+if __package__:
+    from ..gate import resolve_gate as _resolve_gate
+else:
+    from gate import resolve_gate as _resolve_gate  # type: ignore
 
 
 # ---------------------------------------------------------------------------
@@ -224,8 +231,21 @@ def _make_tree_pane_splitter(tree_widget, pane_widget,
 class _PageProjectWS(QtWidgets.QWizardPage):
     """Page 1: bind source + target projects and choose writing-system mapping.
 
-    The source is already bound from the FlexTools host (passed in at wizard
-    construction time).  The user picks the target here.
+    Under FlexTools the source is already bound (the host's open project,
+    passed in at wizard construction time) and the user picks only the target.
+
+    A host with no open project -- the standalone -- passes a `source_binder`,
+    and the source becomes a picked project too: the Source row grows a "Pick
+    source project..." button that mirrors the Target row's, using the twin
+    dialog in `source_picker.py` (feature 034 exception 7). This page is then
+    the application's entry point, which is why the choice lives here rather
+    than in a separate dialog the host throws up before the wizard opens.
+
+    Same-project is refused in both directions: the source's own project is
+    excluded from `list_target_candidates` and refused by `bind_target`, and a
+    bound target is excluded from the source list. Re-picking the source
+    releases a bound target, because the writing-system mapping below is a
+    statement about a *pair* of projects and cannot outlive either half.
 
     WS decision: enumerate ACTIVE writing systems from the source project and
     present a three-way MAP / CREATE / SKIP control re-hosted from
@@ -247,10 +267,18 @@ class _PageProjectWS(QtWidgets.QWizardPage):
     _CHOICE_CREATE = 1
     _CHOICE_SKIP = 2
 
-    def __init__(self, stub, host_project, parent=None):
+    def __init__(self, stub, host_project, parent=None, *,
+                 source_binder=None, report_sink=None):
         super().__init__(parent)
         self._stub = stub
         self._host = host_project
+        # Feature 034 exception 7. `None` (every FlexTools construction) means
+        # "the source is host-supplied": no button, no picker, no behaviour
+        # change. Callable means "this host has no source of its own"; it takes
+        # a project name and returns an open read-only handle. The host keeps
+        # ownership of that handle, because the host is what has to close it.
+        self._source_binder = source_binder
+        self._report = report_sink
         self._context = None   # set when target is bound
         self._target_ws_ids: list = []  # existing WS IDs in the target
         # Row state: dict keyed by (ws_id, kind_value) -> {"choice": int, "target": str}
@@ -264,6 +292,14 @@ class _PageProjectWS(QtWidgets.QWizardPage):
 
         self.setTitle("Step 1 of 10: Project + Writing Systems")
         self.setSubTitle(
+            (
+                "Pick the source and target projects, then map source writing "
+                "systems to target writing systems. Each WS can be Mapped, "
+                "Created, or Skipped."
+            )
+            if source_binder is not None else
+            # Byte-identical to the pre-exception-7 text: under FlexTools the
+            # source is not picked, so the page still describes one choice.
             "Bind a target project and map source writing systems to target "
             "writing systems. Each WS can be Mapped, Created, or Skipped."
         )
@@ -289,22 +325,41 @@ class _PageProjectWS(QtWidgets.QWizardPage):
     def _build_ui(self) -> None:
         layout = QtWidgets.QVBoxLayout(self)
 
+        # The two project rows are built the same way on purpose: same layout,
+        # same label-then-button shape, same dialog mechanics. The only
+        # difference is that the Source row's button exists solely for a host
+        # that does not supply a source (feature 034 exception 7).
         src_row = QtWidgets.QHBoxLayout()
         src_row.addWidget(QtWidgets.QLabel("Source:", self))
-        self._src_label = QtWidgets.QLabel(
-            f"<b>{self._stub.source_project_name}</b> (open in FlexTools)", self
-        )
+        self._src_label = QtWidgets.QLabel(self._initial_source_text(), self)
         src_row.addWidget(self._src_label, 1)
+        self._pick_source_btn = None
+        if self._source_binder is not None:
+            self._pick_source_btn = QtWidgets.QPushButton(
+                "Pick source project...", self
+            )
+            self._pick_source_btn.clicked.connect(self._on_pick_source)
+            src_row.addWidget(self._pick_source_btn)
         layout.addLayout(src_row)
 
         tgt_row = QtWidgets.QHBoxLayout()
         tgt_row.addWidget(QtWidgets.QLabel("Target:", self))
         self._tgt_label = QtWidgets.QLabel("<i>(not picked)</i>", self)
         tgt_row.addWidget(self._tgt_label, 1)
-        pick_btn = QtWidgets.QPushButton("Pick target project...", self)
-        pick_btn.clicked.connect(self._on_pick_target)
-        tgt_row.addWidget(pick_btn)
+        self._pick_target_btn = QtWidgets.QPushButton("Pick target project...", self)
+        self._pick_target_btn.clicked.connect(self._on_pick_target)
+        tgt_row.addWidget(self._pick_target_btn)
         layout.addLayout(tgt_row)
+        # Target-after-source is not a preference, it is what makes the
+        # same-project rule enforceable by *omission*: the target list is built
+        # by excluding the source, so there has to be a source first. Disabled
+        # only in the deferred-source case; under FlexTools there always is one.
+        if not self._source_is_bound():
+            self._pick_target_btn.setEnabled(False)
+            self._pick_target_btn.setToolTip(
+                "Pick the source project first — the target list is everything "
+                "except the source."
+            )
 
         layout.addWidget(QtWidgets.QLabel(
             "Writing-system mapping (MAP / CREATE / SKIP per WS):", self
@@ -351,7 +406,190 @@ class _PageProjectWS(QtWidgets.QWizardPage):
         return table
 
     # ------------------------------------------------------------------
+    # Source binding (feature 034 exception 7)
+    # ------------------------------------------------------------------
+
+    def _source_is_bound(self) -> bool:
+        return bool(getattr(self._stub, "source_project_name", ""))
+
+    def _initial_source_text(self) -> str:
+        if not self._source_is_bound():
+            return "<i>(not picked)</i>"
+        if self._source_binder is None:
+            # FlexTools: unchanged wording, because there it is the truth.
+            return f"<b>{self._stub.source_project_name}</b> (open in FlexTools)"
+        return f"<b>{self._stub.source_project_name}</b> (read-only)"
+
+    def _on_pick_source(self) -> None:
+        """Pick + open the source, mirroring `_on_pick_target` step for step."""
+        if self._source_binder is None:      # defensive: no button exists
+            return
+        if self._context is not None and not self._confirm_release_target():
+            return
+
+        candidates = gt_api.list_source_candidates(
+            getattr(self._stub, "projects_root", ""),
+            # The other half of the same-project rule. `list_target_candidates`
+            # excludes the source; this excludes a target already bound, so the
+            # pair can never collapse onto one project from either direction.
+            exclude_names=tuple(
+                n for n in (self._bound_target_name(),) if n
+            ),
+            exclude_paths=tuple(
+                p for p in (self._bound_target_path(),) if p
+            ),
+        )
+        dlg = SourcePickerDialog(candidates, parent=self)
+        if not candidates:
+            # Show the dialog anyway: its empty-list message says what to do,
+            # where a QMessageBox here would say it in a different voice.
+            dlg.exec()
+            return
+        if dlg.exec() != QtWidgets.QDialog.DialogCode.Accepted:
+            return
+        choice = dlg.selected_candidate()
+        if choice is None:
+            return
+
+        try:
+            handle = self._source_binder(choice.project_name)
+        except Exception as exc:  # noqa: BLE001 -- LCM raises a variety of types
+            # FR-034: attributed to the project that would not open, with the
+            # rest of the list still choosable.
+            QtWidgets.QMessageBox.critical(
+                self, "GramTrans",
+                f"GramTrans could not open {choice.project_name!r} as the "
+                f"source project.\n\nIf it is open in FieldWorks Language "
+                f"Explorer, close it and try again, or choose a different "
+                f"project.\n\nDetails: {exc!s}",
+            )
+            self._log(f"[GramTrans] Could not open source "
+                      f"{choice.project_name!r}: {exc}", error=True)
+            return
+
+        self._release_bound_target()
+        self._bind_source_handle(handle, choice.project_name, choice.project_path)
+
+    def _bind_source_handle(self, handle, project_name: str,
+                            project_path: str) -> None:
+        """Adopt an opened source handle: stub, labels, and the wizard's `_host`.
+
+        `dataclasses.replace` rather than a fresh `initialize_run` so `run_id`
+        and `started_at` survive re-picking. They are stamped into the residue
+        tag of everything a Move writes, and a run that changed its identity
+        halfway through choosing projects would be untraceable afterwards.
+        """
+        import dataclasses
+
+        self._host = handle
+        self._stub = dataclasses.replace(
+            self._stub,
+            source_handle=handle,
+            source_project_name=project_name,
+            source_project_path=project_path,
+        )
+        # Same shape as the target row's label, so the pair reads as a pair.
+        if project_path:
+            self._src_label.setText(
+                f"<b>{project_name}</b> (read-only) (<code>{project_path}</code>)"
+            )
+        else:
+            self._src_label.setText(f"<b>{project_name}</b> (read-only)")
+        # Downstream pages resolve the source through `wizard._host` (or through
+        # the bound context); keep the wizard's copy in step with ours.
+        wizard = self.wizard()
+        if wizard is not None:
+            wizard._host = handle
+        self._pick_target_btn.setEnabled(True)
+        self._pick_target_btn.setToolTip("")
+        self._log(f"  Source (read-only): {project_name!r}")
+
+    def _confirm_release_target(self) -> bool:
+        """Changing the source after a target is bound: ask, then release.
+
+        The writing-system mapping, and every inventory the later pages build,
+        are statements about a *pair* of projects. Silently keeping the target
+        bound while the source changes underneath it would leave the WS table
+        describing a pairing that no longer exists.
+        """
+        answer = QtWidgets.QMessageBox.question(
+            self, "GramTrans — Change the source project?",
+            f"{self._bound_target_name() or 'The target project'} is currently "
+            "bound as the target.\n\nChanging the source releases it and clears "
+            "your writing-system choices, and you will need to pick the target "
+            "again.\n\nChange the source anyway?",
+            QtWidgets.QMessageBox.StandardButton.Yes
+            | QtWidgets.QMessageBox.StandardButton.No,
+            QtWidgets.QMessageBox.StandardButton.No,
+        )
+        return answer == QtWidgets.QMessageBox.StandardButton.Yes
+
+    def _release_bound_target(self) -> None:
+        """Close a previously-bound target and reset everything that named it.
+
+        `CloseProject()` matters here and is not merely tidy: `bind_target`
+        opened it write-enabled, so a dropped handle would leave the project
+        locked for the rest of the process with nothing left holding a
+        reference to unlock it. `gramtrans.py._run_gui` only ever closes the
+        *current* context's handle.
+        """
+        ctx = self._context
+        if ctx is None:
+            return
+        target = getattr(ctx, "target_handle", None)
+        name = getattr(ctx, "target_project_name", "")
+        self._context = None
+        if target is not None:
+            try:
+                target.CloseProject()
+                self._log(f"[GramTrans] Target project {name!r} released "
+                          "(source changed).")
+            except Exception as exc:  # noqa: BLE001
+                self._log(f"[GramTrans] Could not close target project "
+                          f"{name!r}: {exc}", warning=True)
+        self._tgt_label.setText("<i>(not picked)</i>")
+        self._target_ws_ids = []
+        self._row_state.clear()
+        self._analysis_linked = set()
+        self._ws_map_defaults = {}
+        self._vern_table.setRowCount(0)
+        self._anal_table.setRowCount(0)
+        self._set_target_ready(False)
+
+    def _bound_target_name(self) -> str:
+        return getattr(self._context, "target_project_name", "") \
+            if self._context is not None else ""
+
+    def _bound_target_path(self) -> str:
+        return getattr(self._context, "target_project_path", "") \
+            if self._context is not None else ""
+
+    def _log(self, message: str, *, warning: bool = False,
+             error: bool = False) -> None:
+        """Best-effort line to the host's report sink; never raises."""
+        sink = self._report
+        if sink is None:
+            return
+        try:
+            if error:
+                sink.Error(message)
+            elif warning:
+                sink.Warning(message)
+            else:
+                sink.Info(message)
+        except Exception:  # noqa: BLE001 -- logging must not break the picker
+            pass
+
+    # ------------------------------------------------------------------
     def _on_pick_target(self) -> None:
+        if not self._source_is_bound():
+            QtWidgets.QMessageBox.information(
+                self, "GramTrans",
+                "Pick the source project first. GramTrans copies grammar from "
+                "one project into another, so the target list is everything "
+                "except the source.",
+            )
+            return
         candidates = gt_api.list_target_candidates(self._stub)
         if not candidates:
             QtWidgets.QMessageBox.warning(
@@ -4467,18 +4705,23 @@ class _PageFinish(QtWidgets.QWizardPage):
     4. Shows the RunReport (MOVE) in the StatsPanel.
     """
 
-    def __init__(self, report_sink, modify_allowed: bool, parent=None):
+    def __init__(self, report_sink, modify_allowed: bool, parent=None,
+                 confirmation_gate=None):
         super().__init__(parent)
         self._report_sink = report_sink
         self._modify_allowed = modify_allowed
         self._move_done = False
-        # DR-1: cached plan is the sole freshness gate for the dry-run flow.
-        self._cached_plan = None
+        # Feature 034 exceptions 2 and 3. The gate answers two questions for
+        # this page: what the subtitle says about reversibility, and whether a
+        # Move may proceed. `None` resolves to the FlexTools default, whose
+        # subtitle is byte-identical to the literal that used to be inline
+        # here and whose confirm() returns True with no UI (SC-013).
+        self._gate = _resolve_gate(confirmation_gate)
         self.setTitle("Step 10 of 10: Finish / Move")
-        self.setSubTitle(
-            "Click 'Execute Move' to write all planned actions to the target project. "
-            "This is the only write point -- changes can be undone in FLEx with Ctrl+Z."
-        )
+        # Exception 3: gate-supplied, because "changes can be undone in FLEx
+        # with Ctrl+Z" is true under FlexTools and false in the standalone,
+        # and FR-027 forbids the application claiming otherwise.
+        self.setSubTitle(self._gate.finish_page_subtitle())
         self._build_ui()
         # DR-1: Move starts disabled unconditionally; enabled only after dry run.
         self._move_btn.setEnabled(False)
@@ -4606,6 +4849,20 @@ class _PageFinish(QtWidgets.QWizardPage):
             if answer != QtWidgets.QMessageBox.StandardButton.Yes:
                 return  # User cancelled -- no write occurs.
 
+        # Feature 034 exception 2 (FR-017, FR-024): the host's confirmation
+        # gate, consulted ONCE, immediately before the write and after the
+        # EXCLUDED-LOSSY dialog -- so a user who backs out of that one is
+        # never asked to type a project name they have already decided not to
+        # write to. Under FlexTools this returns True with no UI, so the
+        # sequence here is unchanged. A False return aborts with no write and
+        # leaves the wizard and every selection intact (FR-025).
+        #
+        # Preview never reaches this line: it is on the Move path only, which
+        # is what FR-024 requires.
+        target_name = getattr(context, "target_project_name", "") or ""
+        if not self._gate.confirm(target_name):
+            return  # Gate refused -- no write occurs.
+
         try:
             report = gt_api.execute_move(context, plan)
         except gt_api.PreviewStale as e:
@@ -4637,6 +4894,26 @@ class SelectionWizard(QtWidgets.QWizard):
         report_sink:  FlexTools report object (.Info / .Warning / .Error / .Blank).
         modify_allowed: True when FlexTools is running write-enabled.
         source_project_name: display name of the source project.
+        projects_root: feature 034 exception 4 (FR-001) -- where the host says
+            FLEx projects live. Keyword-only and defaulted, so the FlexTools
+            call is unchanged and `list_target_candidates` keeps its historical
+            C:\\ProgramData\\SIL\\FieldWorks\\Projects default. The standalone
+            passes the location FieldWorks itself records.
+        confirmation_gate: feature 034 exceptions 2 and 3 (FR-017) -- the
+            host's answer to "may I write?", consulted once by `_PageFinish`
+            immediately before `gt_api.execute_move` and never on the Preview
+            path. Also supplies the Finish page's subtitle, because whether a
+            Move can be undone is a fact about the host, not about the wizard.
+            `None` resolves to `Lib/gate.AlwaysSatisfiedGate`: True with no UI,
+            and today's subtitle byte for byte (SC-013).
+        source_binder: feature 034 exception 7 -- for a host that has no open
+            project of its own. A callable taking a project name and returning
+            an open **read-only** handle, supplied by the host because the host
+            is what must close it again. When given, `host_project` may be
+            `None` and `source_project_name` empty, and step 1 grows a "Pick
+            source project..." button beside the target's. `None` (every
+            FlexTools call) means the source is host-supplied: no button, no
+            picker, no change to the page (SC-013).
     """
 
     def __init__(
@@ -4647,6 +4924,9 @@ class SelectionWizard(QtWidgets.QWizard):
         *,
         source_project_name: str,
         parent: Optional[QtWidgets.QWidget] = None,
+        projects_root: str = "",
+        confirmation_gate=None,
+        source_binder=None,
     ) -> None:
         super().__init__(parent)
         # Install the palette/text-size theme BEFORE any page is constructed.
@@ -4680,6 +4960,7 @@ class SelectionWizard(QtWidgets.QWizard):
             host_handle=host_project,
             source_project_name=source_project_name,
             source_project_path=_safe_path(host_project),
+            projects_root=projects_root,
         )
 
         # Create pages.
@@ -4698,7 +4979,10 @@ class SelectionWizard(QtWidgets.QWizard):
         # Cross-page lookups go through named accessors (P-1) so this insertion
         # does not silently mis-resolve any literal page index.
         # _PageScopeConflict is retained for back-compat but removed from the flow.
-        self._page_project_ws = _PageProjectWS(stub, host_project)
+        self._page_project_ws = _PageProjectWS(
+            stub, host_project,
+            source_binder=source_binder, report_sink=report_sink,
+        )
         self._page_custom_fields = _PageCustomFields()
         self._page_phonology = _PagePhonology()
         self._page_items = _PageItemPicker()
@@ -4713,7 +4997,9 @@ class SelectionWizard(QtWidgets.QWizard):
         self._page_rules = _PageRules()
         self._page_texts = _PageTexts()        # Feature 026 texts-wordforms
         self._page_preview = _PagePreview()
-        self._page_finish = _PageFinish(report_sink, modify_allowed)
+        self._page_finish = _PageFinish(
+            report_sink, modify_allowed, confirmation_gate=confirmation_gate
+        )
 
         self.addPage(self._page_project_ws)    # index 0
         self.addPage(self._page_custom_fields) # index 1

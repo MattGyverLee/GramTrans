@@ -1,0 +1,54 @@
+# Build-only dependency roots for the standalone Windows artifact (FR-019, FR-041).
+#
+# Compiled into `requirements.lock` (fully pinned, hashed) by
+# `python build\build.py --lock`. `pyproject.toml` is NOT touched: its
+# `pyflexicon>=4.3.1` / `PyQt6>=6.4` floors stay floors, so a FlexTools install
+# is unconstrained by anything this feature pins.
+#
+# Four roots, per contracts/build-and-release.md section 3:
+
+# The LCM access layer. Same distribution the module already depends on; the
+# floor lives in pyproject.toml, the pin lives here.
+pyflexicon>=4.3.1
+
+# The UI toolkit. GPL-or-commercial, which is why the binary licence
+# statement (FR-052) is stricter than the project's MIT source licence.
+#
+# CEILING, deliberately. Measured 2026-08-17: PyQt6 6.11.0 raises
+#   ImportError: DLL load failed while importing QtCore:
+#   The specified procedure could not be found.
+# on this Windows 11 / Python 3.12.7 machine -- and it does so **unfrozen**,
+# in a clean venv, so it is not a packaging fault. It fails with the matched
+# PyQt6-Qt6 6.11.0 as well as with the 6.11.1 that PyQt6's own too-loose pin
+# (`PyQt6-Qt6 >=6.11.0, <6.12.0`) resolves to, which rules out the version
+# mismatch as the cause; Qt 6.11 appears to need a platform component this
+# machine does not have.
+#
+# 6.7.1 is what every unit test, every live parity run and every piece of
+# recorded evidence for this feature used. A build lock exists precisely so
+# the shipped artifact is built from the versions that were actually
+# validated, so that is what it pins.
+#
+# `pyproject.toml` keeps its `PyQt6>=6.4` floor untouched (FR-019/FR-041):
+# this ceiling constrains the ARTIFACT, not FlexTools installs.
+#
+# Before raising it: install the candidate in a clean venv and check that
+# `from PyQt6 import QtCore` succeeds and a QApplication constructs. The
+# smoke test catches this (it did), but catching it at the lock is cheaper.
+PyQt6>=6.4,<6.8
+PyQt6-Qt6>=6.4,<6.8
+
+# `gramtrans.py` opens with `from flextoolslib import *` for the six FTM_*
+# metadata names, so the real library ships. A stand-in shim exposing just
+# those names was considered and rejected in the spec's assumptions: it would
+# be a fork of host metadata that can drift.
+#
+# NOTE: this drags in stock `flexlibs` (flexlibs1) and `cdfutils`
+# transitively. They are inert at runtime -- nothing imports them; the module
+# imports flexicon explicitly -- but they ARE components of the shipped
+# artifact, and therefore fall under the FR-053 amendment's "components it
+# bundles" clause and the FR-052 licence statement.
+flextoolslib
+
+# The freezer itself.
+pyinstaller

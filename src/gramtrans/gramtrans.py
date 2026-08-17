@@ -128,7 +128,8 @@ DEFAULT_SOURCE_PROJECT = "Ejagham Mini"
 # Entry point
 # ============================================================================
 
-def MainFunction(project, report, modifyAllowed):
+def MainFunction(project, report, modifyAllowed, *,
+                 confirmation_gate=None, projects_root="", source_binder=None):
     """Standard FlexTools entry.
 
     Args:
@@ -138,6 +139,28 @@ def MainFunction(project, report, modifyAllowed):
             source is `DEFAULT_SOURCE_PROJECT`.
         report: report.Info / .Warning / .Error / .Blank for log output.
         modifyAllowed: True when FlexTools is running write-enabled.
+        confirmation_gate: feature 034 exception 1, keyword-only. The host's
+            answer to "may I write?", consulted once by the wizard immediately
+            before a Move. `None` resolves to `Lib/gate.AlwaysSatisfiedGate`,
+            which says yes with no dialog and no I/O -- so a FlexTools call
+            with three positional arguments behaves exactly as it did before
+            the parameter existed (SC-013). The standalone supplies a gate
+            that demands the target's name typed exactly, because that host
+            has no undo stack to fall back on.
+        projects_root: feature 034 exception 4, keyword-only. Where this host
+            says FLEx projects live. Empty (the FlexTools case) keeps
+            `list_target_candidates`' historical
+            C:\\ProgramData\\SIL\\FieldWorks\\Projects default; the standalone
+            passes what FieldWorks itself records, so a relocated projects
+            directory is honoured (FR-001).
+        source_binder: feature 034 exception 7, keyword-only. For a host with
+            no open project: a callable taking a project name and returning an
+            open **read-only** handle. When supplied, `project` may be `None`
+            and the wizard's step 1 asks for the source itself, next to where
+            it already asks for the target. `None` -- every FlexTools call --
+            means the source is the host's open project, exactly as before.
+            The host keeps ownership of the handle it returns, because the host
+            is what has to close it (FR-013).
 
     Primary path (T057): opens the GramTrans PyQt main window dialog (FR-002
     picker + category toggles + Preview/Move). The host's open project is the
@@ -153,6 +176,16 @@ def MainFunction(project, report, modifyAllowed):
     """
     QtWidgets = _try_import_qt()
     if QtWidgets is None:
+        # The headless fallback transfers FROM `DEFAULT_SOURCE_PROJECT` INTO the
+        # host's open project, so it needs an open project to be the target. A
+        # host that passed a source_binder has none, and there is no GUI to ask
+        # in -- so say so rather than crash inside the fallback (FR-006).
+        if project is None:
+            report.Error(
+                "[GramTrans] PyQt6 is not available, so GramTrans cannot show "
+                "its window. GramTrans needs PyQt6 installed to run."
+            )
+            return
         report.Warning(
             "[GramTrans] PyQt6 not available; running headless Phase-0 "
             "fallback (source={0!r}).".format(DEFAULT_SOURCE_PROJECT)
@@ -161,7 +194,10 @@ def MainFunction(project, report, modifyAllowed):
         return
 
     try:
-        _run_gui(project, report, modifyAllowed, QtWidgets)
+        _run_gui(project, report, modifyAllowed, QtWidgets,
+                 confirmation_gate=confirmation_gate,
+                 projects_root=projects_root,
+                 source_binder=source_binder)
     except Exception as e:  # noqa: BLE001 — FlexTools silences raw exceptions
         report.Error(f"[GramTrans] GUI fatal: {e}")
         import traceback
@@ -179,7 +215,8 @@ def _try_import_qt():
         return None
 
 
-def _run_gui(project, report, modifyAllowed, QtWidgets):
+def _run_gui(project, report, modifyAllowed, QtWidgets, *,
+             confirmation_gate=None, projects_root="", source_binder=None):
     """Launch the GramTrans PyQt main window. The host's open project is the
     source; the user picks the target inside the dialog.
 
@@ -192,6 +229,19 @@ def _run_gui(project, report, modifyAllowed, QtWidgets):
     _enable_debug_logging()
     _log.debug("_run_gui: entry  modifyAllowed=%s", modifyAllowed)
 
+    # Feature 034 exception 1: resolve the host's confirmation gate once, here,
+    # so there is exactly one place that knows `None` means "the FlexTools
+    # default". Under FlexTools that is AlwaysSatisfiedGate and the run
+    # proceeds exactly as it always has. Which gate is in force is logged
+    # because "the Move happened with no prompt" is otherwise indistinguishable
+    # from "the gate was wired wrong".
+    try:
+        from gate import resolve_gate  # flat (Lib/ on sys.path)
+    except ImportError:
+        from gramtrans.Lib.gate import resolve_gate
+    gate = resolve_gate(confirmation_gate)
+    _log.debug("_run_gui: confirmation gate = %s", type(gate).__name__)
+
     # Phase 3c: use the SelectionWizard (replaces main_window.MainWindow).
     # Flat import (Lib/ui on sys.path) so the dual-mode guard takes its flat
     # branch; fall back to the package path for non-addsitedir hosts.
@@ -200,9 +250,15 @@ def _run_gui(project, report, modifyAllowed, QtWidgets):
     except ImportError:
         from gramtrans.Lib.ui.selection_wizard import SelectionWizard
 
-    source_name = project.ProjectName()
+    # Feature 034 exception 7: with a source_binder the source is not open yet
+    # -- the wizard's step 1 asks for it. `project` is then None and there is no
+    # name to log until the user picks one.
+    source_name = project.ProjectName() if project is not None else ""
     report.Info("[GramTrans] Launching Selection Wizard (Phase 3c).")
-    report.Info(f"  Source (open project): {source_name!r}")
+    if source_name:
+        report.Info(f"  Source (open project): {source_name!r}")
+    else:
+        report.Info("  Source: chosen on step 1 of the wizard.")
     report.Info(f"  Mode: {'MOVE-enabled' if modifyAllowed else 'PREVIEW-only'}")
 
     app = QtWidgets.QApplication.instance()
@@ -214,6 +270,9 @@ def _run_gui(project, report, modifyAllowed, QtWidgets):
         report,
         modifyAllowed,
         source_project_name=source_name,
+        projects_root=projects_root,
+        confirmation_gate=gate,
+        source_binder=source_binder,
     )
     try:
         wizard.exec()
