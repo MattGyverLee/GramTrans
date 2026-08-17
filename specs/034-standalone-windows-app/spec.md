@@ -84,18 +84,21 @@ occur.
 
 1. **Given** a machine with FieldWorks 9 installed, at least two local FLEx
    projects, and no FlexTools and no user-installed Python, **When** the user
-   launches the application, **Then** the application starts and presents a
-   source-project picker listing the local FLEx projects.
-2. **Given** the source picker is displayed, **When** the user has not yet
-   chosen anything, **Then** no project is pre-selected and the control that
+   launches the application, **Then** the application starts on step 1 of the
+   selection wizard, which offers a source-project chooser and a target-project
+   chooser, and neither project is chosen yet.
+2. **Given** step 1 is displayed, **When** the user has not yet chosen
+   anything, **Then** no project is pre-selected in either chooser, the
+   target chooser cannot be opened before a source exists, and the control that
    advances to the next step is disabled.
-3. **Given** the user has chosen a source project, **When** they advance,
-   **Then** a target-project picker is presented, also with nothing
-   pre-selected, and the project already chosen as source is not selectable as
-   the target.
+3. **Given** the user has chosen a source project, **When** they open the
+   target chooser, **Then** it lists the local FLEx projects with nothing
+   pre-selected, and the project already chosen as source is not among them.
+   Conversely, re-opening the source chooser after a target is bound does not
+   offer that target.
 4. **Given** both projects are chosen, **When** the user proceeds, **Then** the
-   existing GramTrans selection wizard opens with the same categories,
-   options, and behaviour it has under FlexTools, and it opens in Preview
+   rest of the existing GramTrans selection wizard behaves exactly as it does
+   under FlexTools — same categories, same options — and it opens in Preview
    mode.
 5. **Given** the wizard is set to Preview, **When** the user runs it, **Then**
    the preview result is displayed inside the application (there is no
@@ -235,9 +238,15 @@ prerequisite and its remedy.
 
 ### Edge Cases
 
-- **Same project chosen twice**: the target picker must make the chosen source
-  unselectable, and the run must be refused if the two ever resolve to the
-  same project on disk.
+- **Same project chosen twice**: neither picker may offer what the other
+  already holds — the target list excludes the chosen source, and the source
+  list excludes a bound target — and the run must be refused if the two ever
+  resolve to the same project on disk.
+- **Source changed after a target is bound**: the target was opened
+  write-enabled, and the writing-system mapping describes a *pair* of projects.
+  Changing the source must release the target (so it does not stay locked with
+  nothing referencing it) and clear the mapping, after telling the user that is
+  what will happen.
 - **Target already open in FieldWorks**: the write-enabled open will fail on a
   lock. The user must be told, in plain language, to close the project in FLEx
   and retry — not shown a lock exception.
@@ -283,9 +292,17 @@ prerequisite and its remedy.
 - **FR-001**: The application MUST enumerate the FLEx projects available on the
   machine using the location FieldWorks itself records, not a hard-coded path.
 - **FR-002**: The application MUST present an explicit **source** project
-  selector. There is no "currently open project" to inherit.
+  selector. There is no "currently open project" to inherit. It MUST be
+  presented **as part of the wizard's first step, alongside the target
+  selector**, and MUST NOT be a separate window shown before the wizard: the
+  application's entry point is step 1, and opening the log window, a project
+  chooser and the wizard together gives the user three windows at once with no
+  order to read them in.
 - **FR-003**: The application MUST present an explicit **target** project
   selector, retaining the semantics the existing target picker already has.
+  The two selectors MUST match — same placement on the step, same kind of
+  control, same dialog behaviour — because they ask the same question about
+  the two halves of one pair.
 - **FR-004**: The application MUST NOT pre-select, default to, or hard-code any
   project in either selector. Both start empty and require a deliberate user
   choice.
