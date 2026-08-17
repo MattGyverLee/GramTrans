@@ -101,6 +101,17 @@ try:
 except ImportError:
     _QT_AVAILABLE = False
 
+# The theme service is Qt-dependent, so it is unavailable in the same headless
+# environments the guard above covers.  It is optional here: a pane with no
+# theme to listen to simply never auto-refreshes.
+try:
+    if __package__:
+        from .theme import theme
+    else:
+        from theme import theme  # type: ignore
+except ImportError:
+    theme = None  # type: ignore[assignment]
+
 
 # ---------------------------------------------------------------------------
 # MergePreviewPane widget
@@ -129,6 +140,13 @@ if _QT_AVAILABLE:
             self._candidates: List[Tuple[str, str, str]] = []
             self._current_request: Optional[PreviewRequest] = None
             self._build_ui()
+
+            # ``to_html`` bakes the diff colours and the text scale into the
+            # HTML string, so the markup already handed to the browser is stale
+            # the moment the mode or the A+/A- step changes.  Nothing else
+            # re-renders it: the pane owns its own repaint.
+            if theme is not None:
+                theme().changed.connect(self.refresh)
 
         # ------------------------------------------------------------------
         def _build_ui(self) -> None:
@@ -238,6 +256,42 @@ if _QT_AVAILABLE:
                 request.target_guid,
                 request.status,
                 request.mode,
+                request.owner_guid,
+            )
+
+        # ------------------------------------------------------------------
+        def refresh(self) -> None:
+            """Re-render the item on display without disturbing any state.
+
+            Deliberately not a ``show_item`` re-run: that repopulates the combo
+            and re-seeds the radio from ``current_resolution``, which would throw
+            away a flip the user made since (``_on_resolution_control_changed``
+            renders the new mode but leaves ``_current_request`` alone).  So the
+            live control state wins whenever the resolution header is in play,
+            and no ``resolution_changed`` is emitted -- nothing the user chose
+            has changed, only how it is drawn.
+            """
+            request = self._current_request
+            if request is None or self._service is None:
+                return
+
+            target_guid = request.target_guid
+            mode = request.mode
+            if request.resolvable:
+                action = self._current_action()
+                live_target = self._current_target_guid() if action != "create_new" else ""
+                # Same guard as the change handler: an empty target with a
+                # non-NEW action is not renderable, so keep the seeded pair.
+                if action == "create_new" or live_target:
+                    target_guid = live_target
+                    mode = _action_to_mode(action)
+
+            self._render_preview(
+                request.category,
+                request.source_guid,
+                target_guid,
+                request.status,
+                mode,
                 request.owner_guid,
             )
 
@@ -383,6 +437,11 @@ else:
 
         def show_item(self, request):
             self._current_request = request
+
+        def refresh(self):
+            # No browser to re-render, but the API must match the Qt class so
+            # callers (and the theme wiring) need no availability check.
+            pass
 
         def clear(self):
             self._current_request = None

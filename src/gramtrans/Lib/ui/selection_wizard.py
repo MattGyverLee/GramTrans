@@ -70,6 +70,7 @@ if __package__:
     from .target_picker import TargetPickerDialog
     from .ws_font_delegate import attach_ws_font_delegate, set_ws_runs
     from .merge_preview_pane import MergePreviewPane, PreviewRequest, _action_to_mode
+    from .theme import ThemeCornerBar, install_theme
     from ..merge_preview import MergePreviewService, OVERWRITE, MERGE_KEEP, NEW
     from ..models import SimilarResolution
     from ..report import RunReport
@@ -115,6 +116,7 @@ else:
     from target_picker import TargetPickerDialog  # type: ignore
     from ws_font_delegate import attach_ws_font_delegate, set_ws_runs  # type: ignore
     from merge_preview_pane import MergePreviewPane, PreviewRequest, _action_to_mode  # type: ignore
+    from theme import ThemeCornerBar, install_theme  # type: ignore
     from merge_preview import MergePreviewService, OVERWRITE, MERGE_KEEP, NEW  # type: ignore
     from models import SimilarResolution  # type: ignore  (already imported above but needs bare-name alias)
     from report import RunReport  # type: ignore
@@ -4647,6 +4649,13 @@ class SelectionWizard(QtWidgets.QWizard):
         parent: Optional[QtWidgets.QWidget] = None,
     ) -> None:
         super().__init__(parent)
+        # Install the palette/text-size theme BEFORE any page is constructed.
+        # The pages snapshot the *application* font into per-item QFonts while
+        # they build their trees (bolded section headers etc.), so a scale
+        # applied afterwards would leave those items at the size that was in
+        # force when the tree was built -- the first paint would come up
+        # unscaled even though the user had saved a larger text size.
+        install_theme()
         self._host = host_project
         self._report = report_sink
         self._modify_allowed = modify_allowed
@@ -4661,7 +4670,10 @@ class SelectionWizard(QtWidgets.QWizard):
         # a white page (AeroStyle/ModernStyle default on Windows). Under an OS
         # dark theme the forced-white page left every QLabel white-on-white
         # (illegible); ClassicStyle keeps text/background consistent with the
-        # palette in both light and dark themes.
+        # palette in both light and dark themes.  The reasoning is stronger now
+        # that the palette is ours (Lib/ui/theme.py) rather than the OS's: a
+        # style that forces its own white page would ignore the dark scheme the
+        # user selected in-app, not merely the one Windows reported.
         self.setWizardStyle(QtWidgets.QWizard.WizardStyle.ClassicStyle)
 
         stub = gt_api.initialize_run(
@@ -4717,6 +4729,15 @@ class SelectionWizard(QtWidgets.QWizard):
 
         self.setOption(QtWidgets.QWizard.WizardOption.HaveHelpButton, False)
 
+        # Built last: the bar parents itself to the wizard and raise_()es itself
+        # over whatever is already there, so it has to be created after the pages
+        # exist or the first page would be stacked on top of it.
+        self._theme_bar = ThemeCornerBar(self)
+        # QWizard rebuilds its header/page stack on every page change, which
+        # re-raises the page above the (un-laid-out) bar.  Repositioning on each
+        # transition is what keeps the bar from disappearing under page 2.
+        self.currentIdChanged.connect(self._reposition_theme_bar)
+
     def context(self):
         """Return the bound RunContext (available after page 1 is completed)."""
         return self._page_project_ws.context()
@@ -4762,6 +4783,31 @@ class SelectionWizard(QtWidgets.QWizard):
 
     def page_finish(self):
         return self._page_finish
+
+    def theme_bar(self):
+        """Named accessor for the floating theme / text-size corner bar."""
+        return self._theme_bar
+
+    # -- Corner-bar geometry -------------------------------------------------
+    # The bar is parented to the wizard but not in any layout, so nothing moves
+    # it for us; these three hooks are the whole of its positioning.
+    def _reposition_theme_bar(self, *_args) -> None:
+        # getattr guard: resize/show can fire while __init__ is still running
+        # (setMinimumSize, addPage), i.e. before the bar attribute exists.
+        bar = getattr(self, "_theme_bar", None)
+        if bar is not None:
+            bar.reposition()
+
+    def resizeEvent(self, event) -> None:  # noqa: N802 -- Qt naming
+        super().resizeEvent(event)
+        self._reposition_theme_bar()
+
+    def showEvent(self, event) -> None:  # noqa: N802 -- Qt naming
+        super().showEvent(event)
+        # First correct geometry is only knowable here: before the wizard is
+        # shown its width is the pre-layout guess, so the construction-time
+        # reposition() lands the bar at the wrong x.
+        self._reposition_theme_bar()
 
 
 # ---------------------------------------------------------------------------

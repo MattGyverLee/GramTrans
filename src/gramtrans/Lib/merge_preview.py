@@ -527,12 +527,59 @@ def _value_to_unchanged(val: Any, ws_role_of: Callable[[str], WsRole | None]) ->
 # HTML rendering  (FR-010, SC-004)
 # ============================================================================
 
-_KIND_STYLE: dict[SegmentKind, str] = {
-    SegmentKind.ADDED: "color:#1a7f1a;",
-    SegmentKind.UNCHANGED: "",
-    SegmentKind.REMOVED: "color:#cc0000;text-decoration:line-through;",
-    SegmentKind.NOTE: "color:#888888;font-style:italic;",
+# Diff colours + render scale.  MUTABLE ON PURPOSE: the Qt theme layer
+# (``Lib/ui/theme.py``) pushes the active scheme in here via
+# :func:`set_diff_theme` so the pane's HTML matches the rest of the interface in
+# both light and dark mode.  This module stays Qt-free (SC-007) -- it never
+# reaches back for a palette, it only accepts one.
+#
+# Defaults are the LIGHT scheme, chosen for >= 6:1 contrast on white (the old
+# fixed values -- #1a7f1a / #cc0000 / #888888 -- were tuned for neither theme,
+# and #888888 note text on white sat at 3.5:1, below AA for body copy).
+DIFF_PALETTE: dict[str, str] = {
+    "added": "#0a6b22",
+    "removed": "#a8000f",
+    "note": "#4e545b",
+    "divider": "#b4bac2",
 }
+#: Multiplier applied to absolute ``pt`` font sizes and ``px`` indents in the
+#: rendered HTML, so the +/- interface text buttons also move the preview pane.
+DIFF_SCALE: float = 1.0
+
+
+def set_diff_theme(colors: dict[str, str] | None = None,
+                   scale: float | None = None) -> None:
+    """Set the diff colours and/or render scale used by :func:`to_html`.
+
+    Called by the Qt theme layer on every theme / text-size change.  Unknown
+    keys in `colors` are ignored so a newer theme cannot break an older
+    renderer; `scale` is clamped to a sane range.  Both arguments are optional
+    -- pass only what changed.
+    """
+    if colors:
+        for key in DIFF_PALETTE:
+            value = colors.get(key)
+            if value:
+                DIFF_PALETTE[key] = str(value)
+    if scale is not None:
+        global DIFF_SCALE
+        DIFF_SCALE = max(0.5, min(4.0, float(scale)))
+
+
+def _kind_style(kind: SegmentKind) -> str:
+    """Inline CSS for a segment kind, read from the live palette."""
+    if kind == SegmentKind.ADDED:
+        return f"color:{DIFF_PALETTE['added']};"
+    if kind == SegmentKind.REMOVED:
+        return f"color:{DIFF_PALETTE['removed']};text-decoration:line-through;"
+    if kind == SegmentKind.NOTE:
+        return f"color:{DIFF_PALETTE['note']};font-style:italic;"
+    return ""
+
+
+def _scaled_px(base: float) -> int:
+    """Scale a layout pixel value by :data:`DIFF_SCALE` (>= 0 preserved)."""
+    return int(round(base * DIFF_SCALE))
 
 
 def _fallback_label(field_name: str) -> str:
@@ -586,14 +633,15 @@ def to_html(preview: MergePreview, registry: WsFontRegistry) -> str:
                 # Divider + bold header visually separates each child section
                 # (Sense 1, Allomorph 2, …) so adjacent groups don't blur.
                 parts.append(
-                    f"<div style='margin-top:8px;margin-bottom:2px;padding-top:4px;"
-                    f"border-top:1px solid #3a3a3a;'>"
+                    f"<div style='margin-top:{_scaled_px(8)}px;"
+                    f"margin-bottom:{_scaled_px(2)}px;padding-top:{_scaled_px(4)}px;"
+                    f"border-top:1px solid {DIFF_PALETTE['divider']};'>"
                     f"<b>{html.escape(group)}</b></div>"
                 )
-        indent_px = fd.indent * 16
+        indent_px = _scaled_px(fd.indent * 16)
         label = fd.display_name or _fallback_label(fd.field_name)
         parts.append(
-            f"<div style='margin-left:{indent_px}px;margin-bottom:4px;'>"
+            f"<div style='margin-left:{indent_px}px;margin-bottom:{_scaled_px(4)}px;'>"
             f"<b>{html.escape(label)}</b>: "
         )
         parts.append(_render_field_body(fd.segments, registry))
@@ -602,7 +650,10 @@ def to_html(preview: MergePreview, registry: WsFontRegistry) -> str:
     if preview.notes:
         parts.append("<div class='preview-notes'>")
         for note in preview.notes:
-            parts.append(f"<div style='color:#888888;font-style:italic;'>{html.escape(note)}</div>")
+            parts.append(
+                f"<div style='color:{DIFF_PALETTE['note']};font-style:italic;'>"
+                f"{html.escape(note)}</div>"
+            )
         parts.append("</div>")
 
     parts.append("</div>")
@@ -611,9 +662,15 @@ def to_html(preview: MergePreview, registry: WsFontRegistry) -> str:
 
 # Writing-system tag rendered as a small grey subscript before its value, e.g.
 # "[etu] fém" -> a grey subscript "etu" then "fém".  Shown ONCE per WS run.
-_WS_CODE_STYLE = "color:#888888;font-size:0.7em;vertical-align:sub;"
-# Replacement arrow between a struck-through old value and its new value.
-_ARROW_HTML = "<span style='color:#888888;'> → </span>"
+# 0.75em (not 0.7) because the tag has to stay legible for readers who have
+# already scaled the interface up; it is relative, so it tracks the base size.
+def _ws_code_style() -> str:
+    return f"color:{DIFF_PALETTE['note']};font-size:0.75em;vertical-align:sub;"
+
+
+def _arrow_html() -> str:
+    """Replacement arrow between a struck-through old value and its new value."""
+    return f"<span style='color:{DIFF_PALETTE['note']};'> → </span>"
 
 
 def _split_ws_prefix(text: str) -> tuple[str, str]:
@@ -632,18 +689,22 @@ def _split_ws_prefix(text: str) -> tuple[str, str]:
 
 
 def _ws_code_html(wid: str) -> str:
-    return f"<sub style='{_WS_CODE_STYLE}'>{html.escape(wid)}</sub> "
+    return f"<sub style='{_ws_code_style()}'>{html.escape(wid)}</sub> "
 
 
 def _value_span(value: str, kind: SegmentKind, ws_role: "WsRole | None",
                 registry: WsFontRegistry) -> str:
     """Render one value (WS tag already stripped) as a colorized, font-aware span."""
-    kind_style = _KIND_STYLE.get(kind, "")
+    kind_style = _kind_style(kind)
     font: WsFont | None = registry.font_for(ws_role)
     font_style = ""
     dir_attr = ""
     if font is not None:
-        font_style = f"font-family:'{html.escape(font.font_name)}';font-size:{font.size_pt}pt;"
+        # The WS point size is absolute (it comes from FLEx), so the interface
+        # text-size setting has to be multiplied in here or the preview pane
+        # would be the one pane that ignores the A+/A- buttons.
+        size_pt = round(font.size_pt * DIFF_SCALE, 1)
+        font_style = f"font-family:'{html.escape(font.font_name)}';font-size:{size_pt}pt;"
         if font.rtl:
             dir_attr = " dir='rtl'"
     style = kind_style + font_style
@@ -686,7 +747,7 @@ def _render_field_body(segments: tuple, registry: WsFontRegistry) -> str:
             if wid2 == wid:
                 _emit_ws(wid)
                 out.append(_value_span(val, SegmentKind.REMOVED, seg.ws_role, registry))
-                out.append(_ARROW_HTML)
+                out.append(_arrow_html())
                 out.append(_value_span(val2, SegmentKind.ADDED, nxt.ws_role, registry))
                 i += 2
                 continue

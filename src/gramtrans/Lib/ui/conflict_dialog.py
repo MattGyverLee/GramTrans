@@ -29,9 +29,11 @@ from PyQt6 import QtCore, QtWidgets
 if __package__:
     from ..conflict import UserCancelled
     from ..models import MergeDecision, MergeResolution
+    from .theme import theme
 else:
     from conflict import UserCancelled
     from models import MergeDecision, MergeResolution
+    from theme import theme
 
 
 _RESOLUTION_LABELS = [
@@ -55,6 +57,11 @@ class ConflictDialog(QtWidgets.QDialog):
         self._populate_list()
         if self._prompts:
             self._list.setCurrentRow(0)
+        # The prior-decision line is secondary text, so it is the one colour
+        # this dialog dims by hand; re-apply on `changed` because a dialog
+        # left open across a light/dark switch never rebuilds its UI.
+        self._apply_theme()
+        theme().changed.connect(self._apply_theme)
 
     # ------------------------------------------------------------------
     # Layout
@@ -86,7 +93,6 @@ class ConflictDialog(QtWidgets.QDialog):
         self._field_label.setStyleSheet("font-weight: bold;")
         right_layout.addWidget(self._field_label)
         self._prior_label = QtWidgets.QLabel("")
-        self._prior_label.setStyleSheet("color: #666;")
         right_layout.addWidget(self._prior_label)
 
         # Side-by-side values
@@ -139,6 +145,15 @@ class ConflictDialog(QtWidgets.QDialog):
         ).clicked.connect(self._on_apply)
         buttons.rejected.connect(self.reject)
         outer.addWidget(buttons)
+
+    def _apply_theme(self):
+        """(Re)build the prior-decision label's colour from the live palette.
+
+        `muted_text` is the token that stays >= 4.5:1 on *both* window
+        colours, which a fixed grey cannot do -- US3 recall is useless if the
+        user cannot read which decision is being recalled.
+        """
+        self._prior_label.setStyleSheet(f"color: {theme().palette.muted_text};")
 
     # ------------------------------------------------------------------
     # Population

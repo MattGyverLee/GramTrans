@@ -18,13 +18,11 @@ from PyQt6 import QtCore, QtWidgets
 if __package__:
     from ..models import GrammarCategory, RunMode, RunReport
     from ..report import render_text_summary
+    from .theme import theme
 else:
     from models import GrammarCategory, RunMode, RunReport  # type: ignore
     from report import render_text_summary  # type: ignore
-
-# Stylesheet constants for EXCLUDED-LOSSY warning rows.
-_WARNING_BG = "#fff3cd"   # amber tint
-_WARNING_FG = "#856404"   # dark amber text
+    from theme import theme  # type: ignore
 
 
 class StatsPanel(QtWidgets.QWidget):
@@ -51,15 +49,14 @@ class StatsPanel(QtWidgets.QWidget):
         layout.addWidget(self._table, 2)
 
         # EXCLUDED-LOSSY warning list (distinct severity — not error, not skip).
-        warn_label = QtWidgets.QLabel(
+        # Held on self so `_apply_theme` can restyle it on a light/dark switch.
+        self._warn_label = QtWidgets.QLabel(
             "Warnings (entries with missing references -- deliberate, warn+allow):", self
         )
-        warn_label.setStyleSheet(f"color: {_WARNING_FG}; font-weight: bold;")
-        layout.addWidget(warn_label)
+        layout.addWidget(self._warn_label)
         self._warn_view = QtWidgets.QPlainTextEdit(self)
         self._warn_view.setReadOnly(True)
         self._warn_view.setMaximumBlockCount(500)
-        self._warn_view.setStyleSheet(f"background: {_WARNING_BG};")
         layout.addWidget(self._warn_view, 1)
 
         # Skip list
@@ -101,6 +98,29 @@ class StatsPanel(QtWidgets.QWidget):
         # Wall-clock footer
         self._footer = QtWidgets.QLabel("", self)
         layout.addWidget(self._footer)
+
+        # The warning pair is the only colour this panel paints itself, and it
+        # is the one thing an OS palette cannot supply. Re-apply on `changed`
+        # because a panel already showing a report does not rebuild.
+        self._apply_theme()
+        theme().changed.connect(self._apply_theme)
+
+    def _apply_theme(self) -> None:
+        """(Re)build the EXCLUDED-LOSSY warning styling from the live palette.
+
+        The amber must stay legible on both window colours, so the label's
+        foreground and the view's background/foreground come from the same
+        `warning_*` token trio rather than a fixed light-mode pair.
+        """
+        pal = theme().palette
+        self._warn_label.setStyleSheet(
+            f"color: {pal.warning_text}; font-weight: bold;"
+        )
+        self._warn_view.setStyleSheet(
+            f"background-color: {pal.warning_bg};"
+            f" color: {pal.warning_text};"
+            f" border: 1px solid {pal.warning_border};"
+        )
 
     def set_report(self, report: RunReport, extra_lines: Sequence[str] = ()) -> None:
         """Render `report`. `extra_lines` (feature 025 P0-2, cycle-6
