@@ -171,14 +171,23 @@ and `None` reproduces FlexTools byte for byte. The alternative — the shell
 driving the wizard's page 1 from outside — would need the shell to reach into
 `Lib/ui/`, which is the coupling FR-015 and FR-016 exist to prevent.
 
-Two consequences worth naming:
+Three consequences worth naming:
 
 1. **`gramtrans/standalone/source_picker.py` is deleted**, and its dialog moves
    to `Lib/ui/source_picker.py` (row 10). It has to: `Lib/ui/` cannot import the
    shell (FR-016), and the wizard is what opens the dialog now. What stays in
    the shell is the half that is genuinely host-specific — `HostSession.bind_source`
    opening the project read-only and `release()` closing it (FR-007/FR-013).
-2. **Source enumeration changes mechanism**, from `flexicon.AllProjectNames()`
+2. **The developer note under step 1's writing-system tables is deleted.**
+   Three sentences, addressed to whoever maintains the page: that the WS choice
+   is project-level and made once, that the per-category handshake of earlier
+   phases is retired, and that vernacular leads its same-tag analysis row. Two
+   of the three describe a design a user never saw; the third describes
+   behaviour the linked rows already demonstrate. It is the same class of
+   change as exception 5 — a static label, no dialog, no prompt, no step — and
+   it applies to both hosts, because a user of either has no use for it. The
+   content stays in `_PageProjectWS`'s docstring, where a maintainer looks.
+3. **Source enumeration changes mechanism**, from `flexicon.AllProjectNames()`
    to the same directory walk the target list has always used, rooted at the
    `projects_root` the shell already derives from `FWProjectsDir`. FR-001 is
    still met (the root comes from what FieldWorks records, not a hard-coded
