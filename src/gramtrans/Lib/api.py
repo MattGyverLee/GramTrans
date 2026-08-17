@@ -504,8 +504,9 @@ def bind_target(stub: RunContextStub, choice: TargetCandidate) -> RunContext:
     # which flipped in 4.4.0). A non-undoable open changes how/whether
     # CloseProject persists writes.
     _log.debug(
-        "bind_target: opened %r writeEnabled=True, undoable=<default False> "
-        "(no undoable= arg passed); handle id=%s",
+        "bind_target: opened %r writeEnabled=True, undoable=False passed "
+        "EXPLICITLY (never the flexicon default, which flipped to True in "
+        "4.4.0); handle id=%s",
         choice.project_name, id(target),
     )
 
