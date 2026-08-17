@@ -2,8 +2,8 @@
   "workflow": "speckit",
   "specName": "Wizard UI Polish Pass",
   "branch": "main",
-  "currentStep": "specify",
-  "status": "specified",
+  "currentStep": "tasks",
+  "status": "ready-to-implement",
   "history": [
     {
       "step": "specify",
@@ -11,6 +11,557 @@
       "kind": "start",
       "by": "extension",
       "at": "2026-08-17T18:59:58.848Z"
+    },
+    {
+      "step": "specify",
+      "substep": null,
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-08-17T19:37:55.950Z"
+    },
+    {
+      "step": "specify",
+      "substep": null,
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-08-17T19:37:55.953Z"
+    },
+    {
+      "step": "plan",
+      "substep": null,
+      "kind": "start",
+      "by": "extension",
+      "at": "2026-08-17T19:37:55.956Z"
+    },
+    {
+      "step": "plan",
+      "substep": "research",
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-17T19:47:39.273Z"
+    },
+    {
+      "step": "plan",
+      "substep": "design",
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-17T19:51:53.701Z"
+    },
+    {
+      "step": "plan",
+      "substep": null,
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-17T19:53:21.236Z"
+    },
+    {
+      "step": "tasks",
+      "substep": null,
+      "kind": "start",
+      "by": "extension",
+      "at": "2026-08-17T20:31:16.575Z"
+    },
+    {
+      "step": "tasks",
+      "substep": "generate",
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-17T20:37:49.351Z"
+    },
+    {
+      "step": "tasks",
+      "substep": null,
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-17T20:39:23.766Z"
     }
-  ]
+  ],
+  "telemetryInstanceId": "19488acc-ad0e-46bf-9a7e-aceb9721c6ba",
+  "approach": "Eight presentation-layer stories on the existing PyQt6 QWizard, no new dependency. Seven are value/label/layout edits: a declared 12-step flow table replaces twelve hand-written 'Step N of 10' titles and splits project selection from writing-system mapping; the minimum width drops 1100->900; the floating zoom/colour strip moves into a laid-out per-page header that also owns the wrapping step description; the dark palette's accent family turns green with the selection highlight left blue; and the preview stops adding quote characters around list entries. The eighth, progress feedback, is the only new mechanism: a Qt-free progress sink threaded into the inventory builders, driven by one modal indicator that appears up front when a cheap O(1) count predicts a wait past 500 ms and otherwise after 500 ms elapsed. Every change on the transfer path is additive and default-off so FR-045 holds.",
+  "decisions": [
+    {
+      "decision": "Keep every LCM read on the UI thread and pump the event loop from inside the enumeration, via a Qt-free progress sink threaded into the inventory builders",
+      "why": "The builders walk LCM through pythonnet on the thread that opened the handle; LCM is not documented thread-safe, and a QTimer can never fire while a synchronous walk holds the thread -- which is exactly why the window greys out today. The only place that can yield is inside the walk.",
+      "rejected": "A worker QThread with signals (the standard Qt answer, but it puts LCM reads on a second thread and risks Principle I), and processEvents on a timer (cannot fire during the blocking call)"
+    },
+    {
+      "decision": "One threshold (PROGRESS_THRESHOLD_MS = 500) used twice: QProgressDialog minimum-duration for the elapsed-time fallback, and the bar an anticipated wait must clear; prediction is total_units / units_per_second, with the rate the only per-operation number",
+      "why": "FR-019a forbids per-operation tuning of the threshold, and minimum-duration is exactly the no-flash behaviour FR-019 asks for. Making the rate the only per-op constant keeps the prediction auditable and re-measurable without touching the threshold.",
+      "rejected": "Elapsed-time triggering only (the clarification chose predictive-first), per-operation delays (FR-019a), and a remaining-time estimate (out of scope -- needs a throughput model)"
+    },
+    {
+      "decision": "Determinate totals only from O(1) reads the project already answers -- LexiconNumberOfEntries(), TextsNumberOfTexts(), possibility-list .Count -- everything else stays indeterminate",
+      "why": "FR-014d forbids buying a nicer bar with a slower operation. Both flexicon calls were verified through the FLExToolsMCP as count reads, not enumerations.",
+      "rejected": "A pre-count pass per page, which doubles the walk to describe it; and progress-by-page, which is an 11-step bar that sits still for 40 seconds"
+    },
+    {
+      "decision": "Split _PageProjectWS into two pages but keep the page_project_ws() accessor pointing at the projects page, adding page_writing_systems() for the new one",
+      "why": "page_project_ws() is called 23 times and every call wants context(), which stays on the projects page. Renaming would be a large diff with no behavioural payoff.",
+      "rejected": "Renaming the accessor across all 23 sites; and keeping one page class serving two wizard pages, which Qt does not allow"
+    },
+    {
+      "decision": "Own the header: each page gets a laid-out header row with a word-wrapping description label and a controls slot, with QWizard.IgnoreSubTitles set while setSubTitle() remains the string of record",
+      "why": "This is the only shape that makes FR-004 separate space a layout fact rather than a positioning guess, and it makes wrapping and non-overlap assertable headlessly. Keeping setSubTitle preserves the API and the existing test surface.",
+      "rejected": "Widgets in the native Windows title bar (costs a custom frame plus re-implemented drag/snap/maximise), a floating bar with reserved page padding (still not laid out), setSideWidget (a side panel, not a header row), and inserting a row into QWizard internal grid (undocumented, and two widgets would share a cell)"
+    },
+    {
+      "decision": "Remove the added quoting at its two sources -- str() instead of repr() for sequence members, and drop the quotes around the gloss in the affix label -- plus a defaulted FieldDiff.multiline flag that makes the renderer emit one entry per line",
+      "why": "FR-034 decides this: stripping quotes at render time would also strip the apostrophes and quote marks that ARE the linguistic data (glottal stops, ejectives, orthographic apostrophes). Removing quoting where it is added cannot touch data, and a defaulted flag keeps every scalar field byte-identical.",
+      "rejected": "Stripping quotes in the render span (destroys real data), inferring list-ness from segment count (a two-segment scalar replacement is indistinguishable from a two-entry list), and HTML <ul> bullets (adds the punctuation FR-033 removes)"
+    },
+    {
+      "decision": "Choose the dark greens against automated measurements: extend the existing _CONTRAST_PAIRS table and add three CIE-Lab DeltaE76 distance floors (accent vs diff-added, highlight vs alternate-base, alternate-base vs base)",
+      "why": "The spec puts the exact hue in the plan and the checkability in the tests. Contrast enforcement already exists as a parametrised table, so FR-026 means extend it rather than invent a mechanism; DeltaE76 is a dozen lines of arithmetic and needs no dependency.",
+      "rejected": "DeltaE2000 (precision this question does not need), and asserting hue names by review rather than measurement (FR-026 requires automation)"
+    },
+    {
+      "decision": "A single 900-pixel constant, with the shared tree/preview splitter made non-collapsible and pane minimums summing below the floor, plus elide-right with tooltips for over-narrow columns",
+      "why": "_make_tree_pane_splitter is already the one place every such page builds its splitter, so FR-029a lands in one function; the floor combined with the largest text scale is reachable in the existing offscreen harness.",
+      "rejected": "Reflowing or stacking the tree and preview at narrow widths -- the requester explicitly chose side-by-side all the way down, accepting tighter columns as the cost"
+    },
+    {
+      "decision": "REVISED at the review-plan gate: display a step number with NO total, assign the number on page entry as (pages shown before me + 1), and skip pages with nothing to decide via QWizardPage.nextId(), resolving the next page before navigating to it",
+      "why": "Requester pushback: a page with nothing selectable should be skipped. Once pages can drop out, a total is a claim the wizard cannot honour -- emptiness for Custom Fields/Phonology/Rules/Entry Types/Texts is a source property not known until a source binds (which happens ON step 1 in the standalone), and for Skeleton/Gram Deps it depends on picks not yet made. Any total shown before those facts land would have to be corrected, which IS the stale-total defect the story exists to remove. Dropping it makes a stale total unrepresentable rather than merely fixed, and consecutiveness follows from the walk.",
+      "rejected": "Static of-N from the declaration length (the original plan; only correct if nothing is ever skipped), letting the total drop mid-run (visibly wrong -- a page painted before a skip claims a bigger total than pages after it), keeping of-12 with gaps in the numbering (reads as a bug), and never skipping (the spec as first written -- predictable but the operator clicks Next through pages that ask nothing)"
+    },
+    {
+      "decision": "Skip only where emptiness is established at negligible cost, with a conservative predicate (unsure = show); Skeleton/Gram Deps use the cheap proxy no-picks-at-all; the Affix and Stem pickers are exempt and always shown",
+      "why": "Deciding emptiness precisely for Affixes or Stems means walking every entry and inspecting MorphType -- the 40-second walk US1 exists to cover, and FR-014d already refuses to buy UI polish with a slower run. Conservatism matters asymmetrically: showing an empty page costs a click, while wrongly skipping one silently removes a decision the operator was entitled to make (a Principle V concern). The Affix/Stem exemption is the requesters call -- an operator never offered the wizards central decision concludes the tool is broken, not that the project is empty.",
+      "rejected": "Eagerly enumerating everything at bind to decide each page precisely (front-loads every expensive walk into one long wait at step 1), and deciding Skeleton/Gram Deps on the real inventory result on arrival (means entering a page and immediately leaving it)"
+    }
+  ],
+  "step_summaries": {
+    "plan": {
+      "summary": "Plan + research.md + data-model.md + contracts/ for eight presentation-layer stories on the PyQt6 selection wizard; no new dependency, no constitution violation, every transfer-path change additive and default-off.",
+      "key_finding": "Progress feedback is the only story that is real construction, and its shape is forced: every page builds its inventory synchronously on the UI thread inside build_*_inventory, so the only place that can yield during a 40-second wait is inside the walk -- which is why the sink is threaded into the builders rather than wrapped around them. The Finish guard, by contrast, is already substantially implemented with exactly two gaps: no explanation on the disabled Execute, and initializePage clears the cached plan but leaves the stale report on screen."
+    },
+    "tasks": {
+      "summary": "50 tasks in 11 phases: Setup (1), Foundational progress+count layer (3), then one phase per story in plan order US2, US1, US3, US4, US5, US6, US8, US7, and a Polish phase (4) ending in live verification on the Ejagham pair.",
+      "key_finding": "26 of the 50 tasks edit src/gramtrans/Lib/ui/selection_wizard.py, so most of the feature is sequential by construction -- the only genuine parallel waves are the test waves and the two new-module waves (progress_indicator.py/selection.py/progress.py, and page_header.py/theme.py). The cheap O(1) count layer moved into Foundational because US1 totals and US2 skip predicates read the same values."
+    }
+  },
+  "coverage": {
+    "FR-001": {
+      "title": "Window title identifies the app and its purpose with no internal phase or milestone label",
+      "tasks": [
+        "T037",
+        "T040"
+      ]
+    },
+    "FR-002": {
+      "title": "The zoom control is preceded by a visible \"Zoom:\" label",
+      "tasks": [
+        "T037",
+        "T039"
+      ]
+    },
+    "FR-003": {
+      "title": "Zoom increase/decrease are marked as increase and decrease only, with no letter-A glyph",
+      "tasks": [
+        "T037",
+        "T039"
+      ]
+    },
+    "FR-004": {
+      "title": "Zoom and colour-mode controls occupy a laid-out header row and never overlap the title, description, or page content",
+      "tasks": [
+        "T037",
+        "T038",
+        "T039",
+        "T041"
+      ]
+    },
+    "FR-005": {
+      "title": "Relocating the controls preserves every capability: increase, decrease, reset, readout, toggle, shortcuts",
+      "tasks": [
+        "T037",
+        "T042"
+      ]
+    },
+    "FR-006": {
+      "title": "Source and target project selection occupies a step of its own, presented first",
+      "tasks": [
+        "T005",
+        "T009",
+        "T010"
+      ]
+    },
+    "FR-007": {
+      "title": "Writing-system correspondence is the next step and arrives already populated from the two bound projects",
+      "tasks": [
+        "T005",
+        "T010"
+      ]
+    },
+    "FR-008": {
+      "title": "Advancing past project selection is refused until both projects are bound, with the reason visible",
+      "tasks": [
+        "T005",
+        "T011"
+      ]
+    },
+    "FR-009": {
+      "title": "Every page shown displays a step number, consecutive from 1 with no gaps or duplicates",
+      "tasks": [
+        "T005",
+        "T012"
+      ]
+    },
+    "FR-009a": {
+      "title": "No page displays a total, so a stale total is unrepresentable",
+      "tasks": [
+        "T005",
+        "T012"
+      ]
+    },
+    "FR-009b": {
+      "title": "The next page is resolved before navigating to it, so numbers are consecutive by construction",
+      "tasks": [
+        "T005",
+        "T013"
+      ]
+    },
+    "FR-009c": {
+      "title": "A page with nothing to decide is skipped where emptiness is cheap to establish; unsure means show",
+      "tasks": [
+        "T005",
+        "T013",
+        "T014"
+      ]
+    },
+    "FR-009d": {
+      "title": "The Affix Picker and Stem Picker are always shown, stating plainly when the project has none",
+      "tasks": [
+        "T005",
+        "T009",
+        "T014"
+      ]
+    },
+    "FR-010": {
+      "title": "Page order and skip eligibility derive from a single declared source",
+      "tasks": [
+        "T005",
+        "T009"
+      ]
+    },
+    "FR-011": {
+      "title": "A page excluded from the flow is unreachable and displays no step number",
+      "tasks": [
+        "T005",
+        "T015"
+      ]
+    },
+    "FR-012": {
+      "title": "A description too long for one line wraps rather than truncating; one that fits reserves no blank line",
+      "tasks": [
+        "T037",
+        "T038",
+        "T043"
+      ]
+    },
+    "FR-013": {
+      "title": "Step descriptions fit two lines at the default window width and default text scale",
+      "tasks": [
+        "T043",
+        "T044"
+      ]
+    },
+    "FR-013a": {
+      "title": "Extra wrapped lines at narrow widths or larger scales are absorbed without clipping or overlap",
+      "tasks": [
+        "T037",
+        "T043"
+      ]
+    },
+    "FR-014": {
+      "title": "Any lexical-database operation shows an indicator when either trigger fires, whichever comes first",
+      "tasks": [
+        "T016",
+        "T020",
+        "T021",
+        "T022"
+      ]
+    },
+    "FR-014a": {
+      "title": "Where a cheap count predicts a wait past 500 ms, the indicator appears before the work starts",
+      "tasks": [
+        "T016",
+        "T017",
+        "T019",
+        "T020"
+      ]
+    },
+    "FR-014b": {
+      "title": "Where size is unknowable, the indicator appears once the operation has run 500 ms",
+      "tasks": [
+        "T016",
+        "T017",
+        "T021"
+      ]
+    },
+    "FR-014c": {
+      "title": "An operation of knowable size states the scale of the work, not merely that work is happening",
+      "tasks": [
+        "T016",
+        "T020"
+      ]
+    },
+    "FR-014d": {
+      "title": "Prediction must not cost more than it saves: O(1) counts only, never a counting pass",
+      "tasks": [
+        "T002",
+        "T004",
+        "T014"
+      ]
+    },
+    "FR-015": {
+      "title": "The indicator names the operation in operator vocabulary, not internal vocabulary",
+      "tasks": [
+        "T020",
+        "T021",
+        "T022"
+      ]
+    },
+    "FR-016": {
+      "title": "A cheaply knowable total yields determinate progress, units completed against that total",
+      "tasks": [
+        "T016",
+        "T020"
+      ]
+    },
+    "FR-017": {
+      "title": "An unknowable total yields an indeterminate but visibly animating indicator",
+      "tasks": [
+        "T016",
+        "T017",
+        "T021"
+      ]
+    },
+    "FR-018": {
+      "title": "The window keeps repainting and is never reported unresponsive; wizard input is blocked during a wait",
+      "tasks": [
+        "T016",
+        "T017"
+      ]
+    },
+    "FR-019": {
+      "title": "An operation neither predicted slow nor past 500 ms shows no indicator at all: no flash, no flicker",
+      "tasks": [
+        "T016",
+        "T017"
+      ]
+    },
+    "FR-019a": {
+      "title": "The 500 ms threshold is one project-wide value used twice and never tuned per operation",
+      "tasks": [
+        "T002",
+        "T003",
+        "T019",
+        "T048"
+      ]
+    },
+    "FR-020": {
+      "title": "Every operation end dismisses the indicator, and a failure is surfaced as a message",
+      "tasks": [
+        "T002",
+        "T003",
+        "T016",
+        "T022"
+      ]
+    },
+    "FR-021": {
+      "title": "Concurrent or nested operations present at most one indicator, describing current work",
+      "tasks": [
+        "T016",
+        "T017"
+      ]
+    },
+    "FR-022": {
+      "title": "Progress feedback never alters what an operation reads, plans, or writes",
+      "tasks": [
+        "T018",
+        "T047"
+      ]
+    },
+    "FR-023": {
+      "title": "The covered operations are enumerated explicitly, all thirteen of them",
+      "tasks": [
+        "T020",
+        "T021",
+        "T022"
+      ]
+    },
+    "FR-024": {
+      "title": "Dark mode uses a green accent family for row striping, buttons, and the focus indicator",
+      "tasks": [
+        "T045",
+        "T046"
+      ]
+    },
+    "FR-024a": {
+      "title": "The dark-mode selection highlight stays blue and stays readable over green striping",
+      "tasks": [
+        "T045",
+        "T046"
+      ]
+    },
+    "FR-025": {
+      "title": "Dark-mode alternating striping is distinguishable at a glance and reads as a green tint",
+      "tasks": [
+        "T045",
+        "T046"
+      ]
+    },
+    "FR-026": {
+      "title": "The dark palette keeps its contrast floors and the enforcement stays automated",
+      "tasks": [
+        "T045"
+      ]
+    },
+    "FR-027": {
+      "title": "Accent green stays visually distinguishable from every semantic colour, notably diff-added green",
+      "tasks": [
+        "T045"
+      ]
+    },
+    "FR-028": {
+      "title": "Light mode stays internally consistent; no control is left coloured for the other mode",
+      "tasks": [
+        "T045",
+        "T046"
+      ]
+    },
+    "FR-029": {
+      "title": "Minimum window width is 900 px, down from 1100, reached continuously; height unchanged",
+      "tasks": [
+        "T023",
+        "T024"
+      ]
+    },
+    "FR-029a": {
+      "title": "Tree-beside-preview pages keep both panes side by side at every width down to the floor",
+      "tasks": [
+        "T023",
+        "T025"
+      ]
+    },
+    "FR-029b": {
+      "title": "Content too wide is elided with a visible ellipsis and stays available on demand; no horizontal scrollbar",
+      "tasks": [
+        "T023",
+        "T026"
+      ]
+    },
+    "FR-030": {
+      "title": "From the floor upward nothing is clipped, silently truncated, or drawn over another control",
+      "tasks": [
+        "T023",
+        "T026"
+      ]
+    },
+    "FR-031": {
+      "title": "At the narrowest width every control is reachable and the navigation controls stay visible and operable",
+      "tasks": [
+        "T023"
+      ]
+    },
+    "FR-032": {
+      "title": "The layout holds at the narrowest width combined with the largest supported text scale",
+      "tasks": [
+        "T001",
+        "T023"
+      ]
+    },
+    "FR-033": {
+      "title": "List-valued preview fields place each entry on its own line and add no quote characters",
+      "tasks": [
+        "T027",
+        "T029",
+        "T030",
+        "T031"
+      ]
+    },
+    "FR-034": {
+      "title": "Quote and apostrophe characters that are part of the linguistic data are preserved exactly",
+      "tasks": [
+        "T027",
+        "T030"
+      ]
+    },
+    "FR-035": {
+      "title": "An affix label separates form from gloss by whitespace or alignment, not added punctuation",
+      "tasks": [
+        "T027",
+        "T032"
+      ]
+    },
+    "FR-036": {
+      "title": "An empty list-valued field is presented as explicitly empty, not as a punctuation artifact",
+      "tasks": [
+        "T027",
+        "T033"
+      ]
+    },
+    "FR-037": {
+      "title": "A capped list discloses the cap and the true total, never silently showing the first few",
+      "tasks": [
+        "T027",
+        "T028",
+        "T033"
+      ]
+    },
+    "FR-038": {
+      "title": "Execute is disabled on arrival at the Finish page until a dry run completes successfully",
+      "tasks": [
+        "T034"
+      ]
+    },
+    "FR-039": {
+      "title": "While Execute is disabled for want of a dry run, its state explains that a dry run is required",
+      "tasks": [
+        "T034",
+        "T035"
+      ]
+    },
+    "FR-040": {
+      "title": "No write occurs through any Finish-page affordance while Execute is disabled",
+      "tasks": [
+        "T034"
+      ]
+    },
+    "FR-041": {
+      "title": "Any selection change after a dry run re-disables Execute and stops the prior result reading as current",
+      "tasks": [
+        "T034",
+        "T036"
+      ]
+    },
+    "FR-042": {
+      "title": "A dry run that produces no plan leaves Execute disabled and states the failure",
+      "tasks": [
+        "T034"
+      ]
+    },
+    "FR-043": {
+      "title": "A completed Execute leaves Execute disabled, so the same plan cannot be written twice",
+      "tasks": [
+        "T034"
+      ]
+    },
+    "FR-044": {
+      "title": "Without write permission Execute is disabled regardless of any dry run, and the condition is stated",
+      "tasks": [
+        "T034",
+        "T035"
+      ]
+    },
+    "FR-045": {
+      "title": "Nothing in this feature changes what GramTrans enumerates, plans, or writes: byte-identical transfer",
+      "tasks": [
+        "T018",
+        "T029",
+        "T047"
+      ]
+    }
+  }
 }

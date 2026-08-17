@@ -35,6 +35,8 @@ not block it.
 - Q: At what window width and text scale is the two-line budget for step descriptions measured? → A: At the default width and text scale. Narrower or larger-text windows may wrap to a third line, which the layout must absorb without clipping
 - Q: Which dark-mode surfaces get the green accent? → A: Alternating row striping, buttons, and the focus indicator. The selection highlight stays blue, so a selected row remains readable against green striping
 - Q: How should the affixes in a slot preview be presented? → A: One affix per line, with form and gloss separated by whitespace or alignment rather than punctuation
+- Q: May a page with nothing to decide on it be skipped, and what happens to the numbering if it is? → A: Skip it. Step titles carry a number and **no total** — the number of pages a run will show is not knowable when the run starts, and a total that has to be corrected later is the very defect this story exists to remove. The page to be shown next is resolved *before* navigating to it, so the numbers the operator walks are always consecutive
+- Q: Which pages may be skipped when empty? → A: Any page whose emptiness can be established cheaply, except the Affix Picker and the Stem Picker, which are always shown. A page whose emptiness cannot be established cheaply is shown with an explicit empty state rather than skipped
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -109,9 +111,10 @@ deferred. It also fixes a live defect: one page in the current flow carries no
 step number at all, and another carries a stale "of 5" count.
 
 **Independent Test**: Walk the wizard end to end. Confirm step 1 asks only for
-projects, step 2 asks only for writing systems, every page in the flow shows a
-step number, the numbers ascend by one with no gaps or repeats, and the "of N"
-total on every page equals the number of pages actually in the flow.
+projects, step 2 asks only for writing systems, every page shown carries a step
+number, and the numbers ascend by one with no gaps or repeats — including across
+any page the run skips for having nothing to decide. Then walk it against a
+project that skips a page, and confirm the numbers still ascend by one.
 
 **Acceptance Scenarios**:
 
@@ -124,15 +127,25 @@ total on every page equals the number of pages actually in the flow.
 3. **Given** the source and target are not both bound, **When** the operator
    tries to advance past step 1, **Then** advancing is refused and the reason is
    visible on the page.
-4. **Given** any page in the flow, **When** the operator reads its title,
-   **Then** it carries a step number and a total, the total is identical on
-   every page, and it equals the count of pages in the flow.
-5. **Given** the full flow, **When** the step numbers are read in order, **Then**
-   they form a consecutive run from 1 to the total with no gaps, duplicates, or
-   unnumbered pages.
+4. **Given** any page the operator is shown, **When** they read its title,
+   **Then** it carries a step number and **no total** — how many pages this run
+   will show is not knowable when the run starts, and no page claims otherwise.
+5. **Given** a walk through the wizard, **When** the step numbers are read in the
+   order they are shown, **Then** they form a consecutive run from 1 with no
+   gaps, duplicates, or unnumbered pages — and this holds equally on a run that
+   skips pages as on one that shows every page.
 6. **Given** a page that is retained in the codebase but not part of the flow,
    **When** the flow is walked, **Then** that page is never shown and its stale
    numbering can never be seen by the operator.
+7. **Given** a project with nothing to decide on some page — no custom fields, no
+   phonological data, no rules — **When** the operator advances through the
+   wizard, **Then** that page is not shown, and the page after it carries the
+   next number in sequence rather than leaving a gap where it would have been.
+8. **Given** a project with no affixes and no stems, **When** the operator
+   advances, **Then** the Affix Picker and the Stem Picker are still shown, each
+   stating plainly that the project has none — these two are never skipped,
+   because an operator who is never offered the wizard's central decision will
+   conclude the tool is broken rather than that the project is empty.
 
 ---
 
@@ -399,9 +412,23 @@ off.
 - **A determinate total that turns out to be wrong.** If the counted total is
   exceeded, the indicator must not display more than 100% or a negative
   remainder; it degrades to indeterminate rather than displaying nonsense.
-- **Renumbering with a conditionally-shown page.** If any page can be skipped for
-  a given run, the step numbers the operator sees must still read consecutively
-  — the numbering describes the flow shown, not the superset of pages that exist.
+- **Renumbering with a conditionally-shown page.** The step numbers the operator
+  sees must read consecutively — the numbering describes the flow shown, not the
+  superset of pages that exist. This is what FR-009a/FR-009b buy: with no total
+  to keep consistent and the next page resolved before it is entered, there is no
+  moment at which the numbering can be caught out of date.
+- **A skipped page that should reappear.** An operator can go back and change a
+  selection so that a page skipped earlier now has something to decide — picking
+  an affix after the Morphology Skeleton was skipped for having no picks. The page
+  must then be shown, and the numbers from that point on shift by one. This is
+  correct rather than surprising: the number describes position in the flow being
+  walked, and that flow genuinely changed. It is also the reason no total is
+  displayed — a total would have to change here too, and visibly.
+- **A page whose emptiness is only discovered on arrival.** Where the cheap check
+  cannot decide, the page is shown and reports that it has nothing to decide
+  (FR-009c). It keeps its number: it was shown, so it counts. Retro-actively
+  un-numbering a page the operator has already seen would break FR-009 for the
+  sequence they actually walked.
 - **Releasing a bound project on the new step 1.** Unbinding a project after
   writing-system choices have been made on step 2 must not leave stale mappings
   attached to a project that is no longer bound.
@@ -463,15 +490,38 @@ off.
 - **FR-008**: Advancing past the project-selection step MUST be refused until
   both a source and a target project are bound, with the reason visible on the
   page.
-- **FR-009**: Every page in the wizard flow MUST display a step number and a
-  total; the numbers MUST be consecutive from 1 with no gaps or duplicates, and
-  the total MUST be identical on every page and equal to the number of pages in
-  the flow.
-- **FR-010**: Step numbering and the total MUST derive from a single declared
-  source, so that adding, removing, or reordering a page cannot leave a stale
-  number or total behind.
+- **FR-009**: Every page the operator is shown MUST display a step number, and
+  the numbers MUST be consecutive from 1 with no gaps or duplicates across the
+  sequence of pages actually shown.
+- **FR-009a**: A page MUST NOT display a total. How many pages a run will show is
+  not knowable when the run starts (FR-009c), and a total that must be corrected
+  once the run learns better is the exact defect this story exists to remove.
+  With no total displayed, a stale total is unrepresentable rather than merely
+  absent.
+- **FR-009b**: The page to be shown next MUST be resolved *before* navigation to
+  it, so that the number a page displays is always one greater than the number
+  the operator was just looking at. Consecutiveness is thereby a property of the
+  navigation, not an assertion made about a flow computed in advance.
+- **FR-009c**: A page with nothing for the operator to decide MUST be skipped,
+  where that emptiness can be established at negligible cost — reusing the same
+  cheap counts FR-014d permits, and never a walk performed for the purpose. Where
+  emptiness cannot be so established, the page MUST be shown, carrying an
+  explicit statement that it has nothing to decide. The skip decision MUST be
+  conservative: it may show a page that turns out to be empty, but it MUST NEVER
+  skip a page that had something to decide.
+- **FR-009d**: The Affix Picker and the Stem Picker MUST always be shown,
+  including when the source project contains no affixes or no stems, each stating
+  plainly that the project has none. They are the wizard's central decision; an
+  operator never offered it concludes the tool is broken, not that the project is
+  empty.
+- **FR-010**: The page order and each page's eligibility to be skipped MUST
+  derive from a single declared source, so that adding, removing, or reordering a
+  page cannot leave a stale number behind or silently change which pages may
+  vanish.
 - **FR-011**: A page retained in the codebase but excluded from the flow MUST NOT
-  be reachable by the operator, and its numbering MUST NOT be displayed.
+  be reachable by the operator, and its numbering MUST NOT be displayed. A page
+  excluded permanently and a page skipped for one run MUST be excluded by the
+  same mechanism, so that neither can acquire a number it never shows.
 - **FR-012**: A step description too long for one line MUST wrap to a second
   line rather than being truncated; a description that fits MUST remain on one
   line without reserving a blank second line.
@@ -622,9 +672,11 @@ off.
 
 ### Key Entities
 
-- **Step**: One page of the wizard flow, carrying a position, a total, a title,
-  and a description. Position and total are derived from the declared flow, never
-  written per page.
+- **Step**: One page of the wizard flow, carrying a position, a title, and a
+  description. Position is the count of pages shown before it plus one, derived
+  from the walk rather than written per page; there is no total. A step also
+  declares whether it may be skipped when it has nothing to decide, and the Affix
+  and Stem pickers declare that it may not.
 - **Progress report**: What the operator is shown during a wait — an operation
   name, and either a completed-against-total pair or an indeterminate marker. Its
   purpose is to answer "how much longer?", so where a total is known it is part of
@@ -662,12 +714,18 @@ off.
 - **SC-002**: The operating system never reports the wizard as unresponsive
   during any operation, measured across a full end-to-end run on the largest
   available test project.
-- **SC-003**: Every page in the flow shows a step number; the numbers read
-  consecutively from 1 to the stated total, and the total matches the flow's page
-  count — verified by walking the flow and by an automated check that fails if a
-  page is added or reordered without the numbering following.
-- **SC-004**: Zero pages present an unnumbered or stale-total step title, down
-  from two in the current flow.
+- **SC-003**: Every page shown carries a step number and the numbers read
+  consecutively from 1 — verified by walking the flow and by an automated check
+  that fails if a page is added or reordered without the numbering following.
+- **SC-003a**: The numbering reads consecutively on a run that skips pages, not
+  only on one that shows every page — verified by driving the wizard against a
+  project that leaves at least one skip-eligible page empty and confirming the
+  shown numbers ascend by one with no gap where the skipped page would have been.
+- **SC-003b**: No page displays a total, so no page can display a stale one —
+  verified as an automated check over every page title, which is what makes the
+  "of 5" and "of 10" defect class unrepresentable rather than merely fixed.
+- **SC-004**: Zero pages present an unnumbered step title, down from one in the
+  current flow, and zero present a total, down from eleven.
 - **SC-005**: The window can be narrowed to 900 pixels with no clipped or
   overlapping control on any page and no horizontal scrollbar, verified at both
   the default and the largest supported text scale, with tree-and-preview pages
@@ -750,6 +808,26 @@ off.
   current flow carries no step number and one retained-but-unreachable page
   carries a stale "of 5". Renumbering fixes both; they are not tracked
   separately.
+- **Numbering is walked, not counted, confirmed with the requester.** The
+  original requirement asked for "1 to the total", which presumes the total is
+  knowable up front. It is not: whether a page has anything to decide depends on
+  the source project and, for some pages, on selections the operator has not made
+  yet. Rather than display a total that must later be corrected, no total is
+  displayed at all (FR-009a) and the next page is resolved before it is entered
+  (FR-009b). Consecutiveness then follows from how the operator moves rather than
+  from a promise made in advance — and the stale-total defect becomes impossible
+  to express, which is a stronger guarantee than fixing the two instances of it.
+- **A page is skipped only when skipping is free, confirmed with the requester.**
+  Emptiness that a count already knows (no custom fields, no phonemes, no rules,
+  no entry types, no texts) skips the page. Emptiness that would take a walk to
+  establish does not: the page is shown, saying it has nothing to decide. This is
+  the same economy FR-014d applies to progress — a nicer flow is not worth a
+  slower run — and it makes the skip decision conservative by construction, since
+  the only failure mode left is showing a page that turns out to be empty.
+- **The Affix and Stem pickers are never skipped, confirmed with the requester.**
+  They are exempt from FR-009c regardless of what the source contains (FR-009d).
+  These two pages are the wizard's reason to exist; an empty one is information,
+  whereas an absent one reads as a malfunction.
 - **The quote problem is a rendering choice, not a data problem.** The preview
   renders sequence entries through a representation that quotes strings, and
   affix labels separately wrap their gloss in quotes. Both are display concerns.
