@@ -871,7 +871,9 @@ into modules — that division is a `plan.md` concern, not a `spec.md` concern.
   present) subject to comparison.
 - **FR-081**: A wordform's set of competing analyses MUST be treated as an
   unordered collection by design; re-ordering its members across a transfer
-  MUST be treated as expected and benign, not as a defect.
+  MUST be treated as expected and benign, not as a defect. See FR-184 for
+  the sibling rule governing how this same object's recorded human-approval
+  state MUST be compared (by evaluation state, never by evaluator identity).
 - **FR-082**: The following owned-sequence fields MUST be treated as
   order-critical and MUST fail the comparison if their order is scrambled: a
   lexical entry's senses, a word analysis's morpheme-bundle sequence, a text
@@ -894,11 +896,24 @@ into modules — that division is a `plan.md` concern, not a `spec.md` concern.
   created by the current run or already existed in a freshly created target
   from the host's own project-creation template; this determination MUST be
   made by direct identifier comparison, never by assuming the referent must
-  be something the current run created.
+  be something the current run created. For a class enumerated on the
+  natural-key identity roster (FR-185), this determination MUST instead
+  proceed through the run's recorded identity-remap record (FR-187) —
+  matching the source referent to whatever target object that record names
+  as its natural-key match — and MUST NEVER be made by direct identifier
+  comparison for such a class, nor by the comparator inferring or
+  re-guessing the correspondence itself; the prohibition on assuming the
+  referent must be something the current run created applies equally under
+  this alternate resolution.
 - **FR-086**: A link field MUST be classified DANGLING when it is non-null
   but resolves to an object whose stable identifier does not match the
   source referent under either RESOLVED or RESOLVED-BY-EQUIVALENCE; DANGLING
-  MUST always be treated as a hard failure, never as benign.
+  MUST always be treated as a hard failure, never as benign. For a class on
+  the natural-key identity roster (FR-185), a link resolving to the object
+  named by the run's recorded identity-remap record (FR-187) MUST NOT be
+  classified DANGLING on the basis of an identifier mismatch alone; DANGLING
+  for such a class MUST be reserved for a resolution that matches neither
+  RESOLVED, RESOLVED-BY-EQUIVALENCE, nor the recorded identity-remap record.
 - **FR-087**: A link field MUST be classified SILENTLY_UNSET when it is null
   or empty, the source field had a referent, and no drop or skip record
   exists for that specific owner/field/item combination in the run's
@@ -921,7 +936,10 @@ into modules — that division is a `plan.md` concern, not a `spec.md` concern.
   for that class; RESOLVED-BY-EQUIVALENCE MUST NOT be used as a fallback for
   any class that normally carries a stable identifier, and if it fires for
   such a class, the comparator MUST fail the project as a harness error and
-  name the class that fired it.
+  name the class that fired it. This basis is distinct from, and MUST NOT be
+  conflated with or used to widen, the separately named natural-key identity
+  basis of FR-185, which is admitted only for a class enumerated on that
+  basis's own roster.
 
 **E.7 — Composition rule and the two accounting planes**
 
@@ -965,13 +983,15 @@ failure, never a pass. Source: cycle1-qc.md, Section 2 (VG-01..VG-12).*
 - **FR-097 (TOTAL-ACCOUNTING)**: The sweep MUST verify that every source
   object's stable identifier, within scope, lands in exactly one of:
   transferred with equal payload, already present with equal payload
-  independently verified (not identity alone), dropped-and-allowlisted
-  within a valid allowlist entry's cap, or explicitly out of scope; any
-  source object landing in none of these buckets — including an object
-  merely dropped-and-reported with no matching allowlist entry, and an
-  object merely present under a matching identity with no payload
-  comparison performed — is unexplained loss and MUST fail the run. Being
-  reported MUST NEVER be, by itself, an explanation for loss.
+  independently verified (not identity alone), legitimately matched by
+  natural-key identity substitution (IDENTITY-SUBSTITUTION, FR-187 —
+  admissible only for a class enumerated on the natural-key identity roster
+  of FR-185), dropped-and-allowlisted within a valid allowlist entry's cap,
+  or explicitly out of scope; any source object landing in none of these
+  buckets — including an object merely dropped-and-reported with no matching
+  allowlist entry, and an object merely present under a matching identity
+  with no payload comparison performed — is unexplained loss and MUST fail
+  the run. Being reported MUST NEVER be, by itself, an explanation for loss.
 - **FR-098 (EMPTY-CORROBORATION)**: A source category or collection that a
   measurement reports as empty MUST be corroborated by an independent count
   before the run may treat it as empty, and a collection that is absent or
@@ -997,7 +1017,15 @@ failure, never a pass. Source: cycle1-qc.md, Section 2 (VG-01..VG-12).*
   the target after a run but absent before it is either traceable to a
   source object or explicitly allowlisted as an expected target-native
   addition; an unexplained new object under a fresh identity is unexplained
-  loss.
+  loss. A second instance of a tool-owned-identity class (FR-183) MUST be
+  classified as an unexplained-loss failure under this rule; it MUST NEVER
+  be treated as an allowlistable expected target-native addition, because
+  more than one instance of such a class is never expected regardless of how
+  an entry is written. Where an allowlisted expected target-native
+  addition's justification is instead the absence of a dependency
+  capability, that entry is additionally governed by the capability-
+  conditional exemption rule of FR-182, and becomes invalid on the same
+  terms.
 - **FR-103 (ACCESSOR-INTEGRITY)**: The sweep MUST verify that every
   accessor it declares it will use to read counts or inventories actually
   resolves without error on every project it runs against, and that the
@@ -1027,7 +1055,15 @@ failure, never a pass. Source: cycle1-qc.md, Section 2 (VG-01..VG-12).*
   loss and MUST NOT be allowlistable under any circumstance. The set of
   drop-reason signatures that identify an engine bug MUST be an explicit,
   version-tracked roster reviewed as source; an empty or implementer-chosen
-  set MUST NOT satisfy this requirement.
+  set MUST NOT satisfy this requirement. This roster MUST, at minimum,
+  include one mandatory member: a loss reason that references an internal
+  task, ticket, issue, probe, or TODO identifier is a developer note leaking
+  into a user-facing reason, and MUST be treated as an engine-bug signature
+  under this requirement, and therefore MUST NEVER be allowlistable per
+  FR-121. This is distinct from a loss arising because a class has no
+  creation path at all ("never implemented"): that is a COVERAGE GAP, not an
+  engine-bug signature, and IS allowlistable, but only together with the
+  open tracking issue FR-119 already requires for any allowlist entry.
 - **FR-108 (CLEAN-CLOSE)**: The sweep MUST verify that every project close,
   before any subsequent reopen or census, completed without error or
   timeout; a close failure or timeout MUST invalidate every measurement that
@@ -1082,7 +1118,10 @@ Every allowlist entry MUST record at minimum: a stable identifier that is
 never reused; a person responsible for it; an open tracking issue reference;
 the exact project(s), object class, and field name it applies to; an
 exact-match reason string; a hard maximum count; a first-observed date; an
-expiry date; and a written justification.
+expiry date; a written justification; and, where that justification is the
+absence of a dependency capability, the identifier of that specific
+capability as pinned by the capability preflight (Section I), per the
+inverted invalidation trigger of FR-182.
 
 - **FR-115**: The loss allowlist MUST be a git-tracked artifact, reviewed as
   source, containing one entry per accepted loss pattern, with all the
@@ -1098,16 +1137,25 @@ expiry date; and a written justification.
   120 days after the date the loss was first observed; an expired entry MUST
   cause the run to fail rather than silently continue to pass, and renewing
   an entry MUST require an edit to the tracked file that a reviewer will
-  see.
+  see. This expiry mechanism does not, by itself, retire an entry whose
+  justification is the absence of a dependency capability; such an entry is
+  additionally governed by the inverted trigger of FR-182, which can
+  invalidate it before its declared expiry.
 - **FR-119**: Every allowlist entry MUST reference an open tracking issue;
   the sweep MUST verify that the referenced issue is open at the time of the
-  run, and a closed or missing issue MUST invalidate the entry.
+  run, and a closed or missing issue MUST invalidate the entry. (See FR-107
+  for the classification distinguishing a coverage-gap loss, which this
+  requirement's open-issue rule makes allowlistable, from an
+  engine-bug-signature loss, which FR-121 forbids allowlisting regardless.)
 - **FR-120**: An allowlist entry that matches zero observed losses across two
   consecutive full-corpus runs MUST be flagged as stale and MUST invalidate
   the run rather than silently continuing to be honored, forcing its
   removal; an entry whose maximum count exceeds the observed count by more
   than 25% across two consecutive runs MUST likewise invalidate the run
-  until the cap is tightened.
+  until the cap is tightened. This staleness mechanism does not, by itself,
+  retire an entry whose justification is the absence of a dependency
+  capability and which therefore matches an observed loss on every run;
+  such an entry is additionally governed by the inverted trigger of FR-182.
 - **FR-121**: A loss reason matching the recognized engine-bug signature set
   MUST NOT be allowlistable under any circumstance, regardless of how the
   entry is written.
@@ -1203,7 +1251,19 @@ Section 4.*
   does not catch, since the enabled category's own source objects still
   exist and are compared. The artifact MUST state that any
   relationship-fidelity claim is conditional on the selection breadth that
-  makes its operands present.
+  makes its operands present. The same vacuity applies within a single class
+  where the tool carries more than one creation path for it: a class whose
+  guarded property (such as identity preservation) was measured clean only
+  by execution of a path other than the one exercised by default MUST report
+  that default path as NOT-EVALUATED rather than clean, and the executed
+  path MUST itself be a recorded discriminator in the artifact, so a clean
+  measurement earned entirely off the default path is never mistaken for
+  coverage of the default path. Where such a default-path gap is presently
+  unavoidable because the dependency lacks a capability the default path
+  would need in order to preserve that property, the resulting coverage
+  limitation MUST be recorded as a capability-conditional allowlist entry
+  under FR-182, so the limitation retires itself the moment that capability
+  becomes available.
 
 ### K. Artifact and provenance
 
@@ -1256,7 +1316,10 @@ Section 4.*
 - **FR-151**: A project's or a corpus's status MUST be derived solely from
   the presence and content of its artifact(s); a status MUST NEVER be
   hand-set in a manifest or ledger independent of the artifact that is
-  supposed to justify it.
+  supposed to justify it. This includes the run intent required by FR-188:
+  a status or claim derived under this requirement MUST take the recorded
+  intent into account exactly as FR-188 and FR-166 require, never
+  overriding it by a separately recalled or assumed intent.
 
 ### L. Batched, gated, fix-forward execution
 
@@ -1355,7 +1418,11 @@ that re-run scope, and the one requirement that keeps the narrowing safe.*
   satisfy this claim. This is what makes FR-163's optimization safe: a
   mis-scoped derivation can cost extra re-run time but can never corrupt the
   final corpus-wide claim, because that claim depends only on the one
-  uniform final sweep, not on the accumulated scoped re-runs.
+  uniform final sweep, not on the accumulated scoped re-runs. That one
+  uniform final sweep MUST additionally carry the GATE run intent required
+  by FR-188 on every one of its per-project artifacts; a sweep recorded with
+  the BASELINE intent MUST NOT satisfy this requirement no matter how
+  uniformly clean its results are.
 - **FR-167 (dependency freeze during a sweep)**: The transfer engine
   dependency's revision MUST be pinned for the entire duration of a sweep
   (from the first batch through the uniform final run of FR-166); any
@@ -1494,6 +1561,124 @@ passed. This group closes that gap.*
   any constructible seeded defect MUST itself be treated as a defect in the
   sweep, never as evidence of an unusually robust implementation.
 
+### P. Identity substitution and capability-conditional exemptions
+
+*A companion object-inventory survey found obligations Sections E, F, H, and
+K could not express: an exemption whose justification is a dependency's
+missing capability rather than an ordinary loss; a class of target-side
+object that records the transfer tool's own act rather than any source
+object; a class constrained by a natural key the census must respect
+alongside, or instead of, identity; and a run's own evidentiary intent. Each
+requirement below is cross-referenced from the existing requirement it
+amends, and vice versa.*
+
+- **FR-182 (capability-conditional exemption, inverted trigger)**: An
+  allowlist or exemption entry whose written justification is the absence of
+  a dependency capability MUST declare the identifier of that specific
+  capability, which MUST be one of the capabilities pinned by the capability
+  preflight (Section I); the preflight MUST test that capability on every
+  run; and the entry MUST become INVALID — failing the run until the entry
+  is removed — from the moment a run's preflight observes that capability to
+  be PRESENT. This inverted trigger is independent of, and is not satisfied
+  by, either of Section H's other two invalidation instruments: the expiry
+  mechanism of FR-118, which an edit can simply renew, or the staleness
+  mechanism of FR-120, which fires only on zero matching losses, while an
+  entry of this kind can go on matching an observed loss on every run,
+  forever, even after the capability it was written against has become
+  verifiable. Rationale: an exemption written for one dependency version
+  MUST NOT outlive it, silently excusing a class that has become verifiable
+  — the same shape of defect as a stale PASS that this specification
+  elsewhere requires be caught. (See FR-102 for the specific consequence
+  when a capability-conditional entry concerns an expected target-native
+  addition, and FR-137 for an instance of a coverage limitation recorded
+  under this mechanism.)
+- **FR-183 (tool-owned identity)**: Identity for a class whose target-side
+  object records the transfer tool's own act — such as the object recording
+  the transfer tool's own evaluation act — rather than reproducing any
+  source object, MUST be a fixed, tool-owned, well-known constant; that
+  identity MUST NOT be derived from any source value under any
+  circumstance; and it MUST be measured against that constant rather than
+  exempted from measurement. Exactly one instance of such an object is
+  expected per target. A second instance, under any identity, MUST be
+  classified as a NO-EXTRA (FR-102) failure; it MUST NEVER be allowlisted on
+  the grounds that the object records the tool's own act. Rationale:
+  propagating a source object's identity onto such an object would be a
+  fidelity VIOLATION, not fidelity — it would assert that another project's
+  own such object approved or produced data now present in this target, and
+  could collide with a same-identity object already present in the target;
+  a name-based lookup used to avoid that collision can itself miss an
+  existing instance and silently create a duplicate, splitting provenance
+  across two instances that should have been one.
+- **FR-184 (evaluation state, not agent identity)**: A record of human
+  approval state attached to an in-scope object MUST be compared by its
+  evaluation state — approved, disapproved, or parser-only (no human
+  evaluation recorded) — and MUST NEVER be compared, in whole or in part, by
+  the identity of the tool-owned object (FR-183) that recorded the
+  evaluation. Load-bearing history: 219 human-approved analyses were once
+  silently dropped by a comparator that conflated evaluation state with
+  evaluator identity, treating a locally-created evaluator in the target as
+  a mismatch against the source's own locally-created evaluator even though
+  the recorded evaluation state itself agreed. See FR-081 for the sibling
+  rule governing order-insignificance among the same object's competing
+  analyses.
+- **FR-185 (natural-key identity, a third basis)**: A class that carries a
+  stable per-instance identifier but is additionally constrained by a
+  natural key that is unique by construction — such as the per-writing-
+  system reversal container (one per writing-system tag) or the top-level
+  reversal entry (keyed by its reversal form) — MUST be admitted to a third,
+  separately named identity basis, NATURAL-KEY IDENTITY, distinct from both
+  direct identifier comparison and the no-stable-identifier basis of FR-090.
+  This basis is admitted ONLY by enumeration on its own git-tracked roster
+  (the Natural-Key Identity Roster), whose entries each name the natural key
+  used and the reason identity cannot be authoritative for that class. This
+  basis MUST NOT be expressed by widening FR-090, which exists to forbid
+  exactly the general fallback this would create — "an identifier exists but
+  another key is preferred" — and FR-090's existing teeth are preserved
+  verbatim: firing for a class not on the FR-090 roster remains a harness
+  error naming the class. Firing this natural-key basis for a class not
+  enumerated on the Natural-Key Identity Roster MUST likewise be a harness
+  error naming the class.
+- **FR-186 (identity-first ordering)**: For any class enumerated on the
+  Natural-Key Identity Roster (FR-185) that also carries a stable identifier,
+  identity MUST be authoritative for matching, and the natural key MUST be
+  used only as the fallback when identity does not resolve — never the
+  reverse. Where a target predates identity preservation for such a class,
+  and its recorded state disagrees with this ordering (it would be read
+  differently depending on which of the two rules is applied), the run MUST
+  report an aggregated warning: silent at zero occurrences, and exactly one
+  warning per run naming both readings when at least one occurrence exists.
+  The ordering basis actually used for a given run MUST be a recorded field
+  on that run's artifact, because it changes what a clean measurement means
+  for the affected classes.
+- **FR-187 (IDENTITY-SUBSTITUTION)**: A source object legitimately matched to
+  a pre-existing target object by natural key rather than by identity —
+  permitted only for a class enumerated on the Natural-Key Identity Roster
+  (FR-185) — MUST be classified under a distinct, first-class
+  IDENTITY-SUBSTITUTION outcome in the total-accounting plane (FR-097),
+  counted per class with a per-run total. This outcome MUST NEVER be
+  collapsed into FR-097's "already present with equal payload independently
+  verified" bucket, which would hide that identity was not preserved; MUST
+  NEVER be scored as unexplained loss under FR-097's catch-all; and MUST
+  NEVER be silent. The run's artifact MUST state, per class, how many
+  objects were matched this way and why. The run MUST maintain a durable,
+  per-run identity-remap record naming, for every such object, the target
+  object it was matched to, sufficient for the link-classification
+  consequence of this substitution to be resolved per FR-085 and FR-086 as
+  amended. IDENTITY-SUBSTITUTION firing for a class not on the Natural-Key
+  Identity Roster MUST be a harness error, on the same terms FR-090 already
+  sets for RESOLVED-BY-EQUIVALENCE firing off its own roster.
+- **FR-188 (run intent)**: Every artifact MUST record its own run INTENT as
+  exactly one of two values: BASELINE or GATE. An artifact whose recorded
+  intent is BASELINE MUST NOT be admissible as evidence for the corpus-level
+  fidelity claim (FR-166), regardless of that artifact's content, including
+  a clean pass earned at a frozen driver-and-dependency revision pair.
+  Rationale: FR-151 derives status solely from the artifact; without a
+  recorded intent, a green baseline artifact earned at a frozen revision
+  pair would satisfy FR-166 on its face. Intent is what makes a baseline
+  non-admissible by construction rather than by recollection, and it carries
+  no precondition of its own about when a sweep may be run — FR-166 and
+  FR-167 already carry that constraint in full.
+
 ## Key Entities *(include if feature involves data)*
 
 - **Source Project**: a read-only FLEx project drawn from the derived
@@ -1516,7 +1701,9 @@ passed. This group closes that gap.*
   project's run. Attributes: guards block, verdict, drop/skip records,
   allowlist hits, driver revision and dirty-tree flag, dependency
   capability fingerprint, baseline backup identity, effective diagnostic
-  level, excluded categories.
+  level, excluded categories, per-class IDENTITY-SUBSTITUTION counts
+  (FR-187), the identity-first ordering basis used where applicable
+  (FR-186), and its recorded run intent, BASELINE or GATE (FR-188).
 - **Capability Fingerprint**: the pinned, git-tracked expectation of the
   transfer engine dependency's introspected behavior, used by the preflight.
   Attributes: introspected symbol set, expected values, a summary hash.
@@ -1533,6 +1720,17 @@ passed. This group closes that gap.*
   project's run, aggregated to a corpus-level exit status.
 - **Loss Allowlist Entry**: a reviewed, capped, expiring, exact-match
   exception to the "unexplained loss fails the run" rule (Section H).
+  Where its justification is the absence of a dependency capability, it
+  additionally names that capability's identifier (FR-182).
+- **Natural-Key Identity Roster**: the git-tracked list of classes admitted
+  to the natural-key identity basis of FR-185. Attributes: class identity,
+  the natural key used, the reason identity cannot be authoritative for
+  that class.
+- **Identity-Remap Record**: the run's durable record naming, for every
+  object matched by IDENTITY-SUBSTITUTION (FR-187), the target object it
+  was matched to. Attributes: source identifier, matched target identifier,
+  class. Used as the sole basis for link classification under FR-085 and
+  FR-086 for a class on the Natural-Key Identity Roster.
 - **Canary Project**: the one small, known-good project re-run in every
   batch to catch regressions immediately.
 - **Revision Stamp**: the pairing of the sweep driver's source-revision
@@ -1601,6 +1799,13 @@ passed. This group closes that gap.*
 - **SC-014**: No corpus-level fidelity claim is ever issued on the basis of
   passing results assembled across more than one driver-and-dependency
   revision pair; every such claim traces to exactly one uniform final sweep.
+- **SC-015**: Zero allowlist entries justified by the absence of a
+  dependency capability remain valid in any run in which the capability
+  preflight observes that capability to be present; each such entry either
+  was already removed or the run reports it INVALID per FR-182.
+- **SC-016**: No corpus-level fidelity claim is ever issued on the basis of
+  an artifact recording the BASELINE run intent; every such claim traces
+  only to artifacts recording the GATE intent, per FR-188.
 
 ## Non-Goals / Deferred
 
