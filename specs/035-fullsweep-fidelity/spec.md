@@ -351,14 +351,19 @@ into modules — that division is a `plan.md` concern, not a `spec.md` concern.
   because excluding on an unmeasured risk reduces coverage silently, whereas
   relying on the source's fingerprint (already required by this group) to
   detect any write converts the assumption into evidence at no additional
-  coverage cost. A fingerprint difference observed on any source, whether or
-  not it has sharing enabled, remains a failure that MUST be recorded per the
-  fingerprint requirement below, never excused by having excluded the source
-  instead. The sweep MUST NEVER change the sharing setting of a source for
-  any reason, including to make it eligible; rewriting a project's settings
-  to permit the sweep to read it is the exact class of write this group
-  exists to forbid, aimed at the exact class of project it exists to
-  protect.
+  coverage cost. The sweep MUST record, per source and WITHOUT ALTERING IT,
+  whether that source has project sharing enabled, and MUST report that flag
+  alongside any fingerprint delta observed for that source, because under
+  this group's run-and-detect policy the flag is the correlate that makes a
+  delta attributable. Any fingerprint delta observed on any source, whether
+  or not it has sharing enabled, MUST be classified and answered per FR-022's
+  classification, with no sharing-specific exemption and no softer treatment
+  on the grounds that sharing was known to be enabled — never excused by
+  having excluded the source instead. The sweep MUST NEVER change the
+  sharing setting of a source for any reason, including to make it eligible;
+  rewriting a project's settings to permit the sweep to read it is the exact
+  class of write this group exists to forbid, aimed at the exact class of
+  project it exists to protect.
 - **FR-011**: A project MUST be written to, or restored over, only if its
   name matches an entry in an explicitly supplied allowlist of anchored
   patterns, each of which MUST match a candidate name in its entirety.
@@ -447,16 +452,20 @@ into modules — that division is a `plan.md` concern, not a `spec.md` concern.
 - **FR-019**: No two workers may hold the same destination at the same time,
   and this MUST be enforced as specified in FR-034 rather than by assignment
   discipline alone.
-- **FR-020**: Each source's on-disk fingerprint MUST consist of exactly four
+- **FR-020**: Each source's on-disk fingerprint MUST consist of exactly five
   recorded fields: the size of its data file, that file's modification
-  timestamp, a content hash of that file, and — as its own separate field —
-  a content hash of the source's sharing-settings file where one exists. The
-  content hash is required in addition to size and timestamp because an
-  in-place rewrite of equal length defeats size-and-timestamp comparison
-  entirely; the sharing-settings hash is kept separate because that is the
-  one non-data file a known code path in this project rewrites, and only
-  against a bind destination, so a change to it is direct evidence that a
-  source was bound as a target. Every source's pre-use fingerprint MUST be
+  timestamp, a content hash of that file, the source's recorded data-model
+  version, and — as its own separate field — a content hash of the source's
+  sharing-settings file where one exists. The content hash is required in
+  addition to size and timestamp because an in-place rewrite of equal length
+  defeats size-and-timestamp comparison entirely; the sharing-settings hash
+  is kept separate because that is the one non-data file a known code path
+  in this project rewrites, and only against a bind destination, so a change
+  to it is direct evidence that a source was bound as a target; the
+  data-model version is captured because it is the only available
+  discriminator, per FR-022, between a host migration and a foreign write
+  reaching the source when both produce the identical hash-size-timestamp
+  delta shape. Every source's pre-use fingerprint MUST be
   captured once, before any worker starts, into a single recorded manifest;
   a per-worker just-in-time pre-fingerprint is forbidden because it would
   baseline damage another worker has already done. Fingerprints MUST be
@@ -475,13 +484,23 @@ into modules — that division is a `plan.md` concern, not a `spec.md` concern.
   backup-settings data.
 - **FR-022**: Fingerprint deltas MUST be classified, and each class has one
   mandated response. Where the data file's hash, size, and timestamp have
-  all changed and the file still parses, the delta MUST be recorded as a
-  first-class finding carrying the name, both hashes, both sizes, both
-  timestamps, and the data-model version before and after; it MUST NOT be
-  suppressed, retried away, or repaired by restoring the source, and it MUST
-  disqualify that project's result from the uniform final sweep unless the
-  result is re-earned on the migrated data. Where the hash has changed while
-  size and timestamp are identical, the sweep MUST abort the whole pool:
+  all changed, the file still parses, AND the data-model version recorded
+  post-use is observed to have INCREASED over the version recorded pre-use,
+  the delta MUST be recorded as a first-class finding carrying the name,
+  both hashes, both sizes, both timestamps, and the data-model version
+  before and after; it MUST NOT be suppressed, retried away, or repaired by
+  restoring the source, and it MUST disqualify that project's result from
+  the uniform final sweep unless the result is re-earned on the migrated
+  data. Where the data file's hash, size, and timestamp have all changed and
+  the file still parses, but the data-model version recorded post-use has
+  NOT increased over the version recorded pre-use, the delta MUST NOT be
+  classified as a migration: it is an unexplained write that reached a
+  source, and the sweep MUST abort the whole pool and escalate to a human,
+  on the same terms as the following class, because the data-model version
+  is the only available discriminator between a host migration and a
+  foreign write, since both produce the identical hash-size-timestamp delta
+  shape. Where the hash has changed while size and timestamp are identical,
+  the sweep MUST abort the whole pool:
   that is not a migration but a write that reached a source, or a
   filesystem reporting falsely. Where the sharing-settings hash has changed,
   the sweep MUST abort: a source was bound as a destination. Where a
@@ -710,9 +729,22 @@ into modules — that division is a `plan.md` concern, not a `spec.md` concern.
   at creation time and the tool has no provenance-preserving write path for
   it, nor is one wanted, because the tool's own provenance record is a
   distinct, dedicated residue tag.
-- **FR-056**: The modification timestamp of an object, and any field whose
-  name contains "modified," MUST always be excluded from comparison as
-  EXPECTED_DIVERGENT, because the host rewrites it on every save.
+- **FR-056**: The host-rewritten modification timestamp of an object MUST be
+  excluded from comparison as EXPECTED_DIVERGENT by ENUMERATION on the
+  git-tracked EXPECTED_DIVERGENT roster (E.2), per class, because the host
+  rewrites it on every save. Exclusion by matching a field's name — whether
+  by substring, prefix, suffix, case-insensitive comparison, or any other
+  naming heuristic — MUST NOT be used for this or any other exclusion,
+  because that is the identical blanket naming heuristic FR-065 forbids, it
+  is unbounded over future classes, and in this domain a name that merely
+  suggests modification is also a content word: a modification rule, a
+  modified stem, or a modification-valued boolean would be silently excluded
+  and any distortion in it made invisible. Any newly encountered field whose
+  name merely suggests modification MUST instead be classified by the
+  transfer engine's own syncable-properties surface, on the same terms
+  FR-065 already sets for booleans, and never by its name; a field not yet
+  on the roster MUST be compared, and promoting it onto the roster MUST be a
+  recorded, reviewable act.
 - **FR-057**: Any future in-scope field equivalent to a "resolved" timestamp
   MUST be treated by the same rule as FR-056 the moment any transferred
   category exposes it, even though no currently transferred category does
@@ -1160,7 +1192,18 @@ Section 4.*
   reduced-coverage run is permitted to be performed, but MUST report using a
   status distinct from and never equivalent to full success, and this
   distinction MUST NOT be "fixed" by a later change to make it report
-  success.
+  success. A run performed with any category excluded MUST additionally
+  enumerate every other category, relationship container, type-possibility
+  list, or link collection whose subject matter is reachable only through
+  the excluded category, and MUST report claims about those as
+  NOT-EVALUATED rather than clean: such a container can belong to an
+  enabled category, be measured, and measure perfectly clean while empty of
+  the only cases it exists to carry, because its operands live in the
+  excluded category — a vacuity the comparisons-performed guard (FR-095)
+  does not catch, since the enabled category's own source objects still
+  exist and are compared. The artifact MUST state that any
+  relationship-fidelity claim is conditional on the selection breadth that
+  makes its operands present.
 
 ### K. Artifact and provenance
 
@@ -1514,7 +1557,11 @@ passed. This group closes that gap.*
   consulting any hardcoded list in the sweep's configuration.
 - **SC-002**: Across every run of the sweep, zero source projects show any
   fingerprint change that is not explicitly recorded as either a tamper
-  finding or a data-model-migration finding.
+  finding or a data-model-migration finding; a fingerprint change MUST NOT
+  be recorded as a data-model-migration finding unless the data-model
+  version recorded post-use is observed to have increased over the version
+  recorded pre-use, per FR-022, so a foreign write can never be satisfied by
+  mislabelling it as a migration.
 - **SC-003**: Across every run of the sweep, zero write operations are ever
   attempted against a project name that fails the strict, anchored
   write-target pattern.
