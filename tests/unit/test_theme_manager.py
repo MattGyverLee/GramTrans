@@ -52,7 +52,7 @@ from gramtrans.Lib.ui import theme as theme_mod  # noqa: E402
 from gramtrans.Lib.ui.theme import (  # noqa: E402
     DARK,
     DARK_PALETTE,
-    FONT_STEP_RATIO,
+    FONT_STEP_INCREMENT,
     LIGHT,
     LIGHT_PALETTE,
     MAX_FONT_STEP,
@@ -208,16 +208,25 @@ class TestFontScale:
         assert manager.font_scale == pytest.approx(1.0)
         assert manager.font_percent() == 100
 
-    @pytest.mark.parametrize("step", [-4, -1, 0, 1, 3, 10])
-    def test_scale_is_ratio_to_the_step(self, manager, step):
+    @pytest.mark.parametrize("step", [-3, -1, 0, 1, 3, 10, 15])
+    def test_scale_is_linear_in_the_step(self, manager, step):
         manager.set_font_step(step)
         assert manager.font_step == step
-        assert manager.font_scale == pytest.approx(FONT_STEP_RATIO ** step)
+        assert manager.font_scale == pytest.approx(1.0 + FONT_STEP_INCREMENT * step)
+
+    @pytest.mark.parametrize("step,percent", [
+        (-3, 70), (-2, 80), (-1, 90), (0, 100),
+        (1, 110), (2, 120), (3, 130), (4, 140), (5, 150), (15, 250),
+    ])
+    def test_percent_walks_in_round_tens(self, manager, step, percent):
+        """No compounding: the readout is 100/110/120/130, not 100/110/121/133."""
+        manager.set_font_step(step)
+        assert manager.font_percent() == percent
 
     def test_increase_then_decrease_returns_to_default(self, manager):
         manager.increase_font()
         assert manager.font_step == 1
-        assert manager.font_scale == pytest.approx(FONT_STEP_RATIO)
+        assert manager.font_scale == pytest.approx(1.0 + FONT_STEP_INCREMENT)
 
         manager.decrease_font()
         assert manager.font_step == 0

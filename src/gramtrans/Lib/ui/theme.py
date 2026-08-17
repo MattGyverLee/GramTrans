@@ -16,8 +16,9 @@ This module centralises **two** things and makes both switchable at runtime:
    contain a hex literal.  Contrast targets: body text >= 7:1 (WCAG AAA) and
    every semantic colour (added / removed / note / warning) >= 4.5:1 against its
    own background, in *both* modes.
-2. **Text size** -- a multiplicative scale in 10% steps
-   (``scale = 1.10 ** step``), applied to the application font *and* to the
+2. **Text size** -- an additive scale in 10-percentage-point steps
+   (``scale = 1 + 0.10 * step``, so the readout walks 100, 110, 120, 130 ...
+   rather than compounding to 100, 110, 121, 133), applied to the application font *and* to the
    metrics that Qt would otherwise keep fixed (checkbox indicators, scrollbar
    width, tree indentation) via :class:`_ScaledProxyStyle`, *and* to the
    merge-preview HTML (which carries absolute ``pt`` sizes from FLEx writing
@@ -59,12 +60,14 @@ _log = logging.getLogger(__name__)
 LIGHT = "light"
 DARK = "dark"
 
-#: Multiplicative step the +/- buttons apply (10% per the UI request).
-FONT_STEP_RATIO = 1.10
-#: Step clamp.  -4 => 68% (below this, labels clip); +10 => 259% (Qt starts
+#: Percentage points the +/- buttons add or remove per step, as a fraction.
+#: Additive (not compounding) so the readout lands on round tens: 100, 110,
+#: 120, 130 ... A step of -10 would reach 0%, hence the clamp below.
+FONT_STEP_INCREMENT = 0.10
+#: Step clamp.  -3 => 70% (below this, labels clip); +15 => 250% (Qt starts
 #: laying out wizard pages taller than a 1080p screen beyond this).
-MIN_FONT_STEP = -4
-MAX_FONT_STEP = 10
+MIN_FONT_STEP = -3
+MAX_FONT_STEP = 15
 
 _ENV_DISABLE = "GRAMTRANS_NO_THEME"
 _SETTINGS_ORG = "SIL"
@@ -591,8 +594,8 @@ class ThemeManager(QtCore.QObject):
 
     @property
     def font_scale(self) -> float:
-        """``1.10 ** font_step`` -- the factor applied to text and metrics."""
-        return FONT_STEP_RATIO ** self._font_step
+        """``1 + 0.10 * font_step`` -- the factor applied to text and metrics."""
+        return 1.0 + FONT_STEP_INCREMENT * self._font_step
 
     @property
     def base_point_size(self) -> float:
@@ -678,8 +681,12 @@ class ThemeManager(QtCore.QObject):
         return self._font_step > MIN_FONT_STEP
 
     def font_percent(self) -> int:
-        """Scale as a whole percentage, for the readout on the corner bar."""
-        return int(round(self.font_scale * 100))
+        """Scale as a whole percentage, for the readout on the corner bar.
+
+        Computed from the step in integer arithmetic so the readout is exactly
+        100 / 110 / 120 ... instead of whatever ``1 + 0.1 * 3`` rounds to.
+        """
+        return 100 + int(round(FONT_STEP_INCREMENT * 100)) * self._font_step
 
     # -- apply ------------------------------------------------------------
     def _apply(self) -> None:
