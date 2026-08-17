@@ -352,13 +352,13 @@ throughout, contrast still measured automatically.
 
 **Wave 1 — single task:**
 
-- [ ] **T045** [P] [US7] Extend the existing parametrised palette checks at `:519-553`: add an sRGB→CIE-Lab ΔE76 helper (a dozen lines of arithmetic, no new dependency); add the contrast pairs `("button_text","button",4.5)`, `("focus","window",4.5)`, `("text","alternate_base",7.0)` to `_CONTRAST_PAIRS` with every existing pair and threshold retained in both modes (FR-026, SC-008); add `_DISTANCE_FLOORS` — `("focus","diff_added",25)`, `("highlight","alternate_base",25)`, `("alternate_base","base",4)` (FR-025, FR-027, SC-008a); assert `highlight`/`highlighted_text` are unchanged and blue (FR-024a), that every semantic token including `diff_added` is unchanged (FR-027), that `LIGHT_PALETTE` is unchanged in every member (FR-028), and that both modes still define the identical field set · `tests/unit/test_theme_manager.py`
+- [x] **T045** [P] [US7] Extend the existing parametrised palette checks at `:519-553`: add an sRGB→CIE-Lab ΔE76 helper (a dozen lines of arithmetic, no new dependency); add the contrast pairs `("button_text","button",4.5)`, `("focus","window",4.5)`, `("text","alternate_base",7.0)` to `_CONTRAST_PAIRS` with every existing pair and threshold retained in both modes (FR-026, SC-008); add `_DISTANCE_FLOORS` — `("focus","diff_added",25)`, `("highlight","alternate_base",25)`, `("alternate_base","base",4)` (FR-025, FR-027, SC-008a); assert `highlight`/`highlighted_text` are unchanged and blue (FR-024a), that every semantic token including `diff_added` is unchanged (FR-027), that `LIGHT_PALETTE` is unchanged in every member (FR-028), and that both modes still define the identical field set · `tests/unit/test_theme_manager.py`
 
 ### Implementation
 
 **⟶ Wait for T045, then:**
 
-- [ ] **T046** [US7] Turn the dark scheme's accent family green — `alternate_base`, `button`, `button_hover`, `button_pressed`, `focus` (candidates in data-model §4) — leaving `highlight`, `highlighted_text`, every semantic token and the whole light palette untouched, and driving the focus ring from the new `focus` value (FR-024, FR-024a, FR-025, FR-028) · `src/gramtrans/Lib/ui/theme.py`
+- [x] **T046** [US7] Turn the dark scheme's accent family green — `alternate_base`, `button`, `button_hover`, `button_pressed`, `focus` (candidates in data-model §4) — leaving `highlight`, `highlighted_text`, every semantic token and the whole light palette untouched, and driving the focus ring from the new `focus` value (FR-024, FR-024a, FR-025, FR-028) · `src/gramtrans/Lib/ui/theme.py`
 
 **Checkpoint**: US7 is independently functional — SC-008 and SC-008a hold as
 measurements rather than as review.

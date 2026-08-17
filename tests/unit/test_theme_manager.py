@@ -14,6 +14,16 @@ without repainting the application:
 - Contrast: a WCAG relative-luminance guard on the pairs the request hinges on
   (field linguists reading small UI text), computed locally so the thresholds
   live in the test rather than in a comment.
+- Colour *distance*: contrast alone cannot say "these two colours read as
+  different hues".  Two greens can both clear 7:1 on the same background and
+  still be indistinguishable from each other, which is exactly the risk once the
+  dark accent family turns green next to the semantic ``diff_added`` green.  So
+  a CIE-Lab DeltaE76 guard sits beside the contrast guard, computed here from
+  sRGB with no extra dependency.
+- Frozen values: ``highlight`` / ``highlighted_text`` stay blue, every semantic
+  token stays put, and ``LIGHT_PALETTE`` is unchanged member-for-member.  These
+  are asserted against literal hexes on purpose -- a "harmless" tidy-up of the
+  accent family must not drift them silently.
 
 NOTE -- ``ThemeManager.install()`` is DELIBERATELY never called here.  It adopts
 the process-wide ``QApplication`` and then re-styles it (style, palette,
@@ -39,6 +49,7 @@ import os
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+import math
 import re
 from dataclasses import fields as dc_fields
 
@@ -527,6 +538,11 @@ def _contrast_ratio(fg: str, bg: str) -> float:
 #: (foreground token, background token, minimum ratio).  7.0 = WCAG AAA body
 #: text; 4.5 = AA.  These are the pairs the light/dark request hinges on --
 #: older readers on small field-laptop screens.
+#:
+#: The last three arrived with the green dark accent family: recolouring
+#: `button` / `alternate_base` / `focus` moves three surfaces that carry text or
+#: must be seen against the window, so each gets its own floor rather than being
+#: eyeballed once and trusted forever.
 _CONTRAST_PAIRS = (
     ("text", "base", 7.0),
     ("window_text", "window", 7.0),
@@ -536,6 +552,9 @@ _CONTRAST_PAIRS = (
     ("diff_added", "base", 4.5),
     ("diff_removed", "base", 4.5),
     ("diff_note", "base", 4.5),
+    ("button_text", "button", 4.5),        # button label on the recoloured face
+    ("focus", "window", 4.5),              # the 2px ring against the page
+    ("text", "alternate_base", 7.0),       # body text on a striped row
 )
 
 
@@ -554,4 +573,241 @@ class TestContrast:
         assert ratio >= minimum, (
             f"{pal.name}: {fg} ({getattr(pal, fg)}) on {bg} ({getattr(pal, bg)}) "
             f"measured {ratio:.2f}:1, below the required {minimum}:1"
+        )
+
+
+# ============================================================================
+# Colour-distance guard (CIE-Lab DeltaE76)
+# ============================================================================
+#
+# WHY a second metric.  Contrast answers "can I read this?"; it says nothing
+# about "is this the same colour as that?".  ``focus`` and ``diff_added`` are
+# both light greens on the dark scheme and can each clear 7:1 on the window
+# while being the *same* green to the eye -- at which point a focus ring reads as
+# an "added" marker.  DeltaE76 in CIE-Lab is the cheapest perceptual answer: it
+# is a plain Euclidean distance in a roughly uniform space, so a single scalar
+# floor is meaningful.  Rough scale: ~2.3 = just-noticeable, ~10 = clearly
+# different shade, ~25 = nobody would call them the same colour.
+#
+# The arithmetic is written out here (sRGB -> linear -> XYZ D65 -> Lab) rather
+# than pulled from colormath/skimage: it is a dozen lines and the test suite must
+# not grow a dependency to assert a palette invariant.
+
+#: CIE XYZ of the D65 white point, Y normalised to 1.0.
+_D65_WHITE = (0.95047, 1.00000, 1.08883)
+
+
+def _linear_rgb(hex_colour: str) -> tuple:
+    """``#rrggbb`` -> linear-light (r, g, b) in 0..1.
+
+    Reuses :func:`_srgb_channel`, the same inverse-companding the contrast
+    helper uses, so the two metrics cannot disagree about what a hex means.
+    """
+    raw = hex_colour.lstrip("#")
+    return tuple(_srgb_channel(int(raw[i:i + 2], 16)) for i in (0, 2, 4))
+
+
+def _lab(hex_colour: str) -> tuple:
+    """``#rrggbb`` -> CIE-Lab ``(L*, a*, b*)`` under D65."""
+    r, g, b = _linear_rgb(hex_colour)
+    # sRGB -> XYZ (Bradford-adapted D65 primaries), then normalise by the white
+    # point so a pure white lands on L*=100, a*=b*=0.
+    x = (0.4124564 * r + 0.3575761 * g + 0.1804375 * b) / _D65_WHITE[0]
+    y = (0.2126729 * r + 0.7151522 * g + 0.0721750 * b) / _D65_WHITE[1]
+    z = (0.0193339 * r + 0.1191920 * g + 0.9503041 * b) / _D65_WHITE[2]
+
+    def f(t: float) -> float:
+        # Cube root above the CIE epsilon (216/24389), linear below it -- the
+        # linear tail keeps the transform finite-sloped near black.
+        if t > 216.0 / 24389.0:
+            return t ** (1.0 / 3.0)
+        return (841.0 / 108.0) * t + 4.0 / 29.0
+
+    fx, fy, fz = f(x), f(y), f(z)
+    return (116.0 * fy - 16.0, 500.0 * (fx - fy), 200.0 * (fy - fz))
+
+
+def _delta_e76(colour_a: str, colour_b: str) -> float:
+    """CIE76 colour difference -- Euclidean distance in Lab, order-independent."""
+    return math.dist(_lab(colour_a), _lab(colour_b))
+
+
+#: (token a, token b, minimum DeltaE76).  Pairs that must never *look* alike,
+#: whatever their contrast ratios say:
+#:
+#: - focus vs diff_added -- a green focus ring must not be mistaken for the
+#:   merge-preview "added" green (the accent family and the semantics are
+#:   different vocabularies and must stay separable).
+#: - highlight vs alternate_base -- "which row is selected?" only works if the
+#:   blue selection band separates from the striped row underneath it.
+#: - alternate_base vs base -- striping that cannot be seen is not striping; 4 is
+#:   deliberately small (a stripe should be *subtle*, just not invisible).
+_DISTANCE_FLOORS = (
+    ("focus", "diff_added", 25),
+    ("highlight", "alternate_base", 25),
+    ("alternate_base", "base", 4),
+)
+
+
+class TestColourDistance:
+    def test_helper_matches_known_reference_values(self):
+        """Anchor the Lab transform before trusting its verdicts."""
+        # White is the D65 white point by construction.
+        white_l, white_a, white_b = _lab("#ffffff")
+        assert white_l == pytest.approx(100.0, abs=0.05)
+        assert white_a == pytest.approx(0.0, abs=0.05)
+        assert white_b == pytest.approx(0.0, abs=0.05)
+        # Black is the origin, so black-vs-white is exactly the L* axis length.
+        assert _lab("#000000") == pytest.approx((0.0, 0.0, 0.0), abs=1e-9)
+        assert _delta_e76("#000000", "#ffffff") == pytest.approx(100.0, abs=0.05)
+        # Any colour against itself is zero, and the metric is symmetric.
+        assert _delta_e76("#5fd48a", "#5fd48a") == pytest.approx(0.0, abs=1e-9)
+        assert _delta_e76("#5fd48a", "#2f6fd0") == pytest.approx(
+            _delta_e76("#2f6fd0", "#5fd48a"), abs=1e-9)
+
+    @pytest.mark.parametrize("pal", [LIGHT_PALETTE, DARK_PALETTE], ids=[LIGHT, DARK])
+    @pytest.mark.parametrize("first,second,minimum", _DISTANCE_FLOORS,
+                             ids=[f"{a}_vs_{b}" for a, b, _ in _DISTANCE_FLOORS])
+    def test_pair_is_far_enough_apart(self, pal, first, second, minimum):
+        distance = _delta_e76(getattr(pal, first), getattr(pal, second))
+        assert distance >= minimum, (
+            f"{pal.name}: {first} ({getattr(pal, first)}) and {second} "
+            f"({getattr(pal, second)}) are only DeltaE76 {distance:.1f} apart, "
+            f"below the required {minimum}"
+        )
+
+
+# ============================================================================
+# Frozen palette values (the dark accent family is green; nothing else moved)
+# ============================================================================
+
+#: The dark accent family, which feature 036 turned green.  Asserted as a set of
+#: *tokens* rather than hexes: the hexes are free to be retuned so long as the
+#: contrast/distance floors above still hold, but the family membership is the
+#: contract -- these five and only these five carry the accent colour.
+_DARK_ACCENT_TOKENS = (
+    "alternate_base", "button", "button_hover", "button_pressed", "focus",
+)
+
+#: Selection stays blue even in the green scheme: selection is a *state*, not an
+#: accent, and a green band would collide with the accent family and with the
+#: "added" semantics both.
+_DARK_SELECTION = {
+    "highlight": "#2F6FD0",
+    "highlighted_text": "#FFFFFF",
+}
+
+#: Semantic colours are a fixed vocabulary (added / removed / note / divider /
+#: warning) and are frozen: recolouring chrome must never move a meaning.
+_DARK_SEMANTIC = {
+    "warning_bg": "#3D3308",
+    "warning_text": "#FFD873",
+    "warning_border": "#8A7414",
+    "diff_added": "#5FD48A",
+    "diff_removed": "#FF8A8A",
+    "diff_note": "#AAB2BB",
+    "diff_divider": "#3C424A",
+}
+
+#: The light scheme, member for member.  Green is a dark-mode decision only, so
+#: the whole light palette is pinned here; the companion test also asserts this
+#: mapping covers every field, so adding a token forces a conscious update.
+_LIGHT_FROZEN = {
+    "name": LIGHT,
+    "window": "#F2F3F5",
+    "base": "#FFFFFF",
+    "alternate_base": "#E9ECF1",
+    "header_bg": "#DFE3E9",
+    "tooltip_base": "#FFFBE6",
+    "window_text": "#12151A",
+    "text": "#12151A",
+    "header_text": "#12151A",
+    "tooltip_text": "#12151A",
+    "muted_text": "#4E545B",
+    "disabled_text": "#7A8189",
+    "bright_text": "#A8000F",
+    "button": "#E3E6EB",
+    "button_text": "#12151A",
+    "button_hover": "#D3D8E0",
+    "button_pressed": "#C3C9D3",
+    "border": "#B4BAC2",
+    "border_strong": "#7C848E",
+    "focus": "#1B5FB0",
+    "highlight": "#1B5FB0",
+    "highlighted_text": "#FFFFFF",
+    "link": "#0B4FA0",
+    "warning_bg": "#FFF3C4",
+    "warning_text": "#5C3D00",
+    "warning_border": "#D9A800",
+    "diff_added": "#0A6B22",
+    "diff_removed": "#A8000F",
+    "diff_note": "#4E545B",
+    "diff_divider": "#B4BAC2",
+}
+
+
+def _is_green(hex_colour: str) -> bool:
+    """True when the colour reads green: green channel dominant *and* Lab a* < 0.
+
+    Two independent tests on purpose.  The channel comparison catches a value
+    that is simply not green; the negative a* catches one that is nominally
+    green-dominant but so desaturated it would read grey.
+    """
+    raw = hex_colour.lstrip("#")
+    r, g, b = (int(raw[i:i + 2], 16) for i in (0, 2, 4))
+    return g > r and g > b and _lab(hex_colour)[1] < 0.0
+
+
+class TestDarkAccentIsGreen:
+    @pytest.mark.parametrize("token", _DARK_ACCENT_TOKENS)
+    def test_accent_token_is_green(self, token):
+        value = getattr(DARK_PALETTE, token)
+        assert _is_green(value), (
+            f"dark {token} ({value}) does not read green: the accent family is "
+            f"green in dark mode"
+        )
+
+    @pytest.mark.parametrize("token", _DARK_ACCENT_TOKENS)
+    def test_the_light_counterpart_did_not_go_green(self, token):
+        """Green is dark-mode only -- the light accents stay neutral/blue."""
+        assert getattr(LIGHT_PALETTE, token) == _LIGHT_FROZEN[token]
+
+
+class TestFrozenDarkTokens:
+    @pytest.mark.parametrize("token,expected", sorted(_DARK_SELECTION.items()))
+    def test_selection_is_unchanged(self, token, expected):
+        assert getattr(DARK_PALETTE, token) == expected
+
+    def test_selection_background_still_reads_blue(self):
+        raw = DARK_PALETTE.highlight.lstrip("#")
+        r, g, b = (int(raw[i:i + 2], 16) for i in (0, 2, 4))
+        assert b > g and b > r, (
+            f"dark highlight ({DARK_PALETTE.highlight}) is no longer blue; the "
+            f"selection band must not join the green accent family"
+        )
+        assert not _is_green(DARK_PALETTE.highlight)
+
+    @pytest.mark.parametrize("token,expected", sorted(_DARK_SEMANTIC.items()))
+    def test_semantic_token_is_unchanged(self, token, expected):
+        assert getattr(DARK_PALETTE, token) == expected, (
+            f"dark {token} moved to {getattr(DARK_PALETTE, token)}; semantic "
+            f"colours are a frozen vocabulary"
+        )
+
+    def test_accent_and_semantic_tokens_do_not_overlap(self):
+        """No token may be both an accent and a meaning."""
+        assert not set(_DARK_ACCENT_TOKENS) & set(_DARK_SEMANTIC)
+        assert not set(_DARK_ACCENT_TOKENS) & set(_DARK_SELECTION)
+
+
+class TestLightPaletteUnchanged:
+    def test_the_frozen_mapping_covers_every_field(self):
+        """A new token must be added here consciously, not slip through."""
+        assert set(_LIGHT_FROZEN) == set(_PALETTE_FIELDS)
+
+    @pytest.mark.parametrize("token,expected", sorted(_LIGHT_FROZEN.items()))
+    def test_every_member_is_unchanged(self, token, expected):
+        assert getattr(LIGHT_PALETTE, token) == expected, (
+            f"light {token} moved to {getattr(LIGHT_PALETTE, token)}; the green "
+            f"accent family is a dark-mode change only"
         )

@@ -169,11 +169,27 @@ LIGHT_PALETTE = Palette(
 
 #: Dark scheme.  Mirrors the light token-for-token so a widget styled once is
 #: correct in both; nothing here is a "dimmed" light value.
+#:
+#: The accent family here is GREEN (`alternate_base`, `button`, `button_hover`,
+#: `button_pressed`, `focus`) while the light scheme's stays neutral/blue.  Two
+#: things are deliberately *not* green and the reasons are worth keeping:
+#:
+#: - `highlight` / `highlighted_text` stay blue.  Selection is a state, not an
+#:   accent; a green band would read as an "added" marker and would stop
+#:   separating from the now-green striped row behind it.
+#: - Every semantic token (warning / diff) is untouched.  Chrome may be retuned;
+#:   a colour that carries a *meaning* may not.
+#:
+#: Every value below is fenced by the automated contrast and CIE-Lab DeltaE76
+#: floors in tests/unit/test_theme_manager.py -- retune freely, but rerun those.
 DARK_PALETTE = Palette(
     name=DARK,
     window="#22262B",
     base="#191C20",
-    alternate_base="#23272D",
+    # Green-tinted stripe, and a bigger step from `base` than the old #23272D:
+    # the striping has to be visible at a glance (DeltaE76 10.6 from base, floor
+    # 4) without becoming a second surface colour.
+    alternate_base="#1F2A23",
     header_bg="#2A2F35",
     tooltip_base="#33383F",
     window_text="#E9EDF2",       # 12.9:1 on #22262B
@@ -183,19 +199,26 @@ DARK_PALETTE = Palette(
     muted_text="#AAB2BB",        # 8.0:1 on #191C20
     disabled_text="#858D96",     # 4.5:1 -- disabled only; never load-bearing
     bright_text="#FF8A8A",
-    button="#2E333A",
+    button="#26332B",            # 11.2:1 for button_text
     button_text="#E9EDF2",
-    button_hover="#3A4048",
-    button_pressed="#454C55",
+    button_hover="#2F4235",
+    button_pressed="#39503F",
     # Deliberately lighter than a "correct" dark separator: Fusion draws
     # checkbox/radio indicator outlines from Mid/Dark, and against a #191C20
     # base a subtler pair left an unchecked radio almost invisible.
     border="#4A515A",
     border_strong="#6C7480",
-    focus="#7FB5FF",             # 7.2:1 on #22262B
-    # Not darkened further: white-on-selection is 4.9:1 (AA), and a darker blue
-    # would buy text contrast at the cost of the selection band's own contrast
-    # against the list base (3.5:1 -> 2.8:1) -- i.e. "which row am I on?"
+    # Pale mint rather than the mid-green the accent family suggests, and the
+    # reason is measurable: the ring must stay DeltaE76 >= 25 from the semantic
+    # `diff_added` green below, and `diff_added` is frozen.  Every mid-green at
+    # this lightness lands within ~20 of it (a mid mint measured 8.8 -- the same
+    # colour, perceptually), so the separation has to come from lightness plus a
+    # chroma drop.  This value: 12.1:1 on #22262B, DeltaE76 29.2 from diff_added.
+    focus="#A8F5D2",
+    # Blue on purpose in a green scheme -- see the header note.  Not darkened
+    # further either: white-on-selection is 4.9:1 (AA), and a darker blue would
+    # buy text contrast at the cost of the selection band's own contrast against
+    # the list base (3.5:1 -> 2.8:1) -- i.e. "which row am I on?"
     highlight="#2F6FD0",
     highlighted_text="#FFFFFF",  # 4.9:1 on #2F6FD0
     link="#7FB5FF",
@@ -377,7 +400,11 @@ QComboBox QAbstractItemView {{
     selection-color: {pal.highlighted_text};
 }}
 
-/* --- a focus ring you can actually see (2px, scaled) --- */
+/* --- a focus ring you can actually see (2px, scaled) ---
+   This block is the ONLY thing that paints a focus ring, and its colour is the
+   `focus` token -- so retuning `focus` (green in dark mode, blue in light)
+   retints every ring in the application with no other edit.  Width stays 2px at
+   100% and grows with the text; 1px vanishes on a high-DPI field laptop. */
 QLineEdit:focus, QPlainTextEdit:focus, QTextEdit:focus, QTextBrowser:focus,
 QSpinBox:focus, QDoubleSpinBox:focus, QComboBox:focus,
 QTreeView:focus, QTreeWidget:focus, QListView:focus, QListWidget:focus,

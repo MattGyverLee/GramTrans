@@ -89,6 +89,22 @@
       "kind": "complete",
       "by": "ai",
       "at": "2026-08-17T20:54:21.568Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T045",
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-17T20:59:25.372Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T046",
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-17T20:59:25.685Z"
     }
   ],
   "telemetryInstanceId": "19488acc-ad0e-46bf-9a7e-aceb9721c6ba",
@@ -579,13 +595,27 @@
       ]
     }
   },
-  "currentTask": "T001",
+  "currentTask": "T046",
   "task_summaries": {
     "T001": {
       "status": "DONE",
       "did": "Added tests/unit/_ui_geometry.py -- offscreen geometry harness: wizard_at(width, scale), visible_rects/rect_in via mapTo, overlaps (peer-only), clipped, horizontal_scrollbars, wrapped_line_count; scale applied to the QApplication font because GRAMTRANS_NO_THEME=1 leaves no theme installed",
       "files": [
         "tests/unit/_ui_geometry.py"
+      ]
+    },
+    "T045": {
+      "status": "DONE",
+      "did": "Added DeltaE76 helper, 3 new contrast pairs, _DISTANCE_FLOORS, and frozen-value guards for dark selection/semantics and the whole light palette",
+      "files": [
+        "tests/unit/test_theme_manager.py"
+      ]
+    },
+    "T046": {
+      "status": "DONE",
+      "did": "Turned the dark accent family green (alternate_base/button/hover/pressed/focus); focus ring still the sole 2px consumer of the focus token; highlight, semantics and LIGHT_PALETTE untouched",
+      "files": [
+        "src/gramtrans/Lib/ui/theme.py"
       ]
     }
   }
