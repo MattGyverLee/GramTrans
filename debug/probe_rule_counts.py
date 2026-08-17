@@ -11,9 +11,12 @@ sys.path.insert(0, str(_REPO / "src" / "gramtrans" / "Lib"))
 
 CANDIDATES = [
     "Ejagham025Src", "Ejagham029Src", "EjaghamCfgSrc", "Ejagham Mini",
-    "Hdi", "IndonesianHC", "Esperanto", "Mbugwe Lizzie HCPractice",
+    "Hdi", "IndonesianHC", "Esperanto", "Mbugwe LizzieHC practice",
     "Iceve-Maci Test-Iceve", "Aweti",
 ]
+# "Mbugwe LizzieHC practice" is the real project (verified 2026-08-17). The
+# similarly-named "Mbugwe Lizzie HCPractice" directory is an empty shell with no
+# .fwdata, so it can never be opened -- this list used to name that one.
 
 
 def main() -> None:

@@ -30,7 +30,7 @@
 
 **BLOCKED on human authorization (needs_human):** the remaining proof is an **attended
 DESTRUCTIVE live Move re-proof**. Run **Move #1 then Move #2** (idempotency) against the
-three pilots **Ejagham Mini / Esperanto / Mbugwe Lizzie HCPractice**, using the new
+three pilots **Ejagham Mini / Esperanto / Mbugwe LizzieHC practice**, using the new
 per-category instrumentation to capture the **146-by-category** breakdown. Each target
 must be backed up / `-restore`-able first. Do NOT run unattended. Pickup after that:
 confirm the by-category breakdown + idempotency (Move #2 adds nothing), then merge

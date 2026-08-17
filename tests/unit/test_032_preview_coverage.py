@@ -3,7 +3,7 @@
 Offline, Qt-free, LCM-free. Uses duck-typed fakes and plain-dict multistrings
 (``_ms_to_dict`` accepts a plain dict directly). Live behaviour was separately
 proven read-only via FLExToolsMCP against ``Ejagham Mini`` (texts / writing
-systems / complex form types) and ``Mbugwe Lizzie HCPractice`` (ad hoc rules,
+systems / complex form types) and ``Mbugwe LizzieHC practice`` (ad hoc rules,
 slots, phonological features, phonological rules); see
 specs/032-preview-coverage-completion/research.md (T004) and
 contracts/adhoc-loss-probe.md is out of P1 scope.
