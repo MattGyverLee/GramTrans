@@ -341,121 +341,342 @@ into modules — that division is a `plan.md` concern, not a `spec.md` concern.
 
 *This is the highest-severity requirement group in this specification.*
 
-- **FR-010**: No source project MUST be written to at any point in the
-  sweep; every source project MUST be opened read-only for the entirety of
-  its use in a run.
-- **FR-011**: The only projects the sweep may open write-enabled are those
-  whose name matches the strict, anchored pattern consisting of the literal
-  word "Target," optionally followed by digits, and nothing else; a prefix
-  match, substring match, or glob match against that pattern is explicitly
-  forbidden.
-- **FR-012**: The write-target name assertion of FR-011 MUST be forbidden
-  from matching names that merely begin with the writable pattern followed
-  by other characters (for example, archived backup directories whose names
-  begin with the writable target's name but continue with additional suffix
-  characters), because such directories hold real archived evidence that a
-  loose match would authorize deleting.
-- **FR-013**: The write-target assertion of FR-011 MUST be evaluated at both
-  of two points independently: the moment a target is selected for a
-  restore, and the moment a target is opened write-enabled for a transfer; a
-  defect that causes one of these points to be skipped MUST NOT allow the
-  other to also be skipped.
-- **FR-014**: A worker's assigned write target MUST never be checked against,
-  be equal to, or be derived from that same worker's assigned source project.
-- **FR-015**: No two workers running concurrently may be assigned the same
-  write target.
-- **FR-016**: Each source project's on-disk fingerprint MUST be captured
-  before first use and compared after last use in every run that touches it;
-  any difference is a failure that MUST be recorded, never silently ignored.
-- **FR-017**: The fingerprint of FR-016 MUST additionally cover the source's
-  adjacent backup file where one exists, as a secondary tell for any write
-  path that might otherwise go undetected via the primary data file alone.
-- **FR-018**: A fingerprint change caused by a data-model migration performed
-  by the host application upon opening an older-format project MUST be
-  recorded as a FINDING in the run's artifact, not suppressed, discarded, or
-  treated as a false positive.
-- **FR-019**: The restore mechanism MUST refuse to operate against any
-  project name that fails the write-target assertion of FR-011, regardless of
-  which code path invokes it.
-- **FR-020**: A work-queue defect that could hand a worker a source
-  project's name as its assigned write target MUST be treated as a failure
-  mode the write-safety guarantee is explicitly designed to catch, not merely
-  a hypothetical; the assertions of FR-011 through FR-013 MUST be exercised
-  on every restore and every write-open, with no code path exempted.
+- **FR-010**: The sweep MUST NOT initiate, request, or authorize any write to
+  a source project: every source MUST be opened read-only for the entirety
+  of its use in a run, no source may ever be bound as a write target, and no
+  code path the sweep invokes may modify a source's settings, lock, or data.
+  Every enumerated source MUST be included in the run's transferable corpus
+  regardless of whether that source has project sharing enabled; the sweep
+  MUST NOT pre-emptively exclude a source on the basis of its sharing state,
+  because excluding on an unmeasured risk reduces coverage silently, whereas
+  relying on the source's fingerprint (already required by this group) to
+  detect any write converts the assumption into evidence at no additional
+  coverage cost. A fingerprint difference observed on any source, whether or
+  not it has sharing enabled, remains a failure that MUST be recorded per the
+  fingerprint requirement below, never excused by having excluded the source
+  instead. The sweep MUST NEVER change the sharing setting of a source for
+  any reason, including to make it eligible; rewriting a project's settings
+  to permit the sweep to read it is the exact class of write this group
+  exists to forbid, aimed at the exact class of project it exists to
+  protect.
+- **FR-011**: A project MUST be written to, or restored over, only if its
+  name matches an entry in an explicitly supplied allowlist of anchored
+  patterns, each of which MUST match a candidate name in its entirety.
+  Matching MUST be deny-by-default: a name matching no entry is refused.
+  Prefix matching, substring matching, leading-anchor-only matching, glob
+  matching, and case-insensitive matching are all forbidden. An empty or
+  absent allowlist MUST raise rather than silently admit or deny, so that a
+  caller who forgets to declare its writable set fails loudly instead of
+  inheriting a permissive default. The allowlist MUST be a parameter of the
+  write-safety check rather than a constant inside it, because other
+  legitimate callers write to differently-named disposable targets and a
+  single hardwired pattern would make those callers fail and be reverted
+  under pressure — a reverted guard is worse than a narrow one. The sweep
+  itself MUST supply the narrowest allowlist sufficient for its own
+  disposable targets, never the default or the union of every caller's
+  needs.
+- **FR-012**: The write-safety name check MUST NOT admit a name that merely
+  begins with, ends with, or contains an allowlisted pattern. This is not
+  hypothetical: archived-evidence directories exist whose names begin with a
+  disposable target's name and continue with additional suffix characters,
+  and hold settings and writing-system data that exist in no backup archive
+  — a loose match would authorize their irrecoverable deletion and would
+  then leave the wreckage satisfying the project-on-disk rule, promoting a
+  destroyed archive into every later run's source and target candidate
+  lists. The check MUST therefore be exercised against a recorded near-miss
+  corpus that includes, at minimum, the real archive names present on the
+  host machine, and names differing from an allowlisted name only by
+  trailing space, leading space, letter case, an appended path separator, an
+  appended relative-path component, an appended decimal fraction, and the
+  empty name.
+- **FR-013**: The write-safety assertion MUST be evaluated independently at
+  both of two boundaries, and a defect that skips one MUST NOT be able to
+  skip the other: (a) the moment a project is selected as the destination of
+  a restore, before any directory for it is created; and (b) the first byte
+  written anywhere beneath that project's own directory, by whichever code
+  path reaches that point first. Boundary (b) MUST NOT be described or
+  implemented as "the moment a project is opened write-enabled": a settings
+  rewrite can occur before that open along an existing code path, so an
+  assertion placed at the open would be placed after the first irreversible
+  write and would not have fired. Neither boundary may be satisfied by a
+  flag computed once and read twice; each MUST be an independent evaluation.
+- **FR-014**: Every write-safety assertion MUST be evaluated at the site that
+  performs the write, and MUST be computed from the values that site is
+  actually about to use. An assertion MUST NOT be inherited from, delegated
+  to, or presumed performed by whatever helper enumerated, filtered, or
+  selected the candidate, and MUST NOT live only in the sweep's driver
+  layer, because a caller that assembles a destination descriptor by hand —
+  as a mis-assigning scheduler, a retry, or a resumed run does — reaches the
+  write site without passing through enumeration, bypassing every check
+  performed there while the code still reads as guarded.
+- **FR-015**: No write-safety assertion may be skipped because an input it
+  compares is absent, empty, or otherwise falsy. Where a comparison requires
+  a value the caller may omit, the omission itself MUST be a failure, not a
+  bypass; a guard that silently self-disables in the configuration that
+  matters is worse than no guard, because reviewers count it as present.
+- **FR-016**: Before any restore is attempted, the sweep MUST assert that a
+  worker's assigned write target is distinct from that worker's assigned
+  source, both by name and by fully resolved on-disk location, and MUST
+  additionally assert that the assigned write target does not appear
+  anywhere in the run's frozen source manifest — not merely that it differs
+  from the source currently in hand. The manifest-wide form is required
+  because a mis-ordered pairing, a worker index into the wrong list, or a
+  retry re-queued with a stale captured value can hand a worker a source
+  name that is not the one it is presently paired with.
+- **FR-017**: The sweep MUST resolve the location of the projects collection
+  from exactly one authority, and that authority MUST be the same one the
+  host data layer consults when it resolves a project by name. Before any
+  write, the sweep MUST assert that the destination's fully resolved
+  directory equals that single authority's root joined with the admitted
+  destination name, and that the name and the path given for a destination
+  refer to the same place. Any override, redirect, or configuration able to
+  relocate one of these two resolutions without relocating the other MUST be
+  rejected loudly and MUST NOT be honored in part, because a redirect
+  honored on the restore side but not the write side sends the restore into
+  a sandbox while the transfer writes into the real project of the same name
+  — manufacturing the accident this requirement exists to prevent, while the
+  run looks clean because the restore succeeded.
+- **FR-018**: A destination name MUST be rejected before use if it contains a
+  path separator of any kind, a volume or drive designator, or a
+  relative-path component, or if it is empty. A destination MUST be a single
+  name resolved against the single authority of FR-017, never a name
+  concatenated or joined into a path, because a name carrying a separator or
+  a parent reference can pass a naive containment or similarity check and
+  still resolve onto a real project, and an empty name collapses every
+  concurrent worker onto one directory.
+- **FR-019**: No two workers may hold the same destination at the same time,
+  and this MUST be enforced as specified in FR-034 rather than by assignment
+  discipline alone.
+- **FR-020**: Each source's on-disk fingerprint MUST consist of exactly four
+  recorded fields: the size of its data file, that file's modification
+  timestamp, a content hash of that file, and — as its own separate field —
+  a content hash of the source's sharing-settings file where one exists. The
+  content hash is required in addition to size and timestamp because an
+  in-place rewrite of equal length defeats size-and-timestamp comparison
+  entirely; the sharing-settings hash is kept separate because that is the
+  one non-data file a known code path in this project rewrites, and only
+  against a bind destination, so a change to it is direct evidence that a
+  source was bound as a target. Every source's pre-use fingerprint MUST be
+  captured once, before any worker starts, into a single recorded manifest;
+  a per-worker just-in-time pre-fingerprint is forbidden because it would
+  baseline damage another worker has already done. Fingerprints MUST be
+  compared after last use, and any difference MUST be recorded, never
+  silently ignored.
+- **FR-021**: Hashing a source's whole directory as a fingerprint is
+  forbidden. A read-only open legitimately touches the source's lock file,
+  its writing-system store logs, its temporary directory, and its
+  shared-settings area, so a whole-directory hash would report a difference
+  on every run; a guard that false-alarms on every run is switched off
+  within an hour and protects nothing. Instead, the sweep MUST record which
+  of those paths were touched, as a recorded observation only, and MUST
+  NEVER compare them or derive a verdict from them. The
+  recorded-but-never-compared set MUST name, at minimum: lock files, the
+  temporary directory and its contents, writing-system store logs, and
+  backup-settings data.
+- **FR-022**: Fingerprint deltas MUST be classified, and each class has one
+  mandated response. Where the data file's hash, size, and timestamp have
+  all changed and the file still parses, the delta MUST be recorded as a
+  first-class finding carrying the name, both hashes, both sizes, both
+  timestamps, and the data-model version before and after; it MUST NOT be
+  suppressed, retried away, or repaired by restoring the source, and it MUST
+  disqualify that project's result from the uniform final sweep unless the
+  result is re-earned on the migrated data. Where the hash has changed while
+  size and timestamp are identical, the sweep MUST abort the whole pool:
+  that is not a migration but a write that reached a source, or a
+  filesystem reporting falsely. Where the sharing-settings hash has changed,
+  the sweep MUST abort: a source was bound as a destination. Where a
+  source's data file is absent after the run, the sweep MUST abort,
+  escalate to a human, and MUST NOT attempt any automatic recovery.
+- **FR-023**: The restore mechanism MUST refuse to operate against any
+  destination that fails the write-safety assertions of this group,
+  regardless of which code path invokes it, and MUST perform that refusal
+  before it creates a directory, removes a lock, removes a data file, or
+  removes any settings or writing-system directory. The ordering is
+  load-bearing: the destructive steps of a restore include removals whose
+  contents exist in no archive, so an assertion evaluated after the first
+  removal cannot prevent the loss it exists to prevent.
+- **FR-024**: A work-queue defect that hands a worker a source's name as its
+  destination MUST be treated as a failure mode this specification's
+  write-safety guarantee is explicitly designed to catch, not as a
+  hypothetical. Every write-safety, containment, and provenance assertion in
+  Groups B and M MUST be exercised on every restore and at every first-write
+  boundary, with no code path exempted and no caller trusted to have checked
+  on the assertion site's behalf. The sweep MUST record, per project, that
+  each assertion was in fact evaluated, so that a silently skipped assertion
+  is visible in the artifact rather than inferred from the absence of a
+  failure.
 
 ### C. Parallel target pool
 
 *A first-class requirement, not an implementation detail.*
 
-- **FR-021**: The sweep MUST support running N disposable write targets
+- **FR-025**: The sweep MUST support running N disposable write targets
   concurrently, where N is a configured worker count, each target owned by
   exactly one worker for the duration of that worker's current project.
-- **FR-022**: Each concurrent worker MUST run as a separate operating-system
+- **FR-026**: Each concurrent worker MUST run as a separate operating-system
   process, not a thread, because each worker requires its own independent
   runtime initialization; the sweep MUST be a standalone, independently
   trackable command-line tool with its own work queue, and MUST NOT run
   inside a single shared host process bound by a fixed timeout.
-- **FR-023**: One existing archived write-target backup MUST be sufficient
+- **FR-027**: One existing archived write-target backup MUST be sufficient
   to seed any number of concurrently running targets; the sweep MUST NOT
   require a distinct backup per target.
-- **FR-024**: The number of concurrently running workers MUST be scheduled
-  based on available memory, not on the machine's core count; the scheduler
-  MUST account for the fact that an open project's memory footprint can
-  substantially exceed its on-disk data-file size.
-- **FR-025**: The scheduler MUST prevent two of the corpus's largest
-  projects (by on-disk data-file size) from running concurrently, to bound
-  peak memory use.
-- **FR-026**: The default worker count MUST be 1 (serial execution).
-- **FR-027**: A worker count greater than 1 MUST NOT be enabled by default;
+- **FR-028**: Worker admission MUST be scheduled on measured free memory,
+  never on the machine's core count. Before admitting a project to a
+  worker, the sweep MUST compute a predicted per-worker footprint as a
+  fixed per-process floor plus a per-unit-of-data-size slope applied to
+  that project's data-file size, and MUST admit the project only when
+  measured free memory exceeds that prediction plus a named reserve held
+  back for the operating system and the host's own services. An open
+  project's memory footprint can substantially exceed its on-disk data-file
+  size, and the scheduler MUST account for that.
+- **FR-029**: The sweep MUST NOT bound peak memory by a rule about which
+  named or size-ranked projects may run together. Any combination of
+  projects MUST be admissible when the free-memory admission check of
+  FR-028 passes for each, and no combination MUST be admissible when it
+  does not; a largest-two exclusion rule is simultaneously too strict (it
+  blocks a pairing the machine can hold) and too weak (it permits several
+  mid-sized projects whose combined footprint exceeds free memory), and it
+  silently stops meaning anything when the corpus changes.
+- **FR-030**: The per-worker memory model MUST be recorded as PROVISIONAL
+  wherever it is used or documented, and MUST state that its slope is
+  derived from a single-large-project observation — a one-point regression
+  that establishes an order of magnitude, not a validated coefficient.
+  Every run artifact MUST record the observed peak per-worker memory
+  alongside that worker's project and data-file size. Once observed actuals
+  exist for a project, or for a data-size range, the admission check MUST
+  prefer them over the model's prediction; the model MUST NOT be restated
+  anywhere as settled physics.
+- **FR-031**: The default worker count MUST be 1 (serial execution).
+- **FR-032**: A worker count greater than 1 MUST NOT be enabled by default;
   enabling it MUST require a recorded concurrency-trial artifact
   demonstrating that concurrent opens against the host database service are
   safe, because it is currently unmeasured whether that service serializes
   concurrent opens; this is a named, explicit gate, not an assumed
   capability.
-- **FR-028**: The sweep MUST write a separate log file per worker;
+- **FR-033**: Until the recorded concurrency-trial artifact of FR-032
+  exists, the sweep MUST NOT publish, and its documentation MUST NOT
+  presume, any runtime estimate, batch schedule, staffing plan, or
+  operating procedure that depends on more than one worker. An operational
+  decision to run several concurrent workers is a configuration the trial
+  UNLOCKS, and its permissible range is bounded by both the trial's
+  findings and the free-memory admission check of FR-028; it is never a
+  justification for treating the gate as already satisfied, and
+  concurrency having worked in practice is never a substitute for the gate.
+- **FR-034**: Concurrent exclusivity of a destination MUST be enforced by an
+  operating-system-level exclusive claim, created atomically and held for
+  the entire duration of that worker's project, whose creation failure
+  aborts that worker. The claim MUST live outside the projects collection
+  so it is never mistaken for project content and is never removed by a
+  restore. Worker identifiers alone are insufficient because the failure
+  mode is identifier reuse — after a crash and restart, or from a stale
+  pool record. The sweep MUST additionally assert that its configured
+  destination pool is a set of distinct, individually admitted names,
+  because two workers on one destination silently invalidate both workers'
+  results — one removes the lock and data file the other holds open, and
+  the other then saves into a directory whose settings were removed
+  underneath it — and a fidelity sweep reporting a pass over corrupted
+  state is worse than a crash.
+- **FR-035**: The run's source list MUST be derived at runtime by the
+  project-on-disk rule, then frozen once into a recorded, hash-identified
+  manifest before any worker starts, and every worker MUST verify its
+  assigned source against that frozen manifest rather than re-enumerating
+  the projects collection. Freezing a runtime-derived list is not a
+  hand-maintained manifest and does not conflict with the enumeration
+  requirements of Group A. Re-enumeration mid-run would let a directory
+  created during the run — including one created by a mis-targeted restore
+  — silently join the source set, and would let the run's corpus differ
+  between workers so that no single corpus-level claim is attributable.
+- **FR-036**: Each worker's source and destination MUST be conveyed as
+  explicit per-invocation arguments. The sweep MUST NOT allow a worker's
+  source, destination, or projects-collection location to be supplied by
+  inherited ambient process configuration, and MUST remove any such
+  inherited setting from a worker's environment before starting it; where
+  an inherited setting is present and cannot be removed, the sweep MUST
+  refuse to start. Ambient settings are read at load time by many existing
+  auxiliary entry points, so a single exported value would be inherited by
+  every worker at once, converging the whole pool onto one destination
+  while also splitting the name and path resolutions apart.
+- **FR-037**: No artifact, log, or intermediate record may be written to a
+  single shared location by more than one worker. Logs MUST be per worker;
+  result artifacts MUST be per worker and per project; archive directories
+  the sweep writes into MUST NOT also be scanned by the sweep for inputs.
+  Interleaved output from concurrent workers destroys attribution of which
+  observation came from which project, which is the sweep's entire
+  product, and a directory that is both an input source and an output
+  destination makes one worker's output another worker's input.
+- **FR-038**: The sweep MUST write a separate log file per worker;
   interleaved output from multiple concurrent workers into a single stream
-  is forbidden because it destroys attribution of which line came from which
-  project.
-- **FR-029**: Every project's result artifact MUST be keyed by that
+  is forbidden because it destroys attribution of which line came from
+  which project.
+- **FR-039**: Every project's result artifact MUST be keyed by that
   project's source name, independent of which worker or which run produced
   it.
-- **FR-030**: Re-running a project whose prior attempt left a stale
-  write-target lock MUST self-heal that lock rather than requiring manual
-  intervention, provided the lock is confirmed stale by the same staleness
-  test the sweep uses elsewhere (an owning process that is no longer
-  running, or is running under a different identity than recorded).
-- **FR-031**: The sweep's expected total runtime MUST be expressed as a
+- **FR-040**: Re-running a project whose prior attempt left a stale lock on
+  a disposable destination MUST self-heal that lock rather than requiring
+  manual intervention, provided the lock is confirmed stale by the same
+  staleness test the sweep uses elsewhere — an owning process that is no
+  longer running, or running under a different identity than recorded.
+  Removing a lock whose owning process is confirmed ALIVE is forbidden and
+  MUST abort the run: removing the lock file does not release the owner's
+  handle, so the sweep would proceed against a project another live
+  process believes it owns, producing two writers and no error. Where
+  ownership cannot be determined, the sweep MUST treat the lock as live and
+  abort rather than assume staleness. The sweep MUST NOT create, modify, or
+  remove a lock file anywhere outside a disposable destination it has
+  admitted for writing; sources in particular MUST be left alone — a dead
+  process's lock recorded on a source has been observed to have no effect
+  on a subsequent read-only open, so there is no source-side lock
+  condition for the sweep to repair, only one for it to record.
+- **FR-041**: The sweep's expected total runtime MUST be expressed as a
   function of the configured worker count N, not as a single fixed number,
-  because runtime scales with worker concurrency.
-- **FR-032**: The sweep's documentation of expected runtime MUST record the
-  serial, per-project baseline observed for the double-transfer variant, and
-  MUST record that per-project cost tracks the volume of actions and drops
-  performed, not the size of the project's on-disk data file.
+  because runtime scales with worker concurrency; a project whose observed
+  runtime exceeds its documented baseline by an order of magnitude MUST be
+  reported as a finding, not silently absorbed.
+- **FR-042**: The sweep's documentation of expected runtime MUST record the
+  serial, per-project baseline observed for the double-transfer variant,
+  and MUST record that per-project cost tracks the volume of actions and
+  drops performed, not the size of the project's on-disk data file; every
+  per-project artifact MUST record that project's own observed cost so a
+  departure from the documented baseline is detected by the sweep in
+  flight rather than by a later study.
 
 ### D. Double-move and idempotency
 
-- **FR-033**: For every project in a run, the sweep MUST perform exactly
-  this sequence: restore the target to its known baseline, perform the first
-  transfer, take a census, perform a second transfer against the same
-  now-populated target, take a second census, then restore the target again.
-- **FR-034**: Idempotency MUST be measured over exactly the set of object
+- **FR-043**: For every project in a run, the sweep MUST perform exactly
+  this sequence: restore the target to its known baseline, take a full
+  census of that freshly restored baseline, perform the first transfer,
+  take a census, perform a second transfer against the same now-populated
+  target, take a second census, then restore the target again.
+- **FR-044**: Every guard that compares a before-state to an after-state
+  MUST be computed against the baseline census taken immediately after
+  restore and before the first transfer, never assumed or omitted; a
+  target that already contains the source's objects at that baseline
+  otherwise reports faithfulness without any transfer having occurred, and
+  a run lacking this baseline census is not-evaluated, never a pass, for
+  every guard that depends on it.
+- **FR-045**: Idempotency MUST be measured over exactly the set of object
   classes that the first transfer is observed to have written, computed as
-  the difference between the target's state after the first transfer and its
-  state before the first transfer; idempotency MUST NOT be measured over a
-  fixed, hand-picked list of classes or counters.
-- **FR-035**: A run in which the first transfer is reported to have written
-  objects in classes that are absent from the idempotency comparison MUST be
-  treated as a defect in the sweep itself, not a passing result.
-- **FR-036**: The second transfer's set of drop records MUST be compared
+  the difference between the target's state after the first transfer and
+  its state before the first transfer; idempotency MUST NOT be measured
+  over a fixed, hand-picked list of classes or counters.
+- **FR-046**: A run in which the first transfer is reported to have written
+  objects in classes that are absent from the idempotency comparison MUST
+  report as a harness error for that project.
+- **FR-047**: The second transfer's set of drop records MUST be compared
   against the first transfer's set of drop records, and any difference
-  between the two MUST be surfaced as a finding.
-- **FR-037**: The corpus-level and per-project idempotency verdict MUST be
+  between the two MUST cause a failing verdict for that project, never an
+  advisory note.
+- **FR-048**: The corpus-level and per-project idempotency verdict MUST be
   computed from BOTH transfers together, not from the first alone.
-- **FR-038**: A run reporting that the second transfer added new objects
+- **FR-049**: A run reporting that the second transfer added new objects
   while simultaneously reporting no measured change in the class(es) those
-  objects belong to MUST be structurally impossible, because the comparison
-  in FR-034 is defined over the actual written-class set rather than an
-  unrelated fixed set.
+  objects belong to MUST be structurally impossible, because the
+  comparison in FR-045 is defined over the actual written-class set rather
+  than an unrelated fixed set.
+- **FR-050**: A project's run MUST return the write target to its baseline,
+  and MUST write that project's artifact, even when the run ends in an
+  unhandled failure.
 
 ### E. Field-level fidelity semantics
 
@@ -463,92 +684,98 @@ into modules — that division is a `plan.md` concern, not a `spec.md` concern.
 
 **E.1 — Generic census, not hand-listed domains**
 
-- **FR-039**: The comparator MUST perform a generic per-object field census
+- **FR-051**: The comparator MUST perform a generic per-object field census
   across every field obtainable from an in-scope object's own class, rather
   than a hand-listed set of domains or fields chosen per class.
-- **FR-040**: A field is excluded from comparison only if it appears on the
+- **FR-052**: A field is excluded from comparison only if it appears on the
   EXPECTED_DIVERGENT roster (E.2) or is a field the transfer engine's own
   syncable-properties surface deliberately omits for that class; no other
-  exclusion mechanism is permitted.
+  exclusion mechanism is permitted. The set of fields the transfer engine's
+  own syncable-properties surface omits for a given class MUST be
+  enumerated in every artifact, and any growth of that omitted set between
+  runs MUST be reported as reduced coverage, never silently absorbed.
 
 **E.2 — EXPECTED_DIVERGENT roster**
 
-- **FR-041**: The EXPECTED_DIVERGENT roster MUST exist as its own git-tracked
+- **FR-053**: The EXPECTED_DIVERGENT roster MUST exist as its own git-tracked
   artifact, independent of, and MUST NOT be derived by re-scraping, the
   interactive merge-preview UI's field-exclusion set, because that set
   conflates UI legibility with fidelity and would wrongly exclude fields
   (such as a phonological rule's direction) that must still be
   fidelity-checked.
-- **FR-042**: The internal runtime session identifier of an object MUST be
+- **FR-054**: The internal runtime session identifier of an object MUST be
   excluded from comparison as EXPECTED_DIVERGENT; it is not persisted data.
-- **FR-043**: The creation timestamp of an object MUST always be excluded
+- **FR-055**: The creation timestamp of an object MUST always be excluded
   from comparison as EXPECTED_DIVERGENT; the target host stamps this value
   at creation time and the tool has no provenance-preserving write path for
   it, nor is one wanted, because the tool's own provenance record is a
   distinct, dedicated residue tag.
-- **FR-044**: The modification timestamp of an object, and any field whose
+- **FR-056**: The modification timestamp of an object, and any field whose
   name contains "modified," MUST always be excluded from comparison as
   EXPECTED_DIVERGENT, because the host rewrites it on every save.
-- **FR-045**: Any future in-scope field equivalent to a "resolved" timestamp
-  MUST be treated by the same rule as FR-044 the moment any transferred
+- **FR-057**: Any future in-scope field equivalent to a "resolved" timestamp
+  MUST be treated by the same rule as FR-056 the moment any transferred
   category exposes it, even though no currently transferred category does
   today.
-- **FR-046**: Internal reference-lookup handle fields other than an object's
+- **FR-058**: Internal reference-lookup handle fields other than an object's
   own primary identifier MUST be excluded from comparison as
   EXPECTED_DIVERGENT.
-- **FR-047**: An owning-sequence position bookkeeping value MUST NOT be
+- **FR-059**: An owning-sequence position bookkeeping value MUST NOT be
   compared as a raw scalar; sequence faithfulness MUST instead be expressed
   by comparing the ordered sequence itself (E.4), not this per-item position
   number.
-- **FR-048**: A raw internal schema field-identifier integer MUST NOT be
+- **FR-060**: A raw internal schema field-identifier integer MUST NOT be
   compared, because it is liable to differ across host builds with no
   semantic content; however, the identity of the owning object it names MUST
   still be faithful, and for any object whose identifier the tool is
   required to preserve, a genuine owner mismatch IS a distortion, just not
   one detected via the raw field-identifier integer.
-- **FR-049**: A recomputed homograph-numbering value MUST always be excluded
+- **FR-061**: A recomputed homograph-numbering value MUST always be excluded
   from comparison as EXPECTED_DIVERGENT, because it is recomputed from the
   target's own lexicon at write time and is not copied user data.
-- **FR-050**: A raw pre-existing import-residue string field MUST NOT be
+- **FR-062**: A raw pre-existing import-residue string field MUST NOT be
   compared as data on any class.
-- **FR-051**: The tool's own provenance-tagging fields MUST be expected to
+- **FR-063**: The tool's own provenance-tagging fields MUST be expected to
   differ by design (the tool deliberately appends its own tag on every run);
   the comparator MUST strip the tool's own appended tag segment before
   comparing the surrounding prose, and MUST NOT report the appended tag
   segment itself as a mismatch.
-- **FR-052**: Any field literally representing a checksum, hash, or CRC MUST
+- **FR-064**: Any field literally representing a checksum, hash, or CRC MUST
   be treated as EXPECTED_DIVERGENT if ever encountered on a transferred
   class, because such values are recomputed by the target, never copied,
   even though no currently transferred class exposes one today.
-- **FR-053**: A boolean or flag field MUST be judged EXPECTED_DIVERGENT only
+- **FR-065**: A boolean or flag field MUST be judged EXPECTED_DIVERGENT only
   when the transfer engine's own syncable-properties surface omits it by
   design for that class; if the engine treats it as data to be synced, the
   comparator MUST treat it as ordinary content subject to the
   DISTORTED/LOST verdicts, never waved through by a blanket naming
   heuristic.
-- **FR-054**: The complete EXPECTED_DIVERGENT roster for a given class MUST
+- **FR-066**: The complete EXPECTED_DIVERGENT roster for a given class MUST
   be exactly this document's enumerated exclusions plus whatever the
   transfer engine's own syncable-properties surface omits for that class; a
   comparator implementation MUST NOT substitute, in whole or in part, the
-  interactive merge-preview UI's exclusion set for this roster.
-- **FR-055**: A phonological rule's direction-of-application field MUST be
+  interactive merge-preview UI's exclusion set for this roster. The
+  omitted-for-that-class set MUST be enumerated per class in every
+  artifact, and any growth of that set between runs MUST be reported as
+  reduced coverage, never silently absorbed.
+- **FR-067**: A phonological rule's direction-of-application field MUST be
   fidelity-checked by the comparator (by decoding both sides to the same
   semantic value, defensively against any cross-version ordinal drift), even
   though it is excluded from the interactive merge-preview UI's diff pane
   for legibility reasons; a UI-legibility exclusion MUST NOT be treated as a
   fidelity exclusion.
-- **FR-056**: A writing system's internal numeric runtime handle MUST NOT be
+- **FR-068**: A writing system's internal numeric runtime handle MUST NOT be
   compared; only its stable language-tag identifier may be used for
   comparison, because the numeric handle is a per-session integer with no
   cross-project stability.
 
 **E.3 — Writing-system-mapped legitimacy**
 
-- **FR-057**: For any multi-writing-system text field, faithful MUST mean:
+- **FR-069**: For any multi-writing-system text field, faithful MUST mean:
   for every source writing-system alternative that has an entry in the run's
   writing-system mapping, that alternative's text appears byte-identical
   under the mapping's target writing system in the target object.
-- **FR-058**: A source writing-system alternative with no mapping entry at
+- **FR-070**: A source writing-system alternative with no mapping entry at
   all MUST be classified EXPECTED_DIVERGENT / out-of-scope, and MUST NEVER
   be classified LOST, provided the run's own accounting artifact carries an
   explicit skip record for that writing system; if no such skip record
@@ -556,44 +783,44 @@ into modules — that division is a `plan.md` concern, not a `spec.md` concern.
   MUST report it as its own distinct finding ("unmapped writing system with
   no skip record"), a process defect in the run's own mapping construction,
   and MUST NOT silently fold it into either LOST or EXPECTED_DIVERGENT.
-- **FR-059**: The sweep's writing-system mapping MUST enumerate every
+- **FR-071**: The sweep's writing-system mapping MUST enumerate every
   distinct source writing system present in a project, both vernacular and
   analysis, and either map each one by language-tag identity to an existing
   target writing system of the same language tag or record that a new
   target writing system will be created for it, before any comparison is
   computed; the sweep MUST NOT inherit a narrower default that only maps a
   single default vernacular writing system.
-- **FR-060**: A target writing-system lookup that resolves to nothing for a
+- **FR-072**: A target writing-system lookup that resolves to nothing for a
   writing system the mapping declared as mapped MUST be classified LOST, not
   EXPECTED_DIVERGENT, because the mapping declared an intent to carry that
   writing system's content across and the intent was not honored.
 
 **E.4 — Distortion classes, ranked most to least user-consequential**
 
-- **FR-061**: A leading or trailing whitespace difference inside compared
+- **FR-073**: A leading or trailing whitespace difference inside compared
   string content MUST be classified DISTORTED; it MUST NEVER be treated as
   benign, because such whitespace can be linguistically significant.
-- **FR-062**: A letter-casing difference inside compared string content MUST
+- **FR-074**: A letter-casing difference inside compared string content MUST
   always be classified DISTORTED, with no exception, because casing
   distinguishes lexical identity for the orthographies this tool's users
   work in.
-- **FR-063**: A formatted, multi-run text field that collapses to matching
+- **FR-075**: A formatted, multi-run text field that collapses to matching
   plain text but loses its internal run boundaries, per-run writing system,
   or per-run character styling MUST be classified DISTORTED; the comparator
   MUST compare the field's internal run structure, not merely its plain
   text, or it will fail to detect this class of loss.
-- **FR-064**: A byte-level Unicode normalization-form difference between
+- **FR-076**: A byte-level Unicode normalization-form difference between
   source and target text MUST be classified DISTORTED, and MUST be tagged
   as its own distinct subtype separate from generic content mismatches, so a
   reviewer can triage a large, probably-benign cluster of these separately
   from genuine content bugs; the comparator MUST NOT silently treat two
   different normalization forms as equal.
-- **FR-065**: A precision difference in an approximate date field (for
+- **FR-077**: A precision difference in an approximate date field (for
   example, an exact year collapsing to an approximate one, or vice versa)
   MUST be classified DISTORTED when it occurs, because precision is itself
   asserted data, not formatting; this rule stands as a forward guard even
   where no currently transferred category exposes such a field.
-- **FR-066**: An enumerated or coded integer value MUST be classified
+- **FR-078**: An enumerated or coded integer value MUST be classified
   DISTORTED only when its decoded semantic value differs between source and
   target, never merely because its raw stored integer differs; the
   comparator MUST decode both sides to the same semantic value before
@@ -601,27 +828,27 @@ into modules — that division is a `plan.md` concern, not a `spec.md` concern.
 
 **E.5 — Children (owned collections/sequences) semantics**
 
-- **FR-067**: Order MUST be treated as part of faithfulness for every owned
+- **FR-079**: Order MUST be treated as part of faithfulness for every owned
   or reference field whose accessor is documented as an ordered sequence;
-  the comparator SHOULD derive order-significance from the tool's own
-  existing ordered-versus-unordered field classification rather than
-  re-deriving it separately per class.
-- **FR-068**: Order MUST NOT be asserted for any owned or reference field
+  the comparator MUST derive order-significance from the tool's own
+  existing ordered-versus-unordered field classification, and MUST NOT
+  re-derive it separately per class.
+- **FR-080**: Order MUST NOT be asserted for any owned or reference field
   documented as an unordered collection; a positional difference on such a
   field MUST be treated as benign, with only set-membership (what is
   present) subject to comparison.
-- **FR-069**: A wordform's set of competing analyses MUST be treated as an
+- **FR-081**: A wordform's set of competing analyses MUST be treated as an
   unordered collection by design; re-ordering its members across a transfer
   MUST be treated as expected and benign, not as a defect.
-- **FR-070**: The following owned-sequence fields MUST be treated as
+- **FR-082**: The following owned-sequence fields MUST be treated as
   order-critical and MUST fail the comparison if their order is scrambled: a
   lexical entry's senses, a word analysis's morpheme-bundle sequence, a text
   paragraph's segment sequence, and a lexical entry's alternate forms.
-- **FR-071**: The following reference-sequence fields MUST be treated as
+- **FR-083**: The following reference-sequence fields MUST be treated as
   order-critical and MUST fail the comparison if their order is scrambled:
   an inflectional affix template's prefix-slot and suffix-slot sequences,
   and a complex-form entry's component-lexeme and primary-lexeme sequences.
-- **FR-072**: Cross-entry iteration order across unrelated top-level
+- **FR-084**: Cross-entry iteration order across unrelated top-level
   lexical entries in the lexicon (as distinct from order among a single
   entry's own owned children) MUST NOT be asserted, because the host
   exposes entries through a surface with no author-assigned cross-entry
@@ -629,53 +856,53 @@ into modules — that division is a `plan.md` concern, not a `spec.md` concern.
 
 **E.6 — Links semantics**
 
-- **FR-073**: A link field MUST be classified RESOLVED when dereferencing it
+- **FR-085**: A link field MUST be classified RESOLVED when dereferencing it
   in the target yields an object whose stable identifier equals the source
   referent's stable identifier, regardless of whether that target object was
   created by the current run or already existed in a freshly created target
   from the host's own project-creation template; this determination MUST be
   made by direct identifier comparison, never by assuming the referent must
   be something the current run created.
-- **FR-074**: A link field MUST be classified DANGLING when it is non-null
+- **FR-086**: A link field MUST be classified DANGLING when it is non-null
   but resolves to an object whose stable identifier does not match the
   source referent under either RESOLVED or RESOLVED-BY-EQUIVALENCE; DANGLING
   MUST always be treated as a hard failure, never as benign.
-- **FR-075**: A link field MUST be classified SILENTLY_UNSET when it is null
+- **FR-087**: A link field MUST be classified SILENTLY_UNSET when it is null
   or empty, the source field had a referent, and no drop or skip record
   exists for that specific owner/field/item combination in the run's
   report; SILENTLY_UNSET MUST be treated as a higher-severity finding than
   an accounted-for gap.
-- **FR-076**: A link field that is null or empty AND for which a matching
+- **FR-088**: A link field that is null or empty AND for which a matching
   drop or skip record DOES exist for that specific owner/field/item
   combination MUST be classified as a distinct, milder verdict,
   LOST-BUT-ACCOUNTED, and MUST NOT be conflated with SILENTLY_UNSET or with
   a clean pass.
-- **FR-077**: A link field re-pointing to a different, non-freshly-copied
+- **FR-089**: A link field re-pointing to a different, non-freshly-copied
   target object MUST still be classified RESOLVED (not a special verdict)
   when that target object is a catalog or seed entry that a freshly created
   target project ships with a fixed, well-known stable identifier equal to
   the source referent's identifier.
-- **FR-078**: A link field MUST be classified RESOLVED-BY-EQUIVALENCE only
+- **FR-090**: A link field MUST be classified RESOLVED-BY-EQUIVALENCE only
   for a class of object that carries no stable per-instance identifier at
   all (such as a custom field definition), using the same owner-and-name
   equivalence the transfer engine's own de-duplication logic already uses
   for that class; RESOLVED-BY-EQUIVALENCE MUST NOT be used as a fallback for
   any class that normally carries a stable identifier, and if it fires for
-  such a class, the comparator MUST log it as a bug signal rather than a
-  passing result.
+  such a class, the comparator MUST fail the project as a harness error and
+  name the class that fired it.
 
 **E.7 — Composition rule and the two accounting planes**
 
-- **FR-079**: Drop or skip records MUST be treated as corroborating detail
+- **FR-091**: Drop or skip records MUST be treated as corroborating detail
   only, never as the primary channel for detecting loss; the primary
   channel MUST be independent reconciliation of every source object against
   the target's actual state, because a drop record's deduplication identity
   can discard a second, different failure on the same owner/field/item,
   leaving a surviving record that may carry a stale reason.
-- **FR-080**: The drop or skip record's deduplication identity MUST be
+- **FR-092**: The drop or skip record's deduplication identity MUST be
   widened to include the failure reason, so that two distinct failures on
   the same owner/field/item are no longer collapsed into one record.
-- **FR-081**: The sweep MUST maintain two structurally separate accounting
+- **FR-093**: The sweep MUST maintain two structurally separate accounting
   planes: an object-level total-accounting plane, in which every source
   object in scope lands in exactly one bucket with zero unaccounted objects,
   and a link/field-level verdict plane, using the five verdicts of E.6;
@@ -687,69 +914,93 @@ into modules — that division is a `plan.md` concern, not a `spec.md` concern.
 *Each guard runs per project. A guard that cannot be evaluated is itself a
 failure, never a pass. Source: cycle1-qc.md, Section 2 (VG-01..VG-12).*
 
-- **FR-082 (BASELINE-DELTA)**: The sweep MUST verify that the first transfer
+- **FR-094 (BASELINE-DELTA)**: The sweep MUST verify that the first transfer
   produced a measurable, non-trivial change in the target: the set of newly
   present objects MUST be non-empty, every per-label count MUST be no lower
   after the first transfer than before it, at least one label MUST be
   strictly higher, and the count of new objects MUST be at least half the
   number of planned actions; failing any part of this is a VACUOUS result,
   meaning the run proved nothing.
-- **FR-083 (COMPARISONS-PERFORMED)**: For every enabled object category that
+- **FR-095 (COMPARISONS-PERFORMED)**: For every enabled object category that
   has at least one source object, the sweep MUST verify that at least one
   field comparison was actually performed and at least one object was
   actually compared; a category with source objects but zero comparisons
   performed is a VACUOUS result for that category.
-- **FR-084 (CATEGORY-COVERAGE)**: The sweep MUST verify that the set of
+- **FR-096 (CATEGORY-COVERAGE)**: The sweep MUST verify that the set of
   categories it measured covers the full set of enabled categories, and MUST
   record any excluded category explicitly; an enabled-but-unmeasured
   category is a COVERAGE_REDUCED result, not a silent gap.
-- **FR-085 (TOTAL-ACCOUNTING)**: The sweep MUST verify that every source
+- **FR-097 (TOTAL-ACCOUNTING)**: The sweep MUST verify that every source
   object's stable identifier, within scope, lands in exactly one of:
-  transferred with equal payload, already present, dropped-and-reported,
-  allowlisted, or explicitly out of scope; any source object landing in none
-  of these buckets is unexplained loss and MUST fail the run.
-- **FR-086 (IDEMPOTENCY-IN-WRITTEN-CLASSES)**: The sweep MUST measure
+  transferred with equal payload, already present with equal payload
+  independently verified (not identity alone), dropped-and-allowlisted
+  within a valid allowlist entry's cap, or explicitly out of scope; any
+  source object landing in none of these buckets — including an object
+  merely dropped-and-reported with no matching allowlist entry, and an
+  object merely present under a matching identity with no payload
+  comparison performed — is unexplained loss and MUST fail the run. Being
+  reported MUST NEVER be, by itself, an explanation for loss.
+- **FR-098 (EMPTY-CORROBORATION)**: A source category or collection that a
+  measurement reports as empty MUST be corroborated by an independent count
+  before the run may treat it as empty, and a collection that is absent or
+  null MUST be recorded as an outcome distinct from one that is present and
+  empty; an uncorroborated empty source measurement MUST fail the run.
+- **FR-099 (UNHANDLED-SUBTYPE)**: Every in-scope object or value whose
+  subtype or representation the comparator cannot handle MUST be recorded
+  under a named, counted outcome — either an enumerated not-applicable class
+  or a harness error — and MUST NEVER be reduced to an absent or empty value
+  that compares equal.
+- **FR-100 (IDEMPOTENCY-IN-WRITTEN-CLASSES)**: The sweep MUST measure
   first-versus-second-transfer idempotency over exactly the set of classes
-  the first transfer is observed to have written (per FR-034), and MUST
+  the first transfer is observed to have written (per FR-045), and MUST
   verify that no class in that set changed between the two censuses and
   that the second transfer added zero new objects; a hand-picked class list
   MUST NOT be substituted for this derived set.
-- **FR-087 (PLAN-CONSERVATION)**: The sweep MUST verify that the number of
+- **FR-101 (PLAN-CONSERVATION)**: The sweep MUST verify that the number of
   planned actions equals the number accounted for (added plus skipped)
   exactly, per category and in total, in both directions (neither more
   accounted for than planned nor fewer); any discrepancy is unexplained
   loss.
-- **FR-088 (NO-EXTRA)**: The sweep MUST verify that every object present in
+- **FR-102 (NO-EXTRA)**: The sweep MUST verify that every object present in
   the target after a run but absent before it is either traceable to a
   source object or explicitly allowlisted as an expected target-native
   addition; an unexplained new object under a fresh identity is unexplained
   loss.
-- **FR-089 (ACCESSOR-INTEGRITY)**: The sweep MUST verify that every
+- **FR-103 (ACCESSOR-INTEGRITY)**: The sweep MUST verify that every
   accessor it declares it will use to read counts or inventories actually
   resolves without error on every project it runs against, and that the
   counts of unreadable identifiers, unreadable names, enumeration failures,
   and skipped source objects are all zero; any accessor failure MUST abort
   that project's run as a harness error rather than being silently
   defaulted to an empty or zero value.
-- **FR-090 (NO-TRUNCATION)**: The sweep MUST verify that its durable
+- **FR-104 (HANDLE-INTEGRITY)**: The sweep MUST treat any failure to open,
+  reopen, close, or initialize a project handle or an auxiliary data
+  service that a measurement depends on as a harness error that aborts that
+  project's run, and MUST record the operation attempted together with the
+  failure's type and message; no measurement may be substituted with an
+  empty, zero, or default value in place of such a failure.
+- **FR-105 (NO-TRUNCATION)**: The sweep MUST verify that its durable
   artifact contains zero omitted drop-reason buckets and zero omitted
   detail rows; any truncation in the durable artifact (as opposed to a
   console summary) is itself a harness error.
-- **FR-091 (ARTIFACT-INTEGRITY)**: The sweep MUST verify that a complete
+- **FR-106 (ARTIFACT-INTEGRITY)**: The sweep MUST verify that a complete
   artifact was written for every project in the run's corpus, and that each
   artifact contains the driver's revision identity, the dependency's
   capability fingerprint, the baseline backup's identity, the effective
   diagnostic level, the set of excluded categories, and a complete guards
   block; a missing artifact for any corpus project is an INCOMPLETE result.
-- **FR-092 (NO-ENGINE-BUG-AS-LOSS)**: The sweep MUST verify that no drop
+- **FR-107 (NO-ENGINE-BUG-AS-LOSS)**: The sweep MUST verify that no drop
   reason matches the recognized set of engine-bug signatures (an underlying
   API-misuse or programming-error signal); any such match is unexplained
-  loss and MUST NOT be allowlistable under any circumstance.
-- **FR-093 (CLEAN-CLOSE)**: The sweep MUST verify that every project close,
+  loss and MUST NOT be allowlistable under any circumstance. The set of
+  drop-reason signatures that identify an engine bug MUST be an explicit,
+  version-tracked roster reviewed as source; an empty or implementer-chosen
+  set MUST NOT satisfy this requirement.
+- **FR-108 (CLEAN-CLOSE)**: The sweep MUST verify that every project close,
   before any subsequent reopen or census, completed without error or
   timeout; a close failure or timeout MUST invalidate every measurement that
   follows it for that project and MUST be reported as a harness error.
-- **FR-094 (Vacuity meta-rule)**: The sweep's artifact MUST carry a guards
+- **FR-109 (Vacuity meta-rule)**: The sweep's artifact MUST carry a guards
   block naming every one of the guards above with a pass, fail, or
   not-evaluated result; any not-evaluated result MUST be treated as
   VACUOUS; and a passing result whose guards block is missing any of the
@@ -772,17 +1023,22 @@ failure, never a pass. Source: cycle1-qc.md, Section 2 (VG-01..VG-12).*
 | Incomplete | The artifact-integrity guard failed — any corpus project not run, skipped, or without an artifact |
 | Allowlist invalid | An allowlist entry is malformed, expired, unowned, capless, over-broad, or stale |
 
-- **FR-095**: The sweep MUST assign exactly one of the ten verdicts above to
+- **FR-110**: The sweep MUST assign exactly one of the ten verdicts above to
   each project's run.
-- **FR-096**: The verdict formerly used by prior instruments to mean "loss
+- **FR-111**: The sweep MUST define and publish a single total ordering of
+  the verdicts in the table above from most to least severe, and MUST treat
+  exactly two of them — Clean pass, and Pass with allowlist — as reporting
+  success; every other verdict MUST report a distinct non-success status.
+- **FR-112**: The verdict formerly used by prior instruments to mean "loss
   occurred but is not itself a failure" MUST be retired; any loss MUST be
   either matched to a valid allowlist entry or classified as a failing
   verdict — there MUST be no verdict meaning "loss reported, review
   advisable, exit success."
-- **FR-097**: A corpus-level run's overall exit status MUST be computed as
-  the single most severe verdict across all of its per-project runs, never
-  the verdict of the last project run, nor of the first.
-- **FR-098**: A corpus run in which any single project's verdict is
+- **FR-113**: A corpus-level run's overall exit status MUST be computed as
+  the single most severe verdict across all of its per-project runs, per
+  the total severity ordering defined in FR-111, never the verdict of the
+  last project run, nor of the first.
+- **FR-114**: A corpus run in which any single project's verdict is
   incomplete MUST NOT report overall success, even if every project that did
   run reported a clean pass.
 
@@ -796,40 +1052,40 @@ the exact project(s), object class, and field name it applies to; an
 exact-match reason string; a hard maximum count; a first-observed date; an
 expiry date; and a written justification.
 
-- **FR-099**: The loss allowlist MUST be a git-tracked artifact, reviewed as
+- **FR-115**: The loss allowlist MUST be a git-tracked artifact, reviewed as
   source, containing one entry per accepted loss pattern, with all the
   fields listed above present on every entry.
-- **FR-100**: An allowlist entry's reason MUST be matched exactly against the
+- **FR-116**: An allowlist entry's reason MUST be matched exactly against the
   observed loss reason; wildcard or pattern-based matching of the reason MUST
   be forbidden, so that one entry cannot be stretched to cover two different
   failure modes.
-- **FR-101**: Every allowlist entry MUST declare a maximum count; an observed
+- **FR-117**: Every allowlist entry MUST declare a maximum count; an observed
   count exceeding that maximum MUST be treated as unexplained loss, not as a
   widened allowance.
-- **FR-102**: Every allowlist entry MUST declare an expiry date no more than
+- **FR-118**: Every allowlist entry MUST declare an expiry date no more than
   120 days after the date the loss was first observed; an expired entry MUST
   cause the run to fail rather than silently continue to pass, and renewing
   an entry MUST require an edit to the tracked file that a reviewer will
   see.
-- **FR-103**: Every allowlist entry MUST reference an open tracking issue;
+- **FR-119**: Every allowlist entry MUST reference an open tracking issue;
   the sweep MUST verify that the referenced issue is open at the time of the
   run, and a closed or missing issue MUST invalidate the entry.
-- **FR-104**: An allowlist entry that matches zero observed losses across two
+- **FR-120**: An allowlist entry that matches zero observed losses across two
   consecutive full-corpus runs MUST be flagged as stale and MUST invalidate
   the run rather than silently continuing to be honored, forcing its
   removal; an entry whose maximum count exceeds the observed count by more
-  than 25% across two consecutive runs MUST likewise be flagged for
-  tightening.
-- **FR-105**: A loss reason matching the recognized engine-bug signature set
+  than 25% across two consecutive runs MUST likewise invalidate the run
+  until the cap is tightened.
+- **FR-121**: A loss reason matching the recognized engine-bug signature set
   MUST NOT be allowlistable under any circumstance, regardless of how the
   entry is written.
-- **FR-106**: The total number of objects covered by allowlist entries for a
+- **FR-122**: The total number of objects covered by allowlist entries for a
   given project MUST NOT exceed 1% of that project's in-scope source
   objects, and the total number of allowlist entries MUST NOT exceed 25;
   exceeding either cap MUST invalidate the run, on the principle that the
   answer to excess loss is fixing the underlying defect, not growing the
   allowlist.
-- **FR-107**: Every allowlist entry actually consumed during a run MUST be
+- **FR-123**: Every allowlist entry actually consumed during a run MUST be
   echoed into that run's artifact together with its identifier, the count it
   matched, and its remaining headroom against its cap, so a passing result
   always discloses exactly what it forgave.
@@ -841,57 +1097,65 @@ changed in the transfer engine's dependency while its version string stayed
 fixed, so a version string alone cannot be trusted. Source: cycle1-qc.md,
 Section 4.*
 
-- **FR-108**: The sweep MUST perform a capability preflight check once at
+- **FR-124**: The sweep MUST perform a capability preflight check once at
   startup, before any restore or write is attempted; a preflight mismatch
   MUST cause the run to refuse to touch any project database.
-- **FR-109**: The preflight MUST compare the transfer engine's runtime
+- **FR-125**: The preflight MUST compare the transfer engine's runtime
   dependency against a pinned, git-tracked capability fingerprint by
   introspecting its actual behavior and interface shapes, not merely by
   reading a declared version string, because a breaking behavioral default
   can change in that dependency while its version string remains unchanged.
-- **FR-110**: The preflight MUST record the dependency's reported version,
-  its installation provenance (confirming it is not resolved from a stale
-  packaged copy), and its own revision identity, in every artifact.
-- **FR-111**: The preflight MUST verify the exact parameter names and
+- **FR-126**: The preflight MUST record the dependency's reported version,
+  its installation provenance, and its own revision identity, in every
+  artifact; a dependency resolved from a stale packaged copy rather than
+  the tracked working installation MUST fail the preflight.
+- **FR-127**: The preflight MUST verify the exact parameter names and
   default values of every interface the sweep depends on for opening and
   closing projects and for reading and writing syncable properties.
-- **FR-112**: The preflight MUST verify the presence of the
+- **FR-128**: The preflight MUST verify the presence of the
   identity-preserving object-creation surface the transfer engine's
   identity-preservation guarantee depends on, for every object-creation
   operation the sweep exercises; a missing capability here MUST fail loudly
   at preflight rather than surface later as a laundered, generic creation
   failure.
-- **FR-113**: The preflight MUST verify that every accessor the sweep's
+- **FR-129**: The preflight MUST verify that every accessor the sweep's
   count and inventory layers depend on resolves by name on a real, opened,
   read-only project handle; an unresolvable accessor MUST fail the
   preflight.
-- **FR-114**: The preflight MUST verify the presence of every override the
+- **FR-130**: The preflight MUST verify the presence of every override the
   project's own documented per-category syncable-properties surface
   requires for indexer visibility.
-- **FR-115**: On a preflight mismatch, the sweep MUST emit a field-by-field
+- **FR-131**: On a preflight mismatch, the sweep MUST emit a field-by-field
   difference report — naming the symbol, its expected value, its actual
   value, and whether it is missing, added, changed, or renamed — to both the
   console and a durable artifact, and MUST exit without attempting any
   restore or write.
-- **FR-116**: The sweep MUST NOT degrade its preflight check into a "best
+- **FR-132**: The sweep MUST NOT degrade its preflight check into a "best
   effort, survive drift" posture; any capability drift MUST be treated as a
   finding requiring a deliberate, recorded update to the pinned expectation,
   never silently tolerated.
+- **FR-133**: The sweep MUST NOT select a measurement or access path at
+  runtime according to whether a dependency capability is present; every
+  such capability MUST be pinned by the preflight, and its absence MUST
+  fail the preflight rather than divert the sweep to an alternate path.
 
 ### J. Coverage
 
-- **FR-117**: The stem-allomorph object category MUST be enabled for at
+- **FR-134**: The stem-allomorph object category MUST be enabled for at
   least one full corpus pass; the sweep MUST NOT inherit an existing
   narrower harness's default exclusion of this category unexamined, because
   that exclusion exists to serve a different, narrower goal, not because
   transferring this category is known to be unsafe.
-- **FR-118**: Any category excluded from a given run MUST be an explicit,
+- **FR-135**: Any category excluded from a given run MUST be an explicit,
   recorded field on that run's artifact; it MUST NOT be expressed as an
   invisible default argument that a reader of the results cannot see.
-- **FR-119**: A run's artifact and report MUST NOT allow a reader to mistake
+- **FR-136**: A run's artifact and report MUST NOT allow a reader to mistake
   "zero mismatches observed in category X" for "category X passed"; if a
-  category was never attempted, the artifact MUST say so plainly.
-- **FR-120**: A run performed with any category excluded from coverage MUST
+  category was never attempted, the artifact MUST say so plainly. The
+  artifact MUST report "attempted and clean" and "never attempted" as
+  distinct, separately counted states, never collapsed into a single zero-
+  mismatch figure.
+- **FR-137**: A run performed with any category excluded from coverage MUST
   NOT report the same success status as a full-coverage run; a
   reduced-coverage run is permitted to be performed, but MUST report using a
   status distinct from and never equivalent to full success, and this
@@ -900,31 +1164,53 @@ Section 4.*
 
 ### K. Artifact and provenance
 
-- **FR-121**: Every artifact MUST record the sweep driver's own
+- **FR-138**: Every artifact MUST record the sweep driver's own
   source-revision identity together with a flag indicating whether the
-  driver's working tree had uncommitted changes at the time of the run.
-- **FR-122**: Every artifact MUST record the transfer engine dependency's
+  driver's working tree had uncommitted changes at the time of the run; a
+  result earned with a dirty working tree MUST NOT count toward the uniform
+  final sweep.
+- **FR-139**: Every artifact MUST record the transfer engine dependency's
   capability fingerprint (per Section I).
-- **FR-123**: Every artifact MUST record the identity (a content hash, not
+- **FR-140**: Every artifact MUST record the identity (a content hash, not
   merely a filename) of the baseline backup used to restore the target for
   that run.
-- **FR-124**: Every artifact MUST record the effective diagnostic/logging
+- **FR-141**: Every artifact MUST record the effective diagnostic/logging
   level actually used for that run, not merely the level requested, so a
-  level silently defaulted differently than intended is visible.
-- **FR-125**: Every artifact MUST record the set of categories excluded from
+  level silently defaulted differently than intended is visible; a run
+  whose effective level is below the level its guards require MUST report
+  as vacuous.
+- **FR-142**: Every artifact MUST record the set of categories excluded from
   that run's coverage (per Section J).
-- **FR-126**: Every artifact MUST record the full guards block described in
+- **FR-143**: Every artifact MUST record the full guards block described in
   Section F.
-- **FR-127**: No durable artifact may truncate any list of findings, drop
+- **FR-144**: No durable artifact may truncate any list of findings, drop
   buckets, or detail rows; truncation is permitted only in a console
   summary, and any such console truncation MUST explicitly state how many
   additional items were omitted.
-- **FR-128**: The sweep MUST flush its artifact to durable storage after
+- **FR-145**: Every recorded finding MUST carry the concrete source value,
+  the concrete target value, and the actual class, category, and field it
+  concerns; a finding whose evidence or label fields are empty, placeholder,
+  or identical regardless of subject MUST itself fail the run.
+- **FR-146**: Every failure, drop, and finding record MUST name the phase
+  of the project's run in which it arose, so that a failure in one phase is
+  never reported as an undifferentiated whole-project failure.
+- **FR-147**: When unexplained extra objects and unaccounted source objects
+  both occur within the same class in one run, the artifact MUST name it as
+  an identity-regeneration finding and report both counts, whether or not
+  the counts are equal.
+- **FR-148**: No datum that contributes to a verdict may reach its reader
+  only through a channel whose failure the sweep tolerates; every such
+  datum MUST also be present in the durable artifact.
+- **FR-149**: The sweep's own code, and every roster, allowlist, capability
+  expectation, and ledger its verdict depends on, MUST be under version
+  control and MUST NOT be excluded by any ignore rule; a verdict produced
+  by an untracked driver MUST NOT be admissible evidence.
+- **FR-150**: The sweep MUST flush its artifact to durable storage after
   every phase of a project's run (restore, first transfer, first census,
   second transfer, second census, final restore), so a crash mid-run leaves
   a partial artifact recording the last completed phase rather than no
   evidence at all.
-- **FR-129**: A project's or a corpus's status MUST be derived solely from
+- **FR-151**: A project's or a corpus's status MUST be derived solely from
   the presence and content of its artifact(s); a status MUST NEVER be
   hand-set in a manifest or ledger independent of the artifact that is
   supposed to justify it.
@@ -934,43 +1220,43 @@ Section 4.*
 *Decided after the cycle-1 domain/QC/explore reports were authored; appears
 in none of them.*
 
-- **FR-130**: The sweep MUST NOT run its full corpus in a single
+- **FR-152**: The sweep MUST NOT run its full corpus in a single
   uninterrupted pass; projects MUST be admitted in batches of 3 to 5
   projects run concurrently.
-- **FR-131**: After each batch completes, the run MUST stop for analysis
+- **FR-153**: After each batch completes, the run MUST stop for analysis
   before any further batch is admitted.
-- **FR-132**: Only the projects that failed within a completed batch MUST be
+- **FR-154**: Only the projects that failed within a completed batch MUST be
   re-run after a fix is applied; projects that already passed within that
   batch MUST NOT be re-run as part of that fix-forward cycle, except for the
-  canary (FR-137).
-- **FR-133**: A batch MUST NOT be considered complete, and the next batch
+  canary (FR-159).
+- **FR-155**: A batch MUST NOT be considered complete, and the next batch
   MUST NOT be admitted, until every project in the current batch has reached
   a passing verdict at the current code and dependency revision.
-- **FR-134**: The sweep MUST maintain a durable, per-project status ledger
+- **FR-156**: The sweep MUST maintain a durable, per-project status ledger
   recording, for every project in the corpus, one of: pending, running,
   passed, failed with a reason, or skipped with a reason; this ledger MUST
   be a tracked artifact, not a file excluded from version control.
-- **FR-135**: Every per-project result MUST be stamped with both the
+- **FR-157**: Every per-project result MUST be stamped with both the
   driver's source-revision identity and the transfer engine dependency's
   revision identity (not merely its version string, which cannot be trusted
   to reflect every behavioral change); a result stamped with a revision pair
   that is not the current revision pair MUST be reported as STALE, never as
   a currently valid pass.
-- **FR-136**: A corpus-level claim of full success MUST be admissible only
+- **FR-158**: A corpus-level claim of full success MUST be admissible only
   when every project's passing result carries the same, current
   driver-and-dependency revision pair; if any project's pass predates the
   current revision pair, the report MUST state the count of currently-valid
   passes separately from the count of stale passes, and MUST NOT report a
   single unqualified "all green."
-- **FR-137**: One small, known-good project MUST be re-run as a canary in
+- **FR-159**: One small, known-good project MUST be re-run as a canary in
   every batch, regardless of that project's existing ledger status, so a fix
   which regresses previously passing behavior is caught within the batch it
   was introduced in rather than only at the end of the full corpus.
-- **FR-138**: The first batch's composition MUST be the three pilot
+- **FR-160**: The first batch's composition MUST be the three pilot
   projects with prior recorded historical results ("Ejagham Mini",
   "Esperanto", "Mbugwe LizzieHC practice"), to give a direct before-and-after
   comparison against those historical numbers.
-- **FR-139**: The first batch's acceptance criterion MUST include that two
+- **FR-161**: The first batch's acceptance criterion MUST include that two
   specific, previously dominant drop-reason classes measure exactly zero
   (historically "Segment/alignment token had no copied target referent," at
   27,844 occurrences, and "paragraph create failed" due to a parameter
@@ -983,66 +1269,187 @@ in none of them.*
   failure, 1 — 160 in total); the sweep MUST be framed, for this batch, as a
   confirmation run against that named residual list rather than an
   open-ended search for unknown loss.
-- **FR-140**: The sweep's field-level link census MUST settle, with an
+- **FR-162**: The sweep's field-level link census MUST settle, with an
   actual measured answer rather than an assumed one, whether a diverged
   shared/default item that the engine reports as a decision to link the
   existing item and merely report the divergence in fact resolves correctly
   in the target or is left silently unset; this question MUST be
   adjudicated by measurement, not asserted as already known.
 
-*The stamping requirement of FR-135/FR-136 alone would force a full
+*The stamping requirement of FR-157/FR-158 alone would force a full
 corpus re-run after every single fix, which makes the batched fix-forward
 loop of this section non-convergent against an 82-project corpus. The
 following requirements define the only two mechanisms permitted to narrow
 that re-run scope, and the one requirement that keeps the narrowing safe.*
 
-- **FR-141 (SCOPE-BASED INVALIDATION)**: A code fix MUST be permitted to
+- **FR-163 (SCOPE-BASED INVALIDATION)**: A code fix MUST be permitted to
   invalidate only those projects whose recorded census actually exercised
   the code path the fix changed, rather than the entire corpus, PROVIDED
-  the affected scope is derived per FR-142; the per-project census's own
+  the affected scope is derived per FR-164; the per-project census's own
   record of which classes and categories it exercised MUST be usable as
   the invalidation index for this purpose.
-- **FR-142 (mechanical scope derivation)**: The affected-scope set for a
+- **FR-164 (mechanical scope derivation)**: The affected-scope set for a
   given code change MUST be derived mechanically — from the changed file,
   to its transitive importers, to the set of object categories whose
   transfer path includes at least one of those importers — and MUST NEVER
   be derived from a human's or an agent's judgement about what a change
   "probably" affects.
-- **FR-143 (conservative default, fail closed)**: Unless the affected scope
-  of FR-142 can be proven narrow by the mechanical derivation, the change
+- **FR-165 (conservative default, fail closed)**: Unless the affected scope
+  of FR-164 can be proven narrow by the mechanical derivation, the change
   MUST invalidate the ENTIRE corpus, with no argument or override available;
   any change touching shared infrastructure MUST invalidate every project's
   recorded pass. A scoping derivation that cannot prove narrowness MUST fail
   closed (invalidate all projects), never fail open (invalidate nothing or
   only a guessed subset).
-- **FR-144 (uniform final run gates the claim)**: Scope-based invalidation
-  (FR-141) is an optimization for deciding what to RE-RUN between batches,
+- **FR-166 (uniform final run gates the claim)**: Scope-based invalidation
+  (FR-163) is an optimization for deciding what to RE-RUN between batches,
   and MUST NOT itself be treated as sufficient evidence of corpus-wide
   fidelity; a corpus-level claim of engine fidelity MUST be admissible only
   on the evidence of one clean full sweep in which every project in the
   corpus passed at the same frozen driver-and-dependency revision pair.
   Partial evidence assembled by combining passing results earned across
   different revisions, however green each individually appears, MUST NOT
-  satisfy this claim. This is what makes FR-141's optimization safe: a
+  satisfy this claim. This is what makes FR-163's optimization safe: a
   mis-scoped derivation can cost extra re-run time but can never corrupt the
   final corpus-wide claim, because that claim depends only on the one
   uniform final sweep, not on the accumulated scoped re-runs.
-- **FR-145 (dependency freeze during a sweep)**: The transfer engine
+- **FR-167 (dependency freeze during a sweep)**: The transfer engine
   dependency's revision MUST be pinned for the entire duration of a sweep
-  (from the first batch through the uniform final run of FR-144); any
+  (from the first batch through the uniform final run of FR-166); any
   change to that dependency's revision during a sweep MUST be treated as a
   full-corpus invalidation event, because that dependency has already been
   observed to change a breaking behavioral default while its version string
   remained unchanged (Section I), so drift at this layer is demonstrated,
   not hypothetical.
-- **FR-146 (corpus ordering by category diversity)**: Projects MUST be
+- **FR-168 (corpus ordering by category diversity)**: Projects MUST be
   admitted in an order that maximizes distinct object-category coverage as
   early as possible in the corpus, so that defects surface against the
-  fewest projects and the scope-based invalidation of FR-141 has the most
+  fewest projects and the scope-based invalidation of FR-163 has the most
   opportunity to pay off across the long tail of remaining batches. The
-  first batch as already specified in FR-138 satisfies this ordering
+  first batch as already specified in FR-160 satisfies this ordering
   principle: between its three pilot projects, they already span texts,
   phonology, ad-hoc rules, and custom writing-system lists.
+
+### M. Baseline provenance and containment
+
+*This group exists separately from Group B because the failure modes here
+are not defeated by any project-name check: they concern where written
+bytes land during a restore, and what the restored bytes actually are, both
+orthogonal to which name may be written (Group B) and to who writes when
+(Group C). Folding them into either of those groups would hide that a
+perfect name guard still leaves them wide open.*
+
+- **FR-169**: Every item written during a restore MUST be proven, from its
+  fully resolved destination, to lie beneath the destination project's own
+  fully resolved directory, and any item that does not MUST abort the
+  restore before any byte is written. This check MUST be independent of the
+  destination name check: the destination of an individual restored item is
+  derived from the archive's own contents, so archive-controlled relative or
+  absolute components can direct a write outside the destination while
+  every name assertion passes.
+- **FR-170**: The baseline archive used to restore a disposable target MUST
+  be identified explicitly and pinned by content hash by the caller. The
+  sweep MUST NEVER select a baseline by recency, by directory scan, or by
+  any other implicit rule, because an archiving step that runs before a
+  sweep begins could otherwise silently repoint a recency-based default at a
+  real project's archive, after which the restore would succeed, the
+  destination would be renamed to the disposable target's name, and every
+  subsequent fidelity comparison would run against a secret clone of a real
+  project.
+- **FR-171**: Before a restore removes anything, the sweep MUST assert that
+  the pinned baseline contains exactly one top-level data file, that its
+  name corresponds either to the declared destination or to a separately
+  declared expected baseline identity, and that no item in the baseline
+  carries an absolute or parent-relative destination. A mismatch MUST abort
+  before the first removal.
+- **FR-172**: A completed restore MUST leave durable evidence recording the
+  pinned baseline's content hash, the destination name, and the identity of
+  the process that performed it. A subsequent iteration MUST either find
+  and validate that evidence or restore unconditionally. Inferring that a
+  destination is usable because its directory exists is forbidden: a
+  worker killed mid-restore leaves a directory that exists and is rubble,
+  and a resumed sweep that skips the restore would then report fidelity
+  results computed against rubble. Recovery MUST be idempotent per project —
+  always restore first, never resume mid-transfer.
+- **FR-173**: After a restore, the set of files present beneath the
+  destination MUST equal the pinned baseline's contents plus the restore
+  evidence of FR-172. Where residue is deliberately tolerated, the tolerated
+  set MUST be declared and the observed residue delta MUST be recorded in
+  that project's own artifact; it MUST NOT be ignored, because a restore
+  that leaves unrelated directories in place lets one project's linked
+  assets, temporary files, and orphaned evidence leak into the next
+  project's baseline, silently contaminating the next project's "before"
+  state.
+- **FR-174**: Before any action that copies assets or configuration into a
+  destination, the sweep MUST assert that the destination's resolved
+  linked-files location, and the resolved location of any configuration
+  directory it writes into, lie beneath that destination project's own
+  directory. Those locations are read from the restored data file, and a
+  baseline restored under a new name can carry an absolute location
+  pointing at the project it was archived from — so assets and
+  configuration files would be added into a real project. Because such
+  writes are additive, a data-file-only fingerprint can never detect them,
+  which makes this pre-write assertion the only available defense.
+
+### N. Failure taxonomy and abort scope
+
+*Groups B, C, and M each say what MUST be asserted; this group says what an
+assertion failing means, so that a tripped safety assertion is never
+conflated with an ordinary per-project failure or with a resource
+shortfall.*
+
+- **FR-175**: A tripped write-safety, containment, provenance, or
+  pool-integrity assertion MUST abort the entire run, including every
+  sibling worker, signalled through a shared mechanism the workers check
+  between projects; the aborting worker's destination MUST be left
+  untouched for inspection. Every such assertion fires only when the
+  sweep's model of the machine is wrong — a mis-assigned destination, a
+  shared destination, a redirected root, a mismatched baseline — never
+  because of a project-specific data quirk, and continuing bets that the
+  defect is scoped to the project that tripped it when it is not: if one
+  worker's pairing is wrong, its siblings' pairings are wrong too.
+- **FR-176**: A per-project transfer failure — a host exception, a timeout,
+  a migration — MUST be recorded as that project's terminal verdict and the
+  run MUST continue. The distinction between "a safety assertion tripped"
+  and "a project failed" MUST be carried by a structured, machine-checkable
+  failure identity, never by matching message text.
+- **FR-177**: A memory-headroom shortfall MUST cause the sweep to degrade —
+  wait for headroom, or admit fewer workers than configured — and MUST be
+  reported distinctly from a tripped safety assertion; the two MUST NOT
+  share a failure identity or an error path. A shortfall means the machine
+  is busy, which is expected and recoverable; a tripped assertion means the
+  sweep's model of the machine is wrong, which is not. Routing a shortfall
+  through the pool-abort path trains operators to expect aborts and restart
+  through them, which is precisely how a real assertion gets ignored;
+  routing an assertion through the degrade path lets a destructive
+  mis-assignment be retried.
+
+### O. Negative controls
+
+*Groups F, B, C, M, N, and E's distortion classes each define a guard,
+assertion, or detector; none of them, on its own, requires that guard to be
+demonstrated capable of failing. Four retired instruments reported success
+over 29,211 dropped items precisely because their guards were wired to
+conditions indistinguishable, in a passing run, from a guard that genuinely
+passed. This group closes that gap.*
+
+- **FR-178**: Every vacuity guard (Section F), every write-safety,
+  containment, and pool-integrity assertion (Sections B, C, M, N), and every
+  distortion or loss detector (Section E) MUST be demonstrated capable of
+  failing before any run relying on it is admissible as passing evidence.
+- **FR-179**: For each guard, assertion, or detector class named in FR-178,
+  at least one deliberately seeded defect matching that class MUST be run
+  through the sweep and MUST be shown to produce the specific failing
+  verdict or refusal that class exists to produce.
+- **FR-180**: The demonstration required by FR-179 MUST be a recorded,
+  durable artifact, never an unrecorded claim or a one-time manual check; a
+  guard, assertion, or detector whose negative-control demonstration is
+  missing, stale, or superseded by a later change to that guard MUST be
+  treated as not-evaluated, and therefore VACUOUS per Section F, until it is
+  re-demonstrated.
+- **FR-181**: A guard, assertion, or detector that cannot be made to fail by
+  any constructible seeded defect MUST itself be treated as a defect in the
+  sweep, never as evidence of an unusually robust implementation.
 
 ## Key Entities *(include if feature involves data)*
 
@@ -1076,7 +1483,7 @@ that re-run scope, and the one requirement that keeps the narrowing safe.*
   rationale.
 - **Drop/Skip Record**: the engine's own account of a value it deliberately
   did not carry across. Attributes: owner, field, item, reason (identity
-  widened per FR-080 to include reason).
+  widened per FR-092 to include reason).
 - **Guard Result**: the pass/fail/not-evaluated outcome of one named vacuity
   guard (Section F) for one project's run.
 - **Verdict**: the single classification (Section G) assigned to a
@@ -1093,10 +1500,10 @@ that re-run scope, and the one requirement that keeps the narrowing safe.*
 - **Affected-Scope Derivation**: the mechanically computed set of object
   categories a given code change can invalidate, derived from the changed
   file's transitive importers; a derivation that cannot prove a narrow
-  scope defaults to the whole corpus (FR-141 through FR-143).
+  scope defaults to the whole corpus (FR-163 through FR-165).
 - **Uniform Final Sweep**: the one clean full-corpus run, with every
   project passing at the same frozen revision pair, that alone is
-  admissible as evidence of corpus-wide fidelity (FR-144).
+  admissible as evidence of corpus-wide fidelity (FR-166).
 
 ## Success Criteria *(mandatory)*
 
@@ -1154,7 +1561,7 @@ that re-run scope, and the one requirement that keeps the narrowing safe.*
   `tasks.md` are separate artifacts and are explicitly out of scope here;
   no implementation shape, API call sequence, class name, or file layout
   belongs in this document.
-- The live concurrency trial gating FR-027 (whether the host database
+- The live concurrency trial gating FR-032 (whether the host database
   service serializes concurrent LCM opens) is deferred to a dedicated task
   in `tasks.md`; this specification defines the gate, not the trial's
   result.
@@ -1174,19 +1581,22 @@ that re-run scope, and the one requirement that keeps the narrowing safe.*
 1. **Does the host FieldWorks database service serialize concurrent LCM
    opens?** This gates whether a worker count greater than 1 (Section C) is
    ever safe to enable; currently unmeasured.
-2. **What is memory consumption per worker process, as a function of source
-   project size?** Needed to make the memory-aware scheduling of FR-024/
-   FR-025 concrete rather than qualitative; currently only the on-disk data-
-   file sizes are known, and the relationship between disk size and open-
-   project memory footprint has not been measured.
-3. **What is the actual field-census cost over the full corpus?** The
-   current runtime budget (Section C, FR-031/FR-032) is built from a
-   3-project sample and a reasoned-but-unmeasured per-object field-read cost;
-   a full-corpus measurement is needed before the batch schedule (Section L)
-   can be planned with confidence.
-4. **Does a diverged shared/default item's reported "link the existing item,
+2. **Is there any project in the corpus whose field census is
+   pathologically expensive?** The per-object field-read cost is no longer
+   unmeasured: a full per-field census over the most populous class found
+   on a live project completed roughly 2,500 field reads in about 0.1 s,
+   which is negligible beside a per-project cost dominated by project open
+   and transfer. What remains open is only whether some project — most
+   plausibly the largest in the corpus — exhibits an object-count or
+   class-shape that breaks that linearity. Confirming this requires a
+   census run against the corpus's largest project, not a full-corpus
+   timing study. Independently of the answer, every per-project artifact
+   MUST record that project's own census cost alongside its open and
+   transfer costs, so a pathological case is detected by the sweep in
+   flight rather than by a prior study.
+3. **Does a diverged shared/default item's reported "link the existing item,
    report the divergence" decision actually leave the target link resolved,
-   or does it leave the field silently unset?** This is FR-140; it accounts
+   or does it leave the field silently unset?** This is FR-162; it accounts
    for 109 of the 160 residual records in the historical pilot data and is
    the highest-value single question the field-level link census must
    settle.
@@ -1231,6 +1641,32 @@ the four retired instruments can survive into the replacement by omission.
   repository for historical comparison; whether they are deleted, archived,
   or left in place is an implementation decision for `plan.md`, not a
   concern of this specification.
+- The disposable write destination is restored from an explicitly pinned,
+  hash-identified baseline archive supplied by the caller; the sweep does
+  not discover a baseline on its own, and a run that cannot name and hash
+  its baseline does not start.
+- Whether a read-only open of a project with sharing enabled can itself
+  write to that project on disk is currently unmeasured; the sweep does not
+  exclude such sources while that measurement is pending, and instead
+  relies on the fingerprint requirement to detect and report any such write,
+  per the run-and-detect policy of Section B.
+- Per-worker memory consumption has been measured live: three projects
+  opened one-per-subprocess and strictly sequentially showed peak working
+  sets of roughly 185 MB and 187 MB for two small data files (about 11 MB
+  each) and roughly 499 MB for one larger data file (about 180 MB). The
+  sweep therefore models a per-worker footprint as a roughly fixed floor
+  near 190 MB plus roughly 1.9 MB per additional MB of data file. This
+  slope is PROVISIONAL: it is a one-point regression from a single large
+  project. It is adequate for an admission check with a reserve, and
+  inadequate as a precise budget; every run must record observed peak
+  per-worker memory, and the admission check must prefer observed actuals
+  to the model once they exist. These numbers were measured with never more
+  than one project open at a time and are not a concurrency-safety claim.
+- A source may carry a lock file recorded against a process that is no
+  longer running; a prior live measurement observed exactly this condition
+  and observed that a read-only open of that source succeeded regardless.
+  The sweep therefore records such locks on sources and never attempts to
+  repair them.
 
 ## Dependencies
 
@@ -1238,12 +1674,22 @@ the four retired instruments can survive into the replacement by omission.
   selection surface.
 - The existing restore-from-backup mechanism for the disposable write
   target.
-- The existing source/target project discovery and enumeration logic.
+- The existing source/target project discovery and enumeration logic, and
+  the single projects-location authority that the host data layer itself
+  uses when resolving a project by name. This specification depends on
+  those two being the same authority; if they are not, that divergence is a
+  defect this feature's write-safety group requires be fixed or refused,
+  not worked around.
 - The transfer engine's runtime dependency, at whatever revision the
   capability preflight (Section I) pins.
 - Git, as the tracking and review mechanism for the EXPECTED_DIVERGENT
   roster, the loss allowlist, the capability fingerprint, and the per-project
   status ledger.
-- **Governance/process dependency**: resolution of the open questions in
-  the section above before the worker count is raised past its default of 1,
-  and before the batch schedule for the full 82-project corpus is finalized.
+- **Governance/process dependency**: resolution of the remaining open
+  questions above before the worker count is raised past its default of 1,
+  and before the batch schedule for the full corpus is finalized. The
+  memory question is answered but its slope is provisional; the
+  concurrency-serialization question is unanswered and is a hard gate.
+- An operating-system facility for an atomic exclusive claim, on which the
+  no-shared-destination guarantee depends. The guarantee is not satisfiable
+  by assignment discipline within the sweep alone.
