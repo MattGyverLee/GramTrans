@@ -2384,9 +2384,11 @@ def _phon_is_empty(obj, *, phoneme: bool, category=None) -> bool:
     """True when a phonology item has no syncable content AND no linked/child
     objects — i.e. it would carry nothing forward on transfer.
 
-    Such items — typically dangling phonemes left behind by a BasicIPAInfo
-    catalog import (observed as 32 unreferenced empties in the Ejagham Full
-    GT-Test target) — are silently skipped from the inventory. 'Content' is
+    Such items are silently skipped from the inventory. The motivating case is
+    dangling phonemes left behind by a BasicIPAInfo catalog import
+    (historically ~32 unreferenced empties on the Ejagham Full GT-Test target;
+    no longer reproducible in current live data, so this path is exercised by a
+    synthetic unit test rather than by any live fixture). 'Content' is
     category-specific, since each category's syncable/linked fields differ:
 
       * PHONOLOGICAL_RULES — always retained. A rule's content is its
@@ -2402,6 +2404,11 @@ def _phon_is_empty(obj, *, phoneme: bool, category=None) -> bool:
         feature-structure object.
       * PHONOLOGICAL_FEATURES — Name OR a non-empty ValuesOC.
       * anything else / unknown category — Name only (legacy fallback).
+
+    Note: an object-valued link (FeaturesOA) counts as content by PRESENCE
+    (`is not None`), not by inspecting its inner specs — an empty-but-present
+    feature structure keeps the item, which is the conservative choice (never
+    silently drop something FLEx bothered to allocate a structure for).
     """
     if category == GrammarCategory.PHONOLOGICAL_RULES:
         return False
