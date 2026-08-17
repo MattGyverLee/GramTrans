@@ -197,8 +197,24 @@ def stamp_buildinfo(info: Dict[str, str]) -> None:
 
 def freeze(targets: List[str]) -> None:
     for path in (DIST, WORK):
-        if path.exists():
+        if not path.exists():
+            continue
+        try:
             shutil.rmtree(path)
+        except PermissionError as exc:
+            # Almost always a previously built artifact still running: the
+            # onefile bootloader holds its unpacked temp tree, and flextoolslib
+            # writes `flextools.log` into the working directory, which for a
+            # double-clicked artifact is `dist\` itself. The raw traceback
+            # names shutil and a log file, so it reads as a build bug rather
+            # than "close the application you left open" -- which is the entire
+            # fix, and takes two seconds once you know.
+            raise SystemExit(
+                f"[FAIL] cannot clear {path}: {exc.filename or path} is in use.\n"
+                "       A previously built GramTrans is probably still running. "
+                "Close it and build again.\n"
+                "       Check with:  Get-Process GramTrans*, GramTrans-portable*"
+            ) from exc
     cmd = [
         str(venv_python()), "-m", "PyInstaller", str(SPEC),
         "--noconfirm",
