@@ -104,6 +104,13 @@ class FieldDiff:
     the field renders flush-left with no header (entry-level scalars).  The
     renderer emits one bold header row per contiguous run of a non-empty
     ``group`` value, then indents that run's fields beneath it.
+
+    ``multiline`` (new, spec-036 FR-033): the field's source value was a
+    sequence (``list``/``tuple``/``set``/``frozenset``), so the renderer puts
+    each entry on its own line instead of running them together.  Defaults
+    ``False`` and is appended LAST on purpose: this module is on the transfer
+    path, and FR-045 requires every pre-existing construction -- and every
+    scalar field -- to behave and render byte-identically to before.
     """
 
     field_name: str
@@ -112,6 +119,7 @@ class FieldDiff:
     display_name: str = ""
     sort_key: tuple = ()
     group: str = ""
+    multiline: bool = False
 
 
 @dataclass(frozen=True)
@@ -156,6 +164,27 @@ _SET_TYPES = (list, tuple, set, frozenset)
 def _is_empty_ms_value(v: Any) -> bool:
     """Return True if a multistring value is absent or empty-string."""
     return v is None or (isinstance(v, str) and v == "")
+
+
+def _is_sequence_value(v: Any) -> bool:
+    """Return True for a list/tuple/set/frozenset value (spec-036 FR-033).
+
+    Drives ``FieldDiff.multiline``.  A ``str`` is deliberately NOT a sequence
+    here: a plain string is a scalar field and must keep rendering on one line
+    (FR-045).
+    """
+    return isinstance(v, _SET_TYPES)
+
+
+#: Note text for a list-valued field that has no entries (spec-036 FR-036).
+#: An empty list used to render as a dropped key or a blank value, which an
+#: operator cannot distinguish from "not read" -- so say it out loud.
+_EMPTY_LIST_NOTE = "(none)"
+
+
+def _empty_list_segments() -> list[DiffSegment]:
+    """The single explicit-empty segment for a list-valued field (FR-036)."""
+    return [DiffSegment(text=_EMPTY_LIST_NOTE, kind=SegmentKind.NOTE, ws_role=None)]
 
 
 def _segments_for_overwrite_ms(
@@ -315,16 +344,31 @@ def _ws_dict_to_segments(
 
 
 def _added_segments(val: Any, ws_role_of: Callable[[str], WsRole | None]) -> list[DiffSegment]:
-    """Convert any value into all-added segments (NEW mode, or source-only)."""
+    """Convert any value into all-added segments (NEW mode, or source-only).
+
+    Sequence members use ``str(item)``, NOT ``repr(item)`` (FR-033/FR-034): a
+    member is a language form, and ``repr`` wraps it in quotes it does not own
+    and may escape an interior quote.  An apostrophe inside a form is a glottal
+    stop, an ejective mark or an orthographic apostrophe -- data, never quoting.
+    Non-sequence values keep ``repr`` so scalar fields stay byte-identical
+    (FR-045).
+    """
     if isinstance(val, dict):
         return _ws_dict_to_segments(val, SegmentKind.ADDED, ws_role_of)
     if isinstance(val, (list, tuple, set, frozenset)):
-        return [DiffSegment(text=repr(item), kind=SegmentKind.ADDED, ws_role=None) for item in val]
+        if not val:
+            return _empty_list_segments()          # FR-036
+        return [DiffSegment(text=str(item), kind=SegmentKind.ADDED, ws_role=None) for item in val]
     return [DiffSegment(text=repr(val), kind=SegmentKind.ADDED, ws_role=None)]
 
 
 def _segments_for_sequence(src_seq: list[Any], tgt_seq: list[Any]) -> list[DiffSegment]:
-    """Union of two sequences: common unchanged, src-only added, tgt-only unchanged."""
+    """Union of two sequences: common unchanged, src-only added, tgt-only unchanged.
+
+    Members render with ``str(item)`` -- see ``_added_segments`` for why ``repr``
+    is wrong for a language form (FR-033, FR-034).  An empty union is reported
+    explicitly rather than as a blank field (FR-036).
+    """
     segs: list[DiffSegment] = []
     # Determine membership using hashability check with linear fallback.
     try:
@@ -338,13 +382,15 @@ def _segments_for_sequence(src_seq: list[Any], tgt_seq: list[Any]) -> list[DiffS
     for item in src_seq:
         in_tgt = item in tgt_set if hashable else item in tgt_seq
         kind = SegmentKind.UNCHANGED if in_tgt else SegmentKind.ADDED
-        segs.append(DiffSegment(text=repr(item), kind=kind, ws_role=None))
+        segs.append(DiffSegment(text=str(item), kind=kind, ws_role=None))
 
     for item in tgt_seq:
         in_src = item in src_set if hashable else item in src_seq
         if not in_src:
-            segs.append(DiffSegment(text=repr(item), kind=SegmentKind.UNCHANGED, ws_role=None))
+            segs.append(DiffSegment(text=str(item), kind=SegmentKind.UNCHANGED, ws_role=None))
 
+    if not segs:
+        return _empty_list_segments()              # FR-036: both sides empty
     return segs
 
 
@@ -392,7 +438,15 @@ def diff_props(
         """Build a FieldDiff, stamping meta if present.
 
         Meta entries are ``(display_name, sort_key, indent, group)``.
+
+        ``multiline`` is derived here, once, from the SOURCE value's shape
+        (FR-033): a sequence-valued field renders one entry per line.  Keying
+        off ``src_props`` rather than the emitted segments keeps the flag a
+        property of the data, not of the diff outcome -- and a target-only key
+        (absent from the source) stays single-line, i.e. byte-identical to
+        today, which is the conservative side of FR-045.
         """
+        ml = _is_sequence_value(src_props.get(key))
         if meta and key in meta:
             dn, sk, ind, grp = meta[key]
             return FieldDiff(
@@ -402,8 +456,9 @@ def diff_props(
                 display_name=dn,
                 sort_key=sk,
                 group=grp,
+                multiline=ml,
             )
-        return FieldDiff(field_name=key, segments=tuple(segs))
+        return FieldDiff(field_name=key, segments=tuple(segs), multiline=ml)
 
     def _sort_field_diffs(fds: list[FieldDiff]) -> list[FieldDiff]:
         """Sort by sort_key if any non-empty; else alphabetical."""
@@ -513,12 +568,19 @@ def _segments_merge_keep_field(
 
 
 def _value_to_unchanged(val: Any, ws_role_of: Callable[[str], WsRole | None]) -> list[DiffSegment]:
-    """Render an existing value as all-unchanged segments."""
+    """Render an existing value as all-unchanged segments.
+
+    The LINK-only / target-only sibling of ``_added_segments``: same
+    ``str(item)`` rule for sequence members (FR-033, FR-034) and the same
+    explicit-empty note (FR-036); non-sequence values keep ``repr`` (FR-045).
+    """
     if isinstance(val, dict):
         return _ws_dict_to_segments(val, SegmentKind.UNCHANGED, ws_role_of)
     if isinstance(val, (list, tuple, set, frozenset)):
+        if not val:
+            return _empty_list_segments()          # FR-036
         return [
-            DiffSegment(text=repr(item), kind=SegmentKind.UNCHANGED, ws_role=None) for item in val
+            DiffSegment(text=str(item), kind=SegmentKind.UNCHANGED, ws_role=None) for item in val
         ]
     return [DiffSegment(text=repr(val), kind=SegmentKind.UNCHANGED, ws_role=None)]
 
@@ -644,7 +706,7 @@ def to_html(preview: MergePreview, registry: WsFontRegistry) -> str:
             f"<div style='margin-left:{indent_px}px;margin-bottom:{_scaled_px(4)}px;'>"
             f"<b>{html.escape(label)}</b>: "
         )
-        parts.append(_render_field_body(fd.segments, registry))
+        parts.append(_render_field_body(fd.segments, registry, multiline=fd.multiline))
         parts.append("</div>")
 
     if preview.notes:
@@ -714,7 +776,8 @@ def _value_span(value: str, kind: SegmentKind, ws_role: "WsRole | None",
     return f"<span>{escaped}</span>"
 
 
-def _render_field_body(segments: tuple, registry: WsFontRegistry) -> str:
+def _render_field_body(segments: tuple, registry: WsFontRegistry,
+                       *, multiline: bool = False) -> str:
     """Render a field's segments, showing each WS code once and collapsing a
     removed+added pair into a single ``old → new`` replacement.
 
@@ -722,21 +785,41 @@ def _render_field_body(segments: tuple, registry: WsFontRegistry) -> str:
       changes (so a replacement shows one code, not two).
     - A ``REMOVED`` segment immediately followed by an ``ADDED`` segment with the
       same WS renders as ``old`` (struck) → ``new`` (green).
+    - ``multiline`` (spec-036 FR-033): the field's value was a sequence, so each
+      entry gets its own line -- a slot with a dozen affixes has to be scannable,
+      and run-together entries are unreadable when the entries themselves contain
+      spaces.  The line is a bare block element: NO bullet, dash, comma or other
+      punctuation is introduced, because anything added here would be
+      indistinguishable from the language data (FR-034).  A collapsed
+      ``old -> new`` replacement stays on ONE line, so a replacement is never
+      split in half.
+
+    ``multiline`` is keyword-only and defaults ``False`` so every pre-036 call
+    site renders byte-identically (FR-045).
     """
     out: list[str] = []
     last_wid: str | None = None
     i = 0
     n = len(segments)
+    lines: list[str] = []      # finished entry lines; used only when multiline
 
     def _emit_ws(wid: str) -> None:
         nonlocal last_wid
         if wid and wid != last_wid:
-            if out:  # gap between distinct WS runs
+            # The double-space spacer separates WS runs sharing ONE line; with
+            # one entry per line the line break already does that job.
+            if out and not multiline:  # gap between distinct WS runs
                 out.append("<span>&#160;&#160;</span>")
             out.append(_ws_code_html(wid))
             last_wid = wid
         elif not wid:
             last_wid = None
+
+    def _end_line() -> None:
+        """Close the current entry when one entry per line is in force."""
+        if multiline and out:
+            lines.append("<div>" + "".join(out) + "</div>")
+            out.clear()
 
     while i < n:
         seg = segments[i]
@@ -750,10 +833,16 @@ def _render_field_body(segments: tuple, registry: WsFontRegistry) -> str:
                 out.append(_arrow_html())
                 out.append(_value_span(val2, SegmentKind.ADDED, nxt.ws_role, registry))
                 i += 2
+                _end_line()
                 continue
         _emit_ws(wid)
         out.append(_value_span(val, seg.kind, seg.ws_role, registry))
         i += 1
+        _end_line()
+
+    if multiline:
+        _end_line()          # no-op unless the loop left a partial entry
+        return "".join(lines)
     return "".join(out)
 
 
@@ -2069,6 +2158,11 @@ def _enrich_phoneme(ph: Any, raw: dict[str, Any]) -> None:
 
 _EXCERPT_CHAR_LIMIT = 280   # Text baseline excerpt cap (FR-018)
 _LIST_ITEM_LIMIT = 25       # Slot affix / ad-hoc reference / NC member cap (FR-018)
+# Unchanged at 25 by spec-036 FR-037 -- the cap is fine, it is the DISCLOSURE
+# that had to improve: the slot-affix note below now states the cap AND the true
+# total instead of a bare "truncated".  The referenced-element note in
+# ``_read_adhoc_compound_rule`` is the same shape and is a candidate for the same
+# treatment; FR-037 names only the slot-affix case, so it is left alone here.
 
 
 def _bounded_excerpt(text: Any, limit: int = _EXCERPT_CHAR_LIMIT) -> tuple[str, bool]:
@@ -2535,9 +2629,18 @@ def _enrich_phon_feature(obj: Any, raw: dict[str, Any]) -> None:
         raw.setdefault("Type", "closed")
 
 
+#: Separator between an affix's form and its gloss (spec-036 FR-035).
+#: Whitespace, never punctuation: the label used to read ``-i2 'PST'``, and
+#: those quotes are indistinguishable from the apostrophes that ARE part of a
+#: form (glottal stops, ejectives, orthographic apostrophes -- FR-034).  A run
+#: of spaces reads as a column gap in the pane and collapses harmlessly to a
+#: single space wherever the label is re-rendered as HTML.
+_AFFIX_LABEL_GAP = "    "
+
+
 def _affix_msa_label(msa: Any) -> str:
     """Label an occupying-slot affix by its owning entry's lexeme form,
-    homograph number, and gloss -- e.g. ``-i2 'PST'`` -- rather than the MSA's
+    homograph number, and gloss -- e.g. ``-i2    PST`` -- rather than the MSA's
     generic ``LongName`` ('Affix in <slot> slot ...').
 
     Navigates the affix MSA -> owning ``ILexEntry`` (lexeme form + homograph
@@ -2582,7 +2685,8 @@ def _affix_msa_label(msa: Any) -> str:
         gloss = _best_analysis_text(getattr(chosen, "Gloss", None)).strip()
     label = f"{form}{hn}" if hn else form
     if gloss:
-        label += f" '{gloss}'"
+        # FR-035: whitespace, not quotes -- see _AFFIX_LABEL_GAP.
+        label += _AFFIX_LABEL_GAP + gloss
     return label
 
 
@@ -2604,7 +2708,11 @@ def _enrich_slot(obj: Any, raw: dict[str, Any]) -> None:
         bounded, truncated = _bounded_list(labels)
         raw["Affixes"] = bounded
         if truncated:
-            raw["Truncated"] = "affix list truncated"
+            # FR-037: one-entry-per-line buys legibility with vertical space, so
+            # the cap has to be disclosed WITH the true total.  A bare
+            # "truncated" leaves the operator unable to tell 26 affixes from 260
+            # -- it says a cut happened but not how much is missing.
+            raw["Truncated"] = f"showing {len(bounded)} of {len(labels)} affixes"
 
 
 def _phon_seg_symbol(tu: Any) -> str:

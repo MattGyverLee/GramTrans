@@ -340,9 +340,18 @@ class TestPlainStrAndSequences:
         tgt = {"Tags": ["b", "c", "d"]}
         result = diff_props(src, tgt, OVERWRITE, _no_role)
         fd = next(f for f in result.fields if f.field_name == "Tags")
-        a_segs = [s for s in fd.segments if "'a'" in s.text]
-        b_segs = [s for s in fd.segments if "'b'" in s.text]
-        d_segs = [s for s in fd.segments if "'d'" in s.text]
+        # Exact match, not a quoted substring: sequence members render through
+        # str() rather than repr() (036 FR-033/FR-034), so a member is its own
+        # text with no surrounding quotes to search for. Matching on "'a'" here
+        # is what caught the change -- keep it exact so the quotes cannot come
+        # back unnoticed.
+        a_segs = [s for s in fd.segments if s.text == "a"]
+        b_segs = [s for s in fd.segments if s.text == "b"]
+        d_segs = [s for s in fd.segments if s.text == "d"]
+        assert not any("'" in s.text for s in fd.segments), (
+            "no programmatic quoting may be added to a sequence member (FR-033); "
+            "an apostrophe in a member is linguistic data, not punctuation (FR-034)"
+        )
         assert any(s.kind == SegmentKind.ADDED for s in a_segs), "'a' is source-only → ADDED"
         assert any(s.kind == SegmentKind.UNCHANGED for s in b_segs), "'b' is common → UNCHANGED"
         assert any(
