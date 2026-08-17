@@ -1,0 +1,16 @@
+{
+  "workflow": "speckit",
+  "specName": "Wizard UI Polish Pass",
+  "branch": "main",
+  "currentStep": "specify",
+  "status": "specified",
+  "history": [
+    {
+      "step": "specify",
+      "substep": null,
+      "kind": "start",
+      "by": "extension",
+      "at": "2026-08-17T18:59:58.848Z"
+    }
+  ]
+}
