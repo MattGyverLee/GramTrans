@@ -164,7 +164,7 @@ def run_one_project(
     from harness import full_run
 
     artifact = ProjectArtifact(
-        project=source_name, run_intent=run_intent, revision_pair=revision_pair(),
+        project=source_name, run_intent=normalize_intent(run_intent), revision_pair=revision_pair(),
         dirty_gramtrans=None, coverage_categories=[], started_at=time.time(),
     )
     rp = artifact.revision_pair
@@ -187,12 +187,12 @@ def run_one_project(
         restore_mod.restore_target(target_name, backup_path=backup_path,
                                     projects_root=str(root))
         artifact.phases_completed.append("restore_initial")
-        flush_artifact(artifact, artifacts_dir)
+        advance_phase(artifact, "restore", artifacts_dir)
 
         census_before = census_project(target_name)
         artifact.census_before = {k: sorted(v) for k, v in census_before.items()}
         artifact.phases_completed.append("census_before")
-        flush_artifact(artifact, artifacts_dir)
+        flush_artifact(artifact, artifacts_dir)  # still within the "restore" phase (T013)
 
         selection = full_run.build_full_selection(exclude=frozenset())
         artifact.coverage_categories = sorted(c.value for c, on in selection.categories.items() if on)
@@ -206,12 +206,12 @@ def run_one_project(
         )
         plan1, report1 = full_run.run_full_transfer(source_name, target_name, target_path)
         artifact.phases_completed.append("first_transfer")
-        flush_artifact(artifact, artifacts_dir)
+        advance_phase(artifact, "transfer_1", artifacts_dir)
 
         census_after_1 = census_project(target_name)
         artifact.census_after_first = {k: sorted(v) for k, v in census_after_1.items()}
         artifact.phases_completed.append("census_after_first")
-        flush_artifact(artifact, artifacts_dir)
+        advance_phase(artifact, "census_1", artifacts_dir)
 
         written = written_classes(census_before, census_after_1)
         artifact.written_classes = written
@@ -222,12 +222,12 @@ def run_one_project(
         )
         plan2, report2 = full_run.run_full_transfer(source_name, target_name, target_path)
         artifact.phases_completed.append("second_transfer")
-        flush_artifact(artifact, artifacts_dir)
+        advance_phase(artifact, "transfer_2", artifacts_dir)
 
         census_after_2 = census_project(target_name)
         artifact.census_after_second = {k: sorted(v) for k, v in census_after_2.items()}
         artifact.phases_completed.append("census_after_second")
-        flush_artifact(artifact, artifacts_dir)
+        advance_phase(artifact, "census_2", artifacts_dir)
 
         idem = check_idempotency(census_after_1, census_after_2, written)
         artifact.idempotency = asdict(idem)
@@ -262,6 +262,7 @@ def run_one_project(
             restore_mod.restore_target(target_name, backup_path=backup_path,
                                         projects_root=str(root))
             artifact.phases_completed.append("restore_final")
+            artifact.phase_reached = "restore_final"
         except Exception as exc:  # noqa: BLE001 -- recorded, not swallowed
             artifact.errors.append({
                 "phase": "restore_final", "error": "%s: %s" % (type(exc).__name__, exc),
@@ -270,11 +271,24 @@ def run_one_project(
 
         src_fp_after = capture_fingerprint(source_name, projects_root)
         artifact.source_fingerprint_after = asdict(src_fp_after)
-        verdict = classify_fingerprint_delta(src_fp_before, src_fp_after)
-        artifact.fingerprint_verdict = verdict
-        if verdict not in (FINGERPRINT_VERDICT_UNCHANGED, FINGERPRINT_VERDICT_MIGRATION):
+        fp_verdict = classify_fingerprint_delta(src_fp_before, src_fp_after)
+        artifact.fingerprint_verdict = fp_verdict
+        if fp_verdict not in (FINGERPRINT_VERDICT_UNCHANGED, FINGERPRINT_VERDICT_MIGRATION):
             artifact.status = "failed"
-            artifact.reason = ("SOURCE TAMPER GUARD: %s -- %s" % (verdict, artifact.reason)).strip(" -")
+            artifact.reason = ("SOURCE TAMPER GUARD: %s -- %s" % (fp_verdict, artifact.reason)).strip(" -")
+
+        # ---- T016: wire registry -> verdict -> artifact -----------------
+        # FR-109 meta-rule: asserted BOTH before the verdict is computed AND
+        # again before the artifact is flushed. Every run reports VACUOUS
+        # today because no guard in the registry has real pass/fail logic
+        # yet (Phase 2 taxonomy-spine scope, T011-T014) -- that is the
+        # correct answer for an instrument that cannot yet prove anything.
+        guard_results = run_all_guards(RunContext(project=source_name))
+        artifact.guards = guard_block_as_dict(guard_results)
+        assert_guard_block_complete(artifact.guards)
+        artifact.verdict = verdict_for_guard_results(guard_results)
+        artifact.exit_code = exit_code_for(artifact.verdict)
+        assert_guard_block_complete(artifact.guards)
 
         artifact.finished_at = time.time()
         flush_artifact(artifact, artifacts_dir)
@@ -307,8 +321,22 @@ def _cmd_project(args) -> int:
     corpus = enumerate_corpus(args.projects_root)
     frozen = freeze_source_manifest(corpus)
     if args.source not in frozen:
-        print("[ERROR] %r is not in the frozen admitted-source manifest" % args.source)
-        return 2
+        # T013/T016: a project this run never attempts (excluded from the
+        # frozen admitted-source manifest) MUST STILL get a written
+        # artifact naming it SKIPPED (FR-151/FR-188) -- never a bare CLI
+        # error with nothing recorded to back it. No FLEx project is
+        # opened on this path.
+        reason = ("[FR-004/FR-006] %r is not in the frozen admitted-source "
+                  "manifest -- no work attempted" % (args.source,))
+        print("[SKIP] %s" % reason)
+        artifact_path = write_skipped_artifact(
+            args.source, reason=reason, run_intent=args.intent,
+            artifacts_dir=Path(args.artifacts_dir),
+        )
+        print("[ARTIFACT] %s" % artifact_path)
+        print("[RESULT] %s -> %s (verdict=VACUOUS, exit=%d)"
+              % (args.source, STATUS_SKIPPED, exit_code_for("VACUOUS")))
+        return exit_code_for("VACUOUS")
     allowlist = tuple(args.allowlist) if args.allowlist else DEFAULT_ALLOWLIST
     try:
         artifact = run_one_project(
@@ -321,8 +349,9 @@ def _cmd_project(args) -> int:
         # These MUST abort the whole run -- re-raise after making that loud.
         print("[ABORT-WHOLE-RUN] %s: %s" % (type(exc).__name__, exc))
         raise
-    print("[RESULT] %s -> %s" % (args.source, artifact.status))
-    return 0 if artifact.status == "passed" else 1
+    print("[RESULT] %s -> %s (verdict=%s, exit=%d)"
+          % (args.source, artifact.status, artifact.verdict, artifact.exit_code))
+    return artifact.exit_code
 
 
 def _cmd_batch(args) -> int:

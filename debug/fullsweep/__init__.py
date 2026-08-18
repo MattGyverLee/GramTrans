@@ -3,7 +3,8 @@ of the ``debug/run_fullcopy_sweep.py`` monolith (T001 of
 specs/035-fullsweep-fidelity/tasks.md Phase 1).
 
 This package holds the six mechanical groups the monolith already implemented
-at commit 8c72bdc:
+at commit 8c72bdc, plus the Phase 2 taxonomy spine (T011-T014,
+specs/035-fullsweep-fidelity/tasks.md) added on top of it:
 
   * ``corpus``  -- Group A: runtime enumeration, exclusion record, frozen manifest
   * ``safety``  -- Group B: write-safety choke point + source tamper guard
@@ -11,12 +12,22 @@ at commit 8c72bdc:
                    concurrency gates
   * ``moves``   -- Group D: double-move loop support, idempotency measurement
   * ``artifact``-- Group K: per-project artifact + provenance/revision stamping
+                   (extended in Phase 2 with the six-name phase vocabulary,
+                   intent normalization, and the always-written SKIPPED
+                   artifact -- T013)
   * ``batch``   -- Group L: status ledger, corpus status summary
+  * ``errors``  -- Group N: failure taxonomy, abort scope, the cross-worker
+                   out-of-collection abort flag (T011)
+  * ``verdict`` -- Group G: the ten verdicts, severity ordering, corpus
+                   aggregation (T012)
+  * ``guards``  -- Group F: the fifteen-guard registry (T014)
 
 ``debug/run_fullcopy_sweep.py`` is now a thin CLI entry point over this
-package. The field-level comparator (Groups E/F/G/H/P, still in review) and
-the per-project double-move loop (``run_one_project``) remain in the driver,
-not here -- they are not among the six groups this package promotes.
+package. The field-level comparator's REAL logic (Groups E/H/P, still in
+review) remains a stub in the driver; the per-project double-move loop
+(``run_one_project``) also remains in the driver, wired to this package's
+guard registry and verdict model (T016) so an unimplemented sweep reports
+``VACUOUS`` end to end.
 
 This module performs, ONCE, the same ``sys.path`` bootstrap the monolith did
 at import time, so the "reused, not reinvented" sibling debug scripts
@@ -41,5 +52,8 @@ from .artifact import *  # noqa: F401,F403,E402 -- includes the driver version/S
                           # stamping helpers (gramtrans_revision, flexicon_revision,
                           # revision_pair), re-exported from this one place.
 from .batch import *  # noqa: F401,F403,E402
+from .errors import *  # noqa: F401,F403,E402 -- Group N: failure taxonomy, abort scope
+from .verdict import *  # noqa: F401,F403,E402 -- Group G: verdicts, severity, aggregation
+from .guards import *  # noqa: F401,F403,E402 -- Group F: the fifteen-guard registry
 
-from . import corpus, safety, pool, moves, artifact, batch  # noqa: F401,E402
+from . import corpus, safety, pool, moves, artifact, batch, errors, verdict, guards  # noqa: F401,E402

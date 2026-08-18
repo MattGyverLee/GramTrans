@@ -65,15 +65,15 @@ ever said. No user-story work starts before this checkpoint.
 
 **Wave 1 -- independent (different files):**
 
-- [ ] **T011** [P] Structured failure taxonomy with stable identity codes, the phase-scoped
+- [x] **T011** [P] Structured failure taxonomy with stable identity codes, the phase-scoped
       failure record, and the cross-worker out-of-collection abort flag; failure categories are
       distinguished by code, never by matching message text (FR-174, FR-175, FR-176, FR-177) ·
       `debug/fullsweep/errors.py`
-- [ ] **T012** [P] The ten verdicts: machine token, human label, exit code, published severity
+- [x] **T012** [P] The ten verdicts: machine token, human label, exit code, published severity
       ordering (NOT derived from the exit-code integer), and corpus aggregation as the maximum
       under that ordering; `DROPS_REPORTED` stays retired (FR-110..FR-113, SC-006) ·
       `debug/fullsweep/verdict.py`
-- [ ] **T013** [P] Artifact document shape: the six-name `phase` vocabulary
+- [x] **T013** [P] Artifact document shape: the six-name `phase` vocabulary
       (`restore | transfer_1 | census_1 | transfer_2 | census_2 | restore_final`), flush after
       every phase, `phase_reached` on a partial document, `intent` normalization
       (`baseline`/`gate` in, `BASELINE`/`GATE` out), the always-written `SKIPPED` artifact, and
@@ -83,7 +83,7 @@ ever said. No user-story work starts before this checkpoint.
 
 **Wave 2 -- the registry over the taxonomy:**
 
-- [ ] **T014** Guard registry keyed by the fifteen exact spec names, each a
+- [x] **T014** Guard registry keyed by the fifteen exact spec names, each a
       `guard(ctx) -> GuardResult` callable returning `not-evaluated` until implemented; FR-109
       completeness enforced as `set(registry) == set(artifact["guards"])`, asserted before the
       verdict is computed and again before the artifact is flushed (FR-093..FR-109) ·
@@ -97,8 +97,8 @@ ever said. No user-story work starts before this checkpoint.
       and injective over the eight non-success verdicts, a severity ordering that is a total
       order over exactly those ten tokens, and corpus aggregation returning the maximum;
       assertions name tokens, never labels or message text (FR-176) ·
-      `tests/unit/test_035_verdict_order.py`
-- [ ] **T016** [P] Wire registry → verdict → artifact into the per-project run so an
+      `tests/unit/test_035_verdict_order.py` (DEFERRED: new test not written this spurt)
+- [x] **T016** [P] Wire registry → verdict → artifact into the per-project run so an
       unimplemented sweep reports `VACUOUS` end to end and exits 4 ·
       `debug/fullsweep/__init__.py`, `debug/run_fullcopy_sweep.py`
 
