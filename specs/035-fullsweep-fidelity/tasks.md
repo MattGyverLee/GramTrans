@@ -396,7 +396,12 @@ the comparator's verdict for each -- no corpus-wide run needed.
 > coverage plumbing carries categories. The two touch disjoint files
 > (`run_fullcopy_sweep.py` vs `guards.py` + `negative-controls.json`), so this is an
 > observability constraint, not a merge-order one. The chain is
-> **T044 → T045a → T045 → T035**; T044's `CoverageReport` is an input to T045a's wiring.
+> **T044 → T045a → T045 → T035**; T044's `CoverageReport` is an input
+> to T045a's wiring. **SUPERSEDED 2026-08-19** -- the reconnaissance recorded under
+> "Wave 3b-bis" below found four further prerequisites, and the chain is now
+> **T044 → T045d → T045e → T045f → T045a(c) → T045b → T045c → T045 → T035**.
+> T045c is last of the wiring tasks on purpose: it is unreachable until the answering
+> set is complete, and it is the thing that fires when it is.
 
 - [ ] **T045a** [US2] Wire the driver's OWN measurements into `RunContext`, and the two
       accounting planes into the guard inputs. `run_one_project` currently calls
@@ -482,9 +487,189 @@ the comparator's verdict for each -- no corpus-wide run needed.
       · `debug/run_fullcopy_sweep.py`, `debug/audit_guid_preservation.py`,
       `debug/fullsweep/moves.py`, `debug/fullsweep/artifact.py`
 
-**⟶ A non-`VACUOUS` verdict requires T045a(c) AND T045b. T035's re-run before both
-lands will report `VACUOUS` again -- with 5 or 7 real guard results attached instead of
-none, which is progress, but not the acceptance criterion.**
+**⟶ A non-`VACUOUS` verdict requires T045a(c) AND T045b -- and, as of the 2026-08-19
+reconnaissance below, four further tasks neither of them names. T035's re-run before all
+of them lands will report `VACUOUS` again -- with 5 or 7 real guard results attached
+instead of none, which is progress, but not the acceptance criterion.**
+
+### Wave 3b-bis -- the prerequisites the reconnaissance found (recorded 2026-08-19)
+
+Two read-only surveys of the worktree at `58cc970` -- one over T045a(c)'s wiring points,
+one over T045b's eight guard inputs -- established that **T045a(c) and T045b are each
+materially larger than their own task lines**, and that a hard blocker sits *after* both
+of them which no task covered. Nothing in this section was implemented; it is the record.
+
+The four tasks are stated first, then the rulings taken on T045b's under-specified
+points, then the corrections to claims already written in this file.
+
+- [ ] **T045c** [US2] **BLOCKER, and it fires only when the others succeed.** Implement
+      `verdict_for_guard_results`'s real assignment table
+      (`debug/fullsweep/verdict.py:120-142`). Today the function returns `VACUOUS` if ANY
+      guard reports `not-evaluated` and otherwise **raises `NotImplementedError`**. Its
+      docstring premise -- "no guard in this registry has real pass/fail logic yet (Phase 2
+      taxonomy-spine scope)" -- was made stale by T033; five guards answer today. T045a(c)
+      buys back two and T045b buys back eight, so **the two of them together take the
+      answering set from 5/15 to 15/15 and land exactly on the raise**. Worse, the call at
+      `debug/run_fullcopy_sweep.py:735` sits inside a `finally:` block, so on a run that was
+      already failing the `NotImplementedError` would mask the original exception. The
+      assignment table is fully specified at
+      [contracts/verdict-exit-model.md](./contracts/verdict-exit-model.md) lines 33-39, and
+      the severity ordering at 50-63 is already implemented, so this is transcription rather
+      than design -- with one real judgement call: several table clauses ("zero loss", "no
+      allowlist entry consumed", "a count over an entry's cap", "an unhandled exception")
+      are **not determinable from the guard results alone**, and `CLEAN_PASS` must not be
+      returned on the strength of fifteen passing guards while those clauses went unchecked.
+      · `debug/fullsweep/verdict.py`
+
+- [ ] **T045d** [US2] **The prerequisite T045a(c) cannot be built without.** Write the
+      generic field reader `field_source(cls, guid) -> (model_fields, syncable_props)` that
+      `census.census_fields` (`debug/fullsweep/census.py:274-326`) requires. **No such
+      reader exists anywhere in the repo.** `GetSyncableProperties` is *not* dispatchable by
+      LCM class name: `BaseOperations.GetSyncableProperties(item)` raises
+      `NotImplementedError` unless the subclass implements it (verified 2026-08-19 against
+      flexicon via FLExToolsMCP), and in this codebase it is reached only through per-domain
+      Operations accessors -- `proj.POS.`, `proj.Senses.`, `proj.Allomorphs.`,
+      `proj.MorphRules.`, `proj.PhonFeatures.` and ~15 more. So this task is a tracked
+      class -> Operations-accessor dispatch table plus the model-field side
+      (`FLExProject.GetFieldID(className, fieldName)`). Closest prior art is
+      `debug/probe_field_census_api.py` (`_read_field`, `_census`) -- reuse it rather than
+      reinvent, but note it carries a `^Target([0-9]+)?$` refusal that the sweep's
+      target-side read must NOT inherit, since reading `Target<N>` is the sweep's whole job.
+      · `debug/fullsweep/census.py`, new dispatch module, `debug/probe_field_census_api.py`
+
+- [ ] **T045e** [US2] The class -> `GrammarCategory` mapping, as a tracked contract.
+      `guard_comparisons_performed` keys its counters on **category**
+      (`debug/fullsweep/guards.py:323`); every plane-2 surface keys on **class**
+      (`census_fields`, `coverage.classify_coverage`, `coverage-floor.json`'s
+      `in_scope_classes`). The only mapping that exists today is a prose column in
+      [object-inventory.md](./object-inventory.md) TABLE 1, and it is **incomplete by
+      construction** -- several rows read `(post-pass, no category)` or `(any category, via
+      the reference CREATE arm)`. Until this exists, `comparisons` and `measured_categories`
+      cannot be produced in the shape their guards read.
+      **Trap to avoid:** `coverage.classify_coverage`'s own `comparisons` parameter
+      (`debug/fullsweep/coverage.py:510`) is `{class_name: int}` -- a different object with
+      the same name. Do not wire one into the other.
+      · new `specs/035-fullsweep-fidelity/contracts/class-category-map.json`,
+      `debug/fullsweep/coverage.py`
+
+- [ ] **T045f** [US2] Give plane-2 output a home in the artifact. `ProjectArtifact`
+      (`debug/fullsweep/artifact.py:71-137`) has **no** `comparisons`, `census`, `coverage`,
+      `link_findings` or `depth` field -- all of which
+      [contracts/artifact-schema.md](./contracts/artifact-schema.md) lines 69-127 already
+      specify. `flush_artifact` is `asdict(artifact)`, so any new block must be a declared
+      dataclass field and must be JSON-serializable; follow the `ObjectAccounting` precedent
+      at `debug/run_fullcopy_sweep.py:658`, which stores `.as_dict()`.
+      **Constraint:** `assert_object_plane_only(artifact.accounting)`
+      (`debug/fullsweep/compare.py:187-196`, asserted at `run_fullcopy_sweep.py:659`) rejects
+      the keys `link_findings` / `findings` / `field_verdicts` / `verdict_plane`. Plane-2
+      output must land on its own artifact field, never folded into `accounting`.
+      · `debug/fullsweep/artifact.py`, `contracts/artifact-schema.md`
+
+#### Rulings taken on T045b's under-specified points (2026-08-19)
+
+The survey found seven points where T045b's text does not determine the implementation.
+Four were ruled; three remain open and are marked as such.
+
+1. **(iii) `extras[*].allowlisted` is `False`, always, for now -- and the risk is
+   recorded.** `LossAllowlistMatcher.match` (`debug/fullsweep/allowlist.py:268-289`) keys on
+   `(project, class_name, field_name, reason)` and matches a **drop reason** byte-for-byte.
+   A target-native *addition* has no drop reason and no field, and no
+   "expected target-native addition" roster exists in `contracts/` despite
+   `contracts/guards.md:78-81` speaking of "an allowlistable expected target-native
+   addition". Ruling: implement the reverse walk with `allowlisted` hardcoded `False` rather
+   than invent a roster. **Consequence, stated plainly: if the pilot corpus produces any
+   extras at all, this flips the three pilots from `VACUOUS` to `UNEXPLAINED_LOSS`.** That is
+   a worse-looking result and a truer one; do not treat it as a regression. Whether a roster
+   is warranted is a decision for after the first measurement, not before it.
+
+2. **(i)/(ii) class-level granularity, in-process.** `empty_measurements` is one record per
+   in-scope class with zero instances in the source census; the independent corroborating
+   count comes from `coverage.scan_class_presence`
+   (`debug/fullsweep/coverage.py:308-362`), which counts `<rt class="X">` rows straight out
+   of `.fwdata` with a byte regex and is genuinely independent of `AllInstances`. No live
+   LCM read; available today. **Known weakness, recorded deliberately:** at class
+   granularity the FR-098 distinction between `absent-or-null` and `present-but-empty`
+   collapses -- `inventory_all` builds from a `defaultdict(set)`
+   (`debug/audit_guid_preservation.py:77`), so a class with zero instances is *absent from
+   the dict*, not present-with-empty-set. The property-granular reading is the only one that
+   makes the distinction meaningful, and it needs the live field read of T045d. One
+   prerequisite on the corroborating half: `scan_class_presence` aggregates corpus-wide and
+   hard-refuses `Target[0-9]*` (`coverage.py:305, 338-340`), so it needs a per-project
+   variant or a `projects=` filter -- a small pure-Python change, no LCM.
+
+3. **(viii) batch-level guard evaluation, writing a new corpus-level artifact.** After the
+   loop, `_cmd_batch` builds a `RunContext` over the frozen manifest
+   (`debug/run_fullcopy_sweep.py:891`, **not** the narrowed `batch` at `:900` -- FR-106 says
+   "every project in the run's corpus") and an artifact index, runs only
+   `ARTIFACT-INTEGRITY`, and writes a corpus document. This needs a schema addition, since
+   `contracts/artifact-schema.md` describes only the per-project document. Chosen over
+   post-hoc patching because patching would make each child's verdict provisional and its
+   already-consumed exit code (`run_fullcopy_sweep.py:945`) stale.
+   **Constraint:** FR-109's fifteen-key completeness (asserted twice, at
+   `run_fullcopy_sweep.py:734` and `:737`) is a **per-project** invariant while FR-106 is a
+   **corpus** predicate, and the subprocess boundary at `:942-944` sits between them.
+   Whatever is built must not let a per-project artifact ship a fourteen-key `guards` block.
+   Note the artifact index must be built by reading each file's `"project"` key back, not by
+   de-mangling filenames: `artifact.py:300`'s
+   `re.sub(r"[^A-Za-z0-9._ -]", "_", ...)` is lossy.
+
+4. **Still open, not ruled.** (a) `truncation` -- which artifact lists the two FR-105
+   counters range over, and whether the counter is per-flush or cumulative across the ~10
+   flushes; the final flush at `run_fullcopy_sweep.py:740` happens *after* `measured` is read
+   at `:731`, so the last write is unmeasured by construction. (b) Whether close operations
+   appear in **both** `close_operations` and `handle_operations` -- FR-104 covers
+   "open, reopen, close, or initialize" while FR-108 covers close specifically, and the two
+   guards read different keys (`error_type` vs `timed_out`/`followed_by`), so one shared
+   record list satisfies neither. (c) `accessor_counters` aggregation scope -- the four
+   `census_project` calls span **two different projects** (target x3, source x1), FR-103
+   reads as per-project, and `RunContext` has exactly one dict field.
+
+#### Corrections to claims already in this file
+
+- **T045a(c)'s stated goal is half stale.** "findings carry real verdicts instead of
+  `NOT_YET_CLASSIFIED_MISSING_FROM_TARGET`" -- that sentinel was **already eliminated by
+  part (b)**. Exhaustive grep at `58cc970` returns four hits, none of them a production
+  site: two historical comments (`run_fullcopy_sweep.py:25`, `:246`) and two test lines
+  (`tests/unit/test_035_run_context_wiring.py:424`, `:430`). What findings actually carry
+  today is `UNACCOUNTED_NO_PAYLOAD_COMPARISON`
+  ("present-under-matching-identity-but-never-compared", `debug/fullsweep/compare.py:74`),
+  produced because `payload_never_compared` is the wired default
+  (`run_fullcopy_sweep.py:270-272, 431, 465`). **That** is what part (c) replaces, and
+  `payload_never_compared` must be kept as the honest default for any path where the census
+  did not run -- `test_035_run_context_wiring.py:391-394` pins that it returns `None` rather
+  than `True`, because "returning True would assert an equality nobody checked".
+
+- **T045b(iii) is the cheapest of the eight, not the hardest.** All three inputs to the
+  reverse walk are already in `run_one_project`'s locals -- `source_inventory` (`:649`),
+  `census_before` (`:577`), `census_after_2` (`:634`) -- and `identity.is_tool_owned_class`
+  / `identity.classify_tool_owned_instances` (`debug/fullsweep/identity.py:108-109`,
+  `:150-212`) already exist and are unused by the driver. It is pure in-process set
+  arithmetic, no new LCM call. `reconcile_objects` walks source-driven only
+  (`compare.py:248`), which is exactly why a target-side addition is invisible today.
+
+- **T045b(iv)/(v) are plumbing, not new measurement.** Both need only an optional
+  out-parameter (`counters=` / `oplog=`, defaulting to `None`) threaded through
+  `audit_guid_preservation.inventory_all` and `moves.census_project`, incremented *before*
+  the existing `continue`/`pass` so swallow-and-continue behaviour is unchanged for every
+  caller that passes nothing. One genuinely hard sub-problem inside (v): `timed_out` is
+  **not** observable from an exception, because `api._close_project_watchdog`
+  (`src/gramtrans/Lib/api.py:140-142`) only *logs* after the deadline and cannot interrupt
+  the call -- it has to be derived by wall-clock timing against `api._SCHEMA_CLOSE_TIMEOUT_S`.
+
+- **The accumulators must be created before the `try:`.** `run_one_project`'s guards run at
+  `run_fullcopy_sweep.py:731` inside `finally:` (opened at `:562`), and the `finally` runs
+  even when the `try` raised. Any counter or log deposited only on the happy path is lost on
+  exactly the runs that most need it. Create them next to `measured: dict = {}` at `:529`
+  and mutate in place.
+
+- **A test name already lies, and must be fixed when the answering set moves.**
+  `tests/unit/test_035_run_context_wiring.py:457` is called
+  `test_the_measured_ten_answer_and_the_rest_decline` while its assertion at `:485-488`
+  lists **five**. That assertion carries the message "the set of answerable guards changed
+  -- update this test deliberately"; honour it. `PENDING_PLANE_2_FIELDS`
+  (`run_fullcopy_sweep.py:359`) and its comment block at `:352-359` become false once the
+  deposits land, and the test at `:447-454` iterates that tuple -- so emptying it would pass
+  **vacuously**. Delete the constant rather than empty it.
 
 **Wave 3c -- the guard semantics T045a makes observable:**
 
@@ -689,7 +874,7 @@ reachable, bounded, disclosed, and self-retiring.
 ## Dependencies & Execution Order
 
 **Phase order**: Setup (T001-T010) → Foundational (T011-T016) → US4 (T017-T024) →
-US1 (T025-T034) → US2 (T036-T045, then T035) → US3 (T046-T057) → US5 (T058-T061) →
+US1 (T025-T034) → US2 (T036-T045f, then T035) → US3 (T046-T057) → US5 (T058-T061) →
 Polish (T062-T067).
 
 Story phases are ordered by priority, but the ordering is also a real dependency
@@ -712,6 +897,12 @@ cannot start before both planes measure; and US5 hardens the valve US1 opened.
   comparison rules (T039-T043) → coverage accounting (T044/T045) → the pilot
   confirmation run T035, which needs the classifier those tasks build before its
   guards can report anything but `not-evaluated`.
+  **Amended 2026-08-19:** the tail of US2 is strictly sequential and longer than the
+  line above implies — T044 → T045d (the generic field reader) → T045e (the
+  class→category contract) → T045f (the plane-2 artifact block) → T045a(c) → T045b
+  → T045c (the verdict assignment table) → T045 → T035. T045d/T045e/T045f are the
+  only genuinely parallel trio in the tail: disjoint files, no shared state. Everything
+  after them gates on all three. See "Wave 3b-bis" in the US2 phase for why.
 - **US3** — test T046 → three independent modules (T047-T049) → four independent CLI
   surfaces (T050-T053) → the scheduled live measurements in order (T054-T057), which
   are strictly sequential: the concurrency trial gates worker count, the census cost
