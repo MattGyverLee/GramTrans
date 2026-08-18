@@ -308,6 +308,38 @@
       "kind": "complete",
       "by": "ai",
       "at": "2026-08-18T19:29:10.446Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T032",
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-18T19:49:55.900Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T031",
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-18T19:49:56.194Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T033",
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-18T20:02:16.303Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T034",
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-18T20:02:16.568Z"
     }
   ],
   "decisions": [
@@ -368,6 +400,26 @@
       "decision": "run_double_move takes restore/transfer/census/drops_of/flush_artifact as injected callables",
       "why": "Makes FR-043 ordering, FR-045 derivation, FR-047 comparison and FR-050 finally-guarantees testable with a fake engine, no live FLEx. Extends the existing skeleton and leaves run_fullcopy_sweep.py wiring to a later task per T027s declared file scope.",
       "rejected": "Rewriting run_one_project in the driver, which is outside T027s file scope and would have conflicted with the pluggable-comparator decision"
+    },
+    {
+      "decision": "GUARD_FAILURE_VERDICT pins EMPTY-CORROBORATION to VACUOUS and UNHANDLED-SUBTYPE to HARNESS_ERROR",
+      "why": "A durable control record must name a real machine token, but guards.md gives these two the non-token phrases run failure and named/counted-outcome-or-HARNESS_ERROR, and verdict-exit-model.md omits both from its assignment table. An uncorroborated empty reading is vacuity (measured nothing, called it empty); an unhandled subtype reduced to an equal comparison is an instrument defect. Both flagged for ratification.",
+      "rejected": "Recording the contracts literal phrases, which are not tokens and would make verdict.is_success raise"
+    },
+    {
+      "decision": "Every RunContext measurement field defaults to None, never to an empty container, and not_evaluated_guard_block asserts all-fifteen-not-evaluated",
+      "why": "An empty container reads as a successful measurement of nothing: an empty accessor-counter dict would let ACCESSOR-INTEGRITY report all-zeros and PASS a project never opened. write_skipped_artifact depends on that path, so the postcondition is asserted in production code rather than left to tests.",
+      "rejected": "Defaulting to empty dicts/lists for ergonomics"
+    },
+    {
+      "decision": "Seeded-defect catalogue derived per guard from its own fail condition, one defect each",
+      "why": "No contract or spec section enumerates a catalogue; the only concrete example is the single TOTAL-ACCOUNTING row in rosters.md section 8, which is reproduced. Each context is minimal and targets exactly one guards fail condition so a firing control proves THAT guard can fail.",
+      "rejected": "One broad mutilated-target fixture, which would fire many guards at once and prove none of them individually"
+    },
+    {
+      "decision": "NO-ENGINE-BUG-AS-LOSS control uses an inline roster, not the tracked one",
+      "why": "The worktree contracts copy can be a stale empty scaffold; against an empty roster the guard fails on the roster-is-empty branch, so the control would prove only that an empty file fails rather than that signature matching works.",
+      "rejected": "Loading the tracked engine-bug-signatures.json for the control"
     }
   ],
   "approach": "Grow the tracked skeleton debug/run_fullcopy_sweep.py (commit 8c72bdc) into a package debug/fullsweep/, adding the field comparator, the 15-guard registry, the 10-verdict model, the loss allowlist, the capability preflight, the coverage floor, negative controls, identity substitution, and the three-axis corpus survey. The sweep drives the shipped engine through the existing Lib/preview.py + Lib/transfer.py split via tests/integration/harness/full_run.py, and reads fields generically through flexicon's native GetSyncableProperties surface. Six phases: taxonomy spine, measurement core, gates, survey/selection, negative controls, then the batched live corpus run.",
@@ -1025,6 +1077,9 @@
       "tasks": [
         "T014",
         "T033"
+      ],
+      "tests": [
+        "tests/unit/test_035_guards.py"
       ]
     },
     "FR-098": {
@@ -1053,6 +1108,9 @@
       "tasks": [
         "T014",
         "T033"
+      ],
+      "tests": [
+        "tests/unit/test_035_guards.py"
       ]
     },
     "FR-102": {
@@ -1095,6 +1153,9 @@
       "tasks": [
         "T014",
         "T033"
+      ],
+      "tests": [
+        "tests/unit/test_035_negative_controls.py"
       ]
     },
     "FR-108": {
@@ -1155,6 +1216,9 @@
       "tasks": [
         "T032",
         "T059"
+      ],
+      "tests": [
+        "tests/unit/test_035_negative_controls.py"
       ]
     },
     "FR-116": {
@@ -1162,6 +1226,9 @@
       "tasks": [
         "T032",
         "T059"
+      ],
+      "tests": [
+        "tests/unit/test_035_negative_controls.py"
       ]
     },
     "FR-117": {
@@ -1169,6 +1236,9 @@
       "tasks": [
         "T032",
         "T059"
+      ],
+      "tests": [
+        "tests/unit/test_035_negative_controls.py"
       ]
     },
     "FR-118": {
@@ -1717,7 +1787,7 @@
       ]
     }
   },
-  "currentTask": "T027",
+  "currentTask": "T034",
   "task_summaries": {
     "T025": {
       "status": "DONE",
@@ -1738,6 +1808,38 @@
       "did": "Double-move mechanics: MOVE_SEQUENCE (FR-043, baseline census as its own step), derived written-class set with hand-picked refusal (FR-045/SC-004), FR-049 contradiction enforcement, FR-092 widened drop dedup, FR-047 drop-set comparison as a failing verdict, FR-048 verdict from both moves, FR-050 restore_final+artifact in finally. 26/26 offline smoke checks pass.",
       "files": [
         "debug/fullsweep/moves.py"
+      ]
+    },
+    "T032": {
+      "status": "DONE",
+      "did": "Loss-reason allowlist: FR-115 all-fields-present validation, FR-116 exact matching with wildcards refused at load time (bare period still legal), FR-117 per-entry cap where at-cap covers and over-cap is UNEXPLAINED_LOSS, FR-123 allowlist_hits. Named loss_allowlist throughout to avoid the existing project-name allowlist collision. US5 validity regime deliberately excluded.",
+      "files": [
+        "debug/fullsweep/allowlist.py",
+        "debug/fullsweep/__init__.py"
+      ]
+    },
+    "T031": {
+      "status": "DONE",
+      "did": "Object-level total-accounting plane: five FR-097 buckets plus a reported unaccounted residual, reconciliation as the primary detection channel with drops only corroborating (FR-091), FR-092 widened drop dedup, no-payload-comparison and drop-without-entry as explicit failures, identity delegated to T028 resolve_match, FR-093 plane separation enforced. 44/44 offline checks with T032.",
+      "files": [
+        "debug/fullsweep/compare.py",
+        "debug/fullsweep/__init__.py"
+      ]
+    },
+    "T033": {
+      "status": "DONE",
+      "did": "All fifteen object-plane guards implemented per contracts/guards.md, replacing the T014 stubs. RunContext widened to carry each guard's measurement, every field defaulting to None so absent input yields not-evaluated and never pass; not_evaluated_guard_block now asserts that postcondition so the SKIPPED path cannot mint a passing guard. BASELINE-DELTA checks all four parts conjunctively including the half-planned threshold; EMPTY-CORROBORATION keeps absent-or-null distinct from present-but-empty; NO-EXTRA rejects tool-owned second instances before consulting the allowlist.",
+      "files": [
+        "debug/fullsweep/guards.py"
+      ]
+    },
+    "T034": {
+      "status": "DONE",
+      "did": "negative-controls subcommand plus the seeded-defect suite: one defect per guard derived from its fail condition (the spec specifies no catalogue), all fifteen produce fail so no FR-181 unfalsifiable guard, durable artifact written additively by guard name for T044/T045, module-content-hash staleness per FR-180. Exits HARNESS_ERROR if any guard proves unfalsifiable. This flipped T026's 76 xfail(strict) tests to passing.",
+      "files": [
+        "debug/fullsweep/guards.py",
+        "debug/run_fullcopy_sweep.py",
+        "specs/035-fullsweep-fidelity/contracts/negative-controls.json"
       ]
     }
   },
@@ -1769,6 +1871,32 @@
       "warnings": [
         "28 pre-existing unit failures are order-dependent pollution, unrelated to 035"
       ]
+    },
+    {
+      "what": "T031+T032 offline checks (allowlist validation/cap/exact-match, all five buckets, plane separation, identity substitution)",
+      "command": "python scratchpad smoke_t031_t032.py",
+      "result": "44/44 checks pass",
+      "warnings": []
+    },
+    {
+      "what": "all 035 unit tests against the real fifteen guards and the generated control artifact",
+      "command": "python -m pytest tests/unit/test_035_*.py -q",
+      "result": "580 passed, 2 skipped; T026 76 formerly-xfail tests now pass for real",
+      "warnings": []
+    },
+    {
+      "what": "seeded-defect suite via the new subcommand",
+      "command": "python debug/run_fullcopy_sweep.py negative-controls --recorded-at 2026-08-18",
+      "result": "15/15 guards produced fail, no FR-181 unfalsifiable guard, artifact written, exit 0",
+      "warnings": []
+    },
+    {
+      "what": "full unit suite regression after T031-T034",
+      "command": "python -m pytest tests/unit -q",
+      "result": "28 failed (identical pre-existing set as clean HEAD), 2981 passed (+441), 14 xfailed (back to baseline)",
+      "warnings": [
+        "the 28 pre-existing failures are unrelated and order-dependent"
+      ]
     }
   ],
   "concerns": [
@@ -1791,7 +1919,23 @@
     {
       "note": ".specify/feature.json pointed at 036-wizard-ui-polish while 035 was the live feature, so companion resume reported the pipeline complete with 40 tasks outstanding. Repointed to 035. The pointer is not updated when work moves between features.",
       "step": "implement"
+    },
+    {
+      "note": "DEFAULT_CONTRACTS_DIR resolves relative to __file__, i.e. the WORKTREE specs/, but populated contracts are committed to main. The worktree natural-key-identity-roster.json is the empty scaffold (0 entries) while main has 3, so NaturalKeyRoster.load() raises on the worktree. identity.py predicts this exactly. Any live run must pass --contracts-dir at a tree with current contracts, or the worktree specs must be synced from main first. Same hazard applies to allowlist.py and any future contract loader.",
+      "step": "implement"
+    },
+    {
+      "note": "FR-101 PLAN-CONSERVATION as written (planned == added + skipped) does not hold against the real RunReport: overwrites is a separate plan tuple with its own overwritten counter, plus closure_pulled_in and excluded_lossy. RunReport also has no total_added/total_skipped despite its docstring citing them. The identity must fold those counters in explicitly or the guard fails every clean run.",
+      "step": "implement"
+    },
+    {
+      "note": "The five FR-097 bucket JSON keys are contract-silent (artifact-schema.md has no total-accounting block; data-model.md none either). compare.py names them itself. The one spelled-out list, reviews/cycle1-qc.md VG-04, was NOT followed: it predates FR-097 and still carries a standalone dropped_reported bucket that FR-097 abolished. These key names need ratifying into artifact-schema.md.",
+      "step": "implement"
+    },
+    {
+      "note": "GuardResult field naming disagrees across contracts: guards.md and artifact-schema.md say result/message/evidence, data-model.md says name/outcome/message/evidence/control_hash. Code follows guards.md. data-model.md should be reconciled, and control_hash has no home outside it.",
+      "step": "implement"
     }
   ],
-  "last_action": "Phase 4 Wave 1 closed: T025-T027 backfilled, 30/67 tasks; frontier is T031 (Wave 3, compare.py)"
+  "last_action": "T025-T034 done -- 34/67; Phase 4 offline work complete, frontier is T035 (live batch 1, needs an attended run)"
 }

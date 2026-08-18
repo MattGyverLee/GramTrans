@@ -231,35 +231,37 @@ of the corpus being present.
 
 **Wave 3 -- the accounting plane over them:**
 
-- [ ] **T031** [US1] Object-level total-accounting plane: every in-scope source identifier
+- [x] **T031** [US1] Object-level total-accounting plane: every in-scope source identifier
       lands in exactly one of transferred-with-equal-payload, already-present-with-equal-payload
       *independently verified*, `IDENTITY-SUBSTITUTION`, dropped-and-allowlisted within cap, or
       explicitly out of scope. Anything else is unexplained loss; being reported is never itself
       an explanation. Drop records corroborate, never detect, and their dedup identity is
       widened to include the failure reason (FR-091..FR-093) · `debug/fullsweep/compare.py`
-- [ ] **T032** [US1] Exact-reason allowlist matching with cap enforcement, enough for the
+- [x] **T032** [US1] Exact-reason allowlist matching with cap enforcement, enough for the
       dropped-and-allowlisted bucket; wildcard and pattern matching are refused here, not
       merely later. The full validity regime lands in User Story 5 (FR-115..FR-117) ·
       `debug/fullsweep/allowlist.py`
 
 **⟶ Wait for Wave 3 to finish, then:**
 
-**Wave 4 -- twelve guards become real:**
+**Wave 4 -- fifteen guards become real:**
 
-- [ ] **T033** [US1] Implement the object-plane guards, each to its per-guard note:
+- [x] **T033** [US1] Implement the object-plane guards, each to its per-guard note:
       `BASELINE-DELTA` (all four parts conjunctively), `COMPARISONS-PERFORMED`,
+      `CATEGORY-COVERAGE` (enabled-but-unmeasured is `COVERAGE_REDUCED`, never a silent gap),
       `TOTAL-ACCOUNTING`, `EMPTY-CORROBORATION` (absent-or-null and present-but-empty stay
       distinct outcomes), `UNHANDLED-SUBTYPE` (named and counted, never reduced to an equal
       comparison), `IDEMPOTENCY-IN-WRITTEN-CLASSES` (over the derived set),
       `PLAN-CONSERVATION` (both directions), `NO-EXTRA`, `ACCESSOR-INTEGRITY`,
       `HANDLE-INTEGRITY`, `NO-TRUNCATION`, `ARTIFACT-INTEGRITY`, `NO-ENGINE-BUG-AS-LOSS`, and
-      `CLEAN-CLOSE` (FR-094..FR-108) · `debug/fullsweep/guards.py`
+      `CLEAN-CLOSE` (FR-094..FR-109 -- all fifteen; FR-109 is the completeness meta-rule) ·
+      `debug/fullsweep/guards.py`
 
 **⟶ Wait for Wave 4 to finish, then:**
 
 **Wave 5 -- proving the guards can fail, then using them:**
 
-- [ ] **T034** [US1] The `negative-controls` subcommand and the seeded-defect suite, writing
+- [x] **T034** [US1] The `negative-controls` subcommand and the seeded-defect suite, writing
       the durable tracked artifact that records, per guard, the seeded defect, the verdict it
       produced, and that guard module's content hash; a guard no constructible defect can fail
       is itself reported as a defect (FR-178..FR-181) · `debug/fullsweep/guards.py`,

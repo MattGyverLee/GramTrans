@@ -1,0 +1,110 @@
+{
+  "schema_version": 1,
+  "controls": [
+    {
+      "guard": "ACCESSOR-INTEGRITY",
+      "seeded_defect": "an accessor reporting 3 unreadable identifiers",
+      "verdict_produced": "HARNESS_ERROR",
+      "guard_module_hash": "sha256:edc15d935a66252ca508eca4e17719d19a157fe0cbdc45745cae600e4c7dcedc",
+      "recorded_at": "2026-08-18"
+    },
+    {
+      "guard": "ARTIFACT-INTEGRITY",
+      "seeded_defect": "a corpus project with no artifact written",
+      "verdict_produced": "INCOMPLETE",
+      "guard_module_hash": "sha256:edc15d935a66252ca508eca4e17719d19a157fe0cbdc45745cae600e4c7dcedc",
+      "recorded_at": "2026-08-18"
+    },
+    {
+      "guard": "BASELINE-DELTA",
+      "seeded_defect": "first transfer changed nothing while 10 actions were planned",
+      "verdict_produced": "VACUOUS",
+      "guard_module_hash": "sha256:edc15d935a66252ca508eca4e17719d19a157fe0cbdc45745cae600e4c7dcedc",
+      "recorded_at": "2026-08-18"
+    },
+    {
+      "guard": "CATEGORY-COVERAGE",
+      "seeded_defect": "an enabled category was never measured and never recorded as excluded",
+      "verdict_produced": "COVERAGE_REDUCED",
+      "guard_module_hash": "sha256:edc15d935a66252ca508eca4e17719d19a157fe0cbdc45745cae600e4c7dcedc",
+      "recorded_at": "2026-08-18"
+    },
+    {
+      "guard": "CLEAN-CLOSE",
+      "seeded_defect": "a project close that timed out before a later census",
+      "verdict_produced": "HARNESS_ERROR",
+      "guard_module_hash": "sha256:edc15d935a66252ca508eca4e17719d19a157fe0cbdc45745cae600e4c7dcedc",
+      "recorded_at": "2026-08-18"
+    },
+    {
+      "guard": "COMPARISONS-PERFORMED",
+      "seeded_defect": "a category with 5 source objects performed 0 comparisons",
+      "verdict_produced": "VACUOUS",
+      "guard_module_hash": "sha256:edc15d935a66252ca508eca4e17719d19a157fe0cbdc45745cae600e4c7dcedc",
+      "recorded_at": "2026-08-18"
+    },
+    {
+      "guard": "EMPTY-CORROBORATION",
+      "seeded_defect": "an empty source measurement with no independent corroborating count",
+      "verdict_produced": "VACUOUS",
+      "guard_module_hash": "sha256:edc15d935a66252ca508eca4e17719d19a157fe0cbdc45745cae600e4c7dcedc",
+      "recorded_at": "2026-08-18"
+    },
+    {
+      "guard": "HANDLE-INTEGRITY",
+      "seeded_defect": "a project handle that failed to reopen",
+      "verdict_produced": "HARNESS_ERROR",
+      "guard_module_hash": "sha256:edc15d935a66252ca508eca4e17719d19a157fe0cbdc45745cae600e4c7dcedc",
+      "recorded_at": "2026-08-18"
+    },
+    {
+      "guard": "IDEMPOTENCY-IN-WRITTEN-CLASSES",
+      "seeded_defect": "the second transfer added a new object in a written class",
+      "verdict_produced": "NON_IDEMPOTENT",
+      "guard_module_hash": "sha256:edc15d935a66252ca508eca4e17719d19a157fe0cbdc45745cae600e4c7dcedc",
+      "recorded_at": "2026-08-18"
+    },
+    {
+      "guard": "NO-ENGINE-BUG-AS-LOSS",
+      "seeded_defect": "a drop reason leaking an internal task identifier",
+      "verdict_produced": "UNEXPLAINED_LOSS",
+      "guard_module_hash": "sha256:edc15d935a66252ca508eca4e17719d19a157fe0cbdc45745cae600e4c7dcedc",
+      "recorded_at": "2026-08-18"
+    },
+    {
+      "guard": "NO-EXTRA",
+      "seeded_defect": "a second instance of a tool-owned-identity class, allowlisted on purpose",
+      "verdict_produced": "UNEXPLAINED_LOSS",
+      "guard_module_hash": "sha256:edc15d935a66252ca508eca4e17719d19a157fe0cbdc45745cae600e4c7dcedc",
+      "recorded_at": "2026-08-18"
+    },
+    {
+      "guard": "NO-TRUNCATION",
+      "seeded_defect": "the durable artifact omitted 3 drop-reason buckets",
+      "verdict_produced": "HARNESS_ERROR",
+      "guard_module_hash": "sha256:edc15d935a66252ca508eca4e17719d19a157fe0cbdc45745cae600e4c7dcedc",
+      "recorded_at": "2026-08-18"
+    },
+    {
+      "guard": "PLAN-CONSERVATION",
+      "seeded_defect": "5 planned actions accounted for as 2 added + 1 skipped",
+      "verdict_produced": "UNEXPLAINED_LOSS",
+      "guard_module_hash": "sha256:edc15d935a66252ca508eca4e17719d19a157fe0cbdc45745cae600e4c7dcedc",
+      "recorded_at": "2026-08-18"
+    },
+    {
+      "guard": "TOTAL-ACCOUNTING",
+      "seeded_defect": "drop one source object with no allowlist entry",
+      "verdict_produced": "UNEXPLAINED_LOSS",
+      "guard_module_hash": "sha256:edc15d935a66252ca508eca4e17719d19a157fe0cbdc45745cae600e4c7dcedc",
+      "recorded_at": "2026-08-18"
+    },
+    {
+      "guard": "UNHANDLED-SUBTYPE",
+      "seeded_defect": "an unhandled subtype reduced to a value that compares equal",
+      "verdict_produced": "HARNESS_ERROR",
+      "guard_module_hash": "sha256:edc15d935a66252ca508eca4e17719d19a157fe0cbdc45745cae600e4c7dcedc",
+      "recorded_at": "2026-08-18"
+    }
+  ]
+}
