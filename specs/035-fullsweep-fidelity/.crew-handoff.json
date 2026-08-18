@@ -2,7 +2,9 @@
   "feature": "035-fullsweep-fidelity",
   "status": "in_progress",
   "last_cycle": 5,
-  "spurts_completed": 5,
+  "spurts_completed": 6,
+  "implementation_branch": "035-fullsweep-fidelity",
+  "worktree": "D:/Github/_Projects/_LEX/GramTrans-035-fullsweep",
   "tasks_done": [
     "cycle5-structural-qc-8of8-pass",
     "cycle5-domain-identity-4of4-pass",
@@ -11,13 +13,21 @@
     "FR-185-wordform-on-roster-writing-systems-excluded",
     "FR-186-inbound-crossref-closed",
     "spec-ratified-189FR-17SC",
-    "corpus-prescan-built-committed-run-84-projects"
+    "corpus-prescan-built-run-84-projects-BUT-UNTRACKED",
+    "T001-T010-phase1-package-promotion",
+    "T011-T014-T016-phase2-taxonomy-spine-VACUOUS-end-to-end"
   ],
-  "next_checkpoint": "corpus-selection-three-axis + driver skeleton against settled groups",
-  "next_entry": "Bring the corpus-selection requirement in line with FR-189: selection must range over three orthogonal axes (class presence, writing-system breadth, structural depth), and must retain Yi Sichuan, the only project of 84 with nested reversals and the widest WS spread, which presence-only greedy set-cover discards.",
+  "next_checkpoint": "Phase 3 / US4 (T017-T024): write safety hardening, baseline pinning, pool integrity, capability preflight",
+  "next_entry": "Phase 1 and Phase 2 are committed on branch 035-fullsweep-fidelity (8235f4f, e60b8ba), NOT merged to main. The sweep now reports VACUOUS with all fifteen guards not-evaluated and exits 4 -- verified live offline via the SKIPPED path. Resume at T017. Phase 3 onward needs FLExToolsMCP (T023 capability fingerprint) and the live measurements T054-T057/T035/T066 need hours of wall time -- schedule those deliberately, not inside a short spurt.",
   "spec_ratified": true,
-  "spec_shape": "FR-001..FR-189 contiguous, SC-001..SC-017 contiguous, verified programmatically",
+  "spec_shape": "FR-001..FR-193 contiguous, SC-001..SC-017 contiguous, verified programmatically",
   "open_caveat": "FLExToolsMCP unavailable to lex-domain for the third time in five cycles; identity rulings rest on documented LCM semantics, live-check points flagged inline in reviews/cycle5-domain-identity.md",
   "coverage_limit": "appendix, stratum, and one rule subclass exist in no project on this machine; must report NOT-EVALUATED, never clean",
+  "new_findings": [
+    "FR-149 VIOLATION IN EVIDENCE BASE: the 84-project prescan output lives in scratchpad/prescan_results/, and scratchpad/ is gitignored (git ls-files scratchpad/ is empty). Under FR-149 untracked evidence is inadmissible, so the three-axis corpus-selection decision currently rests on data the sweep's own rules would reject. The --order set-cover output (ordering.md) was never generated at all. Fix before T049/T050 claim a measured maximum.",
+    "LATENT TEST WEAKNESS from the Phase 1 split: test_035_sweep_safety.py's monkeypatch.setattr(sweep, 'CONCURRENCY_TRIAL_ARTIFACT', ...) patches the flat re-exported copy on the package namespace, not pool.py's module global that assert_concurrency_gate_satisfied actually reads. The test passes, but partly because the real default path is also absent in this worktree. Tighten when T054 makes the concurrency-trial artifact real.",
+    "T015 (tests/unit/test_035_verdict_order.py) DEFERRED unwritten at user request -- the verdict model is implemented but not pinned by a test.",
+    "The real (non-SKIPPED) run_one_project path carries the same guard/verdict wiring but has NOT been exercised live; that needs a FLEx target write."
+  ],
   "updated": "2026-08-18"
 }
