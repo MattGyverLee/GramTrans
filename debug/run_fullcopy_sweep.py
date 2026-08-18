@@ -575,6 +575,43 @@ def _split_categories(value: str) -> list:
     return [c.strip() for c in value.split(",") if c.strip()]
 
 
+def _cmd_negative_controls(args) -> int:
+    """T034: run the seeded-defect suite and write the durable negative-control
+    artifact, stamping each guard's module content hash (FR-178..FR-181).
+
+    Touches no database: every seeded defect is a hand-built ``RunContext``, so
+    this subcommand is safe to run anywhere and needs no target project.
+    """
+    import datetime
+
+    recorded_at = args.recorded_at or datetime.date.today().isoformat()
+    outcomes = run_negative_controls()
+
+    print("[INFO] seeded-defect suite: %d guard(s)" % len(outcomes))
+    for o in outcomes:
+        flag = "UNFALSIFIABLE" if o.unfalsifiable else "ok"
+        print("  %-32s %-13s produced %-18s (%s)"
+              % (o.guard, flag, o.verdict_produced, o.result))
+
+    path = write_negative_controls(
+        outcomes,
+        contracts_dir=Path(args.contracts_dir),
+        recorded_at=recorded_at,
+    )
+    print("[INFO] wrote %s" % path)
+
+    # FR-181: a guard no constructible defect can fail is itself a defect in
+    # the sweep. That is a harness error, not a passing run.
+    unfalsifiable = [o.guard for o in outcomes if o.unfalsifiable]
+    if unfalsifiable:
+        print("[ERROR] %d guard(s) could not be made to fail by their seeded "
+              "defect; per FR-181 this is a defect in the sweep, never evidence "
+              "of robustness: %r" % (len(unfalsifiable), unfalsifiable))
+        return exit_code_for("HARNESS_ERROR")
+    print("[OK] every guard was demonstrated capable of failing")
+    return 0
+
+
 def main(argv=None) -> int:
     ap = _ArgumentErrorExits5(description=__doc__)
     ap.add_argument("--projects-root")
@@ -634,6 +671,16 @@ def main(argv=None) -> int:
     p_batch.add_argument("--diagnostic-level", required=True,
                           choices=DIAGNOSTIC_LEVELS)
     p_batch.set_defaults(func=_cmd_batch)
+
+    p_controls = sub.add_parser(
+        "negative-controls",
+        help="run the seeded-defect suite and write the durable negative-control "
+             "artifact, stamping each guard's module content hash (touches no "
+             "database)")
+    p_controls.add_argument("--recorded-at", default=None,
+                            help="ISO date stamped onto each control record; "
+                                 "defaults to today")
+    p_controls.set_defaults(func=_cmd_negative_controls)
 
     args = ap.parse_args(argv)
 

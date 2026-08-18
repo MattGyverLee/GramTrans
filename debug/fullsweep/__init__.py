@@ -61,9 +61,11 @@ from .guards import *  # noqa: F401,F403,E402 -- Group F: the fifteen-guard regi
 from .baseline import *  # noqa: F401,F403,E402 -- Group M: baseline pinning/containment (T020)
 from .preflight import *  # noqa: F401,F403,E402 -- Group I: capability preflight (T022)
 from .identity import *  # noqa: F401,F403,E402 -- identity rules FR-183..FR-187 (T028)
+from .allowlist import *  # noqa: F401,F403,E402 -- loss-reason allowlist, FR-115..FR-117 (T032)
+from .compare import *  # noqa: F401,F403,E402 -- object-level accounting plane, FR-097 (T031)
 
 from . import (corpus, safety, pool, moves, artifact, batch, errors, verdict,  # noqa: F401,E402
-               guards, baseline, preflight, identity)
+               guards, baseline, preflight, identity, allowlist, compare)
 
 # NOTE for tests and callers: ``import *`` above BINDS A COPY of each module
 # global onto this package namespace. Patching ``fullsweep.NAME`` therefore
