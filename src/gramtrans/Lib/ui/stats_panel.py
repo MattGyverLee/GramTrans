@@ -28,11 +28,16 @@ else:
 class StatsPanel(QtWidgets.QWidget):
     """Bottom-panel widget shown after Preview or Move completes."""
 
+    #: What the header says while no report is being presented. Named because
+    #: `clear()` (036 FR-041) has to put it back, and two copies of the string
+    #: would let the cleared state drift from the initial one.
+    _NO_RUN_PLACEHOLDER = "(No run yet -- click Preview.)"
+
     def __init__(self, parent: Optional[QtWidgets.QWidget] = None) -> None:
         super().__init__(parent)
         layout = QtWidgets.QVBoxLayout(self)
 
-        self._header = QtWidgets.QLabel("(No run yet — click Preview.)", self)
+        self._header = QtWidgets.QLabel(self._NO_RUN_PLACEHOLDER, self)
         self._header.setStyleSheet("font-weight: bold;")
         layout.addWidget(self._header)
 
@@ -189,6 +194,37 @@ class StatsPanel(QtWidgets.QWidget):
             self._extra_view.setVisible(False)
 
         self._footer.setText(f"Wall clock: {report.wall_clock_seconds:.3f}s")
+
+    def clear(self) -> None:
+        """Stop presenting a report. The exact inverse of `set_report`.
+
+        Feature 036 FR-041. A dry-run report describes ONE set of selections, so
+        the moment those selections can have changed -- re-entering the Finish
+        page, or a dry run that failed and produced nothing -- the report on
+        screen stops being a statement about the current run. Leaving it up is
+        the defect FR-041 names: a panel full of last time's numbers beside a
+        disabled Execute reads as "here is your plan", not as "run a dry run".
+
+        Every widget `set_report` writes is reset here, and the header goes back
+        to its pre-run placeholder. The header is the observable the guard test
+        watches, because it is the one that names a run: it carries `run_id=`
+        exactly while a report is being presented.
+
+        Lives on the panel rather than in the Finish page because the panel is
+        what knows which of its widgets hold report content -- a caller clearing
+        them one by one would fall behind the next widget `set_report` gains.
+        """
+        self._header.setText(self._NO_RUN_PLACEHOLDER)
+        self._table.setRowCount(0)
+        self._warn_view.setPlainText("")
+        self._skip_view.setPlainText("")
+        self._extra_view.setPlainText("")
+        self._extra_label.setVisible(False)
+        self._extra_view.setVisible(False)
+        self._remap_view.setPlainText("")
+        self._remap_label.setVisible(False)
+        self._remap_view.setVisible(False)
+        self._footer.setText("")
 
     def render_text(self, report: RunReport) -> str:
         """Helper for tests / report-pane fallback. Uses

@@ -7,8 +7,15 @@ point is step 1 and there is exactly one thing to read at a time.
 
 What has to hold, and is asserted here:
 
-* **FlexTools is untouched.** No binder means no button, no picker, and the
-  page's subtitle byte for byte as it was (SC-013).
+* **FlexTools is untouched.** No binder means no button and no picker, and the
+  page's subtitle still describes exactly one choice (SC-013).
+
+  Feature 036 FR-006 split step 1 in two: this page now binds projects and
+  nothing else, and the writing-system mapping moved to the page after it. Both
+  subtitles were rewritten accordingly -- shorter, and silent about writing
+  systems -- but the *host difference* they encode is unchanged and is still
+  what these tests assert: with a binder the operator picks both projects,
+  without one (every FlexTools call) the source is supplied by the host.
 * **The deferred host gets both rows.** Source button present, target refused
   until a source exists — which is what makes the same-project rule enforceable
   by omission rather than by a check that could be forgotten.
@@ -39,11 +46,18 @@ from gramtrans.Lib.ui import selection_wizard as sw  # noqa: E402
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 
-# The step-1 subtitle before exception 7 existed. Spelled out rather than
-# imported so a change to it is a deliberate two-file edit.
+# The two projects-page subtitles, post-split (036 FR-006). Spelled out rather
+# than imported so a change to either is a deliberate two-file edit -- and kept
+# short because FR-013 caps a description at two lines at the default width and
+# default text scale. Neither mentions writing systems any more: that sentence
+# belongs to the page after this one.
 _FLEXTOOLS_SUBTITLE = (
-    "Bind a target project and map source writing systems to target "
-    "writing systems. Each WS can be Mapped, Created, or Skipped."
+    "Bind the target project to write to. The source project is already open "
+    "and cannot be changed here."
+)
+_PICKED_SOURCE_SUBTITLE = (
+    "Pick the source project to read from and the target project to write to. "
+    "Both are required before you can continue."
 )
 
 
@@ -110,11 +124,22 @@ def _needs_a_real_qwizard():
         pytest.skip("a PyQt6 double is installed in this session (see docstring)")
 
 
+def _projects_page_class():
+    """`_PageProjects` after the 036 split, `_PageProjectWS` before it.
+
+    Resolved rather than hard-coded so that every assertion in this file --
+    the picker, the same-project rule, `run_id` stability, handle ownership --
+    survives the rename instead of collapsing into an import error that hides
+    all of them at once.
+    """
+    return getattr(sw, "_PageProjects", None) or sw._PageProjectWS
+
+
 def _page(qapp, **kwargs):
     """A step-1 page, constructed the way the wizard constructs it."""
     stub = kwargs.pop("stub", None) or _stub()
     host = kwargs.pop("host", None)
-    return sw._PageProjectWS(stub, host, **kwargs)
+    return _projects_page_class()(stub, host, **kwargs)
 
 
 class _PickerDouble:
@@ -167,16 +192,32 @@ def test_flextools_page_has_no_source_button_and_can_pick_a_target(qapp):
     assert "open in FlexTools" in page._src_label.text()
 
 
-def test_the_flextools_subtitle_is_byte_identical(qapp):
+def test_the_flextools_subtitle_names_only_the_target(qapp):
+    """No binder means one choice, so the page describes one choice."""
     page = _page(qapp, stub=_stub(source_project_name="Host Project"))
     assert page.subTitle() == _FLEXTOOLS_SUBTITLE
 
 
 def test_the_deferred_subtitle_mentions_both_choices(qapp):
     page = _page(qapp, source_binder=lambda name: object())
+    assert page.subTitle() == _PICKED_SOURCE_SUBTITLE
     assert page.subTitle() != _FLEXTOOLS_SUBTITLE
     assert "source" in page.subTitle().lower()
     assert "target" in page.subTitle().lower()
+
+
+def test_neither_projects_subtitle_describes_writing_systems(qapp):
+    """036 FR-006: the mapping sentence moved to the page after this one.
+
+    Leaving it here would promise a table this page no longer has -- the
+    operator would look for it, not find it, and have no reason to expect it
+    one page later.
+    """
+    for kwargs in ({"stub": _stub(source_project_name="Host Project")},
+                   {"source_binder": lambda name: object()}):
+        subtitle = _page(qapp, **kwargs).subTitle().lower()
+        assert "writing system" not in subtitle, subtitle
+        assert " ws " not in f" {subtitle} ", subtitle
 
 
 # ===========================================================================

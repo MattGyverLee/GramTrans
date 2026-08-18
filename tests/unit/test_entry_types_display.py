@@ -68,25 +68,41 @@ class TestPreviewCollapsePreselectedAll:
         assert GrammarCategory.VARIANT_TYPES not in result["leaf_item_picks"]
         assert GrammarCategory.COMPLEX_FORM_TYPES not in result["leaf_item_picks"]
 
-    def test_page_title_contains_of_9(self):
-        """FR-001 / SC-007: page title must reflect '9' total pages.
+    def test_page_title_states_no_total(self):
+        """036 FR-009a: the title carries a name, and NO count of pages.
 
-        (9 = the wizard flow after both the Lexical-Entry Types page (spec 021)
-        and the Rules page (018) are inserted before Finish.)
+        This test used to assert the opposite -- that the title read "of 10" --
+        and it is kept, inverted, rather than deleted, because the assertion it
+        made is the exact defect feature 036 removed and the one most likely to
+        be reintroduced by someone restoring "helpful" progress information.
 
-        Inspects the source code string to avoid creating a QWizardPage without
-        a running QApplication (which stalls on Windows headless CI).
+        A total is unstateable here, twice over. The page's own constructor
+        cannot know one: a position is a fact about a RUN, and the run assigns it
+        on entry (`SelectionWizard._apply_step_number`). And no run has a total
+        to state either -- pages with nothing to decide drop out (FR-009c), and
+        the operator can go back and pick an affix, which re-admits a skipped
+        page and shifts every position after it. The old literal proved the
+        point: it claimed ten pages while eleven were registered.
+
+        Inspects the source string rather than constructing a QWizardPage, so
+        the check needs no QApplication (the original reason, unchanged).
         """
         import re
         from pathlib import Path
         from gramtrans.Lib.ui import selection_wizard as _sw
         src = Path(_sw.__file__).read_text(encoding="utf-8")
-        # Find the _PageEntryTypes setTitle call
         match = re.search(r'class _PageEntryTypes.*?setTitle\("([^"]+)"\)', src,
                           re.DOTALL)
         assert match, "_PageEntryTypes setTitle not found in source"
         title = match.group(1)
-        assert "of 10" in title, f"Expected 'of 10' in title, got: {title!r}"
+        assert not re.search(r"of \d+", title), (
+            f"036 FR-009a: the page title states a total ({title!r}); nothing "
+            f"derives a total and nothing may display one."
+        )
+        assert not re.search(r"[Ss]tep\s*\d+", title), (
+            f"036 FR-009: the page title hard-codes a position ({title!r}); the "
+            f"run assigns the number on entry."
+        )
 
     def test_page_title_contains_entry_types(self):
         """Check that the title string mentions 'Entry' or 'Types'."""

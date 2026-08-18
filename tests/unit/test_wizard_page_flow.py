@@ -6,8 +6,10 @@ without a live Qt event loop.
 
 Covers:
 - SelectionWizard can be imported without a live Qt host
-- _PageProjectWS.context() returns None before target bind
-- _PageProjectWS.selected_ws_ids() returns items from the list widget
+- _PageProjects.context() returns None before target bind
+- _PageWritingSystems.selected_ws_ids() returns items from the list widget
+  (036 FR-006 split step 1: the projects half owns context(), the
+  writing-systems half owns the mapping)
 - _PageItemPicker.picker_state() returns empty PickerState on empty tree
 - _PageScopeConflict.collect_selection() translates combos to Selection
   (scopes + conflict modes)
@@ -123,7 +125,10 @@ from gramtrans.Lib.models import (
 from gramtrans.Lib.selection import PickerState, SourceAffixInventory
 from gramtrans.Lib.ui import selection_wizard as _sw_mod
 
-_PageProjectWS = _sw_mod._PageProjectWS
+# 036 FR-006: `_PageProjectWS` became `_PageProjects` (binding + context) plus
+# `_PageWritingSystems` (the two WS tables, ws_mapping, selected_ws_ids).
+_PageProjects = _sw_mod._PageProjects
+_PageWritingSystems = _sw_mod._PageWritingSystems
 _PageItemPicker = _sw_mod._PageItemPicker
 _PageScopeConflict = _sw_mod._PageScopeConflict
 _PagePreview = _sw_mod._PagePreview
@@ -162,17 +167,19 @@ class TestWizardModuleImports:
 
 
 # ===========================================================================
-# _PageProjectWS
+# _PageProjects / _PageWritingSystems (036 FR-006 split)
 # ===========================================================================
 
 class TestPageProjectWS:
     def test_context_none_before_bind(self):
-        page = _bypass(_PageProjectWS)
+        page = _bypass(_PageProjects)
         page._context = None
         assert page.context() is None
 
     def test_selected_ws_ids_from_list_widget(self):
-        page = _bypass(_PageProjectWS)
+        # The mapping moved to the writing-systems page; the legacy `_ws_list`
+        # fallback moved with it, so the assertion is unchanged bar the owner.
+        page = _bypass(_PageWritingSystems)
         # Simulate a QListWidget with 3 items, 2 selected.
         item0 = MagicMock()
         item0.text.return_value = "en"
@@ -201,12 +208,12 @@ class TestPageProjectWS:
         assert result == ["en", "seh"]
 
     def test_is_complete_false_before_bind(self):
-        page = _bypass(_PageProjectWS)
+        page = _bypass(_PageProjects)
         page._target_ready = False
         assert page.isComplete() is False
 
     def test_is_complete_true_after_bind(self):
-        page = _bypass(_PageProjectWS)
+        page = _bypass(_PageProjects)
         page._target_ready = True
         assert page.isComplete() is True
 

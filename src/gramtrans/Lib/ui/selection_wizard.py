@@ -1,14 +1,20 @@
 """Selection Wizard (Phase 3c, plan.md Refinement 3, 2026-07-01).
 
-5-page QWizard that replaces the single-window `main_window.py`.  The
-existing widgets are re-hosted verbatim; no widget logic is rewritten.
+A QWizard that replaces the single-window `main_window.py`.  The existing
+widgets are re-hosted verbatim; no widget logic is rewritten.  How many pages a
+run shows is a property of the run, not of this module -- see `flow()`.
 
-Pages:
-  1  Project + Writing Systems  (WS is a project-level decision, made ONCE)
-  2  Item picker                (affix / stem / affix-template tree)
-  3  Schema scope + conflict mode
-  4  Preview / StatsPanel
-  5  Finish / Move              (the ONLY write point)
+Pages: there is no page list here, deliberately. `SelectionWizard.flow()` is the
+single declaration of which pages exist, in what order, and which of them may
+drop out of a run that has nothing for them to decide (feature 036 FR-010). A
+second list in this docstring is how the old one came to describe five pages
+while eleven were registered.
+
+Two facts the declaration cannot state and a reader needs:
+  * Projects and Writing Systems are two pages (036 FR-006). Binding a pair of
+    projects and mapping their writing systems are separate decisions, and the
+    second is not answerable until the first is done.
+  * Finish / Move is the ONLY write point.
 
 Writing-system rules:
 - Enumerate ACTIVE writing systems only (analysis + vernacular active in
@@ -25,6 +31,7 @@ Constitution alignment:
 from __future__ import annotations
 
 import dataclasses
+from contextlib import contextmanager
 from typing import Optional, Set
 
 from PyQt6 import QtCore, QtWidgets
@@ -72,6 +79,7 @@ if __package__:
     from .ws_font_delegate import attach_ws_font_delegate, set_ws_runs
     from .merge_preview_pane import MergePreviewPane, PreviewRequest, _action_to_mode
     from .theme import ThemeCornerBar, install_theme
+    from .page_header import PageHeader
     from ..merge_preview import MergePreviewService, OVERWRITE, MERGE_KEEP, NEW
     from ..models import SimilarResolution
     from ..report import RunReport
@@ -119,6 +127,7 @@ else:
     from ws_font_delegate import attach_ws_font_delegate, set_ws_runs  # type: ignore
     from merge_preview_pane import MergePreviewPane, PreviewRequest, _action_to_mode  # type: ignore
     from theme import ThemeCornerBar, install_theme  # type: ignore
+    from page_header import PageHeader  # type: ignore
     from merge_preview import MergePreviewService, OVERWRITE, MERGE_KEEP, NEW  # type: ignore
     from models import SimilarResolution  # type: ignore  (already imported above but needs bare-name alias)
     from report import RunReport  # type: ignore
@@ -126,13 +135,54 @@ else:
 
 if __package__:
     from ..gate import resolve_gate as _resolve_gate
+    from ..progress import (
+        SourceCounts,
+        label_for,
+        rate_for,
+        reporting,
+        warrants_indicator,
+    )
+    from .progress_indicator import deferred, immediate
 else:
     from gate import resolve_gate as _resolve_gate  # type: ignore
+    from progress import (  # type: ignore
+        SourceCounts,
+        label_for,
+        rate_for,
+        reporting,
+        warrants_indicator,
+    )
+    from progress_indicator import deferred, immediate  # type: ignore
 
 
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
+
+# T024 / FR-029: the window floor, as ONE declared value for the wizard as a
+# whole. 1100 px had been the floor since feature 004 widened the window for the
+# tree-beside-preview layout, and it was never a measurement -- it is the width
+# that layout happened to want on the machine it was built on. A 1366x768
+# laptop, which is what a field linguist actually has, can show 1100 px only by
+# surrendering every other window.
+#
+# Named rather than inlined because FR-029 is a structural claim as well as a
+# behavioural one: no page negotiates its own floor, so no page can quietly
+# become the real arbiter of how narrow the window may get. The per-pane
+# minimums below are deliberately far smaller and their sum is checked against
+# this number by the US3 test module.
+MIN_WINDOW_WIDTH = 900
+
+# Unchanged by feature 036 (US3 lowers the width only) and named here so the
+# pair reads as one geometry decision instead of one constant and one literal.
+MIN_WINDOW_HEIGHT = 680
+
+# T025 / FR-029a: what a tree-and-preview page's two panes may be squeezed to.
+# Their sum must stay well inside MIN_WINDOW_WIDTH -- minimums that sum past the
+# window floor would make the floor unreachable and Qt would silently clamp the
+# window back up, which is FR-029 failing in the name of FR-029a.
+_TREE_PANE_MIN_WIDTH = 360
+_PREVIEW_PANE_MIN_WIDTH = 260
 
 _SCOPE_LABELS = {
     CategoryScope.NONE: "NONE",
@@ -195,6 +245,111 @@ _CATEGORY_TOGGLES = [
 # Layer-1 helper: which ConflictMode values are offered for a category?
 # ---------------------------------------------------------------------------
 
+def _count_says_content(count) -> bool:
+    """Turn a cheap count into "show this page?" -- unknown means show.
+
+    `None` out of `SourceCounts` means "could not be had cheaply", never "zero".
+    Treating it as zero would skip a page whose contents were merely
+    unmeasurable, which is the one direction FR-009c does not tolerate.
+    """
+    return True if count is None else count > 0
+
+
+# ---------------------------------------------------------------------------
+# T020/T021/T022 -- the one way a page reports a wait (FR-014..FR-023)
+# ---------------------------------------------------------------------------
+# EVERY one of the thirteen FR-023 operations goes through `_page_progress`.
+# Written once because the decision it makes is the same everywhere and is easy
+# to get subtly wrong per call site: which of FR-014's two triggers applies,
+# and whether the indicator comes down on the failure path.
+#
+#   * the trigger is `warrants_indicator(total, rate)` and nothing else -- an
+#     anticipated wait past the threshold is shown up front (FR-014a), and
+#     everything else waits for the elapsed-time fallback (FR-014b). Whichever
+#     fires first wins, so a mis-calibrated rate can only pick the wrong
+#     trigger, never suppress the indicator.
+#   * the label and the rate come from ONE lookup each, both keyed by the FR-023
+#     operation name, so a page cannot name a row the calibration table has
+#     never heard of (`label_for`/`rate_for` raise on a typo, at wiring time).
+#   * `reporting()` owns the dismissal, so a walk that raises still takes its
+#     indicator down (FR-020) and the error message the wizard shows next is
+#     never trapped behind a modal corpse.
+
+
+def _source_counts_of(page) -> SourceCounts:
+    """The run's cheap-count snapshot, or the all-unknown one.
+
+    A page is constructed standalone by a good deal of the test suite and by
+    `_PagePreview`'s host, so `wizard()` may be None and a wizard may predate
+    the snapshot. Unknown counts are the correct answer in both cases: they mean
+    "no total", which is the indeterminate indicator, not a missing one.
+    """
+    wizard = page.wizard()
+    getter = getattr(wizard, "source_counts", None)
+    if getter is None:
+        return SourceCounts.unknown()
+    try:
+        return getter()
+    except Exception:  # noqa: BLE001 -- a count is never worth a failed page entry
+        return SourceCounts.unknown()
+
+
+@contextmanager
+def _page_progress(page, operation: str, total: Optional[int] = None):
+    """Report one FR-023 operation for the duration of the `with` block.
+
+    `total` is a count the caller ALREADY HAS -- `SourceCounts` for the
+    source-derived pages, a `len()` for the two selection-derived ones. It is
+    never obtained by counting (FR-014d); that is the whole point of the
+    snapshot, and a counting pass here would pay the cost the indicator exists
+    to cover.
+
+    Yields the sink, so the body ticks from inside its walk.
+    """
+    label = label_for(operation)
+    if warrants_indicator(total, rate_for(operation)):
+        sink = immediate(label, total, parent=page)     # FR-014a: up front
+    else:
+        sink = deferred(label, total, parent=page)      # FR-014b: after 500 ms
+    with reporting(sink, label, total) as prog:
+        yield prog
+
+
+def _operation_failed_note(operation: str) -> str:
+    """The one sentence a page says when its walk raised (T022, FR-020).
+
+    Dismissing the indicator is half of FR-020; the other half is that the
+    operator is TOLD. A page that quietly renders an empty tree is
+    indistinguishable from a project that genuinely has nothing in it, and the
+    two call for opposite responses -- so the failure gets its own words rather
+    than the page's "nothing here" wording.
+
+    Phrased from the operation's own label, so the sentence names the operation
+    in the same vocabulary the indicator just used (FR-015), and no page invents
+    a second name for the thing it was doing.
+    """
+    return (
+        f"({label_for(operation).rstrip('. ')} failed. Nothing could be read "
+        "from the source project -- see the GramTrans log for the reason.)"
+    )
+
+
+def _show_failure_row(tree, operation: str) -> None:
+    """Replace a tree's contents with the single disabled row that explains why.
+
+    Clearing first is the point: the affix and stem pages did not clear on the
+    failure path, so a second visit to a page whose walk had just raised showed
+    the PREVIOUS visit's rows as though they were current.
+    """
+    tree.clear()
+    item = QtWidgets.QTreeWidgetItem(tree, [_operation_failed_note(operation)])
+    item.setFlags(item.flags() & ~QtCore.Qt.ItemFlag.ItemIsEnabled)
+
+
+# ---------------------------------------------------------------------------
+# Layer-1 helper: which ConflictMode values are offered for a category?
+# ---------------------------------------------------------------------------
+
 def _allowed_modes(cat: GrammarCategory) -> list:
     """Return the list of ConflictMode values offered for `cat` per Layer 1."""
     if cat in _CUSTOM_FIELDS_ONLY:
@@ -215,21 +370,274 @@ def _make_tree_pane_splitter(tree_widget, pane_widget,
 
     Replaces the direct layout.addWidget(tree, 1) call in each page's _build_ui.
     Stretch factors default to 3:2 (tree:pane) per plan R7.
+
+    THE ONE PLACE A TREE-AND-PREVIEW PAGE IS MADE TO SURVIVE 900 PX
+    ---------------------------------------------------------------
+    Nine pages build their splitter here, so 036 T025/T026 are applied here
+    rather than nine times. Three separate ways a narrowed window can eat a pane
+    or a column, and the default Qt behaviour is wrong for all three:
+
+    * **collapse** (FR-029a). A splitter that allows collapse lets the operator
+      drag the preview to zero -- and lets Qt do it for them as the width runs
+      out. `setChildrenCollapsible(False)` plus a real minimum on each pane is
+      what makes "both panes side by side" survive the floor instead of
+      depending on how wide the window happens to be.
+    * **silent cut** (FR-029b). Cells elide right by default; column HEADINGS do
+      not, so a heading too wide for its section is chopped today with nothing
+      to say it was. An unindicated cut is worse than a narrow column: the
+      operator cannot tell there is more.
+    * **a scrollbar instead of an ellipsis** (FR-029b). A view left on
+      `ScrollBarAsNeeded` answers a too-narrow column by growing a horizontal
+      bar, which is the thing FR-029b forbids the page acquiring. The ellipsis
+      and the no-scrollbar clause are one decision, so they are made together.
     """
     splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Horizontal)
     splitter.addWidget(tree_widget)
     splitter.addWidget(pane_widget)
     splitter.setStretchFactor(0, tree_stretch)
     splitter.setStretchFactor(1, pane_stretch)
+    # T025 / FR-029a.
+    splitter.setChildrenCollapsible(False)
+    tree_widget.setMinimumWidth(_TREE_PANE_MIN_WIDTH)
+    pane_widget.setMinimumWidth(_PREVIEW_PANE_MIN_WIDTH)
+    # T026 / FR-029b. The left pane is a view on every page that calls this, but
+    # the guard keeps the helper usable for a page whose left half is not one.
+    for view in _item_views_of(tree_widget):
+        _elide_over_narrow_columns(view)
     return splitter
 
 
+def _item_views_of(widget):
+    """`widget` itself if it is an item view, plus any view nested inside it.
+
+    A page that wraps its tree in a frame still has the view FR-029b means, and
+    a page that hands its tree over directly is the common case. Both are
+    reached the same way so neither has to be special-cased at the call site.
+    """
+    views = []
+    if isinstance(widget, QtWidgets.QAbstractItemView):
+        views.append(widget)
+    views.extend(
+        v for v in widget.findChildren(QtWidgets.QAbstractItemView)
+        if v not in views
+    )
+    return views
+
+
+def _elide_over_narrow_columns(view) -> None:
+    """Make one item view shorten over-narrow content instead of cutting it.
+
+    Separate from the splitter factory so a view built outside a tree-and-preview
+    page can be given the same treatment by name rather than by copying three
+    property calls.
+    """
+    elide_right = QtCore.Qt.TextElideMode.ElideRight
+    view.setTextElideMode(elide_right)
+    view.setHorizontalScrollBarPolicy(
+        QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+    )
+    header = getattr(view, "header", None)
+    header = header() if callable(header) else None
+    if header is not None:
+        # The half Qt does not do for itself: QHeaderView defaults to ElideNone.
+        header.setTextElideMode(elide_right)
+
+
+def _set_item_text_with_tooltip(item, column: int, text: str) -> None:
+    """Set a cell's text and record the untruncated value as its tooltip.
+
+    FR-029b has two halves and Qt supplies only the first: it draws the ellipsis,
+    and nothing in it keeps the string that was elided. The tooltip is the "full
+    value remains available on demand" channel, and it exists only if something
+    sets it -- so this is the one place a cell's text and its full-value tooltip
+    are set together, exactly as `_make_tree_pane_splitter` is the one place a
+    splitter is built.
+
+    The MODEL keeps the untruncated value. Baking an ellipsis into the data would
+    corrupt the value FR-034 requires be preserved exactly, and would make the
+    truncation permanent rather than a property of the current column width.
+    """
+    item.setText(column, text)
+    item.setToolTip(column, text)
+
+
+def _carry_full_values_in_tooltips(tree) -> None:
+    """Give every populated cell a tooltip holding its own untruncated text.
+
+    The other half of FR-029b, applied to trees that were populated by the nine
+    `_populate_*` methods rather than through `_set_item_text_with_tooltip`. One
+    sweep at the end of population is what makes the ellipsis stand IN FOR the
+    value instead of hiding it, without rewriting every row-building loop in the
+    module to thread a tooltip through.
+
+    Signals are blocked for the duration, and that is load-bearing, not
+    defensive: `setToolTip` on a `QTreeWidgetItem` emits `itemChanged`, and the
+    pages connect `itemChanged` to check-state mirroring. An unblocked sweep
+    would look to those handlers exactly like the operator ticking every box on
+    the page.
+
+    Only empty tooltips are filled, so a cell that already carries a richer
+    tooltip (a status explanation, say) keeps it.
+    """
+    blocked = tree.signalsBlocked()
+    tree.blockSignals(True)
+    try:
+        columns = tree.columnCount()
+        iterator = QtWidgets.QTreeWidgetItemIterator(tree)
+        while iterator.value() is not None:
+            item = iterator.value()
+            for column in range(columns):
+                text = item.text(column)
+                if text and not item.toolTip(column):
+                    item.setToolTip(column, text)
+            iterator += 1
+    except Exception:  # noqa: BLE001 -- a tooltip is never worth a failed page
+        pass
+    finally:
+        tree.blockSignals(blocked)
+
+
 # ---------------------------------------------------------------------------
-# Page 1 -- Project + Writing Systems
+# Flow-aware page base (T013, FR-009b)
 # ---------------------------------------------------------------------------
 
-class _PageProjectWS(QtWidgets.QWizardPage):
-    """Page 1: bind source + target projects and choose writing-system mapping.
+class _FlowPage(QtWidgets.QWizardPage):
+    """A page that resolves its successor from `SelectionWizard.flow()`.
+
+    WHY `nextId()` AND NOT A FILTERED PAGE LIST
+    -------------------------------------------
+    `QWizardPage.nextId()` is Qt's own hook for a conditional flow, and Qt calls
+    it to decide whether Next is even *enabled*. Resolving the successor here
+    means the button is right before the click, rather than the alternative --
+    registering only the pages a run "will" need, which has to guess before the
+    operator has picked anything and cannot change its mind afterwards.
+
+    Back needs nothing: Qt replays its own stack of visited pages, so an
+    operator returning through a run that skipped pages retraces exactly the
+    pages they saw.
+
+    `flow()` is read at CALL TIME, never cached. The operator may go back and
+    pick an affix after Morphology Skeleton was skipped for having none, and the
+    page then re-enters the flow -- a baked list could not.
+    """
+
+    # -- The page header (T041, FR-004 / FR-012) ---------------------------
+    # Every page in the flow carries one. `subTitle()` stays the string of
+    # record -- the wizard sets `IgnoreSubTitles` so Qt stops drawing it, and
+    # the header renders it instead in a label that WRAPS. Qt's own subtitle
+    # does not wrap: it elides, which is how a description could end mid-word
+    # with nothing to say it had been cut (FR-013).
+
+    def header(self):
+        """This page's laid-out header row, or None before one is installed.
+
+        Returns None rather than raising for a page constructed standalone --
+        a good deal of the unit suite builds pages with no wizard at all, and
+        a header is something the wizard installs, not something a page makes
+        for itself.
+        """
+        return getattr(self, "_page_header", None)
+
+    def install_header(self, header) -> None:
+        """Adopt `header` as row 0 of this page's own layout.
+
+        Laid out, never positioned. That is the whole of FR-004: a box layout
+        allocates disjoint x-intervals to the description and the controls, so
+        a description grown to any wrapped height cannot intersect the strip --
+        it grows the header's height instead. The floating bar this replaces
+        had no layout relationship with anything, so nothing could move out of
+        its way and it painted an opaque background to stay legible on top of
+        whatever it covered.
+
+        Idempotent: installing twice on one page is a no-op, so a second call
+        cannot stack two header rows.
+        """
+        if getattr(self, "_page_header", None) is not None:
+            return
+        layout = self.layout()
+        if layout is None:
+            return
+        self._page_header = header
+        header.setParent(self)
+        insert = getattr(layout, "insertWidget", None)
+        if callable(insert):
+            insert(0, header)
+        else:                       # not a box layout: better appended than lost
+            layout.addWidget(header)
+        header.set_description(self.subTitle())
+
+    def refresh_header_description(self) -> None:
+        """Re-render `subTitle()` into the header. Cheap; safe before install.
+
+        Called on page entry because `subTitle()` is not frozen at construction
+        -- the Finish page takes its subtitle from the host's confirmation gate,
+        and a page may restate itself in `initializePage`.
+        """
+        header = self.header()
+        if header is not None:
+            header.set_description(self.subTitle())
+
+    def nextId(self) -> int:  # noqa: N802 -- Qt naming
+        """The next page this run will SHOW, or -1 to end the run.
+
+        Walks the declaration forward from this page and returns the first entry
+        that is either unskippable or whose `has_content()` says yes. A
+        predicate that raises is treated as "yes" for the same reason `None` is
+        (FR-009c): a page that is wrongly shown costs a click, a page that is
+        wrongly skipped costs a decision.
+        """
+        wizard = self.wizard()
+        if wizard is None or not hasattr(wizard, "flow"):
+            # Constructed standalone (several unit tests do) or hosted by a
+            # wizard that predates the declaration: fall back to Qt's
+            # registration order rather than refusing to navigate.
+            return super().nextId()
+        entries = list(wizard.flow())
+        here = -1
+        for idx, (attr, _short, _skippable, _has) in enumerate(entries):
+            if getattr(wizard, attr, None) is self:
+                here = idx
+                break
+        if here == -1:
+            return super().nextId()
+
+        for attr, _short, skippable, has_content in entries[here + 1:]:
+            page_id = wizard.flow_page_id(attr)
+            if page_id == -1:
+                continue                    # declared but not registered
+            if not skippable or has_content is None:
+                return page_id              # FR-009d outranks any emptiness
+            try:
+                if has_content():
+                    return page_id
+            except Exception:  # noqa: BLE001 -- unsure means shown
+                return page_id
+        return -1                           # last shown page ends the run
+
+
+# ---------------------------------------------------------------------------
+# Page 1 -- Projects  (feature 036 T010, FR-006/FR-007)
+# ---------------------------------------------------------------------------
+# WHY THIS PAGE IS NO LONGER "Project + Writing Systems"
+# -----------------------------------------------------
+# One page used to ask two unrelated questions: which two projects, and how
+# every source writing system maps into the target. The second question is
+# answerable only *after* the first, so the WS tables sat empty for the whole
+# time the operator was reading the page they were on -- and the page's
+# subtitle promised a table that was not usable yet. Feature 036 FR-006 splits
+# them: this page binds a pair of projects and nothing else, and
+# `_PageWritingSystems` (the step after it) owns the mapping and repopulates
+# itself from the two bound handles on every entry.
+#
+# The accessor name `page_project_ws()` is deliberately NOT renamed: 25 call
+# sites across this module and the test suite reach the source handle and the
+# bound context through it, and renaming a name that still means the same thing
+# ("the page that owns the projects") would be churn with no reader benefit.
+# The *attribute* behind it is `_page_projects`.
+
+
+class _PageProjects(_FlowPage):
+    """Page 1: bind the source + target projects. Nothing else.
 
     Under FlexTools the source is already bound (the host's open project,
     passed in at wizard construction time) and the user picks only the target.
@@ -244,28 +652,16 @@ class _PageProjectWS(QtWidgets.QWizardPage):
     Same-project is refused in both directions: the source's own project is
     excluded from `list_target_candidates` and refused by `bind_target`, and a
     bound target is excluded from the source list. Re-picking the source
-    releases a bound target, because the writing-system mapping below is a
-    statement about a *pair* of projects and cannot outlive either half.
+    releases a bound target, because everything downstream -- the writing-system
+    mapping on the next page most of all -- is a statement about a *pair* of
+    projects and cannot outlive either half.
 
-    WS decision: enumerate ACTIVE writing systems from the source project and
-    present a three-way MAP / CREATE / SKIP control re-hosted from
-    ws_mapping_dialog.py / ws_wizard.py mechanics.  Writing systems are split
-    into two groups: Vernacular WS and Analysis WS (by WSKind).  A dual-role
-    WS (appears in both groups) defaults both rows to the same choice and is
-    independently overridable (linked-until-touched).  A dual-role CREATE
-    choice points BOTH roles at the SAME target WS (no double-create).
-
-    Vernacular is lead: when a vernacular row is set, the same-tag analysis
-    row defaults to the vernacular choice and remains independently
-    overridable.
-
-    This is a PROJECT-LEVEL decision made once; no per-category WS negotiation.
+    Advancing off this page requires BOTH handles (FR-008). Two mechanisms,
+    deliberately, because they say different things: the `target_ready*`
+    required field greys the Next button, and `validatePage()` plus the inline
+    reason label say *why* on the page itself. A greyed button with no
+    explanation is the defect FR-008 names.
     """
-
-    # Choice constants (MAP=0, CREATE=1, SKIP=2) mirrored from WSChoice.
-    _CHOICE_MAP = 0
-    _CHOICE_CREATE = 1
-    _CHOICE_SKIP = 2
 
     def __init__(self, stub, host_project, parent=None, *,
                  source_binder=None, report_sink=None):
@@ -280,28 +676,26 @@ class _PageProjectWS(QtWidgets.QWizardPage):
         self._source_binder = source_binder
         self._report = report_sink
         self._context = None   # set when target is bound
-        self._target_ws_ids: list = []  # existing WS IDs in the target
-        # Row state: dict keyed by (ws_id, kind_value) -> {"choice": int, "target": str}
-        # kind_value is WSKind.VERNACULAR.value or WSKind.ANALYSIS.value
-        self._row_state: dict = {}
-        # Track which analysis rows are still "linked" to their vernacular twin.
-        self._analysis_linked: set = set()  # set of ws_id strings
-        # Feature 032 US4: {source_ws_id: target_ws_id} related-languages MAP
-        # defaults, computed in _populate_ws_tables once the target is bound.
-        self._ws_map_defaults: dict = {}
 
-        self.setTitle("Step 1 of 10: Project + Writing Systems")
+        # Unnumbered here on purpose: the run's flow assigns the number on
+        # entry (`SelectionWizard._apply_step_number`), because a position is a
+        # fact about a *run* and this class cannot know one. The literal that
+        # used to be here claimed a total of ten while eleven pages were
+        # registered -- the total was already a lie before any page was skipped.
+        # (The literal itself is banned from this file by a source-level test,
+        # which is why even a comment does not spell one out.)
+        self.setTitle("Projects")
         self.setSubTitle(
             (
-                "Pick the source and target projects, then map source writing "
-                "systems to target writing systems. Each WS can be Mapped, "
-                "Created, or Skipped."
+                "Pick the source project to read from and the target project "
+                "to write to. Both are required before you can continue."
             )
             if source_binder is not None else
-            # Byte-identical to the pre-exception-7 text: under FlexTools the
-            # source is not picked, so the page still describes one choice.
-            "Bind a target project and map source writing systems to target "
-            "writing systems. Each WS can be Mapped, Created, or Skipped."
+            # Under FlexTools the source is not picked, so the page describes
+            # exactly one choice and must not invite the operator to change a
+            # project the host owns (SC-013).
+            "Bind the target project to write to. The source project is "
+            "already open and cannot be changed here."
         )
         self._build_ui()
         self.registerField("target_ready*", self, "target_ready_prop",
@@ -361,48 +755,64 @@ class _PageProjectWS(QtWidgets.QWizardPage):
                 "except the source."
             )
 
-        layout.addWidget(QtWidgets.QLabel(
-            "Writing-system mapping (MAP / CREATE / SKIP per WS):", self
-        ))
+        # T011 / FR-008: the refusal, stated on the page. A disabled Next button
+        # is the *consequence* of a missing binding, not an explanation of it;
+        # an operator who cannot see which of the two halves is missing has to
+        # guess. Updated by `_refresh_reason` on every binding change, and read
+        # back by `validatePage()` so the two can never disagree.
+        self._reason_label = QtWidgets.QLabel("", self)
+        self._reason_label.setWordWrap(True)
+        layout.addWidget(self._reason_label)
+        layout.addStretch(1)
+        self._refresh_reason()
 
-        # Scrollable area holding the two WS group tables (Vernacular, Analysis).
-        scroll = QtWidgets.QScrollArea(self)
-        scroll.setWidgetResizable(True)
-        scroll_container = QtWidgets.QWidget()
-        scroll_layout = QtWidgets.QVBoxLayout(scroll_container)
+    # ------------------------------------------------------------------
+    # The advance gate (T011, FR-008)
+    # ------------------------------------------------------------------
 
-        # -- Vernacular WS group --
-        vern_group = QtWidgets.QGroupBox("Vernacular Writing Systems", scroll_container)
-        self._vern_layout = QtWidgets.QVBoxLayout(vern_group)
-        self._vern_table = self._make_ws_table(vern_group)
-        self._vern_layout.addWidget(self._vern_table)
-        scroll_layout.addWidget(vern_group)
+    def _missing_binding_reason(self) -> str:
+        """Why this page will not advance, or "" when it will.
 
-        # -- Analysis WS group --
-        anal_group = QtWidgets.QGroupBox("Analysis Writing Systems", scroll_container)
-        self._anal_layout = QtWidgets.QVBoxLayout(anal_group)
-        self._anal_table = self._make_ws_table(anal_group)
-        self._anal_layout.addWidget(self._anal_table)
-        scroll_layout.addWidget(anal_group)
+        Names the half that is missing rather than the pair, because "pick your
+        projects" is not actionable to someone who has already picked one.
+        """
+        if not self._source_is_bound():
+            if self._source_binder is None:
+                # FlexTools with no open project: the operator cannot fix this
+                # from here, so say where it is fixed.
+                return ("No source project is open. GramTrans reads grammar "
+                        "from the project open in FieldWorks; open one and run "
+                        "GramTrans again.")
+            return "Pick the source project to read from."
+        if self._context is None:
+            return "Pick the target project to write to."
+        return ""
 
-        scroll.setWidget(scroll_container)
-        layout.addWidget(scroll, 1)
+    def _refresh_reason(self) -> None:
+        """Show or clear the inline reason. Never raises: it is only a label."""
+        label = getattr(self, "_reason_label", None)
+        if label is None:
+            return
+        reason = self._missing_binding_reason()
+        label.setText(f"<i>{reason}</i>" if reason else "")
+        label.setVisible(bool(reason))
 
-        # No developer note under the tables. What used to be here -- that the
-        # WS choice is project-level and made once, that the per-category
-        # handshake is retired, and that vernacular leads its same-tag analysis
-        # row -- is design commentary addressed to whoever maintains this page.
-        # Two of the three describe a *previous* design a user never saw, and
-        # the third describes behaviour the linked rows already demonstrate.
-        # It lives in this class's docstring instead, which is where a
-        # maintainer looks and a linguist does not.
+    def validatePage(self) -> bool:
+        """Refuse to advance until BOTH projects are bound (FR-008).
 
-    def _make_ws_table(self, parent) -> "QtWidgets.QTableWidget":
-        """Create a QTableWidget with columns: Source WS | Choice | Target WS."""
-        table = QtWidgets.QTableWidget(0, 3, parent)
-        table.setHorizontalHeaderLabels(["Source WS", "Choice", "Target WS"])
-        table.horizontalHeader().setStretchLastSection(True)
-        return table
+        `target_ready*` already greys Next, so this hook is not what stops a
+        click in the normal case -- it is what stops every *other* way forward
+        (Enter on a focused field, a programmatic `next()`, a future Commit
+        button).
+
+        No dialog: the reason is already on the page, and a modal that repeats
+        a sentence the operator can see would be the third window feature 034
+        removed. `_refresh_reason` is re-run here so the label cannot be stale
+        at the moment the refusal happens.
+        """
+        reason = self._missing_binding_reason()
+        self._refresh_reason()
+        return not reason
 
     # ------------------------------------------------------------------
     # Source binding (feature 034 exception 7)
@@ -450,8 +860,15 @@ class _PageProjectWS(QtWidgets.QWizardPage):
         if choice is None:
             return
 
+        # FR-023 row 1. No cheap total exists -- nothing can be counted before
+        # the project is open -- so this is the elapsed-time trigger by
+        # construction (FR-014b/FR-014d): indeterminate, and shown only if
+        # opening takes longer than the threshold. `_page_progress` reads that
+        # off `rate_for("bind_source") is None`, so the choice is declared in the
+        # calibration table rather than repeated here.
         try:
-            handle = self._source_binder(choice.project_name)
+            with _page_progress(self, "bind_source"):
+                handle = self._source_binder(choice.project_name)
         except Exception as exc:  # noqa: BLE001 -- LCM raises a variety of types
             # FR-034: attributed to the project that would not open, with the
             # rest of the list still choosable.
@@ -499,8 +916,14 @@ class _PageProjectWS(QtWidgets.QWizardPage):
         wizard = self.wizard()
         if wizard is not None:
             wizard._host = handle
+            # T014: the ONE place a bind refreshes the cheap-count snapshot the
+            # page-skip predicates read. Doing it here, at the bind, is what
+            # keeps `nextId()` free of project queries (D5b).
+            if hasattr(wizard, "refresh_source_counts"):
+                wizard.refresh_source_counts(handle)
         self._pick_target_btn.setEnabled(True)
         self._pick_target_btn.setToolTip("")
+        self._refresh_reason()
         self._log(f"  Source (read-only): {project_name!r}")
 
     def _confirm_release_target(self) -> bool:
@@ -547,13 +970,14 @@ class _PageProjectWS(QtWidgets.QWizardPage):
                 self._log(f"[GramTrans] Could not close target project "
                           f"{name!r}: {exc}", warning=True)
         self._tgt_label.setText("<i>(not picked)</i>")
-        self._target_ws_ids = []
-        self._row_state.clear()
-        self._analysis_linked = set()
-        self._ws_map_defaults = {}
-        self._vern_table.setRowCount(0)
-        self._anal_table.setRowCount(0)
         self._set_target_ready(False)
+        self._refresh_reason()
+        # The WS row state that named the released target is NOT cleared from
+        # here any more, and must not be: after the FR-006 split this page has
+        # no reference to those tables. `_PageWritingSystems.initializePage`
+        # rebuilds them from scratch on every entry, so a released project's
+        # rows cannot survive into the next visit (data-model s1 edge case).
+        # Clearing across the split would be a second owner of the same state.
 
     def _bound_target_name(self) -> str:
         return getattr(self._context, "target_project_name", "") \
@@ -603,8 +1027,11 @@ class _PageProjectWS(QtWidgets.QWizardPage):
         choice = dlg.selected_candidate()
         if choice is None:
             return
+        # FR-023 row 2. Same shape as the source bind above, and the same reason:
+        # a project has no cheap size until it is open.
         try:
-            self._context = gt_api.bind_target(self._stub, choice)
+            with _page_progress(self, "bind_target"):
+                self._context = gt_api.bind_target(self._stub, choice)
         except gt_api.SameProjectError as e:
             QtWidgets.QMessageBox.critical(self, "GramTrans", str(e))
             return
@@ -614,11 +1041,190 @@ class _PageProjectWS(QtWidgets.QWizardPage):
         self._tgt_label.setText(
             f"<b>{choice.project_name}</b> (<code>{choice.project_path}</code>)"
         )
-        # Enumerate target WS IDs for the MAP target dropdown.
-        self._target_ws_ids = _enumerate_active_ws_ids(self._context.target_handle) \
-            if hasattr(self._context, "target_handle") else []
-        self._populate_ws_tables()
+        # The target WS enumeration and the MAP/CREATE/SKIP tables used to be
+        # built from here, on this page. They now belong to the step after this
+        # one, which enumerates on `initializePage` from the two handles this
+        # page bound -- so binding a target no longer pays for a WS walk the
+        # operator may never look at (FR-006).
         self._set_target_ready(True)
+        self._refresh_reason()
+
+    def context(self):
+        return self._context
+
+    def isComplete(self) -> bool:
+        return self._target_ready
+
+
+# ---------------------------------------------------------------------------
+# Page 2 -- Writing Systems  (feature 036 T010, FR-006)
+# ---------------------------------------------------------------------------
+
+class _PageWritingSystems(_FlowPage):
+    """Page 2: map every ACTIVE source writing system into the target.
+
+    Split out of the old `_PageProjectWS` by feature 036 FR-006. The behaviour
+    is unchanged; what changed is *when* it runs. The tables used to be built
+    inside `_on_pick_target`, i.e. while the operator was still on the projects
+    page and could not see them; they are now built in `initializePage`, from
+    the two handles the previous page bound.
+
+    Rebuilt from scratch on EVERY entry, never merged into existing rows. That
+    is not defensiveness: releasing a bound project on step 1 (`_on_pick_source`
+    -> `_release_bound_target`) invalidates every row that named it, and this
+    page is the only owner of that row state after the split. Repopulating is
+    what makes "the released target's rows cannot come back" true by
+    construction instead of by a second owner remembering to clear them.
+
+    WS decision: enumerate ACTIVE writing systems from the source project and
+    present a three-way MAP / CREATE / SKIP control re-hosted from
+    ws_mapping_dialog.py / ws_wizard.py mechanics.  Writing systems are split
+    into two groups: Vernacular WS and Analysis WS (by WSKind).  A dual-role
+    WS (appears in both groups) defaults both rows to the same choice and is
+    independently overridable (linked-until-touched).  A dual-role CREATE
+    choice points BOTH roles at the SAME target WS (no double-create).
+
+    Vernacular is lead: when a vernacular row is set, the same-tag analysis
+    row defaults to the vernacular choice and remains independently
+    overridable.
+
+    This is a PROJECT-LEVEL decision made once; no per-category WS negotiation.
+    """
+
+    # Choice constants (MAP=0, CREATE=1, SKIP=2) mirrored from WSChoice.
+    _CHOICE_MAP = 0
+    _CHOICE_CREATE = 1
+    _CHOICE_SKIP = 2
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        # Handles, adopted from the projects page on every entry. Held rather
+        # than fetched per call because `_populate_ws_tables` and
+        # `_sync_analysis_row_widget` read the source several times while
+        # building one table, and the accessor chain is not free.
+        self._host = None
+        self._context = None
+        self._target_ws_ids: list = []  # existing WS IDs in the target
+        # Row state: dict keyed by (ws_id, kind_value) -> {"choice": int, "target": str}
+        # kind_value is WSKind.VERNACULAR.value or WSKind.ANALYSIS.value
+        self._row_state: dict = {}
+        # Track which analysis rows are still "linked" to their vernacular twin.
+        self._analysis_linked: set = set()  # set of ws_id strings
+        # Feature 032 US4: {source_ws_id: target_ws_id} related-languages MAP
+        # defaults, computed in _populate_ws_tables once the target is bound.
+        self._ws_map_defaults: dict = {}
+
+        # Unnumbered: the run assigns the number on entry (FR-009a).
+        self.setTitle("Writing Systems")
+        self.setSubTitle(
+            "Map each source writing system onto a target one, create it "
+            "there, or skip it. Vernacular and analysis systems are listed "
+            "separately."
+        )
+        self._build_ui()
+
+    # ------------------------------------------------------------------
+    def _build_ui(self) -> None:
+        layout = QtWidgets.QVBoxLayout(self)
+
+        layout.addWidget(QtWidgets.QLabel(
+            "Writing-system mapping (MAP / CREATE / SKIP per WS):", self
+        ))
+
+        # Scrollable area holding the two WS group tables (Vernacular, Analysis).
+        scroll = QtWidgets.QScrollArea(self)
+        scroll.setWidgetResizable(True)
+        scroll_container = QtWidgets.QWidget()
+        scroll_layout = QtWidgets.QVBoxLayout(scroll_container)
+
+        # -- Vernacular WS group --
+        vern_group = QtWidgets.QGroupBox("Vernacular Writing Systems", scroll_container)
+        self._vern_layout = QtWidgets.QVBoxLayout(vern_group)
+        self._vern_table = self._make_ws_table(vern_group)
+        self._vern_layout.addWidget(self._vern_table)
+        scroll_layout.addWidget(vern_group)
+
+        # -- Analysis WS group --
+        anal_group = QtWidgets.QGroupBox("Analysis Writing Systems", scroll_container)
+        self._anal_layout = QtWidgets.QVBoxLayout(anal_group)
+        self._anal_table = self._make_ws_table(anal_group)
+        self._anal_layout.addWidget(self._anal_table)
+        scroll_layout.addWidget(anal_group)
+
+        scroll.setWidget(scroll_container)
+        layout.addWidget(scroll, 1)
+
+        # Explains what an empty pair of tables means. Without it, a run whose
+        # source has no ACTIVE writing systems (or whose handles did not open)
+        # shows two blank boxes that look like a bug.
+        self._empty_note = QtWidgets.QLabel("", self)
+        self._empty_note.setWordWrap(True)
+        self._empty_note.setVisible(False)
+        layout.addWidget(self._empty_note)
+
+        # No developer note under the tables. What used to be here -- that the
+        # WS choice is project-level and made once, that the per-category
+        # handshake is retired, and that vernacular leads its same-tag analysis
+        # row -- is design commentary addressed to whoever maintains this page.
+        # Two of the three describe a *previous* design a user never saw, and
+        # the third describes behaviour the linked rows already demonstrate.
+        # It lives in this class's docstring instead, which is where a
+        # maintainer looks and a linguist does not.
+
+    def _make_ws_table(self, parent) -> "QtWidgets.QTableWidget":
+        """Create a QTableWidget with columns: Source WS | Choice | Target WS."""
+        table = QtWidgets.QTableWidget(0, 3, parent)
+        table.setHorizontalHeaderLabels(["Source WS", "Choice", "Target WS"])
+        table.horizontalHeader().setStretchLastSection(True)
+        return table
+
+    # ------------------------------------------------------------------
+    def _projects_page(self):
+        """The page that owns the two handles, or None outside a wizard."""
+        wizard = self.wizard()
+        if wizard is None or not hasattr(wizard, "page_project_ws"):
+            return None
+        return wizard.page_project_ws()
+
+    def initializePage(self) -> None:
+        """Adopt the bound handles and rebuild both tables from scratch.
+
+        From scratch, every time -- see the class docstring. A merge into
+        existing rows would let a row that named a since-released project
+        survive, and this page is the only owner of that state.
+        """
+        projects = self._projects_page()
+        self._host = getattr(projects, "_host", None) if projects is not None else None
+        self._context = projects.context() if projects is not None else None
+
+        # Drop everything the previous visit built BEFORE deciding whether the
+        # handles are usable, so an unbound re-entry leaves nothing behind.
+        self._row_state.clear()
+        self._analysis_linked = set()
+        self._ws_map_defaults = {}
+        self._target_ws_ids = []
+        self._vern_table.setRowCount(0)
+        self._anal_table.setRowCount(0)
+
+        target = getattr(self._context, "target_handle", None) \
+            if self._context is not None else None
+        if self._host is None:
+            self._empty_note.setText(
+                "<i>No source project is bound, so there are no writing "
+                "systems to map. Go back and pick the projects first.</i>"
+            )
+            self._empty_note.setVisible(True)
+            return
+        if target is not None:
+            self._target_ws_ids = _enumerate_active_ws_ids(target)
+        self._populate_ws_tables()
+        empty = (self._vern_table.rowCount() == 0
+                 and self._anal_table.rowCount() == 0)
+        self._empty_note.setText(
+            "<i>The source project reports no active writing systems, so there "
+            "is nothing to map here.</i>" if empty else ""
+        )
+        self._empty_note.setVisible(empty)
 
     def _populate_ws_tables(self) -> None:
         """Enumerate ACTIVE writing systems from the source project and build rows.
@@ -772,9 +1378,6 @@ class _PageProjectWS(QtWidgets.QWizardPage):
                 choice_cb.blockSignals(False)
 
     # ------------------------------------------------------------------
-    def context(self):
-        return self._context
-
     def selected_ws_ids(self) -> list:
         """Return the list of source WS IDs that are not SKIP.
 
@@ -839,9 +1442,6 @@ class _PageProjectWS(QtWidgets.QWizardPage):
                     create_in_target=False,
                 ))
         return WSMapping(entries=tuple(entries))
-
-    def isComplete(self) -> bool:
-        return self._target_ready
 
 
 # ---------------------------------------------------------------------------
@@ -911,7 +1511,7 @@ def _make_group_item(parent, label: str, *,
     return item
 
 
-class _PageItemPicker(QtWidgets.QWizardPage):
+class _PageItemPicker(_FlowPage):
     """Page 2: POS-grouped affix item picker.
 
     Tree layout (5 columns):
@@ -945,7 +1545,11 @@ class _PageItemPicker(QtWidgets.QWizardPage):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setTitle("Step 4 of 10: Affix Picker")
+        # Unnumbered: this run assigns the number on entry, because a
+        # position is a fact about the run and not about the page
+        # (SelectionWizard._apply_step_number). The literal that used to
+        # be here stated a total across a flow that could skip pages.
+        self.setTitle("Affix Picker")
         self.setSubTitle(
             "Select the affixes to transfer, grouped by the part of speech they attach to. "
             "Stems are picked on the next page."
@@ -1009,9 +1613,20 @@ class _PageItemPicker(QtWidgets.QWizardPage):
         # FR-018(e): obtain target handle from page-0 context; guard for no-target
         target = self._get_target()
 
+        # FR-023 row 5. The total is the whole-lexicon entry count taken at bind:
+        # this walk visits every entry to decide which are affixes, so the
+        # lexicon size is the number of units it will actually cover.
         try:
-            inventory = build_pos_grouped_inventory(source, target=target)
+            with _page_progress(
+                self, "affixes", _source_counts_of(self).lexicon_entries
+            ) as prog:
+                inventory = build_pos_grouped_inventory(
+                    source, target=target, progress=prog
+                )
         except Exception:  # noqa: BLE001
+            # T022: the indicator is already down (`reporting`'s finally); this
+            # is the half that says so on the page.
+            _show_failure_row(self._tree, "affixes")
             inventory = None  # type: ignore[assignment]
 
         if inventory is None:
@@ -1027,6 +1642,7 @@ class _PageItemPicker(QtWidgets.QWizardPage):
             self._tree, [0, 2, 3], WsFontRegistry.from_project(source)
         )
         self.populate_pos_tree(inventory)
+        _carry_full_values_in_tooltips(self._tree)   # T026 / FR-029b
         self._tree.itemChanged.connect(self._on_item_changed)
 
         # T009/T010: resolution store seeding (FR-008, R3)
@@ -1476,7 +2092,7 @@ class _PageItemPicker(QtWidgets.QWizardPage):
 # Stem picker -- own full page, immediately after the Affix picker (019)
 # ---------------------------------------------------------------------------
 
-class _PageStemPicker(QtWidgets.QWizardPage):
+class _PageStemPicker(_FlowPage):
     """Full page: POS-grouped stem item picker.
 
     Mirrors ``_PageItemPicker`` but for stems.  Stems used to share the affix
@@ -1491,7 +2107,11 @@ class _PageStemPicker(QtWidgets.QWizardPage):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setTitle("Step 5 of 10: Stem Picker")
+        # Unnumbered: this run assigns the number on entry, because a
+        # position is a fact about the run and not about the page
+        # (SelectionWizard._apply_step_number). The literal that used to
+        # be here stated a total across a flow that could skip pages.
+        self.setTitle("Stem Picker")
         self.setSubTitle(
             "Select the stem entries to transfer, grouped by the part of speech "
             "they belong to. Checking a part of speech selects the stems under it."
@@ -1573,11 +2193,17 @@ class _PageStemPicker(QtWidgets.QWizardPage):
             return
 
         target = self._get_target()
+        # FR-023 row 6. Same walk as the affix page over the same lexicon, with
+        # the other half of the affix/stem split kept -- so the same total.
         try:
-            stem_inventory = build_pos_grouped_inventory(
-                source, target=target, want_affix=False
-            )
+            with _page_progress(
+                self, "stems", _source_counts_of(self).lexicon_entries
+            ) as prog:
+                stem_inventory = build_pos_grouped_inventory(
+                    source, target=target, want_affix=False, progress=prog
+                )
         except Exception:  # noqa: BLE001
+            _show_failure_row(self._stem_tree, "stems")   # T022
             stem_inventory = None  # type: ignore[assignment]
 
         self._stem_inventory = stem_inventory
@@ -1586,6 +2212,7 @@ class _PageStemPicker(QtWidgets.QWizardPage):
         attach_ws_font_delegate(self._stem_tree, [0, 2, 3], registry)
         if stem_inventory is not None:
             self.populate_stem_tree(stem_inventory)
+            _carry_full_values_in_tooltips(self._stem_tree)   # T026 / FR-029b
         # Own preview service; stems carry no SIMILAR resolution combo (R5),
         # so the candidate list stays empty.  set_context() also clears.
         self._preview_service = MergePreviewService(source, target)
@@ -1731,7 +2358,15 @@ class _PageStemPicker(QtWidgets.QWizardPage):
 # ---------------------------------------------------------------------------
 
 class _PageScopeConflict(QtWidgets.QWizardPage):
-    """Page 3: per-category three-scope selector + conflict mode.
+    """Per-category three-scope selector + conflict mode. NOT IN THE FLOW.
+
+    Retained for back-compat and constructed by the wizard, but absent from
+    `SelectionWizard.flow()` and therefore never registered (conflict UI
+    deferred, FR-012). It is the reason FR-011 exists: its title claimed a
+    position in a five-step flow for as long as the flow had ten steps,
+    because nothing numbered it and nothing renumbered it either. Permanent exclusion and
+    per-run skipping now use the same mechanism -- absence from `flow()` --
+    so an unreachable page cannot acquire a number it never shows.
 
     Re-hosts the existing scope-combo controls from main_window and adds
     per-category ConflictMode selectors gated by the Layer-1 kind table.
@@ -1742,7 +2377,9 @@ class _PageScopeConflict(QtWidgets.QWizardPage):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setTitle("Step 3 of 5: Schema Scope + Conflict Mode")
+        # T015 / FR-011: the stale step-number-and-total is REMOVED, not
+        # renumbered. This page is in no run, so it has no position to state.
+        self.setTitle("Schema Scope + Conflict Mode")
         self.setSubTitle(
             "For each schema category, choose how much to transfer (NONE / AS-NEEDED / ALL) "
             "and what to do when a source item already exists in the target."
@@ -1865,7 +2502,7 @@ _STATUS_LABELS = {
 # Page 3b -- Morphology Skeleton  (T011-T012)
 # ---------------------------------------------------------------------------
 
-class _PageSkeleton(QtWidgets.QWizardPage):
+class _PageSkeleton(_FlowPage):
     """Page 3b: Morphology skeleton derived from the affix picks.
 
     POS-rooted tree:
@@ -1889,11 +2526,14 @@ class _PageSkeleton(QtWidgets.QWizardPage):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setTitle("Step 6 of 10: Morphology Skeleton")
+        # Unnumbered: this run assigns the number on entry, because a
+        # position is a fact about the run and not about the page
+        # (SelectionWizard._apply_step_number). The literal that used to
+        # be here stated a total across a flow that could skip pages.
+        self.setTitle("Morphology Skeleton")
         self.setSubTitle(
-            "Review the parts of speech, slots, and templates the picked affixes require. "
-            "Pre-checked items are derived from your affix selection. "
-            "Deselect to trim to a bare-bones transfer; check extras to add more."
+            "The parts of speech, slots and templates your picked affixes "
+            "need, preselected. Deselect to trim; check extras to add more."
         )
         self._skeleton: Optional[object] = None  # SkeletonInventory
         self._mirroring: bool = False
@@ -1937,14 +2577,26 @@ class _PageSkeleton(QtWidgets.QWizardPage):
             return
 
         target = self._get_target()
+        # FR-023 row 7. Unit is the lexical entry again: the walk reaches MSAs
+        # and slots THROUGH entries, so the entry count is what it covers, not
+        # the number of affixes the operator picked.
+        failed = False
         try:
-            skeleton = build_skeleton_inventory(source, affix_picks, target=target)
+            with _page_progress(
+                self, "skeleton", _source_counts_of(self).lexicon_entries
+            ) as prog:
+                skeleton = build_skeleton_inventory(
+                    source, affix_picks, target=target, progress=prog
+                )
         except Exception:  # noqa: BLE001
             skeleton = None
+            failed = True   # T022: distinguish "read nothing" from "read failed"
 
         if skeleton is None or not skeleton.pos_nodes:
             empty = QtWidgets.QTreeWidgetItem(
-                self._tree, ["(No skeleton derived from current affix picks)"]
+                self._tree,
+                [_operation_failed_note("skeleton")] if failed
+                else ["(No skeleton derived from current affix picks)"],
             )
             empty.setFlags(empty.flags() & ~QtCore.Qt.ItemFlag.ItemIsEnabled)
             return
@@ -1955,6 +2607,7 @@ class _PageSkeleton(QtWidgets.QWizardPage):
             self._tree, [0], WsFontRegistry.from_project(source)
         )
         self._populate_skeleton_tree(skeleton)
+        _carry_full_values_in_tooltips(self._tree)   # T026 / FR-029b
         self._tree.expandAll()
         for col in range(3):
             self._tree.resizeColumnToContents(col)
@@ -2384,7 +3037,7 @@ class _PageSkeleton(QtWidgets.QWizardPage):
 # Page 3c -- Grammatical Dependencies  (T014)
 # ---------------------------------------------------------------------------
 
-class _PageGramDeps(QtWidgets.QWizardPage):
+class _PageGramDeps(_FlowPage):
     """Page 3c: Grammatical dependencies derived from the affix picks' POSes.
 
     Sections:
@@ -2402,11 +3055,14 @@ class _PageGramDeps(QtWidgets.QWizardPage):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setTitle("Step 7 of 10: Grammatical Dependencies")
+        # Unnumbered: this run assigns the number on entry, because a
+        # position is a fact about the run and not about the page
+        # (SelectionWizard._apply_step_number). The literal that used to
+        # be here stated a total across a flow that could skip pages.
+        self.setTitle("Grammatical Dependencies")
         self.setSubTitle(
-            "Review the inflection features, classes, and stem names "
-            "that the picked affixes' parts of speech require. All are preselected. "
-            "Deselect items you do not want to transfer."
+            "The inflection features, classes and stem names those parts of "
+            "speech need, all preselected. Deselect anything you do not want."
         )
         self._deps: Optional[object] = None  # DepsInventory
         # T014: preview service (initialized in initializePage)
@@ -2441,11 +3097,18 @@ class _PageGramDeps(QtWidgets.QWizardPage):
             return
 
         target = self._get_target()
+        # FR-023 row 8. The heaviest per-entry walk (reference closure), so the
+        # one most likely to want its indicator up before it starts.
         try:
-            deps = build_deps_inventory(
-                source, affix_picks, target=target, stem_picks=stem_picks
-            )
+            with _page_progress(
+                self, "dependencies", _source_counts_of(self).lexicon_entries
+            ) as prog:
+                deps = build_deps_inventory(
+                    source, affix_picks, target=target, stem_picks=stem_picks,
+                    progress=prog,
+                )
         except Exception:  # noqa: BLE001
+            _show_failure_row(self._tree, "dependencies")   # T022
             deps = None
 
         if deps is None:
@@ -2457,6 +3120,7 @@ class _PageGramDeps(QtWidgets.QWizardPage):
             self._tree, [0], WsFontRegistry.from_project(source)
         )
         self._populate_deps_tree(deps)
+        _carry_full_values_in_tooltips(self._tree)   # T026 / FR-029b
         self._tree.expandAll()
         for col in range(2):
             self._tree.resizeColumnToContents(col)
@@ -2715,7 +3379,7 @@ _CF_LEVEL_LABELS = {
 }
 
 
-class _PageCustomFields(QtWidgets.QWizardPage):
+class _PageCustomFields(_FlowPage):
     """Page 2: Custom Fields block (Feature 016, US1/US2/US4).
 
     Grouped tree: four owner-class levels (Entry / Sense / Example / Allomorph),
@@ -2731,11 +3395,14 @@ class _PageCustomFields(QtWidgets.QWizardPage):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setTitle("Step 2 of 10: Custom Fields")
+        # Unnumbered: this run assigns the number on entry, because a
+        # position is a fact about the run and not about the page
+        # (SelectionWizard._apply_step_number). The literal that used to
+        # be here stated a total across a flow that could skip pages.
+        self.setTitle("Custom Fields")
         self.setSubTitle(
-            "Review the source project's custom fields. All fields are preselected. "
-            "Untick the block to skip custom fields, or deselect individual fields. "
-            "Status column shows whether each field exists in the target."
+            "Every custom field in the source is preselected. Deselect any "
+            "you do not want; Status shows what the target already has."
         )
         self._mirroring: bool = False
         self._records: list = []   # list[_CustomFieldRecord]
@@ -2846,10 +3513,28 @@ class _PageCustomFields(QtWidgets.QWizardPage):
                 classify_custom_field,
             )
 
+        # FR-023 row 3. This page has no `build_*` in Lib/selection.py to hand a
+        # sink to -- it consumes a generator out of `categories.py` directly --
+        # so the tick happens where the consumption does. Same contract either
+        # way: one tick per unit, from inside the walk (FR-014).
         try:
-            all_records = list(_enumerate_custom_fields(source))
+            with _page_progress(
+                self, "custom_fields", _source_counts_of(self).custom_fields
+            ) as prog:
+                all_records = []
+                for _rec in _enumerate_custom_fields(source):
+                    all_records.append(_rec)
+                    prog.tick()
         except Exception:  # noqa: BLE001
+            # T022. Not `_show_failure_row`: the four owner-class headers below
+            # are built unconditionally and are the page's own structure, so the
+            # note goes ABOVE them rather than replacing the tree they are about
+            # to repopulate.
             all_records = []
+            note = QtWidgets.QTreeWidgetItem(
+                self._tree, [_operation_failed_note("custom_fields"), ""]
+            )
+            note.setFlags(note.flags() & ~QtCore.Qt.ItemFlag.ItemIsEnabled)
 
         self._records = all_records
 
@@ -2919,6 +3604,9 @@ class _PageCustomFields(QtWidgets.QWizardPage):
         self._tree.expandAll()
         for col in range(2):
             self._tree.resizeColumnToContents(col)
+        # T026 / FR-029b. Last, so the type-difference tooltips set above keep
+        # their richer text -- the sweep fills only the cells that have none.
+        _carry_full_values_in_tooltips(self._tree)
         self._refresh_whole_block()
 
     # -- whole-block toggle -----------------------------------------------
@@ -3094,7 +3782,7 @@ _RULES_STATUS_LABELS = {
 }
 
 
-class _PageRules(QtWidgets.QWizardPage):
+class _PageRules(_FlowPage):
     """Rules page (018-rules-page): Ad Hoc Rules + Compound Rules block.
 
     Two grouped tristate trees, all rows preselected.  Whole-block toggle
@@ -3113,12 +3801,15 @@ class _PageRules(QtWidgets.QWizardPage):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setTitle("Step 9 of 10: Rules")
+        # Unnumbered: this run assigns the number on entry, because a
+        # position is a fact about the run and not about the page
+        # (SelectionWizard._apply_step_number). The literal that used to
+        # be here stated a total across a flow that could skip pages.
+        self.setTitle("Rules")
         self.setSubTitle(
-            "Review the source project's ad hoc and compound rules. "
-            "All rules are preselected. "
-            "Untick the block to skip rules, or deselect individual rules. "
-            "Status column shows whether each rule exists in the target."
+            "Every ad hoc and compound rule in the source is preselected. "
+            "Untick the block or deselect single rules. Status shows what the "
+            "target has."
         )
         self._inventory = None   # RulesInventory | None
         self._mirroring: bool = False
@@ -3159,9 +3850,15 @@ class _PageRules(QtWidgets.QWizardPage):
             return
 
         target = self._get_target()
+        # FR-023 row 10. Unit is the ad-hoc prohibition, counted off the owning
+        # collection at bind.
         try:
-            inventory = build_rules_inventory(source, target=target)
+            with _page_progress(
+                self, "rules", _source_counts_of(self).rules
+            ) as prog:
+                inventory = build_rules_inventory(source, target=target, progress=prog)
         except Exception:  # noqa: BLE001
+            _show_failure_row(self._tree, "rules")   # T022
             inventory = None
 
         if inventory is None:
@@ -3170,6 +3867,7 @@ class _PageRules(QtWidgets.QWizardPage):
 
         self._inventory = inventory
         self._populate_tree(inventory)
+        _carry_full_values_in_tooltips(self._tree)   # T026 / FR-029b
         self._tree.expandAll()
         for col in range(2):
             self._tree.resizeColumnToContents(col)
@@ -3411,7 +4109,7 @@ class _PageRules(QtWidgets.QWizardPage):
             return None
 
 
-class _PagePhonology(QtWidgets.QWizardPage):
+class _PagePhonology(_FlowPage):
     """Page 2: Phonology block (spec 010 — the first Model-B selector).
 
     A grouped tree of the five user-facing phonology categories (features,
@@ -3431,12 +4129,15 @@ class _PagePhonology(QtWidgets.QWizardPage):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setTitle("Step 3 of 10: Phonology")
+        # Unnumbered: this run assigns the number on entry, because a
+        # position is a fact about the run and not about the page
+        # (SelectionWizard._apply_step_number). The literal that used to
+        # be here stated a total across a flow that could skip pages.
+        self.setTitle("Phonology")
         self.setSubTitle(
-            "Review the source's phonology. The whole block is preselected. "
-            "Untick the block to skip phonology, untick a category to trim it, "
-            "or deselect individual items. Strata travel automatically with any "
-            "kept phonological rule."
+            "Every phoneme, natural class and rule is preselected. Untick the "
+            "block, a category, or single items to trim. Strata follow any rule "
+            "you keep."
         )
         self._inventory: Optional[object] = None  # PhonologyInventory
         self._mirroring: bool = False
@@ -3483,9 +4184,19 @@ class _PagePhonology(QtWidgets.QWizardPage):
             return
 
         target = self._get_target()
+        # FR-023 row 4. Unit is the list item: phoneme sets + natural classes +
+        # phonological rules, summed at bind. The sum is None unless all three
+        # were readable, because an under-stated total is worse than none
+        # (Lib/progress.py `_sum_or_none`).
         try:
-            inventory = build_phonology_inventory(source, target=target)
+            with _page_progress(
+                self, "phonology", _source_counts_of(self).phonology
+            ) as prog:
+                inventory = build_phonology_inventory(
+                    source, target=target, progress=prog
+                )
         except Exception:  # noqa: BLE001
+            _show_failure_row(self._tree, "phonology")   # T022
             inventory = None
 
         if inventory is None:
@@ -3499,6 +4210,7 @@ class _PagePhonology(QtWidgets.QWizardPage):
             self._tree, [0], WsFontRegistry.from_project(source)
         )
         self._populate_tree(inventory)
+        _carry_full_values_in_tooltips(self._tree)   # T026 / FR-029b
         self._tree.expandAll()
         for col in range(2):
             self._tree.resizeColumnToContents(col)
@@ -3871,7 +4583,7 @@ _ET_MODE_OVERWRITE = OVERWRITE
 _ET_MODE_NEW = NEW
 
 
-class _PageEntryTypes(QtWidgets.QWizardPage):
+class _PageEntryTypes(_FlowPage):
     """Page 7: Lexical-Entry Types block (spec 021 -- the second Model-B selector).
 
     A grouped tree of two entry-type categories (Variant Types, Complex Form Types),
@@ -3895,11 +4607,14 @@ class _PageEntryTypes(QtWidgets.QWizardPage):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setTitle("Step 8 of 10: Lexical-Entry Types")
+        # Unnumbered: this run assigns the number on entry, because a
+        # position is a fact about the run and not about the page
+        # (SelectionWizard._apply_step_number). The literal that used to
+        # be here stated a total across a flow that could skip pages.
+        self.setTitle("Lexical-Entry Types")
         self.setSubTitle(
-            "Review the source's lexical-entry types (variant types and complex form "
-            "types). The whole block is preselected. Untick the block to skip, untick "
-            "a category to trim it, or deselect individual types."
+            "Every variant type and complex form type in the source is "
+            "preselected. Untick the block, a category, or single types to trim."
         )
         self._inventory: Optional[object] = None  # EntryTypesInventory
         self._mirroring: bool = False
@@ -3942,9 +4657,17 @@ class _PageEntryTypes(QtWidgets.QWizardPage):
             return
 
         target = self._get_target()
+        # FR-023 row 9. Unit is the list item: variant types + complex-form
+        # types, both counted off their possibility lists at bind.
         try:
-            inventory = build_entry_types_inventory(source, target=target)
+            with _page_progress(
+                self, "entry_types", _source_counts_of(self).entry_types
+            ) as prog:
+                inventory = build_entry_types_inventory(
+                    source, target=target, progress=prog
+                )
         except Exception:  # noqa: BLE001
+            _show_failure_row(self._tree, "entry_types")   # T022
             inventory = None
 
         if inventory is None:
@@ -3956,6 +4679,7 @@ class _PageEntryTypes(QtWidgets.QWizardPage):
             self._tree, [0], WsFontRegistry.from_project(source)
         )
         self._populate_tree(inventory)
+        _carry_full_values_in_tooltips(self._tree)   # T026 / FR-029b
         self._tree.expandAll()
         for col in range(2):
             self._tree.resizeColumnToContents(col)
@@ -4232,7 +4956,7 @@ def _entry_types_missing_ref_for(wizard) -> list:
 # Page 4 -- Preview
 # ---------------------------------------------------------------------------
 
-class _PageTexts(QtWidgets.QWizardPage):
+class _PageTexts(_FlowPage):
     """Texts item picker (Feature 026, US1 — Model-A per-text selection, FR-001).
 
     A flat, checkable list of the source's interlinear texts. The wordform
@@ -4251,9 +4975,8 @@ class _PageTexts(QtWidgets.QWizardPage):
         super().__init__(parent)
         self.setTitle("Texts")
         self.setSubTitle(
-            "Select the interlinear texts to transfer. Their human-evaluated "
-            "wordform analyses, translations, notes, and genres come across with "
-            "them. Uncheck any text to leave it out."
+            "Pick the interlinear texts to transfer. Their evaluated analyses, "
+            "translations, notes and genres travel with them."
         )
         self._text_inventory = None
         self._build_ui()
@@ -4328,14 +5051,22 @@ class _PageTexts(QtWidgets.QWizardPage):
             empty.setFlags(empty.flags() & ~QtCore.Qt.ItemFlag.ItemIsEnabled)
             return
         target = self._get_target()
+        # FR-023 row 11. Unit is the text. This is the slowest per-unit walk in
+        # the wizard (a text carries paragraphs, segments and wordforms), which
+        # is why a modest text count still predicts a wait worth announcing.
         try:
-            inventory = build_text_inventory(source, target=target)
+            with _page_progress(
+                self, "texts", _source_counts_of(self).texts
+            ) as prog:
+                inventory = build_text_inventory(source, target=target, progress=prog)
         except Exception:  # noqa: BLE001
+            _show_failure_row(self._text_tree, "texts")   # T022
             inventory = None
         self._text_inventory = inventory
         if inventory is None:
             return
         self.populate_text_list(inventory)
+        _carry_full_values_in_tooltips(self._text_tree)   # T026 / FR-029b
 
         # Feature 032 US1: per-text preview pane (texts reader -> Title/Baseline).
         self._preview_service = MergePreviewService(source, target)
@@ -4416,10 +5147,16 @@ class _PageTexts(QtWidgets.QWizardPage):
 
 
 class _PagePreview(QtWidgets.QWizardPage):
-    """Page 4: Preview / StatsPanel.
+    """Preview / StatsPanel. NOT IN THE FLOW.
 
-    Re-hosts the existing StatsPanel widget verbatim.  Preview is triggered
-    when the page is entered; the plan is cached for use on page 5.
+    Retained and reachable through `page_preview()` for back-compat, but absent
+    from `SelectionWizard.flow()` and never registered: the dry run and its
+    report live on the Finish page. Like `_PageScopeConflict` it therefore
+    carries NO step number -- "(inactive)" is the whole of what its title has to
+    say, and giving it a number would claim a position in a run it is not part
+    of (T015, FR-011).
+
+    Re-hosts the existing StatsPanel widget verbatim.
     """
 
     def __init__(self, parent=None):
@@ -4659,33 +5396,56 @@ def _compute_wizard_plan(wizard) -> tuple:
                 text_picks=frozenset(g.lower() for g in text_picks),
             )
 
-    # Step 6: WS mapping from page 0.
-    page0 = wizard.page_project_ws()
-    ws_mapping = page0.ws_mapping() if hasattr(page0, "ws_mapping") else None
+    # Step 6: WS mapping -- from the writing-systems page, which owns it since
+    # the FR-006 split. `page_project_ws()` no longer answers for the mapping,
+    # and the hasattr guards keep the fake wizards in the unit suite (which
+    # supply only the pages they exercise) working unchanged.
+    ws_page = wizard.page_writing_systems() \
+        if hasattr(wizard, "page_writing_systems") else None
+    ws_mapping = ws_page.ws_mapping() \
+        if ws_page is not None and hasattr(ws_page, "ws_mapping") else None
 
-    # Step 7: compute preview; return (None, None) on failure or None payload.
-    state, payload = gt_api.compute_preview(context, selection, ws_mapping)
-    if payload is None:
-        return (None, None)
+    # FR-023 row 12 -- "Building the transfer plan...". The indicator covers
+    # steps 7 and 8, which is where the wait is: everything above is dict merges
+    # over trees the operator has already populated, while `compute_preview`
+    # walks the source for every selected category.
+    #
+    # The total is the declared unit -- selected categories -- and it is knowable
+    # here and not earlier, because the merges above are what decide which
+    # categories are in. It is a `len()` over a dict already in hand, so no count
+    # is paid for it (FR-014d).
+    #
+    # No intermediate ticks, deliberately: `compute_preview` is one engine call
+    # and takes no sink, so there is no inside for a walk to report from. The
+    # single tick on success is what leaves the last frame reading complete
+    # rather than stalled; a failure never reaches it and the bar is dismissed
+    # where it stood (FR-020).
+    n_categories = sum(1 for on in selection.categories.values() if on)
+    with _page_progress(wizard, "plan_assembly", n_categories) as prog:
+        # Step 7: compute preview; return (None, None) on failure or None payload.
+        state, payload = gt_api.compute_preview(context, selection, ws_mapping)
+        if payload is None:
+            return (None, None)
+        prog.tick(n_categories)
 
-    # Step 8: build run report and return.
-    phon_warnings = _phonology_excluded_lossy_for(wizard)
-    # QC P1 (cycle-1 review, feature 024): surface the plan's projected drops
-    # (Lib/references.py `decide_reference`, run read-only during AFFIXES/
-    # STEMS plan_action) here too, so the wizard's Preview report is
-    # symmetric with both Move and the main-window Preview path.
-    # Feature 024 (T023, FR-013): per-object FidelityStatus, mirroring the
-    # Move-mode wiring in `Lib/transfer.py.execute`.
-    if __package__:
-        from ..categories import compute_fidelity_by_guid
-    else:
-        from categories import compute_fidelity_by_guid  # type: ignore
-    _plan_dropped = getattr(payload, "dropped_items", ())
-    report = RunReport.build_from_plan(
-        payload, RunMode.PREVIEW, extra_excluded_lossy=phon_warnings,
-        extra_dropped_items=_plan_dropped,
-        fidelity_by_guid=compute_fidelity_by_guid(_plan_dropped),
-    )
+        # Step 8: build run report and return.
+        phon_warnings = _phonology_excluded_lossy_for(wizard)
+        # QC P1 (cycle-1 review, feature 024): surface the plan's projected drops
+        # (Lib/references.py `decide_reference`, run read-only during AFFIXES/
+        # STEMS plan_action) here too, so the wizard's Preview report is
+        # symmetric with both Move and the main-window Preview path.
+        # Feature 024 (T023, FR-013): per-object FidelityStatus, mirroring the
+        # Move-mode wiring in `Lib/transfer.py.execute`.
+        if __package__:
+            from ..categories import compute_fidelity_by_guid
+        else:
+            from categories import compute_fidelity_by_guid  # type: ignore
+        _plan_dropped = getattr(payload, "dropped_items", ())
+        report = RunReport.build_from_plan(
+            payload, RunMode.PREVIEW, extra_excluded_lossy=phon_warnings,
+            extra_dropped_items=_plan_dropped,
+            fidelity_by_guid=compute_fidelity_by_guid(_plan_dropped),
+        )
     return (payload, report)
 
 
@@ -4693,7 +5453,7 @@ def _compute_wizard_plan(wizard) -> tuple:
 # Page 5 -- Finish / Move
 # ---------------------------------------------------------------------------
 
-class _PageFinish(QtWidgets.QWizardPage):
+class _PageFinish(_FlowPage):
     """Page 5: Finish / Move.
 
     The ONLY write point.  The Finish handler:
@@ -4716,19 +5476,40 @@ class _PageFinish(QtWidgets.QWizardPage):
         # subtitle is byte-identical to the literal that used to be inline
         # here and whose confirm() returns True with no UI (SC-013).
         self._gate = _resolve_gate(confirmation_gate)
-        self.setTitle("Step 10 of 10: Finish / Move")
+        # Unnumbered: this run assigns the number on entry, because a
+        # position is a fact about the run and not about the page
+        # (SelectionWizard._apply_step_number). The literal that used to
+        # be here stated a total across a flow that could skip pages.
+        self.setTitle("Finish / Move")
         # Exception 3: gate-supplied, because "changes can be undone in FLEx
         # with Ctrl+Z" is true under FlexTools and false in the standalone,
         # and FR-027 forbids the application claiming otherwise.
         self.setSubTitle(self._gate.finish_page_subtitle())
+        # data-model section 6: `None` on CONSTRUCTION, not merely on entry. A
+        # page built but not yet entered used to have no `_cached_plan` attribute
+        # at all, so every guard that asked about it had to reach through a
+        # getattr default -- and a guard whose subject may be absent is one
+        # refactor away from reading absence as permission.
+        self._cached_plan = None
         self._build_ui()
         # DR-1: Move starts disabled unconditionally; enabled only after dry run.
-        self._move_btn.setEnabled(False)
+        self._set_execute_enabled(False)
 
     def initializePage(self) -> None:
-        """DR-2a: clear cached plan and disable Move on every Finish page entry."""
+        """Re-arm the guard on every Finish page entry.
+
+        DR-2a cleared the cached plan and disabled Move here. Feature 036 T036
+        adds the third thing entry has to undo: the report on SCREEN (FR-041).
+        Any route back to this page has passed through pages where a selection
+        could change, so the plan the previous dry run described may no longer be
+        the plan the current selections would produce -- and a StatsPanel still
+        full of that run's numbers presents it as current. The cached plan and the
+        displayed report are two halves of one authorisation and are dropped
+        together.
+        """
         self._cached_plan = None
-        self._move_btn.setEnabled(False)
+        self._stats.clear()
+        self._set_execute_enabled(False)
 
     def _build_ui(self) -> None:
         layout = QtWidgets.QVBoxLayout(self)
@@ -4747,8 +5528,91 @@ class _PageFinish(QtWidgets.QWizardPage):
         self._move_btn.setEnabled(False)
         self._move_btn.clicked.connect(self._on_move)
         layout.addWidget(self._move_btn)
+        # T035 / FR-039: the reason lives next to the control it is about, so it
+        # cannot describe a state the button is no longer in.
+        self._move_reason = QtWidgets.QLabel("", self)
+        self._move_reason.setWordWrap(True)
+        layout.addWidget(self._move_reason)
         self._stats = StatsPanel(self)
         layout.addWidget(self._stats, 1)
+
+    # ------------------------------------------------------------------
+    # T035 / FR-039 + FR-044 -- a dead control that says why it is dead
+    # ------------------------------------------------------------------
+
+    @property
+    def execute_disabled_reason(self) -> str:
+        """Why Execute is unavailable, or `""` when it is available.
+
+        THE THREE REASONS, IN THE ORDER THAT MATTERS TO THE OPERATOR
+        ------------------------------------------------------------
+        1. **Read-only** (FR-044) first, because it is the only one they cannot
+           act on from here. Telling someone to run a dry run when no dry run
+           could ever arm the button is worse than saying nothing: they do the
+           work and the button stays dead. This reason therefore outlives a
+           successful dry run.
+        2. **Already executed** (FR-043). The plan has been written; a second
+           write of the same plan would duplicate every object it created.
+        3. **No dry run yet** (FR-039), the ordinary case: Preview-before-Mutate
+           has not been satisfied for the CURRENT selections.
+
+        Derived, never stored. A stored string is a second source of truth about
+        the button's state and drifts from it the first time an enablement path
+        forgets to update it -- which is exactly how a dead control comes to
+        carry a stale explanation.
+        """
+        if not self._modify_allowed:
+            return (
+                "Execute is unavailable: GramTrans is running in read-only "
+                "(preview-only) mode, so it cannot write to the target project."
+            )
+        if self._move_done:
+            return (
+                "Execute is unavailable: this plan has already been written to "
+                "the target project. Close the wizard and start a new run to "
+                "transfer anything further."
+            )
+        if self._cached_plan is None:
+            return (
+                "Execute is unavailable: a successful dry run of the current "
+                "selections is required first. Click \"Dry run (preview plan)\"."
+            )
+        return ""
+
+    def _may_execute(self) -> bool:
+        """The FR-038/FR-043/FR-044 conjunction, in one place.
+
+        A cached plan, write permission, and no completed Execute this session.
+        `_on_dry_run` used to consult only `modify_allowed`, so a second dry run
+        after a completed move re-armed the button and the same selections could
+        be written twice -- `_move_done` was already recorded and simply not
+        read.
+        """
+        return (
+            self._cached_plan is not None
+            and self._modify_allowed
+            and not self._move_done
+        )
+
+    def _set_execute_enabled(self, enabled: bool) -> None:
+        """Set the button's state and its explanation together.
+
+        One method, so the two cannot disagree. The reason goes onto the control
+        itself (tooltip and accessible description, for a pointer and for a
+        screen reader) and onto the label beneath it, because a tooltip alone is
+        invisible to an operator who has not thought to hover over a button that
+        looks broken.
+        """
+        self._move_btn.setEnabled(bool(enabled))
+        reason = "" if enabled else self.execute_disabled_reason
+        self._move_btn.setToolTip(reason)
+        self._move_btn.setAccessibleDescription(reason)
+        self._move_reason.setText(f"<i>{reason}</i>" if reason else "")
+        self._move_reason.setVisible(bool(reason))
+
+    def _refresh_execute_state(self) -> None:
+        """Re-derive both halves from the current guard state."""
+        self._set_execute_enabled(self._may_execute())
 
     def _on_dry_run(self) -> None:
         """DR-5, G1, FR-006: compute the plan and show report; enable Move on success."""
@@ -4757,6 +5621,14 @@ class _PageFinish(QtWidgets.QWizardPage):
             return
         plan, report = _compute_wizard_plan(wizard)
         if plan is None:
+            # T036 / FR-041 + FR-042: a dry run that produced nothing must not
+            # leave the PREVIOUS run's report on screen. Without this the only
+            # report visible after a failure is the stale one, next to a message
+            # box saying the run failed -- and once the box is dismissed there is
+            # nothing left to say the numbers are old.
+            self._cached_plan = None
+            self._stats.clear()
+            self._refresh_execute_state()
             # DR-5: caller owns QMessageBox.
             context = wizard.page_project_ws().context()
             if context is None:
@@ -4771,8 +5643,11 @@ class _PageFinish(QtWidgets.QWizardPage):
             return
         self._cached_plan = plan
         self._stats.set_report(report)
-        if self._modify_allowed:
-            self._move_btn.setEnabled(True)
+        # FR-043/FR-044 live here too: a successful dry run is necessary for
+        # Execute, never sufficient. `_refresh_execute_state` re-derives the whole
+        # conjunction, so read-only mode and an already-completed move both keep
+        # the button dead -- with the reason updated to match.
+        self._refresh_execute_state()
 
     def _on_move(self) -> None:
         wizard = self.wizard()
@@ -4785,6 +5660,18 @@ class _PageFinish(QtWidgets.QWizardPage):
                 self, "GramTrans",
                 "No plan available. Run a dry run on the Finish page first."
             )
+            return
+        # FR-043 / FR-044: the same conjunction that decides whether the button
+        # is live decides whether the write happens, so the guard does not depend
+        # on the button being the only way in. A disabled button stops a click; it
+        # does not stop Enter on a focused control, a programmatic `click()`, or a
+        # future affordance -- and a second write of an already-written plan
+        # duplicates every object it created.
+        if not self._may_execute():
+            QtWidgets.QMessageBox.warning(
+                self, "GramTrans", self.execute_disabled_reason
+            )
+            self._refresh_execute_state()
             return
         context = wizard.page_project_ws().context()
         if context is None:
@@ -4862,19 +5749,35 @@ class _PageFinish(QtWidgets.QWizardPage):
         if not self._gate.confirm(target_name):
             return  # Gate refused -- no write occurs.
 
+        # FR-023 row 13 -- "Writing to the target project...". The unit is the
+        # planned action and the total is `len()` over the plan already in hand,
+        # so the write's size is known before a single object is created. This is
+        # the operation the operator most needs told about: it is the only one
+        # that changes their project, and the only one they must not interrupt.
+        #
+        # Like row 12 this is one engine call with no sink, so the tick lands on
+        # success (see the comment there). A failure below dismisses the
+        # indicator through `reporting()` and then says what went wrong, in that
+        # order -- a modal indicator left up over a message box would block the
+        # only control that can acknowledge it (FR-020).
+        n_actions = len(getattr(plan, "actions", ()) or ())
         try:
-            report = gt_api.execute_move(context, plan)
+            with _page_progress(self, "move_write", n_actions) as prog:
+                report = gt_api.execute_move(context, plan)
+                prog.tick(n_actions)
         except gt_api.PreviewStale as e:
             QtWidgets.QMessageBox.critical(self, "GramTrans", str(e))
             return
         self._stats.set_report(report)
-        self._move_btn.setEnabled(False)
         self._move_done = True
         # DR-2b, G3: invalidate Finish page's own cached plan (post-move).
         # Move non-repeatability: a double-click or re-entry cannot re-execute
         # the same plan and create duplicate LCM objects. initializePage also
         # clears on re-entry (DR-2a), so this provides belt-and-suspenders safety.
         self._cached_plan = None
+        # Both halves after the state above, so the reason the operator now reads
+        # is FR-043's ("already written"), not FR-039's.
+        self._refresh_execute_state()
         self.completeChanged.emit()
 
 
@@ -4883,7 +5786,10 @@ class _PageFinish(QtWidgets.QWizardPage):
 # ---------------------------------------------------------------------------
 
 class SelectionWizard(QtWidgets.QWizard):
-    """6-page GramTrans selection wizard (Phase 3c, Refinement 3).
+    """The GramTrans selection wizard (Phase 3c, Refinement 3).
+
+    Page order, skip eligibility and per-run numbering all come from `flow()`;
+    no count of pages is stated here or anywhere else (036 FR-009a).
 
     Replaces `main_window.MainWindow`.  All existing widgets are re-hosted
     verbatim; no widget logic is rewritten.
@@ -4938,13 +5844,29 @@ class SelectionWizard(QtWidgets.QWizard):
         self._host = host_project
         self._report = report_sink
         self._modify_allowed = modify_allowed
+        # T014: filled once, here, from whatever source the host already has
+        # open (None under the standalone, whose source is picked on step 1 and
+        # which calls `refresh_source_counts` from there). Every page-skip
+        # predicate reads this snapshot, so nothing on a navigation path ever
+        # queries the project (D5b).
+        self.refresh_source_counts(host_project)
 
-        self.setWindowTitle("GramTrans -- Selection Wizard (Phase 3c)")
+        # T040 / FR-001. The title used to read "GramTrans -- Selection Wizard
+        # (Phase 3c)". "Phase 3c" is OUR development milestone: it tells the
+        # operator nothing about the tool and, worse, reads as a beta warning on
+        # software they are about to point at their language data. What a title
+        # bar owes them is what the application is and what this window does.
+        # No phase, no milestone, no iteration designation -- a source-level test
+        # keeps one from creeping back.
+        self.setWindowTitle("GramTrans -- copy grammar between FieldWorks projects")
         self.setModal(True)
         self.resize(1300, 760)
-        # T004/FR-011: widen wizard to accommodate tree + preview pane side by side
-        from PyQt6 import QtCore as _QtCore
-        self.setMinimumSize(_QtCore.QSize(1100, 680))
+        # 036 T024/FR-029: the floor is the declared constant, and the height is
+        # the one feature 004 set. The default size above is unchanged: US3
+        # lowers how narrow the window CAN go, not how wide it opens.
+        self.setMinimumSize(
+            QtCore.QSize(MIN_WINDOW_WIDTH, MIN_WINDOW_HEIGHT)
+        )
         # ClassicStyle renders pages using the widget palette instead of forcing
         # a white page (AeroStyle/ModernStyle default on Windows). Under an OS
         # dark theme the forced-white page left every QLabel white-on-white
@@ -4962,26 +5884,20 @@ class SelectionWizard(QtWidgets.QWizard):
             projects_root=projects_root,
         )
 
-        # Create pages.
-        # Page order (Stems promoted to its own page after Affixes):
-        #   0 = Project + WS
-        #   1 = Custom Fields (Model-B)
-        #   2 = Phonology (Model-B independent block)
-        #   3 = Affixes (item picker)
-        #   4 = Stems (item picker)
-        #   5 = Skeleton
-        #   6 = Grammatical deps
-        #   7 = Lexical-Entry Types (Model-B independent block)
-        #   8 = Rules (018-rules-page)
-        #   9 = Finish / Move
-        # _PagePreview retained (not added) for back-compat via page_preview().
-        # Cross-page lookups go through named accessors (P-1) so this insertion
-        # does not silently mis-resolve any literal page index.
-        # _PageScopeConflict is retained for back-compat but removed from the flow.
-        self._page_project_ws = _PageProjectWS(
+        # Create pages. The ORDER they are registered in, and which of them a
+        # given run shows, is `flow()` and nothing else (FR-010) -- the numbered
+        # comment block that used to sit here restated the `addPage` order beside
+        # it, which is exactly the second source of truth that let the titles
+        # drift to "of 10" across eleven registered pages.
+        #
+        # _PagePreview and _PageScopeConflict are constructed and retained for
+        # back-compat (`page_preview()`, `page_scope`) but are absent from
+        # `flow()` and therefore never registered and never numbered (FR-011).
+        self._page_projects = _PageProjects(
             stub, host_project,
             source_binder=source_binder, report_sink=report_sink,
         )
+        self._page_writing_systems = _PageWritingSystems()
         self._page_custom_fields = _PageCustomFields()
         self._page_phonology = _PagePhonology()
         self._page_items = _PageItemPicker()
@@ -5000,39 +5916,293 @@ class SelectionWizard(QtWidgets.QWizard):
             report_sink, modify_allowed, confirmation_gate=confirmation_gate
         )
 
-        self.addPage(self._page_project_ws)    # index 0
-        self.addPage(self._page_custom_fields) # index 1
-        self.addPage(self._page_phonology)     # index 2
-        self.addPage(self._page_items)         # index 3  (affixes)
-        self.addPage(self._page_stems)         # index 4  (stems -- own page, 019)
-        self.addPage(self._page_skeleton)      # index 5
-        self.addPage(self._page_gram_deps)     # index 6
-        self.addPage(self._page_entry_types)   # index 7  (spec 021 lexical-entry types)
-        self.addPage(self._page_rules)         # index 8  (018-rules-page)
-        self.addPage(self._page_texts)         # index 9  (026 texts-wordforms)
-        self.addPage(self._page_finish)        # index 10
+        # T009 / FR-010: registration is READ OFF the declaration. The eleven
+        # hand-written `addPage` lines that used to be here carried their own
+        # index comments, so the declaration and the registration were two
+        # statements of the same fact and could disagree -- and did.
+        #
+        # `_page_id_by_attr` is filled here so `nextId()` can turn a declared
+        # attr into a Qt page id by dict lookup. Qt may call `nextId()` on every
+        # `completeChanged`, and searching `pageIds()` on each call would make
+        # the cheap predicates pointless (FR-009c, D5b).
+        self._page_id_by_attr: dict = {}
+        for attr, _short, _skippable, _has_content in self.flow():
+            page = getattr(self, attr)
+            self._page_id_by_attr[attr] = self.addPage(page)
+
+        # Provisional numbers, so a page carries a plausible title before any
+        # run has entered it (the wizard is inspectable at construction). Entry
+        # overwrites them with the position this run actually reached
+        # (`_apply_step_number`); nothing derives or displays a total (FR-009a).
+        self._apply_declared_step_numbers()
 
         self.setOption(QtWidgets.QWizard.WizardOption.HaveHelpButton, False)
 
-        # Built last: the bar parents itself to the wizard and raise_()es itself
-        # over whatever is already there, so it has to be created after the pages
-        # exist or the first page would be stacked on top of it.
+        # T041 / FR-004 + FR-012. Qt stops drawing the subtitle, and each page's
+        # own header draws it instead. `setSubTitle(...)` remains the string of
+        # record everywhere -- this is a change of RENDERER, not a second copy of
+        # the text to keep in step. Qt's renderer elides; the header's wraps, and
+        # a description that ends mid-word with no ellipsis is FR-013's defect.
+        self.setOption(QtWidgets.QWizard.WizardOption.IgnoreSubTitles, True)
+        for attr, _short, _skippable, _has_content in self.flow():
+            page = getattr(self, attr, None)
+            if page is not None and hasattr(page, "install_header"):
+                page.install_header(PageHeader(page))
+
+        # T042 / FR-005 + D8. ONE strip for the whole wizard, moved into the
+        # current page's header slot on every transition.
+        #
+        # WHY ONE, AND NOT ONE PER PAGE
+        # -----------------------------
+        # The obvious implementation -- give each header its own strip -- would
+        # register `ZoomIn`, `ZoomOut` and `Ctrl+0` twelve times inside one
+        # window. Qt resolves an ambiguous shortcut by firing NOTHING, so all
+        # three keys would go quietly dead while every button still worked: a
+        # failure nobody would attribute to the header refactor. One instance
+        # means one registration, which is what FR-005 asks for.
+        #
+        # It is created after the pages exist because it is moved INTO one of
+        # their headers immediately, and the headers are installed just above.
         self._theme_bar = ThemeCornerBar(self)
-        # QWizard rebuilds its header/page stack on every page change, which
-        # re-raises the page above the (un-laid-out) bar.  Repositioning on each
-        # transition is what keeps the bar from disappearing under page 2.
-        self.currentIdChanged.connect(self._reposition_theme_bar)
+        self.currentIdChanged.connect(self._install_theme_bar_on_current_page)
+        self._install_theme_bar_on_current_page()
+
+    # =====================================================================
+    # The declared flow (T009, FR-010; data-model section 1)
+    # =====================================================================
+
+    def flow(self):
+        """The ordered flow: `(attr, short_title, skippable, has_content)` x 12.
+
+        THE SINGLE SOURCE OF PAGE ORDER AND SKIP ELIGIBILITY (FR-010).
+        Registration reads it (`__init__`), numbering reads it
+        (`_apply_step_number`), and skipping reads it (`_FlowPage.nextId`), so
+        the three cannot disagree about what a run contains.
+
+        WHAT IS DELIBERATELY ABSENT
+        ---------------------------
+        **Positions, and any length.** A position is (pages shown before this
+        one in *this run*) + 1, so an integer in this table could only be a slot
+        number -- and a slot number displayed as a position is how eleven
+        registered pages came to announce "of 10". Nothing here derives a total
+        and nothing displays one (FR-009a). The operator may also go back and
+        pick an affix, which re-admits Morphology Skeleton and shifts every
+        position after it: the length of a run is not knowable until the run is
+        over.
+
+        `skippable` / `has_content`
+        ---------------------------
+        `has_content` is `None` if and only if `skippable` is False, so an
+        unskippable page carries no predicate for a caller to consult and skip
+        on anyway. Where it is present it is a zero-argument callable that Qt
+        may invoke on every `completeChanged`; each one is a field read or a
+        `len()`, never an inventory build (FR-009c, D5b).
+
+        The Affix and Stem pickers are unskippable **by mandate** (FR-009d), not
+        because they always have content: "your source has no affixes" is
+        something the operator needs told, and an absent page does not say it.
+        Projects, Writing Systems and Finish are unskippable because they always
+        ask something.
+        """
+        return (
+            ("_page_projects",        "Projects",                 False, None),
+            ("_page_writing_systems", "Writing Systems",          False, None),
+            ("_page_custom_fields",   "Custom Fields",            True,
+             self._has_custom_fields),
+            ("_page_phonology",       "Phonology",                True,
+             self._has_phonology),
+            ("_page_items",           "Affix Picker",             False, None),
+            ("_page_stems",           "Stem Picker",              False, None),
+            ("_page_skeleton",        "Morphology Skeleton",      True,
+             self._has_item_picks),
+            ("_page_gram_deps",       "Grammatical Dependencies", True,
+             self._has_item_picks),
+            ("_page_entry_types",     "Lexical-Entry Types",      True,
+             self._has_entry_types),
+            ("_page_rules",           "Rules",                    True,
+             self._has_rules),
+            ("_page_texts",           "Texts",                    True,
+             self._has_texts),
+            ("_page_finish",          "Finish / Move",            False, None),
+        )
+
+    def flow_page_id(self, attr: str) -> int:
+        """Qt's id for a declared page, or -1 before it has been registered."""
+        return getattr(self, "_page_id_by_attr", {}).get(attr, -1)
+
+    # =====================================================================
+    # The emptiness predicates (T014, FR-009c / FR-009d / D5b)
+    # =====================================================================
+    # THE CONSERVATIVE RULE IS ABSOLUTE. Every predicate below returns True
+    # when it does not know. An empty page that is shown costs the operator one
+    # Next click and says on the page that it has nothing to decide; a non-empty
+    # page that is skipped silently drops a decision they were entitled to make.
+    # The two errors are not symmetric, so unknown means SHOWN.
+    #
+    # Cost matters here in a way it does not elsewhere: Qt calls `nextId()` to
+    # decide whether Next is enabled, which can be on every `completeChanged`.
+    # Nothing below queries a project. The five source-derived pages read a
+    # `SourceCounts` snapshot filled once at bind (`Lib/progress.py`), and the
+    # two selection-derived pages read the picker trees the operator just
+    # touched. No inventory is built -- building one to find out whether a page
+    # would be empty is precisely the expensive walk US1 exists to cover, and
+    # FR-009c forbids paying for it here.
+
+    def source_counts(self) -> "SourceCounts":
+        """The cheap-count snapshot of the currently bound source."""
+        return self._source_counts
+
+    def refresh_source_counts(self, source) -> None:
+        """Re-snapshot the counts because the source binding changed.
+
+        Called from `_PageProjects._bind_source_handle` (the standalone's
+        re-pick) and once from `__init__` (FlexTools, whose source is the host's
+        already-open project). Filling it anywhere else would mean a count was
+        read on a page-navigation path, which is the cost D5b rules out.
+        """
+        self._source_counts = (
+            SourceCounts(source) if source is not None else SourceCounts.unknown()
+        )
+
+    def _has_custom_fields(self) -> bool:
+        """Row 3: source custom-field definitions across the owner classes."""
+        return _count_says_content(self._source_counts.custom_fields)
+
+    def _has_phonology(self) -> bool:
+        """Row 4: phoneme sets + natural classes + phonological rules."""
+        return _count_says_content(self._source_counts.phonology)
+
+    def _has_entry_types(self) -> bool:
+        """Row 9: variant types + complex-form types."""
+        return _count_says_content(self._source_counts.entry_types)
+
+    def _has_rules(self) -> bool:
+        """Row 10: ad-hoc prohibitions."""
+        return _count_says_content(self._source_counts.rules)
+
+    def _has_texts(self) -> bool:
+        """Row 11: `TextsNumberOfTexts()`."""
+        return _count_says_content(self._source_counts.texts)
+
+    def _has_item_picks(self) -> bool:
+        """Rows 7-8: "the operator picked at least one affix or stem".
+
+        The declared proxy for Morphology Skeleton and Grammatical Dependencies
+        (data-model s1, rows 7-8). Deliberately NOT "the skeleton/dependency
+        inventory would come back empty": answering that means building the
+        inventory, which is the multi-second walk those two pages already show a
+        progress indicator for.
+
+        Before either picker has been populated the answer is unknown, not
+        "no" -- an unbound run has picked nothing simply because it has not been
+        asked yet -- so both pages are shown. A page whose proxy says "maybe"
+        and whose inventory then comes back empty says so and keeps its number
+        (spec edge case).
+        """
+        items = getattr(self, "_page_items", None)
+        stems = getattr(self, "_page_stems", None)
+        populated = (getattr(items, "_inventory", None) is not None
+                     or getattr(stems, "_stem_inventory", None) is not None)
+        if not populated:
+            return True                     # unknown -> show
+        try:
+            if items is not None and len(items.picker_state().checked_affixes):
+                return True
+            if stems is not None and len(stems.stem_picks()):
+                return True
+        except Exception:  # noqa: BLE001 -- a broken tree read is "unknown"
+            return True
+        return False
+
+    # -- Step numbering (T012, FR-009 / FR-009a) -----------------------------
+
+    def _short_title_for_page(self, page) -> str:
+        """The declared, unnumbered title of `page`, or "" when undeclared.
+
+        Undeclared is a real answer, not a failure: `_PageScopeConflict` and
+        `_PagePreview` are retained and never in the flow, so they have no
+        number to state and must never be given one (FR-011).
+        """
+        for attr, short, _skippable, _has_content in self.flow():
+            if getattr(self, attr, None) is page:
+                return short
+        return ""
+
+    def _apply_declared_step_numbers(self) -> None:
+        """Number every declared page by its slot, as a pre-run placeholder.
+
+        Only correct for a run that shows everything -- which is why entry
+        recomputes it. It exists because the wizard is inspectable before it is
+        walked, and a page whose title read "Projects" with no number in a
+        numbered flow would look like the un-numbered page SC-004 removed.
+        """
+        for i, (attr, short, _skippable, _has) in enumerate(self.flow(), 1):
+            page = getattr(self, attr, None)
+            if page is not None:
+                page.setTitle(f"Step {i}: {short}")
+
+    def _apply_step_number(self, page_id: int) -> None:
+        """Title `page_id` as "Step {n}: {short}" for this run's n.
+
+        n counts the pages this run has actually SHOWN, so a run that skipped
+        Phonology reads 1, 2, 3 with no hole where it would have been (SC-003a).
+        Qt's own visited stack is the counter: it does not yet contain `page_id`
+        when `initializePage` fires (verified against Qt 6.7), and Back pops it,
+        so retracing a run reproduces the numbers the operator saw.
+        """
+        page = self.page(page_id)
+        if page is None:
+            return
+        short = self._short_title_for_page(page)
+        if not short:
+            return          # not in the flow -> not numbered (FR-011)
+        visited = list(self.visitedIds())
+        position = (visited.index(page_id) + 1) if page_id in visited \
+            else len(visited) + 1
+        page.setTitle(f"Step {position}: {short}")
+
+    def initializePage(self, page_id: int) -> None:  # noqa: N802 -- Qt naming
+        """Number the page being entered, then let it initialise itself.
+
+        The number is assigned HERE rather than in each page's own
+        `initializePage` because it is a fact about the run, not about the page,
+        and because five of the twelve pages have no `initializePage` at all.
+
+        The header's description is re-rendered for the same reason (T041):
+        `subTitle()` is the string of record and a page may restate it as it
+        initialises, so the render happens on entry rather than once at install.
+        """
+        self._apply_step_number(page_id)
+        page = self.page(page_id)
+        if page is not None and hasattr(page, "refresh_header_description"):
+            page.refresh_header_description()
+        super().initializePage(page_id)
 
     def context(self):
         """Return the bound RunContext (available after page 1 is completed)."""
-        return self._page_project_ws.context()
+        return self._page_projects.context()
 
     # -- Named page accessors (spec 010 P-1) ---------------------------------
     # Pages MUST reference each other through these, never by literal index:
     # inserting a page (e.g. Phonology at index 1) shifts every literal
     # `wizard.page(N)` silently. Each accessor returns the stored attribute.
     def page_project_ws(self):
-        return self._page_project_ws
+        """The projects page. 036 FR-006 renamed the attribute, not the name.
+
+        25 call sites reach the source handle and the bound context through
+        this accessor; the page it returns no longer owns the writing-system
+        mapping (see `page_writing_systems`).
+        """
+        return self._page_projects
+
+    def page_writing_systems(self):
+        """The writing-systems page -- `ws_mapping()` and `selected_ws_ids()`.
+
+        New in 036 (FR-006). One owner: reading a mapping off
+        `page_project_ws()` is no longer possible, so no caller can silently get
+        a stale or empty one from the half that lost it.
+        """
+        return self._page_writing_systems
 
     def page_custom_fields(self):
         return self._page_custom_fields
@@ -5070,29 +6240,40 @@ class SelectionWizard(QtWidgets.QWizard):
         return self._page_finish
 
     def theme_bar(self):
-        """Named accessor for the floating theme / text-size corner bar."""
+        """Named accessor for the one theme / text-size control strip.
+
+        Kept under its historical name: callers reach it to ask about zoom and
+        colour mode, which is still what it is for. What changed is where it
+        lives -- a header slot on the current page, not a floating overlay.
+        """
         return self._theme_bar
 
-    # -- Corner-bar geometry -------------------------------------------------
-    # The bar is parented to the wizard but not in any layout, so nothing moves
-    # it for us; these three hooks are the whole of its positioning.
-    def _reposition_theme_bar(self, *_args) -> None:
-        # getattr guard: resize/show can fire while __init__ is still running
-        # (setMinimumSize, addPage), i.e. before the bar attribute exists.
+    # -- The one control strip, moved between page headers (T042, FR-005) ----
+    # No geometry hooks any more. `resizeEvent` and `showEvent` used to exist
+    # solely to re-pin a bar that nothing laid out; the header's layout does
+    # that now, at every width and every text scale, without being told.
+
+    def _install_theme_bar_on_current_page(self, *_args) -> None:
+        """Move the strip into the current page's header controls slot.
+
+        Every guard here is a real state this runs in. `currentIdChanged` fires
+        during construction (before `_theme_bar` exists) and again after the
+        last page, with id -1; a page outside the flow has no header; and Qt
+        rebuilds its page stack on every transition, so the move has to happen
+        on each one rather than once at the start.
+
+        `set_controls` detaches the strip from the previous page's slot first,
+        so exactly one header holds it at any moment and the others collapse
+        their controls cell to nothing.
+        """
         bar = getattr(self, "_theme_bar", None)
-        if bar is not None:
-            bar.reposition()
-
-    def resizeEvent(self, event) -> None:  # noqa: N802 -- Qt naming
-        super().resizeEvent(event)
-        self._reposition_theme_bar()
-
-    def showEvent(self, event) -> None:  # noqa: N802 -- Qt naming
-        super().showEvent(event)
-        # First correct geometry is only knowable here: before the wizard is
-        # shown its width is the pre-layout guess, so the construction-time
-        # reposition() lands the bar at the wrong x.
-        self._reposition_theme_bar()
+        if bar is None:
+            return
+        page = self.currentPage()
+        header = page.header() if hasattr(page, "header") else None
+        if header is None:
+            return
+        header.set_controls(bar)
 
 
 # ---------------------------------------------------------------------------

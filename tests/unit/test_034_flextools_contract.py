@@ -212,6 +212,81 @@ def test_the_finish_page_takes_its_subtitle_from_the_gate():
     assert page.subTitle() == "SUPPLIED BY THE HOST"
 
 
+# ---------------------------------------------------------------------------
+# 036 T007 / FR-006, SC-013 — the projects page still reads as one choice
+# ---------------------------------------------------------------------------
+# Feature 036 splits step 1: this page binds projects, and the writing-system
+# mapping moved to the page after it. Both subtitles were rewritten, so the
+# literal below is not the pre-036 text -- but the property the gate exists to
+# protect is unchanged and is what is asserted: under FlexTools there is no
+# source to pick, so the page must describe exactly one choice and must not
+# invite the operator to change a source the host owns.
+#
+# Spelled out rather than imported, deliberately: changing either string is a
+# multi-file edit (`selection_wizard.py`, this file, and
+# `test_034_step1_source_picker.py`), which is the point.
+_PROJECTS_SUBTITLE_HOST_SOURCE = (
+    "Bind the target project to write to. The source project is already open "
+    "and cannot be changed here."
+)
+_PROJECTS_SUBTITLE_PICKED_SOURCE = (
+    "Pick the source project to read from and the target project to write to. "
+    "Both are required before you can continue."
+)
+
+
+def _projects_page(source_binder=None):
+    """The post-split projects page, built the way the wizard builds it."""
+    pytest.importorskip("PyQt6")
+    import os
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PyQt6 import QtWidgets
+
+    from gramtrans.Lib import api as gt_api
+    from gramtrans.Lib.ui import selection_wizard as sw
+
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    _ = app
+
+    # Resolved, not hard-coded: `_PageProjectWS` becomes `_PageProjects` when
+    # the split lands, and this gate must not fail on the class name.
+    cls = getattr(sw, "_PageProjects", None) or sw._PageProjectWS
+    stub = gt_api.RunContextStub(
+        source_handle=None,
+        source_project_name="Host Project" if source_binder is None else "",
+        source_project_path="",
+        run_id="GT-20260817-000000",
+        started_at="2026-08-17T00:00:00",
+        projects_root="",
+    )
+    return cls(stub, None, source_binder=source_binder)
+
+
+def test_the_flextools_projects_subtitle_describes_one_choice():
+    """No binder — the source is host-supplied, so only the target is picked."""
+    page = _projects_page()
+    assert page.subTitle() == _PROJECTS_SUBTITLE_HOST_SOURCE
+    # SC-013 in substance: nothing here offers to change the host's source.
+    assert "pick the source" not in page.subTitle().lower()
+
+
+def test_the_host_difference_in_the_projects_subtitle_survives():
+    """The two hosts read differently, and the difference is the binder.
+
+    Asserted as a pair rather than one literal each: a refactor that made both
+    hosts share a single string would still pass two independent equality
+    checks if both were updated to the same text, and would silently tell a
+    FlexTools operator to go and pick a source they cannot pick.
+    """
+    host_supplied = _projects_page().subTitle()
+    operator_picked = _projects_page(source_binder=lambda name: object()).subTitle()
+
+    assert host_supplied == _PROJECTS_SUBTITLE_HOST_SOURCE
+    assert operator_picked == _PROJECTS_SUBTITLE_PICKED_SOURCE
+    assert host_supplied != operator_picked
+
+
 def test_default_source_project_and_headless_fallback_still_exist():
     """Exception list, "Explicitly not changed": these stay put.
 

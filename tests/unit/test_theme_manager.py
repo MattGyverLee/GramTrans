@@ -549,6 +549,9 @@ def _contrast_ratio(fg: str, bg: str) -> float:
 #: `button` / `alternate_base` / `focus` moves three surfaces that carry text or
 #: must be seen against the window, so each gets its own floor rather than being
 #: eyeballed once and trusted forever.
+# SC-008: every contrast floor is MEASURED here, not reviewed by eye. The
+# accompanying SC-008a distance floors are `_DISTANCE_FLOORS` below. Both are
+# parametrised, so a palette change that breaks one names the exact pair.
 _CONTRAST_PAIRS = (
     ("text", "base", 7.0),
     ("window_text", "window", 7.0),

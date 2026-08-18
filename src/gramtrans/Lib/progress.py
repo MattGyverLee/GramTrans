@@ -239,33 +239,50 @@ UNITS_PER_SECOND: Dict[str, Optional[float]] = {
     "bind_source": None,
     # FR-023 row 2: bind target project -- same.
     "bind_target": None,
-    # FR-023 row 3: "Reading custom fields..." -- unit: custom-field definition.
-    "custom_fields": 400.0,
-    # FR-023 row 4: "Reading phonology..." -- unit: phoneme / natural class /
-    # phonological rule. Rules carry structural descriptions, so the mixed
-    # population reads slower per item than a flat possibility list.
-    "phonology": 250.0,
-    # FR-023 row 5: "Reading affixes..." -- unit: lexical entry.
-    "affixes": 900.0,
-    # FR-023 row 6: "Reading stems..." -- unit: lexical entry.
-    "stems": 900.0,
-    # FR-023 row 7: "Reading morphology skeleton..." -- unit: lexical entry.
-    # Slower per entry than the affix/stem walks: it visits MSAs and slots.
-    "skeleton": 500.0,
-    # FR-023 row 8: "Reading grammatical dependencies..." -- unit: lexical
-    # entry. The heaviest per-entry walk (reference closure).
-    "dependencies": 350.0,
-    # FR-023 row 9: "Reading lexical-entry types..." -- unit: list item.
-    "entry_types": 1500.0,
-    # FR-023 row 10: "Reading rules..." -- unit: list item.
+    # --- MEASURED (T048, from the T047 run; see verification.md) ------------
+    # Unit: custom-field definition. 4553/s on Ejagham Full, 2442/s on Mini.
+    "custom_fields": 4500.0,
+    # Unit: phoneme set / natural class / phonological rule.
+    # Warm 2338-2566/s; the cold figures (32-73/s) are dominated by the
+    # one-time first touch of PhonologicalDataOA, which is a per-SESSION cost
+    # and not a per-unit one, so a rate derived from them would not be a rate.
+    "phonology": 2500.0,
+    # Unit: lexical entry. 59241/s on Ejagham Full (4304 entries, 73 ms),
+    # 14429/s on Mini. The faster figure is taken deliberately -- see the
+    # asymmetry note below.
+    "affixes": 50000.0,
+    # Unit: lexical entry. 8647/s on Full, 8999/s on Mini -- the two agree,
+    # which is why this is the most trustworthy number in the table.
+    "stems": 9000.0,
+    # Unit: lexical entry. 22289/s on Full, 11233/s on Mini.
+    "skeleton": 20000.0,
+    # Unit: lexical entry. 17592/s on Full, 19046/s on Mini.
+    "dependencies": 19000.0,
+    # Unit: list item. 3230/s on Full, 4615/s on Mini.
+    "entry_types": 4500.0,
+    # --- MEASURED, but on too little data to trust ---------------------------
+    # Unit: text. 995/s on Ejagham Full, 2727-13143/s on Mini -- and both
+    # projects have fewer than ten short texts, which is nowhere near enough to
+    # characterise a walk whose per-unit cost is paragraphs x segments x
+    # wordforms and therefore effectively unbounded. The SLOWEST observation is
+    # taken here, against the general rule below, precisely because this is the
+    # one operation likely to run for many seconds on a real corpus: leaning
+    # towards showing the indicator costs a brief flash, while leaning away
+    # leaves the operator watching a still window for the full 500 ms.
+    "texts": 1000.0,
+    # --- NOT MEASURED --------------------------------------------------------
+    # Unit: ad-hoc prohibition. All three Ejagham projects have ZERO, so the
+    # T047 run could not time this at any size. The placeholder stands and is
+    # labelled as one.
     "rules": 600.0,
-    # FR-023 row 11: "Reading texts..." -- unit: text.
-    "texts": 60.0,
-    # FR-023 row 12: "Building the transfer plan..." -- unit: selected category.
+    # Unit: selected category. Needs a dry run across a bound pair; not covered
+    # by the read-only T047 pass. Placeholder.
     "plan_assembly": 8.0,
-    # FR-023 row 13: "Writing to the target project..." -- unit: plan action.
+    # Unit: plan action. Needs a live Move; not covered by the read-only T047
+    # pass. Placeholder.
     "move_write": 40.0,
 }
+
 """Per-operation throughput, in units per second, keyed by FR-023 row.
 
 This is the ONLY per-operation number in the feature (FR-019a). The 500 ms
@@ -273,17 +290,74 @@ threshold is deliberately absent: it is one project-wide value
 (``PROGRESS_THRESHOLD_MS``) and putting a copy here would reintroduce exactly
 the per-operation drift FR-019a forbids.
 
-**These are placeholders.** They are order-of-magnitude estimates chosen so
-that the up-front/elapsed split behaves sensibly on the available test
-projects, NOT measurements. T047 times a live full run and T048 replaces every
-value here with the measured figure, so each prediction becomes auditable
-against a real run. Until then, a wrong value can only pick the wrong
-*trigger* -- up-front display versus the elapsed-time fallback -- and never
-suppress the indicator altogether, because whichever trigger fires first wins.
+MEASURED BY T048 from the T047 live run against ``Ejagham Mini`` (252 entries)
+and ``Ejagham Full`` (4304 entries), both read-only. Every value is sourced in
+the comment beside it, and the three that could not be measured say so.
+``specs/036-wizard-ui-polish/verification.md`` carries the raw numbers.
 
-Rounder numbers than a measurement would produce, on purpose: nothing here
-should read as calibrated data before T048 does the calibrating.
+WHICH WAY TO ROUND, AND WHY IT IS NOT SYMMETRIC
+-----------------------------------------------
+Where two projects disagree, the FASTER rate is taken. The two errors this
+constant can make are not equally bad:
+
+- **Over-predicting** (rate too low) shows the up-front modal indicator for work
+  that turns out to be fast -- the flash FR-019 and SC-001a forbid. The T047 run
+  caught exactly this with the old placeholders: they predicted 4.8 s, 8.6 s and
+  12.3 s for affix, skeleton and dependency walks that actually took 73 ms,
+  193 ms and 245 ms.
+- **Under-predicting** (rate too high) skips the up-front display, and the
+  elapsed-time fallback then shows the indicator 500 ms in (FR-014b). The
+  operator waits half a second before seeing it, and nothing is wrong.
+
+So the safe direction is to under-predict, and the faster observation is the one
+that under-predicts. ``texts`` is the single documented exception, for the reason
+given beside it.
+
+These rates come from two projects on one machine. They pick a TRIGGER, never
+whether an indicator appears at all: whichever of the two triggers fires first
+wins, so no value here can suppress an indicator.
 """
+
+
+OPERATION_LABELS: Dict[str, str] = {
+    "bind_source": "Opening source project...",
+    "bind_target": "Opening target project...",
+    "custom_fields": "Reading custom fields...",
+    "phonology": "Reading phonology...",
+    "affixes": "Reading affixes...",
+    "stems": "Reading stems...",
+    "skeleton": "Reading morphology skeleton...",
+    "dependencies": "Reading grammatical dependencies...",
+    "entry_types": "Reading lexical-entry types...",
+    "rules": "Reading rules...",
+    "texts": "Reading texts...",
+    "plan_assembly": "Building the transfer plan...",
+    "move_write": "Writing to the target project...",
+}
+"""What the operator is TOLD, keyed by FR-023 row (FR-015).
+
+Operator vocabulary, not ours: no class name, no category enum value, no
+"inventory". Declared here, beside the rates and with the identical key set, so
+one lookup at a call site yields both halves of an operation's declaration and
+neither can name a row the other does not.
+
+Ellipsis as three periods, per the ASCII rule in this module's docstring.
+"""
+
+
+def label_for(operation: str) -> str:
+    """The operator-facing label for one FR-023 operation.
+
+    Raises ``KeyError`` on an unknown name, for the same reason ``rate_for``
+    does: the lookup happens where a page sets its indicator up, never inside a
+    walk, so a typo is a wiring bug and should surface at wiring time.
+    """
+    if operation not in OPERATION_LABELS:
+        raise KeyError(
+            f"unknown progress operation {operation!r}; "
+            f"known operations: {sorted(OPERATION_LABELS)}"
+        )
+    return OPERATION_LABELS[operation]
 
 
 def rate_for(operation: str) -> Optional[float]:

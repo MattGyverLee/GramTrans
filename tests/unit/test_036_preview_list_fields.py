@@ -18,6 +18,14 @@ Covers:
 - T027 / FR-035  affix label separates form from gloss by whitespace only
 - T027 / FR-036  an empty list-valued field renders an explicit ``(none)``
 - T027 / FR-037  a capped list states the cap AND the true total
+
+Success criterion
+-----------------
+**SC-006** is measured by this module in full: an affix list in a slot
+preview reads as one affix per line, with no quoting the data did not
+already carry, an explicit `(none)` where the list is empty, and a cap that
+discloses the true total. FR-045 is the other half and is asserted here as
+byte-identity of every scalar field's rendering.
 """
 
 from __future__ import annotations

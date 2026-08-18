@@ -2159,10 +2159,14 @@ def _enrich_phoneme(ph: Any, raw: dict[str, Any]) -> None:
 _EXCERPT_CHAR_LIMIT = 280   # Text baseline excerpt cap (FR-018)
 _LIST_ITEM_LIMIT = 25       # Slot affix / ad-hoc reference / NC member cap (FR-018)
 # Unchanged at 25 by spec-036 FR-037 -- the cap is fine, it is the DISCLOSURE
-# that had to improve: the slot-affix note below now states the cap AND the true
-# total instead of a bare "truncated".  The referenced-element note in
-# ``_read_adhoc_compound_rule`` is the same shape and is a candidate for the same
-# treatment; FR-037 names only the slot-affix case, so it is left alone here.
+# that had to improve.  BOTH capped lists now state the cap and the true total
+# instead of a bare "truncated": the slot-affix note in ``_enrich_slot`` and the
+# referenced-element note in ``_read_adhoc_compound_rule``.  FR-037 names only
+# the slot-affix case, but it is stated as a rule about a capped list, and a
+# second capped list disclosing less than the first is a difference the operator
+# cannot account for.  The baseline EXCERPT note is deliberately left alone: it
+# caps characters, not entries, and "how many characters are missing" is not a
+# number anyone acts on.
 
 
 def _bounded_excerpt(text: Any, limit: int = _EXCERPT_CHAR_LIMIT) -> tuple[str, bool]:
@@ -2485,7 +2489,13 @@ def _read_adhoc_compound_rule(handle: Any, guid: str, owner_guid: str = "") -> d
         bounded, truncated = _bounded_list(refs)
         result["ReferencedElements"] = bounded
         if truncated:
-            result["Truncated"] = "referenced-element list truncated"
+            # FR-037, same reasoning as the slot-affix note below: a capped list
+            # states the cap AND the true total. "truncated" on its own tells the
+            # operator a cut happened but not how much is behind it, which is the
+            # one thing they need in order to decide whether to go and look.
+            result["Truncated"] = (
+                f"showing {len(bounded)} of {len(refs)} referenced elements"
+            )
     if not result:
         cls = str(getattr(rule, "ClassName", "") or "")
         if cls:

@@ -15,7 +15,8 @@ Covers:
 - T009  US1 create-case (source-only) + graceful degradation (read failure)
 - T010  dispatch registration (four categories resolve to a non-None reader)
 - T016  US2 enrichment: Phon Feature {Type, Values}, Phon Rule {Structure}, Slot {Affixes}
-- T017  US2 bounded Slot affix list (FR-018)
+- T017  US2 bounded Slot affix list (FR-018; note wording per spec-036 FR-037 --
+        the cap is disclosed WITH the true total, not as a bare "truncated")
 - T022  US3 Natural Class Members/Features delivery is load-bearing (absent
         without the enrich step, present with it — on identical fixture data)
 """
@@ -310,14 +311,27 @@ class TestAdhocReader:
         assert props == {"Type": "MoEndoCompound"}
 
     def test_adhoc_bounded_reference_list(self, monkeypatch):
+        """The cap holds, and spec-036 FR-037: the note discloses the true total.
+
+        Same reasoning as `test_affix_list_bounded`. A bare "truncated" says a
+        cut happened and not how much is behind it, so the operator cannot tell
+        26 referenced elements from 260 -- and cannot decide whether it matters.
+        Both of this module's capped lists are held to the same disclosure.
+        """
+        total = 60
         rule = FakeGuidObj(
             "rule-3", ClassName="MoMorphAdhocProhib",
-            MorphemesRS=[FakeGuidObj(f"m{i}", LongName=f"morph{i}") for i in range(60)],
+            MorphemesRS=[FakeGuidObj(f"m{i}", LongName=f"morph{i}")
+                         for i in range(total)],
         )
         monkeypatch.setattr(mp, "_find_adhoc_rule_by_guid", lambda h, g: rule)
         props = props_for(object(), "adhoc_compound_rules", "rule-3")
         assert len(props["ReferencedElements"]) == mp._LIST_ITEM_LIMIT
-        assert props["Truncated"] == "referenced-element list truncated"
+        assert props["Truncated"] == (
+            f"showing {mp._LIST_ITEM_LIMIT} of {total} referenced elements"
+        )
+        # The real total, not the cap echoed twice ("showing 25 of 25").
+        assert str(total) in props["Truncated"]
 
 
 # ===========================================================================
@@ -435,14 +449,23 @@ class TestSlotEnrich:
         assert raw["Affixes"] == ["Affix in (aug) slot"]
 
     def test_affix_list_bounded(self):
+        """The cap still holds, and spec-036 FR-037 requires the note to disclose
+        BOTH the cap and the true total -- a bare "affix list truncated" tells the
+        operator a cut happened but not how much is missing, so 26 affixes reads
+        the same as 260.  Asserting the exact "showing N of M affixes" wording
+        (with M computed from the fixture) fails a regression to the bare note."""
+        total = 60
         obj = FakeGuidObj(
             "slot-2",
-            Affixes=[FakeGuidObj(f"a{i}", LongName=f"affix{i}") for i in range(60)],
+            Affixes=[FakeGuidObj(f"a{i}", LongName=f"affix{i}") for i in range(total)],
         )
         raw = {"Name": {"en": "big"}}
         _enrich_slot(obj, raw)
         assert len(raw["Affixes"]) == mp._LIST_ITEM_LIMIT
-        assert raw["Truncated"] == "affix list truncated"
+        assert raw["Truncated"] == f"showing {mp._LIST_ITEM_LIMIT} of {total} affixes"
+        # Belt-and-braces: the disclosed total must be the REAL total, not the cap
+        # echoed twice, so a note that says "showing 25 of 25" cannot pass.
+        assert str(total) in raw["Truncated"]
 
 
 # ===========================================================================

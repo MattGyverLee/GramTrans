@@ -480,7 +480,7 @@ QTabWidget::pane {{ border: 1px solid {pal.border}; }}
 QProgressBar {{ border: 1px solid {pal.border}; border-radius: {px(3)}px; text-align: center; }}
 QProgressBar::chunk {{ background-color: {pal.highlight}; }}
 
-/* --- the theme/text-size bar in the wizard's top-right corner --- */
+/* --- the theme/text-size strip, laid out in each page's header slot --- */
 #gtThemeBar {{
     background-color: {pal.header_bg};
     border: 1px solid {pal.border};
@@ -488,7 +488,8 @@ QProgressBar::chunk {{ background-color: {pal.highlight}; }}
 }}
 /* min-width:0 because a bare QToolButton reports a ~60px minimum hint whatever
    its text is; the bar sizes its own buttons from font metrics instead, and
-   without this the strip balloons to ~390px and crowds the page title. */
+   without this the strip balloons to ~390px and takes width the page header's
+   description needs for wrapping. */
 #gtThemeBar QToolButton {{ color: {pal.header_text}; padding: {px(2)}px {px(4)}px;
                            min-width: 0px; }}
 #gtThemeBar QLabel {{ color: {pal.header_text}; }}
@@ -889,36 +890,59 @@ def install_theme(app: Optional[QtWidgets.QApplication] = None) -> ThemeManager:
 # ---------------------------------------------------------------------------
 
 class ThemeCornerBar(QtWidgets.QWidget):
-    """Floating ``[A-] [100%] [A+] | [Dark Mode]`` strip for a window's top-right.
+    """``Zoom: [-] [100%] [+] | [Dark Mode]`` strip, laid out by its host.
 
-    It is parented to the window (not laid out in it) and repositioned from the
-    window's ``resizeEvent``, which is what puts it up beside the native
-    minimize/close buttons without disturbing any page layout.  It paints its
-    own ``#gtThemeBar`` background so it stays legible if a long wizard subtitle
-    ever runs underneath.
+    Before feature 036 this bar positioned itself: it was parented to the wizard
+    but not laid out, ``move()``d itself to the window's top-right in a
+    ``reposition()`` method and ``raise_()``d itself above the page.  That is
+    what let it sit on top of a wrapped step description, and it is exactly the
+    overlap FR-004 exists to forbid -- so the positioning is gone.  The bar is
+    now an ordinary laid-out child: the wizard keeps one instance and moves it
+    into the current page's header controls slot (``page_header.PageHeader``),
+    which reserves a cell for it, so nothing can ever be drawn underneath it.
+
+    The bar therefore reports an honest size hint (its own layout's) and asks its
+    host to re-lay-out whenever a zoom step changes the button widths.  It still
+    paints its ``#gtThemeBar`` panel, not to cover text any more -- nothing runs
+    under it now -- but so the strip reads as one group of view controls rather
+    than four loose buttons in the header row.
 
     The bar's own font is capped at 1.3x: the controls must stay reachable at
-    250% text instead of growing until they cover the page title.
+    the largest supported text scale instead of growing until they crowd the
+    description out of its share of the header.
     """
 
     _BAR_FONT_CAP = 1.3
 
-    def __init__(self, parent: QtWidgets.QWidget, margin: int = 6) -> None:
+    def __init__(self, parent: Optional[QtWidgets.QWidget] = None) -> None:
         super().__init__(parent)
         self.setObjectName("gtThemeBar")
         # A plain QWidget ignores a stylesheet background unless it is told to
         # paint a styled one; without this the bar's panel and border simply do
-        # not render and the buttons float loose over the page title.
+        # not render and the buttons read as four loose header widgets.
         self.setAttribute(QtCore.Qt.WidgetAttribute.WA_StyledBackground, True)
-        self._margin = margin
+        # Fixed both ways: the strip is exactly as big as its contents ask for.
+        # The header's controls cell is Fixed-width too, so every pixel the bar
+        # does not claim is width the wrapping description gets instead.
+        self.setSizePolicy(QtWidgets.QSizePolicy.Policy.Fixed,
+                           QtWidgets.QSizePolicy.Policy.Fixed)
         self._theme = theme()
 
         layout = QtWidgets.QHBoxLayout(self)
         layout.setContentsMargins(4, 2, 4, 2)
         layout.setSpacing(2)
 
+        # FR-002: the zoom control is preceded by a visible "Zoom:" label.  The
+        # text is the contract's, verbatim -- colon included.
+        self._zoom_label = QtWidgets.QLabel("Zoom:", self)
+        self._zoom_label.setObjectName("gtThemeBarZoomLabel")
+
+        # FR-003: "-" and "+" only.  The old "A-"/"A+" glyphs read as a font
+        # picker rather than a zoom control, and the letter A means nothing to a
+        # reader of a language that does not use it.  What the buttons act on is
+        # now said once, by the label beside them.
         self._btn_smaller = self._make_button(
-            "A-", "Smaller interface text (-10%)  [Ctrl+-]", self._theme.decrease_font)
+            "-", "Smaller interface text (-10%)  [Ctrl+-]", self._theme.decrease_font)
         self._btn_smaller.setShortcut(QtGui.QKeySequence.StandardKey.ZoomOut)
 
         self._btn_percent = self._make_button(
@@ -926,8 +950,14 @@ class ThemeCornerBar(QtWidgets.QWidget):
             self._theme.reset_font)
 
         self._btn_bigger = self._make_button(
-            "A+", "Larger interface text (+10%)  [Ctrl++]", self._theme.increase_font)
+            "+", "Larger interface text (+10%)  [Ctrl++]", self._theme.increase_font)
         self._btn_bigger.setShortcut(QtGui.QKeySequence.StandardKey.ZoomIn)
+
+        # A screen reader announcing "minus" / "plus" says nothing about what is
+        # being changed, and unlike a tooltip an accessible name is not tied to
+        # hovering a mouse.
+        self._btn_smaller.setAccessibleName("Decrease interface text size")
+        self._btn_bigger.setAccessibleName("Increase interface text size")
 
         separator = QtWidgets.QFrame(self)
         separator.setFrameShape(QtWidgets.QFrame.Shape.VLine)
@@ -937,13 +967,22 @@ class ThemeCornerBar(QtWidgets.QWidget):
             "Dark Mode", "Switch between light and dark interface",
             self._theme.toggle_mode)
 
-        for widget in (self._btn_smaller, self._btn_percent, self._btn_bigger,
-                       separator, self._btn_mode):
+        for widget in (self._zoom_label, self._btn_smaller, self._btn_percent,
+                       self._btn_bigger, separator, self._btn_mode):
             layout.addWidget(widget)
 
-        # Ctrl+0 has no StandardKey; bind it on the window so it works from any
-        # focused pane rather than only when the button has focus.
-        self._reset_shortcut = QtGui.QShortcut(QtGui.QKeySequence("Ctrl+0"), parent)
+        # Ctrl+0 has no StandardKey, so it needs an explicit QShortcut.  Parented
+        # to the bar, not to the host: the bar is moved from one page's header
+        # slot to the next, and a shortcut owned by whatever widget happened to
+        # be the parent at construction time would either outlive the bar or be
+        # left behind by the first page change.  One shortcut per bar instance,
+        # created here and only here -- there is exactly one bar per wizard, so
+        # `Ctrl+0` resolves unambiguously.  The default WindowShortcut context is
+        # what makes it fire from any focused pane in the wizard rather than only
+        # when the percentage button has focus; the bar is a visible child of the
+        # current page's header whenever the wizard is showing a page, which is
+        # the condition Qt requires for a widget-parented shortcut to be live.
+        self._reset_shortcut = QtGui.QShortcut(QtGui.QKeySequence("Ctrl+0"), self)
         self._reset_shortcut.activated.connect(self._theme.reset_font)
 
         self._theme.changed.connect(self._sync)
@@ -971,25 +1010,28 @@ class ThemeCornerBar(QtWidgets.QWidget):
         font = QtGui.QFont(self.font())
         font.setPointSizeF(round(self._theme.base_point_size * capped, 2))
         metrics = QtGui.QFontMetrics(font)
+        # The label follows the same capped font as the buttons; left on the
+        # application font it would keep growing past the cap and be the one part
+        # of the strip that crowds the description at a high text scale.
+        self._zoom_label.setFont(font)
         # Size each button to its own text: Qt's QToolButton hint is ~60px wide
         # regardless of content (it reserves icon space it will never use), which
-        # made the four-button strip ~390px and pushed it into the page title.
+        # made the strip ~390px and left the description almost no width.
         hpad = max(14, int(round(18 * capped)))
         vpad = max(6, int(round(9 * capped)))
+        height = metrics.height() + vpad
         for child in (self._btn_smaller, self._btn_percent,
                       self._btn_bigger, self._btn_mode):
             child.setFont(font)
-            child.setFixedSize(metrics.horizontalAdvance(child.text()) + hpad,
-                               metrics.height() + vpad)
+            width = metrics.horizontalAdvance(child.text()) + hpad
+            if child is self._btn_smaller or child is self._btn_bigger:
+                # "-" and "+" advance only a few pixels, so text width plus
+                # padding alone would make these two a sliver of a click target.
+                # Square them off against the row height instead.
+                width = max(width, height)
+            child.setFixedSize(width, height)
 
-        self.reposition()
-
-    def reposition(self) -> None:
-        """Pin to the parent's top-right corner, above the page content."""
-        parent = self.parentWidget()
-        if parent is None:
-            return
-        self.adjustSize()
-        x = max(0, parent.width() - self.width() - self._margin)
-        self.move(x, self._margin)
-        self.raise_()
+        # The bar no longer moves itself; it tells whoever lays it out that its
+        # hint changed.  Without this a zoom step resizes the buttons but the
+        # host's layout keeps the old cell width, and the strip is clipped.
+        self.updateGeometry()

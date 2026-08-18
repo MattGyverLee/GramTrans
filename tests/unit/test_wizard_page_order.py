@@ -4,8 +4,21 @@ Inserting pages shifts every literal `wizard.page(N)`. The fix routes all
 cross-page lookups through named accessors. These tests guard that:
   (a) each accessor returns its stored `_page_*` attribute,
   (b) no literal `.page(<int>)` call survives in the wizard source,
-  (c) Custom Fields is at addPage index 1 (Feature 016, T011),
-  (d) Phonology is at addPage index 2 (shifted by Custom Fields insertion).
+  (c) Custom Fields is declared before Phonology (Feature 016, T011),
+  (d) Rules sits between Grammatical Dependencies and Finish.
+
+Feature 036 T006 extends this file in two ways, and the reason for each is a
+way the plumbing can now break:
+
+* **Step 1 became two pages** (FR-006). The projects half keeps the
+  `page_project_ws()` accessor -- 23 call sites depend on the name -- but now
+  returns `_page_projects`; the writing-systems half is reached through a new
+  `page_writing_systems()`. Two accessors over one attribute, or one accessor
+  answering for both halves, is the failure this table catches.
+* **Order moved from `addPage` calls to one declaration** (FR-010). The
+  order assertions below used to read literal `addPage(self._page_X)` lines;
+  those lines are gone, so they read the declaration instead. Asserting order
+  against the thing that no longer fixes it would be coverage in name only.
 """
 from __future__ import annotations
 
@@ -35,15 +48,20 @@ from gramtrans.Lib.ui import selection_wizard as _sw
 SelectionWizard = _sw.SelectionWizard
 
 _ACCESSORS = [
-    ("page_project_ws",   "_page_project_ws"),
+    # 036 FR-006: the name is unchanged, the attribute behind it is the
+    # projects half of the split step 1 (data-model section 1, entry 1).
+    ("page_project_ws",   "_page_projects"),
+    ("page_writing_systems", "_page_writing_systems"),  # 036 FR-006: new, entry 2
     ("page_custom_fields","_page_custom_fields"),
     ("page_phonology",    "_page_phonology"),
     ("page_items",        "_page_items"),
+    ("page_stems",        "_page_stems"),
     ("page_skeleton",     "_page_skeleton"),
     ("page_gram_deps",    "_page_gram_deps"),
     ("page_entry_types",  "_page_entry_types"),   # spec 021: idx 6
     ("page_rules",        "_page_rules"),          # 018-rules-page: idx 7
-    ("page_preview",      "_page_preview"),
+    ("page_texts",        "_page_texts"),          # Feature 026
+    ("page_preview",      "_page_preview"),        # retained, never in the flow
     ("page_finish",       "_page_finish"),
 ]
 
@@ -60,16 +78,30 @@ def _stub_with_pages():
     return w
 
 
+def _call(accessor, w):
+    """Invoke the real unbound accessor, naming the attribute it wanted.
+
+    A bare `AttributeError` out of an accessor reads as a broken test; it is
+    in fact the accessor reaching for an attribute this table says it should
+    not (036 FR-006 renamed the one behind `page_project_ws()`).
+    """
+    fn = getattr(SelectionWizard, accessor, None)
+    assert fn is not None, f"SelectionWizard has no {accessor}() accessor"
+    try:
+        return fn(w)
+    except AttributeError as exc:      # noqa: PERF203 -- one accessor, one message
+        raise AssertionError(f"{accessor}() reads the wrong attribute: {exc}")
+
+
 def test_accessors_return_stored_attributes():
     w = _stub_with_pages()
     for accessor, attr in _ACCESSORS:
-        fn = getattr(SelectionWizard, accessor)  # real unbound accessor
-        assert fn(w) is getattr(w, attr), accessor
+        assert _call(accessor, w) is getattr(w, attr), accessor
 
 
 def test_accessors_are_distinct():
     w = _stub_with_pages()
-    got = [getattr(SelectionWizard, acc)(w) for acc, _ in _ACCESSORS]
+    got = [_call(acc, w) for acc, _ in _ACCESSORS]
     assert len(set(map(id, got))) == len(_ACCESSORS)  # no accessor aliases another
 
 
@@ -87,22 +119,46 @@ def test_custom_fields_accessor_exists():
     )
 
 
-def test_custom_fields_page_registered_in_wizard_source():
-    """Custom Fields addPage call must appear before Phonology addPage."""
-    src = Path(_sw.__file__).read_text(encoding="utf-8")
-    cf_pos = src.find("self._page_custom_fields")
-    phon_pos = src.find("self._page_phonology")
-    assert cf_pos != -1, "_page_custom_fields not found in wizard source"
-    assert phon_pos != -1, "_page_phonology not found in wizard source"
-    # custom fields must be addPage'd before phonology in source text
-    # (both appear in the addPage block in order).
-    add_cf = src.find("addPage(self._page_custom_fields)")
-    add_phon = src.find("addPage(self._page_phonology)")
-    assert add_cf != -1, "addPage(_page_custom_fields) not found"
-    assert add_phon != -1, "addPage(_page_phonology) not found"
-    assert add_cf < add_phon, (
-        "Custom Fields addPage must appear before Phonology addPage"
+def test_writing_systems_accessor_exists():
+    """036 FR-006: the writing-systems half of the split step 1 is reachable."""
+    assert hasattr(SelectionWizard, "page_writing_systems"), (
+        "SelectionWizard missing page_writing_systems accessor (036 FR-006); "
+        "ws_mapping() and selected_ws_ids() live behind it"
     )
+
+
+def _declared_position(src, attr):
+    """Where the flow declaration names `attr`, as a source offset (-1: absent).
+
+    036 FR-010 makes one ordered declaration the single source of page order,
+    and data-model section 1 gives each entry's `attr` as a *string*. The
+    quoted attribute name is therefore what fixes the order -- the literal
+    `addPage(self._page_X)` block these assertions used to read is gone.
+    """
+    for quoted in (f'"{attr}"', f"'{attr}'"):
+        pos = src.find(quoted)
+        if pos != -1:
+            return pos
+    return -1
+
+
+def _assert_declared_before(first, second):
+    src = Path(_sw.__file__).read_text(encoding="utf-8")
+    a, b = _declared_position(src, first), _declared_position(src, second)
+    assert a != -1, f"{first} is not named in the flow declaration"
+    assert b != -1, f"{second} is not named in the flow declaration"
+    assert a < b, f"{first} must be declared before {second}"
+
+
+def test_custom_fields_declared_before_phonology():
+    """Custom Fields precedes Phonology in the flow declaration (entries 3, 4)."""
+    _assert_declared_before("_page_custom_fields", "_page_phonology")
+
+
+def test_the_split_step_1_pages_lead_the_declaration():
+    """036 FR-006: projects, then writing systems, then everything else."""
+    _assert_declared_before("_page_projects", "_page_writing_systems")
+    _assert_declared_before("_page_writing_systems", "_page_custom_fields")
 
 
 # ============================================================================
@@ -128,28 +184,28 @@ def test_rules_accessor_returns_page_rules_type():
     assert result is w._page_rules
 
 
-def test_rules_page_registered_before_page_finish_in_source():
-    """T022: addPage(_page_rules) appears before addPage(_page_finish) in source."""
-    src = Path(_sw.__file__).read_text(encoding="utf-8")
-    add_rules = src.find("addPage(self._page_rules)")
-    add_finish = src.find("addPage(self._page_finish)")
-    assert add_rules != -1, "addPage(_page_rules) not found in wizard source"
-    assert add_finish != -1, "addPage(_page_finish) not found in wizard source"
-    assert add_rules < add_finish, (
-        "_PageRules addPage must appear before _PageFinish addPage (index 6 < 7)"
-    )
+def test_rules_page_declared_before_page_finish():
+    """T022, read off the declaration now that it is what fixes the order."""
+    _assert_declared_before("_page_rules", "_page_finish")
 
 
-def test_rules_page_registered_after_gram_deps_in_source():
-    """T022: addPage(_page_rules) appears after addPage(_page_gram_deps) in source."""
+def test_rules_page_declared_after_gram_deps():
+    """T022: Grammatical Dependencies precedes Rules (entries 8, 10)."""
+    _assert_declared_before("_page_gram_deps", "_page_rules")
+
+
+def test_finish_is_declared_last():
+    """Nothing may be declared after Finish / Move -- it ends every run."""
     src = Path(_sw.__file__).read_text(encoding="utf-8")
-    add_gram = src.find("addPage(self._page_gram_deps)")
-    add_rules = src.find("addPage(self._page_rules)")
-    assert add_gram != -1, "addPage(_page_gram_deps) not found in wizard source"
-    assert add_rules != -1, "addPage(_page_rules) not found in wizard source"
-    assert add_gram < add_rules, (
-        "_PageGramDeps (index 5) must be addPage'd before _PageRules (index 6)"
-    )
+    finish = _declared_position(src, "_page_finish")
+    assert finish != -1, "_page_finish is not named in the flow declaration"
+    for attr in ("_page_projects", "_page_writing_systems", "_page_custom_fields",
+                 "_page_phonology", "_page_items", "_page_stems", "_page_skeleton",
+                 "_page_gram_deps", "_page_entry_types", "_page_rules",
+                 "_page_texts"):
+        pos = _declared_position(src, attr)
+        assert pos != -1, f"{attr} is not named in the flow declaration"
+        assert pos < finish, f"{attr} must be declared before _page_finish"
 
 
 def test_page_rules_appears_before_page_finish_accessor():
