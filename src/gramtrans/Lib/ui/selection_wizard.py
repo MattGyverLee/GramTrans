@@ -31,10 +31,16 @@ Constitution alignment:
 from __future__ import annotations
 
 import dataclasses
+import logging
 from contextlib import contextmanager
 from typing import Optional, Set
 
 from PyQt6 import QtCore, QtWidgets
+
+# Module logger. `_log` on the page classes is a REPORT-SINK method (it writes to
+# the run report the operator reads); this is the diagnostic channel, for
+# tracebacks that belong in the log rather than in the report.
+_module_log = logging.getLogger(__name__)
 
 if __package__:
     from .. import api as gt_api
@@ -5182,7 +5188,7 @@ class _PagePreview(QtWidgets.QWizardPage):
         wizard = self.wizard()
         if wizard is None:
             return
-        plan, report = _compute_wizard_plan(wizard)
+        plan, report = _safe_compute_wizard_plan(wizard)
         if plan is None:
             # DR-5: wrapper owns QMessageBox dialogs.
             context = wizard.page_project_ws().context()
@@ -5192,7 +5198,9 @@ class _PagePreview(QtWidgets.QWizardPage):
                 )
             else:
                 QtWidgets.QMessageBox.warning(
-                    self, "GramTrans", "Plan assembly failed. Check project state."
+                    self, "GramTrans",
+                    _take_plan_failure_reason(wizard)
+                    or "Plan assembly failed. Check project state.",
                 )
             return
         self._cached_plan = plan
@@ -5210,6 +5218,64 @@ class _PagePreview(QtWidgets.QWizardPage):
 # Module-level plan assembler (DR-4, FR-004)
 # ---------------------------------------------------------------------------
 
+def _safe_compute_wizard_plan(wizard) -> tuple:
+    """`_compute_wizard_plan`, with the Qt slot boundary enforced.
+
+    Both callers are clicked buttons, and a slot is called from C++: an
+    exception raised in one has no Python frame above it to catch, so PyQt6
+    answers it with `sys.excepthook` and then `qFatal()`/`abort()`. Depending on
+    the build that is either a window that vanishes with no dialog or a button
+    that silently does nothing -- both of which this code has already shipped
+    (`standalone/crashlog.py` documents the abort; a non-1:1 WS mapping raising
+    out of step 6 was the dead Dry-run button).
+
+    `_compute_wizard_plan` already documents "(None, None) on any failure", so
+    this adds no new contract -- it makes the existing one true even for a step
+    that was written to raise. The reason is logged and carried to the dialog:
+    swallowing it silently is what made the original defect take a rebuild and a
+    Windows Error Reporting record to find.
+    """
+    try:
+        return _compute_wizard_plan(wizard)
+    except Exception as exc:  # noqa: BLE001 - a slot must not raise into C++
+        _module_log.exception("plan assembly failed")
+        _set_plan_failure_reason(
+            wizard,
+            _take_plan_failure_reason(wizard)
+            or f"GramTrans could not build the transfer plan.\n\n"
+               f"{type(exc).__name__}: {exc}",
+        )
+        return (None, None)
+
+
+_PLAN_FAILURE_ATTR = "_gt_plan_failure_reason"
+
+
+def _set_plan_failure_reason(wizard, reason: str) -> None:
+    """Record WHY plan assembly returned `(None, None)`, for the caller's dialog.
+
+    `_compute_wizard_plan` must not open dialogs (DR-5) and must not raise
+    across the Qt slot that called it, which leaves it only a return value to
+    speak with. Without this the operator gets "Plan assembly failed. Check
+    project state." for a failure that is neither about project state nor
+    something checking it would reveal.
+    """
+    try:
+        setattr(wizard, _PLAN_FAILURE_ATTR, reason)
+    except Exception:  # noqa: BLE001 - a fake wizard that rejects attributes
+        pass
+
+
+def _take_plan_failure_reason(wizard) -> str:
+    """Read and clear the recorded reason, so it cannot outlive its run."""
+    reason = getattr(wizard, _PLAN_FAILURE_ATTR, "") or ""
+    try:
+        setattr(wizard, _PLAN_FAILURE_ATTR, "")
+    except Exception:  # noqa: BLE001
+        pass
+    return reason
+
+
 def _compute_wizard_plan(wizard) -> tuple:
     """Assemble the transfer plan from all wizard page selections.
 
@@ -5226,6 +5292,9 @@ def _compute_wizard_plan(wizard) -> tuple:
     7. gt_api.compute_preview; return (None, None) on payload-None or failure.
     8. RunReport.build_from_plan; return (payload, report).
     """
+    # A reason from a previous run must not be reported against this one.
+    _set_plan_failure_reason(wizard, "")
+
     # Step 1: context None-guard (no QMessageBox here -- caller owns dialogs).
     context = wizard.page_project_ws().context()
     if context is None:
@@ -5400,10 +5469,27 @@ def _compute_wizard_plan(wizard) -> tuple:
     # the FR-006 split. `page_project_ws()` no longer answers for the mapping,
     # and the hasattr guards keep the fake wizards in the unit suite (which
     # supply only the pages they exercise) working unchanged.
+    #
+    # `WSMapping` validates 1:1 in its `__post_init__`, so building it is a step
+    # that can FAIL on what the operator chose rather than on project state --
+    # two source writing systems pointed at one target. That must arrive as this
+    # function's documented `(None, None)`, with the reason kept for the caller's
+    # dialog: raising here escapes the Qt slot that called us, and an exception
+    # crossing a slot boundary is either a dead button or an abort (see
+    # `standalone/crashlog.py`). Dry run was a dead button for exactly this.
     ws_page = wizard.page_writing_systems() \
         if hasattr(wizard, "page_writing_systems") else None
-    ws_mapping = ws_page.ws_mapping() \
-        if ws_page is not None and hasattr(ws_page, "ws_mapping") else None
+    try:
+        ws_mapping = ws_page.ws_mapping() \
+            if ws_page is not None and hasattr(ws_page, "ws_mapping") else None
+    except ValueError as exc:
+        _set_plan_failure_reason(
+            wizard,
+            f"The writing-system mapping on the Writing Systems step is not "
+            f"one-to-one: {exc}\n\nGo back to Writing Systems and give each "
+            f"source writing system its own target, or SKIP one of them.",
+        )
+        return (None, None)
 
     # FR-023 row 12 -- "Building the transfer plan...". The indicator covers
     # steps 7 and 8, which is where the wait is: everything above is dict merges
@@ -5619,7 +5705,7 @@ class _PageFinish(_FlowPage):
         wizard = self.wizard()
         if wizard is None:
             return
-        plan, report = _compute_wizard_plan(wizard)
+        plan, report = _safe_compute_wizard_plan(wizard)
         if plan is None:
             # T036 / FR-041 + FR-042: a dry run that produced nothing must not
             # leave the PREVIOUS run's report on screen. Without this the only
@@ -5638,7 +5724,9 @@ class _PageFinish(_FlowPage):
             else:
                 # G1: assembly failure -- Move stays disabled, no partial state.
                 QtWidgets.QMessageBox.warning(
-                    self, "GramTrans", "Plan assembly failed. Check project state."
+                    self, "GramTrans",
+                    _take_plan_failure_reason(wizard)
+                    or "Plan assembly failed. Check project state.",
                 )
             return
         self._cached_plan = plan

@@ -443,11 +443,25 @@ def closest_ws_defaults(source, target) -> dict:
     ``"map"`` (an existing target WS) or ``"create"`` (a new WS to add under the
     target primary base). Identity rows (source Id already present in the target)
     are omitted -- the wizard maps those to themselves directly.
+
+    **The result is injective**, including across the identity rows this
+    function omits. It has to be: `WSMapping` rejects a non-1:1 mapping, and
+    two source writing systems sharing one target would merge two languages'
+    text into one field. The `claimed` set below is what makes that a property
+    of the whole proposal rather than of the variant passes alone -- a mapping
+    that is 1:1 within each pass but collides with an identity row is exactly
+    the defect this seeds against (source `en`+`swh` analysis, target `en`:
+    `en` maps to itself by identity while `swh` was rebased onto the target
+    base `en`, and the wizard raised `WS mapping not 1:1` at dry-run time).
     """
     src_ws = _enumerate_ws(source)
     tgt_ws = _enumerate_ws(target)
     tgt_ids = {w["id"] for w in tgt_ws}
     out: dict = {}
+    # Targets the wizard will already spend on identity rows (`ws_id in
+    # self._target_ws_ids -> MAP to it`). They are omitted from `out`, so
+    # nothing here would otherwise know they are taken.
+    claimed: set = {w["id"] for w in src_ws if w["id"] in tgt_ids}
     for kind in (WSKind.VERNACULAR, WSKind.ANALYSIS):
         src_k = [w for w in src_ws if w["kind"] == kind]
         tgt_k = [w for w in tgt_ws if w["kind"] == kind]
@@ -458,9 +472,19 @@ def closest_ws_defaults(source, target) -> dict:
         src_base = src_primary["id"].split("-", 1)[0]
         tgt_base = tgt_primary["id"].split("-", 1)[0]
 
-        # primary -> primary (skip identity; wizard maps it to itself)
+        # primary -> primary (skip identity; wizard maps it to itself).
+        # `claimed` is what stops the bridge from stealing a target another
+        # source WS already owns: with source `en`+`swh` and target `en`, the
+        # analysis primary bridge would hand `en` to a second claimant. A
+        # primary that cannot bridge is created under its own tag -- rebasing it
+        # is what merged two languages in the first place.
         if src_primary["id"] not in tgt_ids:
-            out[src_primary["id"]] = ("map", tgt_primary["id"])
+            if tgt_primary["id"] not in claimed:
+                out[src_primary["id"]] = ("map", tgt_primary["id"])
+                claimed.add(tgt_primary["id"])
+            else:
+                out[src_primary["id"]] = ("create", src_primary["id"])
+                claimed.add(src_primary["id"])
 
         # source variants (top-down order), excluding the primary and any that
         # already exist identically in the target.
@@ -475,6 +499,10 @@ def closest_ws_defaults(source, target) -> dict:
             for w in tgt_k
             if w["id"] != tgt_primary["id"]
         ]
+        # `used` tracks consumption of THIS kind's target variants; `claimed`
+        # tracks every target id spoken for by any rule or identity row. Both
+        # are needed: `used` is what keeps the one-to-one variant matching
+        # top-down, `claimed` is what keeps it 1:1 against everything else.
         used: set = set()
 
         # Pass 1: exact-suffix matches, one-to-one.
@@ -482,31 +510,46 @@ def closest_ws_defaults(source, target) -> dict:
             if sid in out:
                 continue
             for tid, tsuf in avail:
-                if tid not in used and tsuf == suf:
+                if tid not in used and tid not in claimed and tsuf == suf:
                     out[sid] = ("map", tid)
                     used.add(tid)
+                    claimed.add(tid)
                     break
 
         # Pass 2: closest remaining target variant, one-to-one, top-down.
         for sid, suf in src_vars:
             if sid in out:
                 continue
-            remaining = [(tid, tsuf) for tid, tsuf in avail if tid not in used]
+            remaining = [(tid, tsuf) for tid, tsuf in avail
+                         if tid not in used and tid not in claimed]
             if not remaining:
                 break
             best = _closest_sub(suf, remaining)
             out[sid] = ("map", best)
             used.add(best)
+            claimed.add(best)
 
         # Pass 3: leftovers -> CREATE under the target primary base (rebase the
         # source suffix onto tgt_base; never split the language onto src_base).
+        #
+        # An EMPTY suffix means this Id does not extend the source base at all,
+        # so it is a different language rather than a variant of the primary --
+        # `swh` beside a primary of `en`. Rebasing that yields the bare target
+        # base and proposes merging Swahili into English; it is created under its
+        # own tag instead. A rebased tag that is already spoken for is likewise
+        # created rather than merged: "map to the existing tag" is only right
+        # when nothing else is mapping there.
         for sid, suf in src_vars:
             if sid in out:
                 continue
-            proposed = (tgt_base + suf) if suf else tgt_base
-            # If the rebased tag already exists in the target, map to it rather
-            # than propose a duplicate create.
-            out[sid] = ("map", proposed) if proposed in tgt_ids else ("create", proposed)
+            proposed = (tgt_base + suf) if suf else sid
+            if proposed in tgt_ids and proposed not in claimed:
+                out[sid] = ("map", proposed)
+            else:
+                if proposed in claimed:
+                    proposed = sid
+                out[sid] = ("create", proposed)
+            claimed.add(proposed)
     return out
 
 
