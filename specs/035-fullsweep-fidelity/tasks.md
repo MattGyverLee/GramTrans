@@ -270,6 +270,20 @@ of the corpus being present.
       measured result: both historically dominant drop-reason classes at exactly zero, and the
       residual matching the recorded list of 160 records across its five known categories
       (FR-160, FR-161, SC-005) · `scratchpad/035_sweep/batch01/`
+      **RUN DONE 2026-08-19, EXPECTATION NOT MET -- stays unchecked.** Measured result recorded
+      in [batch01-results.md](./batch01-results.md). First live exercise of the real
+      `run_one_project` path: all three pilots completed 7/7 phases, every source fingerprint
+      `UNCHANGED`, `Target` restored from the pinned SHA before and after each project. But:
+      (a) FR-161's primary zero-target `alignment token had no copied target referent` measures
+      exactly its historical 27,844 in Esperanto -- unmoved. `paragraph create failed` (1,207) IS
+      at zero, and the 1,282-drop reduction reconciles exactly, but the criterion is not met.
+      (b) **BLOCKING ORDERING DEFECT**: all 15 guards report `not-evaluated` and 100% of findings
+      (11,148 / 519,277 / 16,503) carry `NOT_YET_CLASSIFIED_MISSING_FROM_TARGET`, so all three
+      verdicts are `VACUOUS` (exit 4). The classifier that turns the measured censuses and drop
+      reasons into guard inputs is **T036-T043 (US2), ordered AFTER this task**. T035 can only
+      ever return `VACUOUS` where it sits; batch 1 must be re-run once US2 lands.
+      (c) FR-149: batch 1's artifacts are in gitignored `scratchpad/` (`.gitignore:117`) and
+      `assert_evidence_base_tracked()` does not cover the artifact dir -- fix before T049/T050.
 
 **Checkpoint**: User Story 1 is independently functional. The pilots produce a verdict
 that is demonstrably capable of failing, and every guard behind it has a recorded
