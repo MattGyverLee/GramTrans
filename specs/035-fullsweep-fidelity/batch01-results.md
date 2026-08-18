@@ -115,6 +115,36 @@ reconciliation in §3c and proved the live path — but T035's acceptance criter
 cannot be evaluated until the US2 classifier lands, at which point batch 1 must
 be re-run.
 
+### 4a. Addendum (same day): the deeper cause is emptier than that
+
+Investigating US2 found a simpler and more consequential reason the guards had
+nothing to report. `run_one_project` calls:
+
+```python
+guard_results = run_all_guards(RunContext(project=source_name))
+```
+
+**Positionally empty.** Every `RunContext` measurement field defaults to `None`,
+and a `None` input is exactly what makes a guard return `not-evaluated` — by
+design, per that dataclass's own docstring, because an empty container would let
+a guard "report all-zeros and pass a project it never opened". FR-109 then turns
+any single `not-evaluated` into `VACUOUS`.
+
+So the run reports `VACUOUS` **regardless of how much it measured**. And it
+measured plenty: the census triple, the written-class delta, idempotency, the
+coverage categories, and 210 / 27,929 / 879 drop reasons — none of which reached
+a single guard. The in-code comment above that call still explains the `VACUOUS`
+as "no guard in the registry has real pass/fail logic yet (Phase 2
+taxonomy-spine scope, T011-T014)", which T033 made stale when it gave all fifteen
+guards real logic.
+
+The §4 ordering inversion is still real — the field plane genuinely did not exist
+yet. But it was not the binding constraint. Even a fully built US2 would have
+returned `VACUOUS` while the context stayed empty. Recorded as **T045a**, which
+no task previously covered, and which must land before T035 is re-run.
+
+---
+
 ---
 
 ## 5. Secondary findings
