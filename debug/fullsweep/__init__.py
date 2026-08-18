@@ -21,6 +21,9 @@ specs/035-fullsweep-fidelity/tasks.md) added on top of it:
   * ``verdict`` -- Group G: the ten verdicts, severity ordering, corpus
                    aggregation (T012)
   * ``guards``  -- Group F: the fifteen-guard registry (T014)
+  * ``identity``-- FR-183..FR-187: tool-owned identity, evaluation state vs
+                   agent identity, the natural-key basis and its roster, and the
+                   IDENTITY-SUBSTITUTION remap record (T028)
 
 ``debug/run_fullcopy_sweep.py`` is now a thin CLI entry point over this
 package. The field-level comparator's REAL logic (Groups E/H/P, still in
@@ -57,9 +60,10 @@ from .verdict import *  # noqa: F401,F403,E402 -- Group G: verdicts, severity, a
 from .guards import *  # noqa: F401,F403,E402 -- Group F: the fifteen-guard registry
 from .baseline import *  # noqa: F401,F403,E402 -- Group M: baseline pinning/containment (T020)
 from .preflight import *  # noqa: F401,F403,E402 -- Group I: capability preflight (T022)
+from .identity import *  # noqa: F401,F403,E402 -- identity rules FR-183..FR-187 (T028)
 
 from . import (corpus, safety, pool, moves, artifact, batch, errors, verdict,  # noqa: F401,E402
-               guards, baseline, preflight)
+               guards, baseline, preflight, identity)
 
 # NOTE for tests and callers: ``import *`` above BINDS A COPY of each module
 # global onto this package namespace. Patching ``fullsweep.NAME`` therefore
