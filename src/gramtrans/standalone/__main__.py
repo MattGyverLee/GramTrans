@@ -104,8 +104,18 @@ def run_self_check() -> int:
 
 def run_application() -> int:
     from gramtrans.standalone.app import HostSession, StartupError
+    from gramtrans.standalone import crashlog
 
     session = HostSession()
+    # Installed here, before anything Qt can call back into, because the funnel
+    # below only sees failures that *unwind*. The three that do not -- a Python
+    # exception inside a Qt slot or virtual, Qt's own `qFatal`, and a native
+    # access violation -- all call `abort()`, and an `except` clause is never
+    # reached by any of them. Without this the window simply vanishes and the
+    # log ends at the last thing that went right, which is the one outcome
+    # `_handle_unexpected` was written to make impossible.
+    crashlog.install(session.report_sink, session.log_path)
+
     try:
         try:
             app = session.start()
