@@ -1,5 +1,99 @@
 # GramTrans — Session Handoff
 
+## Session log — 2026-08-19 (035 US2 wave 3: T044 + T045a a/b)
+
+Two tasks landed, both tested, both committed. **43/69 tasks.** Code is on branch
+`035-fullsweep-fidelity` in worktree
+`D:/Github/_Projects/_LEX/GramTrans-035-fullsweep` at `58cc970`, **not merged**.
+Spec artifacts on `main` at `b755b1e` and `0c4307a`.
+
+### PICKUP — read this before running `/speckit.companion.resume`
+
+**The frontier is `T045a` part (c), NOT `T045`.** The companion resolver reports
+`T045` because it takes the lexically-first unchecked id and `T045` sorts before
+`T045a`. The dependency order established this session is
+**T044 → T045a → T045 → T035**, and it is documented at the Wave 3b heading in
+[tasks.md](specs/035-fullsweep-fidelity/tasks.md). T045 edits a guard whose inputs
+only arrive via T045a; done first, the edit cannot be observed end to end.
+
+**A live sweep run currently refuses, exit 6.** `pyflexicon` 4.4.1 is installed
+**non-editable** into `D:/Apps/anaconda3/Lib/site-packages/flexicon` (the
+dist-info `direct_url.json` has `"dir_info": {}` — no `"editable": true`), so the
+capability preflight fails FR-126: "the dependency resolved from a packaged copy
+rather than the tracked working installation". Three unit tests in
+`tests/unit/test_035_sweep_safety.py` fail for the same reason.
+
+The installed copy is **byte-identical** to the working tree (verified with
+`diff -rq`; only backups and caches differ), so nothing behaves differently — the
+refusal is purely about provenance, and it is *correct*: a run whose dependency
+came from an untracked packaged copy is inadmissible as evidence. Fix:
+
+```powershell
+pip install -e D:/Github/_Projects/_LEX/flexicon
+python -c "import flexicon; print(flexicon.__file__)"   # must NOT be site-packages
+```
+
+Full unit suite: **31 failed / 3176 passed** — and 31 failed at HEAD before this
+session's work too, so there is no regression. 28 of the 31 are pre-existing
+failures unrelated to 035; 3 are the preflight provenance failures above.
+
+### T044 — the coverage floor (FR-133..FR-137, research D-07)
+
+`debug/fullsweep/coverage.py` + a populated
+`contracts/coverage-floor.json`. Intersects the tracked in-scope class roster
+with the measured corpus survey; a class with zero instances corpus-wide lands in
+`never_attempted`, reports `NOT-EVALUATED`, and is refused an allowlist entry.
+`survey=None` puts *every* class in `never_attempted` — an unmeasured corpus is
+not an empty one. `reports_clean` is False whenever any in-scope class went
+unmeasured, and a floor with no gap still reports clean, so the negative case
+means something. 34 tests.
+
+**The third absent class was measured, and the obvious guess was wrong.**
+Research D-07 names "appendix, stratum, and one phonological-rule subclass" but
+identifies only two. A read-only, LCM-free scan of `<rt class="X">` rows across
+all 90 projects names the third as **`PhSegmentRule`**. `PhMetathesisRule` — the
+candidate one would guess, and one of the two classes object-inventory:278
+records absent from Ejagham Mini — is **present** (4 instances / 4 projects).
+Recorded in [class-presence-survey.md](specs/035-fullsweep-fidelity/class-presence-survey.md).
+`MoForm` and `MoMorphSynAnalysis` also scan to zero but are abstract LCM bases
+with no factory, so they sit in `excluded_not_measurable` with that reason rather
+than being filed as corpus gaps. Roster: 69 classes, 66 present, 3 absent.
+
+### T045a (a)+(b) — the measurements reach the guards
+
+`run_one_project` deposits each measurement into a `measured` dict as it is
+taken; `build_run_context` turns that into the guard context.
+`MEASURABLE_RUN_CONTEXT_FIELDS` + `UNMEASURED_RUN_CONTEXT_FIELDS` partition all
+23 `RunContext` measurement fields, asserted exactly by test, so a new guard
+input cannot be added and silently forgotten. The `compare_objects` stub is gone;
+plane 1 runs through `compare.reconcile_objects` and findings carry real FR-097
+bucket detail instead of `NOT_YET_CLASSIFIED_MISSING_FROM_TARGET`. 34 tests.
+
+**Two live defects fixed.** Both meant the artifact described a run that did not
+happen: (1) the exclusion was built as `frozenset(exclude_categories)` — a set of
+**strings** — and compared inside `build_full_selection` against
+`GrammarCategory` **members**, so `--exclude-categories` was a silent no-op;
+(2) `run_full_transfer` then built its own selection with no arguments,
+inheriting the STEMS-excluding default, so the transfer excluded STEMS while the
+artifact claimed STEMS was covered. `run_full_transfer` now takes `exclude`.
+
+**MEASURED RESULT, and a corrected premise.** The guard block went from **0/15 to
+5/15 answering** (`BASELINE-DELTA`, `TOTAL-ACCOUNTING`,
+`IDEMPOTENCY-IN-WRITTEN-CLASSES`, `PLAN-CONSERVATION`, `NO-ENGINE-BUG-AS-LOSS`).
+The verdict is **still `VACUOUS`**: ten guards have no input source. T045a's own
+claim that it is "the ONLY thing standing between T036-T045 and a non-VACUOUS
+verdict" is necessary but **not sufficient**. Two of the ten are part (c); the
+other eight were covered by no task, and are now **T045b**. Two of those eight
+are worse than unmeasured — FR-103's accessor counters are *actively discarded*
+by `audit_guid_preservation.inventory_all`'s `except Exception: continue` at the
+exact point the counter should increment, and `CloseProject` outcomes are
+swallowed the same way.
+
+**Do not re-run T035 (batch 1) yet.** It needs T045a(c) *and* T045b; before both,
+it reports `VACUOUS` again — with 5 real guard results attached instead of none,
+which is progress but not the acceptance criterion.
+
+
 ## Session log — 2026-08-18 (035 Phase 3 spurt, then the 036 backlog committed)
 
 Two pieces of work landed. Both are on `main`; nothing is pushed (`main` is 37
