@@ -277,6 +277,37 @@
       "kind": "complete",
       "by": "extension",
       "at": "2026-08-18T19:02:15.024Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "kind": "start",
+      "by": "extension",
+      "at": "2026-08-18T19:08:56.907Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T025",
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-18T19:17:52.522Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T026",
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-18T19:20:04.556Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T027",
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-18T19:29:10.446Z"
     }
   ],
   "decisions": [
@@ -317,6 +348,26 @@
       "decision": "Delete reopen_and_count/_COUNT_ACCESSORS/total_count from tests/integration/harness/full_run.py and make build_full_selection exclude set an explicit required argument",
       "why": "Those three symbols carry five silence rows at once (S-50 dead accessor, S-51 laundered failure, S-52 three accessors for ~28 categories, S-53, S-59 meaningless heterogeneous sum); repairing them would leave a second counting mechanism beside the class inventory, and two counting mechanisms is how the disagreements got hidden",
       "rejected": "Fixing the accessors in place, and calling preview/transfer directly from the sweep instead of through the harness"
+    },
+    {
+      "decision": "Drive T025 off GUARD_NAMES (all fifteen guards) rather than T033s prose list",
+      "why": "FR-109 mandates fifteen; T033s header says twelve and its body enumerates fourteen, omitting CATEGORY-COVERAGE. Spec text governs over task prose, and driving off the registry means no guard can escape coverage.",
+      "rejected": "Testing only the fourteen guards T033 names, which would have left CATEGORY-COVERAGE untested"
+    },
+    {
+      "decision": "T025 asserts at the contract level (GuardResult validity + FR-109 not-evaluated=>VACUOUS) instead of over real guard bodies",
+      "why": "Per-guard logic lands in T033. The contract invariants are fully assertable today and stay unchanged afterwards, so the tests are green now and still meaningful later.",
+      "rejected": "Writing T025 as a red TDD suite against unimplemented guard bodies, which would have produced 15 uninformative failures"
+    },
+    {
+      "decision": "T026 uses conditional xfail(strict=True) for the parts needing T034",
+      "why": "Keeps collection clean while genuinely failing-by-design; strict means the marker turns into a hard failure the moment T034 lands, so it cannot rot silently.",
+      "rejected": "pytest.skip (hides the gap) or a bare import of nonexistent names (breaks collection)"
+    },
+    {
+      "decision": "run_double_move takes restore/transfer/census/drops_of/flush_artifact as injected callables",
+      "why": "Makes FR-043 ordering, FR-045 derivation, FR-047 comparison and FR-050 finally-guarantees testable with a fake engine, no live FLEx. Extends the existing skeleton and leaves run_fullcopy_sweep.py wiring to a later task per T027s declared file scope.",
+      "rejected": "Rewriting run_one_project in the driver, which is outside T027s file scope and would have conflicted with the pluggable-comparator decision"
     }
   ],
   "approach": "Grow the tracked skeleton debug/run_fullcopy_sweep.py (commit 8c72bdc) into a package debug/fullsweep/, adding the field comparator, the 15-guard registry, the 10-verdict model, the loss allowlist, the capability preflight, the coverage floor, negative controls, identity substitution, and the three-axis corpus survey. The sweep drives the shipped engine through the existing Lib/preview.py + Lib/transfer.py split via tests/integration/harness/full_run.py, and reads fields generically through flexicon's native GetSyncableProperties surface. Six phases: taxonomy spine, measurement core, gates, survey/selection, negative controls, then the batched live corpus run.",
@@ -622,6 +673,9 @@
       "tasks": [
         "T005",
         "T027"
+      ],
+      "tests": [
+        "tests/unit/test_035_guards.py"
       ]
     },
     "FR-045": {
@@ -947,6 +1001,9 @@
       "tasks": [
         "T014",
         "T033"
+      ],
+      "tests": [
+        "tests/unit/test_035_guards.py"
       ]
     },
     "FR-095": {
@@ -1052,6 +1109,9 @@
       "tasks": [
         "T014",
         "T033"
+      ],
+      "tests": [
+        "tests/unit/test_035_guards.py"
       ]
     },
     "FR-110": {
@@ -1529,6 +1589,9 @@
       "tasks": [
         "T026",
         "T034"
+      ],
+      "tests": [
+        "tests/unit/test_035_negative_controls.py"
       ]
     },
     "FR-179": {
@@ -1536,6 +1599,9 @@
       "tasks": [
         "T026",
         "T034"
+      ],
+      "tests": [
+        "tests/unit/test_035_negative_controls.py"
       ]
     },
     "FR-180": {
@@ -1543,6 +1609,9 @@
       "tasks": [
         "T026",
         "T034"
+      ],
+      "tests": [
+        "tests/unit/test_035_negative_controls.py"
       ]
     },
     "FR-181": {
@@ -1550,6 +1619,9 @@
       "tasks": [
         "T026",
         "T034"
+      ],
+      "tests": [
+        "tests/unit/test_035_negative_controls.py"
       ]
     },
     "FR-182": {
@@ -1645,5 +1717,81 @@
       ]
     }
   },
-  "currentTask": "T025"
+  "currentTask": "T027",
+  "task_summaries": {
+    "T025": {
+      "status": "DONE",
+      "did": "One test per object-plane guard: all three outcomes per guard, outcome triple closed, and any single not-evaluated guard forces VACUOUS (FR-094..FR-109). 341 tests pass.",
+      "files": [
+        "tests/unit/test_035_guards.py"
+      ]
+    },
+    "T026": {
+      "status": "DONE",
+      "did": "Negative-control regime tests: mandated failing verdict per guard, module-hash staleness => not-evaluated => VACUOUS, FR-181 unfalsifiability check. 24 pass, 2 skip (spec pins no token), 76 xfail(strict) pending T034 machinery.",
+      "files": [
+        "tests/unit/test_035_negative_controls.py"
+      ]
+    },
+    "T027": {
+      "status": "DONE",
+      "did": "Double-move mechanics: MOVE_SEQUENCE (FR-043, baseline census as its own step), derived written-class set with hand-picked refusal (FR-045/SC-004), FR-049 contradiction enforcement, FR-092 widened drop dedup, FR-047 drop-set comparison as a failing verdict, FR-048 verdict from both moves, FR-050 restore_final+artifact in finally. 26/26 offline smoke checks pass.",
+      "files": [
+        "debug/fullsweep/moves.py"
+      ]
+    }
+  },
+  "verified": [
+    {
+      "what": "T025 object-plane guard contract tests",
+      "command": "python -m pytest tests/unit/test_035_guards.py -q",
+      "result": "341 passed",
+      "warnings": []
+    },
+    {
+      "what": "T026 negative-control regime tests",
+      "command": "python -m pytest tests/unit/test_035_negative_controls.py -q",
+      "result": "24 passed, 2 skipped, 76 xfailed (strict, pending T034)",
+      "warnings": [
+        "2 skips are guards whose mandated token the spec does not pin"
+      ]
+    },
+    {
+      "what": "T027 double-move mechanics, offline fake engine",
+      "command": "python scratchpad smoke_t027.py",
+      "result": "26/26 checks pass across FR-043,044,045,047,048,049,050,092,100,SC-004",
+      "warnings": []
+    },
+    {
+      "what": "regression check vs clean HEAD",
+      "command": "python -m pytest tests/unit -q, with and without the change",
+      "result": "28 pre-existing failures at clean HEAD, identical set after; additions account exactly for +365 passed, +76 xfailed, +2 skipped",
+      "warnings": [
+        "28 pre-existing unit failures are order-dependent pollution, unrelated to 035"
+      ]
+    }
+  ],
+  "concerns": [
+    {
+      "note": "tasks.md T033 undercounts the guards: its wave header says twelve, its body enumerates fourteen, and it omits CATEGORY-COVERAGE. FR-109 and guards.py both say fifteen. T033s prose should be corrected before it is implemented, or CATEGORY-COVERAGE will be skipped.",
+      "step": "implement"
+    },
+    {
+      "note": "The spec does not pin a single mandated verdict token for EMPTY-CORROBORATION (FR-098) or UNHANDLED-SUBTYPE (FR-099) - both say the run must fail without naming which token. T026 leaves these as None and asserts only non-success. T034 must record what it actually produced, and the spec should name the tokens.",
+      "step": "implement"
+    },
+    {
+      "note": "28 pre-existing unit-test failures on this branch at clean HEAD (analysis/human-eval-gate/morph-bundle/segment-alignment/wizard-pos). They are order-dependent: the same files pass when run in isolation. Unrelated to 035 but they make the suite an unreliable gate until fixed.",
+      "step": "implement"
+    },
+    {
+      "note": "status-context.py crashes on Windows cp1252: it writes a U+2192 arrow to stdout and dies with a charmap encode error, suppressing the RESOLUTION line entirely. Needs PYTHONIOENCODING=utf-8 as a workaround. Should be an ASCII arrow.",
+      "step": "implement"
+    },
+    {
+      "note": ".specify/feature.json pointed at 036-wizard-ui-polish while 035 was the live feature, so companion resume reported the pipeline complete with 40 tasks outstanding. Repointed to 035. The pointer is not updated when work moves between features.",
+      "step": "implement"
+    }
+  ],
+  "last_action": "Phase 4 Wave 1 closed: T025-T027 backfilled, 30/67 tasks; frontier is T031 (Wave 3, compare.py)"
 }

@@ -192,10 +192,10 @@ of the corpus being present.
 
 ### Tests
 
-- [ ] **T025** [P] [US1] One test per object-plane guard, each asserting all three outcomes --
+- [x] **T025** [P] [US1] One test per object-plane guard, each asserting all three outcomes --
       `pass`, `fail`, and `not-evaluated` -- and that `not-evaluated` never degrades to `pass`
       (FR-094..FR-109) · `tests/unit/test_035_guards.py`
-- [ ] **T026** [P] [US1] Negative-control tests: each seeded defect produces the mandated
+- [x] **T026** [P] [US1] Negative-control tests: each seeded defect produces the mandated
       verdict, and a guard whose module hash changed since its control was recorded reports
       `not-evaluated`, making the run `VACUOUS` (FR-178..FR-181) ·
       `tests/unit/test_035_negative_controls.py`
@@ -204,7 +204,7 @@ of the corpus being present.
 
 **Wave 1 -- independent (different modules):**
 
-- [ ] **T027** [P] [US1] Double-move mechanics: the exact restore → transfer → census →
+- [x] **T027** [P] [US1] Double-move mechanics: the exact restore → transfer → census →
       transfer → census → restore_final sequence, the written-class set DERIVED as
       after-minus-before (never hand-picked), move-2's drop set compared against move-1's, the
       verdict computed from both moves together, the contradiction check on
