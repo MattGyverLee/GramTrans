@@ -48,7 +48,7 @@ python -c "import flexicon; print(flexicon.__file__)"
 #    (the path depends on your FlexTools install).
 ```
 
-`pyproject.toml` declares `pyflexicon>=4.3.1` — the floor carrying the
+`pyproject.toml` declares `pyflexicon>=4.4.1` — the floor carrying the
 GUID-preserving create surface (flexicon PR #239). Below it the `guid=` kwargs
 raise `TypeError`, which the engine swallows into a generic "create failed"
 drop, so transfers silently regenerate identities instead of failing loudly.

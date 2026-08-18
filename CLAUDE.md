@@ -59,7 +59,7 @@ for MCP-indexer visibility (the indexer's static analysis doesn't follow inherit
 
 ### Install
 
-`pyproject.toml` declares `pyflexicon>=4.3.1` — the floor carrying the
+`pyproject.toml` declares `pyflexicon>=4.4.1` — the floor carrying the
 GUID-preserving create surface feature 033 depends on
 (`BaseOperations._CreateWithGuid` plus the optional `guid=` kwarg on
 `Texts.Create`/`Paragraphs.Create`/`Segments.AppendSentence`/`Wordforms.Create`/

@@ -2,14 +2,14 @@
 #
 # Compiled into `requirements.lock` (fully pinned, hashed) by
 # `python build\build.py --lock`. `pyproject.toml` is NOT touched: its
-# `pyflexicon>=4.3.1` / `PyQt6>=6.4` floors stay floors, so a FlexTools install
+# `pyflexicon>=4.4.1` / `PyQt6>=6.4` floors stay floors, so a FlexTools install
 # is unconstrained by anything this feature pins.
 #
 # Four roots, per contracts/build-and-release.md section 3:
 
 # The LCM access layer. Same distribution the module already depends on; the
 # floor lives in pyproject.toml, the pin lives here.
-pyflexicon>=4.3.1
+pyflexicon>=4.4.1
 
 # The UI toolkit. GPL-or-commercial, which is why the binary licence
 # statement (FR-052) is stricter than the project's MIT source licence.

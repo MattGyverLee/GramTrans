@@ -15,7 +15,7 @@ dependencies = [
     # CLAUDE.md documents the install path; pip install -e D:/Github/_Projects/_LEX/flexicon
     # before installing this package. The LibLCM-direct implementation lives in a
     # separate post-Phase-2 sibling repository (constitution Principle IV) — not here.
-    # >=4.3.1: earliest version carrying the GUID-preserving create surface that
+    # >=4.4.1: current supported version carrying the GUID-preserving create surface that
     # feature 033 depends on — BaseOperations._CreateWithGuid plus the optional
     # guid= kwarg on Texts.Create (+contents_guid=), Paragraphs.Create,
     # Segments.AppendSentence, Wordforms.Create, WfiAnalyses.Create,
@@ -27,7 +27,7 @@ dependencies = [
     # (Superseded floor >=4.1.1: earliest with PhonFeatureOperations
     # GetSyncableProperties/ApplySyncableProperties; below it phonological-
     # feature transfer raised NotImplementedError, mbugwe Bug 3.)
-    "pyflexicon>=4.3.1",
+    "pyflexicon>=4.4.1",
     "PyQt6>=6.4",
 ]
 
