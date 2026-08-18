@@ -502,7 +502,7 @@ of them which no task covered. Nothing in this section was implemented; it is th
 The four tasks are stated first, then the rulings taken on T045b's under-specified
 points, then the corrections to claims already written in this file.
 
-- [ ] **T045c** [US2] **BLOCKER, and it fires only when the others succeed.** Implement
+- [x] **T045c** [US2] **BLOCKER, and it fires only when the others succeed.** Implement
       `verdict_for_guard_results`'s real assignment table
       (`debug/fullsweep/verdict.py:120-142`). Today the function returns `VACUOUS` if ANY
       guard reports `not-evaluated` and otherwise **raises `NotImplementedError`**. Its
@@ -520,6 +520,34 @@ points, then the corrections to claims already written in this file.
       are **not determinable from the guard results alone**, and `CLEAN_PASS` must not be
       returned on the strength of fifteen passing guards while those clauses went unchecked.
       · `debug/fullsweep/verdict.py`
+
+  > **DONE 2026-08-19** (`a44cffe`). Implemented against the **ten-row** table at
+  > `contracts/verdict-exit-model.md:29-42` -- the table is ten rows, not the five a
+  > narrower reading of 33-39 suggests: `PASS_WITH_ALLOWLIST`, `NON_IDEMPOTENT` and
+  > `INCOMPLETE` are in it too. Resolution is (1) any `not-evaluated` → `VACUOUS`
+  > unconditionally, still overriding a peer failure that would otherwise outrank it;
+  > (2) each `fail` maps to a candidate through `guards.GUARD_FAILURE_VERDICT` -- the same
+  > table `run_negative_controls` uses, so guard identity maps to verdict in exactly ONE
+  > place -- with simultaneous failures resolved through `most_severe()`, never
+  > first-failure-wins; (3) no failures → the `CLEAN_PASS` vs `PASS_WITH_ALLOWLIST` split.
+  >
+  > **That last split is the one fact the fifteen guards cannot establish**, because a loss
+  > matched within its allowlist cap is *accounted for*, not unaccounted, so
+  > `TOTAL-ACCOUNTING` still reports `pass`. Closed with an optional keyword-only
+  > `allowlist_consumed`; `None` -- today's only call site -- returns the cautious
+  > `PASS_WITH_ALLOWLIST` rather than guessing `CLEAN_PASS`. Both are exit-code 0 per
+  > FR-111, so the conservative default cannot turn a real pass into a reported failure; it
+  > can only under-claim confidence until the caller is wired. **Wiring that caller is
+  > still open** -- see the note under T045b's remaining points.
+  >
+  > Two triggers are documented as un-adjudicable rather than faked: an unhandled exception
+  > (the run never produced fifteen results, so the caller must assign `HARNESS_ERROR`
+  > itself) and `PREFLIGHT_MISMATCH` / `ALLOWLIST_INVALID` (both structurally upstream -- a
+  > caller holding a results dict has already passed them). Reading `TOTAL-ACCOUNTING`'s
+  > `evidence` dict to reverse-engineer the allowlist fact was considered and rejected:
+  > `evidence` is a guard's own diagnostic payload, not a structural contract for other
+  > modules to depend on. 105 tests; `GUARD_FAILURE_VERDICT` verified total over all
+  > fifteen guard names, so the lookup has no `KeyError` path.
 
 - [ ] **T045d** [US2] **The prerequisite T045a(c) cannot be built without.** Write the
       generic field reader `field_source(cls, guid) -> (model_fields, syncable_props)` that

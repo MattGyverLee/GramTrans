@@ -1,5 +1,117 @@
 # GramTrans — Session Handoff
 
+## Session log — 2026-08-19b (035: reconnaissance, four new tasks, T045c)
+
+A short session that spent most of its effort *measuring the work* rather than doing
+it. **44/73 tasks** (was 43/69 — four tasks were added, one was done). Code is on
+branch `035-fullsweep-fidelity` in worktree
+`D:/Github/_Projects/_LEX/GramTrans-035-fullsweep` at `a44cffe`, **not merged**.
+Spec artifacts on `main` at `77c9bd8` and the commit carrying this entry.
+
+### PICKUP — the frontier moved, and it is longer than it was
+
+The chain is now
+**T044 → T045d → T045e → T045f → T045a(c) → T045b → T045c → T045 → T035**.
+T045c is already done. The next task is **T045d**, and T045d/T045e/T045f are the only
+genuinely parallel trio in the tail (disjoint files, no shared state); everything after
+them gates on all three.
+
+The companion resolver will still say `T045` — it takes the lexically-first unchecked
+id. It is still wrong, for the same reason it was wrong last session.
+
+### The live-run blocker from last session is CLEARED
+
+`pyflexicon` 4.4.1 was installed **non-editable** into
+`D:/Apps/anaconda3/Lib/site-packages/flexicon` (dist-info `direct_url.json` read
+`{"dir_info": {}}`), so the FR-126 capability preflight refused every sweep with exit 6
+and three tests in `test_035_sweep_safety.py` failed. Reinstalled with
+`pip install -e D:/Github/_Projects/_LEX/flexicon`. It now resolves to
+`D:\Github\_Projects\_LEX\flexicon\flexicon\__init__.py` with
+`{"dir_info": {"editable": true}}`, and `test_035_sweep_safety.py` is **109 passed**.
+
+Unit suite baseline moved from **31 failed / 3176 passed** to **28 failed / 3179
+passed** purely from that fix — the 3 provenance failures are gone. The 28 remaining
+are the same documented pre-existing non-035 failures (029 pictures ×5, 032 preview
+coverage ×1, adjacent-data ×6, analysis idempotency ×3, analysis verdict ×1, human-eval
+gate ×5, morph-bundle wiring ×4, residue tagging ×1, segment alignment ×1, wizard POS
+wiring ×1). After T045c the suite is **28 failed / 3284 passed**; the +105 is exactly
+the new test file, verified by collection count, so there is no hidden drift.
+
+### What the reconnaissance found — four tasks nothing covered
+
+Two read-only surveys of the worktree at `58cc970`, one per in-flight task. Both are
+recorded in full under "Wave 3b-bis" in
+[tasks.md](specs/035-fullsweep-fidelity/tasks.md).
+
+**T045a(c) and T045b are each materially larger than their own task lines**, and a hard
+blocker sat *after* both of them:
+
+- **T045c (DONE)** — `verdict_for_guard_results` returned `VACUOUS` on any
+  `not-evaluated` guard and otherwise **raised `NotImplementedError`**, on a premise
+  T033 had made stale. T045a(c) buys back 2 guards and T045b buys back 8, so together
+  they reach 15/15 and land exactly on the raise — inside a `finally:` block, where it
+  would mask the original exception. **This is the failure mode where doing the work
+  correctly is what breaks it.**
+- **T045d** — the generic `field_source(cls, guid)` that `census.census_fields`
+  requires **does not exist anywhere in the repo**. `GetSyncableProperties` is not
+  dispatchable by LCM class name: `BaseOperations.GetSyncableProperties` raises
+  `NotImplementedError` unless the subclass implements it (verified against flexicon
+  via FLExToolsMCP), and it is reached only through per-domain Operations accessors.
+  T045a(c) cannot be built without this.
+- **T045e** — the class → `GrammarCategory` mapping, as a tracked contract. The guard
+  keys on category; every plane-2 surface keys on class; the only mapping today is an
+  incomplete prose column in `object-inventory.md`.
+- **T045f** — a home in `ProjectArtifact` for plane-2 output. `artifact-schema.md`
+  already specifies `comparisons`/`census`/`coverage`/`link_findings`/`depth`; the
+  dataclass has none of them, and `assert_object_plane_only` forbids folding them into
+  `accounting`.
+
+### T045c — the verdict table
+
+Implemented against the **ten-row** table at `contracts/verdict-exit-model.md:29-42`
+(it is ten rows, not five — `PASS_WITH_ALLOWLIST`, `NON_IDEMPOTENT` and `INCOMPLETE`
+are in it). Failures map to candidates through `guards.GUARD_FAILURE_VERDICT` — the
+same table `run_negative_controls` uses, so guard identity maps to verdict in exactly
+one place — and simultaneous failures resolve through `most_severe()`, never
+first-failure-wins. Verified `GUARD_FAILURE_VERDICT` is total over all fifteen guard
+names, so the lookup has no `KeyError` path.
+
+**The one fact the fifteen guards cannot establish** is `CLEAN_PASS` vs
+`PASS_WITH_ALLOWLIST`: a loss matched within its allowlist cap is *accounted for*, not
+unaccounted, so `TOTAL-ACCOUNTING` still passes. Closed with an optional keyword-only
+`allowlist_consumed`; `None` — today's only call site — returns the cautious
+`PASS_WITH_ALLOWLIST` rather than guessing `CLEAN_PASS`. Both are exit-code 0, so the
+default cannot turn a real pass into a reported failure. **Open follow-up: nothing
+wires that kwarg yet, so no run can currently report `CLEAN_PASS`.** That is the honest
+state, not a defect, but it needs closing before the acceptance claim.
+
+### Rulings recorded on T045b's under-specified points
+
+Four of seven were ruled this session; three remain open and are marked so in tasks.md.
+The one with teeth: **`extras[*].allowlisted` is hardcoded `False`** — no
+target-native-addition roster exists, and `LossAllowlistMatcher` keys on a drop reason
+an addition does not have. **Consequence, stated plainly: if the pilot corpus produces
+any extras at all, this flips the three pilots from `VACUOUS` to `UNEXPLAINED_LOSS`.**
+That is a worse-looking result and a truer one. Do not treat it as a regression.
+
+### Corrections to things previously written down
+
+- **T045a(c)'s stated goal is half stale.** The
+  `NOT_YET_CLASSIFIED_MISSING_FROM_TARGET` sentinel it promises to remove was already
+  eliminated by part (b) — four hits remain at `58cc970`, all comments or test lines,
+  none a production site. What findings actually carry is
+  `UNACCOUNTED_NO_PAYLOAD_COMPARISON`.
+- **T045b(iii) is the cheapest of the eight, not the hardest** — all three inputs to
+  the reverse walk are already in `run_one_project`'s locals, and the `identity` helpers
+  it needs already exist and are unused.
+- **T045b(iv)/(v) are plumbing**, via an optional out-parameter, not new measurement.
+
+### Still true from before
+
+**Do not re-run T035 (batch 1) yet.** It now needs T045d, T045e, T045f, T045a(c) and
+T045b. Before those it reports `VACUOUS` again — with 5 real guard results attached
+instead of none.
+
 ## Session log — 2026-08-19 (035 US2 wave 3: T044 + T045a a/b)
 
 Two tasks landed, both tested, both committed. **43/69 tasks.** Code is on branch
