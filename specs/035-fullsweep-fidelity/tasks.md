@@ -93,11 +93,12 @@ ever said. No user-story work starts before this checkpoint.
 
 **Wave 3 -- independent (a test and a wiring change):**
 
-- [ ] **T015** [P] Pin the verdict model: ten distinct tokens, an exit-code map that is total
+- [x] **T015** [P] Pin the verdict model: ten distinct tokens, an exit-code map that is total
       and injective over the eight non-success verdicts, a severity ordering that is a total
       order over exactly those ten tokens, and corpus aggregation returning the maximum;
       assertions name tokens, never labels or message text (FR-176) ·
-      `tests/unit/test_035_verdict_order.py` (DEFERRED: new test not written this spurt)
+      `tests/unit/test_035_verdict_order.py` (32 tests; negative-controlled against a
+      severity ordering derived from the exit-code integer, which it catches)
 - [x] **T016** [P] Wire registry → verdict → artifact into the per-project run so an
       unimplemented sweep reports `VACUOUS` end to end and exits 4 ·
       `debug/fullsweep/__init__.py`, `debug/run_fullcopy_sweep.py`
