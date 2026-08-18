@@ -3,8 +3,8 @@
   "specName": "035-fullsweep-fidelity",
   "branch": "035-fullsweep-fidelity",
   "selectedAt": "2026-08-17T20:09:24.318Z",
-  "currentStep": "plan",
-  "status": "planned",
+  "currentStep": "tasks",
+  "status": "ready-to-implement",
   "history": [
     {
       "step": "specify",
@@ -40,6 +40,27 @@
       "kind": "start",
       "by": "ai",
       "at": "2026-08-18T05:19:37.953Z"
+    },
+    {
+      "step": "tasks",
+      "substep": "generate",
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-18T06:11:35.303Z"
+    },
+    {
+      "step": "tasks",
+      "substep": null,
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-18T06:11:35.702Z"
+    },
+    {
+      "step": "tasks",
+      "substep": null,
+      "kind": "start",
+      "by": "extension",
+      "at": "2026-08-18T06:11:54.171Z"
     }
   ],
   "decisions": [
@@ -87,6 +108,1325 @@
     "plan": {
       "summary": "Plan + research + data-model + 7 contracts for the fullsweep: 6 phases growing the tracked 8c72bdc skeleton into debug/fullsweep/, all 65 anti-silence rows satisfied with zero waivers, Constitution v8.0.0 check 5/5 PASS.",
       "key_finding": "FLExToolsMCP is reachable again (server 2.9.1, flexicon 4.3.1 exact-match index, LibLCM 11.0.0), so the cycle5 identity rulings that rested on documented LCM semantics become a schedulable live-verification task rather than a standing caveat -- and the constitution in this tree is v8.0.0, not the v5.1.0 the brief cited."
+    },
+    "tasks": {
+      "summary": "67 tasks (T001-T067) across 8 phases: Setup package promotion, Foundational taxonomy spine, then one phase per user story in priority order US4/US1/US2/US3/US5, then Polish; 47 tasks marked [P], waves joined by explicit wait points; all 193 FRs mapped to tasks."
+    }
+  },
+  "coverage": {
+    "FR-001": {
+      "title": "Sources MUST be derived at runtime by the rule that a directory containing a same-named data file constitutes one transferable source; the sweep MUST NOT consume a hand-m",
+      "tasks": [
+        "T002"
+      ]
+    },
+    "FR-002": {
+      "title": "The sweep MUST examine every directory under the FieldWorks- recorded projects location and, for every directory it does not admit as a source, record the directory name",
+      "tasks": [
+        "T002"
+      ]
+    },
+    "FR-003": {
+      "title": "The recorded source count MUST be treated as an observation of a given run, never as a constant baked into the sweep's code or its pass/fail logic; a run against a corpus",
+      "tasks": [
+        "T002"
+      ]
+    },
+    "FR-004": {
+      "title": "The sweep's known-good regression set MUST name exactly \"Ejagham Mini\", \"Esperanto\", and \"Mbugwe LizzieHC practice\" (that exact spelling); the sweep MUST NOT name or admi",
+      "tasks": [
+        "T002",
+        "T035"
+      ]
+    },
+    "FR-005": {
+      "title": "Every project present in the derived corpus for a given run MUST either be run to a terminal per-project verdict or be recorded as explicitly excluded with a reason; a pr",
+      "tasks": [
+        "T002"
+      ]
+    },
+    "FR-006": {
+      "title": "The sweep MUST exclude, by construction, its own disposable write target(s) and any additional working directory it uses for its own operation from the source corpus, and",
+      "tasks": [
+        "T002"
+      ]
+    },
+    "FR-007": {
+      "title": "The sweep's enumeration MUST reuse the project's existing definition of \"a FLEx project on disk,\" rather than re-deriving an equivalent rule, so the two never disagree ab",
+      "tasks": [
+        "T002"
+      ]
+    },
+    "FR-008": {
+      "title": "A directory whose only contents indicate an empty shell (no same-named data file present) MUST be excluded from the source corpus and MUST NOT be reported as a project th",
+      "tasks": [
+        "T002"
+      ]
+    },
+    "FR-009": {
+      "title": "The exclusion record of FR-002 MUST be reviewable independently of the pass/fail results, so a reader can audit the corpus definition without cross-referencing a code cha",
+      "tasks": [
+        "T003",
+        "T019"
+      ]
+    },
+    "FR-010": {
+      "title": "The sweep MUST NOT initiate, request, or authorize any write to a source project: every source MUST be opened read-only for the entirety of its use in a run, no source ma",
+      "tasks": [
+        "T003",
+        "T019"
+      ]
+    },
+    "FR-011": {
+      "title": "A project MUST be written to, or restored over, only if its name matches an entry in an explicitly supplied allowlist of anchored patterns, each of which MUST match a can",
+      "tasks": [
+        "T003",
+        "T019"
+      ]
+    },
+    "FR-012": {
+      "title": "The write-safety name check MUST NOT admit a name that merely begins with, ends with, or contains an allowlisted pattern. This is not hypothetical: archived-evidence dire",
+      "tasks": [
+        "T003",
+        "T019"
+      ]
+    },
+    "FR-013": {
+      "title": "The write-safety assertion MUST be evaluated independently at both of two boundaries, and a defect that skips one MUST NOT be able to skip the other: (a) the moment a pro",
+      "tasks": [
+        "T003",
+        "T019"
+      ]
+    },
+    "FR-014": {
+      "title": "Every write-safety assertion MUST be evaluated at the site that performs the write, and MUST be computed from the values that site is actually about to use. An assertion",
+      "tasks": [
+        "T003",
+        "T019"
+      ]
+    },
+    "FR-015": {
+      "title": "No write-safety assertion may be skipped because an input it compares is absent, empty, or otherwise falsy. Where a comparison requires a value the caller may omit, the o",
+      "tasks": [
+        "T003",
+        "T019"
+      ]
+    },
+    "FR-016": {
+      "title": "Before any restore is attempted, the sweep MUST assert that a worker's assigned write target is distinct from that worker's assigned source, both by name and by fully res",
+      "tasks": [
+        "T003",
+        "T019"
+      ]
+    },
+    "FR-017": {
+      "title": "The sweep MUST resolve the location of the projects collection from exactly one authority, and that authority MUST be the same one the host data layer consults when it re",
+      "tasks": [
+        "T003",
+        "T019"
+      ]
+    },
+    "FR-018": {
+      "title": "A destination name MUST be rejected before use if it contains a path separator of any kind, a volume or drive designator, or a relative-path component, or if it is empty.",
+      "tasks": [
+        "T003",
+        "T019"
+      ]
+    },
+    "FR-019": {
+      "title": "No two workers may hold the same destination at the same time, and this MUST be enforced as specified in FR-034 rather than by assignment discipline alone.",
+      "tasks": [
+        "T003",
+        "T019"
+      ]
+    },
+    "FR-020": {
+      "title": "Each source's on-disk fingerprint MUST consist of exactly five recorded fields: the size of its data file, that file's modification timestamp, a content hash of that file",
+      "tasks": [
+        "T003",
+        "T019"
+      ]
+    },
+    "FR-021": {
+      "title": "Hashing a source's whole directory as a fingerprint is forbidden. A read-only open legitimately touches the source's lock file, its writing-system store logs, its tempora",
+      "tasks": [
+        "T003",
+        "T019"
+      ]
+    },
+    "FR-022": {
+      "title": "Fingerprint deltas MUST be classified, and each class has one mandated response. Where the data file's hash, size, and timestamp have all changed, the file still parses,",
+      "tasks": [
+        "T003",
+        "T019"
+      ]
+    },
+    "FR-023": {
+      "title": "The restore mechanism MUST refuse to operate against any destination that fails the write-safety assertions of this group, regardless of which code path invokes it, and M",
+      "tasks": [
+        "T003",
+        "T019"
+      ]
+    },
+    "FR-024": {
+      "title": "A work-queue defect that hands a worker a source's name as its destination MUST be treated as a failure mode this specification's write-safety guarantee is explicitly des",
+      "tasks": [
+        "T003",
+        "T019"
+      ]
+    },
+    "FR-025": {
+      "title": "The sweep MUST support running N disposable write targets concurrently, where N is a configured worker count, each target owned by exactly one worker for the duration of",
+      "tasks": [
+        "T004",
+        "T021"
+      ]
+    },
+    "FR-026": {
+      "title": "Each concurrent worker MUST run as a separate operating-system process, not a thread, because each worker requires its own independent runtime initialization; the sweep M",
+      "tasks": [
+        "T004",
+        "T021"
+      ]
+    },
+    "FR-027": {
+      "title": "One existing archived write-target backup MUST be sufficient to seed any number of concurrently running targets; the sweep MUST NOT require a distinct backup per target.",
+      "tasks": [
+        "T004",
+        "T021"
+      ]
+    },
+    "FR-028": {
+      "title": "Worker admission MUST be scheduled on measured free memory, never on the machine's core count. Before admitting a project to a worker, the sweep MUST compute a predicted",
+      "tasks": [
+        "T004",
+        "T021"
+      ]
+    },
+    "FR-029": {
+      "title": "The sweep MUST NOT bound peak memory by a rule about which named or size-ranked projects may run together. Any combination of projects MUST be admissible when the free-me",
+      "tasks": [
+        "T004",
+        "T021"
+      ]
+    },
+    "FR-030": {
+      "title": "The per-worker memory model MUST be recorded as PROVISIONAL wherever it is used or documented, and MUST state that its slope is derived from a single-large-project observ",
+      "tasks": [
+        "T004",
+        "T021"
+      ]
+    },
+    "FR-031": {
+      "title": "The default worker count MUST be 1 (serial execution).",
+      "tasks": [
+        "T004",
+        "T021"
+      ]
+    },
+    "FR-032": {
+      "title": "A worker count greater than 1 MUST NOT be enabled by default; enabling it MUST require a recorded concurrency-trial artifact demonstrating that concurrent opens against t",
+      "tasks": [
+        "T004",
+        "T021"
+      ]
+    },
+    "FR-033": {
+      "title": "Until the recorded concurrency-trial artifact of FR-032 exists, the sweep MUST NOT publish, and its documentation MUST NOT presume, any runtime estimate, batch schedule,",
+      "tasks": [
+        "T004",
+        "T021"
+      ]
+    },
+    "FR-034": {
+      "title": "Concurrent exclusivity of a destination MUST be enforced by an operating-system-level exclusive claim, created atomically and held for the entire duration of that worker'",
+      "tasks": [
+        "T004",
+        "T021"
+      ]
+    },
+    "FR-036": {
+      "title": "Each worker's source and destination MUST be conveyed as explicit per-invocation arguments. The sweep MUST NOT allow a worker's source, destination, or projects-collectio",
+      "tasks": [
+        "T004",
+        "T021"
+      ]
+    },
+    "FR-037": {
+      "title": "No artifact, log, or intermediate record may be written to a single shared location by more than one worker. Logs MUST be per worker; result artifacts MUST be per worker",
+      "tasks": [
+        "T004",
+        "T021"
+      ]
+    },
+    "FR-038": {
+      "title": "The sweep MUST write a separate log file per worker; interleaved output from multiple concurrent workers into a single stream is forbidden because it destroys attribution",
+      "tasks": [
+        "T004",
+        "T021"
+      ]
+    },
+    "FR-039": {
+      "title": "Every project's result artifact MUST be keyed by that project's source name, independent of which worker or which run produced it.",
+      "tasks": [
+        "T004",
+        "T021"
+      ]
+    },
+    "FR-040": {
+      "title": "Re-running a project whose prior attempt left a stale lock on a disposable destination MUST self-heal that lock rather than requiring manual intervention, provided the lo",
+      "tasks": [
+        "T004",
+        "T021"
+      ]
+    },
+    "FR-041": {
+      "title": "The sweep's expected total runtime MUST be expressed as a function of the configured worker count N, not as a single fixed number, because runtime scales with worker conc",
+      "tasks": [
+        "T004",
+        "T021"
+      ]
+    },
+    "FR-042": {
+      "title": "The sweep's documentation of expected runtime MUST record the serial, per-project baseline observed for the double-transfer variant, and MUST record that per-project cost",
+      "tasks": [
+        "T005",
+        "T027"
+      ]
+    },
+    "FR-043": {
+      "title": "For every project in a run, the sweep MUST perform exactly this sequence: restore the target to its known baseline, take a full census of that freshly restored baseline,",
+      "tasks": [
+        "T005",
+        "T027"
+      ]
+    },
+    "FR-044": {
+      "title": "Every guard that compares a before-state to an after-state MUST be computed against the baseline census taken immediately after restore and before the first transfer, nev",
+      "tasks": [
+        "T005",
+        "T027"
+      ]
+    },
+    "FR-045": {
+      "title": "Idempotency MUST be measured over exactly the set of object classes that the first transfer is observed to have written, computed as the difference between the target's s",
+      "tasks": [
+        "T005",
+        "T027"
+      ]
+    },
+    "FR-046": {
+      "title": "A run in which the first transfer is reported to have written objects in classes that are absent from the idempotency comparison MUST report as a harness error for that p",
+      "tasks": [
+        "T005",
+        "T027"
+      ]
+    },
+    "FR-047": {
+      "title": "The second transfer's set of drop records MUST be compared against the first transfer's set of drop records, and any difference between the two MUST cause a failing verdi",
+      "tasks": [
+        "T005",
+        "T027"
+      ]
+    },
+    "FR-048": {
+      "title": "The corpus-level and per-project idempotency verdict MUST be computed from BOTH transfers together, not from the first alone.",
+      "tasks": [
+        "T005",
+        "T027"
+      ]
+    },
+    "FR-049": {
+      "title": "A run reporting that the second transfer added new objects while simultaneously reporting no measured change in the class(es) those objects belong to MUST be structurally",
+      "tasks": [
+        "T005",
+        "T027"
+      ]
+    },
+    "FR-050": {
+      "title": "A project's run MUST return the write target to its baseline, and MUST write that project's artifact, even when the run ends in an unhandled failure.",
+      "tasks": [
+        "T005",
+        "T027"
+      ]
+    },
+    "FR-051": {
+      "title": "The comparator MUST perform a generic per-object field census across every field obtainable from an in-scope object's own class, rather than a hand-listed set of domains",
+      "tasks": [
+        "T037",
+        "T038"
+      ]
+    },
+    "FR-052": {
+      "title": "A field is excluded from comparison only if it appears on the EXPECTED_DIVERGENT roster (E.2) or is a field the transfer engine's own syncable-properties surface delibera",
+      "tasks": [
+        "T037",
+        "T038"
+      ]
+    },
+    "FR-053": {
+      "title": "The EXPECTED_DIVERGENT roster MUST exist as its own git-tracked artifact, independent of, and MUST NOT be derived by re-scraping, the interactive merge-preview UI's field",
+      "tasks": [
+        "T037",
+        "T038"
+      ]
+    },
+    "FR-054": {
+      "title": "The internal runtime session identifier of an object MUST be excluded from comparison as EXPECTED_DIVERGENT; it is not persisted data.",
+      "tasks": [
+        "T037",
+        "T038"
+      ]
+    },
+    "FR-055": {
+      "title": "The creation timestamp of an object MUST always be excluded from comparison as EXPECTED_DIVERGENT; the target host stamps this value at creation time and the tool has no",
+      "tasks": [
+        "T037",
+        "T038"
+      ]
+    },
+    "FR-056": {
+      "title": "The host-rewritten modification timestamp of an object MUST be excluded from comparison as EXPECTED_DIVERGENT by ENUMERATION on the git-tracked EXPECTED_DIVERGENT roster",
+      "tasks": [
+        "T037",
+        "T038"
+      ]
+    },
+    "FR-057": {
+      "title": "Any future in-scope field equivalent to a \"resolved\" timestamp MUST be treated by the same rule as FR-056 the moment any transferred category exposes it, even though no c",
+      "tasks": [
+        "T037",
+        "T038"
+      ]
+    },
+    "FR-058": {
+      "title": "Internal reference-lookup handle fields other than an object's own primary identifier MUST be excluded from comparison as EXPECTED_DIVERGENT.",
+      "tasks": [
+        "T037",
+        "T038"
+      ]
+    },
+    "FR-059": {
+      "title": "An owning-sequence position bookkeeping value MUST NOT be compared as a raw scalar; sequence faithfulness MUST instead be expressed by comparing the ordered sequence itse",
+      "tasks": [
+        "T037",
+        "T038"
+      ]
+    },
+    "FR-060": {
+      "title": "A raw internal schema field-identifier integer MUST NOT be compared, because it is liable to differ across host builds with no semantic content; however, the identity of",
+      "tasks": [
+        "T037",
+        "T038"
+      ]
+    },
+    "FR-061": {
+      "title": "A recomputed homograph-numbering value MUST always be excluded from comparison as EXPECTED_DIVERGENT, because it is recomputed from the target's own lexicon at write time",
+      "tasks": [
+        "T037",
+        "T038"
+      ]
+    },
+    "FR-062": {
+      "title": "A raw pre-existing import-residue string field MUST NOT be compared as data on any class.",
+      "tasks": [
+        "T037",
+        "T038"
+      ]
+    },
+    "FR-063": {
+      "title": "The tool's own provenance-tagging fields MUST be expected to differ by design (the tool deliberately appends its own tag on every run); the comparator MUST strip the tool",
+      "tasks": [
+        "T037",
+        "T038"
+      ]
+    },
+    "FR-064": {
+      "title": "Any field literally representing a checksum, hash, or CRC MUST be treated as EXPECTED_DIVERGENT if ever encountered on a transferred class, because such values are recomp",
+      "tasks": [
+        "T037",
+        "T038"
+      ]
+    },
+    "FR-065": {
+      "title": "A boolean or flag field MUST be judged EXPECTED_DIVERGENT only when the transfer engine's own syncable-properties surface omits it by design for that class; if the engine",
+      "tasks": [
+        "T037",
+        "T038"
+      ]
+    },
+    "FR-066": {
+      "title": "The complete EXPECTED_DIVERGENT roster for a given class MUST be exactly this document's enumerated exclusions plus whatever the transfer engine's own syncable-properties",
+      "tasks": [
+        "T037",
+        "T038"
+      ]
+    },
+    "FR-067": {
+      "title": "A phonological rule's direction-of-application field MUST be fidelity-checked by the comparator (by decoding both sides to the same semantic value, defensively against an",
+      "tasks": [
+        "T037",
+        "T038"
+      ]
+    },
+    "FR-068": {
+      "title": "A writing system's internal numeric runtime handle MUST NOT be compared; only its stable language-tag identifier may be used for comparison, because the numeric handle is",
+      "tasks": [
+        "T037",
+        "T038"
+      ]
+    },
+    "FR-069": {
+      "title": "For any multi-writing-system text field, faithful MUST mean: for every source writing-system alternative that has an entry in the run's writing-system mapping, that alter",
+      "tasks": [
+        "T039"
+      ]
+    },
+    "FR-070": {
+      "title": "A source writing-system alternative with no mapping entry at all MUST be classified EXPECTED_DIVERGENT / out-of-scope, and MUST NEVER be classified LOST, provided the run",
+      "tasks": [
+        "T039"
+      ]
+    },
+    "FR-071": {
+      "title": "The sweep's writing-system mapping MUST enumerate every distinct source writing system present in a project, both vernacular and analysis, and either map each one by lang",
+      "tasks": [
+        "T039"
+      ]
+    },
+    "FR-072": {
+      "title": "A target writing-system lookup that resolves to nothing for a writing system the mapping declared as mapped MUST be classified LOST, not EXPECTED_DIVERGENT, because the m",
+      "tasks": [
+        "T039"
+      ]
+    },
+    "FR-073": {
+      "title": "A leading or trailing whitespace difference inside compared string content MUST be classified DISTORTED; it MUST NEVER be treated as benign, because such whitespace can b",
+      "tasks": [
+        "T040"
+      ]
+    },
+    "FR-074": {
+      "title": "A letter-casing difference inside compared string content MUST always be classified DISTORTED, with no exception, because casing distinguishes lexical identity for the or",
+      "tasks": [
+        "T040"
+      ]
+    },
+    "FR-075": {
+      "title": "A formatted, multi-run text field that collapses to matching plain text but loses its internal run boundaries, per-run writing system, or per-run character styling MUST b",
+      "tasks": [
+        "T040"
+      ]
+    },
+    "FR-076": {
+      "title": "A byte-level Unicode normalization-form difference between source and target text MUST be classified DISTORTED, and MUST be tagged as its own distinct subtype separate fr",
+      "tasks": [
+        "T040"
+      ]
+    },
+    "FR-077": {
+      "title": "A precision difference in an approximate date field (for example, an exact year collapsing to an approximate one, or vice versa) MUST be classified DISTORTED when it occu",
+      "tasks": [
+        "T040"
+      ]
+    },
+    "FR-078": {
+      "title": "An enumerated or coded integer value MUST be classified DISTORTED only when its decoded semantic value differs between source and target, never merely because its raw sto",
+      "tasks": [
+        "T040"
+      ]
+    },
+    "FR-079": {
+      "title": "Order MUST be treated as part of faithfulness for every owned or reference field whose accessor is documented as an ordered sequence; the comparator MUST derive order-sig",
+      "tasks": [
+        "T041"
+      ]
+    },
+    "FR-080": {
+      "title": "Order MUST NOT be asserted for any owned or reference field documented as an unordered collection; a positional difference on such a field MUST be treated as benign, with",
+      "tasks": [
+        "T041"
+      ]
+    },
+    "FR-081": {
+      "title": "A wordform's set of competing analyses MUST be treated as an unordered collection by design; re-ordering its members across a transfer MUST be treated as expected and ben",
+      "tasks": [
+        "T041"
+      ]
+    },
+    "FR-082": {
+      "title": "The following owned-sequence fields MUST be treated as order-critical and MUST fail the comparison if their order is scrambled: a lexical entry's senses, a word analysis'",
+      "tasks": [
+        "T041"
+      ]
+    },
+    "FR-083": {
+      "title": "The following reference-sequence fields MUST be treated as order-critical and MUST fail the comparison if their order is scrambled: an inflectional affix template's prefi",
+      "tasks": [
+        "T041"
+      ]
+    },
+    "FR-084": {
+      "title": "Cross-entry iteration order across unrelated top-level lexical entries in the lexicon (as distinct from order among a single entry's own owned children) MUST NOT be asser",
+      "tasks": [
+        "T041"
+      ]
+    },
+    "FR-085": {
+      "title": "A link field MUST be classified RESOLVED when dereferencing it in the target yields an object whose stable identifier equals the source referent's stable identifier, rega",
+      "tasks": [
+        "T042"
+      ]
+    },
+    "FR-086": {
+      "title": "A link field MUST be classified DANGLING when it is non-null but resolves to an object whose stable identifier does not match the source referent under either RESOLVED or",
+      "tasks": [
+        "T042"
+      ]
+    },
+    "FR-087": {
+      "title": "A link field MUST be classified SILENTLY_UNSET when it is null or empty, the source field had a referent, and no drop or skip record exists for that specific owner/field/",
+      "tasks": [
+        "T042"
+      ]
+    },
+    "FR-088": {
+      "title": "A link field that is null or empty AND for which a matching drop or skip record DOES exist for that specific owner/field/item combination MUST be classified as a distinct",
+      "tasks": [
+        "T042"
+      ]
+    },
+    "FR-089": {
+      "title": "A link field re-pointing to a different, non-freshly-copied target object MUST still be classified RESOLVED (not a special verdict) when that target object is a catalog o",
+      "tasks": [
+        "T042"
+      ]
+    },
+    "FR-090": {
+      "title": "A link field MUST be classified RESOLVED-BY-EQUIVALENCE only for a class of object that carries no stable per-instance identifier at all (such as a custom field definitio",
+      "tasks": [
+        "T042"
+      ]
+    },
+    "FR-091": {
+      "title": "Drop or skip records MUST be treated as corroborating detail only, never as the primary channel for detecting loss; the primary channel MUST be independent reconciliation",
+      "tasks": [
+        "T031"
+      ]
+    },
+    "FR-092": {
+      "title": "The drop or skip record's deduplication identity MUST be widened to include the failure reason, so that two distinct failures on the same owner/field/item are no longer c",
+      "tasks": [
+        "T031"
+      ]
+    },
+    "FR-093": {
+      "title": "The sweep MUST maintain two structurally separate accounting planes: an object-level total-accounting plane, in which every source object in scope lands in exactly one bu",
+      "tasks": [
+        "T031"
+      ]
+    },
+    "FR-094": {
+      "title": "BASELINE-DELTA: The sweep MUST verify that the first transfer produced a measurable, non-trivial change in the target: the set of newly present objects MUST be non-empty,",
+      "tasks": [
+        "T014",
+        "T033"
+      ]
+    },
+    "FR-095": {
+      "title": "COMPARISONS-PERFORMED: For every enabled object category that has at least one source object, the sweep MUST verify that at least one field comparison was actually perfor",
+      "tasks": [
+        "T014",
+        "T033"
+      ]
+    },
+    "FR-096": {
+      "title": "CATEGORY-COVERAGE: The sweep MUST verify that the set of categories it measured covers the full set of enabled categories, and MUST record any excluded category explicitl",
+      "tasks": [
+        "T014",
+        "T033"
+      ]
+    },
+    "FR-097": {
+      "title": "TOTAL-ACCOUNTING: The sweep MUST verify that every source object's stable identifier, within scope, lands in exactly one of: transferred with equal payload, already prese",
+      "tasks": [
+        "T014",
+        "T033"
+      ]
+    },
+    "FR-098": {
+      "title": "EMPTY-CORROBORATION: A source category or collection that a measurement reports as empty MUST be corroborated by an independent count before the run may treat it as empty",
+      "tasks": [
+        "T014",
+        "T033"
+      ]
+    },
+    "FR-099": {
+      "title": "UNHANDLED-SUBTYPE: Every in-scope object or value whose subtype or representation the comparator cannot handle MUST be recorded under a named, counted outcome — either an",
+      "tasks": [
+        "T014",
+        "T033"
+      ]
+    },
+    "FR-100": {
+      "title": "IDEMPOTENCY-IN-WRITTEN-CLASSES: The sweep MUST measure first-versus-second-transfer idempotency over exactly the set of classes the first transfer is observed to have wri",
+      "tasks": [
+        "T014",
+        "T033"
+      ]
+    },
+    "FR-101": {
+      "title": "PLAN-CONSERVATION: The sweep MUST verify that the number of planned actions equals the number accounted for (added plus skipped) exactly, per category and in total, in bo",
+      "tasks": [
+        "T014",
+        "T033"
+      ]
+    },
+    "FR-102": {
+      "title": "NO-EXTRA: The sweep MUST verify that every object present in the target after a run but absent before it is either traceable to a source object or explicitly allowlisted",
+      "tasks": [
+        "T014",
+        "T033"
+      ]
+    },
+    "FR-103": {
+      "title": "ACCESSOR-INTEGRITY: The sweep MUST verify that every accessor it declares it will use to read counts or inventories actually resolves without error on every project it ru",
+      "tasks": [
+        "T014",
+        "T033"
+      ]
+    },
+    "FR-104": {
+      "title": "HANDLE-INTEGRITY: The sweep MUST treat any failure to open, reopen, close, or initialize a project handle or an auxiliary data service that a measurement depends on as a",
+      "tasks": [
+        "T014",
+        "T033"
+      ]
+    },
+    "FR-105": {
+      "title": "NO-TRUNCATION: The sweep MUST verify that its durable artifact contains zero omitted drop-reason buckets and zero omitted detail rows; any truncation in the durable artif",
+      "tasks": [
+        "T014",
+        "T033"
+      ]
+    },
+    "FR-106": {
+      "title": "ARTIFACT-INTEGRITY: The sweep MUST verify that a complete artifact was written for every project in the run's corpus, and that each artifact contains the driver's revisio",
+      "tasks": [
+        "T014",
+        "T033"
+      ]
+    },
+    "FR-107": {
+      "title": "NO-ENGINE-BUG-AS-LOSS: The sweep MUST verify that no drop reason matches the recognized set of engine-bug signatures (an underlying API-misuse or programming-error signal",
+      "tasks": [
+        "T014",
+        "T033"
+      ]
+    },
+    "FR-108": {
+      "title": "CLEAN-CLOSE: The sweep MUST verify that every project close, before any subsequent reopen or census, completed without error or timeout; a close failure or timeout MUST i",
+      "tasks": [
+        "T014",
+        "T033"
+      ]
+    },
+    "FR-109": {
+      "title": "Vacuity meta-rule: The sweep's artifact MUST carry a guards block naming every one of the guards above with a pass, fail, or not-evaluated result; any not-evaluated resul",
+      "tasks": [
+        "T014",
+        "T033"
+      ]
+    },
+    "FR-110": {
+      "title": "The sweep MUST assign exactly one of the ten verdicts above to each project's run.",
+      "tasks": [
+        "T012",
+        "T015"
+      ]
+    },
+    "FR-111": {
+      "title": "The sweep MUST define and publish a single total ordering of the verdicts in the table above from most to least severe, and MUST treat exactly two of them — Clean pass, a",
+      "tasks": [
+        "T012",
+        "T015"
+      ]
+    },
+    "FR-112": {
+      "title": "The verdict formerly used by prior instruments to mean \"loss occurred but is not itself a failure\" MUST be retired; any loss MUST be either matched to a valid allowlist e",
+      "tasks": [
+        "T012",
+        "T015"
+      ]
+    },
+    "FR-113": {
+      "title": "A corpus-level run's overall exit status MUST be computed as the single most severe verdict across all of its per-project runs, per the total severity ordering defined in",
+      "tasks": [
+        "T012",
+        "T015"
+      ]
+    },
+    "FR-114": {
+      "title": "A corpus run in which any single project's verdict is incomplete MUST NOT report overall success, even if every project that did run reported a clean pass.",
+      "tasks": [
+        "T059",
+        "T060",
+        "T061"
+      ]
+    },
+    "FR-115": {
+      "title": "The loss allowlist MUST be a git-tracked artifact, reviewed as source, containing one entry per accepted loss pattern, with all the fields listed above present on every e",
+      "tasks": [
+        "T032",
+        "T059"
+      ]
+    },
+    "FR-116": {
+      "title": "An allowlist entry's reason MUST be matched exactly against the observed loss reason; wildcard or pattern-based matching of the reason MUST be forbidden, so that one entr",
+      "tasks": [
+        "T032",
+        "T059"
+      ]
+    },
+    "FR-117": {
+      "title": "Every allowlist entry MUST declare a maximum count; an observed count exceeding that maximum MUST be treated as unexplained loss, not as a widened allowance.",
+      "tasks": [
+        "T032",
+        "T059"
+      ]
+    },
+    "FR-118": {
+      "title": "Every allowlist entry MUST declare an expiry date no more than 120 days after the date the loss was first observed; an expired entry MUST cause the run to fail rather tha",
+      "tasks": [
+        "T059",
+        "T060",
+        "T061"
+      ]
+    },
+    "FR-119": {
+      "title": "Every allowlist entry MUST reference an open tracking issue; the sweep MUST verify that the referenced issue is open at the time of the run, and a closed or missing issue",
+      "tasks": [
+        "T059",
+        "T060",
+        "T061"
+      ]
+    },
+    "FR-120": {
+      "title": "An allowlist entry that matches zero observed losses across two consecutive full-corpus runs MUST be flagged as stale and MUST invalidate the run rather than silently con",
+      "tasks": [
+        "T059",
+        "T060",
+        "T061"
+      ]
+    },
+    "FR-121": {
+      "title": "A loss reason matching the recognized engine-bug signature set MUST NOT be allowlistable under any circumstance, regardless of how the entry is written.",
+      "tasks": [
+        "T059",
+        "T060",
+        "T061"
+      ]
+    },
+    "FR-122": {
+      "title": "The total number of objects covered by allowlist entries for a given project MUST NOT exceed 1% of that project's in-scope source objects, and the total number of allowli",
+      "tasks": [
+        "T059",
+        "T060",
+        "T061"
+      ]
+    },
+    "FR-123": {
+      "title": "Every allowlist entry actually consumed during a run MUST be echoed into that run's artifact together with its identifier, the count it matched, and its remaining headroo",
+      "tasks": [
+        "T022",
+        "T023"
+      ]
+    },
+    "FR-124": {
+      "title": "The sweep MUST perform a capability preflight check once at startup, before any restore or write is attempted; a preflight mismatch MUST cause the run to refuse to touch",
+      "tasks": [
+        "T022",
+        "T023"
+      ]
+    },
+    "FR-125": {
+      "title": "The preflight MUST compare the transfer engine's runtime dependency against a pinned, git-tracked capability fingerprint by introspecting its actual behavior and interfac",
+      "tasks": [
+        "T022",
+        "T023"
+      ]
+    },
+    "FR-126": {
+      "title": "The preflight MUST record the dependency's reported version, its installation provenance, and its own revision identity, in every artifact; a dependency resolved from a s",
+      "tasks": [
+        "T022",
+        "T023"
+      ]
+    },
+    "FR-127": {
+      "title": "The preflight MUST verify the exact parameter names and default values of every interface the sweep depends on for opening and closing projects and for reading and writin",
+      "tasks": [
+        "T022",
+        "T023"
+      ]
+    },
+    "FR-128": {
+      "title": "The preflight MUST verify the presence of the identity-preserving object-creation surface the transfer engine's identity-preservation guarantee depends on, for every obje",
+      "tasks": [
+        "T022",
+        "T023"
+      ]
+    },
+    "FR-129": {
+      "title": "The preflight MUST verify that every accessor the sweep's count and inventory layers depend on resolves by name on a real, opened, read-only project handle; an unresolvab",
+      "tasks": [
+        "T022",
+        "T023"
+      ]
+    },
+    "FR-130": {
+      "title": "The preflight MUST verify the presence of every override the project's own documented per-category syncable-properties surface requires for indexer visibility.",
+      "tasks": [
+        "T022",
+        "T023"
+      ]
+    },
+    "FR-131": {
+      "title": "On a preflight mismatch, the sweep MUST emit a field-by-field difference report — naming the symbol, its expected value, its actual value, and whether it is missing, adde",
+      "tasks": [
+        "T022",
+        "T023"
+      ]
+    },
+    "FR-132": {
+      "title": "The sweep MUST NOT degrade its preflight check into a \"best effort, survive drift\" posture; any capability drift MUST be treated as a finding requiring a deliberate, reco",
+      "tasks": [
+        "T022",
+        "T023"
+      ]
+    },
+    "FR-133": {
+      "title": "The sweep MUST NOT select a measurement or access path at runtime according to whether a dependency capability is present; every such capability MUST be pinned by the pre",
+      "tasks": [
+        "T044",
+        "T045"
+      ]
+    },
+    "FR-134": {
+      "title": "The stem-allomorph object category MUST be enabled for at least one full corpus pass; the sweep MUST NOT inherit an existing narrower harness's default exclusion of this",
+      "tasks": [
+        "T044",
+        "T045"
+      ]
+    },
+    "FR-135": {
+      "title": "Any category excluded from a given run MUST be an explicit, recorded field on that run's artifact; it MUST NOT be expressed as an invisible default argument that a reader",
+      "tasks": [
+        "T044",
+        "T045"
+      ]
+    },
+    "FR-136": {
+      "title": "A run's artifact and report MUST NOT allow a reader to mistake \"zero mismatches observed in category X\" for \"category X passed\"; if a category was never attempted, the ar",
+      "tasks": [
+        "T044",
+        "T045"
+      ]
+    },
+    "FR-137": {
+      "title": "A run performed with any category excluded from coverage MUST NOT report the same success status as a full-coverage run; a reduced-coverage run is permitted to be perform",
+      "tasks": [
+        "T044",
+        "T045"
+      ]
+    },
+    "FR-138": {
+      "title": "Every artifact MUST record the sweep driver's own source-revision identity together with a flag indicating whether the driver's working tree had uncommitted changes at th",
+      "tasks": [
+        "T006",
+        "T013"
+      ]
+    },
+    "FR-139": {
+      "title": "Every artifact MUST record the transfer engine dependency's capability fingerprint (per Section I).",
+      "tasks": [
+        "T006",
+        "T013"
+      ]
+    },
+    "FR-140": {
+      "title": "Every artifact MUST record the identity (a content hash, not merely a filename) of the baseline backup used to restore the target for that run.",
+      "tasks": [
+        "T006",
+        "T013"
+      ]
+    },
+    "FR-141": {
+      "title": "Every artifact MUST record the effective diagnostic/logging level actually used for that run, not merely the level requested, so a level silently defaulted differently th",
+      "tasks": [
+        "T006",
+        "T013"
+      ]
+    },
+    "FR-142": {
+      "title": "Every artifact MUST record the set of categories excluded from that run's coverage (per Section J).",
+      "tasks": [
+        "T006",
+        "T013"
+      ]
+    },
+    "FR-143": {
+      "title": "Every artifact MUST record the full guards block described in Section F.",
+      "tasks": [
+        "T006",
+        "T013"
+      ]
+    },
+    "FR-144": {
+      "title": "No durable artifact may truncate any list of findings, drop buckets, or detail rows; truncation is permitted only in a console summary, and any such console truncation MU",
+      "tasks": [
+        "T006",
+        "T013"
+      ]
+    },
+    "FR-145": {
+      "title": "Every recorded finding MUST carry the concrete source value, the concrete target value, and the actual class, category, and field it concerns; a finding whose evidence or",
+      "tasks": [
+        "T006",
+        "T013"
+      ]
+    },
+    "FR-146": {
+      "title": "Every failure, drop, and finding record MUST name the phase of the project's run in which it arose, so that a failure in one phase is never reported as an undifferentiate",
+      "tasks": [
+        "T006",
+        "T013"
+      ]
+    },
+    "FR-147": {
+      "title": "When unexplained extra objects and unaccounted source objects both occur within the same class in one run, the artifact MUST name it as an identity-regeneration finding a",
+      "tasks": [
+        "T006",
+        "T013"
+      ]
+    },
+    "FR-148": {
+      "title": "No datum that contributes to a verdict may reach its reader only through a channel whose failure the sweep tolerates; every such datum MUST also be present in the durable",
+      "tasks": [
+        "T006",
+        "T013"
+      ]
+    },
+    "FR-149": {
+      "title": "The sweep's own code, and every roster, allowlist, capability expectation, and ledger its verdict depends on, MUST be under version control and MUST NOT be excluded by an",
+      "tasks": [
+        "T006",
+        "T019"
+      ]
+    },
+    "FR-150": {
+      "title": "The sweep MUST flush its artifact to durable storage after every phase of a project's run (restore, first transfer, first census, second transfer, second census, final re",
+      "tasks": [
+        "T006",
+        "T013"
+      ]
+    },
+    "FR-151": {
+      "title": "A project's or a corpus's status MUST be derived solely from the presence and content of its artifact(s); a status MUST NEVER be hand-set in a manifest or ledger independ",
+      "tasks": [
+        "T006",
+        "T013"
+      ]
+    },
+    "FR-152": {
+      "title": "The sweep MUST NOT run its full corpus in a single uninterrupted pass; projects MUST be admitted in batches of 3 to 5 projects run concurrently.",
+      "tasks": [
+        "T048",
+        "T057"
+      ]
+    },
+    "FR-153": {
+      "title": "After each batch completes, the run MUST stop for analysis before any further batch is admitted.",
+      "tasks": [
+        "T048",
+        "T057"
+      ]
+    },
+    "FR-154": {
+      "title": "Only the projects that failed within a completed batch MUST be re-run after a fix is applied; projects that already passed within that batch MUST NOT be re-run as part of",
+      "tasks": [
+        "T048",
+        "T057"
+      ]
+    },
+    "FR-155": {
+      "title": "A batch MUST NOT be considered complete, and the next batch MUST NOT be admitted, until every project in the current batch has reached a passing verdict at the current co",
+      "tasks": [
+        "T048",
+        "T057"
+      ]
+    },
+    "FR-156": {
+      "title": "The sweep MUST maintain a durable, per-project status ledger recording, for every project in the corpus, one of: pending, running, passed, failed with a reason, or skippe",
+      "tasks": [
+        "T048",
+        "T057"
+      ]
+    },
+    "FR-157": {
+      "title": "Every per-project result MUST be stamped with both the driver's source-revision identity and the transfer engine dependency's revision identity (not merely its version st",
+      "tasks": [
+        "T048",
+        "T057"
+      ]
+    },
+    "FR-158": {
+      "title": "A corpus-level claim of full success MUST be admissible only when every project's passing result carries the same, current driver-and-dependency revision pair; if any pro",
+      "tasks": [
+        "T048",
+        "T057"
+      ]
+    },
+    "FR-159": {
+      "title": "One small, known-good project MUST be re-run as a canary in every batch, regardless of that project's existing ledger status, so a fix which regresses previously passing",
+      "tasks": [
+        "T048",
+        "T057"
+      ]
+    },
+    "FR-160": {
+      "title": "The first batch's composition MUST be the three pilot projects with prior recorded historical results (\"Ejagham Mini\", \"Esperanto\", \"Mbugwe LizzieHC practice\"), to give a",
+      "tasks": [
+        "T048",
+        "T057"
+      ]
+    },
+    "FR-161": {
+      "title": "The first batch's acceptance criterion MUST include that two specific, previously dominant drop-reason classes measure exactly zero (historically \"Segment/alignment token",
+      "tasks": [
+        "T048",
+        "T057"
+      ]
+    },
+    "FR-162": {
+      "title": "The sweep's field-level link census MUST settle, with an actual measured answer rather than an assumed one, whether a diverged shared/default item that the engine reports",
+      "tasks": [
+        "T056"
+      ]
+    },
+    "FR-163": {
+      "title": "SCOPE-BASED INVALIDATION: A code fix MUST be permitted to invalidate only those projects whose recorded census actually exercised the code path the fix changed, rather th",
+      "tasks": [
+        "T051",
+        "T052"
+      ]
+    },
+    "FR-164": {
+      "title": "mechanical scope derivation: The affected-scope set for a given code change MUST be derived mechanically — from the changed file, to its transitive importers, to the set",
+      "tasks": [
+        "T051",
+        "T052"
+      ]
+    },
+    "FR-165": {
+      "title": "conservative default, fail closed: Unless the affected scope of FR-164 can be proven narrow by the mechanical derivation, the change MUST invalidate the ENTIRE corpus, wi",
+      "tasks": [
+        "T051",
+        "T052"
+      ]
+    },
+    "FR-166": {
+      "title": "uniform final run gates the claim: Scope-based invalidation (FR-163) is an optimization for deciding what to RE-RUN between batches, and MUST NOT itself be treated as suf",
+      "tasks": [
+        "T051",
+        "T052"
+      ]
+    },
+    "FR-167": {
+      "title": "dependency freeze during a sweep: The transfer engine dependency's revision MUST be pinned for the entire duration of a sweep (from the first batch through the uniform fi",
+      "tasks": [
+        "T053"
+      ]
+    },
+    "FR-168": {
+      "title": "corpus ordering by category diversity: Projects MUST be admitted in an order that maximizes distinct object-category coverage as early as possible in the corpus, so that",
+      "tasks": [
+        "T049"
+      ]
+    },
+    "FR-169": {
+      "title": "Every item written during a restore MUST be proven, from its fully resolved destination, to lie beneath the destination project's own fully resolved directory, and any it",
+      "tasks": [
+        "T020"
+      ]
+    },
+    "FR-170": {
+      "title": "The baseline archive used to restore a disposable target MUST be identified explicitly and pinned by content hash by the caller. The sweep MUST NEVER select a baseline by",
+      "tasks": [
+        "T020"
+      ]
+    },
+    "FR-171": {
+      "title": "Before a restore removes anything, the sweep MUST assert that the pinned baseline contains exactly one top-level data file, that its name corresponds either to the declar",
+      "tasks": [
+        "T020"
+      ]
+    },
+    "FR-172": {
+      "title": "A completed restore MUST leave durable evidence recording the pinned baseline's content hash, the destination name, and the identity of the process that performed it. A s",
+      "tasks": [
+        "T020"
+      ]
+    },
+    "FR-173": {
+      "title": "After a restore, the set of files present beneath the destination MUST equal the pinned baseline's contents plus the restore evidence of FR-172. Where residue is delibera",
+      "tasks": [
+        "T020"
+      ]
+    },
+    "FR-174": {
+      "title": "Before any action that copies assets or configuration into a destination, the sweep MUST assert that the destination's resolved linked-files location, and the resolved lo",
+      "tasks": [
+        "T020"
+      ]
+    },
+    "FR-175": {
+      "title": "A tripped write-safety, containment, provenance, or pool-integrity assertion MUST abort the entire run, including every sibling worker, signalled through a shared mechani",
+      "tasks": [
+        "T011"
+      ]
+    },
+    "FR-176": {
+      "title": "A per-project transfer failure — a host exception, a timeout, a migration — MUST be recorded as that project's terminal verdict and the run MUST continue. The distinction",
+      "tasks": [
+        "T011"
+      ]
+    },
+    "FR-177": {
+      "title": "A memory-headroom shortfall MUST cause the sweep to degrade — wait for headroom, or admit fewer workers than configured — and MUST be reported distinctly from a tripped s",
+      "tasks": [
+        "T011"
+      ]
+    },
+    "FR-178": {
+      "title": "Every vacuity guard (Section F), every write-safety, containment, and pool-integrity assertion (Sections B, C, M, N), and every distortion or loss detector (Section E) MU",
+      "tasks": [
+        "T026",
+        "T034"
+      ]
+    },
+    "FR-179": {
+      "title": "For each guard, assertion, or detector class named in FR-178, at least one deliberately seeded defect matching that class MUST be run through the sweep and MUST be shown",
+      "tasks": [
+        "T026",
+        "T034"
+      ]
+    },
+    "FR-180": {
+      "title": "The demonstration required by FR-179 MUST be a recorded, durable artifact, never an unrecorded claim or a one-time manual check; a guard, assertion, or detector whose neg",
+      "tasks": [
+        "T026",
+        "T034"
+      ]
+    },
+    "FR-181": {
+      "title": "A guard, assertion, or detector that cannot be made to fail by any constructible seeded defect MUST itself be treated as a defect in the sweep, never as evidence of an un",
+      "tasks": [
+        "T026",
+        "T034"
+      ]
+    },
+    "FR-182": {
+      "title": "capability-conditional exemption, inverted trigger: An allowlist or exemption entry whose written justification is the absence of a dependency capability MUST declare the",
+      "tasks": [
+        "T059"
+      ]
+    },
+    "FR-183": {
+      "title": "tool-owned identity: Identity for a class whose target-side object records the transfer tool's own act — such as the object recording the transfer tool's own evaluation a",
+      "tasks": [
+        "T028",
+        "T029"
+      ]
+    },
+    "FR-184": {
+      "title": "evaluation state, not agent identity: A record of human approval state attached to an in-scope object MUST be compared by its evaluation state — approved, disapproved, or",
+      "tasks": [
+        "T028",
+        "T029"
+      ]
+    },
+    "FR-185": {
+      "title": "natural-key identity, a third basis: A class that carries a stable per-instance identifier but is additionally constrained by a natural key that is unique by construction",
+      "tasks": [
+        "T028",
+        "T029"
+      ]
+    },
+    "FR-186": {
+      "title": "identity-first ordering: For any class enumerated on the Natural-Key Identity Roster (FR-185) that also carries a stable identifier, identity MUST be authoritative for ma",
+      "tasks": [
+        "T028",
+        "T029"
+      ]
+    },
+    "FR-187": {
+      "title": "IDENTITY-SUBSTITUTION: A source object legitimately matched to a pre-existing target object by natural key rather than by identity — permitted only for a class enumerated",
+      "tasks": [
+        "T028",
+        "T029"
+      ]
+    },
+    "FR-188": {
+      "title": "run intent: Every artifact MUST record its own run INTENT as exactly one of two values: BASELINE or GATE. An artifact whose recorded intent is BASELINE MUST NOT be admiss",
+      "tasks": [
+        "T013"
+      ]
+    },
+    "FR-189": {
+      "title": "structural depth and per-parent degree: For every in-scope class whose objects may own further objects of the same class — such as sub-senses, reversal sub-entries, and p",
+      "tasks": [
+        "T043"
+      ]
+    },
+    "FR-190": {
+      "title": "Corpus ordering and batch composition MUST range over at least three orthogonal coverage axes — the set of object classes present, writing- system breadth (vernacular and",
+      "tasks": [
+        "T046",
+        "T047",
+        "T049"
+      ]
+    },
+    "FR-191": {
+      "title": "A run over any SUBSET of the derived corpus — a batch, a re-run of invalidated projects, or a time-boxed smoke pass — MUST record, per axis, the subset's maximum observed",
+      "tasks": [
+        "T046",
+        "T047",
+        "T049"
+      ]
+    },
+    "FR-192": {
+      "title": "The per-axis maxima of FR-190 and FR-191 MUST be measured from the corpus itself by a read-only survey, and MUST NOT be asserted from project names, file sizes, folder la",
+      "tasks": [
+        "T046",
+        "T047",
+        "T049"
+      ]
+    },
+    "FR-193": {
+      "title": "The selection axes and the measured maxima MUST be recorded on the run artifact, so that a reader can tell which axes a given run actually exercised without re-deriving t",
+      "tasks": [
+        "T046",
+        "T047",
+        "T049"
+      ]
+    },
+    "FR-035": {
+      "title": "The run's source list MUST be derived at runtime by the project-on-disk rule, then frozen once into a recorded, hash-identified manifest before any worker starts, and eve",
+      "tasks": [
+        "T004",
+        "T021"
+      ]
     }
   }
 }
