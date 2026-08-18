@@ -13,6 +13,9 @@ the opposite of exit-code order.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Optional
+
+from .guards import GUARD_FAILURE_VERDICT
 
 
 @dataclass(frozen=True)
@@ -117,26 +120,106 @@ def corpus_exit_code(tokens) -> int:
     return exit_code_for(most_severe(tokens))
 
 
-def verdict_for_guard_results(results: dict) -> str:
-    """The one assignment rule this Phase-2 taxonomy spine can honestly
-    implement today: guards.md's FR-109 meta-rule 2 -- ANY ``not-evaluated``
-    guard result makes the run ``VACUOUS``.
+def verdict_for_guard_results(results: dict, *, allowlist_consumed: Optional[bool] = None) -> str:
+    """contracts/verdict-exit-model.md's assignment table (lines 29-42),
+    applied to one project's fifteen guard results.
 
-    ``results`` maps guard name -> an object with a ``.result`` attribute
-    (``guards.GuardResult``). The rest of contracts/verdict-exit-model.md's
-    assignment table depends on guards that do not have real pass/fail logic
-    yet (Phase 2 scope is the taxonomy spine, not the guards themselves) --
-    reaching a state where every guard reported ``pass``/``fail`` and none
-    ``not-evaluated`` is therefore not yet reachable, and this function
-    raises loudly rather than guess at an assignment it has no authority to
-    make.
+    T033 gave all fifteen guards real pass/fail logic and T045a/T045b wire
+    real measurements in, so ``results`` reaching a state with no
+    ``not-evaluated`` entries is no longer hypothetical -- this function must
+    resolve a verdict for it, not raise.
+
+    Resolution, in order:
+
+    1. FR-109 meta-rule 2: ANY guard reporting ``not-evaluated`` sinks the run
+       to ``VACUOUS`` unconditionally. This is NOT part of the severity-order
+       resolution below -- it overrides it even when a peer guard reported
+       ``fail`` for something that would otherwise outrank ``VACUOUS`` (e.g. a
+       ``HARNESS_ERROR``-mapped failure), because "this guard could not look"
+       makes every other guard's answer unusable, not merely worse
+       (``tests/unit/test_035_run_context_wiring.py::...`` and
+       ``test_035_guards.py``'s ``test_a_not_evaluated_guard_outranks_even_a_failing_peer``
+       both pin this).
+    2. Otherwise, every ``fail`` result names a candidate verdict via
+       ``guards.GUARD_FAILURE_VERDICT`` -- the same table
+       ``run_negative_controls`` uses, so there is exactly one place that maps
+       a guard's identity to the verdict its failure produces. When several
+       guards fail at once, the candidates are resolved through
+       ``most_severe`` (never "first failure wins", per FR-113's ordering
+       discipline applied at the per-project scale too).
+    3. If no guard failed, the fifteen guards collectively establish "no
+       guard-detectable loss, extra, coverage gap, non-idempotence, or harness
+       defect occurred" -- but NOT the ``CLEAN_PASS`` vs ``PASS_WITH_ALLOWLIST``
+       distinction, because "an allowlist entry was consumed" is not something
+       any guard's pass/fail result carries (a loss matched within its cap is
+       accounted for, not unaccounted, so ``TOTAL-ACCOUNTING`` still reports
+       ``pass``). See "What this function cannot adjudicate" below.
+
+    What this function CAN adjudicate from ``results`` alone: every row of the
+    assignment table keyed to a specific guard's failure --
+    ``UNEXPLAINED_LOSS``, ``NON_IDEMPOTENT``, ``COVERAGE_REDUCED``,
+    ``INCOMPLETE``, and the ``HARNESS_ERROR`` rows keyed to
+    ``ACCESSOR-INTEGRITY``/``HANDLE-INTEGRITY``/``NO-TRUNCATION``/``CLEAN-CLOSE``
+    -- plus the ``VACUOUS`` short-circuit.
+
+    What this function CANNOT adjudicate from ``results`` alone, and how each
+    gap is closed here:
+
+    * **"no allowlist entry consumed"** (the one fact separating ``CLEAN_PASS``
+      from ``PASS_WITH_ALLOWLIST`` when no guard failed). Closed via the
+      optional ``allowlist_consumed`` keyword: ``True`` -> ``PASS_WITH_ALLOWLIST``,
+      ``False`` -> ``CLEAN_PASS``, ``None`` (the default, and what today's only
+      call site at ``debug/run_fullcopy_sweep.py`` supplies) -> this function
+      refuses to guess ``CLEAN_PASS`` -- guessing wrong there is exactly the
+      false assurance this feature exists to prevent -- and instead returns
+      the more cautious of the two success tokens, ``PASS_WITH_ALLOWLIST``.
+      Both are exit-code 0 (FR-111), so this default cannot turn a real pass
+      into a reported failure; it can only under-claim confidence in a pass
+      until the caller is wired to pass ``allowlist_consumed`` explicitly.
+    * **"an unhandled exception" (one of ``HARNESS_ERROR``'s triggers)**. Not
+      representable in a guard-results mapping at all -- an unhandled
+      exception means the run never finished producing fifteen results to
+      hand this function. The caller MUST catch it and assign
+      ``HARNESS_ERROR`` itself (or avoid calling this function at all for that
+      project) rather than expecting this function to infer it after the
+      fact.
+    * ``PREFLIGHT_MISMATCH`` and ``ALLOWLIST_INVALID`` are not columns this
+      function can ever produce: neither corresponds to a fifteen-guard
+      failure (``guards.GUARD_FAILURE_VERDICT`` never names either), and both
+      are structurally upstream of guard evaluation -- the capability
+      preflight and allowlist-file validation described in
+      contracts/verdict-exit-model.md lines 14-20 run (and can fail) before a
+      project's guards are ever evaluated. A caller that has a guard-results
+      dict at all has, by construction, already passed those two checks for
+      this project; assigning them here would require inventing an input this
+      function has no honest way to receive.
     """
     if any(r.result == "not-evaluated" for r in results.values()):
         return "VACUOUS"
-    raise NotImplementedError(
-        "verdict_for_guard_results: no guard in this registry has real "
-        "pass/fail logic yet (Phase 2 taxonomy-spine scope) -- got %r; "
-        "extend this function's assignment table (per "
-        "contracts/verdict-exit-model.md) as guard logic lands in a later "
-        "phase" % ({k: v.result for k, v in results.items()},)
-    )
+
+    candidates = [
+        GUARD_FAILURE_VERDICT[name]
+        for name, r in results.items()
+        if r.result == "fail"
+    ]
+    if not candidates:
+        # No guard-detectable problem. CLEAN_PASS vs PASS_WITH_ALLOWLIST turns
+        # on a fact no guard result carries -- see docstring. Never default to
+        # the unverified CLEAN_PASS claim.
+        candidates = [
+            "PASS_WITH_ALLOWLIST" if allowlist_consumed in (True, None) else "CLEAN_PASS"
+        ]
+
+    if not candidates:
+        # Defence in depth: the two branches above always produce at least one
+        # candidate, so this is unreachable by construction. Guarded anyway
+        # because most_severe() raises an unhelpful bare ValueError on an
+        # empty sequence, and a verdict function silently returning nothing
+        # would be exactly the kind of unverified gap this module exists to
+        # refuse.
+        raise AssertionError(
+            "verdict_for_guard_results: no candidate verdict was derived from "
+            "%r -- this indicates a bug in this function, not in the guard "
+            "results" % ({k: v.result for k, v in results.items()},)
+        )
+    return most_severe(candidates)
