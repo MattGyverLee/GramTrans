@@ -3,7 +3,7 @@
   "specName": "Wizard UI Polish Pass",
   "branch": "main",
   "currentStep": "implement",
-  "status": "implementing",
+  "status": "completed",
   "history": [
     {
       "step": "specify",
@@ -137,6 +137,364 @@
       "kind": "complete",
       "by": "ai",
       "at": "2026-08-17T21:01:36.139Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T038",
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-17T21:03:20.466Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T005",
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-17T21:05:02.383Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T006",
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-17T21:05:16.903Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T007",
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-17T21:05:17.166Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T008",
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-17T21:05:17.429Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T027",
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-17T21:07:25.484Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T029",
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-17T21:07:25.779Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T030",
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-17T21:07:26.034Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T031",
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-17T21:07:39.950Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T032",
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-17T21:07:40.273Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T033",
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-17T21:07:40.648Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T018",
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-17T21:11:00.902Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T034",
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-17T21:12:31.416Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T023",
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-17T21:15:56.914Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T009",
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-17T21:37:21.875Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T010",
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-17T21:37:22.217Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T011",
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-17T21:37:22.517Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T012",
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-17T21:37:22.784Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T013",
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-17T21:37:23.070Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T014",
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-17T21:37:23.367Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T015",
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-17T21:37:23.621Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T016",
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-17T21:39:22.402Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T017",
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-17T21:39:34.887Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T020",
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-08-18T05:24:19.497Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T021",
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-08-18T05:24:19.497Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T022",
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-08-18T05:24:19.497Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T024",
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-08-18T05:24:19.497Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T025",
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-08-18T05:24:19.497Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T026",
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-08-18T05:24:19.497Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T028",
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-08-18T05:24:19.497Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T035",
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-08-18T05:24:19.497Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T036",
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-08-18T05:24:19.497Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T037",
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-08-18T05:24:19.497Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T039",
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-08-18T05:24:19.497Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T040",
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-08-18T05:24:19.497Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T041",
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-08-18T05:24:19.497Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T042",
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-08-18T05:24:19.497Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T043",
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-08-18T05:24:19.497Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T044",
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-08-18T05:24:19.497Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T049",
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-08-18T05:24:19.497Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T050",
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-08-18T05:24:19.497Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T047",
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-08-18T05:42:07.058Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T048",
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-08-18T05:42:07.058Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-08-18T05:42:07.058Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-08-18T05:55:53.146Z"
     }
   ],
   "telemetryInstanceId": "19488acc-ad0e-46bf-9a7e-aceb9721c6ba",
@@ -191,6 +549,11 @@
       "decision": "Skip only where emptiness is established at negligible cost, with a conservative predicate (unsure = show); Skeleton/Gram Deps use the cheap proxy no-picks-at-all; the Affix and Stem pickers are exempt and always shown",
       "why": "Deciding emptiness precisely for Affixes or Stems means walking every entry and inspecting MorphType -- the 40-second walk US1 exists to cover, and FR-014d already refuses to buy UI polish with a slower run. Conservatism matters asymmetrically: showing an empty page costs a click, while wrongly skipping one silently removes a decision the operator was entitled to make (a Principle V concern). The Affix/Stem exemption is the requesters call -- an operator never offered the wizards central decision concludes the tool is broken, not that the project is empty.",
       "rejected": "Eagerly enumerating everything at bind to decide each page precisely (front-loads every expensive walk into one long wait at step 1), and deciding Skeleton/Gram Deps on the real inventory result on arrival (means entering a page and immediately leaving it)"
+    },
+    {
+      "decision": "Maximum interface text scale is 200% (MAX_FONT_STEP 15 -> 10), and 900px stays the minimum window width. This is what \"the largest supported text scale\" resolves to for FR-032, SC-005, SC-005a and SC-009.",
+      "why": "User decision: the app scale multiplies the OS display scaling, and an operator who needs large text already runs the OS at 125% or more, so supporting our 250% meant guaranteeing ~300% effective -- a budget no page can meet without reflowing and one no real operator asks for. The spec never pinned a figure (it says \"largest supported text scale\" throughout), so no spec edit was needed.",
+      "rejected": "Keeping 250% and fixing the QGroupBox title overflow it caused by shortening titles or capping the group font."
     }
   ],
   "step_summaries": {
@@ -627,7 +990,7 @@
       ]
     }
   },
-  "currentTask": "T019",
+  "currentTask": "T050",
   "task_summaries": {
     "T001": {
       "status": "DONE",
@@ -677,6 +1040,185 @@
       "files": [
         "src/gramtrans/Lib/progress.py"
       ]
+    },
+    "T038": {
+      "status": "DONE",
+      "did": "Laid-out PageHeader widget: wrapping description label + collapsing controls slot, separate space by layout (FR-004, FR-012)",
+      "files": [
+        "src/gramtrans/Lib/ui/page_header.py"
+      ]
+    },
+    "T005": {
+      "status": "DONE",
+      "did": "Failing-first flow/numbering test: 12-entry flow() declaration, consecutive Step N titles on full and skipping runs, no 'of N' total, unskippable pickers, excluded pages unnumbered",
+      "files": [
+        "tests/unit/test_036_wizard_flow_numbering.py"
+      ]
+    },
+    "T006": {
+      "status": "DONE",
+      "did": "Accessor table gains page_writing_systems() and points page_project_ws() at _page_projects; addPage-literal order tests re-based on the flow declaration",
+      "files": [
+        "tests/unit/test_wizard_page_order.py"
+      ]
+    },
+    "T007": {
+      "status": "DONE",
+      "did": "Added the post-split projects-page subtitle assertions, preserving the host-difference (source picked vs host-supplied) as a paired assertion",
+      "files": [
+        "tests/unit/test_034_flextools_contract.py"
+      ]
+    },
+    "T008": {
+      "status": "DONE",
+      "did": "Updated both step-1 subtitle literals for the post-split projects page, added a no-writing-systems assertion, and made the page helper resolve _PageProjects",
+      "files": [
+        "tests/unit/test_034_step1_source_picker.py"
+      ]
+    },
+    "T027": {
+      "status": "DONE",
+      "did": "New test_036_preview_list_fields.py: 65 tests over FieldDiff.multiline default, scalar byte-identity goldens, str-not-repr members, quote preservation, one-entry-per-line, affix gap, (none), capped-list disclosure",
+      "files": [
+        "tests/unit/test_036_preview_list_fields.py"
+      ]
+    },
+    "T029": {
+      "status": "DONE",
+      "did": "FieldDiff.multiline added last with default False; stamped in diff_props._make_fd from the SOURCE value shape via new _is_sequence_value",
+      "files": [
+        "src/gramtrans/Lib/merge_preview.py"
+      ]
+    },
+    "T030": {
+      "status": "DONE",
+      "did": "Sequence members now render with str(item) at all three sites (_added_segments, _segments_for_sequence, _value_to_unchanged); non-sequence values keep repr",
+      "files": [
+        "src/gramtrans/Lib/merge_preview.py"
+      ]
+    },
+    "T031": {
+      "status": "DONE",
+      "did": "_render_field_body gained keyword-only multiline=False; a multiline field emits one bare div per entry, no bullet or punctuation, and a collapsed old-to-new replacement stays on one line",
+      "files": [
+        "src/gramtrans/Lib/merge_preview.py"
+      ]
+    },
+    "T032": {
+      "status": "DONE",
+      "did": "_affix_msa_label now joins form and gloss with _AFFIX_LABEL_GAP (four spaces) instead of wrapping the gloss in single quotes",
+      "files": [
+        "src/gramtrans/Lib/merge_preview.py"
+      ]
+    },
+    "T033": {
+      "status": "DONE",
+      "did": "Empty list-valued fields render an explicit (none) NOTE segment at all three builders; _enrich_slot truncation note is now 'showing 25 of N affixes'; _LIST_ITEM_LIMIT unchanged at 25",
+      "files": [
+        "src/gramtrans/Lib/merge_preview.py"
+      ]
+    },
+    "T018": {
+      "status": "DONE",
+      "did": "Added keyword-only progress=None to all 7 selection.py inventory builders with per-unit ticks inside each walk; progress=None path byte-identical (FR-022/FR-045)",
+      "files": [
+        "src/gramtrans/Lib/selection.py"
+      ]
+    },
+    "T034": {
+      "status": "DONE",
+      "did": "FR-038..FR-044 Finish-page guard matrix: 24 tests, 14 regression PASS + 9 red for the new halves (execute_disabled_reason, stale-report clear, _cached_plan on construction, no re-enable after Execute)",
+      "files": [
+        "tests/unit/test_036_finish_guard.py"
+      ]
+    },
+    "T023": {
+      "status": "DONE",
+      "did": "T023: failing-first min-width layout tests (FR-029..FR-032, SC-005) on the T001 geometry harness -- 21 tests, all red for the right reasons",
+      "files": [
+        "tests/unit/test_036_min_width_layout.py"
+      ]
+    },
+    "T009": {
+      "status": "DONE",
+      "did": "flow() declares the 12 (attr, short_title, skippable, has_content) entries and drives addPage; no positions, no total",
+      "files": [
+        "src/gramtrans/Lib/ui/selection_wizard.py"
+      ]
+    },
+    "T010": {
+      "status": "DONE",
+      "did": "_PageProjectWS split into _PageProjects (binding + context, keeps page_project_ws()) and _PageWritingSystems (tables, ws_mapping, selected_ws_ids, repopulated from scratch on every entry)",
+      "files": [
+        "src/gramtrans/Lib/ui/selection_wizard.py"
+      ]
+    },
+    "T011": {
+      "status": "DONE",
+      "did": "step 1 refuses to advance until both projects are bound, with an inline reason label beside the greyed Next",
+      "files": [
+        "src/gramtrans/Lib/ui/selection_wizard.py"
+      ]
+    },
+    "T012": {
+      "status": "DONE",
+      "did": "numbering assigned on page entry from Qt's visited stack; the eleven Step-N-of-M title literals deleted",
+      "files": [
+        "src/gramtrans/Lib/ui/selection_wizard.py"
+      ]
+    },
+    "T013": {
+      "status": "DONE",
+      "did": "_FlowPage.nextId() walks flow() at call time and returns the first non-skippable or non-empty entry; Back left to Qt",
+      "files": [
+        "src/gramtrans/Lib/ui/selection_wizard.py"
+      ]
+    },
+    "T014": {
+      "status": "DONE",
+      "did": "has_content predicates wired: 5 source pages read the SourceCounts snapshot filled at bind, skeleton/deps use the len(picks) proxy, unknown => shown",
+      "files": [
+        "src/gramtrans/Lib/ui/selection_wizard.py"
+      ]
+    },
+    "T015": {
+      "status": "DONE",
+      "did": "_PageScopeConflict and _PagePreview carry no step number and are absent from flow(), so they are never registered",
+      "files": [
+        "src/gramtrans/Lib/ui/selection_wizard.py"
+      ]
+    },
+    "T016": {
+      "status": "DONE",
+      "did": "Added 35 Qt-sink tests to test_036_progress_sink.py -- deferred/immediate triggers, nested relabel+restore, overrun degradation, failure-path dismissal, time-based pump throttle, no hard-coded colour -- with the Qt import quarantined in a fixture so the 56 Qt-free tests stay Qt-free",
+      "files": [
+        "tests/unit/test_036_progress_sink.py"
+      ]
+    },
+    "T017": {
+      "status": "DONE",
+      "did": "Created Lib/ui/progress_indicator.py -- QtProgressSink over ONE application-wide modal QProgressDialog with a nested-label stack, no cancel affordance, 40 ms time-throttled event-loop pump, overrun-to-indeterminate degradation, plus deferred() at setMinimumDuration(PROGRESS_THRESHOLD_MS) and immediate() shown before the work starts",
+      "files": [
+        "src/gramtrans/Lib/ui/progress_indicator.py"
+      ]
     }
-  }
+  },
+  "concerns": [
+    {
+      "note": "20 of 21 geometry tests SKIP in a full tests/unit run: test_wizard_page_flow.py installs a PyQt6 QWizard double at import time, so needs_a_real_qwizard() bows out for every T001 consumer (T023/T037/T043). Pre-existing, but it means SC-005/SC-005a/SC-009 have no EFFECTIVE automated guard in a full-suite run -- they only assert when the module is run alone. T049 must either isolate the double or the success criteria are unprotected in CI.",
+      "step": "implement"
+    },
+    {
+      "note": "Real layout defect at 900px x 2.5 text scale on the projects/WS page: QGroupBox title \"Vernacular Writing Systems\" measures 780px at 22.5pt, forcing minimumSizeHint 836 (+18 margins = 854) against an 846px QScrollArea viewport -- a hidden horizontal scrollbar (FR-029b) and one clip (FR-030). QGroupBox titles do not elide, so ElideRight cannot fix it; needs a shorter title or a group-font cap like ThemeCornerBar._BAR_FONT_CAP.",
+      "step": "implement"
+    },
+    {
+      "note": "Second-write hole found by T034, not specified: _on_dry_run gates Execute enablement on _modify_allowed alone, so a dry run AFTER a completed Execute re-enables Execute and a second write becomes reachable. FR-043 enablement conjunction requires _move_done be consulted too. Closed by US5.",
+      "step": "implement"
+    },
+    {
+      "note": "MECHANISM CONFIRMED for the geometry-test skip. tests/unit/test_wizard_page_flow.py:97-99 does sys.modules[\"PyQt6.QtWidgets\"].QWizard = _QWizard UNCONDITIONALLY, so when real PyQt6 is already imported it overwrites the genuine class permanently. This runs at COLLECTION time (module import), before any test executes, so alphabetical ordering does not save test_036_*. The damage is real, not cosmetic: SelectionWizard.__init__ reads QtWidgets.QWizard.WizardStyle at runtime (selection_wizard.py:4956), so construction raises AttributeError -- verified. needs_a_real_qwizard() is therefore correct to skip. Fix requires test_wizard_page_flow.py (and test_ui_gating.py) to stop mutating the shared module -- e.g. use real offscreen Qt when PyQt6 is importable. Until then SC-005/SC-005a/SC-009 assert only when their module runs alone.",
+      "step": "implement"
+    }
+  ]
 }
