@@ -424,6 +424,68 @@ the comparator's verdict for each -- no corpus-wide run needed.
       `NOT_YET_CLASSIFIED_MISSING_FROM_TARGET`.
       · `debug/run_fullcopy_sweep.py`, `debug/fullsweep/guards.py`
 
+  > **(a) and (b) DONE 2026-08-19.** The guard block went from **0/15 to 5/15
+  > answering**: `BASELINE-DELTA`, `TOTAL-ACCOUNTING`,
+  > `IDEMPOTENCY-IN-WRITTEN-CLASSES`, `PLAN-CONSERVATION` and
+  > `NO-ENGINE-BUG-AS-LOSS` now report pass or fail. The `compare_objects` stub is
+  > gone; findings carry real FR-097 bucket detail. `MEASURABLE_RUN_CONTEXT_FIELDS`
+  > + `UNMEASURED_RUN_CONTEXT_FIELDS` partition all 23 `RunContext` measurement
+  > fields, tested exactly, so a new guard input cannot be added and silently
+  > forgotten. 34 tests.
+  >
+  > **Two live defects found and fixed while wiring the category inputs** -- both
+  > meant the artifact described a run that did not happen:
+  > 1. the exclusion was built as `frozenset(exclude_categories)`, a set of
+  >    **strings**, compared inside `build_full_selection` against
+  >    `GrammarCategory` **members**. A string never equals a member, so
+  >    `--exclude-categories` was a silent no-op and the recorded
+  >    `coverage_categories` always listed every category.
+  > 2. `run_full_transfer` then built its OWN selection with no arguments,
+  >    inheriting the STEMS-excluding default -- so the transfer excluded STEMS
+  >    while the artifact claimed STEMS was covered. FR-136's "MUST NOT allow a
+  >    reader to mistake", in its strongest form, plus FR-135's invisible-default
+  >    prohibition. `run_full_transfer` now takes an `exclude` parameter.
+  >
+  > **(c) NOT done, and T045a's own premise was wrong.** The task says it "is the
+  > ONLY thing standing between T036-T045 and a non-`VACUOUS` verdict". Measured:
+  > it is **necessary but not sufficient**. Ten guards still report
+  > `not-evaluated`, so FR-109 still yields `VACUOUS`. Two of the ten are part (c);
+  > the other eight are covered by no task at all, which is why T045b below now
+  > exists. Every one has its reason recorded in
+  > `UNMEASURED_RUN_CONTEXT_FIELDS`, and a test pins the answering set so a later
+  > "non-VACUOUS" claim has to update it deliberately.
+
+- [ ] **T045b** [US2] **NEW, 2026-08-19** -- the remaining eight guard inputs. After T045a
+      (a)+(b) the answering set is 5/15 and FR-109 therefore still reports `VACUOUS`. Part (c)
+      buys back two more (`COMPARISONS-PERFORMED`, `CATEGORY-COVERAGE`); these eight are
+      what remains, and **no other task covers them**:
+      (i) `empty_measurements` -- per empty source collection, which of FR-098's two distinct
+      outcomes applied plus the independent corroborating count · plane 2;
+      (ii) `unhandled_subtypes` -- each subtype the engine did not handle, named and counted
+      (FR-099) · plane 2;
+      (iii) `extras` -- the REVERSE walk: target objects absent from the source, with
+      `traceable_to_source` and `tool_owned_duplicate` decided per object (FR-102/FR-183).
+      Plane 1 currently walks source→target only, so a target-side addition is invisible;
+      (iv) `accessor_counters` -- FR-103's four counters are not merely unmeasured, they are
+      **actively discarded**: `audit_guid_preservation.inventory_all` swallows every
+      per-object read failure with `except Exception: continue`, at the exact point the
+      counter should increment;
+      (v) `close_operations` -- `CloseProject` outcomes are unlogged; both `inventory_all` and
+      `run_full_transfer` close inside a bare `except` (FR-108);
+      (vi) `handle_operations` -- no project-handle operation log exists (FR-104);
+      (vii) `truncation` -- the durable artifact writer keeps no omission counters, so
+      FR-105's two zeros cannot be *asserted*; hardcoding them to 0 would be a claim, not a
+      measurement;
+      (viii) `corpus_projects` + `artifacts_present` -- corpus-level, not per-project: only
+      the batch driver knows the frozen project list and the artifact index (FR-106), so this
+      one belongs to `_cmd_batch`, not `run_one_project`.
+      · `debug/run_fullcopy_sweep.py`, `debug/audit_guid_preservation.py`,
+      `debug/fullsweep/moves.py`, `debug/fullsweep/artifact.py`
+
+**⟶ A non-`VACUOUS` verdict requires T045a(c) AND T045b. T035's re-run before both
+lands will report `VACUOUS` again -- with 5 or 7 real guard results attached instead of
+none, which is progress, but not the acceptance criterion.**
+
 **Wave 3c -- the guard semantics T045a makes observable:**
 
 - [ ] **T045** [US2] Implement `CATEGORY-COVERAGE` for real (any excluded category, any
