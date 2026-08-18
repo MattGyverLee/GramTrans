@@ -10,21 +10,29 @@ package (see ``debug/fullsweep/__init__.py`` for the map). What remains here:
 
   * the per-project double-move loop (``run_one_project``), wiring Groups
     B/D/K together for exactly one project;
-  * the COMPARATOR / VERDICT TAXONOMY extension point (``compare_objects``),
-    deliberately a stub -- see its docstring;
+  * plane 1, the object-level reconciliation (``reconcile_project_objects``),
+    a thin adapter over ``fullsweep.compare.reconcile_objects``;
+  * the measurement-to-guard wiring (``build_run_context``,
+    ``MEASURABLE_RUN_CONTEXT_FIELDS``, ``UNMEASURED_RUN_CONTEXT_FIELDS``);
   * the CLI itself (``list`` / ``project`` / ``batch`` subcommands), with
     every existing flag spelling preserved exactly.
 
-SCOPE (per the feature-035 dispatch brief, 2026-08-18): build everything the
-spec has already settled -- Group A (corpus enumeration), Group B (write
-safety), Group C (parallel target pool), Group D (double-move and
-idempotency), Group K (artifact/provenance), Group L (batched, gated,
-fix-forward execution) -- and leave the COMPARATOR / VERDICT TAXONOMY
-(spec.md Groups E, F, G, H, and the identity-substitution rules of Group P)
-as an explicit, documented extension point. That taxonomy is still in review
-(cycle3-amendments.md / cycle3-safety-amendments.md are not yet folded into
-spec.md's settled requirement groups) and MUST NOT be invented here. See
-``compare_objects`` below for the pluggable seam.
+SCOPE UPDATE, 2026-08-19 (T045a). The verdict taxonomy is no longer in review:
+the ratified spec settled Groups E/F/G/H and Group P, ``fullsweep.compare``
+implements both accounting planes (T031, T036-T043), and ``fullsweep.guards``
+carries real pass/fail logic for all fifteen guards (T033). The
+``compare_objects`` stub that stood in for that taxonomy is GONE -- it emitted
+one ``NOT_YET_CLASSIFIED_MISSING_FROM_TARGET`` row per absent GUID and populated
+no accounting block, so TOTAL-ACCOUNTING could only report ``not-evaluated``.
+
+The one thing still missing is plane 2's LIVE FIELD READ: ``census.census_fields``
+needs a ``field_source(cls, guid)`` over live LCM objects before ``comparisons``
+and ``measured_categories`` can be measured. Until that lands, this driver's
+payload comparator is ``payload_never_compared``, which returns None for every
+object -- and FR-097 makes "present under a matching identity with no payload
+comparison performed" unexplained loss, so those objects are REPORTED as
+unverified rather than assumed equal. See ``UNMEASURED_RUN_CONTEXT_FIELDS`` for
+the full, per-field list of what is still unmeasured and why.
 
 Reused rather than reinvented (per instructions):
   * ``debug/prescan_type_coverage.py`` -- corpus enumeration
@@ -37,12 +45,16 @@ Reused rather than reinvented (per instructions):
     for WHATEVER name it is given, so this driver never calls it without
     first passing every name through ``assert_destination_safe``).
   * ``tests/integration/harness/full_run.py`` -- ``build_full_selection`` and
-    ``run_full_transfer``. This driver ALWAYS calls
-    ``build_full_selection(exclude=frozenset())`` -- an explicit EMPTY
-    exclusion set -- because ``full_run``'s own default excludes
-    ``GrammarCategory.STEMS`` and the user has explicitly decided stems are
-    required for this sweep. The resulting coverage set is recorded in every
-    artifact (Group K, FR-142).
+    ``run_full_transfer``. This driver resolves its exclusion set ONCE, into
+    ``GrammarCategory`` MEMBERS (``resolve_excluded_categories``), and hands the
+    same set to the recorded selection AND to both transfers. It never relies on
+    ``full_run``'s own STEMS-excluding default: the user has explicitly decided
+    stems are required for this sweep (FR-134), and an exclusion expressed as a
+    default argument is what FR-135 forbids. The resulting coverage set is
+    recorded in every artifact (Group K, FR-142).
+
+    Before T045a this comment was accurate about intent and wrong about
+    behaviour twice over -- see ``resolve_excluded_categories`` for both defects.
   * ``debug/audit_guid_preservation.py`` -- the ``AllInstances`` identity-keyed
     inventory shape (``{class_name: {guid, ...}}``), reused here as
     ``census_project``.
@@ -107,56 +119,329 @@ DIAGNOSTIC_LEVELS = ("quiet", "normal", "verbose")
 
 
 # ===========================================================================
-# GROUP E/F/G/H PLUGGABLE SEAM -- NOT BUILT HERE (still in review)
+# CATEGORY RESOLUTION (T045a part a -- FR-134, FR-135, FR-136)
 # ===========================================================================
 
-def compare_objects(source_inventory: dict, target_inventory: dict) -> list[dict]:
-    """EXTENSION POINT for the field-level fidelity comparator.
+def resolve_excluded_categories(spec: Sequence[str]) -> tuple:
+    """Turn ``--exclude-categories`` strings into ``(members, records)``.
 
-    Deliberately NOT the taxonomy from spec.md Groups E (field-level
-    semantics), F (vacuity guards), G (verdict/exit model), H (loss
-    allowlist), or the identity-substitution rules of Group P -- those are
-    still in review as of 2026-08-18 (cycle3-amendments.md and
-    cycle3-safety-amendments.md have not yet been folded into spec.md's
-    settled requirement groups) and inventing them here would hardcode a
-    taxonomy this feature does not yet have authority to hardcode.
+    ``members`` is a frozenset of ``GrammarCategory`` MEMBERS, which is what
+    ``build_full_selection`` compares against. ``records`` is the FR-135 field:
+    one ``{"category": value, "reason": str}`` per exclusion.
 
-    Contract for the eventual real implementation:
-        source_inventory / target_inventory: ``{class_name: {guid, ...}}``,
-            the same identity-keyed shape ``census_project`` returns.
-        Returns: ``list[dict]`` "findings". Per FR-145 (settled, Group K),
-            every real finding MUST eventually carry AT LEAST:
-                {"class": str, "category": str | None, "field": str | None,
-                 "source_value": Any, "target_value": Any,
-                 "verdict": str, "guid": str}
-            -- but the legal ``verdict`` vocabulary (RESOLVED / DANGLING /
-            SILENTLY_UNSET / LOST-BUT-ACCOUNTED / RESOLVED-BY-EQUIVALENCE for
-            links; DISTORTED / EXPECTED_DIVERGENT / etc. for field content;
-            the five FR-094..FR-099 vacuity guards; the allowlist-consumption
-            accounting of Group H) is exactly what has not been settled.
+    TWO DEFECTS THIS FUNCTION EXISTS TO CLOSE, both live before T045a:
 
-    TODO(035-verdict-taxonomy): replace this stub once Groups E-P leave
-    review. Until then this performs ONLY the total-accounting
-    presence/absence reconciliation that the identity-keyed census already
-    gives for free -- no taxonomy decision required for that much: a source
-    GUID is either present in the target's post-transfer inventory for its
-    class, or it is not.
+    1. ``run_one_project`` built its exclusion as ``frozenset(exclude_categories)``
+       -- a set of *strings* -- and passed it to ``build_full_selection``, whose
+       body tests ``if cat not in exclude`` against enum MEMBERS. A string never
+       equals a member, so the exclusion was a silent no-op: the recorded
+       ``coverage_categories`` always listed every category no matter what the
+       operator asked to exclude.
+    2. ``run_full_transfer`` then built its OWN selection with no arguments,
+       inheriting ``build_full_selection``'s STEMS-excluding default. So the
+       transfer excluded STEMS while the artifact claimed STEMS was covered --
+       FR-136's "MUST NOT allow a reader to mistake" defect, in the strongest
+       form available: the artifact described a run that did not happen.
 
-    ``run_one_project`` (below) takes this function as an injectable
-    parameter (default: this stub) so a future comparator can be wired in
-    without touching the driver's control flow.
+    An unknown category name RAISES. Ignoring it is how (1) stayed invisible for
+    a whole live batch, and FR-135's "explicit, recorded" cannot be satisfied by
+    a name the harness silently discarded.
+
+    A reason may be attached as ``NAME=reason``. Supplying none leaves the reason
+    empty, which makes CATEGORY-COVERAGE FAIL rather than pass -- FR-135 requires
+    every exclusion to be explicit, and "the operator did not say why" is a
+    recorded fact, not a detail to fill in on their behalf.
     """
-    findings: list[dict] = []
-    for cls, src_guids in source_inventory.items():
-        tgt_guids = target_inventory.get(cls, set())
-        for g in sorted(src_guids - tgt_guids):
-            findings.append({
-                "class": cls, "category": None, "field": None,
-                "source_value": g, "target_value": None,
-                "verdict": "NOT_YET_CLASSIFIED_MISSING_FROM_TARGET",
-                "guid": g,
-            })
+    from gramtrans.Lib.models import GrammarCategory
+
+    by_value = {c.value: c for c in GrammarCategory}
+    by_name = {c.name: c for c in GrammarCategory}
+    members, records, unknown = set(), [], []
+    for raw in spec or ():
+        token = str(raw).strip()
+        if not token:
+            continue
+        name, _, reason = token.partition("=")
+        name, reason = name.strip(), reason.strip()
+        member = by_value.get(name) or by_name.get(name.upper())
+        if member is None:
+            unknown.append(name)
+            continue
+        members.add(member)
+        records.append({"category": member.value, "reason": reason})
+    if unknown:
+        raise HarnessError(
+            "[FR-135] --exclude-categories names %r, which are not "
+            "GrammarCategory members. A name the harness cannot resolve is "
+            "silently NOT excluded, so the artifact would record coverage the "
+            "run did not have. Valid values: %s"
+            % (sorted(unknown), ", ".join(sorted(by_value)))
+        )
+    return frozenset(members), records
+
+
+def plan_conservation_counters(plan, report) -> dict:
+    """FR-101's per-category and total counters, read off the plan and report.
+
+    ``planned`` is counted from the PLAN's own action rows, and ``added`` /
+    ``skipped`` from the REPORT's per-category record -- two independent
+    surfaces, which is the point: a conservation check that read both sides from
+    the same object could not detect a discrepancy.
+
+    Every other counter the report carries travels through untouched.
+    ``guards.PLAN_ACCOUNTED_COUNTERS`` decides which ones close the identity and
+    reports the rest in its evidence, so widening the formula stays a deliberate
+    edit there rather than a quiet reshaping here.
+    """
+    def _cat(x):
+        c = getattr(x, "category", None)
+        return getattr(c, "value", None) or str(c)
+
+    planned_by_cat: dict = {}
+    for action in getattr(plan, "actions", ()) or ():
+        key = _cat(action)
+        planned_by_cat[key] = planned_by_cat.get(key, 0) + 1
+
+    per_category: dict = {}
+    for category, rec in (getattr(report, "per_category", {}) or {}).items():
+        key = getattr(category, "value", None) or str(category)
+        row = {"planned": planned_by_cat.get(key, 0)}
+        for counter in ("added", "skipped", "closure_pulled_in", "overwritten",
+                        "excluded_lossy", "interactive_resolved", "interactive_skipped"):
+            row[counter] = int(getattr(rec, counter, 0) or 0)
+        per_category[key] = row
+    # A category the plan planned for but the report never mentioned still has
+    # to be accounted for; omitting it would hide the very gap FR-101 checks.
+    for key, planned in planned_by_cat.items():
+        per_category.setdefault(key, {"planned": planned, "added": 0, "skipped": 0})
+
+    total = {"planned": sum(r["planned"] for r in per_category.values())}
+    for counter in ("added", "skipped", "closure_pulled_in", "overwritten",
+                    "excluded_lossy", "interactive_resolved", "interactive_skipped"):
+        total[counter] = sum(r.get(counter, 0) for r in per_category.values())
+    return {"per_category": per_category, "total": total}
+
+
+def observed_drop_reasons(drops_block: dict) -> list:
+    """Every drop reason the engine reported, across both transfers.
+
+    NO-ENGINE-BUG-AS-LOSS matches its roster against these. Duplicates are kept:
+    the guard counts matches, and collapsing identical reasons would understate
+    how many objects an engine-bug signature actually claimed.
+    """
+    reasons: list = []
+    for phase in ("first", "second"):
+        block = (drops_block or {}).get(phase) or {}
+        for record in block.get("records") or ():
+            reason = record.get("reason")
+            if reason:
+                reasons.append(reason)
+    return reasons
+
+
+# ===========================================================================
+# PLANE 1 -- OBJECT-LEVEL RECONCILIATION (T045a part b)
+#
+# This replaces the ``compare_objects`` stub. The stub emitted one
+# ``NOT_YET_CLASSIFIED_MISSING_FROM_TARGET`` finding per absent source GUID and
+# populated no accounting block at all, so TOTAL-ACCOUNTING could only ever
+# report ``not-evaluated``. Its TODO said the verdict taxonomy was still in
+# review; the ratified spec settled it, and ``fullsweep.compare.reconcile_objects``
+# implements it (T031).
+#
+# FR-091 is the load-bearing ordering here: the WALK detects loss, and drop
+# records only ever EXPLAIN it. So the reconciliation is driven by the source
+# census, and ``drops`` is consulted only once an object is already known to be
+# absent -- never the other way round.
+# ===========================================================================
+
+#: FR-097 requires a payload comparison for every object present under a
+#: matching identity. Plane 2 (the field census) is what performs it; until it is
+#: wired, NO comparison happens, and this callback says so by returning None for
+#: every object rather than a cheerful True.
+#:
+#: ``reconcile_objects`` turns None into
+#: ``unaccounted: present-under-matching-identity-but-never-compared``, which
+#: fails TOTAL-ACCOUNTING. That is the correct reading of FR-097 -- "an object
+#: merely present under a matching identity with no payload comparison performed
+#: ... is unexplained loss and MUST fail the run" -- and it is a far more useful
+#: answer than the stub's silence, because it names how many objects are
+#: unverified instead of implying there are none.
+def payload_never_compared(class_name: str, source_id: str, target_id: str):
+    """The honest no-op payload comparator: no comparison was performed."""
+    return None
+
+
+def drop_records_from_artifact(drops_block: dict) -> tuple:
+    """Rebuild ``compare.DropRecord``s from the artifact's recorded drop channel.
+
+    Keyed on ``item_guid``, not ``item_name``: ``reconcile_objects`` matches a
+    drop against a source IDENTIFIER, and a label would match nothing (or, worse,
+    the wrong object -- labels are not unique).
+    """
+    out: list = []
+    for phase in ("first", "second"):
+        block = (drops_block or {}).get(phase) or {}
+        for record in block.get("records") or ():
+            item = record.get("item_guid")
+            if not item:
+                # An unidentified drop cannot be attributed to a source object.
+                # It is still evidence, and ``observed_drop_reasons`` still feeds
+                # it to NO-ENGINE-BUG-AS-LOSS; it simply cannot explain a
+                # specific absence, which is a fact about the engine's record,
+                # not something to paper over with a synthetic identifier.
+                continue
+            out.append(DropRecord(
+                owner=str(record.get("owner_guid") or ""),
+                field_name=str(record.get("field_name") or ""),
+                item=str(item).lower(),
+                reason=str(record.get("reason") or ""),
+            ))
+    return tuple(out)
+
+
+def findings_from_accounting(accounting) -> list:
+    """FR-145 finding rows for every object the reconciliation could not explain.
+
+    One row per unaccounted object, carrying the bucket's own detail string as
+    the verdict -- so a reader sees WHICH of FR-097's failure modes applied
+    (dropped-with-no-allowlist-entry, present-but-never-compared, absent-with-no-
+    explanation, over-cap) instead of the stub's single undifferentiated token.
+    """
+    findings: list = []
+    for item in accounting.unaccounted:
+        findings.append({
+            "class": item.class_name,
+            "category": None,
+            "field": None,
+            "source_value": item.source_id,
+            "target_value": item.target_id,
+            "verdict": item.detail or UNACCOUNTED_ABSENT_NO_EXPLANATION,
+            "guid": item.source_id,
+        })
     return findings
+
+
+#: Every ``RunContext`` field ``run_one_project`` is able to measure today, and
+#: therefore every field ``build_run_context`` will pass through. A field NOT on
+#: this tuple is one no per-project measurement exists for yet; it stays None and
+#: its guard reports ``not-evaluated``.
+#:
+#: This tuple is the deliberate, reviewable line between "measured" and "not
+#: measured". Adding a name here without also depositing it into ``measured`` is
+#: harmless (absent key -> None -> not-evaluated); depositing a key that is NOT
+#: named here is a defect, and ``build_run_context`` raises on it rather than
+#: silently discarding a measurement the run paid for.
+MEASURABLE_RUN_CONTEXT_FIELDS: tuple = (
+    "census_baseline",
+    "census_after_first",
+    "census_after_second",
+    "written",
+    "idempotency",
+    "planned_action_count",
+    "plan_conservation",
+    "accounting",
+    "enabled_categories",
+    "measured_categories",   # awaits plane 2 -- see PENDING_PLANE_2_FIELDS
+    "excluded_categories",
+    "comparisons",           # awaits plane 2 -- see PENDING_PLANE_2_FIELDS
+    "drop_reasons",
+    "engine_bug_signatures",
+)
+
+#: Named measurable, but NOT yet deposited by ``run_one_project``: both need
+#: plane 2's live field read (``census.census_fields`` with a real
+#: ``field_source(cls, guid)`` over LCM objects), which T045a part (c) covers.
+#: They are listed as measurable because the shape is settled and the guard is
+#: built -- only the reader is missing. Until it lands they stay absent from
+#: ``measured`` and their guards report ``not-evaluated``, which is the honest
+#: answer and not a defect in this wiring.
+PENDING_PLANE_2_FIELDS: tuple = ("comparisons", "measured_categories")
+
+#: The guard inputs ``run_one_project`` has NO measurement for, with the reason.
+#: Recorded here, in code, so "why is this run still VACUOUS?" has a written
+#: answer instead of requiring an archaeology session through fifteen guards.
+UNMEASURED_RUN_CONTEXT_FIELDS: dict = {
+    "empty_measurements": "plane 2 has to record, per empty source collection, "
+                          "which of FR-098's two distinct outcomes applied and "
+                          "the independent corroborating count",
+    "unhandled_subtypes": "plane 2 has to name and count each subtype the engine "
+                          "did not handle (FR-099)",
+    "extras": "the reverse walk -- target objects absent from the source, with "
+              "traceable_to_source and tool_owned_duplicate decided per object "
+              "(FR-102/FR-183)",
+    "accessor_counters": "audit_guid_preservation.inventory_all currently "
+                         "swallows a per-object read failure with "
+                         "`except Exception: continue`, so the four FR-103 "
+                         "counters are not merely unmeasured -- they are "
+                         "actively discarded at the point they occur",
+    "handle_operations": "no project-handle operation log exists (FR-104)",
+    "truncation": "the durable artifact writer keeps no omission counters, so "
+                  "FR-105's two zeros cannot be asserted -- and hardcoding them "
+                  "to 0 would be a claim, not a measurement",
+    "close_operations": "CloseProject outcomes are not logged; both inventory_all "
+                        "and run_full_transfer close inside a bare except "
+                        "(FR-108)",
+    "corpus_projects": "corpus-level, not per-project: only the batch driver "
+                       "knows the frozen project list (FR-106)",
+    "artifacts_present": "corpus-level, as above -- an artifact index over the "
+                         "whole run",
+}
+
+
+def build_run_context(project: str, measured: dict) -> RunContext:
+    """Build the guard context from what this run ACTUALLY measured.
+
+    The one rule: a key present in ``measured`` is passed through; a key absent
+    keeps ``RunContext``'s ``None`` default and its guard reports
+    ``not-evaluated``. Nothing here substitutes an empty container for a missing
+    measurement -- per ``RunContext``'s docstring, an empty accessor-counter dict
+    would let ACCESSOR-INTEGRITY report all-zeros and pass a project it never
+    opened.
+
+    A key that is not a known measurable field raises. Silently dropping it would
+    reproduce, one level up, exactly the bug this function was written to fix: a
+    measurement taken and then never handed to the guard that needed it.
+    """
+    unknown = sorted(set(measured) - set(MEASURABLE_RUN_CONTEXT_FIELDS))
+    if unknown:
+        raise HarnessError(
+            "[FR-109] %r were measured but are not named in "
+            "MEASURABLE_RUN_CONTEXT_FIELDS, so no guard would ever see them. "
+            "Add them to that tuple (and check the field spelling against "
+            "guards.RunContext) rather than letting the measurement be "
+            "discarded." % (unknown,)
+        )
+    return RunContext(
+        project=project,
+        **{k: v for k, v in measured.items()},
+    )
+
+
+def reconcile_project_objects(
+    source_inventory: dict,
+    target_before: dict,
+    target_after: dict,
+    *,
+    project: str,
+    drops: Sequence = (),
+    matcher=None,
+    roster=None,
+    remap=None,
+    payload_equal: Callable = payload_never_compared,
+):
+    """Plane 1 for one project: ``(ObjectAccounting, findings)``.
+
+    Thin on purpose. Every rule lives in ``fullsweep.compare.reconcile_objects``
+    and ``fullsweep.identity``; this function only supplies the project's
+    measurements and shapes the findings list the artifact carries.
+    """
+    accounting = reconcile_objects(
+        source_inventory, target_before, target_after,
+        project=project, payload_equal=payload_equal,
+        roster=roster, remap=remap, matcher=matcher, drops=drops,
+    )
+    return accounting, findings_from_accounting(accounting)
 
 
 # ===========================================================================
@@ -175,7 +460,11 @@ def run_one_project(
     diagnostic_level: str,
     projects_root: Optional[str] = None,
     artifacts_dir: Path = DEFAULT_ARTIFACTS_DIR,
-    comparator: Callable[[dict, dict], list] = compare_objects,
+    contracts_dir: Path = DEFAULT_CONTRACTS_DIR,
+    reconciler: Callable = reconcile_project_objects,
+    payload_equal: Callable = payload_never_compared,
+    allowlist_matcher=None,
+    natural_key_roster=None,
     tolerated_residue: Sequence[str] = (),
 ) -> ProjectArtifact:
     """FR-043: restore -> census -> Move #1 -> census -> Move #2 -> census ->
@@ -207,13 +496,61 @@ def run_one_project(
     )
     rp = artifact.revision_pair
     artifact.dirty_gramtrans = rp.get("gramtrans", {}).get("dirty")
-    artifact.excluded_categories = list(exclude_categories)
+
+    # T045a: resolved ONCE, here, and used for BOTH the recorded coverage set
+    # and the transfer that actually runs. Resolving it twice is how the two
+    # drifted apart (see resolve_excluded_categories).
+    excluded_members, excluded_records = resolve_excluded_categories(exclude_categories)
+    artifact.excluded_categories = [r["category"] for r in excluded_records]
+    artifact.excluded_category_records = excluded_records
     artifact.diagnostic_level = diagnostic_level
     artifact.baseline = pinned_baseline.as_dict()
 
     # FR-024: the per-project record that each assertion was IN FACT
     # evaluated, at which boundary, against which literal values.
     ledger = AssertionLedger(project=source_name)
+
+    # ---- T045a: the guard-input accumulator -----------------------------
+    # The guards run in the ``finally`` below, so they must be able to read
+    # whatever this run got as far as measuring -- including on a run that died
+    # at the first transfer. Every measurement is deposited here the moment it is
+    # taken; a key that never appears stays absent, and RunContext's own default
+    # (None) then makes its guard report ``not-evaluated``.
+    #
+    # This dict is the WHOLE of T045a part (a). Before it, the finally block
+    # called ``run_all_guards(RunContext(project=source_name))`` -- positionally
+    # empty -- so all fifteen guards reported ``not-evaluated`` and FR-109 sank
+    # every run to VACUOUS no matter how much it had measured. Batch 1 measured
+    # the census triple, the written-class delta, idempotency and 210/27,929/879
+    # drop reasons, and handed none of them to a single guard.
+    measured: dict = {}
+
+    # ---- T045a: the tracked rosters, read BEFORE any database is touched.
+    # NO-ENGINE-BUG-AS-LOSS needs its signature roster; the reconciliation needs
+    # the allowlist matcher and the natural-key roster. All three are read up
+    # front so a malformed contract refuses the run instead of surfacing halfway
+    # through a double move, with a target already written to.
+    #
+    # Note the deliberate asymmetry with the guard-input rule above: these
+    # loaders RAISE on a missing or malformed file rather than yielding None. A
+    # missing roster is not an unmeasured input -- it is a broken instrument, and
+    # each loader's docstring says why treating it as "empty" would silently
+    # change which losses count as explained.
+    measured["engine_bug_signatures"] = load_engine_bug_signatures(
+        contracts_dir=Path(contracts_dir))
+    if allowlist_matcher is None:
+        allowlist_matcher = LossAllowlistMatcher(
+            entries=load_loss_allowlist(contracts_dir=Path(contracts_dir)))
+    if natural_key_roster is None:
+        natural_key_roster = NaturalKeyRoster.load(Path(contracts_dir))
+
+    # FR-133..FR-137: allowlisting a structurally absent class is refused, and
+    # refused HERE -- at load time, before a run can report a reduced-coverage
+    # pass as a pass (T044).
+    assert_allowlist_respects_floor(
+        load_coverage_floor(Path(contracts_dir) / COVERAGE_FLOOR_NAME),
+        {e.class_name for e in allowlist_matcher.entries if getattr(e, "class_name", None)},
+    )
 
     root = resolve_projects_root(projects_root)
     target_path = str(root / target_name)
@@ -239,12 +576,18 @@ def run_one_project(
 
         census_before = census_project(target_name)
         artifact.census_before = {k: sorted(v) for k, v in census_before.items()}
+        measured["census_baseline"] = census_before
         artifact.phases_completed.append("census_before")
         flush_artifact(artifact, artifacts_dir)  # still within the "restore" phase (T013)
 
-        excluded = frozenset(exclude_categories)
-        selection = full_run.build_full_selection(exclude=excluded)
+        # T045a: ONE selection object, built from the resolved enum members,
+        # recorded here AND handed to both transfers below. Before this, the
+        # recorded set and the executed set were computed independently and
+        # disagreed (see resolve_excluded_categories).
+        selection = full_run.build_full_selection(exclude=excluded_members)
         artifact.coverage_categories = sorted(c.value for c, on in selection.categories.items() if on)
+        measured["enabled_categories"] = list(artifact.coverage_categories)
+        measured["excluded_categories"] = excluded_records
 
         # ---- boundary (b): re-asserted immediately before the first byte
         # written beneath the target, computed fresh from the literal
@@ -254,44 +597,67 @@ def run_one_project(
             target_name, source_name=source_name, frozen_sources=frozen_sources,
             allowlist=allowlist, projects_root=projects_root, ledger=ledger,
         )
-        plan1, report1 = full_run.run_full_transfer(source_name, target_name, target_path)
+        plan1, report1 = full_run.run_full_transfer(
+            source_name, target_name, target_path, exclude=excluded_members)
         # FR-161/SC-005: the engine's drop channel is the ONLY place the two
         # historically dominant loss classes and the named residual list can be
         # read from. Recorded per transfer, before anything downstream can lose
         # the report object.
         artifact.drops["first"] = summarize_drops(report1)
+        measured["planned_action_count"] = len(getattr(plan1, "actions", ()) or ())
+        measured["plan_conservation"] = plan_conservation_counters(plan1, report1)
+        measured["drop_reasons"] = observed_drop_reasons(artifact.drops)
         artifact.phases_completed.append("first_transfer")
         advance_phase(artifact, "transfer_1", artifacts_dir)
 
         census_after_1 = census_project(target_name)
         artifact.census_after_first = {k: sorted(v) for k, v in census_after_1.items()}
+        measured["census_after_first"] = census_after_1
         artifact.phases_completed.append("census_after_first")
         advance_phase(artifact, "census_1", artifacts_dir)
 
         written = written_classes(census_before, census_after_1)
         artifact.written_classes = written
+        measured["written"] = written
 
         assert_first_write_boundary(
             target_name, source_name=source_name, frozen_sources=frozen_sources,
             allowlist=allowlist, projects_root=projects_root, ledger=ledger,
         )
-        plan2, report2 = full_run.run_full_transfer(source_name, target_name, target_path)
+        plan2, report2 = full_run.run_full_transfer(
+            source_name, target_name, target_path, exclude=excluded_members)
         artifact.drops["second"] = summarize_drops(report2)
+        measured["drop_reasons"] = observed_drop_reasons(artifact.drops)
         artifact.phases_completed.append("second_transfer")
         advance_phase(artifact, "transfer_2", artifacts_dir)
 
         census_after_2 = census_project(target_name)
         artifact.census_after_second = {k: sorted(v) for k, v in census_after_2.items()}
+        measured["census_after_second"] = census_after_2
         artifact.phases_completed.append("census_after_second")
         advance_phase(artifact, "census_2", artifacts_dir)
 
         idem = check_idempotency(census_after_1, census_after_2, written)
         artifact.idempotency = asdict(idem)
+        measured["idempotency"] = idem
         if idem.harness_error:
             raise HarnessError(idem.harness_error)
 
+        # ---- plane 1: the object-level reconciliation (T045a part b) -----
+        # FR-091: THIS walk detects loss. The drop channel recorded above is
+        # consulted only to explain an absence the walk already found.
         source_inventory = census_project(source_name)
-        artifact.findings = comparator(source_inventory, census_after_2)
+        accounting, findings = reconciler(
+            source_inventory, census_before, census_after_2,
+            project=source_name,
+            drops=drop_records_from_artifact(artifact.drops),
+            matcher=allowlist_matcher, roster=natural_key_roster,
+            payload_equal=payload_equal,
+        )
+        measured["accounting"] = accounting
+        artifact.accounting = accounting.as_dict()
+        assert_object_plane_only(artifact.accounting)   # FR-093: planes stay apart
+        artifact.findings = findings
 
         artifact.status = "passed" if (idem.passed and not artifact.findings) else "failed"
         artifact.reason = "" if artifact.status == "passed" else (
@@ -351,14 +717,20 @@ def run_one_project(
             artifact.status = "failed"
             artifact.reason = ("%s -- %s" % (exc, artifact.reason)).strip(" -")
 
-        # ---- T016: wire registry -> verdict -> artifact -----------------
+        # ---- T016/T045a: wire measurements -> registry -> verdict -------
         # FR-109 meta-rule: asserted BOTH before the verdict is computed AND
-        # again before the artifact is flushed. Every run reports VACUOUS
-        # today because no guard in the registry has real pass/fail logic
-        # yet (Phase 2 taxonomy-spine scope, T011-T014) -- that is the
-        # correct answer for an instrument that cannot yet prove anything.
-        guard_results = run_all_guards(RunContext(project=source_name))
+        # again before the artifact is flushed.
+        #
+        # T045a: the context is built from ``measured``, so every guard whose
+        # input this run actually took now reports pass or fail. Anything the run
+        # did NOT measure is simply absent from the dict and keeps RunContext's
+        # None default, which reports ``not-evaluated`` -- honestly. Handing a
+        # guard an empty container instead would let it report all-zeros and pass
+        # a project it never opened, which is the trap RunContext's own docstring
+        # names and the reason the fields default to None rather than to {}.
+        guard_results = run_all_guards(build_run_context(source_name, measured))
         artifact.guards = guard_block_as_dict(guard_results)
+        artifact.guard_inputs_measured = sorted(measured)
         assert_guard_block_complete(artifact.guards)
         artifact.verdict = verdict_for_guard_results(guard_results)
         artifact.exit_code = exit_code_for(artifact.verdict)
@@ -452,6 +824,7 @@ def _cmd_project(args) -> int:
             diagnostic_level=args.diagnostic_level,
             projects_root=args.projects_root,
             artifacts_dir=Path(args.artifacts_dir),
+            contracts_dir=Path(args.contracts_dir),
         )
     except (WriteSafetyError, SourceTamperError, EvidenceProvenanceError) as exc:
         # These MUST abort the whole run -- re-raise after making that loud.

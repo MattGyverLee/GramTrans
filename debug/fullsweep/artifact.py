@@ -118,6 +118,24 @@ class ProjectArtifact:
     #: transfer returned. Never truncated here (FR-144).
     drops: dict = field(default_factory=dict)
 
+    # ---- T045a additions (Phase 5 / US2 wave 3b) ------------------------
+    #: FR-093 plane 1: the object-level accounting block, from
+    #: ``compare.ObjectAccounting.as_dict()``. Structurally separate from
+    #: ``findings`` (the field/link verdict plane) and asserted so by
+    #: ``compare.assert_object_plane_only``.
+    accounting: dict = field(default_factory=dict)
+
+    #: FR-135: every excluded category WITH its recorded reason.
+    #: ``excluded_categories`` above stays a plain list[str] for the artifact
+    #: schema; this carries the reason, because "explicit and recorded" is not
+    #: satisfied by a bare name.
+    excluded_category_records: list = field(default_factory=list)
+
+    #: FR-109 diagnostics: which guard inputs this run actually measured. A
+    #: VACUOUS verdict is only actionable if a reader can see WHICH input was
+    #: missing, instead of being told that fifteen guards declined to answer.
+    guard_inputs_measured: list = field(default_factory=list)
+
 
 def summarize_drops(report) -> dict:
     """T035/FR-161: the drop channel of one transfer, as recorded evidence.
