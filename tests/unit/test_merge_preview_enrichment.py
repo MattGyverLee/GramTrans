@@ -18,6 +18,7 @@ from gramtrans.Lib.merge_preview import (
     _enrich_phoneme,
     _find_inflection_feature_or_value,
     _gather_entry_nested,
+    _natural_class_features,
     _natural_class_members,
     _phoneme_feature_labels,
     _phoneme_label,
@@ -165,6 +166,21 @@ class _FeatStruc:
 class _PhonemeWithFeatures:
     def __init__(self, specs):
         self.FeaturesOA = _FeatStruc(specs) if specs is not None else None
+
+
+class _FeatureBasedNC:
+    def __init__(self, specs):
+        self.FeaturesOA = _FeatStruc(specs)
+
+
+class TestNaturalClassFeatureEnrichment:
+    def test_labels_include_closed_value_signs(self):
+        nc = _FeatureBasedNC([
+            _ClosedValue(long_name="high:+"),
+            _ClosedValue(long_name="back:-"),
+        ])
+
+        assert _natural_class_features(nc) == ["high:+", "back:-"]
 
 
 class TestPhonemeFeatureEnrichment:

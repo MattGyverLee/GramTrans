@@ -6016,7 +6016,7 @@ class SelectionWizard(QtWidgets.QWizard):
             ("_page_skeleton",        "Morphology Skeleton",      True,
              self._has_item_picks),
             ("_page_gram_deps",       "Grammatical Dependencies", True,
-             self._has_item_picks),
+             self._has_gram_deps),
             ("_page_entry_types",     "Lexical-Entry Types",      True,
              self._has_entry_types),
             ("_page_rules",           "Rules",                    True,
@@ -6085,13 +6085,12 @@ class SelectionWizard(QtWidgets.QWizard):
         return _count_says_content(self._source_counts.texts)
 
     def _has_item_picks(self) -> bool:
-        """Rows 7-8: "the operator picked at least one affix or stem".
+        """Row 7: "the operator picked at least one affix or stem".
 
-        The declared proxy for Morphology Skeleton and Grammatical Dependencies
-        (data-model s1, rows 7-8). Deliberately NOT "the skeleton/dependency
-        inventory would come back empty": answering that means building the
-        inventory, which is the multi-second walk those two pages already show a
-        progress indicator for.
+        The declared proxy for Morphology Skeleton. Deliberately NOT "the
+        skeleton inventory would come back empty": answering that means
+        building the inventory, which is the multi-second walk the page already
+        shows a progress indicator for.
 
         Before either picker has been populated the answer is unknown, not
         "no" -- an unbound run has picked nothing simply because it has not been
@@ -6113,6 +6112,46 @@ class SelectionWizard(QtWidgets.QWizard):
         except Exception:  # noqa: BLE001 -- a broken tree read is "unknown"
             return True
         return False
+
+    def _has_gram_deps(self) -> bool:
+        """Return whether the selected items have grammatical dependencies.
+
+        Dependency enumeration is cached per source and picker selection so
+        Qt can ask this predicate repeatedly without rebuilding the inventory.
+        An unavailable or failed enumeration is treated as unknown and keeps
+        the page visible.
+        """
+        items = getattr(self, "_page_items", None)
+        stems = getattr(self, "_page_stems", None)
+        try:
+            affix_picks = items.collect_selection().affix_picks if items else frozenset()
+            stem_picks = stems.stem_picks() if stems else frozenset()
+            populated = (getattr(items, "_inventory", None) is not None
+                         or getattr(stems, "_stem_inventory", None) is not None)
+            if not populated:
+                return True
+            source = self._page_projects.context().source_handle
+            if source is None:
+                return True
+        except Exception:  # noqa: BLE001 -- a broken read is "unknown"
+            return True
+
+        cache_key = (id(source), frozenset(affix_picks), frozenset(stem_picks))
+        cached = getattr(self, "_gram_deps_content_cache", None)
+        if cached is not None and cached[0] == cache_key:
+            return cached[1]
+        if not affix_picks and not stem_picks:
+            result = False
+        else:
+            try:
+                deps = build_deps_inventory(
+                    source, frozenset(affix_picks), stem_picks=frozenset(stem_picks)
+                )
+                result = bool(deps.infl_features or deps.infl_classes or deps.stem_names)
+            except Exception:  # noqa: BLE001 -- unknown means show
+                return True
+        self._gram_deps_content_cache = (cache_key, result)
+        return result
 
     # -- Step numbering (T012, FR-009 / FR-009a) -----------------------------
 

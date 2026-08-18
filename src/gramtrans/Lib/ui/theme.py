@@ -593,6 +593,19 @@ def rescale_view_columns(root: QtWidgets.QWidget, ratio: float) -> None:
             header.resizeSection(i, max(1, int(round(header.sectionSize(i) * ratio))))
 
 
+def rescale_table_row_heights(root: QtWidgets.QWidget) -> None:
+    """Re-fit ``QTableWidget``/``QTableView`` row heights to their cell widgets.
+
+    ``app.setFont`` grows the font inside cell widgets (e.g. the WS-mapping
+    table's MAP/CREATE/SKIP and target-WS combo boxes) but a table never
+    revisits a row height it already computed, so at a large zoom step those
+    combos get clipped inside their old, too-short rows. ``resizeRowsToContents``
+    re-measures every row against its current cell widgets/items.
+    """
+    for table in root.findChildren(QtWidgets.QTableView):
+        table.resizeRowsToContents()
+
+
 # ---------------------------------------------------------------------------
 # ThemeManager
 # ---------------------------------------------------------------------------
@@ -792,6 +805,7 @@ class ThemeManager(QtCore.QObject):
             try:
                 rescale_item_fonts(top, point_size)
                 rescale_view_columns(top, ratio)
+                rescale_table_row_heights(top)
             except RuntimeError:
                 continue
         self._applied_point_size = point_size

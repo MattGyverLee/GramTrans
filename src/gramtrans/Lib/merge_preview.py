@@ -2026,7 +2026,7 @@ def _natural_class_members(nc: Any) -> list[str]:
 def _natural_class_features(nc: Any) -> list[str]:
     """Feature-spec labels for a feature-based natural class (IPhNCFeatures).
 
-    Returns ``["feature=value", …]`` (or bare feature names when the value is
+    Returns ``["feature:value", …]`` (or bare feature names when the value is
     unreadable).  Empty for segment-based classes or on any read failure.
     """
     out: list[str] = []
@@ -2036,14 +2036,9 @@ def _natural_class_features(nc: Any) -> list[str]:
         return out
     try:
         for spec in getattr(fs, "FeatureSpecsOC", None) or []:
-            fname = _best_analysis_text(getattr(getattr(spec, "FeatureRA", None), "Name", None))
-            val = ""
-            v = getattr(spec, "ValueRA", None)
-            if v is not None:
-                val = (_best_analysis_text(getattr(v, "Abbreviation", None))
-                       or _best_analysis_text(getattr(v, "Name", None)))
-            if fname or val:
-                out.append(f"{fname}={val}" if (fname and val) else (fname or val))
+            label = _closed_value_label(spec)
+            if label:
+                out.append(label)
     except Exception as _e:
         logging.debug("_natural_class_features: read failed: %s", _e)
     return out

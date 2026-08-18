@@ -383,6 +383,33 @@ def test_a_skippable_page_with_content_survives_its_empty_neighbours(
         assert any(t.endswith(f": {short}") for t in titles), short
 
 
+def test_empty_grammatical_dependencies_are_skipped(wizard, monkeypatch):
+    """Picked affixes do not force an empty dependency page to appear."""
+    class _Selection:
+        affix_picks = frozenset({"affix-guid"})
+
+    class _Deps:
+        infl_features = []
+        infl_classes = []
+        stem_names = []
+
+    items = wizard.page_items()
+    stems = wizard.page_stems()
+    monkeypatch.setattr(items, "collect_selection", lambda: _Selection())
+    monkeypatch.setattr(items, "_inventory", object(), raising=False)
+    monkeypatch.setattr(stems, "stem_picks", lambda: frozenset())
+    monkeypatch.setattr(stems, "_stem_inventory", object(), raising=False)
+    monkeypatch.setattr(wizard.page_project_ws(), "context",
+                        lambda: type("_Context", (), {
+                            "source_handle": object(),
+                        })())
+    monkeypatch.setattr(sw, "build_deps_inventory",
+                        lambda *args, **kwargs: _Deps())
+
+    assert wizard._has_gram_deps() is False
+    assert wizard._has_gram_deps() is False
+
+
 def test_the_pickers_are_shown_even_when_the_source_has_none(
         wizard, monkeypatch):
     """FR-009d: `skippable is False` outranks any emptiness answer.
