@@ -24,6 +24,9 @@ specs/035-fullsweep-fidelity/tasks.md) added on top of it:
   * ``identity``-- FR-183..FR-187: tool-owned identity, evaluation state vs
                    agent identity, the natural-key basis and its roster, and the
                    IDENTITY-SUBSTITUTION remap record (T028)
+  * ``census``  -- Group E plane 2: the generic per-object FIELD census, the
+                   EXPECTED_DIVERGENT roster, and omitted-set growth as reduced
+                   coverage (FR-051/FR-052/FR-066 -- T037)
 
 ``debug/run_fullcopy_sweep.py`` is now a thin CLI entry point over this
 package. The field-level comparator's REAL logic (Groups E/H/P, still in
@@ -63,9 +66,10 @@ from .preflight import *  # noqa: F401,F403,E402 -- Group I: capability prefligh
 from .identity import *  # noqa: F401,F403,E402 -- identity rules FR-183..FR-187 (T028)
 from .allowlist import *  # noqa: F401,F403,E402 -- loss-reason allowlist, FR-115..FR-117 (T032)
 from .compare import *  # noqa: F401,F403,E402 -- object-level accounting plane, FR-097 (T031)
+from .census import *  # noqa: F401,F403,E402 -- field-level census plane, FR-051/FR-052/FR-066 (T037)
 
 from . import (corpus, safety, pool, moves, artifact, batch, errors, verdict,  # noqa: F401,E402
-               guards, baseline, preflight, identity, allowlist, compare)
+               guards, baseline, preflight, identity, allowlist, compare, census)
 
 # NOTE for tests and callers: ``import *`` above BINDS A COPY of each module
 # global onto this package namespace. Patching ``fullsweep.NAME`` therefore
