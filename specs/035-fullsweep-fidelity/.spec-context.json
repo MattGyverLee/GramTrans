@@ -3,7 +3,90 @@
   "specName": "035-fullsweep-fidelity",
   "branch": "035-fullsweep-fidelity",
   "selectedAt": "2026-08-17T20:09:24.318Z",
-  "currentStep": "specify",
-  "status": "draft",
-  "history": []
+  "currentStep": "plan",
+  "status": "planned",
+  "history": [
+    {
+      "step": "specify",
+      "substep": null,
+      "kind": "complete",
+      "by": "manual-repair",
+      "at": "2026-08-17T22:01:21.000Z"
+    },
+    {
+      "step": "plan",
+      "substep": "research",
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-18T05:09:53.223Z"
+    },
+    {
+      "step": "plan",
+      "substep": "design",
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-18T05:15:07.996Z"
+    },
+    {
+      "step": "plan",
+      "substep": null,
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-18T05:15:08.336Z"
+    },
+    {
+      "step": "plan",
+      "substep": null,
+      "kind": "start",
+      "by": "ai",
+      "at": "2026-08-18T05:19:37.953Z"
+    }
+  ],
+  "decisions": [
+    "Spec ratified at FR-001..FR-189 / SC-001..SC-017 (contiguous, verified programmatically) over 5 LEX crew review cycles.",
+    "FR-189: structural depth + per-parent degree guard.",
+    "FR-185: wordform on roster; writing systems excluded.",
+    "FR-186: inbound cross-references closed.",
+    "Corpus selection ranges over three orthogonal axes (class presence, writing-system breadth, structural depth); Yi Sichuan must be retained -- only project of 84 with nested reversals and widest WS spread, which presence-only greedy set-cover discards.",
+    "Fullsweep driver skeleton exists (Groups A/B/C/D/K/L), comparator pluggable.",
+    "Coverage limit: appendix, stratum, and one rule subclass exist in no project on this machine -- must report NOT-EVALUATED, never clean.",
+    "Open caveat: FLExToolsMCP was unavailable to lex-domain in 3 of 5 cycles; identity rulings rest on documented LCM semantics with live-check points flagged in reviews/cycle5-domain-identity.md.",
+    {
+      "decision": "Grow debug/run_fullcopy_sweep.py into a tracked package debug/fullsweep/, keeping the file as a thin CLI entry point",
+      "why": "FR-149/S-64 make trackedness a correctness property; debug/ is already tracked, already on the sys.path bootstrap, and already hosts the two modules the skeleton imports, so the move costs no import rewiring and leaves the shipped Lib/ surface untouched",
+      "rejected": "src/gramtrans/Lib/fullsweep/ (would enlarge the shipped FlexTools artifact and blur Principle II) and a new top-level tools/ (new bootstrap, no benefit)"
+    },
+    {
+      "decision": "Drive the generic field census off flexicon GetSyncableProperties, publishing the per-class omitted-property set on every artifact",
+      "why": "It is the surface ApplySyncableProperties writes back, so the census measures exactly what the transfer moves; cost is settled at ~2500 field reads in ~0.1s; FR-066 already presumes an introspective surface with a publishable omitted set",
+      "rejected": "LCM metadata reflection via IFwMetaDataCache (reaches fields the engine cannot write, so every one would report as permanent loss, and it reads LibLCM directly which Principle II forbids) and a hand-maintained per-class field list (the banned hand-picked set)"
+    },
+    {
+      "decision": "Publish a severity ordering for the 10 verdicts that is independent of the exit-code integer, ranking untrustworthy-measurement verdicts above trustworthy-bad-result ones",
+      "why": "FR-113 aggregates the corpus status as the single most severe verdict; sorting by exit code would rank UNEXPLAINED_LOSS (1) above HARNESS_ERROR (5) and send an operator chasing a loss figure a broken instrument produced",
+      "rejected": "Reusing the exit code as the severity key, and a single non-zero exit for every failure (FR-111/FR-112 forbid it; it is the DROPS_REPORTED collapse the feature exists to retire)"
+    },
+    {
+      "decision": "Corpus selection retains each axis MEASURED maximum carrier rather than naming projects; the three axes are added to prescan_type_coverage.py output",
+      "why": "FR-192 forbids asserting axis values from project names, sizes, layout, or prior belief, so a rule pinning Yi Sichuan by name would violate the requirement it is meant to satisfy; the measured-maximum rule retains Yi Sichuan today and its successor tomorrow",
+      "rejected": "A new standalone survey tool (would duplicate the read-only opening discipline that took a cycle to get right) and deriving depth from .fwdata XML without opening the project"
+    },
+    {
+      "decision": "Split artifact storage: rosters/allowlist/fingerprint/ledger/negative-controls tracked under specs/035-fullsweep-fidelity/; per-run result artifacts and logs untracked under scratchpad/035_sweep/",
+      "why": "FR-149 names exactly what must be version-controlled and does not include every per-run result; committing 82 result JSONs per batch would make the spec folder unreviewable while the ledger already carries each project durable standing and revision pair",
+      "rejected": "Tracking everything, and tracking nothing (reintroduces S-64 for the rosters and makes the allowlist unreviewable)"
+    },
+    {
+      "decision": "Delete reopen_and_count/_COUNT_ACCESSORS/total_count from tests/integration/harness/full_run.py and make build_full_selection exclude set an explicit required argument",
+      "why": "Those three symbols carry five silence rows at once (S-50 dead accessor, S-51 laundered failure, S-52 three accessors for ~28 categories, S-53, S-59 meaningless heterogeneous sum); repairing them would leave a second counting mechanism beside the class inventory, and two counting mechanisms is how the disagreements got hidden",
+      "rejected": "Fixing the accessors in place, and calling preview/transfer directly from the sweep instead of through the harness"
+    }
+  ],
+  "approach": "Grow the tracked skeleton debug/run_fullcopy_sweep.py (commit 8c72bdc) into a package debug/fullsweep/, adding the field comparator, the 15-guard registry, the 10-verdict model, the loss allowlist, the capability preflight, the coverage floor, negative controls, identity substitution, and the three-axis corpus survey. The sweep drives the shipped engine through the existing Lib/preview.py + Lib/transfer.py split via tests/integration/harness/full_run.py, and reads fields generically through flexicon's native GetSyncableProperties surface. Six phases: taxonomy spine, measurement core, gates, survey/selection, negative controls, then the batched live corpus run.",
+  "step_summaries": {
+    "plan": {
+      "summary": "Plan + research + data-model + 7 contracts for the fullsweep: 6 phases growing the tracked 8c72bdc skeleton into debug/fullsweep/, all 65 anti-silence rows satisfied with zero waivers, Constitution v8.0.0 check 5/5 PASS.",
+      "key_finding": "FLExToolsMCP is reachable again (server 2.9.1, flexicon 4.3.1 exact-match index, LibLCM 11.0.0), so the cycle5 identity rulings that rested on documented LCM semantics become a schedulable live-verification task rather than a standing caveat -- and the constitution in this tree is v8.0.0, not the v5.1.0 the brief cited."
+    }
+  }
 }
