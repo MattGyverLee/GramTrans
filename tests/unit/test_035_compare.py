@@ -6,19 +6,20 @@ contracts/expected-divergent.json.
 NO FLEx project and NO LCM. ``census_fields`` takes an injected ``field_source``
 exactly so this plane is testable offline; every fixture below is a plain dict.
 
-SCOPE, stated honestly. tasks.md T036 lists the whole of FR-051..FR-092, but
-Phase 5 gates its waves: Wave 1 (T037 census surface + T038 roster) is what
-exists at the time this file lands. So this file covers **FR-051..FR-068** --
-the census surface, the EXPECTED_DIVERGENT roster's effective composition,
-tag-stripping, and the coverage-growth rule.
+SCOPE. Wave 1 (T037 census surface + T038 roster) covers FR-051..FR-068; wave 2
+(T039-T043) covers FR-069..FR-092 plus FR-189/SC-017. Both are here:
 
-The Wave-2 rules -- writing-system mapping (FR-069..FR-072), the DISTORTED
-classes (FR-073..FR-078), order semantics (FR-079..FR-084), the five link
-verdicts (FR-085..FR-090), and structural depth (FR-189) -- are asserted in the
-``TestWave2NotYetImplemented`` guard at the bottom, which fails the moment those
-surfaces appear without their tests. That is deliberate: a test file that
-silently covered less than its task claims would be the same silent-absorption
-failure FR-052 exists to prevent.
+  * FR-051..FR-068 -- the census surface, the EXPECTED_DIVERGENT roster's
+    effective composition, tag-stripping, and the coverage-growth rule.
+  * FR-069..FR-072 -- writing-system mapped legitimacy (T039).
+  * FR-067, FR-073..FR-078 -- the distortion classes (T040).
+  * FR-079..FR-084 -- order semantics (T041).
+  * FR-085..FR-090 -- the five link verdicts (T042).
+  * FR-189 / SC-017 -- structural depth and per-parent degree (T043).
+
+FR-091/FR-092 are the object plane's composition rule and are asserted in
+test_035_guards.py against ``reconcile_objects``, not here; ``TestPlaneSeparation``
+below pins the FR-093 boundary between the two planes.
 
 Per FR-176 the contract facts below are transcribed as INDEPENDENT literals from
 spec.md and the measured LCM enumeration, so the module is never checked against
@@ -404,30 +405,583 @@ class TestOmittedGrowth:
 
 
 # ===========================================================================
-# Wave 2: not yet implemented, and this file says so out loud
+# WAVE 2 -- the five comparison rules (T039-T043)
 # ===========================================================================
 
-class TestWave2NotYetImplemented:
-    """tasks.md T036 names FR-051..FR-092. Wave 1 delivered FR-051..FR-068.
+from debug.fullsweep import compare  # noqa: E402
+from debug.fullsweep import identity as identity_mod  # noqa: E402
 
-    These assertions fail the moment a Wave-2 surface lands in ``compare.py``
-    without its tests arriving in this file, so the gap cannot be forgotten. The
-    task is not complete while any of them still pass.
-    """
+#: FR-161's residual list names "writing system absent in target" as a real
+#: measured class, so these tests use tags seen live in batch 1.
+LIVE_TAGS = ("eo", "fr", "mgz", "mgz-fonipa-x-etic", "swh")
 
-    WAVE_2_SURFACES = (
-        ("classify_writing_system", "FR-069..FR-072", "T039"),
-        ("classify_distortion", "FR-073..FR-078", "T040"),
-        ("compare_order", "FR-079..FR-084", "T041"),
-        ("classify_link", "FR-085..FR-090", "T042"),
-        ("compare_structural_depth", "FR-189/SC-017", "T043"),
-    )
 
-    @pytest.mark.parametrize("name,frs,task", WAVE_2_SURFACES)
-    def test_wave2_surface_absent_or_tested(self, name, frs, task):
-        from debug.fullsweep import compare
-        assert not hasattr(compare, name), (
-            "compare.%s (%s) has landed via %s, so its classification tests are "
-            "now REQUIRED in this file and this placeholder must be replaced"
-            % (name, frs, task)
-        )
+class _FakeRoster:
+    """Stands in for identity.NaturalKeyRoster: only ``admits`` is consulted."""
+
+    def __init__(self, classes):
+        self._classes = frozenset(classes)
+
+    def admits(self, class_name):
+        return class_name in self._classes
+
+
+class _FakeRemap:
+    def __init__(self, table):
+        self._t = dict(table)
+
+    def target_for(self, class_name, source_guid):
+        return self._t.get((class_name, source_guid))
+
+
+# ---------------------------------------------------------------------------
+# T039 -- FR-069..FR-072
+# ---------------------------------------------------------------------------
+
+class TestWritingSystemMapping:
+
+    def test_mapping_enumerates_every_source_writing_system(self):
+        """FR-071: the narrower default this refuses is the
+        single-default-vernacular map, which would make every other writing
+        system's content invisible rather than compared."""
+        m = compare.build_writing_system_mapping(LIVE_TAGS, ("eo", "fr"))
+        assert set(m.mapped) == {"eo", "fr"}
+        assert set(m.to_create) == {"mgz", "mgz-fonipa-x-etic", "swh"}
+        # Every source tag is accounted for one way or the other.
+        assert set(m.mapped) | set(m.to_create) == set(LIVE_TAGS)
+
+    def test_empty_source_enumeration_is_a_measurement_defect(self):
+        with pytest.raises(compare.FieldPlaneContractError, match="FR-071"):
+            compare.build_writing_system_mapping([], ("eo",))
+
+    def test_mapped_and_resolving_is_mapped(self):
+        m = compare.build_writing_system_mapping(("eo",), ("eo",))
+        assert compare.classify_writing_system(
+            "eo", mapping=m, target_resolves=True, has_content=True
+        ) == compare.WS_MAPPED
+
+    def test_declared_but_not_resolving_is_LOST_not_expected_divergent(self):
+        """FR-072: the mapping declared an intent to carry this content across
+        and the intent was not honored. Classifying it EXPECTED_DIVERGENT would
+        excuse the failure it is meant to surface."""
+        m = compare.build_writing_system_mapping(("eo",), ("eo",))
+        assert compare.classify_writing_system(
+            "eo", mapping=m, target_resolves=False, has_content=True
+        ) == compare.WS_LOST
+
+    def test_to_create_is_also_declared_so_FR072_applies(self):
+        """A writing system the run said it would CREATE is declared just as
+        much as one it mapped, so a target that still does not have it is loss."""
+        m = compare.build_writing_system_mapping(("mgz",), ("eo",))
+        assert "mgz" in m.to_create
+        assert compare.classify_writing_system(
+            "mgz", mapping=m, target_resolves=False, has_content=True
+        ) == compare.WS_LOST
+
+    def test_unmapped_with_skip_record_is_out_of_scope_never_lost(self):
+        """FR-070: MUST NEVER be classified LOST when a skip record exists."""
+        m = compare.WritingSystemMapping(mapped={}, to_create=frozenset(),
+                                         skip_records=frozenset({"fr"}))
+        v = compare.classify_writing_system(
+            "fr", mapping=m, target_resolves=False, has_content=True)
+        assert v == compare.WS_OUT_OF_SCOPE
+        assert v != compare.WS_LOST
+
+    def test_unmapped_with_content_and_no_skip_record_is_its_own_process_defect(self):
+        """FR-070: a process defect in the run's own mapping construction. It
+        MUST NOT be folded into either LOST or EXPECTED_DIVERGENT -- both would
+        blame the data for a harness bug."""
+        m = compare.WritingSystemMapping(mapped={}, to_create=frozenset(),
+                                         skip_records=frozenset())
+        v = compare.classify_writing_system(
+            "fr", mapping=m, target_resolves=False, has_content=True)
+        assert v == compare.WS_PROCESS_DEFECT
+        assert v not in (compare.WS_LOST, compare.WS_OUT_OF_SCOPE)
+
+    def test_unmapped_without_content_is_out_of_scope(self):
+        m = compare.WritingSystemMapping(mapped={}, to_create=frozenset(),
+                                         skip_records=frozenset())
+        assert compare.classify_writing_system(
+            "fr", mapping=m, target_resolves=False, has_content=False
+        ) == compare.WS_OUT_OF_SCOPE
+
+    def test_untagged_alternative_refused(self):
+        m = compare.build_writing_system_mapping(("eo",), ("eo",))
+        with pytest.raises(compare.FieldPlaneContractError):
+            compare.classify_writing_system("", mapping=m, target_resolves=True,
+                                            has_content=True)
+
+    def test_alternatives_compared_byte_identically_under_mapped_ws(self):
+        """FR-069. Also: every source alternative yields a finding, including
+        out-of-scope ones -- an alternative with no finding is indistinguishable
+        from one that was never looked at."""
+        m = compare.build_writing_system_mapping(("eo", "fr"), ("eo", "fr"))
+        rows = compare.compare_ws_alternatives(
+            {"eo": "saluto", "fr": "bonjour"},
+            {"eo": "saluto", "fr": "Bonjour"}, mapping=m)
+        assert len(rows) == 2
+        by_ws = {r["writing_system"]: r for r in rows}
+        assert by_ws["eo"]["verdict"] == compare.EQUAL
+        assert by_ws["fr"]["verdict"] == compare.DISTORTED
+        assert by_ws["fr"]["subtype"] == compare.SUB_CASING
+
+
+# ---------------------------------------------------------------------------
+# T040 -- FR-067, FR-073..FR-078
+# ---------------------------------------------------------------------------
+
+class TestDistortionClasses:
+
+    def test_identical_text_is_equal(self):
+        r = compare.classify_distortion("abc", "abc")
+        assert r.verdict == compare.EQUAL and r.subtype == ""
+
+    @pytest.mark.parametrize("src,tgt", [
+        (" abc", "abc"), ("abc ", "abc"), ("abc", "  abc  "), ("\tabc", "abc"),
+    ])
+    def test_leading_or_trailing_whitespace_is_distorted(self, src, tgt):
+        """FR-073: MUST NEVER be treated as benign -- such whitespace can be
+        linguistically significant."""
+        r = compare.classify_distortion(src, tgt)
+        assert r.verdict == compare.DISTORTED
+        assert r.subtype == compare.SUB_WHITESPACE
+
+    @pytest.mark.parametrize("src,tgt", [
+        ("abc", "Abc"), ("ABC", "abc"), ("Ekpe", "ekpe"),
+    ])
+    def test_casing_is_always_distorted_with_no_exception(self, src, tgt):
+        """FR-074: no exception, because casing distinguishes lexical identity
+        for the orthographies this tool's users work in."""
+        r = compare.classify_distortion(src, tgt)
+        assert r.verdict == compare.DISTORTED
+        assert r.subtype == compare.SUB_CASING
+
+    def test_normalization_difference_is_its_own_subtype_not_generic_content(self):
+        """FR-076: tagged as its own distinct subtype so a reviewer can triage a
+        large, probably-benign cluster separately from genuine content bugs --
+        and NOT silently treated as equal."""
+        nfc = "é"          # e-acute, composed
+        nfd = "é"          # e + combining acute, decomposed
+        assert nfc != nfd
+        r = compare.classify_distortion(nfc, nfd)
+        assert r.verdict == compare.DISTORTED
+        assert r.subtype == compare.SUB_NORMALIZATION
+        assert r.subtype != compare.SUB_CONTENT
+
+    def test_normalization_check_does_not_mask_whitespace(self):
+        r = compare.classify_distortion("é ", "é")
+        assert r.subtype == compare.SUB_WHITESPACE
+
+    def test_unrelated_content_is_generic_mismatch(self):
+        r = compare.classify_distortion("cat", "dog")
+        assert r.subtype == compare.SUB_CONTENT
+
+    def test_run_structure_loss_with_matching_plain_text_is_distorted(self):
+        """FR-075: the comparator MUST compare the field's internal run
+        structure, not merely its plain text, or it will not detect this class
+        of loss at all."""
+        src = [("hello ", "en", "bold"), ("world", "eo", None)]
+        tgt = [("hello world", "en", None)]
+        r = compare.classify_distortion(src, tgt, kind=compare.KIND_RUNS)
+        assert r.verdict == compare.DISTORTED
+        assert r.subtype == compare.SUB_RUN_STRUCTURE
+
+    def test_per_run_writing_system_loss_is_distorted(self):
+        src = [("a", "eo", None)]
+        tgt = [("a", "en", None)]
+        r = compare.classify_distortion(src, tgt, kind=compare.KIND_RUNS)
+        assert r.subtype == compare.SUB_RUN_STRUCTURE
+
+    def test_identical_runs_are_equal(self):
+        runs = [("a", "eo", "bold"), ("b", "fr", None)]
+        r = compare.classify_distortion(runs, list(runs), kind=compare.KIND_RUNS)
+        assert r.verdict == compare.EQUAL
+
+    def test_run_text_difference_still_reports_the_text_subtype(self):
+        src = [("Abc", "en", None)]
+        tgt = [("abc", "en", None)]
+        r = compare.classify_distortion(src, tgt, kind=compare.KIND_RUNS)
+        assert r.subtype == compare.SUB_CASING
+
+    def test_date_precision_collapse_is_distorted(self):
+        """FR-077: precision is itself asserted data, not formatting."""
+        r = compare.classify_distortion((1998, "exact"), (1998, "approximate"),
+                                        kind=compare.KIND_DATE)
+        assert r.verdict == compare.DISTORTED
+        assert r.subtype == compare.SUB_DATE_PRECISION
+
+    def test_same_date_and_precision_is_equal(self):
+        r = compare.classify_distortion((1998, "exact"), (1998, "exact"),
+                                        kind=compare.KIND_DATE)
+        assert r.verdict == compare.EQUAL
+
+    def test_enum_equal_decoded_value_with_different_raw_int_is_equal(self):
+        """FR-078: DISTORTED only when the DECODED semantic value differs, never
+        merely because the raw stored integer differs."""
+        decode = {0: "leftToRight", 1: "rightToLeft", 7: "leftToRight"}.get
+        r = compare.classify_distortion(0, 7, kind=compare.KIND_ENUM, decode=decode)
+        assert r.verdict == compare.EQUAL
+
+    def test_enum_different_decoded_value_is_distorted(self):
+        decode = {0: "leftToRight", 1: "rightToLeft"}.get
+        r = compare.classify_distortion(0, 1, kind=compare.KIND_ENUM, decode=decode)
+        assert r.verdict == compare.DISTORTED
+        assert r.subtype == compare.SUB_ENUM_DECODED
+
+    def test_enum_without_decoder_refuses(self):
+        """Comparing raw ordinals is exactly what FR-078 forbids."""
+        with pytest.raises(compare.FieldPlaneContractError, match="FR-078"):
+            compare.classify_distortion(0, 1, kind=compare.KIND_ENUM)
+
+    def test_undecodable_ordinal_raises_rather_than_comparing_raw(self):
+        with pytest.raises(compare.FieldPlaneContractError, match="FR-078"):
+            compare.classify_distortion(0, 99, kind=compare.KIND_ENUM,
+                                        decode={0: "a"}.get)
+
+    def test_phonological_rule_direction_is_compared_by_decoded_value(self):
+        """FR-067: the field is excluded from the merge-preview UI's diff pane
+        and MUST STILL be fidelity-checked, decoded on both sides defensively
+        against cross-version ordinal drift."""
+        decode = {0: "leftToRight", 1: "rightToLeft", 2: "simultaneous"}.get
+        assert compare.classify_distortion(
+            0, 1, kind=compare.KIND_ENUM, decode=decode).subtype == (
+            compare.SUB_ENUM_DECODED)
+
+    def test_unresolvable_kind_raises_rather_than_bucketing_to_empty(self):
+        """S-09: a category that quietly becomes '' is indistinguishable
+        downstream from a clean result."""
+        with pytest.raises(compare.FieldPlaneContractError, match="S-09"):
+            compare.classify_distortion("a", "b", kind="whatever")
+
+    def test_text_kind_refuses_non_text_rather_than_coercing(self):
+        with pytest.raises(compare.FieldPlaneContractError, match="S-09"):
+            compare.classify_distortion(1, 2, kind=compare.KIND_TEXT)
+
+    def test_every_subtype_is_distinct(self):
+        assert len(set(compare.DISTORTION_SUBTYPES)) == len(
+            compare.DISTORTION_SUBTYPES)
+
+
+# ---------------------------------------------------------------------------
+# T041 -- FR-079..FR-084
+# ---------------------------------------------------------------------------
+
+class TestOrderSemantics:
+
+    @pytest.mark.parametrize("cls,fld", compare.ORDER_CRITICAL_OWNED
+                             + compare.ORDER_CRITICAL_REFERENCE)
+    def test_named_order_critical_fields_are_ordered(self, cls, fld):
+        """FR-082/FR-083: these MUST fail the comparison if their order is
+        scrambled."""
+        assert compare.order_significance(cls, fld) == compare.ORDER_ASSERTED
+
+    def test_scrambled_order_critical_sequence_fails_despite_equal_membership(self):
+        r = compare.compare_order("LexEntry", "SensesOS", ["a", "b", "c"],
+                                  ["c", "b", "a"])
+        assert r.passed is False
+        assert "scrambled" in r.reason
+
+    def test_ordered_sequence_in_order_passes(self):
+        r = compare.compare_order("LexEntry", "SensesOS", ["a", "b"], ["a", "b"])
+        assert r.passed is True
+
+    def test_competing_analyses_are_unordered_by_design(self):
+        """FR-081: re-ordering a wordform's competing analyses across a transfer
+        MUST be treated as expected and benign, not as a defect."""
+        assert compare.order_significance("WfiWordform", "AnalysesOC") == (
+            compare.ORDER_NOT_ASSERTED)
+        r = compare.compare_order("WfiWordform", "AnalysesOC", ["a", "b"],
+                                  ["b", "a"])
+        assert r.passed is True
+
+    def test_unordered_collection_still_fails_on_missing_membership(self):
+        """FR-080 exempts POSITION, not presence."""
+        r = compare.compare_order("WfiWordform", "AnalysesOC", ["a", "b"], ["b"])
+        assert r.passed is False
+        assert r.missing == ("a",)
+
+    def test_cross_entry_iteration_order_is_not_asserted_at_all(self):
+        """FR-084: the host exposes entries through a surface with no
+        author-assigned cross-entry order, so neither order nor membership is
+        asserted here."""
+        assert compare.order_significance("LexDb", "Entries") == (
+            compare.ORDER_EXCLUDED)
+        r = compare.compare_order("LexDb", "Entries", ["a", "b"], ["b"])
+        assert r.passed is True
+
+    def test_significance_derives_from_the_accessor_suffix_not_per_class(self):
+        """FR-079: derived from the tool's own existing ordered/unordered
+        classification -- the OS/RS vs OC/RC accessor convention -- and NOT
+        re-derived per class. A class never named in any roster still resolves."""
+        assert compare.order_significance("NeverHeardOf", "ThingsOS") == (
+            compare.ORDER_ASSERTED)
+        assert compare.order_significance("NeverHeardOf", "ThingsRS") == (
+            compare.ORDER_ASSERTED)
+        assert compare.order_significance("NeverHeardOf", "ThingsOC") == (
+            compare.ORDER_NOT_ASSERTED)
+        assert compare.order_significance("NeverHeardOf", "ThingsRC") == (
+            compare.ORDER_NOT_ASSERTED)
+
+    def test_unclassifiable_field_refuses_rather_than_guessing_unordered(self):
+        """Guessing 'unordered' would silently stop asserting order, which is the
+        failure mode FR-079 exists to prevent."""
+        with pytest.raises(compare.FieldPlaneContractError, match="FR-079"):
+            compare.order_significance("LexEntry", "SomeScalar")
+
+    def test_extra_member_in_target_is_reported(self):
+        r = compare.compare_order("LexEntry", "SensesOS", ["a"], ["a", "b"])
+        assert r.passed is False and r.extra == ("b",)
+
+
+# ---------------------------------------------------------------------------
+# T042 -- FR-085..FR-090
+# ---------------------------------------------------------------------------
+
+class TestLinkClassification:
+
+    def test_exactly_five_verdicts(self):
+        assert len(compare.LINK_VERDICTS) == 5
+        assert len(set(compare.LINK_VERDICTS)) == 5
+
+    def test_equal_identifiers_resolve(self):
+        r = compare.classify_link(class_name="LexSense", field_name="MSA",
+                                  source_referent="g1", target_referent="g1")
+        assert r.verdict == compare.LINK_RESOLVED
+
+    def test_repointed_link_to_a_seed_entry_still_resolves(self):
+        """FR-089: a catalog or seed entry that a freshly created target ships
+        with, at a fixed well-known identifier equal to the source referent's,
+        is RESOLVED -- not a special verdict. FR-085 forbids assuming the
+        referent must be something THIS run created."""
+        r = compare.classify_link(class_name="MoMorphType",
+                                  field_name="MorphTypeRA",
+                                  source_referent="seed-guid",
+                                  target_referent="seed-guid")
+        assert r.verdict == compare.LINK_RESOLVED
+
+    def test_mismatched_identifier_is_dangling_and_is_a_hard_failure(self):
+        r = compare.classify_link(class_name="LexSense", field_name="MSA",
+                                  source_referent="g1", target_referent="g2")
+        assert r.verdict == compare.LINK_DANGLING
+
+    def test_null_target_with_source_referent_and_no_record_is_silently_unset(self):
+        """FR-087: higher severity than an accounted-for gap."""
+        r = compare.classify_link(class_name="LexSense", field_name="MSA",
+                                  source_referent="g1", target_referent=None,
+                                  has_accounting_record=False)
+        assert r.verdict == compare.LINK_SILENTLY_UNSET
+
+    def test_null_target_with_a_matching_record_is_the_milder_verdict(self):
+        """FR-088: a distinct, MILDER verdict, never conflated with
+        SILENTLY_UNSET or with a clean pass."""
+        r = compare.classify_link(class_name="LexSense", field_name="MSA",
+                                  source_referent="g1", target_referent=None,
+                                  has_accounting_record=True)
+        assert r.verdict == compare.LINK_LOST_BUT_ACCOUNTED
+        assert r.verdict != compare.LINK_SILENTLY_UNSET
+        assert r.verdict != compare.LINK_RESOLVED
+
+    def test_null_on_both_sides_is_vacuously_resolved(self):
+        r = compare.classify_link(class_name="LexSense", field_name="MSA",
+                                  source_referent=None, target_referent=None)
+        assert r.verdict == compare.LINK_RESOLVED
+
+    def test_roster_class_resolves_through_the_remap_record(self):
+        """FR-085 as amended: for a class on the natural-key identity roster the
+        determination proceeds THROUGH the recorded identity-remap record and
+        MUST NEVER be made by direct identifier comparison."""
+        r = compare.classify_link(
+            class_name="WfiWordform", field_name="AnalysesOC",
+            source_referent="src-guid", target_referent="tgt-guid",
+            natural_key_roster=_FakeRoster({"WfiWordform"}),
+            remap_record=_FakeRemap({("WfiWordform", "src-guid"): "tgt-guid"}))
+        assert r.verdict == compare.LINK_RESOLVED
+        assert "identity-remap record" in r.basis
+
+    def test_roster_class_identifier_mismatch_alone_is_not_dangling(self):
+        """FR-086 as amended: DANGLING for such a class is reserved for a
+        resolution matching NEITHER RESOLVED, RESOLVED-BY-EQUIVALENCE, nor the
+        recorded remap record."""
+        r = compare.classify_link(
+            class_name="WfiWordform", field_name="AnalysesOC",
+            source_referent="src", target_referent="mapped-to",
+            natural_key_roster=_FakeRoster({"WfiWordform"}),
+            remap_record=_FakeRemap({("WfiWordform", "src"): "mapped-to"}))
+        assert r.verdict != compare.LINK_DANGLING
+
+    def test_roster_class_matching_neither_is_dangling(self):
+        r = compare.classify_link(
+            class_name="WfiWordform", field_name="AnalysesOC",
+            source_referent="src", target_referent="someone-else",
+            natural_key_roster=_FakeRoster({"WfiWordform"}),
+            remap_record=_FakeRemap({("WfiWordform", "src"): "expected"}))
+        assert r.verdict == compare.LINK_DANGLING
+
+    def test_roster_class_identity_still_authoritative(self):
+        """FR-186: identity is authoritative and the natural key is the fallback,
+        never the reverse -- so an identifier match still resolves."""
+        r = compare.classify_link(
+            class_name="WfiWordform", field_name="AnalysesOC",
+            source_referent="same", target_referent="same",
+            natural_key_roster=_FakeRoster({"WfiWordform"}),
+            remap_record=_FakeRemap({}))
+        assert r.verdict == compare.LINK_RESOLVED
+
+    def test_roster_class_without_a_remap_record_refuses_to_fall_back(self):
+        """Falling back to identifier comparison for a roster class is
+        explicitly forbidden, so the absence of the record must raise rather
+        than silently take the ordinary path."""
+        with pytest.raises(compare.FieldPlaneContractError, match="FR-085"):
+            compare.classify_link(
+                class_name="WfiWordform", field_name="AnalysesOC",
+                source_referent="a", target_referent="b",
+                natural_key_roster=_FakeRoster({"WfiWordform"}),
+                remap_record=None)
+
+    def test_resolved_by_equivalence_only_for_a_class_with_no_stable_id(self):
+        """FR-090: admissible ONLY for a class carrying no stable per-instance
+        identifier, using the same owner-and-name equivalence the engine's own
+        de-duplication already uses."""
+        cls = sorted(compare.NO_STABLE_IDENTIFIER_CLASSES)[0]
+        r = compare.classify_link(class_name=cls, field_name="Owner",
+                                  source_referent="a", target_referent="b",
+                                  equivalence_match=True)
+        assert r.verdict == compare.LINK_RESOLVED_BY_EQUIVALENCE
+
+    def test_equivalence_firing_off_roster_is_a_harness_error_naming_the_class(self):
+        """FR-090: MUST NOT be used as a fallback for any class that normally
+        carries a stable identifier; if it fires, fail and NAME the class."""
+        with pytest.raises(compare.FieldPlaneContractError) as exc:
+            compare.classify_link(class_name="LexEntry", field_name="MSA",
+                                  source_referent="a", target_referent="b",
+                                  equivalence_match=True)
+        assert "LexEntry" in str(exc.value)
+        assert "FR-090" in str(exc.value)
+
+    def test_equivalence_basis_is_not_the_natural_key_basis(self):
+        """FR-090's last sentence: this basis is distinct from FR-185's and MUST
+        NOT be conflated with or used to widen it. A class on the natural-key
+        roster must NOT thereby become eligible for RESOLVED-BY-EQUIVALENCE."""
+        with pytest.raises(compare.FieldPlaneContractError, match="FR-090"):
+            compare.classify_link(
+                class_name="WfiWordform", field_name="X",
+                source_referent="a", target_referent="b",
+                natural_key_roster=_FakeRoster(set()),
+                equivalence_match=True)
+
+    def test_the_real_roster_admits_only_its_enumerated_classes(self):
+        """Wire the shipped roster in, not just the fake, so the admission
+        surface this rule depends on is exercised as delivered."""
+        roster = identity_mod.NaturalKeyRoster.load()
+        assert roster.classes
+        assert not roster.admits("LexEntry")
+
+
+# ---------------------------------------------------------------------------
+# T043 -- FR-189 / SC-017
+# ---------------------------------------------------------------------------
+
+class TestStructuralDepth:
+
+    def test_depth_is_measured_recursively_not_to_a_fixed_depth(self):
+        """FR-189: enumerate children recursively at every node until no further
+        children exist there. A five-deep chain must measure 5, not a capped 2
+        or 3."""
+        kids = {"a": ["b"], "b": ["c"], "c": ["d"], "d": ["e"]}
+        assert compare.measure_max_depth(kids, ["a"]) == 5
+
+    def test_flat_roots_are_depth_one_and_no_roots_is_zero(self):
+        assert compare.measure_max_depth({}, ["a", "b"]) == 1
+        assert compare.measure_max_depth({}, []) == 0
+
+    def test_deepest_branch_wins(self):
+        kids = {"a": ["b", "c"], "c": ["d"]}
+        assert compare.measure_max_depth(kids, ["a"]) == 3
+
+    def test_ownership_cycle_raises_rather_than_truncating_the_walk(self):
+        """Truncating would report a shallower depth than the data has -- the
+        exact self-hiding failure FR-189 exists to catch."""
+        with pytest.raises(compare.FieldPlaneContractError, match="FR-189"):
+            compare.measure_max_depth({"a": ["b"], "b": ["a"]}, ["a"])
+
+    def test_shallower_target_depth_is_vacuous_for_that_class(self):
+        """FR-189: a class whose recorded target-side maximum depth is lower
+        than its source-side maximum MUST be a VACUOUS result -- because every
+        object the walk did visit compared perfectly."""
+        r = compare.compare_structural_depth(
+            "LexSense",
+            source_children={"a": ["b"], "b": ["c"]}, source_roots=["a"],
+            target_children={"a": ["b"]}, target_roots=["a"])
+        assert r.verdict == "VACUOUS"
+        assert r.clean is False
+        assert r.source_max_depth == 3 and r.target_max_depth == 2
+
+    def test_per_parent_degree_mismatch_fails_even_when_children_compare_clean(self):
+        """FR-189: a per-parent child-count disagreement MUST fail the run even
+        when every child actually visited compared clean."""
+        r = compare.compare_structural_depth(
+            "LexSense",
+            source_children={"a": ["b", "x"], "b": ["c"]}, source_roots=["a"],
+            target_children={"a": ["b"], "b": ["c"]}, target_roots=["a"])
+        assert r.verdict == compare.DISTORTED
+        assert r.clean is False
+        assert r.degree_mismatches == (("a", 2, 1),)
+
+    def test_matching_depth_and_degree_is_clean(self):
+        tree = {"a": ["b"], "b": ["c"]}
+        r = compare.compare_structural_depth(
+            "LexSense", source_children=tree, source_roots=["a"],
+            target_children=dict(tree), target_roots=["a"])
+        assert r.verdict == compare.EQUAL and r.clean is True
+
+    def test_class_with_no_nesting_in_the_corpus_is_not_evaluated_never_clean(self):
+        """FR-189's closing clause: where no available project exhibits
+        same-class nesting deeper than one level, that class's depth behavior
+        MUST be reported NOT-EVALUATED rather than clean."""
+        r = compare.compare_structural_depth(
+            "CmPossibility", source_children={}, source_roots=["a"],
+            target_children={}, target_roots=["a"])
+        assert r.verdict == compare.DEPTH_NOT_EVALUATED
+        assert r.evaluated is False
+        assert r.clean is False
+
+    def test_explicit_corpus_absence_flag_forces_not_evaluated(self):
+        r = compare.compare_structural_depth(
+            "LexSense", source_children={"a": ["b"], "b": ["c"]},
+            source_roots=["a"], target_children={"a": ["b"], "b": ["c"]},
+            target_roots=["a"], nesting_available_in_corpus=False)
+        assert r.verdict == compare.DEPTH_NOT_EVALUATED
+        assert r.clean is False
+
+    def test_artifact_block_records_both_sides_depth_and_degree(self):
+        """SC-017: every artifact carries a recorded per-side maximum depth AND
+        per-parent child-count comparison outcomes."""
+        r = compare.compare_structural_depth(
+            "LexSense", source_children={"a": ["b", "x"], "b": ["c"]},
+            source_roots=["a"], target_children={"a": ["b"], "b": ["c"]},
+            target_roots=["a"])
+        d = r.as_dict()
+        assert d["source_max_depth"] == 3 and d["target_max_depth"] == 3
+        assert d["degree_mismatches"] == [
+            {"parent": "a", "source_children": 2, "target_children": 1}]
+        assert d["class"] == "LexSense"
+
+    def test_same_class_nesting_roster_names_the_documented_cases(self):
+        """FR-189 names sub-senses, reversal sub-entries, and possibility
+        sub-items explicitly."""
+        for cls in ("LexSense", "ReversalIndexEntry", "CmPossibility"):
+            assert cls in compare.SAME_CLASS_NESTING_CLASSES
+
+
+# ---------------------------------------------------------------------------
+# FR-093 -- the two planes stay structurally separate
+# ---------------------------------------------------------------------------
+
+class TestPlaneSeparation:
+
+    def test_field_plane_keys_are_refused_in_an_object_plane_block(self):
+        with pytest.raises(Exception, match="FR-093"):
+            compare.assert_object_plane_only({"findings": []})
+
+    def test_a_clean_object_plane_block_passes(self):
+        compare.assert_object_plane_only({"transferred_equal_payload": []})

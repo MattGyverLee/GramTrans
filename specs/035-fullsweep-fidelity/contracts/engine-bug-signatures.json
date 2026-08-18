@@ -1,4 +1,99 @@
 {
   "schema_version": 1,
-  "signatures": []
+  "populated_by": "T030 -- specs/035-fullsweep-fidelity/tasks.md Phase 4 / US1",
+  "populated_at": "2026-08-18",
+  "governs": [
+    "FR-107 (NO-ENGINE-BUG-AS-LOSS) -- a drop reason matching any signature below is UNEXPLAINED_LOSS",
+    "FR-121 -- such a reason is NEVER allowlistable, however the allowlist entry is written"
+  ],
+  "matching": {
+    "how": "regex search, case-insensitive, against the observed drop/skip reason string",
+    "why_regex_is_correct_here_when_FR_116_forbids_it_for_the_allowlist": "FR-116 bans pattern matching for ALLOWLIST reasons because a pattern lets one entry stretch to EXCUSE two different failure modes. This roster runs in the opposite direction: it CATCHES failure modes, so breadth is a safety property, not a loophole. A signature that over-matches costs a false UNEXPLAINED_LOSS -- loud and reviewable. An allowlist pattern that over-matches costs a silent pass.",
+    "precedence": "This roster is evaluated BEFORE the allowlist. A match here terminates matching: no allowlist entry is consulted, so no entry can excuse it (FR-121)."
+  },
+  "provenance": {
+    "requirement": "rosters.md section 3 and FR-107: 'An empty or implementer-chosen set does NOT satisfy FR-107.' Every signature below is therefore tied to a reason string this codebase actually emits, or to a failure mode this feature's own specification records as historically observed. Nothing here is invented.",
+    "sources": [
+      "src/gramtrans/Lib/texts.py:837, 1259 -- reasons that interpolate type(e).__name__ directly into a user-facing reason string",
+      "src/gramtrans/Lib/categories.py:4520, 5234; Lib/owned.py:445, 699, 732, 1367; Lib/reversals.py:572, 655, 734, 855 -- reasons that interpolate a raw exception object ({exc}) into a user-facing reason",
+      "spec.md FR-161 -- the historically dominant 'paragraph create failed' class, 1,207 occurrences, caused by a parameter error",
+      "CLAUDE.md / rosters.md section 5 -- on a too-low flexicon every guid= kwarg raises TypeError, which the engine's _safe wrapper swallows into a generic create-failure drop"
+    ]
+  },
+  "signatures": [
+    {
+      "id": "EBS-001",
+      "pattern": "(?:\\bTODO\\b|\\bFIXME\\b|\\bXXX\\b|\\bHACK\\b|\\bWIP\\b|\\bissue\\s*#?\\d+|\\bticket\\s*#?\\w+|\\btask\\s*#?\\d+|\\bprobe\\s*#?\\w+|\\bGH-\\d+|\\bT\\d{3}\\b|#\\d+)",
+      "kind": "internal-identifier leak",
+      "mandatory_minimum_member": true,
+      "rationale": "FR-107 names this member explicitly and rosters.md restates it: a loss reason that references an internal task, ticket, issue, probe, or TODO identifier is a developer note leaking into a user-facing reason. The leak is the evidence -- a reason written for a developer was never a reason written for the operator whose data went missing, so the loss it reports has not actually been explained to anyone.",
+      "evidence": "spec.md FR-107, mandatory-minimum clause; rosters.md section 3, 'Mandatory minimum member'."
+    },
+    {
+      "id": "EBS-002",
+      "pattern": "\\b(?:TypeError|AttributeError|ValueError|KeyError|IndexError|NameError|UnboundLocalError|ZeroDivisionError|AssertionError|NotImplementedError|RecursionError)\\b",
+      "kind": "python programming-error type leaked into a user-facing reason",
+      "rationale": "These exception types signal a defect in the caller, not a condition in the data. A drop whose reason carries one is a programming error the harness swallowed, so counting it as ordinary loss would launder a bug into a statistic.",
+      "evidence": "src/gramtrans/Lib/texts.py:837 emits 'text create failed: {type(e).__name__}' and texts.py:1259 emits 'paragraph create failed: {type(e).__name__}' -- the exception type name is interpolated into the reason by construction, so this signature has a live emission path rather than a hypothetical one."
+    },
+    {
+      "id": "EBS-003",
+      "pattern": "(?:unexpected keyword argument|takes no keyword arguments|missing \\d+ required positional argument|takes \\d+ positional arguments? but|got multiple values for argument|no overload for method)",
+      "kind": "parameter or signature misuse against the dependency",
+      "rationale": "A call the dependency's signature does not accept. This is the exact shape of the historically dominant failure: 1,207 'paragraph create failed' drops caused by a parameter error. It is also the shape CLAUDE.md warns about for the feature-033 floor -- on a too-low flexicon every guid= kwarg raises TypeError, which the engine's _safe wrapper swallows into a generic create-failure drop, making the transfer SILENTLY regenerate identities instead of failing loudly. That silent-regeneration path is precisely what this signature exists to make loud.",
+      "evidence": "spec.md FR-161 (1,207 occurrences, parameter error); CLAUDE.md 'Why the floor matters'; rosters.md section 5 'Why these specific symbols'."
+    },
+    {
+      "id": "EBS-004",
+      "pattern": "(?:'NoneType' object has no attribute|NoneType' object is not|object reference not set to an instance|NullReferenceException)",
+      "kind": "null/None dereference",
+      "rationale": "An object the code assumed present was absent and was dereferenced anyway. The absence may well be legitimate data; dereferencing it is not. The resulting drop reports a crash, not a data condition, so it explains nothing about the missing object.",
+      "evidence": "the {exc} interpolation sites listed under provenance -- any of them will carry this text verbatim when the underlying failure is a null dereference, because the raw exception string is passed straight through."
+    },
+    {
+      "id": "EBS-005",
+      "pattern": "(?:InvalidCastException|unable to cast object of type|has no attribute 'Owner'|ICmObjectOrId)",
+      "kind": "missing polymorphic cast against the LCM type system",
+      "rationale": "LibLCM base interfaces do not expose every property of their concrete types; reading one without the cast is API misuse, and the failure is in the reader rather than the object read. Recorded here because it is a standing, reproducible hazard of this dependency rather than a one-off slip.",
+      "evidence": "encountered live during this feature's own T029 confirmation on 2026-08-18: reading .Owner on an IReversalIndexEntry was refused because Owner is absent on ICmObjectOrId and present only on ICmObject (FLExToolsMCP op-214224259-006, error_code casting_issues_detected). The same class of failure inside a transfer would surface as a create/apply drop with this text in its reason."
+    },
+    {
+      "id": "EBS-006",
+      "pattern": "(?:System\\.[A-Za-z]+Exception|SIL\\.LCModel\\.[A-Za-z.]*Exception|ArgumentNullException|ArgumentOutOfRangeException|ArgumentException)",
+      "kind": "raw .NET exception class leaked into a user-facing reason",
+      "rationale": "Same principle as EBS-002, on the managed side of the boundary. A reason naming a .NET exception class is reporting the harness's own stack, not the datum's fate.",
+      "evidence": "the {exc} interpolation sites listed under provenance pass the raw exception through, and the objects being written are LCM objects, so a managed-side throw reaches the reason string unmodified."
+    }
+  ],
+  "not_engine_bug_signatures": {
+    "why_this_section_exists": "FR-107 requires the engine-bug class to be DISTINGUISHED from a 'never implemented' coverage gap, which IS allowlistable (with the open tracking issue FR-119 requires). Recording the coverage-gap shapes here keeps a later reader from folding them into the signatures above and thereby making a legitimately allowlistable gap permanently unallowlistable.",
+    "coverage_gap_examples_observed_in_this_codebase": [
+      {
+        "reason": "segment note not reproduced: no confirmed note write path",
+        "site": "src/gramtrans/Lib/texts.py:867",
+        "classification": "COVERAGE GAP -- no creation path exists at all; allowlistable with an open issue"
+      },
+      {
+        "reason": "no translation type available in target",
+        "site": "src/gramtrans/Lib/owned.py:634",
+        "classification": "COVERAGE GAP or data condition -- not a programming-error signal on its face"
+      },
+      {
+        "reason": "writing system not mapped",
+        "site": "src/gramtrans/Lib/texts.py:186, 211, 622",
+        "classification": "DATA/MAPPING condition governed by the pre-run writing-system mapping of FR-069..FR-072, not an engine bug"
+      },
+      {
+        "reason": "lexical relation type not found in target",
+        "site": "src/gramtrans/Lib/categories.py:5033",
+        "classification": "DATA condition -- the target genuinely lacks the type"
+      }
+    ],
+    "unclassified_pending_measurement": [
+      {
+        "class": "translation-field class, 37 records",
+        "note": "FR-161 describes the historical residual's 37-record translation-field class as an API-MISUSE class, which would make it an engine bug. The reasons this codebase now emits at that site (Lib/owned.py:624 'translation type unresolved; substituted ...', :634 'no translation type available in target') do not read as API misuse. Deliberately NOT added as a signature on the strength of the historical label alone: T035's measured batch-1 residual decides it. Recording the open question here rather than guessing, because guessing either way is silent -- as a signature it would make a possibly-legitimate gap unallowlistable; as an omission it could launder a real bug."
+      }
+    ]
+  }
 }

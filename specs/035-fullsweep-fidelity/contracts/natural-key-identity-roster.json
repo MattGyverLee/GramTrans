@@ -1,4 +1,199 @@
 {
   "schema_version": 1,
-  "entries": []
+  "populated_by": "T029 -- specs/035-fullsweep-fidelity/tasks.md Phase 4 / US1",
+  "populated_at": "2026-08-18",
+  "governs": [
+    "FR-185 -- admission to the NATURAL-KEY IDENTITY basis is BY ENUMERATION ON THIS ROSTER ONLY",
+    "FR-186 -- identity is authoritative; the natural key is the fallback, never the reverse",
+    "FR-187 -- every match made on this basis is accounted as IDENTITY-SUBSTITUTION"
+  ],
+  "live_confirmation": {
+    "requirement": "WP-0: each entry confirmed live via FLExToolsMCP against the points flagged in reviews/cycle5-domain-identity.md, whose rulings rested on documented LCM semantics because MCP was not exposed to lex-domain in 3 of 5 review cycles.",
+    "status": "COMPLETE -- the carried caveat is cleared for the three classes below.",
+    "method": "read-only FLExToolsMCP flextools_run_module census over four projects; every project opened writeEnabled=False, write_certification is_certified_readonly=true on every op",
+    "date": "2026-08-18",
+    "flexicon_installed": "4.4.1",
+    "ops": [
+      "op-214022425-003 (Ejagham Mini, wordforms + writing systems)",
+      "op-214131748-005 (Yi Sichuan, reversal walk, 25116 entries)",
+      "op-214242730-007 (Yi Sichuan, collision forensics + per-index strict scan)",
+      "op-214333068-008 (Yi Sichuan, wordforms at scale)",
+      "op-214415519-009 (Yi Sichuan, per-writing-system collision split)",
+      "op-214529431-011 (Esperanto)",
+      "op-214612533-012 (Mbugwe LizzieHC practice)"
+    ],
+    "two_corrections_this_confirmation_forced": [
+      "The wordform natural key must name the DEFAULT VERNACULAR writing system, not 'a writing system'. Read against any enabled writing system the key is NOT unique: Yi Sichuan's secondary vernacular ii-Latn carries 16 distinct wordform pairs sharing a form. Read against the default vernacular it is exact across all 36658 wordforms measured.",
+      "The reversal-entry form key is NOT unique by construction, contrary to reviews/cycle5-domain-identity.md section 3, which called form-keyed dedup an 'operationally-enforced' property. A live counterexample exists (see the ReversalIndexEntry entry below). The entry is still admitted, because the transfer engine must be able to match these objects, but it is admitted with an explicit ambiguity rule instead of a uniqueness claim."
+    ]
+  },
+  "entries": [
+    {
+      "class": "WfiWordform",
+      "natural_key": "(default vernacular writing system, exact form)",
+      "key_unique_by_construction": true,
+      "on_ambiguous_key": "harness_error",
+      "reason": "FindOrCreateWordform-style lookup (flexicon WordformOperations.Find / .Exists, both confirmed present) prevents two wordform objects coexisting with the same form under the same writing system, so reusing an existing target wordform for a source wordform of the same form is CORRECT behaviour and the GUID is not the key. FR-185 names this the highest-volume instance of the basis: omitting it would make the basis's own harness error fire on correct behaviour.",
+      "key_scoping_note": "The key is scoped to the DEFAULT VERNACULAR writing system (project.GetDefaultVernacularWS()). A secondary vernacular is NOT part of the key and MUST NOT be used to match: see the ii-Latn measurement below, where 16 pairs of distinct wordforms share a secondary-vernacular form while remaining distinct in the default vernacular. Matching on a secondary writing system would fabricate 16 IDENTITY-SUBSTITUTION matches on that one project.",
+      "live_confirmation": {
+        "verdict": "CONFIRMED -- 36658 wordforms measured across four projects, zero collisions in the default vernacular",
+        "measurements": [
+          {
+            "project": "Esperanto",
+            "default_vernacular": "eo",
+            "wordforms_with_a_form": 31340,
+            "distinct_forms": 31340,
+            "collisions": 0
+          },
+          {
+            "project": "Yi Sichuan",
+            "default_vernacular": "ii",
+            "wordforms_with_a_form": 3958,
+            "distinct_forms": 3958,
+            "collisions": 0
+          },
+          {
+            "project": "Mbugwe LizzieHC practice",
+            "default_vernacular": "mgz",
+            "wordforms_with_a_form": 1187,
+            "distinct_forms": 1187,
+            "collisions": 0
+          },
+          {
+            "project": "Ejagham Mini",
+            "default_vernacular": "etu",
+            "wordforms_with_a_form": 173,
+            "distinct_forms": 173,
+            "collisions": 0,
+            "note": "measured across both enabled writing systems (en, etu) rather than isolating the default vernacular; total keys equalled total wordforms, so each wordform carries a form in exactly one writing system here and the two readings coincide"
+          }
+        ],
+        "counterexample_in_a_secondary_writing_system": {
+          "project": "Yi Sichuan",
+          "writing_system": "ii-Latn",
+          "kind": "secondary vernacular (romanization of the ii script)",
+          "wordforms_with_a_form": 3782,
+          "distinct_forms": 3766,
+          "collisions": 16,
+          "sample_forms": ["ly", "hxit", "rre jip zzur bbo", "ddie hxot", "fut"],
+          "interpretation": "distinct Nuosu-script wordforms whose romanizations coincide -- correct data, not a defect, and the reason the key names the default vernacular only"
+        }
+      }
+    },
+    {
+      "class": "ReversalIndex",
+      "natural_key": "(writing system tag)",
+      "key_unique_by_construction": true,
+      "on_ambiguous_key": "harness_error",
+      "reason": "FLEx maintains at most one reversal index per writing system; the container correspondence is the writing-system tag, not the index's own identifier. flexicon exposes this as a first-class lookup (ReversalIndexOperations.FindByWritingSystem), which is the operational form of the invariant.",
+      "live_confirmation": {
+        "verdict": "CONFIRMED -- 11 indexes across three projects carrying them, no writing-system tag ever holding two indexes",
+        "measurements": [
+          {
+            "project": "Yi Sichuan",
+            "index_count": 7,
+            "distinct_ws_tags": 7,
+            "tags_with_more_than_one_index": 0,
+            "ws_tags": ["en", "es", "ii", "zh-CN", "zh-CN-x-py", "zh-CN-x-pyn", "zh-CN-x-zhsort"]
+          },
+          {
+            "project": "Esperanto",
+            "index_count": 2,
+            "distinct_ws_tags": 2,
+            "tags_with_more_than_one_index": 0,
+            "ws_tags": ["en", "fr"]
+          },
+          {
+            "project": "Mbugwe LizzieHC practice",
+            "index_count": 2,
+            "distinct_ws_tags": 2,
+            "tags_with_more_than_one_index": 0,
+            "ws_tags": ["en", "swh"]
+          },
+          {
+            "project": "Ejagham Mini",
+            "index_count": 0,
+            "distinct_ws_tags": 0,
+            "tags_with_more_than_one_index": 0
+          }
+        ],
+        "incidental_finding": {
+          "id": "T029-F1",
+          "project": "Yi Sichuan",
+          "observation": "One reversal index (27509243-40a0-46cb-9791-7f116e321b1f, name 'Spanish', writing system 'es', 0 top-level entries) sits on a writing-system tag that is NOT among the project's enabled writing systems, so project.WSHandle('es') does not resolve.",
+          "why_it_matters": "The set of reversal-index writing systems is NOT a subset of the project's enabled writing systems. Any transfer or census that maps reversal containers through the pre-run writing-system mapping of FR-069..FR-072 will find no mapping for such an index. Silently skipping it would be an unmeasured class instance; per FR-098 the absent-or-null outcome must stay distinct from present-but-empty, and per FR-096 an enabled-but-unmeasured category is COVERAGE_REDUCED rather than a silent gap.",
+          "required_handling": "A reversal index whose writing-system tag has no handle MUST be recorded under a named, counted outcome (FR-099), never dropped and never compared as empty."
+        }
+      }
+    },
+    {
+      "class": "ReversalIndexEntry",
+      "natural_key": "(owning reversal index, exact form in that index's writing system, parent entry for a sub-entry)",
+      "key_unique_by_construction": false,
+      "on_ambiguous_key": "harness_error",
+      "reason": "FLEx's reversal-index editing surfaces treat the entry form as the lookup key within its index (flexicon ReversalIndexEntryOperations.Find(index, form, ws)), and sub-entries nest recursively under the same form-keyed discipline (GetSubentries). Identity cannot be authoritative across a transfer because a target that predates identity preservation for this class carries its own independently-created entries for the same forms.",
+      "uniqueness_caveat": {
+        "claim_refuted": "reviews/cycle5-domain-identity.md section 3 described form-keyed dedup of top-level reversal entries as a 'real, operationally-enforced' LCM/FLEx property. Live data refutes uniqueness-by-construction: FLEx permits two top-level entries with the same form in the same index.",
+        "consequence": "Because the key is not unique, a natural-key fallback MUST NOT pick a candidate when more than one matches. An ambiguous key is a harness error naming the class, the index, and the form -- never a silent choice, and never an IDENTITY-SUBSTITUTION match. FR-187's remap record cannot be written for an object whose correspondence is genuinely ambiguous.",
+        "rate_measured": "1 collision in 25051 top-level entries measured (0.004%)"
+      },
+      "live_confirmation": {
+        "verdict": "ADMITTED, uniqueness REFUTED -- the key is unique in practice but not by construction, so the entry carries an ambiguity rule instead of a uniqueness claim",
+        "counterexample": {
+          "project": "Yi Sichuan",
+          "index_writing_system": "en",
+          "owning_index_guid": "d2acf5c8-f420-468e-8bb6-d4afab334a2b",
+          "form": "Xichang",
+          "entries": [
+            {
+              "guid": "6177f54e-c375-425f-b5f9-ff2e18a6fc5d",
+              "form_in_index_ws": "Xichang",
+              "senses": 1,
+              "subentries": 0,
+              "owner_class": "ReversalIndex"
+            },
+            {
+              "guid": "aff4f368-e3a5-49ae-a64e-95586e0c8f20",
+              "form_in_index_ws": "Xichang",
+              "senses": 2,
+              "subentries": 0,
+              "owner_class": "ReversalIndex"
+            }
+          ],
+          "artifact_ruled_out": "Not an artifact of reading a best/default alternative: both forms were re-read with the index's own 'en' handle explicitly, and both objects are owned by the same 'en' ReversalIndex at top level. They differ only in how many senses they carry.",
+          "op": "op-214242730-007"
+        },
+        "per_index_measurements": [
+          {"project": "Yi Sichuan", "ws": "en", "top_level": 7931, "distinct_forms": 7930, "collisions": 1},
+          {"project": "Yi Sichuan", "ws": "zh-CN", "top_level": 9231, "distinct_forms": 9231, "collisions": 0},
+          {"project": "Yi Sichuan", "ws": "zh-CN-x-pyn", "top_level": 7834, "distinct_forms": 7834, "collisions": 0},
+          {"project": "Yi Sichuan", "ws": "zh-CN-x-py", "top_level": 49, "distinct_forms": 49, "collisions": 0},
+          {"project": "Yi Sichuan", "ws": "ii", "top_level": 0, "distinct_forms": 0, "collisions": 0},
+          {"project": "Yi Sichuan", "ws": "zh-CN-x-zhsort", "top_level": 0, "distinct_forms": 0, "collisions": 0},
+          {"project": "Esperanto", "ws": "en", "top_level": 6, "distinct_forms": 6, "collisions": 0},
+          {"project": "Esperanto", "ws": "fr", "top_level": 0, "distinct_forms": 0, "collisions": 0}
+        ],
+        "recursion_evidence": {
+          "project": "Yi Sichuan",
+          "entries_walked": 25116,
+          "max_depth_reached": 3,
+          "count_per_depth": {"1": 25045, "2": 70, "3": 1},
+          "why_recorded": "FR-189's structural-depth guard needs a corpus witness that real nesting goes deeper than one level. It does, but the deeper levels are 71 objects against 25045 shallow ones -- 0.28% -- which is exactly the ratio that lets a recursion bug that stops one level early hide inside aggregate per-class counts. Depth reached MUST be recorded per class as an artifact discriminator."
+        }
+      }
+    }
+  ],
+  "deliberately_excluded": [
+    {
+      "class": "writing systems",
+      "reason": "FR-185 excludes them explicitly. Their one-per-tag correspondence is already established by the run's pre-run writing-system mapping (FR-069..FR-072); a second, later-firing basis for the same correspondence would be redundant and could disagree with it.",
+      "live_note": "One-per-tag was nonetheless measured while confirming the other entries and holds on every project examined: Ejagham Mini 2/2 distinct tags, Yi Sichuan 7/7, Esperanto 3/3, Mbugwe LizzieHC practice 5/5. This is recorded as corroboration for the mapping, NOT as an admission to this roster."
+    }
+  ],
+  "enforcement": {
+    "firing_for_a_class_not_on_this_roster": "harness error naming the class (FR-185, on the same terms FR-090 sets for RESOLVED-BY-EQUIVALENCE)",
+    "accounting": "every match lands in the IDENTITY-SUBSTITUTION bucket of FR-097, counted per class with a per-run total, never collapsed into 'already present with equal payload independently verified' and never silent (FR-187)",
+    "ordering": "identity first, natural key only as the fallback; the ordering basis actually used is a recorded field on the run's artifact (FR-186)",
+    "ambiguity": "for any entry whose key_unique_by_construction is false, a fallback match resolving to more than one candidate is a harness error, never a pick"
+  }
 }
