@@ -1,6 +1,207 @@
 # GramTrans — Session Handoff
 
-## ▶▶▶ Feature 035 fullsweep-fidelity — SPEC RATIFIED at 189 FR / 17 SC (2026-08-18)
+## ▶▶▶ Feature 036 wizard-ui-polish — ALL 50 TASKS DONE, live-verified (2026-08-18)
+
+**All eight user stories are implemented, the suite is green, and T047's live
+verification is done.** One open defect is recorded below — SC-001b — and it
+needs a spec-level decision rather than more code.
+
+Resumed from `.spec-context.json` at T009 and worked forward. Several tasks were
+already done but unmarked, so the checkmarks were re-derived from the code and
+the suite rather than trusted.
+
+Landed this session:
+- **US2 (T009-T015)** — verified complete and marked: the declared `flow()`, the
+  `_PageProjects` / `_PageWritingSystems` split, step-1 gating with a visible
+  reason, per-run numbering, `nextId()` skipping, the cheap `has_content`
+  predicates, and the stale step-number literals removed.
+- **US1 (T020-T022)** — the wiring that was missing. All thirteen FR-023
+  operations now report through one helper, `_page_progress`, which picks
+  FR-014's up-front or elapsed-time trigger from `warrants_indicator` alone.
+  Labels and rates come from two tables in `Lib/progress.py` keyed identically
+  (`OPERATION_LABELS` is new), so a page cannot name a row the calibration table
+  has never heard of. `reporting()` owns dismissal, and the nine enumeration
+  pages now SAY so on the page when a walk raises instead of rendering an
+  unexplained empty tree.
+- **US3 (T024-T026)** — `MIN_WINDOW_WIDTH = 900` as one declared value; the
+  splitter factory made non-collapsible with pane minimums summing to 620; views
+  and their headers elide right with horizontal scrollbars off; and every
+  populated cell carries its untruncated text as a tooltip.
+- **US5 (T035-T036)** — `execute_disabled_reason` derives the reason from state
+  rather than storing it; `_may_execute()` is the FR-038/FR-043/FR-044
+  conjunction in one place and now gates `_on_move` as well as the button, so a
+  second dry run after a completed move cannot re-arm a duplicate write;
+  `StatsPanel.clear()` is new and page entry drops the displayed report with the
+  cached plan.
+- **US6 (T039-T042)** — the control strip is laid out, not floating:
+  `reposition()`/`raise_()` are gone, the wizard sets `IgnoreSubTitles` and each
+  flow page owns a `PageHeader`, and ONE `ThemeCornerBar` is reparented into the
+  current page's header slot so `Ctrl+0`/`ZoomIn`/`ZoomOut` are registered once
+  rather than twelve times.
+- **US8 (T044)** — eight step descriptions shortened to the two-line budget at
+  the default width and scale.
+- **T049** — full offscreen suite run; SC citations added where a check existed
+  but could not be traced to its criterion (SC-004, SC-006, SC-008).
+
+Defects found and fixed while verifying, beyond the task list:
+- `test_entry_types_display::test_page_title_contains_of_9` asserted the exact
+  "of 10" total FR-009a bans. Inverted rather than deleted — it is the assertion
+  most likely to be reintroduced by someone restoring progress information.
+- `test_036_wizard_flow_numbering::test_a_partly_empty_run_drops_only_the_empty_pages`
+  had an off-by-one ("Step 3: Affix Picker" where the run yields step 4). It had
+  never executed: the module was being skipped whenever a sibling installed a
+  PyQt6 double.
+- `test_036_page_header_layout` called `QShortcut.parentWidget()` (QShortcut is a
+  QObject) and forced a fixed 700-character description that is three lines at
+  100% text and THIRTY at 250% — demanding a 680 px window absorb an 836 px
+  label. The description is now composed to the line count under test.
+- FR-037's disclosure was applied to only one of the two capped lists in
+  `merge_preview.py`; `_read_adhoc_compound_rule` still said "truncated" with no
+  total. Both now state the cap and the true total.
+
+**Suite:** 2492 passed, 27 failed, 78 skipped. All 27 failures are pre-existing
+and were confirmed against a clean `HEAD` baseline before any of this work (that
+baseline had 53). None is in feature 036; they cluster in
+`test_adjacent_data`, `test_analysis_*`, `test_human_eval_gate`,
+`test_morph_bundle_wiring`, `test_residue_tagging_026`, `test_segment_alignment`,
+`test_029_*` and `test_wizard_pos_grammar_wiring`.
+
+**T047 ran (read-only) and T048 is applied.** Full evidence in
+`specs/036-wizard-ui-polish/verification.md`. Against `Ejagham Mini` (252
+entries), `Ejagham Full` (4304) and `Ejagham Full GT-Test` (empty — it is the
+reset transfer target), every operation run twice, once with `progress=None` and
+once with a counting sink:
+
+- **SC-011 / FR-045 PASS**, on two independent lines: all nine inventories are
+  identical with and without a sink on all three projects, AND `Lib/transfer.py`
+  and `Lib/preview.py` contain no reference to progress at all, so the write path
+  cannot behave differently by construction.
+- **SC-002 PASS** for the nine measured operations — longest stretch with no
+  event-loop pump was 74 ms against a ~5 s unresponsive threshold.
+- **SC-001 PASS.** Only `stems` on `Ejagham Full` crossed 500 ms (498/555 ms),
+  and it is covered by the elapsed-time fallback.
+- **SC-001a FAILED as found, now fixed.** The placeholder rates predicted 4.8 s,
+  8.6 s and 12.3 s for affix, skeleton and dependency walks that actually take
+  73 ms, 193 ms and 245 ms — three modal flashes. T048 replaced every measurable
+  rate with the measured one: **0 mispredictions out of 9**, each prediction now
+  within ~30 ms of the real time.
+
+**OPEN DEFECT — SC-001b, needs a decision before it can be fixed.** The
+indicator's total does not match the work performed on four of nine operations,
+reproduced on more than one project:
+
+| Operation | Declared total | Ticks | Ratio | Operator sees |
+|---|---|---|---|---|
+| affixes | 4304 | 20 | 0.005x | bar reaches 0.5% and vanishes |
+| skeleton | 4304 | 12912 | 3.00x | fills, degrades to indeterminate at 33% |
+| phonology | 6 | 38 | 6.33x | same, at 16% |
+| entry_types | 14 | 16 | 1.14x | same, at 88% |
+
+Two causes. The affix/stem walks tick per entry in their own partition while
+taking `LexiconNumberOfEntries()` as the total — stems only looks correct on
+Ejagham because that project is 4284 stems out of 4304 entries, which is the
+same bug hidden by the data. Skeleton, phonology and entry_types tick at a finer
+granularity than the cheap total counts.
+
+Presentation-only — it cannot affect what is transferred, and `QtProgressSink`
+degrades an overrun to indeterminate rather than showing over 100%. Not fixed
+here because the fix is a choice between changing the declared unit
+(data-model §3) and moving the tick in `Lib/selection.py`, which is on the
+transfer path and governed by FR-045. **Recommend a follow-up task.**
+
+**Also not covered:** FR-023 rows 12 (plan assembly) and 13 (execute-move write)
+were not exercised — both need a bound pair and row 13 is a live write. Their
+`units_per_second` stay documented placeholders, and they are the two places
+SC-002 could still fail, since each is a single engine call that takes no sink
+and so never pumps the loop. `rules` could not be calibrated either: all three
+Ejagham projects have zero ad-hoc prohibitions.
+
+## ▶▶▶ Feature 035 fullsweep-fidelity — Phase 3 / US4 DONE, 23/67 tasks (2026-08-18)
+
+**Spurt 7 closed. The sweep can now refuse before it can damage anything.**
+Phase 3 (User Story 4 — write safety, containment, baseline pinning, capability
+preflight) is complete on branch `035-fullsweep-fidelity` in worktree
+`D:/Github/_Projects/_LEX/GramTrans-035-fullsweep`. Not merged to `main`.
+
+Landed this spurt (T017–T024):
+- **T019 `safety.py`** — FR-015 now means what it says: a falsy `source_name` or
+  an *empty* `frozen_sources` raises instead of making the comparison vacuously
+  true. FR-013's two boundaries are two separate functions,
+  `assert_restore_boundary` and `assert_first_write_boundary`, sharing no memo,
+  so passing one can never satisfy the other. An `AssertionLedger` records each
+  of the five assertions per boundary into the artifact (FR-024), and
+  `assert_tracked` / `assert_evidence_base_tracked` refuse untracked or
+  gitignored evidence (FR-149) via a new `EvidenceProvenanceError` that
+  `classify_exception` maps to `PROVENANCE` — one of FR-175's whole-run aborts.
+- **T020 `baseline.py` (new)** — the pinned, contained restore that replaces
+  `harness.restore_target` for this sweep. Archive pinned by path *and* SHA-256
+  (FR-170, no recency fallback anywhere — a test greps for one); exactly one
+  top-level data file whose name matches the destination or a declared identity,
+  and no member with an absolute or parent-relative destination, both proven
+  *before the first removal* (FR-171); every item's containment proven from its
+  fully resolved destination (FR-169); declared `LinkedFilesRootDir` proven
+  beneath the destination before anything copies assets in (FR-174); durable
+  restore evidence (FR-172); post-restore file-set *equality* with declared
+  residue recorded either way (FR-173).
+- **T021 `pool.py`** — `ExclusiveTargetClaim.assert_held()` catches a claim lost
+  or taken over *mid-project*, which acquisition-time checks cannot see (FR-034).
+  The memory model carries a `PROVISIONAL` stamp into every admission decision
+  and every artifact (FR-030), observed actuals are preferred over the model when
+  they exist, and `NAMED_PROJECT_ADMISSION_RULES == ()` is asserted, not merely
+  documented (FR-029). The concurrency gate now needs a **present and valid**
+  trial artifact demonstrating at least the requested worker count (SC-012).
+- **T022 `preflight.py` (new)** — behavioral introspection, never the version
+  string (FR-125). Field-by-field diff with `missing`/`added`/`changed`/`renamed`
+  (FR-131), `PREFLIGHT_MISMATCH` + exit 6 before any restore or write, and no
+  best-effort degradation: an *unpinned* fingerprint is itself a mismatch
+  (FR-132).
+- **T023** — the capability fingerprint is **pinned and matching** against the
+  live dependency. `run_preflight()` returns ok, exit 0.
+- **T024** — CLI: `preflight` subcommand; `--contracts-dir`, `--ledger`,
+  `--baseline-sha256` (required with `--backup`), required-and-explicit
+  `--exclude-categories` and `--diagnostic-level`; `--artifacts-dir` default
+  moved to `scratchpad/035_sweep/artifacts`; **argument errors exit 5**, not
+  argparse's 2 (which collides with `NON_IDEMPOTENT`).
+- **T017/T018** — `tests/unit/test_035_sweep_safety.py` grew from 20 to **107
+  assertions, all green**, covering boundary independence, falsy inputs,
+  name-shape rejection, claim exclusivity, baseline pinning, containment, the
+  preflight, and the CLI exit codes.
+
+Also fixed: the latent test weakness the previous handoff recorded — the suite
+patched the flat `import *` copy on the package namespace rather than `pool.py`'s
+own global, so the concurrency-gate test was passing partly by accident. A new
+test now pins that distinction directly.
+
+**Findings worth acting on.** The installed dependency reports **four different
+versions** — dist metadata `4.3.1`, FLExToolsMCP health `4.4.0`, git log
+post-4.4.0, `__version__` `None` — which is a live exhibit of exactly the hazard
+FR-125 names. `ApplySyncableProperties` carries a fourth parameter
+`fill_gaps=False` that this repo's `CLAUDE.md` does not document; CLAUDE.md is
+the stale document and is worth updating. The guid-preserving create surface is
+complete on all eight targets, but under `flexicon.code.TextsWords.*Operations`
+class names (not the `Texts`/`Wordforms` accessor names CLAUDE.md uses) and
+behind an `OperationsMethod` descriptor whose `__get__` returns a generic
+`(project, *args, **kwargs)` dispatcher — naive `getattr` introspection reports
+`guid=` absent on all seven.
+
+**Still open.** The FR-149 violation in the evidence base stands: the 84-project
+prescan output is in gitignored `scratchpad/prescan_results/` and `ordering.md`
+was never generated — fix before T049/T050 claim a measured maximum. T015 remains
+deferred unwritten at the user's request. The real (non-`SKIPPED`)
+`run_one_project` path is now wired to the pinned restore but has **not** been
+exercised live; that needs a FLEx target write and must be scheduled
+deliberately, never inside an unattended loop. 28 unit tests fail in the
+full-suite run — verified identical at HEAD before this work (28 failed / 2421
+passed → 28 failed / 2508 passed), they pass in isolation, and they are unrelated
+cross-test pollution.
+
+**Next checkpoint: Phase 4 / US1 (T025–T033)** — the object-level accounting
+plane: one test per object-plane guard asserting all three outcomes, the
+negative-control suite, and the first real guard logic.
+
+---
+
+## Feature 035 fullsweep-fidelity — SPEC RATIFIED at 189 FR / 17 SC (2026-08-18)
 
 **Spurt 5 closed. `specs/035-fullsweep-fidelity/spec.md` is RATIFIED.** Section P
 (the identity/intent amendment section) is settled; spec.md is now stable input

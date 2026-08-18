@@ -119,13 +119,13 @@ refused before any file is touched, with no corpus run required.
 
 ### Tests
 
-- [ ] **T017** [P] [US4] Extend the safety suite: an archived directory whose name *begins*
+- [x] **T017** [P] [US4] Extend the safety suite: an archived directory whose name *begins*
       with the writable pattern is refused; both boundaries are evaluated independently and a
       defect skipping one cannot skip the other; a falsy/absent comparison input raises rather
       than skipping the check; path separators, drive designators, and relative components are
       rejected; no two workers ever hold one destination (FR-011..FR-019, FR-023, FR-024) ·
       `tests/unit/test_035_sweep_safety.py`
-- [ ] **T018** [P] [US4] Baseline tests in the same suite: a restore without
+- [x] **T018** [P] [US4] Baseline tests in the same suite: a restore without
       `--baseline-sha256` refuses to start; a baseline whose hash does not match is refused; the
       post-restore file set must equal the pinned baseline's contents exactly; no
       newest-archive glob fallback exists anywhere (FR-170..FR-173, S-10) ·
@@ -135,20 +135,20 @@ refused before any file is touched, with no corpus run required.
 
 **Wave 1 -- independent (different modules):**
 
-- [ ] **T019** [P] [US4] Harden Group B: recompute every assertion at the site that performs
+- [x] **T019** [P] [US4] Harden Group B: recompute every assertion at the site that performs
       the write from the values that site is about to use; never skip on a falsy input; add the
       FR-149 trackedness assertion (an untracked driver, roster, allowlist, fingerprint, or
       ledger is not admissible evidence) (FR-010..FR-024, FR-149) · `debug/fullsweep/safety.py`
-- [ ] **T020** [P] [US4] Baseline provenance and containment: the archive pinned by name plus
+- [x] **T020** [P] [US4] Baseline provenance and containment: the archive pinned by name plus
       SHA-256, exactly one top-level entry asserted before anything is removed, every written
       item proven from its fully resolved destination to lie beneath the target, durable restore
       evidence, and post-restore file-set equality (FR-169..FR-174) · `debug/fullsweep/baseline.py`
-- [ ] **T021** [P] [US4] Pool integrity: OS-level exclusive destination claim held for the whole
+- [x] **T021** [P] [US4] Pool integrity: OS-level exclusive destination claim held for the whole
       lifetime, admission scheduled on measured free memory (never core count, never a
       named-project rule), the memory model stamped PROVISIONAL wherever it is used, default
       worker count 1, and any count above 1 refused without a recorded concurrency-trial
       artifact (FR-025..FR-041, SC-012) · `debug/fullsweep/pool.py`
-- [ ] **T022** [P] [US4] Capability preflight by behavioral introspection -- never the version
+- [x] **T022** [P] [US4] Capability preflight by behavioral introspection -- never the version
       string -- against the pinned fingerprint, emitting a field-by-field diff with `kind` in
       `missing`/`added`/`changed`/`renamed`, assigning `PREFLIGHT_MISMATCH` and exiting 6 before
       any restore or write; no best-effort degradation and no runtime path selection around a
@@ -158,13 +158,15 @@ refused before any file is touched, with no corpus run required.
 
 **Wave 2 -- the surfaces over them:**
 
-- [ ] **T023** [US4] Capture the pinned capability fingerprint from the live dependency
-      (flexicon 4.3.1) via FLExToolsMCP introspection -- `GetSyncableProperties`,
+- [x] **T023** [US4] Capture the pinned capability fingerprint from the live dependency
+      (flexicon 4.4.0 per FLExToolsMCP health -- NOT the 4.3.1 this line assumed;
+      the dist metadata still says 4.3.1, which is itself an FR-125 exhibit) via
+      FLExToolsMCP introspection -- `GetSyncableProperties`,
       `ApplySyncableProperties` defaults, `_CreateWithGuid`, every `guid=` kwarg,
       `FLExProject.LexiconNumberOfEntries` (not the dead `lexicon` accessor), and all eight
       Grammar Operations overrides (FR-123..FR-125) ·
       `specs/035-fullsweep-fidelity/contracts/flexicon-capability.json`
-- [ ] **T024** [US4] CLI surface: add `--contracts-dir`, `--ledger`, `--baseline-sha256`
+- [x] **T024** [US4] CLI surface: add `--contracts-dir`, `--ledger`, `--baseline-sha256`
       (required with `--backup`), required-and-explicit `--exclude-categories`,
       `--diagnostic-level`, and `--intent`; move the `--artifacts-dir` default to
       `scratchpad/035_sweep/artifacts`; add the `preflight` subcommand; an argument error exits 5

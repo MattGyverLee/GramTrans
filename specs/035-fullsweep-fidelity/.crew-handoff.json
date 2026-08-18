@@ -2,7 +2,7 @@
   "feature": "035-fullsweep-fidelity",
   "status": "in_progress",
   "last_cycle": 5,
-  "spurts_completed": 6,
+  "spurts_completed": 7,
   "implementation_branch": "035-fullsweep-fidelity",
   "worktree": "D:/Github/_Projects/_LEX/GramTrans-035-fullsweep",
   "tasks_done": [
@@ -15,19 +15,31 @@
     "spec-ratified-189FR-17SC",
     "corpus-prescan-built-run-84-projects-BUT-UNTRACKED",
     "T001-T010-phase1-package-promotion",
-    "T011-T014-T016-phase2-taxonomy-spine-VACUOUS-end-to-end"
+    "T011-T014-T016-phase2-taxonomy-spine-VACUOUS-end-to-end",
+    "T017-T018-phase3-write-safety-and-baseline-tests",
+    "T019-safety-hardening-FR015-falsy-FR013-two-boundaries-FR024-assertion-ledger-FR149-trackedness",
+    "T020-baseline.py-pinned-contained-restore-FR169-FR174",
+    "T021-pool-integrity-claim-lifetime-PROVISIONAL-stamp-valid-trial-gate",
+    "T022-preflight.py-behavioral-introspection-FR124-FR132",
+    "T023-capability-fingerprint-PINNED-LIVE-preflight-now-MATCHES",
+    "T024-cli-surface-preflight-subcommand-exit-5-on-argument-error"
   ],
-  "next_checkpoint": "Phase 3 / US4 (T017-T024): write safety hardening, baseline pinning, pool integrity, capability preflight",
-  "next_entry": "Phase 1 and Phase 2 are committed on branch 035-fullsweep-fidelity (8235f4f, e60b8ba), NOT merged to main. The sweep now reports VACUOUS with all fifteen guards not-evaluated and exits 4 -- verified live offline via the SKIPPED path. Resume at T017. Phase 3 onward needs FLExToolsMCP (T023 capability fingerprint) and the live measurements T054-T057/T035/T066 need hours of wall time -- schedule those deliberately, not inside a short spurt.",
+  "next_checkpoint": "Phase 4 / US1 (T025-T033): the object-level accounting plane -- per-guard tests asserting all three outcomes, negative controls, and the first real guard logic. T015 (verdict-order test) is still DEFERRED unwritten.",
+  "next_entry": "Phase 3 / US4 is COMPLETE and committed on branch 035-fullsweep-fidelity. The sweep now refuses before it can damage anything: both FR-013 boundaries are independently evaluated and recorded per project (FR-024), a falsy source/manifest raises instead of skipping (FR-015), restores go through debug/fullsweep/baseline.py with the archive pinned by SHA-256 and every member's containment proven before a byte is written (FR-169..FR-174), and the capability preflight is PINNED AND MATCHING against the live dependency (exit 6 on drift, before any restore or write). 107 tests in test_035_sweep_safety.py, all green. Resume at T025. NOTE: the real (non-SKIPPED) run_one_project path is now wired to the pinned restore but still has NOT been exercised live -- that needs a FLEx target write and must be scheduled deliberately, never inside an unattended loop.",
   "spec_ratified": true,
   "spec_shape": "FR-001..FR-193 contiguous, SC-001..SC-017 contiguous, verified programmatically",
   "open_caveat": "FLExToolsMCP unavailable to lex-domain for the third time in five cycles; identity rulings rest on documented LCM semantics, live-check points flagged inline in reviews/cycle5-domain-identity.md",
   "coverage_limit": "appendix, stratum, and one rule subclass exist in no project on this machine; must report NOT-EVALUATED, never clean",
   "new_findings": [
-    "FR-149 VIOLATION IN EVIDENCE BASE: the 84-project prescan output lives in scratchpad/prescan_results/, and scratchpad/ is gitignored (git ls-files scratchpad/ is empty). Under FR-149 untracked evidence is inadmissible, so the three-axis corpus-selection decision currently rests on data the sweep's own rules would reject. The --order set-cover output (ordering.md) was never generated at all. Fix before T049/T050 claim a measured maximum.",
-    "LATENT TEST WEAKNESS from the Phase 1 split: test_035_sweep_safety.py's monkeypatch.setattr(sweep, 'CONCURRENCY_TRIAL_ARTIFACT', ...) patches the flat re-exported copy on the package namespace, not pool.py's module global that assert_concurrency_gate_satisfied actually reads. The test passes, but partly because the real default path is also absent in this worktree. Tighten when T054 makes the concurrency-trial artifact real.",
-    "T015 (tests/unit/test_035_verdict_order.py) DEFERRED unwritten at user request -- the verdict model is implemented but not pinned by a test.",
-    "The real (non-SKIPPED) run_one_project path carries the same guard/verdict wiring but has NOT been exercised live; that needs a FLEx target write."
+    "RESOLVED (was: latent test weakness): test_035_sweep_safety.py now patches fullsweep.pool.CONCURRENCY_TRIAL_ARTIFACT, and a new test pins that patching the flat re-exported copy on the package namespace is INERT for the gate. The gate also now requires a PRESENT AND VALID artifact (SC-012), not merely a present one, and refuses a trial demonstrating fewer workers than requested.",
+    "CAPABILITY FINGERPRINT PINNED (T023) against flexicon at D:/Github/_Projects/_LEX/flexicon (git 5994acc, working tree, NOT site-packages). run_preflight() now returns ok=True, exit 0.",
+    "VERSION-STRING DISAGREEMENT, recorded in the fingerprint as an FR-125 exhibit: dist metadata says pyflexicon 4.3.1, FLExToolsMCP health reports flexicon installed=4.4.0 / index=4.4.0, the working tree's git log is post-4.4.0 ('before 4.4.1'), and flexicon.__version__ is None. Four sources, three answers. tasks.md T023 assumed 4.3.1; corrected in place.",
+    "API DRIFT vs this repo's CLAUDE.md, confirmed independently via FLExToolsMCP flextools_get_object_api: ApplySyncableProperties carries a FOURTH parameter fill_gaps=False. CLAUDE.md documents ApplySyncableProperties(item, props, ws_map=None). CLAUDE.md is the stale document; the fingerprint pins measured reality. Consider updating CLAUDE.md.",
+    "INTROSPECTION TRAP now defused, worth knowing for any future prober: the guid-preserving create surface is COMPLETE (all 8 targets accept guid=), but (a) the class names are flexicon.code.TextsWords.{Text,Paragraph,Segment,Wordform,WfiAnalysis,WfiGloss,WfiMorphBundle}Operations, NOT the Texts/Paragraphs/... accessor names CLAUDE.md uses, and (b) each Create is wrapped in an OperationsMethod descriptor whose __get__ returns a generic (project, *args, **kwargs) dispatcher. getattr-based introspection therefore reports guid= ABSENT on all seven, which under FR-132's no-degradation posture would have refused every run for an introspection defect rather than real drift. preflight._lookup reads the class __dict__; preflight._unwrap follows .func.",
+    "FR-129 verified LIVE via FLExToolsMCP run_module (read-only, 'Ejagham Mini', op-101942581-001): project.LexiconNumberOfEntries resolves and returns 252; the dead 'lexicon' accessor does not resolve.",
+    "STILL OPEN -- FR-149 VIOLATION IN EVIDENCE BASE: the 84-project prescan output lives in gitignored scratchpad/prescan_results/, and --order set-cover ordering.md was never generated. assert_evidence_base_tracked() now EXISTS and is wired into the batch driver, so this will be caught -- but the prescan data itself is still inadmissible. Fix before T049/T050 claim a measured maximum.",
+    "T015 (tests/unit/test_035_verdict_order.py) STILL DEFERRED unwritten at user request -- the verdict model is implemented but not pinned by a test.",
+    "PRE-EXISTING, NOT INTRODUCED HERE: 28 unit tests fail in the full-suite run (test_adjacent_data, test_analysis_idempotency, test_human_eval_gate, test_morph_bundle_wiring, test_residue_tagging_026, test_segment_alignment, test_wizard_pos_grammar_wiring and friends). Verified identical at HEAD e60b8ba via git stash: 28 failed / 2421 passed before, 28 failed / 2508 passed after. They pass in isolation, so it is cross-test pollution in the full-suite ordering, unrelated to feature 035."
   ],
   "updated": "2026-08-18"
 }
