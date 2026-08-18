@@ -109,6 +109,56 @@ class ProjectArtifact:
     verdict: str = ""                                       # machine token, verdict.py
     exit_code: Optional[int] = None                         # verdict.exit_code_for(verdict)
 
+    # ---- T035 additions (Phase 4 / US1, FR-160/FR-161/SC-005) ----------
+    #: The engine's own never-silent drop channel (``RunReport.dropped_items``),
+    #: per transfer, keyed "first"/"second". FR-161's acceptance criterion is
+    #: stated in terms of drop-reason CLASSES and their counts, so a run that
+    #: does not record them cannot be compared against the historical numbers
+    #: at all -- and the reports were previously discarded the moment the
+    #: transfer returned. Never truncated here (FR-144).
+    drops: dict = field(default_factory=dict)
+
+
+def summarize_drops(report) -> dict:
+    """T035/FR-161: the drop channel of one transfer, as recorded evidence.
+
+    Returns per-reason counts AND the full record list. The counts are what
+    FR-161's acceptance criterion is written against (two named classes at
+    exactly zero, a named residual list matching); the records are what makes
+    a non-zero count auditable instead of merely a number. Both, because a
+    count with no records cannot be checked and records with no count summary
+    cannot be compared against the historical figures.
+
+    A report with an EMPTY drop channel and a report that was never asked to do
+    the work that produces drops are indistinguishable from the counts alone,
+    so ``planned_actions`` and ``planned_skips`` travel with them: zero drops
+    out of zero planned actions is not the same measurement as zero drops out
+    of many, and FR-161's "exactly zero" is only meaningful in the second case.
+    """
+    dropped = tuple(getattr(report, "dropped_items", ()) or ())
+    by_reason: dict = {}
+    records = []
+    for rec in dropped:
+        reason = getattr(rec, "reason", "") or ""
+        by_reason[reason] = by_reason.get(reason, 0) + 1
+        records.append({
+            "owner_kind": getattr(rec, "owner_kind", None),
+            "owner_guid": getattr(rec, "owner_guid", None),
+            "owner_label": getattr(rec, "owner_label", None),
+            "field_name": getattr(rec, "field_name", None),
+            "item_name": getattr(rec, "item_name", None),
+            "item_guid": getattr(rec, "item_guid", None),
+            "reason": reason,
+        })
+    per_category = getattr(report, "per_category", {}) or {}
+    return {
+        "total": len(records),
+        "by_reason": dict(sorted(by_reason.items(), key=lambda kv: (-kv[1], kv[0]))),
+        "records": records,
+        "planned_actions": sum(getattr(r, "added", 0) for r in per_category.values()),
+        "planned_skips": len(getattr(report, "skips", ()) or ()),
+    }
+
 
 # ---------------------------------------------------------------------------
 # T013: artifact document shape additions -- phase vocabulary, intent

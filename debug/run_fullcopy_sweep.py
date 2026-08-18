@@ -255,6 +255,11 @@ def run_one_project(
             allowlist=allowlist, projects_root=projects_root, ledger=ledger,
         )
         plan1, report1 = full_run.run_full_transfer(source_name, target_name, target_path)
+        # FR-161/SC-005: the engine's drop channel is the ONLY place the two
+        # historically dominant loss classes and the named residual list can be
+        # read from. Recorded per transfer, before anything downstream can lose
+        # the report object.
+        artifact.drops["first"] = summarize_drops(report1)
         artifact.phases_completed.append("first_transfer")
         advance_phase(artifact, "transfer_1", artifacts_dir)
 
@@ -271,6 +276,7 @@ def run_one_project(
             allowlist=allowlist, projects_root=projects_root, ledger=ledger,
         )
         plan2, report2 = full_run.run_full_transfer(source_name, target_name, target_path)
+        artifact.drops["second"] = summarize_drops(report2)
         artifact.phases_completed.append("second_transfer")
         advance_phase(artifact, "transfer_2", artifacts_dir)
 
@@ -456,6 +462,41 @@ def _cmd_project(args) -> int:
     return artifact.exit_code
 
 
+def compose_batch(frozen, ledger, *, only, batch_size, canary):
+    """Decide WHICH sources this batch runs, and say where that came from.
+
+    Two compositions, and the difference is recorded rather than inferred:
+
+    * ``only`` -- FR-160: the caller dictates the batch, named source by named
+      source, in the order given. Batch 1's composition is specified as exactly
+      the three pilot projects with prior recorded historical results, so it
+      must never be a by-product of corpus enumeration order or of whatever the
+      ledger happens to hold. ``batch_size`` does NOT truncate an explicit
+      composition -- a caller who names four sources and leaves the default
+      size of three would otherwise silently measure three.
+    * derived -- the ledger's not-yet-passed list, capped at ``batch_size``.
+
+    ``canary`` is prepended when absent under EITHER composition: FR-159 wants
+    it re-run in every batch regardless of its ledger status, and naming a
+    composition is not a way around that. A no-op whenever the composition
+    already contains it, as batch 1's does.
+
+    Returns ``(batch, composition_label)`` and reads nothing but the ledger.
+    """
+    if only:
+        batch = list(only)
+        composition = "explicit (--only)"
+    else:
+        batch = [n for n in frozen if (ledger.get(n) or {}).get("status") != "passed"]
+        if canary and canary not in batch:
+            batch = [canary] + batch
+        batch = batch[:batch_size]
+        composition = "derived (ledger pending, size %d)" % batch_size
+    if canary and canary not in batch:
+        batch = [canary] + batch
+    return batch, composition
+
+
 def _cmd_batch(args) -> int:
     """Driver mode skeleton: admits a batch of --batch-size projects,
     running each as an isolated subprocess (FR-026), gated by the memory
@@ -483,12 +524,19 @@ def _cmd_batch(args) -> int:
     print("[INFO] captured fingerprints for %d frozen sources" % len(manifest_fp))
 
     ledger = Ledger(Path(args.ledger))  # FR-149: tracked, not a runtime artifact
-    pending = [n for n in frozen if (ledger.get(n) or {}).get("status") != "passed"]
-    if args.canary and args.canary not in pending:
-        pending = [args.canary] + pending  # FR-159: canary re-runs every batch
-    batch = pending[: args.batch_size]
+    batch, composition = compose_batch(
+        frozen, ledger, only=args.only, batch_size=args.batch_size,
+        canary=args.canary,
+    )
+    unknown = [n for n in batch if n not in frozen]
 
-    print("[INFO] batch of %d: %s" % (len(batch), ", ".join(batch)))
+    print("[INFO] batch of %d, composition %s: %s"
+          % (len(batch), composition, ", ".join(batch)))
+    if unknown:
+        # Not an abort: FR-151/FR-188 want every named-but-unattempted project
+        # to reach a WRITTEN artifact saying SKIPPED, which the worker does.
+        print("[WARN] not in the frozen admitted-source manifest, will be "
+              "recorded SKIPPED rather than attempted: %s" % ", ".join(unknown))
     exit_code = 0
     for i, source in enumerate(batch):
         target = target_pool[i % len(target_pool)]
@@ -663,6 +711,12 @@ def main(argv=None) -> int:
     p_batch.add_argument("--batch-size", type=int, default=3)
     p_batch.add_argument("--workers", type=int, default=1)
     p_batch.add_argument("--canary", default=CANARY_PROJECTS[0])
+    p_batch.add_argument("--only", nargs="*", default=None, metavar="SOURCE",
+                          help="FR-160: compose the batch from EXACTLY these "
+                               "named sources, in this order, instead of "
+                               "deriving it from the ledger's pending list. "
+                               "--batch-size does not truncate it; --canary is "
+                               "still prepended if absent (FR-159).")
     p_batch.add_argument("--intent", required=True, choices=VALID_RUN_INTENTS)
     p_batch.add_argument("--backup", default=None)
     p_batch.add_argument("--baseline-sha256", default=None)

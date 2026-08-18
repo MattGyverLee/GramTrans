@@ -505,14 +505,35 @@ def restore_from_pinned_baseline(
 
         # ---- 4. removals, then extraction --------------------------------
         dest_dir.mkdir(parents=True, exist_ok=True)
-        for lock in dest_dir.glob("*.lock"):
-            assert_item_contained(dest_dir, lock)
-            lock.unlink()
+        # ``*.bak`` alongside ``*.lock``: FieldWorks writes ``<name>.bak``, a
+        # copy of the data file as it stood before the last save, whenever a
+        # transfer writes to the project. The archive contains no such member,
+        # so after a run it is residue under FR-173 -- and residue that is
+        # itself a full stale copy of a previous project's data, which is the
+        # worst thing to leave beneath a target claiming to be this baseline.
+        for companion in sorted(dest_dir.glob("*.lock")) + sorted(dest_dir.glob("*.bak")):
+            assert_item_contained(dest_dir, companion)
+            companion.unlink()
         old_fwdata = dest_dir / ("%s.fwdata" % destination_name)
         if old_fwdata.exists():
             assert_item_contained(dest_dir, old_fwdata)
             old_fwdata.unlink()
         for sub in ("WritingSystemStore", "ConfigurationSettings", "SharedSettings"):
+            d = dest_dir / sub
+            if d.is_dir():
+                assert_item_contained(dest_dir, d)
+                shutil.rmtree(d)
+        # The extraction above deliberately does NOT write the archive's
+        # backup-metadata directories, and expected_file_set therefore does not
+        # expect them -- so a copy of one left behind from whatever this
+        # directory held BEFORE would be residue under FR-173, and would trip
+        # the file-set assertion on every single project. Worse, tolerating it
+        # instead would leave a stale record naming a DIFFERENT project's
+        # backup beneath a target claiming to be this baseline: exactly the
+        # orphaned evidence FR-173 exists to keep out of the next project's
+        # baseline. Removed here, so the invariant holds by construction rather
+        # than by the caller remembering to declare it.
+        for sub in sorted(BACKUP_METADATA_TOP_DIRS):
             d = dest_dir / sub
             if d.is_dir():
                 assert_item_contained(dest_dir, d)

@@ -613,6 +613,70 @@ def test_end_to_end_pinned_restore_is_contained_and_leaves_evidence(tmp_path, mo
     assert result.declared_locations["LinkedFilesRootDir"]["contained"] is True
 
 
+def test_stale_backup_metadata_beneath_the_destination_does_not_survive(tmp_path):
+    """FR-173, measured against a REAL .fwbackup (T035's first live batch):
+
+    a genuine FieldWorks backup archive carries ``BackupSettings/`` -- backup
+    metadata, not project data -- which the extraction deliberately skips and
+    ``expected_file_set`` therefore does not expect. A disposable target that
+    has ever been backed up from carries its own copy on disk. Before this was
+    removed with the other pre-restore removals, that copy was residue on every
+    project, and the only way past it was for the caller to declare tolerance
+    for it -- which would have left a stale record naming a DIFFERENT project's
+    backup beneath a target claiming to be this baseline.
+    """
+    root = tmp_path / "projects"
+    root.mkdir()
+    archive = _make_backup(
+        tmp_path,
+        extra_members=(("BackupSettings/BackupSettings.xml",
+                        "<backupSettings project='SomeOtherProject'/>"),),
+    )
+    pinned = sweep.pin_baseline(archive, sweep.sha256_file(archive))
+    dest = root / "Target"
+    (dest / "BackupSettings").mkdir(parents=True)
+    (dest / "BackupSettings" / "BackupSettings.xml").write_text(
+        "<backupSettings project='StaleFromBefore'/>", encoding="utf-8")
+
+    # No tolerated_residue declared, on purpose: the invariant must hold by
+    # construction.
+    result = sweep.restore_from_pinned_baseline(
+        "Target", pinned=pinned, source_name="Esperanto",
+        frozen_sources=("Esperanto",), allowlist=sweep.DEFAULT_ALLOWLIST,
+        projects_root=str(root),
+    )
+    assert result.residue_delta["untolerated_residue"] == []
+    assert not (dest / "BackupSettings").exists(), (
+        "backup metadata from before the restore must not survive it")
+    assert (dest / "Target.fwdata").is_file()
+
+
+def test_a_fieldworks_bak_companion_does_not_survive_the_restore(tmp_path):
+    """FR-173, also measured live in T035's first batch: FieldWorks writes
+    ``<name>.bak`` -- the data file as it stood before the last save -- when a
+    transfer writes to the project. The archive has no such member, so after
+    the first transfer the FINAL restore found it as untolerated residue and
+    the target was never returned to baseline. It is a full stale copy of the
+    previous run's data, so tolerating it is the wrong answer."""
+    root = tmp_path / "projects"
+    root.mkdir()
+    archive = _make_backup(tmp_path)
+    pinned = sweep.pin_baseline(archive, sweep.sha256_file(archive))
+    dest = root / "Target"
+    dest.mkdir(parents=True)
+    (dest / "Target.bak").write_text("<languageproject/>", encoding="utf-8")
+    (dest / "Target.fwdata.lock").write_text("", encoding="utf-8")
+
+    result = sweep.restore_from_pinned_baseline(
+        "Target", pinned=pinned, source_name="Esperanto",
+        frozen_sources=("Esperanto",), allowlist=sweep.DEFAULT_ALLOWLIST,
+        projects_root=str(root),
+    )
+    assert result.residue_delta["untolerated_residue"] == []
+    assert not (dest / "Target.bak").exists()
+    assert not (dest / "Target.fwdata.lock").exists()
+
+
 def test_pinned_restore_refuses_a_destination_that_is_a_source(tmp_path):
     """FR-023: the refusal happens BEFORE a directory is created, a lock is
     removed, or a data file is removed."""
