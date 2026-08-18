@@ -1,0 +1,1324 @@
+{
+  "schema_version": 1,
+  "populated_by": "T038 -- specs/035-fullsweep-fidelity/tasks.md Phase 5 / US2 Wave 1",
+  "populated_at": "2026-08-19",
+  "governs": [
+    "FR-052 -- a field is excluded ONLY via this roster or the engine's own syncable-properties omission; no other mechanism",
+    "FR-053 -- this roster is NOT derived from the interactive merge-preview UI's field-exclusion set",
+    "FR-054..FR-068 -- the enumerated exclusions and their rationales",
+    "FR-066 -- EFFECTIVE roster for a class = these entries PLUS whatever GetSyncableProperties omits for that class"
+  ],
+  "derivation": {
+    "authority": "spec.md Section E.2 (FR-053..FR-068). Field PRESENCE per class is measured, not assumed.",
+    "measured_how": "read-only FLExToolsMCP liblcm run over 'Ejagham Mini': IFwMetaDataCacheManaged.GetFields(clsid, includeSuperclasses=True, fieldTypes=-1), field names via GetFieldName",
+    "measured_op": "op-002401657-002",
+    "measured_at": "2026-08-19",
+    "class_universe": "the 66 classes actually measured in batch 1's censuses across the three FR-160 pilots (see batch01-results.md)",
+    "NOT_derived_from": "the interactive merge-preview UI's exclusion set (FR-053 forbids it, in whole or in part)"
+  },
+  "structural_exclusions_not_expressible_per_class": [
+    {
+      "fr": "FR-054",
+      "subject": "the internal runtime session identifier (Hvo)",
+      "finding": "Hvo is NOT an LCM model field -- it appears in none of the 66 classes' GetFields enumeration. The exclusion is therefore satisfied by construction: a metadata-driven census cannot reach it. Recorded so a future reader does not read its absence from `entries` as an oversight."
+    },
+    {
+      "fr": "FR-058",
+      "subject": "internal reference-lookup handle fields other than the object's own primary identifier",
+      "finding": "The metadata surface names reference fields by their object-valued name (e.g. XxxRA), not by a separate integer handle field, so no per-class entry is constructible. The census MUST compare a reference by its referent's stable identifier (Section E.6), never by a handle."
+    },
+    {
+      "fr": "FR-068",
+      "subject": "a writing system's internal numeric runtime handle",
+      "finding": "Not a model field on any of the 66 classes; it is a per-session integer reached through the writing-system surface. Comparison MUST use the stable language-tag identifier only."
+    },
+    {
+      "fr": "FR-057",
+      "subject": "a 'resolved' timestamp equivalent",
+      "finding": "NOT PRESENT on any of the 66 measured classes (DateResolved absent everywhere). FR-057 stands as a forward guard: the moment any transferred category exposes such a field it MUST be added here under FR-056's rule."
+    }
+  ],
+  "tag_stripping": {
+    "fr": "FR-063",
+    "rule": "The tool appends its own provenance tag on every run, so the tag segment MUST be stripped before the surrounding prose is compared, and the tag segment itself MUST NEVER be reported as a mismatch.",
+    "carrier_a": {
+      "fields": [
+        "LiftResidue"
+      ],
+      "handling": "already fully excluded under FR-062; no stripping needed"
+    },
+    "carrier_b": {
+      "fields": [
+        "Description"
+      ],
+      "line_marker": "[GT-Tag]: ",
+      "handling": "COMPARED. Strip the whole [GT-Tag]: line, then compare the remaining prose.",
+      "tag_wire_format": "GT|<run_id>|<source_project_name>|<iso_timestamp>"
+    }
+  },
+  "entries": [
+    {
+      "class": "CmAgent",
+      "field": "OwnOrd",
+      "rationale": "Owning-sequence position bookkeeping value. Sequence faithfulness is expressed by comparing the ordered sequence itself (E.4), never by this per-item position number.",
+      "fr": "FR-059",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "CmAgent",
+      "field": "OwningFlid",
+      "rationale": "Raw internal schema field-identifier integer; liable to differ across host builds with no semantic content. The identity of the owning object it names IS still compared.",
+      "fr": "FR-060",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "CmAgentEvaluation",
+      "field": "OwnOrd",
+      "rationale": "Owning-sequence position bookkeeping value. Sequence faithfulness is expressed by comparing the ordered sequence itself (E.4), never by this per-item position number.",
+      "fr": "FR-059",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "CmAgentEvaluation",
+      "field": "OwningFlid",
+      "rationale": "Raw internal schema field-identifier integer; liable to differ across host builds with no semantic content. The identity of the owning object it names IS still compared.",
+      "fr": "FR-060",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "CmAnnotationDefn",
+      "field": "DateCreated",
+      "rationale": "Creation timestamp. The target host stamps this at creation time and the tool has no provenance-preserving write path for it, nor is one wanted -- the tool's own provenance record is the separate ImportResidueTag.",
+      "fr": "FR-055",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "CmAnnotationDefn",
+      "field": "DateModified",
+      "rationale": "Host-rewritten modification timestamp. Excluded BY ENUMERATION on this roster, per class -- never by matching the field's name, because in this domain a name suggesting modification is also a content word (a modification rule, a modified stem).",
+      "fr": "FR-056",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "CmAnnotationDefn",
+      "field": "OwnOrd",
+      "rationale": "Owning-sequence position bookkeeping value. Sequence faithfulness is expressed by comparing the ordered sequence itself (E.4), never by this per-item position number.",
+      "fr": "FR-059",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "CmAnnotationDefn",
+      "field": "OwningFlid",
+      "rationale": "Raw internal schema field-identifier integer; liable to differ across host builds with no semantic content. The identity of the owning object it names IS still compared.",
+      "fr": "FR-060",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "CmCell",
+      "field": "OwnOrd",
+      "rationale": "Owning-sequence position bookkeeping value. Sequence faithfulness is expressed by comparing the ordered sequence itself (E.4), never by this per-item position number.",
+      "fr": "FR-059",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "CmCell",
+      "field": "OwningFlid",
+      "rationale": "Raw internal schema field-identifier integer; liable to differ across host builds with no semantic content. The identity of the owning object it names IS still compared.",
+      "fr": "FR-060",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "CmDomainQ",
+      "field": "OwnOrd",
+      "rationale": "Owning-sequence position bookkeeping value. Sequence faithfulness is expressed by comparing the ordered sequence itself (E.4), never by this per-item position number.",
+      "fr": "FR-059",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "CmDomainQ",
+      "field": "OwningFlid",
+      "rationale": "Raw internal schema field-identifier integer; liable to differ across host builds with no semantic content. The identity of the owning object it names IS still compared.",
+      "fr": "FR-060",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "CmFilter",
+      "field": "OwnOrd",
+      "rationale": "Owning-sequence position bookkeeping value. Sequence faithfulness is expressed by comparing the ordered sequence itself (E.4), never by this per-item position number.",
+      "fr": "FR-059",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "CmFilter",
+      "field": "OwningFlid",
+      "rationale": "Raw internal schema field-identifier integer; liable to differ across host builds with no semantic content. The identity of the owning object it names IS still compared.",
+      "fr": "FR-060",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "CmFolder",
+      "field": "OwnOrd",
+      "rationale": "Owning-sequence position bookkeeping value. Sequence faithfulness is expressed by comparing the ordered sequence itself (E.4), never by this per-item position number.",
+      "fr": "FR-059",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "CmFolder",
+      "field": "OwningFlid",
+      "rationale": "Raw internal schema field-identifier integer; liable to differ across host builds with no semantic content. The identity of the owning object it names IS still compared.",
+      "fr": "FR-060",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "CmOverlay",
+      "field": "OwnOrd",
+      "rationale": "Owning-sequence position bookkeeping value. Sequence faithfulness is expressed by comparing the ordered sequence itself (E.4), never by this per-item position number.",
+      "fr": "FR-059",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "CmOverlay",
+      "field": "OwningFlid",
+      "rationale": "Raw internal schema field-identifier integer; liable to differ across host builds with no semantic content. The identity of the owning object it names IS still compared.",
+      "fr": "FR-060",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "CmPerson",
+      "field": "DateCreated",
+      "rationale": "Creation timestamp. The target host stamps this at creation time and the tool has no provenance-preserving write path for it, nor is one wanted -- the tool's own provenance record is the separate ImportResidueTag.",
+      "fr": "FR-055",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "CmPerson",
+      "field": "DateModified",
+      "rationale": "Host-rewritten modification timestamp. Excluded BY ENUMERATION on this roster, per class -- never by matching the field's name, because in this domain a name suggesting modification is also a content word (a modification rule, a modified stem).",
+      "fr": "FR-056",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "CmPerson",
+      "field": "OwnOrd",
+      "rationale": "Owning-sequence position bookkeeping value. Sequence faithfulness is expressed by comparing the ordered sequence itself (E.4), never by this per-item position number.",
+      "fr": "FR-059",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "CmPerson",
+      "field": "OwningFlid",
+      "rationale": "Raw internal schema field-identifier integer; liable to differ across host builds with no semantic content. The identity of the owning object it names IS still compared.",
+      "fr": "FR-060",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "CmPossibility",
+      "field": "DateCreated",
+      "rationale": "Creation timestamp. The target host stamps this at creation time and the tool has no provenance-preserving write path for it, nor is one wanted -- the tool's own provenance record is the separate ImportResidueTag.",
+      "fr": "FR-055",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "CmPossibility",
+      "field": "DateModified",
+      "rationale": "Host-rewritten modification timestamp. Excluded BY ENUMERATION on this roster, per class -- never by matching the field's name, because in this domain a name suggesting modification is also a content word (a modification rule, a modified stem).",
+      "fr": "FR-056",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "CmPossibility",
+      "field": "OwnOrd",
+      "rationale": "Owning-sequence position bookkeeping value. Sequence faithfulness is expressed by comparing the ordered sequence itself (E.4), never by this per-item position number.",
+      "fr": "FR-059",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "CmPossibility",
+      "field": "OwningFlid",
+      "rationale": "Raw internal schema field-identifier integer; liable to differ across host builds with no semantic content. The identity of the owning object it names IS still compared.",
+      "fr": "FR-060",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "CmPossibilityList",
+      "field": "DateCreated",
+      "rationale": "Creation timestamp. The target host stamps this at creation time and the tool has no provenance-preserving write path for it, nor is one wanted -- the tool's own provenance record is the separate ImportResidueTag.",
+      "fr": "FR-055",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "CmPossibilityList",
+      "field": "DateModified",
+      "rationale": "Host-rewritten modification timestamp. Excluded BY ENUMERATION on this roster, per class -- never by matching the field's name, because in this domain a name suggesting modification is also a content word (a modification rule, a modified stem).",
+      "fr": "FR-056",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "CmPossibilityList",
+      "field": "OwnOrd",
+      "rationale": "Owning-sequence position bookkeeping value. Sequence faithfulness is expressed by comparing the ordered sequence itself (E.4), never by this per-item position number.",
+      "fr": "FR-059",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "CmPossibilityList",
+      "field": "OwningFlid",
+      "rationale": "Raw internal schema field-identifier integer; liable to differ across host builds with no semantic content. The identity of the owning object it names IS still compared.",
+      "fr": "FR-060",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "CmResource",
+      "field": "OwnOrd",
+      "rationale": "Owning-sequence position bookkeeping value. Sequence faithfulness is expressed by comparing the ordered sequence itself (E.4), never by this per-item position number.",
+      "fr": "FR-059",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "CmResource",
+      "field": "OwningFlid",
+      "rationale": "Raw internal schema field-identifier integer; liable to differ across host builds with no semantic content. The identity of the owning object it names IS still compared.",
+      "fr": "FR-060",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "CmRow",
+      "field": "OwnOrd",
+      "rationale": "Owning-sequence position bookkeeping value. Sequence faithfulness is expressed by comparing the ordered sequence itself (E.4), never by this per-item position number.",
+      "fr": "FR-059",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "CmRow",
+      "field": "OwningFlid",
+      "rationale": "Raw internal schema field-identifier integer; liable to differ across host builds with no semantic content. The identity of the owning object it names IS still compared.",
+      "fr": "FR-060",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "CmSemanticDomain",
+      "field": "DateCreated",
+      "rationale": "Creation timestamp. The target host stamps this at creation time and the tool has no provenance-preserving write path for it, nor is one wanted -- the tool's own provenance record is the separate ImportResidueTag.",
+      "fr": "FR-055",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "CmSemanticDomain",
+      "field": "DateModified",
+      "rationale": "Host-rewritten modification timestamp. Excluded BY ENUMERATION on this roster, per class -- never by matching the field's name, because in this domain a name suggesting modification is also a content word (a modification rule, a modified stem).",
+      "fr": "FR-056",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "CmSemanticDomain",
+      "field": "OwnOrd",
+      "rationale": "Owning-sequence position bookkeeping value. Sequence faithfulness is expressed by comparing the ordered sequence itself (E.4), never by this per-item position number.",
+      "fr": "FR-059",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "CmSemanticDomain",
+      "field": "OwningFlid",
+      "rationale": "Raw internal schema field-identifier integer; liable to differ across host builds with no semantic content. The identity of the owning object it names IS still compared.",
+      "fr": "FR-060",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "DsDiscourseData",
+      "field": "OwnOrd",
+      "rationale": "Owning-sequence position bookkeeping value. Sequence faithfulness is expressed by comparing the ordered sequence itself (E.4), never by this per-item position number.",
+      "fr": "FR-059",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "DsDiscourseData",
+      "field": "OwningFlid",
+      "rationale": "Raw internal schema field-identifier integer; liable to differ across host builds with no semantic content. The identity of the owning object it names IS still compared.",
+      "fr": "FR-060",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "FsClosedFeature",
+      "field": "OwnOrd",
+      "rationale": "Owning-sequence position bookkeeping value. Sequence faithfulness is expressed by comparing the ordered sequence itself (E.4), never by this per-item position number.",
+      "fr": "FR-059",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "FsClosedFeature",
+      "field": "OwningFlid",
+      "rationale": "Raw internal schema field-identifier integer; liable to differ across host builds with no semantic content. The identity of the owning object it names IS still compared.",
+      "fr": "FR-060",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "FsClosedValue",
+      "field": "OwnOrd",
+      "rationale": "Owning-sequence position bookkeeping value. Sequence faithfulness is expressed by comparing the ordered sequence itself (E.4), never by this per-item position number.",
+      "fr": "FR-059",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "FsClosedValue",
+      "field": "OwningFlid",
+      "rationale": "Raw internal schema field-identifier integer; liable to differ across host builds with no semantic content. The identity of the owning object it names IS still compared.",
+      "fr": "FR-060",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "FsComplexFeature",
+      "field": "OwnOrd",
+      "rationale": "Owning-sequence position bookkeeping value. Sequence faithfulness is expressed by comparing the ordered sequence itself (E.4), never by this per-item position number.",
+      "fr": "FR-059",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "FsComplexFeature",
+      "field": "OwningFlid",
+      "rationale": "Raw internal schema field-identifier integer; liable to differ across host builds with no semantic content. The identity of the owning object it names IS still compared.",
+      "fr": "FR-060",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "FsFeatStruc",
+      "field": "OwnOrd",
+      "rationale": "Owning-sequence position bookkeeping value. Sequence faithfulness is expressed by comparing the ordered sequence itself (E.4), never by this per-item position number.",
+      "fr": "FR-059",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "FsFeatStruc",
+      "field": "OwningFlid",
+      "rationale": "Raw internal schema field-identifier integer; liable to differ across host builds with no semantic content. The identity of the owning object it names IS still compared.",
+      "fr": "FR-060",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "FsFeatStrucType",
+      "field": "OwnOrd",
+      "rationale": "Owning-sequence position bookkeeping value. Sequence faithfulness is expressed by comparing the ordered sequence itself (E.4), never by this per-item position number.",
+      "fr": "FR-059",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "FsFeatStrucType",
+      "field": "OwningFlid",
+      "rationale": "Raw internal schema field-identifier integer; liable to differ across host builds with no semantic content. The identity of the owning object it names IS still compared.",
+      "fr": "FR-060",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "FsFeatureSystem",
+      "field": "OwnOrd",
+      "rationale": "Owning-sequence position bookkeeping value. Sequence faithfulness is expressed by comparing the ordered sequence itself (E.4), never by this per-item position number.",
+      "fr": "FR-059",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "FsFeatureSystem",
+      "field": "OwningFlid",
+      "rationale": "Raw internal schema field-identifier integer; liable to differ across host builds with no semantic content. The identity of the owning object it names IS still compared.",
+      "fr": "FR-060",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "FsSymFeatVal",
+      "field": "OwnOrd",
+      "rationale": "Owning-sequence position bookkeeping value. Sequence faithfulness is expressed by comparing the ordered sequence itself (E.4), never by this per-item position number.",
+      "fr": "FR-059",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "FsSymFeatVal",
+      "field": "OwningFlid",
+      "rationale": "Raw internal schema field-identifier integer; liable to differ across host builds with no semantic content. The identity of the owning object it names IS still compared.",
+      "fr": "FR-060",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "LangProject",
+      "field": "DateCreated",
+      "rationale": "Creation timestamp. The target host stamps this at creation time and the tool has no provenance-preserving write path for it, nor is one wanted -- the tool's own provenance record is the separate ImportResidueTag.",
+      "fr": "FR-055",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "LangProject",
+      "field": "DateModified",
+      "rationale": "Host-rewritten modification timestamp. Excluded BY ENUMERATION on this roster, per class -- never by matching the field's name, because in this domain a name suggesting modification is also a content word (a modification rule, a modified stem).",
+      "fr": "FR-056",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "LangProject",
+      "field": "OwnOrd",
+      "rationale": "Owning-sequence position bookkeeping value. Sequence faithfulness is expressed by comparing the ordered sequence itself (E.4), never by this per-item position number.",
+      "fr": "FR-059",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "LangProject",
+      "field": "OwningFlid",
+      "rationale": "Raw internal schema field-identifier integer; liable to differ across host builds with no semantic content. The identity of the owning object it names IS still compared.",
+      "fr": "FR-060",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "LexDb",
+      "field": "DateCreated",
+      "rationale": "Creation timestamp. The target host stamps this at creation time and the tool has no provenance-preserving write path for it, nor is one wanted -- the tool's own provenance record is the separate ImportResidueTag.",
+      "fr": "FR-055",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "LexDb",
+      "field": "DateModified",
+      "rationale": "Host-rewritten modification timestamp. Excluded BY ENUMERATION on this roster, per class -- never by matching the field's name, because in this domain a name suggesting modification is also a content word (a modification rule, a modified stem).",
+      "fr": "FR-056",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "LexDb",
+      "field": "OwnOrd",
+      "rationale": "Owning-sequence position bookkeeping value. Sequence faithfulness is expressed by comparing the ordered sequence itself (E.4), never by this per-item position number.",
+      "fr": "FR-059",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "LexDb",
+      "field": "OwningFlid",
+      "rationale": "Raw internal schema field-identifier integer; liable to differ across host builds with no semantic content. The identity of the owning object it names IS still compared.",
+      "fr": "FR-060",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "LexEntry",
+      "field": "DateCreated",
+      "rationale": "Creation timestamp. The target host stamps this at creation time and the tool has no provenance-preserving write path for it, nor is one wanted -- the tool's own provenance record is the separate ImportResidueTag.",
+      "fr": "FR-055",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "LexEntry",
+      "field": "DateModified",
+      "rationale": "Host-rewritten modification timestamp. Excluded BY ENUMERATION on this roster, per class -- never by matching the field's name, because in this domain a name suggesting modification is also a content word (a modification rule, a modified stem).",
+      "fr": "FR-056",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "LexEntry",
+      "field": "HomographNumber",
+      "rationale": "Recomputed from the target's own lexicon at write time; not copied user data.",
+      "fr": "FR-061",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "LexEntry",
+      "field": "ImportResidue",
+      "rationale": "Raw pre-existing import-residue string field; never compared as data on any class.",
+      "fr": "FR-062",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "LexEntry",
+      "field": "LiftResidue",
+      "rationale": "Raw pre-existing import-residue string field, and Carrier A for the tool's own ImportResidueTag; never compared as data on any class.",
+      "fr": "FR-062",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "LexEntry",
+      "field": "OwnOrd",
+      "rationale": "Owning-sequence position bookkeeping value. Sequence faithfulness is expressed by comparing the ordered sequence itself (E.4), never by this per-item position number.",
+      "fr": "FR-059",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "LexEntry",
+      "field": "OwningFlid",
+      "rationale": "Raw internal schema field-identifier integer; liable to differ across host builds with no semantic content. The identity of the owning object it names IS still compared.",
+      "fr": "FR-060",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "LexEntryInflType",
+      "field": "DateCreated",
+      "rationale": "Creation timestamp. The target host stamps this at creation time and the tool has no provenance-preserving write path for it, nor is one wanted -- the tool's own provenance record is the separate ImportResidueTag.",
+      "fr": "FR-055",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "LexEntryInflType",
+      "field": "DateModified",
+      "rationale": "Host-rewritten modification timestamp. Excluded BY ENUMERATION on this roster, per class -- never by matching the field's name, because in this domain a name suggesting modification is also a content word (a modification rule, a modified stem).",
+      "fr": "FR-056",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "LexEntryInflType",
+      "field": "OwnOrd",
+      "rationale": "Owning-sequence position bookkeeping value. Sequence faithfulness is expressed by comparing the ordered sequence itself (E.4), never by this per-item position number.",
+      "fr": "FR-059",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "LexEntryInflType",
+      "field": "OwningFlid",
+      "rationale": "Raw internal schema field-identifier integer; liable to differ across host builds with no semantic content. The identity of the owning object it names IS still compared.",
+      "fr": "FR-060",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "LexEntryType",
+      "field": "DateCreated",
+      "rationale": "Creation timestamp. The target host stamps this at creation time and the tool has no provenance-preserving write path for it, nor is one wanted -- the tool's own provenance record is the separate ImportResidueTag.",
+      "fr": "FR-055",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "LexEntryType",
+      "field": "DateModified",
+      "rationale": "Host-rewritten modification timestamp. Excluded BY ENUMERATION on this roster, per class -- never by matching the field's name, because in this domain a name suggesting modification is also a content word (a modification rule, a modified stem).",
+      "fr": "FR-056",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "LexEntryType",
+      "field": "OwnOrd",
+      "rationale": "Owning-sequence position bookkeeping value. Sequence faithfulness is expressed by comparing the ordered sequence itself (E.4), never by this per-item position number.",
+      "fr": "FR-059",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "LexEntryType",
+      "field": "OwningFlid",
+      "rationale": "Raw internal schema field-identifier integer; liable to differ across host builds with no semantic content. The identity of the owning object it names IS still compared.",
+      "fr": "FR-060",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "LexRefType",
+      "field": "DateCreated",
+      "rationale": "Creation timestamp. The target host stamps this at creation time and the tool has no provenance-preserving write path for it, nor is one wanted -- the tool's own provenance record is the separate ImportResidueTag.",
+      "fr": "FR-055",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "LexRefType",
+      "field": "DateModified",
+      "rationale": "Host-rewritten modification timestamp. Excluded BY ENUMERATION on this roster, per class -- never by matching the field's name, because in this domain a name suggesting modification is also a content word (a modification rule, a modified stem).",
+      "fr": "FR-056",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "LexRefType",
+      "field": "OwnOrd",
+      "rationale": "Owning-sequence position bookkeeping value. Sequence faithfulness is expressed by comparing the ordered sequence itself (E.4), never by this per-item position number.",
+      "fr": "FR-059",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "LexRefType",
+      "field": "OwningFlid",
+      "rationale": "Raw internal schema field-identifier integer; liable to differ across host builds with no semantic content. The identity of the owning object it names IS still compared.",
+      "fr": "FR-060",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "LexSense",
+      "field": "ImportResidue",
+      "rationale": "Raw pre-existing import-residue string field; never compared as data on any class.",
+      "fr": "FR-062",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "LexSense",
+      "field": "LiftResidue",
+      "rationale": "Raw pre-existing import-residue string field, and Carrier A for the tool's own ImportResidueTag; never compared as data on any class.",
+      "fr": "FR-062",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "LexSense",
+      "field": "OwnOrd",
+      "rationale": "Owning-sequence position bookkeeping value. Sequence faithfulness is expressed by comparing the ordered sequence itself (E.4), never by this per-item position number.",
+      "fr": "FR-059",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "LexSense",
+      "field": "OwningFlid",
+      "rationale": "Raw internal schema field-identifier integer; liable to differ across host builds with no semantic content. The identity of the owning object it names IS still compared.",
+      "fr": "FR-060",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "MoAffixAllomorph",
+      "field": "LiftResidue",
+      "rationale": "Raw pre-existing import-residue string field, and Carrier A for the tool's own ImportResidueTag; never compared as data on any class.",
+      "fr": "FR-062",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "MoAffixAllomorph",
+      "field": "OwnOrd",
+      "rationale": "Owning-sequence position bookkeeping value. Sequence faithfulness is expressed by comparing the ordered sequence itself (E.4), never by this per-item position number.",
+      "fr": "FR-059",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "MoAffixAllomorph",
+      "field": "OwningFlid",
+      "rationale": "Raw internal schema field-identifier integer; liable to differ across host builds with no semantic content. The identity of the owning object it names IS still compared.",
+      "fr": "FR-060",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "MoDerivAffMsa",
+      "field": "LiftResidue",
+      "rationale": "Raw pre-existing import-residue string field, and Carrier A for the tool's own ImportResidueTag; never compared as data on any class.",
+      "fr": "FR-062",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "MoDerivAffMsa",
+      "field": "OwnOrd",
+      "rationale": "Owning-sequence position bookkeeping value. Sequence faithfulness is expressed by comparing the ordered sequence itself (E.4), never by this per-item position number.",
+      "fr": "FR-059",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "MoDerivAffMsa",
+      "field": "OwningFlid",
+      "rationale": "Raw internal schema field-identifier integer; liable to differ across host builds with no semantic content. The identity of the owning object it names IS still compared.",
+      "fr": "FR-060",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "MoEndoCompound",
+      "field": "OwnOrd",
+      "rationale": "Owning-sequence position bookkeeping value. Sequence faithfulness is expressed by comparing the ordered sequence itself (E.4), never by this per-item position number.",
+      "fr": "FR-059",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "MoEndoCompound",
+      "field": "OwningFlid",
+      "rationale": "Raw internal schema field-identifier integer; liable to differ across host builds with no semantic content. The identity of the owning object it names IS still compared.",
+      "fr": "FR-060",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "MoInflAffMsa",
+      "field": "LiftResidue",
+      "rationale": "Raw pre-existing import-residue string field, and Carrier A for the tool's own ImportResidueTag; never compared as data on any class.",
+      "fr": "FR-062",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "MoInflAffMsa",
+      "field": "OwnOrd",
+      "rationale": "Owning-sequence position bookkeeping value. Sequence faithfulness is expressed by comparing the ordered sequence itself (E.4), never by this per-item position number.",
+      "fr": "FR-059",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "MoInflAffMsa",
+      "field": "OwningFlid",
+      "rationale": "Raw internal schema field-identifier integer; liable to differ across host builds with no semantic content. The identity of the owning object it names IS still compared.",
+      "fr": "FR-060",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "MoInflAffixSlot",
+      "field": "OwnOrd",
+      "rationale": "Owning-sequence position bookkeeping value. Sequence faithfulness is expressed by comparing the ordered sequence itself (E.4), never by this per-item position number.",
+      "fr": "FR-059",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "MoInflAffixSlot",
+      "field": "OwningFlid",
+      "rationale": "Raw internal schema field-identifier integer; liable to differ across host builds with no semantic content. The identity of the owning object it names IS still compared.",
+      "fr": "FR-060",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "MoInflAffixTemplate",
+      "field": "OwnOrd",
+      "rationale": "Owning-sequence position bookkeeping value. Sequence faithfulness is expressed by comparing the ordered sequence itself (E.4), never by this per-item position number.",
+      "fr": "FR-059",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "MoInflAffixTemplate",
+      "field": "OwningFlid",
+      "rationale": "Raw internal schema field-identifier integer; liable to differ across host builds with no semantic content. The identity of the owning object it names IS still compared.",
+      "fr": "FR-060",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "MoMorphAdhocProhib",
+      "field": "OwnOrd",
+      "rationale": "Owning-sequence position bookkeeping value. Sequence faithfulness is expressed by comparing the ordered sequence itself (E.4), never by this per-item position number.",
+      "fr": "FR-059",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "MoMorphAdhocProhib",
+      "field": "OwningFlid",
+      "rationale": "Raw internal schema field-identifier integer; liable to differ across host builds with no semantic content. The identity of the owning object it names IS still compared.",
+      "fr": "FR-060",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "MoMorphData",
+      "field": "OwnOrd",
+      "rationale": "Owning-sequence position bookkeeping value. Sequence faithfulness is expressed by comparing the ordered sequence itself (E.4), never by this per-item position number.",
+      "fr": "FR-059",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "MoMorphData",
+      "field": "OwningFlid",
+      "rationale": "Raw internal schema field-identifier integer; liable to differ across host builds with no semantic content. The identity of the owning object it names IS still compared.",
+      "fr": "FR-060",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "MoMorphType",
+      "field": "DateCreated",
+      "rationale": "Creation timestamp. The target host stamps this at creation time and the tool has no provenance-preserving write path for it, nor is one wanted -- the tool's own provenance record is the separate ImportResidueTag.",
+      "fr": "FR-055",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "MoMorphType",
+      "field": "DateModified",
+      "rationale": "Host-rewritten modification timestamp. Excluded BY ENUMERATION on this roster, per class -- never by matching the field's name, because in this domain a name suggesting modification is also a content word (a modification rule, a modified stem).",
+      "fr": "FR-056",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "MoMorphType",
+      "field": "OwnOrd",
+      "rationale": "Owning-sequence position bookkeeping value. Sequence faithfulness is expressed by comparing the ordered sequence itself (E.4), never by this per-item position number.",
+      "fr": "FR-059",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "MoMorphType",
+      "field": "OwningFlid",
+      "rationale": "Raw internal schema field-identifier integer; liable to differ across host builds with no semantic content. The identity of the owning object it names IS still compared.",
+      "fr": "FR-060",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "MoStemMsa",
+      "field": "LiftResidue",
+      "rationale": "Raw pre-existing import-residue string field, and Carrier A for the tool's own ImportResidueTag; never compared as data on any class.",
+      "fr": "FR-062",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "MoStemMsa",
+      "field": "OwnOrd",
+      "rationale": "Owning-sequence position bookkeeping value. Sequence faithfulness is expressed by comparing the ordered sequence itself (E.4), never by this per-item position number.",
+      "fr": "FR-059",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "MoStemMsa",
+      "field": "OwningFlid",
+      "rationale": "Raw internal schema field-identifier integer; liable to differ across host builds with no semantic content. The identity of the owning object it names IS still compared.",
+      "fr": "FR-060",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "PartOfSpeech",
+      "field": "DateCreated",
+      "rationale": "Creation timestamp. The target host stamps this at creation time and the tool has no provenance-preserving write path for it, nor is one wanted -- the tool's own provenance record is the separate ImportResidueTag.",
+      "fr": "FR-055",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "PartOfSpeech",
+      "field": "DateModified",
+      "rationale": "Host-rewritten modification timestamp. Excluded BY ENUMERATION on this roster, per class -- never by matching the field's name, because in this domain a name suggesting modification is also a content word (a modification rule, a modified stem).",
+      "fr": "FR-056",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "PartOfSpeech",
+      "field": "OwnOrd",
+      "rationale": "Owning-sequence position bookkeeping value. Sequence faithfulness is expressed by comparing the ordered sequence itself (E.4), never by this per-item position number.",
+      "fr": "FR-059",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "PartOfSpeech",
+      "field": "OwningFlid",
+      "rationale": "Raw internal schema field-identifier integer; liable to differ across host builds with no semantic content. The identity of the owning object it names IS still compared.",
+      "fr": "FR-060",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "PhBdryMarker",
+      "field": "OwnOrd",
+      "rationale": "Owning-sequence position bookkeeping value. Sequence faithfulness is expressed by comparing the ordered sequence itself (E.4), never by this per-item position number.",
+      "fr": "FR-059",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "PhBdryMarker",
+      "field": "OwningFlid",
+      "rationale": "Raw internal schema field-identifier integer; liable to differ across host builds with no semantic content. The identity of the owning object it names IS still compared.",
+      "fr": "FR-060",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "PhCode",
+      "field": "OwnOrd",
+      "rationale": "Owning-sequence position bookkeeping value. Sequence faithfulness is expressed by comparing the ordered sequence itself (E.4), never by this per-item position number.",
+      "fr": "FR-059",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "PhCode",
+      "field": "OwningFlid",
+      "rationale": "Raw internal schema field-identifier integer; liable to differ across host builds with no semantic content. The identity of the owning object it names IS still compared.",
+      "fr": "FR-060",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "PhEnvironment",
+      "field": "OwnOrd",
+      "rationale": "Owning-sequence position bookkeeping value. Sequence faithfulness is expressed by comparing the ordered sequence itself (E.4), never by this per-item position number.",
+      "fr": "FR-059",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "PhEnvironment",
+      "field": "OwningFlid",
+      "rationale": "Raw internal schema field-identifier integer; liable to differ across host builds with no semantic content. The identity of the owning object it names IS still compared.",
+      "fr": "FR-060",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "PhFeatureConstraint",
+      "field": "OwnOrd",
+      "rationale": "Owning-sequence position bookkeeping value. Sequence faithfulness is expressed by comparing the ordered sequence itself (E.4), never by this per-item position number.",
+      "fr": "FR-059",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "PhFeatureConstraint",
+      "field": "OwningFlid",
+      "rationale": "Raw internal schema field-identifier integer; liable to differ across host builds with no semantic content. The identity of the owning object it names IS still compared.",
+      "fr": "FR-060",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "PhNCFeatures",
+      "field": "OwnOrd",
+      "rationale": "Owning-sequence position bookkeeping value. Sequence faithfulness is expressed by comparing the ordered sequence itself (E.4), never by this per-item position number.",
+      "fr": "FR-059",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "PhNCFeatures",
+      "field": "OwningFlid",
+      "rationale": "Raw internal schema field-identifier integer; liable to differ across host builds with no semantic content. The identity of the owning object it names IS still compared.",
+      "fr": "FR-060",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "PhNCSegments",
+      "field": "OwnOrd",
+      "rationale": "Owning-sequence position bookkeeping value. Sequence faithfulness is expressed by comparing the ordered sequence itself (E.4), never by this per-item position number.",
+      "fr": "FR-059",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "PhNCSegments",
+      "field": "OwningFlid",
+      "rationale": "Raw internal schema field-identifier integer; liable to differ across host builds with no semantic content. The identity of the owning object it names IS still compared.",
+      "fr": "FR-060",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "PhPhonData",
+      "field": "OwnOrd",
+      "rationale": "Owning-sequence position bookkeeping value. Sequence faithfulness is expressed by comparing the ordered sequence itself (E.4), never by this per-item position number.",
+      "fr": "FR-059",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "PhPhonData",
+      "field": "OwningFlid",
+      "rationale": "Raw internal schema field-identifier integer; liable to differ across host builds with no semantic content. The identity of the owning object it names IS still compared.",
+      "fr": "FR-060",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "PhPhoneme",
+      "field": "OwnOrd",
+      "rationale": "Owning-sequence position bookkeeping value. Sequence faithfulness is expressed by comparing the ordered sequence itself (E.4), never by this per-item position number.",
+      "fr": "FR-059",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "PhPhoneme",
+      "field": "OwningFlid",
+      "rationale": "Raw internal schema field-identifier integer; liable to differ across host builds with no semantic content. The identity of the owning object it names IS still compared.",
+      "fr": "FR-060",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "PhPhonemeSet",
+      "field": "OwnOrd",
+      "rationale": "Owning-sequence position bookkeeping value. Sequence faithfulness is expressed by comparing the ordered sequence itself (E.4), never by this per-item position number.",
+      "fr": "FR-059",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "PhPhonemeSet",
+      "field": "OwningFlid",
+      "rationale": "Raw internal schema field-identifier integer; liable to differ across host builds with no semantic content. The identity of the owning object it names IS still compared.",
+      "fr": "FR-060",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "PhRegularRule",
+      "field": "OwnOrd",
+      "rationale": "Owning-sequence position bookkeeping value. Sequence faithfulness is expressed by comparing the ordered sequence itself (E.4), never by this per-item position number.",
+      "fr": "FR-059",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "PhRegularRule",
+      "field": "OwningFlid",
+      "rationale": "Raw internal schema field-identifier integer; liable to differ across host builds with no semantic content. The identity of the owning object it names IS still compared.",
+      "fr": "FR-060",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "PhSegRuleRHS",
+      "field": "OwnOrd",
+      "rationale": "Owning-sequence position bookkeeping value. Sequence faithfulness is expressed by comparing the ordered sequence itself (E.4), never by this per-item position number.",
+      "fr": "FR-059",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "PhSegRuleRHS",
+      "field": "OwningFlid",
+      "rationale": "Raw internal schema field-identifier integer; liable to differ across host builds with no semantic content. The identity of the owning object it names IS still compared.",
+      "fr": "FR-060",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "PhSequenceContext",
+      "field": "OwnOrd",
+      "rationale": "Owning-sequence position bookkeeping value. Sequence faithfulness is expressed by comparing the ordered sequence itself (E.4), never by this per-item position number.",
+      "fr": "FR-059",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "PhSequenceContext",
+      "field": "OwningFlid",
+      "rationale": "Raw internal schema field-identifier integer; liable to differ across host builds with no semantic content. The identity of the owning object it names IS still compared.",
+      "fr": "FR-060",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "PhSimpleContextBdry",
+      "field": "OwnOrd",
+      "rationale": "Owning-sequence position bookkeeping value. Sequence faithfulness is expressed by comparing the ordered sequence itself (E.4), never by this per-item position number.",
+      "fr": "FR-059",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "PhSimpleContextBdry",
+      "field": "OwningFlid",
+      "rationale": "Raw internal schema field-identifier integer; liable to differ across host builds with no semantic content. The identity of the owning object it names IS still compared.",
+      "fr": "FR-060",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "PhSimpleContextNC",
+      "field": "OwnOrd",
+      "rationale": "Owning-sequence position bookkeeping value. Sequence faithfulness is expressed by comparing the ordered sequence itself (E.4), never by this per-item position number.",
+      "fr": "FR-059",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "PhSimpleContextNC",
+      "field": "OwningFlid",
+      "rationale": "Raw internal schema field-identifier integer; liable to differ across host builds with no semantic content. The identity of the owning object it names IS still compared.",
+      "fr": "FR-060",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "PhSimpleContextSeg",
+      "field": "OwnOrd",
+      "rationale": "Owning-sequence position bookkeeping value. Sequence faithfulness is expressed by comparing the ordered sequence itself (E.4), never by this per-item position number.",
+      "fr": "FR-059",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "PhSimpleContextSeg",
+      "field": "OwningFlid",
+      "rationale": "Raw internal schema field-identifier integer; liable to differ across host builds with no semantic content. The identity of the owning object it names IS still compared.",
+      "fr": "FR-060",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "ReversalIndex",
+      "field": "DateCreated",
+      "rationale": "Creation timestamp. The target host stamps this at creation time and the tool has no provenance-preserving write path for it, nor is one wanted -- the tool's own provenance record is the separate ImportResidueTag.",
+      "fr": "FR-055",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "ReversalIndex",
+      "field": "DateModified",
+      "rationale": "Host-rewritten modification timestamp. Excluded BY ENUMERATION on this roster, per class -- never by matching the field's name, because in this domain a name suggesting modification is also a content word (a modification rule, a modified stem).",
+      "fr": "FR-056",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "ReversalIndex",
+      "field": "OwnOrd",
+      "rationale": "Owning-sequence position bookkeeping value. Sequence faithfulness is expressed by comparing the ordered sequence itself (E.4), never by this per-item position number.",
+      "fr": "FR-059",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "ReversalIndex",
+      "field": "OwningFlid",
+      "rationale": "Raw internal schema field-identifier integer; liable to differ across host builds with no semantic content. The identity of the owning object it names IS still compared.",
+      "fr": "FR-060",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "RnResearchNbk",
+      "field": "DateCreated",
+      "rationale": "Creation timestamp. The target host stamps this at creation time and the tool has no provenance-preserving write path for it, nor is one wanted -- the tool's own provenance record is the separate ImportResidueTag.",
+      "fr": "FR-055",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "RnResearchNbk",
+      "field": "DateModified",
+      "rationale": "Host-rewritten modification timestamp. Excluded BY ENUMERATION on this roster, per class -- never by matching the field's name, because in this domain a name suggesting modification is also a content word (a modification rule, a modified stem).",
+      "fr": "FR-056",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "RnResearchNbk",
+      "field": "OwnOrd",
+      "rationale": "Owning-sequence position bookkeeping value. Sequence faithfulness is expressed by comparing the ordered sequence itself (E.4), never by this per-item position number.",
+      "fr": "FR-059",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "RnResearchNbk",
+      "field": "OwningFlid",
+      "rationale": "Raw internal schema field-identifier integer; liable to differ across host builds with no semantic content. The identity of the owning object it names IS still compared.",
+      "fr": "FR-060",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "Segment",
+      "field": "OwnOrd",
+      "rationale": "Owning-sequence position bookkeeping value. Sequence faithfulness is expressed by comparing the ordered sequence itself (E.4), never by this per-item position number.",
+      "fr": "FR-059",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "Segment",
+      "field": "OwningFlid",
+      "rationale": "Raw internal schema field-identifier integer; liable to differ across host builds with no semantic content. The identity of the owning object it names IS still compared.",
+      "fr": "FR-060",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "StStyle",
+      "field": "OwnOrd",
+      "rationale": "Owning-sequence position bookkeeping value. Sequence faithfulness is expressed by comparing the ordered sequence itself (E.4), never by this per-item position number.",
+      "fr": "FR-059",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "StStyle",
+      "field": "OwningFlid",
+      "rationale": "Raw internal schema field-identifier integer; liable to differ across host builds with no semantic content. The identity of the owning object it names IS still compared.",
+      "fr": "FR-060",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "StText",
+      "field": "DateModified",
+      "rationale": "Host-rewritten modification timestamp. Excluded BY ENUMERATION on this roster, per class -- never by matching the field's name, because in this domain a name suggesting modification is also a content word (a modification rule, a modified stem).",
+      "fr": "FR-056",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "StText",
+      "field": "OwnOrd",
+      "rationale": "Owning-sequence position bookkeeping value. Sequence faithfulness is expressed by comparing the ordered sequence itself (E.4), never by this per-item position number.",
+      "fr": "FR-059",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "StText",
+      "field": "OwningFlid",
+      "rationale": "Raw internal schema field-identifier integer; liable to differ across host builds with no semantic content. The identity of the owning object it names IS still compared.",
+      "fr": "FR-060",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "StTxtPara",
+      "field": "OwnOrd",
+      "rationale": "Owning-sequence position bookkeeping value. Sequence faithfulness is expressed by comparing the ordered sequence itself (E.4), never by this per-item position number.",
+      "fr": "FR-059",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "StTxtPara",
+      "field": "OwningFlid",
+      "rationale": "Raw internal schema field-identifier integer; liable to differ across host builds with no semantic content. The identity of the owning object it names IS still compared.",
+      "fr": "FR-060",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "Text",
+      "field": "DateCreated",
+      "rationale": "Creation timestamp. The target host stamps this at creation time and the tool has no provenance-preserving write path for it, nor is one wanted -- the tool's own provenance record is the separate ImportResidueTag.",
+      "fr": "FR-055",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "Text",
+      "field": "DateModified",
+      "rationale": "Host-rewritten modification timestamp. Excluded BY ENUMERATION on this roster, per class -- never by matching the field's name, because in this domain a name suggesting modification is also a content word (a modification rule, a modified stem).",
+      "fr": "FR-056",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "Text",
+      "field": "OwnOrd",
+      "rationale": "Owning-sequence position bookkeeping value. Sequence faithfulness is expressed by comparing the ordered sequence itself (E.4), never by this per-item position number.",
+      "fr": "FR-059",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "Text",
+      "field": "OwningFlid",
+      "rationale": "Raw internal schema field-identifier integer; liable to differ across host builds with no semantic content. The identity of the owning object it names IS still compared.",
+      "fr": "FR-060",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "WfiAnalysis",
+      "field": "OwnOrd",
+      "rationale": "Owning-sequence position bookkeeping value. Sequence faithfulness is expressed by comparing the ordered sequence itself (E.4), never by this per-item position number.",
+      "fr": "FR-059",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "WfiAnalysis",
+      "field": "OwningFlid",
+      "rationale": "Raw internal schema field-identifier integer; liable to differ across host builds with no semantic content. The identity of the owning object it names IS still compared.",
+      "fr": "FR-060",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "WfiGloss",
+      "field": "OwnOrd",
+      "rationale": "Owning-sequence position bookkeeping value. Sequence faithfulness is expressed by comparing the ordered sequence itself (E.4), never by this per-item position number.",
+      "fr": "FR-059",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "WfiGloss",
+      "field": "OwningFlid",
+      "rationale": "Raw internal schema field-identifier integer; liable to differ across host builds with no semantic content. The identity of the owning object it names IS still compared.",
+      "fr": "FR-060",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "WfiMorphBundle",
+      "field": "OwnOrd",
+      "rationale": "Owning-sequence position bookkeeping value. Sequence faithfulness is expressed by comparing the ordered sequence itself (E.4), never by this per-item position number.",
+      "fr": "FR-059",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "WfiMorphBundle",
+      "field": "OwningFlid",
+      "rationale": "Raw internal schema field-identifier integer; liable to differ across host builds with no semantic content. The identity of the owning object it names IS still compared.",
+      "fr": "FR-060",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "WfiWordform",
+      "field": "Checksum",
+      "rationale": "Recomputed by the target, never copied. NOTE: FR-064 is written as a forward guard saying no currently transferred class exposes such a field -- WfiWordform.Checksum, measured live on 2026-08-19, shows one does.",
+      "fr": "FR-064",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "WfiWordform",
+      "field": "OwnOrd",
+      "rationale": "Owning-sequence position bookkeeping value. Sequence faithfulness is expressed by comparing the ordered sequence itself (E.4), never by this per-item position number.",
+      "fr": "FR-059",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    },
+    {
+      "class": "WfiWordform",
+      "field": "OwningFlid",
+      "rationale": "Raw internal schema field-identifier integer; liable to differ across host builds with no semantic content. The identity of the owning object it names IS still compared.",
+      "fr": "FR-060",
+      "basis": "enumerated-per-class-from-live-lcm-metadata"
+    }
+  ],
+  "compared_not_excluded": [
+    {
+      "class": "MoAffixAllomorph",
+      "field": "IsAbstract",
+      "fr": "FR-065",
+      "why_compared": "Boolean/flag field. EXPECTED_DIVERGENT only if the engine's own GetSyncableProperties surface omits it for this class -- never waved through by a blanket naming heuristic. Absent such an omission it is ordinary content, subject to DISTORTED/LOST."
+    },
+    {
+      "class": "MoEndoCompound",
+      "field": "Disabled",
+      "fr": "FR-065",
+      "why_compared": "Boolean/flag field. EXPECTED_DIVERGENT only if the engine's own GetSyncableProperties surface omits it for this class -- never waved through by a blanket naming heuristic. Absent such an omission it is ordinary content, subject to DISTORTED/LOST."
+    },
+    {
+      "class": "MoInflAffixTemplate",
+      "field": "Disabled",
+      "fr": "FR-065",
+      "why_compared": "Boolean/flag field. EXPECTED_DIVERGENT only if the engine's own GetSyncableProperties surface omits it for this class -- never waved through by a blanket naming heuristic. Absent such an omission it is ordinary content, subject to DISTORTED/LOST."
+    },
+    {
+      "class": "MoMorphAdhocProhib",
+      "field": "Disabled",
+      "fr": "FR-065",
+      "why_compared": "Boolean/flag field. EXPECTED_DIVERGENT only if the engine's own GetSyncableProperties surface omits it for this class -- never waved through by a blanket naming heuristic. Absent such an omission it is ordinary content, subject to DISTORTED/LOST."
+    },
+    {
+      "class": "PhRegularRule",
+      "field": "Direction",
+      "fr": "FR-067",
+      "why_compared": "A phonological rule's direction-of-application field. Excluded from the interactive merge-preview UI's diff pane for legibility only; a UI-legibility exclusion is NOT a fidelity exclusion. MUST be compared by decoding BOTH sides to the same semantic value, defensively against cross-version ordinal drift."
+    },
+    {
+      "class": "PhRegularRule",
+      "field": "Disabled",
+      "fr": "FR-065",
+      "why_compared": "Boolean/flag field. EXPECTED_DIVERGENT only if the engine's own GetSyncableProperties surface omits it for this class -- never waved through by a blanket naming heuristic. Absent such an omission it is ordinary content, subject to DISTORTED/LOST."
+    }
+  ]
+}

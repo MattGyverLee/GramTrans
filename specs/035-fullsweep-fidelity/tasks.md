@@ -266,28 +266,16 @@ of the corpus being present.
       produced, and that guard module's content hash; a guard no constructible defect can fail
       is itself reported as a defect (FR-178..FR-181) · `debug/fullsweep/guards.py`,
       `debug/run_fullcopy_sweep.py`, `specs/035-fullsweep-fidelity/contracts/negative-controls.json`
-- [ ] **T035** [US1] Run batch 1 -- the three pilots, `--intent baseline` -- and record the
-      measured result: both historically dominant drop-reason classes at exactly zero, and the
-      residual matching the recorded list of 160 records across its five known categories
-      (FR-160, FR-161, SC-005) · `scratchpad/035_sweep/batch01/`
-      **RUN DONE 2026-08-19, EXPECTATION NOT MET -- stays unchecked.** Measured result recorded
-      in [batch01-results.md](./batch01-results.md). First live exercise of the real
-      `run_one_project` path: all three pilots completed 7/7 phases, every source fingerprint
-      `UNCHANGED`, `Target` restored from the pinned SHA before and after each project. But:
-      (a) FR-161's primary zero-target `alignment token had no copied target referent` measures
-      exactly its historical 27,844 in Esperanto -- unmoved. `paragraph create failed` (1,207) IS
-      at zero, and the 1,282-drop reduction reconciles exactly, but the criterion is not met.
-      (b) **BLOCKING ORDERING DEFECT**: all 15 guards report `not-evaluated` and 100% of findings
-      (11,148 / 519,277 / 16,503) carry `NOT_YET_CLASSIFIED_MISSING_FROM_TARGET`, so all three
-      verdicts are `VACUOUS` (exit 4). The classifier that turns the measured censuses and drop
-      reasons into guard inputs is **T036-T043 (US2), ordered AFTER this task**. T035 can only
-      ever return `VACUOUS` where it sits; batch 1 must be re-run once US2 lands.
-      (c) FR-149: batch 1's artifacts are in gitignored `scratchpad/` (`.gitignore:117`) and
-      `assert_evidence_base_tracked()` does not cover the artifact dir -- fix before T049/T050.
-
 **Checkpoint**: User Story 1 is independently functional. The pilots produce a verdict
 that is demonstrably capable of failing, and every guard behind it has a recorded
 seeded defect proving so.
+
+> **T035 MOVED to the end of Phase 5 (2026-08-19).** The pilot confirmation run was
+> executed live at its original position and could only return `VACUOUS`: the guards it
+> must report on are fed by the US2 classifier, which is ordered after it. Batch 1's
+> first live run and its measured numbers are recorded in
+> [batch01-results.md](./batch01-results.md); the task itself now sits after T045, where
+> its acceptance criterion can actually be evaluated.
 
 ---
 
@@ -303,7 +291,7 @@ the comparator's verdict for each -- no corpus-wide run needed.
 
 ### Tests
 
-- [ ] **T036** [P] [US2] Difference classification tests: `DISTORTED` for whitespace, casing,
+- [x] **T036** [P] [US2] Difference classification tests: `DISTORTED` for whitespace, casing,
       run-boundary loss, normalization form, and date-precision collapse; the five link
       verdicts; ordered vs unordered order handling; the `EXPECTED_DIVERGENT` roster's effective
       composition; and an unresolvable category raising rather than bucketing to `""`
@@ -313,16 +301,26 @@ the comparator's verdict for each -- no corpus-wide run needed.
 
 **Wave 1 -- independent (the census surface and its roster):**
 
-- [ ] **T037** [P] [US2] Generic per-object field census across every field obtainable from an
+- [x] **T037** [P] [US2] Generic per-object field census across every field obtainable from an
       in-scope object through the engine's syncable-property surface, publishing the per-class
       OMITTED set on every artifact so growth in that surface is reported as reduced coverage
       rather than silently absorbed (FR-051, FR-066) · `debug/fullsweep/census.py`
-- [ ] **T038** [P] [US2] The `EXPECTED_DIVERGENT` roster as its own tracked artifact -- session
+- [x] **T038** [P] [US2] The `EXPECTED_DIVERGENT` roster as its own tracked artifact -- session
       handle, creation timestamp, host-rewritten modification timestamp, lookup handles,
       sequence-position bookkeeping, schema field ids, homograph numbering, import residue, the
       tool's own provenance tags, checksums, and the writing system's numeric runtime handle.
       Derived from this spec, never from the interactive merge-preview UI's exclusions
       (FR-052..FR-065, FR-068) · `specs/035-fullsweep-fidelity/contracts/expected-divergent.json`
+      **DONE 2026-08-19**: 175 exclusions across 66 classes, enumerated per class from a LIVE
+      read-only measurement (FLExToolsMCP `op-002401657-002`,
+      `IFwMetaDataCacheManaged.GetFields` over 'Ejagham Mini') rather than assumed, because
+      FR-056 forbids exclusion by naming heuristic. Plus 6 fields recorded as explicitly NOT
+      excluded (FR-065 booleans and FR-067 `PhRegularRule.Direction`) and 4 structural
+      exclusions no per-class entry can express (FR-054/057/058/068).
+      **Two spec premises contradicted by measurement**: (a) FR-064 says no currently
+      transferred class exposes a checksum field -- `WfiWordform.Checksum` does, and
+      WfiWordform is transferred; (b) `StText` carries `DateModified` but no `DateCreated`,
+      the only class of the 66 with that asymmetry.
 
 **⟶ Wait for Wave 1 to finish, then:**
 
@@ -370,6 +368,27 @@ the comparator's verdict for each -- no corpus-wide run needed.
       the full corpus pass, and record each field-plane guard's seeded defect into the
       negative-control artifact (FR-096, FR-134, FR-135, FR-137, FR-179) ·
       `debug/fullsweep/guards.py`, `specs/035-fullsweep-fidelity/contracts/negative-controls.json`
+
+**Wave 4 -- the pilot confirmation run, moved here from Phase 4:**
+
+- [ ] **T035** [US1] Run batch 1 -- the three pilots, `--intent baseline` -- and record the
+      measured result: both historically dominant drop-reason classes at exactly zero, and the
+      residual matching the recorded list of 160 records across its five known categories
+      (FR-160, FR-161, SC-005) · `scratchpad/035_sweep/batch01/`
+      **RUN DONE 2026-08-19, EXPECTATION NOT MET -- stays unchecked.** Measured result recorded
+      in [batch01-results.md](./batch01-results.md). First live exercise of the real
+      `run_one_project` path: all three pilots completed 7/7 phases, every source fingerprint
+      `UNCHANGED`, `Target` restored from the pinned SHA before and after each project. But:
+      (a) FR-161's primary zero-target `alignment token had no copied target referent` measures
+      exactly its historical 27,844 in Esperanto -- unmoved. `paragraph create failed` (1,207) IS
+      at zero, and the 1,282-drop reduction reconciles exactly, but the criterion is not met.
+      (b) **BLOCKING ORDERING DEFECT**: all 15 guards report `not-evaluated` and 100% of findings
+      (11,148 / 519,277 / 16,503) carry `NOT_YET_CLASSIFIED_MISSING_FROM_TARGET`, so all three
+      verdicts are `VACUOUS` (exit 4). The classifier that turns the measured censuses and drop
+      reasons into guard inputs is **T036-T043 (US2), ordered AFTER this task**. T035 can only
+      ever return `VACUOUS` where it sits; batch 1 must be re-run once US2 lands.
+      (c) FR-149: batch 1's artifacts are in gitignored `scratchpad/` (`.gitignore:117`) and
+      `assert_evidence_base_tracked()` does not cover the artifact dir -- fix before T049/T050.
 
 **Checkpoint**: User Story 2 is independently functional. "Faithful" now means every
 field the engine exposes, with a reviewed, tracked exclusion list and an honest count
@@ -537,7 +556,7 @@ reachable, bounded, disclosed, and self-retiring.
 ## Dependencies & Execution Order
 
 **Phase order**: Setup (T001-T010) → Foundational (T011-T016) → US4 (T017-T024) →
-US1 (T025-T035) → US2 (T036-T045) → US3 (T046-T057) → US5 (T058-T061) →
+US1 (T025-T034) → US2 (T036-T045, then T035) → US3 (T046-T057) → US5 (T058-T061) →
 Polish (T062-T067).
 
 Story phases are ordered by priority, but the ordering is also a real dependency
@@ -554,10 +573,12 @@ cannot start before both planes measure; and US5 hardens the valve US1 opened.
 - **US4** — tests T017/T018 → four independent modules (T019-T022) → T023/T024 over
   them.
 - **US1** — tests T025/T026 → four independent modules (T027-T030) → the accounting
-  plane T031/T032 → the twelve guards T033 → negative controls T034 then the pilot
-  run T035.
+  plane T031/T032 → the twelve guards T033 → negative controls T034. (The pilot run
+  T035 was originally last here; it MOVED to the end of US2 — see below.)
 - **US2** — test T036 → census surface and roster (T037/T038) → five independent
-  comparison rules (T039-T043) → coverage accounting (T044/T045).
+  comparison rules (T039-T043) → coverage accounting (T044/T045) → the pilot
+  confirmation run T035, which needs the classifier those tasks build before its
+  guards can report anything but `not-evaluated`.
 - **US3** — test T046 → three independent modules (T047-T049) → four independent CLI
   surfaces (T050-T053) → the scheduled live measurements in order (T054-T057), which
   are strictly sequential: the concurrency trial gates worker count, the census cost

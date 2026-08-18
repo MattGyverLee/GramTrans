@@ -420,6 +420,9 @@
       "decision": "NO-ENGINE-BUG-AS-LOSS control uses an inline roster, not the tracked one",
       "why": "The worktree contracts copy can be a stale empty scaffold; against an empty roster the guard fails on the roster-is-empty branch, so the control would prove only that an empty file fails rather than that signature matching works.",
       "rejected": "Loading the tracked engine-bug-signatures.json for the control"
+    },
+    {
+      "decision": "T035 RELOCATED to the end of Phase 5 (after T045). It could only ever return VACUOUS where it sat, because the guards it reports on are fed by the US2 classifier ordered after it. Batch 1 must be re-run once US2 lands."
     }
   ],
   "approach": "Grow the tracked skeleton debug/run_fullcopy_sweep.py (commit 8c72bdc) into a package debug/fullsweep/, adding the field comparator, the 15-guard registry, the 10-verdict model, the loss allowlist, the capability preflight, the coverage floor, negative controls, identity substitution, and the three-axis corpus survey. The sweep drives the shipped engine through the existing Lib/preview.py + Lib/transfer.py split via tests/integration/harness/full_run.py, and reads fields generically through flexicon's native GetSyncableProperties surface. Six phases: taxonomy spine, measurement core, gates, survey/selection, negative controls, then the batched live corpus run.",
@@ -1897,6 +1900,9 @@
       "warnings": [
         "the 28 pre-existing failures are unrelated and order-dependent"
       ]
+    },
+    {
+      "what": "Live write-safety spine works: pinned-SHA restore before and after each project, containment proven, every source fingerprint UNCHANGED, no source written to, preflight MATCH."
     }
   ],
   "concerns": [
