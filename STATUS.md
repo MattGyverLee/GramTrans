@@ -1,5 +1,51 @@
 # GramTrans — Session Handoff
 
+## Session log — 2026-08-18 (035 Phase 3 spurt, then the 036 backlog committed)
+
+Two pieces of work landed. Both are on `main`; nothing is pushed (`main` is 37
+commits ahead of `origin/main`).
+
+**Feature 035 — Phase 3 / US4, T017–T024.** Detail in the 035 section below.
+Code is on branch `035-fullsweep-fidelity` in worktree
+`D:/Github/_Projects/_LEX/GramTrans-035-fullsweep` at `f72c29a`, **not merged**.
+Spec artifacts on `main` at `a10c42a` and `5ca220d`. Worktree is clean; the
+safety suite is 107 assertions, all green.
+
+**Feature 036 — the finished-but-uncommitted backlog, now committed.** 50/50
+tasks of wizard-ui-polish had been complete and live-verified in a prior session
+but never committed — ~7,600 lines across 23 files sitting dirty in the main
+checkout. Committed as `d6a48d8` (`feat(036)`, src + tests) and `6171102`
+(`docs(036)`, spec artifacts + `verification.md`).
+
+Three things a future reader should know about that:
+
+1. **It went to `main`, not a worktree — a deliberate deviation from the git
+   protocol in `CLAUDE.md`.** There was no `036-wizard-ui-polish` branch, and
+   `GramTrans-036-baseline` is a detached HEAD on an *035* commit
+   (`53b8465`), i.e. a comparison baseline, not a 036 feature branch. The work
+   had been done directly in the main checkout. Committing in place was chosen
+   over retro-fitting a branch and moving 7,600 lines. If the protocol matters
+   for the record, the split is still available: the two commits are contiguous
+   and unpushed.
+
+2. **The 036 suite was NOT re-verified in this session.** The numbers quoted in
+   the 036 section below (2492 passed, 27 failed, 78 skipped) are the *previous*
+   session's measurement, and the commit was made on the strength of that record.
+   A re-run was attempted and abandoned: it hangs without
+   `QT_QPA_PLATFORM=offscreen`, which the suite requires. **Anyone picking this
+   up should run `QT_QPA_PLATFORM=offscreen python -m pytest tests/unit -q`
+   before trusting the green claim.**
+
+3. **`a10c42a` is mislabeled.** Its message says 035 spec bookkeeping, but it
+   also carries the pre-existing, uncommitted 036 STATUS.md entry (~108 lines)
+   that was dirty in the working tree when it was staged. The content is
+   legitimate and belongs on `main` either way; only the attribution is wrong.
+
+Feature 036's own open items are unchanged and still open: **SC-001b** (declared
+total vs ticks mismatch on four of nine operations — needs a spec-level decision,
+not code) and the uncalibrated FR-023 rows 12/13.
+
+
 ## ▶▶▶ Feature 036 wizard-ui-polish — ALL 50 TASKS DONE, live-verified (2026-08-18)
 
 **All eight user stories are implemented, the suite is green, and T047's live
