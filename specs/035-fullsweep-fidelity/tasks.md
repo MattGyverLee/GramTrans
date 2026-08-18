@@ -216,13 +216,13 @@ of the corpus being present.
       remap record (never direct identifier comparison, never re-guessed by the comparator), and
       per-class `IDENTITY-SUBSTITUTION` counts on the artifact -- admissible only for a roster
       class, a harness error otherwise (FR-183..FR-187) · `debug/fullsweep/identity.py`
-- [ ] **T029** [P] [US1] Populate the Natural-Key Identity Roster: `WfiWordform` on
+- [x] **T029** [P] [US1] Populate the Natural-Key Identity Roster: `WfiWordform` on
       `(writing system, exact form)`, the reversal-index classes on the
       one-container-per-writing-system invariant with form-keyed recursive dedup, and writing
       systems deliberately absent. Clear the carried caveat by confirming each entry live via
       FLExToolsMCP against the points flagged in `reviews/cycle5-domain-identity.md` (FR-185,
       WP-0) · `specs/035-fullsweep-fidelity/contracts/natural-key-identity-roster.json`
-- [ ] **T030** [P] [US1] Engine-bug signature roster, explicit and version-tracked, with its
+- [x] **T030** [P] [US1] Engine-bug signature roster, explicit and version-tracked, with its
       mandatory minimum member: a loss reason referencing an internal task, ticket, issue,
       probe, or TODO identifier. An empty or implementer-chosen set does not satisfy FR-107
       (FR-107, FR-121) · `specs/035-fullsweep-fidelity/contracts/engine-bug-signatures.json`
