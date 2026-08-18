@@ -423,6 +423,9 @@
     },
     {
       "decision": "T035 RELOCATED to the end of Phase 5 (after T045). It could only ever return VACUOUS where it sat, because the guards it reports on are fed by the US2 classifier ordered after it. Batch 1 must be re-run once US2 lands."
+    },
+    {
+      "decision": "T039-T043 complete on branch as 2ea137f. Remaining before the batch 1 re-run: T044/T045 (coverage accounting) and the newly added T045a (driver wiring), which is the actual blocker to a non-VACUOUS verdict."
     }
   ],
   "approach": "Grow the tracked skeleton debug/run_fullcopy_sweep.py (commit 8c72bdc) into a package debug/fullsweep/, adding the field comparator, the 15-guard registry, the 10-verdict model, the loss allowlist, the capability preflight, the coverage floor, negative controls, identity substitution, and the three-axis corpus survey. The sweep drives the shipped engine through the existing Lib/preview.py + Lib/transfer.py split via tests/integration/harness/full_run.py, and reads fields generically through flexicon's native GetSyncableProperties surface. Six phases: taxonomy spine, measurement core, gates, survey/selection, negative controls, then the batched live corpus run.",

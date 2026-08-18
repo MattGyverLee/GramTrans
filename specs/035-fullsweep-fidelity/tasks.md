@@ -326,28 +326,28 @@ the comparator's verdict for each -- no corpus-wide run needed.
 
 **Wave 2 -- independent comparison rules (each its own concern in `compare.py`):**
 
-- [ ] **T039** [P] [US2] Writing-system mapping: enumerate every distinct source writing system
+- [x] **T039** [P] [US2] Writing-system mapping: enumerate every distinct source writing system
       before the run; compare each mapped alternative byte-for-byte under its mapped target
       writing system; classify an unmapped alternative as out-of-scope; and raise a distinct
       PROCESS DEFECT -- not ordinary loss -- when a mapped writing system resolves to nothing or
       the mapping step recorded no skip for it (FR-069..FR-072) · `debug/fullsweep/compare.py`
-- [ ] **T040** [P] [US2] String-content distortion rules: leading/trailing whitespace, letter
+- [x] **T040** [P] [US2] String-content distortion rules: leading/trailing whitespace, letter
       casing (no exceptions), multi-run collapse losing run boundaries or per-run writing system
       or styling, Unicode normalization form, approximate-date precision, and decoded enumerated
       values -- including a phonological rule's direction-of-application field, decoded on both
       sides defensively against cross-version ordinal drift (FR-067, FR-073..FR-078) ·
       `debug/fullsweep/compare.py`
-- [ ] **T041** [P] [US2] Order semantics: order asserted for every documented ordered accessor
+- [x] **T041** [P] [US2] Order semantics: order asserted for every documented ordered accessor
       and for the named order-critical owned and reference sequences; order NEVER asserted for a
       documented unordered collection, including a wordform's competing analyses; cross-entry
       iteration order across unrelated top-level entries excluded (FR-079..FR-084) ·
       `debug/fullsweep/compare.py`
-- [ ] **T042** [P] [US2] Link classification into exactly five verdicts -- `RESOLVED`,
+- [x] **T042** [P] [US2] Link classification into exactly five verdicts -- `RESOLVED`,
       `DANGLING`, `SILENTLY_UNSET`, the corroborated-null case, and `RESOLVED-BY-EQUIVALENCE`
       (only for a class carrying no stable per-instance identifier) -- with a re-pointed link to
       a non-freshly-copied object still `RESOLVED`, and a null with no accounting record
       classified more severely than a null with one (FR-085..FR-090) · `debug/fullsweep/compare.py`
-- [ ] **T043** [P] [US2] Structural depth and per-parent degree for every class capable of
+- [x] **T043** [P] [US2] Structural depth and per-parent degree for every class capable of
       same-class nesting: per-side maximum depth reached and per-parent child-count comparison
       recorded on every artifact; a lower target-side maximum depth, or any parent whose child
       count differs, is never a clean result (FR-189, SC-017) · `debug/fullsweep/compare.py`
@@ -368,6 +368,36 @@ the comparator's verdict for each -- no corpus-wide run needed.
       the full corpus pass, and record each field-plane guard's seeded defect into the
       negative-control artifact (FR-096, FR-134, FR-135, FR-137, FR-179) ·
       `debug/fullsweep/guards.py`, `specs/035-fullsweep-fidelity/contracts/negative-controls.json`
+
+**Wave 3b -- NEW, discovered 2026-08-19 by batch 1's live run:**
+
+- [ ] **T045a** [US2] Wire the driver's OWN measurements into `RunContext`, and the two
+      accounting planes into the guard inputs. `run_one_project` currently calls
+      `run_all_guards(RunContext(project=source_name))` -- **positionally empty**. Every
+      `RunContext` measurement field defaults to `None` and a `None` input makes its guard
+      report `not-evaluated`, so all fifteen guards report `not-evaluated` and FR-109 sinks
+      every run to `VACUOUS` **regardless of how much the run actually measured**. Batch 1
+      proved this: it measured the census triple, the written-class delta, idempotency, the
+      coverage categories and 210/27,929/879 drop reasons, then passed none of them to a
+      single guard. The in-code comment still blames "no guard in the registry has real
+      pass/fail logic yet (T011-T014)", which T033 made stale.
+      This task is the ONLY thing standing between T036-T045 and a non-`VACUOUS` verdict, and
+      no other task covers it. Three parts, in order:
+      (a) pass the already-measured fields through -- `census_baseline`,
+      `census_after_first`, `census_after_second`, `written`, `idempotency`,
+      `enabled_categories`, `measured_categories`, `excluded_categories`, `drop_reasons`,
+      `engine_bug_signatures`. Leave every genuinely unmeasured field `None`: a guard must
+      report `not-evaluated` honestly rather than be handed an empty container, which is the
+      FR-109 discipline `RunContext`'s own docstring states.
+      (b) replace the `compare_objects` stub with `reconcile_objects` (plane 1) so
+      `accounting` is populated -- its TODO still says the taxonomy is unsettled, which the
+      ratified spec made stale.
+      (c) wire the plane-2 census and the five comparison rules (T037/T039-T043) so
+      `comparisons` is populated and findings carry real verdicts instead of
+      `NOT_YET_CLASSIFIED_MISSING_FROM_TARGET`.
+      · `debug/run_fullcopy_sweep.py`, `debug/fullsweep/guards.py`
+
+**⟶ T045a must land before T035 is re-run, or the re-run repeats batch 1's result.**
 
 **Wave 4 -- the pilot confirmation run, moved here from Phase 4:**
 
