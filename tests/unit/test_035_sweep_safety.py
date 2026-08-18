@@ -23,11 +23,10 @@ import sys
 from pathlib import Path
 
 _ROOT = Path(__file__).resolve().parents[2]
-_DEBUG = _ROOT / "debug"
-if str(_DEBUG) not in sys.path:
-    sys.path.insert(0, str(_DEBUG))
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
 
-import run_fullcopy_sweep as sweep  # noqa: E402
+from debug import fullsweep as sweep  # noqa: E402
 
 
 # ---------------------------------------------------------------------------

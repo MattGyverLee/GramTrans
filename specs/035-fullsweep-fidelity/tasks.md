@@ -22,35 +22,35 @@ must stay green through every task in this phase, with its 20 assertions unchang
 
 **Wave 1 -- single task (everything else in the phase depends on the package existing):**
 
-- [ ] **T001** Create the package skeleton with its public surface and the driver
+- [x] **T001** Create the package skeleton with its public surface and the driver
       version/SHA stamping helpers re-exported from one place · `debug/fullsweep/__init__.py`
 
 **⟶ Wait for Wave 1 to finish, then:**
 
 **Wave 2 -- independent (different files, one existing Group each):**
 
-- [ ] **T002** [P] Move Group A (runtime enumeration, exclusion record, frozen manifest)
+- [x] **T002** [P] Move Group A (runtime enumeration, exclusion record, frozen manifest)
       out of the monolith unchanged · `debug/fullsweep/corpus.py`
-- [ ] **T003** [P] Move Group B (allowlist choke point, name-shape rejection, destination
+- [x] **T003** [P] Move Group B (allowlist choke point, name-shape rejection, destination
       safety, fingerprints, tamper classification) out unchanged · `debug/fullsweep/safety.py`
-- [ ] **T004** [P] Move Group C (target pool, exclusive claim, stale-lock self-heal, memory
+- [x] **T004** [P] Move Group C (target pool, exclusive claim, stale-lock self-heal, memory
       admission, concurrency gate) out unchanged · `debug/fullsweep/pool.py`
-- [ ] **T005** [P] Move Group D (double-move loop, class census, written-class derivation,
+- [x] **T005** [P] Move Group D (double-move loop, class census, written-class derivation,
       idempotency result) out unchanged · `debug/fullsweep/moves.py`
-- [ ] **T006** [P] Move Group K (revision pair, `ProjectArtifact`, atomic write, flush) out
+- [x] **T006** [P] Move Group K (revision pair, `ProjectArtifact`, atomic write, flush) out
       unchanged · `debug/fullsweep/artifact.py`
-- [ ] **T007** [P] Move Group L (ledger, corpus status summary, batch command body) out
+- [x] **T007** [P] Move Group L (ledger, corpus status summary, batch command body) out
       unchanged · `debug/fullsweep/batch.py`
 
 **⟶ Wait for Wave 2 to finish, then:**
 
 **Wave 3 -- the seams that close over the split:**
 
-- [ ] **T008** Reduce the driver to a thin CLI entry point over the package, preserving every
+- [x] **T008** Reduce the driver to a thin CLI entry point over the package, preserving every
       existing flag spelling exactly · `debug/run_fullcopy_sweep.py`
-- [ ] **T009** Repoint the existing safety suite's imports at the package; assertions,
+- [x] **T009** Repoint the existing safety suite's imports at the package; assertions,
       counts, and test names stay byte-identical · `tests/unit/test_035_sweep_safety.py`
-- [ ] **T010** Create the six tracked contract data files as `schema_version: 1` scaffolds with
+- [x] **T010** Create the six tracked contract data files as `schema_version: 1` scaffolds with
       empty entry lists, so every consumer has a real file to load from day one ·
       `specs/035-fullsweep-fidelity/contracts/{expected-divergent,loss-allowlist,engine-bug-signatures,natural-key-identity-roster,flexicon-capability,coverage-floor}.json`
 
