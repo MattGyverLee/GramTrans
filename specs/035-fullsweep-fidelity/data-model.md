@@ -264,7 +264,11 @@ Four git-tracked lists, each reviewed as source.
 - **CoverageFloor** -- every in-scope class. A class with zero instances
   corpus-wide reports `NOT-EVALUATED` and is counted in the artifact's never-
   attempted bucket. Appendix, stratum, and one phonological-rule subclass are
-  in this state on this machine (research D-07).
+  in this state on this machine (research D-07) -- measured 2026-08-19 as
+  `LexAppendix`, `MoStratum`, `PhSegmentRule` (class-presence-survey.md, T044).
+  The roster carries **69** classes; `MoForm` and `MoMorphSynAnalysis` are
+  deliberately off it, with the reason recorded in `excluded_not_measurable`,
+  because an abstract LCM base can have no instance anywhere.
 
 ---
 

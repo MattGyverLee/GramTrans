@@ -224,7 +224,15 @@ and its guards report `not-evaluated`, which per FR-109 makes any run claiming
 that class clean a `VACUOUS` failure.
 
 **Rationale.** Appendix, stratum, and one phonological-rule subclass exist in no
-project on this machine (recorded coverage limit). Without an explicit floor,
+project on this machine (recorded coverage limit). **Named by measurement,
+2026-08-19 (T044):** `LexAppendix`, `MoStratum`, and `PhSegmentRule` -- 0
+instances each across all 90 projects. The phonological-rule subclass is
+`PhSegmentRule`, NOT the `PhMetathesisRule` one would guess, which is present (4
+instances / 4 projects). See class-presence-survey.md; the scan is
+`coverage.scan_class_presence`, read-only and LCM-free. Two further classes scan
+to zero for a different reason and are kept off the roster with that reason
+recorded: `MoForm` and `MoMorphSynAnalysis` are abstract LCM bases with no
+factory, so absence is by construction, not a corpus gap. Without an explicit floor,
 "we compared zero appendices and found zero mismatches" reads as a pass -- which
 is FR-137's named defect verbatim. The floor turns absence into a loud,
 countable, permanent statement rather than an invisible gap.

@@ -356,20 +356,47 @@ the comparator's verdict for each -- no corpus-wide run needed.
 
 **Wave 3 -- coverage accounting over the census:**
 
-- [ ] **T044** [US2] Coverage floor: intersect the tracked in-scope class list with the measured
+- [x] **T044** [US2] Coverage floor: intersect the tracked in-scope class list with the measured
       corpus survey; a class with zero instances corpus-wide lands in `never_attempted` and
       reports `NOT-EVALUATED`, its guards `not-evaluated`. Appendix, stratum, and the absent
       phonological-rule subclass MUST report `NOT-EVALUATED` and MUST NEVER report clean;
       allowlisting them is refused, because a structural coverage gap does not expire
       (FR-133..FR-137) · `debug/fullsweep/coverage.py`,
       `specs/035-fullsweep-fidelity/contracts/coverage-floor.json`
-- [ ] **T045** [US2] Implement `CATEGORY-COVERAGE` for real (any excluded category, any
-      unmeasured enabled category → `COVERAGE_REDUCED`), enable the stem-allomorph category for
-      the full corpus pass, and record each field-plane guard's seeded defect into the
-      negative-control artifact (FR-096, FR-134, FR-135, FR-137, FR-179) ·
-      `debug/fullsweep/guards.py`, `specs/035-fullsweep-fidelity/contracts/negative-controls.json`
 
-**Wave 3b -- NEW, discovered 2026-08-19 by batch 1's live run:**
+  > **The third absent class was MEASURED, not inferred -- and the obvious guess was
+  > wrong.** Research D-07 names "appendix, stratum, and one phonological-rule subclass"
+  > but identifies only two. `coverage.scan_class_presence` counted `<rt class="X">` rows
+  > across all 90 projects (read-only, no LCM, no lock, `Target` refused) and names the
+  > third as **`PhSegmentRule`** (0 instances). `PhMetathesisRule` -- the candidate one
+  > would guess, and one of the two object-inventory:278 records absent from Ejagham
+  > Mini -- is **present**: 4 instances / 4 projects. Pinning it would have left the real
+  > gap invisible while loudly reporting a fictional one. Recorded in
+  > [class-presence-survey.md](./class-presence-survey.md).
+  >
+  > Two further classes scan to zero and are deliberately kept OFF the roster, in the
+  > floor's `excluded_not_measurable` block **with the reason**: `MoForm` and
+  > `MoMorphSynAnalysis` are abstract LCM bases (no factory exists for either, verified
+  > via FLExToolsMCP against liblcm 11.0.0), so no `.fwdata` can carry a row for them by
+  > construction. Filing them as corpus gaps would put two permanent `NOT-EVALUATED` rows
+  > on every artifact forever and teach a reader to skim past the bucket -- the habit
+  > FR-136 exists to prevent. Roster: **69** in-scope classes, 66 present, 3 absent.
+
+**Wave 3b -- the real blocker, discovered 2026-08-19 by batch 1's live run. RE-ORDERED
+2026-08-19 to run BEFORE T045:**
+
+> **Why T045a precedes T045.** T045 asks to implement `CATEGORY-COVERAGE` "for real",
+> but `guard_category_coverage` (`guards.py:347`) already HAS real logic -- what is
+> missing is that its three inputs (`enabled_categories`, `measured_categories`,
+> `excluded_categories`) never arrive, because `run_one_project` builds `RunContext`
+> positionally empty. T045a is the task that delivers them. Done in the other order,
+> every T045 guard edit lands blind: the driver keeps reporting `not-evaluated` for it
+> regardless, so the change cannot be observed end-to-end. T045's clause (b) --
+> enabling the stem-allomorph category -- is likewise only *reportable* once the
+> coverage plumbing carries categories. The two touch disjoint files
+> (`run_fullcopy_sweep.py` vs `guards.py` + `negative-controls.json`), so this is an
+> observability constraint, not a merge-order one. The chain is
+> **T044 → T045a → T045 → T035**; T044's `CoverageReport` is an input to T045a's wiring.
 
 - [ ] **T045a** [US2] Wire the driver's OWN measurements into `RunContext`, and the two
       accounting planes into the guard inputs. `run_one_project` currently calls
@@ -396,6 +423,20 @@ the comparator's verdict for each -- no corpus-wide run needed.
       `comparisons` is populated and findings carry real verdicts instead of
       `NOT_YET_CLASSIFIED_MISSING_FROM_TARGET`.
       · `debug/run_fullcopy_sweep.py`, `debug/fullsweep/guards.py`
+
+**Wave 3c -- the guard semantics T045a makes observable:**
+
+- [ ] **T045** [US2] Implement `CATEGORY-COVERAGE` for real (any excluded category, any
+      unmeasured enabled category → `COVERAGE_REDUCED`), enable the stem-allomorph category for
+      the full corpus pass, and record each field-plane guard's seeded defect into the
+      negative-control artifact (FR-096, FR-134, FR-135, FR-137, FR-179) ·
+      `debug/fullsweep/guards.py`, `specs/035-fullsweep-fidelity/contracts/negative-controls.json`
+
+  > Note for the implementer: today `guard_category_coverage` PASSES a run whose
+  > exclusions all carry a reason. FR-137 forbids that -- "a run performed with any
+  > category excluded MUST NOT report the same success status as a full-coverage run" --
+  > so a non-empty excluded set must itself force `COVERAGE_REDUCED`, recorded reason or
+  > not. The reason check stays; it becomes the second failure mode, not the only one.
 
 **⟶ T045a must land before T035 is re-run, or the re-run repeats batch 1's result.**
 

@@ -1,0 +1,117 @@
+{
+  "schema_version": 1,
+  "_source": "in_scope_classes is the union of object-inventory.md TABLE 1 (65 primary classes the engine creates) and TABLE 2's referenced-only classes, minus the classes listed in excluded_not_measurable. known_absent_corpus_wide is MEASURED, not asserted -- see class-presence-survey.md.",
+  "in_scope_classes": [
+    "CmAgent",
+    "CmAnthroItem",
+    "CmFile",
+    "CmFolder",
+    "CmPicture",
+    "CmPossibility",
+    "CmSemanticDomain",
+    "FsClosedFeature",
+    "FsClosedValue",
+    "FsComplexFeature",
+    "FsFeatStruc",
+    "FsFeatStrucType",
+    "FsSymFeatVal",
+    "LexAppendix",
+    "LexEntry",
+    "LexEntryInflType",
+    "LexEntryRef",
+    "LexEntryType",
+    "LexEtymology",
+    "LexExampleSentence",
+    "LexExtendedNote",
+    "LexPronunciation",
+    "LexRefType",
+    "LexReference",
+    "LexSense",
+    "MoAdhocProhibGr",
+    "MoAffixAllomorph",
+    "MoAlloAdhocProhib",
+    "MoDerivAffMsa",
+    "MoEndoCompound",
+    "MoExoCompound",
+    "MoInflAffMsa",
+    "MoInflAffixSlot",
+    "MoInflAffixTemplate",
+    "MoInflClass",
+    "MoMorphAdhocProhib",
+    "MoMorphType",
+    "MoStemAllomorph",
+    "MoStemMsa",
+    "MoStemName",
+    "MoStratum",
+    "MoUnclassifiedAffixMsa",
+    "PartOfSpeech",
+    "PhBdryMarker",
+    "PhEnvironment",
+    "PhFeatureConstraint",
+    "PhMetathesisRule",
+    "PhNCFeatures",
+    "PhNCSegments",
+    "PhPhoneme",
+    "PhRegularRule",
+    "PhSegRuleRHS",
+    "PhSegmentRule",
+    "PhSequenceContext",
+    "PhSimpleContextBdry",
+    "PhSimpleContextNC",
+    "PhSimpleContextSeg",
+    "PunctuationForm",
+    "ReversalIndex",
+    "ReversalIndexEntry",
+    "Segment",
+    "StText",
+    "StTxtPara",
+    "Text",
+    "TextTag",
+    "WfiAnalysis",
+    "WfiGloss",
+    "WfiMorphBundle",
+    "WfiWordform"
+  ],
+  "excluded_not_measurable": [
+    {
+      "class": "MoForm",
+      "reason": "abstract LCM base class (no IMoFormFactory exists; subclasses MoStemAllomorph / MoAffixAllomorph carry every instance). Absent from every .fwdata by construction, not by corpus gap."
+    },
+    {
+      "class": "MoMorphSynAnalysis",
+      "reason": "abstract LCM base class (no IMoMorphSynAnalysisFactory exists; subclasses MoStemMsa / MoInflAffMsa / MoDerivAffMsa / MoUnclassifiedAffixMsa carry every instance). Absent from every .fwdata by construction, not by corpus gap."
+    }
+  ],
+  "known_absent_corpus_wide": [
+    {
+      "class": "LexAppendix",
+      "reason": "absent-corpus-wide",
+      "detail": "research D-07's \"appendix\". Referenced by LexSense.AppendixesRC and never created by any engine path; no project on this machine owns one.",
+      "measured": {
+        "instances_corpus_wide": 0,
+        "projects_scanned": 90,
+        "survey": "class-presence-survey.md"
+      }
+    },
+    {
+      "class": "MoStratum",
+      "reason": "absent-corpus-wide",
+      "detail": "research D-07's \"stratum\". Created by the STRATA category and referenced by the deferred phon-rule wiring drain; no project on this machine owns one.",
+      "measured": {
+        "instances_corpus_wide": 0,
+        "projects_scanned": 90,
+        "survey": "class-presence-survey.md"
+      }
+    },
+    {
+      "class": "PhSegmentRule",
+      "reason": "absent-corpus-wide",
+      "detail": "research D-07's \"one phonological-rule subclass\". Concrete (IPhSegmentRuleFactory exists) and dispatched by Lib/categories.py:8544, but no project on this machine owns one. Its siblings ARE present: PhRegularRule 398/33, PhMetathesisRule 4/4 (instances/projects).",
+      "measured": {
+        "instances_corpus_wide": 0,
+        "projects_scanned": 90,
+        "survey": "class-presence-survey.md"
+      }
+    }
+  ]
+}
