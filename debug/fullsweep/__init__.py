@@ -27,6 +27,10 @@ specs/035-fullsweep-fidelity/tasks.md) added on top of it:
   * ``census``  -- Group E plane 2: the generic per-object FIELD census, the
                    EXPECTED_DIVERGENT roster, and omitted-set growth as reduced
                    coverage (FR-051/FR-052/FR-066 -- T037)
+  * ``coverage``-- Group J: the coverage floor. Intersects the tracked in-scope
+                   class roster with the MEASURED corpus survey so a class with
+                   zero instances corpus-wide reports NOT-EVALUATED instead of a
+                   silent zero (FR-133..FR-137, research D-07 -- T044)
 
 ``debug/run_fullcopy_sweep.py`` is now a thin CLI entry point over this
 package. The field-level comparator's REAL logic (Groups E/H/P, still in
@@ -67,9 +71,11 @@ from .identity import *  # noqa: F401,F403,E402 -- identity rules FR-183..FR-187
 from .allowlist import *  # noqa: F401,F403,E402 -- loss-reason allowlist, FR-115..FR-117 (T032)
 from .compare import *  # noqa: F401,F403,E402 -- object-level accounting plane, FR-097 (T031)
 from .census import *  # noqa: F401,F403,E402 -- field-level census plane, FR-051/FR-052/FR-066 (T037)
+from .coverage import *  # noqa: F401,F403,E402 -- Group J: the coverage floor, FR-133..FR-137 (T044)
 
 from . import (corpus, safety, pool, moves, artifact, batch, errors, verdict,  # noqa: F401,E402
-               guards, baseline, preflight, identity, allowlist, compare, census)
+               guards, baseline, preflight, identity, allowlist, compare, census,
+               coverage)
 
 # NOTE for tests and callers: ``import *`` above BINDS A COPY of each module
 # global onto this package namespace. Patching ``fullsweep.NAME`` therefore
