@@ -95,6 +95,16 @@ class ProjectArtifact:
 
     # ---- T013 additions (Phase 2 taxonomy spine, FR-138..FR-151/FR-188) ----
     phase_reached: Optional[str] = None                     # FR-150, six-name vocabulary
+
+    # ---- T019/T020/T024 additions (Phase 3 / US4) ----------------------
+    assertions: list = field(default_factory=list)          # FR-024: each assertion, per boundary
+    assertions_complete: Optional[bool] = None              # FR-013: both boundaries evaluated
+    baseline: dict = field(default_factory=dict)            # FR-170: pinned archive + hash
+    restore_evidence: dict = field(default_factory=dict)    # FR-172/FR-173 (initial restore)
+    restore_evidence_final: dict = field(default_factory=dict)  # FR-172/FR-173 (final restore)
+    excluded_categories: list = field(default_factory=list)  # FR-142: explicit, possibly empty
+    diagnostic_level: str = ""                              # recorded, never setdefault-ed
+    preflight: dict = field(default_factory=dict)           # FR-124/FR-126: capability check
     guards: dict = field(default_factory=dict)              # FR-109/FR-143: all fifteen keys
     verdict: str = ""                                       # machine token, verdict.py
     exit_code: Optional[int] = None                         # verdict.exit_code_for(verdict)

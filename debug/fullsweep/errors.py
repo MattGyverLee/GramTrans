@@ -100,14 +100,17 @@ def classify_exception(exc: BaseException) -> str:
     module carries no hard import-order dependency on modules promoted
     independently of it in Phase 1.
     """
-    from .safety import WriteSafetyError, SourceTamperError
+    from .safety import WriteSafetyError, SourceTamperError, EvidenceProvenanceError
     from .pool import MemoryShortfall
     try:
         from .moves import HarnessError as _HarnessDefect
     except Exception:  # pragma: no cover -- moves.py always present in this repo
         _HarnessDefect = ()  # type: ignore[assignment]
 
-    if isinstance(exc, SourceTamperError):
+    if isinstance(exc, (SourceTamperError, EvidenceProvenanceError)):
+        # FR-022 source tamper and FR-149 inadmissible evidence are both
+        # provenance failures: what the run can HONESTLY CLAIM is broken,
+        # not what it attempted. FR-175 aborts the whole run on either.
         return FAILURE_CODE_PROVENANCE
     if isinstance(exc, WriteSafetyError):
         return FAILURE_CODE_WRITE_SAFETY

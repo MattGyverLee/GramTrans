@@ -84,6 +84,27 @@ from debug.fullsweep import *  # noqa: F401,F403,E402 -- the package's public su
 
 VALID_RUN_INTENTS = ("baseline", "gate")
 
+# ---------------------------------------------------------------------------
+# T024 CLI surface constants (contracts/sweep-cli.md)
+# ---------------------------------------------------------------------------
+
+#: CHANGED DEFAULT (research D-10): per-run result artifacts are EVIDENCE, not
+#: reviewed source, so they move out of the tracked spec folder into the
+#: gitignored runtime dir. What stays tracked is exactly what FR-149 names --
+#: the driver, the rosters, the allowlist, the capability fingerprint, the
+#: negative-control artifact and the ledger.
+DEFAULT_ARTIFACTS_DIR = DEFAULT_RUNTIME_DIR / "artifacts"
+
+#: FR-149 tracked inputs.
+DEFAULT_CONTRACTS_DIR = _ROOT / "specs" / "035-fullsweep-fidelity" / "contracts"
+DEFAULT_LEDGER_PATH = _ROOT / "specs" / "035-fullsweep-fidelity" / "ledger.json"
+
+#: ``--diagnostic-level`` is set explicitly and recorded; it is NEVER
+#: setdefault-ed from the environment, because a level silently inherited
+#: from an operator's shell makes two runs incomparable while both look
+#: configured.
+DIAGNOSTIC_LEVELS = ("quiet", "normal", "verbose")
+
 
 # ===========================================================================
 # GROUP E/F/G/H PLUGGABLE SEAM -- NOT BUILT HERE (still in review)
@@ -149,18 +170,35 @@ def run_one_project(
     frozen_sources: tuple,
     allowlist: Sequence[str],
     run_intent: str,
-    backup_path=None,
+    pinned_baseline,
+    exclude_categories: Sequence[str],
+    diagnostic_level: str,
     projects_root: Optional[str] = None,
     artifacts_dir: Path = DEFAULT_ARTIFACTS_DIR,
     comparator: Callable[[dict, dict], list] = compare_objects,
+    tolerated_residue: Sequence[str] = (),
 ) -> ProjectArtifact:
     """FR-043: restore -> census -> Move #1 -> census -> Move #2 -> census ->
     restore, for exactly one project, with the write-safety choke point
-    re-evaluated at every restore/write boundary (never cached)."""
+    re-evaluated INDEPENDENTLY at each of FR-013's two boundaries (never
+    cached, never inherited).
+
+    ``pinned_baseline`` is a REQUIRED ``PinnedBaseline`` (T020): the restore
+    goes through ``restore_from_pinned_baseline``, never through
+    ``harness.restore_target``, so there is no newest-archive glob fallback
+    on this path and every restored item's containment is proven before a
+    byte is written.
+    """
     if run_intent not in VALID_RUN_INTENTS:
         raise ValueError("run_intent must be one of %r" % (VALID_RUN_INTENTS,))
+    if diagnostic_level not in DIAGNOSTIC_LEVELS:
+        raise ValueError("diagnostic_level must be one of %r" % (DIAGNOSTIC_LEVELS,))
+    if pinned_baseline is None:
+        raise BaselineError(
+            "[FR-170] run_one_project requires a pinned baseline. A run that "
+            "cannot name and hash its baseline does not start."
+        )
 
-    from harness import restore as restore_mod  # lazy: harness package on sys.path
     from harness import full_run
 
     artifact = ProjectArtifact(
@@ -169,6 +207,13 @@ def run_one_project(
     )
     rp = artifact.revision_pair
     artifact.dirty_gramtrans = rp.get("gramtrans", {}).get("dirty")
+    artifact.excluded_categories = list(exclude_categories)
+    artifact.diagnostic_level = diagnostic_level
+    artifact.baseline = pinned_baseline.as_dict()
+
+    # FR-024: the per-project record that each assertion was IN FACT
+    # evaluated, at which boundary, against which literal values.
+    ledger = AssertionLedger(project=source_name)
 
     root = resolve_projects_root(projects_root)
     target_path = str(root / target_name)
@@ -178,14 +223,17 @@ def run_one_project(
     flush_artifact(artifact, artifacts_dir)
 
     try:
-        # ---- boundary (a): restore, first pass -------------------------
-        dest = assert_destination_safe(
-            target_name, source_name=source_name, frozen_sources=frozen_sources,
-            allowlist=allowlist, projects_root=projects_root,
+        # ---- boundary (a): pinned, contained restore --------------------
+        # assert_restore_boundary fires INSIDE restore_from_pinned_baseline,
+        # before the archive is even opened and long before the first removal
+        # (FR-023's load-bearing ordering).
+        restored = restore_from_pinned_baseline(
+            target_name, pinned=pinned_baseline, source_name=source_name,
+            frozen_sources=frozen_sources, allowlist=allowlist,
+            projects_root=projects_root, tolerated_residue=tolerated_residue,
+            ledger=ledger,
         )
-        self_heal_stale_lock(dest, target_name)
-        restore_mod.restore_target(target_name, backup_path=backup_path,
-                                    projects_root=str(root))
+        artifact.restore_evidence = restored.as_dict()
         artifact.phases_completed.append("restore_initial")
         advance_phase(artifact, "restore", artifacts_dir)
 
@@ -194,15 +242,17 @@ def run_one_project(
         artifact.phases_completed.append("census_before")
         flush_artifact(artifact, artifacts_dir)  # still within the "restore" phase (T013)
 
-        selection = full_run.build_full_selection(exclude=frozenset())
+        excluded = frozenset(exclude_categories)
+        selection = full_run.build_full_selection(exclude=excluded)
         artifact.coverage_categories = sorted(c.value for c, on in selection.categories.items() if on)
 
-        # ---- boundary (b): re-asserted immediately before the write-
-        # enabled open that run_full_transfer performs internally, computed
-        # fresh from the literal target_name about to be used -----------
-        assert_destination_safe(
+        # ---- boundary (b): re-asserted immediately before the first byte
+        # written beneath the target, computed fresh from the literal
+        # target_name about to be used. An INDEPENDENT evaluation -- it
+        # shares no flag with boundary (a) ------------------------------
+        assert_first_write_boundary(
             target_name, source_name=source_name, frozen_sources=frozen_sources,
-            allowlist=allowlist, projects_root=projects_root,
+            allowlist=allowlist, projects_root=projects_root, ledger=ledger,
         )
         plan1, report1 = full_run.run_full_transfer(source_name, target_name, target_path)
         artifact.phases_completed.append("first_transfer")
@@ -216,9 +266,9 @@ def run_one_project(
         written = written_classes(census_before, census_after_1)
         artifact.written_classes = written
 
-        assert_destination_safe(
+        assert_first_write_boundary(
             target_name, source_name=source_name, frozen_sources=frozen_sources,
-            allowlist=allowlist, projects_root=projects_root,
+            allowlist=allowlist, projects_root=projects_root, ledger=ledger,
         )
         plan2, report2 = full_run.run_full_transfer(source_name, target_name, target_path)
         artifact.phases_completed.append("second_transfer")
@@ -252,15 +302,16 @@ def run_one_project(
         raise
     finally:
         # FR-050: restore the target to baseline and write the artifact even
-        # on an unhandled failure.
+        # on an unhandled failure. FR-172: recovery is idempotent per project
+        # -- always restore, never resume mid-transfer.
         try:
-            dest = assert_destination_safe(
-                target_name, source_name=source_name, frozen_sources=frozen_sources,
-                allowlist=allowlist, projects_root=projects_root,
+            restored_final = restore_from_pinned_baseline(
+                target_name, pinned=pinned_baseline, source_name=source_name,
+                frozen_sources=frozen_sources, allowlist=allowlist,
+                projects_root=projects_root, tolerated_residue=tolerated_residue,
+                ledger=ledger,
             )
-            self_heal_stale_lock(dest, target_name)
-            restore_mod.restore_target(target_name, backup_path=backup_path,
-                                        projects_root=str(root))
+            artifact.restore_evidence_final = restored_final.as_dict()
             artifact.phases_completed.append("restore_final")
             artifact.phase_reached = "restore_final"
         except Exception as exc:  # noqa: BLE001 -- recorded, not swallowed
@@ -276,6 +327,23 @@ def run_one_project(
         if fp_verdict not in (FINGERPRINT_VERDICT_UNCHANGED, FINGERPRINT_VERDICT_MIGRATION):
             artifact.status = "failed"
             artifact.reason = ("SOURCE TAMPER GUARD: %s -- %s" % (fp_verdict, artifact.reason)).strip(" -")
+
+        # ---- FR-024: the assertion record goes into the artifact, and both
+        # FR-013 boundaries must have been independently evaluated. Recorded
+        # BEFORE the check, so a run that failed the check still shows what
+        # it did evaluate. -----------------------------------------------
+        artifact.assertions = ledger.as_list()
+        try:
+            assert_both_boundaries_evaluated(ledger)
+            artifact.assertions_complete = True
+        except WriteSafetyError as exc:
+            artifact.assertions_complete = False
+            artifact.errors.append({
+                "phase": artifact.phase_reached or "setup",
+                "error": "%s: %s" % (type(exc).__name__, exc), "traceback": "",
+            })
+            artifact.status = "failed"
+            artifact.reason = ("%s -- %s" % (exc, artifact.reason)).strip(" -")
 
         # ---- T016: wire registry -> verdict -> artifact -----------------
         # FR-109 meta-rule: asserted BOTH before the verdict is computed AND
@@ -299,6 +367,34 @@ def run_one_project(
 # ===========================================================================
 # CLI
 # ===========================================================================
+
+def _preflight_gate(args) -> Optional[int]:
+    """FR-124/SC-008: performed ONCE at startup, BEFORE any restore or write.
+
+    Returns an exit code when the run must refuse, or None to proceed. There
+    is no third outcome: FR-132 forbids a best-effort degradation and FR-133
+    forbids selecting a different runtime path around a mismatch.
+    """
+    result = run_preflight(Path(args.contracts_dir))
+    if result.ok:
+        return None
+    print(format_diff_report(result, max_rows=getattr(args, "max_console_rows", None)))
+    artifact_path = write_preflight_artifact(result, Path(args.artifacts_dir))
+    print("[ARTIFACT] %s" % artifact_path)
+    print("[REFUSED] capability preflight mismatch -- no project database was "
+          "touched, no restore and no write attempted (SC-008).")
+    return result.exit_code
+
+
+def _pinned_baseline_from_args(args):
+    """FR-170: build the pinned baseline from the caller's EXPLICIT --backup
+    and --baseline-sha256. Absent both, the run has no baseline to pin and
+    ``run_one_project`` refuses -- there is deliberately no fallback here
+    that would select one."""
+    if not getattr(args, "backup", None):
+        return None
+    return pin_baseline(args.backup, args.baseline_sha256)
+
 
 def _cmd_list(args) -> int:
     corpus = enumerate_corpus(args.projects_root)
@@ -338,14 +434,20 @@ def _cmd_project(args) -> int:
               % (args.source, STATUS_SKIPPED, exit_code_for("VACUOUS")))
         return exit_code_for("VACUOUS")
     allowlist = tuple(args.allowlist) if args.allowlist else DEFAULT_ALLOWLIST
+    refused = _preflight_gate(args)
+    if refused is not None:
+        return refused
     try:
         artifact = run_one_project(
             args.source, target_name=args.target, frozen_sources=frozen,
             allowlist=allowlist, run_intent=args.intent,
-            backup_path=args.backup, projects_root=args.projects_root,
+            pinned_baseline=_pinned_baseline_from_args(args),
+            exclude_categories=args.exclude_categories,
+            diagnostic_level=args.diagnostic_level,
+            projects_root=args.projects_root,
             artifacts_dir=Path(args.artifacts_dir),
         )
-    except (WriteSafetyError, SourceTamperError) as exc:
+    except (WriteSafetyError, SourceTamperError, EvidenceProvenanceError) as exc:
         # These MUST abort the whole run -- re-raise after making that loud.
         print("[ABORT-WHOLE-RUN] %s: %s" % (type(exc).__name__, exc))
         raise
@@ -361,6 +463,15 @@ def _cmd_batch(args) -> int:
     skeleton runs workers SERIALLY when --workers=1 (the FR-031 default);
     it refuses to do otherwise without a recorded concurrency-trial
     artifact (assert_concurrency_gate_satisfied)."""
+    refused = _preflight_gate(args)
+    if refused is not None:
+        return refused
+    # FR-149: the driver, the capability expectation and the ledger this
+    # verdict will depend on must be tracked and un-ignored BEFORE any work.
+    assert_evidence_base_tracked({
+        EVIDENCE_KIND_DRIVER: [Path(__file__).resolve()],
+        EVIDENCE_KIND_CAPABILITY: [Path(args.contracts_dir) / "flexicon-capability.json"],
+    })
     assert_concurrency_gate_satisfied(args.workers)
     corpus = enumerate_corpus(args.projects_root)
     frozen = freeze_source_manifest(corpus)
@@ -371,7 +482,7 @@ def _cmd_batch(args) -> int:
     manifest_fp = capture_source_manifest(frozen, args.projects_root)
     print("[INFO] captured fingerprints for %d frozen sources" % len(manifest_fp))
 
-    ledger = Ledger(Path(args.artifacts_dir) / "ledger.json")
+    ledger = Ledger(Path(args.ledger))  # FR-149: tracked, not a runtime artifact
     pending = [n for n in frozen if (ledger.get(n) or {}).get("status") != "passed"]
     if args.canary and args.canary not in pending:
         pending = [args.canary] + pending  # FR-159: canary re-runs every batch
@@ -383,7 +494,7 @@ def _cmd_batch(args) -> int:
         target = target_pool[i % len(target_pool)]
         row = next((e for e in corpus if e.project == source), None)
         try:
-            assert_memory_admits(row.fwdata_mb if row else 0.0)
+            assert_memory_admits_project(source, row.fwdata_mb if row else 0.0)
         except MemoryShortfall as exc:
             print("[WAIT] %s: %s (admitting fewer workers / waiting is an "
                   "operational concern, NOT a safety abort)" % (source, exc))
@@ -398,7 +509,12 @@ def _cmd_batch(args) -> int:
         if args.projects_root:
             cmd += ["--projects-root", args.projects_root]
         cmd += ["--artifacts-dir", args.artifacts_dir, "--runtime-dir", args.runtime_dir,
-                "project", "--source", source, "--target", target, "--intent", args.intent]
+                "--contracts-dir", args.contracts_dir, "--ledger", args.ledger,
+                "project", "--source", source, "--target", target, "--intent", args.intent,
+                "--exclude-categories", ",".join(args.exclude_categories),
+                "--diagnostic-level", args.diagnostic_level]
+        if args.backup:
+            cmd += ["--backup", args.backup, "--baseline-sha256", args.baseline_sha256]
         log_dir = Path(args.runtime_dir) / "logs"
         log_dir.mkdir(parents=True, exist_ok=True)
         log_path = log_dir / ("%s.log" % re.sub(r"[^A-Za-z0-9._ -]", "_", source))
@@ -418,24 +534,92 @@ def _cmd_batch(args) -> int:
     return exit_code
 
 
-def main() -> int:
-    ap = argparse.ArgumentParser(description=__doc__)
+def _cmd_preflight(args) -> int:
+    """T024/FR-124/SC-008: introspect the dependency against the pinned
+    fingerprint and exit. Touches no database, performs no restore and no
+    write. Exit 0 on match, 6 with a field-by-field diff on mismatch."""
+    result = run_preflight(Path(args.contracts_dir))
+    print(format_diff_report(result, max_rows=args.max_console_rows))
+    artifact_path = write_preflight_artifact(result, Path(args.artifacts_dir))
+    print("[ARTIFACT] %s" % artifact_path)
+    return result.exit_code
+
+
+class _ArgumentErrorExits5(argparse.ArgumentParser):
+    """Contracts/sweep-cli.md, "Exit codes": there is no separate CLI-usage
+    exit-code space. An argument error raises BEFORE any verdict exists and
+    exits 5 (``HARNESS_ERROR``), since a run that could not be configured
+    measured nothing.
+
+    argparse's own default is exit 2, which collides with ``NON_IDEMPOTENT``
+    -- a misconfigured invocation would otherwise be indistinguishable from a
+    real second-transfer divergence in a batch driver reading exit codes.
+    """
+
+    def error(self, message):
+        self.print_usage(sys.stderr)
+        sys.stderr.write("[HARNESS_ERROR] %s: %s\n" % (self.prog, message))
+        raise SystemExit(exit_code_for("HARNESS_ERROR"))
+
+
+def _split_categories(value: str) -> list:
+    """``--exclude-categories`` is REQUIRED AND EXPLICIT, and may legitimately
+    be EMPTY. An empty string therefore means "exclude nothing", stated
+    deliberately -- never a default argument that silently excludes STEMS the
+    way ``full_run.build_full_selection`` does on its own."""
+    if value is None:
+        raise argparse.ArgumentTypeError(
+            "--exclude-categories must be given explicitly (pass '' to exclude "
+            "nothing); it is never defaulted"
+        )
+    return [c.strip() for c in value.split(",") if c.strip()]
+
+
+def main(argv=None) -> int:
+    ap = _ArgumentErrorExits5(description=__doc__)
     ap.add_argument("--projects-root")
-    ap.add_argument("--artifacts-dir", default=str(DEFAULT_ARTIFACTS_DIR))
+    ap.add_argument("--artifacts-dir", default=str(DEFAULT_ARTIFACTS_DIR),
+                     help="per-run result artifacts (evidence, not reviewed source)")
     ap.add_argument("--runtime-dir", default=str(DEFAULT_RUNTIME_DIR))
     ap.add_argument("--allowlist", nargs="*", default=None,
                      help="anchored regex patterns; default: this sweep's own "
                           "Target[0-9]* pool only")
+    # ---- T024 NEW globals -------------------------------------------------
+    ap.add_argument("--contracts-dir", default=str(DEFAULT_CONTRACTS_DIR),
+                     help="where the tracked rosters, allowlist and capability "
+                          "fingerprint are read from")
+    ap.add_argument("--ledger", default=str(DEFAULT_LEDGER_PATH),
+                     help="the tracked per-project status ledger")
+    ap.add_argument("--max-console-rows", type=int, default=None,
+                     help="truncate CONSOLE listings only, always stating the "
+                          "omitted count; the artifact never truncates (FR-144)")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     p_list = sub.add_parser("list", help="enumerate the corpus")
     p_list.set_defaults(func=_cmd_list)
 
+    p_preflight = sub.add_parser(
+        "preflight", help="capability check: introspect the dependency against "
+                          "the pinned fingerprint and exit (touches no database)")
+    p_preflight.set_defaults(func=_cmd_preflight)
+
     p_project = sub.add_parser("project", help="worker mode: run one project")
     p_project.add_argument("--source", required=True)
     p_project.add_argument("--target", required=True)
     p_project.add_argument("--backup", default=None)
+    p_project.add_argument("--baseline-sha256", default=None,
+                            help="REQUIRED with --backup. A run that cannot name "
+                                 "and hash its baseline does not start; there is "
+                                 "no newest-archive glob fallback (FR-170)")
     p_project.add_argument("--intent", required=True, choices=VALID_RUN_INTENTS)
+    p_project.add_argument("--exclude-categories", required=True,
+                            type=_split_categories,
+                            help="EXPLICIT, possibly empty (pass ''). A non-empty "
+                                 "value forces COVERAGE_REDUCED")
+    p_project.add_argument("--diagnostic-level", required=True,
+                            choices=DIAGNOSTIC_LEVELS,
+                            help="set explicitly and recorded; never setdefault "
+                                 "from the environment")
     p_project.set_defaults(func=_cmd_project)
 
     p_batch = sub.add_parser("batch", help="driver mode: admit and run one batch")
@@ -443,9 +627,24 @@ def main() -> int:
     p_batch.add_argument("--workers", type=int, default=1)
     p_batch.add_argument("--canary", default=CANARY_PROJECTS[0])
     p_batch.add_argument("--intent", required=True, choices=VALID_RUN_INTENTS)
+    p_batch.add_argument("--backup", default=None)
+    p_batch.add_argument("--baseline-sha256", default=None)
+    p_batch.add_argument("--exclude-categories", required=True,
+                          type=_split_categories)
+    p_batch.add_argument("--diagnostic-level", required=True,
+                          choices=DIAGNOSTIC_LEVELS)
     p_batch.set_defaults(func=_cmd_batch)
 
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
+
+    # FR-170: --baseline-sha256 is required WITH --backup. Enforced here rather
+    # than by argparse because argparse has no native "required-with" relation;
+    # routing it through ap.error() keeps the exit code at 5 (HARNESS_ERROR).
+    if getattr(args, "backup", None) and not getattr(args, "baseline_sha256", None):
+        ap.error("--baseline-sha256 is REQUIRED with --backup (FR-170: a "
+                  "baseline is pinned by content hash by the caller; the sweep "
+                  "never selects one by recency or directory scan)")
+
     return args.func(args)
 
 

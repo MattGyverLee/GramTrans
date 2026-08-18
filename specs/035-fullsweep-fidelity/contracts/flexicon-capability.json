@@ -1,6 +1,257 @@
 {
   "schema_version": 1,
-  "reported_version": null,
-  "summary_hash": null,
-  "introspected": {}
+  "captured_by": "T023 -- specs/035-fullsweep-fidelity/tasks.md Phase 3 / US4",
+  "captured_at": "2026-08-18",
+  "reported_version": "4.3.1",
+  "version_note": "RECORDED ONLY (FR-126); NEVER the basis of the preflight decision (FR-125). This installation is a LIVE INSTANCE of the exact hazard FR-125 names: the editable install's distribution metadata reports 4.3.1, FLExToolsMCP health reports installed=4.4.0 / index=4.4.0, and the working tree's own git log is post-4.4.0 (5994acc, 'before 4.4.1'). Three sources, three answers. flexicon.__version__ is None. Only the introspected block below is decisive.",
+  "provenance": {
+    "resolved_path": "D:\\Github\\_Projects\\_LEX\\flexicon\\flexicon\\__init__.py",
+    "from_site_packages": false,
+    "revision": {
+      "sha": "5994acc226862cef4c3a3f0a3ae25e5c54bb8b3f",
+      "dirty": true,
+      "error": ""
+    },
+    "note": "FR-126: a dependency resolved from a stale packaged copy rather than the tracked working installation MUST fail the preflight. This capture resolved to the working tree, not site-packages."
+  },
+  "accessors_verified_live": {
+    "verified_via": "FLExToolsMCP flextools_run_module, read-only, project 'Ejagham Mini', op-101942581-001, 2026-08-18",
+    "LexiconNumberOfEntries": {
+      "resolves": true,
+      "callable": true,
+      "observed_value": 252
+    },
+    "lexicon": {
+      "resolves": false,
+      "expected_resolves": false,
+      "note": "the dead accessor; must never resolve and must never be depended on"
+    },
+    "note": "FR-129 requires these to resolve BY NAME on a real, opened, READ-ONLY project handle. Kept OUTSIDE 'introspected' on purpose: 'introspected' is compared field-by-field against what introspect_capabilities() measures without a project handle, and the preflight subcommand must touch no database (SC-008)."
+  },
+  "introspected": {
+    "signatures": {
+      "flexicon.FLExProject.OpenProject": {
+        "parameters": {
+          "self": "<required>",
+          "projectName": "<required>",
+          "writeEnabled": "False",
+          "undoable": "True",
+          "ui": "None"
+        },
+        "order": [
+          "self",
+          "projectName",
+          "writeEnabled",
+          "undoable",
+          "ui"
+        ]
+      },
+      "flexicon.FLExProject.CloseProject": {
+        "parameters": {
+          "self": "<required>"
+        },
+        "order": [
+          "self"
+        ]
+      },
+      "flexicon.code.BaseOperations.BaseOperations.GetSyncableProperties": {
+        "parameters": {
+          "self": "<required>",
+          "item": "<required>"
+        },
+        "order": [
+          "self",
+          "item"
+        ]
+      },
+      "flexicon.code.BaseOperations.BaseOperations.ApplySyncableProperties": {
+        "parameters": {
+          "self": "<required>",
+          "item": "<required>",
+          "props": "<required>",
+          "ws_map": "None",
+          "fill_gaps": "False"
+        },
+        "order": [
+          "self",
+          "item",
+          "props",
+          "ws_map",
+          "fill_gaps"
+        ]
+      }
+    },
+    "guid_create_surface": {
+      "flexicon.code.BaseOperations.BaseOperations._CreateWithGuid": {
+        "parameters": {
+          "self": "<required>",
+          "factory": "<required>",
+          "guid": "None",
+          "kind": "None"
+        },
+        "order": [
+          "self",
+          "factory",
+          "guid",
+          "kind"
+        ],
+        "accepts_guid_kwarg": true
+      },
+      "flexicon.code.TextsWords.TextOperations.TextOperations.Create": {
+        "parameters": {
+          "self": "<required>",
+          "name": "<required>",
+          "genre": "None",
+          "guid": "None",
+          "contents_guid": "None"
+        },
+        "order": [
+          "self",
+          "name",
+          "genre",
+          "guid",
+          "contents_guid"
+        ],
+        "accepts_guid_kwarg": true
+      },
+      "flexicon.code.TextsWords.ParagraphOperations.ParagraphOperations.Create": {
+        "parameters": {
+          "self": "<required>",
+          "text_or_hvo": "<required>",
+          "content": "<required>",
+          "wsHandle": "None",
+          "guid": "None"
+        },
+        "order": [
+          "self",
+          "text_or_hvo",
+          "content",
+          "wsHandle",
+          "guid"
+        ],
+        "accepts_guid_kwarg": true
+      },
+      "flexicon.code.TextsWords.SegmentOperations.SegmentOperations.AppendSentence": {
+        "parameters": {
+          "self": "<required>",
+          "paragraph_or_hvo": "<required>",
+          "text": "<required>",
+          "wsHandle": "None",
+          "guid": "None"
+        },
+        "order": [
+          "self",
+          "paragraph_or_hvo",
+          "text",
+          "wsHandle",
+          "guid"
+        ],
+        "accepts_guid_kwarg": true
+      },
+      "flexicon.code.TextsWords.WordformOperations.WordformOperations.Create": {
+        "parameters": {
+          "self": "<required>",
+          "form": "<required>",
+          "wsHandle": "None",
+          "guid": "None"
+        },
+        "order": [
+          "self",
+          "form",
+          "wsHandle",
+          "guid"
+        ],
+        "accepts_guid_kwarg": true
+      },
+      "flexicon.code.TextsWords.WfiAnalysisOperations.WfiAnalysisOperations.Create": {
+        "parameters": {
+          "self": "<required>",
+          "wordform_or_hvo": "<required>",
+          "guid": "None"
+        },
+        "order": [
+          "self",
+          "wordform_or_hvo",
+          "guid"
+        ],
+        "accepts_guid_kwarg": true
+      },
+      "flexicon.code.TextsWords.WfiGlossOperations.WfiGlossOperations.Create": {
+        "parameters": {
+          "self": "<required>",
+          "analysis_or_hvo": "<required>",
+          "form": "<required>",
+          "wsHandle": "None",
+          "guid": "None"
+        },
+        "order": [
+          "self",
+          "analysis_or_hvo",
+          "form",
+          "wsHandle",
+          "guid"
+        ],
+        "accepts_guid_kwarg": true
+      },
+      "flexicon.code.TextsWords.WfiMorphBundleOperations.WfiMorphBundleOperations.Create": {
+        "parameters": {
+          "self": "<required>",
+          "analysis_or_hvo": "<required>",
+          "guid": "None"
+        },
+        "order": [
+          "self",
+          "analysis_or_hvo",
+          "guid"
+        ],
+        "accepts_guid_kwarg": true
+      }
+    },
+    "grammar_overrides": {
+      "flexicon.POSOperations.ApplySyncableProperties": {
+        "declared": true
+      },
+      "flexicon.MorphRuleOperations.ApplySyncableProperties": {
+        "declared": true
+      },
+      "flexicon.GramCatOperations.ApplySyncableProperties": {
+        "declared": true
+      },
+      "flexicon.InflectionFeatureOperations.ApplySyncableProperties": {
+        "declared": true
+      },
+      "flexicon.NaturalClassOperations.ApplySyncableProperties": {
+        "declared": true
+      },
+      "flexicon.EnvironmentOperations.ApplySyncableProperties": {
+        "declared": true
+      },
+      "flexicon.PhonologicalRuleOperations.ApplySyncableProperties": {
+        "declared": true
+      },
+      "flexicon.PhonemeOperations.ApplySyncableProperties": {
+        "declared": true
+      }
+    },
+    "dead_accessors": {
+      "lexicon": {
+        "present": false
+      }
+    }
+  },
+  "summary_hash": "5c4df800d9134818c59c26f7d938a6b66a5711d0d2f9b7b3714a89c2675d35f8",
+  "drift_observed_at_capture": [
+    {
+      "symbol": "flexicon.code.BaseOperations.BaseOperations.ApplySyncableProperties",
+      "note": "carries a fourth parameter fill_gaps=False that this repo's CLAUDE.md does not document (it states ApplySyncableProperties(item, props, ws_map=None)). Confirmed independently via FLExToolsMCP flextools_get_object_api. Pinned here as measured; CLAUDE.md is the stale document, not this fingerprint."
+    },
+    {
+      "symbol": "flexicon.FLExProject.OpenProject",
+      "note": "undoable=True is the DEFAULT. probe-results-live.md already records this as the 'undoable default' finding; pinned here so a change to it trips the preflight instead of silently altering transfer semantics."
+    },
+    {
+      "symbol": "guid-preserving create surface",
+      "note": "present and complete on all eight targets, but NOT under the class names CLAUDE.md uses. Texts/Paragraphs/Segments/Wordforms/WfiAnalyses/WfiGlosses/WfiMorphBundles are FLExProject ACCESSOR names; the classes are flexicon.code.TextsWords.{Text,Paragraph,Segment,Wordform,WfiAnalysis,WfiGloss,WfiMorphBundle}Operations. Each Create is wrapped in an OperationsMethod descriptor whose __get__ returns a generic (project, *args, **kwargs) dispatcher -- introspecting via getattr records the wrapper, not the real signature, and reports guid= as ABSENT on all seven. preflight._lookup reads the class __dict__ and preflight._unwrap follows .func to defeat both."
+    }
+  ]
 }

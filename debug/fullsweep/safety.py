@@ -14,7 +14,7 @@ import hashlib
 import json
 import os
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional, Sequence
 
@@ -39,6 +39,242 @@ class WriteSafetyError(RuntimeError):
 class SourceTamperError(RuntimeError):
     """Group B, FR-022: an unexplained fingerprint delta on a SOURCE. MUST
     abort the whole worker pool and escalate to a human."""
+
+
+class EvidenceProvenanceError(RuntimeError):
+    """FR-149: a verdict input (the driver itself, a roster, an allowlist, a
+    capability fingerprint, or the ledger) is not under version control, or
+    is excluded by an ignore rule. A verdict produced from such an input is
+    NOT ADMISSIBLE EVIDENCE, so this is a provenance failure -- distinct
+    from ``WriteSafetyError`` (nothing unsafe was attempted) and from
+    ``SourceTamperError`` (no source changed). ``errors.classify_exception``
+    maps it to ``PROVENANCE``, which FR-175 aborts the whole run on."""
+
+
+# ===========================================================================
+# GROUP B (continued) -- T019: THE ASSERTION LEDGER (FR-024) AND THE TWO
+# INDEPENDENT BOUNDARIES (FR-013)
+# ===========================================================================
+
+#: The five assertions ``assert_destination_safe`` evaluates, named so that a
+#: skipped one is VISIBLE in the artifact rather than inferred from the
+#: absence of a failure (FR-024 last sentence).
+ASSERTION_NAME_SHAPE = "name-shape"              # FR-018
+ASSERTION_ALLOWLIST = "allowlist-fullmatch"      # FR-011/FR-012
+ASSERTION_SOURCE_DISTINCT = "source-distinct"    # FR-016 (this worker's pairing)
+ASSERTION_MANIFEST_WIDE = "manifest-wide"        # FR-016 (whole frozen manifest)
+ASSERTION_ROOT_CONTAINMENT = "root-containment"  # FR-017
+
+REQUIRED_ASSERTIONS: tuple[str, ...] = (
+    ASSERTION_NAME_SHAPE,
+    ASSERTION_ALLOWLIST,
+    ASSERTION_SOURCE_DISTINCT,
+    ASSERTION_MANIFEST_WIDE,
+    ASSERTION_ROOT_CONTAINMENT,
+)
+
+#: FR-013: the two boundaries, evaluated INDEPENDENTLY. Boundary (b) is
+#: deliberately NOT named "write-enabled open" -- FR-013 forbids describing
+#: it that way, because a settings rewrite can precede that open along an
+#: existing code path, so an assertion placed at the open would sit after
+#: the first irreversible write.
+BOUNDARY_RESTORE = "restore-destination-selected"   # FR-013(a)
+BOUNDARY_FIRST_WRITE = "first-byte-beneath-target"  # FR-013(b)
+
+BOUNDARIES: tuple[str, ...] = (BOUNDARY_RESTORE, BOUNDARY_FIRST_WRITE)
+
+
+@dataclass
+class AssertionLedger:
+    """FR-024: a per-project record that each write-safety assertion was IN
+    FACT evaluated, at which boundary, against which literal values.
+
+    This is an evidence recorder, never a memo: nothing in this module ever
+    reads the ledger to decide whether to SKIP an assertion. Recording that
+    an assertion passed at boundary (a) can therefore never satisfy boundary
+    (b) -- which is exactly what FR-013's "a defect that skips one MUST NOT
+    be able to skip the other" requires.
+    """
+    project: str = ""
+    records: list = field(default_factory=list)
+
+    def record(self, assertion: str, boundary: str, **evidence) -> None:
+        self.records.append({
+            "assertion": assertion, "boundary": boundary, "evidence": evidence,
+        })
+
+    def evaluated(self, boundary: str) -> set:
+        return {r["assertion"] for r in self.records if r["boundary"] == boundary}
+
+    def boundaries_evaluated(self) -> set:
+        return {r["boundary"] for r in self.records}
+
+    def as_list(self) -> list:
+        return list(self.records)
+
+
+def _record(ledger, assertion: str, boundary: str, **evidence) -> None:
+    """Internal: a no-op when no ledger was supplied, so the choke point stays
+    usable from a bare call site. The ABSENCE of a ledger is never treated as
+    "the assertion was performed" anywhere -- see
+    ``assert_boundary_fully_evaluated``, which fails on a missing ledger."""
+    if ledger is not None:
+        ledger.record(assertion, boundary, **evidence)
+
+
+def assert_boundary_fully_evaluated(ledger, boundary: str) -> None:
+    """FR-024: all five assertions must have been evaluated at ``boundary``.
+
+    A missing ledger, or a ledger with nothing recorded for the boundary, is
+    a FAILURE -- never a pass. FR-015's principle applied to the evidence
+    itself: an absent record is not an absent violation.
+    """
+    if ledger is None:
+        raise WriteSafetyError(
+            "[FR-024] no assertion ledger was kept for boundary %r -- a run "
+            "that cannot show its assertions were evaluated has not shown "
+            "they were" % (boundary,)
+        )
+    if boundary not in BOUNDARIES:
+        raise WriteSafetyError(
+            "[FR-013] unknown write-safety boundary %r -- must be one of %r"
+            % (boundary, BOUNDARIES)
+        )
+    missing = sorted(set(REQUIRED_ASSERTIONS) - ledger.evaluated(boundary))
+    if missing:
+        raise WriteSafetyError(
+            "[FR-024] boundary %r did not evaluate every required write-safety "
+            "assertion; missing=%r (a silently skipped assertion must be "
+            "visible here, not inferred from the absence of a failure)"
+            % (boundary, missing)
+        )
+
+
+def assert_both_boundaries_evaluated(ledger) -> None:
+    """FR-013: BOTH boundaries must be independently evaluated for a project.
+
+    Called at the end of a project's run so a defect that removed one of the
+    two call sites is a loud failure rather than a silently narrower guard.
+    """
+    for boundary in BOUNDARIES:
+        assert_boundary_fully_evaluated(ledger, boundary)
+
+
+def assert_restore_boundary(
+    name: str, *, source_name, frozen_sources, allowlist: Sequence[str],
+    projects_root: Optional[str] = None, ledger=None,
+) -> Path:
+    """FR-013(a): the moment a project is SELECTED as a restore destination,
+    before any directory for it is created.
+
+    A full, independent evaluation -- it shares no cached flag, no memo, and
+    no early return with ``assert_first_write_boundary``.
+    """
+    return assert_destination_safe(
+        name, source_name=source_name, frozen_sources=frozen_sources,
+        allowlist=allowlist, projects_root=projects_root,
+        ledger=ledger, boundary=BOUNDARY_RESTORE,
+    )
+
+
+def assert_first_write_boundary(
+    name: str, *, source_name, frozen_sources, allowlist: Sequence[str],
+    projects_root: Optional[str] = None, ledger=None,
+) -> Path:
+    """FR-013(b)/FR-014: the first byte written anywhere beneath that
+    project's own directory, by whichever code path reaches that point
+    first -- computed from the values THIS site is about to use.
+
+    Deliberately a separate function from ``assert_restore_boundary``, with
+    its own complete evaluation: FR-014 forbids inheriting the assertion
+    from whatever enumerated or selected the candidate, and FR-013 forbids
+    one boundary's result satisfying the other.
+    """
+    return assert_destination_safe(
+        name, source_name=source_name, frozen_sources=frozen_sources,
+        allowlist=allowlist, projects_root=projects_root,
+        ledger=ledger, boundary=BOUNDARY_FIRST_WRITE,
+    )
+
+
+# ===========================================================================
+# GROUP B (continued) -- T019: FR-149 TRACKEDNESS
+# ===========================================================================
+
+#: FR-149's own enumeration: "The sweep's own code, and every roster,
+#: allowlist, capability expectation, and ledger its verdict depends on".
+EVIDENCE_KIND_DRIVER = "driver"
+EVIDENCE_KIND_ROSTER = "roster"
+EVIDENCE_KIND_ALLOWLIST = "allowlist"
+EVIDENCE_KIND_CAPABILITY = "capability-expectation"
+EVIDENCE_KIND_LEDGER = "ledger"
+
+EVIDENCE_KINDS: tuple[str, ...] = (
+    EVIDENCE_KIND_DRIVER, EVIDENCE_KIND_ROSTER, EVIDENCE_KIND_ALLOWLIST,
+    EVIDENCE_KIND_CAPABILITY, EVIDENCE_KIND_LEDGER,
+)
+
+
+def _git(args, cwd: Path):
+    import subprocess
+    return subprocess.run(["git", *args], cwd=str(cwd), capture_output=True, text=True)
+
+
+def is_tracked(path, repo_root: Optional[Path] = None) -> tuple:
+    """Return ``(tracked: bool, reason: str)`` for ``path``.
+
+    Tracked means BOTH: git knows the path (``git ls-files --error-unmatch``
+    succeeds) AND no ignore rule excludes it (``git check-ignore`` does not
+    match). FR-149 names both conditions -- "MUST be under version control
+    and MUST NOT be excluded by any ignore rule" -- because a file can be
+    committed and still sit under a later-added ignore rule, at which point
+    the next contributor's checkout silently does not have it.
+    """
+    p = Path(path)
+    root = Path(repo_root) if repo_root else Path(__file__).resolve().parents[2]
+    cp = _git(["ls-files", "--error-unmatch", "--", str(p)], root)
+    if cp.returncode != 0:
+        return False, "not under version control (git ls-files: %s)" % (
+            (cp.stderr or cp.stdout).strip() or "no such tracked path")
+    ignored = _git(["check-ignore", "-q", "--", str(p)], root)
+    if ignored.returncode == 0:
+        return False, "excluded by a gitignore rule"
+    return True, ""
+
+
+def assert_tracked(path, *, kind: str, repo_root: Optional[Path] = None) -> None:
+    """FR-149: refuse to treat an untracked or ignored input as admissible
+    evidence.
+
+    Raises ``EvidenceProvenanceError`` -- NOT ``WriteSafetyError``: nothing
+    unsafe was attempted, the run simply cannot claim what it is about to
+    claim. ``errors.classify_exception`` maps this to ``PROVENANCE``, one of
+    FR-175's four whole-run abort codes.
+    """
+    if kind not in EVIDENCE_KINDS:
+        raise ValueError("[FR-149] unknown evidence kind %r -- must be one of %r"
+                          % (kind, EVIDENCE_KINDS))
+    tracked, reason = is_tracked(path, repo_root)
+    if not tracked:
+        raise EvidenceProvenanceError(
+            "[FR-149] %s %r is %s. A verdict produced by an untracked driver, "
+            "roster, allowlist, capability expectation, or ledger is NOT "
+            "admissible evidence -- track it (and remove the ignore rule) "
+            "before this run may claim anything." % (kind, str(path), reason)
+        )
+
+
+def assert_evidence_base_tracked(paths_by_kind: dict, repo_root: Optional[Path] = None) -> dict:
+    """FR-149 over a whole evidence base: ``{kind: [path, ...]}``. Returns the
+    per-path trackedness record for the artifact; raises on the FIRST
+    untracked entry, so a run cannot proceed part-way on inadmissible
+    evidence."""
+    record = {}
+    for kind, paths in paths_by_kind.items():
+        for path in paths:
+            assert_tracked(path, kind=kind, repo_root=repo_root)
+            record[str(path)] = {"kind": kind, "tracked": True}
+    return record
 
 
 def resolve_projects_root(projects_root: Optional[str] = None) -> Path:
@@ -119,6 +355,8 @@ def assert_destination_safe(
     frozen_sources,
     allowlist: Sequence[str],
     projects_root: Optional[str] = None,
+    ledger: "Optional[AssertionLedger]" = None,
+    boundary: str = "",
 ) -> Path:
     """THE write-safety choke point (Group B).
 
@@ -140,22 +378,34 @@ def assert_destination_safe(
     propagate all the way out and abort the entire run (Group B is explicit
     that a violation aborts the WHOLE run, not just one project/worker).
     """
+    _reject_unsafe_name_shape(name)
+    _record(ledger, ASSERTION_NAME_SHAPE, boundary, destination=name)
     assert_name_allowlisted(name, allowlist)
+    _record(ledger, ASSERTION_ALLOWLIST, boundary, destination=name,
+            allowlist=tuple(allowlist))
 
-    if source_name is None:
+    if not source_name:
         raise WriteSafetyError(
-            "[FR-015] source_name was omitted (None) -- a write-safety check "
-            "with no source to compare against is a bypass, not a pass"
+            "[FR-015] source_name was omitted or falsy (%r) -- a write-safety "
+            "check with no source to compare against is a bypass, not a pass. "
+            "FR-015 names 'absent, empty, or otherwise falsy' explicitly: an "
+            "empty string must fail here, not slip past a None-only test"
+            % (source_name,)
         )
     if name == source_name:
         raise WriteSafetyError(
             "[FR-016] destination %r equals its own assigned source -- refusing" % (name,)
         )
+    _record(ledger, ASSERTION_SOURCE_DISTINCT, boundary, destination=name,
+            source=source_name)
 
-    if frozen_sources is None:
+    if not frozen_sources:
         raise WriteSafetyError(
-            "[FR-015] frozen_sources manifest was omitted (None) -- the "
-            "manifest-wide check of FR-016 cannot be skipped"
+            "[FR-015] frozen_sources manifest was omitted or empty (%r) -- the "
+            "manifest-wide check of FR-016 cannot be skipped. An empty manifest "
+            "makes the 'destination is not any source' test vacuously true, "
+            "which is precisely the self-disabling guard FR-015 forbids"
+            % (frozen_sources,)
         )
     if name in frozen_sources:
         raise WriteSafetyError(
@@ -164,6 +414,8 @@ def assert_destination_safe(
             "(catches a mis-ordered pairing / stale retry, not just today's "
             "assignment)" % (name,)
         )
+    _record(ledger, ASSERTION_MANIFEST_WIDE, boundary, destination=name,
+            manifest_size=len(frozen_sources))
 
     root = resolve_projects_root(projects_root)
     dest = (root / name).resolve()
@@ -172,6 +424,8 @@ def assert_destination_safe(
             "[FR-017] resolved destination %r is not a direct child of the "
             "single-authority projects root %r" % (str(dest), str(root))
         )
+    _record(ledger, ASSERTION_ROOT_CONTAINMENT, boundary, destination=name,
+            resolved=str(dest), root=str(root))
     return dest
 
 

@@ -55,5 +55,15 @@ from .batch import *  # noqa: F401,F403,E402
 from .errors import *  # noqa: F401,F403,E402 -- Group N: failure taxonomy, abort scope
 from .verdict import *  # noqa: F401,F403,E402 -- Group G: verdicts, severity, aggregation
 from .guards import *  # noqa: F401,F403,E402 -- Group F: the fifteen-guard registry
+from .baseline import *  # noqa: F401,F403,E402 -- Group M: baseline pinning/containment (T020)
+from .preflight import *  # noqa: F401,F403,E402 -- Group I: capability preflight (T022)
 
-from . import corpus, safety, pool, moves, artifact, batch, errors, verdict, guards  # noqa: F401,E402
+from . import (corpus, safety, pool, moves, artifact, batch, errors, verdict,  # noqa: F401,E402
+               guards, baseline, preflight)
+
+# NOTE for tests and callers: ``import *`` above BINDS A COPY of each module
+# global onto this package namespace. Patching ``fullsweep.NAME`` therefore
+# does NOT change what the defining module reads. Patch the DEFINING module
+# (``fullsweep.pool.CONCURRENCY_TRIAL_ARTIFACT``, not
+# ``fullsweep.CONCURRENCY_TRIAL_ARTIFACT``) -- the submodules are re-exported
+# on the line above precisely so that is always possible.
