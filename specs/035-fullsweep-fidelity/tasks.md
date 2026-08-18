@@ -210,7 +210,7 @@ of the corpus being present.
       verdict computed from both moves together, the contradiction check on
       "added objects but no measured change", and `restore_final` plus an artifact written even
       on failure (FR-043..FR-050, SC-004) · `debug/fullsweep/moves.py`
-- [ ] **T028** [P] [US1] Identity rules: tool-owned identity (a second instance is unexplained
+- [x] **T028** [P] [US1] Identity rules: tool-owned identity (a second instance is unexplained
       loss, never an allowlistable target-native addition), evaluation state distinguished from
       agent identity, the natural-key third basis, identity-first ordering through the recorded
       remap record (never direct identifier comparison, never re-guessed by the comparator), and
