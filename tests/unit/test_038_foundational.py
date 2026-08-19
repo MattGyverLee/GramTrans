@@ -328,10 +328,46 @@ class TestNaturalKeyRoster:
         assert entry.key_fn_id == "phoneme_name_key"
         assert matcher_mod.require_natural_key_roster_entry("PhPhoneme")
 
-    def test_row_without_key_fn_id_is_not_executable(self, tmp_path):
-        """key_fn_id is what makes a roster row executable. Without it the
-        row cannot drive matching, so the class has no natural-key basis --
-        this is the state 035's three live entries are in today."""
+    def test_row_without_key_fn_id_and_without_a_binding_is_not_executable(
+        self, tmp_path,
+    ):
+        """A roster row is executable only if SOMETHING supplies `key_fn_id`.
+
+        T029 made that "something" two-sided: the file may spell it, or
+        `NATURAL_KEY_BINDINGS` may supply it for that class. A class with
+        NEITHER has no natural-key basis, however completely the file
+        describes it -- which is what stops an admitted-but-unexecutable row
+        from matching on a guessed key.
+
+        `WfiWordform` is the live instance of exactly that: 035 admits it and
+        `census.NATURAL_KEY_DEFINITIONS` can even compute its key, but 038
+        binds no key function for it.
+        """
+        assert "WfiWordform" not in matcher_mod.NATURAL_KEY_BINDINGS
+        roster = tmp_path / "roster.json"
+        roster.write_text(json.dumps({
+            "schema_version": 1,
+            "entries": [{
+                "class": "WfiWordform",
+                "natural_key": "Form (default vernacular WS)",
+                "key_unique_by_construction": True,
+                "on_ambiguous_key": "harness_error",
+                "reason": "live-confirmed",
+            }],
+        }), encoding="utf-8")
+        matcher_mod.reset_natural_key_roster_cache(str(roster))
+        assert matcher_mod.natural_key_roster_entry_for("WfiWordform") is None
+
+    def test_row_without_key_fn_id_is_executable_when_a_binding_supplies_one(
+        self, tmp_path,
+    ):
+        """The other half of the same rule (T029).
+
+        T028 appends 038's six proposed entries to 035's file VERBATIM, and
+        those entries carry no `key_fn_id` -- the file will never supply one.
+        The binding does, so the class IS executable, and the roster's own
+        `natural_key` text still governs what the key MEANS.
+        """
         roster = tmp_path / "roster.json"
         roster.write_text(json.dumps({
             "schema_version": 1,
@@ -344,7 +380,15 @@ class TestNaturalKeyRoster:
             }],
         }), encoding="utf-8")
         matcher_mod.reset_natural_key_roster_cache(str(roster))
-        assert matcher_mod.natural_key_roster_entry_for("PhPhoneme") is None
+        entry = matcher_mod.natural_key_roster_entry_for("PhPhoneme")
+        assert entry is not None
+        assert entry.key_fn_id == (
+            matcher_mod.NATURAL_KEY_BINDINGS["PhPhoneme"].key_fn_id
+        )
+        assert entry.scope_fn_id == (
+            matcher_mod.NATURAL_KEY_BINDINGS["PhPhoneme"].scope_fn_id
+        )
+        assert entry.natural_key == "Name"
 
 
 class TestNaturalKeyRosterEntryType:

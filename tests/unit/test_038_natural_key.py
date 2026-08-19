@@ -536,7 +536,13 @@ def test_auto_generated_natural_class_names_are_ineligible(appended_roster):
     first = _named("PhNCFeatures", "guid-a", label)
     second = _named("PhNCFeatures", "guid-b", label)
 
-    assert _m("natural_key_eligibility")("PhNCFeatures", src) == (
+    # The handle is passed because the auto-label is checked on the SCOPED
+    # name and only on it. Probing every alt instead would exclude a class
+    # whose scoped name is a real linguist name while some other writing
+    # system happens to hold a rule label -- a narrowing the roster does not
+    # authorise. `_MultiString` exposes only `get_String(ws_handle)`, so a
+    # handle-free read is not available to any implementation either.
+    assert _m("natural_key_eligibility")("PhNCFeatures", src, ANAL) == (
         _m("KEY_INELIGIBLE_AUTO_GENERATED")
     )
 
