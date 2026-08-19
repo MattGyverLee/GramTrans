@@ -241,7 +241,7 @@
         "required_class_count": {
           "type": "integer",
           "minimum": 0,
-          "$comment": "in_scope_class_count + len(census_additions). MUST equal len(classes). 72 at the time of writing."
+          "$comment": "MUST equal len(classes) -- this is the normative constraint (invariant 1). The composition is in_scope_class_count (69) + len(census_additions) (3) + the excluded_not_measurable NOT_EVALUATED rows (2) = 74 distinct class names, plus one extra ROW per Amendment A1 owner split (FsFeatStrucType) = 75 rows at the time of writing. The earlier formula in_scope_class_count + len(census_additions) = 72 counted only REQUIRED classes and omitted both the excluded_not_measurable rows that fidelity-census.md:150-152 mandates and the A1 split, so it contradicted MUST equal len(classes). 72 is still checked, separately, as the required-class cardinality."
         },
         "census_additions": {
           "type": "array",

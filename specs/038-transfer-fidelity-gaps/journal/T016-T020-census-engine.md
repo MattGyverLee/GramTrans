@@ -27,7 +27,10 @@ all five phase predicates, all 11 invariants.
 
 **No T014 assertion turned out to be wrong about the contract.**
 
-## OPEN -- the class-count arithmetic does not match CP-1 as written
+## RESOLVED (see ADDENDUM below) -- the class-count arithmetic did not match CP-1 as written
+
+> **Outcome: `tasks.md`'s CP-1 was the wrong premise and has been amended; the code is correct.**
+> The section below is the question as originally raised. The ADDENDUM has the answer.
 
 tasks.md's T016 says: parse TABLE 1 + TABLE 2 and assert set equality against
 `coverage-floor.json` `in_scope_classes` (69) **plus
@@ -49,18 +52,21 @@ Three counts are now in play and they are not reconciled:
 - **75** -- rows actually emitted, because the A1 `FsFeatStrucType` split adds one.
   `required_class_count` was redefined as the **row count** to accommodate this.
 
-**This needs settling before the census verdict can be trusted**, because CP-1's
+**This needed settling before the census verdict could be trusted**, because CP-1's
 whole purpose is that a mismatch is `COVERAGE_INCOMPLETE` naming the classes --
 a gate that measures a different equality than the one specified cannot serve
 that purpose. Specifically unresolved: whether `MoAffixProcess`, `PhCode` and
 `CmTranslation` appear in the inventory TABLEs at all, or exist only in
-`census_additions`. Query raised with the implementer.
+`census_additions`. Query raised with the implementer -- **answered, see ADDENDUM**.
 
 Related contract tension the implementer documented in code: the
 `required_class_count` `$comment` at `census-artifact.schema.json:244` says "72 at
 the time of writing", against 3.2's own demand for `excluded_not_measurable` rows.
 
-## Amendment A1 -- provisional, and the implementer recommends option 2
+## RESOLVED (see ADDENDUM below) -- Amendment A1, provisional at time of writing
+
+> **Outcome: settled on the row property.** Schema `047fdcb` on `main`, code `78c8728`
+> on the branch. The recommendation below was accepted.
 
 Implemented provisionally as **string-encoding**:
 `FsFeatStrucType(MsFeatureSystem)` / `FsFeatStrucType(PhFeatureSystem)`.
@@ -157,3 +163,142 @@ Ruff on `census.py`: 67 findings, 59 `UP045` plus one `I001`, matching
 `models.py`'s dominant style as T015 chose; **zero `E501`** (models.py has 3).
 Six `SIM102` and one `SIM105` left as-is because each inner branch carries its own
 failure message.
+
+---
+
+# ADDENDUM -- both open items settled
+
+## The class-count arithmetic: tasks.md was wrong, the code is right
+
+CP-1 as `tasks.md:159` stated it was **unsatisfiable**. It has been amended.
+
+`fidelity-census.md:118-121` -- the contract -- states the equality as:
+
+> "parsing TABLE 1 and TABLE 2 of `object-inventory.md` and asserts set equality
+> against `in_scope_classes` **union `excluded_not_measurable`**."
+
+`tasks.md` instead wrote "plus `census_additions` (3) = 72", conflating that
+sentence with the separate **cardinality** statement at `fidelity-census.md:145`
+("Required class count is therefore 72"). The `tasks.md` form can never hold,
+because it requires the three additions to be members of `parse(T1 union T2)`,
+and they are provably absent from both tables:
+
+| class | where it actually appears |
+|---|---|
+| `MoAffixProcess` | **zero matches** in `object-inventory.md` |
+| `PhCode` | TABLE 3 only (`:202`), plus `:300`, `:374`, `:407`, `:441` |
+| `CmTranslation` | TABLE 2 `:150` **only as column-3 owning field** `CmTranslation.TypeRA` (that row's class is `CmPossibility (TranslationTagsOA)`); TABLE 3 at `:200` |
+
+Their absence **is why the additions ledger exists** --
+`fidelity-census.md:130-141`: "Absent from `object-inventory.md` entirely, because
+the engine has **no create path** for it"; "TABLE 3 (ride-along)"; "Reached through
+the texts path; never projected into the floor."
+
+The `71 = 69 + 2` identity is `coverage-floor.json`'s own `_source`:
+*"in_scope_classes is the union of object-inventory.md TABLE 1 ... and TABLE 2's
+referenced-only classes, **minus** the classes listed in excluded_not_measurable."*
+The two excluded classes are `MoForm` and `MoMorphSynAnalysis` (abstract LCM base
+classes, no factory), both TABLE 2 rows at `:167`/`:172` and `:171`.
+
+### Full reconciliation
+
+```
+parse(TABLE 1 union TABLE 2)                              = 71   (T1 65, T2 30 distinct)
+  = in_scope_classes (69) union excluded_not_measurable (2)       [both inside the union]
++ census_additions (3)                                            [in NEITHER table]
+  -> 74 distinct class names
+      of which REQUIRED = 69 floor + 3 additions          = 72   (CP-1's "72")
+      of which advisory NOT_EVALUATED                      =  2   (MoForm, MoMorphSynAnalysis)
++ A1 owner split: FsFeatStrucType -> 2 rows, still 1 class, +1 row
+  -> 75 ROWS emitted
+```
+
+### No class can go silently unmeasured
+
+Four independent gates, each failing `COVERAGE_INCOMPLETE` **by class name**:
+the derivation equality (71) catching drift in either direction via
+`in_inventory_not_in_floor` / `in_floor_not_in_inventory`; the cardinality check
+`required_count != 72`, so dropping a class from the floor **or** the ledger fails
+the run; CP-4 (floor intersect additions); and CP-2
+(`len(classes) == required_class_count`, validator-enforced).
+
+The one blind spot no document-vs-document proof can close: a create path that
+exists **in code** but is documented in neither the inventory nor the ledger. That
+is 035's inventory-maintenance obligation, outside CP-1 by construction.
+
+### `required_class_count`: which claim was broken, and why
+
+Three claims collided:
+
+- schema `:244` `$comment`: "`in_scope_class_count + len(census_additions)`.
+  **MUST equal `len(classes)`**. 72 at the time of writing."
+- schema `:236`: `in_scope_class_count` is "69 as read".
+- `fidelity-census.md:150-152`: `MoForm`/`MoMorphSynAnalysis` **get a
+  `NOT_EVALUATED` row**, and `in_class_list_via`'s `"excluded_not_measurable"`
+  enum member exists precisely so those rows can say how they got in -> 74.
+
+**Preserved** the normative "MUST equal `len(classes)`" (invariant 1,
+validator-enforced and T014-tested) and `in_scope_class_count = 69`.
+**Broke** the additive formula and the "72 at the time of writing" figure -- both
+non-normative `$comment` prose. Emitting `required_class_count: 72` against 74+
+rows would make **every** artifact fail its own invariant 1 and make CP-2
+undetectable. The `$comment` has now been corrected in place to state the real
+composition.
+
+## Amendment A1: settled on the row property
+
+- Schema, on `main`: **`047fdcb`** -- `owning_feature_system` added to
+  `$defs.classRow` as a **new OPTIONAL property**, not in `required`, conforming to
+  the EVOLUTION RULE at `schema:6`.
+- Code, on the branch: **`78c8728`** -- `A1_OWNER_ENCODING` flipped to
+  `"row_property"`; `class` is the plain class name again for both halves.
+- Enum spellings taken from the contract, **not invented**:
+  `["LangProject.MsFeatureSystemOA", "LangProject.PhFeatureSystemOA"]` per
+  `fidelity-census.md:650-673`. `FEATURE_SYSTEM_OWNERS` was changed from a local
+  shorthand to these, since they are emitted verbatim.
+- Validated four ways with jsonschema: a row **without** the property validates;
+  one carrying `LangProject.MsFeatureSystemOA` validates; the shorthand
+  `MsFeatureSystem` is **rejected** by the enum; `additionalProperties: false`
+  still rejects an unknown key.
+- **`schema_version` deliberately NOT bumped.** The EVOLUTION RULE's bump clause
+  governs a *shipped* version; this schema's own description says "the instrument
+  that produces this document does not exist yet", so the property lands before
+  first release. Bumping would also contradict `test_object_census.py`'s
+  `CENSUS_SCHEMA_VERSION == 1` pin.
+- **The `startswith` prefix fallback was removable and is deleted.**
+  `_row_by_class` is exact-match only now, with a note that a predicate naming a
+  split class must select on the owner too, because either half alone is not the
+  class. `grep startswith(object_class` returns nothing.
+
+### Two consequences the flip forced -- found and fixed, not left latent
+
+1. **Invariant 1 broke.** Its duplicate-row detection keyed on `class` alone, so
+   after the flip the two legitimate split halves read as one class twice. It now
+   keys on `(class, owning_feature_system)`. Without this the end-to-end artifact
+   would have reported a **phantom coverage failure**.
+2. **Nothing forced per-owner counting.** `count_classes` returns one number per
+   *class* -- for `FsFeatStrucType` the **summed repository total**, exactly the
+   ambiguous figure A1 exists to forbid. A driver filling both halves from it would
+   emit two rows backed by one measurement, and the masking A1 targets would remain
+   possible. Added `split_counts` + `count_for_entry`; the per-owner pass is
+   gathered **inside the same read-only open** (one open, one digest window), and
+   `count_for_entry` returns `None` rather than the class total for a split entry
+   nobody counted per owner. The first e2e run made exactly this mistake (both
+   halves 3/3); the corrected run shows **3 and 0**.
+
+### Arithmetic that shifted
+
+Row count unchanged at **75**, required classes unchanged at **72**. What changed:
+**distinct `class` values went 75 -> 74**, so a set-equality join on `class` now
+sees the real 74-class roster instead of one unresolvable pseudo-class
+`FsFeatStrucType(MsFeatureSystem)`.
+
+### Re-verification after the flip
+
+`tests/unit` **27 failed / 2623 passed**, documented clusters only. Gate test with
+the CLI stub **90 passed / 1 failed** (unchanged; the failure is T021's file).
+End-to-end: 75 rows, 74 distinct names, **0 jsonschema errors, 0 validator
+failures**, gate `BASELINE_MISSING` / exit 4. Split round-trip independently
+counted, `Ms` 3 and `Ph` 0, summing to the repository total of 3.
+`Ejagham Mini` read-only, digest `d5bb4d32c0f4...` identical across all four
+readings.
