@@ -347,7 +347,7 @@ LCM type (Principle II, data-model.md:3-6).
 
 - [ ] **T070** [P] [US3] Mark pulled-in items in the plan and surface them through the existing pulled-in surfaces at :1348, :1380 and :1427 rather than adding a new one; set `ClosureEdge.origin` to `"pulled_in"` (FR-015) - `src/gramtrans/Lib/preview.py`
 - [ ] **T071** [P] [US3] Reuse `Selection.excluded_deps`, `is_dep_excluded`, `Selection.scope_for`'s `CategoryScope` mapping and the existing `SkipReason.EXCLUDED_LOSSY` / `BARE_BONES_MISSING_CLOSURE` for deselection rather than adding new machinery - `src/gramtrans/Lib/selection.py`
-- [ ] **T072** [P] [US3] Make each pulled-in item individually deselectable in the wizard (FR-016) - `src/gramtrans/Lib/ui/selection_wizard.py`
+- [ ] **T072** [P] [US3] Make each pulled-in item individually deselectable in the wizard (FR-016) - **re-pointed by feature 039:** `selection_wizard.py` no longer holds the page classes. The tree to edit is in the module that owns it - `src/gramtrans/Lib/ui/wizard_pages_skeleton.py` (`_PageGramDeps`, for grammar dependencies pulled in by an affix pick) or `src/gramtrans/Lib/ui/wizard_pages_pickers.py` (`_PageItemPicker` / `_PageStemPicker`). If the deselection needs whole-block tristate behaviour, put it on `_BlockPage` in `src/gramtrans/Lib/ui/wizard_page_base.py` rather than in one page
 
 **--> Wait for Wave 3, then:**
 

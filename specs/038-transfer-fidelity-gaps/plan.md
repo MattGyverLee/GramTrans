@@ -178,7 +178,7 @@ src/gramtrans/
 |   |-- selection.py          3892 L   *_dependencies() producers, currently unconsumed
 |   |-- matcher.py             387 L   match basis recording
 |   |-- residue.py             351 L   [GT-Tag] carrier
-|   `-- ui/                    14 modules; selection_wizard.py 6512 L (FR-015/FR-016 surface)
+|   `-- ui/                    24 modules; selection_wizard.py 1699 L (FR-015/FR-016 surface)
 `-- standalone/                11 modules; the sanctioned Windows host artifact
 
 tests/
@@ -303,3 +303,18 @@ including one on a live FLEx write. This plan is written to be compatible with t
 | **US3 (dependency closure) stays in this feature** even though `census-evidence.md` section 4 recommends it get its own spec | The closure requirements FR-014..FR-019 are already approved *in this spec*, and SC-003 / SC-004 are this feature's success criteria. Splitting them out would leave 038 unable to meet its own gates | Deferring closure to a separate spec was rejected because it strands SC-003/SC-004 with no owner and leaves `Lib/closure.py` dead for another cycle. The cost is contained instead by three obligations: closure is consumed in the plan builder only, each `*_dependencies()` edge is audited before it may influence a plan (FR-018), and Phase 2 holds a lock on `categories.py` |
 | **A second census instrument** alongside `tests/verification/fidelity_census.py` | They measure different things: field-level static classification over an in-code metadata snapshot versus live per-class object counts across two projects. FR-009..FR-012 need the latter and cannot be answered by the former | Extending the 024 instrument was rejected because it is offline by design (its value is that unit tests need no live project), and making it open two live projects would destroy that property. Mitigation: the new contract states the distinction explicitly so no reader conflates them |
 | **This feature extends another feature's governed contract** (`specs/035-fullsweep-fidelity/contracts/natural-key-identity-roster.json`), which has a live in-progress session on it | FR-003 requires a governed roster and the spec's Assumptions require extending the existing one rather than creating a second identity mechanism. That roster's `enforcement` clause already makes an off-roster class a harness error, so a fork would create two disagreeing authorities | A 038-local roster was rejected as a second identity mechanism -- exactly what the spec forbids. Mitigation: 038 writes a *proposal* (`contracts/natural-key-roster-extension.json`, schema-identical to the existing entries) and never edits 035's file directly; the coordination protocol is recorded alongside it. A further cost is that the roster now serves two consumers -- sweep-harness accounting and transfer-engine matching -- which the proposal must record explicitly |
+
+## Amendment (2026-08-19) -- the wizard is no longer one file
+
+The line above recorded `selection_wizard.py` at 6512 L. Feature 039 split it
+into a facade plus ten `wizard_*.py` page modules (see
+`specs/039-wizard-module-split/`). The facade is now 1699 L and keeps only the
+safety-critical cluster -- `SelectionWizard`, `flow()`, the `page_*` accessors,
+`_PagePreview`, `_PageFinish` (still the sole `gt_api.execute_move` caller) and
+the plan-assembly functions. Every relocated name is still re-exported, so
+`selection_wizard.X` resolves exactly as before.
+
+For this feature that matters in one place: **T072** targets
+`selection_wizard.py` by name. The per-item deselection work it describes now
+lands in the page module that owns the tree in question -- see the re-pointed
+task text.

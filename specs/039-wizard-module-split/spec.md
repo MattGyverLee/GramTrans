@@ -152,6 +152,56 @@ institutional memory. It moves verbatim with the code it explains.
   fixing it is a behaviour change; it is recorded as a follow-up question.
 - Any change to `flow()`, page order, or the skip predicates.
 
+## Open questions raised by this feature
+
+### OQ-001 — should `_PageEntryTypes` read the source handle like the other eight pages?
+
+Raised by T030, deliberately **not** resolved here.
+
+Eight pages resolve their source project through
+`_ProjectHandlesMixin._get_source()`:
+`self.wizard()` → `page_project_ws()` → `context().source_handle`, falling back
+to that page's `_host`. `_PageEntryTypes` instead reads `wizard._host` directly:
+
+```python
+def _get_source(self):
+    wizard = self.wizard()
+    if wizard is None:
+        return None
+    return getattr(wizard, "_host", None)
+```
+
+Two things follow, and only the first is obviously wrong:
+
+1. A source bound on **step 1** via `context.source_handle` — which is the
+   standalone application's path, feature 034 exception rows 8 and 10 — is
+   ignored by this page. On the FlexTools path `_host` *is* the source, so the
+   two agree and nothing shows. That is why this has never surfaced as a bug
+   report: it can only bite the standalone, and only if `_host` is unset or
+   stale where the context is not.
+2. It reads `_host` off the **wizard**, where the mixin reads it off **page 0**.
+   Those are different objects.
+
+Fixing it is a behaviour change on a live code path and belongs in a feature
+that can test the standalone source-binding flow end to end. It is kept as a
+documented override with the reasoning next to the code.
+
+### OQ-002 — `_PageEntryTypes._get_target` diverges too
+
+Also T030, and **not** recorded in `plan.md`, which named only `_get_source`.
+
+`_get_target` on that page is semantically the same walk as the mixin's, but it
+guards each step with `hasattr` instead of wrapping the whole thing in
+`try`/`except`. The difference is real: if `page_project_ws()` or `context()`
+*raises*, the mixin returns `None` and this page propagates. Adopting the mixin
+would have made the page swallow an exception it currently surfaces — a silent
+behaviour change inside a deduplication commit, which is exactly what FR-004's
+"documented override rather than silently normalised" clause exists to prevent.
+
+Whether propagating is the *better* behaviour is a fair question; nine of ten
+accessors in this wizard swallow, so the odd one out is at least worth a
+deliberate decision.
+
 ## Notes for whoever picks this up
 
 Five unchecked tasks in `specs/020-conflict-mode-field-merge/tasks.md`
