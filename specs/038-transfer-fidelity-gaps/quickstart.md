@@ -8,10 +8,20 @@ destination pair, reads the artifact, and uses it as a phase acceptance gate.
 Contract: [`contracts/fidelity-census.md`](contracts/fidelity-census.md).
 Artifact schema: [`contracts/census-artifact.schema.json`](contracts/census-artifact.schema.json).
 
-> **The instrument does not exist yet.** `debug/audit_object_census.py` is NOT in
-> the repository; the figures in [`census-evidence.md`](census-evidence.md) were
-> produced ad-hoc. Every command below whose invocation depends on unwritten code
-> is marked **`PLANNED`**. Commands not so marked run today.
+> **The instrument ships.** It is `python -m gramtrans.census_cli`, implemented in
+> `src/gramtrans/census_cli.py` over `src/gramtrans/Lib/census.py` (T021), with the
+> four subcommands `capture-baseline` / `run` / `gate` / `diff`. Every command below
+> runs today; the `PLANNED` markers this file used to carry are gone.
+>
+> There is **no** `debug/audit_object_census.py` and there will not be one. R2
+> (`research.md`) rejected a `debug/` home outright -- "a release gate cannot live in
+> unsupported scratch" (SC-009) -- so earlier drafts of this quickstart named a path
+> that was never going to exist. The flag is `--destination` everywhere, never
+> `--target`: "destination" is the vocabulary of the schema and the contracts, and
+> `build_parser`'s own docstring records that absence as load-bearing.
+>
+> The figures in [`census-evidence.md`](census-evidence.md) were produced ad-hoc,
+> before the instrument existed, and several are under correction -- see section 6.
 >
 > Do not confuse this with `tests/verification/fidelity_census.py` (feature 024),
 > which is a **field-level** census over an in-code LCM model snapshot and never
@@ -111,23 +121,43 @@ FR-010: the census must exclude what a newly created FLEx project ships, or the
    do not add an entry, do not edit the starter phoneme or part-of-speech lists.
    An edited starter inventory is no longer a baseline.
 2. Close FLEx so the `.fwdata` is flushed and unlocked.
-3. Capture: **`PLANNED`**
+3. Capture:
 
    ```powershell
-   python debug/audit_object_census.py capture-baseline `
+   python -m gramtrans.census_cli capture-baseline `
      --project "GT Starter Baseline" `
      --out specs/038-transfer-fidelity-gaps/contracts/starter-baseline.json
    ```
 
-4. Confirm the capture carries **keys, not only counts**:
+   Add `--projects-root PATH` if the projects do not live under the default
+   `C:\ProgramData\SIL\FieldWorks\Projects`.
+
+4. Confirm the capture records what it actually holds:
 
    ```powershell
-   python -c "import json; d=json.load(open('specs/038-transfer-fidelity-gaps/contracts/starter-baseline.json')); print(d['carries_natural_keys'], d['flex_version'], d['data_model_version'], d['class_count'])"
+   python -c "import json; d=json.load(open('specs/038-transfer-fidelity-gaps/contracts/starter-baseline.json')); print(d['kind'], d['carries_natural_keys'], d['flex_version'], d['data_model_version'], d['class_count'])"
    ```
 
-   `carries_natural_keys` must be `True`. Counts alone force every census row onto
-   the `baseline_gross` subtraction basis, which cannot distinguish a correct
-   natural-key match from a shortfall (`contracts/fidelity-census.md` 5.2).
+   The captured artifact reads `starter_capture False 9.3.10 7000072 72`.
+
+   **`carries_natural_keys` is `False`, and that is correct -- not a failed
+   capture.** An earlier draft of this step demanded `True`. That demand is
+   unsatisfiable for a whole-project baseline: a genuinely blank FieldWorks project
+   holds objects in 36 classes, **11 of which carry no name at all** (`CmDomainQ`
+   7938, `StTxtPara` 86, `PhCode` 25, `CmRow`, `CmCell`, `CmAgentEvaluation`,
+   `DsDiscourseData`, `LangProject`, `MoMorphData`, `PhPhonData`, `StText`), so no
+   such baseline can record a natural key for every starter object. Per
+   `contracts/census-artifact.schema.json` a count-only baseline is a **legal,
+   designed state**. What matters is that the flag is recorded *truthfully*: it must
+   report `False` when keys are absent, and never claim a `True` it cannot back.
+
+   The consequence is real, and you have to plan for it: a count-only baseline forces
+   every row onto the `baseline_gross` subtraction basis, and on that basis the
+   verdict is **capped at `CENSUS_ACCOUNTED`** and can never be
+   `UNEXPLAINED_SHORTFALL` / `UNEXPLAINED_SURPLUS` (`contracts/fidelity-census.md`
+   5.2, implemented in `recompute_verdict`). Without that cap a *correct* transfer
+   reports a shortfall -- the contract's own 43-23=20 example. Read section 3's note
+   on the cap before treating an exit 0 as a clean run.
 
 5. Commit the baseline. It lives under `specs/`, so it commits to `main` per the
    Git Workflow Protocol.
@@ -148,11 +178,8 @@ destination that already holds real work.
 
 ### Step 1 (strongly recommended) -- pre-transfer census of the destination
 
-**`PLANNED`**
-
 ```powershell
-python debug/audit_object_census.py run `
-  --source "Ejagham W Mini" `
+python -m gramtrans.census_cli run `
   --destination "Ejagham W Target" `
   --pre-transfer `
   --out scratchpad/038_census/pre.json
@@ -162,20 +189,31 @@ This produces a baseline of kind `pre_transfer_census` that the post-transfer ru
 consumes. It also gives you the destination's honest starting point before anything
 touches it.
 
+`--pre-transfer` censuses the **destination only**, so it takes no `--source`:
+`_dispatch` routes it straight to `capture_baseline(args.destination, ...)`, and a
+`--source` given on this path is ignored. Passing `--baseline` here warns, for the
+same reason -- this run *is* the baseline. On every other `run` path `--source` is
+required.
+
 ### Step 2 -- run the transfer
 
 Run GramTrans as you normally would (FlexTools, or the standalone app). Note the
 run id it prints -- format `GT-YYYYMMDD-HHMMSS`, e.g. `GT-20260819-030049` -- and
-keep the run report. The census can run without the report, but then it cannot know
-how many starter objects were matched, so it drops to the `baseline_gross` basis and
-the verdict is capped at `CENSUS_ACCOUNTED` (`contracts/fidelity-census.md` 5.2).
+keep the run report. Supply it: an `accounted_for[]` line needs a `report_ref` to
+prove the run report actually explains a difference, so without the report nothing
+can be accounted for at all.
+
+**Supplying it does not lift the 5.2 cap, though.** An earlier draft of this section
+implied the cap was the price of omitting the report. It is not:
+`starter_subtraction_basis` is emitted as `baseline_gross` on **every** path that has
+a baseline (`census_cli.py`, `_row_for_entry`), whether or not a run report was
+given, so the verdict is capped at `CENSUS_ACCOUNTED` either way. Section 4's note on
+`starter_subtraction_basis` explains why, and points at the open work.
 
 ### Step 3 -- run the census
 
-**`PLANNED`**
-
 ```powershell
-python debug/audit_object_census.py run `
+python -m gramtrans.census_cli run `
   --source "Ejagham W Mini" `
   --destination "Ejagham W Target" `
   --baseline scratchpad/038_census/pre.json `
@@ -188,6 +226,20 @@ The census prints the human-readable per-class table to the console and writes t
 machine-readable artifact to `--out`. It **never writes to either project**: both
 are opened read-only, no residue tag is applied, and no restore is needed before or
 after.
+
+**Read the `[WARN] census note(s)` block printed immediately above the verdict.**
+That placement is deliberate (T023c): 5.2's cap can turn a large shortfall into
+`CENSUS_ACCOUNTED` / exit 0, and the sentence that says so has to be the last thing
+you read before the exit code, not something scrolled off the top. Notes are
+**reportage only** -- the verdict is computed from counts, bases and accounting
+lines, never from a note, so a hand-written note cannot buy a cap. When a *more*
+severe verdict decided the run, the console says the cap did not apply.
+
+Counts are **per exact class, not per polymorphic subtree** (T023b). LCM's
+`AllInstances()` includes subclasses, so an unfiltered count puts one `PartOfSpeech`
+object in both its own row and `CmPossibility`'s. The census filters on class
+identity instead, so every object lands in exactly one row and each row's
+`difference` is unambiguous.
 
 Check the exit code, since that is the gate:
 
@@ -209,6 +261,17 @@ echo $LASTEXITCODE
 
 Only 0 is success. There is deliberately no verdict meaning "loss reported, review
 advisable, exit success".
+
+> **Open, and load-bearing for anyone using exit 0 as a release gate (T024b).** On
+> the gross basis the *design* above and the *shipped default* pull apart: both live
+> sanity pairs reported `CENSUS_ACCOUNTED` / **exit 0** / `passed=True` while
+> carrying 44-47 failing rows and 74,157 units of unexplained shortfall. That is
+> 5.2's cap behaving exactly as specified, and it is still an unsafe default for a
+> release gate -- the headline says success over a catastrophically incomplete
+> transfer. The failing evidence does exist and is reachable today via
+> `gate --phase N`, which fails correctly and names the classes. Until T024b is
+> decided, **do not read a bare exit 0 on the gross basis as "nothing was lost" --
+> always pass `--phase`.**
 
 ---
 
@@ -258,9 +321,22 @@ How to read a row, in order:
 5. **`match_basis`** -- `identity` vs `natural_key` (FR-006), plus `created_new`,
    `enriched`, and `unmatched_reported`. A large `created_new` on a class whose
    starter content should have matched is the duplicate defect in the making.
-6. **`starter_subtraction_basis`** -- `baseline_matched` is trustworthy;
-   `baseline_gross` means no run report was supplied and the row is advisory for
-   shortfall purposes; `no_baseline` means the run cannot pass at all.
+6. **`starter_subtraction_basis`** -- `no_baseline` means the run cannot pass at
+   all. `baseline_matched` is the trustworthy basis; `baseline_gross` makes the row
+   advisory for shortfall purposes and caps the whole verdict at
+   `CENSUS_ACCOUNTED`.
+
+   **In shipped behaviour you will only ever see `baseline_gross` (T024d).**
+   `Lib/census.py` supports `baseline_matched` end to end -- it is in
+   `SUBTRACTION_BASES`, `unmatched_starter()` computes from
+   `starter_matched_to_source`, invariant checking special-cases it, 5.2's cap skips
+   rows carrying it, and phase evaluation treats its shortfalls as trustworthy --
+   but **nothing emits it**: the only emitter hardcodes `baseline_gross` on every
+   path that has a baseline. This is not a matter of passing the right flag.
+   Emitting it needs per-**object-class** matched tallies, and `RunReport`'s
+   substitution counts are keyed by `GrammarCategory`, which is not a 1:1 mapping
+   for the affix and MSA categories. That is T024d's work, split into a `report.py`
+   half that tallies per class and a `census_cli.py` half that wires it in.
 
 Note that the artifact always carries **one row per required class**, including
 classes with no instances anywhere (`verdict_class: "NOT_EVALUATED"` with a
@@ -295,10 +371,13 @@ Assert a predicate against an artifact:
 python -c "import json,sys; d=json.load(open('scratchpad/038_census/GT-20260819-030049-census.json')); rows={r['class']:r for r in d['classes']}; want=['MoStemMsa','MoInflAffMsa','MoDerivAffMsa','MoUnclassifiedAffixMsa','PartOfSpeech']; bad=[c for c in want if rows.get(c,{}).get('verdict_class')!='MATCHED']; dup=rows.get('PhPhoneme',{}).get('duplicates',{}).get('extra_objects',-1); print('PHASE 1', 'PASS' if not bad and dup==0 else 'FAIL'); print('not matched:', bad, 'phoneme duplicates:', dup); sys.exit(0 if not bad and dup==0 else 1)"
 ```
 
-Or, once the subcommand exists: **`PLANNED`**
+Or, equivalently and preferably, with the shipped subcommand -- which recomputes the
+verdict from the artifact's own evidence and never trusts its stored `verdict` /
+`exit_code`, so a document claiming `CENSUS_CLEAN` over an absent baseline is still
+refused:
 
 ```powershell
-python debug/audit_object_census.py gate `
+python -m gramtrans.census_cli gate `
   --artifact scratchpad/038_census/GT-20260819-030049-census.json `
   --phase 1
 ```
@@ -306,10 +385,10 @@ python debug/audit_object_census.py gate `
 ### Idempotency (SC-008)
 
 Run the transfer a second time into the same destination, take a third census, and
-compare: the second run must add no objects. **`PLANNED`**
+compare: the second run must add no objects.
 
 ```powershell
-python debug/audit_object_census.py diff `
+python -m gramtrans.census_cli diff `
   --before scratchpad/038_census/GT-20260819-030049-census.json `
   --after  scratchpad/038_census/GT-20260819-041500-census.json
 ```
@@ -328,6 +407,18 @@ Point it at the two disposable measured targets and check it reproduces
 both, `MoAffixProcess` 13 -> 0 against `MoAffixAllomorph` +13 on Ejagham, and
 `MoInflAffixTemplate` 8 -> 0 / `MoInflAffixSlot` 11 -> 0. A census that reports
 those pairs clean is itself broken.
+
+> **Several figures in the paragraph above are under correction -- do not pin a test
+> to them yet (T024, T024c).** Measured live 2026-08-19: the `MoStemMsa` 1949 -> 0
+> source is **`Ngoreme FLEx`**, not `Ngoreme`; the `MoInflAffixTemplate` 8 -> 0 /
+> `MoInflAffixSlot` 11 -> 0 pair is **Ejagham**, while the Ngoreme pair loses 13 and
+> 19; and **`MoAffixAllomorph` +13 is not reproducible** on this machine -- the
+> conversion signature that *is* reproducible is `MoAffixProcess` 1 -> 0 beside
+> `MoAffixAllomorph` 146 -> 147 on the Ngoreme pair. `PhPhoneme` 41 -> 64 verified
+> exactly. Separately, T024's live half censuses two projects **as they sit on
+> disk** and never runs a transfer, so it cannot yet sanity-check one; T024c rebuilds
+> it as restore -> pre-transfer census -> full transfer -> post census. Owned by
+> T024/T024c, not by this file.
 
 The two measured targets are disposable test projects and will be re-created rather
 than repaired (spec Assumptions), so they are safe to census repeatedly.
