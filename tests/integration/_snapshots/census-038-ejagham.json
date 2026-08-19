@@ -1,0 +1,2012 @@
+{
+  "schema_version": 1,
+  "census_id": "CENSUS-20260819-131935",
+  "generated_at": "2026-08-19T13:19:35",
+  "instrument": {
+    "name": "gramtrans.census_cli",
+    "version": "0.1.0",
+    "gramtrans_sha": "3973fa0",
+    "gramtrans_dirty": false,
+    "python_version": "3.12.7",
+    "flexicon_version": "4.5.2",
+    "flexicon_path": "D:\\Github\\_Projects\\_LEX\\flexicon\\flexicon\\__init__.py",
+    "flex_version": "9.3.10"
+  },
+  "projects": {
+    "source": {
+      "name": "Ejagham W Mini",
+      "path": "C:\\ProgramData\\SIL\\FieldWorks\\Projects\\Ejagham W Mini",
+      "opened_read_only": true,
+      "counted_at": "2026-08-19T13:19:30",
+      "fwdata_sha256_before": "c174f0b455982a1245b12ec6213ff92366603eb3c000e45fcf81cbd01c9924e6",
+      "fwdata_sha256_after": "c174f0b455982a1245b12ec6213ff92366603eb3c000e45fcf81cbd01c9924e6",
+      "data_model_version": 7000072,
+      "object_count_total": 17410
+    },
+    "destination": {
+      "name": "Ejagham W Target",
+      "path": "C:\\ProgramData\\SIL\\FieldWorks\\Projects\\Ejagham W Target",
+      "opened_read_only": true,
+      "counted_at": "2026-08-19T13:19:35",
+      "fwdata_sha256_before": "1cbef60c9550360181d61ee11efb0907811cb0cb6829d681f71de2b7bed094cc",
+      "fwdata_sha256_after": "1cbef60c9550360181d61ee11efb0907811cb0cb6829d681f71de2b7bed094cc",
+      "data_model_version": 7000072,
+      "declared_freshly_created": true,
+      "object_count_total": 12181
+    }
+  },
+  "class_list_provenance": {
+    "inventory_document": "specs/035-fullsweep-fidelity/object-inventory.md",
+    "inventory_sha256": "c81fb2f6eca17c7d7bb63bdf46640fa41a549c77d2e3236b4505492bbe2c79b3",
+    "coverage_floor_document": "specs/035-fullsweep-fidelity/contracts/coverage-floor.json",
+    "coverage_floor_sha256": "5ecfe96490e675bf3f34b5367464ce0cb345090ababb16516bbf4f09a74923bb",
+    "census_additions": [
+      {
+        "class": "MoAffixProcess",
+        "rationale": "Absent from object-inventory.md entirely, because the engine has no create path for it -- the class the transfer silently downgraded. A truth-source gap, not a corpus gap.",
+        "measured_evidence": "Ejagham 13 -> 0, Ngoreme 1 -> 0",
+        "owed_to_035": true
+      },
+      {
+        "class": "PhCode",
+        "rationale": "object-inventory.md TABLE 3 (ride-along): flexicon's phoneme GetSyncableProperties explicitly does not include CodesOS, so nothing carries it and nothing reports the drop.",
+        "measured_evidence": "43 -> 25, 89 -> 25",
+        "owed_to_035": true
+      },
+      {
+        "class": "CmTranslation",
+        "rationale": "Reached through the texts path; never projected into the floor.",
+        "measured_evidence": "Ngoreme 7925 -> 2",
+        "owed_to_035": true
+      }
+    ],
+    "excluded_not_measurable": [
+      {
+        "class": "MoForm",
+        "reason": "abstract LCM base class (no IMoFormFactory exists; subclasses MoStemAllomorph / MoAffixAllomorph carry every instance). Absent from every .fwdata by construction, not by corpus gap."
+      },
+      {
+        "class": "MoMorphSynAnalysis",
+        "reason": "abstract LCM base class (no IMoMorphSynAnalysisFactory exists; subclasses MoStemMsa / MoInflAffMsa / MoDerivAffMsa / MoUnclassifiedAffixMsa carry every instance). Absent from every .fwdata by construction, not by corpus gap."
+      }
+    ],
+    "in_scope_class_count": 69,
+    "natural_key_roster_document": "specs/035-fullsweep-fidelity/contracts/natural-key-identity-roster.json",
+    "natural_key_roster_sha256": "fade5c9bfd4060fe73fd71496a6e16d4ed07cfa65aa0175a1e7a584b9649d627",
+    "derivation_check": {
+      "performed": true,
+      "result": "match",
+      "derived_class_count": 71,
+      "in_inventory_not_in_floor": [],
+      "in_floor_not_in_inventory": []
+    },
+    "required_class_count": 75
+  },
+  "starter_baseline": {
+    "kind": "starter_capture",
+    "flex_version": "9.3.10",
+    "captured_at": "2026-08-19T10:46:44",
+    "project_name": "GT038 T023b Scratch",
+    "path": "D:\\Github\\_Projects\\_LEX\\GramTrans\\specs\\038-transfer-fidelity-gaps\\contracts\\starter-baseline.json",
+    "data_model_version": 7000072,
+    "class_count": 72,
+    "carries_natural_keys": false
+  },
+  "classes": [
+    {
+      "class": "CmAgent",
+      "source_count": 4,
+      "destination_count_total": 4,
+      "difference": -4,
+      "engine_can_create": true,
+      "destination_count_net": 0,
+      "difference_raw": 0,
+      "verdict_class": "SHORTFALL",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1",
+        "TABLE_2"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 4,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 4,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document"
+    },
+    {
+      "class": "CmAnthroItem",
+      "source_count": 859,
+      "destination_count_total": 859,
+      "difference": -859,
+      "engine_can_create": true,
+      "destination_count_net": 0,
+      "difference_raw": 0,
+      "verdict_class": "NOT_EVALUATED",
+      "not_evaluated_reason": "OUT_OF_SCOPE_CLASS",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1",
+        "TABLE_2"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 859,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document"
+    },
+    {
+      "class": "CmFile",
+      "source_count": 0,
+      "destination_count_total": 0,
+      "difference": 0,
+      "engine_can_create": true,
+      "destination_count_net": 0,
+      "difference_raw": 0,
+      "verdict_class": "MATCHED",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1",
+        "TABLE_2"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document"
+    },
+    {
+      "class": "CmFolder",
+      "source_count": 1,
+      "destination_count_total": 1,
+      "difference": -1,
+      "engine_can_create": true,
+      "destination_count_net": 0,
+      "difference_raw": 0,
+      "verdict_class": "SHORTFALL",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 1,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 1,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document"
+    },
+    {
+      "class": "CmPicture",
+      "source_count": 0,
+      "destination_count_total": 0,
+      "difference": 0,
+      "engine_can_create": true,
+      "destination_count_net": 0,
+      "difference_raw": 0,
+      "verdict_class": "MATCHED",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document"
+    },
+    {
+      "class": "CmPossibility",
+      "source_count": 308,
+      "destination_count_total": 302,
+      "difference": -308,
+      "engine_can_create": true,
+      "destination_count_net": 0,
+      "difference_raw": -6,
+      "verdict_class": "SHORTFALL",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1",
+        "TABLE_2"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 308,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 302,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document"
+    },
+    {
+      "class": "CmSemanticDomain",
+      "source_count": 1792,
+      "destination_count_total": 1792,
+      "difference": -1792,
+      "engine_can_create": true,
+      "destination_count_net": 0,
+      "difference_raw": 0,
+      "verdict_class": "SHORTFALL",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1",
+        "TABLE_2"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 1792,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 1792,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document"
+    },
+    {
+      "class": "FsClosedFeature",
+      "source_count": 20,
+      "destination_count_total": 16,
+      "difference": -4,
+      "engine_can_create": true,
+      "destination_count_net": 16,
+      "difference_raw": -4,
+      "verdict_class": "SHORTFALL",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1",
+        "TABLE_2"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 4,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document"
+    },
+    {
+      "class": "FsClosedValue",
+      "source_count": 994,
+      "destination_count_total": 682,
+      "difference": -312,
+      "engine_can_create": true,
+      "destination_count_net": 682,
+      "difference_raw": -312,
+      "verdict_class": "SHORTFALL",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 312,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document"
+    },
+    {
+      "class": "FsComplexFeature",
+      "source_count": 1,
+      "destination_count_total": 0,
+      "difference": -1,
+      "engine_can_create": true,
+      "destination_count_net": 0,
+      "difference_raw": -1,
+      "verdict_class": "SHORTFALL",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 1,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document"
+    },
+    {
+      "class": "FsFeatStruc",
+      "source_count": 269,
+      "destination_count_total": 56,
+      "difference": -213,
+      "engine_can_create": true,
+      "destination_count_net": 56,
+      "difference_raw": -213,
+      "verdict_class": "SHORTFALL",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 213,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document"
+    },
+    {
+      "class": "FsFeatStrucType",
+      "source_count": 3,
+      "destination_count_total": 0,
+      "difference": -3,
+      "engine_can_create": true,
+      "destination_count_net": 0,
+      "difference_raw": -3,
+      "verdict_class": "SHORTFALL",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 3,
+      "unexplained_surplus": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "absent_from_baseline",
+      "notes": [
+        "Amendment A1: this row is one half of a class split by owning feature system, and the baseline document is not split, so no starter subtraction is applied to it (starter_baseline_source 'absent_from_baseline')."
+      ],
+      "owning_feature_system": "LangProject.MsFeatureSystemOA"
+    },
+    {
+      "class": "FsFeatStrucType",
+      "source_count": 1,
+      "destination_count_total": 1,
+      "difference": 0,
+      "engine_can_create": true,
+      "destination_count_net": 1,
+      "difference_raw": 0,
+      "verdict_class": "MATCHED",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "absent_from_baseline",
+      "notes": [
+        "Amendment A1: this row is one half of a class split by owning feature system, and the baseline document is not split, so no starter subtraction is applied to it (starter_baseline_source 'absent_from_baseline')."
+      ],
+      "owning_feature_system": "LangProject.PhFeatureSystemOA"
+    },
+    {
+      "class": "FsSymFeatVal",
+      "source_count": 51,
+      "destination_count_total": 34,
+      "difference": -17,
+      "engine_can_create": true,
+      "destination_count_net": 34,
+      "difference_raw": -17,
+      "verdict_class": "SHORTFALL",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1",
+        "TABLE_2"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 17,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document"
+    },
+    {
+      "class": "LexAppendix",
+      "source_count": 0,
+      "destination_count_total": 0,
+      "difference": 0,
+      "engine_can_create": false,
+      "destination_count_net": 0,
+      "difference_raw": 0,
+      "verdict_class": "MATCHED",
+      "gate_scope": "advisory",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_2"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document"
+    },
+    {
+      "class": "LexEntry",
+      "source_count": 269,
+      "destination_count_total": 0,
+      "difference": -269,
+      "engine_can_create": true,
+      "destination_count_net": 0,
+      "difference_raw": -269,
+      "verdict_class": "SHORTFALL",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1",
+        "TABLE_2"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 269,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document"
+    },
+    {
+      "class": "LexEntryInflType",
+      "source_count": 7,
+      "destination_count_total": 3,
+      "difference": -7,
+      "engine_can_create": true,
+      "destination_count_net": 0,
+      "difference_raw": -4,
+      "verdict_class": "SHORTFALL",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1",
+        "TABLE_2"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 7,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 3,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document",
+      "duplicates": {
+        "roster_admitted": false,
+        "key_definition": "Name (default analysis alt), exact and case-sensitive, within the variant-entry-types list and restricted to LexEntryInflType",
+        "groups": 0,
+        "extra_objects": 0,
+        "examples": []
+      }
+    },
+    {
+      "class": "LexEntryRef",
+      "source_count": 6,
+      "destination_count_total": 0,
+      "difference": -6,
+      "engine_can_create": true,
+      "destination_count_net": 0,
+      "difference_raw": -6,
+      "verdict_class": "SHORTFALL",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 6,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document"
+    },
+    {
+      "class": "LexEntryType",
+      "source_count": 11,
+      "destination_count_total": 11,
+      "difference": -11,
+      "engine_can_create": true,
+      "destination_count_net": 0,
+      "difference_raw": 0,
+      "verdict_class": "SHORTFALL",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1",
+        "TABLE_2"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 11,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 11,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document"
+    },
+    {
+      "class": "LexEtymology",
+      "source_count": 0,
+      "destination_count_total": 0,
+      "difference": 0,
+      "engine_can_create": true,
+      "destination_count_net": 0,
+      "difference_raw": 0,
+      "verdict_class": "MATCHED",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document"
+    },
+    {
+      "class": "LexExampleSentence",
+      "source_count": 68,
+      "destination_count_total": 0,
+      "difference": -68,
+      "engine_can_create": true,
+      "destination_count_net": 0,
+      "difference_raw": -68,
+      "verdict_class": "SHORTFALL",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 68,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document"
+    },
+    {
+      "class": "LexExtendedNote",
+      "source_count": 0,
+      "destination_count_total": 0,
+      "difference": 0,
+      "engine_can_create": true,
+      "destination_count_net": 0,
+      "difference_raw": 0,
+      "verdict_class": "MATCHED",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document"
+    },
+    {
+      "class": "LexPronunciation",
+      "source_count": 117,
+      "destination_count_total": 0,
+      "difference": -117,
+      "engine_can_create": true,
+      "destination_count_net": 0,
+      "difference_raw": -117,
+      "verdict_class": "SHORTFALL",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 117,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document"
+    },
+    {
+      "class": "LexRefType",
+      "source_count": 10,
+      "destination_count_total": 7,
+      "difference": -10,
+      "engine_can_create": false,
+      "destination_count_net": 0,
+      "difference_raw": -3,
+      "verdict_class": "SHORTFALL",
+      "gate_scope": "advisory",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_2"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 10,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 7,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document"
+    },
+    {
+      "class": "LexReference",
+      "source_count": 0,
+      "destination_count_total": 0,
+      "difference": 0,
+      "engine_can_create": true,
+      "destination_count_net": 0,
+      "difference_raw": 0,
+      "verdict_class": "MATCHED",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document"
+    },
+    {
+      "class": "LexSense",
+      "source_count": 265,
+      "destination_count_total": 0,
+      "difference": -265,
+      "engine_can_create": true,
+      "destination_count_net": 0,
+      "difference_raw": -265,
+      "verdict_class": "SHORTFALL",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1",
+        "TABLE_2"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 265,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document"
+    },
+    {
+      "class": "MoAdhocProhibGr",
+      "source_count": 0,
+      "destination_count_total": 0,
+      "difference": 0,
+      "engine_can_create": true,
+      "destination_count_net": 0,
+      "difference_raw": 0,
+      "verdict_class": "MATCHED",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document"
+    },
+    {
+      "class": "MoAffixAllomorph",
+      "source_count": 130,
+      "destination_count_total": 0,
+      "difference": -130,
+      "engine_can_create": true,
+      "destination_count_net": 0,
+      "difference_raw": -130,
+      "verdict_class": "SHORTFALL",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 130,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document"
+    },
+    {
+      "class": "MoAlloAdhocProhib",
+      "source_count": 0,
+      "destination_count_total": 0,
+      "difference": 0,
+      "engine_can_create": true,
+      "destination_count_net": 0,
+      "difference_raw": 0,
+      "verdict_class": "MATCHED",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document"
+    },
+    {
+      "class": "MoDerivAffMsa",
+      "source_count": 0,
+      "destination_count_total": 0,
+      "difference": 0,
+      "engine_can_create": true,
+      "destination_count_net": 0,
+      "difference_raw": 0,
+      "verdict_class": "MATCHED",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document"
+    },
+    {
+      "class": "MoEndoCompound",
+      "source_count": 0,
+      "destination_count_total": 0,
+      "difference": 0,
+      "engine_can_create": true,
+      "destination_count_net": 0,
+      "difference_raw": 0,
+      "verdict_class": "MATCHED",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document"
+    },
+    {
+      "class": "MoExoCompound",
+      "source_count": 0,
+      "destination_count_total": 0,
+      "difference": 0,
+      "engine_can_create": true,
+      "destination_count_net": 0,
+      "difference_raw": 0,
+      "verdict_class": "MATCHED",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document"
+    },
+    {
+      "class": "MoInflAffMsa",
+      "source_count": 111,
+      "destination_count_total": 0,
+      "difference": -111,
+      "engine_can_create": true,
+      "destination_count_net": 0,
+      "difference_raw": -111,
+      "verdict_class": "SHORTFALL",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 111,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document"
+    },
+    {
+      "class": "MoInflAffixSlot",
+      "source_count": 11,
+      "destination_count_total": 0,
+      "difference": -11,
+      "engine_can_create": true,
+      "destination_count_net": 0,
+      "difference_raw": -11,
+      "verdict_class": "SHORTFALL",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1",
+        "TABLE_2"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 11,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document"
+    },
+    {
+      "class": "MoInflAffixTemplate",
+      "source_count": 8,
+      "destination_count_total": 0,
+      "difference": -8,
+      "engine_can_create": true,
+      "destination_count_net": 0,
+      "difference_raw": -8,
+      "verdict_class": "SHORTFALL",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 8,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document"
+    },
+    {
+      "class": "MoInflClass",
+      "source_count": 2,
+      "destination_count_total": 0,
+      "difference": -2,
+      "engine_can_create": true,
+      "destination_count_net": 0,
+      "difference_raw": -2,
+      "verdict_class": "SHORTFALL",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 2,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document"
+    },
+    {
+      "class": "MoMorphAdhocProhib",
+      "source_count": 0,
+      "destination_count_total": 0,
+      "difference": 0,
+      "engine_can_create": true,
+      "destination_count_net": 0,
+      "difference_raw": 0,
+      "verdict_class": "MATCHED",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document"
+    },
+    {
+      "class": "MoMorphType",
+      "source_count": 19,
+      "destination_count_total": 19,
+      "difference": -19,
+      "engine_can_create": true,
+      "destination_count_net": 0,
+      "difference_raw": 0,
+      "verdict_class": "SHORTFALL",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1",
+        "TABLE_2"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 19,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 19,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document",
+      "duplicates": {
+        "roster_admitted": false,
+        "key_definition": "Name (default analysis alt), exact and case-sensitive, within the lexicon's morph-types list",
+        "groups": 0,
+        "extra_objects": 0,
+        "examples": []
+      }
+    },
+    {
+      "class": "MoStemAllomorph",
+      "source_count": 185,
+      "destination_count_total": 0,
+      "difference": -185,
+      "engine_can_create": true,
+      "destination_count_net": 0,
+      "difference_raw": -185,
+      "verdict_class": "SHORTFALL",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 185,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document"
+    },
+    {
+      "class": "MoStemMsa",
+      "source_count": 153,
+      "destination_count_total": 0,
+      "difference": -153,
+      "engine_can_create": true,
+      "destination_count_net": 0,
+      "difference_raw": -153,
+      "verdict_class": "SHORTFALL",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 153,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document"
+    },
+    {
+      "class": "MoStemName",
+      "source_count": 0,
+      "destination_count_total": 0,
+      "difference": 0,
+      "engine_can_create": true,
+      "destination_count_net": 0,
+      "difference_raw": 0,
+      "verdict_class": "MATCHED",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1",
+        "TABLE_2"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document"
+    },
+    {
+      "class": "MoStratum",
+      "source_count": 0,
+      "destination_count_total": 0,
+      "difference": 0,
+      "engine_can_create": true,
+      "destination_count_net": 0,
+      "difference_raw": 0,
+      "verdict_class": "MATCHED",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1",
+        "TABLE_2"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document"
+    },
+    {
+      "class": "MoUnclassifiedAffixMsa",
+      "source_count": 0,
+      "destination_count_total": 0,
+      "difference": 0,
+      "engine_can_create": true,
+      "destination_count_net": 0,
+      "difference_raw": 0,
+      "verdict_class": "MATCHED",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document"
+    },
+    {
+      "class": "PartOfSpeech",
+      "source_count": 20,
+      "destination_count_total": 5,
+      "difference": -20,
+      "engine_can_create": true,
+      "destination_count_net": 0,
+      "difference_raw": -15,
+      "verdict_class": "SHORTFALL",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1",
+        "TABLE_2"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 20,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 5,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document",
+      "duplicates": {
+        "roster_admitted": false,
+        "key_definition": "Name (default analysis alt), exact and case-sensitive, project-wide over the recursive hierarchy; the owning parent is NOT part of the key",
+        "groups": 0,
+        "extra_objects": 0,
+        "examples": []
+      }
+    },
+    {
+      "class": "PhBdryMarker",
+      "source_count": 2,
+      "destination_count_total": 2,
+      "difference": -2,
+      "engine_can_create": false,
+      "destination_count_net": 0,
+      "difference_raw": 0,
+      "verdict_class": "SHORTFALL",
+      "gate_scope": "advisory",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_2"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 2,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 2,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document"
+    },
+    {
+      "class": "PhEnvironment",
+      "source_count": 2,
+      "destination_count_total": 2,
+      "difference": 0,
+      "engine_can_create": true,
+      "destination_count_net": 2,
+      "difference_raw": 0,
+      "verdict_class": "MATCHED",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1",
+        "TABLE_2"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document"
+    },
+    {
+      "class": "PhFeatureConstraint",
+      "source_count": 0,
+      "destination_count_total": 0,
+      "difference": 0,
+      "engine_can_create": true,
+      "destination_count_net": 0,
+      "difference_raw": 0,
+      "verdict_class": "MATCHED",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1",
+        "TABLE_2"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document"
+    },
+    {
+      "class": "PhMetathesisRule",
+      "source_count": 0,
+      "destination_count_total": 0,
+      "difference": 0,
+      "engine_can_create": true,
+      "destination_count_net": 0,
+      "difference_raw": 0,
+      "verdict_class": "MATCHED",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document"
+    },
+    {
+      "class": "PhNCFeatures",
+      "source_count": 15,
+      "destination_count_total": 15,
+      "difference": 0,
+      "engine_can_create": true,
+      "destination_count_net": 15,
+      "difference_raw": 0,
+      "verdict_class": "MATCHED",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1",
+        "TABLE_2"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document",
+      "duplicates": {
+        "roster_admitted": false,
+        "key_definition": "Name (default analysis alt), exact and case-sensitive, within the PhPhonData natural-class list and restricted to PhNCFeatures",
+        "groups": 1,
+        "extra_objects": 3,
+        "examples": [
+          {
+            "key": "Created automatically for rule \"N~CVCV H\"",
+            "count": 4,
+            "guids": [
+              "32bcd114-5045-4cd2-860b-3a7edf640176",
+              "46fe8200-9cd5-47e0-b7c3-32df1e19ddcc",
+              "caef18fe-ebe6-4f0a-b5a3-6c6021e4da14",
+              "f6403a7a-a5c4-40e5-83b1-28e47da91b9a"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "class": "PhNCSegments",
+      "source_count": 3,
+      "destination_count_total": 5,
+      "difference": 0,
+      "engine_can_create": true,
+      "destination_count_net": 3,
+      "difference_raw": 2,
+      "verdict_class": "MATCHED",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1",
+        "TABLE_2"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 2,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document",
+      "duplicates": {
+        "roster_admitted": false,
+        "key_definition": "Name (default analysis alt), exact and case-sensitive, within the PhPhonData natural-class list and restricted to PhNCSegments",
+        "groups": 1,
+        "extra_objects": 1,
+        "examples": [
+          {
+            "key": "Vowels",
+            "count": 2,
+            "guids": [
+              "35970e0c-b1b9-4ffe-b8dd-56028c83df80",
+              "d6a85d2c-ea5e-11de-83f4-0013722f8dec"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "class": "PhPhoneme",
+      "source_count": 41,
+      "destination_count_total": 64,
+      "difference": 0,
+      "engine_can_create": true,
+      "destination_count_net": 41,
+      "difference_raw": 23,
+      "verdict_class": "MATCHED",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1",
+        "TABLE_2"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 23,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document",
+      "duplicates": {
+        "roster_admitted": false,
+        "key_definition": "Name (default vernacular alt), exact and case-sensitive",
+        "groups": 21,
+        "extra_objects": 21,
+        "examples": [
+          {
+            "key": "r",
+            "count": 2,
+            "guids": [
+              "0cf63c15-4298-4231-b402-931b73ecff93",
+              "d7ec9b62-ea5e-11de-892e-0013722f8dec"
+            ]
+          },
+          {
+            "key": "g",
+            "count": 2,
+            "guids": [
+              "0dadcbf9-817d-4a2b-ae4d-0b069d5e9776",
+              "d78616c6-ea5e-11de-9f26-0013722f8dec"
+            ]
+          },
+          {
+            "key": "l",
+            "count": 2,
+            "guids": [
+              "13b79c18-d9d3-4789-a43c-86447ec817e2",
+              "d7b36338-ea5e-11de-9064-0013722f8dec"
+            ]
+          },
+          {
+            "key": "w",
+            "count": 2,
+            "guids": [
+              "14e4935e-eccc-4b11-9b71-b41c1cb7f611",
+              "d8237132-ea5e-11de-987d-0013722f8dec"
+            ]
+          },
+          {
+            "key": "i",
+            "count": 2,
+            "guids": [
+              "26813520-5cb6-4b1c-bef0-a33195ac1586",
+              "d792027e-ea5e-11de-98bc-0013722f8dec"
+            ]
+          },
+          {
+            "key": "b",
+            "count": 2,
+            "guids": [
+              "271f4fe2-0367-403e-98ac-be43983df2d9",
+              "d75b2ca4-ea5e-11de-9639-0013722f8dec"
+            ]
+          },
+          {
+            "key": "a",
+            "count": 2,
+            "guids": [
+              "4f7a69a7-67fc-4b63-a85a-828ca8835bd2",
+              "d74f40f6-ea5e-11de-8028-0013722f8dec"
+            ]
+          },
+          {
+            "key": "ŋ",
+            "count": 2,
+            "guids": [
+              "694bfc63-02a7-4dd9-81e1-d8aec99996e3",
+              "d844d1f6-ea5e-11de-819d-0013722f8dec"
+            ]
+          },
+          {
+            "key": "e",
+            "count": 2,
+            "guids": [
+              "6c50da82-bc5c-4bb9-9b85-8614b72b389e",
+              "d770a1ba-ea5e-11de-93c8-0013722f8dec"
+            ]
+          },
+          {
+            "key": "k",
+            "count": 2,
+            "guids": [
+              "7ca9485d-b663-4cbe-9ae0-b938ff394776",
+              "d7a7778a-ea5e-11de-90d5-0013722f8dec"
+            ]
+          },
+          {
+            "key": "d",
+            "count": 2,
+            "guids": [
+              "82d7a6a6-e507-44e1-81bb-4a171bcdb0a8",
+              "d764b602-ea5e-11de-9d0b-0013722f8dec"
+            ]
+          },
+          {
+            "key": "t",
+            "count": 2,
+            "guids": [
+              "83744b9b-9678-4c09-be9b-6a4da1a6191d",
+              "d802106e-ea5e-11de-8560-0013722f8dec"
+            ]
+          },
+          {
+            "key": "s",
+            "count": 2,
+            "guids": [
+              "85abbf4d-e0b3-4ea0-bfb2-02266d64dde9",
+              "d7f624c0-ea5e-11de-9891-0013722f8dec"
+            ]
+          },
+          {
+            "key": "m",
+            "count": 2,
+            "guids": [
+              "8be60143-7290-4978-b09a-522292495465",
+              "d7bf4ef0-ea5e-11de-96a9-0013722f8dec"
+            ]
+          },
+          {
+            "key": "o",
+            "count": 2,
+            "guids": [
+              "8dd32213-4b01-4e2f-a38e-eca5f1cc87f7",
+              "d7d4c3fc-ea5e-11de-89e1-0013722f8dec"
+            ]
+          },
+          {
+            "key": "f",
+            "count": 2,
+            "guids": [
+              "a8c01691-7b43-4a53-ab2d-40e6a783da85",
+              "d77c8d68-ea5e-11de-9b1a-0013722f8dec"
+            ]
+          },
+          {
+            "key": "p",
+            "count": 2,
+            "guids": [
+              "ba262069-eb7c-4dd9-9f5f-fc9cefc656db",
+              "d7e0afb4-ea5e-11de-9cc6-0013722f8dec"
+            ]
+          },
+          {
+            "key": "z",
+            "count": 2,
+            "guids": [
+              "c2709ceb-02c9-47a5-8a14-9efcc1a067a0",
+              "d838e648-ea5e-11de-9b7f-0013722f8dec"
+            ]
+          },
+          {
+            "key": "n",
+            "count": 2,
+            "guids": [
+              "ce9ca657-dac9-4672-a41e-6f91333e4fb5",
+              "d7c8d84e-ea5e-11de-909e-0013722f8dec"
+            ]
+          },
+          {
+            "key": "u",
+            "count": 2,
+            "guids": [
+              "e4b80f86-0eb0-4ed6-a3bd-911b2831cadf",
+              "d80dfc26-ea5e-11de-852c-0013722f8dec"
+            ]
+          },
+          {
+            "key": "j",
+            "count": 2,
+            "guids": [
+              "f7d35cff-f286-48ca-b9a6-537cde076d98",
+              "d79dee2c-ea5e-11de-98a0-0013722f8dec"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "class": "PhRegularRule",
+      "source_count": 6,
+      "destination_count_total": 6,
+      "difference": 0,
+      "engine_can_create": true,
+      "destination_count_net": 6,
+      "difference_raw": 0,
+      "verdict_class": "MATCHED",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document"
+    },
+    {
+      "class": "PhSegRuleRHS",
+      "source_count": 6,
+      "destination_count_total": 6,
+      "difference": 0,
+      "engine_can_create": true,
+      "destination_count_net": 6,
+      "difference_raw": 0,
+      "verdict_class": "MATCHED",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document"
+    },
+    {
+      "class": "PhSegmentRule",
+      "source_count": 0,
+      "destination_count_total": 0,
+      "difference": 0,
+      "engine_can_create": true,
+      "destination_count_net": 0,
+      "difference_raw": 0,
+      "verdict_class": "MATCHED",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document"
+    },
+    {
+      "class": "PhSequenceContext",
+      "source_count": 41,
+      "destination_count_total": 2,
+      "difference": -39,
+      "engine_can_create": true,
+      "destination_count_net": 2,
+      "difference_raw": -39,
+      "verdict_class": "SHORTFALL",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 39,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document"
+    },
+    {
+      "class": "PhSimpleContextBdry",
+      "source_count": 10,
+      "destination_count_total": 1,
+      "difference": -9,
+      "engine_can_create": true,
+      "destination_count_net": 1,
+      "difference_raw": -9,
+      "verdict_class": "SHORTFALL",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 9,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document"
+    },
+    {
+      "class": "PhSimpleContextNC",
+      "source_count": 42,
+      "destination_count_total": 6,
+      "difference": -36,
+      "engine_can_create": true,
+      "destination_count_net": 6,
+      "difference_raw": -36,
+      "verdict_class": "SHORTFALL",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 36,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document"
+    },
+    {
+      "class": "PhSimpleContextSeg",
+      "source_count": 36,
+      "destination_count_total": 10,
+      "difference": -26,
+      "engine_can_create": true,
+      "destination_count_net": 10,
+      "difference_raw": -26,
+      "verdict_class": "SHORTFALL",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 26,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document"
+    },
+    {
+      "class": "PunctuationForm",
+      "source_count": 775,
+      "destination_count_total": 0,
+      "difference": -775,
+      "engine_can_create": true,
+      "destination_count_net": 0,
+      "difference_raw": -775,
+      "verdict_class": "SHORTFALL",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_2"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 775,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document"
+    },
+    {
+      "class": "ReversalIndex",
+      "source_count": 2,
+      "destination_count_total": 1,
+      "difference": -2,
+      "engine_can_create": true,
+      "destination_count_net": 0,
+      "difference_raw": -1,
+      "verdict_class": "SHORTFALL",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 2,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 1,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document"
+    },
+    {
+      "class": "ReversalIndexEntry",
+      "source_count": 144,
+      "destination_count_total": 0,
+      "difference": -144,
+      "engine_can_create": true,
+      "destination_count_net": 0,
+      "difference_raw": -144,
+      "verdict_class": "SHORTFALL",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 144,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document"
+    },
+    {
+      "class": "Segment",
+      "source_count": 198,
+      "destination_count_total": 0,
+      "difference": -198,
+      "engine_can_create": true,
+      "destination_count_net": 0,
+      "difference_raw": -198,
+      "verdict_class": "SHORTFALL",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 198,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document"
+    },
+    {
+      "class": "StText",
+      "source_count": 33,
+      "destination_count_total": 12,
+      "difference": -33,
+      "engine_can_create": true,
+      "destination_count_net": 0,
+      "difference_raw": -21,
+      "verdict_class": "SHORTFALL",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 33,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 12,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document"
+    },
+    {
+      "class": "StTxtPara",
+      "source_count": 314,
+      "destination_count_total": 86,
+      "difference": -314,
+      "engine_can_create": true,
+      "destination_count_net": 0,
+      "difference_raw": -228,
+      "verdict_class": "SHORTFALL",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 314,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 86,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document"
+    },
+    {
+      "class": "Text",
+      "source_count": 16,
+      "destination_count_total": 0,
+      "difference": -16,
+      "engine_can_create": true,
+      "destination_count_net": 0,
+      "difference_raw": -16,
+      "verdict_class": "SHORTFALL",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 16,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document"
+    },
+    {
+      "class": "TextTag",
+      "source_count": 0,
+      "destination_count_total": 0,
+      "difference": 0,
+      "engine_can_create": true,
+      "destination_count_net": 0,
+      "difference_raw": 0,
+      "verdict_class": "MATCHED",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document"
+    },
+    {
+      "class": "WfiAnalysis",
+      "source_count": 305,
+      "destination_count_total": 0,
+      "difference": -305,
+      "engine_can_create": true,
+      "destination_count_net": 0,
+      "difference_raw": -305,
+      "verdict_class": "SHORTFALL",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1",
+        "TABLE_2"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 305,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document"
+    },
+    {
+      "class": "WfiGloss",
+      "source_count": 293,
+      "destination_count_total": 0,
+      "difference": -293,
+      "engine_can_create": true,
+      "destination_count_net": 0,
+      "difference_raw": -293,
+      "verdict_class": "SHORTFALL",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1",
+        "TABLE_2"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 293,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document"
+    },
+    {
+      "class": "WfiMorphBundle",
+      "source_count": 577,
+      "destination_count_total": 0,
+      "difference": -577,
+      "engine_can_create": true,
+      "destination_count_net": 0,
+      "difference_raw": -577,
+      "verdict_class": "SHORTFALL",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 577,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document"
+    },
+    {
+      "class": "WfiWordform",
+      "source_count": 429,
+      "destination_count_total": 0,
+      "difference": -429,
+      "engine_can_create": true,
+      "destination_count_net": 0,
+      "difference_raw": -429,
+      "verdict_class": "SHORTFALL",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1",
+        "TABLE_2"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 429,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document",
+      "duplicates": {
+        "roster_admitted": true,
+        "key_definition": "Form (default vernacular alt), exact and case-sensitive",
+        "groups": 0,
+        "extra_objects": 0,
+        "examples": []
+      }
+    },
+    {
+      "class": "MoAffixProcess",
+      "source_count": 13,
+      "destination_count_total": 0,
+      "difference": -13,
+      "engine_can_create": true,
+      "destination_count_net": 0,
+      "difference_raw": -13,
+      "verdict_class": "SHORTFALL",
+      "gate_scope": "required",
+      "in_class_list_via": "census_additions",
+      "inventory_tables": [
+        "NONE"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 13,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document"
+    },
+    {
+      "class": "PhCode",
+      "source_count": 43,
+      "destination_count_total": 25,
+      "difference": -43,
+      "engine_can_create": true,
+      "destination_count_net": 0,
+      "difference_raw": -18,
+      "verdict_class": "SHORTFALL",
+      "gate_scope": "required",
+      "in_class_list_via": "census_additions",
+      "inventory_tables": [
+        "NONE"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 43,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 25,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document"
+    },
+    {
+      "class": "CmTranslation",
+      "source_count": 68,
+      "destination_count_total": 0,
+      "difference": -68,
+      "engine_can_create": true,
+      "destination_count_net": 0,
+      "difference_raw": -68,
+      "verdict_class": "SHORTFALL",
+      "gate_scope": "required",
+      "in_class_list_via": "census_additions",
+      "inventory_tables": [
+        "NONE"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 68,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document"
+    },
+    {
+      "class": "MoForm",
+      "source_count": 0,
+      "destination_count_total": 0,
+      "difference": 0,
+      "engine_can_create": false,
+      "destination_count_net": 0,
+      "difference_raw": 0,
+      "verdict_class": "NOT_EVALUATED",
+      "not_evaluated_reason": "ABSENT_BY_CONSTRUCTION",
+      "gate_scope": "advisory",
+      "in_class_list_via": "excluded_not_measurable",
+      "inventory_tables": [
+        "TABLE_2"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "absent_from_baseline",
+      "notes": [
+        "not measured: in_class_list_via 'excluded_not_measurable' (an abstract LCM base with no factory). The 0 counts are placeholders -- the schema's honest value is null, which models.ClassCensusRow cannot carry."
+      ]
+    },
+    {
+      "class": "MoMorphSynAnalysis",
+      "source_count": 0,
+      "destination_count_total": 0,
+      "difference": 0,
+      "engine_can_create": false,
+      "destination_count_net": 0,
+      "difference_raw": 0,
+      "verdict_class": "NOT_EVALUATED",
+      "not_evaluated_reason": "ABSENT_BY_CONSTRUCTION",
+      "gate_scope": "advisory",
+      "in_class_list_via": "excluded_not_measurable",
+      "inventory_tables": [
+        "TABLE_2"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "absent_from_baseline",
+      "notes": [
+        "not measured: in_class_list_via 'excluded_not_measurable' (an abstract LCM base with no factory). The 0 counts are placeholders -- the schema's honest value is null, which models.ClassCensusRow cannot carry."
+      ]
+    }
+  ],
+  "totals": {
+    "classes_reported": 75,
+    "classes_matched": 26,
+    "classes_shortfall": 46,
+    "classes_surplus": 0,
+    "classes_not_evaluated": 3,
+    "total_shortfall": 8216,
+    "total_surplus": 0,
+    "unexplained_shortfall": 7357,
+    "unexplained_surplus": 0,
+    "duplicate_extra_objects": 0,
+    "accounted_shortfall": 0,
+    "accounted_surplus": 0,
+    "advisory_shortfall": 12
+  },
+  "verdict": "CENSUS_ACCOUNTED",
+  "exit_code": 0,
+  "verdict_human_label": "Census accounted",
+  "notes": [
+    "[WARN] verdict CAPPED at CENSUS_ACCOUNTED by fidelity-census.md 5.2: 44 unexplained tallies on rows whose starter_subtraction_basis is baseline_gross are ADVISORY, not evidence -- gross subtraction also subtracts the starter objects the transfer correctly matched, so it reports a shortfall on a correct run. This is NOT a statement that nothing was lost; supply the run report to get a baseline_matched basis and a trustworthy answer.",
+    "[WARN]   CmAgent: unexplained_shortfall 4 suppressed (basis baseline_gross)",
+    "[WARN]   CmFolder: unexplained_shortfall 1 suppressed (basis baseline_gross)",
+    "[WARN]   CmPossibility: unexplained_shortfall 308 suppressed (basis baseline_gross)",
+    "[WARN]   CmSemanticDomain: unexplained_shortfall 1792 suppressed (basis baseline_gross)",
+    "[WARN]   FsClosedFeature: unexplained_shortfall 4 suppressed (basis baseline_gross)",
+    "[WARN]   FsClosedValue: unexplained_shortfall 312 suppressed (basis baseline_gross)",
+    "[WARN]   FsComplexFeature: unexplained_shortfall 1 suppressed (basis baseline_gross)",
+    "[WARN]   FsFeatStruc: unexplained_shortfall 213 suppressed (basis baseline_gross)",
+    "[WARN]   FsFeatStrucType: unexplained_shortfall 3 suppressed (basis baseline_gross)",
+    "[WARN]   FsSymFeatVal: unexplained_shortfall 17 suppressed (basis baseline_gross)",
+    "[WARN]   LexEntry: unexplained_shortfall 269 suppressed (basis baseline_gross)",
+    "[WARN]   LexEntryInflType: unexplained_shortfall 7 suppressed (basis baseline_gross)",
+    "[WARN]   LexEntryRef: unexplained_shortfall 6 suppressed (basis baseline_gross)",
+    "[WARN]   LexEntryType: unexplained_shortfall 11 suppressed (basis baseline_gross)",
+    "[WARN]   LexExampleSentence: unexplained_shortfall 68 suppressed (basis baseline_gross)",
+    "[WARN]   LexPronunciation: unexplained_shortfall 117 suppressed (basis baseline_gross)",
+    "[WARN]   LexSense: unexplained_shortfall 265 suppressed (basis baseline_gross)",
+    "[WARN]   MoAffixAllomorph: unexplained_shortfall 130 suppressed (basis baseline_gross)",
+    "[WARN]   MoInflAffMsa: unexplained_shortfall 111 suppressed (basis baseline_gross)",
+    "[WARN]   MoInflAffixSlot: unexplained_shortfall 11 suppressed (basis baseline_gross)",
+    "[WARN]   MoInflAffixTemplate: unexplained_shortfall 8 suppressed (basis baseline_gross)",
+    "[WARN]   MoInflClass: unexplained_shortfall 2 suppressed (basis baseline_gross)",
+    "[WARN]   MoMorphType: unexplained_shortfall 19 suppressed (basis baseline_gross)",
+    "[WARN]   MoStemAllomorph: unexplained_shortfall 185 suppressed (basis baseline_gross)",
+    "[WARN]   MoStemMsa: unexplained_shortfall 153 suppressed (basis baseline_gross)",
+    "[WARN]   PartOfSpeech: unexplained_shortfall 20 suppressed (basis baseline_gross)",
+    "[WARN]   PhSequenceContext: unexplained_shortfall 39 suppressed (basis baseline_gross)",
+    "[WARN]   PhSimpleContextBdry: unexplained_shortfall 9 suppressed (basis baseline_gross)",
+    "[WARN]   PhSimpleContextNC: unexplained_shortfall 36 suppressed (basis baseline_gross)",
+    "[WARN]   PhSimpleContextSeg: unexplained_shortfall 26 suppressed (basis baseline_gross)",
+    "[WARN]   PunctuationForm: unexplained_shortfall 775 suppressed (basis baseline_gross)",
+    "[WARN]   ReversalIndex: unexplained_shortfall 2 suppressed (basis baseline_gross)",
+    "[WARN]   ReversalIndexEntry: unexplained_shortfall 144 suppressed (basis baseline_gross)",
+    "[WARN]   Segment: unexplained_shortfall 198 suppressed (basis baseline_gross)",
+    "[WARN]   StText: unexplained_shortfall 33 suppressed (basis baseline_gross)",
+    "[WARN]   StTxtPara: unexplained_shortfall 314 suppressed (basis baseline_gross)",
+    "[WARN]   Text: unexplained_shortfall 16 suppressed (basis baseline_gross)",
+    "[WARN]   WfiAnalysis: unexplained_shortfall 305 suppressed (basis baseline_gross)",
+    "[WARN]   WfiGloss: unexplained_shortfall 293 suppressed (basis baseline_gross)",
+    "[WARN]   WfiMorphBundle: unexplained_shortfall 577 suppressed (basis baseline_gross)",
+    "[WARN]   WfiWordform: unexplained_shortfall 429 suppressed (basis baseline_gross)",
+    "[WARN]   MoAffixProcess: unexplained_shortfall 13 suppressed (basis baseline_gross)",
+    "[WARN]   PhCode: unexplained_shortfall 43 suppressed (basis baseline_gross)",
+    "[WARN]   CmTranslation: unexplained_shortfall 68 suppressed (basis baseline_gross)"
+  ]
+}
