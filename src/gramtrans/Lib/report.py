@@ -172,14 +172,43 @@ def _build_from_plan(cls, plan: RunPlan, mode: RunMode,
             return False
         return bool(getattr(basis, "target_guid", ""))
 
-    def _count_substitution(bucket, obj) -> None:
+    def _count_substitution(bucket, obj, *, always_matched: bool = False) -> None:
         """Feature 038 (FR-006): tally objects matched by a roster-admitted
         NATURAL KEY rather than by GUID. Counted from the `match_basis`
         record on the plan item itself, so the report cannot claim a stronger
         identity basis than the matcher actually used. Items planned before
-        038's matcher ran carry `match_basis=None` and are not counted."""
+        038's matcher ran carry `match_basis=None` and are not counted.
+
+        `always_matched` (T037) enables a SECOND, weaker source of the same
+        fact and is passed only where it is safe. `PlannedOverwrite` carries
+        two independent records of natural-key-ness: the structured
+        `match_basis` and the plain `match_via` string, whose legal values
+        models.py documents as "guid"|"identity_remap"|"fingerprint"|
+        "natural_key" -- the last added by this very feature for the Phase 2
+        policy code that switches on it. A producer that sets only the string
+        would otherwise have its substitution silently counted as an ordinary
+        match, i.e. the report would assert a GUID-strength claim the matcher
+        never made, which is precisely the defect FR-006 exists to remove. The
+        string is consulted ONLY when no `match_basis` is present, so it can
+        never contradict or double-count the structured record.
+
+        Why the flag rather than an unconditional check: every substitution
+        counted here must also be counted by `_count_matched`, or
+        `RunReport.__post_init__` rejects the report with
+        `identity_substituted > matched_to_source_total` and a legitimate run
+        dies at report time. Overwrites are unconditionally matched (an
+        overwrite writes onto an object that already existed), so the fallback
+        is safe there. ADD actions are matched only via
+        `_action_matched_existing`, which requires a real `match_basis` -- so
+        the fallback must never fire on that path, and the flag is what makes
+        that structural rather than a comment nobody reads.
+        """
         basis = getattr(obj, "match_basis", None)
-        if basis is not None and getattr(basis, "basis", None) is MatchBasis.NATURAL_KEY:
+        if basis is not None:
+            if getattr(basis, "basis", None) is MatchBasis.NATURAL_KEY:
+                bucket["identity_substitution"] += 1
+            return
+        if always_matched and getattr(obj, "match_via", "") == "natural_key":
             bucket["identity_substitution"] += 1
 
     for action in plan.actions:
@@ -216,7 +245,7 @@ def _build_from_plan(cls, plan: RunPlan, mode: RunMode,
         b["overwritten"] += 1
         if getattr(ow, "pulled_in_by", ()):
             b["closure_pulled_in"] += 1
-        _count_substitution(b, ow)
+        _count_substitution(b, ow, always_matched=True)
         # T024d-a: an OVERWRITE is by definition a write onto a destination
         # object that already existed, so every one of them is a match --
         # whether it was found by GUID, by identity remap, by fingerprint, or
@@ -1105,6 +1134,21 @@ def _to_snapshot_json(self) -> str:
     identity_substitution = _counter_block(self, "identity_substitution")
     if identity_substitution is not None:
         identity_substitution["basis"] = MatchBasis.NATURAL_KEY.name
+        # T037: the count alone is unreadable. 1 substitution beside 3 matches
+        # and 1 substitution beside the 1,806 matches measured on the
+        # Ejagham/Ngoreme pair are different fidelity claims, and a reader must
+        # not have to hunt for the denominator in another block. `null` -- NOT
+        # 0 -- when the matched tally was never measured, per the same
+        # "absent is not a zero" rule `census.unmatched_starter` applies.
+        matched_total = self.matched_to_source_total
+        identity_substitution["of_matched_to_source_total"] = (
+            matched_total or None
+        )
+        if not matched_total:
+            identity_substitution["denominator_note"] = (
+                "no matched-to-source tally was measured on this run, so this "
+                "substitution count has no denominator; absent is not zero"
+            )
         identity_substitution["note"] = (
             "matched by a roster-admitted natural key because no GUID "
             "counterpart existed; weaker than an identity (GUID) match"
@@ -1125,6 +1169,28 @@ def _to_snapshot_json(self) -> str:
                 "destination objects that already existed and were matched to "
                 "a source object; an ABSENT class is not a zero -- it is no "
                 "evidence the matcher evaluated that class"
+            ),
+            # T037 / FR-006: the basis split, carried HERE as well as under
+            # `identity_substitution`, because `identity_substitution` is
+            # omitted when it is empty (038's omit-when-empty discipline) and
+            # a measured ZERO is exactly the reading that needed a home. On
+            # the Ejagham/Ngoreme pair the report said `total: 1806` and
+            # nothing else, so "found by GUID, natural key found nothing" and
+            # "the natural-key path never ran" produced identical artifacts.
+            "by_natural_key": self.identity_substituted,
+            # Deliberately NOT named "by_identity": it is a REMAINDER, and the
+            # `unattributed_by_category` matches inside it carry no basis
+            # record at all. Naming it after a basis nothing recorded would
+            # manufacture the GUID-strength claim FR-006 exists to prevent.
+            "not_by_natural_key": (
+                self.matched_to_source_total - self.identity_substituted
+            ),
+            "basis_note": (
+                "by_natural_key is counted positively from "
+                "MatchBasisRecord(basis=NATURAL_KEY); not_by_natural_key is "
+                "the remainder and is NOT a positive count of GUID matches -- "
+                "any match listed under unattributed_by_category carries no "
+                "match-basis record, so its basis is unproven"
             ),
         }
         if self.matches_unattributed:
@@ -1301,6 +1367,12 @@ def _render_038_lines(report: RunReport) -> Iterable[str]:
     back. Aggregate counts are ALWAYS printed in full (they are bounded by
     the number of categories / dependency kinds), so no section can hide the
     size of what it summarises. ASCII only, per the Windows console rule.
+
+    Silence policy (T037, FR-006): a section is skipped when its bucket is
+    EMPTY, never when its bucket is measured and reads zero. The match-basis
+    section below is the case that forced the distinction -- an unrendered
+    zero is indistinguishable from an unrun matcher, which is the one reading
+    a fidelity report must never leave open.
     """
     # ---- FR-006 / FR-187: identity SUBSTITUTION, reported distinctly ------
     # An object found by name is NOT an object found by GUID. Rendering these
@@ -1308,19 +1380,71 @@ def _render_038_lines(report: RunReport) -> Iterable[str]:
     # its own fidelity, so substitution gets its own labelled section and its
     # own caveat line.
     substituted = getattr(report, "identity_substituted", 0)
+    matched_total = getattr(report, "matched_to_source_total", 0)
+    unattributed = sum(getattr(report, "matches_unattributed", {}).values())
+    attributed = matched_total - unattributed
     if substituted:
+        # The denominator is part of the claim, not decoration: "1" means one
+        # thing beside 3 matches and something else entirely beside 1,806 (the
+        # figure measured on the Ejagham/Ngoreme pair). It is printed only when
+        # the matched tally was actually MEASURED -- a hand-built report
+        # carries none, and "3 of 0" would be a fabricated denominator.
+        scale = (
+            f"{substituted} of {matched_total}" if matched_total
+            else f"{substituted} total"
+        )
         yield (
             f"  Identity SUBSTITUTION (matched by NATURAL KEY, not by GUID) "
-            f"-- {substituted} total:"
+            f"-- {scale}:"
         )
         for cat in _ordered_categories(report.per_category):
             n = getattr(report.per_category[cat], "identity_substitution", 0)
             if n:
                 yield f"    - [{cat.value}] {n}"
+        if matched_total:
+            yield (
+                f"    ({matched_total - substituted} matched without a natural "
+                "key -- by GUID, by identity remap, or by fingerprint)"
+            )
+        if unattributed:
+            yield (
+                f"    ({unattributed} of those carried no match-basis record "
+                "at all, so their basis is UNPROVEN -- it is not evidence of a "
+                "GUID match)"
+            )
         yield (
             "    (a natural-key match is a weaker identity claim than a GUID "
             "match -- verify these before relying on them)"
         )
+    elif matched_total:
+        # FR-006, the reading that had no console surface at all before T037.
+        # Measured on the Ejagham/Ngoreme pair: the report carried
+        # `matched_to_source.total == 1806` beside `identity_substituted == 0`
+        # and printed NOTHING, so a run in which every object was found by GUID
+        # was indistinguishable from a run in which the natural-key path had
+        # never been built. Silence is the one rendering that cannot be read,
+        # so a measured zero is now STATED -- and stated separately from the
+        # matches whose basis nothing recorded, which prove nothing either way.
+        yield (
+            f"  Match basis -- {matched_total} destination "
+            f"{'object' if matched_total == 1 else 'objects'} matched to a "
+            f"source object:"
+        )
+        if attributed:
+            yield (
+                f"    - {attributed} "
+                f"{'carries' if attributed == 1 else 'carry'} a match-basis "
+                "record and NONE of them is a natural key: no identity "
+                "substitution in this run"
+            )
+        if unattributed:
+            yield (
+                f"    - {unattributed} "
+                f"{'carries' if unattributed == 1 else 'carry'} no "
+                "match-basis record at all -- that basis is UNPROVEN, and it "
+                "is NOT evidence that the natural-key path ran and found "
+                "nothing"
+            )
 
     # ---- FR-014 / FR-015: closure edges ----------------------------------
     edges = getattr(report, "closure_edges", ())
