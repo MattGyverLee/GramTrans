@@ -2167,3 +2167,1022 @@ def build_artifact(
     if notes:
         artifact["notes"] = list(notes)
     return artifact
+
+
+# ===========================================================================
+# T020 -- the GATE: verdicts, exit codes, the published severity ordering, the
+#         R-1..R-5 fail triggers, the 11 validator invariants, and the phase
+#         predicates of fidelity-census.md 9.1
+#
+# THREE SEPARATE THINGS, DELIBERATELY NOT CONFLATED (house style, following
+# `specs/035-fullsweep-fidelity/contracts/verdict-exit-model.md`): the MACHINE
+# TOKEN the artifact stores and tests assert on, the HUMAN LABEL the console
+# prints, and the PROCESS EXIT CODE. Storing all three is what stops the console
+# and the artifact drifting apart.
+#
+# THE GATE RECOMPUTES. `recompute_verdict` never reads `artifact["verdict"]` or
+# `artifact["exit_code"]`; it derives the verdict from the evidence in the
+# document. Otherwise an artifact could buy a pass by simply writing
+# `CENSUS_CLEAN` and `0` into itself, and "there is no path on which a missing
+# baseline yields exit 0" would be false by construction.
+# ===========================================================================
+
+#: Section 9's table. Exactly two verdicts report success: there is deliberately
+#: no verdict meaning "loss reported, review advisable, exit success" -- that is
+#: the shape of the bug this feature exists to remove (SC-010).
+VERDICT_EXIT_CODES: dict = {
+    "CENSUS_CLEAN": 0,
+    "CENSUS_ACCOUNTED": 0,
+    "UNEXPLAINED_SHORTFALL": 1,
+    "UNEXPLAINED_SURPLUS": 2,
+    "DUPLICATE_IDENTITY": 3,
+    "BASELINE_MISSING": 4,
+    "BASELINE_STALE": 5,
+    "COVERAGE_INCOMPLETE": 6,
+    "CENSUS_ERROR": 7,
+}
+
+#: What the console prints. Stored rather than derived from the token so the
+#: two cannot drift.
+VERDICT_HUMAN_LABELS: dict = {
+    "CENSUS_CLEAN": "Census clean",
+    "CENSUS_ACCOUNTED": "Census accounted",
+    "UNEXPLAINED_SHORTFALL": "Unexplained shortfall",
+    "UNEXPLAINED_SURPLUS": "Unexplained surplus",
+    "DUPLICATE_IDENTITY": "Duplicate identity",
+    "BASELINE_MISSING": "Baseline missing",
+    "BASELINE_STALE": "Baseline stale",
+    "COVERAGE_INCOMPLETE": "Coverage incomplete",
+    "CENSUS_ERROR": "Census error",
+}
+
+#: The PUBLISHED severity ordering, most severe FIRST. It is NOT the exit-code
+#: integer and MUST NOT be derived from it: BASELINE_MISSING (exit 4) outranks
+#: DUPLICATE_IDENTITY (exit 3), so sorting by the integer gives a different and
+#: wrong sequence. A missing baseline outranks a duplicate because a census with
+#: no baseline cannot be trusted to have found the duplicates in the first place.
+VERDICT_SEVERITY_ORDER: tuple = (
+    "CENSUS_ERROR",
+    "COVERAGE_INCOMPLETE",
+    "BASELINE_MISSING",
+    "BASELINE_STALE",
+    "DUPLICATE_IDENTITY",
+    "UNEXPLAINED_SHORTFALL",
+    "UNEXPLAINED_SURPLUS",
+    "CENSUS_ACCOUNTED",
+    "CENSUS_CLEAN",
+)
+
+#: PASS is exactly these two, and they are exactly the exit-0 verdicts.
+PASSING_VERDICTS: frozenset = frozenset({"CENSUS_CLEAN", "CENSUS_ACCOUNTED"})
+
+#: `$defs.starterBaseline.staleness.verdict`.
+STALENESS_VERDICTS: tuple = ("current", "stale", "unknown", "not_applicable")
+
+#: The reason that admits a duplicate group as ACCOUNTED. A duplicate is always
+#: a defect; it is admissible as accounting only while a report line names it.
+DUPLICATE_ACCOUNTING_REASON = "DUPLICATE_CREATED"
+
+#: P5's two admissible reasons (9.1). `DUPLICATE_CREATED` is real accounting but
+#: is deliberately NOT phase-5 done: it is exactly the reason a phase's exit
+#: criteria should drive to zero.
+PHASE_5_ADMISSIBLE_REASONS: frozenset = frozenset({
+    "GOVERNED_BY_OTHER_FEATURE", "NO_CREATE_PATH",
+})
+
+_CENSUS_ID_PATTERN = re.compile(r"^CENSUS-[0-9]{8}-[0-9]{6}$")
+_TRANSFER_RUN_ID_PATTERN = re.compile(r"^GT-[0-9]{8}-[0-9]{6}$")
+
+
+def reason_requires_report_ref(reason: str) -> bool:
+    """True unless the reason is one of the four exempt tokens (R-1).
+
+    An unknown token RAISES rather than returning False: "a reason the census
+    cannot classify is CENSUS_ERROR, never a free-text pass", so absorbing an
+    unrecognised token as exempt is the one answer that must not be possible.
+    """
+    if reason not in REASON_TOKENS:
+        raise CensusError(
+            "reason " + repr(reason) + " is outside the closed 16-token "
+            "vocabulary -- there is no UNEXPLAINED and no OTHER token, and an "
+            "unclassifiable reason is CENSUS_ERROR rather than a 17th token"
+        )
+    return reason not in REASONS_NOT_REQUIRING_REPORT_REF
+
+
+def exit_code_for(verdict: str) -> int:
+    """The section-9 exit code for a verdict token. Raises on an unknown one."""
+    try:
+        return VERDICT_EXIT_CODES[verdict]
+    except KeyError:
+        raise CensusError(
+            "verdict " + repr(verdict) + " is not one of the nine tokens "
+            + repr(tuple(VERDICT_EXIT_CODES))
+        ) from None
+
+
+def is_passing_verdict(verdict: str) -> bool:
+    """True for the two success verdicts. Raises on an unknown token."""
+    exit_code_for(verdict)  # validates the token
+    return verdict in PASSING_VERDICTS
+
+
+def most_severe_verdict(verdicts) -> str:
+    """The most severe of several verdicts, by the PUBLISHED ordering."""
+    tokens = tuple(verdicts)
+    if not tokens:
+        raise CensusError(
+            "most_severe_verdict needs at least one verdict token"
+        )
+    for token in tokens:
+        exit_code_for(token)  # validates every token before choosing
+    return min(tokens, key=lambda t: VERDICT_SEVERITY_ORDER.index(t))
+
+
+# ---------------------------------------------------------------------------
+# Reading the artifact -- small helpers, so every rule below reads the same way
+# ---------------------------------------------------------------------------
+
+
+def _rows(artifact) -> list:
+    rows = artifact.get("classes")
+    return list(rows) if isinstance(rows, list) else []
+
+
+def _row_label(row) -> str:
+    return str(row.get("class", "(unnamed class)"))
+
+
+def _is_required(row) -> bool:
+    return row.get("gate_scope") == "required"
+
+
+def _lines(row) -> list:
+    lines = row.get("accounted_for")
+    return list(lines) if isinstance(lines, list) else []
+
+
+def _line_sum(row, direction: str) -> int:
+    return sum(
+        int(line.get("count", 0)) for line in _lines(row)
+        if line.get("direction") == direction
+    )
+
+
+def _duplicates(row) -> dict:
+    block = row.get("duplicates")
+    return block if isinstance(block, dict) else {}
+
+
+def _projects(artifact) -> list:
+    projects = artifact.get("projects")
+    if not isinstance(projects, dict):
+        return []
+    return [
+        (role, block) for role, block in projects.items()
+        if isinstance(block, dict)
+    ]
+
+
+def _int_or_none(value):
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
+def duplicates_unaccounted(row) -> int:
+    """Unaccounted `duplicates.extra_objects` on ONE row.
+
+    A duplicate group is accounted only while a `DUPLICATE_CREATED` line names
+    it, which is why the count is netted against those lines and nothing else.
+    Roster admission is what makes the residue able to FAIL the gate: a
+    duplicate name on an unadmitted class is advisory, because homographs are
+    legitimate content (section 6).
+    """
+    block = _duplicates(row)
+    if not block.get("roster_admitted"):
+        return 0
+    extra = int(block.get("extra_objects", 0) or 0)
+    claimed = sum(
+        int(line.get("count", 0)) for line in _lines(row)
+        if line.get("reason") == DUPLICATE_ACCOUNTING_REASON
+    )
+    return max(0, extra - claimed)
+
+
+# ---------------------------------------------------------------------------
+# Baseline staleness -- a JUDGEMENT the gate computes (5.3)
+# ---------------------------------------------------------------------------
+
+
+def baseline_staleness(artifact) -> Optional[str]:
+    """`"stale"` / `"current"` / `None` (nothing to judge).
+
+    Three shapes count as stale, all three tested: an explicit `staleness`
+    marker, a recorded `flex_version` differing from the running FieldWorks
+    version, and a destination `data_model_version` EXCEEDING the baseline's.
+    FLEx changes what a new project ships between versions, so an old capture
+    silently mis-subtracts.
+    """
+    baseline = artifact.get("starter_baseline")
+    if not isinstance(baseline, dict) or baseline.get("kind") == "none":
+        return None
+    marker = baseline.get("staleness")
+    if isinstance(marker, dict) and marker.get("verdict") == "stale":
+        return "stale"
+    instrument = artifact.get("instrument") or {}
+    running = instrument.get("flex_version")
+    recorded = baseline.get("flex_version")
+    if running and recorded and running != recorded:
+        return "stale"
+    projects = artifact.get("projects") or {}
+    destination = projects.get("destination") or {}
+    dest_version = _int_or_none(destination.get("data_model_version"))
+    base_version = _int_or_none(baseline.get("data_model_version"))
+    if dest_version is not None and base_version is not None:
+        if dest_version > base_version:
+            return "stale"
+    return "current"
+
+
+def baseline_misdeclared(artifact) -> bool:
+    """True for a `starter_capture` baseline used against a destination the
+    operator did not declare freshly created.
+
+    The spec's edge case "destination content FLEx ships but the linguist has
+    since edited" is handled the only honest way: any destination that is not
+    demonstrably fresh requires a `pre_transfer_census`. An ABSENT declaration
+    is not a permissive default -- an undeclared destination is undeclared.
+    """
+    baseline = artifact.get("starter_baseline")
+    if not isinstance(baseline, dict):
+        return False
+    if baseline.get("kind") != "starter_capture":
+        return False
+    projects = artifact.get("projects") or {}
+    destination = projects.get("destination") or {}
+    return destination.get("declared_freshly_created") is not True
+
+
+# ---------------------------------------------------------------------------
+# The 11 validator invariants (section 11) plus the R-1..R-5 fail triggers
+# ---------------------------------------------------------------------------
+
+
+def validate_artifact(artifact) -> tuple:
+    """Every section-11 invariant and R-1/R-2 violation, as failure strings.
+
+    Empty when the artifact is internally consistent. Each string NAMES the
+    class or project it failed on, because a gate failure a reader cannot
+    localise is a gate failure they will ignore.
+
+    Unlike `recompute_verdict`, this DOES read the stored `verdict` and
+    `exit_code`: invariant 8 is precisely the claim that the stored pair agrees
+    with the recomputed one, which is how a forged verdict is caught.
+    """
+    failures: list = []
+    rows = _rows(artifact)
+
+    # -- 1. exactly one row per required class -----------------------------
+    provenance = artifact.get("class_list_provenance") or {}
+    required_count = _int_or_none(provenance.get("required_class_count"))
+    if required_count is not None and required_count != len(rows):
+        failures.append(
+            "invariant 1: len(classes) is " + str(len(rows))
+            + " but class_list_provenance.required_class_count is "
+            + str(required_count)
+            + " -- a class with no instances is a NOT_EVALUATED row, never an "
+            "omitted one (CP-2)"
+        )
+    seen = set()
+    for row in rows:
+        label = _row_label(row)
+        if label in seen:
+            failures.append(
+                "invariant 1: two rows for class " + label
+                + " -- exactly one row per class"
+            )
+        seen.add(label)
+
+    derivation = provenance.get("derivation_check") or {}
+    if derivation.get("performed") is not True:
+        failures.append(
+            "CP-1: class_list_provenance.derivation_check.performed is not "
+            "true -- a census that skipped the derivation cannot make a "
+            "coverage claim"
+        )
+    if derivation.get("result") not in (None, "match"):
+        named = tuple(derivation.get("in_inventory_not_in_floor", ())) + tuple(
+            derivation.get("in_floor_not_in_inventory", ()))
+        failures.append(
+            "CP-1: derivation_check.result is "
+            + repr(derivation.get("result")) + ", naming "
+            + (", ".join(str(n) for n in named) or "(no classes)")
+        )
+
+    for row in rows:
+        label = _row_label(row)
+        source = _int_or_none(row.get("source_count"))
+        total = _int_or_none(row.get("destination_count_total"))
+        net = _int_or_none(row.get("destination_count_net"))
+        difference = _int_or_none(row.get("difference"))
+        difference_raw = _int_or_none(row.get("difference_raw"))
+        lines = _lines(row)
+
+        # -- 3. both stored differences must follow from the counts ---------
+        if None not in (net, source) and difference is not None:
+            if difference != net - source:
+                failures.append(
+                    "invariant 3: " + label + " stores difference "
+                    + str(difference) + " but destination_count_net - "
+                    "source_count is " + str(net - source)
+                )
+        if None not in (total, source) and difference_raw is not None:
+            if difference_raw != total - source:
+                failures.append(
+                    "invariant 3: " + label + " stores difference_raw "
+                    + str(difference_raw) + " but destination_count_total - "
+                    "source_count is " + str(total - source)
+                )
+
+        # -- 4. the matched subtraction, when that is the declared basis ----
+        if row.get("starter_subtraction_basis") == "baseline_matched":
+            baseline_count = _int_or_none(row.get("starter_baseline_count"))
+            matched = _int_or_none(row.get("starter_matched_to_source"))
+            if None not in (total, net, baseline_count, matched):
+                expected = total - (baseline_count - matched)
+                if net != expected:
+                    failures.append(
+                        "invariant 4: " + label + " declares "
+                        "starter_subtraction_basis 'baseline_matched' but "
+                        "destination_count_net " + str(net) + " != "
+                        + str(total) + " - (" + str(baseline_count) + " - "
+                        + str(matched) + ") = " + str(expected)
+                    )
+
+        # -- 5 / R-1. every line resolves to real report content -----------
+        for line in lines:
+            reason = line.get("reason")
+            count = int(line.get("count", 0) or 0)
+            if reason not in REASON_TOKENS:
+                failures.append(
+                    "UNCLASSIFIABLE_REASON: " + label + " carries reason "
+                    + repr(reason) + ", outside the closed 16-token vocabulary "
+                    "-- unexplained is the ABSENCE of a line and cannot be "
+                    "laundered into one"
+                )
+                continue
+            if not reason_requires_report_ref(reason):
+                continue
+            ref = line.get("report_ref")
+            if not isinstance(ref, dict):
+                failures.append(
+                    "invariant 5 (R-1): " + label + " line " + reason
+                    + " carries no report_ref; only STARTER_CONTENT, "
+                    "ABSENT_BY_CONSTRUCTION, OUT_OF_SCOPE_CLASS and "
+                    "GOVERNED_BY_OTHER_FEATURE account without one"
+                )
+                continue
+            in_report = _int_or_none(ref.get("count_in_report"))
+            if in_report is None or in_report < count:
+                failures.append(
+                    "invariant 5 (R-1): " + label + " line " + reason
+                    + " claims " + str(count) + " against a report naming "
+                    + str(in_report) + " -- a line that outruns its evidence "
+                    "is CENSUS_ERROR, not a pass"
+                )
+
+        # -- 6 / R-2. accounting never exceeds the difference ---------------
+        if difference is not None:
+            for direction, room in (
+                    ("shortfall", max(0, -difference)),
+                    ("surplus", max(0, difference))):
+                claimed = _line_sum(row, direction)
+                if claimed > room:
+                    failures.append(
+                        "invariant 6 (R-2): " + label + " accounts "
+                        + str(claimed) + " " + direction
+                        + " against a difference of " + str(difference)
+                        + " -- the census must not explain away more than "
+                        "actually happened"
+                    )
+
+        # -- R-5 / section 7. the stored unexplained counts must be the
+        # formula's, so a row cannot understate what it failed to explain.
+        if difference is not None and row.get("verdict_class") != "NOT_EVALUATED":
+            expected_short, expected_surplus = (
+                max(0, -difference) - _line_sum(row, "shortfall"),
+                max(0, difference) - _line_sum(row, "surplus"),
+            )
+            for key, expected in (
+                    ("unexplained_shortfall", max(0, expected_short)),
+                    ("unexplained_surplus", max(0, expected_surplus))):
+                stored = _int_or_none(row.get(key))
+                if stored is not None and stored != expected:
+                    failures.append(
+                        "section 7 (R-5): " + label + " stores " + key + " "
+                        + str(stored) + " but max(0, difference) less its "
+                        "accounted lines is " + str(expected)
+                        + " -- absence of an accounting line is not an excuse"
+                    )
+
+        # -- 2. no list is ever truncated ----------------------------------
+        dup = _duplicates(row)
+        groups = _int_or_none(dup.get("groups")) or 0
+        examples = dup.get("examples")
+        if groups > 0 and (not isinstance(examples, list) or len(examples) < groups):
+            failures.append(
+                "invariant 2: " + label + " reports " + str(groups)
+                + " duplicate groups but carries "
+                + str(len(examples) if isinstance(examples, list) else 0)
+                + " examples -- duplicates.examples is never truncated; "
+                "truncation is legal only in the console summary"
+            )
+
+        # -- 11. the match-basis tallies -----------------------------------
+        basis = row.get("match_basis")
+        if isinstance(basis, dict) and basis.get("basis_source") == "run_report":
+            if _is_required(row):
+                summands = [
+                    _int_or_none(basis.get(name))
+                    for name in MATCH_BASIS_SUMMANDS
+                ]
+                if all(v is not None for v in summands) and source is not None:
+                    if sum(summands) != source:
+                        failures.append(
+                            "invariant 11: " + label + " match_basis identity + "
+                            "natural_key + created_new + unmatched_reported == "
+                            + str(sum(summands)) + " but source_count is "
+                            + str(source) + " (enriched is a SUBSET of the "
+                            "matches and is excluded from the sum)"
+                        )
+
+    # -- 7. read-only, and nothing written --------------------------------
+    for role, block in _projects(artifact):
+        if block.get("opened_read_only") is not True:
+            failures.append(
+                "invariant 7: projects." + role + ".opened_read_only is not "
+                "true -- the census is READ-ONLY without exception"
+            )
+        before = block.get("fwdata_sha256_before")
+        after = block.get("fwdata_sha256_after")
+        if before != after:
+            failures.append(
+                "invariant 7: projects." + role + " ("
+                + str(block.get("name", "?")) + ") fwdata_sha256 changed under "
+                "the census: " + str(before)[:12] + "... -> "
+                + str(after)[:12] + "..."
+            )
+
+    # -- 10. the two id formats are deliberately distinct ------------------
+    census_id = artifact.get("census_id")
+    if not isinstance(census_id, str) or not _CENSUS_ID_PATTERN.match(census_id):
+        failures.append(
+            "invariant 10: census_id " + repr(census_id) + " does not match "
+            "^CENSUS-\\d{8}-\\d{6}$ (a transfer run id is GT-..., and the two "
+            "prefixes are deliberately distinct)"
+        )
+    transfer_run = artifact.get("transfer_run")
+    if isinstance(transfer_run, dict):
+        run_id = transfer_run.get("run_id")
+        if not isinstance(run_id, str) or not _TRANSFER_RUN_ID_PATTERN.match(run_id):
+            failures.append(
+                "invariant 10: transfer_run.run_id " + repr(run_id)
+                + " does not match ^GT-\\d{8}-\\d{6}$"
+            )
+
+    # -- the baseline's own two hard failures ------------------------------
+    if baseline_misdeclared(artifact):
+        failures.append(
+            "BASELINE_KIND_MISDECLARED: a starter_capture baseline is used "
+            "against a destination that is not declared freshly created -- an "
+            "edited starter inventory is not disposable, so a destination that "
+            "is not demonstrably fresh requires a pre_transfer_census (5.3)"
+        )
+
+    # -- totals must be the rows' own arithmetic ---------------------------
+    stored_totals = artifact.get("totals")
+    if isinstance(stored_totals, dict) and rows:
+        recomputed = build_totals(rows)
+        for key in (
+                "classes_reported", "classes_matched", "classes_shortfall",
+                "classes_surplus", "classes_not_evaluated", "total_shortfall",
+                "total_surplus", "unexplained_shortfall", "unexplained_surplus",
+                "duplicate_extra_objects"):
+            stored = _int_or_none(stored_totals.get(key))
+            if stored is not None and stored != recomputed[key]:
+                failures.append(
+                    "totals." + key + " is " + str(stored) + " but the rows "
+                    "give " + str(recomputed[key])
+                    + " -- every verdict-bearing datum must be recomputable "
+                    "from this artifact (invariant 9)"
+                )
+
+    # -- 8. the stored verdict must be the recomputed one ------------------
+    stored_verdict = artifact.get("verdict")
+    computed = recompute_verdict(artifact)
+    if stored_verdict != computed:
+        failures.append(
+            "invariant 8: the artifact stores verdict " + repr(stored_verdict)
+            + " but its own evidence gives " + repr(computed)
+            + " -- verdict is the most severe applicable token by the section 9 "
+            "ordering, and the gate recomputes it rather than trusting it"
+        )
+    stored_exit = artifact.get("exit_code")
+    if isinstance(stored_verdict, str) and stored_verdict in VERDICT_EXIT_CODES:
+        if stored_exit != VERDICT_EXIT_CODES[stored_verdict]:
+            failures.append(
+                "invariant 8: verdict " + stored_verdict + " carries exit_code "
+                + repr(stored_exit) + ", not the section 9 table's "
+                + str(VERDICT_EXIT_CODES[stored_verdict])
+            )
+        label = artifact.get("verdict_human_label")
+        if label is not None and label != VERDICT_HUMAN_LABELS[stored_verdict]:
+            failures.append(
+                "invariant 8: verdict " + stored_verdict + " carries "
+                "verdict_human_label " + repr(label) + ", not "
+                + repr(VERDICT_HUMAN_LABELS[stored_verdict])
+            )
+    elif stored_verdict is not None:
+        failures.append(
+            "invariant 8: verdict " + repr(stored_verdict) + " is not one of "
+            "the nine section 9 tokens"
+        )
+
+    return tuple(failures)
+
+
+# ---------------------------------------------------------------------------
+# The verdict, recomputed from evidence
+# ---------------------------------------------------------------------------
+
+
+def recompute_verdict(artifact) -> str:
+    """The verdict this artifact's OWN EVIDENCE supports.
+
+    NEVER reads `artifact["verdict"]` or `artifact["exit_code"]`. Those are the
+    two fields a forged document would set, and trusting either of them would
+    make the whole gate a formality: an artifact could buy exit 0 by writing 0
+    into itself. Every branch below reads counts, digests, baselines and
+    accounting lines instead.
+
+    Returns the MOST SEVERE applicable token by `VERDICT_SEVERITY_ORDER`.
+    """
+    applicable = []
+    rows = _rows(artifact)
+
+    # -- CENSUS_ERROR (7) --------------------------------------------------
+    if artifact.get("errors"):
+        applicable.append("CENSUS_ERROR")
+    for _role, block in _projects(artifact):
+        if block.get("opened_read_only") is not True:
+            applicable.append("CENSUS_ERROR")
+        if block.get("fwdata_sha256_before") != block.get("fwdata_sha256_after"):
+            applicable.append("CENSUS_ERROR")
+    if baseline_misdeclared(artifact):
+        applicable.append("CENSUS_ERROR")
+    for row in rows:
+        difference = _int_or_none(row.get("difference"))
+        for line in _lines(row):
+            reason = line.get("reason")
+            count = int(line.get("count", 0) or 0)
+            if reason not in REASON_TOKENS:
+                applicable.append("CENSUS_ERROR")  # UNCLASSIFIABLE_REASON
+                continue
+            if reason in REASONS_NOT_REQUIRING_REPORT_REF:
+                continue
+            ref = line.get("report_ref")
+            in_report = (
+                _int_or_none(ref.get("count_in_report"))
+                if isinstance(ref, dict) else None
+            )
+            if in_report is None or in_report < count:
+                applicable.append("CENSUS_ERROR")  # R-1
+        if difference is not None:
+            if (_line_sum(row, "shortfall") > max(0, -difference)
+                    or _line_sum(row, "surplus") > max(0, difference)):
+                applicable.append("CENSUS_ERROR")  # R-2
+        basis = row.get("match_basis")
+        if (isinstance(basis, dict)
+                and basis.get("basis_source") == "run_report"
+                and _is_required(row)):
+            summands = [
+                _int_or_none(basis.get(name)) for name in MATCH_BASIS_SUMMANDS
+            ]
+            source = _int_or_none(row.get("source_count"))
+            if (all(v is not None for v in summands) and source is not None
+                    and sum(summands) != source):
+                applicable.append("CENSUS_ERROR")  # invariant 11
+
+    # -- COVERAGE_INCOMPLETE (6) ------------------------------------------
+    provenance = artifact.get("class_list_provenance") or {}
+    derivation = provenance.get("derivation_check") or {}
+    if derivation.get("result") not in (None, "match"):
+        applicable.append("COVERAGE_INCOMPLETE")
+    if derivation.get("performed") is not True:
+        applicable.append("COVERAGE_INCOMPLETE")
+    required_count = _int_or_none(provenance.get("required_class_count"))
+    if required_count is not None and required_count != len(rows):
+        applicable.append("COVERAGE_INCOMPLETE")
+
+    # -- BASELINE_MISSING (4) / BASELINE_STALE (5) ------------------------
+    baseline = artifact.get("starter_baseline")
+    if not isinstance(baseline, dict) or baseline.get("kind") == "none":
+        # An ABSENT baseline block is treated exactly like `kind: "none"`: the
+        # census cannot subtract what it never had, and absence is a verdict.
+        applicable.append("BASELINE_MISSING")
+    elif baseline_staleness(artifact) == "stale":
+        applicable.append("BASELINE_STALE")
+
+    # -- DUPLICATE_IDENTITY (3) -------------------------------------------
+    if any(duplicates_unaccounted(row) > 0 for row in rows):
+        applicable.append("DUPLICATE_IDENTITY")
+
+    # -- UNEXPLAINED_SHORTFALL (1) / UNEXPLAINED_SURPLUS (2) --------------
+    # R-4, and SC-005 in one line. Scoped to `required` rows: an advisory row
+    # cannot by itself fail the gate (CP-3).
+    if any(_is_required(r) and int(r.get("unexplained_shortfall", 0) or 0) > 0
+           for r in rows):
+        applicable.append("UNEXPLAINED_SHORTFALL")
+    if any(_is_required(r) and int(r.get("unexplained_surplus", 0) or 0) > 0
+           for r in rows):
+        applicable.append("UNEXPLAINED_SURPLUS")
+
+    # -- CENSUS_ACCOUNTED (0) vs CENSUS_CLEAN (0) -------------------------
+    # Clean means nothing needed explaining. Accounted means something did and
+    # every unit of it is explained by a valid line.
+    if any(_lines(row) for row in rows):
+        applicable.append("CENSUS_ACCOUNTED")
+    applicable.append("CENSUS_CLEAN")
+
+    return most_severe_verdict(applicable)
+
+
+def stamp_verdict(artifact) -> dict:
+    """Write the recomputed verdict, exit code and human label into `artifact`.
+
+    The ONLY sanctioned way those three fields get their values, so the console
+    label and the artifact token cannot disagree and neither can be authored by
+    hand.
+    """
+    verdict = recompute_verdict(artifact)
+    artifact["verdict"] = verdict
+    artifact["exit_code"] = exit_code_for(verdict)
+    artifact["verdict_human_label"] = VERDICT_HUMAN_LABELS[verdict]
+    return artifact
+
+
+# ---------------------------------------------------------------------------
+# Row-level pass, for the record
+# ---------------------------------------------------------------------------
+
+
+def row_passes(row) -> bool:
+    """Section 6's two conditions, BOTH required:
+
+    1. `difference == 0`, or every non-zero unit accounted for; AND
+    2. `duplicates.extra_objects == 0`, or each duplicate group accounted.
+
+    Condition 2 is why the census is a gate for SC-002 and not merely for
+    SC-005: the measured phoneme row satisfies condition 1 exactly (difference
+    0) while carrying 21 duplicate names.
+    """
+    if row.get("verdict_class") == "NOT_EVALUATED":
+        return True
+    if not _is_required(row):
+        return True
+    if int(row.get("unexplained_shortfall", 0) or 0) > 0:
+        return False
+    if int(row.get("unexplained_surplus", 0) or 0) > 0:
+        return False
+    return duplicates_unaccounted(row) == 0
+
+
+# ---------------------------------------------------------------------------
+# The phase predicates (fidelity-census.md 9.1)
+#
+# Acceptance for Phases 1..5 is a census DIFF, not a unit test. Each predicate
+# names classes and counts, and every failure string NAMES THE CLASS it failed
+# on -- a predicate that says only "phase 1 failed" cannot be acted on.
+# ---------------------------------------------------------------------------
+
+#: P1 (identity): the four MSA subclasses plus PartOfSpeech. (SC-001, SC-002)
+PHASE_1_MATCHED_CLASSES: tuple = (
+    "MoStemMsa", "MoInflAffMsa", "MoDerivAffMsa", "MoUnclassifiedAffixMsa",
+    "PartOfSpeech",
+)
+
+#: P2 (closure): the template and its slots. (SC-004)
+PHASE_2_MATCHED_CLASSES: tuple = ("MoInflAffixTemplate", "MoInflAffixSlot")
+
+#: P3 (enrichment): the owned-child classes FR-020 enriches rather than
+#: recreates. (SC-007)
+PHASE_3_OWNED_CHILD_CLASSES: tuple = (
+    "MoInflAffixTemplate", "MoInflAffixSlot", "MoInflClass", "MoStemName",
+    "MoStemAllomorph", "MoMorphType",
+)
+
+#: P4 (process rules): BOTH halves, because either alone can be satisfied by the
+#: defect itself -- 13 MoAffixProcess became 13 extra MoAffixAllomorph, so
+#: checking only the allomorph difference would pass a whole-class downgrade.
+PHASE_4_CLASSES: tuple = ("MoAffixProcess", "MoAffixAllomorph")
+
+
+@dataclass(frozen=True)
+class PhaseResult:
+    """The answer for one phase: satisfied, and if not, exactly why."""
+
+    phase: int
+    satisfied: bool
+    failures: tuple = ()
+
+    def __post_init__(self) -> None:
+        if self.satisfied and self.failures:
+            raise CensusError(
+                "PhaseResult for phase " + str(self.phase) + " claims "
+                "satisfied with failures recorded: " + "; ".join(self.failures)
+            )
+
+
+def _row_by_class(artifact, object_class: str) -> Optional[dict]:
+    """One row, matched on the emitted class label OR on the class name an A1
+    split row is derived from, so a split does not hide a row from a predicate.
+    """
+    for row in _rows(artifact):
+        label = _row_label(row)
+        if label == object_class:
+            return row
+        if row.get("owning_feature_system") and label == object_class:
+            return row
+        if label.startswith(object_class + "("):
+            return row
+    return None
+
+
+def _require_matched(artifact, object_class: str, phase: int) -> tuple:
+    """`(failures,)` for "class X's row is MATCHED"."""
+    row = _row_by_class(artifact, object_class)
+    if row is None:
+        return (
+            "P" + str(phase) + ": no census row for " + object_class
+            + " -- FR-012 requires one row per class, so an absent row is a "
+            "coverage defect and not a pass",
+        )
+    verdict_class = row.get("verdict_class")
+    if verdict_class != "MATCHED":
+        return (
+            "P" + str(phase) + ": " + object_class + " is " + str(verdict_class)
+            + " (difference " + str(row.get("difference")) + "), not MATCHED",
+        )
+    if not row_passes(row):
+        return (
+            "P" + str(phase) + ": " + object_class + " counts as MATCHED but "
+            "does not pass its row conditions (unexplained "
+            + str(row.get("unexplained_shortfall")) + "/"
+            + str(row.get("unexplained_surplus")) + ", unaccounted duplicates "
+            + str(duplicates_unaccounted(row)) + ")",
+        )
+    return ()
+
+
+def _phase_1(artifact) -> tuple:
+    failures: list = []
+    for name in PHASE_1_MATCHED_CLASSES:
+        failures.extend(_require_matched(artifact, name, 1))
+    row = _row_by_class(artifact, "PhPhoneme")
+    if row is None:
+        failures.append(
+            "P1: no census row for PhPhoneme -- SC-002 is measured on that row"
+        )
+    else:
+        extra = int(_duplicates(row).get("extra_objects", 0) or 0)
+        if extra != 0:
+            failures.append(
+                "P1: PhPhoneme duplicates.extra_objects is " + str(extra)
+                + ", not 0 -- difference is " + str(row.get("difference"))
+                + ", so baseline arithmetic alone would have passed this row "
+                "(SC-002)"
+            )
+    return tuple(failures)
+
+
+def _phase_2(artifact) -> tuple:
+    failures: list = []
+    for name in PHASE_2_MATCHED_CLASSES:
+        failures.extend(_require_matched(artifact, name, 2))
+    return tuple(failures)
+
+
+def _phase_3(artifact) -> tuple:
+    failures: list = []
+    row = _row_by_class(artifact, "PartOfSpeech")
+    if row is None:
+        failures.append(
+            "P3: no census row for PartOfSpeech, so nothing can show it was "
+            "enriched"
+        )
+    else:
+        basis = row.get("match_basis")
+        enriched = (
+            _int_or_none(basis.get("enriched")) if isinstance(basis, dict)
+            else None
+        )
+        if not enriched:
+            failures.append(
+                "P3: PartOfSpeech match_basis.enriched is " + str(enriched)
+                + ", not > 0 -- nothing was enriched, which is what a "
+                "whole-object SKIP decided by GUID presence alone looks like "
+                "(defect G3) while every row still reports MATCHED"
+            )
+    for name in PHASE_3_OWNED_CHILD_CLASSES:
+        failures.extend(_require_matched(artifact, name, 3))
+    return tuple(failures)
+
+
+def _phase_4(artifact) -> tuple:
+    failures: list = []
+    failures.extend(_require_matched(artifact, "MoAffixProcess", 4))
+    row = _row_by_class(artifact, "MoAffixAllomorph")
+    if row is None:
+        failures.append(
+            "P4: no census row for MoAffixAllomorph -- the downgrade is only "
+            "visible in BOTH rows at once"
+        )
+    else:
+        difference = _int_or_none(row.get("difference"))
+        if difference != 0:
+            failures.append(
+                "P4: MoAffixAllomorph difference is " + str(difference)
+                + ", not 0 -- 13 MoAffixProcess became 13 extra "
+                "MoAffixAllomorph, so either half alone can be satisfied by "
+                "the defect itself"
+            )
+        elif not row_passes(row):
+            failures.append(
+                "P4: MoAffixAllomorph difference is 0 but the row does not "
+                "pass its own conditions (unaccounted duplicates "
+                + str(duplicates_unaccounted(row)) + ")"
+            )
+    return tuple(failures)
+
+
+def _phase_5(artifact) -> tuple:
+    failures: list = []
+    for row in _rows(artifact):
+        if not _is_required(row):
+            continue
+        verdict_class = row.get("verdict_class")
+        if verdict_class in ("MATCHED", "NOT_EVALUATED"):
+            if verdict_class == "MATCHED" and not row_passes(row):
+                failures.append(
+                    "P5: " + _row_label(row) + " is MATCHED but carries "
+                    + str(duplicates_unaccounted(row))
+                    + " unaccounted duplicate objects"
+                )
+            continue
+        lines = _lines(row)
+        if not lines:
+            failures.append(
+                "P5: " + _row_label(row) + " is " + str(verdict_class)
+                + " (difference " + str(row.get("difference"))
+                + ") and carries NO accounting line -- absence of an "
+                "accounted_for list is not an excuse (R-5)"
+            )
+            continue
+        wrong = tuple(sorted({
+            str(line.get("reason")) for line in lines
+            if line.get("reason") not in PHASE_5_ADMISSIBLE_REASONS
+        }))
+        if wrong:
+            failures.append(
+                "P5: " + _row_label(row) + " accounts with " + ", ".join(wrong)
+                + ", which is real accounting but not phase-5 done -- P5 admits "
+                "GOVERNED_BY_OTHER_FEATURE and NO_CREATE_PATH only"
+            )
+        if (int(row.get("unexplained_shortfall", 0) or 0)
+                or int(row.get("unexplained_surplus", 0) or 0)):
+            failures.append(
+                "P5: " + _row_label(row) + " still has unexplained "
+                + str(row.get("unexplained_shortfall")) + " shortfall / "
+                + str(row.get("unexplained_surplus")) + " surplus after its "
+                "accounting lines"
+            )
+    return tuple(failures)
+
+
+@dataclass(frozen=True)
+class PhasePredicate:
+    """One phase's exit criteria, as a predicate over the ARTIFACT.
+
+    "A phase is not done when its unit tests pass; it is done when the census
+    run for its predicate exits 0 with the predicate satisfied." Both halves
+    live in `gate_artifact`.
+    """
+
+    phase: int
+    name: str
+    description: str
+    check: object
+
+    def evaluate(self, artifact) -> PhaseResult:
+        failures = tuple(self.check(artifact))
+        return PhaseResult(
+            phase=self.phase, satisfied=not failures, failures=failures)
+
+
+PHASE_PREDICATES: dict = {
+    1: PhasePredicate(
+        1, "identity",
+        "MoStemMsa, MoInflAffMsa, MoDerivAffMsa, MoUnclassifiedAffixMsa and "
+        "PartOfSpeech rows MATCHED; PhPhoneme.duplicates.extra_objects == 0 "
+        "(SC-001, SC-002)",
+        _phase_1,
+    ),
+    2: PhasePredicate(
+        2, "closure",
+        "MoInflAffixTemplate and MoInflAffixSlot rows MATCHED (SC-004)",
+        _phase_2,
+    ),
+    3: PhasePredicate(
+        3, "enrichment",
+        "match_basis.enriched > 0 on PartOfSpeech, and the owned-child classes "
+        "MATCHED (SC-007)",
+        _phase_3,
+    ),
+    4: PhasePredicate(
+        4, "process rules",
+        "MoAffixProcess MATCHED and MoAffixAllomorph difference == 0 -- both, "
+        "because either alone can be satisfied by the defect itself (SC-006)",
+        _phase_4,
+    ),
+    5: PhasePredicate(
+        5, "residual",
+        "every remaining required row is either MATCHED or carries a valid "
+        "GOVERNED_BY_OTHER_FEATURE / NO_CREATE_PATH line (SC-005)",
+        _phase_5,
+    ),
+}
+
+
+def evaluate_phase(artifact, phase: int) -> PhaseResult:
+    """Evaluate one phase predicate against an artifact."""
+    try:
+        predicate = PHASE_PREDICATES[phase]
+    except KeyError:
+        raise CensusError(
+            "phase " + repr(phase) + " is not one of "
+            + repr(tuple(sorted(PHASE_PREDICATES)))
+        ) from None
+    return predicate.evaluate(artifact)
+
+
+# ---------------------------------------------------------------------------
+# The gate
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class GateOutcome:
+    """The gate's whole answer: token, exit code, pass/fail, and the reasons.
+
+    `passed` is `verdict in PASSING_VERDICTS` AND no validator failure AND, when
+    a phase was named, that phase satisfied. There is deliberately no fourth
+    state: a run either passes the gate or it does not.
+    """
+
+    verdict: str
+    exit_code: int
+    passed: bool
+    failures: tuple = ()
+    phase: Optional[PhaseResult] = None
+
+    @property
+    def human_label(self) -> str:
+        return VERDICT_HUMAN_LABELS[self.verdict]
+
+
+def gate_artifact(artifact, phase: Optional[int] = None) -> GateOutcome:
+    """Gate one census artifact, optionally against a phase predicate.
+
+    The verdict is RECOMPUTED from the artifact's evidence, never read from it,
+    so a document that claims `CENSUS_CLEAN` with `exit_code: 0` over
+    `starter_baseline.kind == "none"` is still refused with exit 4. That is the
+    whole point of 5.3's "there is no path on which a missing baseline yields
+    exit 0".
+    """
+    verdict = recompute_verdict(artifact)
+    failures = list(validate_artifact(artifact))
+    phase_result = None
+    if phase is not None:
+        phase_result = evaluate_phase(artifact, phase)
+        failures.extend(phase_result.failures)
+    passed = (
+        is_passing_verdict(verdict)
+        and not failures
+        and (phase_result is None or phase_result.satisfied)
+    )
+    return GateOutcome(
+        verdict=verdict,
+        exit_code=exit_code_for(verdict),
+        passed=passed,
+        failures=tuple(failures),
+        phase=phase_result,
+    )
