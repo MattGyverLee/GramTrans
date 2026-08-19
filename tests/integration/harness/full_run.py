@@ -138,12 +138,32 @@ def _dump_plan_composition(plan) -> None:
 # Full transfer orchestration
 # ---------------------------------------------------------------------------
 
+def _write_report_snapshot(report: RunReport, path: str) -> None:
+    """Persist the RunReport as the JSON `census run --run-report` consumes.
+
+    `RunReport.to_snapshot_json` is the single serialiser -- the census reads
+    `context.run_id`, `per_category` and (since T024d-a) `matched_to_source`
+    out of exactly this shape, so writing anything hand-rolled here would let
+    the harness and the census disagree about what a run report is.
+    """
+    import pathlib
+
+    target = pathlib.Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(report.to_snapshot_json(), encoding="utf-8")
+    print("[INFO] run report written: %s" % (target,))
+
+
 def run_full_transfer(
     source_name: str,
     target_name: str,
     target_path: str,
+    *,
+    exclude: Optional[frozenset] = None,
+    ws_mapping_mode: str = "default-vernacular",
+    report_path: Optional[str] = None,
 ) -> Tuple[RunPlan, RunReport]:
-    """Run a full (all-categories-except-STEMS) transfer end to end.
+    """Run a full (all-categories-except-STEMS by default) transfer end to end.
 
     Sets GRAMTRANS_DEBUG=1 (so export/persist diagnostics fire), opens the
     source read-only, binds the target for write, computes the preview plan,
@@ -152,6 +172,28 @@ def run_full_transfer(
     The source handle is closed in a finally block; the target handle is
     closed there too (execute_move never closes the caller's handle -- on the
     custom-field path it persists via in-session checkpoints instead).
+
+    Keyword-only options, all defaulting to the pre-T024c behaviour so the
+    dozen existing callers are byte-identical:
+
+    ``exclude``
+        Passed to `build_full_selection`. ``None`` keeps that function's own
+        default (STEMS excluded). T024c passes ``frozenset()`` because a FULL
+        copy must not exclude stems -- the census then measures what a full
+        copy actually does, not what a stem-less one does.
+    ``ws_mapping_mode``
+        ``"default-vernacular"`` (the default) maps only source default vern ->
+        target default vern. ``"full"`` gives EVERY source writing system an
+        entry, creating in the target any tag it lacks. WS handles are
+        per-project and not portable (measured: 999000002 is `en` in
+        `Ngoreme FLEx` and `ngq` in `Ngoreme Target`), so a source alternative
+        with no mapped counterpart is exactly the T024g failure class; "full"
+        is what a real full copy needs.
+    ``report_path``
+        When set, the RunReport snapshot is written there as JSON. T024c needs
+        it on disk because `census run --run-report` is a separate process:
+        without it the post-transfer census cannot attribute a single match and
+        every out-of-scope class stays in `unexplained_shortfall`.
     """
     # Ensure the export/persist diagnostics fire for this run.
     os.environ.setdefault(DEBUG_ENV, "1")
@@ -170,21 +212,47 @@ def run_full_transfer(
         )
         context = api.bind_target(stub, choice)
 
-        selection = build_full_selection()
+        selection = (build_full_selection() if exclude is None
+                     else build_full_selection(exclude=exclude))
         # Map the source's default vernacular WS -> the target's default
-        # vernacular WS (identity for the default vern). Not customizable: the
-        # coverage/full-run harness always uses the default vernacular on both
-        # sides. GetDefaultVernacularWS() returns a (language-tag, Name) tuple.
+        # vernacular WS (identity for the default vern). This is the DEFAULT
+        # mode, kept exactly as it was for every pre-T024c caller.
+        # GetDefaultVernacularWS() returns a (language-tag, Name) tuple.
         src_vern_tag = source_handle.GetDefaultVernacularWS()[0]
         tgt_vern_tag = context.target_handle.GetDefaultVernacularWS()[0]
-        ws_mapping = WSMapping(entries=(
-            WSMappingEntry(
-                source_ws_id=src_vern_tag,
-                source_ws_kind=WSKind.VERNACULAR,
-                target_ws_id=tgt_vern_tag,
-                create_in_target=False,
-            ),
-        ))
+        if ws_mapping_mode == "full":
+            # Every source WS gets an entry; a tag the target already has maps
+            # to itself, a tag it lacks is created there. Leaving a source
+            # alternative unmapped is the T024g failure class: the handle is
+            # per-project, so it either throws in
+            # `WritingSystemManager.Get` (discarding the whole unit of work) or
+            # -- worse -- resolves silently to a DIFFERENT writing system.
+            target_ids = {w.Id
+                          for w in context.target_handle.WritingSystems.GetAll()}
+            entries = tuple(
+                WSMappingEntry(
+                    source_ws_id=w.Id,
+                    source_ws_kind=(WSKind.VERNACULAR if w.Id == src_vern_tag
+                                    else WSKind.ANALYSIS),
+                    target_ws_id=w.Id,
+                    create_in_target=(w.Id not in target_ids),
+                )
+                for w in source_handle.WritingSystems.GetAll()
+            )
+            ws_mapping = WSMapping(entries=entries)
+        elif ws_mapping_mode == "default-vernacular":
+            ws_mapping = WSMapping(entries=(
+                WSMappingEntry(
+                    source_ws_id=src_vern_tag,
+                    source_ws_kind=WSKind.VERNACULAR,
+                    target_ws_id=tgt_vern_tag,
+                    create_in_target=False,
+                ),
+            ))
+        else:
+            raise ValueError(
+                "[ERROR] unknown ws_mapping_mode %r -- expected "
+                "'default-vernacular' or 'full'" % (ws_mapping_mode,))
         state, plan = api.compute_preview(context, selection, ws_mapping=ws_mapping)
         if state is not api.PreviewState.PREVIEW_READY:
             raise RuntimeError(
@@ -194,6 +262,8 @@ def run_full_transfer(
         _dump_plan_composition(plan)
 
         report = api.execute_move(context, plan)
+        if report_path is not None:
+            _write_report_snapshot(report, report_path)
         return plan, report
     finally:
         # The harness IS the host here: on the plain path FLEx only persists

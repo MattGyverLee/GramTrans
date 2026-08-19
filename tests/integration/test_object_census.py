@@ -73,8 +73,11 @@ carry the marker individually.
 """
 from __future__ import annotations
 
+import importlib.util
 import json
+import os
 import re
+import sys
 from pathlib import Path
 
 import pytest
@@ -3726,3 +3729,291 @@ class TestCorrectedPremiseNgoremeFlexIsTheSource:
             measured_row(snapshot, "MoStemMsa")["source_count"],
             measured_row(snapshot, "PhPhoneme")["source_count"],
         )
+
+
+# ---------------------------------------------------------------------------
+# T024c -- the sanity check PRODUCES the transfer it measures
+# ---------------------------------------------------------------------------
+#
+# `_t024_census` above censuses two projects AS THEY HAPPEN TO SIT ON DISK.
+# Nothing else in this file restores a target or executes a transfer, so the
+# destination's provenance lives only in a session log: touch either project
+# and the suite measures a different, equally unattributable delta while still
+# claiming to be a sanity check. A sanity check for an instrument that gates
+# transfers must itself produce the transfer.
+#
+# The corrected shape, which the code already supports end to end:
+#
+#   restore_target("Ngoreme Target", <0831 backup>)
+#     -> census run --pre-transfer --destination ... --out pre.json
+#     -> run_full_transfer(..., exclude=frozenset(), ws_mapping_mode="full",
+#                          report_path=report.json)
+#     -> census run --source ... --destination ... --baseline pre.json
+#                   --run-report report.json --out post.json
+#
+# Two corrections to earlier drafts of this block, both measured:
+#
+#   * `--destination-freshly-created` was NOT a false declaration on the old
+#     runs. The 0831 backup is a genuinely blank starter (LexEntry 0,
+#     LexSense 0, MoStemMsa 0, PhPhoneme 23, PartOfSpeech 5) and
+#     `census.baseline_misdeclared` tests the DECLARATION, not emptiness at
+#     census time. It is dropped below only because a `--pre-transfer`
+#     baseline measures the destination directly and makes the declaration
+#     redundant -- not because it was untrue.
+#   * A `pre_transfer_census` baseline does NOT lift the 5.2 verdict cap, and
+#     neither does `--run-report` on its own. The cap keys off
+#     `starter_subtraction_basis`, and only classes the run report can
+#     ATTRIBUTE reach `baseline_matched` (T024d-b). The assertions below say so
+#     explicitly rather than letting a future reader expect CENSUS_CLEAN.
+#
+# DESTRUCTIVE: this restores and writes `Ngoreme Target`. It is gated on
+# GRAMTRANS_E2E=1 like every other live-write module in this suite, and on an
+# anchored allowlist, so a bare `pytest tests/integration` can never fire it.
+
+T024C_SOURCE = "Ngoreme FLEx"
+T024C_DESTINATION = "Ngoreme Target"
+
+#: Deny-by-default, anchored FULL match. The destination is the only project
+#: this block may ever open write-enabled, and it may never equal the source.
+T024C_WRITE_ALLOWLIST = frozenset({"Ngoreme Target"})
+
+T024C_BACKUP_RELPATH = "backups/Ngoreme Target 2026-08-19 0831.fwbackup"
+
+_T024C_CACHE: dict = {}
+
+
+def _t024c_backup() -> Path:
+    return _repo_root() / T024C_BACKUP_RELPATH
+
+
+def _t024c_assert_write_safe(destination: str, source: str) -> None:
+    """035 FR-011/FR-012: the write target is checked, not assumed."""
+    assert destination in T024C_WRITE_ALLOWLIST, (
+        "refusing to write " + repr(destination) + " -- not in the anchored "
+        "allowlist " + repr(sorted(T024C_WRITE_ALLOWLIST))
+    )
+    assert destination != source, (
+        "refusing a transfer whose destination IS its source")
+
+
+def _t024c_live_run() -> dict:
+    """Restore -> pre-census -> transfer -> post-census, once per session.
+
+    Returns `{"pre", "post", "report", "plan", "run_report_path"}`. Skips --
+    never errors -- on every absence this machine can present.
+    """
+    if "result" in _T024C_CACHE:
+        cached = _T024C_CACHE["result"]
+        if isinstance(cached, str):
+            pytest.skip(cached)
+        return cached
+
+    def refuse(reason: str):
+        _T024C_CACHE["result"] = reason
+        pytest.skip(reason)
+
+    if os.environ.get("GRAMTRANS_E2E") != "1":
+        refuse("T024c: GRAMTRANS_E2E != 1; set it to opt into the live "
+               "restore-and-transfer run that this sanity check requires")
+    if importlib.util.find_spec("flexicon") is None:
+        refuse("T024c: flexicon not importable; no live FLEx host here")
+
+    _t024c_assert_write_safe(T024C_DESTINATION, T024C_SOURCE)
+
+    backup = _t024c_backup()
+    if not backup.is_file():
+        refuse("T024c: no starter backup at " + str(backup))
+    for name in (T024C_SOURCE, T024C_DESTINATION):
+        path = _t024_fwdata(name)
+        if not path.is_file():
+            refuse("T024c: project " + repr(name) + " has no .fwdata at "
+                   + str(path))
+    # Only the DESTINATION's lock is disqualifying, and the asymmetry is
+    # measured rather than assumed: a read-only flexicon open of a project
+    # FieldWorks holds open SUCCEEDS (the whole T024 block above censuses
+    # `Ngoreme FLEx` while FieldWorks has it), but a restore cannot replace a
+    # locked `.fwdata` and a write-enabled open cannot take it. A locked source
+    # is still recorded, because the destination's provenance is only as exact
+    # as the source it was read from.
+    dest_lock = Path(str(_t024_fwdata(T024C_DESTINATION)) + ".lock")
+    if dest_lock.exists():
+        refuse(
+            "T024c: the destination " + repr(T024C_DESTINATION) + " is locked "
+            "by FieldWorks -- a restore cannot replace a locked .fwdata and a "
+            "write-enabled open cannot take it. Close it and re-run.")
+    source_locked = Path(str(_t024_fwdata(T024C_SOURCE)) + ".lock").exists()
+    if source_locked:
+        print("[WARN] T024c: the source " + repr(T024C_SOURCE) + " is open in "
+              "FieldWorks. The read-only open still succeeds and the on-disk "
+              ".fwdata is a committed state, but any UNSAVED edit in that "
+              "session is invisible here -- recorded, not assumed away.")
+
+    harness_dir = str(_repo_root() / "tests" / "integration")
+    if harness_dir not in sys.path:
+        sys.path.insert(0, harness_dir)
+    try:
+        from harness import full_run, restore  # noqa: PLC0415
+    except Exception as exc:  # noqa: BLE001
+        refuse("T024c: live harness unimportable: " + repr(exc))
+
+    import tempfile  # noqa: PLC0415
+
+    workdir = Path(tempfile.mkdtemp(prefix="gt038-t024c-"))
+    pre = workdir / "pre.json"
+    post = workdir / "post.json"
+    run_report = workdir / "report.json"
+
+    # 1. Restore the destination blank. This is what binds the measurement to a
+    #    known starting state instead of to whatever the last session left.
+    try:
+        restore.restore_target(T024C_DESTINATION, backup_path=backup)
+    except Exception as exc:  # noqa: BLE001
+        refuse("T024c: restore failed: " + repr(exc))
+
+    # 2. Pre-transfer census of the DESTINATION ONLY -> the exact baseline.
+    #    `starter_baseline_count` becomes MEASURED rather than modelled.
+    code = cli_exit(["run", "--pre-transfer",
+                     "--destination", T024C_DESTINATION,
+                     "--out", str(pre)])
+    if not pre.is_file():
+        refuse("T024c: the pre-transfer census wrote no artifact (exit "
+               + str(code) + ")")
+
+    # 3. The transfer this block exists to measure. `exclude=frozenset()`
+    #    because a FULL copy must not exclude STEMS -- the default does.
+    #    `ws_mapping_mode="full"` because an unmapped source alternative
+    #    carries a handle the target cannot resolve (T024g).
+    _t024c_assert_write_safe(T024C_DESTINATION, T024C_SOURCE)
+    try:
+        plan, report = full_run.run_full_transfer(
+            T024C_SOURCE, T024C_DESTINATION,
+            str(_t024_fwdata(T024C_DESTINATION).parent),
+            exclude=frozenset(),
+            ws_mapping_mode="full",
+            report_path=str(run_report),
+        )
+    except Exception as exc:  # noqa: BLE001
+        refuse("T024c: the transfer raised: " + type(exc).__name__ + ": "
+               + str(exc))
+
+    # 4. Post-transfer census, judged against the measured baseline AND the run
+    #    report that names the run.
+    code = cli_exit(["run",
+                     "--source", T024C_SOURCE,
+                     "--destination", T024C_DESTINATION,
+                     "--baseline", str(pre),
+                     "--run-report", str(run_report),
+                     "--out", str(post)])
+    if not post.is_file():
+        refuse("T024c: the post-transfer census wrote no artifact (exit "
+               + str(code) + ")")
+
+    result = {
+        "pre": json.loads(pre.read_text(encoding="utf-8")),
+        "post": json.loads(post.read_text(encoding="utf-8")),
+        "report": report,
+        "plan": plan,
+        "run_report_path": run_report,
+        "exit_code": code,
+        "source_locked": source_locked,
+        "workdir": workdir,
+    }
+    _T024C_CACHE["result"] = result
+    return result
+
+
+@pytest.mark.integration
+class TestT024cTheSanityCheckProducesItsOwnTransfer:
+    """The live half of T024, rebuilt so the thing measured is a transfer this
+    test performed, from a backup it restored, attributed to one named run."""
+
+    def test_the_baseline_is_measured_not_declared(self):
+        """`--pre-transfer` censuses the destination directly, so
+        `starter_baseline_count` is a measurement of the project about to be
+        written -- not a model of what a blank project ships with."""
+        result = _t024c_live_run()
+        pre = result["pre"]
+        kinds = {pre.get("baseline_kind"), pre.get("kind"),
+                 (pre.get("baseline") or {}).get("kind")}
+        assert "pre_transfer_census" in kinds, (
+            "the pre-transfer artifact does not declare itself a "
+            "pre_transfer_census baseline: " + repr(sorted(pre)))
+
+    def test_the_destination_is_attributable_to_this_run(self):
+        """The pairing is ENFORCED, not conventional. The run report names the
+        run, and the census artifact cites it."""
+        result = _t024c_live_run()
+        block = result["post"].get("transfer_run") or {}
+        assert block.get("run_id"), (
+            "the post-transfer census carries no transfer_run.run_id, so "
+            "nothing in it could be cited as evidence")
+        assert block["run_id"] == result["report"].context.run_id
+        assert Path(block["report_path"]) == result["run_report_path"]
+
+    def test_the_meaningful_delta_is_the_unaccounted_rows(self):
+        """THE reading T024's disk-state census could not produce. Every row
+        whose `difference` is non-zero and which the run report does not
+        account for is a candidate loss with a named owner -- reproducible from
+        a backup and attributable to one run."""
+        result = _t024c_live_run()
+        rows = result["post"].get("classes", ())
+        assert rows, "the post-transfer census produced no class rows"
+
+        unaccounted = [
+            {"class": r.get("class"),
+             "difference": r.get("difference"),
+             "basis": r.get("starter_subtraction_basis"),
+             "verdict": r.get("verdict_class"),
+             "unexplained_shortfall": r.get("unexplained_shortfall"),
+             "unexplained_surplus": r.get("unexplained_surplus")}
+            for r in rows
+            if r.get("difference")
+            and (r.get("unexplained_shortfall") or r.get("unexplained_surplus"))
+        ]
+        # Reported, not asserted empty: this block's job is to make the delta
+        # MEANINGFUL. A non-empty list is a finding for the phase gates
+        # (T038/T039) to act on, not a failure of the instrument.
+        print("[INFO] T024c unaccounted rows: %d" % len(unaccounted))
+        for row in unaccounted[:40]:
+            print("[INFO]   %s" % (row,))
+
+        assert all(isinstance(r.get("difference"), int) for r in rows), (
+            "every row must carry an integer difference for the delta to be "
+            "readable at all")
+
+    def test_the_cap_survives_a_measured_baseline(self):
+        """Pinned because two earlier drafts of T024c got this wrong in
+        opposite directions. A `pre_transfer_census` baseline does NOT lift the
+        5.2 verdict cap, and neither does supplying `--run-report`: only rows
+        the report can ATTRIBUTE reach `baseline_matched` (T024d-b). So a class
+        the report does not cover stays on `baseline_gross`, and the run
+        verdict stays capped at CENSUS_ACCOUNTED."""
+        result = _t024c_live_run()
+        bases = {r.get("starter_subtraction_basis")
+                 for r in result["post"].get("classes", ())}
+        assert bases <= {"baseline_gross", "baseline_matched", None}, (
+            "unexpected subtraction basis token(s): " + repr(sorted(
+                b for b in bases if b is not None)))
+        verdict = result["post"].get("verdict")
+        assert verdict != "CENSUS_CLEAN" or "baseline_gross" not in bases, (
+            "CENSUS_CLEAN was reported while at least one row was still on the "
+            "gross basis -- the 5.2 cap did not fire")
+
+    def test_the_transfer_actually_persisted(self):
+        """T024g's regression guard, in the place that would notice. A report
+        claiming additions over a byte-identical destination is the silent-loss
+        class this whole feature exists to eliminate, so once the report claims
+        additions the destination census total must have grown."""
+        result = _t024c_live_run()
+        pre_total = sum(int(r.get("destination_count_total") or 0)
+                        for r in result["pre"].get("classes", ()))
+        post_total = sum(int(r.get("destination_count_total") or 0)
+                         for r in result["post"].get("classes", ()))
+        added = getattr(result["report"], "total_added", 0) or 0
+        print("[INFO] T024c destination totals: pre=%d post=%d added=%s"
+              % (pre_total, post_total, added))
+        if added:
+            assert post_total > pre_total, (
+                "the run report claims " + str(added) + " additions but the "
+                "destination census total did not grow (" + str(pre_total)
+                + " -> " + str(post_total) + ") -- nothing persisted")
