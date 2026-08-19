@@ -2097,3 +2097,1606 @@ class TestExactClassCounting:
         for symbol in ("COUNT_BASIS_SUBTRACTION", "COUNT_BASIS_ENUMERATION",
                        "cumulative_count_for", "direct_subclass_names"):
             assert symbol in source
+
+
+# ===========================================================================
+# T024 -- THE ADVERSARIAL SANITY CHECK: the instrument must SEE a real loss
+# ===========================================================================
+#
+# Everything above this line is hermetic: synthetic artifacts in `tmp_path`, no
+# FieldWorks host, no project. That property is load-bearing (the census gate
+# has to stay runnable on a machine with no LCM) and this block does NOT change
+# it -- every live test below carries `@pytest.mark.integration` INDIVIDUALLY,
+# the module still has no module-scoped marker, and nothing here imports
+# `flexicon` at module scope. `-m "not integration"` runs the hermetic suite.
+#
+# WHY THIS BLOCK EXISTS
+# ---------------------
+# A census that reports a known-destroyed transfer as clean is worse than no
+# census, because it launders the loss. So before any green result from this
+# instrument is trusted, it has to be shown FAILING on transfers whose damage
+# is already known from the `.fwdata` on disk.
+#
+# THE PAIRS, AS MEASURED (2026-08-19) -- NOT AS ASSUMED
+# ----------------------------------------------------
+# T024's brief named pairs that turned out not to be the ones on disk. The
+# figures below were read straight out of each `.fwdata` (`<rt class="X"`
+# counts) and then reproduced by the instrument. Where brief and disk
+# disagree, THE DISK WINS and the discrepancy is recorded here:
+#
+#   * `MoStemMsa` 1949 -> 0 is `Ngoreme FLEx` -> `Ngoreme Target`.
+#     It is NOT the project called `Ngoreme`, which holds MoStemMsa 1945 and
+#     PhPhoneme 37. `Ngoreme FLEx` holds exactly 1949 and 41.
+#   * `PhPhoneme` 41 -> 64 holds on BOTH pairs, because both sources happen to
+#     carry 41 phonemes. 23 starter + 41 source == 64, so this row is the
+#     clearest available test of whether starter subtraction works at all.
+#   * `MoInflAffixTemplate` 8 -> 0 / `MoInflAffixSlot` 11 -> 0 is the EJAGHAM
+#     pair. The Ngoreme pair loses 13 and 19 instead.
+#   * `MoAffixProcess` 13 -> 0 is the EJAGHAM pair. But the other half of that
+#     story -- `MoAffixAllomorph` +13 -- IS NOT REPRODUCIBLE from any state on
+#     disk: `Ejagham W Target` holds ZERO MoAffixAllomorph, so the pair shows
+#     130 -> 0, both classes destroyed outright rather than one converted into
+#     the other. No project on this machine holds the 143 that +13 needs.
+#     `test_moaffixallomorph_plus_13_is_not_reproducible_from_disk` pins that
+#     honestly instead of manufacturing the pair with a transfer.
+#     The conversion SIGNATURE is still reproducible, at scale 1, on the
+#     Ngoreme pair: MoAffixProcess 1 -> 0 beside MoAffixAllomorph 146 -> 147.
+#
+# WHAT THESE TWO PAIRS ACTUALLY ARE -- AND WHY ONLY ONE IS DAMNING
+# ---------------------------------------------------------------
+# NEITHER destination is a blank project, and the two tell different stories.
+# Read this before citing either as proof of a transfer defect.
+#
+#   * `Ngoreme Target` IS POPULATED: 1415 LexEntry, 1552 LexSense, 1534
+#     MoStemAllomorph, 147 MoAffixAllomorph, 50 Text, 2271 Segment. A broad
+#     transfer plainly ran and moved a great deal. And yet ZERO of the source's
+#     1949 MoStemMsa arrived, along with 0 of 134 MoInflAffMsa, 0 of 13
+#     templates and 0 of 19 slots. That is the genuinely damning pair: the
+#     lexicon arrived STRIPPED OF ITS MORPHO-SYNTACTIC ANALYSES. It is not "a
+#     blank project reads 0"; it is a populated project missing exactly the
+#     grammar layer, which is the loss class 038 exists to catch.
+#
+#   * `Ejagham W Target` IS NEARLY EMPTY: 0 LexEntry, 0 LexSense, 64 PhPhoneme.
+#     That is consistent with a deliberately PHONOLOGY-ONLY run (feature 037's
+#     territory), so its zeros are "losses" only relative to a full-transfer
+#     expectation. THE CENSUS CANNOT KNOW A RUN'S INTENDED SCOPE: with no
+#     `--run-report` it compares every class source -> destination and reports
+#     what is missing, which is the correct conservative behaviour. Supplying
+#     the run report is what moves those rows from `unexplained_shortfall` into
+#     `accounted_for`. So the Ejagham rows below pin THAT THE INSTRUMENT SEES
+#     the absences -- not that the transfer was buggy to produce them.
+#
+# The distinction matters for what a green result would have meant: on the
+# Ngoreme pair a clean census would be a false negative on a real defect; on
+# the Ejagham pair it would be a false negative on an out-of-scope class.
+#
+# THE GROSS-BASIS CAP MEANS THE RUN VERDICT IS NOT THE EVIDENCE
+# ------------------------------------------------------------
+# The real baseline is a `starter_capture` with `carries_natural_keys: false`,
+# so every row lands on `baseline_gross`, so `fidelity-census.md` 5.2 caps the
+# RUN verdict at `CENSUS_ACCOUNTED` and suppresses `UNEXPLAINED_SHORTFALL`.
+# Both pairs therefore exit 0 while having lost whole classes. That is correct
+# behaviour and it is exactly why these tests assert on ROW-level evidence --
+# `difference`, `unexplained_shortfall`, `verdict_class`, `census.row_passes`,
+# `census.evaluate_phase` -- which the cap deliberately leaves untouched.
+# `test_the_capped_run_verdict_is_not_a_clean_transfer` pins the trap itself so
+# nobody can later cite "exit 0" as evidence the transfer was lossless.
+
+T024_NGOREME_SOURCE = "Ngoreme FLEx"
+T024_NGOREME_DESTINATION = "Ngoreme Target"
+T024_EJAGHAM_SOURCE = "Ejagham W Mini"
+T024_EJAGHAM_DESTINATION = "Ejagham W Target"
+
+T024_NGOREME_PAIR = (T024_NGOREME_SOURCE, T024_NGOREME_DESTINATION)
+T024_EJAGHAM_PAIR = (T024_EJAGHAM_SOURCE, T024_EJAGHAM_DESTINATION)
+
+#: Every loss this task must prove the instrument can see, keyed by pair:
+#: `(source_count, destination_count_total, difference, unexplained_shortfall,
+#:   unexplained_surplus, verdict_class)`. `row_passes` must be False for all
+#: of them -- that is the single most important assertion in this block.
+T024_EXPECTED_LOSSES = {
+    T024_NGOREME_PAIR: {
+        "MoStemMsa":           (1949, 0, -1949, 1949, 0, "SHORTFALL"),
+        "MoAffixProcess":      (1, 0, -1, 1, 0, "SHORTFALL"),
+        "MoAffixAllomorph":    (146, 147, 1, 0, 1, "SURPLUS"),
+        "MoInflAffixTemplate": (13, 0, -13, 13, 0, "SHORTFALL"),
+        "MoInflAffixSlot":     (19, 0, -19, 19, 0, "SHORTFALL"),
+    },
+    T024_EJAGHAM_PAIR: {
+        "MoStemMsa":           (153, 0, -153, 153, 0, "SHORTFALL"),
+        "MoAffixProcess":      (13, 0, -13, 13, 0, "SHORTFALL"),
+        "MoAffixAllomorph":    (130, 0, -130, 130, 0, "SHORTFALL"),
+        "MoInflAffixTemplate": (8, 0, -8, 8, 0, "SHORTFALL"),
+        "MoInflAffixSlot":     (11, 0, -11, 11, 0, "SHORTFALL"),
+    },
+}
+
+#: `PhPhoneme` duplicate-name groups per pair, under the census's OWN key
+#: definition: the Name's DEFAULT VERNACULAR alternative, exact and
+#: case-sensitive (T018).
+#:
+#: The Ejagham pair yields the expected 21. The Ngoreme pair yields 20, and the
+#: difference is the instrument being RIGHT: a ws-agnostic scan of
+#: `Ngoreme Target.fwdata` finds THREE phonemes whose Name contains "b", but
+#: the third is `{en: "b", ngq: "bh"}` and `ngq` is the default vernacular, so
+#: its key is "bh" and it is not a duplicate at all. Counting it would have
+#: been exactly the fabrication `census._ws_handle_for` exists to prevent.
+T024_EXPECTED_PHONEME_DUPLICATES = {
+    T024_NGOREME_PAIR: 20,
+    T024_EJAGHAM_PAIR: 21,
+}
+
+#: 23 starter + 41 source == 64 destination, on both pairs.
+T024_PHONEME_STARTER_BASELINE = 23
+T024_PHONEME_SOURCE_COUNT = 41
+T024_PHONEME_DESTINATION_TOTAL = 64
+
+#: Live runs are expensive (the Ngoreme source is a 76 MB `.fwdata`), so each
+#: pair is censused at most ONCE per session and every test reads the cached
+#: artifact. Keyed by pair; the value is the artifact dict or a skip reason.
+_T024_CACHE: dict = {}
+
+
+T024_BASELINE_RELPATH = (
+    "specs/038-transfer-fidelity-gaps/contracts/starter-baseline.json")
+
+#: Materialised copies of the baseline pulled out of git, kept for the session
+#: so `git show` runs at most once.
+_T024_BASELINE_CACHE: dict = {}
+
+
+def _t024_starter_baseline() -> Path:
+    """The recaptured starter baseline, found from ANY worktree.
+
+    THIS IS NOT OVER-ENGINEERING, IT IS THE PROJECT'S GIT PROTOCOL. CLAUDE.md:
+    "if it lives under `specs/`, commit it to `main`; otherwise commit it on
+    the feature worktree." The baseline is a spec artifact, so it lives on
+    `main` (commit 69f4097) and a feature worktree checked out at a branch tip
+    that predates it DOES NOT HAVE THE FILE. Resolving only against
+    `_repo_root()` therefore skipped all 23 live tests on the very worktree
+    they are meant to run in -- a clean skip, but a silent one, and a green
+    "137 passed, 23 skipped" is exactly the false comfort T024 exists to
+    prevent.
+
+    So: prefer the working tree, then ask git for it on `main`, and only then
+    give up and let the caller skip.
+    """
+    direct = _repo_root() / Path(T024_BASELINE_RELPATH)
+    if direct.is_file():
+        return direct
+    if "path" in _T024_BASELINE_CACHE:
+        return _T024_BASELINE_CACHE["path"]
+
+    import subprocess  # noqa: PLC0415 -- only needed on the fallback path
+    import tempfile  # noqa: PLC0415
+
+    for ref in ("main", "origin/main"):
+        try:
+            blob = subprocess.run(
+                ["git", "show", ref + ":" + T024_BASELINE_RELPATH],
+                cwd=str(_repo_root()), capture_output=True, timeout=60,
+                check=False)
+        except (OSError, subprocess.SubprocessError):
+            break
+        if blob.returncode == 0 and blob.stdout.strip():
+            out = (Path(tempfile.mkdtemp(prefix="gt038-t024-baseline-"))
+                   / "starter-baseline.json")
+            out.write_bytes(blob.stdout)
+            _T024_BASELINE_CACHE["path"] = out
+            return out
+    return direct
+
+
+def _t024_fwdata(project_name: str) -> Path:
+    """Where the project's `.fwdata` would be. Pure path arithmetic --
+    `census.fwdata_path_for` touches no LCM and imports no flexicon, so this
+    stays safe to call during collection on a host with no FieldWorks."""
+    return census.fwdata_path_for(project_name)
+
+
+def _t024_census(source: str, destination: str) -> dict:
+    """The census artifact for one live pair, or `pytest.skip`.
+
+    Skips rather than errors on every absence this machine can present: a
+    missing project, a missing baseline, a project another program holds open
+    (FieldWorks takes an exclusive `.fwdata.lock` and flexicon then raises
+    `FP_FileLockedError`, which the CLI reports as CENSUS_ERROR / exit 7 with
+    no artifact written), or a host with no FieldWorks at all.
+
+    READ-ONLY IS NOT ASSUMED HERE, IT IS CHECKED. The CLI's `run` path digests
+    each `.fwdata` before the open and again after the CLOSE and refuses the
+    whole run if either moved, so reaching a written artifact is itself proof;
+    `test_the_census_wrote_nothing_to_either_project` then re-reads both files
+    off disk and compares them against the recorded digests.
+    """
+    key = (source, destination)
+    if key in _T024_CACHE:
+        cached = _T024_CACHE[key]
+        if isinstance(cached, str):
+            pytest.skip(cached)
+        return cached
+
+    def refuse(reason: str):
+        _T024_CACHE[key] = reason
+        pytest.skip(reason)
+
+    baseline = _t024_starter_baseline()
+    if not baseline.is_file():
+        refuse("T024: no starter baseline at " + str(baseline))
+    for name in (source, destination):
+        path = _t024_fwdata(name)
+        if not path.is_file():
+            refuse("T024: project " + repr(name) + " has no .fwdata at "
+                   + str(path))
+
+    import tempfile  # noqa: PLC0415 -- only needed on the live path
+
+    out = Path(tempfile.mkdtemp(prefix="gt038-t024-")) / "census.json"
+    argv = [
+        "run",
+        "--source", source,
+        "--destination", destination,
+        "--baseline", str(baseline),
+        "--destination-freshly-created",
+        "--out", str(out),
+    ]
+    try:
+        code = cli_exit(argv)
+    except Exception as exc:  # noqa: BLE001 -- no FieldWorks host, COM, ...
+        refuse("T024: could not census " + repr(source) + " -> "
+               + repr(destination) + ": " + type(exc).__name__ + ": "
+               + str(exc))
+    if not out.is_file():
+        refuse("T024: the census of " + repr(source) + " -> "
+               + repr(destination) + " wrote no artifact (exit " + str(code)
+               + ") -- most often CENSUS_ERROR because a project is open in "
+               "FieldWorks and holds its .fwdata.lock")
+    artifact = json.loads(out.read_text(encoding="utf-8"))
+    _T024_CACHE[key] = artifact
+    return artifact
+
+
+def _t024_row(artifact: dict, object_class: str) -> dict:
+    """One class row, insisting the row EXISTS.
+
+    A missing row is the worst failure available to this block: it is the
+    instrument not looking, which reads identically to a clean result in every
+    summary. `MoAffixProcess` is the live example -- it is in the class list
+    only via `census_additions` with `inventory_tables: ["NONE"]`, i.e. no
+    transfer table claims to move it, and it is precisely the class the
+    Ejagham transfer destroyed 13 of.
+    """
+    for row in artifact.get("classes", ()):
+        if row.get("class") == object_class:
+            return row
+    raise AssertionError(
+        "no census row for " + repr(object_class) + " -- the instrument cannot "
+        "report a loss in a class it never counted. Rows present: "
+        + str(sorted(r.get("class") for r in artifact.get("classes", ())))
+    )
+
+
+def _t024_pair_id(pair) -> str:
+    return pair[0] + " -> " + pair[1]
+
+
+T024_PAIRS = [
+    pytest.param(T024_NGOREME_PAIR, id="ngoreme"),
+    pytest.param(T024_EJAGHAM_PAIR, id="ejagham"),
+]
+
+
+class TestT024KnownBadPairsAreSeen:
+    """Every expected loss, asserted at ROW level so the gross-basis verdict
+    cap cannot hide a regression behind a green run verdict."""
+
+    @pytest.mark.integration
+    @pytest.mark.parametrize("pair", T024_PAIRS)
+    def test_no_expected_loss_row_is_reported_clean(self, pair):
+        """THE headline assertion of T024. If any row in the expected table
+        passes section 6, the instrument is laundering a known loss and no
+        green result from it means anything."""
+        artifact = _t024_census(*pair)
+        clean = []
+        for object_class in T024_EXPECTED_LOSSES[pair]:
+            row = _t024_row(artifact, object_class)
+            if census.row_passes(row):
+                clean.append(
+                    object_class + ": source " + str(row["source_count"])
+                    + " -> destination " + str(row["destination_count_total"])
+                    + ", difference " + str(row["difference"])
+                    + ", verdict_class " + str(row["verdict_class"]))
+        assert not clean, (
+            _t024_pair_id(pair) + ": the census reported " + str(len(clean))
+            + " KNOWN-BAD row(s) as PASSING -- " + "; ".join(clean))
+
+    @pytest.mark.integration
+    @pytest.mark.parametrize("pair", T024_PAIRS)
+    def test_every_expected_loss_row_reproduces_its_measured_figures(self, pair):
+        """Not merely "it failed" but "it failed with the right numbers", so a
+        regression that changes WHAT is counted is caught as well as one that
+        stops counting altogether."""
+        artifact = _t024_census(*pair)
+        actual, expected = {}, {}
+        for object_class, figures in T024_EXPECTED_LOSSES[pair].items():
+            row = _t024_row(artifact, object_class)
+            actual[object_class] = (
+                row["source_count"],
+                row["destination_count_total"],
+                row["difference"],
+                row["unexplained_shortfall"],
+                row["unexplained_surplus"],
+                row["verdict_class"],
+            )
+            expected[object_class] = figures
+        assert actual == expected, _t024_pair_id(pair)
+
+    @pytest.mark.integration
+    def test_mostemmsa_1949_to_0_is_a_total_loss_the_census_reports(self):
+        """The brief's flagship pair. `Ngoreme Target` holds ZERO MoStemMsa
+        against a source of 1949 -- every morpho-syntactic analysis of every
+        stem, gone. A census that cannot see this can see nothing."""
+        artifact = _t024_census(*T024_NGOREME_PAIR)
+        row = _t024_row(artifact, "MoStemMsa")
+        assert row["source_count"] == 1949
+        assert row["destination_count_total"] == 0
+        assert row["destination_count_net"] == 0
+        assert row["starter_baseline_count"] == 0, (
+            "the blank starter holds no MoStemMsa, so gross subtraction cannot "
+            "excuse any part of this shortfall")
+        assert row["difference"] == -1949
+        assert row["unexplained_shortfall"] == 1949
+        assert row["verdict_class"] == "SHORTFALL"
+        assert row["accounted_for"] == [], (
+            "nothing explains the loss, so it must stay unexplained rather "
+            "than acquire an accounting line")
+        assert census.row_passes(row) is False
+
+    @pytest.mark.integration
+    @pytest.mark.parametrize("pair", T024_PAIRS)
+    def test_the_total_loss_is_named_by_the_phase_predicates(self, pair):
+        """Row figures are the evidence; the phase predicates are how a phase
+        is stopped from declaring itself done over them. Both must NAME the
+        class, because a failure that does not say what broke is not usable."""
+        artifact = _t024_census(*pair)
+        for phase in (1, 5):
+            result = census.evaluate_phase(artifact, phase)
+            assert result.satisfied is False, (
+                _t024_pair_id(pair) + ": phase " + str(phase) + " declared "
+                "itself satisfied over a destroyed transfer")
+            named = [f for f in result.failures if "MoStemMsa" in f]
+            assert named, (
+                _t024_pair_id(pair) + ": phase " + str(phase) + " failed but "
+                "never named MoStemMsa: " + str(list(result.failures)[:5]))
+            assert census.gate_artifact(artifact, phase=phase).passed is False
+
+    @pytest.mark.integration
+    def test_moinflaffixtemplate_8_and_slot_11_to_zero_ejagham(self):
+        """The inflectional templates and their slots, both wiped. Asserted on
+        the Ejagham pair because that is where 8 and 11 actually live; the
+        Ngoreme pair loses 13 and 19 and is covered by the table above."""
+        artifact = _t024_census(*T024_EJAGHAM_PAIR)
+        for object_class, source_count in (
+                ("MoInflAffixTemplate", 8), ("MoInflAffixSlot", 11)):
+            row = _t024_row(artifact, object_class)
+            assert row["source_count"] == source_count, object_class
+            assert row["destination_count_total"] == 0, object_class
+            assert row["difference"] == -source_count, object_class
+            assert row["unexplained_shortfall"] == source_count, object_class
+            assert census.row_passes(row) is False, object_class
+
+
+class TestT024PhonemeStarterSubtraction:
+    """`PhPhoneme` 41 -> 64 is the one row that tests starter subtraction
+    itself: the destination total is LARGER than the source, and only
+    subtracting the 23 starter phonemes reveals the transfer is square."""
+
+    @pytest.mark.integration
+    @pytest.mark.parametrize("pair", T024_PAIRS)
+    def test_starter_subtraction_nets_64_minus_23_to_the_source_41(self, pair):
+        artifact = _t024_census(*pair)
+        row = _t024_row(artifact, "PhPhoneme")
+        assert row["source_count"] == T024_PHONEME_SOURCE_COUNT
+        assert row["destination_count_total"] == T024_PHONEME_DESTINATION_TOTAL
+        assert row["starter_baseline_count"] == T024_PHONEME_STARTER_BASELINE
+        assert row["starter_baseline_source"] == "baseline_document"
+        # The whole point: net == total - baseline, and that equals the source.
+        assert row["destination_count_net"] == (
+            T024_PHONEME_DESTINATION_TOTAL - T024_PHONEME_STARTER_BASELINE)
+        assert row["destination_count_net"] == T024_PHONEME_SOURCE_COUNT
+        assert row["difference"] == 0
+        assert row["verdict_class"] == "MATCHED"
+        # And the UNSUBTRACTED reading is retained and is NOT the answer, so a
+        # reader can see what subtraction bought: +23 became 0.
+        assert row["difference_raw"] == 23
+
+    @pytest.mark.integration
+    @pytest.mark.parametrize("pair", T024_PAIRS)
+    def test_the_duplicate_phoneme_names_are_detected(self, pair):
+        """Exact, case-sensitive matching on the default vernacular Name alt --
+        T018's contract. The counts differ per pair BECAUSE that key definition
+        is honoured; see `T024_EXPECTED_PHONEME_DUPLICATES`."""
+        artifact = _t024_census(*pair)
+        row = _t024_row(artifact, "PhPhoneme")
+        duplicates = row.get("duplicates")
+        assert isinstance(duplicates, dict), (
+            _t024_pair_id(pair) + ": PhPhoneme carries NO duplicates block, so "
+            "the census never looked for duplicate identities -- and an absent "
+            "block is not the same claim as extra_objects 0")
+        expected = T024_EXPECTED_PHONEME_DUPLICATES[pair]
+        assert duplicates["extra_objects"] == expected, (
+            _t024_pair_id(pair) + ": expected " + str(expected) + " extra "
+            "phoneme objects, got " + str(duplicates["extra_objects"]))
+        assert duplicates["groups"] > 0
+        assert "case-sensitive" in duplicates["key_definition"]
+        # Examples must be real, distinct objects, not one GUID repeated.
+        for group in duplicates.get("examples", ()):
+            assert group["count"] >= 2, group
+            assert len(set(group["guids"])) == len(group["guids"]), group
+
+    @pytest.mark.integration
+    @pytest.mark.parametrize("pair", T024_PAIRS)
+    def test_the_duplicates_fail_phase_1_even_though_the_arithmetic_passes(
+            self, pair):
+        """SC-002, and the reason the phoneme row is in this block at all.
+
+        `difference` is 0 and `verdict_class` is MATCHED, so BASELINE
+        ARITHMETIC ALONE WOULD HAVE PASSED THIS ROW. The duplicate check is the
+        only thing that catches the transfer having created second copies of
+        starter phonemes instead of matching the starters by name."""
+        artifact = _t024_census(*pair)
+        row = _t024_row(artifact, "PhPhoneme")
+        assert row["difference"] == 0 and row["verdict_class"] == "MATCHED"
+        assert census.row_passes(row) is True, (
+            "if this ever becomes False the SC-002 story here is no longer the "
+            "interesting one, and this test needs rewriting, not silencing")
+        result = census.evaluate_phase(artifact, 1)
+        assert result.satisfied is False
+        named = [f for f in result.failures
+                 if "PhPhoneme" in f and "extra_objects" in f]
+        assert named, (
+            _t024_pair_id(pair) + ": phase 1 did not fail on the duplicate "
+            "phonemes: " + str(list(result.failures)))
+        assert str(T024_EXPECTED_PHONEME_DUPLICATES[pair]) in named[0]
+
+    @pytest.mark.integration
+    @pytest.mark.parametrize("pair", T024_PAIRS)
+    def test_the_duplicates_do_NOT_raise_the_verdict_to_duplicate_identity(
+            self, pair):
+        """A FINDING, pinned as behaviour rather than quietly filed as a defect.
+
+        T024's brief expected `DUPLICATE_IDENTITY` (severity above the
+        gross-basis cap, exit 3) here. It does NOT fire, and the reason is
+        neither the cap nor a bug: `PhPhoneme` is not in 035's natural-key
+        roster, so `duplicates.roster_admitted` is False, and
+        `census.duplicates_unaccounted` returns 0 for unadmitted classes BY
+        DESIGN -- "a duplicate name on an unadmitted class is advisory, because
+        homographs are legitimate content" (census.py).
+
+        Consequence, and it is a real gap worth staring at:
+        `totals.duplicate_extra_objects` reads 0 on a destination holding 20-21
+        duplicate phonemes, and the run exits 0. Only the phase-1 predicate in
+        the test above stops the transfer being called done.
+
+        `test_admitting_phphoneme_to_the_roster_makes_the_duplicates_fail`
+        proves roster admission is the ONLY thing in the way, so 038's roster
+        extension flips this without touching census.py."""
+        artifact = _t024_census(*pair)
+        row = _t024_row(artifact, "PhPhoneme")
+        assert row["duplicates"]["roster_admitted"] is False
+        assert census.duplicates_unaccounted(row) == 0
+        assert "PhPhoneme" not in census.roster_admitted_classes(_repo_root()), (
+            "PhPhoneme has joined the roster -- its duplicates are now "
+            "gate-failing, so this test and the totals expectation below must "
+            "be updated to the DUPLICATE_IDENTITY behaviour T024 predicted")
+        assert census.gate_artifact(artifact).verdict != "DUPLICATE_IDENTITY"
+        assert artifact["totals"]["duplicate_extra_objects"] == 0, (
+            "the artifact's headline duplicate tally counts admitted classes "
+            "only; the per-row block is where the "
+            + str(T024_EXPECTED_PHONEME_DUPLICATES[pair])
+            + " duplicates are visible")
+
+    def test_admitting_phphoneme_to_the_roster_makes_the_duplicates_fail(self):
+        """Hermetic counterpart to the finding above -- NO live project needed,
+        so the gap stays pinned on a machine with no FieldWorks.
+
+        Take 5.2's worked example (gross basis, capped verdict) carrying 21
+        duplicate phonemes and flip ONLY `roster_admitted`. `DUPLICATE_IDENTITY`
+        outranks the `CENSUS_ACCOUNTED` ceiling, so the verdict must move and
+        the exit code must leave 0. That isolates roster admission as the whole
+        difference, which is what makes the live finding a ROSTER gap rather
+        than a census-engine defect.
+
+        `gross_basis_rows` is re-applied after `replace_row` on purpose:
+        `replace_row` rebuilds the row through `make_row`, which does not carry
+        `starter_baseline_count` / `starter_subtraction_basis`, so without it
+        the phoneme row would silently leave the gross basis and the cap under
+        test would not apply to it."""
+        advisory_rows = gross_basis_rows(replace_row(
+            five_two_worked_example_rows(), "PhPhoneme",
+            source_count=41, destination_count_total=64,
+            destination_count_net=41, verdict_class="MATCHED",
+            unexplained_shortfall=0, unexplained_surplus=0,
+            duplicates_extra=21, duplicates_groups=21, roster_admitted=False))
+        # Invariant 2: `duplicates.examples` is NEVER truncated, so 21 groups
+        # must carry 21 example groups. `make_row` leaves the list empty, and
+        # the census caught that -- which is itself a small vote of confidence.
+        examples = [
+            {"key": f"p{n}", "count": 2,
+             "guids": [f"00000000-0000-4000-8000-0000000000{2 * n:02d}",
+                       f"00000000-0000-4000-8000-0000000000{2 * n + 1:02d}"]}
+            for n in range(21)
+        ]
+        for candidate in advisory_rows:
+            if candidate["class"] == "PhPhoneme":
+                candidate["duplicates"]["examples"] = examples
+        advisory = gross_basis_artifact(advisory_rows)
+        advisory_row = _t024_row(advisory, "PhPhoneme")
+        assert advisory_row["duplicates"]["roster_admitted"] is False
+        assert advisory_row["starter_subtraction_basis"] == (
+            GROSS_SUBTRACTION_BASIS)
+        assert census.duplicates_unaccounted(advisory_row) == 0
+        # The advisory artifact comes out CENSUS_CLEAN rather than merely
+        # capped, and that is the sharpest possible form of this test: zeroing
+        # 5.2's phantom phoneme shortfall leaves the cap nothing to suppress,
+        # so NOTHING is wrong with this artifact except 21 duplicate phonemes
+        # on an unadmitted class -- and it still exits 0.
+        advisory_outcome = census.gate_artifact(advisory)
+        assert advisory_outcome.verdict != "DUPLICATE_IDENTITY"
+        assert census.exit_code_for(advisory_outcome.verdict) == 0
+        assert advisory_outcome.passed is True, (
+            "21 duplicate phonemes bought no failure at all while PhPhoneme is "
+            "outside the roster -- that is the gap this test exists to record")
+
+        admitted_rows = gross_basis_rows(replace_row(
+            advisory_rows, "PhPhoneme", roster_admitted=True))
+        admitted = gross_basis_artifact(admitted_rows)
+        admitted_row = _t024_row(admitted, "PhPhoneme")
+        assert admitted_row["duplicates"]["extra_objects"] == 21
+        assert census.duplicates_unaccounted(admitted_row) == 21
+        outcome = census.gate_artifact(admitted)
+        assert outcome.verdict == "DUPLICATE_IDENTITY"
+        assert outcome.passed is False
+        assert census.exit_code_for(outcome.verdict) != 0
+
+
+class TestT024ClassConversionAndUnreproduciblePairs:
+    """`MoAffixProcess` -> `MoAffixAllomorph`: one class silently becoming
+    another. Both halves have to appear, because a census showing only the
+    shortfall reports a deletion where the truth is a substitution."""
+
+    @pytest.mark.integration
+    def test_moaffixprocess_13_to_0_is_seen_on_the_ejagham_pair(self):
+        artifact = _t024_census(*T024_EJAGHAM_PAIR)
+        row = _t024_row(artifact, "MoAffixProcess")
+        assert row["source_count"] == 13
+        assert row["destination_count_total"] == 0
+        assert row["difference"] == -13
+        assert row["unexplained_shortfall"] == 13
+        assert census.row_passes(row) is False
+        # It is measured only because the census ADDED it: no transfer
+        # inventory table claims to move MoAffixProcess at all. A census built
+        # from the tables alone would have had no row here, and would have
+        # reported this pair clean on this class.
+        assert row["in_class_list_via"] == "census_additions"
+        assert row["inventory_tables"] == ["NONE"]
+        assert row["gate_scope"] == "required"
+
+    @pytest.mark.integration
+    def test_moaffixallomorph_plus_13_is_not_reproducible_from_disk(self):
+        """AN HONEST NEGATIVE RESULT, deliberately not manufactured.
+
+        T024's brief expects `MoAffixProcess` 13 -> 0 to appear *against*
+        `MoAffixAllomorph` +13, i.e. 13 affix processes converted into 13 affix
+        allomorphs. `Ejagham W Target` holds ZERO MoAffixAllomorph, so what is
+        actually on disk is 130 -> 0: both classes destroyed outright. No
+        project on this machine holds the 143 the +13 reading needs.
+
+        Producing that pair would mean running a transfer, which T024 is not
+        authorised to do, so this test asserts the TRUE state and names the
+        gap. If a future session does create the +13 destination this test
+        fails and should be REPLACED by the conversion assertion -- it must not
+        be deleted quietly."""
+        artifact = _t024_census(*T024_EJAGHAM_PAIR)
+        row = _t024_row(artifact, "MoAffixAllomorph")
+        assert row["source_count"] == 130
+        assert row["destination_count_total"] == 0, (
+            "Ejagham W Target has grown MoAffixAllomorph objects -- the +13 "
+            "conversion pair may now be reproducible here")
+        assert row["difference"] == -130
+        assert row["unexplained_surplus"] == 0
+        assert census.row_passes(row) is False
+
+    @pytest.mark.integration
+    def test_the_conversion_signature_is_reproducible_at_scale_one(self):
+        """The `Ngoreme FLEx` -> `Ngoreme Target` pair carries the conversion
+        story the Ejagham pair cannot: MoAffixProcess 1 -> 0 while
+        MoAffixAllomorph goes 146 -> 147. The starter contributes 0 of either,
+        so the +1 is a genuine surplus and not starter arithmetic.
+
+        BOTH halves must be in the SAME artifact and must NOT be netted against
+        each other -- a shortfall of 1 in one class beside a surplus of 1 in
+        another is two findings, not zero."""
+        artifact = _t024_census(*T024_NGOREME_PAIR)
+        lost = _t024_row(artifact, "MoAffixProcess")
+        gained = _t024_row(artifact, "MoAffixAllomorph")
+
+        assert (lost["source_count"], lost["destination_count_total"]) == (1, 0)
+        assert lost["difference"] == -1
+        assert lost["unexplained_shortfall"] == 1
+        assert lost["starter_baseline_count"] == 0
+
+        assert (gained["source_count"],
+                gained["destination_count_total"]) == (146, 147)
+        assert gained["difference"] == 1
+        assert gained["verdict_class"] == "SURPLUS"
+        assert gained["unexplained_surplus"] == 1
+        assert gained["starter_baseline_count"] == 0
+
+        assert census.row_passes(lost) is False
+        assert census.row_passes(gained) is False
+
+        # No cross-class netting: the totals carry the surplus AND the
+        # shortfall, and the surplus is not cancelled by the far larger
+        # shortfall sitting beside it.
+        totals = artifact["totals"]
+        assert totals["unexplained_surplus"] >= 1
+        assert totals["unexplained_shortfall"] >= 1949
+        assert totals["classes_surplus"] >= 1
+        assert totals["classes_shortfall"] >= 1
+
+
+class TestT024TheGreenVerdictIsNotEvidence:
+    """The gross-basis cap makes both of these catastrophic transfers exit 0.
+    That is contract-correct and it is a trap, so it is pinned here rather than
+    left for someone to discover by citing it as proof of a clean transfer."""
+
+    @pytest.mark.integration
+    @pytest.mark.parametrize("pair", T024_PAIRS)
+    def test_the_capped_run_verdict_is_not_a_clean_transfer(self, pair):
+        artifact = _t024_census(*pair)
+        # Every row is on the gross basis, which is what triggers the cap.
+        assert all(row.get("starter_subtraction_basis")
+                   == GROSS_SUBTRACTION_BASIS
+                   for row in artifact["classes"])
+        assert artifact["starter_baseline"]["kind"] == "starter_capture"
+        assert artifact["starter_baseline"]["carries_natural_keys"] is False
+
+        outcome = census.gate_artifact(artifact)
+        assert outcome.verdict == GROSS_BASIS_VERDICT_CAP
+        assert census.exit_code_for(outcome.verdict) == 0
+        assert outcome.verdict != "CENSUS_CLEAN", (
+            "a capped run must never read as CLEAN -- CENSUS_ACCOUNTED is the "
+            "ceiling precisely so that distinction survives")
+
+        # ...and yet the artifact is full of failing rows, and no phase passes.
+        failing = [row["class"] for row in artifact["classes"]
+                   if not census.row_passes(row)]
+        assert len(failing) >= 40, (
+            _t024_pair_id(pair) + ": only " + str(len(failing)) + " failing "
+            "rows on a transfer that lost whole classes")
+        assert census.gate_artifact(artifact, phase=5).passed is False
+
+        # The cap must be AUDIBLE: the artifact says so in its own notes.
+        notes = " ".join(artifact.get("notes", ()))
+        assert GROSS_BASIS_VERDICT_CAP in notes and "ADVISORY" in notes
+
+    @pytest.mark.integration
+    @pytest.mark.parametrize("pair", T024_PAIRS)
+    def test_the_census_wrote_nothing_to_either_project(self, pair):
+        """Read-only, proved twice: by the digest pair the run itself recorded
+        across the open AND the close, and by re-reading both files here."""
+        artifact = _t024_census(*pair)
+        for role in ("source", "destination"):
+            block = artifact["projects"][role]
+            assert block["opened_read_only"] is True, role
+            assert (block["fwdata_sha256_before"]
+                    == block["fwdata_sha256_after"]), role
+            fwdata = _t024_fwdata(block["name"])
+            assert census.sha256_of(fwdata) == block["fwdata_sha256_before"], (
+                block["name"] + "'s .fwdata has changed since the census read "
+                "it at " + str(fwdata))
+
+
+# ===========================================================================
+# T024 -- the instrument, sanity-checked against KNOWN-BAD live pairs
+#
+# WHY THIS EXISTS
+# ---------------
+# Every test above proves the census is INTERNALLY consistent: given an
+# artifact, the verdict, the phases and the invariants follow. None of them
+# proves the census SEES A REAL LOSS. A counter that always returns
+# `difference: 0` would pass all 136 of them.
+#
+# So T024 measured two pairs whose losses were already known from feature
+# 035/037 work, and pins the measured numbers here. If the instrument ever
+# starts reporting these pairs as clean, these tests say so.
+#
+# WHERE THE DATA LIVES, AND WHY
+# -----------------------------
+# `tests/integration/_snapshots/census-038-{ngoreme,ejagham}.json` -- committed
+# beside `full_e2e_post.json`, which established the directory. They are the
+# BYTE-FOR-BYTE artifacts `census run` wrote on 2026-08-19 against the four
+# live projects; nothing was trimmed, reordered or hand-edited.
+#
+# Not trimmed on purpose. `recompute_verdict` reconciles
+# `class_list_provenance.required_class_count` against `len(classes)` and
+# `derivation_check`, so dropping the 69 rows these tests do not name would
+# turn the artifact into COVERAGE_INCOMPLETE and destroy the single most
+# important property below -- that a run carrying 44-47 failing rows still
+# reports exit 0. A trimmed fixture could not pin the surprise it exists to
+# pin. 137 KB for both, against the 467 KB snapshot already in that directory.
+#
+# Not a scratchpad path on purpose either: a test that reads
+# `%TEMP%/claude/.../scratchpad` passes for exactly one agent on one machine.
+# `test_the_snapshots_are_committed_repo_data` pins that.
+#
+# HERMETIC vs LIVE
+# ----------------
+# Everything here is hermetic (JSON off disk) EXCEPT
+# `TestCorrectedPremiseNgoremeFlexIsTheSource`, which carries
+# `@pytest.mark.integration` on the one test that opens projects. Per T014's
+# module docstring the module itself must stay marker-free and runnable with
+# no live project: `-m "not integration"` must collect and pass everything
+# else. Do not promote the marker to module scope.
+#
+# TWO THINGS DELIBERATELY NOT ASSERTED
+# ------------------------------------
+# 1. The RUN VERDICT / EXIT CODE of a shortfall pair. Both artifacts are on the
+#    `baseline_gross` basis (the real baseline is count-only), so 5.2's cap
+#    makes the run verdict `CENSUS_ACCOUNTED` / exit 0 BY DESIGN. That is
+#    pinned as the documented surprise in
+#    `TestCappedExitZeroCoexistsWithFailingRows`, not treated as a pass.
+#    Loss evidence is asserted per row (`difference`,
+#    `unexplained_shortfall`, `verdict_class`, `row_passes`) and through
+#    `evaluate_phase` / `gate_artifact(phase=N)`, which the cap never touches.
+# 2. `DUPLICATE_IDENTITY` for the duplicate phonemes. It does not fire and
+#    must not be asserted -- see `TestDuplicatePhonemesAreInertUntilT028`.
+# ===========================================================================
+
+MEASURED_CENSUS_SNAPSHOTS = {
+    "ngoreme": "census-038-ngoreme.json",
+    "ejagham": "census-038-ejagham.json",
+}
+
+#: The four projects the two snapshots were measured against, with the
+#: `.fwdata` digest recorded before AND after each read-only open. `Ngoreme
+#: Target` is irreplaceable evidence of a ruined transfer: it must never be
+#: write-enabled or restored, and its digest is pinned here so a later run
+#: that touched it cannot pass these tests quietly.
+MEASURED_PROJECT_DIGESTS = {
+    "Ngoreme FLEx":
+        "052243ea76405eed520c17e3d61562f09fa5efd171f65eb02f1abf1c8f09843b",
+    "Ngoreme Target":
+        "dda21971829a36030f749d60a5a020444cb291376056a2e37043e430104af3b1",
+    "Ejagham W Mini":
+        "c174f0b455982a1245b12ec6213ff92366603eb3c000e45fcf81cbd01c9924e6",
+    "Ejagham W Target":
+        "1cbef60c9550360181d61ee11efb0907811cb0cb6829d681f71de2b7bed094cc",
+}
+
+
+def measured_snapshot_path(pair: str) -> Path:
+    return (
+        Path(__file__).resolve().parent / "_snapshots"
+        / MEASURED_CENSUS_SNAPSHOTS[pair]
+    )
+
+
+def load_measured_census(pair: str) -> dict:
+    path = measured_snapshot_path(pair)
+    assert path.is_file(), (
+        "the T024 measured census snapshot is missing: " + str(path)
+        + " -- it is committed repo data, not a regenerable temp file; "
+        "restore it from git rather than re-running the 76 MB Ngoreme open"
+    )
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+@pytest.fixture()
+def ngoreme_census() -> dict:
+    """`Ngoreme FLEx` -> `Ngoreme Target`, measured 2026-08-19."""
+    return load_measured_census("ngoreme")
+
+
+@pytest.fixture()
+def ejagham_census() -> dict:
+    """`Ejagham W Mini` -> `Ejagham W Target`, measured 2026-08-19."""
+    return load_measured_census("ejagham")
+
+
+def measured_row(artifact, object_class: str) -> dict:
+    for row in artifact["classes"]:
+        if row["class"] == object_class:
+            return row
+    raise AssertionError(
+        "no census row for " + object_class + " in the measured artifact for "
+        + repr(artifact["projects"]["source"]["name"]) + " -> "
+        + repr(artifact["projects"]["destination"]["name"])
+        + "; rows present: "
+        + ", ".join(sorted(r["class"] for r in artifact["classes"]))
+    )
+
+
+def failing_rows(artifact) -> list:
+    return [row for row in artifact["classes"] if not row_passes(row)]
+
+
+# ---------------------------------------------------------------------------
+# The snapshots themselves: real, valid, and committed
+# ---------------------------------------------------------------------------
+
+class TestMeasuredCensusSnapshots:
+    """The fixtures are genuine instrument output, not hand-authored JSON."""
+
+    @pytest.mark.parametrize("pair", sorted(MEASURED_CENSUS_SNAPSHOTS))
+    def test_the_snapshot_parses_and_is_schema_version_1(self, pair):
+        artifact = load_measured_census(pair)
+        assert artifact["schema_version"] == CENSUS_SCHEMA_VERSION
+
+    @pytest.mark.parametrize("pair", sorted(MEASURED_CENSUS_SNAPSHOTS))
+    def test_the_snapshot_validates_against_the_published_schema(
+            self, pair, census_schema):
+        errors = schema_errors(load_measured_census(pair), census_schema)
+        assert errors == [], (
+            "the measured " + pair + " artifact does not validate against "
+            + str(_schema_path()) + ": " + "; ".join(errors[:5])
+        )
+
+    @pytest.mark.parametrize("pair", sorted(MEASURED_CENSUS_SNAPSHOTS))
+    def test_the_snapshot_passes_the_section_11_invariants(self, pair):
+        """A real loss must be reportable WITHOUT breaking an invariant. If
+        `validate_artifact` complained here, the failing rows below would be a
+        malformed document rather than measured evidence."""
+        assert validate_artifact(load_measured_census(pair)) == ()
+
+    def test_the_snapshots_name_the_pairs_the_journal_names(
+            self, ngoreme_census, ejagham_census):
+        """Corrected premise 1: the 1949-object source is `Ngoreme FLEx`, NOT
+        `Ngoreme`. tasks.md said `Ngoreme`; `Ngoreme` holds 1945/37."""
+        assert ngoreme_census["projects"]["source"]["name"] == "Ngoreme FLEx"
+        assert (ngoreme_census["projects"]["destination"]["name"]
+                == "Ngoreme Target")
+        assert ejagham_census["projects"]["source"]["name"] == "Ejagham W Mini"
+        assert (ejagham_census["projects"]["destination"]["name"]
+                == "Ejagham W Target")
+
+    @pytest.mark.parametrize("pair", sorted(MEASURED_CENSUS_SNAPSHOTS))
+    def test_every_project_was_opened_read_only_with_an_unchanged_digest(
+            self, pair):
+        artifact = load_measured_census(pair)
+        for role, block in artifact["projects"].items():
+            assert block["opened_read_only"] is True, role
+            assert (block["fwdata_sha256_before"]
+                    == block["fwdata_sha256_after"]), role
+            assert (block["fwdata_sha256_before"]
+                    == MEASURED_PROJECT_DIGESTS[block["name"]]), (
+                block["name"] + " was measured at a different digest than the "
+                "one T024 recorded -- either the snapshot was regenerated or "
+                "the project was written to"
+            )
+
+    def test_the_destination_projects_are_declared_freshly_created(
+            self, ngoreme_census, ejagham_census):
+        for artifact in (ngoreme_census, ejagham_census):
+            assert (artifact["projects"]["destination"]
+                    ["declared_freshly_created"] is True)
+
+    @pytest.mark.parametrize("pair", sorted(MEASURED_CENSUS_SNAPSHOTS))
+    def test_the_snapshots_are_committed_repo_data(self, pair):
+        """A test that reads a session scratchpad passes for one agent on one
+        machine and fails for everybody else. These live under `tests/`."""
+        path = measured_snapshot_path(pair)
+        root = _repo_root()
+        assert root in path.parents
+        assert (root / "tests" / "integration" / "_snapshots") == path.parent
+        lowered = [part.lower() for part in path.parts]
+        assert "temp" not in lowered and "tmp" not in lowered
+
+    @pytest.mark.parametrize("pair", sorted(MEASURED_CENSUS_SNAPSHOTS))
+    def test_the_snapshot_records_the_instrument_that_produced_it(self, pair):
+        instrument = load_measured_census(pair)["instrument"]
+        assert instrument["name"] == "gramtrans.census_cli"
+        assert instrument["gramtrans_dirty"] is False
+        assert instrument["flexicon_version"] == "4.5.2"
+        assert instrument["flex_version"] == "9.3.10"
+
+
+# ---------------------------------------------------------------------------
+# MoStemMsa 1949 -> 0: the loss that started feature 038
+# ---------------------------------------------------------------------------
+
+class TestMoStemMsaTotalLoss:
+    """`Ngoreme FLEx` -> `Ngoreme Target`: every one of 1949 stem MSAs gone."""
+
+    def test_mostemmsa_is_1949_to_0(self, ngoreme_census):
+        row = measured_row(ngoreme_census, "MoStemMsa")
+        assert row["source_count"] == 1949
+        assert row["destination_count_total"] == 0
+        assert row["starter_baseline_count"] == 0
+        assert row["destination_count_net"] == 0
+        assert row["difference"] == -1949
+        assert row["difference_raw"] == -1949
+        assert row["unexplained_shortfall"] == 1949
+        assert row["unexplained_surplus"] == 0
+        assert row["verdict_class"] == "SHORTFALL"
+        assert row["gate_scope"] == "required"
+
+    def test_the_row_does_not_pass(self, ngoreme_census):
+        assert row_passes(measured_row(ngoreme_census, "MoStemMsa")) is False
+
+    def test_nothing_claims_to_account_for_it(self, ngoreme_census):
+        """R-5: an empty `accounted_for` is not an excuse. 1949 units are
+        unexplained and stay unexplained."""
+        row = measured_row(ngoreme_census, "MoStemMsa")
+        assert row["accounted_for"] == []
+        assert row["unexplained_shortfall"] == -row["difference"]
+
+    def test_the_gross_basis_does_not_soften_the_row(self, ngoreme_census):
+        """5.2's cap is the RUN verdict only. The row-level evidence the cap
+        leaves untouched is what these tests assert on."""
+        row = measured_row(ngoreme_census, "MoStemMsa")
+        assert row["starter_subtraction_basis"] == GROSS_SUBTRACTION_BASIS
+        assert is_gross_basis_row(row) is True
+        assert row["difference"] == -1949
+        assert row["unexplained_shortfall"] == 1949
+        assert row_passes(row) is False
+
+    def test_the_ejagham_pair_loses_its_stem_msas_too(self, ejagham_census):
+        """Not a Ngoreme quirk: the same class is 153 -> 0 on the other pair."""
+        row = measured_row(ejagham_census, "MoStemMsa")
+        assert row["source_count"] == 153
+        assert row["destination_count_total"] == 0
+        assert row["difference"] == -153
+        assert row_passes(row) is False
+
+
+# ---------------------------------------------------------------------------
+# PhPhoneme 41 -> 64: the row net arithmetic gets RIGHT
+# ---------------------------------------------------------------------------
+
+class TestPhonemeRowIsMatchedByNetArithmetic:
+    """The counterpart to MoStemMsa: a destination total LARGER than the
+    source, which naive subtraction would call a surplus and gross
+    subtraction would call a shortfall. Net arithmetic calls it MATCHED, and
+    that is correct -- 23 of the 64 are the starter project's own phonemes."""
+
+    @pytest.mark.parametrize("pair", sorted(MEASURED_CENSUS_SNAPSHOTS))
+    def test_41_to_64_over_a_baseline_of_23_is_matched(self, pair):
+        row = measured_row(load_measured_census(pair), "PhPhoneme")
+        assert row["source_count"] == 41
+        assert row["destination_count_total"] == 64
+        assert row["starter_baseline_count"] == 23
+        assert row["destination_count_net"] == 41
+        assert row["difference"] == 0
+        assert row["verdict_class"] == "MATCHED"
+        assert row["unexplained_shortfall"] == 0
+        assert row["unexplained_surplus"] == 0
+
+    @pytest.mark.parametrize("pair", sorted(MEASURED_CENSUS_SNAPSHOTS))
+    def test_the_raw_difference_is_a_plus_23_the_baseline_explains(self, pair):
+        """`difference_raw` is kept precisely so the +23 is visible rather
+        than silently absorbed: 64 - 41 = +23, and 64 - 23 = 41 = source."""
+        row = measured_row(load_measured_census(pair), "PhPhoneme")
+        assert row["difference_raw"] == 23
+        assert (row["difference_raw"]
+                == row["destination_count_total"] - row["source_count"])
+        assert (row["destination_count_net"]
+                == row["destination_count_total"] - row["starter_baseline_count"])
+        assert row["destination_count_net"] == row["source_count"]
+
+    @pytest.mark.parametrize("pair", sorted(MEASURED_CENSUS_SNAPSHOTS))
+    def test_the_matched_row_still_carries_its_duplicate_evidence(self, pair):
+        """MATCHED on count does not mean clean: the same row records 20-21
+        duplicate names. Section 6 needs BOTH conditions, which is why
+        `row_passes` reads `duplicates` and not just `difference`."""
+        row = measured_row(load_measured_census(pair), "PhPhoneme")
+        assert row["difference"] == 0
+        assert row["duplicates"]["groups"] >= 20
+        assert row["duplicates"]["extra_objects"] >= 20
+
+    @pytest.mark.parametrize("pair", sorted(MEASURED_CENSUS_SNAPSHOTS))
+    def test_the_phoneme_row_is_a_leaf_count_not_a_subtree_count(self, pair):
+        """T023b: `PhPhoneme` has no subclasses, so 64 is 64 and the exact /
+        cumulative distinction cannot hide anything on this row."""
+        row = measured_row(load_measured_census(pair), "PhPhoneme")
+        assert row["in_class_list_via"] == "coverage_floor"
+        assert "TABLE_1" in row["inventory_tables"]
+
+
+# ---------------------------------------------------------------------------
+# Process morphology: the class the truth source never listed
+# ---------------------------------------------------------------------------
+
+class TestProcessMorphologyLoss:
+    """`MoAffixProcess` is absent from 035's `object-inventory.md` entirely,
+    because the engine has no create path for it -- so nothing measured it and
+    nothing reported the drop. It reaches the census as a `census_additions`
+    row, which is the point: a class missing from the truth source is a
+    TRUTH-SOURCE gap, not a corpus gap."""
+
+    def test_ejagham_moaffixprocess_is_13_to_0(self, ejagham_census):
+        row = measured_row(ejagham_census, "MoAffixProcess")
+        assert row["source_count"] == 13
+        assert row["destination_count_total"] == 0
+        assert row["starter_baseline_count"] == 0
+        assert row["difference"] == -13
+        assert row["difference_raw"] == -13
+        assert row["unexplained_shortfall"] == 13
+        assert row["verdict_class"] == "SHORTFALL"
+        assert row_passes(row) is False
+
+    def test_the_row_arrives_via_census_additions_with_no_inventory_table(
+            self, ejagham_census):
+        row = measured_row(ejagham_census, "MoAffixProcess")
+        assert row["in_class_list_via"] == "census_additions"
+        assert row["inventory_tables"] == ["NONE"]
+        assert row["gate_scope"] == "required", (
+            "a class the inventory forgot must still be REQUIRED, or the "
+            "census inherits the very blind spot it was built to close"
+        )
+
+    @pytest.mark.parametrize("pair", sorted(MEASURED_CENSUS_SNAPSHOTS))
+    def test_the_addition_is_declared_as_owed_back_to_035(self, pair):
+        artifact = load_measured_census(pair)
+        additions = {
+            entry["class"]: entry
+            for entry in artifact["class_list_provenance"]["census_additions"]
+        }
+        assert "MoAffixProcess" in additions
+        entry = additions["MoAffixProcess"]
+        assert entry["owed_to_035"] is True
+        assert "13 -> 0" in entry["measured_evidence"]
+        assert "1 -> 0" in entry["measured_evidence"]
+
+    def test_ngoreme_moaffixprocess_is_1_to_0(self, ngoreme_census):
+        """Scale 1. Small, but the same defect, and it is what makes the
+        conversion signature below reproducible on one pair."""
+        row = measured_row(ngoreme_census, "MoAffixProcess")
+        assert row["source_count"] == 1
+        assert row["destination_count_total"] == 0
+        assert row["difference"] == -1
+        assert row["unexplained_shortfall"] == 1
+        assert row_passes(row) is False
+
+
+# ---------------------------------------------------------------------------
+# Templates and slots: the Ejagham pair, 8 and 11
+# ---------------------------------------------------------------------------
+
+class TestTemplateAndSlotLoss:
+    """Corrected premise 2: `MoInflAffixTemplate` 8 / `MoInflAffixSlot` 11 is
+    the EJAGHAM pair. tasks.md attributed it to Ngoreme, which loses 13 and
+    19 -- also total, just different numbers."""
+
+    def test_ejagham_template_is_8_to_0(self, ejagham_census):
+        row = measured_row(ejagham_census, "MoInflAffixTemplate")
+        assert row["source_count"] == 8
+        assert row["destination_count_total"] == 0
+        assert row["difference"] == -8
+        assert row["unexplained_shortfall"] == 8
+        assert row["verdict_class"] == "SHORTFALL"
+        assert row_passes(row) is False
+
+    def test_ejagham_slot_is_11_to_0(self, ejagham_census):
+        row = measured_row(ejagham_census, "MoInflAffixSlot")
+        assert row["source_count"] == 11
+        assert row["destination_count_total"] == 0
+        assert row["difference"] == -11
+        assert row["unexplained_shortfall"] == 11
+        assert row["verdict_class"] == "SHORTFALL"
+        assert row_passes(row) is False
+
+    def test_the_ngoreme_pair_loses_13_and_19_not_8_and_11(
+            self, ngoreme_census):
+        assert measured_row(
+            ngoreme_census, "MoInflAffixTemplate")["source_count"] == 13
+        assert measured_row(
+            ngoreme_census, "MoInflAffixTemplate")["difference"] == -13
+        assert measured_row(
+            ngoreme_census, "MoInflAffixSlot")["source_count"] == 19
+        assert measured_row(
+            ngoreme_census, "MoInflAffixSlot")["difference"] == -19
+
+    @pytest.mark.parametrize("pair", sorted(MEASURED_CENSUS_SNAPSHOTS))
+    def test_phase_2_is_unsatisfied_and_names_both_classes(self, pair):
+        """A template with no slots is not a partial transfer; it is an
+        unusable one. Phase 2's predicate is where that surfaces."""
+        result = evaluate_phase(load_measured_census(pair), 2)
+        assert result.satisfied is False
+        blob = " | ".join(result.failures)
+        assert "MoInflAffixTemplate" in blob
+        assert "MoInflAffixSlot" in blob
+
+
+# ---------------------------------------------------------------------------
+# THE PROPERTY THAT MATTERS MOST: a conversion is TWO facts, never one net
+# ---------------------------------------------------------------------------
+
+class TestConversionSignatureIsNotNetted:
+    """When the engine silently DOWNGRADES a class -- reads an
+    `MoAffixProcess`, writes an `MoAffixAllomorph` -- the object count barely
+    moves. A census that netted the two halves would report nothing at all.
+
+    tasks.md described this as `MoAffixProcess` 13 -> 0 beside
+    `MoAffixAllomorph` +13. That +13 DOES NOT EXIST ON DISK: no project on
+    this machine holds 143 affix allomorphs, and `Ejagham W Target` lost BOTH
+    classes outright (130 -> 0 and 13 -> 0). It was not manufactured to make a
+    test pass -- see `test_no_plus_13_allomorph_row_was_fabricated`.
+
+    The SIGNATURE is nonetheless reproducible at scale 1 on the Ngoreme pair,
+    and that is what is pinned: a shortfall row and a surplus row, both
+    present in ONE artifact, neither cancelling the other."""
+
+    def test_both_halves_are_present_in_one_artifact(self, ngoreme_census):
+        shortfall = measured_row(ngoreme_census, "MoAffixProcess")
+        surplus = measured_row(ngoreme_census, "MoAffixAllomorph")
+
+        assert shortfall["source_count"] == 1
+        assert shortfall["destination_count_total"] == 0
+        assert shortfall["difference"] == -1
+        assert shortfall["unexplained_shortfall"] == 1
+        assert shortfall["verdict_class"] == "SHORTFALL"
+
+        assert surplus["source_count"] == 146
+        assert surplus["destination_count_total"] == 147
+        assert surplus["starter_baseline_count"] == 0
+        assert surplus["difference"] == 1
+        assert surplus["difference_raw"] == 1
+        assert surplus["unexplained_surplus"] == 1
+        assert surplus["verdict_class"] == "SURPLUS"
+
+    def test_the_two_halves_are_not_netted_against_each_other(
+            self, ngoreme_census):
+        """The defect this guards against: -1 + +1 == 0, so a netting census
+        prints a clean line and the downgrade is invisible forever. Both
+        tallies must survive into `totals` separately."""
+        totals = ngoreme_census["totals"]
+        assert totals["unexplained_shortfall"] == 74157
+        assert totals["unexplained_surplus"] == 1
+        assert totals["total_surplus"] == 1
+        assert totals["classes_surplus"] == 1
+        assert totals["classes_shortfall"] == 47
+        assert totals["accounted_shortfall"] == 0
+        assert totals["accounted_surplus"] == 0
+
+    def test_neither_half_claims_the_other_as_its_explanation(
+            self, ngoreme_census):
+        """There is no accounting line linking them, and there must not be:
+        `MoAffixProcess` -> `MoAffixAllomorph` is not one of the 16 reason
+        tokens, so a conversion CANNOT be explained away as bookkeeping."""
+        for name in ("MoAffixProcess", "MoAffixAllomorph"):
+            assert measured_row(ngoreme_census, name)["accounted_for"] == []
+        assert not any(
+            "CONVER" in token or "DOWNGRAD" in token
+            for token in REASON_TOKENS
+        )
+
+    def test_both_halves_are_required_rows_so_both_can_fail_a_phase(
+            self, ngoreme_census):
+        for name in ("MoAffixProcess", "MoAffixAllomorph"):
+            row = measured_row(ngoreme_census, name)
+            assert row["gate_scope"] == "required"
+            assert row_passes(row) is False
+
+    def test_phase_5_is_unsatisfied_and_names_both_halves(
+            self, ngoreme_census):
+        result = evaluate_phase(ngoreme_census, 5)
+        assert result.satisfied is False
+        blob = " | ".join(result.failures)
+        assert "MoAffixProcess" in blob
+        assert "MoAffixAllomorph" in blob
+
+    def test_no_plus_13_allomorph_row_was_fabricated(
+            self, ngoreme_census, ejagham_census):
+        """tasks.md's `MoAffixAllomorph +13` is not on disk and was NOT
+        invented to satisfy the brief. On Ejagham the class is 130 -> 0; on
+        Ngoreme it is 146 -> 147. Neither is +13, and no source count of 130
+        can produce a destination of 143."""
+        ejagham = measured_row(ejagham_census, "MoAffixAllomorph")
+        assert ejagham["source_count"] == 130
+        assert ejagham["destination_count_total"] == 0
+        assert ejagham["difference"] == -130
+        assert ejagham["verdict_class"] == "SHORTFALL"
+
+        ngoreme = measured_row(ngoreme_census, "MoAffixAllomorph")
+        assert ngoreme["difference"] == 1
+        for row in (ejagham, ngoreme):
+            assert row["difference"] != 13
+            assert row["destination_count_total"] != 143
+
+
+# ---------------------------------------------------------------------------
+# FINDING 2 -- the capped exit 0. Documented, not treated as a pass.
+# ---------------------------------------------------------------------------
+
+class TestCappedExitZeroCoexistsWithFailingRows:
+    """Both ruined pairs report `CENSUS_ACCOUNTED` / exit 0.
+
+    That is 5.2's gross-basis cap behaving exactly as specified -- the real
+    baseline is count-only, so EVERY row is `baseline_gross`, and on that
+    basis a shortfall tally is advisory rather than evidence. It is pinned
+    here so the behaviour is DISCOVERED FROM A TEST rather than rediscovered
+    from a green release gate: the headline says success while 44-47 rows fail
+    and 7,357-74,157 units are unexplained. Recorded as T024b.
+
+    These are the tests that must NOT be read as "the transfer was fine"."""
+
+    @pytest.mark.parametrize("pair", sorted(MEASURED_CENSUS_SNAPSHOTS))
+    def test_the_run_verdict_is_capped_to_a_passing_token(self, pair):
+        artifact = load_measured_census(pair)
+        assert artifact["verdict"] == GROSS_BASIS_VERDICT_CAP
+        assert artifact["verdict"] == "CENSUS_ACCOUNTED"
+        assert artifact["exit_code"] == 0
+        assert recompute_verdict(artifact) == "CENSUS_ACCOUNTED"
+        assert is_passing_verdict(recompute_verdict(artifact)) is True
+        assert gate_artifact(artifact).passed is True
+        assert gate_artifact(artifact).exit_code == 0
+
+    @pytest.mark.parametrize(
+        "pair,failing,shortfall_rows,unexplained",
+        [("ngoreme", 46, 47, 74157), ("ejagham", 44, 46, 7357)],
+    )
+    def test_the_same_artifact_carries_dozens_of_failing_rows(
+            self, pair, failing, shortfall_rows, unexplained):
+        """The two halves of the surprise, asserted together on purpose.
+
+        `failing` is one or two fewer than `shortfall_rows` because
+        `LexRefType` and `PhBdryMarker` are `gate_scope: advisory` on both
+        pairs (CP-3: an advisory row cannot by itself fail the gate), while
+        Ngoreme's required SURPLUS row `MoAffixAllomorph` fails and is not a
+        shortfall row at all."""
+        artifact = load_measured_census(pair)
+        assert gate_artifact(artifact).exit_code == 0
+        assert len(failing_rows(artifact)) == failing
+        assert artifact["totals"]["classes_shortfall"] == shortfall_rows
+        assert artifact["totals"]["unexplained_shortfall"] == unexplained
+        assert "MoStemMsa" in {row["class"] for row in failing_rows(artifact)}
+        advisory = {row["class"] for row in artifact["classes"]
+                    if row["verdict_class"] == "SHORTFALL"
+                    and row["gate_scope"] != "required"}
+        assert advisory == {"LexRefType", "PhBdryMarker"}
+
+    @pytest.mark.parametrize(
+        "pair,shortfall,unexplained,matched,short_rows,advisory",
+        [("ngoreme", 75016, 74157, 24, 47, 9),
+         ("ejagham", 8216, 7357, 26, 46, 12)],
+    )
+    def test_the_measured_totals(self, pair, shortfall, unexplained, matched,
+                                 short_rows, advisory):
+        totals = load_measured_census(pair)["totals"]
+        assert totals["classes_reported"] == 75
+        assert totals["classes_matched"] == matched
+        assert totals["classes_shortfall"] == short_rows
+        assert totals["classes_not_evaluated"] == 3
+        assert totals["total_shortfall"] == shortfall
+        assert totals["unexplained_shortfall"] == unexplained
+        assert totals["advisory_shortfall"] == advisory
+
+    @pytest.mark.parametrize("pair,suppressed", [("ngoreme", 46),
+                                                ("ejagham", 44)])
+    def test_every_row_is_on_the_gross_basis_which_is_why_the_cap_applies(
+            self, pair, suppressed):
+        artifact = load_measured_census(pair)
+        bases = {row["starter_subtraction_basis"] for row in artifact["classes"]}
+        assert bases == {GROSS_SUBTRACTION_BASIS}
+        assert len(gross_basis_suppressions(artifact)) == suppressed
+
+    @pytest.mark.parametrize("pair", sorted(MEASURED_CENSUS_SNAPSHOTS))
+    def test_the_cap_is_audible_rather_than_silent(self, pair):
+        """T023c. An exit 0 that printed nothing about the cap would be the
+        worst of both worlds."""
+        artifact = load_measured_census(pair)
+        assert artifact["notes"], "a capped run must carry its cap notes"
+        headline = artifact["notes"][0]
+        assert "CAPPED at CENSUS_ACCOUNTED" in headline
+        assert "ADVISORY" in headline
+        assert "NOT a statement that nothing was lost" in headline
+        assert any(
+            "CAPPED at CENSUS_ACCOUNTED" in note
+            for note in gross_basis_cap_notes(artifact)
+        ), "the sentence must be regenerable from the basis, not only stored"
+
+    @pytest.mark.parametrize("pair", sorted(MEASURED_CENSUS_SNAPSHOTS))
+    def test_the_failing_evidence_is_reachable_through_phase(self, pair):
+        """The information exists; only the DEFAULT is wrong. `--phase` turns
+        the same artifact into a refusal."""
+        artifact = load_measured_census(pair)
+        assert gate_artifact(artifact).passed is True
+        for phase in (1, 2, 5):
+            outcome = gate_artifact(artifact, phase=phase)
+            assert outcome.passed is False, phase
+            assert outcome.phase is not None
+            assert outcome.phase.satisfied is False
+
+    @pytest.mark.parametrize("pair", sorted(MEASURED_CENSUS_SNAPSHOTS))
+    def test_phase_1_and_phase_5_name_mostemmsa_and_moaffixprocess(self, pair):
+        artifact = load_measured_census(pair)
+        phase_1 = evaluate_phase(artifact, 1)
+        phase_5 = evaluate_phase(artifact, 5)
+        assert phase_1.satisfied is False
+        assert phase_5.satisfied is False
+        assert any("MoStemMsa" in f for f in phase_1.failures)
+        assert any("MoStemMsa" in f for f in phase_5.failures)
+        assert any("MoAffixProcess" in f for f in phase_5.failures)
+
+    def test_the_cap_is_a_ceiling_on_tallies_not_on_severity(
+            self, ngoreme_census):
+        """Proof the exit 0 is the cap and not a blind instrument: add a
+        single error to the SAME artifact and it becomes CENSUS_ERROR."""
+        from copy import deepcopy
+
+        assert recompute_verdict(ngoreme_census) == "CENSUS_ACCOUNTED"
+        forged = deepcopy(ngoreme_census)
+        forged["errors"] = [{
+            "class": "MoStemMsa",
+            "message": "synthetic, to prove severity still escapes the cap",
+        }]
+        assert recompute_verdict(forged) == "CENSUS_ERROR"
+        assert exit_code_for(recompute_verdict(forged)) == 7
+
+    def test_a_baseline_matched_row_would_defeat_the_cap(self, ngoreme_census):
+        """And the fix is not a code change: supply a run report, the basis
+        stops being gross, and the 1949 becomes evidence rather than advice."""
+        from copy import deepcopy
+
+        forged = deepcopy(ngoreme_census)
+        for row in forged["classes"]:
+            if row["class"] == "MoStemMsa":
+                row["starter_subtraction_basis"] = "baseline_matched"
+        assert recompute_verdict(forged) == "UNEXPLAINED_SHORTFALL"
+        assert exit_code_for(recompute_verdict(forged)) == 1
+
+
+# ---------------------------------------------------------------------------
+# FINDING 1 -- the duplicate phonemes are INERT, and that is a T028 dependency
+# ---------------------------------------------------------------------------
+
+class TestDuplicatePhonemesAreInertUntilT028:
+    """21 duplicate phoneme names in the Ejagham destination (20 in Ngoreme),
+    and `DUPLICATE_IDENTITY` NEVER FIRES. `totals.duplicate_extra_objects`
+    reads 0.
+
+    Not a bug and not the cap: `PhPhoneme` is absent from 035's natural-key
+    roster (admitted: `WfiWordform`, `ReversalIndex`, `ReversalIndexEntry`), so
+    `duplicates.roster_admitted` is False and `duplicates_unaccounted()`
+    returns 0 BY DESIGN -- a duplicate name on an unadmitted class is advisory,
+    because homographs are legitimate content.
+
+    So the correct assertion is PHASE 1 UNSATISFIED, not `DUPLICATE_IDENTITY`.
+    `test_t028_has_not_yet_admitted_phphoneme_to_the_roster` is the tripwire
+    that makes the inertness stop reading as correctness once T028 lands."""
+
+    @pytest.mark.parametrize("pair,groups", [("ngoreme", 20),
+                                             ("ejagham", 21)])
+    def test_the_duplicates_are_measured_and_recorded(self, pair, groups):
+        row = measured_row(load_measured_census(pair), "PhPhoneme")
+        duplicates = row["duplicates"]
+        assert duplicates["groups"] == groups
+        assert duplicates["extra_objects"] == groups
+        assert len(duplicates["examples"]) == groups
+        assert all(example["count"] == 2
+                   for example in duplicates["examples"])
+        assert all(len(set(example["guids"])) == 2
+                   for example in duplicates["examples"])
+
+    @pytest.mark.parametrize("pair", sorted(MEASURED_CENSUS_SNAPSHOTS))
+    def test_duplicate_identity_does_not_fire_and_must_not_be_asserted(
+            self, pair):
+        artifact = load_measured_census(pair)
+        row = measured_row(artifact, "PhPhoneme")
+        assert row["duplicates"]["roster_admitted"] is False
+        assert census.duplicates_unaccounted(row) == 0
+        assert artifact["totals"]["duplicate_extra_objects"] == 0
+        assert recompute_verdict(artifact) != "DUPLICATE_IDENTITY"
+        assert row_passes(row) is True, (
+            "the phoneme row PASSES on its own conditions -- which is exactly "
+            "why the loss has to be caught somewhere else"
+        )
+
+    @pytest.mark.parametrize("pair,extra", [("ngoreme", 20), ("ejagham", 21)])
+    def test_phase_1_catches_it_with_the_sc_002_wording(self, pair, extra):
+        """`census.py`'s dedicated PhPhoneme check in `_phase_1`. Its wording
+        is the whole point: SC-002 exists because count arithmetic alone
+        cannot see a duplicated identity."""
+        result = evaluate_phase(load_measured_census(pair), 1)
+        assert result.satisfied is False
+        matching = [f for f in result.failures
+                    if "PhPhoneme" in f and "duplicates.extra_objects" in f]
+        assert len(matching) == 1, result.failures
+        failure = matching[0]
+        assert "duplicates.extra_objects is " + str(extra) in failure
+        assert "difference is 0" in failure
+        assert "baseline arithmetic alone would have passed this row" in failure
+        assert "SC-002" in failure
+
+    @pytest.mark.parametrize("pair,extra", [("ngoreme", 20), ("ejagham", 21)])
+    def test_the_inertness_is_roster_gating_not_a_broken_detector(
+            self, pair, extra):
+        """Admit the class on a COPY and the detector fires immediately, with
+        the right count and the right verdict. So nothing is broken: the
+        roster is simply not populated yet."""
+        from copy import deepcopy
+
+        artifact = deepcopy(load_measured_census(pair))
+        row = measured_row(artifact, "PhPhoneme")
+        row["duplicates"]["roster_admitted"] = True
+
+        assert census.duplicates_unaccounted(row) == extra
+        assert row_passes(row) is False
+        assert recompute_verdict(artifact) == "DUPLICATE_IDENTITY"
+        assert exit_code_for(recompute_verdict(artifact)) == 3
+        assert gate_artifact(artifact).passed is False
+
+    def test_t028_has_not_yet_admitted_phphoneme_to_the_roster(self):
+        """THE TRIPWIRE. This test FAILS THE MOMENT T028 lands, and that is
+        its job: the moment `PhPhoneme` is admitted, the two snapshots above
+        become stale (they were measured with `roster_admitted: false`) and
+        the duplicate assertions must be re-run and moved from "phase 1
+        unsatisfied" to `DUPLICATE_IDENTITY` / exit 3.
+
+        Without this, a future reader finds `duplicate_extra_objects: 0` and
+        reads DESIGNED INERTNESS as A CLEAN RESULT."""
+        roster = json.loads(
+            (_repo_root() / "specs" / "035-fullsweep-fidelity" / "contracts"
+             / "natural-key-identity-roster.json").read_text(encoding="utf-8")
+        )
+        admitted = tuple(entry["class"] for entry in roster["entries"])
+        assert admitted == (
+            "WfiWordform", "ReversalIndex", "ReversalIndexEntry"), (
+            "035's natural-key roster changed. If T028 landed, REGENERATE "
+            "tests/integration/_snapshots/census-038-*.json and move the "
+            "duplicate assertions in "
+            "TestDuplicatePhonemesAreInertUntilT028 from 'phase 1 "
+            "unsatisfied' to DUPLICATE_IDENTITY / exit 3. Do not simply "
+            "update this list."
+        )
+        assert "PhPhoneme" not in admitted
+
+    def test_the_038_proposal_exists_and_names_phphoneme(self):
+        """The other half of the T028 dependency: the extension document is
+        written, so the inertness is a SEQUENCING fact with an owner, not an
+        oversight nobody noticed."""
+        extension = json.loads(
+            (_repo_root() / "specs" / "038-transfer-fidelity-gaps"
+             / "contracts" / "natural-key-roster-extension.json"
+             ).read_text(encoding="utf-8")
+        )
+        proposed = [entry["class"]
+                    for entry in extension["proposed_entries"]]
+        assert "PhPhoneme" in proposed
+        assert extension["target_file"] == (
+            "specs/035-fullsweep-fidelity/contracts/"
+            "natural-key-identity-roster.json")
+
+    def test_ngoreme_has_20_groups_not_21_because_bh_is_a_distinct_key(self):
+        """The 20-vs-21 gap is the instrument being MORE right than the brief.
+        A writing-system-agnostic scan finds three `b` phonemes in `Ngoreme
+        Target`, but the third is `{en: "b", ngq: "bh"}` and `ngq` is the
+        default vernacular -- so its key is `bh`, not a duplicate.
+        `census._ws_handle_for`'s no-fallback rule is what stops a match being
+        fabricated out of the English alternative."""
+        ngoreme = measured_row(load_measured_census("ngoreme"), "PhPhoneme")
+        ejagham = measured_row(load_measured_census("ejagham"), "PhPhoneme")
+
+        for row in (ngoreme, ejagham):
+            assert row["duplicates"]["key_definition"] == (
+                "Name (default vernacular alt), exact and case-sensitive")
+
+        keys = [example["key"] for example in ngoreme["duplicates"]["examples"]]
+        assert keys.count("b") == 1
+        assert "bh" not in keys
+        assert len(keys) == 20 == len(set(keys))
+        assert len(ejagham["duplicates"]["examples"]) == 21
+
+
+# ---------------------------------------------------------------------------
+# A locked project is a verdict, not a traceback (hermetic)
+# ---------------------------------------------------------------------------
+
+class TestALockedProjectIsACensusError:
+    """During T024 both target projects were open in FieldWorks and the first
+    census attempt CORRECTLY refused with `FP_FileLockedError`. Reading a
+    half-written `.fwdata` and reporting counts from it would be far worse
+    than failing. Pinned without a live project by raising at the one seam
+    that opens one."""
+
+    def test_a_locked_project_is_census_error_exit_7(self, tmp_path,
+                                                     monkeypatch, capsys):
+        class FP_FileLockedError(Exception):  # noqa: N801 -- flexicon's name
+            pass
+
+        def refuse(project_name):
+            raise FP_FileLockedError(
+                "The FieldWorks project is locked: " + project_name)
+
+        monkeypatch.setattr(census_cli, "_read_only_handle", refuse)
+        code = census_cli.main([
+            "run",
+            "--source", "Ngoreme FLEx",
+            "--destination", "Ngoreme Target",
+            "--out", str(tmp_path / "census.json"),
+        ])
+        assert code == exit_code_for("CENSUS_ERROR") == 7
+        combined = capsys.readouterr()
+        assert "FP_FileLockedError" in combined.out + combined.err
+
+    def test_the_locked_refusal_is_not_a_passing_verdict(self):
+        assert is_passing_verdict("CENSUS_ERROR") is False
+        assert exit_code_for("CENSUS_ERROR") == 7
+
+
+# ---------------------------------------------------------------------------
+# The one LIVE test: the corrected premise no artifact can settle
+# ---------------------------------------------------------------------------
+
+def _live_projects_root() -> Path:
+    return Path("C:/ProgramData/SIL/FieldWorks/Projects")
+
+
+def _live_project_or_skip(name: str) -> Path:
+    root = _live_projects_root()
+    fwdata = root / name / (name + ".fwdata")
+    if not fwdata.is_file():
+        pytest.skip("live project not on this machine: " + str(fwdata))
+    if (root / name / (name + ".fwdata.lock")).exists():
+        pytest.skip(
+            "live project " + repr(name) + " is locked by FieldWorks; the "
+            "census correctly refuses a locked project (FP_FileLockedError -> "
+            "CENSUS_ERROR exit 7), so this test skips rather than measuring a "
+            "half-written file"
+        )
+    return fwdata
+
+
+class TestCorrectedPremiseNgoremeFlexIsTheSource:
+    """tasks.md named `Ngoreme` as the 1949-object source. It is not:
+    `Ngoreme` holds 1945 MoStemMsa / 37 PhPhoneme, and `Ngoreme FLEx` holds
+    exactly 1949 / 41. The snapshots pin `Ngoreme FLEx`; only a live open can
+    pin that `Ngoreme` is a DIFFERENT project, which is what stops a future
+    reader "correcting" the name back."""
+
+    @pytest.mark.integration
+    def test_ngoreme_flex_holds_1949_and_ngoreme_holds_1945(self):
+        """Read-only, both projects, digests checked before open and after
+        close. Neither is a transfer target, so nothing here can write."""
+        import hashlib
+
+        pytest.importorskip(
+            "flexicon", reason="the FlexTools host is not available")
+
+        expected = {"Ngoreme FLEx": (1949, 41), "Ngoreme": (1945, 37)}
+        paths = {name: _live_project_or_skip(name) for name in expected}
+
+        def digest(path: Path) -> str:
+            return hashlib.sha256(path.read_bytes()).hexdigest()
+
+        before = {name: digest(path) for name, path in paths.items()}
+        assert before["Ngoreme FLEx"] == MEASURED_PROJECT_DIGESTS[
+            "Ngoreme FLEx"], (
+            "`Ngoreme FLEx` has changed since T024 measured it; the snapshot "
+            "counts below are no longer the counts of this file"
+        )
+
+        measured = {}
+        for name in expected:
+            handle = census_cli._read_only_handle(name)  # noqa: SLF001
+            try:
+                counts = census.count_classes(
+                    handle, ("MoStemMsa", "PhPhoneme"))
+                measured[name] = (counts.count_for("MoStemMsa"),
+                                  counts.count_for("PhPhoneme"))
+            finally:
+                handle.CloseProject()
+
+        assert measured == expected, (
+            "the corrected premise no longer holds: measured " + repr(measured)
+        )
+        after = {name: digest(path) for name, path in paths.items()}
+        assert after == before, "a read-only census changed a .fwdata"
+
+        snapshot = load_measured_census("ngoreme")
+        assert measured["Ngoreme FLEx"] == (
+            measured_row(snapshot, "MoStemMsa")["source_count"],
+            measured_row(snapshot, "PhPhoneme")["source_count"],
+        )
