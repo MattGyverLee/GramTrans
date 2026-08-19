@@ -180,6 +180,45 @@ def _ws_handles_for(handle) -> dict:
     return _matcher.ws_handles_for(handle)
 
 
+#: The LCM class name for a `GrammarCategory`, where the correspondence is
+#: UNAMBIGUOUS. `MatchBasisRecord.object_class` must be non-empty, and it is
+#: the field `report.py` groups matches by, so a wrong or guessed class name is
+#: worse than no record at all: it would put a match in another class's row.
+#:
+#: Only one-to-one categories appear here, and the omissions are deliberate:
+#:
+#: * `ALLOMORPH` covers both `MoStemAllomorph` and `MoAffixAllomorph`;
+#: * `MSA` covers the four `Mo*Msa` subclasses;
+#: * `NATURAL_CLASSES` covers `PhNCSegments` and `PhNCFeatures`, which 038's
+#:   own roster keeps strictly apart -- they must never match each other, so
+#:   collapsing them to one name here would undo that at the report layer;
+#: * `VARIANT_TYPES` covers `LexEntryType` and `LexEntryInflType`, the same
+#:   problem again;
+#: * `INFLECTION_FEATURES` covers `FsClosedFeature` and `FsComplexFeature`.
+#:
+#: A category absent from this map yields NO record rather than a guessed one.
+#: A caller that knows better passes `object_class=` explicitly.
+_LCM_CLASS_FOR_CATEGORY = {
+    GrammarCategory.POS: "PartOfSpeech",
+    GrammarCategory.GRAM_CATEGORIES: "PartOfSpeech",
+    GrammarCategory.SLOTS: "MoInflAffixSlot",
+    GrammarCategory.AFFIX_TEMPLATES: "MoInflAffixTemplate",
+    GrammarCategory.INFLECTION_CLASSES: "MoInflClass",
+    GrammarCategory.PH_ENVIRONMENT: "PhEnvironment",
+    GrammarCategory.PHONEMES: "PhPhoneme",
+    GrammarCategory.STEM_NAMES: "MoStemName",
+    GrammarCategory.SEMANTIC_DOMAINS: "CmSemanticDomain",
+    GrammarCategory.STRATA: "MoStratum",
+    GrammarCategory.FEATURE_STRUCT_TYPES: "FsFeatStrucType",
+    GrammarCategory.PHON_FEAT_TYPES: "FsFeatStrucType",
+}
+
+
+def lcm_class_for_category(category) -> str:
+    """The LCM class name for a category, or "" when it is not one-to-one."""
+    return _LCM_CLASS_FOR_CATEGORY.get(category, "")
+
+
 def match_basis_for_present_by_guid(object_class: str, source_guid: str,
                                     target_guid: str):
     """The `MatchBasisRecord` for a caller that has ALREADY proven a GUID hit.
@@ -1474,12 +1513,18 @@ def _emit_present_outcome(
       `PlannedOverwrite` instead so the executor updates the existing
       target object's syncable properties from source.
 
-    `object_class` (038 T031) attaches the `MatchBasisRecord` the run report
-    needs to tell "found by GUID" from "found by name because the GUID was
-    absent". It is attached ONLY when the caller names the class AND the match
-    really was by GUID -- `match_via="guid"` or `"identity_remap"`, both of
-    which are `MatchBasis.IDENTITY` (FR-001 treats a previous run's remap entry
-    as identity, not as a substitution).
+    A `MatchBasisRecord` (038 T031) is attached so the run report can tell
+    "found by GUID" from "found by name because the GUID was absent". The class
+    is derived from `category` through `lcm_class_for_category`, and
+    `object_class=` overrides that for a caller that knows better. A category
+    whose LCM class is NOT one-to-one yields no record rather than a guessed
+    one -- `object_class` is the field the report groups by, so a wrong name
+    would file the match under another class.
+
+    The record is attached ONLY when the match really was by GUID --
+    `match_via="guid"` or `"identity_remap"`, both of which are
+    `MatchBasis.IDENTITY` (FR-001 treats a previous run's remap entry as
+    identity, not as a substitution).
 
     It is deliberately NOT attached for `match_via="fingerprint"`. A
     fingerprint match is neither identity nor a roster-admitted natural key,
@@ -1490,10 +1535,16 @@ def _emit_present_outcome(
     honest answer, and `report.py` already accounts for it under
     `matches_unattributed`.
     """
+    # Derived from the category rather than demanded from the caller. The
+    # parameter came first and NOTHING passed it, so the record was never
+    # produced -- T036 found that while proving its own no-record path, which
+    # is a good illustration of why an opt-in that every caller must remember
+    # is the wrong shape for an accounting record.
+    resolved_class = object_class or lcm_class_for_category(category)
     match_basis = None
-    if object_class and match_via in ("guid", "identity_remap"):
+    if resolved_class and match_via in ("guid", "identity_remap"):
         match_basis = match_basis_for_present_by_guid(
-            object_class, src_guid, target_guid,
+            resolved_class, src_guid, target_guid,
         )
     if selection.enable_overwrite and overwrites is not None:
         overwrites.append(PlannedOverwrite(

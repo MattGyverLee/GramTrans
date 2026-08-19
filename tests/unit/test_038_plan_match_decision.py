@@ -349,16 +349,15 @@ def test_present_by_guid_record_is_an_identity_record():
     assert record.key_value == ""
 
 
-def _emit(match_via, object_class):
+def _emit(match_via, object_class, category=GrammarCategory.GRAM_CATEGORIES):
     overwrites = []
     preview_mod._emit_present_outcome(
-        GrammarCategory.GRAM_CATEGORIES,
+        category,
         "guid-src",
         "guid-tgt",
         "summary",
         "skip detail",
-        Selection(categories={GrammarCategory.GRAM_CATEGORIES: True},
-                  enable_overwrite=True),
+        Selection(categories={category: True}, enable_overwrite=True),
         [],
         overwrites,
         match_via=match_via,
@@ -383,7 +382,41 @@ def test_a_fingerprint_match_carries_no_record():
     assert _emit("fingerprint", "PartOfSpeech").match_basis is None
 
 
-def test_no_record_without_a_named_class():
-    """`MatchBasisRecord.object_class` must be non-empty, so a caller that
-    cannot name the class gets no record rather than an invented one."""
-    assert _emit("guid", "").match_basis is None
+def test_the_class_is_derived_from_the_category_not_demanded_of_the_caller():
+    """The `object_class=` parameter came first and NOTHING passed it, so the
+    record was never actually produced -- an opt-in every caller must remember
+    is the wrong shape for an accounting record. The class is now derived."""
+    overwrite = _emit("guid", "", GrammarCategory.GRAM_CATEGORIES)
+    assert overwrite.match_basis is not None
+    assert overwrite.match_basis.object_class == "PartOfSpeech"
+    assert preview_mod.lcm_class_for_category(GrammarCategory.SLOTS) == (
+        "MoInflAffixSlot"
+    )
+
+
+@pytest.mark.parametrize("category", [
+    GrammarCategory.ALLOMORPH,      # MoStemAllomorph vs MoAffixAllomorph
+    GrammarCategory.MSA,            # four Mo*Msa subclasses
+    GrammarCategory.NATURAL_CLASSES,   # PhNCSegments vs PhNCFeatures
+    GrammarCategory.VARIANT_TYPES,     # LexEntryType vs LexEntryInflType
+])
+def test_a_category_whose_lcm_class_is_not_one_to_one_yields_no_record(
+    category,
+):
+    """`object_class` is the field the report GROUPS BY, so a guessed name is
+    worse than no record: it files the match under another class's row.
+
+    `NATURAL_CLASSES` and `VARIANT_TYPES` are the sharp cases -- 038's own
+    roster keeps `PhNCSegments`/`PhNCFeatures` and
+    `LexEntryType`/`LexEntryInflType` strictly apart and forbids them matching
+    each other, so collapsing either pair to one name here would undo that at
+    the report layer.
+    """
+    assert preview_mod.lcm_class_for_category(category) == ""
+    assert _emit("guid", "", category).match_basis is None
+
+
+def test_an_explicit_object_class_overrides_the_derivation():
+    """A caller that knows which subclass it is holding says so."""
+    overwrite = _emit("guid", "MoAffixAllomorph", GrammarCategory.ALLOMORPH)
+    assert overwrite.match_basis.object_class == "MoAffixAllomorph"
