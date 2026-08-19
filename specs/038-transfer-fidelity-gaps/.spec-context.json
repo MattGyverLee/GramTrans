@@ -94,6 +94,62 @@
       "kind": "complete",
       "by": "ai",
       "at": "2026-08-19T03:34:16.973Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T007",
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-19T03:38:31.070Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T008",
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-19T03:44:52.926Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T009",
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-19T03:56:15.570Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T010",
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-19T03:56:15.803Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T011",
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-19T04:02:26.818Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T012",
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-19T04:09:05.719Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T013",
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-19T04:09:05.957Z"
     }
   ],
   "decisions": [
@@ -159,6 +215,30 @@
         "tests/integration hangs after Windows access violation in flexicon FLExInit.py:64 via the live flex fixture; 3 runs killed; NOT usable as a gate",
         "a full-suite run inflates the same 27 unit failures to 104 via cross-test pollution once live-FLEx tests run in-process - only same-selection comparisons are meaningful"
       ]
+    },
+    {
+      "what": "T010 closure registry ships empty and is inert by construction",
+      "command": "throwaway proof + python -m pytest -q tests/unit",
+      "result": "PASS - CLOSURE_EDGES_VERIFIED empty on import and still empty at rest; callable returns () for all 23 leaf categories; closure.walk with the empty registry is a no-op; a registered producer IS consulted via the registry= override; an entry with empty verified_by raises. tests/unit 27 failed/2568 passed, baseline unchanged.",
+      "warnings": [
+        "research.md:153 said 24 producers; the true count is 23 on both main and the branch, and research.md contradicted itself (its own R3 Alternatives paragraph already said 23). Corrected on main."
+      ]
+    },
+    {
+      "what": "A run with no 038 data produces a byte-identical snapshot to pre-038 main",
+      "command": "canonical bare RunReport -> to_snapshot_json, rendered under both D:/.../GramTrans (main b4fcd29) and the 038 worktree, then diffed",
+      "result": "PASS - diff empty, byte-identical.",
+      "warnings": [
+        "tests/integration/test_full_workflow_e2e.py, the golden-equality test this property was designed to protect, is SKIPPED in this environment - so it is NOT currently guarding the claim. The direct diff above is what verifies it."
+      ]
+    },
+    {
+      "what": "Phase 2 checkpoint -- foundational types land with no behaviour change, and the FR-018 gate is a real gate",
+      "command": "python -m pytest -q tests/unit  (plus a deliberate sabotage of the FR-018 gate to confirm red-then-green)",
+      "result": "PASS - 27 failed / 2621 passed. The 27 are the unchanged pre-038 baseline from main; passes rose 2568->2621, exactly the 53 tests added. Sabotaging the gate produced DID NOT RAISE on test_unverified_edge_raises; restoring it returned 53/53.",
+      "warnings": [
+        "The closure registry ships EMPTY, so every closure code path added in T010/T012 is exercised only by tests using a registry= override. That is intended (emptiness is the safety property) but means live closure behaviour remains unproven until a first edge is registered with real evidence."
+      ]
     }
   ],
   "concerns": [
@@ -193,6 +273,14 @@
     },
     {
       "note": "CORRECTION to the earlier concern on this list that blamed concurrency. The access violation in flexicon FLExInit.py:64 (via the live flex fixture at test_034_standalone_preview_live.py:114) reproduces on a SOLO run with nothing else in flight, so concurrency is not the established cause. What is established: tests/integration emits that native fault and then usually HANGS (~23s CPU over 40+ min = blocked, not slow); three runs had to be killed; and a run killed mid-flight leaves a summary-less output file that grep scores as 0 failures, which is a trap - never treat a missing summary line as a pass. Only tests/unit (16s, no live FLEx) is a usable regression gate. Aggravating but unproven factor: 6 flextoolsmcp servers held live COM handles throughout.",
+      "step": "implement"
+    },
+    {
+      "note": "BLOCKING for T028/Phase 4. data-model.md section 3 makes key_fn_id a REQUIRED roster field (it names the pure key-extraction function that makes a row executable) and NaturalKeyRosterEntry enforces it non-empty. But NONE of the six entries in specs/038-transfer-fidelity-gaps/contracts/natural-key-roster-extension.json carries key_fn_id or scope_fn_id, and neither do 035s three existing entries. Measured live via the T009 accessor: 0 of 3 current roster entries project successfully; all 3 are skipped for lacking key_fn_id. If T028 appends the six proposed entries verbatim, all six project to zero too and Phase 4 natural-key matching silently does NOTHING -- the exact silent-failure class this feature exists to remove. T028 must add key_fn_id/scope_fn_id during the merge, and the values cannot be chosen until the Phase 4 key-extraction functions exist. Also note the proposal nests rows under proposed_entries, not entries.",
+      "step": "implement"
+    },
+    {
+      "note": "Roster JSON shape differs from the briefing in two ways the T009 accessor now tolerates: (1) the class-name key is \"class\", not \"object_class\" (data-model.md documents this correctly; it was my briefing that was wrong); (2) uniqueness_caveat is a dict on the ReversalIndexEntry row while NaturalKeyRosterEntry types it Optional[str], so the projection renders non-str values as stable sorted JSON rather than rejecting an otherwise-valid row on a shape difference alone.",
       "step": "implement"
     }
   ],
@@ -393,7 +481,7 @@
       "summary": "85 tasks in 9 phases (Setup, Foundational, then 6 story phases ordered by verifiability -- US2 census first as the acceptance instrument, then US1, US4 || US5a, US3, US5b -- plus Polish); waves serialized on categories.py and models.py; 2 hard external gates (035 roster append, 037 landing)"
     }
   },
-  "currentTask": "T006",
+  "currentTask": "T013",
   "task_summaries": {
     "T001": {
       "status": "DONE",
@@ -437,6 +525,56 @@
       "did": "Baseline established on rebased branch fa47bdd: tests/unit failure sets are BYTE-IDENTICAL to main (27 failed both sides), branch passes 2568 vs main 2559 (+9 from 038-affix new tests) -- merge introduced zero regressions. Baseline is stable but NOT green; T006's green premise is unachievable. tests/integration hangs after a native access violation in FLExInitialize and cannot serve as a gate.",
       "files": [
         "specs/038-transfer-fidelity-gaps/journal/T006-baseline.md"
+      ]
+    },
+    "T007": {
+      "status": "DONE",
+      "did": "Added MatchBasis enum (IDENTITY/NATURAL_KEY/NONE), MatchBasisRecord (frozen, with hard __post_init__ invariants: target_guid empty IFF basis NONE both directions, NATURAL_KEY requires key_expression+key_value, candidate_count>=0) and NaturalKeyRosterEntry (roster projection incl. 038's key_fn_id/scope_fn_id). Extended SkipReason with NOT_REPRODUCIBLE and DEPENDENCY_DESELECTED, and documented the defect-G3 narrowing of ALREADY_PRESENT_BY_GUID to post-field-identity-comparison only. Verified all 6 invalid states raise; tests/unit unchanged at 27 failed/2568 passed",
+      "files": [
+        "src/gramtrans/Lib/models.py"
+      ]
+    },
+    "T008": {
+      "status": "DONE",
+      "did": "Extended the plan/report carriers and added the element types they need: DependencyKind, ClosureEdge (raises unless verified edges name their evidence), IncompletenessRecord, EnrichedCollection, EnrichmentRecord (+is_empty), ProcessContextSpec/ProcessOutputSpec/ProcessRuleTransferRecord (raises on unexplained non-reproduction). PlannedAction.match_basis; PlannedOverwrite gains natural_key match_via, match_basis, enrichment, and a new __post_init__ forcing write_mode=merge for enrichments (FR-021); RunPlan +4 tuples; CategoryReport +identity_substitution/enriched/not_reproducible; RunReport +4 tuples +census forward-ref, 037-style derived properties (identity_substituted, rules_not_reproduced, has_incomplete_items), and the accounting invariant extended so enriched reconciles with len(enrichments) and not_reproducible with the count of Skip(NOT_REPRODUCIBLE). 22/22 invariant checks pass; tests/unit unchanged at 27 failed/2568 passed",
+      "files": [
+        "src/gramtrans/Lib/models.py"
+      ]
+    },
+    "T009": {
+      "status": "DONE",
+      "did": "Added the single roster accessor in matcher.py: natural_key_roster_entry_for() returns None for no-natural-key-basis (normal path, caller degrades to GUID-only), require_natural_key_roster_entry() raises NaturalKeyRosterHarnessError naming the class when an off-roster class reaches the matching step. Missing file / malformed JSON / unprojectable row all degrade to an empty roster with a warning. Nothing hard-coded; the file is the sole source of truth. Measured: 0 of 3 live roster entries project (all 3 lack key_fn_id) -- so the engine is GUID-only everywhere today, which is exactly R1's land-green-before-035-appends. 10/10 proof cases pass; tests/unit unchanged 27/2568",
+      "files": [
+        "src/gramtrans/Lib/matcher.py"
+      ]
+    },
+    "T010": {
+      "status": "DONE",
+      "did": "Added CLOSURE_EDGES_VERIFIED (ships EMPTY) plus closure_dependencies_for(), the closure.DepFn handed to closure.walk: it builds its category->producer map ONLY from the registry, so an unregistered producer is never invoked -- there is deliberately no fall-through to LEAF_CATEGORIES dependencies. Registry validation mirrors ClosureEdge and raises on an empty verified_by (FR-018). Not wired into build_run_plan (T012 owns that). Amended 037's existing RC-2 note on natural_classes_dependencies to say it is unconsumed BECAUSE it is unregistered. Producer count adjudicated: the real number is 23, not research.md's 24",
+      "files": [
+        "src/gramtrans/Lib/categories.py",
+        "specs/038-transfer-fidelity-gaps/research.md"
+      ]
+    },
+    "T011": {
+      "status": "DONE",
+      "did": "Added the 038 report surfaces in report.py: machine-readable block in _to_snapshot_json, human-readable _render_038_lines in render_text_summary, plus _build_from_plan threading the four plan buckets and tallying identity_substitution/enriched/not_reproducible. Empty buckets are OMITTED so a no-038 snapshot stays byte-identical (independently verified by diffing a canonical bare report through main and the branch). Console truncates detail lists at 20 rows and always states the omitted count from the same tuple it sliced; the JSON artifact never truncates. Identity SUBSTITUTION renders as its own section, never folded into ordinary match counts. 34/34 checks pass; tests/unit unchanged 27/2568",
+      "files": [
+        "src/gramtrans/Lib/report.py"
+      ]
+    },
+    "T012": {
+      "status": "DONE",
+      "did": "Wired build_run_plan to the closure walk: seeds are the plan's actions+overwrites (preserving closure.walk's seed semantics), then walk -> topological -> ClosureEdge materialisation into RunPlan.closure_edges. The FR-018 gate RAISES on any edge with verified False rather than planning from it; also raises on an edge no registry row authorises and on an ambiguous registry (two kinds claiming one category pair). Short-circuits entirely while CLOSURE_EDGES_VERIFIED is empty -- no-op by construction",
+      "files": [
+        "src/gramtrans/Lib/preview.py"
+      ]
+    },
+    "T013": {
+      "status": "DONE",
+      "did": "Added 53 foundational unit tests covering every new dataclass invariant, the roster accessor's degrade-vs-raise split, the empty registry's inertness across all GrammarCategory members, and the build_run_plan FR-018 gate. Includes a test encoding the T009 finding that a roster row without key_fn_id is not executable. RED-THEN-GREEN VERIFIED: disabling the FR-018 gate makes test_unverified_edge_raises fail with DID NOT RAISE, and restoring it passes",
+      "files": [
+        "tests/unit/test_038_foundational.py"
       ]
     }
   }

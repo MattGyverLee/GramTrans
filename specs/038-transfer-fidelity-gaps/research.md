@@ -150,12 +150,16 @@ to FR-017 reach surfaces that already exist for the verb vertical: `pulled_in_by
 `BARE_BONES_MISSING_CLOSURE`; and `Selection.scope_for`'s existing `CategoryScope` mapping.
 
 **Rationale.** FR-018 requires each relationship be verified before it influences a plan. All
-24 producers are unverified by construction, so enable-all activates 24 unaudited edge sets at
+23 producers are unverified by construction, so enable-all activates 23 unaudited edge sets at
 once -- US3's own stated widest-regression risk -- and one global flag cannot express "this edge
 verified, that one not", so it cannot satisfy FR-018 at all.
 
 **Alternatives considered.** One global `include_closure` switch -- rejected per FR-018, and it
-makes a regression un-bisectable across 23 leaf categories. Consuming dependencies in
+makes a regression un-bisectable across 23 leaf categories. (Count corrected from 24
+to 23 during T010: `grep -cE "^def [a-z_]+_dependencies\(" categories.py` returns 23 on
+both `main` and the 038 branch, and `LEAF_CATEGORIES` carries exactly 23 `"dependencies"`
+entries -- one per producer. The 23 in this very sentence was already the correct figure,
+so the paragraph above contradicted itself.) Consuming dependencies in
 `transfer.execute` (`transfer.py:157`) -- rejected by Principle III's plan-builder /
 plan-executor split: the preview would stop showing what the transfer will do. Deleting
 `closure.py` -- rejected, `topological` already handles the DAG and cycle cases.
