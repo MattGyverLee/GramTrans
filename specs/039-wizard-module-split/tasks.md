@@ -244,14 +244,72 @@ test pins the changed tristate behaviour.
 
 **Wave 2 — independent (four different validation surfaces):**
 
-- [ ] **T049** [P] **SC-006 — flat import mode**, the FlexTools and frozen-bundle path that pytest never exercises: `python -c "import site,os; d=r'src/gramtrans/Lib'; site.addsitedir(d); site.addsitedir(os.path.join(d,'ui')); import selection_wizard as sw; print(sw.SelectionWizard, len([n for n in dir(sw) if n.startswith('_Page')]))"` — the wizard must import **and construct**, not merely import · flat-mode smoke
-- [ ] **T050** [P] **SC-008 — size budget**: `wc -l src/gramtrans/Lib/ui/*.py`; no module exceeds 1750 L (FR-003) · `src/gramtrans/Lib/ui/`
-- [ ] **T051** [P] **SC-001 … SC-005 final sweep** on the complete branch: `check_suite_baseline.py`, `pytest tests/unit/test_034_flextools_contract.py -q` standalone, `check_shared_exceptions.py --base main`, `build/hiddenimports.py`, `ruff check src/gramtrans/Lib/ui/`. Compare **full-suite** runs only — subset runs give different results because of the `sys.modules` Qt swap · CI scripts
-- [ ] **T052** [P] Confirm commits 1–3 read as pure relocations under `git diff -M --find-copies-harder` (moved hunks rendered as renames wherever possible) · git history
+- [X] **T049** [P] **SC-006 — flat import mode**, the FlexTools and frozen-bundle path that pytest never exercises: `python -c "import site,os; d=r'src/gramtrans/Lib'; site.addsitedir(d); site.addsitedir(os.path.join(d,'ui')); import selection_wizard as sw; print(sw.SelectionWizard, len([n for n in dir(sw) if n.startswith('_Page')]))"` — the wizard must import **and construct**, not merely import · flat-mode smoke
+- [X] **T050** [P] **SC-008 — size budget**: `wc -l src/gramtrans/Lib/ui/*.py`; no module exceeds 1750 L (FR-003) · `src/gramtrans/Lib/ui/`
+- [X] **T051** [P] **SC-001 … SC-005 final sweep** on the complete branch: `check_suite_baseline.py`, `pytest tests/unit/test_034_flextools_contract.py -q` standalone, `check_shared_exceptions.py --base main`, `build/hiddenimports.py`, `ruff check src/gramtrans/Lib/ui/`. Compare **full-suite** runs only — subset runs give different results because of the `sys.modules` Qt swap · CI scripts
+- [X] **T052** [P] Confirm commits 1–3 read as pure relocations under `git diff -M --find-copies-harder` (moved hunks rendered as renames wherever possible) · git history
+
+### Polish results (measured 2026-08-19)
+
+**T049 / SC-006 — flat import mode. Passes, but only after a fix outside the
+split.** `ws_font_delegate.py` was the ONE module in `Lib/ui/` with an unguarded
+`from ..ws_fonts import ...`, and `selection_wizard.py` imports it in **both**
+branches of its own guard — so a flat load of the whole wizard failed with
+"attempted relative import with no known parent package". **Reproduced on `main`
+first**, so pre-existing rather than caused by the split; fixed here because
+SC-006 is this feature's own criterion, and enumerated as exception-table row 22.
+Flat mode now imports **and constructs**: 14 page classes, 12 flow pages, all 10
+`wizard_*` modules loaded with `__package__ == ''`.
+
+**T050 / SC-008 — size budget.** Largest module is the facade at 1699 L; then
+`wizard_pages_blocks` 1317, `theme` 1051 (pre-existing), `wizard_pages_pickers`
+877, `wizard_pages_skeleton` 829. Nothing over 1750. `Lib/ui/` total 11368 L
+across 25 files, from 10802 L across 15 — the +566 is module docstrings and
+eleven import headers, against −520 of deleted duplication.
+
+**T051 / SC-001…SC-005 — final sweep, all green.** SC-001 `check_suite_baseline.py`
+PASS (27 known failures, 0 new). SC-002 `test_034_flextools_contract.py` — one
+failure, `test_the_finish_page_takes_its_subtitle_from_the_gate`, **identical on
+`main`** (a `stats_panel.py:111` RuntimeError); 66 pass vs 56 on `main`, because
+the contract test auto-discovers files and the 10 new modules add FR-016
+import-direction cases that all pass. SC-003 PASS (13 shared-code changes, all
+enumerated). SC-004 PASS. SC-005 ruff over `Lib/ui/` is **4 errors better than
+`main`** and worse in no category: B007 2→1 (a deleted duplicate), F401 9→8
+(`MERGE_KEEP`), SIM222 1→0 and UP028 1→0 — **ruff had been reporting both halves
+of defect 2 all along**, unread among 138 other pre-existing errors in that
+directory.
+
+**T052 — diff shape.** Commits 1–2 read as relocations (811 ins / 497 del; 5222 /
+4717); commit 3 is net −267. Git renders the new modules as `create`, not
+`rename`, and cannot do otherwise: rename detection pairs whole files and the
+facade keeps its bulk, so a partial extraction has no pair to find. Verbatim
+relocation is instead proved mechanically — all 40 top-level definitions compare
+equal under `ast.dump` against `main`, none lost, none duplicated.
+
+**T053 / SC-007 — live walk against read-only `Ejagham Mini`, Preview only.**
+Automated as `tests/integration/harness/sc007_live_wizard_walk.py` so it is
+repeatable. All green: header installed as **row 0** of its own layout on 12/12
+pages; splitters hold `[514, 342]` against minimums `(360, 260)` at a 900 px
+window on all 8 tree-and-preview pages; block-page tristate correct at empty /
+partial / full on all four Model-B pages against real inventory (custom fields 2
+rows, phonology 41, entry types 19, and **rules legitimately empty in this
+project → unchecked AND disabled**, the Acceptance 1.3 edge case); no title
+states an `of N` total; no Move executed.
+
+> **One part of SC-007 is not verifiable this way, and is not claimed.**
+> Consecutive step numbering across a *traversal* needs a bound target — step 1
+> gates Next on `_PageProjects.isComplete()` → `self._target_ready`, and
+> `api.bind_target` opens the target writeEnabled even for a Preview. So a
+> forward walk is unreachable from a target-free Preview-only harness, which is
+> the wizard behaving correctly. Numbering is covered by
+> `test_036_wizard_flow_numbering.py` (37 tests, no live project needed). What
+> also remains open is the genuinely visual half — whether the window *looks*
+> right — which needs a person at a screen; the harness covers the object-level
+> facts underneath it.
 
 **⟶ Wait for Wave 2 to finish, then:**
 
-- [ ] **T053** **SC-007 — live smoke, last.** A refactor that keeps every test green can still break the window. Launch the real wizard with `run_gui_harness.py` and walk all 12 pages against the read-only `Ejagham Mini` source, confirming: step numbering is consecutive with **no** `of N` total; each page's header renders with the theme strip following it; tree/preview splitters hold at a 900 px window; block-page tristate is correct at empty / partial / full. **Preview only — no Move.** Never point this at `Esperanto`, and never at `Ngoreme Target` or `Ejagham W Target`, which STATUS.md records as freshly verified clean; if a Move is wanted, restore the throwaway `Target` first via `tests/integration/harness/restore.py` · `run_gui_harness.py`
+- [X] **T053** **SC-007 — live smoke, last.** A refactor that keeps every test green can still break the window. Launch the real wizard with `run_gui_harness.py` and walk all 12 pages against the read-only `Ejagham Mini` source, confirming: step numbering is consecutive with **no** `of N` total; each page's header renders with the theme strip following it; tree/preview splitters hold at a 900 px window; block-page tristate is correct at empty / partial / full. **Preview only — no Move.** Never point this at `Esperanto`, and never at `Ngoreme Target` or `Ejagham W Target`, which STATUS.md records as freshly verified clean; if a Move is wanted, restore the throwaway `Target` first via `tests/integration/harness/restore.py` · `run_gui_harness.py`
 - [ ] **T054** Merge `039-wizard-split` back to `main` and remove the worktree · git
 
 ---
