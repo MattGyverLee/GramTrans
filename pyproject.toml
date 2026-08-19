@@ -27,7 +27,24 @@ dependencies = [
     # (Superseded floor >=4.1.1: earliest with PhonFeatureOperations
     # GetSyncableProperties/ApplySyncableProperties; below it phonological-
     # feature transfer raised NotImplementedError, mbugwe Bug 3.)
-    "pyflexicon>=4.4.1",
+    # >=4.5.0 (current floor, feature 037): earliest with
+    # NaturalClassOperations.GetSyncableProperties/ApplySyncableProperties
+    # FeaturesOA wiring (FeaturesGuid + Features specs, rewired against the
+    # target's PhFeatureSystemOA by GUID -- flexicon issue #222). Below this
+    # floor, GetSyncableProperties for a natural class returns only
+    # Name/Abbreviation/Description/PhonemeGuids -- it never touches
+    # FeaturesOA -- so every feature-based natural class (IPhNCFeatures)
+    # transfers as an empty shell: correct Name/GUID, FeaturesOA silently
+    # null. Measured against two live projects: 0 of 34 PhNCFeatures
+    # transferred with a feature structure in one (source: 41 of 41), 0 of
+    # 11 in the other (source: 15 of 15) -- silently breaking 14 of 21 and
+    # 1 of 6 phonological rules respectively, since a rule referencing a
+    # feature-based natural class with no features can no longer match
+    # anything. This is precisely the failure mode
+    # Lib/categories.py's natural_classes_execute_action now fails loudly on
+    # (RuntimeError, not a silent drop) rather than the previous behaviour
+    # of reporting the transfer as fully successful.
+    "pyflexicon>=4.5.0",
     "PyQt6>=6.4",
 ]
 

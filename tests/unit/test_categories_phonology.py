@@ -14,6 +14,7 @@ from gramtrans.Lib import categories
 from gramtrans.Lib.models import (
     GrammarCategory,
     PlannedAction,
+    PlannedOverwrite,
     RunContext,
     Selection,
     Skip,
@@ -282,6 +283,9 @@ def _fake_lcmodel(monkeypatch):
     for name in (
         "IPhSegmentRule", "IPhRegularRule",
         "IPhSimpleContextSeg", "IPhSimpleContextNC", "IPhSequenceContext",
+        # Task 7 (feature 037): _phon_rule_fingerprint also branches on
+        # PhSimpleContextBdry / PhIterationContext.
+        "IPhSimpleContextBdry", "IPhIterationContext",
         "ICmObject",
     ):
         setattr(fake, name, identity)
@@ -763,3 +767,419 @@ def test_render_summary_emits_skip_line_for_empty_selected_categories():
     assert len(skip_lines) == 2
     assert any("strata" in ln for ln in skip_lines)
     assert any("phonological_rules" in ln for ln in skip_lines)
+
+
+# ============================================================================
+# Feature 037 (task 1) -- PhNCFeatures execute-action: FeaturesOA must
+# actually be verified non-null, not silently skipped/trusted.
+# ============================================================================
+
+class _FakeNCFeaturesSrc:
+    """Fake IPhNCFeatures source natural class (ClassName-driven dispatch)."""
+
+    def __init__(self, guid):
+        self.guid = guid
+        self.Guid = guid
+        self.ClassName = "PhNCFeatures"
+
+
+def _build_nc_features_execute_context(src_nc, apply_sets_features_oa):
+    """Build fake source + target handles for a PhNCFeatures
+    natural_classes_execute_action call.
+
+    `apply_sets_features_oa` simulates whether the mocked
+    ApplySyncableProperties call wires FeaturesOA (flexicon >=4.5.0) or
+    silently no-ops (flexicon <4.5.0 -- the original bug)."""
+    source = MagicMock()
+    source.NaturalClasses.GetAll.return_value = [src_nc]
+    source.NaturalClasses.GetSyncableProperties.return_value = {"FeaturesGuid": "fs-1"}
+
+    tgt_nc = MagicMock()
+    tgt_nc.FeaturesOA = None  # starts null; ApplySyncableProperties may populate it
+
+    def _fake_apply(item, props, ws_map=None):
+        if apply_sets_features_oa:
+            item.FeaturesOA = object()
+
+    target = MagicMock()
+    target.NaturalClasses.ApplySyncableProperties.side_effect = _fake_apply
+
+    factory = MagicMock()
+    factory.Create.return_value = tgt_nc
+    sl = MagicMock()
+    sl.GetService.return_value = factory
+    cache = MagicMock()
+    cache.ServiceLocator = sl
+    cache.LangProject.PhonologicalDataOA.NaturalClassesOS = MagicMock()
+    target.Cache = cache
+
+    return source, target, tgt_nc
+
+
+def test_nc_execute_raises_when_phnc_features_featuresoa_stays_null():
+    """Task 1: the confirmed data-loss bug. A PhNCFeatures natural class
+    whose FeaturesOA is STILL null after ApplySyncableProperties (the
+    flexicon <4.5.0 silent-no-op case, or any other failure to wire it)
+    must RAISE -- not pass through as an apparently-successful transfer."""
+    src_nc = _FakeNCFeaturesSrc("nc-feat-1")
+    source, target, tgt_nc = _build_nc_features_execute_context(
+        src_nc, apply_sets_features_oa=False,
+    )
+    action = MagicMock()
+    action.source_guid = "nc-feat-1"
+    ctx = _ctx(source, target)
+
+    orig_sys = _fake_sys_guid(None)
+    orig_lcm, _ = _stub_lcm_nc_imports(None)
+    try:
+        with pytest.raises(RuntimeError) as exc_info:
+            categories.natural_classes_execute_action(action, ctx, WSM, "test-tag")
+    finally:
+        _restore_sys_guid(orig_sys)
+        _restore_lcm(orig_lcm)
+
+    msg = str(exc_info.value)
+    assert "FeaturesOA" in msg
+    assert "nc-feat-1" in msg
+
+
+def test_nc_execute_succeeds_when_phnc_features_featuresoa_populated():
+    """PhNCFeatures whose FeaturesOA IS populated after
+    ApplySyncableProperties (flexicon >=4.5.0) must NOT raise and must
+    return the new natural class -- i.e. removing the false
+    `class_name != "PhNCFeatures"` skip does not break the happy path."""
+    src_nc = _FakeNCFeaturesSrc("nc-feat-2")
+    source, target, tgt_nc = _build_nc_features_execute_context(
+        src_nc, apply_sets_features_oa=True,
+    )
+    action = MagicMock()
+    action.source_guid = "nc-feat-2"
+    ctx = _ctx(source, target)
+
+    orig_sys = _fake_sys_guid(None)
+    orig_lcm, _ = _stub_lcm_nc_imports(None)
+    try:
+        result = categories.natural_classes_execute_action(action, ctx, WSM, "test-tag")
+    finally:
+        _restore_sys_guid(orig_sys)
+        _restore_lcm(orig_lcm)
+
+    assert result is tgt_nc
+    assert tgt_nc.FeaturesOA is not None
+
+
+# ============================================================================
+# Feature 037 (task 2) -- natural_classes_dependencies must surface the
+# feature/value GUIDs a PhNCFeatures item references (previously `()` with
+# the false "FeaturesOA is owned" rationale); PhNCSegments unchanged.
+# ============================================================================
+
+def _install_fake_nc_deps_lcmodel(monkeypatch):
+    import sys
+    import types
+
+    identity = lambda x: x  # noqa: E731
+    fake = types.ModuleType("SIL.LCModel")
+    for name in ("IPhNCSegments", "IPhNCFeatures", "IFsClosedValue", "ICmObject"):
+        setattr(fake, name, identity)
+    sil = types.ModuleType("SIL")
+    sil.LCModel = fake
+    monkeypatch.setitem(sys.modules, "SIL", sil)
+    monkeypatch.setitem(sys.modules, "SIL.LCModel", fake)
+
+
+class _FakeGuidRef:
+    """Minimal fake exposing `.Guid` (uppercase) for the identity-cast
+    `ICmObject(obj).Guid` access `natural_classes_dependencies` uses."""
+
+    def __init__(self, guid):
+        self.Guid = guid
+
+
+def test_natural_classes_dependencies_phnc_features_returns_feature_value_guids(monkeypatch):
+    """Task 2: for a PhNCFeatures item, natural_classes_dependencies must
+    return the GUIDs of the IFsClosedFeature/IFsSymFeatVal objects its
+    FeaturesOA feature structure references (FeatureRA + ValueRA of each
+    FeatureSpecsOC entry) -- NOT an empty tuple."""
+    _install_fake_nc_deps_lcmodel(monkeypatch)
+
+    class _FakeClosedValue:
+        def __init__(self, feature_guid, value_guid):
+            self.FeatureRA = _FakeGuidRef(feature_guid)
+            self.ValueRA = _FakeGuidRef(value_guid)
+
+    class _FakeFeatStruc:
+        def __init__(self, specs):
+            self.FeatureSpecsOC = specs
+
+    class _FakeNCFeaturesForDeps:
+        def __init__(self, features_oa):
+            self.FeaturesOA = features_oa
+
+    specs = [
+        _FakeClosedValue("feat-1", "val-1"),
+        _FakeClosedValue("feat-2", "val-2"),
+    ]
+    piece = _FakeNCFeaturesForDeps(_FakeFeatStruc(specs))
+
+    deps = set(categories.natural_classes_dependencies(piece))
+    assert deps == {"feat-1", "val-1", "feat-2", "val-2"}
+
+
+def test_natural_classes_dependencies_phnc_features_null_featuresoa_returns_empty(monkeypatch):
+    """A PhNCFeatures item with FeaturesOA not yet set has no dependencies
+    to surface (there is nothing to gate ordering on)."""
+    _install_fake_nc_deps_lcmodel(monkeypatch)
+
+    class _FakeNCFeaturesForDeps:
+        FeaturesOA = None
+
+    assert categories.natural_classes_dependencies(_FakeNCFeaturesForDeps()) == ()
+
+
+def test_natural_classes_dependencies_phnc_segments_unchanged(monkeypatch):
+    """Task 2 regression guard: the new PhNCFeatures branch must not disturb
+    PhNCSegments' existing phoneme-GUID dependency behavior."""
+    _install_fake_nc_deps_lcmodel(monkeypatch)
+
+    class _FakeNCSegmentsForDeps:
+        SegmentsRC = [_FakeGuidRef("p1"), _FakeGuidRef("p2")]
+
+    deps = set(categories.natural_classes_dependencies(_FakeNCSegmentsForDeps()))
+    assert deps == {"p1", "p2"}
+
+
+# ============================================================================
+# Feature 037 (task 4) -- post-transfer guard: any transferred PhNCFeatures
+# left with a null FeaturesOA must be surfaced via DroppedItemRecord.
+# ============================================================================
+
+class _FakeTgtNCForGuard:
+    def __init__(self, guid, features_oa):
+        self.guid = guid
+        self.Guid = guid
+        self.FeaturesOA = features_oa
+        self.Name = "MyFeatureClass"
+
+
+def test_guard_nc_features_transferred_appends_dropped_record_when_null():
+    tgt = _project(NaturalClasses=[_FakeTgtNCForGuard("nc-guard-1", None)])
+    ctx = _ctx(_project(), tgt)
+    object.__setattr__(ctx, "_nc_features_guids", ["nc-guard-1"])
+    dropped: list = []
+    object.__setattr__(ctx, "_dropped", dropped)
+
+    result = categories._guard_nc_features_transferred(ctx, tgt, "test-tag")
+
+    assert result == []
+    assert len(dropped) == 1
+    rec = dropped[0]
+    assert rec.owner_kind == "PhNCFeatures"
+    assert rec.owner_guid == "nc-guard-1"
+    assert rec.field_name == "FeaturesOA"
+    assert rec.item_guid == "nc-guard-1"
+
+
+def test_guard_nc_features_transferred_no_op_when_featuresoa_populated():
+    tgt = _project(NaturalClasses=[_FakeTgtNCForGuard("nc-guard-2", object())])
+    ctx = _ctx(_project(), tgt)
+    object.__setattr__(ctx, "_nc_features_guids", ["nc-guard-2"])
+    dropped: list = []
+    object.__setattr__(ctx, "_dropped", dropped)
+
+    result = categories._guard_nc_features_transferred(ctx, tgt, "test-tag")
+
+    assert result == []
+    assert dropped == []
+
+
+def test_guard_nc_features_transferred_no_op_when_no_guids_tracked():
+    """No PhNCFeatures touched this run -> guard is a complete no-op."""
+    tgt = _project(NaturalClasses=[])
+    ctx = _ctx(_project(), tgt)
+    dropped: list = []
+    object.__setattr__(ctx, "_dropped", dropped)
+
+    result = categories._guard_nc_features_transferred(ctx, tgt, "test-tag")
+
+    assert result == []
+    assert dropped == []
+
+
+# ============================================================================
+# Feature 037 (task 3) -- phonological rule Disabled flag must be copied
+# EXPLICITLY (flexicon's GetSyncableProperties never includes it).
+# ============================================================================
+
+def test_phon_rule_apply_body_copies_disabled_true_explicitly():
+    orig_lcm, _ = _stub_lcm_nc_imports(None)
+    try:
+        class _SrcRule:
+            ClassName = "PhMetathesisRule"
+            Disabled = True
+
+        class _NewRule:
+            Disabled = False  # starts enabled -- must flip to True
+
+        source = MagicMock()
+        source.PhonRules.GetSyncableProperties.return_value = {"Name": {}}
+        target = MagicMock()
+
+        new_rule = _NewRule()
+        result = categories._phon_rule_apply_body(
+            _SrcRule(), new_rule, "PhMetathesisRule", source, target,
+            ws_mapping=None, tag="test-tag", src_guid="rule-1", context=None,
+        )
+    finally:
+        _restore_lcm(orig_lcm)
+
+    assert result is new_rule
+    assert new_rule.Disabled is True
+
+
+def test_phon_rule_apply_body_leaves_enabled_rule_enabled():
+    """Companion case: Disabled=False on source must not flip an
+    already-True target flag to False in a way that looks like a bug in the
+    other direction (defends against a copy that ORs instead of assigns)."""
+    orig_lcm, _ = _stub_lcm_nc_imports(None)
+    try:
+        class _SrcRule:
+            ClassName = "PhMetathesisRule"
+            Disabled = False
+
+        class _NewRule:
+            Disabled = True
+
+        source = MagicMock()
+        source.PhonRules.GetSyncableProperties.return_value = {}
+        target = MagicMock()
+
+        new_rule = _NewRule()
+        categories._phon_rule_apply_body(
+            _SrcRule(), new_rule, "PhMetathesisRule", source, target,
+            ws_mapping=None, tag="test-tag", src_guid="rule-2", context=None,
+        )
+    finally:
+        _restore_lcm(orig_lcm)
+
+    assert new_rule.Disabled is False
+
+
+# ============================================================================
+# Feature 037 (task 7) -- already-present-by-GUID phonological rules must be
+# reconciled (skip if structurally identical, update if different), not
+# blindly skipped.  `_fake_lcmodel` (module-level fixture, extended above
+# with IPhSimpleContextBdry/IPhIterationContext) drives `_phon_rule_fingerprint`.
+# ============================================================================
+
+def _make_rule(guid, struc_desc=None, rhs_list=None, initial=None, final=None,
+               disabled=False, direction=0, class_name="PhRegularRule"):
+    rule = _PhRule(
+        struc_desc if struc_desc is not None else [],
+        rhs_list if rhs_list is not None else [],
+        initial=initial, final=final,
+    )
+    rule.guid = guid
+    rule.Disabled = disabled
+    rule.Direction = direction
+    rule.ClassName = class_name
+    return rule
+
+
+def test_phonological_rules_plan_action_skips_identical_structural_fingerprint(_fake_lcmodel):
+    """Task 7(a): a rule present by GUID with an IDENTICAL structural
+    fingerprint is skipped, as before -- cheap, no PlannedOverwrite."""
+    src_rhs = _PhRHS(
+        right=_PhCell("PhSimpleContextNC", "rc-src", feature=_PhRef("nc-1")),
+    )
+    src_rule = _make_rule("r-1", rhs_list=[src_rhs])
+    tgt_rhs = _PhRHS(
+        # Different cell GUID ("rc-tgt" vs "rc-src") is irrelevant -- only the
+        # REFERENCED natural class GUID ("nc-1") is compared.
+        right=_PhCell("PhSimpleContextNC", "rc-tgt", feature=_PhRef("nc-1")),
+    )
+    tgt_rule = _make_rule("r-1", rhs_list=[tgt_rhs])
+
+    src = _project(PhonRules=[src_rule])
+    tgt = _project(PhonRules=[tgt_rule])
+
+    result = categories.phonological_rules_plan_action(src_rule, _ctx(src, tgt), WSM)
+
+    assert isinstance(result, Skip)
+    assert result.reason == SkipReason.ALREADY_PRESENT_BY_GUID
+
+
+def test_phonological_rules_plan_action_detects_null_vs_present_right_context(_fake_lcmodel):
+    """Task 7(b) -- regression test for the proven case: rule
+    "nasal assim simple reb" (33978942-cc6e-4655-afb2-b0a869b670c5), whose
+    source RHS[0].RightContextOA holds a PhSimpleContextNC while target's is
+    null, with everything else matching. Must be detected as DIFFERENT and
+    routed to a structural-rebuild PlannedOverwrite -- not skipped."""
+    src_rhs = _PhRHS(
+        struc_change=[_PhCell("PhSimpleContextSeg", "sc-1", feature=_PhRef("p-1"))],
+        left=_PhCell("PhSimpleContextNC", "lc-1", feature=_PhRef("nc-left")),
+        right=_PhCell("PhSimpleContextNC", "rc-1", feature=_PhRef("nc-right")),
+    )
+    src_rule = _make_rule(
+        "33978942-cc6e-4655-afb2-b0a869b670c5", rhs_list=[src_rhs],
+    )
+
+    tgt_rhs = _PhRHS(
+        struc_change=[_PhCell("PhSimpleContextSeg", "sc-1t", feature=_PhRef("p-1"))],
+        left=_PhCell("PhSimpleContextNC", "lc-1t", feature=_PhRef("nc-left")),
+        right=None,  # <-- the drift under test: RightContextOA is null in target
+    )
+    tgt_rule = _make_rule(
+        "33978942-cc6e-4655-afb2-b0a869b670c5", rhs_list=[tgt_rhs],
+    )
+
+    src = _project(PhonRules=[src_rule])
+    tgt = _project(PhonRules=[tgt_rule])
+
+    result = categories.phonological_rules_plan_action(src_rule, _ctx(src, tgt), WSM)
+
+    assert isinstance(result, PlannedOverwrite)
+    assert result.write_mode == "structural_rebuild"
+    assert result.category == GrammarCategory.PHONOLOGICAL_RULES
+    assert result.source_guid == "33978942-cc6e-4655-afb2-b0a869b670c5"
+
+
+def test_phonological_rules_plan_action_detects_disabled_only_drift(_fake_lcmodel):
+    """Task 7(c): rules identical in owned structure but differing ONLY in
+    Disabled must also be detected as different."""
+    src_rule = _make_rule("r-disabled", disabled=True)
+    tgt_rule = _make_rule("r-disabled", disabled=False)
+
+    src = _project(PhonRules=[src_rule])
+    tgt = _project(PhonRules=[tgt_rule])
+
+    result = categories.phonological_rules_plan_action(src_rule, _ctx(src, tgt), WSM)
+
+    assert isinstance(result, PlannedOverwrite)
+    assert result.write_mode == "structural_rebuild"
+
+
+def test_shallow_syncable_props_comparator_would_not_catch_right_context_drift(_fake_lcmodel):
+    """Task 7(d): prove the shallow comparator flexicon's
+    PhonologicalRuleOperations effectively offers (GetSyncableProperties:
+    Name/Description/Direction/StratumGuid only) is BLIND to the exact
+    drift test (b) exercises -- the reason a naive CompareTo-based fix would
+    NOT have caught rule "nasal assim simple reb"."""
+    src_rhs = _PhRHS(right=_PhCell("PhSimpleContextNC", "rc-1", feature=_PhRef("nc-right")))
+    src_rule = _make_rule("r-shallow", rhs_list=[src_rhs], direction=0)
+    tgt_rhs = _PhRHS(right=None)
+    tgt_rule = _make_rule("r-shallow", rhs_list=[tgt_rhs], direction=0)
+
+    # The only fields flexicon's GetSyncableProperties would ever compare
+    # for a rule (Name/Description omitted here -- both empty on these
+    # fakes -- StratumGuid is dead code per categories.py's docstring):
+    shallow_src = {"Direction": src_rule.Direction}
+    shallow_tgt = {"Direction": tgt_rule.Direction}
+    assert shallow_src == shallow_tgt, "shallow comparator sees these as IDENTICAL"
+
+    # ...yet the structural fingerprint this fix uses correctly reports them
+    # as different.
+    assert (
+        categories._phon_rule_fingerprint(src_rule)
+        != categories._phon_rule_fingerprint(tgt_rule)
+    ), "structural fingerprint must catch what the shallow comparator misses"

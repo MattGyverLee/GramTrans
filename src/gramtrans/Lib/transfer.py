@@ -1698,6 +1698,28 @@ def _execute_update_semantic(overwrite, source, target, report_sink, tag: Import
     src_guid = overwrite.source_guid
     tgt_guid = overwrite.target_guid
 
+    # Task 7 (feature 037): a PHONOLOGICAL_RULES overwrite whose
+    # `write_mode == "structural_rebuild"` came from
+    # `categories.phonological_rules_plan_action` finding the target rule
+    # already present by GUID but STRUCTURALLY different from source (a
+    # shallow GetSyncableProperties-only compare -- Name/Description/
+    # Direction/StratumGuid -- cannot see this; see
+    # `categories._phon_rule_fingerprint`'s docstring for the proven case).
+    # Route to the dedicated rebuild helper instead of the generic
+    # ops-accessor path below, which (a) is keyed on the wrong flexicon
+    # accessor name for this category (`PhonologicalRules`, which does not
+    # exist -- flexicon exposes `PhonRules`) and (b) only ever compares the
+    # same four shallow fields, so it could never detect or fix this class
+    # of drift even if the accessor name were corrected.
+    if cat == GrammarCategory.PHONOLOGICAL_RULES and getattr(overwrite, "write_mode", "") == "structural_rebuild":
+        if __package__:
+            from .categories import _execute_phon_rule_structural_update
+        else:
+            from categories import _execute_phon_rule_structural_update  # type: ignore
+        return _execute_phon_rule_structural_update(
+            overwrite, source, target, report_sink, tag, ws_map=ws_map,
+        )
+
     # C6 guard: mirrors the leaf-path gate at execute():227 (_FIELD_DIFF_GATED).
     # Currently LATENT — PHONEMES/PH_ENVIRONMENT don't emit PlannedOverwrite today
     # (_phonology_simple_plan emits only Skip/PlannedAction) — but guards against
@@ -1796,7 +1818,16 @@ _OPS_ACCESSOR_FOR_CATEGORY: dict = {
     GrammarCategory.EXCEPTION_FEATURES:     "ExceptionFeatures",
     GrammarCategory.NATURAL_CLASSES:        "NaturalClasses",
     GrammarCategory.PHONOLOGICAL_FEATURES:  "PhonologicalFeatures",
-    GrammarCategory.PHONOLOGICAL_RULES:     "PhonologicalRules",
+    # NOTE: flexicon's FLExProject exposes this Operations class as
+    # `.PhonRules`, never `.PhonologicalRules` (see FLExProject.py's
+    # `PhonRules` property) -- this entry previously pointed at a
+    # nonexistent attribute, silently no-op'ing (see the "ops accessor ...
+    # not found" Warning branch below) for any PHONOLOGICAL_RULES overwrite
+    # that reached the generic path. Corrected as part of task 7 (feature
+    # 037); moot in practice since a "structural_rebuild" write_mode
+    # PlannedOverwrite is intercepted above before reaching this table, but
+    # left correct rather than latent for any future write_mode.
+    GrammarCategory.PHONOLOGICAL_RULES:     "PhonRules",
     GrammarCategory.PHONEMES:               "Phonemes",
     GrammarCategory.PH_ENVIRONMENT:         "Environments",
     GrammarCategory.STRATA:                 "Strata",
