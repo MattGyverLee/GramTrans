@@ -694,14 +694,25 @@ def _census_row_json(row) -> dict:
     for internal, artifact_key in CLASS_CENSUS_ROW_ARTIFACT_FIELDS.items():
         if artifact_key is None:  # internal-only: never emitted
             continue
-        block[artifact_key] = getattr(row, internal)
+        value = getattr(row, internal, None)
+        if value is None:
+            # An OPTIONAL artifact property this row does not carry -- today
+            # only A1's `owning_feature_system` on an ordinary class. Omitted
+            # rather than emitted as null, because the property is enumerated
+            # and the row object is `additionalProperties: false`.
+            continue
+        block[artifact_key] = value
 
     block["destination_count_net"] = row.destination_count_net
     block["difference_raw"] = row.difference_raw
     block["verdict_class"] = row.verdict_class
 
+    # A1 row-property encoding; absent on every ordinary class. Idempotent with
+    # the table-driven pass above now that `owning_feature_system` is a mapped
+    # `ClassCensusRow` field: both write the same value, and this stays the one
+    # reader that also copes with a row `dict`.
     owner = _census_owner(row)
-    if owner:  # A1 row-property encoding; absent on every ordinary class
+    if owner:
         block["owning_feature_system"] = owner
 
     not_evaluated_reason = engine.select_not_evaluated_reason(row.reasons)

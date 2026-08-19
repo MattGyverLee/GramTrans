@@ -839,6 +839,20 @@ CENSUS_ROW_VERDICT_CLASSES: tuple = (
     "MATCHED", "SHORTFALL", "SURPLUS", "NOT_EVALUATED",
 )
 
+#: Amendment A1's two owning feature systems -- `$defs.classRow`'s
+#: `owning_feature_system` enum, in schema order. These spellings are the
+#: CONTRACT ones (fidelity-census.md:650-673) and are emitted VERBATIM, so a
+#: shorter local shorthand (`MsFeatureSystem`) would fail validation.
+#:
+#: DECLARED HERE for the same reason `CENSUS_REASON_TOKENS` is: the dependency
+#: direction is census -> models and never the reverse, and `ClassCensusRow`
+#: must reject an out-of-vocabulary owner AT CONSTRUCTION. `Lib/census.py`
+#: RE-EXPORTS this as `FEATURE_SYSTEM_OWNERS` rather than re-declaring it.
+CENSUS_FEATURE_SYSTEM_OWNERS: tuple = (
+    "LangProject.MsFeatureSystemOA",
+    "LangProject.PhFeatureSystemOA",
+)
+
 #: `census_id` / `FidelityCensus.run_id` format, deliberately distinct in
 #: prefix from a transfer run id ("GT-...") so the two cannot be confused.
 _CENSUS_ID_RE = re.compile(r"^CENSUS-[0-9]{8}-[0-9]{6}$")
@@ -1094,6 +1108,19 @@ class ClassCensusRow:
 
     Sign convention on `difference` is fixed and shared with the schema:
     negative = SHORTFALL (loss), zero = MATCHED, positive = SURPLUS.
+
+    AMENDMENT A1. `owning_feature_system` is the optional per-owner qualifier
+    for a class reachable from BOTH FieldWorks feature systems
+    (`FsFeatStrucType`). It is `None` on every ordinary class -- which is what
+    keeps it additive, both here (existing positional construction is
+    unaffected) and in the artifact, where `$defs.classRow` carries it as a new
+    OPTIONAL property under the schema's own EVOLUTION RULE. A row that DOES
+    name an owner asserts a PER-OWNER measurement: its counts are that feature
+    system's alone, never the class total, because a summed row would let a
+    shortfall under one system be masked by a surplus under the other -- the
+    exact masking A1 exists to forbid. The engine's `census.count_for_entry`
+    returns `None` rather than the class total for a split entry nobody counted
+    per owner, so the ambiguous figure cannot reach a row in the first place.
     """
     object_class: str          # -> artifact `class`
     source_count: int          # -> artifact `source_count`
@@ -1104,6 +1131,8 @@ class ClassCensusRow:
     engine_can_create: bool    # -> artifact `engine_can_create`
     out_of_scope: bool         # -> artifact `verdict_class` NOT_EVALUATED
     reasons: tuple = ()        # -> artifact `accounted_for[*].reason` tokens
+    #: A1: owning feature system, or None for every ordinary class.
+    owning_feature_system: Optional[str] = None  # -> `owning_feature_system`
 
     def __post_init__(self) -> None:
         if not self.object_class:
@@ -1169,6 +1198,22 @@ class ClassCensusRow:
                 + repr(tuple(sorted(CENSUS_NOT_EVALUATED_REASONS)))
                 + " -- the artifact requires a NOT_EVALUATED row to name its "
                 "not_evaluated_reason"
+            )
+        # A1: the owner is a CLOSED two-member vocabulary and is emitted
+        # verbatim into an enumerated schema property, so an unrecognised
+        # spelling is rejected here rather than at validation time -- the same
+        # construction-time treatment the reason tokens get.
+        if (self.owning_feature_system is not None
+                and self.owning_feature_system
+                not in CENSUS_FEATURE_SYSTEM_OWNERS):
+            raise ValueError(
+                "ClassCensusRow.owning_feature_system for "
+                + repr(self.object_class) + " is "
+                + repr(self.owning_feature_system) + ", outside the two "
+                "spellings Amendment A1 and $defs.classRow enumerate "
+                + repr(CENSUS_FEATURE_SYSTEM_OWNERS)
+                + " -- a shorthand such as 'MsFeatureSystem' is emitted "
+                "verbatim and would fail schema validation"
             )
 
     # ---- derived views -------------------------------------------------
@@ -1297,14 +1342,44 @@ class FidelityCensus:
                 "no instances anywhere is a NOT_EVALUATED row, never an "
                 "omitted one (FR-012)"
             )
+        # Keyed on (class, owning_feature_system), not on class alone, exactly
+        # as the artifact validator's invariant 1 is: Amendment A1 splits one
+        # class into one row PER OWNING FEATURE SYSTEM, and both halves carry
+        # the same plain `object_class`. Two rows for one class-and-owner are
+        # the same row twice, which is what this rejects; two rows for one
+        # class under DIFFERENT owners are the A1 shape, and keying on class
+        # alone would report them as a phantom duplicate.
         seen = set()
         for row in self.rows:
-            if row.object_class in seen:
+            key = (row.object_class, row.owning_feature_system)
+            if key in seen:
+                owner = key[1]
                 raise ValueError(
                     "FidelityCensus carries two rows for class "
-                    + repr(row.object_class) + " -- exactly one row per class"
+                    + repr(row.object_class)
+                    + (" under " + repr(owner) if owner else "")
+                    + " -- exactly one row per class"
+                    + (" and owning feature system" if owner else "")
                 )
-            seen.add(row.object_class)
+            seen.add(key)
+        # A1 again: a class may be reported EITHER once for the class or once
+        # per owner, never both. The mixed shape is the one ambiguity A1 exists
+        # to forbid -- a class-total row sitting beside per-owner rows lets the
+        # same objects be counted twice, or a per-owner shortfall be masked by
+        # the total that contains it.
+        split_classes = {r.object_class for r in self.rows
+                         if r.owning_feature_system is not None}
+        summed = sorted({r.object_class for r in self.rows
+                         if r.owning_feature_system is None
+                         and r.object_class in split_classes})
+        if summed:
+            raise ValueError(
+                "FidelityCensus carries BOTH a per-owner row and an "
+                "owner-less row for " + ", ".join(summed)
+                + " -- a class split by Amendment A1 is reported once per "
+                "owning feature system, and the owner-less row would carry "
+                "the summed class total the split exists to forbid"
+            )
         if not isinstance(self.gate_pass, bool):
             raise ValueError(
                 "FidelityCensus.gate_pass must be a bool, got "
@@ -1318,7 +1393,13 @@ class FidelityCensus:
                     "4), not a warning, and there is no path on which a "
                     "missing baseline yields exit 0 (fidelity-census.md 5.3)"
                 )
-            failing = tuple(r.object_class for r in self.failing_rows)
+            failing = tuple(
+                r.object_class + (
+                    " (" + r.owning_feature_system + ")"
+                    if r.owning_feature_system else ""
+                )
+                for r in self.failing_rows
+            )
             if failing:
                 raise ValueError(
                     "FidelityCensus.gate_pass is True but these gate-relevant "
@@ -1348,14 +1429,32 @@ class FidelityCensus:
         T020's to judge from the artifact."""
         return not self.baseline.is_missing and not self.failing_rows
 
-    def row_for(self, object_class: str) -> Optional[ClassCensusRow]:
+    def row_for(
+        self,
+        object_class: str,
+        owning_feature_system: Optional[str] = None,
+    ) -> Optional[ClassCensusRow]:
         """The row for one class, or None when the census has none -- which is
         itself a coverage defect (FR-012 requires a row per class), not a
-        normal outcome."""
+        normal outcome.
+
+        Pass `owning_feature_system` for an A1-split class: either half alone
+        is NOT the class, so an unqualified lookup over a split returns
+        whichever half comes first, which is a per-owner number and not the
+        class's. `rows_for` returns both."""
         for row in self.rows:
-            if row.object_class == object_class:
-                return row
+            if row.object_class != object_class:
+                continue
+            if (owning_feature_system is not None
+                    and row.owning_feature_system != owning_feature_system):
+                continue
+            return row
         return None
+
+    def rows_for(self, object_class: str) -> tuple:
+        """Every row for one class. More than one only for an A1 split, where
+        the class is reported once per owning feature system."""
+        return tuple(r for r in self.rows if r.object_class == object_class)
 
 
 # ---------------------------------------------------------------------------
@@ -1392,12 +1491,20 @@ STARTER_BASELINE_ARTIFACT_FIELDS: dict = {
 #: `unexplained_shortfall` / `unexplained_surplus` (per-direction arithmetic
 #: over those lines). `destination_count_net`, `difference_raw` and
 #: `verdict_class` are derived properties here -- read them, do not recompute.
+#:
+#: `owning_feature_system` IS emitted -- it is a real, enumerated (and optional)
+#: `$defs.classRow` property under Amendment A1, not an internal name. Because
+#: it is OPTIONAL, an emitter driven by this table must OMIT it when the value
+#: is `None` rather than emit a null: every artifact object is
+#: `additionalProperties: false` with an enumerated value here, so
+#: `"owning_feature_system": null` is a hard validation failure.
 CLASS_CENSUS_ROW_ARTIFACT_FIELDS: dict = {
     "object_class": "class",
     "source_count": "source_count",
     "destination_count": "destination_count_total",
     "difference": "difference",
     "engine_can_create": "engine_can_create",
+    "owning_feature_system": "owning_feature_system",  # A1; omit when None
     "starter_excluded": None,  # = starter_baseline_count - starter_matched_to_source
     "explained": None,         # expressed as a non-empty `accounted_for`
     "reasons": None,           # -> `accounted_for[*].reason`

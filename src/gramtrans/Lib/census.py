@@ -41,6 +41,7 @@ from pathlib import Path
 from typing import Optional
 
 from .models import (
+    CENSUS_FEATURE_SYSTEM_OWNERS,
     CENSUS_NOT_EVALUATED_REASONS,
     CENSUS_REASON_TOKENS,
     CENSUS_REASONS_NOT_REQUIRING_REPORT_REF,
@@ -1505,9 +1506,13 @@ A1_OWNER_ENCODING = "row_property"
 #: (fidelity-census.md:650-673) and the schema enum members, not a local
 #: shorthand: they are emitted verbatim into `owning_feature_system`, so a
 #: shorter token invented here would fail validation.
-FEATURE_SYSTEM_OWNERS: tuple = (
-    "LangProject.MsFeatureSystemOA", "LangProject.PhFeatureSystemOA",
-)
+#:
+#: RE-EXPORT, NOT RE-DECLARATION -- `models.CENSUS_FEATURE_SYSTEM_OWNERS` owns
+#: the literals, the same way it owns `CENSUS_REASON_TOKENS`. The direction is
+#: forced: census -> models is the only legal import direction, and
+#: `models.ClassCensusRow` has to reject an out-of-vocabulary owner at
+#: construction, so the tuple cannot live here.
+FEATURE_SYSTEM_OWNERS: tuple = CENSUS_FEATURE_SYSTEM_OWNERS
 
 #: `LangProject` attribute per owner token.
 FEATURE_SYSTEM_ATTRS: dict = {
@@ -2046,7 +2051,34 @@ def class_row_artifact(
     for internal, artifact_key in CLASS_CENSUS_ROW_ARTIFACT_FIELDS.items():
         if artifact_key is None:  # internal-only: never emitted
             continue
-        block[artifact_key] = getattr(row, internal)
+        value = getattr(row, internal, None)
+        if value is None:
+            # An OPTIONAL artifact property the row does not carry -- currently
+            # only A1's `owning_feature_system` on an ordinary class. Omitted,
+            # never emitted as null: the property is enumerated and every
+            # artifact object is `additionalProperties: false`, so a null is a
+            # hard validation failure. No REQUIRED mapped field can be None
+            # (the row's own invariants reject that), so this cannot silently
+            # drop one.
+            continue
+        block[artifact_key] = value
+
+    # A1 consistency: when both the row and its class-list entry name an owner
+    # they must be the SAME owner. `encode_split_owner` below writes the
+    # entry's, so a disagreement would silently relabel a measurement as
+    # belonging to the other feature system -- the precise mislabelling A1
+    # exists to prevent.
+    row_owner = getattr(row, "owning_feature_system", None)
+    if (row_owner is not None
+            and entry.owning_feature_system is not None
+            and row_owner != entry.owning_feature_system):
+        raise CensusError(
+            "class_row_artifact for " + repr(entry.object_class)
+            + ": the row is measured under " + repr(row_owner)
+            + " but its class-list entry is " + repr(entry.owning_feature_system)
+            + " -- one of the two owners is wrong, and emitting either would "
+            "attribute a per-owner count to the wrong feature system (A1)"
+        )
 
     # Derived properties on the row -- read, never recomputed, so the emitter
     # cannot arrive at a second answer.
