@@ -102,10 +102,17 @@ def _should_prefer_disk(feature_dir: Path, rec_step: str, disk_step: str) -> boo
 
 
 def _decisions(ctx: dict) -> list[str]:
-    """The top-level `decisions[]` passthrough (surfaced as ViewerState.decisions)."""
+    """The top-level `decisions[]` passthrough (surfaced as ViewerState.decisions).
+
+    An entry is either a bare scalar or the writer's `{"decision": ..., "why": ...,
+    "rejected": ...}` object -- write-context.py --decision normalizes even bare text
+    into that object form, so reading scalars only silently dropped every recorded
+    decision.
+    """
     raw = ctx.get("decisions")
     if isinstance(raw, list):
-        return [str(d) for d in raw if isinstance(d, (str, int, float)) and str(d).strip()]
+        cand = ((d.get("decision") if isinstance(d, dict) else d) for d in raw)
+        return [str(t) for t in cand if isinstance(t, (str, int, float)) and str(t).strip()]
     return []
 
 
