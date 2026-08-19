@@ -656,6 +656,70 @@ def _census_gate(census) -> dict:
     }
 
 
+def _census_cap_was_overruled(verdict: str) -> bool:
+    """True when `verdict` is strictly MORE severe than 5.2's cap ceiling.
+
+    Asked of the verdict the gate already computed, over `census.py`'s
+    published `most_severe_verdict` and `GROSS_BASIS_VERDICT_CAP` -- it does
+    NOT ask again whether the artifact is on the gross basis, and it does not
+    restate the severity order. So it cannot disagree with the cap: it only
+    reports that something above the ceiling won.
+
+    Needed because `census.stamp_verdict` writes the cap notes whenever the
+    gross basis suppressed a tally, including on a run that a more severe
+    finding (say `BASELINE_MISSING`, exit 4) then decides. Rendering the note
+    unqualified there would read as "capped at CENSUS_ACCOUNTED" beside a
+    `[FAIL] ... exit 4` line -- two sentences the reader has to reconcile
+    unaided. Display only; nothing reads this back.
+    """
+    engine = _census_module()
+    try:
+        return engine.most_severe_verdict(
+            (verdict, engine.GROSS_BASIS_VERDICT_CAP)
+        ) != engine.GROSS_BASIS_VERDICT_CAP
+    except Exception:  # pragma: no cover - an unknown token is not our error
+        return False
+
+
+def _census_notes(block) -> tuple:
+    """T023c -- every note this census carries, for DISPLAY only.
+
+    The artifact's own `notes` array first, in the order it stored them, then
+    any of 5.2's gross-basis cap notes that are not already there. Two sources,
+    because the two paths into this renderer carry notes differently:
+
+    * a census artifact that went through `census.stamp_verdict` already holds
+      the cap notes, and they are copied through verbatim -- this renderer must
+      not paraphrase what the document says about itself; and
+    * an artifact `dict` handed straight to `RunReport.census` was never
+      stamped, yet `_census_gate` still RECOMPUTES its verdict and would print
+      a capped `CENSUS_ACCOUNTED` with nothing saying why. `census.py`'s public
+      `gross_basis_cap_notes` supplies exactly the sentences `stamp_verdict`
+      would have written, so the console cannot end up more silent than the
+      artifact.
+
+    The accessor is CALLED, never reimplemented: "is this capped" has one
+    derivation (`census.is_gross_basis_row` over
+    `starter_subtraction_basis`), and a second copy here -- even a read-only
+    one -- is the duplicated-truth defect feature 038 exists to remove.
+
+    NOT LOAD-BEARING (invariant 9). Nothing here is read back by
+    `_census_gate`, by `census.recompute_verdict`, or by any exit code: a
+    hand-written note cannot buy a cap, and deleting every note changes no
+    verdict. It changes only what a reader is told.
+    """
+    engine = _census_module()
+    notes = [
+        str(note) for note in (
+            (block.get("notes") or ()) if isinstance(block, dict) else ()
+        ) if str(note).strip()
+    ]
+    for note in engine.gross_basis_cap_notes(block):
+        if note not in notes:
+            notes.append(note)
+    return tuple(notes)
+
+
 def _census_row_json(row) -> dict:
     """One `$defs.classRow`-shaped dict from an in-memory `ClassCensusRow`.
 
@@ -1338,7 +1402,14 @@ def _render_census_lines(census) -> Iterable[str]:
     the rows are ordered so what is held back is always the least urgent.
     The header counts, the per-state tally and the totals are printed in FULL
     -- they are bounded by the number of verdict classes -- so no section can
-    hide the size of what it summarises.
+    hide the size of what it summarises. The notes block (T023c) goes through
+    `_rows` for the same reason.
+
+    A CAPPED VERDICT IS NEVER SILENT: `fidelity-census.md` 5.2 lets a
+    gross-basis run report `CENSUS_ACCOUNTED` where the raw tallies say
+    `UNEXPLAINED_SHORTFALL`, and the reason lives in the artifact's `notes`.
+    `_census_notes` renders it here, so "accounted" can never be mistaken for
+    "nothing was lost".
 
     A MISSING BASELINE IS A FAILURE LINE, not a blank and not a warning: it
     renders `[FAIL] ... MISSING` and the verdict line then reads
@@ -1485,6 +1556,35 @@ def _render_census_lines(census) -> Iterable[str]:
             "artifact's gate can return the same verdict or a MORE severe "
             "one, never a less severe one"
         )
+    # ---- the artifact's own notes: where a CAPPED verdict says so -------
+    # T023c. 5.2's gross-basis cap turns UNEXPLAINED_SHORTFALL into
+    # CENSUS_ACCOUNTED and writes its reason into `notes`. Before this
+    # block, the verdict line above printed the capped token and NOTHING
+    # printed the reason, so a suppressed 21-object shortfall read exactly
+    # like a run that lost nothing. Placed beside the FLOOR line because it
+    # is the same kind of statement -- what the verdict above does and does
+    # not establish -- and in the same register.
+    notes = _census_notes(block)
+    if notes:
+        yield (
+            f"    [WARN] Census notes -- {len(notes)} total (the census's own "
+            f"reportage; every verdict above is computed from counts, bases "
+            f"and accounting lines, NEVER from a note):"
+        )
+        for line in _rows(notes, lambda n: f"      {n}", indent="      "):
+            yield line
+        if _census_cap_was_overruled(gate["verdict"]):
+            # A cap note is written whenever the gross basis suppressed a
+            # tally, which can happen on a run a MORE severe finding then
+            # decides. Left alone the note would read as though the run
+            # finished at the ceiling, contradicting the [FAIL] line above.
+            engine = _census_module()
+            yield (
+                f"      [INFO] the cap those notes describe did NOT decide "
+                f"this run: {gate['verdict']} is more severe than the "
+                f"{engine.GROSS_BASIS_VERDICT_CAP} ceiling, so it stands "
+                f"(exit {gate['exit_code']})"
+            )
     if gate["failures"]:
         yield f"    Gate failures -- {len(gate['failures'])} total:"
         for line in _rows(

@@ -1437,6 +1437,144 @@ class TestGrossBasisVerdictCap:
         assert recompute_verdict(artifact) == "CENSUS_ACCOUNTED"
         assert gate_artifact(artifact).exit_code == 0
 
+
+# ===========================================================================
+# 3b. T023c -- the cap must be VISIBLE where people actually look
+#
+# T023a made a capped verdict visible IN THE ARTIFACT (`notes`). Neither
+# console surface rendered `notes` at all, so a capped `CENSUS_ACCOUNTED` /
+# exit 0 printed identically to a run that lost nothing -- the exact silence
+# the cap's own warning text exists to break. These tests pin the RENDERING on
+# both surfaces, and pin that rendering it did not make a note load-bearing.
+# ===========================================================================
+
+def render_census_section(artifact) -> str:
+    """`Lib/report.py`'s human-readable census section, as one blob."""
+    from gramtrans.Lib.report import _render_census_lines
+    return "\n".join(_render_census_lines(artifact))
+
+
+class TestCappedVerdictIsVisibleInRenderedOutput:
+    def test_the_run_report_console_section_prints_the_cap_note(self):
+        """The bug T023c fixes: `_render_census_lines` printed the capped token
+        and nothing at all about the cap."""
+        artifact = gross_basis_artifact()
+        assert recompute_verdict(artifact) == GROSS_BASIS_VERDICT_CAP
+        rendered = render_census_section(artifact)
+        assert GROSS_BASIS_VERDICT_CAP in rendered
+        for note in gross_basis_cap_notes(artifact):
+            assert note in rendered, "a capped verdict rendered without its note"
+        assert "CAPPED" in rendered
+        assert "PhPhoneme" in rendered and "21" in rendered
+        assert "5.2" in rendered
+
+    def test_a_clean_run_renders_no_notes_block(self):
+        """The note block is conditional: a run with nothing to explain must
+        render byte-identically to before T023c."""
+        artifact = gross_basis_artifact(gross_basis_rows())
+        assert artifact.get("notes") == []
+        rendered = render_census_section(artifact)
+        assert "Census notes" not in rendered
+        assert "CAPPED" not in rendered
+        assert "CENSUS_CLEAN" in rendered
+
+    def test_a_more_severe_verdict_is_not_crowded_out_by_the_cap_note(self):
+        """A cap note is written whenever the gross basis suppressed a tally,
+        including on a run a MORE severe verdict then decides. The real failure
+        must still be the headline, and the note must not read as though the
+        run finished at the ceiling."""
+        artifact = gross_basis_artifact(baseline=make_baseline("none"))
+        assert recompute_verdict(artifact) == "BASELINE_MISSING"
+        rendered = render_census_section(artifact)
+        assert "[FAIL] Census verdict: BASELINE_MISSING" in rendered
+        assert "exit 4" in rendered
+        assert "gate FAILED" in rendered
+        # ...and the note is qualified rather than left to contradict it.
+        assert "did NOT decide this run" in rendered
+        assert "more severe than the " + GROSS_BASIS_VERDICT_CAP in rendered
+
+    def test_the_cli_gate_announces_a_capped_pass(self, tmp_path, capsys):
+        """The release-gate surface. A pass that only happened because of the
+        subtraction basis has to say so next to its exit 0."""
+        artifact = gross_basis_artifact()
+        path = write_artifact(tmp_path, artifact, "capped.json")
+        code = cli_exit(["gate", "--artifact", str(path)])
+        out = capsys.readouterr().out
+        assert code == 0
+        assert "verdict " + GROSS_BASIS_VERDICT_CAP in out
+        for note in gross_basis_cap_notes(artifact):
+            assert note in out, "the gate passed a capped census silently"
+
+    def test_the_cli_gate_prints_no_notes_for_a_clean_census(self, tmp_path,
+                                                             capsys):
+        path = write_artifact(
+            tmp_path, gross_basis_artifact(gross_basis_rows()), "clean.json")
+        assert cli_exit(["gate", "--artifact", str(path)]) == 0
+        out = capsys.readouterr().out
+        assert "census note(s)" not in out
+        assert "CAPPED" not in out
+
+    def test_rendering_notes_did_not_make_them_load_bearing(self, tmp_path):
+        """Invariant 9 survives T023c. Deleting every note changes neither the
+        verdict nor the exit code on either surface -- the cap reads
+        `starter_subtraction_basis`, and the renderer regenerates the sentence
+        from `gross_basis_cap_notes` rather than believing the array."""
+        artifact = gross_basis_artifact()
+        before = (recompute_verdict(artifact), gate_artifact(artifact).exit_code)
+
+        stripped = json.loads(json.dumps(artifact))
+        stripped["notes"] = []
+        assert (recompute_verdict(stripped),
+                gate_artifact(stripped).exit_code) == before
+
+        absent = json.loads(json.dumps(artifact))
+        absent.pop("notes", None)
+        assert (recompute_verdict(absent),
+                gate_artifact(absent).exit_code) == before
+
+        path = write_artifact(tmp_path, absent, "no-notes.json")
+        assert cli_exit(["gate", "--artifact", str(path)]) == before[1]
+        # ...and the cap is STILL announced, because the accessor derives the
+        # sentence from the basis instead of reading the array back.
+        assert "CAPPED" in render_census_section(absent)
+
+    def test_a_fabricated_cap_note_does_not_buy_a_cap_on_either_surface(
+            self, tmp_path, capsys):
+        """A hand-written note is rendered but cannot change anything: the
+        verdict line and the exit code both stay at the real failure."""
+        forged = make_artifact(
+            replace_row(phase_rows(), "PhPhoneme", source_count=41,
+                        destination_count_total=20, destination_count_net=20,
+                        verdict_class="SHORTFALL", unexplained_shortfall=21),
+            verdict="UNEXPLAINED_SHORTFALL")
+        forged["notes"] = list(gross_basis_cap_notes(gross_basis_artifact()))
+        assert not any(is_gross_basis_row(r) for r in forged["classes"])
+        assert recompute_verdict(forged) == "UNEXPLAINED_SHORTFALL"
+
+        rendered = render_census_section(forged)
+        assert "[FAIL] Census verdict: UNEXPLAINED_SHORTFALL" in rendered
+        assert "did NOT decide this run" in rendered
+
+        path = write_artifact(tmp_path, forged, "forged.json")
+        assert cli_exit(["gate", "--artifact", str(path)]) == 1
+        assert "verdict UNEXPLAINED_SHORTFALL" in capsys.readouterr().out
+
+    def test_a_long_note_list_states_what_it_omitted(self):
+        """Invariant 2: a console summary may shorten a list only while saying
+        how many it left out. The artifact is never truncated."""
+        from gramtrans.Lib import report as report_module
+        artifact = gross_basis_artifact()
+        artifact["notes"] = list(artifact["notes"]) + [
+            "[WARN] filler note %d" % index for index in range(60)]
+        rendered = render_census_section(artifact)
+        budget = report_module._CONSOLE_MAX_ROWS
+        omitted = len(artifact["notes"]) - budget
+        assert "... and %d more not shown here" % omitted in rendered
+        assert "%d total" % len(artifact["notes"]) in rendered
+        # The cap note is first in the array, so truncation can never hide it.
+        assert "CAPPED" in rendered
+
+
 # ===========================================================================
 # 4. Verdicts, exit codes, severity ordering, PASS predicate
 # ===========================================================================

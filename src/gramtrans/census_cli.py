@@ -956,6 +956,66 @@ def _print_class_table(artifact: dict) -> None:
     _say("")
 
 
+def _artifact_notes(artifact: dict) -> tuple:
+    """T023c -- every note the artifact carries, for DISPLAY only.
+
+    Its own `notes` array first, in stored order, then any of 5.2's gross-basis
+    cap notes not already present. The second source matters on the `gate` path:
+    `gate` reads a file somebody else wrote and `census.gate_artifact`
+    RECOMPUTES the verdict, so an artifact that was never `stamp_verdict`-ed can
+    still be gated to a capped `CENSUS_ACCOUNTED` while holding no note
+    explaining it. `census.gross_basis_cap_notes` supplies exactly the sentences
+    stamping would have written, so the console is never more silent than the
+    verdict it prints.
+
+    The accessor is CALLED, not reimplemented: "is this row capped" has one
+    derivation (`census.is_gross_basis_row`), and a second read-only copy here
+    would be free to drift from it.
+
+    NOT LOAD-BEARING (invariant 9). No exit code, no verdict and no invariant
+    check reads any of this back; a hand-written note cannot buy a cap, and
+    deleting every note changes nothing but what the operator is told.
+    """
+    notes = [str(note) for note in (artifact.get("notes") or ())
+             if str(note).strip()]
+    for note in census.gross_basis_cap_notes(artifact):
+        if note not in notes:
+            notes.append(note)
+    return tuple(notes)
+
+
+def _print_notes(artifact: dict, outcome) -> None:
+    """Print the artifact's notes above the verdict headline.
+
+    ABOVE the headline on purpose: 5.2's cap can turn a 21-object shortfall
+    into `CENSUS_ACCOUNTED` / exit 0, and on a release gate the sentence that
+    says so has to be the thing the operator reads immediately before the
+    exit code, not something scrolled off the top.
+
+    Truncation obeys invariant 2 -- a console summary may shorten a list only
+    while stating how many it left out. The artifact is never truncated.
+    """
+    notes = _artifact_notes(artifact)
+    if not notes:
+        return
+    _warn(str(len(notes)) + " census note(s) -- the census's own reportage; "
+          "the verdict below is computed from counts, bases and accounting "
+          "lines, NEVER from a note:")
+    for note in notes[:_CONSOLE_MAX_ROWS]:
+        _say("  " + note)
+    if len(notes) > _CONSOLE_MAX_ROWS:
+        _info(str(len(notes) - _CONSOLE_MAX_ROWS) + " further note(s) omitted "
+              "from this console summary; the artifact carries all of them")
+    # A cap note is written whenever the gross basis suppressed a tally, which
+    # can happen on a run a MORE severe verdict then decides. Say so, or the
+    # note reads as "capped at CENSUS_ACCOUNTED" beside a [FAIL] exit 4.
+    ceiling = census.GROSS_BASIS_VERDICT_CAP
+    if census.most_severe_verdict((outcome.verdict, ceiling)) != ceiling:
+        _info("the cap those notes describe did NOT decide this run: "
+              + outcome.verdict + " is more severe than the " + ceiling
+              + " ceiling, so it stands")
+
+
 def _print_gate(artifact: dict, outcome, invariant_failures) -> int:
     """Print the gate's answer and return the process exit code."""
     totals = artifact.get("totals") or {}
@@ -1018,6 +1078,12 @@ def _print_gate(artifact: dict, outcome, invariant_failures) -> int:
         if len(other) > _CONSOLE_MAX_ROWS:
             _info(str(len(other) - _CONSOLE_MAX_ROWS) + " further failure(s) "
                   "omitted from this console summary")
+
+    # T023c: the notes, immediately above the headline. Without them a capped
+    # `CENSUS_ACCOUNTED` / exit 0 was indistinguishable on this surface from a
+    # run that lost nothing -- which is the exact silence 5.2's warning text
+    # exists to break.
+    _print_notes(artifact, outcome)
 
     headline = (
         "verdict " + outcome.verdict + " (" + outcome.human_label
