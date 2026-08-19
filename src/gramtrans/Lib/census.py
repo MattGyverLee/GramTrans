@@ -417,7 +417,10 @@ class ClassListEntry:
         Equal to `object_class` for every ordinary class. For an A1-split class
         it carries the owning feature system as well, because a single summed
         row would let a shortfall in one system be masked by a surplus in the
-        other -- see `split_class_label` (T018).
+        other. INTERNAL ONLY: the two halves must be distinguishable in memory
+        (`ClassList` rejects two rows under one key), but the EMITTED `class` is
+        the plain class name on both, with the owner in the row property
+        `owning_feature_system` -- see `encode_split_owner`.
         """
         if self.owning_feature_system is None:
             return self.object_class
@@ -681,13 +684,15 @@ def class_list_provenance_artifact(class_list: ClassList) -> dict:
 
 
 def split_class_label(object_class: str, owner: str) -> str:
-    """PROVISIONAL (A1): the row label for a class split by owning collection.
+    """The label for a class split by owning collection -- FALLBACK ONLY.
 
-    The two candidate encodings are documented at `A1_OWNER_ENCODING` below --
-    this string form ("class_string") needs no contract edit but is unvalidated;
-    the alternative adds `owning_feature_system` to `$defs.classRow`. Every
-    emission goes through `encode_split_owner`, which is the one seam that
-    chooses.
+    Not part of the emitted artifact while `A1_OWNER_ENCODING` is
+    `"row_property"` (the settled choice, backed by the `classRow` property
+    `owning_feature_system`). It survives as the INTERNAL
+    `ClassListEntry.row_key`, which needs the two halves of a split to be
+    distinguishable in memory even though the emitted `class` is the plain class
+    name on both. Kept so the encoding decision is reversible at one constant;
+    see the note above `A1_OWNER_ENCODING`.
     """
     return object_class + "(" + owner + ")"
 
@@ -969,6 +974,9 @@ class ProjectCensusReading:
     counts: ClassCounts
     data_model_version: Optional[int] = None
     declared_freshly_created: Optional[bool] = None
+    #: `{row_key: count}` for the A1-split rows -- see `split_counts`. Empty
+    #: unless `read_project` was given the class list.
+    split_counts: Optional[dict] = None
 
     @property
     def digest_unchanged(self) -> bool:
@@ -1007,6 +1015,7 @@ def read_project(
     *,
     projects_root: Optional[str] = None,
     declared_freshly_created: Optional[bool] = None,
+    class_list: Optional[ClassList] = None,
     open_project=None,
 ) -> ProjectCensusReading:
     """Open one project READ-ONLY, count every class once, and prove no write.
@@ -1017,6 +1026,11 @@ def read_project(
     `CensusError` (verdict `CENSUS_ERROR`, exit 7): the census's whole claim to
     be a safe instrument rests on that comparison, so it is the feature, not a
     formality.
+
+    Pass `class_list` to also collect the A1 per-owner counts (`split_counts`)
+    IN THIS SAME OPEN. They deliberately are not a second `read_project` call:
+    one open means one digest window, and a second open of the same project to
+    finish counting would widen the very window this function exists to close.
 
     `open_project` is an injection seam -- it must accept `(project_name)` and
     return a handle whose `ObjectCountFor` works. The default opens a real
@@ -1046,6 +1060,9 @@ def read_project(
             handle.OpenProject(projectName=project_name, writeEnabled=False)
         resolved = fwdata_path_for(project_name, projects_root, handle)
         counts = count_classes(handle, class_names, project_name=project_name)
+        per_owner = (
+            split_counts(handle, class_list) if class_list is not None else None
+        )
     except CensusFailure:
         raise
     except Exception as exc:  # noqa: BLE001 -- LCM raises many types
@@ -1079,7 +1096,23 @@ def read_project(
         counts=counts,
         data_model_version=model_version,
         declared_freshly_created=declared_freshly_created,
+        split_counts=per_owner,
     )
+
+
+def count_for_entry(reading: ProjectCensusReading, entry: ClassListEntry):
+    """The count for ONE class-list entry, or None when unmeasured.
+
+    Prefers the A1 per-owner count for a split entry and returns None rather
+    than the summed class total when the reading has none -- because handing a
+    split row the class total is exactly the ambiguity A1 forbids, and a
+    conspicuous None is the honest answer for a caller who never asked for the
+    per-owner pass.
+    """
+    if entry.owning_feature_system is not None:
+        per_owner = reading.split_counts or {}
+        return per_owner.get(entry.row_key)
+    return reading.counts.count_for(entry.object_class)
 
 
 def projects_artifact(
@@ -1436,38 +1469,50 @@ def duplicate_reports_for(
 # other -- the same masking defect section 6 rule 2 exists to prevent for
 # duplicate identity. Each part is evaluated INDEPENDENTLY against section 9.
 #
-# ####################################################################
-# # PROVISIONAL (A1): THE OWNER ENCODING IS NOT SETTLED.             #
-# ####################################################################
-# `fidelity-census.md:650-673` requires the row to "carry the owner", but
-# `$defs.classRow` is `additionalProperties: false` with `class` as a bare
-# string and NO owner property. Two encodings are possible and exactly one seam
-# below decides between them:
+# THE OWNER ENCODING IS SETTLED: `row_property`.
 #
-#   1. "class_string"  -- `class: "FsFeatStrucType(MsFeatureSystem)"`.
-#      Needs no contract edit, validates today, but NOTHING checks the owner:
-#      it is an unvalidated convention inside a string, and a consumer
-#      splitting on class name sees two unknown classes.
-#   2. "row_property"  -- add `owning_feature_system` to `$defs.classRow`.
-#      Validated, self-describing, and additive under the schema's own
-#      EVOLUTION RULE (a new OPTIONAL property) -- but it EDITS A CONTRACT
-#      under `specs/`, which this task is not permitted to do.
+# `fidelity-census.md:650-673` requires the row to "carry the owner". When this
+# was first written `$defs.classRow` had no owner property, so two encodings
+# were possible and the choice was left at the seam below:
 #
-# "class_string" is the provisional default so the suite can run. Switching is
-# one constant: set `A1_OWNER_ENCODING = "row_property"`. RECOMMENDATION is
-# recorded in the T018 journal entry; the orchestrator settles it.
+#   1. "class_string"  -- `class: "FsFeatStrucType(MsFeatureSystem)"`. Needed no
+#      contract edit and validated as it stood, but NOTHING checked the owner:
+#      an unvalidated convention inside a string; a consumer joining on `class`
+#      saw two unknown classes; the phase-predicate lookup had to prefix-match a
+#      class name to find a split row; and the emitted class names outnumbered
+#      the class roster by one pseudo-class while A1 insists the class count is
+#      unchanged.
+#   2. "row_property" -- `owning_feature_system` alongside a PLAIN `class`.
+#
+# Option 2 is now the choice, and the contract carries it: `classRow` gained
+# `owning_feature_system` as a new OPTIONAL property, enumerated to exactly the
+# two spellings A1 itself uses, so the owner is VALIDATED rather than merely
+# conventional and `class` goes back to being the plain LCM class name on both
+# halves. A row without the property -- every ordinary class -- validates
+# unchanged, which is what makes the addition additive under the schema
+# EVOLUTION RULE.
+#
+# "class_string" is RETAINED, unused, purely so the decision stays reversible at
+# one constant. It is a fallback, not an equal alternative: switching back
+# reintroduces all four costs above.
 # ---------------------------------------------------------------------------
 
-#: The A1 seam. `"class_string"` (provisional) or `"row_property"`.
-A1_OWNER_ENCODING = "class_string"
+#: The A1 seam. `"row_property"` (settled, backed by the `classRow` property of
+#: the same name) or `"class_string"` (retained fallback only).
+A1_OWNER_ENCODING = "row_property"
 
-#: The two owning feature systems, in `LangProject` attribute order.
-FEATURE_SYSTEM_OWNERS: tuple = ("MsFeatureSystem", "PhFeatureSystem")
+#: The two owning feature systems. These spellings are the CONTRACT ones
+#: (fidelity-census.md:650-673) and the schema enum members, not a local
+#: shorthand: they are emitted verbatim into `owning_feature_system`, so a
+#: shorter token invented here would fail validation.
+FEATURE_SYSTEM_OWNERS: tuple = (
+    "LangProject.MsFeatureSystemOA", "LangProject.PhFeatureSystemOA",
+)
 
 #: `LangProject` attribute per owner token.
 FEATURE_SYSTEM_ATTRS: dict = {
-    "MsFeatureSystem": "MsFeatureSystemOA",
-    "PhFeatureSystem": "PhFeatureSystemOA",
+    "LangProject.MsFeatureSystemOA": "MsFeatureSystemOA",
+    "LangProject.PhFeatureSystemOA": "PhFeatureSystemOA",
 }
 
 #: Classes reachable from BOTH feature systems, which A1 therefore splits. A1's
@@ -1480,20 +1525,18 @@ def encode_split_owner(row: dict, object_class: str, owner: Optional[str]) -> di
     """THE A1 SEAM. Put the owning feature system into an emitted class row.
 
     Every A1-aware emission goes through here, so the encoding is decided in
-    exactly one place. See the PROVISIONAL block above for the two options and
-    why the string form is the current default.
+    exactly one place. `class` is the PLAIN LCM class name on every row,
+    including both halves of a split, and the owner rides in
+    `owning_feature_system`. See the settled-encoding note above.
     """
     if owner is None:
         row["class"] = object_class
         return row
     if A1_OWNER_ENCODING == "row_property":
-        # Requires `owning_feature_system` on `$defs.classRow`. Until that
-        # property exists the artifact is additionalProperties:false and this
-        # branch produces an INVALID document -- deliberately, rather than
-        # silently degrading to the other encoding.
         row["class"] = object_class
         row["owning_feature_system"] = owner
         return row
+    # Retained fallback only; reintroduces the four costs named above.
     row["class"] = split_class_label(object_class, owner)
     return row
 
@@ -1528,6 +1571,32 @@ def split_feature_system_entries(class_list: ClassList) -> ClassList:
         derivation_check=dict(class_list.derivation_check),
         provenance=dict(class_list.provenance),
     )
+
+
+def split_counts(handle, class_list: ClassList) -> dict:
+    """`{row_key: count}` for every A1-split row in `class_list`.
+
+    THE POINT OF THIS FUNCTION IS THAT IT EXISTS. `count_classes` returns one
+    number per CLASS, which for `FsFeatStrucType` is the summed repository total
+    -- precisely the ambiguous figure A1 forbids. A driver that fills the two
+    split rows from that dict gives both halves the same number and the split
+    becomes decorative: two rows, one measurement, and a shortfall in one system
+    still masked by a surplus in the other. So the per-owner counts get their own
+    call, keyed by `row_key`, for the driver to prefer over the class total.
+
+    Measured on `Ejagham Mini`: 3 under MsFeatureSystemOA, 0 under
+    PhFeatureSystemOA, summing to the repository total of 3.
+    """
+    out: dict = {}
+    for object_class in sorted({
+            e.object_class for e in class_list.entries
+            if e.owning_feature_system is not None}):
+        per_owner = count_by_feature_system(handle, object_class)
+        for entry in class_list.entries_for(object_class):
+            if entry.owning_feature_system is None:
+                continue
+            out[entry.row_key] = per_owner.get(entry.owning_feature_system, 0)
+    return out
 
 
 def count_by_feature_system(handle, object_class: str) -> dict:
@@ -2454,13 +2523,20 @@ def validate_artifact(artifact) -> tuple:
         )
     seen = set()
     for row in rows:
-        label = _row_label(row)
-        if label in seen:
+        # Keyed on (class, owner), not on class alone: Amendment A1 splits one
+        # class into one row PER OWNING FEATURE SYSTEM, and both halves emit the
+        # same plain class name with the owner in `owning_feature_system`. Two
+        # rows for one class are a defect; two rows for one class-and-owner are
+        # the same row twice, which is the thing this invariant is for.
+        key = (_row_label(row), row.get("owning_feature_system"))
+        if key in seen:
+            owner = key[1]
             failures.append(
-                "invariant 1: two rows for class " + label
+                "invariant 1: two rows for class " + key[0]
+                + (" under " + str(owner) if owner else "")
                 + " -- exactly one row per class"
             )
-        seen.add(label)
+        seen.add(key)
 
     derivation = provenance.get("derivation_check") or {}
     if derivation.get("performed") is not True:
@@ -2903,16 +2979,16 @@ class PhaseResult:
 
 
 def _row_by_class(artifact, object_class: str) -> Optional[dict]:
-    """One row, matched on the emitted class label OR on the class name an A1
-    split row is derived from, so a split does not hide a row from a predicate.
+    """One row, matched EXACTLY on the emitted class name.
+
+    Exact match is sufficient because `class` is always the plain LCM class
+    name: an A1 split carries its owner in `owning_feature_system` rather than
+    inside the label, so the prefix-matching fallback this function used to need
+    is gone. No phase predicate names a split class; one that ever does must
+    select on the owner too, because either half alone is not the class.
     """
     for row in _rows(artifact):
-        label = _row_label(row)
-        if label == object_class:
-            return row
-        if row.get("owning_feature_system") and label == object_class:
-            return row
-        if label.startswith(object_class + "("):
+        if _row_label(row) == object_class:
             return row
     return None
 
