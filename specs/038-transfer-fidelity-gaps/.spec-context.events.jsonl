@@ -13,3 +13,6 @@
 {"step": "implement", "substep": null, "task": "T013", "kind": "complete", "by": "ai", "at": "2026-08-19T04:09:05.957Z", "did": "Added 53 foundational unit tests covering every new dataclass invariant, the roster accessor's degrade-vs-raise split, the empty registry's inertness across all GrammarCategory members, and the build_run_plan FR-018 gate. Includes a test encoding the T009 finding that a roster row without key_fn_id is not executable. RED-THEN-GREEN VERIFIED: disabling the FR-018 gate makes test_unverified_edge_raises fail with DID NOT RAISE, and restoring it passes", "files": ["tests/unit/test_038_foundational.py"]}
 {"step": "implement", "substep": null, "task": "T024a", "kind": "complete", "by": "extension", "at": "2026-08-19T17:18:17.705Z"}
 {"step": "implement", "substep": null, "task": "T024f", "kind": "complete", "by": "extension", "at": "2026-08-19T17:33:06.621Z"}
+{"step": "implement", "substep": null, "task": "T024c", "kind": "complete", "by": "extension", "at": "2026-08-19T18:15:30.262Z"}
+{"step": "implement", "substep": null, "task": "T024e", "kind": "complete", "by": "extension", "at": "2026-08-19T18:15:30.487Z"}
+{"step": "implement", "substep": null, "task": "T024h", "kind": "complete", "by": "extension", "at": "2026-08-19T18:15:30.717Z"}

@@ -318,6 +318,30 @@
       "kind": "complete",
       "by": "extension",
       "at": "2026-08-19T17:33:06.621Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T024c",
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-08-19T18:15:30.262Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T024e",
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-08-19T18:15:30.487Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T024h",
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-08-19T18:15:30.717Z"
     }
   ],
   "decisions": [
@@ -649,7 +673,7 @@
       "summary": "85 tasks in 9 phases (Setup, Foundational, then 6 story phases ordered by verifiability -- US2 census first as the acceptance instrument, then US1, US4 || US5a, US3, US5b -- plus Polish); waves serialized on categories.py and models.py; 2 hard external gates (035 roster append, 037 landing)"
     }
   },
-  "currentTask": "T024f",
+  "currentTask": "T024h",
   "task_summaries": {
     "T001": {
       "status": "DONE",
@@ -749,6 +773,15 @@
       "status": "DONE"
     },
     "T024f": {
+      "status": "DONE"
+    },
+    "T024c": {
+      "status": "DONE"
+    },
+    "T024e": {
+      "status": "DONE"
+    },
+    "T024h": {
       "status": "DONE"
     }
   }
