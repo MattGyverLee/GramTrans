@@ -15,7 +15,8 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Iterable
+from dataclasses import dataclass
+from typing import Iterable, Optional
 
 _log = logging.getLogger(__name__)
 
@@ -24,6 +25,8 @@ if __package__:
         DroppedItemRecord,
         GrammarCategory,
         LeafExecutionFailure,
+        MatchBasis,
+        MatchBasisRecord,
         MergeDecision,
         MergeDecisionLog,
         MergeResolution,
@@ -50,6 +53,8 @@ else:
         DroppedItemRecord,
         GrammarCategory,
         LeafExecutionFailure,
+        MatchBasis,
+        MatchBasisRecord,
         MergeDecision,
         MergeDecisionLog,
         MergeResolution,
@@ -440,6 +445,13 @@ def execute(plan: RunPlan, source, target, report_sink, tag: ImportResidueTag,
     # APR copy-set gate sees every allomorph already copied earlier in this
     # SAME run (across every entry, not just the one currently being copied).
     object.__setattr__(exec_ctx, '_copy_set', {})
+    # Feature 038 T036: the CURRENT action's `PlannedDestination`, re-set on
+    # every leaf-dispatch iteration below. Seeded here with the
+    # "plan decided nothing" value so a consumer added later never has to
+    # distinguish "not attached" from "no match_basis" -- those are the same
+    # answer, and only one of them should have to be written down.
+    object.__setattr__(exec_ctx, '_planned_destination',
+                       PlannedDestination(DESTINATION_UNDETERMINED))
     # C6: categories gated behind the flexicon ITsString.get_String fix.
     # When _phoneme_env_field_diff_enabled() is False (current state), field-diff
     # for PHONEMES and PH_ENVIRONMENT is skipped — they remain SELECTOR-ONLY
@@ -474,6 +486,55 @@ def execute(plan: RunPlan, source, target, report_sink, tag: ImportResidueTag,
             action.category.value, action.source_guid,
         )
         try:
+            # Feature 038 T036 -- the leaf path's half of the single
+            # resolve-or-create path.
+            #
+            # `execute_action` lives in `categories.py` and does its own
+            # guard-then-Create on the SOURCE GUID, which is blind to a
+            # destination the plan matched by a roster-admitted natural key
+            # (that object exists under a different GUID). Resolving the
+            # plan's record HERE does two things the category code cannot do
+            # for itself yet:
+            #
+            #   * a record naming a destination the target does not hold
+            #     raises `PlannedDestinationError` BEFORE any write, so the
+            #     item is never created-anyway as a duplicate, and
+            #   * a `MatchBasis.NONE` whose creation the roster refuses
+            #     (`MoMorphType`: the morph-types list is project-independent
+            #     fixed content, all 19 GUIDs byte-identical across the three
+            #     projects measured) is reported instead of minting an object
+            #     the canonical list does not contain.
+            #
+            # The resolved destination is attached to `exec_ctx` on the same
+            # `object.__setattr__` convention as `_run_plan` / `_ws_map` /
+            # `_dropped`, so the category executors can CONSUME the plan's
+            # decision rather than re-deriving it. It is set on every
+            # iteration -- never left over from the previous action -- and no
+            # consumer exists in `categories.py` yet, which is why this is a
+            # seam and not a fix for that module.
+            #
+            # Raising inside this try is deliberate. The established per-leaf
+            # policy here is swallow-and-record (feature 037 defect C), and a
+            # harness error routed through it still reaches THREE channels
+            # that a `_NullReportSink` cannot discard: the logged traceback,
+            # the `report_sink.Warning`, and a first-class
+            # `LeafExecutionFailure` in the RunReport. It also keeps the
+            # counters honest -- `leaf_succeeded` is incremented only after
+            # `execute_action` returns, so a refused item is never counted as
+            # a success. Aborting the whole transfer for one item would be
+            # louder but would discard the other 138 items' work.
+            #
+            # With `match_basis=None` (every plan built today) this is one
+            # attribute read yielding `DESTINATION_UNDETERMINED`, one
+            # `__setattr__`, and no behaviour change whatsoever.
+            _dest = planned_destination_for(action, target)
+            if _dest.outcome == DESTINATION_REPORT:
+                raise PlannedDestinationError(
+                    "plan match_basis for " + (_dest.object_class or "?")
+                    + " " + action.source_guid + " found no destination and "
+                    "creation is not permitted: " + _dest.detail
+                )
+            object.__setattr__(exec_ctx, '_planned_destination', _dest)
             bundle["execute_action"](action, exec_ctx, ws_map, tag)
             leaf_count += 1
             leaf_succeeded += 1
@@ -691,8 +752,12 @@ def _execute_verb_vertical(
         if src_pos is None:
             report_sink.Warning(f"Source POS {action.source_guid} vanished; skipping")
             continue
+        # 038 T036: the plan's own match decision travels with the action.
+        # For every plan built today it is None, and the creator behaves
+        # exactly as it did before 038.
         target_verb = _create_pos_with_guid(
-            target, action.source_guid, source.POS.GetSyncableProperties(src_pos), tag, report_sink
+            target, action.source_guid, source.POS.GetSyncableProperties(src_pos), tag, report_sink,
+            match_basis=getattr(action, "match_basis", None),
         )
 
     # If POS was skipped (already in target), look up the existing target POS
@@ -721,6 +786,7 @@ def _execute_verb_vertical(
             source.MorphRules.GetSyncableProperties(src_template_wrap),
             tag,
             report_sink,
+            match_basis=getattr(action, "match_basis", None),  # 038 T036
         )
 
     # Owner template may have been Skip-by-GUID; resolve from target.
@@ -768,12 +834,19 @@ def _execute_verb_vertical(
     }
 
     target_slots_by_guid: dict = {}
-    planned_slot_guids = {a.source_guid for a in _filter(plan.actions, GrammarCategory.SLOTS)}
+    # 038 T036: keep the ACTION, not just its GUID, so the plan's match
+    # decision can travel to the creator. The membership test below is
+    # unchanged -- `in` on a dict tests its keys, exactly as it did on the set
+    # this replaced.
+    planned_slot_guids = {
+        a.source_guid: a for a in _filter(plan.actions, GrammarCategory.SLOTS)
+    }
     for kind, src_slot, slot_guid in ordered_src_slots:
         if slot_guid in planned_slot_guids:
             slot_name = _slot_name(src_slot)
             new_slot = _create_slot_with_guid(
-                target, target_verb, slot_guid, slot_name, tag, report_sink
+                target, target_verb, slot_guid, slot_name, tag, report_sink,
+                match_basis=getattr(planned_slot_guids[slot_guid], "match_basis", None),
             )
             target_slots_by_guid[slot_guid] = new_slot
         else:
@@ -788,12 +861,367 @@ def _execute_verb_vertical(
 
 
 # ============================================================================
+# Feature 038 T036 -- the single resolve-or-create path
+# ============================================================================
+#
+# WHAT THIS REPLACES. Before 038 the executor answered "does this source
+# object already have a counterpart in the destination?" in two places, with
+# two opposite failure modes:
+#
+#   * CREATE-ANYWAY. `_idempotency_guard` asks `target.Object(SOURCE guid)`.
+#     That question can only ever find an IDENTITY match. When the plan
+#     matched a starter object by a roster-admitted NATURAL KEY -- the
+#     destination object exists but under a DIFFERENT GUID -- the guard sees
+#     nothing and the caller Creates. The cost of that is a duplicate of
+#     FLEx's own starter content: a second `Verb`, a second `n`, a second
+#     `[C]`, permanently written to .fwdata on CloseProject.
+#
+#   * RESOLVE-ONLY. `_find_target_pos_by_guid` / `_find_target_template_by_guid`
+#     / `_find_target_slot_by_guid` / `_find_target_morph_type_by_guid` /
+#     `_find_target_env_by_guid` / `_find_obj_by_guid` each run their OWN
+#     category-scoped linear scan; a miss produces `report_sink.Warning(...)`
+#     and `return`. The work the plan did for that object is thrown away, and
+#     in export mode the `_NullReportSink` discards the Warning too, so the
+#     abandon leaves no trace at all (the same shape as feature 037's defect
+#     C, which is why `LeafExecutionFailure` exists).
+#
+# One question, three implementations (`preview.py` scanned one way,
+# `transfer.py` another, `categories.py` a third), so the two halves could and
+# did disagree. T031 moved the decision into the plan; T036 makes the executor
+# CONSUME that decision instead of re-deriving it.
+#
+# THE CONTRACT. The executor may RESOLVE a GUID to an object. It may NOT
+# decide WHICH object corresponds to which -- no scans, no keys, no candidate
+# counting, no fallbacks between strategies. Everything below is either a
+# GUID -> object lookup, a read of the plan's own record, or a read of the
+# roster's per-class CREATION policy (which decides whether a create is
+# permitted, never which object matches).
+#
+# CLEAN DEGRADATION IS THE PRIME CONSTRAINT. `match_basis is None` means the
+# plan builder never ran 038's matcher for this item, and that is the state of
+# every category today: `preview._emit_present_outcome` attaches a record only
+# when its caller passes `object_class=`, and as of T036 NO caller passes it,
+# so not one plan item in production carries a record at all. Every path below
+# therefore begins by returning `DESTINATION_UNDETERMINED` for a None record,
+# which every call site treats as "do exactly what you did before 038". A
+# category acquires the new behaviour when, and only when, its planner starts
+# attaching a record.
+
+
+class PlannedDestinationError(RuntimeError):
+    """The plan's `match_basis` and the destination project disagree.
+
+    RAISED, never absorbed. A `MatchBasisRecord` whose basis is IDENTITY or
+    NATURAL_KEY is a positive assertion by the plan that a specific
+    destination object EXISTS and is the counterpart of this source object.
+    If the executor cannot resolve that GUID, exactly one of two things is
+    true, and both are harness errors rather than data conditions:
+
+      * the plan and the destination project have drifted apart (the usual
+        cause is the operator editing the project in FLEx between Preview and
+        Move -- the fix is to re-run Preview, not to guess), or
+      * the plan builder recorded a GUID it never verified.
+
+    Absorbing it would resurrect precisely the two defects this path exists to
+    remove: falling back to Create duplicates the destination object under a
+    second GUID, and falling back to a `Warning` + `return` throws the analysis
+    away. Neither is safe, so the executor stops instead of choosing one.
+    """
+
+
+#: The plan carries no `match_basis` for this item. PRE-038 BEHAVIOUR,
+#: unchanged -- the call site keeps its own GUID-only lookup or its own
+#: guard-then-Create. This is a degradation, not an error (FR-013, and the
+#: roster's "if 035 rejects an entry" clause).
+DESTINATION_UNDETERMINED = "undetermined"
+
+#: The plan named a destination object and it resolved. Use `.obj`; do not
+#: re-scan for it, do not create anything.
+DESTINATION_RESOLVED = "resolved"
+
+#: The plan found no destination (basis NONE) and creation is permitted --
+#: both by the plan item's own verb and by the roster's per-class rule.
+DESTINATION_CREATE = "create"
+
+#: The plan found no destination and creation is NOT permitted. The item is
+#: reported and skipped; it is never written as something else.
+DESTINATION_REPORT = "report"
+
+
+@dataclass(frozen=True)
+class PlannedDestination:
+    """The executor-internal answer to "where does this plan item write?".
+
+    Deliberately NOT in `models.py`: it is not part of any plan or report
+    artifact, it never crosses a process boundary, and it exists only for the
+    few lines between reading `match_basis` and acting on it. Putting it in
+    the shared model would invite a producer to build one, which is exactly
+    the "the executor decided the match" inversion T036 removes.
+
+    Fields:
+        outcome:      one of the four `DESTINATION_*` tokens above.
+        obj:          the resolved destination object; only ever non-None for
+                      `DESTINATION_RESOLVED`.
+        target_guid:  the GUID the plan named. Empty except when RESOLVED.
+        object_class: the LCM class the plan's record named.
+        basis:        the `MatchBasis` the plan recorded, or None.
+        detail:       for `DESTINATION_REPORT`, why creation was refused --
+                      written for a human reading the run report, so it names
+                      the rule rather than restating the outcome.
+    """
+
+    outcome: str
+    obj: object = None
+    target_guid: str = ""
+    object_class: str = ""
+    basis: Optional[MatchBasis] = None
+    detail: str = ""
+
+    @property
+    def undetermined(self) -> bool:
+        """True when the plan carried no record and pre-038 behaviour applies.
+
+        Every call site is written as "if the plan decided, obey it; otherwise
+        do what you did before", so this reads as the guard it is rather than
+        a string comparison repeated a dozen times.
+        """
+        return self.outcome == DESTINATION_UNDETERMINED
+
+    @property
+    def resolved(self) -> bool:
+        """True when the plan named a destination object and it was found."""
+        return self.outcome == DESTINATION_RESOLVED
+
+
+def _resolve_guid_in_target(target, guid_str: str):
+    """The ONE resolution primitive: a GUID string -> the target object, or None.
+
+    `FLExProject.Object(guid)` is a cache lookup, not a scan, so it is
+    class-agnostic and O(1) -- which is why it is safe to use as the single
+    primitive for every class the plan can name, where the category-scoped
+    helpers below (`_find_target_pos_by_guid` and friends) each walk one
+    collection and can only ever answer for their own category.
+
+    Swallowing the exception is correct HERE and only here: "the GUID is not
+    in this project" and "the GUID is malformed" are the same answer to the
+    caller's question, and the caller (`resolve_planned_destination`) turns a
+    None into a loud `PlannedDestinationError` that names the class, the GUID
+    and the source object. Nothing is silently dropped.
+    """
+    try:
+        return target.Object(guid_str)
+    except Exception:  # noqa: BLE001 -- see docstring
+        return None
+
+
+def _resolved_class_name(obj) -> str:
+    """The exact LCM class name of a resolved object, or "" when it has none."""
+    concrete = _unwrap(obj)
+    try:
+        name = getattr(concrete, "ClassName", None)
+    except Exception:  # noqa: BLE001 -- a proxy may raise on attribute access
+        return ""
+    return str(name) if name else ""
+
+
+def _creation_policy(object_class: str, creation_licensed: bool):
+    """`(may_create, why_not)` for a `MatchBasis.NONE` record. NOT a match.
+
+    Two independent vetoes, both of which must pass:
+
+    1. THE PLAN ITEM'S VERB. `creation_licensed` is True only for a
+       `PlannedAction` -- the ADD verb IS the plan saying creation is allowed.
+       A `PlannedOverwrite` (or an UPDATE/LINK/merge mode routed through one)
+       is an instruction to write onto an object that already exists;
+       creating from one would be the create-anyway defect with extra steps.
+
+    2. THE ROSTER'S PER-CLASS RULE, read from
+       `matcher.natural_key_binding_for(...).creates_on_miss`. This is a
+       creation POLICY lookup, not matching logic: it decides whether a missed
+       key may mint an object, never which object corresponds to which.
+       `MoMorphType` is the one admitted class that sets it False -- FLEx
+       treats the morph-types list as project-independent fixed content (all
+       19 GUIDs byte-identical across the three projects measured), so minting
+       one would add an object the canonical list does not contain.
+
+    A class with NO binding is refused as well, and that is the honest reading
+    of "never create when the record shows the key could not be computed": no
+    binding means 038 binds no key function for the class, so no key was, or
+    could have been, computed for it -- the record's NONE means "not keyed",
+    not "keyed and missed".
+
+    KNOWN RESIDUAL, stated rather than hidden. `MatchBasisRecord` cannot
+    currently distinguish a key that RAN AND MISSED (FR-007 licenses a create)
+    from a key that COULD NOT BE COMPUTED for this particular object -- an
+    auto-generated rule label, a subclass mismatch, or no name in the scoped
+    writing system (66 of 113 measured feature-based natural classes collide
+    on an auto-generated label; 42 of 42 `Mbugwe LizzieHC practice` phonemes
+    have no `en` name). `matcher._miss` builds an identical record for both,
+    and the distinction lives on `MatchDecision.may_create`, which does not
+    travel on the plan. That guarantee therefore rests on the PLAN BUILDER: a
+    decision whose `may_create` is False must not become a `PlannedAction` at
+    all. This function enforces the two vetoes it can see and does not pretend
+    to enforce the third.
+    """
+    if not creation_licensed:
+        return False, (
+            "the plan item is not an ADD, so it carries no licence to create "
+            "-- an OVERWRITE/UPDATE whose match_basis is NONE names no "
+            "destination to write onto"
+        )
+    if __package__:
+        from . import matcher as _matcher
+    else:
+        import matcher as _matcher  # type: ignore
+    binding = _matcher.natural_key_binding_for(object_class)
+    if binding is None:
+        return False, (
+            "no natural-key binding exists for object class "
+            + repr(object_class) + ", so no key was computed for it and its "
+            "NONE basis means 'not keyed' rather than 'keyed and missed'"
+        )
+    if not binding.creates_on_miss:
+        return False, (
+            "the roster forbids creating a " + repr(object_class)
+            + " on a missed key (creates_on_miss=false): the list is "
+            "project-independent fixed content, so minting one would add an "
+            "object the canonical list does not contain"
+        )
+    return True, ""
+
+
+def resolve_planned_destination(match_basis: Optional[MatchBasisRecord], target, *,
+                                creation_licensed: bool,
+                                resolve_fn=None) -> PlannedDestination:
+    """THE resolve-or-create path. One function, four outcomes, no fallbacks.
+
+    Parameters:
+        match_basis:       the plan item's `MatchBasisRecord`, or None.
+        target:            the destination project handle.
+        creation_licensed: whether the CALLER's own plan verb permits a create
+                           (see `_creation_policy`). Passed rather than
+                           inferred so a create-site helper -- which is a
+                           create by construction -- does not have to fake a
+                           plan item to say so.
+        resolve_fn:        injection hook for the GUID -> object primitive,
+                           mirroring `matcher.resolve_match`'s existing
+                           `key_fn=` convention. Production leaves it None.
+
+    Raises:
+        PlannedDestinationError: when the plan asserted a destination the
+            target does not hold, or holds as a different class.
+
+    Never scans and never keys. `MatchBasis.IDENTITY` and
+    `MatchBasis.NATURAL_KEY` are handled IDENTICALLY on purpose: the plan
+    already applied the ordering contract (identity first and authoritative;
+    the key only when identity found nothing), and re-deciding it here is
+    exactly the duplication that let the plan and the executor reach different
+    answers.
+    """
+    if match_basis is None:
+        # Pre-038. The caller keeps its own behaviour, bit-for-bit.
+        return PlannedDestination(DESTINATION_UNDETERMINED)
+
+    basis = getattr(match_basis, "basis", None)
+    object_class = getattr(match_basis, "object_class", "") or ""
+    source_guid = getattr(match_basis, "source_guid", "") or ""
+    target_guid = getattr(match_basis, "target_guid", "") or ""
+
+    if basis in (MatchBasis.IDENTITY, MatchBasis.NATURAL_KEY):
+        # `MatchBasisRecord.__post_init__` already refuses a non-NONE basis
+        # with an empty target_guid, so this can only fire for a record built
+        # some other way. Checked anyway: an empty GUID reaching
+        # `target.Object("")` would resolve to None and be reported as "the
+        # destination is gone", which would send the operator hunting for a
+        # data problem that is really a producer bug.
+        if not target_guid:
+            raise PlannedDestinationError(
+                "plan match_basis for object class " + repr(object_class)
+                + " (source " + repr(source_guid) + ") records basis "
+                + str(getattr(basis, "value", basis)) + " but names no "
+                "target_guid -- a matched basis without a destination GUID is "
+                "not a match"
+            )
+        obj = (resolve_fn or _resolve_guid_in_target)(target, target_guid)
+        if obj is None:
+            raise PlannedDestinationError(
+                "plan match_basis promised a destination "
+                + repr(object_class) + " at GUID " + repr(target_guid)
+                + " for source object " + repr(source_guid) + " (basis "
+                + str(getattr(basis, "value", basis)) + "), but the target "
+                "project does not hold it. The executor will NOT fall back to "
+                "creating the object (that duplicates destination content "
+                "under a second GUID) nor to skipping it (that discards the "
+                "analysis). Re-run Preview against the current target."
+            )
+        resolved_class = _resolved_class_name(obj)
+        if object_class and resolved_class and resolved_class != object_class:
+            raise PlannedDestinationError(
+                "plan match_basis named a " + repr(object_class) + " at GUID "
+                + repr(target_guid) + " but the target holds a "
+                + repr(resolved_class) + " there. `PhNCSegments` must never "
+                "match `PhNCFeatures` and `LexEntryInflType` must never match "
+                "`LexEntryType`, however identical their names -- writing "
+                "source properties onto the wrong class is a corruption, not "
+                "a mismatch to warn about."
+            )
+        return PlannedDestination(
+            outcome=DESTINATION_RESOLVED,
+            obj=obj,
+            target_guid=target_guid,
+            object_class=object_class,
+            basis=basis,
+        )
+
+    if basis is MatchBasis.NONE:
+        may_create, why_not = _creation_policy(object_class, creation_licensed)
+        return PlannedDestination(
+            outcome=DESTINATION_CREATE if may_create else DESTINATION_REPORT,
+            target_guid="",
+            object_class=object_class,
+            basis=basis,
+            detail="" if may_create else why_not,
+        )
+
+    raise PlannedDestinationError(
+        "plan match_basis for object class " + repr(object_class)
+        + " carries an unknown basis " + repr(basis) + "; the executor "
+        "refuses to guess whether that means resolve or create"
+    )
+
+
+def planned_destination_for(plan_item, target, *,
+                            resolve_fn=None) -> PlannedDestination:
+    """`resolve_planned_destination` for a whole plan item -- the front door.
+
+    Reads the item's own `match_basis` and derives the creation licence from
+    its VERB: only a `PlannedAction` (ADD) carries one. Every other plan item
+    -- `PlannedOverwrite`, and the UPDATE/LINK/merge modes routed through it
+    -- names an object that already exists, so a create from one would be the
+    create-anyway defect.
+
+    `getattr` rather than attribute access because `plan.actions` is
+    heterogeneous: `CreateDefinitionAction` is a schema-level MDC write with
+    no `match_basis` at all (the same reason `execute()` reads `pulled_in_by`
+    defensively), and a schema action must degrade to pre-038 behaviour rather
+    than raise.
+    """
+    return resolve_planned_destination(
+        getattr(plan_item, "match_basis", None),
+        target,
+        creation_licensed=isinstance(plan_item, PlannedAction),
+        resolve_fn=resolve_fn,
+    )
+
+
+# ============================================================================
 # Per-layer create helpers (extracted verbatim from the pre-T-Spike monolith
 # so the parity rubric in tasks.md T-Spike step 3 passes byte-for-byte on
 # created objects)
 # ============================================================================
 
-def _idempotency_guard(target, src_guid: str, expected_classname: str, report_sink):
+def _idempotency_guard(target, src_guid: str, expected_classname: str, report_sink,
+                       *, match_basis=None):
     """Idempotency guard: check if an object with `src_guid` already exists.
 
     Called at EVERY Guid-preserving Create site BEFORE factory.Create(guid, ...).
@@ -807,7 +1235,63 @@ def _idempotency_guard(target, src_guid: str, expected_classname: str, report_si
         (True, None) if a WRONG-class object was found -- caller should return
             None and skip Create entirely (log WARNING).
         (False, None) if no object exists for that GUID -- proceed with Create.
+
+    Feature 038 T036 -- `match_basis`, and why the guard alone was never enough.
+    ---------------------------------------------------------------------------
+    The GUID probe below asks `target.Object(SOURCE guid)`. That question can
+    only ever discover an IDENTITY match, so it is blind to precisely the case
+    038 exists to fix: the destination already holds this object under a
+    DIFFERENT GUID because FLEx created it as starter content, and the plan
+    matched it by a roster-admitted natural key. The guard answers "no such
+    object", the caller Creates, and the project ends up with two `Verb`s.
+
+    Passing the plan item's `MatchBasisRecord` turns this into the single
+    resolve-or-create path: the plan's decision is consulted FIRST and, when it
+    named a destination, that object is returned and no Create happens --
+    whatever GUID it carries. The guard adds no matching logic of its own; it
+    only resolves the GUID the plan already chose.
+
+    `match_basis=None` (every production call site as of T036, since no planner
+    attaches a record yet) skips the whole block and leaves the pre-038 probe
+    bit-for-bit unchanged.
     """
+    dest = resolve_planned_destination(
+        match_basis, target,
+        # A create-helper call site is a create by construction: it was reached
+        # because the plan asked for this object to be added. The roster's
+        # per-class `creates_on_miss` veto still applies inside.
+        creation_licensed=True,
+    )
+    if dest.resolved:
+        resolved_class = _resolved_class_name(dest.obj)
+        if not resolved_class or resolved_class == expected_classname:
+            return (True, dest.obj)
+        # `resolve_planned_destination` already rejects a class that
+        # contradicts the RECORD; this catches a record whose class is right
+        # but does not match what THIS create helper builds -- a wiring bug in
+        # the caller, not a data condition. Reported and skipped rather than
+        # created, because creating here would duplicate the object the plan
+        # just resolved.
+        report_sink.Warning(
+            f"  [038 T036] plan resolved {dest.object_class or '?'} "
+            f"{dest.target_guid[:8]}... for source {src_guid[:8]}..., but this "
+            f"create site builds {expected_classname!r} (target holds "
+            f"{resolved_class!r}); skipping Create to avoid duplicating it"
+        )
+        return (True, None)
+    if dest.outcome == DESTINATION_REPORT:
+        # The plan found no destination AND creation is refused. Reported and
+        # skipped -- never created, never silently dropped (FR-013).
+        report_sink.Warning(
+            f"  [038 T036] no destination for {dest.object_class or expected_classname} "
+            f"{src_guid[:8]}... and creation is not permitted: {dest.detail}"
+        )
+        return (True, None)
+
+    # DESTINATION_CREATE and DESTINATION_UNDETERMINED both fall through to the
+    # pre-038 probe. The probe is still required for CREATE: it is the
+    # anti-corruption guard against LCM's silent duplicate-GUID Create, which
+    # is a different question from "did the plan find a counterpart".
     try:
         existing = target.Object(src_guid)
     except Exception:
@@ -869,16 +1353,25 @@ def _cast_existing_to_lexsense(obj):
     return ILexSense(obj)
 
 
-def _create_pos_with_guid(target, src_guid: str, src_props, tag: ImportResidueTag, report_sink):
+def _create_pos_with_guid(target, src_guid: str, src_props, tag: ImportResidueTag,
+                          report_sink, *, match_basis=None):
     """Create a Part-of-Speech in the target with `src_guid` preserved.
 
     Idempotency guard (P0): if a PartOfSpeech with this GUID already exists,
     return it without calling Create (prevents LCM silent-duplicate corruption).
+
+    `match_basis` (038 T036): the plan item's `MatchBasisRecord`, threaded
+    straight to `_idempotency_guard` so a destination the plan matched by a
+    roster-admitted NATURAL KEY -- i.e. under a GUID other than `src_guid` --
+    is RESOLVED here instead of being duplicated by the Create below. None
+    (the default, and every production caller today) leaves the pre-038
+    guard-then-Create behaviour untouched.
     """
     from SIL.LCModel import IPartOfSpeechFactory, ICmPossibilityList
     from System import Guid as DotNetGuid
 
-    found, existing = _idempotency_guard(target, src_guid, "PartOfSpeech", report_sink)
+    found, existing = _idempotency_guard(target, src_guid, "PartOfSpeech", report_sink,
+                                        match_basis=match_basis)
     if found:
         if existing is not None:
             report_sink.Info(f"  POS already exists (idempotency reuse)  guid={src_guid}")
@@ -895,16 +1388,26 @@ def _create_pos_with_guid(target, src_guid: str, src_props, tag: ImportResidueTa
     return new_pos
 
 
-def _create_template_with_guid(target, owner_pos, src_guid: str, src_props, tag: ImportResidueTag, report_sink):
+def _create_template_with_guid(target, owner_pos, src_guid: str, src_props,
+                               tag: ImportResidueTag, report_sink, *,
+                               match_basis=None):
     """Create an Affix Template in the target owned by `owner_pos`.
 
     Idempotency guard (P0): if a MoInflAffixTemplate with this GUID already
     exists, return it without calling Create.
+
+    `match_basis` (038 T036): the plan item's `MatchBasisRecord`, threaded
+    straight to `_idempotency_guard` so a destination the plan matched by a
+    roster-admitted NATURAL KEY -- i.e. under a GUID other than `src_guid` --
+    is RESOLVED here instead of being duplicated by the Create below. None
+    (the default, and every production caller today) leaves the pre-038
+    guard-then-Create behaviour untouched.
     """
     from SIL.LCModel import IMoInflAffixTemplateFactory
     from System import Guid as DotNetGuid
 
-    found, existing = _idempotency_guard(target, src_guid, "MoInflAffixTemplate", report_sink)
+    found, existing = _idempotency_guard(target, src_guid, "MoInflAffixTemplate", report_sink,
+                                        match_basis=match_basis)
     if found:
         if existing is not None:
             report_sink.Info(f"  Template already exists (idempotency reuse)  guid={src_guid}")
@@ -921,17 +1424,27 @@ def _create_template_with_guid(target, owner_pos, src_guid: str, src_props, tag:
     return new_template
 
 
-def _create_slot_with_guid(target, owner_pos, src_guid: str, slot_name: str, tag: ImportResidueTag, report_sink):
+def _create_slot_with_guid(target, owner_pos, src_guid: str, slot_name: str,
+                           tag: ImportResidueTag, report_sink, *,
+                           match_basis=None):
     """Create an Affix Slot in the target owned by `owner_pos`.
 
     Idempotency guard (P0): if a MoInflAffixSlot with this GUID already
     exists, return it without calling Create.
+
+    `match_basis` (038 T036): the plan item's `MatchBasisRecord`, threaded
+    straight to `_idempotency_guard` so a destination the plan matched by a
+    roster-admitted NATURAL KEY -- i.e. under a GUID other than `src_guid` --
+    is RESOLVED here instead of being duplicated by the Create below. None
+    (the default, and every production caller today) leaves the pre-038
+    guard-then-Create behaviour untouched.
     """
     from SIL.LCModel import IMoInflAffixSlotFactory, IMoInflAffixSlot
     from SIL.LCModel.Core.Text import TsStringUtils
     from System import Guid as DotNetGuid
 
-    found, existing = _idempotency_guard(target, src_guid, "MoInflAffixSlot", report_sink)
+    found, existing = _idempotency_guard(target, src_guid, "MoInflAffixSlot", report_sink,
+                                        match_basis=match_basis)
     if found:
         if existing is not None:
             report_sink.Info(f"  Slot already exists (idempotency reuse)  guid={src_guid}")
@@ -1227,7 +1740,10 @@ def _execute_layer3(
     # PhoneEnvRC wiring step can resolve them.
     env_guid_to_target = {}
     for action in _filter(plan.actions, GrammarCategory.PH_ENVIRONMENT):
-        new_env = _create_environment_with_guid(target, action.source_guid, report_sink, tag)
+        new_env = _create_environment_with_guid(
+            target, action.source_guid, report_sink, tag,
+            match_basis=getattr(action, "match_basis", None),  # 038 T036
+        )
         env_guid_to_target[action.source_guid] = new_env
     for skip in plan.skips:
         if skip.category != GrammarCategory.PH_ENVIRONMENT:
@@ -1250,7 +1766,14 @@ def _execute_layer3(
 
     # Group entry-related actions by entry_guid (sense + msa + allomorph
     # actions reference their entry through pulled_in_by).
-    entry_action_guids = [a.source_guid for a in _filter(plan.actions, GrammarCategory.ENTRY)]
+    entry_actions = list(_filter(plan.actions, GrammarCategory.ENTRY))
+    entry_action_guids = [a.source_guid for a in entry_actions]
+    # 038 T036: the plan's match decision, keyed by the same source GUID the
+    # loop below walks. Empty for every plan built today, which is what makes
+    # the `.get()` below a no-op rather than a behaviour change.
+    entry_match_basis = {
+        a.source_guid: getattr(a, "match_basis", None) for a in entry_actions
+    }
 
     # Index source entries by GUID for quick lookup.
     src_entry_by_guid = {}
@@ -1264,7 +1787,10 @@ def _execute_layer3(
             continue
 
         # 1. Create LexEntry.
-        new_entry = _create_lexentry_with_guid(target, entry_guid, src_entry, source, tag, report_sink)
+        new_entry = _create_lexentry_with_guid(
+            target, entry_guid, src_entry, source, tag, report_sink,
+            match_basis=entry_match_basis.get(entry_guid),
+        )
 
         _populate_entry_children(
             new_entry, src_entry, identity_remap, source, target,
@@ -1424,16 +1950,25 @@ def _find_target_env_by_guid(target, env_guid: str):
     return None
 
 
-def _create_environment_with_guid(target, src_guid: str, report_sink, tag: ImportResidueTag):
+def _create_environment_with_guid(target, src_guid: str, report_sink,
+                                  tag: ImportResidueTag, *, match_basis=None):
     """Create IPhEnvironment in target's PhonologicalData with GUID preserved.
 
     Idempotency guard (P0): if a PhEnvironment with this GUID already exists,
     return it without calling Create.
+
+    `match_basis` (038 T036): the plan item's `MatchBasisRecord`, threaded
+    straight to `_idempotency_guard` so a destination the plan matched by a
+    roster-admitted NATURAL KEY -- i.e. under a GUID other than `src_guid` --
+    is RESOLVED here instead of being duplicated by the Create below. None
+    (the default, and every production caller today) leaves the pre-038
+    guard-then-Create behaviour untouched.
     """
     from SIL.LCModel import IPhEnvironmentFactory, IPhEnvironment
     from System import Guid as DotNetGuid
 
-    found, existing = _idempotency_guard(target, src_guid, "PhEnvironment", report_sink)
+    found, existing = _idempotency_guard(target, src_guid, "PhEnvironment", report_sink,
+                                        match_basis=match_basis)
     if found:
         if existing is not None:
             report_sink.Info(f"  PhEnvironment already exists (idempotency reuse)  guid={src_guid}")
@@ -1451,17 +1986,27 @@ def _create_environment_with_guid(target, src_guid: str, report_sink, tag: Impor
     return new_env
 
 
-def _create_lexentry_with_guid(target, src_guid: str, src_entry, source, tag: ImportResidueTag, report_sink):
+def _create_lexentry_with_guid(target, src_guid: str, src_entry, source,
+                               tag: ImportResidueTag, report_sink, *,
+                               match_basis=None):
     """Create ILexEntry owned by target.LexDb with GUID preserved + apply
     syncable string properties.
 
     Idempotency guard (P0): if a LexEntry with this GUID already exists,
     return it without calling Create.
+
+    `match_basis` (038 T036): the plan item's `MatchBasisRecord`, threaded
+    straight to `_idempotency_guard` so a destination the plan matched by a
+    roster-admitted NATURAL KEY -- i.e. under a GUID other than `src_guid` --
+    is RESOLVED here instead of being duplicated by the Create below. None
+    (the default, and every production caller today) leaves the pre-038
+    guard-then-Create behaviour untouched.
     """
     from SIL.LCModel import ILexEntryFactory, ILexDb
     from System import Guid as DotNetGuid
 
-    found, existing = _idempotency_guard(target, src_guid, "LexEntry", report_sink)
+    found, existing = _idempotency_guard(target, src_guid, "LexEntry", report_sink,
+                                        match_basis=match_basis)
     if found:
         if existing is not None:
             report_sink.Info(f"  LexEntry already exists (idempotency reuse)  guid={src_guid}")
@@ -1837,6 +2382,16 @@ def _execute_update_semantic(overwrite, source, target, report_sink, tag: Import
         )
         return []
 
+    # Feature 038 T036 -- same resolve half as `_execute_overwrite`. The
+    # `_find_obj_by_guid(tgt_ops, tgt_guid)` below walks ONE category's
+    # `GetAll()` and swallows every exception on the way, so a miss is
+    # indistinguishable from an accessor that raised; either way the UPDATE is
+    # abandoned with a Warning the export path discards. When the plan named
+    # the destination, resolve it once here instead. Raised (not caught)
+    # deliberately, and placed OUTSIDE the try below so the broad
+    # `except Exception` there cannot turn a harness error into a warning.
+    dest = planned_destination_for(overwrite, target)
+
     try:
         src_ops = getattr(source, ops_key, None)
         tgt_ops = getattr(target, ops_key, None)
@@ -1850,6 +2405,8 @@ def _execute_update_semantic(overwrite, source, target, report_sink, tag: Import
         # Locate the source and target objects by GUID.
         src_obj = _find_obj_by_guid(src_ops, src_guid)
         tgt_obj = _find_obj_by_guid(tgt_ops, tgt_guid)
+        if tgt_obj is None and dest.resolved:
+            tgt_obj = dest.obj
         if src_obj is None or tgt_obj is None:
             report_sink.Warning(
                 f"  [{cat.value}] UPDATE: source or target object not found"
@@ -1981,10 +2538,39 @@ def _execute_overwrite(overwrite, source, target, report_sink, tag: ImportResidu
     src_guid = overwrite.source_guid
     tgt_guid = overwrite.target_guid
 
+    # Feature 038 T036 -- the resolve half of the resolve-or-create path.
+    #
+    # Every branch below re-answers "which target object is this?" with its
+    # OWN category-scoped linear scan, and every one of those scans ends in
+    # `Warning(...)` + `return` on a miss -- the resolve-only failure mode:
+    # the plan's work for this object is discarded, and in export mode the
+    # `_NullReportSink` discards the Warning too, so nothing records that it
+    # happened. Those scans are also NARROWER than the question: the template
+    # and slot lookups are scoped to an owner POS, so a correct
+    # `PlannedOverwrite` whose `owner_guid` disagrees with the destination
+    # hierarchy misses an object that is demonstrably present.
+    #
+    # When the plan carries a `match_basis` it has ALREADY decided which
+    # destination object this is, by GUID or by a roster-admitted natural key.
+    # Resolving it once here means each branch's scan becomes an optimisation
+    # rather than a second, weaker opinion: on a scan miss the branch falls
+    # back to the object the PLAN named, instead of abandoning the item.
+    #
+    # A record that names a destination the target does not hold raises
+    # `PlannedDestinationError` from here -- deliberately BEFORE any write, and
+    # deliberately not caught, so the run stops rather than half-applying.
+    # With `match_basis=None` (every plan built today) this is a single
+    # attribute read returning `DESTINATION_UNDETERMINED`, and every
+    # `dest.resolved` test below is False, leaving each branch bit-for-bit
+    # as it was.
+    dest = planned_destination_for(overwrite, target)
+
     # Per-category lookup + apply
     if cat == GrammarCategory.POS:
         src_obj = _find_source_pos_by_guid(source, src_guid)
         tgt_obj = _find_target_pos_by_guid(target, tgt_guid)
+        if tgt_obj is None and dest.resolved:
+            tgt_obj = _cast_existing_to_pos(_unwrap(dest.obj))
         if src_obj is None or tgt_obj is None:
             report_sink.Warning(f"  [OW] POS {src_guid[:8]} not found in source or target")
             return
@@ -2017,10 +2603,19 @@ def _execute_overwrite(overwrite, source, target, report_sink, tag: ImportResidu
             report_sink.Warning(f"  [OW] Template {src_guid[:8]} has no owner POS reference")
             return
         tgt_pos = _find_target_pos_by_guid(target, owner_pos_guid)
-        if tgt_pos is None:
+        tgt_tpl = None
+        if tgt_pos is not None:
+            tgt_tpl = _find_target_template_by_guid(target, tgt_pos, tgt_guid)
+        if tgt_tpl is None and dest.resolved:
+            # The owner-scoped scan above cannot see a template whose owning
+            # POS in the DESTINATION differs from the source's -- exactly the
+            # re-parented case 038 measured for categories. The plan already
+            # resolved the template itself, so use it rather than dropping the
+            # overwrite over a disagreement about its parent.
+            tgt_tpl = _cast_existing_to_template(_unwrap(dest.obj))
+        if tgt_pos is None and tgt_tpl is None:
             report_sink.Warning(f"  [OW] Template owner POS {owner_pos_guid[:8]} not in target")
             return
-        tgt_tpl = _find_target_template_by_guid(target, tgt_pos, tgt_guid)
         if tgt_tpl is None:
             report_sink.Warning(f"  [OW] Template {tgt_guid[:8]} not in target")
             return
@@ -2048,6 +2643,8 @@ def _execute_overwrite(overwrite, source, target, report_sink, tag: ImportResidu
                         break
                 if tgt_slot is not None:
                     break
+        if tgt_slot is None and dest.resolved:
+            tgt_slot = _cast_existing_to_slot(_unwrap(dest.obj))
         if tgt_slot is None:
             report_sink.Warning(f"  [OW] Slot {tgt_guid[:8]} not in target")
             return
@@ -2086,6 +2683,8 @@ def _execute_overwrite(overwrite, source, target, report_sink, tag: ImportResidu
             if str(ICmObject(_unwrap(te)).Guid).lower() == tgt_guid:
                 tgt_entry = _unwrap(te)
                 break
+        if tgt_entry is None and dest.resolved:
+            tgt_entry = _cast_existing_to_lexentry(_unwrap(dest.obj))
         if tgt_entry is None:
             report_sink.Warning(f"  [OW] LexEntry {tgt_guid[:8]} not in target")
             return
@@ -2392,6 +2991,8 @@ def _execute_overwrite(overwrite, source, target, report_sink, tag: ImportResidu
 
     if cat == GrammarCategory.PH_ENVIRONMENT:
         tgt_env = _find_target_env_by_guid(target, tgt_guid)
+        if tgt_env is None and dest.resolved:
+            tgt_env = _cast_existing_to_environment(_unwrap(dest.obj))
         if tgt_env is None:
             report_sink.Warning(f"  [OW] PhEnvironment {tgt_guid[:8]} not in target")
             return
