@@ -1565,3 +1565,605 @@ def count_by_feature_system(handle, object_class: str) -> dict:
                 (object_class,),
             ) from exc
     return counts
+
+
+# ===========================================================================
+# T019 -- the accounting arithmetic, and the artifact emitter
+#
+# THE THREE COUNTS AND THE SIGN CONVENTION (fidelity-census.md 4, 5.2, 7):
+#
+#     unmatched_starter     = starter_baseline_count - starter_matched_to_source
+#     destination_count_net = destination_count_total - unmatched_starter
+#     difference            = destination_count_net - source_count
+#     difference_raw        = destination_count_total - source_count
+#
+#     difference <  0  SHORTFALL   difference == 0  MATCHED   > 0  SURPLUS
+#
+# The subtrahend is the starter objects NOT matched to a source object, never
+# the gross baseline. Gross subtraction is wrong the moment natural-key
+# matching works: on the fixed phoneme run (source 41, destination 43, starter
+# 23 of which 21 matched) gross gives 43 - 23 = 20 and reports -21, a shortfall
+# on a CORRECT run. Matched gives 43 - 2 = 41, difference 0.
+#
+# NO CROSS-CLASS NETTING, EVER. Every function here takes ONE row's numbers.
+# There is deliberately no signature anywhere in this module that can see two
+# classes' differences at once, and `build_totals` reports `total_shortfall` and
+# `total_surplus` separately and never sums them: Ejagham's MoAffixProcess
+# 13 -> 0 and MoAffixAllomorph +13 are the SAME defect seen twice, and netting
+# them to zero is precisely the SC-010 failure this feature exists to end.
+#
+# WHAT THIS TASK HAD TO SUPPLY ITSELF (T015's open disagreement 1).
+# `$defs.classRow` REQUIRES 13 keys; `models.ClassCensusRow` has 9, and four of
+# the required keys are not functions of those 9. Resolution:
+#   * `gate_scope`, `in_class_list_via` (+ optional `inventory_tables`) come
+#     from T016's `ClassListEntry`, carried through -- the loader is the only
+#     thing that actually knows CP-3's advisory marking and CP-4's provenance,
+#     so re-deciding them at emission time would be a second source of truth.
+#   * `accounted_for` is an EMITTER ARGUMENT (`AccountedLine` objects): the row
+#     carries only reason TOKENS, never their counts, directions or report refs.
+#   * `unexplained_shortfall` / `unexplained_surplus` are DERIVED here from the
+#     difference and the lines by section 7's formula -- never passed in, so a
+#     caller cannot understate them.
+# `ClassCensusRow` itself is unchanged: it is `data-model.md`'s frozen shape and
+# `models.py` is the wrong place for artifact-only provenance.
+# ===========================================================================
+
+#: Precedence for picking the ONE `not_evaluated_reason` out of a row's reason
+#: TUPLE (T015's open disagreement 3: `data-model.md`:112 is a tuple, schema
+#: `:427-430` is a single token). Most absolute first: a class that cannot exist
+#: at all outranks one that is merely outside this feature's scope, which
+#: outranks one another feature governs. Chosen against the named set
+#: `CENSUS_NOT_EVALUATED_REASONS` so the choice is auditable rather than
+#: incidental to tuple order.
+NOT_EVALUATED_REASON_PRECEDENCE: tuple = (
+    "ABSENT_BY_CONSTRUCTION",
+    "OUT_OF_SCOPE_CLASS",
+    "GOVERNED_BY_OTHER_FEATURE",
+)
+
+#: `$defs.accountedLine.direction`.
+DIRECTIONS: tuple = ("shortfall", "surplus")
+
+#: `$defs.classRow.starter_subtraction_basis`.
+SUBTRACTION_BASES: tuple = ("baseline_matched", "baseline_gross", "no_baseline")
+
+#: `$defs.classRow.starter_baseline_source`.
+BASELINE_SOURCES: tuple = (
+    "baseline_document", "absent_from_baseline", "assumed_zero_not_permitted",
+)
+
+
+def select_not_evaluated_reason(reasons) -> Optional[str]:
+    """The ONE `not_evaluated_reason` for a row, or None when it was measured.
+
+    `NOT_EVALUATED_REASON_PRECEDENCE` decides when a row carries more than one
+    qualifying token; anything outside `CENSUS_NOT_EVALUATED_REASONS` is ignored
+    here (a measured row's accounting reasons are not evaluation reasons).
+    """
+    present = {r for r in reasons if r in NOT_EVALUATED_REASONS}
+    for token in NOT_EVALUATED_REASON_PRECEDENCE:
+        if token in present:
+            return token
+    return None
+
+
+# ---------------------------------------------------------------------------
+# One accounting line
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class ReportRef:
+    """-> `$defs.reportRef`. What makes a line resolvable to real content."""
+
+    kind: str
+    count_in_report: int
+    run_id: str = ""
+    report_path: str = ""
+    record_ids: tuple = ()
+
+    def artifact(self) -> dict:
+        block = {"kind": self.kind, "count_in_report": self.count_in_report}
+        if self.run_id:
+            block["run_id"] = self.run_id
+        if self.report_path:
+            block["report_path"] = self.report_path
+        if self.record_ids:
+            block["record_ids"] = list(self.record_ids)
+        return block
+
+
+@dataclass(frozen=True)
+class AccountedLine:
+    """-> `$defs.accountedLine`. One claim against one direction of one class.
+
+    R-1 is enforced AT CONSTRUCTION: every reason outside the four exempt tokens
+    must carry a `report_ref` whose `count_in_report >= count`. A line with no
+    resolvable report content is not accounting, so it cannot be built and then
+    validated away -- the emitter never gets the chance to write one.
+    """
+
+    reason: str
+    count: int
+    direction: str
+    report_ref: Optional[ReportRef] = None
+    detail: str = ""
+
+    def __post_init__(self) -> None:
+        if self.reason not in REASON_TOKENS:
+            raise CensusError(
+                "accounting reason " + repr(self.reason) + " is outside the "
+                "closed 16-token vocabulary -- there is no UNEXPLAINED and no "
+                "OTHER token: unexplained is the ABSENCE of a line and cannot "
+                "be laundered into one"
+            )
+        if self.direction not in DIRECTIONS:
+            raise CensusError(
+                "accounting direction " + repr(self.direction)
+                + " must be 'shortfall' or 'surplus'"
+            )
+        if self.count < 1:
+            raise CensusError(
+                "an accounting line must claim at least 1 object, got "
+                + repr(self.count) + " for reason " + repr(self.reason)
+            )
+        if self.reason in REASONS_NOT_REQUIRING_REPORT_REF:
+            return
+        if self.report_ref is None:
+            raise CensusError(
+                "reason " + repr(self.reason) + " requires a report_ref (R-1): "
+                "only STARTER_CONTENT, ABSENT_BY_CONSTRUCTION, "
+                "OUT_OF_SCOPE_CLASS and GOVERNED_BY_OTHER_FEATURE account "
+                "without one"
+            )
+        if self.report_ref.count_in_report < self.count:
+            raise CensusError(
+                "accounting line for " + repr(self.reason) + " claims "
+                + str(self.count) + " against a report naming only "
+                + str(self.report_ref.count_in_report)
+                + " -- a line that outruns its evidence is CENSUS_ERROR, not a "
+                "pass (R-1)"
+            )
+
+    def artifact(self) -> dict:
+        block = {
+            "reason": self.reason,
+            "count": self.count,
+            "direction": self.direction,
+        }
+        if self.report_ref is not None:
+            block["report_ref"] = self.report_ref.artifact()
+        if self.detail:
+            block["detail"] = self.detail
+        return block
+
+
+# ---------------------------------------------------------------------------
+# The arithmetic. One row at a time, on purpose.
+# ---------------------------------------------------------------------------
+
+
+def unmatched_starter(
+    starter_baseline_count: Optional[int],
+    starter_matched_to_source: Optional[int],
+) -> Optional[int]:
+    """`starter_baseline_count - starter_matched_to_source`, or None.
+
+    None when either input is unknown: with no baseline there is nothing to
+    subtract, and with no run report the matched count cannot be known. Neither
+    may be silently read as zero -- a zero baseline is a positive claim that the
+    destination shipped empty (5.3), and a zero matched count is the broken run.
+    """
+    if starter_baseline_count is None:
+        return None
+    if starter_matched_to_source is None:
+        return None
+    return starter_baseline_count - starter_matched_to_source
+
+
+def net_destination_count(
+    destination_count_total: Optional[int], unmatched: Optional[int],
+) -> Optional[int]:
+    """`destination_count_total - unmatched_starter`.
+
+    With `unmatched` None the net IS the total (5.2's `no_baseline` row: "net =
+    total; the run cannot pass") -- the number is still reported, and the
+    verdict, not the arithmetic, is what refuses to pass.
+    """
+    if destination_count_total is None:
+        return None
+    return destination_count_total - (unmatched or 0)
+
+
+def signed_difference(
+    destination_count_net: Optional[int], source_count: Optional[int],
+) -> Optional[int]:
+    """`destination_count_net - source_count`, the GATE quantity."""
+    if destination_count_net is None or source_count is None:
+        return None
+    return destination_count_net - source_count
+
+
+def row_verdict_class(
+    difference: Optional[int], not_evaluated_reason: Optional[str] = None,
+) -> str:
+    """MATCHED / SHORTFALL / SURPLUS / NOT_EVALUATED.
+
+    NOT_EVALUATED wins over the sign, and an unmeasurable count is
+    NOT_EVALUATED rather than MATCHED: a row that was never measured must not be
+    reported as agreeing because two numbers nobody trusts happen to be equal.
+    """
+    if not_evaluated_reason is not None or difference is None:
+        return "NOT_EVALUATED"
+    if difference == 0:
+        return "MATCHED"
+    return "SHORTFALL" if difference < 0 else "SURPLUS"
+
+
+def accounted_in_direction(lines, direction: str) -> int:
+    """`sum(count)` over the lines claiming ONE direction of ONE class.
+
+    R-3: a shortfall line never offsets a surplus, and a line on one class never
+    touches another. That rule is expressed as a signature: this function cannot
+    be handed two classes' lines because the caller only ever holds one row's.
+    """
+    return sum(line.count for line in lines if line.direction == direction)
+
+
+def unexplained_counts(difference: Optional[int], lines) -> tuple:
+    """`(unexplained_shortfall, unexplained_surplus)` for one row.
+
+        unexplained_shortfall = max(0, -difference) - sum(shortfall lines)
+        unexplained_surplus   = max(0,  difference) - sum(surplus lines)
+
+    Clamped at 0, because a NEGATIVE residue means over-accounting, which is
+    R-2's `CENSUS_ERROR` and is detected by `validate_artifact` rather than
+    hidden by being folded into an unexplained count.
+    """
+    if difference is None:
+        return (0, 0)
+    shortfall = max(0, -difference) - accounted_in_direction(lines, "shortfall")
+    surplus = max(0, difference) - accounted_in_direction(lines, "surplus")
+    return (max(0, shortfall), max(0, surplus))
+
+
+def over_accounted_directions(difference: Optional[int], lines) -> tuple:
+    """The directions whose accounting EXCEEDS the difference (R-2).
+
+    Separate from `unexplained_counts` on purpose: over-accounting is a
+    different failure from under-accounting and must not be clamped away. "The
+    census must not be able to explain away more than actually happened."
+    """
+    if difference is None:
+        return ()
+    out = []
+    if accounted_in_direction(lines, "shortfall") > max(0, -difference):
+        out.append("shortfall")
+    if accounted_in_direction(lines, "surplus") > max(0, difference):
+        out.append("surplus")
+    return tuple(out)
+
+
+# ---------------------------------------------------------------------------
+# Match-basis tallies (section 8, invariant 11)
+# ---------------------------------------------------------------------------
+
+#: The four tallies that must sum to `source_count`. `enriched` is deliberately
+#: ABSENT: it is a SUBSET of `identity + natural_key` (an object can be matched
+#: and then gain owned children), so including it would double-count every
+#: enriched object and turn a correct run into a tally mismatch.
+MATCH_BASIS_SUMMANDS: tuple = (
+    "identity", "natural_key", "created_new", "unmatched_reported",
+)
+
+
+@dataclass(frozen=True)
+class MatchBasis:
+    """-> `$defs.matchBasis`. How each source object was accounted for.
+
+    FR-006 requires every natural-key match to be distinguishable from an
+    identity match, and this is where that distinction survives into the gate
+    artifact instead of being report-only prose.
+    """
+
+    basis_source: str = "run_report"
+    identity: Optional[int] = None
+    natural_key: Optional[int] = None
+    created_new: Optional[int] = None
+    enriched: Optional[int] = None
+    unmatched_reported: Optional[int] = None
+    ambiguous_key_reported: Optional[int] = None
+
+    def __post_init__(self) -> None:
+        if self.basis_source not in ("run_report", "unavailable"):
+            raise CensusError(
+                "MatchBasis.basis_source must be 'run_report' or "
+                "'unavailable', got " + repr(self.basis_source)
+            )
+        if self.basis_source == "unavailable":
+            populated = tuple(
+                name for name in (
+                    "identity", "natural_key", "created_new", "enriched",
+                    "unmatched_reported", "ambiguous_key_reported")
+                if getattr(self, name) is not None
+            )
+            if populated:
+                raise CensusError(
+                    "MatchBasis(basis_source='unavailable') must leave every "
+                    "tally null, but these are populated: "
+                    + ", ".join(populated) + " -- with no run report the census "
+                    "does not know them and must say so (section 8)"
+                )
+
+    @property
+    def summed(self) -> Optional[int]:
+        """`identity + natural_key + created_new + unmatched_reported`, or None
+        when any summand is unknown. `enriched` is excluded."""
+        values = [getattr(self, name) for name in MATCH_BASIS_SUMMANDS]
+        if any(v is None for v in values):
+            return None
+        return sum(values)
+
+    def sums_to(self, source_count: Optional[int]) -> bool:
+        """Invariant 11, on a `required` row whose basis is `run_report`."""
+        total = self.summed
+        if total is None or source_count is None:
+            return True
+        return total == source_count
+
+    def artifact(self) -> dict:
+        block = {"basis_source": self.basis_source}
+        for name in ("identity", "natural_key", "created_new", "enriched",
+                     "unmatched_reported", "ambiguous_key_reported"):
+            value = getattr(self, name)
+            if value is not None:
+                block[name] = value
+        return block
+
+
+def match_basis_sum_error(
+    object_class: str, basis: Optional[MatchBasis], source_count: Optional[int],
+    *, gate_scope: str = "required",
+) -> Optional[str]:
+    """The invariant-11 failure string for one row, or None when it holds.
+
+    A MISMATCH IS A FAIL, not a note: it means the census's own account of what
+    happened to each source object does not add up to the number of source
+    objects, so no statement it makes about that class can be trusted.
+    """
+    if basis is None or gate_scope != "required":
+        return None
+    if basis.basis_source != "run_report":
+        return None
+    if basis.sums_to(source_count):
+        return None
+    return (
+        object_class + ": match_basis identity + natural_key + created_new + "
+        "unmatched_reported == " + str(basis.summed) + " but source_count is "
+        + str(source_count) + " (enriched is a SUBSET of the matches and is "
+        "excluded from the sum, section 8)"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Emitting one class row
+# ---------------------------------------------------------------------------
+
+
+def class_row_artifact(
+    row,
+    entry: ClassListEntry,
+    *,
+    accounted_for=(),
+    starter_baseline_count: Optional[int] = None,
+    starter_matched_to_source: Optional[int] = None,
+    starter_subtraction_basis: Optional[str] = None,
+    starter_baseline_source: Optional[str] = None,
+    match_basis: Optional[MatchBasis] = None,
+    duplicates: Optional[DuplicateReport] = None,
+    notes=(),
+) -> dict:
+    """-> one `$defs.classRow`, from a `models.ClassCensusRow` plus its entry.
+
+    DRIVEN BY THE TRANSLATION TABLE. The internal-to-artifact key mapping is
+    read out of `models.CLASS_CENSUS_ROW_ARTIFACT_FIELDS`, where a `None` target
+    means internal-only and MUST NOT be emitted; every object in the artifact is
+    `additionalProperties: false`, so an extra key is a hard failure and not a
+    harmless addition. Nothing here re-derives a name the table already states.
+    """
+    from .models import CLASS_CENSUS_ROW_ARTIFACT_FIELDS  # noqa: PLC0415
+
+    block: dict = {}
+    for internal, artifact_key in CLASS_CENSUS_ROW_ARTIFACT_FIELDS.items():
+        if artifact_key is None:  # internal-only: never emitted
+            continue
+        block[artifact_key] = getattr(row, internal)
+
+    # Derived properties on the row -- read, never recomputed, so the emitter
+    # cannot arrive at a second answer.
+    block["destination_count_net"] = row.destination_count_net
+    block["difference_raw"] = row.difference_raw
+
+    lines = tuple(accounted_for)
+    not_evaluated_reason = select_not_evaluated_reason(row.reasons)
+    if entry.not_evaluated_reason is not None:
+        not_evaluated_reason = select_not_evaluated_reason(
+            tuple(row.reasons) + (entry.not_evaluated_reason,))
+
+    block["verdict_class"] = row_verdict_class(
+        row.difference, not_evaluated_reason)
+    if not_evaluated_reason is not None:
+        block["not_evaluated_reason"] = not_evaluated_reason
+
+    # The four required keys `ClassCensusRow` cannot supply (see the task
+    # header): two carried from the class-list entry, one an argument, one
+    # derived.
+    block["gate_scope"] = entry.gate_scope
+    block["in_class_list_via"] = entry.in_class_list_via
+    if entry.inventory_tables:
+        block["inventory_tables"] = list(entry.inventory_tables)
+    block["accounted_for"] = [line.artifact() for line in lines]
+    shortfall, surplus = unexplained_counts(row.difference, lines)
+    if block["verdict_class"] == "NOT_EVALUATED":
+        # A row that was not measured explains nothing and owes nothing.
+        shortfall, surplus = 0, 0
+    block["unexplained_shortfall"] = shortfall
+    block["unexplained_surplus"] = surplus
+
+    if starter_baseline_count is not None:
+        block["starter_baseline_count"] = starter_baseline_count
+    if starter_matched_to_source is not None:
+        block["starter_matched_to_source"] = starter_matched_to_source
+    if starter_subtraction_basis is not None:
+        if starter_subtraction_basis not in SUBTRACTION_BASES:
+            raise CensusError(
+                "starter_subtraction_basis " + repr(starter_subtraction_basis)
+                + " is outside the schema enum " + repr(SUBTRACTION_BASES)
+            )
+        block["starter_subtraction_basis"] = starter_subtraction_basis
+    if starter_baseline_source is not None:
+        if starter_baseline_source not in BASELINE_SOURCES:
+            raise CensusError(
+                "starter_baseline_source " + repr(starter_baseline_source)
+                + " is outside the schema enum " + repr(BASELINE_SOURCES)
+            )
+        block["starter_baseline_source"] = starter_baseline_source
+    if match_basis is not None:
+        block["match_basis"] = match_basis.artifact()
+    if duplicates is not None:
+        block["duplicates"] = duplicates.artifact()
+    if notes:
+        block["notes"] = list(notes)
+
+    # A1: the one seam that decides how a split row carries its owner.
+    return encode_split_owner(
+        block, entry.object_class, entry.owning_feature_system)
+
+
+def build_totals(rows) -> dict:
+    """-> artifact `totals`. Shortfall and surplus are NEVER summed together.
+
+    `total_shortfall` and `total_surplus` are reported separately and there is
+    deliberately no net figure anywhere in this block: a net of zero over
+    MoAffixProcess -13 and MoAffixAllomorph +13 would report a run clean while a
+    whole class changed kind (section 4).
+    """
+    required = [r for r in rows if r.get("gate_scope") == "required"]
+    diffs = [r["difference"] for r in required if r.get("difference") is not None]
+    totals = {
+        "classes_reported": len(rows),
+        "classes_matched": sum(
+            1 for r in rows if r.get("verdict_class") == "MATCHED"),
+        "classes_shortfall": sum(
+            1 for r in rows if r.get("verdict_class") == "SHORTFALL"),
+        "classes_surplus": sum(
+            1 for r in rows if r.get("verdict_class") == "SURPLUS"),
+        "classes_not_evaluated": sum(
+            1 for r in rows if r.get("verdict_class") == "NOT_EVALUATED"),
+        "total_shortfall": sum(max(0, -d) for d in diffs),
+        "total_surplus": sum(max(0, d) for d in diffs),
+        "unexplained_shortfall": sum(
+            r.get("unexplained_shortfall", 0) for r in required),
+        "unexplained_surplus": sum(
+            r.get("unexplained_surplus", 0) for r in required),
+        "duplicate_extra_objects": sum(
+            r.get("duplicates", {}).get("extra_objects", 0) for r in rows
+            if r.get("duplicates", {}).get("roster_admitted")
+        ),
+        "accounted_shortfall": sum(
+            line["count"] for r in rows for line in r.get("accounted_for", ())
+            if line.get("direction") == "shortfall"
+        ),
+        "accounted_surplus": sum(
+            line["count"] for r in rows for line in r.get("accounted_for", ())
+            if line.get("direction") == "surplus"
+        ),
+        "advisory_shortfall": sum(
+            max(0, -r["difference"]) for r in rows
+            if r.get("gate_scope") == "advisory"
+            and r.get("difference") is not None
+        ),
+    }
+    return totals
+
+
+def starter_baseline_artifact(baseline) -> dict:
+    """-> artifact `starter_baseline`, driven by the translation table.
+
+    `entries`, `content_hash` and the in-memory `schema_version` are
+    internal-only (`STARTER_BASELINE_ARTIFACT_FIELDS` maps them to None);
+    `class_count` and `carries_natural_keys` are derived properties, so they
+    cannot drift from the entries they describe. `staleness` is NOT emitted from
+    the baseline: it is a judgement the gate computes (T020), and finding a
+    pre-baked answer here to trust would defeat the point.
+    """
+    from .models import STARTER_BASELINE_ARTIFACT_FIELDS  # noqa: PLC0415
+
+    block: dict = {}
+    for internal, artifact_key in STARTER_BASELINE_ARTIFACT_FIELDS.items():
+        if artifact_key is None:
+            continue
+        value = getattr(baseline, internal)
+        if internal == "kind":
+            block[artifact_key] = value.value
+            continue
+        if value in ("", None):
+            continue
+        block[artifact_key] = value
+    if not baseline.is_missing:
+        block["class_count"] = baseline.class_count
+        block["carries_natural_keys"] = baseline.carries_natural_keys
+    return block
+
+
+def build_artifact(
+    census,
+    class_list: ClassList,
+    rows,
+    *,
+    projects: dict,
+    instrument: dict,
+    transfer_run: Optional[dict] = None,
+    verdict: str = "",
+    exit_code: Optional[int] = None,
+    verdict_human_label: str = "",
+    errors=(),
+    notes=(),
+) -> dict:
+    """Assemble the whole census artifact from already-emitted class rows.
+
+    Driven by `models.FIDELITY_CENSUS_ARTIFACT_FIELDS`, whose `gate_pass -> None`
+    entry is why no `gate_pass` key appears at top level: the artifact is
+    `additionalProperties: false` and carries `verdict` + `exit_code`, and the
+    gate RECOMPUTES both rather than trusting a stored boolean.
+
+    `verdict` / `exit_code` may be left empty and stamped by T020's
+    `stamp_verdict`, which is the only path that computes them from evidence.
+    """
+    rows = list(rows)
+    artifact = {
+        "schema_version": census.schema_version,
+        "census_id": census.run_id,
+        "generated_at": census.taken_at,
+        "instrument": dict(instrument),
+        "projects": dict(projects),
+        "class_list_provenance": class_list_provenance_artifact(class_list),
+        "starter_baseline": starter_baseline_artifact(census.baseline),
+        "classes": rows,
+        "totals": build_totals(rows),
+    }
+    if transfer_run:
+        artifact["transfer_run"] = dict(transfer_run)
+    if verdict:
+        artifact["verdict"] = verdict
+        artifact["exit_code"] = (
+            exit_code if exit_code is not None else exit_code_for(verdict)
+        )
+        artifact["verdict_human_label"] = (
+            verdict_human_label or VERDICT_HUMAN_LABELS[verdict]
+        )
+    if errors:
+        artifact["errors"] = [dict(e) for e in errors]
+    if notes:
+        artifact["notes"] = list(notes)
+    return artifact
