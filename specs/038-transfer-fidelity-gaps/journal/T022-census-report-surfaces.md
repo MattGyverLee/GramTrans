@@ -63,7 +63,12 @@ stating there is no path on which it yields exit 0.
 No row or class count is asserted anywhere -- the header says "rows", and none of
 71/72/74/75 appears.
 
-## OPEN -- `FidelityCensus` cannot express an A1 split (created by settling A1)
+## RESOLVED -- `FidelityCensus` could not express an A1 split (created by settling A1)
+
+> **Closed by `ea2c79c` / `73b80c3`; see `A1-followup-model-symmetry.md`.**
+> `ClassCensusRow` gained an optional `owning_feature_system`, duplicate detection
+> rekeyed on `(object_class, owner)`, and a per-owner row beside a summed
+> owner-less row is now rejected outright.
 
 `FidelityCensus.__post_init__` rejects two rows with the same `object_class`, and
 `ClassCensusRow` has **no owner field** -- the split currently lives on
