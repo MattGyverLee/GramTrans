@@ -307,10 +307,27 @@ def _run_gui(project, report, modifyAllowed, QtWidgets, *,
                     _safe_uow_is_dirty(target),
                 )
             except Exception as exc:  # noqa: BLE001
-                report.Warning(f"[GramTrans] Could not close target project: {exc}")
+                # 038 T024g: CloseProject() is the ONLY disk-write on this path,
+                # so a raise here means the LCM unit of work was DISCARDED and
+                # NOTHING PERSISTED -- however many additions the RunReport
+                # claims. Measured live: a full Ngoreme transfer reported 2,243
+                # adds across 19 categories over a byte-identical destination
+                # because one MoInflAffixSlot carried an unresolvable writing-
+                # system handle and `XMLBackendProvider.Commit` threw. This was
+                # a report.Warning, which is how a total loss read as a success.
+                # It is an ERROR, and it must say what it costs.
+                report.Error(
+                    "[GramTrans] TRANSFER NOT SAVED. Closing the target project "
+                    f"failed, so NOTHING was written to disk: {exc}"
+                )
+                report.Error(
+                    "[GramTrans] Every change this run reported was rolled back "
+                    "by FieldWorks. The target project is unchanged. Do not "
+                    "treat the summary above as a record of what transferred."
+                )
                 _log.exception(
-                    "_run_gui cleanup: CloseProject() raised on handle id=%s",
-                    id(target),
+                    "_run_gui cleanup: CloseProject() raised on handle id=%s -- "
+                    "TOTAL ROLLBACK, nothing persisted", id(target),
                 )
     report.Info("[GramTrans] Selection Wizard closed.")
 

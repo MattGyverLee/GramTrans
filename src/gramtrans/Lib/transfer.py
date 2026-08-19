@@ -2443,7 +2443,8 @@ def _execute_overwrite(overwrite, source, target, report_sink, tag: ImportResidu
         GrammarCategory.PHONOLOGICAL_FEATURES,
     }
     if cat in _GOLD_RESERVED_CATS and getattr(overwrite, "write_mode", "overwrite") == "merge":
-        _execute_gold_reserved_merge(overwrite, source, target, report_sink)
+        _execute_gold_reserved_merge(overwrite, source, target, report_sink,
+                                     ws_map=ws_map)
         return
 
     # For other categories, Phase 1 just logs and skips the apply — the
@@ -2452,7 +2453,8 @@ def _execute_overwrite(overwrite, source, target, report_sink, tag: ImportResidu
     report_sink.Info(f"  [OW] {cat.value} overwrite no-op  guid={src_guid}")
 
 
-def _execute_gold_reserved_merge(overwrite, source, target, report_sink):
+def _execute_gold_reserved_merge(overwrite, source, target, report_sink,
+                                 ws_map=None):
     """Fill empty-in-target WS slots on a GOLD_RESERVED item (spec 017 FR-E08).
 
     Locates both the source item and the target item by GUID using the
@@ -2555,11 +2557,27 @@ def _execute_gold_reserved_merge(overwrite, source, target, report_sink):
         report_sink.Warning(f"  [OW-MERGE] {cat.value} target {src_guid[:8]} not found")
         return
 
-    # Enumerate writing systems from source.
+    # Enumerate writing systems from source, PAIRED WITH THE TARGET HANDLE for
+    # the same (mapped) WS Id. WS handles are per-project and NOT portable --
+    # measured live, 999000002 is `en` in `Ngoreme FLEx` and `ngq` in
+    # `Ngoreme Target`. Writing a raw source handle into the target mislabels
+    # the string, or leaves a handle `WritingSystemManager.Get` cannot resolve
+    # -- which throws inside `XMLBackendProvider.Commit` at CloseProject and
+    # discards the WHOLE unit of work (feature 038 T024g).
+    ws_map = ws_map or {}
+    try:
+        tgt_handle_by_id = {w.Id: w.Handle for w in target.WritingSystems.GetAll()}
+    except Exception:
+        tgt_handle_by_id = {}
     ws_list = []
     try:
         for ws_obj in source.WritingSystems.GetAll():
-            ws_list.append((getattr(ws_obj, "Id", str(ws_obj)), ws_obj.Handle))
+            src_id = getattr(ws_obj, "Id", str(ws_obj))
+            tgt_id = ws_map.get(src_id, src_id)  # identity when unmapped
+            tgt_handle = tgt_handle_by_id.get(tgt_id)
+            if tgt_handle is None:
+                continue  # no counterpart target WS -> skip, never a wrong handle
+            ws_list.append((src_id, ws_obj.Handle, tgt_handle))
     except Exception:
         pass
 
@@ -2584,16 +2602,16 @@ def _execute_gold_reserved_merge(overwrite, source, target, report_sink):
         tgt_ms = getattr(tgt_obj, field_name, None)
         if src_ms is None or tgt_ms is None:
             continue
-        for _ws_id, ws_handle in ws_list:
+        for _ws_id, src_handle, tgt_handle in ws_list:
             try:
-                src_ts = src_ms.get_String(ws_handle)
+                src_ts = src_ms.get_String(src_handle)
                 src_text = getattr(src_ts, "Text", None)
             except Exception:
                 src_text = None
             if not src_text:
                 continue
             try:
-                tgt_ts = tgt_ms.get_String(ws_handle)
+                tgt_ts = tgt_ms.get_String(tgt_handle)
                 tgt_text = getattr(tgt_ts, "Text", None)
             except Exception:
                 tgt_text = None
@@ -2602,12 +2620,13 @@ def _execute_gold_reserved_merge(overwrite, source, target, report_sink):
                 continue
             # Empty target slot -> fill it.
             try:
-                tgt_ms.set_String(ws_handle, TsStringUtils.MakeString(src_text, ws_handle))
+                tgt_ms.set_String(tgt_handle,
+                                  TsStringUtils.MakeString(src_text, tgt_handle))
                 filled_count += 1
             except Exception as exc:
                 _log.exception(
                     "OW-MERGE: set_String FAILED (swallowed) category=%s guid=%s "
-                    "field=%s ws=%s", cat.value, src_guid, field_name, ws_handle,
+                    "field=%s ws=%s", cat.value, src_guid, field_name, tgt_handle,
                 )
                 report_sink.Warning(
                     f"  [OW-MERGE] {cat.value} {src_guid[:8]} "

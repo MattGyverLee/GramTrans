@@ -2220,23 +2220,14 @@ def stem_names_execute_action(action: PlannedAction, context: RunContext, ws_map
 
     # Copy Name multistring directly (IMoStemName has Name but may not
     # be covered by a GetSyncableProperties wrapper in flexicon).
-    from SIL.LCModel.Core.KernelInterfaces import ITsString
-    from SIL.LCModel.Core.Text import TsStringUtils
-    all_ws = {ws_obj.Id: ws_obj.Handle for ws_obj in source.WritingSystems.GetAll()}
     from SIL.LCModel import IMoStemName as IMoStemNameType
     src_sn_typed = IMoStemNameType(src_obj)
-    for prop_name in ("Name", "Abbreviation", "Description"):
-        src_p = getattr(src_sn_typed, prop_name, None)
-        tgt_p = getattr(new_sn, prop_name, None)
-        if src_p is None or tgt_p is None:
-            continue
-        for ws_id, ws_handle in all_ws.items():
-            try:
-                text = ITsString(src_p.get_String(ws_handle)).Text
-                if text:
-                    tgt_p.set_String(ws_handle, TsStringUtils.MakeString(text, ws_handle))
-            except Exception:
-                pass
+    # WS-FIDELITY: translate source handle -> target handle by WS Id. See the
+    # note in `slots_execute_action`; the raw-source-handle write is what makes
+    # CloseProject throw and roll the whole transfer back (038 T024g).
+    _copy_multistrings_ws_mapped(
+        src_sn_typed, new_sn, ("Name", "Abbreviation", "Description"),
+        source=source, target=target, ws_map=_ws_map_dict(ws_mapping))
 
     apply_carrier_b(new_sn, ws, tag)
     return new_sn
@@ -7518,20 +7509,16 @@ def slots_execute_action(action, context, ws_mapping, tag):
     new_slot = IMoInflAffixSlot(new_slot)
 
     src_typed = IMoInflAffixSlot(src_slot)
-    all_ws = {w.Id: w.Handle for w in source.WritingSystems.GetAll()}
-    for prop_name in ("Name", "Description"):
-        src_p = getattr(src_typed, prop_name, None)
-        tgt_p = getattr(new_slot, prop_name, None)
-        if src_p is None or tgt_p is None:
-            continue
-        for _ws_id, ws_handle in all_ws.items():
-            try:
-                text = src_p.get_String(ws_handle).Text
-                if text:
-                    tgt_p.set_String(ws_handle,
-                                     TsStringUtils.MakeString(text, ws_handle))
-            except Exception:
-                pass
+    # WS-FIDELITY: writing-system HANDLES are per-project and NOT portable --
+    # measured live, 999000002 is `en` in `Ngoreme FLEx` and `ngq` in
+    # `Ngoreme Target`, and `swh` has no target counterpart at all. Writing a
+    # source handle into the target therefore either mislabels the string or
+    # leaves a handle `WritingSystemManager.Get` cannot resolve, and the latter
+    # throws inside `XMLBackendProvider.Commit` at CloseProject -- discarding
+    # the ENTIRE unit of work, not just this slot (feature 038 T024g).
+    _copy_multistrings_ws_mapped(
+        src_typed, new_slot, ("Name", "Description"),
+        source=source, target=target, ws_map=_ws_map_dict(ws_mapping))
     try:
         new_slot.Optional = bool(src_typed.Optional)
     except (AttributeError, TypeError):
