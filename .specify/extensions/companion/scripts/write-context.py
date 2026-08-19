@@ -912,8 +912,14 @@ def fold_living_spec(feature_dir: Path, by: str) -> Path | None:
 # `**` is optional: matches the turbo/companion bold form `- [x] **T001**` AND the
 # standard tasks-template plain form `- [x] T001 …`. A `T\d+` is still required right
 # after the checkbox, so non-task checkboxes never false-match.
-COMPLETED_TASK_RE = re.compile(r"^\s*[-*]\s*\[[xX]\]\s*(?:\*\*)?(T\d+)")
-PENDING_TASK_RE = re.compile(r"^\s*[-*]\s*\[\s\]\s*(?:\*\*)?(T\d+)")
+# The id may carry a LETTER SUFFIX (`T024a`, `T024h`), which sub-tasks added
+# after the fact use. Capturing only `T\d+` collapsed every suffixed sibling onto
+# its numeric stem, so one checked `T024g` marked the whole `T024` family done and
+# `_next_unchecked_task` skipped the still-open `T024`/`T024a`..`T024f`/`T024h`
+# outright -- resume then pointed at a task six places further on. The suffix is
+# part of the id, not decoration.
+COMPLETED_TASK_RE = re.compile(r"^\s*[-*]\s*\[[xX]\]\s*(?:\*\*)?(T\d+[a-z]*)")
+PENDING_TASK_RE = re.compile(r"^\s*[-*]\s*\[\s\]\s*(?:\*\*)?(T\d+[a-z]*)")
 
 
 def parse_task_markers(tasks_md: Path) -> tuple[list[str], list[str]]:
