@@ -30,10 +30,16 @@ LCM API notes (discovered during implementation):
   - `IFsFeatStrucTypeFactory.Create(Guid)` is available for gram_categories.
     Top-level cats live in MsFeatureSystemOA.TypesOC; sub-cats in
     parent.SubPossibilitiesOS and use ICmPossibilityFactory.Create(Guid).
-  - `IFsClosedFeatureFactory.Create(Guid, featureSystem)` (2-arg) is
-    attempted first for inflection_features; Path B falls back to
-    `Create(Guid)` + `FeaturesOC.Add()` per the pattern in
-    InflectionFeatureOperations._factory_create_attached.
+  - Every `Fs*` factory in this module is called as 1-arg
+    `Create(Guid)` FOLLOWED BY `Add()` to the owning collection, in that
+    order (feature 038, T035). The `Create(Guid, owner)` 2-arg overload is
+    declared on the LCM INTERFACE only; `ServiceLocator.GetService` hands back
+    the CONCRETE factory, whose `Create` pythonnet cannot bind to two
+    arguments. The old code tried the 2-arg call FIRST inside a bare
+    `except Exception:` and fell through to the 1-arg path, so the bind
+    failure was swallowed on every single create -- correct end state, but a
+    per-object exception nobody could see, and a comment tree asserting a
+    capability that does not exist.
   - `IMoInflClassFactory` and `IMoStemNameFactory` both support
     `Create(Guid)` — confirmed by transfer.py slot/template precedent.
   - `exception_features` in FLEx are `IFsSymFeatVal` items referenced by
@@ -161,6 +167,223 @@ def _find_target_obj_by_guid(target_iter, src_guid: str):
         if _guid_str_from(obj) == src_guid:
             return obj
     return None
+
+
+# ---------------------------------------------------------------------------
+# FsFeatStruc / FsFeatStrucType closure edges (feature 038 -- T034)
+# ---------------------------------------------------------------------------
+#
+# WHY THIS EXISTS. An `IFsFeatStruc` -- an MSA's `InflFeatsOA`/`MsFeaturesOA`,
+# an `IPartOfSpeech`'s `DefaultFeaturesOA`, an `IPhPhoneme`'s or
+# `IPhNCFeatures`' `FeaturesOA` -- carries a `TypeRA` REFERENCE to an
+# `IFsFeatStrucType`, and each `FeatureSpecsOC` entry carries `FeatureRA` /
+# `ValueRA` REFERENCES to an `IFsClosedFeature` / `IFsSymFeatVal`. None of
+# those three targets is OWNED by the structure: they live in the
+# LangProject's feature systems, and separate categories transfer them. A
+# transfer that writes the structure before they exist therefore leaves a
+# dangling reference, which constitution Principle I forbids -- the write
+# looks successful and is not. Measured on the 038 census: the ~2,083 MSAs the
+# affix path restores each carry a `TypeRA`, and with the target's
+# `MsFeatureSystemOA.TypesOC` empty every one of those references is
+# unsatisfiable.
+#
+# WHICH SIDE THE `TypeRA` EDGE LIVES ON -- the OWNING side, not the type side.
+# `feature_struct_types_dependencies` / `phon_feat_types_dependencies` are
+# handed an `IFsFeatStrucType` taken straight out of `TypesOC` (see their
+# `*_enumerate_source`). The `TypeRA` arrow points AT such a piece, from an
+# `IFsFeatStruc` owned by an MSA / POS / phoneme / natural class. Emitting it
+# from the type's own producer would reverse it, and `closure.walk` walks
+# OUTWARD from what the user selected -- so an MSA selected for transfer would
+# never pull in the struct type it needs. The edge is emitted by
+# `affixes_dependencies`, `stems_dependencies`, `gram_categories_dependencies`,
+# `phonemes_dependencies` and `natural_classes_dependencies` instead.
+#
+# WHY BOTH FEATURE SYSTEMS ARE WALKED. `IFsFeatStrucType` is owned ONLY by
+# `IFsFeatureSystem.TypesOC`, and a LangProject holds exactly two feature
+# systems: `MsFeatureSystemOA` (whose `TypesOC` FEATURE_STRUCT_TYPES transfers,
+# whose `FeaturesOC` INFLECTION_FEATURES transfers) and `PhFeatureSystemOA`
+# (PHON_FEAT_TYPES / PHONOLOGICAL_FEATURES). A `TypeRA` GUID alone does not say
+# which system it came from, and guessing would file the edge under the wrong
+# far category -- precisely the failure the `CLOSURE_EDGES_VERIFIED` banner
+# warns about when it refuses to register a producer "whose far endpoint
+# category is a guess". `_feat_struc_type_categories` walks BOTH systems off
+# the piece's own cache and classifies the GUID by ownership; the caller's
+# structural expectation is only the fallback for a piece whose cache is
+# unreachable (the duck-typed unit fakes).
+#
+# SHAPE. These producers emit REF TUPLES `(GrammarCategory, guid)`, never bare
+# guid strings, because one structure's references straddle two categories at
+# once and a bare guid cannot say which.
+
+#: (LangProject attribute, category owning its `TypesOC`, category owning its
+#: `FeaturesOC`). Ms first, Ph second, for deterministic iteration only.
+_FEATURE_SYSTEMS = (
+    ("MsFeatureSystemOA", GrammarCategory.FEATURE_STRUCT_TYPES,
+     GrammarCategory.INFLECTION_FEATURES),
+    ("PhFeatureSystemOA", GrammarCategory.PHON_FEAT_TYPES,
+     GrammarCategory.PHONOLOGICAL_FEATURES),
+)
+
+#: Every owning-atomic `IFsFeatStruc` slot an MSA subclass can carry:
+#: `IMoStemMsa.MsFeaturesOA`, `IMoInflAffMsa.InflFeatsOA`,
+#: `IMoDerivAffMsa.FromMsFeaturesOA`/`ToMsFeaturesOA`, and
+#: `IMoDerivStepMsa.MsFeaturesOA` + `.InflFeatsOA`.
+#: `IMoUnclassifiedAffixMsa` has none. Probed BY NAME rather than by
+#: `ClassName` dispatch so a duck-typed test fake and a live cast MSA behave
+#: identically -- an absent slot is just `getattr(...) -> None`.
+_MSA_FEAT_STRUC_ATTRS = (
+    "InflFeatsOA", "MsFeaturesOA", "FromMsFeaturesOA", "ToMsFeaturesOA",
+)
+
+#: Depth cap for the `IFsComplexValue.ValueOA -> IFsFeatStruc` recursion. LCM
+#: does not structurally forbid a cycle, and a dependency producer that hangs
+#: the closure walk is strictly worse than one that under-reports; 8 is far
+#: past any nesting depth attested in a FLEx project.
+_FEAT_STRUC_MAX_DEPTH = 8
+
+
+def _unwrap_lcm(obj):
+    """The LCM object behind a flexicon wrapper (`._obj`), else `obj` itself.
+
+    `*_enumerate_source` yields raw LCM objects for some categories and
+    flexicon `RuleCollection`-style wrappers for others (see `_guid_str_from`'s
+    branch 2). A wrapper does not forward `Cache` or the typed `Fs*` members,
+    so unwrap before any structural `getattr`.
+    """
+    inner = getattr(obj, "_obj", None)
+    return obj if inner is None else inner
+
+
+def _feat_struc_type_categories(piece) -> dict:
+    """`{struct_type_guid: GrammarCategory}` across BOTH feature systems,
+    read off `piece`'s own cache.
+
+    A `*_dependencies(piece)` producer is handed the piece and NOTHING else --
+    `closure_dependencies_for` calls `entry["producer"](piece)` with one
+    argument, no context and no project handle -- so the LangProject has to be
+    reached through `ICmObject.Cache` on the piece itself.
+
+    Returns `{}` for a duck-typed fake or any piece whose cache is
+    unreachable. Callers then fall back to the structural expectation for
+    their own side (Ms for MSA/POS, Ph for phoneme/natural class), which is
+    correct for every attested shape -- it is merely unverified, which is why
+    the walk is preferred whenever it is available.
+    """
+    index: dict = {}
+    cache = getattr(_unwrap_lcm(piece), "Cache", None)
+    if cache is None:
+        return index
+    lang_project = getattr(cache, "LangProject", None)
+    if lang_project is None:
+        return index
+    for attr, type_category, _defn_category in _FEATURE_SYSTEMS:
+        try:
+            system = getattr(lang_project, attr, None)
+            if system is None:
+                continue
+            for struct_type in getattr(system, "TypesOC", None) or ():
+                guid = _guid_str_from(struct_type)
+                if guid:
+                    index[guid] = type_category
+        except Exception:  # noqa: BLE001 -- an unreadable system contributes nothing
+            continue
+    return index
+
+
+def _feat_struc_deps(struc, type_category, defn_category, type_index=None,
+                     deps=None, depth=0):
+    """Closure refs for ONE `IFsFeatStruc`, appended to `deps` and returned.
+
+    Emits, in source order and de-duplicated:
+      - `(FEATURE_STRUCT_TYPES | PHON_FEAT_TYPES, guid)` for `TypeRA`, with the
+        category taken from `type_index` when the piece's cache made the
+        ownership walk possible and from `type_category` otherwise; and
+      - `(INFLECTION_FEATURES | PHONOLOGICAL_FEATURES, guid)` for each
+        `FeatureSpecsOC` entry's `FeatureRA` and `ValueRA`,
+
+    recursing through `IFsComplexValue.ValueOA` (itself an `IFsFeatStruc`) up
+    to `_FEAT_STRUC_MAX_DEPTH`.
+
+    `_cast_lcm` is used on every hop because pythonnet exposes only the STATIC
+    type's members: `FeatureSpecsOC` is typed `IFsFeatureSpecification`, which
+    declares `FeatureRA` but NOT `ValueRA` -- that one is `IFsClosedValue`-only
+    (the same live-vs-fake divergence `_existing_infl_feat_pairs` already
+    handles). Offline fakes pass through `_cast_lcm` untouched.
+    """
+    if deps is None:
+        deps = []
+    if struc is None or depth > _FEAT_STRUC_MAX_DEPTH:
+        return deps
+    struc = _cast_lcm(_unwrap_lcm(struc), "IFsFeatStruc")
+
+    def _add(category, obj):
+        guid = _guid_str_from(obj) if obj is not None else ""
+        if not guid:
+            return
+        edge = (category, guid)
+        if edge not in deps:
+            deps.append(edge)
+
+    type_ra = getattr(struc, "TypeRA", None)
+    if type_ra is not None:
+        type_guid = _guid_str_from(type_ra)
+        if type_guid:
+            _add((type_index or {}).get(type_guid, type_category), type_ra)
+
+    for raw_spec in getattr(struc, "FeatureSpecsOC", None) or ():
+        spec = _unwrap_lcm(raw_spec)
+        closed = _cast_lcm(spec, "IFsClosedValue")
+        _add(defn_category, getattr(closed, "FeatureRA", None))
+        _add(defn_category, getattr(closed, "ValueRA", None))
+        nested = getattr(_cast_lcm(spec, "IFsComplexValue"), "ValueOA", None)
+        if nested is not None:
+            _feat_struc_deps(nested, type_category, defn_category,
+                             type_index, deps, depth + 1)
+    return deps
+
+
+def _entry_feat_struc_deps(entry):
+    """MSA-side struct-type / inflection-feature refs for one `ILexEntry`.
+
+    The sibling of `_entry_pos_deps`, shared by AFFIXES and STEMS: both
+    categories enumerate LexEntries, and an entry's MSAs are the objects that
+    actually carry the feature structures. Returns a list of ref tuples.
+    """
+    index = _feat_struc_type_categories(entry)
+    deps: list = []
+    for msa in getattr(_unwrap_lcm(entry), "MorphoSyntaxAnalysesOC", None) or []:
+        msa_obj = _unwrap_lcm(msa)
+        for attr in _MSA_FEAT_STRUC_ATTRS:
+            _feat_struc_deps(
+                getattr(msa_obj, attr, None),
+                GrammarCategory.FEATURE_STRUCT_TYPES,
+                GrammarCategory.INFLECTION_FEATURES,
+                index, deps,
+            )
+    return deps
+
+
+def _feat_struc_type_member_deps(piece, defn_category):
+    """`(defn_category, guid)` for each `IFsFeatStrucType.FeaturesRS` member.
+
+    `FeaturesRS` is a REFERENCE sequence into the owning feature system's
+    `FeaturesOC`, so a struct type transferred before its member defns exist
+    arrives partially wired -- `feature_struct_types_execute_action` already
+    logs exactly that ("no target counterpart in FeaturesOC -- skipping
+    member") and continues rather than failing. This is the type side's OWN
+    outward edge; it is unrelated to the inbound `TypeRA` arrow documented
+    above, which the owning side emits.
+    """
+    struct_type = _cast_lcm(_unwrap_lcm(piece), "IFsFeatStrucType")
+    deps: list = []
+    for defn in getattr(struct_type, "FeaturesRS", None) or ():
+        guid = _guid_str_from(defn)
+        if not guid:
+            continue
+        edge = (defn_category, guid)
+        if edge not in deps:
+            deps.append(edge)
+    return tuple(deps)
 
 
 
@@ -343,7 +566,29 @@ def gram_categories_enumerate_source(context: RunContext, selection: Selection):
 
 
 def gram_categories_dependencies(piece):
-    return ()  # leaf -- POS owns inflection_classes / stem_names / exception_features
+    """POS is a leaf for OWNERSHIP -- it owns its inflection classes, stem
+    names and exception features outright, so none of those is a closure edge.
+
+    It is NOT a leaf for REFERENCE (feature 038, T034). `IPartOfSpeech`
+    carries `DefaultFeaturesOA`, an `IFsFeatStruc` whose `TypeRA` REFERENCES an
+    `IFsFeatStrucType` in `MsFeatureSystemOA.TypesOC` (FEATURE_STRUCT_TYPES)
+    and whose `FeatureSpecsOC` REFERENCE `IFsClosedFeature`/`IFsSymFeatVal` in
+    `MsFeatureSystemOA.FeaturesOC` (INFLECTION_FEATURES). A POS written before
+    those exist carries an unsatisfiable reference -- see the
+    "FsFeatStruc / FsFeatStrucType closure edges" banner above for why the
+    arrow is emitted from this side and not from the struct type's own
+    producer.
+
+    Returns `()` for the overwhelmingly common POS that has no default feature
+    structure at all, and for duck-typed fakes with no `DefaultFeaturesOA`.
+    """
+    pos = _cast_lcm(_unwrap_lcm(piece), "IPartOfSpeech")
+    return tuple(_feat_struc_deps(
+        getattr(pos, "DefaultFeaturesOA", None),
+        GrammarCategory.FEATURE_STRUCT_TYPES,
+        GrammarCategory.INFLECTION_FEATURES,
+        _feat_struc_type_categories(piece),
+    ))
 
 
 def gram_categories_required_writing_systems(piece) -> Iterable[Tuple[str, WSKind]]:
@@ -488,8 +733,11 @@ def gram_categories_execute_action(action: PlannedAction, context: RunContext, w
 # Inflection features are IFsClosedFeature objects (or IFsComplexFeature).
 # They live under LangProject.MsFeatureSystemOA.FeaturesOC.
 # GOLD check: non-empty CatalogSourceId.
-# Creation: IFsClosedFeatureFactory.Create(Guid, featureSystem) (2-arg) or
-#            IFsClosedFeatureFactory.Create(Guid) + FeaturesOC.Add().
+# Creation (feature 038, T035): IFsClosedFeatureFactory.Create(Guid) --
+# 1-arg -- THEN FeaturesOC.Add(). Never the interface-declared 2-arg
+# Create(Guid, featureSystem): pythonnet cannot bind it on the concrete
+# factory GetService returns, so attempting it first only produced a
+# swallowed TypeError before the 1-arg path ran anyway.
 
 def inflection_features_enumerate_source(context: RunContext, selection: Selection):
     """Walk source.InflectionFeatures.FeatureGetAll()."""
@@ -632,10 +880,11 @@ def inflection_features_execute_action(action: PlannedAction, context: RunContex
     Dispatches on `src_feat.ClassName` (coverage-content-fidelity-v2 Part B
     sub-part 1 -- complex/open inflection features):
     - "FsClosedFeature" (or unknown/absent ClassName): the existing GOLD
-      Path A/B create + IFsSymFeatVal ValuesOC co-create logic, unchanged.
+      1-arg Create(Guid) + Add() GOLD path plus the IFsSymFeatVal
+      ValuesOC co-create loop.
     - "FsComplexFeature": creates an IFsComplexFeature via
-      IFsComplexFeatureFactory (Path A 2-arg Create(Guid, featureSystem),
-      falling back to Path B Create(Guid) + guarded Add). Copies
+      IFsComplexFeatureFactory -- 1-arg Create(Guid) then guarded Add
+      (feature 038, T035). Copies
       Name/Abbreviation/Description via the WS-mapped Operations surface
       (falling back to `_copy_multistrings_ws_mapped`). Wires TypeRA by
       GUID lookup in `MsFeatureSystemOA.TypesOC` if the target struct-type
@@ -645,13 +894,18 @@ def inflection_features_execute_action(action: PlannedAction, context: RunContex
     - "FsOpenFeature": documented clean skip (Skip(NEEDS_MANUAL)) -- open
       features have no closed value set to sync; no crash, no orphan.
 
-    Uses the 2-arg factory overload (Path A: Create(Guid, featureSystem))
-    per the InflectionFeatureOperations._factory_create_attached pattern.
-    Falls back to Create(Guid) + FeaturesOC.Add() if the 2-arg overload
-    is unavailable.
+    Feature 038 (T035) -- FACTORY CALL ORDER. All three Fs* creates below
+    (IFsComplexFeature, IFsClosedFeature, IFsSymFeatVal) call the CONCRETE
+    factory's 1-arg `Create(Guid)` and THEN `Add()` to the owning collection,
+    in that order. The 2-arg `Create(Guid, owner)` overload exists on the LCM
+    INTERFACE, not on the concrete factory `ServiceLocator.GetService` returns,
+    and pythonnet cannot bind it: the previous "Path A first, Path B on
+    exception" shape therefore raised and swallowed a TypeError on EVERY
+    create before doing the 1-arg call anyway. Removing Path A removes a
+    swallowed exception, not a capability.
 
-    Values (IFsSymFeatVal) are co-created via CreateValue so they land
-    in the same transaction.  Carrier B residue is applied.
+    Values (IFsSymFeatVal) are co-created so they land in the same
+    transaction.  Carrier B residue is applied.
 
     031 US2: `Name`/`Abbreviation`/`Description` are copied through
     writing-system mapping (contract C3) -- the feature via the flexicon
@@ -724,28 +978,25 @@ def inflection_features_execute_action(action: PlannedAction, context: RunContex
 
             complex_factory = sl.GetService(IFsComplexFeatureFactory)
 
-            # Path A: 2-arg Create(Guid, featureSystem) -- auto-attaches; do
-            # NOT call FeaturesOC.Add() afterward (double-attach risk).
-            new_feat_raw = None
+            # Feature 038 (T035): 1-arg Create(Guid), THEN Add(), in that
+            # order. `IFsComplexFeatureFactory.Create(Guid, IFsFeatureSystem)`
+            # is declared on the INTERFACE; `GetService` returns the CONCRETE
+            # factory and pythonnet cannot bind the 2-arg form against it. The
+            # removed "Path A first" attempt therefore raised on every create
+            # and had its exception swallowed by a bare `except Exception:`
+            # before this same 1-arg path ran. Fail loud if even the 1-arg
+            # overload is unavailable rather than silently produce a
+            # fresh-GUID duplicate on re-run (C4/VR-1).
             try:
-                new_feat_raw = complex_factory.Create(parsed_guid, feature_system)
-            except Exception:
-                new_feat_raw = None
-
-            if new_feat_raw is None:
-                # Path B: Create(Guid) + guarded Add. Fail loud rather than
-                # silently produce a fresh-GUID duplicate on re-run (mirrors
-                # the closed-feature posture, C4/VR-1).
-                try:
-                    new_feat_raw = complex_factory.Create(parsed_guid)
-                except Exception as e:
-                    raise RuntimeError(
-                        f"IFsComplexFeatureFactory does not support "
-                        f"Create(Guid); cannot align complex feature GUID "
-                        f"{src_guid}"
-                    ) from e
-                _safe_add_to_owner(new_feat_raw, feature_system.FeaturesOC,
-                                   "IFsComplexFeatureFactory", src_guid)
+                new_feat_raw = complex_factory.Create(parsed_guid)
+            except Exception as e:
+                raise RuntimeError(
+                    f"IFsComplexFeatureFactory does not support "
+                    f"Create(Guid); cannot align complex feature GUID "
+                    f"{src_guid}"
+                ) from e
+            _safe_add_to_owner(new_feat_raw, feature_system.FeaturesOC,
+                               "IFsComplexFeatureFactory", src_guid)
 
             new_feat = IFsComplexFeature(new_feat_raw)
             src_feat_typed = IFsComplexFeature(src_feat)
@@ -844,28 +1095,23 @@ def inflection_features_execute_action(action: PlannedAction, context: RunContex
 
         factory = sl.GetService(IFsClosedFeatureFactory)
 
-        # Path A: 2-arg Create(Guid, featureSystem).
-        new_feat = None
+        # Feature 038 (T035): 1-arg Create(Guid), THEN Add() -- same reason as
+        # the complex-feature branch above (the 2-arg overload is
+        # interface-only and unbindable from pythonnet, so trying it first
+        # only manufactured a swallowed exception). No no-arg fallback: if
+        # Create(Guid) is unsupported we fail loud rather than silently produce
+        # a fresh-GUID duplicate feature on re-run (031 US2, C4/VR-1;
+        # research.md R3 dedup). Mirrors the value path's fail-loud posture.
         try:
-            new_feat = factory.Create(parsed_guid, feature_system)
-        except Exception:
-            new_feat = None
-
-        if new_feat is None:
-            # Path B: Create(Guid) + guarded Add. No no-arg fallback -- if
-            # Create(Guid) is unsupported we fail loud rather than silently
-            # produce a fresh-GUID duplicate feature on re-run (031 US2, C4/VR-1;
-            # research.md R3 dedup). Mirrors the value path's fail-loud posture.
-            try:
-                new_feat = factory.Create(parsed_guid)
-            except Exception as e:
-                raise RuntimeError(
-                    f"IFsClosedFeatureFactory does not support Create(Guid); "
-                    f"cannot align feature GUID {src_guid} (a no-GUID create "
-                    f"would produce a duplicate feature on re-run)"
-                ) from e
-            _safe_add_to_owner(new_feat, feature_system.FeaturesOC,
-                               "IFsClosedFeatureFactory", src_guid)
+            new_feat = factory.Create(parsed_guid)
+        except Exception as e:
+            raise RuntimeError(
+                f"IFsClosedFeatureFactory does not support Create(Guid); "
+                f"cannot align feature GUID {src_guid} (a no-GUID create "
+                f"would produce a duplicate feature on re-run)"
+            ) from e
+        _safe_add_to_owner(new_feat, feature_system.FeaturesOC,
+                           "IFsClosedFeatureFactory", src_guid)
 
         new_feat = IFsClosedFeature(new_feat)
 
@@ -885,30 +1131,27 @@ def inflection_features_execute_action(action: PlannedAction, context: RunContex
                 source=source, target=target, ws_map=ws_map)
 
         # Co-create values (IFsSymFeatVal) with their canonical GUIDs.
-        # P0-A hardening: the 2-arg Create attaches automatically; the 1-arg
-        # path guards Add with _safe_add_to_owner.  No no-arg fallback --
-        # if Create(Guid) is unsupported on this LCM build we fail loud
-        # rather than silently produce GUID-misaligned values.
+        # Feature 038 (T035): 1-arg Create(Guid) THEN ValuesOC.Add(), guarded
+        # by _safe_add_to_owner. The interface-declared 2-arg
+        # Create(Guid, IFsClosedFeature) is not bindable on the concrete
+        # factory, so the removed attempt raised once PER VALUE and was
+        # swallowed. No no-arg fallback -- if Create(Guid) is unsupported on
+        # this LCM build we fail loud rather than silently produce
+        # GUID-misaligned values.
         val_factory = sl.GetService(IFsSymFeatValFactory)
         if hasattr(src_feat_typed, "ValuesOC"):
             for src_val in src_feat_typed.ValuesOC:
                 val_guid = _guid_str_from(src_val)
                 parsed_val_guid = DotNetGuid.Parse(val_guid)
-                new_val = None
                 try:
-                    new_val = val_factory.Create(parsed_val_guid, new_feat)
-                except Exception:
-                    new_val = None
-                if new_val is None:
-                    try:
-                        new_val = val_factory.Create(parsed_val_guid)
-                    except Exception as e:
-                        raise RuntimeError(
-                            f"IFsSymFeatValFactory does not support Create(Guid); "
-                            f"cannot align value GUID {val_guid} on feature {src_guid}"
-                        ) from e
-                    _safe_add_to_owner(new_val, new_feat.ValuesOC,
-                                       "IFsSymFeatValFactory", val_guid)
+                    new_val = val_factory.Create(parsed_val_guid)
+                except Exception as e:
+                    raise RuntimeError(
+                        f"IFsSymFeatValFactory does not support Create(Guid); "
+                        f"cannot align value GUID {val_guid} on feature {src_guid}"
+                    ) from e
+                _safe_add_to_owner(new_val, new_feat.ValuesOC,
+                                   "IFsSymFeatValFactory", val_guid)
                 new_val = IFsSymFeatVal(new_val)
                 src_val_typed = IFsSymFeatVal(src_val)
                 # C3: values copy via the explicit ws-mapped handle translation
@@ -1511,10 +1754,14 @@ def inflection_classes_execute_action(action: PlannedAction, context: RunContext
 # PHON_FEAT_TYPES category (PhFeatureSystemOA.TypesOC), which is a later,
 # separate coverage sub-part and IS GOLD_RESERVED.
 #
-# Factory: IFsFeatStrucTypeFactory.Create(Guid) -- 1-arg only (no 2-arg
-# attach-on-create overload confirmed for this factory, unlike
-# IFsComplexFeatureFactory). Must Add() to TypesOC BEFORE writing any
-# multistrings (LCM NPEs on free-floating objects) -- mirrors
+# Factory: IFsFeatStrucTypeFactory.Create(Guid) -- 1-arg, then Add(). This
+# was already the shape feature 038's T035 made universal: no Fs* factory in
+# this module uses a 2-arg attach-on-create call, because the 2-arg overload
+# is declared on the INTERFACE and pythonnet cannot bind it on the concrete
+# factory GetService returns (IFsComplexFeatureFactory included -- the old
+# claim that it was the exception was wrong, and its "Path A" call had been
+# failing and being swallowed all along). Must Add() to TypesOC BEFORE writing
+# any multistrings (LCM NPEs on free-floating objects) -- mirrors
 # inflection_classes_execute_action / _safe_add_to_owner usage above.
 # FeaturesRS.Add() is guarded per-member: a member whose GUID has no target
 # counterpart in FeaturesOC is logged and skipped, never crashing the whole
@@ -1537,9 +1784,23 @@ def feature_struct_types_enumerate_source(context: RunContext, selection: Select
 
 
 def feature_struct_types_dependencies(piece):
-    """No additional closure deps -- member defns are owned by FeaturesOC
-    (INFLECTION_FEATURES), not by this category."""
-    return ()
+    """Yield (INFLECTION_FEATURES, defn_guid) for every `FeaturesRS` member
+    (feature 038, T034).
+
+    The previous `()` and its "member defns are owned by FeaturesOC, not by
+    this category" rationale had the implication backwards: BECAUSE the defns
+    are owned elsewhere, `FeaturesRS` is a REFERENCE sequence, and a struct
+    type transferred before `MsFeatureSystemOA.FeaturesOC` is populated arrives
+    partially wired. `feature_struct_types_execute_action` already documents
+    that outcome -- it logs "no target counterpart in FeaturesOC -- skipping
+    member" per member and tolerates the partial result.
+
+    The `TypeRA` arrow is NOT emitted here. It points AT this piece from an
+    `IFsFeatStruc` owned by an MSA / POS, so the owning side's producer emits
+    it (`affixes_dependencies` / `stems_dependencies` /
+    `gram_categories_dependencies`); see the banner above `_unwrap_lcm`.
+    """
+    return _feat_struc_type_member_deps(piece, GrammarCategory.INFLECTION_FEATURES)
 
 
 def feature_struct_types_required_writing_systems(piece) -> Iterable[Tuple[str, WSKind]]:
@@ -1768,9 +2029,16 @@ def phon_feat_types_enumerate_source(context: RunContext, selection: Selection):
 
 
 def phon_feat_types_dependencies(piece):
-    """No additional closure deps -- member defns are owned by the
-    phonological FeaturesOC (PHONOLOGICAL_FEATURES), not by this category."""
-    return ()
+    """Yield (PHONOLOGICAL_FEATURES, defn_guid) for every `FeaturesRS` member
+    (feature 038, T034) -- the phonological twin of
+    `feature_struct_types_dependencies`, with `PhFeatureSystemOA.FeaturesOC`
+    as the owning collection instead of `MsFeatureSystemOA.FeaturesOC`.
+
+    As on the analysis side, the inbound `TypeRA` arrow is emitted by the
+    owning side (`phonemes_dependencies` / `natural_classes_dependencies`),
+    not here.
+    """
+    return _feat_struc_type_member_deps(piece, GrammarCategory.PHONOLOGICAL_FEATURES)
 
 
 def phon_feat_types_required_writing_systems(piece) -> Iterable[Tuple[str, WSKind]]:
@@ -7526,9 +7794,22 @@ def affixes_enumerate_source(context, selection):
 
 
 def affixes_dependencies(piece):
-    """Yield (GRAM_CATEGORIES, pos_guid) for each MSA's owning POS (E4).
-    MorphType is FW-global; no dependency edge emitted for it."""
-    return tuple(_entry_pos_deps(piece))
+    """Yield (GRAM_CATEGORIES, pos_guid) for each MSA's owning POS (E4), then
+    the MSA-side feature-structure refs (feature 038, T034): each MSA's
+    `InflFeatsOA`/`MsFeaturesOA`/`From-`/`ToMsFeaturesOA` contributes
+    (FEATURE_STRUCT_TYPES, type_guid) for its `TypeRA` and
+    (INFLECTION_FEATURES, guid) for every `FeatureRA`/`ValueRA` it references.
+
+    That second group is the ~2,083-MSA case the 038 census measured: every
+    restored MSA carries a `TypeRA`, and the target's
+    `MsFeatureSystemOA.TypesOC` being empty makes each one unsatisfiable.
+
+    MorphType is FW-global; no dependency edge is emitted for it."""
+    deps = list(_entry_pos_deps(piece))
+    for edge in _entry_feat_struc_deps(piece):
+        if edge not in deps:
+            deps.append(edge)
+    return tuple(deps)
 
 
 def affixes_required_writing_systems(piece):
@@ -7928,8 +8209,16 @@ def stems_enumerate_source(context, selection):
 def stems_dependencies(piece):
     """Yield (GRAM_CATEGORIES, pos_guid) per MSA POS, (SEMANTIC_DOMAINS,
     domain_guid) per sense SemanticDomainsRC entry, and (STRATA, stratum_guid)
-    per MoStemMsa.StratumRA (E4/E10/FR-336)."""
+    per MoStemMsa.StratumRA (E4/E10/FR-336).
+
+    Feature 038 (T034) adds the MSA-side feature-structure refs, identically to
+    `affixes_dependencies`: `IMoStemMsa.MsFeaturesOA` is an `IFsFeatStruc`, so a
+    stem entry's MSAs reference struct types (FEATURE_STRUCT_TYPES) and feature
+    defns/values (INFLECTION_FEATURES) exactly as an affix entry's do."""
     deps = list(_entry_pos_deps(piece))
+    for edge in _entry_feat_struc_deps(piece):
+        if edge not in deps:
+            deps.append(edge)
     for msa in getattr(piece, "MorphoSyntaxAnalysesOC", None) or []:
         stratum = getattr(msa, "StratumRA", None)
         if stratum is not None:
@@ -8237,7 +8526,26 @@ def phonemes_enumerate_source(context, selection):
 
 
 def phonemes_dependencies(piece):
-    return ()
+    """Feature 038 (T034): an `IPhPhoneme`'s `FeaturesOA` is an `IFsFeatStruc`
+    in the PHONOLOGICAL feature system -- its `TypeRA` names an
+    `IFsFeatStrucType` in `PhFeatureSystemOA.TypesOC` (PHON_FEAT_TYPES) and its
+    `FeatureSpecsOC` name `IFsClosedFeature`/`IFsSymFeatVal` in
+    `PhFeatureSystemOA.FeaturesOC` (PHONOLOGICAL_FEATURES).
+
+    `PhonemeOperations.ApplySyncableProperties` rewires that structure against
+    the TARGET's `PhFeatureSystemOA` by GUID, so a phoneme written before those
+    objects exist arrives with a hollow feature structure -- the same silent
+    defect feature 037 measured for feature-based natural classes (0 of 34 and
+    0 of 11 arriving with a feature structure across two live projects).
+
+    Ref tuples, not bare guids: the two far endpoints are different categories.
+    `()` for a phoneme with no feature structure and for duck-typed fakes."""
+    return tuple(_feat_struc_deps(
+        getattr(_cast_lcm(_unwrap_lcm(piece), "IPhPhoneme"), "FeaturesOA", None),
+        GrammarCategory.PHON_FEAT_TYPES,
+        GrammarCategory.PHONOLOGICAL_FEATURES,
+        _feat_struc_type_categories(piece),
+    ))
 
 
 def phonemes_required_writing_systems(piece):
@@ -8349,7 +8657,33 @@ def natural_classes_dependencies(piece):
         feat_struct = getattr(nc_feat, "FeaturesOA", None)
         if feat_struct is None:
             return ()
-        refs: list[str] = []
+        # Feature 038 (T034): the FeatureRA/ValueRA guids gathered below are
+        # only HALF this structure's references. `TypeRA` names the
+        # `IFsFeatStrucType` in `PhFeatureSystemOA.TypesOC` that PHON_FEAT_TYPES
+        # transfers, and a natural class written before that type exists has an
+        # unsatisfiable `TypeRA` -- the same defect class as the hollow
+        # `FeaturesOA` feature 037 fixed.
+        #
+        # It is emitted as a REF TUPLE, deliberately mixing shapes with this
+        # producer's bare guids: a bare guid here would be indistinguishable
+        # from a feature/value guid and a single `dependency_category` on the
+        # registry entry would file it under the wrong far category.
+        # `closure_dependencies_for` already accepts both shapes from one
+        # producer (it tests `isinstance(item, tuple)` before falling back to
+        # `dependency_category`). The remaining bare-guid half is what still
+        # blocks registration, exactly as the `CLOSURE_EDGES_VERIFIED` banner
+        # says -- splitting this producer per far category is that work, not
+        # this one.
+        refs: list = []
+        type_ra = getattr(feat_struct, "TypeRA", None)
+        if type_ra is not None:
+            type_guid = _guid_str_from(type_ra)
+            if type_guid:
+                refs.append((
+                    _feat_struc_type_categories(piece).get(
+                        type_guid, GrammarCategory.PHON_FEAT_TYPES),
+                    type_guid,
+                ))
         for raw_spec in feat_struct.FeatureSpecsOC:
             try:
                 cv = IFsClosedValue(raw_spec)
@@ -10508,6 +10842,25 @@ def for_category(category: GrammarCategory) -> dict:
 # registered as-is: split it into per-category producers first, because the
 # audit that earns `verified_by` cannot certify an edge whose far endpoint
 # category is a guess.
+#
+# T034 (the FsFeatStrucType closure edge) DELIBERATELY DID NOT REGISTER ITSELF
+# here. It made `affixes_dependencies`, `stems_dependencies`,
+# `gram_categories_dependencies`, `phonemes_dependencies` and
+# `natural_classes_dependencies` emit the `FsFeatStruc.TypeRA` ->
+# `IFsFeatStrucType` arrow (plus the `FeatureSpecsOC` -> feature/value arrows),
+# and added `DependencyKind.MSA_TO_FEAT_STRUC_TYPE` to name the relationship --
+# but registering it is Phase 7's job (T067-T069), for two reasons:
+#
+#   1. FR-018 makes `verified_by` mandatory and it must name a REAL audit. No
+#      audit of these edge sets against a live project exists yet, and a
+#      fabricated `verified_by` would defeat the entire mechanism.
+#   2. The registry is keyed by `DependencyKind` and a dict key is unique, so
+#      the five producers above cannot all be registered under one member.
+#      Phase 7 must decide the member split (`POS_TO_FEAT_STRUC_TYPE`,
+#      `PHONEME_TO_FEAT_STRUC_TYPE`, ...) as part of the same audit that earns
+#      each one its evidence.
+#
+# Until then the producers are correct and inert, exactly like the other 23.
 
 CLOSURE_EDGES_VERIFIED: dict = {}
 

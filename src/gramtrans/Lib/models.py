@@ -1539,6 +1539,27 @@ class DependencyKind(enum.Enum):
     SLOT_TO_TEMPLATE = "slot_to_template"
     TEMPLATE_TO_POS = "template_to_pos"
     MSA_TO_INFL_FEATURE = "msa_to_infl_feature"
+    #: Feature 038 (T034). An MSA's `InflFeatsOA`/`MsFeaturesOA` is an
+    #: `IFsFeatStruc` whose `TypeRA` REFERENCES an `IFsFeatStrucType` owned by
+    #: `IFsFeatureSystem.TypesOC` -- i.e. by FEATURE_STRUCT_TYPES (analysis
+    #: side) or PHON_FEAT_TYPES (phonological side), never by the MSA. The 038
+    #: census measured ~2,083 MSAs restored by the affix path, every one of
+    #: them carrying a `TypeRA`; with the target's `MsFeatureSystemOA.TypesOC`
+    #: empty each of those references is unsatisfiable, which constitution
+    #: Principle I forbids. This names the relationship so
+    #: `CLOSURE_EDGES_VERIFIED` can switch it on ALONE, on its own evidence.
+    #:
+    #: The same arrow leaves three other kinds of owner -- `IPartOfSpeech`
+    #: (`DefaultFeaturesOA`), `IPhPhoneme` and `IPhNCFeatures` (`FeaturesOA`)
+    #: -- and `Lib/categories.py` emits it from all of them, across five
+    #: producers (AFFIXES and STEMS both enumerate MSA-bearing LexEntries).
+    #: Because
+    #: `CLOSURE_EDGES_VERIFIED` is keyed by this enum and a dict key is unique,
+    #: registering more than one of those four sources requires sibling members
+    #: (`POS_TO_FEAT_STRUC_TYPE`, `PHONEME_TO_FEAT_STRUC_TYPE`, ...). They are
+    #: deliberately NOT added ahead of the audit that would earn each one a
+    #: `verified_by`: an unused member invites a registration nobody verified.
+    MSA_TO_FEAT_STRUC_TYPE = "msa_to_feat_struc_type"
     PROCESS_RULE_TO_PHONEME = "process_rule_to_phoneme"
     PROCESS_RULE_TO_NATURAL_CLASS = "process_rule_to_natural_class"
 
