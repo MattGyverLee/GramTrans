@@ -681,3 +681,425 @@ def split_class_label(object_class: str, owner: str) -> str:
     consideration.
     """
     return object_class + "(" + owner + ")"
+
+
+# ===========================================================================
+# T017 -- the READ-ONLY counting pass
+#
+# READ-ONLY, WITHOUT EXCEPTION (fidelity-census.md section 2). Both projects
+# are opened `writeEnabled=False`, the `.fwdata` digest is taken before and
+# after, and a digest that MOVED is `CENSUS_ERROR` -- not a warning, not a
+# note. `Ejagham Mini`, `Esperanto` and `Mbugwe LizzieHC practice` are
+# read-only test projects, and the digest pair is the evidence that they stayed
+# that way. `$defs.projectRef.opened_read_only` is `const: true`, so a census
+# that opened a write handle cannot produce a valid artifact at all.
+#
+# AN UNRESOLVED ACCESSOR IS A REPORTED OUTCOME, NEVER A SKIP.
+# `tests/integration/harness/full_run.py:230` is the precedent to avoid: its
+# counting loop does `except Exception: continue`, so a renamed accessor turns
+# into a silently absent number and the harness reports success over it. Here a
+# class whose repository cannot be resolved lands in `unresolved_accessors`,
+# becomes an `errors[]` entry with the class named, and drives the run to
+# CENSUS_ERROR. The census may fail to measure a class; it may not fail
+# QUIETLY.
+# ===========================================================================
+
+#: Where FLEx projects live when no root is supplied. The same literal
+#: `Lib/api.py` defaults to, so the census and the transfer cannot disagree
+#: about where a project is.
+DEFAULT_PROJECTS_ROOT = r"C:\ProgramData\SIL\FieldWorks\Projects"
+
+#: `<languageproject version="7000072">` on the second line of every `.fwdata`.
+_DATA_MODEL_VERSION_RE = re.compile(rb'<languageproject\s+version="(\d+)"')
+
+#: Process-wide latch for `FLExInitialize()`; see `_ensure_flex_initialized`.
+_FLEX_INITIALIZED = False
+
+
+def _ensure_flex_initialized() -> None:
+    """Call `flexicon.FLExInitialize()` exactly once per process.
+
+    A non-FlexTools-host process MUST initialise the FieldWorks libraries
+    before any `OpenProject`; skipping it surfaces as
+    `RegistryHelper.get_CompanyKey()` throwing `ArgumentNullException` on the
+    first open. The import is function-level on purpose -- see this module's
+    docstring on why nothing here may touch FieldWorks at import time.
+    """
+    global _FLEX_INITIALIZED
+    if _FLEX_INITIALIZED:
+        return
+    from flexicon import FLExInitialize  # noqa: PLC0415 -- see module docstring
+
+    FLExInitialize()
+    _FLEX_INITIALIZED = True
+
+
+def fwdata_path_for(
+    project_name: str,
+    projects_root: Optional[str] = None,
+    handle=None,
+) -> Path:
+    """The `.fwdata` file whose digest proves the census wrote nothing.
+
+    Prefers the OPEN handle's own `ProjectId.Path` (the accessor
+    `Lib/config_views.py` and `Lib/api.py` already use), because that is the
+    file LCM actually has open rather than a guess from the project name.
+    Falls back to `<root>/<name>/<name>.fwdata`, research R5's definition of
+    what a FLEx project looks like on disk.
+    """
+    if handle is not None:
+        try:
+            candidate = str(handle.project.ProjectId.Path)
+        except Exception:  # noqa: BLE001 -- fake handles / API drift
+            candidate = ""
+        if candidate and Path(candidate).is_file():
+            return Path(candidate)
+    root = projects_root or DEFAULT_PROJECTS_ROOT
+    return Path(root) / project_name / (project_name + ".fwdata")
+
+
+def read_data_model_version(fwdata: Path) -> Optional[int]:
+    """The `.fwdata` header's data-model version, or None when unreadable.
+
+    Read from the file rather than from the cache because it is needed BEFORE
+    and AFTER the open, and because baseline staleness is judged against it
+    (fidelity-census.md 5.3): a destination whose `data_model_version` exceeds
+    the baseline's makes the baseline stale.
+    """
+    try:
+        with open(fwdata, "rb") as handle:
+            head = handle.read(4096)
+    except OSError:
+        return None
+    found = _DATA_MODEL_VERSION_RE.search(head)
+    return int(found.group(1)) if found else None
+
+
+# ---------------------------------------------------------------------------
+# Per-class counts
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class ClassCounts:
+    """One project's per-class instance counts, plus what could NOT be counted.
+
+    `counts` holds only classes that were actually measured. A class the census
+    could not measure is in `unmeasurable` and its reason is in
+    `unresolved_accessors` -- it is never silently absent from `counts` and
+    never defaulted to zero, because zero is a positive claim ("this project
+    holds none of these") and an unresolved accessor supports no claim at all.
+    """
+
+    project_name: str
+    counts: dict
+    unmeasurable: tuple = ()
+    unresolved_accessors: Optional[dict] = None
+    object_count_total: Optional[int] = None
+
+    def __post_init__(self) -> None:
+        if self.unresolved_accessors is None:
+            object.__setattr__(self, "unresolved_accessors", {})
+        missing = tuple(
+            name for name in self.unmeasurable
+            if name not in self.unresolved_accessors
+        )
+        if missing:
+            raise CensusError(
+                "these classes are unmeasurable with no recorded reason: "
+                + ", ".join(sorted(missing))
+                + " -- an unmeasurable class must say WHY, or it is "
+                "indistinguishable from a class the census forgot",
+                missing,
+            )
+        both = tuple(sorted(set(self.counts) & set(self.unmeasurable)))
+        if both:
+            raise CensusError(
+                "these classes are both counted and unmeasurable: "
+                + ", ".join(both),
+                both,
+            )
+
+    def count_for(self, object_class: str) -> Optional[int]:
+        """The count for one class, or None when it could not be measured.
+
+        None is `unmeasurable`, NOT zero. The caller must report it rather than
+        subtract it.
+        """
+        return self.counts.get(object_class)
+
+    @property
+    def is_complete(self) -> bool:
+        """True when every requested class yielded a number."""
+        return not self.unmeasurable
+
+
+def _repository_interface(object_class: str):
+    """The `SIL.LCModel.I<Class>Repository` interface, or None when absent.
+
+    LCM generates one repository per class, so this resolves for every class in
+    the roster; returning None rather than raising lets the caller record an
+    `unresolved_accessors` entry naming the class instead of aborting the whole
+    pass on one drifted name.
+    """
+    import SIL.LCModel as lcm  # noqa: PLC0415 -- see module docstring
+
+    return getattr(lcm, "I" + object_class + "Repository", None)
+
+
+def count_classes(handle, class_names, *, project_name: str = "") -> ClassCounts:
+    """Count each class ONCE against an open, read-only project handle.
+
+    One `repository.Count` read per class -- no per-object enumeration and no
+    per-object re-query, which is what makes the pass affordable over the 74
+    rows of a real project. `handle.ObjectCountFor(iface)` is flexicon's own
+    accessor for exactly this (`FLExProject.ObjectCountFor` ->
+    `ServiceLocator.GetService(repository).Count`).
+
+    Every failure mode is recorded and named: a missing repository interface, a
+    service locator that returns nothing, a raising accessor, and a count that
+    is not an integer are four distinct `unresolved_accessors` reasons.
+    """
+    requested = tuple(dict.fromkeys(class_names))
+    counts: dict = {}
+    unresolved: dict = {}
+
+    for name in requested:
+        iface = _repository_interface(name)
+        if iface is None:
+            unresolved[name] = (
+                "SIL.LCModel exposes no I" + name + "Repository -- the class "
+                "was renamed, removed, or is not a first-class LCM class"
+            )
+            continue
+        try:
+            value = handle.ObjectCountFor(iface)
+        except Exception as exc:  # noqa: BLE001 -- LCM raises many types
+            unresolved[name] = (
+                "I" + name + "Repository resolved but counting raised "
+                + type(exc).__name__ + ": " + str(exc)
+            )
+            continue
+        if value is None:
+            unresolved[name] = (
+                "the service locator returned no I" + name + "Repository"
+            )
+            continue
+        try:
+            counts[name] = int(value)
+        except (TypeError, ValueError):
+            unresolved[name] = (
+                "I" + name + "Repository.Count is not an integer: "
+                + repr(value)
+            )
+
+    total: Optional[int] = None
+    try:
+        import SIL.LCModel as lcm  # noqa: PLC0415
+
+        repo = handle.ObjectRepository(lcm.ICmObjectRepository)
+        total = int(repo.Count) if repo is not None else None
+    except Exception:  # noqa: BLE001 -- advisory figure only
+        total = None
+
+    return ClassCounts(
+        project_name=project_name or str(getattr(handle, "ProjectName", "")),
+        counts=counts,
+        unmeasurable=tuple(sorted(unresolved)),
+        unresolved_accessors=unresolved,
+        object_count_total=total,
+    )
+
+
+def objects_in_class(handle, object_class: str) -> list:
+    """Every instance of one class, enumerated ONCE.
+
+    T018's duplicate grouping is the only caller: grouping by natural key needs
+    the objects themselves, not just their number. Raises `CensusError` rather
+    than yielding nothing when the class cannot be enumerated, so a duplicate
+    count of 0 always means "measured, and none" and never "could not look".
+    """
+    iface = _repository_interface(object_class)
+    if iface is None:
+        raise CensusError(
+            "cannot enumerate " + repr(object_class)
+            + ": SIL.LCModel exposes no I" + object_class + "Repository",
+            (object_class,),
+        )
+    try:
+        return list(handle.ObjectsIn(iface))
+    except Exception as exc:  # noqa: BLE001
+        raise CensusError(
+            "cannot enumerate " + repr(object_class) + ": "
+            + type(exc).__name__ + ": " + str(exc),
+            (object_class,),
+        ) from exc
+
+
+# ---------------------------------------------------------------------------
+# One project's reading
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class ProjectCensusReading:
+    """-> artifact `projects.source` / `projects.destination`.
+
+    `opened_read_only` is not stored: it is emitted as the literal `True` the
+    schema pins as `const`, and it is true because `read_project` is the only
+    way to build one of these and it passes `writeEnabled=False`. A caller who
+    counted through a write handle has no way to express that here, which is
+    the intended shape.
+    """
+
+    name: str
+    path: str
+    counted_at: str
+    fwdata_sha256_before: str
+    fwdata_sha256_after: str
+    counts: ClassCounts
+    data_model_version: Optional[int] = None
+    declared_freshly_created: Optional[bool] = None
+
+    @property
+    def digest_unchanged(self) -> bool:
+        """Invariant 7's per-project half: the census wrote nothing."""
+        return self.fwdata_sha256_before == self.fwdata_sha256_after
+
+    def artifact(self) -> dict:
+        """The `$defs.projectRef` block."""
+        block = {
+            "name": self.name,
+            "path": self.path,
+            "opened_read_only": True,
+            "counted_at": self.counted_at,
+            "fwdata_sha256_before": self.fwdata_sha256_before,
+            "fwdata_sha256_after": self.fwdata_sha256_after,
+        }
+        if self.data_model_version is not None:
+            block["data_model_version"] = self.data_model_version
+        if self.declared_freshly_created is not None:
+            block["declared_freshly_created"] = self.declared_freshly_created
+        if self.counts.object_count_total is not None:
+            block["object_count_total"] = self.counts.object_count_total
+        return block
+
+
+def _now_iso() -> str:
+    """`counted_at` / `generated_at`, second resolution, ISO-8601."""
+    import datetime  # noqa: PLC0415 -- keeps the import surface uniform
+
+    return datetime.datetime.now().replace(microsecond=0).isoformat()
+
+
+def read_project(
+    project_name: str,
+    class_names,
+    *,
+    projects_root: Optional[str] = None,
+    declared_freshly_created: Optional[bool] = None,
+    open_project=None,
+) -> ProjectCensusReading:
+    """Open one project READ-ONLY, count every class once, and prove no write.
+
+    The digest is taken before the open and again after the CLOSE, because a
+    write LCM only flushes on `CloseProject()` would not show up in a digest
+    taken while the handle is still open. A digest that moved raises
+    `CensusError` (verdict `CENSUS_ERROR`, exit 7): the census's whole claim to
+    be a safe instrument rests on that comparison, so it is the feature, not a
+    formality.
+
+    `open_project` is an injection seam -- it must accept `(project_name)` and
+    return a handle whose `ObjectCountFor` works. The default opens a real
+    flexicon handle with `writeEnabled=False`.
+    """
+    fwdata = fwdata_path_for(project_name, projects_root)
+    if not fwdata.is_file():
+        raise CensusError(
+            "no .fwdata for project " + repr(project_name) + " at "
+            + str(fwdata) + " -- the census cannot prove it wrote nothing to a "
+            "file it cannot digest"
+        )
+    before = sha256_of(fwdata)
+    model_version = read_data_model_version(fwdata)
+    counted_at = _now_iso()
+    resolved = fwdata
+
+    handle = None
+    try:
+        if open_project is not None:
+            handle = open_project(project_name)
+        else:
+            from flexicon import FLExProject  # noqa: PLC0415
+
+            _ensure_flex_initialized()
+            handle = FLExProject()
+            handle.OpenProject(projectName=project_name, writeEnabled=False)
+        resolved = fwdata_path_for(project_name, projects_root, handle)
+        counts = count_classes(handle, class_names, project_name=project_name)
+    except CensusFailure:
+        raise
+    except Exception as exc:  # noqa: BLE001 -- LCM raises many types
+        raise CensusError(
+            "could not open " + repr(project_name) + " read-only for counting: "
+            + type(exc).__name__ + ": " + str(exc)
+        ) from exc
+    finally:
+        if handle is not None:
+            try:
+                handle.CloseProject()
+            except Exception:  # noqa: BLE001 -- nothing was written to lose
+                pass
+
+    after = sha256_of(fwdata)
+    if before != after:
+        raise CensusError(
+            "the .fwdata digest for " + repr(project_name) + " CHANGED under "
+            "the census (" + before[:12] + "... -> " + after[:12] + "...) at "
+            + str(fwdata) + " -- the census is read-only without exception "
+            "(fidelity-census.md section 2), so a moved digest invalidates the "
+            "whole run rather than one row"
+        )
+
+    return ProjectCensusReading(
+        name=project_name,
+        path=str(Path(resolved).parent),
+        counted_at=counted_at,
+        fwdata_sha256_before=before,
+        fwdata_sha256_after=after,
+        counts=counts,
+        data_model_version=model_version,
+        declared_freshly_created=declared_freshly_created,
+    )
+
+
+def projects_artifact(
+    source: ProjectCensusReading, destination: ProjectCensusReading,
+) -> dict:
+    """-> artifact `projects`. Both readings, both digest pairs."""
+    return {
+        "source": source.artifact(),
+        "destination": destination.artifact(),
+    }
+
+
+def unmeasurable_errors(*readings) -> tuple:
+    """-> artifact `errors[]` entries, one per unresolved accessor.
+
+    EMITTED, not logged. The `errors` array is what carries an unresolved
+    accessor to its reader, and `recompute_verdict` treats a non-empty `errors`
+    array as CENSUS_ERROR, so the failure cannot be read as a pass.
+    """
+    out = []
+    for reading in readings:
+        for name in reading.counts.unmeasurable:
+            out.append({
+                "code": "UNHANDLED_EXCEPTION",
+                "message": (
+                    "class " + name + " could not be counted in project "
+                    + reading.name + "; the census makes no claim about it"
+                ),
+                "class": name,
+                "evidence": reading.counts.unresolved_accessors[name],
+            })
+    return tuple(out)
