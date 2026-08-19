@@ -1,0 +1,441 @@
+{
+  "schema_version": 1,
+  "kind": "starter_capture",
+  "project_name": "GT Starter Capture 038",
+  "captured_at": "2026-08-19T10:13:44",
+  "flex_version": "9.3.10",
+  "data_model_version": 7000072,
+  "content_hash": "105dad8dcd38a030f768836583aac4c9cc38e58ad2e4f585fdf645ccaa8ddfc3",
+  "class_count": 72,
+  "carries_natural_keys": false,
+  "entries": [
+    {
+      "class": "CmAgent",
+      "count": 4,
+      "names": []
+    },
+    {
+      "class": "CmAnthroItem",
+      "count": 859,
+      "names": []
+    },
+    {
+      "class": "CmFile",
+      "count": 0,
+      "names": []
+    },
+    {
+      "class": "CmFolder",
+      "count": 1,
+      "names": []
+    },
+    {
+      "class": "CmPicture",
+      "count": 0,
+      "names": []
+    },
+    {
+      "class": "CmPossibility",
+      "count": 3014,
+      "names": []
+    },
+    {
+      "class": "CmSemanticDomain",
+      "count": 1792,
+      "names": []
+    },
+    {
+      "class": "FsClosedFeature",
+      "count": 0,
+      "names": []
+    },
+    {
+      "class": "FsClosedValue",
+      "count": 0,
+      "names": []
+    },
+    {
+      "class": "FsComplexFeature",
+      "count": 0,
+      "names": []
+    },
+    {
+      "class": "FsFeatStruc",
+      "count": 0,
+      "names": []
+    },
+    {
+      "class": "FsFeatStrucType",
+      "count": 0,
+      "names": []
+    },
+    {
+      "class": "FsSymFeatVal",
+      "count": 0,
+      "names": []
+    },
+    {
+      "class": "LexAppendix",
+      "count": 0,
+      "names": []
+    },
+    {
+      "class": "LexEntry",
+      "count": 0,
+      "names": []
+    },
+    {
+      "class": "LexEntryInflType",
+      "count": 3,
+      "names": [
+        "Irregularly Inflected Form",
+        "Past",
+        "Plural"
+      ]
+    },
+    {
+      "class": "LexEntryRef",
+      "count": 0,
+      "names": []
+    },
+    {
+      "class": "LexEntryType",
+      "count": 14,
+      "names": []
+    },
+    {
+      "class": "LexEtymology",
+      "count": 0,
+      "names": []
+    },
+    {
+      "class": "LexExampleSentence",
+      "count": 0,
+      "names": []
+    },
+    {
+      "class": "LexExtendedNote",
+      "count": 0,
+      "names": []
+    },
+    {
+      "class": "LexPronunciation",
+      "count": 0,
+      "names": []
+    },
+    {
+      "class": "LexRefType",
+      "count": 7,
+      "names": []
+    },
+    {
+      "class": "LexReference",
+      "count": 0,
+      "names": []
+    },
+    {
+      "class": "LexSense",
+      "count": 0,
+      "names": []
+    },
+    {
+      "class": "MoAdhocProhibGr",
+      "count": 0,
+      "names": []
+    },
+    {
+      "class": "MoAffixAllomorph",
+      "count": 0,
+      "names": []
+    },
+    {
+      "class": "MoAlloAdhocProhib",
+      "count": 0,
+      "names": []
+    },
+    {
+      "class": "MoDerivAffMsa",
+      "count": 0,
+      "names": []
+    },
+    {
+      "class": "MoEndoCompound",
+      "count": 0,
+      "names": []
+    },
+    {
+      "class": "MoExoCompound",
+      "count": 0,
+      "names": []
+    },
+    {
+      "class": "MoInflAffMsa",
+      "count": 0,
+      "names": []
+    },
+    {
+      "class": "MoInflAffixSlot",
+      "count": 0,
+      "names": []
+    },
+    {
+      "class": "MoInflAffixTemplate",
+      "count": 0,
+      "names": []
+    },
+    {
+      "class": "MoInflClass",
+      "count": 0,
+      "names": []
+    },
+    {
+      "class": "MoMorphAdhocProhib",
+      "count": 0,
+      "names": []
+    },
+    {
+      "class": "MoMorphType",
+      "count": 19,
+      "names": [
+        "discontiguous phrase",
+        "infixing interfix",
+        "suffixing interfix",
+        "particle",
+        "phrase",
+        "prefixing interfix",
+        "clitic",
+        "infix",
+        "prefix",
+        "simulfix",
+        "suffix",
+        "suprafix",
+        "circumfix",
+        "enclitic",
+        "proclitic",
+        "bound root",
+        "root",
+        "bound stem",
+        "stem"
+      ]
+    },
+    {
+      "class": "MoStemAllomorph",
+      "count": 0,
+      "names": []
+    },
+    {
+      "class": "MoStemMsa",
+      "count": 0,
+      "names": []
+    },
+    {
+      "class": "MoStemName",
+      "count": 0,
+      "names": []
+    },
+    {
+      "class": "MoStratum",
+      "count": 0,
+      "names": []
+    },
+    {
+      "class": "MoUnclassifiedAffixMsa",
+      "count": 0,
+      "names": []
+    },
+    {
+      "class": "PartOfSpeech",
+      "count": 5,
+      "names": [
+        "Adverb",
+        "Verb",
+        "Pronoun",
+        "Pro-form",
+        "Noun"
+      ]
+    },
+    {
+      "class": "PhBdryMarker",
+      "count": 2,
+      "names": []
+    },
+    {
+      "class": "PhEnvironment",
+      "count": 0,
+      "names": []
+    },
+    {
+      "class": "PhFeatureConstraint",
+      "count": 0,
+      "names": []
+    },
+    {
+      "class": "PhMetathesisRule",
+      "count": 0,
+      "names": []
+    },
+    {
+      "class": "PhNCFeatures",
+      "count": 0,
+      "names": []
+    },
+    {
+      "class": "PhNCSegments",
+      "count": 2,
+      "names": [
+        "Consonants",
+        "Vowels"
+      ]
+    },
+    {
+      "class": "PhPhoneme",
+      "count": 23,
+      "names": [
+        "a",
+        "b",
+        "d",
+        "e",
+        "f",
+        "g",
+        "i",
+        "j",
+        "k",
+        "l",
+        "m",
+        "n",
+        "o",
+        "p",
+        "r",
+        "s",
+        "t",
+        "u",
+        "v",
+        "w",
+        "x",
+        "z",
+        "ŋ"
+      ]
+    },
+    {
+      "class": "PhRegularRule",
+      "count": 0,
+      "names": []
+    },
+    {
+      "class": "PhSegRuleRHS",
+      "count": 0,
+      "names": []
+    },
+    {
+      "class": "PhSegmentRule",
+      "count": 0,
+      "names": []
+    },
+    {
+      "class": "PhSequenceContext",
+      "count": 0,
+      "names": []
+    },
+    {
+      "class": "PhSimpleContextBdry",
+      "count": 0,
+      "names": []
+    },
+    {
+      "class": "PhSimpleContextNC",
+      "count": 0,
+      "names": []
+    },
+    {
+      "class": "PhSimpleContextSeg",
+      "count": 0,
+      "names": []
+    },
+    {
+      "class": "PunctuationForm",
+      "count": 0,
+      "names": []
+    },
+    {
+      "class": "ReversalIndex",
+      "count": 1,
+      "names": []
+    },
+    {
+      "class": "ReversalIndexEntry",
+      "count": 0,
+      "names": []
+    },
+    {
+      "class": "Segment",
+      "count": 0,
+      "names": []
+    },
+    {
+      "class": "StText",
+      "count": 12,
+      "names": []
+    },
+    {
+      "class": "StTxtPara",
+      "count": 86,
+      "names": []
+    },
+    {
+      "class": "Text",
+      "count": 0,
+      "names": []
+    },
+    {
+      "class": "TextTag",
+      "count": 0,
+      "names": []
+    },
+    {
+      "class": "WfiAnalysis",
+      "count": 0,
+      "names": []
+    },
+    {
+      "class": "WfiGloss",
+      "count": 0,
+      "names": []
+    },
+    {
+      "class": "WfiMorphBundle",
+      "count": 0,
+      "names": []
+    },
+    {
+      "class": "WfiWordform",
+      "count": 0,
+      "names": []
+    },
+    {
+      "class": "MoAffixProcess",
+      "count": 0,
+      "names": []
+    },
+    {
+      "class": "PhCode",
+      "count": 25,
+      "names": []
+    },
+    {
+      "class": "CmTranslation",
+      "count": 0,
+      "names": []
+    }
+  ],
+  "fwdata_sha256": "bc91a75bfb4bbcd078f947480766ccfb59ddf87c18633212fb808e0683b20e73",
+  "instrument": {
+    "name": "gramtrans.census_cli",
+    "version": "0.1.0",
+    "gramtrans_sha": "73b80c3",
+    "gramtrans_dirty": true,
+    "python_version": "3.12.7",
+    "flexicon_version": "4.5.2",
+    "flexicon_path": "D:\\Github\\_Projects\\_LEX\\flexicon\\flexicon\\__init__.py",
+    "flex_version": "9.3.10"
+  }
+}
