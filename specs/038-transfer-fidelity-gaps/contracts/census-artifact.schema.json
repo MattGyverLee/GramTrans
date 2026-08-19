@@ -1,0 +1,695 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/MattGyverLee/GramTrans/specs/038-transfer-fidelity-gaps/contracts/census-artifact.schema.json",
+  "title": "GramTrans per-class object census artifact",
+  "description": "One JSON document per census run. Machine-readable form of the per-class object census required by 038 FR-011, used as the acceptance gate for FR-009/FR-010/FR-012/FR-013 and SC-005/SC-009/SC-010. The human contract, including every rule this schema cannot express, is fidelity-census.md in this directory. The instrument that produces this document does not exist yet; this schema is the contract for it.",
+  "$comment": "SCHEMA EVOLUTION RULE (keeps a later bump purely additive): 'schema_version' is an integer incremented only for ADDITIVE change. Additive means: new OPTIONAL properties, or new members appended to an existing enum. It NEVER means removing a property, renaming one, changing its type, narrowing an enum, or adding a member to a 'required' list. Because every object here is additionalProperties:false, a consumer pinned to version N validates an N+1 document against the N+1 schema and ignores properties it does not know; it MUST NOT validate an N+1 document against the N schema. A breaking change requires a new $id, not a version bump.",
+
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "census_id",
+    "generated_at",
+    "instrument",
+    "projects",
+    "class_list_provenance",
+    "starter_baseline",
+    "classes",
+    "totals",
+    "verdict",
+    "exit_code"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "minimum": 1,
+      "$comment": "1 for the first shipped census. See the SCHEMA EVOLUTION RULE above; readers select their validator by this value."
+    },
+    "census_id": {
+      "type": "string",
+      "pattern": "^CENSUS-[0-9]{8}-[0-9]{6}$",
+      "$comment": "Identity of THIS census invocation: 'CENSUS-YYYYMMDD-HHMMSS', deliberately distinct in prefix from a transfer run id ('GT-...') so the two can never be confused in a log or a filename."
+    },
+    "generated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "instrument": { "$ref": "#/$defs/instrument" },
+    "transfer_run": {
+      "oneOf": [
+        { "type": "null" },
+        { "$ref": "#/$defs/transferRun" }
+      ],
+      "$comment": "The transfer run this census judges. null for a standalone or pre-transfer census; when null, no class row may claim a 'baseline_matched' subtraction basis and no match_basis tally may be non-null (fidelity-census.md 5.2, 8)."
+    },
+    "projects": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source", "destination"],
+      "properties": {
+        "source": { "$ref": "#/$defs/projectRef" },
+        "destination": { "$ref": "#/$defs/projectRef" }
+      }
+    },
+    "class_list_provenance": { "$ref": "#/$defs/classListProvenance" },
+    "starter_baseline": { "$ref": "#/$defs/starterBaseline" },
+    "classes": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/classRow" },
+      "$comment": "Exactly one row per required class -- length MUST equal class_list_provenance.required_class_count. A class with no instances anywhere is verdict_class NOT_EVALUATED, never an omitted row (FR-012, CP-2). Never truncated."
+    },
+    "totals": { "$ref": "#/$defs/totals" },
+    "verdict": {
+      "$ref": "#/$defs/verdictToken",
+      "$comment": "Exactly one per census run, the most severe applicable token by the published severity ordering in fidelity-census.md section 9. The severity ordering is NOT the exit_code integer and must not be derived from it."
+    },
+    "exit_code": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 7,
+      "$comment": "Process exit code. Normative verdict->exit_code mapping lives in fidelity-census.md section 9: CENSUS_CLEAN 0, CENSUS_ACCOUNTED 0, UNEXPLAINED_SHORTFALL 1, UNEXPLAINED_SURPLUS 2, DUPLICATE_IDENTITY 3, BASELINE_MISSING 4, BASELINE_STALE 5, COVERAGE_INCOMPLETE 6, CENSUS_ERROR 7. Only 0 reports success."
+    },
+    "verdict_human_label": {
+      "type": "string",
+      "$comment": "The console label for 'verdict' (e.g. 'Unexplained shortfall'). Stored so the artifact and the console cannot drift apart; the machine token remains the thing tests assert on."
+    },
+    "errors": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/censusError" },
+      "$comment": "Populated for CENSUS_ERROR / COVERAGE_INCOMPLETE. An empty array with a failing verdict is itself invalid: a failure must name its cause."
+    },
+    "notes": {
+      "type": "array",
+      "items": { "type": "string" },
+      "$comment": "Free-text observations for a human reader only. Never load-bearing: no verdict may depend on a note (fidelity-census.md invariant 9). Never truncated."
+    }
+  },
+
+  "$defs": {
+    "instrument": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "version", "gramtrans_sha", "gramtrans_dirty"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "$comment": "e.g. 'debug/audit_object_census.py'. PLANNED -- not in the repository at the time this contract was written."
+        },
+        "version": { "type": "string" },
+        "gramtrans_sha": { "type": "string" },
+        "gramtrans_dirty": {
+          "type": "boolean",
+          "$comment": "true when the working tree carried uncommitted changes. A dirty tree does not invalidate the counts but makes the artifact non-reproducible, so it is recorded rather than inferred."
+        },
+        "flexicon_version": {
+          "type": "string",
+          "$comment": "Installed pyflexicon version. Below the 4.4.1 floor every guid= kwarg raises TypeError, which the engine's _safe wrappers swallow into a generic drop -- so a too-low flexicon silently regenerates identities and any census taken over such a run measures the wrong thing."
+        },
+        "flexicon_path": {
+          "type": "string",
+          "$comment": "Resolved flexicon.__file__. A site-packages path here means the editable install did not take effect."
+        },
+        "python_version": { "type": "string" },
+        "flex_version": {
+          "type": "string",
+          "$comment": "Running FieldWorks version, compared against starter_baseline.flex_version for staleness (fidelity-census.md 5.3)."
+        }
+      }
+    },
+
+    "transferRun": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["run_id"],
+      "properties": {
+        "run_id": {
+          "type": "string",
+          "pattern": "^GT-[0-9]{8}-[0-9]{6}$",
+          "$comment": "The transfer's own run id, format 'GT-YYYYMMDD-HHMMSS' as minted by Lib/api.py and stamped into residue markers. The two measured runs are GT-20260819-030049 (Ejagham) and GT-20260819-024027 (Ngoreme)."
+        },
+        "mode": {
+          "type": "string",
+          "enum": ["PREVIEW", "MOVE", "COPY"],
+          "$comment": "A PREVIEW run writes nothing, so a census over one can only legitimately report the destination's prior state."
+        },
+        "report_path": {
+          "type": "string",
+          "$comment": "Path to the run report the accounted_for report_refs resolve against. Absent means no report was available, which forces starter_subtraction_basis 'baseline_gross' on every row."
+        },
+        "started_at": { "type": "string", "format": "date-time" },
+        "finished_at": { "type": "string", "format": "date-time" },
+        "selected_categories": {
+          "type": "array",
+          "items": { "type": "string" },
+          "$comment": "GrammarCategory names the operator selected. A class whose category is absent here can legitimately account a shortfall as NOT_SELECTED."
+        }
+      }
+    },
+
+    "projectRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "opened_read_only", "counted_at", "fwdata_sha256_before", "fwdata_sha256_after"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "$comment": "FLEx project name exactly as FieldWorks holds it, e.g. 'Ejagham W Mini'. Do not normalise spacing or case."
+        },
+        "path": { "type": "string" },
+        "opened_read_only": {
+          "const": true,
+          "$comment": "Pinned to true so an artifact produced through a write-enabled handle cannot validate. The census is a pure observer of BOTH projects (fidelity-census.md section 2)."
+        },
+        "counted_at": { "type": "string", "format": "date-time" },
+        "fwdata_sha256_before": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "$comment": "Digest taken before counting."
+        },
+        "fwdata_sha256_after": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "$comment": "Digest taken after counting. Must equal fwdata_sha256_before; a difference is CENSUS_ERROR, because it means either the census wrote or something else did while it read, and in both cases the counts are not evidence."
+        },
+        "data_model_version": {
+          "type": "integer",
+          "$comment": "LCM data model version. Used for baseline staleness (fidelity-census.md 5.3)."
+        },
+        "declared_freshly_created": {
+          "type": "boolean",
+          "$comment": "Destination only: the operator's declaration that this project was newly created and therefore holds only FLEx starter content. A 'starter_capture' baseline used against a destination where this is false or absent is CENSUS_ERROR -- an edited starter inventory is not disposable."
+        },
+        "object_count_total": {
+          "type": "integer",
+          "minimum": 0,
+          "$comment": "All LCM objects in the project, across every class including ones outside the census scope. Context for a reader, never a gate quantity."
+        }
+      }
+    },
+
+    "classListProvenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "inventory_document",
+        "inventory_sha256",
+        "coverage_floor_document",
+        "coverage_floor_sha256",
+        "derivation_check",
+        "in_scope_class_count",
+        "required_class_count"
+      ],
+      "properties": {
+        "inventory_document": {
+          "type": "string",
+          "$comment": "The truth source for 'every class the engine can create': specs/035-fullsweep-fidelity/object-inventory.md, TABLE 1 (65 created classes) and TABLE 2 (24 referenced classes). Owned by feature 035; 038 reads it and does not fork it."
+        },
+        "inventory_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "coverage_floor_document": {
+          "type": "string",
+          "$comment": "specs/035-fullsweep-fidelity/contracts/coverage-floor.json -- the machine-readable projection of the inventory (in_scope_classes, currently 69 entries)."
+        },
+        "coverage_floor_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "natural_key_roster_document": {
+          "type": "string",
+          "$comment": "specs/035-fullsweep-fidelity/contracts/natural-key-identity-roster.json -- decides which classes get gate-failing duplicate detection and which may legitimately report a natural-key match (FR-003, FR-006)."
+        },
+        "natural_key_roster_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "derivation_check": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["performed", "result"],
+          "$comment": "CP-1: FR-012 coverage is PROVEN, not asserted. On every run the census re-parses the inventory's TABLE 1 + TABLE 2 class columns and asserts set equality against in_scope_classes union excluded_not_measurable. A mismatch is COVERAGE_INCOMPLETE and names the classes.",
+          "properties": {
+            "performed": {
+              "const": true,
+              "$comment": "Pinned: a census that skipped the derivation cannot make a coverage claim, so it cannot produce a valid artifact."
+            },
+            "result": { "type": "string", "enum": ["match", "mismatch"] },
+            "derived_class_count": { "type": "integer", "minimum": 0 },
+            "in_inventory_not_in_floor": { "type": "array", "items": { "type": "string" } },
+            "in_floor_not_in_inventory": { "type": "array", "items": { "type": "string" } }
+          }
+        },
+        "in_scope_class_count": {
+          "type": "integer",
+          "minimum": 0,
+          "$comment": "Count of coverage-floor in_scope_classes as read (69 at the time of writing)."
+        },
+        "required_class_count": {
+          "type": "integer",
+          "minimum": 0,
+          "$comment": "in_scope_class_count + len(census_additions). MUST equal len(classes). 72 at the time of writing."
+        },
+        "census_additions": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/censusAddition" },
+          "$comment": "CP-4: classes 038 measured that the 035 floor omits. A class present in BOTH the floor and this list is COVERAGE_INCOMPLETE, so the ledger cannot become a second truth source."
+        },
+        "excluded_not_measurable": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/exclusion" },
+          "$comment": "Copied forward from the coverage floor: abstract LCM bases with no factory (MoForm, MoMorphSynAnalysis). Reported as NOT_EVALUATED / ABSENT_BY_CONSTRUCTION rows, never silently omitted."
+        }
+      }
+    },
+
+    "censusAddition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["class", "rationale", "owed_to_035"],
+      "properties": {
+        "class": { "type": "string" },
+        "rationale": {
+          "type": "string",
+          "$comment": "Why the 035 floor omits it. MoAffixProcess: absent from object-inventory.md entirely because the engine has no create path (a truth-source gap, not a corpus gap). PhCode: inventory TABLE 3 ride-along that flexicon's phoneme GetSyncableProperties explicitly does not carry. CmTranslation: reached through the texts path, never projected into the floor."
+        },
+        "measured_evidence": {
+          "type": "string",
+          "$comment": "The census-evidence.md section 0 figures that justify admission, e.g. 'Ejagham 13 -> 0, Ngoreme 1 -> 0'."
+        },
+        "owed_to_035": {
+          "type": "boolean",
+          "$comment": "true while feature 035 has not yet absorbed the class into coverage-floor.json. Roster and floor edits must be coordinated with that live session."
+        }
+      }
+    },
+
+    "exclusion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["class", "reason"],
+      "properties": {
+        "class": { "type": "string" },
+        "reason": { "type": "string" }
+      }
+    },
+
+    "starterBaseline": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "$comment": "FR-010 provenance. A missing baseline is the verdict BASELINE_MISSING, never an assumed zero: a zero baseline is a positive claim that the destination shipped empty (Principle IV -- a report must not claim more certainty than its baseline supports).",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": ["pre_transfer_census", "starter_capture", "none"],
+          "$comment": "pre_transfer_census: a census of the destination taken BEFORE the transfer -- exact by construction and the only kind valid for a destination that is not a fresh project. starter_capture: a per-class census of a genuinely freshly created empty FLEx project. none: recordable, never passable."
+        },
+        "path": {
+          "type": "string",
+          "$comment": "For starter_capture, specs/038-transfer-fidelity-gaps/contracts/starter-baseline.json; for pre_transfer_census, the earlier census artifact."
+        },
+        "source_census_id": {
+          "type": "string",
+          "pattern": "^CENSUS-[0-9]{8}-[0-9]{6}$",
+          "$comment": "For kind pre_transfer_census: the census run that produced the baseline, so the chain of evidence is traceable."
+        },
+        "captured_at": { "type": "string", "format": "date-time" },
+        "project_name": { "type": "string" },
+        "fwdata_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "flex_version": {
+          "type": "string",
+          "$comment": "FieldWorks version the baseline was captured under. FLEx changes what a new project ships between versions, so a mismatch against instrument.flex_version is BASELINE_STALE."
+        },
+        "data_model_version": {
+          "type": "integer",
+          "$comment": "A destination whose data_model_version exceeds this is BASELINE_STALE."
+        },
+        "staleness": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["verdict"],
+          "properties": {
+            "verdict": { "type": "string", "enum": ["current", "stale", "unknown", "not_applicable"] },
+            "detail": { "type": "string" }
+          }
+        },
+        "class_count": {
+          "type": "integer",
+          "minimum": 0,
+          "$comment": "Number of classes the baseline carries a count for. A class the baseline does not mention is treated as baseline 0 for THAT class only, and the row records it in starter_baseline_source."
+        },
+        "carries_natural_keys": {
+          "type": "boolean",
+          "$comment": "true when the baseline records the natural KEYS of each starter object, not just counts. Required for the matched-subtraction of fidelity-census.md 5.2 and for duplicate detection in section 6; a count-only baseline forces starter_subtraction_basis 'baseline_gross'."
+        }
+      }
+    },
+
+    "classRow": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "class",
+        "engine_can_create",
+        "gate_scope",
+        "in_class_list_via",
+        "source_count",
+        "destination_count_total",
+        "destination_count_net",
+        "difference",
+        "difference_raw",
+        "verdict_class",
+        "accounted_for",
+        "unexplained_shortfall",
+        "unexplained_surplus"
+      ],
+      "properties": {
+        "class": {
+          "type": "string",
+          "$comment": "LCM class name WITHOUT the 'I' interface prefix, matching object-inventory.md convention: 'LexEntry', not 'ILexEntry'."
+        },
+        "engine_can_create": {
+          "type": "boolean",
+          "$comment": "true when the class appears in object-inventory.md TABLE 1 (or in census_additions as a class the engine SHOULD create). false for the referenced-only classes the inventory records as never created by any path: LexRefType, LexAppendix, PhBdryMarker."
+        },
+        "gate_scope": {
+          "type": "string",
+          "enum": ["required", "advisory"],
+          "$comment": "SC-005's scope is exactly the 'required' rows. An 'advisory' row is counted and reported in full but cannot by itself fail the gate."
+        },
+        "in_class_list_via": {
+          "type": "string",
+          "enum": ["coverage_floor", "census_additions", "excluded_not_measurable"],
+          "$comment": "Which arm of the class list put this row here (CP-4 traceability)."
+        },
+        "inventory_tables": {
+          "type": "array",
+          "items": { "type": "string", "enum": ["TABLE_1", "TABLE_2", "TABLE_3", "TABLE_4", "NONE"] },
+          "$comment": "Where object-inventory.md records the class. 'NONE' is meaningful: MoAffixProcess appears in no table because the engine has no create path for it."
+        },
+        "source_count": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "$comment": "null only on a NOT_EVALUATED row where the class could not be counted at all; a genuine zero is 0, never null."
+        },
+        "destination_count_total": { "type": ["integer", "null"], "minimum": 0 },
+        "starter_baseline_count": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "$comment": "Instances the destination already held before the transfer, per the baseline. 23 for PhPhoneme on a fresh FLEx project."
+        },
+        "starter_matched_to_source": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "$comment": "How many of those pre-existing instances the transfer MATCHED to a source object (identity or natural key). null when unknown. This is the field that makes baseline subtraction correct: subtracting the full baseline count is wrong once natural-key matching works, because a matched starter object stands in for a source object rather than being surplus (fidelity-census.md 5.2)."
+        },
+        "starter_subtraction_basis": {
+          "type": "string",
+          "enum": ["baseline_matched", "baseline_gross", "no_baseline"],
+          "$comment": "baseline_matched: net = total - (baseline - matched); fully trustworthy. baseline_gross: net = total - baseline, used when no run report is available; caps the run verdict at CENSUS_ACCOUNTED. no_baseline: net = total; the run cannot pass."
+        },
+        "starter_baseline_source": {
+          "type": "string",
+          "enum": ["baseline_document", "absent_from_baseline", "assumed_zero_not_permitted"],
+          "$comment": "'absent_from_baseline' records that the baseline document simply does not mention this class, which is a different statement from a measured zero. 'assumed_zero_not_permitted' exists so a validator can reject any artifact that tried it."
+        },
+        "destination_count_net": {
+          "type": ["integer", "null"],
+          "$comment": "destination_count_total minus the pre-existing instances that were NOT matched to a source object. May legitimately be negative if the destination lost pre-existing objects, which would itself be a defect."
+        },
+        "difference": {
+          "type": ["integer", "null"],
+          "$comment": "THE GATE QUANTITY: destination_count_net - source_count. Sign convention is fixed: negative = SHORTFALL (loss), zero = MATCHED, positive = SURPLUS (excess)."
+        },
+        "difference_raw": {
+          "type": ["integer", "null"],
+          "$comment": "destination_count_total - source_count, i.e. before any baseline subtraction. Stored so a reader can see both what happened and what it means: PhPhoneme measured difference_raw +23, difference 0."
+        },
+        "verdict_class": {
+          "type": "string",
+          "enum": ["MATCHED", "SHORTFALL", "SURPLUS", "NOT_EVALUATED"],
+          "$comment": "Carried explicitly so no reader has to infer intent from the sign of an integer. MATCHED is NOT sufficient for a pass: see 'duplicates'."
+        },
+        "not_evaluated_reason": {
+          "$ref": "#/$defs/reasonToken",
+          "$comment": "Required when verdict_class is NOT_EVALUATED. Typically ABSENT_BY_CONSTRUCTION (abstract LCM base), OUT_OF_SCOPE_CLASS (CmAnthroItem), or GOVERNED_BY_OTHER_FEATURE."
+        },
+        "accounted_for": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/accountedLine" },
+          "$comment": "SC-005 accounting. Never truncated. An empty array on a non-zero difference means the difference is fully unexplained -- absence of a line is not an excuse."
+        },
+        "unexplained_shortfall": {
+          "type": "integer",
+          "minimum": 0,
+          "$comment": "max(0, -difference) minus the sum of shortfall-direction accounted_for counts. Non-zero on a 'required' row fails the run (R-4)."
+        },
+        "unexplained_surplus": {
+          "type": "integer",
+          "minimum": 0,
+          "$comment": "max(0, difference) minus the sum of surplus-direction accounted_for counts. Accounting is per direction: a shortfall line never offsets a surplus, and a line on one class never touches another class (no cross-class netting -- MoAffixProcess -13 and MoAffixAllomorph +13 are two failures, not zero)."
+        },
+        "match_basis": { "$ref": "#/$defs/matchBasis" },
+        "duplicates": { "$ref": "#/$defs/duplicates" },
+        "notes": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+
+    "matchBasis": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["basis_source"],
+      "$comment": "FR-006: a natural-key match must be distinguishable from an identity match, in the gate artifact and not merely in report prose. On a 'required' row with basis_source 'run_report', identity + natural_key + created_new + unmatched_reported MUST equal source_count; 'enriched' is a subset of identity + natural_key and is NOT part of that sum. natural_key > 0 for a class absent from the 035 roster is a harness error naming the class.",
+      "properties": {
+        "identity": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "$comment": "Matched by GUID -- the authoritative basis (FR-001). Identity always wins over a natural key; the natural key is consulted only when identity finds nothing."
+        },
+        "natural_key": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "$comment": "Matched by the agreed natural key (FR-002), accounted as IDENTITY-SUBSTITUTION in 035's FR-187 terms."
+        },
+        "created_new": { "type": ["integer", "null"], "minimum": 0 },
+        "enriched": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "$comment": "Matched objects that GAINED owned children the destination copy lacked (FR-020, FR-022). Distinguishes an enriched item from a created one and from a whole-object skip."
+        },
+        "unmatched_reported": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "$comment": "Neither matched nor created, but named in the run report (FR-007). The measured runs had 0 here alongside a 1949-object loss -- that gap between 0 reported and 1949 lost is the Principle I violation this feature exists to close."
+        },
+        "ambiguous_key_reported": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "$comment": "Natural key matched more than one destination object. Per the roster's enforcement clause this is a harness error for any entry with key_unique_by_construction false -- never a pick."
+        },
+        "basis_source": {
+          "type": "string",
+          "enum": ["run_report", "unavailable"],
+          "$comment": "'unavailable' when no run report was supplied; every tally is then null and the row's starter_subtraction_basis is at best baseline_gross."
+        }
+      }
+    },
+
+    "duplicates": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["roster_admitted", "groups", "extra_objects"],
+      "$comment": "Why a zero difference is NOT sufficient for a pass. Measured PhPhoneme: difference 0, verdict_class MATCHED, and yet 21 duplicate names -- baseline arithmetic cannot see a duplicate, so a gate built on counts alone would have passed the worst available phoneme outcome (SC-002).",
+      "properties": {
+        "roster_admitted": {
+          "type": "boolean",
+          "$comment": "true when the class is on the 035 natural-key roster (or is a census_additions class with a stated key). Only admitted classes can FAIL the gate on duplicates; for other classes duplicates are advisory, because a repeated name is not automatically a defect (homographs are legitimate). Admission is by enumeration, exactly as FR-003 requires for matching."
+        },
+        "key_definition": {
+          "type": "string",
+          "$comment": "The exact key the grouping used, e.g. 'Name (vernacular alt), case-sensitive'. Recorded because a duplicate claim is only meaningful relative to a stated key."
+        },
+        "groups": {
+          "type": "integer",
+          "minimum": 0,
+          "$comment": "Keys held by more than one destination object. 21 on the measured PhPhoneme row."
+        },
+        "extra_objects": {
+          "type": "integer",
+          "minimum": 0,
+          "$comment": "sum(group_size - 1) over those groups -- how many objects would have to disappear for the destination to hold one per key. Non-zero and unaccounted on an admitted class is DUPLICATE_IDENTITY."
+        },
+        "examples": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["key", "count"],
+            "properties": {
+              "key": { "type": "string" },
+              "count": { "type": "integer", "minimum": 2 },
+              "guids": { "type": "array", "items": { "type": "string" } }
+            }
+          },
+          "$comment": "Never truncated in the artifact; truncation is legal only in the console summary, which must state how many it omitted."
+        }
+      }
+    },
+
+    "accountedLine": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["reason", "count", "direction"],
+      "properties": {
+        "reason": { "$ref": "#/$defs/reasonToken" },
+        "count": {
+          "type": "integer",
+          "minimum": 1,
+          "$comment": "Units of the difference this line claims. Over-accounting -- a per-direction sum exceeding the difference -- is CENSUS_ERROR: the census must not be able to explain away more than actually happened (R-2)."
+        },
+        "direction": {
+          "type": "string",
+          "enum": ["shortfall", "surplus"],
+          "$comment": "Which side of the difference the line pays down. Directions never offset each other (R-3)."
+        },
+        "report_ref": {
+          "$ref": "#/$defs/reportRef",
+          "$comment": "REQUIRED for every reason except STARTER_CONTENT, ABSENT_BY_CONSTRUCTION, OUT_OF_SCOPE_CLASS, and GOVERNED_BY_OTHER_FEATURE. SC-005 says 'accounted for by a LINE IN THE RUN REPORT', so a line with no resolvable report content is not accounting (R-1)."
+        },
+        "detail": { "type": "string" }
+      }
+    },
+
+    "reportRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "count_in_report"],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": ["dropped_item", "skip", "planned_overwrite", "identity_remap", "residue_tag", "statistics_panel"],
+          "$comment": "Which part of the run report carries the line. 'dropped_item' is a DroppedItemRecord (Lib/models.py); 'skip' a SkipReason-bearing Skip; 'statistics_panel' the post-run panel every non-transfer must appear in."
+        },
+        "run_id": { "type": "string", "pattern": "^GT-[0-9]{8}-[0-9]{6}$" },
+        "report_path": { "type": "string" },
+        "record_ids": {
+          "type": "array",
+          "items": { "type": "string" },
+          "$comment": "Identifiers of the specific report records, so a reviewer can go read them. Never truncated."
+        },
+        "count_in_report": {
+          "type": "integer",
+          "minimum": 0,
+          "$comment": "How many units the report ACTUALLY names. Must be >= the claiming line's count; a line claiming 13 against a report naming 2 is CENSUS_ERROR, not a pass (R-1)."
+        }
+      }
+    },
+
+    "reasonToken": {
+      "type": "string",
+      "enum": [
+        "MATCHED_EXISTING_IDENTITY",
+        "MATCHED_EXISTING_NATURAL_KEY",
+        "ENRICHED_EXISTING",
+        "STARTER_CONTENT",
+        "NO_CREATE_PATH",
+        "UNSUPPORTED_SUBTYPE",
+        "DEPENDENCY_UNRESOLVED",
+        "DEPENDENCY_DESELECTED",
+        "NOT_SELECTED",
+        "UNMAPPED_WS",
+        "IDENTITY_COLLISION",
+        "AMBIGUOUS_NATURAL_KEY",
+        "DUPLICATE_CREATED",
+        "GOVERNED_BY_OTHER_FEATURE",
+        "OUT_OF_SCOPE_CLASS",
+        "ABSENT_BY_CONSTRUCTION"
+      ],
+      "$comment": "FR-013's closed vocabulary; each token's meaning is tabulated in fidelity-census.md 7.1. There is deliberately NO 'UNEXPLAINED' and NO 'OTHER' member: unexplained is the ABSENCE of an accounting line, so it cannot be laundered into one. A reason the census cannot classify is CENSUS_ERROR. Later schema versions may APPEND members; they may never remove or rename one."
+    },
+
+    "verdictToken": {
+      "type": "string",
+      "enum": [
+        "CENSUS_CLEAN",
+        "CENSUS_ACCOUNTED",
+        "UNEXPLAINED_SHORTFALL",
+        "UNEXPLAINED_SURPLUS",
+        "DUPLICATE_IDENTITY",
+        "BASELINE_MISSING",
+        "BASELINE_STALE",
+        "COVERAGE_INCOMPLETE",
+        "CENSUS_ERROR"
+      ],
+      "$comment": "Exactly two report success (CENSUS_CLEAN, CENSUS_ACCOUNTED). There is deliberately no verdict meaning 'loss reported, review advisable, exit success' -- that is the shape of the bug this feature removes (SC-010)."
+    },
+
+    "totals": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "classes_reported",
+        "classes_matched",
+        "classes_shortfall",
+        "classes_surplus",
+        "classes_not_evaluated",
+        "total_shortfall",
+        "total_surplus",
+        "unexplained_shortfall",
+        "unexplained_surplus",
+        "duplicate_extra_objects"
+      ],
+      "$comment": "There is deliberately NO single net total. total_shortfall and total_surplus are reported separately and never summed: netting the measured MoAffixProcess -13 against MoAffixAllomorph +13 would report a clean run while a whole class had changed kind.",
+      "properties": {
+        "classes_reported": { "type": "integer", "minimum": 0 },
+        "classes_matched": { "type": "integer", "minimum": 0 },
+        "classes_shortfall": { "type": "integer", "minimum": 0 },
+        "classes_surplus": { "type": "integer", "minimum": 0 },
+        "classes_not_evaluated": { "type": "integer", "minimum": 0 },
+        "total_shortfall": {
+          "type": "integer",
+          "minimum": 0,
+          "$comment": "Sum of max(0, -difference) over 'required' rows, as a positive magnitude."
+        },
+        "total_surplus": { "type": "integer", "minimum": 0 },
+        "unexplained_shortfall": { "type": "integer", "minimum": 0 },
+        "unexplained_surplus": { "type": "integer", "minimum": 0 },
+        "duplicate_extra_objects": {
+          "type": "integer",
+          "minimum": 0,
+          "$comment": "Sum over roster-admitted classes only, since only those can fail the gate on duplicates."
+        },
+        "accounted_shortfall": { "type": "integer", "minimum": 0 },
+        "accounted_surplus": { "type": "integer", "minimum": 0 },
+        "advisory_shortfall": {
+          "type": "integer",
+          "minimum": 0,
+          "$comment": "Shortfall on 'advisory' rows, kept out of the gate totals so an advisory class cannot fail the run and cannot be quietly ignored either."
+        }
+      }
+    },
+
+    "censusError": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "message"],
+      "properties": {
+        "code": {
+          "type": "string",
+          "enum": [
+            "DERIVATION_MISMATCH",
+            "MISSING_CLASS_ROW",
+            "CLASS_IN_FLOOR_AND_ADDITIONS",
+            "OVER_ACCOUNTED",
+            "REPORT_REF_UNRESOLVED",
+            "MATCH_BASIS_SUM_MISMATCH",
+            "PROJECT_DIGEST_CHANGED",
+            "BASELINE_KIND_MISDECLARED",
+            "UNCLASSIFIABLE_REASON",
+            "UNHANDLED_EXCEPTION"
+          ]
+        },
+        "message": { "type": "string" },
+        "class": { "type": "string" },
+        "evidence": {
+          "type": "string",
+          "$comment": "Concrete values, never a placeholder. A failure whose evidence is empty or subject-invariant is itself a defect (035 artifact-schema invariant 3)."
+        }
+      }
+    }
+  }
+}

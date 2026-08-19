@@ -1,0 +1,111 @@
+{
+  "workflow": "speckit",
+  "specName": "Transfer Fidelity Gaps",
+  "branch": "main",
+  "currentStep": "plan",
+  "status": "planned",
+  "history": [
+    {
+      "step": "specify",
+      "substep": null,
+      "kind": "start",
+      "by": "extension",
+      "at": "2026-08-19T01:03:41.334Z"
+    },
+    {
+      "step": "plan",
+      "substep": null,
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-19T01:45:43.447Z"
+    }
+  ],
+  "decisions": [
+    {
+      "decision": "Extend 035s natural-key-identity-roster.json in place, additive only (schema_version stays 1); 038 authors a proposal and never edits 035s file",
+      "why": "Spec Assumptions forbid a second identity mechanism; 035 is in_progress so a schema bump would force it to touch its 3 existing entries mid-flight",
+      "rejected": "A 038-local roster; a required per-entry consumers field with a schema_version 1->2 bump"
+    },
+    {
+      "decision": "Census instrument = Lib/census.py + census_cli.py + tests/integration/test_object_census.py; NOT debug/ and NOT folded into tests/verification/fidelity_census.py",
+      "why": "SC-009 forbids hand-written scripting; the test_* filename means the 037-locked pyproject.toml needs no edit; 024s instrument is field-level and offline by design",
+      "rejected": "debug/audit_object_census.py; extending the 024 field-level census; extending harness reopen_and_count"
+    },
+    {
+      "decision": "Closure switch-on is per-relationship behind a CLOSURE_EDGES_VERIFIED allowlist that lands empty, consumed in Lib/preview.py only",
+      "why": "FR-018 requires each edge verified before it influences a plan, and all 24 *_dependencies() producers are unverified by construction; a single global flag cannot express per-edge verification",
+      "rejected": "One global include_closure flag; consuming dependencies in transfer.execute (breaks Principle III)"
+    },
+    {
+      "decision": "Enrichment widens _plan_gold_reserved_edit (categories.py:194) to owned collections as add-only UPDATE, rather than adding a parallel enrich path",
+      "why": "Principle IV already defines SKIP by field-identity comparison, so G3 is a violation of existing rules; the write machinery already exists, only the decision is wrong",
+      "rejected": "A new enrich_present() planner; reusing OVERWRITE (permits blanking, violates FR-021)"
+    },
+    {
+      "decision": "Phase 4 splits: 4a wholly-owned rule graphs after Phase 1; 4b shared project-level contexts after Phase 2",
+      "why": "Live probe found 6 of 18 rules reference PhSimpleContext* owned by PhPhonData.ContextsOS, making them a closure problem; creating them with an empty MembersRS would be a silent content loss",
+      "rejected": "Treating Phase 4 as a local create depending only on Phase 1"
+    },
+    {
+      "decision": "FsFeatStrucType is promoted from report-only to a Phase 1 prerequisite, satisfied by registering one closure edge (no new create code)",
+      "why": "Probe refuted the no-create-path premise and showed 42 of 42 FsFeatStruc carry TypeRA into the feature system, so Phase 1s ~2083 restored MSAs would each hold an unsatisfiable reference, which Principle I forbids",
+      "rejected": "Leaving FsFeatStrucType report-only in Phase 5"
+    },
+    {
+      "decision": "Land order 037 -> 038-affix-fidelity -> this feature -> re-census; claim categories.py for Phases 2/3 and transfer.py before any edit",
+      "why": "transfer.py is a three-way hazard (modified on 037 +33 and 038-affix-fidelity +58); categories.py is the file every branch touches",
+      "rejected": "Proceeding without lockout claims and resolving at merge"
+    }
+  ],
+  "verified": [
+    {
+      "what": "Six natural-key roster entries confirmed by live read-only measurement",
+      "result": "6 of 6 CONFIRMED, 0 PENDING, over Ejagham Mini / Esperanto / Mbugwe LizzieHC practice; all ops certified read-only"
+    },
+    {
+      "what": "MoAffixProcess create path feasibility (Phase 4)",
+      "result": "FEASIBLE. No flexicon wrapper; must use GetService(IMoAffixProcessFactory) + create_with_guid. All 12 factories in the rule graph expose Create(Guid)"
+    },
+    {
+      "what": "FsFeatStrucType / FsComplexFeature create path (census-evidence open question)",
+      "result": "ANSWERED: both DO have GUID-preserving create paths already implemented in categories.py; all 13 Fs* factories expose Create(Guid). The 4->0 loss is a selection/closure gap"
+    },
+    {
+      "what": "037 concurrent session locks respected",
+      "result": "git status shows zero changes under specs/035-fullsweep-fidelity/, src/, pyproject.toml, CLAUDE.md; Target.fwdata never opened"
+    }
+  ],
+  "concerns": [
+    {
+      "note": "A counts-only census gate would have passed the worst measured defect: PhPhoneme 41->64 against a 23-phoneme baseline nets to zero, same as a correct run. Resolved by a duplicate-natural-key tally plus a DUPLICATE_IDENTITY verdict",
+      "step": "plan",
+      "kind": "resolved"
+    },
+    {
+      "note": "All six roster keys are key_unique_by_construction=false, and PhNCFeatures uniqueness is refuted at 66 collisions in 113 objects (FLEx auto-generated labels). PhNCFeatures needs an eligibility predicate on top of the ambiguity rule",
+      "step": "plan",
+      "kind": "open"
+    },
+    {
+      "note": "on_ambiguous_key catches two candidates but is blind to one candidate that is the wrong object; the homograph hazard needs per-class mitigations, not the ambiguity rule",
+      "step": "plan",
+      "kind": "open"
+    },
+    {
+      "note": "CLAUDE.md SPECKIT pointer still names specs/029-sense-pictures/plan.md and cannot be repointed while 037 holds the CLAUDE.md lockout claim. Deferred, not skipped",
+      "step": "plan",
+      "kind": "deferred"
+    },
+    {
+      "note": "FR-012 required class count is 72, not 69: MoAffixProcess, PhCode and CmTranslation are absent from 035 coverage-floor in_scope_classes. Carried in a census_additions ledger with owed_to_035=true",
+      "step": "plan",
+      "kind": "open"
+    }
+  ],
+  "expectations": [
+    "Repairing destination projects damaged by earlier transfer runs is out of scope (forward-looking only)",
+    "CmAnthroItem and the anthropology category list are out of scope",
+    "Texts, wordforms and the interlinear path are report-only beyond their census figures",
+    "Reversal indexes are report-only beyond their census figures"
+  ]
+}
