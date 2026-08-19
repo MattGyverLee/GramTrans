@@ -47,6 +47,7 @@ These are blocking facts, not advice. Each has a task that owns it.
 | 035 must append the six roster entries to `main` before **any** Phase 4 matching code | T028 | **CLEARED** `d8635d9` -- entries 3 -> 9, all six admitted, none rejected |
 | `038-affix-fidelity` (`18c0ece`) must merge before US5 begins (spec.md:403) | T005 | unmerged |
 | Post-037 re-census gates Phase 9 scoping and the phonology part of SC-005 (R7) | T078 | blocked on 037 |
+| T038's P1 gate: `PhPhoneme` duplicates **0 (PASS)**; `PartOfSpeech` -5 is a `baseline_gross` phantom cleared by T043; `MoStemMsa` -2 is REAL and unexplained; exit 0 blocked by `carries_natural_keys:false` (fidelity-census.md 5.2, not Phase 4 work) | T038 | run 2026-08-20, `GT-20260820-002806` -- see journal |
 | `CLAUDE.md` SPECKIT pointer still names `specs/029-sense-pictures/plan.md`; `CLAUDE.md` is claimed by 037 | T083 | deferred |
 
 **037 has no spec artifacts.** There is no `specs/037*` on any branch or worktree, and 037's
