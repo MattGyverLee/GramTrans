@@ -44,7 +44,7 @@ These are blocking facts, not advice. Each has a task that owns it.
 | Gate | Owner task | Status |
 |---|---|---|
 | Land order `037-phon-nc-features` -> `038-affix-fidelity` -> this feature -> re-census (R6, non-negotiable) | T005 | both branches unmerged |
-| 035 must append the six roster entries to `main` before **any** Phase 4 matching code | T028 | not started; 035 owns the write |
+| 035 must append the six roster entries to `main` before **any** Phase 4 matching code | T028 | **CLEARED** `d8635d9` -- entries 3 -> 9, all six admitted, none rejected |
 | `038-affix-fidelity` (`18c0ece`) must merge before US5 begins (spec.md:403) | T005 | unmerged |
 | Post-037 re-census gates Phase 9 scoping and the phonology part of SC-005 (R7) | T078 | blocked on 037 |
 | `CLAUDE.md` SPECKIT pointer still names `specs/029-sense-pictures/plan.md`; `CLAUDE.md` is claimed by 037 | T083 | deferred |
@@ -240,7 +240,7 @@ LCM type (Principle II, data-model.md:3-6).
 
 **Wave 1 - single blocking gate:**
 
-- [ ] **T028** [US1] Execute the roster coordination protocol (roster-extension.md:411-481). 038 has already committed the proposal; the remaining steps are 035's: claim the roster file as team `fullsweep-fidelity-035`, pull `main`, **APPEND** the six `proposed_entries` objects verbatim and in order to the **end** of `entries`, record the seven op ids under a `live_confirmation_038` sibling key, re-run 035's roster checks, commit to `main`, release the claim. `schema_version` stays 1 and the original three entries stay byte-identical. **Expect one breakage: any 035 test pinning the roster to exactly three entries.** 038 must **not** begin the matching code below until the six entries are visible on `main` (`coordination.step_6`). If 035 rejects an entry, 038 implements no natural-key matching for that class and falls back to FR-007/FR-013 - `specs/035-fullsweep-fidelity/contracts/natural-key-identity-roster.json`
+- [x] **T028** [US1] Execute the roster coordination protocol (roster-extension.md:411-481). 038 has already committed the proposal; the remaining steps are 035's: claim the roster file as team `fullsweep-fidelity-035`, pull `main`, **APPEND** the six `proposed_entries` objects verbatim and in order to the **end** of `entries`, record the seven op ids under a `live_confirmation_038` sibling key, re-run 035's roster checks, commit to `main`, release the claim. `schema_version` stays 1 and the original three entries stay byte-identical. **Expect one breakage: any 035 test pinning the roster to exactly three entries.** 038 must **not** begin the matching code below until the six entries are visible on `main` (`coordination.step_6`). If 035 rejects an entry, 038 implements no natural-key matching for that class and falls back to FR-007/FR-013 - `specs/035-fullsweep-fidelity/contracts/natural-key-identity-roster.json`
 
 **--> Wait for T028 (hard gate), then (different files):**
 
