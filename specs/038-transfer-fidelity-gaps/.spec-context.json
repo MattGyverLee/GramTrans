@@ -342,6 +342,22 @@
       "kind": "complete",
       "by": "extension",
       "at": "2026-08-19T18:15:30.717Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T026",
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-08-19T18:56:51.460Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T027",
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-08-19T18:56:51.778Z"
     }
   ],
   "decisions": [
@@ -673,7 +689,7 @@
       "summary": "85 tasks in 9 phases (Setup, Foundational, then 6 story phases ordered by verifiability -- US2 census first as the acceptance instrument, then US1, US4 || US5a, US3, US5b -- plus Polish); waves serialized on categories.py and models.py; 2 hard external gates (035 roster append, 037 landing)"
     }
   },
-  "currentTask": "T026",
+  "currentTask": "T027",
   "task_summaries": {
     "T001": {
       "status": "DONE",
@@ -783,6 +799,20 @@
     },
     "T024h": {
       "status": "DONE"
+    },
+    "T026": {
+      "status": "DONE",
+      "did": "Wrote the T026 matching-order tests in tests/unit/test_038_natural_key.py; red pending T029/T030",
+      "files": [
+        "tests/unit/test_038_natural_key.py"
+      ]
+    },
+    "T027": {
+      "status": "DONE",
+      "did": "Wrote the T027 strictness and writing-system-scope tests, plus the T030 eligibility rules; red pending T029/T030",
+      "files": [
+        "tests/unit/test_038_natural_key.py"
+      ]
     }
   }
 }

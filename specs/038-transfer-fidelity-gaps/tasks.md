@@ -233,8 +233,8 @@ LCM type (Principle II, data-model.md:3-6).
 
 ### Tests
 
-- [ ] **T026** [US1] Write failing unit tests for the matching order: GUID found -> `IDENTITY`, key never computed, then **enrich rather than whole-object skip**; not found -> compute key; ineligible or not computable -> report, no match, **no create-by-key**; 0 candidates -> FR-007 create GUID-preserving or report; exactly 1 -> reuse plus an IDENTITY-SUBSTITUTION record; more than 1 -> `harness_error` naming class, scope and key. Ambiguity is **never a pick and never an IDENTITY-SUBSTITUTION record** - `tests/unit/test_038_natural_key.py`
-- [ ] **T027** [US1] Write failing tests for comparison strictness: exact, case-sensitive, **no** Unicode normalisation, **no** case folding, **no** whitespace trimming, for all six classes (`Nasals` / `nasals` / `Nasal Consonants` were measured distinct). An object with no name in the scoped writing system has **no key** and must never match - including empty-key against empty-key - `tests/unit/test_038_natural_key.py`
+- [x] **T026** [US1] Write failing unit tests for the matching order: GUID found -> `IDENTITY`, key never computed, then **enrich rather than whole-object skip**; not found -> compute key; ineligible or not computable -> report, no match, **no create-by-key**; 0 candidates -> FR-007 create GUID-preserving or report; exactly 1 -> reuse plus an IDENTITY-SUBSTITUTION record; more than 1 -> `harness_error` naming class, scope and key. Ambiguity is **never a pick and never an IDENTITY-SUBSTITUTION record** - `tests/unit/test_038_natural_key.py`
+- [x] **T027** [US1] Write failing tests for comparison strictness: exact, case-sensitive, **no** Unicode normalisation, **no** case folding, **no** whitespace trimming, for all six classes (`Nasals` / `nasals` / `Nasal Consonants` were measured distinct). An object with no name in the scoped writing system has **no key** and must never match - including empty-key against empty-key - `tests/unit/test_038_natural_key.py`
 
 ### Implementation
 
