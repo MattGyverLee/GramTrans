@@ -1,5 +1,150 @@
 # GramTrans — Session Handoff
 
+## Session log — 2026-08-19e (038: transfer fidelity gaps — Phase 3 census gate, 27/90)
+
+Phase 3 (US2, "the run report tells the truth about what moved") is essentially built.
+The census gate exists, is exercised by **233 tests** (209 hermetic), and has been
+validated against real known-bad transfers rather than only against fixtures.
+
+**Branch** `038-transfer-fidelity-gaps` (worktree `../GramTrans-038-transfer-fidelity-gaps`),
+HEAD `d8fbe65`. Spec artifacts on `main` through `27a55e8`.
+
+| task | commit | what |
+|---|---|---|
+| T014 | `1e8fcba` | gate test, failing by design |
+| T015 | `49f7cb7` | census model types |
+| T016-T020 | `4de786d`..`e78306e` | the census engine (+3188 lines) |
+| T021 | `bd59e44` | `census_cli` — capture-baseline / run / gate / diff |
+| T022 | `8f7d4d3` | census attached to the run report |
+| A1 follow-up | `ea2c79c`, `73b80c3` | model holds an owner split; `gate_scope_for` public |
+| T023 | `8189da2` (main) | starter baseline captured from a blank project |
+| T023a | `ca64629` | 5.2 gross-basis verdict cap |
+| T023b | `3973fa0`, `69f4097` | exact-class counting + baseline recapture |
+| T023c | `4d3de35` | render artifact `notes` so a capped verdict is not silent |
+| T024 | `08c1033`, `d8fbe65` | sanity tests against known-bad pairs + fixtures |
+
+**Test state.** `test_object_census.py`: **233 collected, 209 passed, 24 deselected**
+under `-m "not integration"` in 1.65s — the gate runs with **no live project**.
+`tests/unit`: **27 failed / 2624 passed**; the 27 are pre-existing
+(texts/wordforms/pictures) and never drifted all session. Do **not** run `pytest tests/`
+or a directory selection: `FLExInitialize` throws a survivable access violation and can
+hang (root cause `test_034_standalone_preview_live.py:109`, an unconditional
+module-scoped `flex` fixture with no `skipif`). It also fires on **single-file** runs,
+just survivably.
+
+### Three stale premises in tasks.md, corrected against measurement
+
+- **CP-1 (T016) was unsatisfiable.** It asserted the inventory union equals
+  `in_scope_classes` + `census_additions` (72), but all three additions are provably
+  absent from TABLE 1/2 — which is *why* the ledger exists. The contract's actual
+  equality is `in_scope_classes` ∪ `excluded_not_measurable` (71); 72 remains a separate
+  cardinality check.
+- **T023 asserted `carries_natural_keys: true`**, impossible for a whole-project
+  baseline: 11 of 36 populated starter classes carry no name (`CmDomainQ` alone has
+  7938). Count-only is a *legal* state that forces the gross basis.
+- **T024's pairs were misattributed.** The `MoStemMsa` 1949 source is `Ngoreme FLEx`,
+  not `Ngoreme` (1945). The 8/11 template/slot losses are Ejagham. `MoAffixAllomorph
+  +13` **does not exist on disk** and was not manufactured — the conversion signature
+  reproduces at scale 1 on Ngoreme (`MoAffixProcess` 1→0 beside `MoAffixAllomorph`
+  146→147), both halves in one artifact, not netted.
+
+### Two defects the work found and fixed
+
+- **LCM repositories are polymorphic.** `ObjectsIn(I<Class>Repository)` includes
+  subclasses, so `CmPossibility` read **3014** against 302 own objects and the 74 rows
+  were not disjoint. Worse than miscounting: it fed duplicate grouping nine classes'
+  objects under one name, so a `PartOfSpeech`/`CmSemanticDomain` collision would have
+  been reported as a duplicate `CmPossibility`. Now
+  `exact(C) = cumulative(C) − Σ cumulative(direct subclass)` — **direct**, or
+  grandchildren are double-subtracted (302 → 299). The old instrument double-counted
+  **2731** objects; the fix is also *faster* (0.26s vs 0.37s). It hit and correctly
+  handled the CLAUDE.md pythonnet trap: `MetaDataCacheAccessor` is typed
+  `IFwMetaDataCache`, which does not declare `GetDirectSubclasses`.
+- **A correct transfer reported `UNEXPLAINED_SHORTFALL`.** `fidelity-census.md` 5.2's
+  gross-basis cap was unimplemented, so the contract's own 43−23=20 example failed on a
+  correct run. Now capped at `CENSUS_ACCOUNTED` — a ceiling on unexplained tallies, not
+  on severity; `CENSUS_ERROR`/`BASELINE_MISSING`/`DUPLICATE_IDENTITY` still win, and
+  `row_passes`/`evaluate_phase` are untouched so no phase can self-certify on gross
+  arithmetic.
+
+### Pickup checklist
+
+1. **T024b needs a USER DECISION — ask, do not choose.** `census gate` returns a bare
+   **exit 0** on the gross basis while carrying **44–47 failing rows and 74,157 units of
+   unexplained shortfall**. Contract-faithful, unsafe as a release default. Options
+   canvassed: require `--phase` to pass; a distinct non-zero exit for gross basis; rely
+   on the rendered notes; refuse to certify without a matched baseline.
+2. **T024a** — duplicate detection is inert for `PhPhoneme` until **T028** populates
+   035's roster (`natural-key-roster-extension.json` has **zero entries**). A hermetic
+   test flips `roster_admitted` alone and `DUPLICATE_IDENTITY` fires, proving the engine
+   is correct and the roster is empty. Re-run those assertions after T028.
+3. **T025** — quickstart sweep, widened to the schema `$comment` at line 98 still
+   advertising `debug/audit_object_census.py`.
+4. **Reconcile the two T024 designs.** Both are committed in one file (an orchestration
+   error had two agents on T024; `08c1033` swept both blocks in, and its message
+   understates its contents). The hermetic block **cannot silently skip**; the live block
+   is the only thing that re-reads the database and can catch the counting layer drifting
+   against LCM. Suggested shape: keep the hermetic block as the gate, trim the live block
+   to 2–3 re-measurement tests that regenerate the snapshots, and **add a guard that
+   fails rather than skips when zero live tests ran** under `-m integration`.
+5. **Any test reading a spec artifact must resolve it via `git show main:<path>`.** Spec
+   artifacts live on `main`, so a feature branch lacks them — T024's first live run
+   skipped all 23 live tests and reported a green "137 passed, 23 skipped". A skip path
+   is indistinguishable from success in a summary line.
+
+### Writing-system defects (from a user report this session, not part of 038)
+
+`docs/defects/2026-08-19-writing-system-store-vs-active.md` (`3e1beb2`, `572dc27`). Six
+candidates verified: 2 confirmed, 1 killed, 1 overstated, 2 partial.
+
+- **flexicon [#249](https://github.com/MattGyverLee/flexicon/issues/249)** — `FLExInit`
+  swallows a real `Sldr.Initialize` failure; liblcm then quarantines every `.ldml` on each
+  open. **16 events** in `Ejagham Full GT-Test`; loss negligible (defaults regenerated 9s
+  before being re-quarantined) but it recurs every open.
+- **flexicon [#250](https://github.com/MattGyverLee/flexicon/issues/250)** — `Exists`
+  scans the whole store while documenting "active only"; `Create` then refuses to activate
+  a store-present WS and content is **silently dropped**. Reproduces `Ejagham Full` →
+  `Ejagham Mini` on `etu-fonipa` and `fr`.
+- **GramTrans [#43](https://github.com/MattGyverLee/GramTrans/issues/43)** —
+  `ws_wizard.py:146` calls a nonexistent `WritingSystems.Add`. Orphaned path, so **no
+  production impact** (title corrected after I overstated it).
+- **GramTrans [#44](https://github.com/MattGyverLee/GramTrans/issues/44)** —
+  `_ensure_writing_systems` downgrades a failed create to a warning; `debuglog.py:46`
+  drops all flexicon records; **build venv is on pyflexicon 4.4.1** under a 4.5.2 floor.
+- **GramTrans [#45](https://github.com/MattGyverLee/GramTrans/issues/45)** — **worst
+  found**: every untitled text collides on `Exists(plan.title or "(untitled)")`, merging
+  distinct texts with **zero drop records**. **328 of 1207 texts untitled across 25 of 88
+  local projects**; `Tlachichilco Tepehua` would lose 38 of 39.
+- **GramTrans [#46](https://github.com/MattGyverLee/GramTrans/issues/46)** — a reversal
+  alt in a WS absent from the target aborts the Move **mid-write** while two docstrings
+  promise "Never raises".
+
+**Root cause behind all of them: self-consistent test fakes.**
+`test_ensure_writing_systems.py:50-54` backs `GetAll()` and `Exists()` with one list;
+`_fakes_texts.py:236-262` has `GetName`/`Find`/`Exists` read one `t.name`;
+`test_p0_idempotency_ws.py:51-64` raises only for absence. Each makes its bug
+*unrepresentable* — the same shape as the flexicon 4.5.0 `FeaturesOA` trap.
+
+**Still open:** whether `factory.Create(existingGuid, owner)` silently duplicates
+(`transfer.py:742-744`) or raises and regenerates (flexicon `BaseOperations.py:1914-1918`).
+One of the two docstrings is wrong, and it decides whether `transfer.py:755`'s bare except
+means corruption or identity loss. Needs one write to a throwaway project.
+
+### Live project state (read-only discipline held all session)
+
+`Ngoreme Target` is **post-transfer evidence** — `LexEntry` 1415, `MoStemMsa` 0,
+`PhPhoneme` 64, `MoAffixAllomorph` 147, `Text` 50; mtime `Aug 19 09:30:41`, digest
+`dda21971…4af3b`. **Never write-enabled, never restored.** `Ejagham W Target` is the
+authorised overwrite target. Both supplied backups
+(`backups/{Ejagham W Target,Ngoreme Target} 2026-08-19 083*.fwbackup`) are the **same
+near-blank starter template** — `PhPhoneme` 23, `PartOfSpeech` 5, zero lexicon — which is
+why `PhPhoneme` 41→64 is explicable as 23 starter + 41 source. Both remain **untracked**,
+though `.gitignore:110`'s rule is commented out with a note that the existing fixtures are
+intentionally tracked. The census **correctly refuses** a project held by FieldWorks with
+`FP_FileLockedError` → `CENSUS_ERROR` exit 7 rather than reading a half-written file.
+
+---
+
 ## Session log — 2026-08-19d (039: wizard module split — ALL 54 TASKS DONE, MERGED to main)
 
 `src/gramtrans/Lib/ui/selection_wizard.py` was **6512 lines**. It is now a
