@@ -153,6 +153,18 @@ closing clause before Layer 3 begins.
 
 When working and referencing flexicon or liblcm, ALWAYS use FLExToolsMCP instead of using direct code inspection. This allows lookup and testing. `Ejagham Mini` and `Esperanto`, `Mbugwe LizzieHC practice` are good (read-only) test projects for many phenomena.
 
+> **`Esperanto` is READ-ONLY in the strong sense: it is not a project you can
+> edit.** Read it freely; never select it as a transfer *target*, and never
+> plan a write against it. "Read-only test project" above is a statement of
+> fact about what is possible, not merely a convention to observe.
+>
+> For anything that WRITES, use the throwaway `Target`
+> (`C:\ProgramData\SIL\FieldWorks\Projects\Target`), restored from a known
+> backup first — `tests/integration/harness/restore.py` does this headlessly,
+> e.g. from `backups/Target 2026-07-06 0218.fwbackup`. Restore-before-write is
+> what makes a live verification repeatable *and* keeps real language data out
+> of the blast radius.
+
 > Exact project name, verified 2026-08-17: `Mbugwe LizzieHC practice` (note the
 > spacing — "LizzieHC practice", not "Lizzie HCPractice"). A directory named
 > `Mbugwe Lizzie HCPractice` also exists on disk but is an EMPTY SHELL with no
