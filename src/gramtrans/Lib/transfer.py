@@ -156,6 +156,48 @@ def _strip_ref_fields(src_props: dict, fields) -> None:
 # Public API
 # ============================================================================
 
+
+def _ensure_171_subpass(exec_ctx, target, tag, exec_skips):
+    """Run the 17.1 sub-pass if the AFFIX_TEMPLATES tail did not (FR-333).
+
+    `categories._run_171_subpass` wires `MoInflAffMsa.SlotsRC` (the affix's
+    template column) and `MSA.InflFeatsOA`. It is normally driven by
+    `_run_tail_once` on the LAST executed AFFIX_TEMPLATES action -- which
+    quietly makes it conditional on the USER'S SELECTION. A run that transfers
+    affixes without also selecting affix templates has zero AFFIX_TEMPLATES
+    actions, so the tail never fires: every transferred affix MSA keeps an
+    empty SlotsRC and no inflection features, and nothing in the report says
+    so.
+
+    Called after the leaf-dispatch loop, where every category (slots included)
+    has finished, so all wiring endpoints exist. The `_did_171_subpass` flag
+    the tail sets makes this a no-op when the tail already ran, so the two
+    paths never double-execute.
+
+    Never raises: a failure here must not lose the writes the run already made.
+    """
+    if getattr(exec_ctx, "_did_171_subpass", False):
+        return
+    if __package__:
+        from .categories import _run_171_subpass
+    else:
+        from categories import _run_171_subpass  # type: ignore
+    try:
+        object.__setattr__(exec_ctx, "_did_171_subpass", True)
+    except (AttributeError, TypeError):
+        pass
+    try:
+        late_skips = _run_171_subpass(exec_ctx, target, tag)
+    except Exception:
+        _log.exception("execute: 17.1 sub-pass safety net FAILED (swallowed)")
+        return
+    if late_skips and exec_skips is not None:
+        try:
+            exec_skips.extend(late_skips)
+        except (AttributeError, TypeError):
+            pass
+
+
 def execute(plan: RunPlan, source, target, report_sink, tag: ImportResidueTag,
             interactive_session=None) -> RunReport:
     """Apply `plan.actions` to `target` and return a finalized RunReport.
@@ -464,6 +506,22 @@ def execute(plan: RunPlan, source, target, report_sink, tag: ImportResidueTag,
             ))
     if leaf_count:
         report_sink.Info(f"[Move] Leaf-dispatch executed {leaf_count} action(s).")
+
+    # FR-333 safety net -- the 17.1 sub-pass must not depend on the SELECTION.
+    #
+    # `_run_171_subpass` (MoInflAffMsa.SlotsRC + MSA.InflFeatsOA wiring) is
+    # normally driven by `_run_tail_once` on the LAST executed AFFIX_TEMPLATES
+    # action. That makes it silently conditional on the user having selected
+    # affix templates: a run that transfers AFFIXES/STEMS without them has zero
+    # AFFIX_TEMPLATES actions, the tail never fires, and every transferred
+    # affix MSA is left with an empty SlotsRC -- the affixes are not linked to
+    # any template column -- plus no inflection features. Nothing reported it.
+    #
+    # Running it here instead is safe in both directions: the leaf-dispatch
+    # loop above has finished EVERY category (slots included), so all wiring
+    # endpoints exist, and `_did_171_subpass` makes this a no-op when the
+    # template tail already ran it.
+    _ensure_171_subpass(exec_ctx, target, tag, _exec_skips)
 
     # Feature 024 (T031, US3, FR-008 -- single-final-pass redesign):
     # `reproduce_all_lexical_relations` is the SOLE lexical-relation

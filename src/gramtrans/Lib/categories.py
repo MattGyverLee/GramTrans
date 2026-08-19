@@ -4851,6 +4851,30 @@ def _plan_entry_reference_decisions(src_entry, context, target):
         allomorphs.extend(getattr(src_entry, "AlternateFormsOS", None) or [])
         for src_allo in allomorphs:
             a_guid = _guid_str_from(src_allo)
+            # Preview twin of the `_walk_entry_allomorphs._mk` NEEDS_MANUAL
+            # gate (Principle III: Preview must show what Move will do). An
+            # allomorph whose subclass this engine cannot reproduce is not
+            # transferred at all, so it contributes no reference decisions --
+            # report it here and move on, exactly as Move does.
+            _allo_class = _class_name_of(src_allo)
+            if _dispatch_allomorph_subclass(_allo_class) is None:
+                _append_dropped_once(dropped, DroppedItemRecord(
+                    owner_kind="LexEntry",
+                    owner_guid=_guid_str_from(src_entry),
+                    owner_label=_owner_label_for("LexEntry", src_entry),
+                    field_name=("LexemeFormOA" if src_allo is lf
+                                else "AlternateFormsOS"),
+                    item_name=_allo_class or "(unknown allomorph subclass)",
+                    item_guid=a_guid,
+                    reason=(
+                        "allomorph subclass "
+                        f"{_allo_class or 'unknown'} is not reproducible by "
+                        "this engine (NEEDS_MANUAL) -- will not be "
+                        "transferred (007-affixes-stems spec.md "
+                        "'Out of scope')"
+                    ),
+                ))
+                continue
             records.extend(_decide_reference_fields(
                 "MoForm", a_guid, src_allo, target, resolver_cache, dropped,
                 skip_fields=_MOFORM_DEFERRED_FIELDS, source=source))
@@ -6126,7 +6150,8 @@ def _walk_lex_entry_closure(src_entry, context, tag, category, dropped=None):
             new_msa = msa_by_src_guid.get(m_guid)
             if new_msa is None:
                 new_msa = _create_msa_for_closure(
-                    src_msa, new_sense, new_entry, context, tag, identity_remap)
+                    src_msa, new_sense, new_entry, context, tag, identity_remap,
+                    dropped=dropped, src_entry=src_entry)
                 if new_msa is not None:
                     msa_by_src_guid[m_guid] = new_msa
             if new_msa is not None:
@@ -6181,7 +6206,44 @@ def _walk_entry_allomorphs(src_entry, new_entry, context, tag, identity_remap, d
     ws_map = getattr(context, "_ws_map", None)
 
     def _mk(src_allo, is_lexeme_form):
-        subclass = _dispatch_allomorph_subclass(_class_name_of(src_allo))
+        class_name = _class_name_of(src_allo)
+        subclass = _dispatch_allomorph_subclass(class_name)
+        if subclass is None:
+            # 007-affixes-stems spec.md "Out of scope" / FR-341 posture: an
+            # IMoForm subclass this engine cannot reproduce -- notably
+            # MoAffixProcess, whose Input/Output process-rule chain has no
+            # counterpart on a plain MoAffixAllomorph -- must NOT be degraded
+            # into one.
+            #
+            # This branch used to be absent: `_dispatch_allomorph_subclass`
+            # correctly returned None, and the `else` on the factory ternary
+            # below silently sent it to IMoAffixAllomorphFactory anyway. The
+            # result kept the source GUID and Form, destroyed Input/Output and
+            # any custom fields, and was then stamped with GT residue -- so the
+            # run reported a clean transfer over objects whose entire
+            # linguistic content had been discarded (13/13 MoAffixProcess on
+            # the Ejagham W Mini -> Ejagham W Target sweep).
+            #
+            # Report it and create nothing; the entry keeps its senses and its
+            # remaining allomorphs.
+            _append_dropped_once(dropped, DroppedItemRecord(
+                owner_kind="LexEntry",
+                owner_guid=_guid_str_from(src_entry),
+                owner_label=_owner_label_for("LexEntry", src_entry),
+                field_name=("LexemeFormOA" if is_lexeme_form
+                            else "AlternateFormsOS"),
+                item_name=class_name or "(unknown allomorph subclass)",
+                item_guid=_guid_str_from(src_allo),
+                reason=(
+                    "allomorph subclass "
+                    f"{class_name or 'unknown'} is not reproducible by this "
+                    "engine (NEEDS_MANUAL) -- not transferred, because copying "
+                    "it as a plain MoAffixAllomorph would silently discard the "
+                    "subclass's own data (007-affixes-stems spec.md "
+                    "'Out of scope')"
+                ),
+            ))
+            return
         factory_iface = (IMoStemAllomorphFactory if subclass == "MoStemAllomorph"
                          else IMoAffixAllomorphFactory)
         try:
@@ -6190,7 +6252,7 @@ def _walk_entry_allomorphs(src_entry, new_entry, context, tag, identity_remap, d
             # regenerated the identity of EVERY transferred allomorph (106/106
             # on the Ejagham Mini sweep).
             new_allo = create_with_guid(
-                factory, _guid_str_from(src_allo), subclass or "allomorph")
+                factory, _guid_str_from(src_allo), subclass)
         except Exception:
             return
         if new_allo is None:
@@ -6342,7 +6404,28 @@ def _create_msa_with_guid(target, new_entry, new_sense, subclass, src_guid, pos_
     return new_msa
 
 
-def _create_msa_for_closure(src_msa, new_sense, new_entry, context, tag, identity_remap):
+def _report_dropped_msa(dropped, src_entry, src_msa, kind, reason):
+    """Emit the FR-010 report line for an MSA that will not be reproduced.
+
+    No-ops when the caller has no `dropped` collector (duck-typed unit fakes
+    that call `_create_msa_for_closure` directly); the report is a backstop,
+    never a precondition for the transfer itself."""
+    if dropped is None:
+        return
+    _append_dropped_once(dropped, DroppedItemRecord(
+        owner_kind="LexEntry",
+        owner_guid=_guid_str_from(src_entry) if src_entry is not None else "",
+        owner_label=(_owner_label_for("LexEntry", src_entry)
+                     if src_entry is not None else ""),
+        field_name="MorphoSyntaxAnalysesOC",
+        item_name=kind or "(unknown MSA subclass)",
+        item_guid=_guid_str_from(src_msa),
+        reason=reason,
+    ))
+
+
+def _create_msa_for_closure(src_msa, new_sense, new_entry, context, tag,
+                            identity_remap, dropped=None, src_entry=None):
     """Create the target MSA for a sense, PRESERVING the source GUID.
 
     Feature 033. This used to route through the flexicon MSAOperations wrappers
@@ -6373,6 +6456,10 @@ def _create_msa_for_closure(src_msa, new_sense, new_entry, context, tag, identit
     class_name = _class_name_of(src_msa)
     subclass = _dispatch_msa_subclass(class_name)
     if subclass is None:
+        _report_dropped_msa(
+            dropped, src_entry, src_msa, class_name,
+            f"MSA subclass {class_name or 'unknown'} is not reproducible by "
+            "this engine (NEEDS_MANUAL) -- sense left without an MSA")
         return None
 
     # Cast to the concrete MSA subclass so PartOfSpeechRA / From/ToPartOfSpeechRA
@@ -6396,12 +6483,25 @@ def _create_msa_for_closure(src_msa, new_sense, new_entry, context, tag, identit
         pg = _pos_guid_of(attr)
         tp = _resolve_target_pos(target, pg) if pg else None
         if tp is None:
+            why = ("is empty on source" if not pg
+                   else "not resolvable in target")
             _mlog.warning(
                 "MSA %s (%s): %s.%s guid=%r %s; skipping this MSA "
                 "(affix keeps its entry/senses/allomorphs).",
-                src_g[:8], subclass, subclass, which, pg,
-                "is empty on source" if not pg else "not resolvable in target",
+                src_g[:8], subclass, subclass, which, pg, why,
             )
+            # Never-silent (FR-010 / Principle I): a warning in the debug log
+            # is not a report. Dropping an MSA strips the sense's entire
+            # morphosyntactic analysis -- part of speech, inflection class,
+            # slot membership -- and the run report used to show nothing at
+            # all (69 of 111 MoInflAffMsa vanished this way on the Ejagham W
+            # Mini -> Ejagham W Target sweep, because the referenced POSes
+            # were never brought into the target).
+            _report_dropped_msa(
+                dropped, src_entry, src_msa, subclass,
+                f"{subclass}.{which} (POS guid={pg or 'empty'}) {why} -- MSA "
+                "not transferred; the sense keeps its entry and allomorphs "
+                "but loses its part-of-speech analysis")
         return tp
 
     if subclass == "MoInflAffMsa":
