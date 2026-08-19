@@ -1,11 +1,11 @@
 {
   "schema_version": 1,
   "kind": "starter_capture",
-  "project_name": "GT Starter Capture 038",
-  "captured_at": "2026-08-19T10:13:44",
+  "project_name": "GT038 T023b Scratch",
+  "captured_at": "2026-08-19T10:46:44",
   "flex_version": "9.3.10",
   "data_model_version": 7000072,
-  "content_hash": "105dad8dcd38a030f768836583aac4c9cc38e58ad2e4f585fdf645ccaa8ddfc3",
+  "content_hash": "a1435380495029e7f36e72529ffba18f7a36a94745bc8f045f6421bf230c7dcc",
   "class_count": 72,
   "carries_natural_keys": false,
   "entries": [
@@ -36,7 +36,7 @@
     },
     {
       "class": "CmPossibility",
-      "count": 3014,
+      "count": 302,
       "names": []
     },
     {
@@ -100,7 +100,7 @@
     },
     {
       "class": "LexEntryType",
-      "count": 14,
+      "count": 11,
       "names": []
     },
     {
@@ -431,8 +431,8 @@
   "instrument": {
     "name": "gramtrans.census_cli",
     "version": "0.1.0",
-    "gramtrans_sha": "73b80c3",
-    "gramtrans_dirty": true,
+    "gramtrans_sha": "3973fa0",
+    "gramtrans_dirty": false,
     "python_version": "3.12.7",
     "flexicon_version": "4.5.2",
     "flexicon_path": "D:\\Github\\_Projects\\_LEX\\flexicon\\flexicon\\__init__.py",
