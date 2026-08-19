@@ -49,6 +49,23 @@ LOGGER_NAMES = (
     "api",
     "preview",
     "selection_wizard",
+    # Feature 039 split the wizard's page classes out of ``selection_wizard``
+    # into these ten modules. Each needs its own entry: this tuple is what
+    # ``configure()`` attaches the debug handler to, and under the flat
+    # FlexTools/frozen scheme ``logging.getLogger(__name__)`` inside
+    # ``wizard_pages_blocks.py`` yields the bare stem ``wizard_pages_blocks``,
+    # not ``selection_wizard``. Without the entry the module's ``_module_log``
+    # output goes unconfigured in exactly the host this file exists to serve.
+    "wizard_roles",
+    "wizard_page_base",
+    "wizard_widgets",
+    "wizard_page_projects",
+    "wizard_page_ws",
+    "wizard_pages_pickers",
+    "wizard_pages_skeleton",
+    "wizard_pages_blocks",
+    "wizard_page_texts",
+    "wizard_pages_deferred",
 )
 
 # Module state (guards idempotency of enable_from_env).

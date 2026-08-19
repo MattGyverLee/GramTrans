@@ -32,7 +32,6 @@ from __future__ import annotations
 
 import dataclasses
 import logging
-from contextlib import contextmanager
 from typing import Optional, Set
 
 from PyQt6 import QtCore, QtWidgets
@@ -141,24 +140,148 @@ else:
 
 if __package__:
     from ..gate import resolve_gate as _resolve_gate
-    from ..progress import (
-        SourceCounts,
-        label_for,
-        rate_for,
-        reporting,
-        warrants_indicator,
-    )
-    from .progress_indicator import deferred, immediate
+    from ..progress import SourceCounts
 else:
     from gate import resolve_gate as _resolve_gate  # type: ignore
-    from progress import (  # type: ignore
-        SourceCounts,
-        label_for,
-        rate_for,
-        reporting,
-        warrants_indicator,
+    from progress import SourceCounts  # type: ignore
+
+# ---------------------------------------------------------------------------
+# Relocated helpers this facade still calls (feature 039)
+# ---------------------------------------------------------------------------
+if __package__:
+    from .wizard_page_base import _FlowPage
+    from .wizard_roles import (
+        _CF_GUID_ROLE,
+        _CF_KIND_ROLE,
+        _CF_LEVEL_LABELS,
+        _CF_STATUS_ROLE,
+        _DEPS_CAT_ROLE,
+        _DEPS_STATUS_ROLE,
+        _ET_CAT_ROLE,
+        _ET_GUID_ROLE,
+        _ET_KIND_ROLE,
+        _ET_STATUS_ROLE,
+        _GUID_ROLE,
+        _IS_PRODUCES,
+        _ITEM_CAT_ROLE,
+        _ITEM_STATUS_ROLE,
+        _KIND_ROLE,
+        _PHON_CAT_ROLE,
+        _PHON_GUID_ROLE,
+        _PHON_KIND_ROLE,
+        _PHON_STATUS_ROLE,
+        _ROLE_ROLE,
+        _RULES_GUID_ROLE,
+        _RULES_KIND_ROLE,
+        _RULES_STATUS_LABELS,
+        _RULES_STATUS_ROLE,
+        _SKEL_CAT_ROLE,
+        _SKEL_GUID_ROLE,
+        _SKEL_KIND_ROLE,
+        _SKEL_OWNER_ROLE,
+        _SKEL_READ_ONLY,
+        _SKEL_STATUS_ROLE,
+        _STATUS_LABELS,
     )
-    from progress_indicator import deferred, immediate  # type: ignore
+    from .wizard_widgets import (
+        _carry_full_values_in_tooltips,
+        _count_affixes_in_node,
+        _make_group_item,
+        _make_tree_pane_splitter,
+        _operation_failed_note,
+        _page_progress,
+        _show_failure_row,
+        _source_counts_of,
+    )
+else:
+    from wizard_page_base import _FlowPage  # type: ignore
+    from wizard_roles import (  # type: ignore
+        _CF_GUID_ROLE,
+        _CF_KIND_ROLE,
+        _CF_LEVEL_LABELS,
+        _CF_STATUS_ROLE,
+        _DEPS_CAT_ROLE,
+        _DEPS_STATUS_ROLE,
+        _ET_CAT_ROLE,
+        _ET_GUID_ROLE,
+        _ET_KIND_ROLE,
+        _ET_STATUS_ROLE,
+        _GUID_ROLE,
+        _IS_PRODUCES,
+        _ITEM_CAT_ROLE,
+        _ITEM_STATUS_ROLE,
+        _KIND_ROLE,
+        _PHON_CAT_ROLE,
+        _PHON_GUID_ROLE,
+        _PHON_KIND_ROLE,
+        _PHON_STATUS_ROLE,
+        _ROLE_ROLE,
+        _RULES_GUID_ROLE,
+        _RULES_KIND_ROLE,
+        _RULES_STATUS_LABELS,
+        _RULES_STATUS_ROLE,
+        _SKEL_CAT_ROLE,
+        _SKEL_GUID_ROLE,
+        _SKEL_KIND_ROLE,
+        _SKEL_OWNER_ROLE,
+        _SKEL_READ_ONLY,
+        _SKEL_STATUS_ROLE,
+        _STATUS_LABELS,
+    )
+    from wizard_widgets import (  # type: ignore
+        _carry_full_values_in_tooltips,
+        _count_affixes_in_node,
+        _make_group_item,
+        _make_tree_pane_splitter,
+        _operation_failed_note,
+        _page_progress,
+        _show_failure_row,
+        _source_counts_of,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Compatibility re-exports (feature 039 FR-006, T010/T021)
+# ---------------------------------------------------------------------------
+# `selection_wizard` is the name ~20 test modules import and bind
+# off, and exactly one production site imports (`SelectionWizard` at
+# `gramtrans.py:249`). Splitting the pages out must not change what
+# `selection_wizard.X` resolves to, so every relocated name is
+# re-exported here and `test_039_module_split.py` guard 2 asserts the
+# list is complete rather than trusting it.
+#
+# Eagerly, never lazily. `test_wizard_page_flow.py:99/107` replaces
+# `QtWidgets.QWizard`/`QWizardPage` in `sys.modules` at import time,
+# so each `class _PageX(QtWidgets.QWizardPage)` captures whichever
+# base is installed at ITS module's import moment. Importing every
+# page module here, from one place, is what keeps that base the same
+# for all of them -- see `_ui_geometry.needs_a_real_qwizard()`.
+if __package__:
+    from .wizard_page_base import (
+        _BlockPage,  # noqa: F401
+        _PickDerivedMixin,  # noqa: F401
+        _ProjectHandlesMixin,  # noqa: F401
+    )
+    from .wizard_widgets import (
+        _PREVIEW_PANE_MIN_WIDTH,  # noqa: F401
+        _TREE_PANE_MIN_WIDTH,  # noqa: F401
+        _elide_over_narrow_columns,  # noqa: F401
+        _item_views_of,  # noqa: F401
+        _set_item_text_with_tooltip,  # noqa: F401
+    )
+else:
+    from wizard_page_base import (  # type: ignore
+        _BlockPage,  # noqa: F401
+        _PickDerivedMixin,  # noqa: F401
+        _ProjectHandlesMixin,  # noqa: F401
+    )
+    from wizard_widgets import (  # type: ignore
+        _PREVIEW_PANE_MIN_WIDTH,  # noqa: F401
+        _TREE_PANE_MIN_WIDTH,  # noqa: F401
+        _elide_over_narrow_columns,  # noqa: F401
+        _item_views_of,  # noqa: F401
+        _set_item_text_with_tooltip,  # noqa: F401
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -182,13 +305,6 @@ MIN_WINDOW_WIDTH = 900
 # Unchanged by feature 036 (US3 lowers the width only) and named here so the
 # pair reads as one geometry decision instead of one constant and one literal.
 MIN_WINDOW_HEIGHT = 680
-
-# T025 / FR-029a: what a tree-and-preview page's two panes may be squeezed to.
-# Their sum must stay well inside MIN_WINDOW_WIDTH -- minimums that sum past the
-# window floor would make the floor unreachable and Qt would silently clamp the
-# window back up, which is FR-029 failing in the name of FR-029a.
-_TREE_PANE_MIN_WIDTH = 360
-_PREVIEW_PANE_MIN_WIDTH = 260
 
 _SCOPE_LABELS = {
     CategoryScope.NONE: "NONE",
@@ -262,97 +378,6 @@ def _count_says_content(count) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# T020/T021/T022 -- the one way a page reports a wait (FR-014..FR-023)
-# ---------------------------------------------------------------------------
-# EVERY one of the thirteen FR-023 operations goes through `_page_progress`.
-# Written once because the decision it makes is the same everywhere and is easy
-# to get subtly wrong per call site: which of FR-014's two triggers applies,
-# and whether the indicator comes down on the failure path.
-#
-#   * the trigger is `warrants_indicator(total, rate)` and nothing else -- an
-#     anticipated wait past the threshold is shown up front (FR-014a), and
-#     everything else waits for the elapsed-time fallback (FR-014b). Whichever
-#     fires first wins, so a mis-calibrated rate can only pick the wrong
-#     trigger, never suppress the indicator.
-#   * the label and the rate come from ONE lookup each, both keyed by the FR-023
-#     operation name, so a page cannot name a row the calibration table has
-#     never heard of (`label_for`/`rate_for` raise on a typo, at wiring time).
-#   * `reporting()` owns the dismissal, so a walk that raises still takes its
-#     indicator down (FR-020) and the error message the wizard shows next is
-#     never trapped behind a modal corpse.
-
-
-def _source_counts_of(page) -> SourceCounts:
-    """The run's cheap-count snapshot, or the all-unknown one.
-
-    A page is constructed standalone by a good deal of the test suite and by
-    `_PagePreview`'s host, so `wizard()` may be None and a wizard may predate
-    the snapshot. Unknown counts are the correct answer in both cases: they mean
-    "no total", which is the indeterminate indicator, not a missing one.
-    """
-    wizard = page.wizard()
-    getter = getattr(wizard, "source_counts", None)
-    if getter is None:
-        return SourceCounts.unknown()
-    try:
-        return getter()
-    except Exception:  # noqa: BLE001 -- a count is never worth a failed page entry
-        return SourceCounts.unknown()
-
-
-@contextmanager
-def _page_progress(page, operation: str, total: Optional[int] = None):
-    """Report one FR-023 operation for the duration of the `with` block.
-
-    `total` is a count the caller ALREADY HAS -- `SourceCounts` for the
-    source-derived pages, a `len()` for the two selection-derived ones. It is
-    never obtained by counting (FR-014d); that is the whole point of the
-    snapshot, and a counting pass here would pay the cost the indicator exists
-    to cover.
-
-    Yields the sink, so the body ticks from inside its walk.
-    """
-    label = label_for(operation)
-    if warrants_indicator(total, rate_for(operation)):
-        sink = immediate(label, total, parent=page)     # FR-014a: up front
-    else:
-        sink = deferred(label, total, parent=page)      # FR-014b: after 500 ms
-    with reporting(sink, label, total) as prog:
-        yield prog
-
-
-def _operation_failed_note(operation: str) -> str:
-    """The one sentence a page says when its walk raised (T022, FR-020).
-
-    Dismissing the indicator is half of FR-020; the other half is that the
-    operator is TOLD. A page that quietly renders an empty tree is
-    indistinguishable from a project that genuinely has nothing in it, and the
-    two call for opposite responses -- so the failure gets its own words rather
-    than the page's "nothing here" wording.
-
-    Phrased from the operation's own label, so the sentence names the operation
-    in the same vocabulary the indicator just used (FR-015), and no page invents
-    a second name for the thing it was doing.
-    """
-    return (
-        f"({label_for(operation).rstrip('. ')} failed. Nothing could be read "
-        "from the source project -- see the GramTrans log for the reason.)"
-    )
-
-
-def _show_failure_row(tree, operation: str) -> None:
-    """Replace a tree's contents with the single disabled row that explains why.
-
-    Clearing first is the point: the affix and stem pages did not clear on the
-    failure path, so a second visit to a page whose walk had just raised showed
-    the PREVIOUS visit's rows as though they were current.
-    """
-    tree.clear()
-    item = QtWidgets.QTreeWidgetItem(tree, [_operation_failed_note(operation)])
-    item.setFlags(item.flags() & ~QtCore.Qt.ItemFlag.ItemIsEnabled)
-
-
-# ---------------------------------------------------------------------------
 # Layer-1 helper: which ConflictMode values are offered for a category?
 # ---------------------------------------------------------------------------
 
@@ -364,261 +389,6 @@ def _allowed_modes(cat: GrammarCategory) -> list:
     # Constitution v7.0.0 GOLD unlock: GOLD_RESERVED categories are ordinary
     # items and offer the full mode set (default UPDATE via _DEFAULT_CONFLICT_MODES).
     return [ConflictMode.ADD_NEW, ConflictMode.LINK, ConflictMode.UPDATE, ConflictMode.OVERWRITE]
-
-
-# ---------------------------------------------------------------------------
-# Shared splitter helper (T004, FR-005, FR-011, R7)
-# ---------------------------------------------------------------------------
-
-def _make_tree_pane_splitter(tree_widget, pane_widget,
-                             tree_stretch=3, pane_stretch=2):
-    """Return a horizontal QSplitter with tree on the left and pane on the right.
-
-    Replaces the direct layout.addWidget(tree, 1) call in each page's _build_ui.
-    Stretch factors default to 3:2 (tree:pane) per plan R7.
-
-    THE ONE PLACE A TREE-AND-PREVIEW PAGE IS MADE TO SURVIVE 900 PX
-    ---------------------------------------------------------------
-    Nine pages build their splitter here, so 036 T025/T026 are applied here
-    rather than nine times. Three separate ways a narrowed window can eat a pane
-    or a column, and the default Qt behaviour is wrong for all three:
-
-    * **collapse** (FR-029a). A splitter that allows collapse lets the operator
-      drag the preview to zero -- and lets Qt do it for them as the width runs
-      out. `setChildrenCollapsible(False)` plus a real minimum on each pane is
-      what makes "both panes side by side" survive the floor instead of
-      depending on how wide the window happens to be.
-    * **silent cut** (FR-029b). Cells elide right by default; column HEADINGS do
-      not, so a heading too wide for its section is chopped today with nothing
-      to say it was. An unindicated cut is worse than a narrow column: the
-      operator cannot tell there is more.
-    * **a scrollbar instead of an ellipsis** (FR-029b). A view left on
-      `ScrollBarAsNeeded` answers a too-narrow column by growing a horizontal
-      bar, which is the thing FR-029b forbids the page acquiring. The ellipsis
-      and the no-scrollbar clause are one decision, so they are made together.
-    """
-    splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Horizontal)
-    splitter.addWidget(tree_widget)
-    splitter.addWidget(pane_widget)
-    splitter.setStretchFactor(0, tree_stretch)
-    splitter.setStretchFactor(1, pane_stretch)
-    # T025 / FR-029a.
-    splitter.setChildrenCollapsible(False)
-    tree_widget.setMinimumWidth(_TREE_PANE_MIN_WIDTH)
-    pane_widget.setMinimumWidth(_PREVIEW_PANE_MIN_WIDTH)
-    # T026 / FR-029b. The left pane is a view on every page that calls this, but
-    # the guard keeps the helper usable for a page whose left half is not one.
-    for view in _item_views_of(tree_widget):
-        _elide_over_narrow_columns(view)
-    return splitter
-
-
-def _item_views_of(widget):
-    """`widget` itself if it is an item view, plus any view nested inside it.
-
-    A page that wraps its tree in a frame still has the view FR-029b means, and
-    a page that hands its tree over directly is the common case. Both are
-    reached the same way so neither has to be special-cased at the call site.
-    """
-    views = []
-    if isinstance(widget, QtWidgets.QAbstractItemView):
-        views.append(widget)
-    views.extend(
-        v for v in widget.findChildren(QtWidgets.QAbstractItemView)
-        if v not in views
-    )
-    return views
-
-
-def _elide_over_narrow_columns(view) -> None:
-    """Make one item view shorten over-narrow content instead of cutting it.
-
-    Separate from the splitter factory so a view built outside a tree-and-preview
-    page can be given the same treatment by name rather than by copying three
-    property calls.
-    """
-    elide_right = QtCore.Qt.TextElideMode.ElideRight
-    view.setTextElideMode(elide_right)
-    view.setHorizontalScrollBarPolicy(
-        QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff
-    )
-    header = getattr(view, "header", None)
-    header = header() if callable(header) else None
-    if header is not None:
-        # The half Qt does not do for itself: QHeaderView defaults to ElideNone.
-        header.setTextElideMode(elide_right)
-
-
-def _set_item_text_with_tooltip(item, column: int, text: str) -> None:
-    """Set a cell's text and record the untruncated value as its tooltip.
-
-    FR-029b has two halves and Qt supplies only the first: it draws the ellipsis,
-    and nothing in it keeps the string that was elided. The tooltip is the "full
-    value remains available on demand" channel, and it exists only if something
-    sets it -- so this is the one place a cell's text and its full-value tooltip
-    are set together, exactly as `_make_tree_pane_splitter` is the one place a
-    splitter is built.
-
-    The MODEL keeps the untruncated value. Baking an ellipsis into the data would
-    corrupt the value FR-034 requires be preserved exactly, and would make the
-    truncation permanent rather than a property of the current column width.
-    """
-    item.setText(column, text)
-    item.setToolTip(column, text)
-
-
-def _carry_full_values_in_tooltips(tree) -> None:
-    """Give every populated cell a tooltip holding its own untruncated text.
-
-    The other half of FR-029b, applied to trees that were populated by the nine
-    `_populate_*` methods rather than through `_set_item_text_with_tooltip`. One
-    sweep at the end of population is what makes the ellipsis stand IN FOR the
-    value instead of hiding it, without rewriting every row-building loop in the
-    module to thread a tooltip through.
-
-    Signals are blocked for the duration, and that is load-bearing, not
-    defensive: `setToolTip` on a `QTreeWidgetItem` emits `itemChanged`, and the
-    pages connect `itemChanged` to check-state mirroring. An unblocked sweep
-    would look to those handlers exactly like the operator ticking every box on
-    the page.
-
-    Only empty tooltips are filled, so a cell that already carries a richer
-    tooltip (a status explanation, say) keeps it.
-    """
-    blocked = tree.signalsBlocked()
-    tree.blockSignals(True)
-    try:
-        columns = tree.columnCount()
-        iterator = QtWidgets.QTreeWidgetItemIterator(tree)
-        while iterator.value() is not None:
-            item = iterator.value()
-            for column in range(columns):
-                text = item.text(column)
-                if text and not item.toolTip(column):
-                    item.setToolTip(column, text)
-            iterator += 1
-    except Exception:  # noqa: BLE001 -- a tooltip is never worth a failed page
-        pass
-    finally:
-        tree.blockSignals(blocked)
-
-
-# ---------------------------------------------------------------------------
-# Flow-aware page base (T013, FR-009b)
-# ---------------------------------------------------------------------------
-
-class _FlowPage(QtWidgets.QWizardPage):
-    """A page that resolves its successor from `SelectionWizard.flow()`.
-
-    WHY `nextId()` AND NOT A FILTERED PAGE LIST
-    -------------------------------------------
-    `QWizardPage.nextId()` is Qt's own hook for a conditional flow, and Qt calls
-    it to decide whether Next is even *enabled*. Resolving the successor here
-    means the button is right before the click, rather than the alternative --
-    registering only the pages a run "will" need, which has to guess before the
-    operator has picked anything and cannot change its mind afterwards.
-
-    Back needs nothing: Qt replays its own stack of visited pages, so an
-    operator returning through a run that skipped pages retraces exactly the
-    pages they saw.
-
-    `flow()` is read at CALL TIME, never cached. The operator may go back and
-    pick an affix after Morphology Skeleton was skipped for having none, and the
-    page then re-enters the flow -- a baked list could not.
-    """
-
-    # -- The page header (T041, FR-004 / FR-012) ---------------------------
-    # Every page in the flow carries one. `subTitle()` stays the string of
-    # record -- the wizard sets `IgnoreSubTitles` so Qt stops drawing it, and
-    # the header renders it instead in a label that WRAPS. Qt's own subtitle
-    # does not wrap: it elides, which is how a description could end mid-word
-    # with nothing to say it had been cut (FR-013).
-
-    def header(self):
-        """This page's laid-out header row, or None before one is installed.
-
-        Returns None rather than raising for a page constructed standalone --
-        a good deal of the unit suite builds pages with no wizard at all, and
-        a header is something the wizard installs, not something a page makes
-        for itself.
-        """
-        return getattr(self, "_page_header", None)
-
-    def install_header(self, header) -> None:
-        """Adopt `header` as row 0 of this page's own layout.
-
-        Laid out, never positioned. That is the whole of FR-004: a box layout
-        allocates disjoint x-intervals to the description and the controls, so
-        a description grown to any wrapped height cannot intersect the strip --
-        it grows the header's height instead. The floating bar this replaces
-        had no layout relationship with anything, so nothing could move out of
-        its way and it painted an opaque background to stay legible on top of
-        whatever it covered.
-
-        Idempotent: installing twice on one page is a no-op, so a second call
-        cannot stack two header rows.
-        """
-        if getattr(self, "_page_header", None) is not None:
-            return
-        layout = self.layout()
-        if layout is None:
-            return
-        self._page_header = header
-        header.setParent(self)
-        insert = getattr(layout, "insertWidget", None)
-        if callable(insert):
-            insert(0, header)
-        else:                       # not a box layout: better appended than lost
-            layout.addWidget(header)
-        header.set_description(self.subTitle())
-
-    def refresh_header_description(self) -> None:
-        """Re-render `subTitle()` into the header. Cheap; safe before install.
-
-        Called on page entry because `subTitle()` is not frozen at construction
-        -- the Finish page takes its subtitle from the host's confirmation gate,
-        and a page may restate itself in `initializePage`.
-        """
-        header = self.header()
-        if header is not None:
-            header.set_description(self.subTitle())
-
-    def nextId(self) -> int:  # noqa: N802 -- Qt naming
-        """The next page this run will SHOW, or -1 to end the run.
-
-        Walks the declaration forward from this page and returns the first entry
-        that is either unskippable or whose `has_content()` says yes. A
-        predicate that raises is treated as "yes" for the same reason `None` is
-        (FR-009c): a page that is wrongly shown costs a click, a page that is
-        wrongly skipped costs a decision.
-        """
-        wizard = self.wizard()
-        if wizard is None or not hasattr(wizard, "flow"):
-            # Constructed standalone (several unit tests do) or hosted by a
-            # wizard that predates the declaration: fall back to Qt's
-            # registration order rather than refusing to navigate.
-            return super().nextId()
-        entries = list(wizard.flow())
-        here = -1
-        for idx, (attr, _short, _skippable, _has) in enumerate(entries):
-            if getattr(wizard, attr, None) is self:
-                here = idx
-                break
-        if here == -1:
-            return super().nextId()
-
-        for attr, _short, skippable, has_content in entries[here + 1:]:
-            page_id = wizard.flow_page_id(attr)
-            if page_id == -1:
-                continue                    # declared but not registered
-            if not skippable or has_content is None:
-                return page_id              # FR-009d outranks any emptiness
-            try:
-                if has_content():
-                    return page_id
-            except Exception:  # noqa: BLE001 -- unsure means shown
-                return page_id
-        return -1                           # last shown page ends the run
 
 
 # ---------------------------------------------------------------------------
@@ -1451,70 +1221,8 @@ class _PageWritingSystems(_FlowPage):
 
 
 # ---------------------------------------------------------------------------
-# Item-data roles used throughout _PageItemPicker
-# ---------------------------------------------------------------------------
-
-_GUID_ROLE = QtCore.Qt.ItemDataRole.UserRole + 1   # entry_guid string
-_KIND_ROLE = QtCore.Qt.ItemDataRole.UserRole + 2   # "affix" | "pos_group" | "subgroup"
-_ROLE_ROLE = QtCore.Qt.ItemDataRole.UserRole + 3   # "attaches" | "produces" (leaf rows)
-_IS_PRODUCES = QtCore.Qt.ItemDataRole.UserRole + 4  # bool: True for deriv_produces rows
-# T005 -- Data roles for _PageItemPicker (FR-010, R6)
-_ITEM_STATUS_ROLE = QtCore.Qt.ItemDataRole.UserRole + 30  # "new" | "in_target" | "similar"
-_ITEM_CAT_ROLE    = QtCore.Qt.ItemDataRole.UserRole + 31  # GrammarCategory
-
-
-# ---------------------------------------------------------------------------
 # Page 2 -- Item picker (POS-grouped, specs/008-affix-pos-picker)
 # ---------------------------------------------------------------------------
-
-def _count_affixes_in_node(pos_node) -> int:
-    """Return the count of distinct affix entry_guids in pos_node's whole subtree.
-
-    Counts guids in inflectional + deriv_attaches + deriv_produces at this
-    node and recursively in all children.  Deduplicates across sub-lists so
-    an entry appearing in multiple subgroups of the same node is counted once.
-    Used by FR-017(b) to annotate POS group header labels.
-    """
-    guids: Set[str] = set()
-
-    def _collect(node) -> None:
-        for row in node.inflectional:
-            guids.add(row.entry_guid)
-        for row in node.deriv_attaches:
-            guids.add(row.entry_guid)
-        for row in node.deriv_produces:
-            guids.add(row.entry_guid)
-        for child in node.children:
-            _collect(child)
-
-    _collect(pos_node)
-    return len(guids)
-
-
-def _make_group_item(parent, label: str, *,
-                     kind: str, checkable: bool,
-                     is_produces_group: bool) -> "QtWidgets.QTreeWidgetItem":
-    """Create a group/header tree item (shared by the affix + stem pickers).
-
-    FR-017(c): header rows (pos_group and subgroup) are styled with bold
-    font so they are visually distinct from leaf rows.
-    """
-    # 5 columns: label, type, from, to, target (blank for headers)
-    item = QtWidgets.QTreeWidgetItem(parent, [label, "", "", "", ""])
-    item.setData(0, _KIND_ROLE, kind)
-    item.setData(0, _IS_PRODUCES, is_produces_group)
-    if checkable:
-        item.setFlags(
-            item.flags()
-            | QtCore.Qt.ItemFlag.ItemIsUserCheckable
-            | QtCore.Qt.ItemFlag.ItemIsAutoTristate
-        )
-        item.setCheckState(0, QtCore.Qt.CheckState.Unchecked)
-    # FR-017(c): bold font for all header/group rows
-    bold_font = item.font(0)
-    bold_font.setBold(True)
-    item.setFont(0, bold_font)
-    return item
 
 
 class _PageItemPicker(_FlowPage):
@@ -2478,33 +2186,6 @@ class _PageScopeConflict(QtWidgets.QWizardPage):
 
 
 # ---------------------------------------------------------------------------
-# Data roles for _PageSkeleton and _PageGramDeps trees
-# ---------------------------------------------------------------------------
-
-_SKEL_GUID_ROLE = QtCore.Qt.ItemDataRole.UserRole + 10   # slot/tpl/pos guid
-_SKEL_KIND_ROLE = QtCore.Qt.ItemDataRole.UserRole + 11   # "pos"|"slot"|"template"|"dep"
-_SKEL_READ_ONLY = QtCore.Qt.ItemDataRole.UserRole + 12   # bool: template slot entry
-# T006 -- Data roles for _PageSkeleton (FR-010, R6)
-_SKEL_STATUS_ROLE = QtCore.Qt.ItemDataRole.UserRole + 40  # "new" | "in_target" | "similar"
-_SKEL_CAT_ROLE    = QtCore.Qt.ItemDataRole.UserRole + 41  # GrammarCategory (slot / template)
-_SKEL_OWNER_ROLE  = QtCore.Qt.ItemDataRole.UserRole + 42  # owner POS GUID (for template/slot preview)
-# T007 -- Data roles for _PageGramDeps (FR-010, R6)
-# GrammarCategory mapping (research: _populate_deps_tree sections):
-#   "Inflection Features" -> GrammarCategory.INFLECTION_FEATURES
-#   "Inflection Classes"  -> GrammarCategory.INFLECTION_CLASSES
-#   "Stem Names"          -> GrammarCategory.STEM_NAMES
-_DEPS_STATUS_ROLE = QtCore.Qt.ItemDataRole.UserRole + 50  # "new" | "in_target" | "similar"
-_DEPS_CAT_ROLE    = QtCore.Qt.ItemDataRole.UserRole + 51  # GrammarCategory
-
-# Target-status label map (shared with affix picker).
-_STATUS_LABELS = {
-    "new": "NEW",
-    "in_target": "IN TARGET",
-    "similar": "SIMILAR",
-}
-
-
-# ---------------------------------------------------------------------------
 # Page 3b -- Morphology Skeleton  (T011-T012)
 # ---------------------------------------------------------------------------
 
@@ -3371,19 +3052,6 @@ class _PageGramDeps(_FlowPage):
 # Page 2 -- Custom Fields  (Feature 016, US1/US2/US4)
 # ---------------------------------------------------------------------------
 
-# Data roles for _PageCustomFields
-_CF_GUID_ROLE   = QtCore.Qt.ItemDataRole.UserRole + 60  # synthetic "cf:<owner>:<name>" guid
-_CF_KIND_ROLE   = QtCore.Qt.ItemDataRole.UserRole + 61  # "group" | "item"
-_CF_STATUS_ROLE = QtCore.Qt.ItemDataRole.UserRole + 63  # "NEW" | "IN TARGET" | ""
-
-# Display labels for the four owner-class levels.
-_CF_LEVEL_LABELS = {
-    "LexEntry":           "Entry",
-    "LexSense":           "Sense",
-    "LexExampleSentence": "Example",
-    "MoForm":             "Allomorph",
-}
-
 
 class _PageCustomFields(_FlowPage):
     """Page 2: Custom Fields block (Feature 016, US1/US2/US4).
@@ -3761,31 +3429,10 @@ class _PageCustomFields(_FlowPage):
 # Page 3 -- Phonology  (spec 010, Model-B independent block)
 # ---------------------------------------------------------------------------
 
-_PHON_GUID_ROLE = QtCore.Qt.ItemDataRole.UserRole + 20   # source GUID (item rows)
-_PHON_KIND_ROLE = QtCore.Qt.ItemDataRole.UserRole + 21   # "group" | "item"
-_PHON_CAT_ROLE = QtCore.Qt.ItemDataRole.UserRole + 22    # GrammarCategory (group + item)
-# T008 -- Data role for _PagePhonology (FR-010, R6)
-_PHON_STATUS_ROLE = QtCore.Qt.ItemDataRole.UserRole + 23  # "new" | "in_target" | "similar"
 
 # SC-008: module-level aliases used inside _PagePhonology instead of string literals.
 _PHON_MODE_OVERWRITE = OVERWRITE
 _PHON_MODE_NEW = NEW
-
-# ---------------------------------------------------------------------------
-# Data roles for _PageRules (018-rules-page T017)
-# ---------------------------------------------------------------------------
-
-_RULES_GUID_ROLE   = QtCore.Qt.ItemDataRole.UserRole + 70  # normalized rule GUID (item rows)
-_RULES_KIND_ROLE   = QtCore.Qt.ItemDataRole.UserRole + 71  # "group" | "item"
-_RULES_STATUS_ROLE = QtCore.Qt.ItemDataRole.UserRole + 72  # "NEW" | "IN TARGET" | "SIMILAR" | ""
-
-# Status display map shared with phonology convention
-_RULES_STATUS_LABELS = {
-    "NEW": "NEW",
-    "IN TARGET": "IN TARGET",
-    "SIMILAR": "SIMILAR",
-    "": "",
-}
 
 
 class _PageRules(_FlowPage):
@@ -4578,11 +4225,6 @@ def _phonology_excluded_lossy_for(wizard) -> list:
 # Page 7 -- Lexical-Entry Types (spec 021, Model-B independent block)
 # ---------------------------------------------------------------------------
 
-# Data roles for _PageEntryTypes
-_ET_GUID_ROLE   = QtCore.Qt.ItemDataRole.UserRole + 70  # source GUID (item rows)
-_ET_KIND_ROLE   = QtCore.Qt.ItemDataRole.UserRole + 71  # "group" | "item"
-_ET_CAT_ROLE    = QtCore.Qt.ItemDataRole.UserRole + 72  # GrammarCategory
-_ET_STATUS_ROLE = QtCore.Qt.ItemDataRole.UserRole + 73  # "new" | "in_target" | ""
 
 # SC-008: module-level mode aliases used inside _PageEntryTypes (no ConflictMode refs).
 _ET_MODE_OVERWRITE = OVERWRITE
