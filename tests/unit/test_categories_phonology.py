@@ -578,6 +578,12 @@ def _stub_lcm_nc_imports(monkeypatch):
     fake_lcm.IPhNCSegmentsFactory = MagicMock()
     fake_lcm.IPhNCFeaturesFactory = MagicMock()
     fake_lcm.IPhNCSegments = _PassthroughCast
+    # Item 8 (coordinator round 3): _get_features_oa casts through
+    # IPhNCFeatures(obj) before reading FeaturesOA -- must be a real
+    # passthrough (not an unconfigured MagicMock, which would return an
+    # unrelated fixed Mock instead of `obj`, breaking every FeaturesOA
+    # null/non-null assertion in this fake's tests).
+    fake_lcm.IPhNCFeatures = _PassthroughCast
     # ICmObject(src_nc).ClassName => "PhNCSegments" for our fake.
     fake_lcm.ICmObject.side_effect = lambda obj: obj
     # Make sure obj.ClassName is "PhNCSegments" on our fakes
@@ -774,13 +780,30 @@ def test_render_summary_emits_skip_line_for_empty_selected_categories():
 # actually be verified non-null, not silently skipped/trusted.
 # ============================================================================
 
-class _FakeNCFeaturesSrc:
-    """Fake IPhNCFeatures source natural class (ClassName-driven dispatch)."""
+class _FakeFeatStrucForExecute:
+    def __init__(self, spec_count=1):
+        self.FeatureSpecsOC = [object()] * spec_count
 
-    def __init__(self, guid):
+
+class _FakeNCFeaturesSrc:
+    """Fake IPhNCFeatures source natural class (ClassName-driven dispatch).
+
+    Item 8 (coordinator round 3): the source-aware guard only raises when
+    SOURCE FeaturesOA is non-null, so this fake carries a real (non-null)
+    FeaturesOA by default -- a source that legitimately has none is covered
+    by a dedicated test below (test_nc_execute_no_raise_when_source_features_null)."""
+
+    _UNSET = object()
+
+    def __init__(self, guid, features_oa=_UNSET):
         self.guid = guid
         self.Guid = guid
         self.ClassName = "PhNCFeatures"
+        self.FeaturesOA = (
+            _FakeFeatStrucForExecute(spec_count=1)
+            if features_oa is _FakeNCFeaturesSrc._UNSET
+            else features_oa
+        )
 
 
 def _build_nc_features_execute_context(src_nc, apply_sets_features_oa):
@@ -963,8 +986,12 @@ class _FakeTgtNCForGuard:
 
 
 def test_guard_nc_features_transferred_appends_dropped_record_when_null():
+    """Item 8 (coordinator round 3): source-aware -- only flags a null
+    target FeaturesOA as a defect when source's is non-null."""
+    src_nc = _FakeNCFeaturesSrc("nc-guard-1")  # non-null FeaturesOA by default
+    src = _project(NaturalClasses=[src_nc])
     tgt = _project(NaturalClasses=[_FakeTgtNCForGuard("nc-guard-1", None)])
-    ctx = _ctx(_project(), tgt)
+    ctx = _ctx(src, tgt)
     object.__setattr__(ctx, "_nc_features_guids", ["nc-guard-1"])
     dropped: list = []
     object.__setattr__(ctx, "_dropped", dropped)
@@ -980,9 +1007,28 @@ def test_guard_nc_features_transferred_appends_dropped_record_when_null():
     assert rec.item_guid == "nc-guard-1"
 
 
+def test_guard_nc_features_transferred_no_op_when_source_features_null():
+    """Item 8: a source that legitimately has no feature structure is not a
+    loss -- the guard must not flag a null target FeaturesOA in that case."""
+    src_nc = _FakeNCFeaturesSrc("nc-guard-1b", features_oa=None)
+    src = _project(NaturalClasses=[src_nc])
+    tgt = _project(NaturalClasses=[_FakeTgtNCForGuard("nc-guard-1b", None)])
+    ctx = _ctx(src, tgt)
+    object.__setattr__(ctx, "_nc_features_guids", ["nc-guard-1b"])
+    dropped: list = []
+    object.__setattr__(ctx, "_dropped", dropped)
+
+    result = categories._guard_nc_features_transferred(ctx, tgt, "test-tag")
+
+    assert result == []
+    assert dropped == []
+
+
 def test_guard_nc_features_transferred_no_op_when_featuresoa_populated():
-    tgt = _project(NaturalClasses=[_FakeTgtNCForGuard("nc-guard-2", object())])
-    ctx = _ctx(_project(), tgt)
+    src_nc = _FakeNCFeaturesSrc("nc-guard-2")
+    src = _project(NaturalClasses=[src_nc])
+    tgt = _project(NaturalClasses=[_FakeTgtNCForGuard("nc-guard-2", _FakeFeatStrucForExecute(spec_count=1))])
+    ctx = _ctx(src, tgt)
     object.__setattr__(ctx, "_nc_features_guids", ["nc-guard-2"])
     dropped: list = []
     object.__setattr__(ctx, "_dropped", dropped)

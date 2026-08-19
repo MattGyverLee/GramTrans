@@ -1078,6 +1078,46 @@ class DroppedItemRecord:
 
 
 @dataclass(frozen=True)
+class LeafExecutionFailure:
+    """Feature 037 (defect C, coordinator live-run finding): a leaf-dispatch
+    `execute_action` call that RAISED and was swallowed (transfer.py's
+    leaf-dispatch loop logs a Warning and continues rather than aborting the
+    whole Move -- that swallow-and-continue policy is intentional and is NOT
+    what this record changes).
+
+    What this record fixes: before this existed, a swallowed leaf-dispatch
+    exception left NO trace on `RunReport` at all -- `per_category[*].added`
+    is computed from `plan.actions` (the PLAN), not from actual write
+    outcomes, so a run that planned 139 actions and only wrote 98 (41
+    `execute_action` calls raising) still reported "139 added" with nothing
+    to distinguish it from a fully clean run. One `LeafExecutionFailure` is
+    appended per swallowed exception; `RunReport.leaf_failed` (a property,
+    not a field, so it can never drift out of sync) is `len(...)` of the
+    tuple these live in, giving a caller a single `assert report.leaf_failed
+    == 0` truthiness check.
+
+    Fields
+    ------
+    category       : the GrammarCategory of the PlannedAction being executed.
+    source_guid    : the source object's GUID (action.source_guid).
+    exception_type : `type(exc).__name__` (e.g. "RuntimeError") -- NOT the
+                     exception object itself, so this stays picklable/
+                     JSON-serializable like every other report record.
+    message        : `str(exc)`.
+    """
+    category: GrammarCategory
+    source_guid: str
+    exception_type: str
+    message: str
+
+    def __post_init__(self) -> None:
+        if not self.source_guid:
+            raise ValueError("LeafExecutionFailure.source_guid must be non-empty")
+        if not self.exception_type:
+            raise ValueError("LeafExecutionFailure.exception_type must be non-empty")
+
+
+@dataclass(frozen=True)
 class ReferenceFieldSpec:
     """One row of the hand-curated dispatch table that drives the referenced-
     possibility resolver (data-model.md; contracts/reference-resolver.md).
@@ -1419,6 +1459,12 @@ class RunReport:
     # pass these get the empty defaults below (snapshot compatibility).
     dropped_items: tuple = ()  # tuple[DroppedItemRecord, ...]
     fidelity_by_guid: dict = field(default_factory=dict)  # owner_guid -> FidelityStatus
+    # Feature 037 (defect C): leaf-dispatch execute_action failures that were
+    # caught and logged (swallow-and-continue is intentional -- see
+    # LeafExecutionFailure's docstring) rather than aborting the run. Additive
+    # field -- old callers that never pass this get the empty default
+    # (snapshot compatibility), same pattern as dropped_items above.
+    leaf_execution_failures: tuple = ()  # tuple[LeafExecutionFailure, ...]
 
     def __post_init__(self) -> None:
         # FR-018: sum of per_category[*].skipped must equal len(skips)
@@ -1428,6 +1474,16 @@ class RunReport:
                 f"FR-018 violation: sum(per_category[*].skipped)={cat_skipped_total} "
                 f"!= len(skips)={len(self.skips)}"
             )
+
+    @property
+    def leaf_failed(self) -> int:
+        """Count of swallowed leaf-dispatch execute_action failures (feature
+        037, defect C). A property (not a dataclass field) so it can never
+        drift out of sync with `leaf_execution_failures` -- the single
+        source of truth. ``assert report.leaf_failed == 0`` is the
+        truthiness check a caller needs to tell a clean run from one that
+        silently wrote fewer objects than it planned."""
+        return len(self.leaf_execution_failures)
 
 
 # ============================================================================
