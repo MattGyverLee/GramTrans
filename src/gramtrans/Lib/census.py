@@ -458,11 +458,17 @@ class ClassList:
 
     @property
     def required_classes(self) -> tuple:
-        """The CP-1 class set: coverage floor union census additions."""
-        return tuple(
+        """The CP-1 class set: coverage floor union census additions.
+
+        DISTINCT class names, so an A1 split (one class, two rows -- see
+        `split_feature_system_entries`) leaves this count untouched, exactly as
+        Amendment A1 requires: "it adds no class to the required list and does
+        not alter the 72-class count". The row count is `required_class_count`.
+        """
+        return tuple(dict.fromkeys(
             e.object_class for e in self.entries
             if e.in_class_list_via in ("coverage_floor", "census_additions")
-        )
+        ))
 
     @property
     def required_class_count(self) -> int:
@@ -677,8 +683,11 @@ def class_list_provenance_artifact(class_list: ClassList) -> dict:
 def split_class_label(object_class: str, owner: str) -> str:
     """PROVISIONAL (A1): the row label for a class split by owning collection.
 
-    Replaced or kept by T018; see that task's seam for the two encodings under
-    consideration.
+    The two candidate encodings are documented at `A1_OWNER_ENCODING` below --
+    this string form ("class_string") needs no contract edit but is unvalidated;
+    the alternative adds `owning_feature_system` to `$defs.classRow`. Every
+    emission goes through `encode_split_owner`, which is the one seam that
+    chooses.
     """
     return object_class + "(" + owner + ")"
 
@@ -1103,3 +1112,456 @@ def unmeasurable_errors(*readings) -> tuple:
                 "evidence": reading.counts.unresolved_accessors[name],
             })
     return tuple(out)
+
+
+# ===========================================================================
+# T018 -- duplicate natural-key grouping, and Amendment A1's FsFeatStrucType
+#        split by owning feature system
+#
+# WHY DUPLICATES ARE NOT OPTIONAL (fidelity-census.md section 6). A class row
+# passes only when BOTH `difference == 0` (or every unit accounted) AND
+# `duplicates.extra_objects == 0` (or each group accounted). The measured
+# phoneme row is the proof: source 41, destination 64, starter 23, so
+# 64 - 23 = 41 and `difference` is 0 -- on a run that had matched NONE of the
+# 23 starter phonemes and created 41 beside them, with 21 duplicate names. The
+# FIXED run gives the same 0. Baseline arithmetic cannot tell those two apart;
+# grouping by natural key can, and is what makes this a gate for SC-002 rather
+# than only for SC-005.
+#
+# COMPARISON STRICTNESS. Exact, case-sensitive, NO Unicode normalisation, NO
+# case folding, NO whitespace trimming -- `Nasals`, `nasals` and
+# `Nasal Consonants` were measured as three distinct natural classes. An object
+# with no name in the scoped writing system has NO KEY and is excluded from
+# grouping entirely: an empty key must never match another empty key, so two
+# unnamed objects are not duplicates of each other.
+# ===========================================================================
+
+#: Writing-system scope tokens. The scope differs BY CLASS and in opposite
+#: directions -- `PhPhoneme` keys on the default VERNACULAR (measured 97/97,
+#: against only 44/97 in the analysis WS) while every other admitted class keys
+#: on the default ANALYSIS WS -- so the scope is stored per class rather than
+#: assumed once for all of them.
+WS_SCOPE_VERNACULAR = "default_vernacular"
+WS_SCOPE_ANALYSIS = "default_analysis"
+
+
+@dataclass(frozen=True)
+class NaturalKeyDefinition:
+    """How one class's duplicate key is computed, and how it is described.
+
+    `description` is emitted verbatim as `duplicates.key_definition`, so a
+    reader of the artifact can tell WHICH key produced a duplicate group
+    without reading this file. `roster_source` records which document admits the
+    class, because admission to gate-failing duplicate detection is by roster
+    enumeration only (FR-003's rule for matching, applied to duplicates).
+    """
+
+    object_class: str
+    property_name: str
+    ws_scope: str
+    description: str
+    roster_source: str = "roster_extension_038"
+
+    def __post_init__(self) -> None:
+        if self.ws_scope not in (WS_SCOPE_VERNACULAR, WS_SCOPE_ANALYSIS):
+            raise CensusError(
+                "NaturalKeyDefinition.ws_scope for "
+                + repr(self.object_class) + " is " + repr(self.ws_scope)
+            )
+
+
+#: The classes whose duplicate keys the census can compute. Transcribed from
+#: 035's `natural-key-identity-roster.json` (the three entries it already
+#: carries) and 038's `natural-key-roster-extension.json` (the six proposed by
+#: FR-005). A class absent from this table gets NO `duplicates` block rather
+#: than an `extra_objects: 0` block, because 0 would claim the census looked.
+NATURAL_KEY_DEFINITIONS: dict = {
+    "PhPhoneme": NaturalKeyDefinition(
+        "PhPhoneme", "Name", WS_SCOPE_VERNACULAR,
+        "Name (default vernacular alt), exact and case-sensitive",
+    ),
+    "PhNCSegments": NaturalKeyDefinition(
+        "PhNCSegments", "Name", WS_SCOPE_ANALYSIS,
+        "Name (default analysis alt), exact and case-sensitive, within the "
+        "PhPhonData natural-class list and restricted to PhNCSegments",
+    ),
+    "PhNCFeatures": NaturalKeyDefinition(
+        "PhNCFeatures", "Name", WS_SCOPE_ANALYSIS,
+        "Name (default analysis alt), exact and case-sensitive, within the "
+        "PhPhonData natural-class list and restricted to PhNCFeatures",
+    ),
+    "PartOfSpeech": NaturalKeyDefinition(
+        "PartOfSpeech", "Name", WS_SCOPE_ANALYSIS,
+        "Name (default analysis alt), exact and case-sensitive, project-wide "
+        "over the recursive hierarchy; the owning parent is NOT part of the key",
+    ),
+    "MoMorphType": NaturalKeyDefinition(
+        "MoMorphType", "Name", WS_SCOPE_ANALYSIS,
+        "Name (default analysis alt), exact and case-sensitive, within the "
+        "lexicon's morph-types list",
+    ),
+    "LexEntryInflType": NaturalKeyDefinition(
+        "LexEntryInflType", "Name", WS_SCOPE_ANALYSIS,
+        "Name (default analysis alt), exact and case-sensitive, within the "
+        "variant-entry-types list and restricted to LexEntryInflType",
+    ),
+    "WfiWordform": NaturalKeyDefinition(
+        "WfiWordform", "Form", WS_SCOPE_VERNACULAR,
+        "Form (default vernacular alt), exact and case-sensitive",
+        roster_source="natural_key_identity_roster_035",
+    ),
+}
+
+
+def roster_admitted_classes(root: Optional[Path] = None) -> frozenset:
+    """The classes 035's roster ADMITS, read at run time.
+
+    Admission is what makes a duplicate group able to FAIL the gate. A duplicate
+    name on an unadmitted class is surfaced as advisory instead, because
+    homographs are legitimate content and the roster -- not this file -- decides
+    which classes have a key. Reading the file rather than hard-coding the three
+    current entries means the six entries feature 038 proposes (T028) become
+    gate-failing the moment 035 merges them, with no edit here.
+    """
+    base = repo_root() if root is None else Path(root)
+    path = base / NATURAL_KEY_ROSTER_DOCUMENT
+    if not path.is_file():
+        return frozenset()
+    data = json.loads(path.read_text(encoding="utf-8"))
+    return frozenset(
+        entry["class"] for entry in data.get("entries", ())
+        if entry.get("class")
+    )
+
+
+def _ws_handle_for(handle, ws_scope: str):
+    """The writing-system handle one key scope names, or None.
+
+    None means the key is NOT COMPUTABLE for this project, which the caller must
+    report -- never silently fall back to another writing system. Matching a
+    secondary vernacular would have fabricated 16 matches on `Yi Sichuan`
+    alone (the roster's measured counterexample).
+    """
+    getter = (
+        "GetDefaultVernacularWSHandle" if ws_scope == WS_SCOPE_VERNACULAR
+        else "GetDefaultAnalysisWSHandle"
+    )
+    method = getattr(handle, getter, None)
+    if callable(method):
+        try:
+            return method()
+        except Exception:  # noqa: BLE001
+            return None
+    cache = getattr(handle, "Cache", None)
+    attr = "DefaultVernWs" if ws_scope == WS_SCOPE_VERNACULAR else "DefaultAnalWs"
+    return getattr(cache, attr, None)
+
+
+def natural_key_of(obj, definition: NaturalKeyDefinition, ws_handle) -> Optional[str]:
+    """One object's natural key, or None when it HAS no key.
+
+    Exact string, taken from the named property's alt in the scoped writing
+    system. Returned unchanged: no `.strip()`, no `.casefold()`, no
+    `unicodedata.normalize`. None (no such property, no alt, empty alt) means
+    the object has no key and must not be grouped -- an empty key never matches
+    another empty key.
+    """
+    if ws_handle is None:
+        return None
+    prop = getattr(obj, definition.property_name, None)
+    if prop is None:
+        return None
+    try:
+        alt = prop.get_String(ws_handle)
+    except Exception:  # noqa: BLE001 -- not a multistring on this subclass
+        alt = None
+    text = getattr(alt, "Text", None)
+    if text is None:
+        return None
+    text = str(text)
+    return text if text else None
+
+
+@dataclass(frozen=True)
+class DuplicateReport:
+    """-> artifact `$defs.duplicates` for one class row.
+
+    `groups` counts keys held by MORE THAN ONE destination object;
+    `extra_objects` is `sum(group_size - 1)` over those groups -- the number of
+    objects that would not exist if matching had worked. `examples` is NEVER
+    truncated (invariant 2): truncation is legal only in the console summary,
+    which must state how many items it omitted.
+    """
+
+    object_class: str
+    roster_admitted: bool
+    key_definition: str
+    groups: int
+    extra_objects: int
+    examples: tuple = ()
+
+    def __post_init__(self) -> None:
+        for name in ("groups", "extra_objects"):
+            if getattr(self, name) < 0:
+                raise CensusError(
+                    "DuplicateReport." + name + " must be >= 0 on class "
+                    + repr(self.object_class)
+                )
+        if self.groups and not self.extra_objects:
+            raise CensusError(
+                "DuplicateReport for " + repr(self.object_class) + " claims "
+                + str(self.groups) + " duplicate groups but 0 extra objects -- "
+                "a group of size > 1 contributes at least one extra object"
+            )
+
+    def artifact(self) -> dict:
+        block = {
+            "roster_admitted": self.roster_admitted,
+            "key_definition": self.key_definition,
+            "groups": self.groups,
+            "extra_objects": self.extra_objects,
+            "examples": [dict(e) for e in self.examples],
+        }
+        return block
+
+
+def group_by_natural_key(objects, definition: NaturalKeyDefinition, ws_handle) -> dict:
+    """`{key: [objects]}` over the objects that HAVE a key, insertion-ordered.
+
+    Objects with no key are omitted rather than collected under a shared
+    sentinel, which is the whole point: two unnamed phonemes are two unnamed
+    phonemes, not a duplicate pair.
+    """
+    grouped: dict = {}
+    for obj in objects:
+        key = natural_key_of(obj, definition, ws_handle)
+        if key is None:
+            continue
+        grouped.setdefault(key, []).append(obj)
+    return grouped
+
+
+def _guid_str(obj) -> str:
+    try:
+        return str(obj.Guid)
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def duplicate_report(
+    object_class: str,
+    objects,
+    *,
+    ws_handle,
+    definition: Optional[NaturalKeyDefinition] = None,
+    roster_admitted: bool = False,
+) -> Optional[DuplicateReport]:
+    """Group one class's destination objects by natural key and count the extras.
+
+    Returns None when the class has no key definition at all -- the honest
+    answer, because an `extra_objects: 0` block would claim a measurement that
+    never happened.
+    """
+    spec = definition or NATURAL_KEY_DEFINITIONS.get(object_class)
+    if spec is None:
+        return None
+    grouped = group_by_natural_key(objects, spec, ws_handle)
+    examples = []
+    groups = 0
+    extra = 0
+    for key, members in grouped.items():
+        if len(members) < 2:
+            continue
+        groups += 1
+        extra += len(members) - 1
+        examples.append({
+            "key": key,
+            "count": len(members),
+            "guids": [g for g in (_guid_str(m) for m in members) if g],
+        })
+    return DuplicateReport(
+        object_class=object_class,
+        roster_admitted=roster_admitted,
+        key_definition=spec.description,
+        groups=groups,
+        extra_objects=extra,
+        examples=tuple(examples),
+    )
+
+
+def duplicate_reports_for(
+    handle,
+    class_names,
+    *,
+    admitted: Optional[frozenset] = None,
+    objects_for=None,
+) -> dict:
+    """`{class: DuplicateReport}` for every class that has a key definition.
+
+    `objects_for(handle, class_name)` is the enumeration seam; it defaults to
+    `objects_in_class`, which enumerates each class exactly ONCE and raises
+    rather than returning an empty list when the class cannot be enumerated.
+    """
+    admitted_set = (
+        roster_admitted_classes() if admitted is None else admitted
+    )
+    enumerate_objects = objects_for or objects_in_class
+    handles: dict = {}
+    out: dict = {}
+    for name in dict.fromkeys(class_names):
+        spec = NATURAL_KEY_DEFINITIONS.get(name)
+        if spec is None:
+            continue
+        if spec.ws_scope not in handles:
+            handles[spec.ws_scope] = _ws_handle_for(handle, spec.ws_scope)
+        report = duplicate_report(
+            name,
+            enumerate_objects(handle, name),
+            ws_handle=handles[spec.ws_scope],
+            definition=spec,
+            roster_admitted=name in admitted_set,
+        )
+        if report is not None:
+            out[name] = report
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Amendment A1 -- `FsFeatStrucType` is counted PER FEATURE SYSTEM
+#
+# A FieldWorks project has TWO feature systems, and both own
+# `FsFeatStrucType`: `LangProject.MsFeatureSystemOA` (morphosyntactic) and
+# `LangProject.PhFeatureSystemOA` (phonological). A single summed row is
+# ambiguous, because a shortfall in one system is masked by a surplus in the
+# other -- the same masking defect section 6 rule 2 exists to prevent for
+# duplicate identity. Each part is evaluated INDEPENDENTLY against section 9.
+#
+# ####################################################################
+# # PROVISIONAL (A1): THE OWNER ENCODING IS NOT SETTLED.             #
+# ####################################################################
+# `fidelity-census.md:650-673` requires the row to "carry the owner", but
+# `$defs.classRow` is `additionalProperties: false` with `class` as a bare
+# string and NO owner property. Two encodings are possible and exactly one seam
+# below decides between them:
+#
+#   1. "class_string"  -- `class: "FsFeatStrucType(MsFeatureSystem)"`.
+#      Needs no contract edit, validates today, but NOTHING checks the owner:
+#      it is an unvalidated convention inside a string, and a consumer
+#      splitting on class name sees two unknown classes.
+#   2. "row_property"  -- add `owning_feature_system` to `$defs.classRow`.
+#      Validated, self-describing, and additive under the schema's own
+#      EVOLUTION RULE (a new OPTIONAL property) -- but it EDITS A CONTRACT
+#      under `specs/`, which this task is not permitted to do.
+#
+# "class_string" is the provisional default so the suite can run. Switching is
+# one constant: set `A1_OWNER_ENCODING = "row_property"`. RECOMMENDATION is
+# recorded in the T018 journal entry; the orchestrator settles it.
+# ---------------------------------------------------------------------------
+
+#: The A1 seam. `"class_string"` (provisional) or `"row_property"`.
+A1_OWNER_ENCODING = "class_string"
+
+#: The two owning feature systems, in `LangProject` attribute order.
+FEATURE_SYSTEM_OWNERS: tuple = ("MsFeatureSystem", "PhFeatureSystem")
+
+#: `LangProject` attribute per owner token.
+FEATURE_SYSTEM_ATTRS: dict = {
+    "MsFeatureSystem": "MsFeatureSystemOA",
+    "PhFeatureSystem": "PhFeatureSystemOA",
+}
+
+#: Classes reachable from BOTH feature systems, which A1 therefore splits. A1's
+#: closing sentence extends the requirement to "any other class reachable from
+#: both feature systems", so this is a set rather than a single class name.
+FEATURE_SYSTEM_SPLIT_CLASSES: frozenset = frozenset({"FsFeatStrucType"})
+
+
+def encode_split_owner(row: dict, object_class: str, owner: Optional[str]) -> dict:
+    """THE A1 SEAM. Put the owning feature system into an emitted class row.
+
+    Every A1-aware emission goes through here, so the encoding is decided in
+    exactly one place. See the PROVISIONAL block above for the two options and
+    why the string form is the current default.
+    """
+    if owner is None:
+        row["class"] = object_class
+        return row
+    if A1_OWNER_ENCODING == "row_property":
+        # Requires `owning_feature_system` on `$defs.classRow`. Until that
+        # property exists the artifact is additionalProperties:false and this
+        # branch produces an INVALID document -- deliberately, rather than
+        # silently degrading to the other encoding.
+        row["class"] = object_class
+        row["owning_feature_system"] = owner
+        return row
+    row["class"] = split_class_label(object_class, owner)
+    return row
+
+
+def split_feature_system_entries(class_list: ClassList) -> ClassList:
+    """Expand each A1 class into one entry PER OWNING FEATURE SYSTEM.
+
+    An accounting change only: the CP-1 required class count is untouched (A1's
+    own words -- it "adds no class to the required list"), because both parts
+    carry the same `object_class`. `ClassList.required_classes` therefore still
+    reports `FsFeatStrucType` twice for one class, while `row_key` keeps the two
+    rows distinct so neither can be summed into the other.
+    """
+    entries = []
+    for entry in class_list.entries:
+        if (entry.object_class not in FEATURE_SYSTEM_SPLIT_CLASSES
+                or entry.owning_feature_system is not None):
+            entries.append(entry)
+            continue
+        for owner in FEATURE_SYSTEM_OWNERS:
+            entries.append(ClassListEntry(
+                object_class=entry.object_class,
+                in_class_list_via=entry.in_class_list_via,
+                gate_scope=entry.gate_scope,
+                engine_can_create=entry.engine_can_create,
+                inventory_tables=entry.inventory_tables,
+                not_evaluated_reason=entry.not_evaluated_reason,
+                owning_feature_system=owner,
+            ))
+    return ClassList(
+        entries=tuple(entries),
+        derivation_check=dict(class_list.derivation_check),
+        provenance=dict(class_list.provenance),
+    )
+
+
+def count_by_feature_system(handle, object_class: str) -> dict:
+    """`{owner: count}` for one A1 class, counted through each owning system.
+
+    Counted from `LangProject.<system>OA.TypesOC` rather than from the class
+    repository, because the repository total is exactly the ambiguous summed
+    figure A1 forbids. An owning system that is absent counts 0 -- a project
+    with no phonological feature system genuinely owns no phonological types,
+    which is a measurement and not an unresolved accessor.
+    """
+    counts: dict = {}
+    lang_project = getattr(handle, "lp", None)
+    if lang_project is None:
+        lang_project = getattr(getattr(handle, "project", None),
+                               "LangProject", None)
+    for owner in FEATURE_SYSTEM_OWNERS:
+        system = getattr(lang_project, FEATURE_SYSTEM_ATTRS[owner], None)
+        if system is None:
+            counts[owner] = 0
+            continue
+        types = getattr(system, "TypesOC", None)
+        if types is None:
+            counts[owner] = 0
+            continue
+        try:
+            counts[owner] = int(types.Count)
+        except Exception as exc:  # noqa: BLE001
+            raise CensusError(
+                "cannot count " + object_class + " under "
+                + FEATURE_SYSTEM_ATTRS[owner] + ": " + type(exc).__name__
+                + ": " + str(exc) + " -- A1 requires the two feature systems "
+                "to be counted separately, and a summed fallback is exactly "
+                "the ambiguity it forbids",
+                (object_class,),
+            ) from exc
+    return counts
