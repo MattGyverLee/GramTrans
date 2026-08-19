@@ -2349,6 +2349,89 @@ VERDICT_SEVERITY_ORDER: tuple = (
 #: PASS is exactly these two, and they are exactly the exit-0 verdicts.
 PASSING_VERDICTS: frozenset = frozenset({"CENSUS_CLEAN", "CENSUS_ACCOUNTED"})
 
+# ---------------------------------------------------------------------------
+# 5.2's GROSS-BASIS VERDICT CAP (T023a)
+#
+# `fidelity-census.md:251`, the `starter_subtraction_basis` table:
+#
+#   | `baseline_gross` | baseline present, run report absent |
+#   | `starter_matched_to_source: null`; gross subtraction used; EVERY ROW IS
+#     ADVISORY FOR SHORTFALL PURPOSES and THE RUN VERDICT CANNOT EXCEED
+#     `CENSUS_ACCOUNTED` |
+#
+# and `census-artifact.schema.json:408` says the same in one clause:
+# "baseline_gross: net = total - baseline, used when no run report is
+# available; caps the run verdict at CENSUS_ACCOUNTED."
+#
+# WHY THIS IS A CORRECTNESS FIX AND NOT A LENIENCY. On the gross basis the
+# subtrahend is the WHOLE baseline count, not the unmatched part of it, so a
+# starter object that the transfer correctly MATCHED to a source object is
+# subtracted anyway -- once as a starter object and once as the source object
+# it now stands in for. 5.2's own worked example: source 41, destination 43,
+# starter 23, gross 43 - 23 = 20, `difference` -21. That is a 21-object
+# shortfall reported on a run that lost nothing. The uncapped verdict is not a
+# strict reading of weak evidence; it is a FALSE STATEMENT about a correct
+# transfer, and `unexplained_shortfall` on such a row is arithmetic noise
+# rather than evidence of loss.
+#
+# AND IT IS THE NORMAL PATH, not a degenerate one. `census-artifact.schema.json:337`
+# on `carries_natural_keys`: "a count-only baseline forces
+# `starter_subtraction_basis` 'baseline_gross'". A whole-project baseline
+# CANNOT carry a natural key for every starter object -- measured on a blank
+# FieldWorks project, 36 classes hold objects and 11 of them (CmDomainQ 7938,
+# StTxtPara 86, PhCode 25, CmRow 30, CmCell 29, CmAgentEvaluation 8,
+# DsDiscourseData, LangProject, MoMorphData, PhPhonData, StText 12) carry no
+# name at all. So `carries_natural_keys` is false in practice and the gross
+# basis is what a real starter baseline yields. An unimplemented cap would
+# therefore make EVERY real run lie, not an edge case.
+#
+# THE CAP IS A CEILING, NOT A FLOOR, AND IT IS NOT A PASS.
+# * Ceiling: it removes exactly `UNEXPLAINED_SHORTFALL` and
+#   `UNEXPLAINED_SURPLUS`. Every verdict ABOVE `CENSUS_ACCOUNTED` in the
+#   published ordering -- `CENSUS_ERROR`, `COVERAGE_INCOMPLETE`,
+#   `BASELINE_MISSING`, `BASELINE_STALE`, `DUPLICATE_IDENTITY` -- is untouched
+#   and still wins, because `most_severe_verdict` still chooses over the full
+#   list. 5.3's "there is no path on which a missing baseline yields exit 0"
+#   survives verbatim: the cap never ADDS a verdict less severe than
+#   `CENSUS_ACCOUNTED`, so it can never displace exit 4.
+# * Not `CENSUS_CLEAN`: a suppressed shortfall makes the run ACCOUNTED, never
+#   CLEAN. Clean means nothing needed explaining; here something did, and what
+#   explains it is the basis rather than a report line. Capping to
+#   `CENSUS_CLEAN` would let a real difference read as "nothing happened".
+# * Only the RUN VERDICT. `row_passes` and the section 9.1 phase predicates are
+#   deliberately NOT relaxed: a phase declaring itself done needs trustworthy
+#   evidence, and gross-basis arithmetic is by construction not that. So a
+#   gross-basis run exits 0 while `census gate --phase N` still refuses.
+#
+# GRANULARITY. `starter_subtraction_basis` lives on the ROW
+# (`census-artifact.schema.json:405`, `$defs.classRow`), while the cap sentence
+# speaks of "the RUN verdict". The two agree in practice because the condition
+# is a run-wide one -- `census-artifact.schema.json:139`: an absent
+# `transfer_run.report_path` "forces starter_subtraction_basis 'baseline_gross'
+# on EVERY row". The contract is silent on a mixed artifact, so the
+# CONSERVATIVE reading is implemented: the suppression is applied PER ROW, so a
+# `baseline_matched` row -- whose shortfall IS trustworthy evidence -- still
+# raises `UNEXPLAINED_SHORTFALL` and still fails the run. One gross-basis row
+# therefore caps only its own contribution, never the whole artifact. In the
+# uniform case the contract describes, every row is gross and the two readings
+# coincide exactly.
+# ---------------------------------------------------------------------------
+
+#: The one basis on which a row's shortfall/surplus is arithmetic noise rather
+#: than evidence. Spelled as a named constant because the string appears in
+#: `SUBTRACTION_BASES`, in the validator's invariant 4, and here, and a typo in
+#: any one of the three would silently disable the cap.
+GROSS_SUBTRACTION_BASIS: str = "baseline_gross"
+
+#: The ceiling 5.2 imposes. Deliberately NOT `CENSUS_CLEAN`: see above.
+GROSS_BASIS_VERDICT_CAP: str = "CENSUS_ACCOUNTED"
+
+#: The two verdicts the cap suppresses, and the only two. Everything more
+#: severe than `GROSS_BASIS_VERDICT_CAP` is untouched.
+GROSS_BASIS_CAPPED_VERDICTS: frozenset = frozenset({
+    "UNEXPLAINED_SHORTFALL", "UNEXPLAINED_SURPLUS",
+})
+
 #: `$defs.starterBaseline.staleness.verdict`.
 STALENESS_VERDICTS: tuple = ("current", "stale", "unknown", "not_applicable")
 
@@ -2835,6 +2918,84 @@ def validate_artifact(artifact) -> tuple:
 # ---------------------------------------------------------------------------
 
 
+def is_gross_basis_row(row) -> bool:
+    """True when this row's starter subtraction was GROSS (5.2's table).
+
+    The single predicate the cap turns on, so `recompute_verdict` and the note
+    that makes the cap visible cannot disagree about which rows are capped.
+    A row that declares no basis at all is NOT capped: the cap is a claim the
+    artifact has to make about itself, never a default.
+    """
+    return row.get("starter_subtraction_basis") == GROSS_SUBTRACTION_BASIS
+
+
+def gross_basis_suppressions(artifact) -> tuple:
+    """Every shortfall/surplus 5.2's cap turns from a failure into accounting.
+
+    Each entry is `(class_label, direction, count)`. Pure: derived from the
+    rows' own `starter_subtraction_basis` and unexplained tallies, and -- like
+    the rest of the gate -- never from `artifact["verdict"]`.
+
+    Empty means the cap changed nothing, which is the ordinary case on a
+    `baseline_matched` run. Non-empty is what `gross_basis_cap_notes` renders,
+    and what stops a capped `CENSUS_ACCOUNTED` from reading as `CENSUS_CLEAN`.
+    """
+    found = []
+    for row in _rows(artifact):
+        if not _is_required(row) or not is_gross_basis_row(row):
+            continue
+        for direction, key in (
+                ("shortfall", "unexplained_shortfall"),
+                ("surplus", "unexplained_surplus")):
+            count = int(row.get(key, 0) or 0)
+            if count > 0:
+                found.append((_row_label(row), direction, count))
+    return tuple(found)
+
+
+def gross_basis_cap_notes(artifact) -> tuple:
+    """The human sentences that make the cap VISIBLE rather than silent.
+
+    Without these, `CENSUS_ACCOUNTED` on a gross-basis run is indistinguishable
+    from `CENSUS_ACCOUNTED` on a run where every difference was explained by a
+    report line -- and a reader would take "accounted" to mean "no shortfall
+    found". These say a shortfall WAS found, how big, on which class, and that
+    what accounts for it is the subtraction basis rather than evidence of
+    correctness.
+
+    They live in the artifact's `notes` array (schema top level, and
+    `$defs.classRow.notes` per row), which is the only string-array the
+    `additionalProperties: false` document offers -- there is no
+    `verdict_capped` / `verdict_floor` property to add without a breaking
+    schema change, and inventing one is forbidden. Notes are explicitly NOT
+    load-bearing (invariant 9: no verdict may depend on a note), and this cap
+    does not depend on one: it reads `starter_subtraction_basis`. The note
+    reports the decision; it never makes it.
+    """
+    suppressions = gross_basis_suppressions(artifact)
+    if not suppressions:
+        return ()
+    one = len(suppressions) == 1
+    notes = [
+        "[WARN] verdict CAPPED at " + GROSS_BASIS_VERDICT_CAP
+        + " by fidelity-census.md 5.2: " + str(len(suppressions))
+        + " unexplained tall" + ("y " if one else "ies ")
+        + "on rows whose starter_subtraction_basis is "
+        + GROSS_SUBTRACTION_BASIS + (" is" if one else " are")
+        + " ADVISORY, not evidence -- gross "
+        "subtraction also subtracts the starter objects the transfer correctly "
+        "matched, so it reports a shortfall on a correct run. This is NOT a "
+        "statement that nothing was lost; supply the run report to get a "
+        "baseline_matched basis and a trustworthy answer."
+    ]
+    for label, direction, count in suppressions:
+        notes.append(
+            "[WARN]   " + label + ": unexplained_" + direction + " "
+            + str(count) + " suppressed (basis " + GROSS_SUBTRACTION_BASIS + ")"
+        )
+    return tuple(notes)
+
+
 def recompute_verdict(artifact) -> str:
     """The verdict this artifact's OWN EVIDENCE supports.
 
@@ -2919,10 +3080,26 @@ def recompute_verdict(artifact) -> str:
     # -- UNEXPLAINED_SHORTFALL (1) / UNEXPLAINED_SURPLUS (2) --------------
     # R-4, and SC-005 in one line. Scoped to `required` rows: an advisory row
     # cannot by itself fail the gate (CP-3).
-    if any(_is_required(r) and int(r.get("unexplained_shortfall", 0) or 0) > 0
+    #
+    # T023a / 5.2's GROSS-BASIS CAP. `is_gross_basis_row` rows are skipped here
+    # -- "every row is advisory for SHORTFALL purposes" (fidelity-census.md:251)
+    # -- because gross subtraction removes the matched starter objects twice and
+    # so manufactures a shortfall on a correct run (43 - 23 = 20 against a
+    # source of 41). The suppression is a CEILING and nothing more: the two
+    # tokens simply never enter `applicable`, so every more-severe token
+    # already appended above (CENSUS_ERROR, COVERAGE_INCOMPLETE,
+    # BASELINE_MISSING, BASELINE_STALE, DUPLICATE_IDENTITY) still wins the
+    # `most_severe_verdict` choice untouched.
+    #
+    # A `baseline_matched` row is NOT skipped: its shortfall is trustworthy
+    # evidence and must still fail the run even in the same artifact as a
+    # gross-basis row.
+    if any(_is_required(r) and not is_gross_basis_row(r)
+           and int(r.get("unexplained_shortfall", 0) or 0) > 0
            for r in rows):
         applicable.append("UNEXPLAINED_SHORTFALL")
-    if any(_is_required(r) and int(r.get("unexplained_surplus", 0) or 0) > 0
+    if any(_is_required(r) and not is_gross_basis_row(r)
+           and int(r.get("unexplained_surplus", 0) or 0) > 0
            for r in rows):
         applicable.append("UNEXPLAINED_SURPLUS")
 
@@ -2931,6 +3108,15 @@ def recompute_verdict(artifact) -> str:
     # every unit of it is explained by a valid line.
     if any(_lines(row) for row in rows):
         applicable.append("CENSUS_ACCOUNTED")
+    # ...or, on the gross basis, by the SUBTRACTION BASIS rather than a line.
+    # This is the FLOOR half of the cap and it is not optional: without it a
+    # suppressed 21-object shortfall would leave `applicable` holding only
+    # CENSUS_CLEAN, and the run would report that NOTHING needed explaining.
+    # The cap's ceiling is CENSUS_ACCOUNTED, so CENSUS_CLEAN must stay
+    # unreachable BY CAPPING while remaining reachable on a run's own merits
+    # (no suppressions, no lines -> the append below still wins).
+    if gross_basis_suppressions(artifact):
+        applicable.append(GROSS_BASIS_VERDICT_CAP)
     applicable.append("CENSUS_CLEAN")
 
     return most_severe_verdict(applicable)
@@ -2942,11 +3128,23 @@ def stamp_verdict(artifact) -> dict:
     The ONLY sanctioned way those three fields get their values, so the console
     label and the artifact token cannot disagree and neither can be authored by
     hand.
+
+    Also appends 5.2's cap notes when the gross basis suppressed anything, so a
+    stamped `CENSUS_ACCOUNTED` always carries the reason it is not
+    `UNEXPLAINED_SHORTFALL`. Appending is deduplicated, so stamping twice does
+    not double the notes; the notes are reportage and the verdict never reads
+    them back (invariant 9).
     """
     verdict = recompute_verdict(artifact)
     artifact["verdict"] = verdict
     artifact["exit_code"] = exit_code_for(verdict)
     artifact["verdict_human_label"] = VERDICT_HUMAN_LABELS[verdict]
+    cap_notes = gross_basis_cap_notes(artifact)
+    if cap_notes:
+        notes = artifact.get("notes")
+        notes = list(notes) if isinstance(notes, list) else []
+        notes.extend(n for n in cap_notes if n not in notes)
+        artifact["notes"] = notes
     return artifact
 
 

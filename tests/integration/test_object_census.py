@@ -83,6 +83,9 @@ import pytest
 # ModuleNotFoundError naming the not-yet-written census modules.
 from gramtrans.Lib.census import (  # noqa: F401  (imported for the contract)
     CENSUS_SCHEMA_VERSION,
+    GROSS_BASIS_CAPPED_VERDICTS,
+    GROSS_BASIS_VERDICT_CAP,
+    GROSS_SUBTRACTION_BASIS,
     PASSING_VERDICTS,
     PHASE_PREDICATES,
     REASON_TOKENS,
@@ -96,7 +99,12 @@ from gramtrans.Lib.census import (  # noqa: F401  (imported for the contract)
     is_passing_verdict,
     most_severe_verdict,
     recompute_verdict,
+    gross_basis_cap_notes,
+    gross_basis_suppressions,
+    is_gross_basis_row,
     reason_requires_report_ref,
+    row_passes,
+    stamp_verdict,
     validate_artifact,
 )
 from gramtrans import census_cli
@@ -1117,6 +1125,317 @@ class TestBaselineIsAFailingVerdict:
         assert cli_exit(["gate", "--artifact", str(path)]) == 0
         assert cli_exit(["gate", "--artifact", str(path), "--phase", "1"]) == 0
 
+
+
+# ===========================================================================
+# 3b. T023a -- 5.2's GROSS-BASIS VERDICT CAP
+#
+# `fidelity-census.md:251`: on `baseline_gross`, "every row is advisory for
+# SHORTFALL purposes and the run verdict cannot exceed `CENSUS_ACCOUNTED`".
+# `census-artifact.schema.json:408` says the same: "caps the run verdict at
+# CENSUS_ACCOUNTED".
+#
+# This is not leniency. Gross subtraction subtracts the WHOLE baseline count, so
+# a starter object the transfer correctly matched is subtracted twice -- once as
+# a starter object and once as the source object it stands in for. 5.2's own
+# worked example is a 21-object shortfall reported on a run that lost nothing.
+# And `census-artifact.schema.json:337` makes this the NORMAL path: "a
+# count-only baseline forces starter_subtraction_basis 'baseline_gross'", which
+# every whole-project baseline is, because a blank FieldWorks project holds
+# objects in 11 classes that carry no name to key on at all.
+# ===========================================================================
+
+def gross_basis_rows(rows=None, *, phoneme_baseline=23):
+    """`rows` (default `phase_rows()`) rewritten as a no-run-report census: no
+    `starter_matched_to_source`, gross subtraction, no match_basis tallies."""
+    rows = list(phase_rows() if rows is None else rows)
+    for row in rows:
+        row["starter_baseline_count"] = (
+            phoneme_baseline if row["class"] == "PhPhoneme" else 0)
+        row["starter_matched_to_source"] = None
+        row["starter_subtraction_basis"] = GROSS_SUBTRACTION_BASIS
+        row["starter_baseline_source"] = "baseline_document"
+        row["match_basis"] = {"basis_source": "unavailable"}
+    return rows
+
+
+def five_two_worked_example_rows():
+    """fidelity-census.md 5.2's FIXED run, verbatim: "21 starter phonemes
+    matched by name, 20 new created, destination total 43. Gross subtraction
+    gives 43 - 23 = 20, so `difference` **-21** -- a shortfall reported on a
+    *correct* run."
+    """
+    rows = replace_row(phase_rows(), "PartOfSpeech", source_count=5)
+    rows = replace_row(
+        rows, "PhPhoneme",
+        source_count=41,               # the source's 41 phonemes
+        destination_count_total=43,    # 21 matched starters + 20 created + 2 left
+        destination_count_net=20,      # GROSS: 43 - 23
+        verdict_class="SHORTFALL",
+        unexplained_shortfall=21,      # difference -21, and no line explains it
+    )
+    return gross_basis_rows(rows)
+
+
+def gross_basis_artifact(rows=None, **overrides):
+    """A stamped artifact over gross-basis rows. A `starter_capture` baseline
+    with `carries_natural_keys` False is exactly what forces the gross basis,
+    and an absent `transfer_run` is the condition 5.2's table names."""
+    overrides.setdefault("baseline", make_baseline(
+        "starter_capture", carries_natural_keys=False))
+    overrides.setdefault("destination_freshly_created", True)
+    overrides.setdefault("with_transfer_run", False)
+    artifact = make_artifact(
+        five_two_worked_example_rows() if rows is None else rows, **overrides)
+    return stamp_verdict(artifact)
+
+
+class TestGrossBasisVerdictCap:
+    def test_the_cap_constants_match_the_contract(self):
+        assert GROSS_SUBTRACTION_BASIS == "baseline_gross"
+        assert GROSS_BASIS_VERDICT_CAP == "CENSUS_ACCOUNTED"
+        # The cap suppresses exactly the two tokens BELOW the ceiling and above
+        # CENSUS_CLEAN, and nothing above the ceiling.
+        assert set(GROSS_BASIS_CAPPED_VERDICTS) == {
+            "UNEXPLAINED_SHORTFALL", "UNEXPLAINED_SURPLUS"}
+        order = list(VERDICT_SEVERITY_ORDER)
+        cap = order.index(GROSS_BASIS_VERDICT_CAP)
+        for token in GROSS_BASIS_CAPPED_VERDICTS:
+            assert order.index(token) < cap
+            assert order.index(token) < order.index("CENSUS_CLEAN")
+
+    def test_the_basis_is_a_row_property_in_the_schema(self, census_schema):
+        """Granularity: `starter_subtraction_basis` lives on `$defs.classRow`,
+        while the cap sentence speaks of the RUN verdict. The two agree because
+        an absent report forces the gross basis on EVERY row."""
+        row_props = census_schema["$defs"]["classRow"]["properties"]
+        assert "starter_subtraction_basis" in row_props
+        assert GROSS_SUBTRACTION_BASIS in row_props[
+            "starter_subtraction_basis"]["enum"]
+        assert "starter_subtraction_basis" not in census_schema["properties"]
+
+    def test_the_five_two_worked_example_reports_accounted_not_shortfall(self):
+        """THE HEADLINE. 5.2: source 41, destination 43, starter 23, gross
+        43 - 23 = 20, difference -21 -- "a shortfall reported on a *correct*
+        run". Uncapped, this correct transfer exits 1."""
+        artifact = gross_basis_artifact()
+        row = [r for r in artifact["classes"] if r["class"] == "PhPhoneme"][0]
+        assert row["destination_count_net"] == 43 - 23 == 20
+        assert row["difference"] == -21
+        assert row["unexplained_shortfall"] == 21
+
+        assert recompute_verdict(artifact) == "CENSUS_ACCOUNTED"
+        outcome = gate_artifact(artifact)
+        assert outcome.exit_code == 0
+        assert outcome.passed
+        assert list(validate_artifact(artifact)) == []
+
+    def test_the_same_shortfall_on_the_matched_basis_still_fails(self):
+        """The counterweight: the cap must be doing its work because of the
+        BASIS, not because the gate stopped noticing shortfalls at all."""
+        rows = five_two_worked_example_rows()
+        for row in rows:
+            if row["class"] == "PhPhoneme":
+                # invariant 4: net == total - (baseline - matched) == 43 - 23.
+                row["starter_subtraction_basis"] = "baseline_matched"
+                row["starter_matched_to_source"] = 0
+        artifact = make_artifact(
+            rows, baseline=make_baseline("starter_capture"),
+            destination_freshly_created=True, with_transfer_run=False,
+            verdict="UNEXPLAINED_SHORTFALL")
+        assert recompute_verdict(artifact) == "UNEXPLAINED_SHORTFALL"
+        assert gate_artifact(artifact).exit_code == 1
+
+    def test_one_matched_basis_row_still_fails_a_mostly_gross_artifact(self):
+        """Granularity, decided conservatively: the suppression is PER ROW, so a
+        `baseline_matched` row's shortfall -- which IS trustworthy evidence --
+        still fails the run alongside gross-basis rows. One gross-basis row caps
+        only its own contribution, never the whole artifact."""
+        rows = five_two_worked_example_rows()
+        for row in rows:
+            if row["class"] == "MoStemMsa":
+                row["starter_subtraction_basis"] = "baseline_matched"
+                row["starter_matched_to_source"] = 0
+                row["destination_count_total"] = 3
+                row["destination_count_net"] = 3
+                row["difference"] = 3 - row["source_count"]
+                row["difference_raw"] = 3 - row["source_count"]
+                row["verdict_class"] = "SHORTFALL"
+                row["unexplained_shortfall"] = row["source_count"] - 3
+        artifact = make_artifact(
+            rows, baseline=make_baseline("starter_capture",
+                                         carries_natural_keys=False),
+            destination_freshly_created=True, with_transfer_run=False,
+            verdict="UNEXPLAINED_SHORTFALL")
+        assert recompute_verdict(artifact) == "UNEXPLAINED_SHORTFALL"
+        assert gate_artifact(artifact).exit_code == 1
+
+    def test_a_row_declaring_no_basis_is_not_capped(self):
+        """The cap is a claim the artifact must MAKE, never a default: a row
+        carrying no `starter_subtraction_basis` at all keeps failing."""
+        rows = five_two_worked_example_rows()
+        for row in rows:
+            row.pop("starter_subtraction_basis", None)
+        assert not any(is_gross_basis_row(r) for r in rows)
+        artifact = make_artifact(
+            rows, baseline=make_baseline("starter_capture"),
+            destination_freshly_created=True, with_transfer_run=False,
+            verdict="UNEXPLAINED_SHORTFALL")
+        assert recompute_verdict(artifact) == "UNEXPLAINED_SHORTFALL"
+
+    @pytest.mark.parametrize("verdict,mutate", [
+        ("CENSUS_ERROR", lambda kw: kw.update(errors=[{
+            "code": "UNHANDLED_EXCEPTION", "message": "boom"}])),
+        ("COVERAGE_INCOMPLETE", lambda kw: kw.update(
+            derivation_result="mismatch")),
+        ("BASELINE_MISSING", lambda kw: kw.update(
+            baseline=make_baseline("none"))),
+        ("BASELINE_STALE", lambda kw: kw.update(
+            baseline=make_baseline("starter_capture",
+                                   carries_natural_keys=False,
+                                   data_model_version=7000070),
+            destination_data_model_version=7000072)),
+    ])
+    def test_every_more_severe_verdict_still_beats_the_cap(self, verdict, mutate):
+        """'Capped' is a CEILING, not a floor. Every token above
+        CENSUS_ACCOUNTED in the published ordering still wins, which is why
+        5.3's "there is no path on which a missing baseline yields exit 0"
+        survives the cap verbatim."""
+        kwargs = {}
+        mutate(kwargs)
+        artifact = gross_basis_artifact(**kwargs)
+        assert recompute_verdict(artifact) == verdict
+        outcome = gate_artifact(artifact)
+        assert outcome.exit_code == EXPECTED_VERDICT_EXIT_CODES[verdict]
+        assert not outcome.passed
+
+    def test_duplicate_identity_still_beats_the_cap(self):
+        """Section 6 is "not optional" on the gross basis either: baseline
+        arithmetic cannot see a duplicate, so the cap must not hide one."""
+        rows = five_two_worked_example_rows()
+        for row in rows:
+            if row["class"] == "PhPhoneme":
+                row["duplicates"] = dict(
+                    row["duplicates"], groups=21, extra_objects=21,
+                    examples=[{"key": "k%d" % i, "count": 2, "guids": []}
+                              for i in range(21)])
+        artifact = gross_basis_artifact(rows)
+        assert recompute_verdict(artifact) == "DUPLICATE_IDENTITY"
+        assert gate_artifact(artifact).exit_code == 3
+
+    def test_a_missing_baseline_over_gross_rows_is_still_exit_four(self, tmp_path):
+        """5.3's bypass sweep, narrowed to the cap: no flag combination may let
+        the gross basis turn an absent baseline into exit 0."""
+        artifact = make_artifact(five_two_worked_example_rows(),
+                                 baseline=make_baseline("none"),
+                                 with_transfer_run=False,
+                                 verdict="BASELINE_MISSING")
+        path = write_artifact(tmp_path, artifact, "gross-no-baseline.json")
+        known = option_strings(census_cli.build_parser())
+        invocations = [["gate", "--artifact", str(path)]]
+        invocations += [["gate", "--artifact", str(path), "--phase", str(p)]
+                        for p in (1, 2, 3, 4, 5)]
+        invocations += [argv + [flag]
+                        for flag in CANDIDATE_BYPASS_FLAGS if flag in known
+                        for argv in list(invocations)]
+        zeros = [argv for argv in invocations if cli_exit(argv) == 0]
+        assert zeros == [], f"gross basis bought exit 0 with no baseline: {zeros}"
+
+    def test_census_clean_is_not_reachable_by_capping(self):
+        """The cap's ceiling is CENSUS_ACCOUNTED. A suppressed 21-object
+        shortfall must never read as "nothing needed explaining"."""
+        artifact = gross_basis_artifact()
+        assert recompute_verdict(artifact) != "CENSUS_CLEAN"
+        assert gross_basis_suppressions(artifact) == (
+            ("PhPhoneme", "shortfall", 21),)
+
+    def test_a_genuinely_clean_gross_basis_run_is_still_census_clean(self):
+        """...and the floor is not a blanket downgrade either: a gross-basis run
+        with nothing to explain keeps CENSUS_CLEAN on its own merits."""
+        artifact = gross_basis_artifact(gross_basis_rows())
+        assert gross_basis_suppressions(artifact) == ()
+        assert recompute_verdict(artifact) == "CENSUS_CLEAN"
+        assert gate_artifact(artifact).passed
+        assert artifact.get("notes") == []
+
+    def test_the_cap_is_visible_in_the_artifact(self):
+        """A capped CENSUS_ACCOUNTED must SAY it was capped, so nobody reads it
+        as "no shortfall found". The carrier is the schema's `notes` array --
+        the document is `additionalProperties: false` throughout and offers no
+        verdict-annotation property to add without a breaking change."""
+        artifact = gross_basis_artifact()
+        notes = artifact["notes"]
+        assert notes, "a capped verdict with no note is a silent cap"
+        blob = " ".join(notes)
+        assert "CAPPED" in blob
+        assert GROSS_BASIS_VERDICT_CAP in blob
+        assert GROSS_SUBTRACTION_BASIS in blob
+        assert "PhPhoneme" in blob and "21" in blob
+        assert "5.2" in blob
+        assert tuple(notes) == gross_basis_cap_notes(artifact)
+
+    def test_the_capped_artifact_still_validates_against_the_schema(
+            self, census_schema):
+        assert schema_errors(gross_basis_artifact(), census_schema) == []
+
+    def test_stamping_twice_does_not_duplicate_the_notes(self):
+        artifact = gross_basis_artifact()
+        first = list(artifact["notes"])
+        stamp_verdict(artifact)
+        stamp_verdict(artifact)
+        assert artifact["notes"] == first
+
+    def test_no_verdict_depends_on_a_note(self):
+        """Invariant 9: notes are reportage. Deleting them must not change the
+        verdict -- the cap reads `starter_subtraction_basis`, never a note --
+        and a hand-written note must not BUY a cap."""
+        artifact = gross_basis_artifact()
+        with_notes = recompute_verdict(artifact)
+        artifact["notes"] = []
+        assert recompute_verdict(artifact) == with_notes
+
+        forged = make_artifact(
+            replace_row(phase_rows(), "PhPhoneme", source_count=41,
+                        destination_count_total=20, destination_count_net=20,
+                        verdict_class="SHORTFALL", unexplained_shortfall=21),
+            verdict="UNEXPLAINED_SHORTFALL")
+        forged["notes"] = list(gross_basis_cap_notes(gross_basis_artifact()))
+        assert recompute_verdict(forged) == "UNEXPLAINED_SHORTFALL"
+
+    def test_the_cap_does_not_relax_row_passes_or_the_phase_predicates(self):
+        """5.2 caps "the RUN verdict". A phase declaring itself DONE needs
+        trustworthy evidence and gross-basis arithmetic is by construction not
+        that, so `census gate --phase N` still refuses what the run verdict now
+        passes."""
+        artifact = gross_basis_artifact()
+        row = [r for r in artifact["classes"] if r["class"] == "PhPhoneme"][0]
+        assert row_passes(row) is False
+        phase_5 = evaluate_phase(artifact, 5)
+        assert not phase_5.satisfied
+        assert any("PhPhoneme" in f for f in phase_5.failures)
+        assert not gate_artifact(artifact, phase=5).passed
+
+    def test_recompute_still_ignores_a_forged_verdict_on_a_capped_artifact(self):
+        artifact = gross_basis_artifact()
+        artifact["verdict"] = "CENSUS_CLEAN"
+        artifact["exit_code"] = 0
+        assert recompute_verdict(artifact) == "CENSUS_ACCOUNTED"
+
+    def test_a_gross_basis_surplus_is_capped_the_same_way(self):
+        """`UNEXPLAINED_SURPLUS` sits below `CENSUS_ACCOUNTED` in the ordering
+        exactly as the shortfall does. Gross subtraction over-subtracts, so it
+        manufactures shortfalls rather than surpluses -- but 5.2's table caps on
+        the BASIS, not on the sign, and a one-sided cap would be a second rule
+        free to drift from the first."""
+        rows = gross_basis_rows(replace_row(
+            phase_rows(), "MoInflClass", source_count=3,
+            destination_count_total=9, destination_count_net=9,
+            verdict_class="SURPLUS", unexplained_surplus=6))
+        artifact = gross_basis_artifact(rows)
+        assert gross_basis_suppressions(artifact) == (
+            ("MoInflClass", "surplus", 6),)
+        assert recompute_verdict(artifact) == "CENSUS_ACCOUNTED"
+        assert gate_artifact(artifact).exit_code == 0
 
 # ===========================================================================
 # 4. Verdicts, exit codes, severity ordering, PASS predicate
