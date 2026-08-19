@@ -31,12 +31,12 @@ independently reviewable and revertible.
 
 **Wave 1 — independent (different concerns):**
 
-- [ ] **T001** [P] Create the implementation worktree `../GramTrans-039-wizard-split` on branch `039-wizard-split` off current `main`; confirm `git -C ../GramTrans-039-wizard-split status` is clean · `../GramTrans-039-wizard-split`
-- [ ] **T002** [P] Capture the pre-change baseline on `main` with the **full** suite (never a subset — `test_wizard_page_flow.py` / `test_ui_gating.py` replace `QWizard` in `sys.modules` at import time): `python -m pytest tests/unit -q -m "not integration" > baseline.txt`. Confirm exactly one failure, the documented `.github/known-failures.txt:47` entry (`test_wizard_pos_grammar_wiring.py::TestPosClosureWalksPickedPos::test_plan_emits_pos_action_for_picked_pos`). Do **not** fix it · `baseline.txt` (scratch, not committed)
+- [X] **T001** [P] Create the implementation worktree `../GramTrans-039-wizard-split` on branch `039-wizard-split` off current `main`; confirm `git -C ../GramTrans-039-wizard-split status` is clean · `../GramTrans-039-wizard-split`
+- [X] **T002** [P] Capture the pre-change baseline on `main` with the **full** suite (never a subset — `test_wizard_page_flow.py` / `test_ui_gating.py` replace `QWizard` in `sys.modules` at import time): `python -m pytest tests/unit -q -m "not integration" > baseline.txt`. **Correction (measured 2026-08-19):** the baseline is **27** failures, not one — `.github/known-failures.txt` lists all 27 (features 026/029 plus the one wizard POS-closure entry at line 47), and the measured run reproduces exactly that set. `python .github/scripts/check_suite_baseline.py` is the authoritative gate and reports `[PASS] No new failures; all 27 baseline entries still fail`. Do **not** fix any of them · `baseline.txt` (scratch, not committed)
 
 **⟶ Wait for Wave 1 to finish, then:**
 
-- [ ] **T003** Record the exact `Lib/ui/` line-count table as the FR-003 / SC-008 reference point (`selection_wizard.py` = 6512 L today, 10802 L across the package) so every later size check compares against a real number · `specs/039-wizard-module-split/tasks.md` (this file, Notes section)
+- [X] **T003** Record the exact `Lib/ui/` line-count table as the FR-003 / SC-008 reference point (`selection_wizard.py` = 6512 L today, 10802 L across the package) so every later size check compares against a real number · `specs/039-wizard-module-split/tasks.md` (this file, Notes section)
 
 ---
 
