@@ -498,13 +498,25 @@ class ClassList:
         return tuple(e for e in self.entries if e.object_class == object_class)
 
 
-def _gate_scope_for(object_class: str, engine_can_create: bool) -> str:
+def gate_scope_for(object_class: str, engine_can_create: bool) -> str:
     """CP-3: `gate_scope` is explicit per row, and advisory is not a judgement.
 
     Rows the engine can create are `required`; the classes no path creates are
     `advisory` and cannot by themselves fail the gate.
+
+    PUBLIC ON PURPOSE. `Lib/report.py` needs this when it emits a `classRow`
+    from an in-memory `FidelityCensus`, and the only alternative there is a
+    local `"required" if engine_can_create else "advisory"` -- a second copy of
+    CP-3's rule, free to drift. One rule, one function, called from both
+    surfaces.
     """
     return "required" if engine_can_create else "advisory"
+
+
+#: Compatibility alias for the pre-promotion private spelling. Retained rather
+#: than renamed so an in-flight caller of `census._gate_scope_for` keeps
+#: working; both names are the same function object, so they cannot disagree.
+_gate_scope_for = gate_scope_for
 
 
 def derive_class_list(
@@ -595,7 +607,7 @@ def derive_class_list(
         entries.append(ClassListEntry(
             object_class=name,
             in_class_list_via="coverage_floor",
-            gate_scope=_gate_scope_for(name, engine_can_create),
+            gate_scope=gate_scope_for(name, engine_can_create),
             engine_can_create=engine_can_create,
             inventory_tables=derived.get(name, ("NONE",)),
             not_evaluated_reason=NOT_EVALUATED_CLASS_REASONS.get(name),
@@ -610,7 +622,7 @@ def derive_class_list(
         entries.append(ClassListEntry(
             object_class=name,
             in_class_list_via="census_additions",
-            gate_scope=_gate_scope_for(name, engine_can_create),
+            gate_scope=gate_scope_for(name, engine_can_create),
             engine_can_create=engine_can_create,
             inventory_tables=derived.get(name, ("NONE",)),
             not_evaluated_reason=NOT_EVALUATED_CLASS_REASONS.get(name),

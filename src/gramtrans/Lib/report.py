@@ -671,7 +671,7 @@ def _census_row_json(row) -> dict:
     Four required `classRow` keys are not functions of the row
     (`CLASS_CENSUS_ROW_ARTIFACT_FIELDS`'s docstring names them):
 
-    * `gate_scope` comes from `census._gate_scope_for`, which is a pure
+    * `gate_scope` comes from `census.gate_scope_for`, which is a pure
       function of `engine_can_create` -- called rather than restated, because
       a local `"required" if ... else "advisory"` would be a second copy of
       CP-3's rule.
@@ -719,7 +719,7 @@ def _census_row_json(row) -> dict:
     if not_evaluated_reason is not None:
         block["not_evaluated_reason"] = not_evaluated_reason
 
-    block["gate_scope"] = engine._gate_scope_for(
+    block["gate_scope"] = engine.gate_scope_for(
         row.object_class, row.engine_can_create)
     block["accounted_for"] = [{"reason": token} for token in row.reasons]
 
