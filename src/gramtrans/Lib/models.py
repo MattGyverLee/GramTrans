@@ -212,6 +212,13 @@ class SkipReason(enum.Enum):
     GUID_CONFLICT_NO_OVERRIDE = "guid_conflict_no_override"  # Phase 1+ only
     UNSUPPORTED_LCM_TYPE = "unsupported_lcm_type"
     BARE_BONES_MISSING_CLOSURE = "bare_bones_missing_closure"
+    # Feature 038 (defect G3) NARROWING: this reason is legal ONLY after a
+    # field-identity comparison has actually run and found the destination
+    # object equivalent. It previously doubled as "a GUID lookup hit
+    # something", which let an object that merely EXISTS be reported as
+    # already-present while its fields silently diverged from source. A GUID
+    # hit whose fields differ is an enrichment/overwrite candidate (FR-020),
+    # never this skip.
     ALREADY_PRESENT_BY_GUID = "already_present_by_guid"  # FR-009 informational
     INTERACTIVE_SKIP = "interactive_skip"  # Phase 2 (FR-204): user picked SKIP
     UNMAPPED_WS_USER_CHOSE_SKIP = "unmapped_ws_user_chose_skip"  # Phase 2 (FR-211)
@@ -231,6 +238,41 @@ class SkipReason(enum.Enum):
     # hard-fails); EXCLUDED_LOSSY is a soft warn+allow disposition -- the
     # entry transfers with a null reference after explicit user confirmation.
     EXCLUDED_LOSSY = "excluded_lossy"
+    # Feature 038 (FR-017, FR-025, SC-010): the engine reached the object,
+    # understood it, and still cannot faithfully rebuild it in the target --
+    # e.g. a MoAffixProcess whose rule structure has no reproducible form.
+    # Distinct from UNSUPPORTED_LCM_TYPE (never attempted) and from
+    # DEPENDENCY_UNRESOLVED (a missing referent, not the object itself).
+    # This reason exists so such a loss is REPORTED rather than skipped
+    # silently; it increments CategoryReport.not_reproducible.
+    NOT_REPRODUCIBLE = "not_reproducible"
+    # Feature 038 (FR-020): an object the closure walk would have pulled in
+    # was deliberately DESELECTED by the user. Distinct from EXCLUDED_LOSSY
+    # (which is about a reference going null on a copied entry) -- here the
+    # dependency object itself is not transferred at all, by choice.
+    DEPENDENCY_DESELECTED = "dependency_deselected"
+
+
+class MatchBasis(enum.Enum):
+    """Feature 038 (FR-001, FR-006) -- HOW a source object was matched to a
+    destination object.
+
+    The ordering here is a contract, not a preference: IDENTITY is always
+    tried first and is authoritative; NATURAL_KEY is only ever consulted
+    when identity finds nothing, and never the reverse. Inverting them
+    would let a name collision overwrite an object that a GUID had already
+    correctly identified.
+
+    IDENTITY    : matched by GUID, or by an existing `identity_remap` entry.
+    NATURAL_KEY : matched by a roster-admitted key (e.g. a phoneme name)
+                  after identity found no counterpart. Only legal for a
+                  class listed in
+                  `specs/035-fullsweep-fidelity/contracts/natural-key-identity-roster.json`.
+    NONE        : no match -- the object is created, or reported.
+    """
+    IDENTITY = "identity"
+    NATURAL_KEY = "natural_key"
+    NONE = "none"
 
 
 class MergeResolution(enum.Enum):
@@ -606,6 +648,356 @@ class ExcludedLossy:
 
 
 @dataclass(frozen=True)
+class MatchBasisRecord:
+    """Feature 038 (FR-001, FR-006) -- the per-item accounting unit recording
+    HOW one source object was matched, carried on `PlannedAction` /
+    `PlannedOverwrite` and aggregated into `CategoryReport`.
+
+    Why this exists: before 038 the report could not distinguish "this object
+    was found by GUID" from "this object was found by name because its GUID
+    was absent". Those are very different fidelity claims -- the second is an
+    identity SUBSTITUTION, and the roster (FR-187) requires it be counted as
+    such. A reader of the run report must never have to guess which happened.
+
+    Fields
+    ------
+    basis           : see `MatchBasis`.
+    object_class    : LCM class name, e.g. "PhPhoneme". MUST be a roster entry
+                      when `basis is NATURAL_KEY`.
+    key_expression  : the roster `natural_key` text that was evaluated.
+                      Empty for IDENTITY / NONE.
+    key_value       : the concrete key that matched, e.g. the phoneme name.
+                      Empty for IDENTITY / NONE.
+    source_guid     : source object GUID. Always present.
+    target_guid     : matched destination GUID. Empty IFF `basis is NONE`.
+    candidate_count : how many destination candidates the key hit. For
+                      IDENTITY this is 0 or 1; for NATURAL_KEY a value > 1 on a
+                      key declared unique is a harness error, never a pick.
+
+    Invariants enforced below mirror data-model.md section 2. They are
+    deliberately hard failures: a silently-wrong identity match is exactly the
+    class of defect this feature exists to remove, so an inconsistent record
+    must not be constructible.
+    """
+    basis: MatchBasis
+    object_class: str
+    source_guid: str
+    key_expression: str = ""
+    key_value: str = ""
+    target_guid: str = ""
+    candidate_count: int = 0
+
+    def __post_init__(self) -> None:
+        if not self.object_class:
+            raise ValueError("MatchBasisRecord.object_class must be non-empty")
+        if not self.source_guid:
+            raise ValueError("MatchBasisRecord.source_guid must be non-empty")
+        if self.candidate_count < 0:
+            raise ValueError(
+                "MatchBasisRecord.candidate_count must be >= 0, got "
+                f"{self.candidate_count!r}"
+            )
+        # target_guid is empty IFF basis is NONE -- both directions.
+        if self.basis is MatchBasis.NONE:
+            if self.target_guid:
+                raise ValueError(
+                    "MatchBasisRecord with basis=NONE must have an empty "
+                    f"target_guid, got {self.target_guid!r}"
+                )
+        elif not self.target_guid:
+            raise ValueError(
+                f"MatchBasisRecord with basis={self.basis.value} must carry a "
+                "non-empty target_guid"
+            )
+        # A natural-key match is meaningless without the key that produced it.
+        if self.basis is MatchBasis.NATURAL_KEY:
+            if not self.key_expression:
+                raise ValueError(
+                    "MatchBasisRecord with basis=NATURAL_KEY must carry the "
+                    "roster key_expression it was matched by"
+                )
+            if not self.key_value:
+                raise ValueError(
+                    "MatchBasisRecord with basis=NATURAL_KEY must carry the "
+                    "key_value that matched"
+                )
+
+
+@dataclass(frozen=True)
+class NaturalKeyRosterEntry:
+    """Feature 038 (FR-003) -- read-only projection of ONE `entries[]` object
+    from `specs/035-fullsweep-fidelity/contracts/natural-key-identity-roster.json`.
+
+    The roster file is owned by feature 035. This type exists so engine code
+    validates against that file rather than against a second, hand-written
+    list that would inevitably drift from it. Nothing here may be hard-coded:
+    a class absent from the file has NO natural-key basis and the engine must
+    degrade to GUID-only matching for it.
+
+    `key_fn_id` / `scope_fn_id` are 038's additions to the row. They make an
+    entry executable: `key_fn_id` names the pure key-extraction function, and
+    `scope_fn_id` names the destination candidate scope, so a key that is only
+    unique within one owning list is never matched project-wide.
+    """
+    object_class: str
+    natural_key: str
+    key_unique_by_construction: bool
+    on_ambiguous_key: str
+    reason: str
+    key_fn_id: str
+    key_scoping_note: Optional[str] = None
+    uniqueness_caveat: Optional[str] = None
+    live_confirmation: Optional[dict] = None
+    scope_fn_id: Optional[str] = None
+
+    def __post_init__(self) -> None:
+        for name in ("object_class", "natural_key", "on_ambiguous_key",
+                     "reason", "key_fn_id"):
+            if not getattr(self, name):
+                raise ValueError(
+                    f"NaturalKeyRosterEntry.{name} must be non-empty "
+                    f"(object_class={self.object_class!r})"
+                )
+
+
+class DependencyKind(enum.Enum):
+    """Feature 038 (FR-014) -- the relationship one `ClosureEdge` represents.
+
+    These name the SPECIFIC dependency being walked, not a generic "depends
+    on", because FR-018 requires each relationship to be verified on its own
+    evidence before it may influence a plan. A single global "closure is on"
+    flag cannot express that, which is why `CLOSURE_EDGES_VERIFIED`
+    (Lib/categories.py) is a per-relationship allowlist keyed by this enum.
+    """
+    AFFIX_TO_POS = "affix_to_pos"
+    AFFIX_TO_SLOT = "affix_to_slot"
+    SLOT_TO_TEMPLATE = "slot_to_template"
+    TEMPLATE_TO_POS = "template_to_pos"
+    MSA_TO_INFL_FEATURE = "msa_to_infl_feature"
+    PROCESS_RULE_TO_PHONEME = "process_rule_to_phoneme"
+    PROCESS_RULE_TO_NATURAL_CLASS = "process_rule_to_natural_class"
+
+
+@dataclass(frozen=True)
+class ClosureEdge:
+    """Feature 038 (FR-014, FR-015) -- one materialised (dependency,
+    dependent) pair from `closure.walk`'s `pulled_in_by` map.
+
+    `dependent` needs `dependency`. Both are `(GrammarCategory, guid)` pairs.
+
+    `verified` is the FR-018 gate. `build_run_plan` MUST RAISE on an edge
+    whose `verified is False` rather than quietly planning from it: an
+    unverified dependency edge that silently changes what gets transferred is
+    precisely the failure mode FR-018 exists to prevent. `verified_by` names
+    the test or probe that earned the True.
+
+    `origin` preserves `closure.walk`'s seed semantics -- a directly selected
+    item is "chosen" and is never "pulled_in".
+    """
+    dependent: tuple
+    dependency: tuple
+    kind: DependencyKind
+    verified: bool
+    origin: str
+    verified_by: str = ""
+    deselected: bool = False
+
+    def __post_init__(self) -> None:
+        for name in ("dependent", "dependency"):
+            val = getattr(self, name)
+            if not (isinstance(val, tuple) and len(val) == 2):
+                raise ValueError(
+                    "ClosureEdge." + name + " must be a (GrammarCategory, "
+                    "guid) 2-tuple, got " + repr(val)
+                )
+            if not val[1]:
+                raise ValueError(
+                    "ClosureEdge." + name + " must carry a non-empty guid"
+                )
+        if self.origin not in ("chosen", "pulled_in"):
+            raise ValueError(
+                "ClosureEdge.origin must be 'chosen' or 'pulled_in', got "
+                + repr(self.origin)
+            )
+        if self.verified and not self.verified_by:
+            raise ValueError(
+                "ClosureEdge.verified is True but verified_by is empty -- "
+                "FR-018 requires naming the evidence that verified the edge"
+            )
+
+
+@dataclass(frozen=True)
+class IncompletenessRecord:
+    """Feature 038 (FR-016, FR-017, FR-019, SC-010) -- an item that will
+    arrive in the target KNOWINGLY incomplete.
+
+    Raised when a dependency was deselected by the user (cause="deselected"),
+    cannot be satisfied at all ("unsatisfiable"), or sits in a dependency
+    cycle ("cycle"). Every record reaches the post-run statistics panel: the
+    contract is that the item is REPORTED, never transferred silently broken.
+    Affix-to-column link failures emit one of these too (FR-019, SC-003).
+    """
+    incomplete_item: tuple
+    incomplete_label: str
+    missing_dependency: tuple
+    missing_label: str
+    cause: str
+    consequence: str
+
+    def __post_init__(self) -> None:
+        causes = ("deselected", "unsatisfiable", "cycle")
+        if self.cause not in causes:
+            raise ValueError(
+                "IncompletenessRecord.cause must be one of "
+                + repr(causes) + ", got " + repr(self.cause)
+            )
+        if not self.consequence:
+            raise ValueError(
+                "IncompletenessRecord.consequence must be non-empty -- a "
+                "record the user cannot act on is not a report (SC-010)"
+            )
+
+
+@dataclass(frozen=True)
+class EnrichedCollection:
+    """Feature 038 (FR-020..FR-022) -- what one owned collection gained during
+    an enrichment. `field_name` is one of the seven POS owned collections
+    (AffixSlotsOC, AffixTemplatesOS, InflectableFeatsRC, SubPossibilitiesOS,
+    StemNamesOC, InflectionClassesOC, ReferenceFormsOS)."""
+    field_name: str
+    added: int = 0
+    already_present: int = 0
+    dropped: int = 0
+
+    def __post_init__(self) -> None:
+        if not self.field_name:
+            raise ValueError("EnrichedCollection.field_name must be non-empty")
+        for name in ("added", "already_present", "dropped"):
+            if getattr(self, name) < 0:
+                raise ValueError(
+                    "EnrichedCollection." + name + " must be >= 0, got "
+                    + repr(getattr(self, name))
+                )
+
+
+@dataclass(frozen=True)
+class EnrichmentRecord:
+    """Feature 038 (FR-020..FR-022, SC-007) -- what a MATCHED destination
+    object gained.
+
+    Enrichment never removes, blanks, or overwrites existing destination
+    content (FR-021): it is add-only, carried as
+    `PlannedOverwrite.write_mode == "merge"` -- Principle IV's "write source
+    where non-empty, keep target where source empty, never blank from empty".
+
+    `was_created` is always False here; it exists so the report can state the
+    created-vs-enriched distinction explicitly (FR-022) rather than leaving a
+    reader to infer it.
+    """
+    object_class: str
+    source_guid: str
+    target_guid: str
+    label: str
+    collections: tuple = ()
+    fields_updated: tuple = ()
+    was_created: bool = False
+
+    def __post_init__(self) -> None:
+        for name in ("object_class", "source_guid", "target_guid"):
+            if not getattr(self, name):
+                raise ValueError(
+                    "EnrichmentRecord." + name + " must be non-empty"
+                )
+        if self.was_created:
+            raise ValueError(
+                "EnrichmentRecord.was_created must be False -- an enrichment "
+                "acts on an object that already existed in the target "
+                "(FR-022). A creation is a PlannedAction, not an enrichment."
+            )
+
+    @property
+    def is_empty(self) -> bool:
+        """True when nothing was actually gained. Per data-model.md section 7
+        this is the ONLY case that may degrade to a `Skip`."""
+        return (not self.fields_updated
+                and all(c.added == 0 for c in self.collections))
+
+
+@dataclass(frozen=True)
+class ProcessContextSpec:
+    """Feature 038 (FR-023) -- one input context row of a `MoAffixProcess`
+    (`PhSimpleContextSeg` / `PhSimpleContextNC` / `PhSimpleContextBdry`)."""
+    context_class: str
+    index: int
+    referent_guid: str = ""
+    label: str = ""
+
+    def __post_init__(self) -> None:
+        if not self.context_class:
+            raise ValueError(
+                "ProcessContextSpec.context_class must be non-empty"
+            )
+        if self.index < 0:
+            raise ValueError("ProcessContextSpec.index must be >= 0")
+
+
+@dataclass(frozen=True)
+class ProcessOutputSpec:
+    """Feature 038 (FR-023) -- one output step of a `MoAffixProcess`
+    (`MoCopyFromInput`, `MoInsertPhones`, `MoModifyFromInput`)."""
+    step_class: str
+    index: int
+    content: str = ""
+    referent_guids: tuple = ()
+
+    def __post_init__(self) -> None:
+        if not self.step_class:
+            raise ValueError("ProcessOutputSpec.step_class must be non-empty")
+        if self.index < 0:
+            raise ValueError("ProcessOutputSpec.index must be >= 0")
+
+
+@dataclass(frozen=True)
+class ProcessRuleTransferRecord:
+    """Feature 038 (FR-023..FR-025, SC-006) -- the outcome of transferring one
+    source `MoAffixProcess`.
+
+    HARD INVARIANT (FR-025, SC-010): when `reproduced is False` the rule is
+    reported -- via a `DroppedItemRecord` plus `Skip(NOT_REPRODUCIBLE)` -- and
+    SKIPPED. It must NEVER be written as a different, simpler class. The
+    historic `MoAffixProcess -> MoAffixAllomorph` downgrade is prohibited by
+    construction: no `PlannedAction` may name a target class differing from
+    its source class. A rule silently demoted to a shape that cannot express
+    the same alternation is worse than a rule the report says was not
+    transferred.
+    """
+    source_guid: str
+    input_contexts: tuple = ()
+    output_steps: tuple = ()
+    reproduced: bool = False
+    target_guid: str = ""
+    not_reproducible_reason: str = ""
+    reference_decisions: tuple = ()
+
+    def __post_init__(self) -> None:
+        if not self.source_guid:
+            raise ValueError(
+                "ProcessRuleTransferRecord.source_guid must be non-empty"
+            )
+        if not self.reproduced and not self.not_reproducible_reason:
+            raise ValueError(
+                "ProcessRuleTransferRecord with reproduced=False MUST carry a "
+                "non-empty not_reproducible_reason (FR-025, SC-010) -- an "
+                "unexplained non-reproduction is a silent loss"
+            )
+        if self.reproduced and not self.target_guid:
+            raise ValueError(
+                "ProcessRuleTransferRecord with reproduced=True must carry "
+                "the target_guid it was reproduced as"
+            )
+
+
+@dataclass(frozen=True)
 class PlannedAction:
     """ADD — create a brand-new object in target with the source's GUID
     preserved (where possible).  Phase 0's primary action verb."""
@@ -613,6 +1005,12 @@ class PlannedAction:
     source_guid: str
     intended_target_guid: str
     summary: str
+    # Feature 038 (FR-006): HOW this object was matched -- or None, which
+    # means no destination counterpart was found and this is a brand-new ADD.
+    # Carried so the run report can distinguish a GUID match from a
+    # natural-key (identity-substitution) match instead of leaving a reader
+    # to guess which one produced the plan.
+    match_basis: Optional["MatchBasisRecord"] = None
     pulled_in_by: tuple = ()  # tuple[str, ...] of source GUIDs
     # Feature 024 (T017, Principle III): per-item ReferenceDecision snapshots
     # for every referenced-possibility field on the entry/sense/allomorph
@@ -668,8 +1066,16 @@ class PlannedOverwrite:
     its syncable properties from source.  Phase 1 (FR-101 onward).
 
     `match_via` records which strategy yielded this overwrite
-    ("guid" | "identity_remap" | "fingerprint"). Phase 2 may inspect it to
-    apply different conflict-resolution policy per-match-type.
+    ("guid" | "identity_remap" | "fingerprint" | "natural_key"). Phase 2 may
+    inspect it to apply different conflict-resolution policy per-match-type.
+
+    Feature 038 adds "natural_key" (FR-001, FR-002): the source object had no
+    GUID counterpart in the destination, but a roster-admitted natural key
+    (e.g. a phoneme name) matched an existing destination object. Identity is
+    always tried first and is authoritative; the natural key is only ever the
+    fallback. The richer `match_basis` field below carries the full accounting
+    for the same fact -- `match_via` stays a plain string for the existing
+    Phase 2 policy code that switches on it.
 
     `owner_guid` is the parent reference the executor needs to scope its
     lookup (e.g. for a Slot overwrite, owner_guid is the template's GUID;
@@ -686,7 +1092,7 @@ class PlannedOverwrite:
     source_guid: str
     target_guid: str  # the existing target GUID (may differ from source for fingerprint matches)
     summary: str
-    match_via: str = "guid"  # "guid" | "identity_remap" | "fingerprint"
+    match_via: str = "guid"  # "guid"|"identity_remap"|"fingerprint"|"natural_key"
     pulled_in_by: tuple = ()
     owner_guid: str = ""  # parent reference for the executor's lookup
     write_mode: str = "overwrite"  # "overwrite" | "merge"
@@ -698,6 +1104,27 @@ class PlannedOverwrite:
     # Empty for overwrite categories that don't (yet) route through the
     # resolver.
     reference_decisions: tuple = ()  # tuple[ReferenceDecisionRecord, ...]
+    # Feature 038 (FR-006): full match accounting for this overwrite. The
+    # richer sibling of `match_via` above -- see MatchBasisRecord. None on
+    # overwrites planned before 038's matcher ran.
+    match_basis: Optional["MatchBasisRecord"] = None
+    # Feature 038 (FR-020..FR-022): set when this overwrite is an ENRICHMENT
+    # -- an add-only update that fills gaps on a destination object that
+    # already existed. Enrichment requires `write_mode == "merge"`; it never
+    # removes, blanks, or overwrites existing destination content (FR-021).
+    enrichment: Optional["EnrichmentRecord"] = None
+
+    def __post_init__(self) -> None:
+        # FR-021: an enrichment is add-only by construction. Catching this
+        # here means an enrichment can never be constructed with overwrite
+        # semantics that would blank destination content the user still has.
+        if self.enrichment is not None and self.write_mode != "merge":
+            raise ValueError(
+                "PlannedOverwrite carrying an enrichment must have "
+                "write_mode='merge' (FR-021: enrichment is add-only and must "
+                "never blank existing destination content), got write_mode="
+                + repr(self.write_mode)
+            )
 
 
 @dataclass(frozen=True)
@@ -794,6 +1221,28 @@ class RunPlan:
     # `extra_lines` param -- P0-2, feature-025 cycle-6 remediation) before
     # Move ever writes.
     reversal_decisions: tuple = ()  # tuple[ReversalDecision, ...]
+    # ---- Feature 038 (transfer fidelity gaps) -------------------------------
+    # All four are additive `tuple = ()` so every existing run snapshot stays
+    # valid without migration -- the same pattern `dropped_items` above
+    # established and feature 037 reused for `leaf_execution_failures`.
+    #
+    # FR-014/FR-015: the dependency-closure walk's materialised edges. With
+    # `CLOSURE_EDGES_VERIFIED` (Lib/categories.py) landing EMPTY this is a
+    # no-op by construction -- no edge is registered, so no edge is walked.
+    # `build_run_plan` MUST raise on any edge with `verified is False`
+    # (FR-018) rather than plan from it.
+    closure_edges: tuple = ()  # tuple[ClosureEdge, ...]
+    # FR-016/FR-017/FR-019: items that will arrive knowingly incomplete,
+    # because a dependency was deselected, is unsatisfiable, or sits in a
+    # cycle. Reported, never silently transferred broken (SC-010).
+    incompleteness: tuple = ()  # tuple[IncompletenessRecord, ...]
+    # FR-020..FR-022: add-only updates to destination objects that already
+    # existed and were matched by identity or natural key.
+    enrichments: tuple = ()  # tuple[EnrichmentRecord, ...]
+    # FR-023..FR-025: per-MoAffixProcess transfer outcomes. A rule that
+    # cannot be reproduced is reported and skipped -- NEVER downgraded to a
+    # simpler class (the historic MoAffixProcess -> MoAffixAllomorph bug).
+    process_rules: tuple = ()  # tuple[ProcessRuleTransferRecord, ...]
     # Feature 025 (full reversals, US3 T033): Part B `.fwdictconfig`
     # configuration-view copy plan (`Lib/config_views.py.plan_config_views`),
     # computed once in `Lib/preview.py.build_run_plan` (fail-soft -- a
@@ -1430,6 +1879,18 @@ class CategoryReport:
     ws_created: int = 0
     ws_skipped: int = 0
     excluded_lossy: int = 0        # Phase 3c Selection UI: deliberate warn+allow omissions
+    # ---- Feature 038 ---------------------------------------------------
+    # FR-006: objects matched by a roster-admitted NATURAL KEY rather than by
+    # GUID. This is the roster's IDENTITY-SUBSTITUTION bucket (FR-187): the
+    # report must never let a name match pass as an identity match.
+    identity_substitution: int = 0
+    # FR-022: destination objects that already existed and gained content.
+    # Deliberately distinct from `overwritten` -- an enrichment is add-only.
+    enriched: int = 0
+    # FR-017/FR-025: objects the engine understood but could not faithfully
+    # rebuild, reported via Skip(NOT_REPRODUCIBLE) instead of being written
+    # in a degraded form.
+    not_reproducible: int = 0
 
 
 @dataclass(frozen=True)
@@ -1465,6 +1926,18 @@ class RunReport:
     # field -- old callers that never pass this get the empty default
     # (snapshot compatibility), same pattern as dropped_items above.
     leaf_execution_failures: tuple = ()  # tuple[LeafExecutionFailure, ...]
+    # ---- Feature 038 (transfer fidelity gaps) ---------------------------
+    # The same four tuples RunPlan carries, plus the census. Additive with
+    # empty defaults, so pre-038 callers and snapshots are unaffected.
+    closure_edges: tuple = ()      # tuple[ClosureEdge, ...]
+    incompleteness: tuple = ()     # tuple[IncompletenessRecord, ...]
+    enrichments: tuple = ()        # tuple[EnrichmentRecord, ...]
+    process_rules: tuple = ()      # tuple[ProcessRuleTransferRecord, ...]
+    # FR-009..FR-013: the per-object-class fidelity census for this run.
+    # The type is defined by T015 (Phase 3); the annotation is a forward
+    # reference, which is safe because this module runs under
+    # `from __future__ import annotations`.
+    census: Optional["FidelityCensus"] = None
 
     def __post_init__(self) -> None:
         # FR-018: sum of per_category[*].skipped must equal len(skips)
@@ -1473,6 +1946,33 @@ class RunReport:
             raise ValueError(
                 f"FR-018 violation: sum(per_category[*].skipped)={cat_skipped_total} "
                 f"!= len(skips)={len(self.skips)}"
+            )
+        # ---- Feature 038: extend the accounting invariant to the new buckets.
+        # Each new per-category counter must reconcile against the tuple that
+        # is its single source of truth. A counter that can drift from its
+        # records is exactly how a fidelity report starts lying.
+        cat_enriched_total = sum(
+            r.enriched for r in self.per_category.values()
+        )
+        if cat_enriched_total != len(self.enrichments):
+            raise ValueError(
+                "Feature 038 accounting violation: "
+                f"sum(per_category[*].enriched)={cat_enriched_total} "
+                f"!= len(enrichments)={len(self.enrichments)}"
+            )
+        cat_not_reproducible_total = sum(
+            r.not_reproducible for r in self.per_category.values()
+        )
+        skips_not_reproducible = sum(
+            1 for sk in self.skips
+            if getattr(sk, "reason", None) is SkipReason.NOT_REPRODUCIBLE
+        )
+        if cat_not_reproducible_total != skips_not_reproducible:
+            raise ValueError(
+                "Feature 038 accounting violation: "
+                "sum(per_category[*].not_reproducible)="
+                f"{cat_not_reproducible_total} != number of "
+                f"Skip(NOT_REPRODUCIBLE)={skips_not_reproducible}"
             )
 
     @property
@@ -1484,6 +1984,37 @@ class RunReport:
         truthiness check a caller needs to tell a clean run from one that
         silently wrote fewer objects than it planned."""
         return len(self.leaf_execution_failures)
+
+    # ---- Feature 038 derived views ------------------------------------
+    # Properties, not fields, for the same reason `leaf_failed` is one:
+    # a stored count can drift from the records it summarises, and these
+    # are the numbers a fidelity claim rests on.
+
+    @property
+    def identity_substituted(self) -> int:
+        """Count of objects matched by natural key rather than by GUID
+        (FR-006). Non-zero means the run relied on identity SUBSTITUTION for
+        that many objects -- correct and intended, but a materially weaker
+        claim than a GUID match, so it is reported separately."""
+        return sum(
+            r.identity_substitution for r in self.per_category.values()
+        )
+
+    @property
+    def rules_not_reproduced(self) -> tuple:
+        """The process rules this run could not faithfully rebuild
+        (FR-025). Each carries a non-empty `not_reproducible_reason` by
+        construction, so this is directly renderable."""
+        return tuple(
+            r for r in self.process_rules if not r.reproduced
+        )
+
+    @property
+    def has_incomplete_items(self) -> bool:
+        """True when at least one item is arriving knowingly incomplete
+        (FR-016, FR-017). SC-010's never-silent contract means this must be
+        surfaced by any caller that reports success."""
+        return bool(self.incompleteness)
 
 
 # ============================================================================
