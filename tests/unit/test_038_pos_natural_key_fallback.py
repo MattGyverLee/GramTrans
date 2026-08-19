@@ -116,10 +116,20 @@ def admitted(tmp_path):
 
 
 @pytest.fixture
-def not_admitted():
-    """The roster as shipped in THIS worktree, which does not yet carry the six
-    entries (they landed on `main`). The fallback must be inert."""
-    matcher_mod.reset_natural_key_roster_cache(str(ROSTER_035))
+def not_admitted(tmp_path):
+    """A roster carrying only 035's original three entries -- i.e. one that
+    does NOT admit `PartOfSpeech`. The fallback must be inert.
+
+    This used to point at the shipped file, on the reasoning that this
+    worktree had not yet merged T028's append. That was true when written and
+    false one merge later, which is exactly why a test must not use a live
+    artifact as a stand-in for a state it happens to be in today.
+    """
+    base = json.loads(ROSTER_035.read_text(encoding="utf-8"))
+    base["entries"] = list(base["entries"])[:3]
+    path = tmp_path / "natural-key-identity-roster.json"
+    path.write_text(json.dumps(base), encoding="utf-8")
+    matcher_mod.reset_natural_key_roster_cache(str(path))
     yield
     matcher_mod.reset_natural_key_roster_cache(None)
 

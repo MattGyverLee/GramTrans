@@ -252,10 +252,31 @@ def appended_roster(tmp_path):
     reset_natural_key_roster_cache(None)
 
 
+def _roster_without_038_entries(tmp_path):
+    """035's file as it stood BEFORE T028 appended 038's six entries: its
+    original three, and nothing else.
+
+    Built from the shipped file's first three entries rather than by reading
+    the shipped file whole. That distinction is the whole point of this
+    helper. These tests need "a roster that does not admit the six", and until
+    T028 landed the shipped file WAS that -- so pointing at it directly was
+    the obvious thing to do, and it silently stopped being true the moment 035
+    committed the append. Taking the first three keeps the fixture honest
+    against any future roster, and the protocol guarantees they stay first and
+    byte-identical.
+    """
+    base = json.loads(ROSTER_035.read_text(encoding="utf-8"))
+    base["entries"] = list(base["entries"])[:3]
+    path = tmp_path / "natural-key-identity-roster.json"
+    path.write_text(json.dumps(base), encoding="utf-8")
+    return str(path)
+
+
 @pytest.fixture
-def original_roster():
-    """Point the module accessor at the real, not-yet-appended file."""
-    reset_natural_key_roster_cache(str(ROSTER_035))
+def original_roster(tmp_path):
+    """Point the module accessor at a roster carrying ONLY 035's original
+    three entries."""
+    reset_natural_key_roster_cache(_roster_without_038_entries(tmp_path))
     yield
     reset_natural_key_roster_cache(None)
 

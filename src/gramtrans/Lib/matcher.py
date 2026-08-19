@@ -881,14 +881,26 @@ def ws_handles_for(handle) -> Dict[str, object]:
 
 
 def _guid_text(obj) -> str:
-    """An object's GUID as a string, or "" when it has none."""
+    """An object's GUID, lower-cased, or "" when it has none.
+
+    Mirrors `categories._guid_str_from`'s attribute fallback deliberately:
+    lowercase `.guid` FIRST (duck-typed objects, and the original contract),
+    then PascalCase `.Guid`. Getting this wrong is not cosmetic. This module
+    compares the string it returns against the one `categories` returns, so a
+    shape one of them reads and the other does not makes identity silently
+    fail for that object -- and identity failing silently is the exact defect
+    038 exists to remove.
+
+    Lower-cased for the same reason: a GUID that differs only in case is the
+    same GUID, and the rest of the codebase already normalises.
+    """
     if obj is None:
         return ""
-    guid = getattr(obj, "Guid", None)
-    if guid is None:
-        return ""
-    text = str(guid)
-    return text if text else ""
+    for attr in ("guid", "Guid"):
+        value = getattr(obj, attr, None)
+        if value:
+            return str(value).lower()
+    return ""
 
 
 def _class_name(obj) -> str:
@@ -1020,6 +1032,23 @@ def resolve_match(
     """
     source_guid = _guid_text(source_obj)
     candidates = list(candidates or ())
+
+    if not source_guid:
+        # Every MatchBasisRecord is keyed by its source GUID, so an object
+        # without one cannot be ACCOUNTED FOR -- not matched, not missed, not
+        # reported. Returning a silent "no match" would drop it from the
+        # accounting entirely, which is the failure mode FR-013 forbids, so
+        # this is raised with a message that names the shape rather than left
+        # to surface as MatchBasisRecord's opaque "source_guid must be
+        # non-empty". Callers on a live path guard before calling.
+        raise ValueError(
+            "resolve_match cannot account for a source object of class "
+            + repr(object_class) + " whose GUID is unreadable: "
+            + type(source_obj).__name__ + " exposes neither a non-empty "
+            "'guid' nor 'Guid'. Every MatchBasisRecord is keyed by its source "
+            "GUID, so this object could be neither matched nor reported as a "
+            "miss."
+        )
 
     # --- Step 1: identity. Authoritative, and it short-circuits. ------------
     wanted = {source_guid} if source_guid else set()

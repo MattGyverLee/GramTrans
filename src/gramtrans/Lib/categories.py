@@ -4271,6 +4271,14 @@ def _resolve_target_pos_by_natural_key(target, src_pos, source_handle):
     """
     if src_pos is None or source_handle is None:
         return None
+    if not _guid_str_from(src_pos):
+        # `resolve_match` raises rather than silently dropping an object it
+        # cannot key its accounting record by. On this path that is the wrong
+        # trade: identity has already been tried and failed, so the caller is
+        # about to report the item anyway (T033), and turning a reportable
+        # miss into an exception would take down the whole run over one
+        # unreadable object.
+        return None
     if _matcher.natural_key_binding_for("PartOfSpeech") is None:
         return None
     if _matcher.natural_key_roster_entry_for("PartOfSpeech") is None:
