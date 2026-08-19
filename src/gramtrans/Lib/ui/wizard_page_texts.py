@@ -23,7 +23,7 @@ if __package__:
     from ..selection import build_text_inventory
     from ..ws_fonts import WsFontRegistry
     from .merge_preview_pane import MergePreviewPane, PreviewRequest
-    from .wizard_page_base import _FlowPage
+    from .wizard_page_base import _FlowPage, _ProjectHandlesMixin
     from .wizard_roles import _GUID_ROLE, _ITEM_CAT_ROLE, _ITEM_STATUS_ROLE
     from .wizard_widgets import (
         _carry_full_values_in_tooltips,
@@ -37,7 +37,7 @@ else:
     from merge_preview_pane import MergePreviewPane, PreviewRequest  # type: ignore
     from models import GrammarCategory  # type: ignore
     from selection import build_text_inventory  # type: ignore
-    from wizard_page_base import _FlowPage  # type: ignore
+    from wizard_page_base import _FlowPage, _ProjectHandlesMixin  # type: ignore
     from wizard_roles import (  # type: ignore
         _GUID_ROLE,
         _ITEM_CAT_ROLE,
@@ -57,7 +57,7 @@ else:
 # Page 4 -- Preview
 # ---------------------------------------------------------------------------
 
-class _PageTexts(_FlowPage):
+class _PageTexts(_ProjectHandlesMixin, _FlowPage):
     """Texts item picker (Feature 026, US1 — Model-A per-text selection, FR-001).
 
     A flat, checkable list of the source's interlinear texts. The wordform
@@ -106,38 +106,7 @@ class _PageTexts(_FlowPage):
         btn_row.addStretch(1)
         layout.addLayout(btn_row)
 
-    # -- source/target handles (per-page copy, matching the wizard convention) --
-    def _get_source(self):
-        try:
-            wizard = self.wizard()
-            if wizard is None:
-                return None
-            page0 = wizard.page_project_ws()
-            if page0 is None:
-                return None
-            ctx = page0.context()
-            if ctx is not None:
-                h = getattr(ctx, "source_handle", None)
-                if h is not None:
-                    return h
-            return getattr(page0, "_host", None)
-        except Exception:  # noqa: BLE001
-            return None
 
-    def _get_target(self):
-        try:
-            wizard = self.wizard()
-            if wizard is None:
-                return None
-            page0 = wizard.page_project_ws()
-            if page0 is None:
-                return None
-            ctx = page0.context()
-            if ctx is None:
-                return None
-            return getattr(ctx, "target_handle", None)
-        except Exception:  # noqa: BLE001
-            return None
 
     def initializePage(self) -> None:
         """Build the text inventory from the bound source and populate the list.

@@ -40,7 +40,7 @@ What is deliberately absent
 """
 from __future__ import annotations
 
-from PyQt6 import QtWidgets
+from PyQt6 import QtCore, QtWidgets
 
 # ---------------------------------------------------------------------------
 # Flow-aware page base (T013, FR-009b)
@@ -160,41 +160,255 @@ class _FlowPage(QtWidgets.QWizardPage):
         return -1                           # last shown page ends the run
 
 # ---------------------------------------------------------------------------
-# Shared bases (feature 039 T008 declares them; T027 fills them in)
+# Shared bases (feature 039 T027)
 # ---------------------------------------------------------------------------
-# Declared here in the relocation commit and left without method bodies on
-# purpose. US1 and US2 are reviewable as pure relocations; a commit that both
-# moved code and rewrote it would forfeit that. The bodies arrive in US3
-# (T027), together with the deletion of the copies they replace, so the
-# deduplication is one self-contained, separately revertible diff.
+# Each method below existed in several byte-identical copies before the split.
+# The counts are measured, not estimated: `_get_source` had nine copies of which
+# seven were structurally identical, `_get_target` nine of which eight were, the
+# two pick accessors two each, and the whole-block cluster four each. Where the
+# copies' docstrings differed, the most informative wording is the one kept --
+# it is the one that says WHY, and losing it is the actual cost of deduplicating
+# by hand (FR-010).
 
 
 class _ProjectHandlesMixin:
-    """`_get_source()` / `_get_target()`, written once (T027).
+    """`_get_source()` / `_get_target()` for the pages that read the project pair.
 
-    Depends on the page being hosted by a wizard exposing `page_project_ws()`,
-    and on that page exposing `context()` and `_host`. Nothing else.
+    Both walk the same path: this page -> its wizard -> `page_project_ws()` ->
+    that page's `context()`. Both return None rather than raising at every step,
+    because a page is constructed standalone by a good deal of the unit suite and
+    by `_PagePreview`'s host, and "no source bound yet" is a normal state on
+    every page before step 1 is complete -- not an error.
+
+    Depends on nothing but those two duck-typed calls, which is why no page class
+    has to import `_PageProjects` to reach it.
+
+    Applied to `_PageItemPicker`, `_PageStemPicker`, `_PageSkeleton`,
+    `_PageGramDeps`, `_PageCustomFields`, `_PageRules`, `_PagePhonology` and
+    `_PageTexts`. `_PageEntryTypes` overrides BOTH methods -- see the comments on
+    its overrides in `wizard_pages_blocks.py`; the divergence is real, predates
+    the split, and changing it would be a behaviour change.
     """
+
+    def _get_source(self):
+        """Return the source project handle from page 0, or None.
+
+        Prefers `context().source_handle` -- the handle bound when the operator
+        chose a source on step 1 -- and falls back to the page's `_host`, which
+        is what the FlexTools path supplies directly.
+        """
+        try:
+            w = self.wizard()
+            if w is None:
+                return None
+            p0 = w.page_project_ws()
+            if p0 is None:
+                return None
+            ctx = p0.context()
+            if ctx is not None:
+                h = getattr(ctx, "source_handle", None)
+                if h is not None:
+                    return h
+            return getattr(p0, "_host", None)
+        except Exception:  # noqa: BLE001
+            return None
+
+    def _get_target(self):
+        """Return the target project handle from page-0 context, or None.
+
+        FR-018(e): the RunContext, set when the operator picks a target on step
+        1, exposes `.target_handle`. With no context or no target yet this
+        returns None so the inventory builder is called with `target=None` --
+        the Target column renders blank instead of the page failing to build.
+        """
+        try:
+            w = self.wizard()
+            if w is None:
+                return None
+            p0 = w.page_project_ws()
+            if p0 is None:
+                return None
+            ctx = p0.context()
+            if ctx is None:
+                return None
+            return getattr(ctx, "target_handle", None)
+        except Exception:  # noqa: BLE001
+            return None
 
 
 class _PickDerivedMixin:
-    """`_get_affix_picks()` / `_get_stem_picks()`, written once (T027).
+    """`_get_affix_picks()` / `_get_stem_picks()` for the two pick-derived pages.
 
-    For the two pages whose contents derive from earlier picks rather than from
-    the source project directly.
+    `_PageSkeleton` and `_PageGramDeps` do not enumerate the source project;
+    they derive their contents from what was picked on the affix and stem pages.
+    Both reach those picks the same way -- through the wizard's named accessors,
+    never by importing the picker classes -- and both treat any failure as "no
+    picks", so a page whose predecessor is not yet built renders empty instead of
+    refusing to build.
     """
+
+    def _get_affix_picks(self) -> frozenset:
+        """Retrieve affix_picks from the item-picker page (index 1)."""
+        try:
+            w = self.wizard()
+            if w is None:
+                return frozenset()
+            page_items = w.page_items()
+            if page_items is None:
+                return frozenset()
+            sel = page_items.collect_selection()
+            return sel.affix_picks
+        except Exception:  # noqa: BLE001
+            return frozenset()
+
+    def _get_stem_picks(self) -> frozenset:
+        """019: retrieve stem_picks from the dedicated Stems page (mirror of
+        _get_affix_picks). The skeleton builder itself stays AFFIX-ONLY per
+        FR-013; this accessor exists for parity and downstream use.
+        """
+        try:
+            w = self.wizard()
+            if w is None:
+                return frozenset()
+            page_stems = w.page_stems()
+            if page_stems is None:
+                return frozenset()
+            return page_stems.stem_picks()
+        except Exception:  # noqa: BLE001
+            return frozenset()
 
 
 class _BlockPage(_FlowPage):
-    """The Model-B "independent block" page: one tree, wholesale NONE/ALL (T027).
+    """The Model-B "independent block" page: one tree, wholesale NONE/ALL.
 
-    Depends on exactly three attributes, all set by the subclass's own
-    `__init__`: `self._tree`, `self._whole_block`, `self._mirroring`.
+    `specs/wizard-selection-roadmap.md` names two selection models. This is the
+    second: the page owns one tree of group headers over checkable item rows,
+    plus a single whole-block tristate checkbox that reflects and drives them.
+    Nothing on the page derives from an earlier page's picks.
+
+    The cluster below depends on exactly three attributes, all set by the
+    subclass's own `__init__`:
+
+      * `self._tree`         -- the QTreeWidget of groups and items
+      * `self._whole_block`  -- the tristate QCheckBox
+      * `self._mirroring`    -- the reentrancy flag that stops a programmatic
+                               `setCheckState` from being read back as a user
+                               edit
+
+    and on one class attribute, `_kind_role`.
+
+    NOT in this base, on purpose: each page's `collect_*` API. Their contracts
+    genuinely differ -- `leaf_item_picks() -> dict`,
+    `collect_rules_picks() -> Optional[frozenset]` where `None` means
+    transfer-all rather than nothing, `collect_phonology_picks() ->
+    dict[GrammarCategory, set]`, `collect_entry_type_picks() -> dict` -- so a
+    base method overridden four different ways would share a name and nothing
+    else. `deselected_needed_guids()`, which only two of the four have, is out
+    for the same reason.
     """
 
     # Which item-data role this page's tree keys its "group" / "item"
     # distinction on. It was the ONLY thing that varied across the four
-    # otherwise identical `_iter_item_rows` copies, so it is the only thing the
+    # otherwise-identical `_iter_item_rows` copies, so it is the only thing the
     # base takes as a parameter. Subclasses set it; `None` means the page has
-    # not declared one and `_iter_item_rows` yields nothing.
+    # not declared one, and `_iter_item_rows` then yields nothing rather than
+    # comparing every row against None and silently matching the wrong ones.
     _kind_role = None
+
+    def _iter_item_rows(self):
+        """Yield (group_item, item) for every checkable item row in the tree.
+
+        One level of groups over one level of items, which is the shape all four
+        block pages build. `_PageEntryTypes` overrides this: its trees nest, so
+        it walks the full depth.
+        """
+        if self._kind_role is None:
+            return
+        root = self._tree.invisibleRootItem()
+        for i in range(root.childCount()):
+            group = root.child(i)
+            if group.data(0, self._kind_role) != "group":
+                continue
+            for j in range(group.childCount()):
+                item = group.child(j)
+                if item.data(0, self._kind_role) == "item":
+                    yield group, item
+
+    def _on_whole_block_clicked(self, _checked: bool = False) -> None:
+        """User toggled the whole-block checkbox: check-all or uncheck-all.
+
+        Ignores Qt's cycled tristate state and decides from the tree so the
+        behaviour is deterministic (partial => check-all, full => uncheck-all).
+        """
+        if not self._has_any_item():
+            self._refresh_whole_block()
+            return
+        want_checked = not self._all_items_checked()
+        self._set_all_items(want_checked)
+        self._refresh_whole_block()
+
+    def _set_all_items(self, checked: bool) -> None:
+        state = (QtCore.Qt.CheckState.Checked if checked
+                 else QtCore.Qt.CheckState.Unchecked)
+        self._mirroring = True
+        try:
+            for _grp, item in self._iter_item_rows():
+                item.setCheckState(0, state)
+        finally:
+            self._mirroring = False
+
+    def _refresh_whole_block(self) -> None:
+        """Reflect the aggregate item state on the whole-block tristate box.
+
+        Empty block (no items at all) => unchecked + disabled, NOT vacuously
+        fully-selected, per the edge-case invariant in the contract
+        (Acceptance 1.3). A block with nothing in it has nothing selected; a box
+        that read "all" would offer to transfer a set the page cannot describe.
+        """
+        self._mirroring = True
+        try:
+            if not self._has_any_item():
+                self._whole_block.setEnabled(False)
+                self._whole_block.setCheckState(QtCore.Qt.CheckState.Unchecked)
+                return
+            self._whole_block.setEnabled(True)
+            checked = sum(
+                1 for _g, it in self._iter_item_rows()
+                if it.checkState(0) == QtCore.Qt.CheckState.Checked
+            )
+            total = sum(1 for _ in self._iter_item_rows())
+            if checked == 0:
+                self._whole_block.setCheckState(QtCore.Qt.CheckState.Unchecked)
+            elif checked == total:
+                self._whole_block.setCheckState(QtCore.Qt.CheckState.Checked)
+            else:
+                self._whole_block.setCheckState(
+                    QtCore.Qt.CheckState.PartiallyChecked
+                )
+        finally:
+            self._mirroring = False
+
+    def _on_item_changed(self, item, column) -> None:
+        if self._mirroring or column != 0:
+            return
+        self._refresh_whole_block()
+
+    def _has_any_item(self) -> bool:
+        for _ in self._iter_item_rows():
+            return True
+        return False
+
+    def _all_items_checked(self) -> bool:
+        any_item = False
+        for _g, item in self._iter_item_rows():
+            any_item = True
+            if item.checkState(0) != QtCore.Qt.CheckState.Checked:
+                return False
+        return any_item
+
+    def whole_block_on(self) -> bool:
+        """True iff any item row in this block is currently checked."""
+        for _g, item in self._iter_item_rows():
+            if item.checkState(0) == QtCore.Qt.CheckState.Checked:
+                return True
+        return False

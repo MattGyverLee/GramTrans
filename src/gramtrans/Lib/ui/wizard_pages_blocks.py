@@ -44,7 +44,7 @@ if __package__:
     )
     from ..ws_fonts import WsFontRegistry
     from .merge_preview_pane import MergePreviewPane, PreviewRequest
-    from .wizard_page_base import _FlowPage
+    from .wizard_page_base import _BlockPage, _ProjectHandlesMixin
     from .wizard_roles import (
         _CF_GUID_ROLE,
         _CF_KIND_ROLE,
@@ -82,7 +82,7 @@ else:
         build_phonology_inventory,
         build_rules_inventory,
     )
-    from wizard_page_base import _FlowPage  # type: ignore
+    from wizard_page_base import _BlockPage, _ProjectHandlesMixin  # type: ignore
     from wizard_roles import (  # type: ignore
         _CF_GUID_ROLE,
         _CF_KIND_ROLE,
@@ -119,7 +119,7 @@ else:
 # ---------------------------------------------------------------------------
 
 
-class _PageCustomFields(_FlowPage):
+class _PageCustomFields(_ProjectHandlesMixin, _BlockPage):
     """Page 2: Custom Fields block (Feature 016, US1/US2/US4).
 
     Grouped tree: four owner-class levels (Entry / Sense / Example / Allomorph),
@@ -132,6 +132,11 @@ class _PageCustomFields(_FlowPage):
     No ADD_NEW / LINK / UPDATE / OVERWRITE conflict-mode control (per spec: CUSTOM_FIELDS
     uses conservative LINK-only default, applied automatically at plan time).
     """
+
+    # Which item-data role this page's tree keys group-vs-item
+    # on. The `_BlockPage` cluster reads it; it is the whole of
+    # what used to be four near-copies of `_iter_item_rows`.
+    _kind_role = _CF_KIND_ROLE
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -349,81 +354,12 @@ class _PageCustomFields(_FlowPage):
         _carry_full_values_in_tooltips(self._tree)
         self._refresh_whole_block()
 
-    # -- whole-block toggle -----------------------------------------------
-    def _on_whole_block_clicked(self, _checked: bool = False) -> None:
-        if not self._has_any_item():
-            self._refresh_whole_block()
-            return
-        want_checked = not self._all_items_checked()
-        self._set_all_items(want_checked)
-        self._refresh_whole_block()
 
-    def _set_all_items(self, checked: bool) -> None:
-        state = (QtCore.Qt.CheckState.Checked if checked
-                 else QtCore.Qt.CheckState.Unchecked)
-        self._mirroring = True
-        try:
-            for _grp, item in self._iter_item_rows():
-                item.setCheckState(0, state)
-        finally:
-            self._mirroring = False
 
-    def _refresh_whole_block(self) -> None:
-        """Reflect aggregate item state on the whole-block tristate box.
 
-        Empty block => unchecked + disabled (NOT vacuously full, per Acceptance 1.3).
-        """
-        self._mirroring = True
-        try:
-            if not self._has_any_item():
-                self._whole_block.setEnabled(False)
-                self._whole_block.setCheckState(QtCore.Qt.CheckState.Unchecked)
-                return
-            self._whole_block.setEnabled(True)
-            checked = sum(
-                1 for _g, it in self._iter_item_rows()
-                if it.checkState(0) == QtCore.Qt.CheckState.Checked
-            )
-            total = sum(1 for _ in self._iter_item_rows())
-            if checked == 0:
-                self._whole_block.setCheckState(QtCore.Qt.CheckState.Unchecked)
-            elif checked == total:
-                self._whole_block.setCheckState(QtCore.Qt.CheckState.Checked)
-            else:
-                self._whole_block.setCheckState(QtCore.Qt.CheckState.PartiallyChecked)
-        finally:
-            self._mirroring = False
 
-    def _on_item_changed(self, item, column) -> None:
-        if self._mirroring or column != 0:
-            return
-        self._refresh_whole_block()
 
-    # -- tree walking helpers -----------------------------------------------
-    def _iter_item_rows(self):
-        """Yield (group_item, item) for every checkable custom-field item row."""
-        root = self._tree.invisibleRootItem()
-        for i in range(root.childCount()):
-            group = root.child(i)
-            if group.data(0, _CF_KIND_ROLE) != "group":
-                continue
-            for j in range(group.childCount()):
-                item = group.child(j)
-                if item.data(0, _CF_KIND_ROLE) == "item":
-                    yield group, item
 
-    def _has_any_item(self) -> bool:
-        for _ in self._iter_item_rows():
-            return True
-        return False
-
-    def _all_items_checked(self) -> bool:
-        any_item = False
-        for _g, item in self._iter_item_rows():
-            any_item = True
-            if item.checkState(0) != QtCore.Qt.CheckState.Checked:
-                return False
-        return any_item
 
     # -- state API (US2) ---------------------------------------------------
     def leaf_item_picks(self) -> dict:
@@ -450,12 +386,6 @@ class _PageCustomFields(_FlowPage):
             return {}
         return {GrammarCategory.CUSTOM_FIELDS: frozenset(checked_guids)}
 
-    def whole_block_on(self) -> bool:
-        """True iff any field row is checked."""
-        for _g, item in self._iter_item_rows():
-            if item.checkState(0) == QtCore.Qt.CheckState.Checked:
-                return True
-        return False
 
     # -- source/target helpers ---------------------------------------------
     def _get_source(self):
@@ -491,7 +421,7 @@ class _PageCustomFields(_FlowPage):
             return None
 
 
-class _PageRules(_FlowPage):
+class _PageRules(_ProjectHandlesMixin, _BlockPage):
     """Rules page (018-rules-page): Ad Hoc Rules + Compound Rules block.
 
     Two grouped tristate trees, all rows preselected.  Whole-block toggle
@@ -507,6 +437,11 @@ class _PageRules(_FlowPage):
       - whole block OFF                  => empty frozenset (SC-005)
       - individual trim                  => full set minus deselected GUIDs
     """
+
+    # Which item-data role this page's tree keys group-vs-item
+    # on. The `_BlockPage` cluster reads it; it is the whole of
+    # what used to be four near-copies of `_iter_item_rows`.
+    _kind_role = _RULES_KIND_ROLE
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -656,92 +591,13 @@ class _PageRules(_FlowPage):
                       else QtCore.Qt.CheckState.Unchecked)
                 item.setCheckState(0, cs)
 
-    # -- whole-block toggle ------------------------------------------------
-    def _on_whole_block_clicked(self, _checked: bool = False) -> None:
-        """User toggled the whole-block checkbox: check-all or uncheck-all."""
-        if not self._has_any_item():
-            self._refresh_whole_block()
-            return
-        want_checked = not self._all_items_checked()
-        self._set_all_items(want_checked)
-        self._refresh_whole_block()
 
-    def _set_all_items(self, checked: bool) -> None:
-        state = (QtCore.Qt.CheckState.Checked if checked
-                 else QtCore.Qt.CheckState.Unchecked)
-        self._mirroring = True
-        try:
-            for _g, item in self._iter_item_rows():
-                item.setCheckState(0, state)
-        finally:
-            self._mirroring = False
 
-    def _refresh_whole_block(self) -> None:
-        """Reflect aggregate item state on the whole-block tristate box.
 
-        Empty block => unchecked + disabled (NOT vacuously fully-selected,
-        per edge-case invariant — mirrors _PagePhonology / _PageCustomFields).
-        """
-        self._mirroring = True
-        try:
-            if not self._has_any_item():
-                self._whole_block.setEnabled(False)
-                self._whole_block.setCheckState(QtCore.Qt.CheckState.Unchecked)
-                return
-            self._whole_block.setEnabled(True)
-            checked = sum(
-                1 for _g, it in self._iter_item_rows()
-                if it.checkState(0) == QtCore.Qt.CheckState.Checked
-            )
-            total = sum(1 for _ in self._iter_item_rows())
-            if checked == 0:
-                self._whole_block.setCheckState(QtCore.Qt.CheckState.Unchecked)
-            elif checked == total:
-                self._whole_block.setCheckState(QtCore.Qt.CheckState.Checked)
-            else:
-                self._whole_block.setCheckState(
-                    QtCore.Qt.CheckState.PartiallyChecked
-                )
-        finally:
-            self._mirroring = False
 
-    def _on_item_changed(self, item, column) -> None:
-        if self._mirroring or column != 0:
-            return
-        self._refresh_whole_block()
 
-    # -- tree walking helpers ----------------------------------------------
-    def _iter_item_rows(self):
-        """Yield (group_item, item) for every checkable rule item row."""
-        root = self._tree.invisibleRootItem()
-        for i in range(root.childCount()):
-            group = root.child(i)
-            if group.data(0, _RULES_KIND_ROLE) != "group":
-                continue
-            for j in range(group.childCount()):
-                item = group.child(j)
-                if item.data(0, _RULES_KIND_ROLE) == "item":
-                    yield group, item
 
-    def _has_any_item(self) -> bool:
-        for _ in self._iter_item_rows():
-            return True
-        return False
 
-    def _all_items_checked(self) -> bool:
-        any_item = False
-        for _g, item in self._iter_item_rows():
-            any_item = True
-            if item.checkState(0) != QtCore.Qt.CheckState.Checked:
-                return False
-        return any_item
-
-    def whole_block_on(self) -> bool:
-        """True iff any item row is currently checked."""
-        for _g, item in self._iter_item_rows():
-            if item.checkState(0) == QtCore.Qt.CheckState.Checked:
-                return True
-        return False
 
     # -- state API (T019) --------------------------------------------------
     def collect_rules_picks(self) -> Optional[frozenset]:
@@ -828,7 +684,7 @@ _PHON_MODE_OVERWRITE = OVERWRITE
 _PHON_MODE_NEW = NEW
 
 
-class _PagePhonology(_FlowPage):
+class _PagePhonology(_ProjectHandlesMixin, _BlockPage):
     """Page 2: Phonology block (spec 010 — the first Model-B selector).
 
     A grouped tree of the five user-facing phonology categories (features,
@@ -845,6 +701,11 @@ class _PagePhonology(_FlowPage):
     (FR-012 / SC-008); Layer-1 default conflict modes are applied automatically
     when the Preview page builds the Selection.
     """
+
+    # Which item-data role this page's tree keys group-vs-item
+    # on. The `_BlockPage` cluster reads it; it is the whole of
+    # what used to be four near-copies of `_iter_item_rows`.
+    _kind_role = _PHON_KIND_ROLE
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -1044,89 +905,12 @@ class _PagePhonology(_FlowPage):
         )
         self._pane.show_item(request)
 
-    # -- whole-block toggle (T017) -------------------------------------
-    def _on_whole_block_clicked(self, _checked: bool = False) -> None:
-        """User toggled the whole-block checkbox: check-all or uncheck-all.
 
-        Ignores Qt's cycled tristate state and decides from the tree so the
-        behaviour is deterministic (partial ⇒ check-all, full ⇒ uncheck-all).
-        """
-        if not self._has_any_item():
-            self._refresh_whole_block()
-            return
-        want_checked = not self._all_items_checked()
-        self._set_all_items(want_checked)
-        self._refresh_whole_block()
 
-    def _set_all_items(self, checked: bool) -> None:
-        state = (QtCore.Qt.CheckState.Checked if checked
-                 else QtCore.Qt.CheckState.Unchecked)
-        self._mirroring = True
-        try:
-            for group, item in self._iter_item_rows():
-                item.setCheckState(0, state)
-        finally:
-            self._mirroring = False
 
-    def _refresh_whole_block(self) -> None:
-        """Reflect the aggregate item state on the whole-block tristate box.
 
-        Empty block (no items at all) ⇒ unchecked + disabled (NOT vacuously
-        fully-selected, per the edge-case invariant in the contract).
-        """
-        self._mirroring = True
-        try:
-            if not self._has_any_item():
-                self._whole_block.setEnabled(False)
-                self._whole_block.setCheckState(QtCore.Qt.CheckState.Unchecked)
-                return
-            self._whole_block.setEnabled(True)
-            checked = sum(
-                1 for _g, it in self._iter_item_rows()
-                if it.checkState(0) == QtCore.Qt.CheckState.Checked
-            )
-            total = sum(1 for _ in self._iter_item_rows())
-            if checked == 0:
-                self._whole_block.setCheckState(QtCore.Qt.CheckState.Unchecked)
-            elif checked == total:
-                self._whole_block.setCheckState(QtCore.Qt.CheckState.Checked)
-            else:
-                self._whole_block.setCheckState(
-                    QtCore.Qt.CheckState.PartiallyChecked
-                )
-        finally:
-            self._mirroring = False
 
-    def _on_item_changed(self, item, column) -> None:
-        if self._mirroring or column != 0:
-            return
-        self._refresh_whole_block()
 
-    # -- tree walking helpers ------------------------------------------
-    def _iter_item_rows(self):
-        """Yield (group_item, item) for every checkable phonology item row."""
-        root = self._tree.invisibleRootItem()
-        for i in range(root.childCount()):
-            group = root.child(i)
-            if group.data(0, _PHON_KIND_ROLE) != "group":
-                continue
-            for j in range(group.childCount()):
-                item = group.child(j)
-                if item.data(0, _PHON_KIND_ROLE) == "item":
-                    yield group, item
-
-    def _has_any_item(self) -> bool:
-        for _ in self._iter_item_rows():
-            return True
-        return False
-
-    def _all_items_checked(self) -> bool:
-        any_item = False
-        for _g, item in self._iter_item_rows():
-            any_item = True
-            if item.checkState(0) != QtCore.Qt.CheckState.Checked:
-                return False
-        return any_item
 
     # -- state API (contract §Page state) ------------------------------
     def collect_phonology_picks(self) -> dict:
@@ -1142,12 +926,6 @@ class _PagePhonology(_FlowPage):
             picks.setdefault(cat, set()).add(guid)
         return picks
 
-    def whole_block_on(self) -> bool:
-        """True iff any category has >=1 checked row."""
-        for _g, item in self._iter_item_rows():
-            if item.checkState(0) == QtCore.Qt.CheckState.Checked:
-                return True
-        return False
 
     def deselected_needed_guids(self) -> frozenset:
         """Preselected-but-unchecked guids (input to EXCLUDED-LOSSY, T024)."""
@@ -1206,7 +984,7 @@ _ET_MODE_OVERWRITE = OVERWRITE
 _ET_MODE_NEW = NEW
 
 
-class _PageEntryTypes(_FlowPage):
+class _PageEntryTypes(_ProjectHandlesMixin, _BlockPage):
     """Page 7: Lexical-Entry Types block (spec 021 -- the second Model-B selector).
 
     A grouped tree of two entry-type categories (Variant Types, Complex Form Types),
@@ -1227,6 +1005,11 @@ class _PageEntryTypes(_FlowPage):
     (FR-012 / SC-008); Layer-1 default conflict modes are applied automatically when
     the Preview page builds the Selection.
     """
+
+    # Which item-data role this page's tree keys group-vs-item
+    # on. The `_BlockPage` cluster reads it; it is the whole of
+    # what used to be four near-copies of `_iter_item_rows`.
+    _kind_role = _ET_KIND_ROLE
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -1407,59 +1190,15 @@ class _PageEntryTypes(_FlowPage):
         )
         self._pane.show_item(request)
 
-    # -- whole-block toggle (mirrors _PagePhonology) ------------------
-    def _on_whole_block_clicked(self, _checked: bool = False) -> None:
-        if not self._has_any_item():
-            self._refresh_whole_block()
-            return
-        want_checked = not self._all_items_checked()
-        self._set_all_items(want_checked)
-        self._refresh_whole_block()
 
-    def _set_all_items(self, checked: bool) -> None:
-        state = (QtCore.Qt.CheckState.Checked if checked
-                 else QtCore.Qt.CheckState.Unchecked)
-        self._mirroring = True
-        try:
-            for _g, item in self._iter_item_rows():
-                item.setCheckState(0, state)
-        finally:
-            self._mirroring = False
 
-    def _refresh_whole_block(self) -> None:
-        """Reflect the aggregate item state on the whole-block tristate box.
 
-        Empty block (no items) => unchecked + disabled (NOT vacuously checked).
-        """
-        self._mirroring = True
-        try:
-            if not self._has_any_item():
-                self._whole_block.setEnabled(False)
-                self._whole_block.setCheckState(QtCore.Qt.CheckState.Unchecked)
-                return
-            self._whole_block.setEnabled(True)
-            checked = sum(
-                1 for _g, it in self._iter_item_rows()
-                if it.checkState(0) == QtCore.Qt.CheckState.Checked
-            )
-            total = sum(1 for _ in self._iter_item_rows())
-            if checked == 0:
-                self._whole_block.setCheckState(QtCore.Qt.CheckState.Unchecked)
-            elif checked == total:
-                self._whole_block.setCheckState(QtCore.Qt.CheckState.Checked)
-            else:
-                self._whole_block.setCheckState(
-                    QtCore.Qt.CheckState.PartiallyChecked
-                )
-        finally:
-            self._mirroring = False
-
-    def _on_item_changed(self, item, column) -> None:
-        if self._mirroring or column != 0:
-            return
-        self._refresh_whole_block()
 
     # -- tree walking helpers ------------------------------------------
+    # OVERRIDE (required -- feature 039 T030). Entry-type trees NEST:
+    # groups contain items which contain sub-type items, so the base's
+    # single group-over-item walk would miss a whole level. This is the
+    # one member of the whole-block cluster that genuinely differs.
     def _iter_item_rows(self):
         """Yield (group_item, item) for every checkable entry-type item row.
 
@@ -1491,18 +1230,7 @@ class _PageEntryTypes(_FlowPage):
             for pair in _walk(group, False):
                 yield pair
 
-    def _has_any_item(self) -> bool:
-        for _ in self._iter_item_rows():
-            return True
-        return False
 
-    def _all_items_checked(self) -> bool:
-        any_item = False
-        for _g, item in self._iter_item_rows():
-            any_item = True
-            if item.checkState(0) != QtCore.Qt.CheckState.Checked:
-                return False
-        return any_item
 
     # -- state API -----------------------------------------------------
     def collect_entry_type_picks(self) -> dict:
@@ -1518,12 +1246,6 @@ class _PageEntryTypes(_FlowPage):
             picks.setdefault(cat, set()).add(guid)
         return picks
 
-    def whole_block_on(self) -> bool:
-        """True iff any category has >= 1 checked row."""
-        for _g, item in self._iter_item_rows():
-            if item.checkState(0) == QtCore.Qt.CheckState.Checked:
-                return True
-        return False
 
     def deselected_needed_guids(self) -> frozenset:
         """Preselected-but-unchecked guids (input to missing-ref warning)."""
@@ -1539,12 +1261,27 @@ class _PageEntryTypes(_FlowPage):
         return self._inventory
 
     # -- source/target accessors (mirror _PagePhonology pattern) ------
+    # OVERRIDE (kept deliberately -- feature 039 T030). Unlike the other
+    # eight pages, this reads `wizard._host` directly instead of going
+    # through `page_project_ws().context().source_handle`, so a source
+    # bound on step 1 via the context is ignored here. That looks like a
+    # defect and it predates the split; normalising it would be a
+    # BEHAVIOUR change, which a deduplication commit is the wrong place
+    # for. Recorded as an open question in
+    # specs/039-wizard-module-split/spec.md (T048).
     def _get_source(self):
         wizard = self.wizard()
         if wizard is None:
             return None
         return getattr(wizard, "_host", None)
 
+    # OVERRIDE (kept deliberately -- feature 039 T030). Semantically this
+    # reaches the same handle as `_ProjectHandlesMixin._get_target`, but
+    # it guards with `hasattr` instead of try/except, so an exception
+    # raised by `page_project_ws()` or `context()` PROPAGATES here where
+    # the mixin would swallow it and return None. Adopting the mixin
+    # would change behaviour on that path. plan.md named only
+    # `_get_source` as divergent; this one is divergent too.
     def _get_target(self):
         wizard = self.wizard()
         if wizard is None:

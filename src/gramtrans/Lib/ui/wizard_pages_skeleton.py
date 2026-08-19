@@ -31,7 +31,7 @@ if __package__:
     from ..selection import build_deps_inventory, build_skeleton_inventory
     from ..ws_fonts import WsFontRegistry, WsRole
     from .merge_preview_pane import MergePreviewPane, PreviewRequest
-    from .wizard_page_base import _FlowPage
+    from .wizard_page_base import _FlowPage, _PickDerivedMixin, _ProjectHandlesMixin
     from .wizard_roles import (
         _DEPS_CAT_ROLE,
         _DEPS_STATUS_ROLE,
@@ -57,7 +57,7 @@ else:
     from merge_preview_pane import MergePreviewPane, PreviewRequest  # type: ignore
     from models import GrammarCategory  # type: ignore
     from selection import build_deps_inventory, build_skeleton_inventory  # type: ignore
-    from wizard_page_base import _FlowPage  # type: ignore
+    from wizard_page_base import _FlowPage, _PickDerivedMixin, _ProjectHandlesMixin  # type: ignore
     from wizard_roles import (  # type: ignore
         _DEPS_CAT_ROLE,
         _DEPS_STATUS_ROLE,
@@ -85,7 +85,7 @@ else:
 # Page 3b -- Morphology Skeleton  (T011-T012)
 # ---------------------------------------------------------------------------
 
-class _PageSkeleton(_FlowPage):
+class _PageSkeleton(_PickDerivedMixin, _ProjectHandlesMixin, _FlowPage):
     """Page 3b: Morphology skeleton derived from the affix picks.
 
     POS-rooted tree:
@@ -500,68 +500,9 @@ class _PageSkeleton(_FlowPage):
                               else QtCore.Qt.CheckState.Unchecked)
                         slot_item.setCheckState(0, cs)
 
-    # ------------------------------------------------------------------
-    def _get_source(self):
-        try:
-            w = self.wizard()
-            if w is None:
-                return None
-            p0 = w.page_project_ws()
-            if p0 is None:
-                return None
-            ctx = p0.context()
-            if ctx is not None:
-                h = getattr(ctx, "source_handle", None)
-                if h is not None:
-                    return h
-            return getattr(p0, "_host", None)
-        except Exception:  # noqa: BLE001
-            return None
 
-    def _get_target(self):
-        try:
-            w = self.wizard()
-            if w is None:
-                return None
-            p0 = w.page_project_ws()
-            if p0 is None:
-                return None
-            ctx = p0.context()
-            if ctx is None:
-                return None
-            return getattr(ctx, "target_handle", None)
-        except Exception:  # noqa: BLE001
-            return None
 
-    def _get_affix_picks(self) -> frozenset:
-        """Retrieve affix_picks from the item-picker page (index 1)."""
-        try:
-            w = self.wizard()
-            if w is None:
-                return frozenset()
-            page_items = w.page_items()
-            if page_items is None:
-                return frozenset()
-            sel = page_items.collect_selection()
-            return sel.affix_picks
-        except Exception:  # noqa: BLE001
-            return frozenset()
 
-    def _get_stem_picks(self) -> frozenset:
-        """019: retrieve stem_picks from the dedicated Stems page (mirror of
-        _get_affix_picks). The skeleton builder itself stays AFFIX-ONLY per
-        FR-013; this accessor exists for parity and downstream use.
-        """
-        try:
-            w = self.wizard()
-            if w is None:
-                return frozenset()
-            page_stems = w.page_stems()
-            if page_stems is None:
-                return frozenset()
-            return page_stems.stem_picks()
-        except Exception:  # noqa: BLE001
-            return frozenset()
 
     def collect_skeleton_picks(self) -> dict:
         """Return the current skeleton selections as:
@@ -620,7 +561,7 @@ class _PageSkeleton(_FlowPage):
 # Page 3c -- Grammatical Dependencies  (T014)
 # ---------------------------------------------------------------------------
 
-class _PageGramDeps(_FlowPage):
+class _PageGramDeps(_PickDerivedMixin, _ProjectHandlesMixin, _FlowPage):
     """Page 3c: Grammatical dependencies derived from the affix picks' POSes.
 
     Sections:
@@ -824,65 +765,9 @@ class _PageGramDeps(_FlowPage):
                     row_item.setCheckState(0, cs)
                     parent_stack.append((row.depth, row_item))
 
-    # ------------------------------------------------------------------
-    def _get_source(self):
-        try:
-            w = self.wizard()
-            if w is None:
-                return None
-            p0 = w.page_project_ws()
-            if p0 is None:
-                return None
-            ctx = p0.context()
-            if ctx is not None:
-                h = getattr(ctx, "source_handle", None)
-                if h is not None:
-                    return h
-            return getattr(p0, "_host", None)
-        except Exception:  # noqa: BLE001
-            return None
 
-    def _get_target(self):
-        try:
-            w = self.wizard()
-            if w is None:
-                return None
-            p0 = w.page_project_ws()
-            if p0 is None:
-                return None
-            ctx = p0.context()
-            if ctx is None:
-                return None
-            return getattr(ctx, "target_handle", None)
-        except Exception:  # noqa: BLE001
-            return None
 
-    def _get_affix_picks(self) -> frozenset:
-        try:
-            w = self.wizard()
-            if w is None:
-                return frozenset()
-            page_items = w.page_items()
-            if page_items is None:
-                return frozenset()
-            sel = page_items.collect_selection()
-            return sel.affix_picks
-        except Exception:  # noqa: BLE001
-            return frozenset()
 
-    def _get_stem_picks(self) -> frozenset:
-        """019: retrieve stem_picks from the dedicated Stems page (mirror of
-        _get_affix_picks)."""
-        try:
-            w = self.wizard()
-            if w is None:
-                return frozenset()
-            page_stems = w.page_stems()
-            if page_stems is None:
-                return frozenset()
-            return page_stems.stem_picks()
-        except Exception:  # noqa: BLE001
-            return frozenset()
 
     def collect_dep_picks(self) -> dict:
         """Return currently-checked dep GUIDs by section.

@@ -86,7 +86,7 @@ if __package__:
     from .merge_preview_pane import MergePreviewPane, PreviewRequest, _action_to_mode
     from .theme import ThemeCornerBar, install_theme
     from .page_header import PageHeader
-    from ..merge_preview import MergePreviewService, OVERWRITE, MERGE_KEEP, NEW
+    from ..merge_preview import MergePreviewService, OVERWRITE, NEW
     from ..models import SimilarResolution
     from ..report import RunReport
     from ..ws_mapping import closest_ws_defaults
@@ -134,7 +134,7 @@ else:
     from merge_preview_pane import MergePreviewPane, PreviewRequest, _action_to_mode  # type: ignore  # noqa: F401
     from theme import ThemeCornerBar, install_theme  # type: ignore
     from page_header import PageHeader  # type: ignore
-    from merge_preview import MergePreviewService, OVERWRITE, MERGE_KEEP, NEW  # type: ignore  # noqa: F401
+    from merge_preview import MergePreviewService, OVERWRITE, NEW  # type: ignore  # noqa: F401
     from models import SimilarResolution  # type: ignore  (already imported above but needs bare-name alias)  # noqa: F401
     from report import RunReport  # type: ignore
     from ws_mapping import closest_ws_defaults  # type: ignore  # noqa: F401

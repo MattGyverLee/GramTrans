@@ -43,7 +43,7 @@ if __package__:
     )
     from ..ws_fonts import WsFontRegistry, WsRole
     from .merge_preview_pane import MergePreviewPane, PreviewRequest, _action_to_mode
-    from .wizard_page_base import _FlowPage
+    from .wizard_page_base import _FlowPage, _ProjectHandlesMixin
     from .wizard_roles import (
         _GUID_ROLE,
         _IS_PRODUCES,
@@ -80,7 +80,7 @@ else:
         collapse_pos_grouped,
         mirror_check_state,
     )
-    from wizard_page_base import _FlowPage  # type: ignore
+    from wizard_page_base import _FlowPage, _ProjectHandlesMixin  # type: ignore
     from wizard_roles import (  # type: ignore
         _GUID_ROLE,
         _IS_PRODUCES,
@@ -107,7 +107,7 @@ else:
 # ---------------------------------------------------------------------------
 
 
-class _PageItemPicker(_FlowPage):
+class _PageItemPicker(_ProjectHandlesMixin, _FlowPage):
     """Page 2: POS-grouped affix item picker.
 
     Tree layout (5 columns):
@@ -434,46 +434,7 @@ class _PageItemPicker(_FlowPage):
         for item in self._guid_to_items.get(entry_guid, []):
             item.setText(4, label)
 
-    def _get_source(self):
-        """Return the source project handle from page 0, or None."""
-        try:
-            wizard = self.wizard()
-            if wizard is None:
-                return None
-            page0 = wizard.page_project_ws()
-            if page0 is None:
-                return None
-            # Try context().source_handle first, then _host directly
-            ctx = page0.context()
-            if ctx is not None:
-                h = getattr(ctx, "source_handle", None)
-                if h is not None:
-                    return h
-            host = getattr(page0, "_host", None)
-            return host
-        except Exception:  # noqa: BLE001
-            return None
 
-    def _get_target(self):
-        """Return the target project handle from page-0 context, or None.
-
-        FR-018(e): the RunContext (set when user picks a target on page 1)
-        exposes .target_handle.  If no context or no target yet, returns None
-        so the builder is called with target=None (Target column blank, no crash).
-        """
-        try:
-            wizard = self.wizard()
-            if wizard is None:
-                return None
-            page0 = wizard.page_project_ws()
-            if page0 is None:
-                return None
-            ctx = page0.context()
-            if ctx is None:
-                return None
-            return getattr(ctx, "target_handle", None)
-        except Exception:  # noqa: BLE001
-            return None
 
     # ------------------------------------------------------------------
     def populate_pos_tree(self, inventory: PosGroupedAffixInventory) -> None:
@@ -688,7 +649,7 @@ class _PageItemPicker(_FlowPage):
 # Stem picker -- own full page, immediately after the Affix picker (019)
 # ---------------------------------------------------------------------------
 
-class _PageStemPicker(_FlowPage):
+class _PageStemPicker(_ProjectHandlesMixin, _FlowPage):
     """Full page: POS-grouped stem item picker.
 
     Mirrors ``_PageItemPicker`` but for stems.  Stems used to share the affix
@@ -736,40 +697,7 @@ class _PageStemPicker(_FlowPage):
         splitter = _make_tree_pane_splitter(self._stem_tree, self._stem_pane)
         layout.addWidget(splitter, 1)
 
-    # -- source/target handles (per-page copy, matching the wizard convention) --
-    def _get_source(self):
-        """Return the source project handle from page 0, or None."""
-        try:
-            wizard = self.wizard()
-            if wizard is None:
-                return None
-            page0 = wizard.page_project_ws()
-            if page0 is None:
-                return None
-            ctx = page0.context()
-            if ctx is not None:
-                h = getattr(ctx, "source_handle", None)
-                if h is not None:
-                    return h
-            return getattr(page0, "_host", None)
-        except Exception:  # noqa: BLE001
-            return None
 
-    def _get_target(self):
-        """Return the target project handle from page-0 context, or None."""
-        try:
-            wizard = self.wizard()
-            if wizard is None:
-                return None
-            page0 = wizard.page_project_ws()
-            if page0 is None:
-                return None
-            ctx = page0.context()
-            if ctx is None:
-                return None
-            return getattr(ctx, "target_handle", None)
-        except Exception:  # noqa: BLE001
-            return None
 
     # ------------------------------------------------------------------
     def initializePage(self) -> None:
