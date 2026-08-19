@@ -21,6 +21,7 @@ if __package__:
         ExcludedLossy,
         FidelityStatus,
         GrammarCategory,
+        MatchBasis,
         PlannedAction,
         RunMode,
         RunPlan,
@@ -35,6 +36,7 @@ else:
         ExcludedLossy,
         FidelityStatus,
         GrammarCategory,
+        MatchBasis,
         PlannedAction,
         RunMode,
         RunPlan,
@@ -56,7 +58,12 @@ def _build_from_plan(cls, plan: RunPlan, mode: RunMode,
                      extra_excluded_lossy=(),
                      extra_dropped_items=(),
                      fidelity_by_guid=None,
-                     extra_leaf_execution_failures=()) -> RunReport:
+                     extra_leaf_execution_failures=(),
+                     extra_closure_edges=(),
+                     extra_incompleteness=(),
+                     extra_enrichments=(),
+                     extra_process_rules=(),
+                     census=None) -> RunReport:
     """Build a finalized RunReport from a RunPlan.
 
     Iterates plan.actions to accumulate per-category added/closure_pulled_in
@@ -81,6 +88,14 @@ def _build_from_plan(cls, plan: RunPlan, mode: RunMode,
     ``RunReport.leaf_execution_failures``; `RunReport.leaf_failed` is a
     property computed from its length, not a separate field, so it cannot
     drift out of sync.
+
+    `extra_closure_edges` / `extra_incompleteness` / `extra_enrichments` /
+    `extra_process_rules` / `census` (feature 038): the four fidelity buckets
+    plus the census. Each is UNIONed with the same-named tuple on the plan,
+    so a producer may emit at plan time (Preview) or at execute time (Move)
+    without this function caring which. All empty by default -- with no 038
+    producers wired yet, every one of these is a no-op and the report renders
+    exactly as it did before.
     """
     per_category: dict = {}
 
@@ -91,12 +106,26 @@ def _build_from_plan(cls, plan: RunPlan, mode: RunMode,
                 "interactive_resolved": 0, "interactive_skipped": 0,
                 "ws_mapped": 0, "ws_created": 0, "ws_skipped": 0,
                 "excluded_lossy": 0,
+                # Feature 038 (see the counting notes further down).
+                "identity_substitution": 0, "enriched": 0,
+                "not_reproducible": 0,
             }
         return per_category[cat]
+
+    def _count_substitution(bucket, obj) -> None:
+        """Feature 038 (FR-006): tally objects matched by a roster-admitted
+        NATURAL KEY rather than by GUID. Counted from the `match_basis`
+        record on the plan item itself, so the report cannot claim a stronger
+        identity basis than the matcher actually used. Items planned before
+        038's matcher ran carry `match_basis=None` and are not counted."""
+        basis = getattr(obj, "match_basis", None)
+        if basis is not None and getattr(basis, "basis", None) is MatchBasis.NATURAL_KEY:
+            bucket["identity_substitution"] += 1
 
     for action in plan.actions:
         b = _bucket(action.category)
         b["added"] += 1
+        _count_substitution(b, action)
         # plan.actions is heterogeneous: PlannedAction has `pulled_in_by`,
         # but CreateDefinitionAction (schema-level custom-field creates) does
         # not.  Tolerate its absence the same way the overwrites loop below does.
@@ -108,6 +137,11 @@ def _build_from_plan(cls, plan: RunPlan, mode: RunMode,
         b = _bucket(skip.category)
         b["skipped"] += 1
         skips_list.append(skip)
+        # Feature 038 (FR-017/FR-025): NOT_REPRODUCIBLE is counted from the
+        # skips themselves, which is what RunReport.__post_init__ reconciles
+        # the counter against -- so the two can never disagree.
+        if skip.reason == SkipReason.NOT_REPRODUCIBLE:
+            b["not_reproducible"] += 1
 
     # Phase 1 (FR-110): count overwrites per category. Tolerate plans
     # produced before Phase 1 (no `overwrites` attribute) by falling back
@@ -117,6 +151,7 @@ def _build_from_plan(cls, plan: RunPlan, mode: RunMode,
         b["overwritten"] += 1
         if getattr(ow, "pulled_in_by", ()):
             b["closure_pulled_in"] += 1
+        _count_substitution(b, ow)
 
     # Phase 2 (T030): account for INTERACTIVE_SKIP records emitted by
     # _apply_merge_decisions during execute().  These are not in
@@ -128,6 +163,8 @@ def _build_from_plan(cls, plan: RunPlan, mode: RunMode,
         skips_list.append(skip)
         if skip.reason == SkipReason.INTERACTIVE_SKIP:
             b["interactive_skipped"] += 1
+        if skip.reason == SkipReason.NOT_REPRODUCIBLE:
+            b["not_reproducible"] += 1
 
     # Phase 3c Selection UI: tally EXCLUDED-LOSSY warnings from the plan
     # and any extras passed in by the executor.
@@ -136,6 +173,35 @@ def _build_from_plan(cls, plan: RunPlan, mode: RunMode,
     for el in excluded_lossy_all:
         b = _bucket(el.category)
         b["excluded_lossy"] += 1
+
+    # Feature 038 (FR-020..FR-022): enrichment records travel on the plan,
+    # but `EnrichmentRecord` carries an LCM object_class, not a
+    # GrammarCategory -- so the per-category `enriched` counter has to be
+    # attributed via the plan item that produced the record.
+    # `RunReport.__post_init__` reconciles the counter total against
+    # `len(enrichments)`, so an unattributable record is a hard error here
+    # rather than a quietly-wrong count later.
+    enrichments_all = tuple(getattr(plan, "enrichments", ())) + tuple(
+        extra_enrichments
+    )
+    if enrichments_all:
+        guid_to_cat: dict = {}
+        for ow in getattr(plan, "overwrites", ()):
+            guid_to_cat.setdefault(ow.source_guid, ow.category)
+        for action in plan.actions:
+            guid_to_cat.setdefault(action.source_guid, action.category)
+        for enrichment in enrichments_all:
+            cat = guid_to_cat.get(enrichment.source_guid)
+            if cat is None:
+                raise ValueError(
+                    "Feature 038: cannot attribute EnrichmentRecord for "
+                    f"source_guid={enrichment.source_guid!r} "
+                    f"({enrichment.object_class}) to a category -- no plan "
+                    "action or overwrite carries that GUID. Guessing would "
+                    "make per_category[*].enriched disagree with "
+                    "len(enrichments)."
+                )
+            _bucket(cat)["enriched"] += 1
 
     per_category_final = {
         cat: CategoryReport(
@@ -149,6 +215,9 @@ def _build_from_plan(cls, plan: RunPlan, mode: RunMode,
             ws_created=counts["ws_created"],
             ws_skipped=counts["ws_skipped"],
             excluded_lossy=counts["excluded_lossy"],
+            identity_substitution=counts["identity_substitution"],
+            enriched=counts["enriched"],
+            not_reproducible=counts["not_reproducible"],
         )
         for cat, counts in per_category.items()
     }
@@ -176,7 +245,248 @@ def _build_from_plan(cls, plan: RunPlan, mode: RunMode,
         dropped_items=tuple(extra_dropped_items),
         fidelity_by_guid=dict(fidelity_by_guid) if fidelity_by_guid else {},
         leaf_execution_failures=tuple(extra_leaf_execution_failures),
+        # Feature 038: the four plan-side buckets flow straight through, so
+        # the report surfaces below have something to render. All four are
+        # empty on a plan built before 038's producers exist, which is why
+        # this is a no-op for every current caller.
+        closure_edges=tuple(getattr(plan, "closure_edges", ()))
+        + tuple(extra_closure_edges),
+        incompleteness=tuple(getattr(plan, "incompleteness", ()))
+        + tuple(extra_incompleteness),
+        enrichments=enrichments_all,
+        process_rules=tuple(getattr(plan, "process_rules", ()))
+        + tuple(extra_process_rules),
+        census=census,
     )
+
+
+# ============================================================================
+# Feature 038 (transfer fidelity gaps) -- shared helpers for the new buckets
+# ============================================================================
+# Two surfaces, one rule each:
+#
+#   * The ARTIFACT (`to_snapshot_json`) is NEVER truncated. Every record in
+#     every 038 bucket appears in it, in full -- it is what a linguist can
+#     still consult after the console has scrolled away.
+#   * The CONSOLE (`render_text_summary`) MAY truncate a long list, but only
+#     while STATING how many rows it omitted and where the rest live. A
+#     truncation that hides its own existence is indistinguishable from a
+#     silent loss, which is the exact failure mode this feature exists to
+#     remove (SC-010).
+#
+# Snapshot compatibility: every 038 key is OMITTED when its bucket is empty
+# rather than emitted as `[]` / `{}`. A run with no 038 data therefore
+# produces a BYTE-IDENTICAL snapshot to the pre-038 build, so the golden
+# snapshot in tests/integration/test_full_workflow_e2e.py -- which asserts
+# `normalized == golden`, not "golden is a subset of normalized" -- keeps
+# matching with no re-baseline, and a reader doing
+# `data.get("enrichments", [])` sees the same empty default either way.
+# Deliberate departure from feature 024's always-emit convention for
+# `dropped_items` / `fidelity_by_guid`: 024 could afford to change every
+# snapshot because it was re-baselining them anyway; 038 is landing in waves
+# alongside other work and must not.
+
+#: Console row budget per 038 detail list. The ARTIFACT ignores this entirely.
+_CONSOLE_MAX_ROWS = 20
+
+
+def _enum_name(value) -> str:
+    """JSON-side enum rendering: `.name`, matching the existing convention
+    (`mode.name`, `category.name`, `reason.name`). Tolerates a plain string so
+    a hand-built record does not explode the serializer."""
+    return getattr(value, "name", str(value))
+
+
+def _enum_value(value) -> str:
+    """Console-side enum rendering: `.value`, matching the existing convention
+    (`cat.value`, `s.reason.value`)."""
+    return getattr(value, "value", str(value))
+
+
+def _guid8(guid) -> str:
+    """First 8 chars of a GUID -- CONSOLE ONLY. The artifact always carries
+    the full GUID."""
+    return str(guid)[:8]
+
+
+def _pair_json(pair) -> dict:
+    """Serialize a `(GrammarCategory, guid)` 2-tuple as carried by
+    `ClosureEdge` and `IncompletenessRecord`."""
+    cat, guid = pair
+    return {"category": _enum_name(cat), "guid": guid}
+
+
+def _pair_text(pair) -> str:
+    """Console form of a `(GrammarCategory, guid)` pair: `affixes 1a2b3c4d`."""
+    cat, guid = pair
+    return f"{_enum_value(cat)} {_guid8(guid)}"
+
+
+def _ordered_categories(per_category: dict) -> list:
+    """The report's categories in GrammarCategory DECLARATION order, so every
+    038 per-category block diffs as deterministically as `per_category`."""
+    return [
+        GrammarCategory[name]
+        for name in GrammarCategory.__members__
+        if GrammarCategory[name] in per_category
+    ]
+
+
+def _counter_block(report, attr: str):
+    """`{"total": N, "per_category": {...}}` for one 038 CategoryReport
+    counter, or None when the counter is zero everywhere (-> key omitted).
+
+    Deliberately kept OUT of the pre-existing `per_category` block: that
+    block's shape is load-bearing for existing snapshot consumers, and a run
+    with no 038 data must not grow new keys inside it."""
+    per = {}
+    for cat in _ordered_categories(report.per_category):
+        n = getattr(report.per_category[cat], attr, 0)
+        if n:
+            per[cat.name] = n
+    total = sum(per.values())
+    return {"total": total, "per_category": per} if total else None
+
+
+def _closure_edge_json(e) -> dict:
+    return {
+        "dependent": _pair_json(e.dependent),
+        "dependency": _pair_json(e.dependency),
+        "kind": _enum_name(e.kind),
+        "verified": bool(e.verified),
+        "verified_by": e.verified_by,
+        "origin": e.origin,
+        "deselected": bool(e.deselected),
+    }
+
+
+def _incompleteness_json(r) -> dict:
+    return {
+        "incomplete_item": _pair_json(r.incomplete_item),
+        "incomplete_label": r.incomplete_label,
+        "missing_dependency": _pair_json(r.missing_dependency),
+        "missing_label": r.missing_label,
+        "cause": r.cause,
+        # FR-016 / SC-010: what the reader actually LOSES. Never omitted --
+        # a record the user cannot act on is not a report.
+        "consequence": r.consequence,
+    }
+
+
+def _enrichment_json(r) -> dict:
+    return {
+        "object_class": r.object_class,
+        "source_guid": r.source_guid,
+        "target_guid": r.target_guid,
+        "label": r.label,
+        # FR-022: the created-vs-enriched distinction is STATED, not inferred.
+        "was_created": bool(r.was_created),
+        "is_empty": bool(getattr(r, "is_empty", False)),
+        "fields_updated": list(r.fields_updated),
+        "collections": [
+            {
+                "field_name": c.field_name,
+                "added": c.added,
+                "already_present": c.already_present,
+                "dropped": c.dropped,
+            }
+            for c in r.collections
+        ],
+    }
+
+
+def _reference_decision_json(d) -> dict:
+    """Tolerant serializer for a `ReferenceDecisionRecord` carried on a
+    process-rule record's `reference_decisions`."""
+    action = getattr(d, "action", None)
+    return {
+        "owner_kind": getattr(d, "owner_kind", ""),
+        "owner_guid": getattr(d, "owner_guid", ""),
+        "field_name": getattr(d, "field_name", ""),
+        "action": _enum_name(action) if action is not None else "",
+        "item_name": getattr(d, "item_name", ""),
+        "item_guid": getattr(d, "item_guid", ""),
+    }
+
+
+def _process_rule_json(r) -> dict:
+    return {
+        "source_guid": r.source_guid,
+        "reproduced": bool(r.reproduced),
+        "target_guid": r.target_guid,
+        # FR-025: guaranteed non-empty by ProcessRuleTransferRecord's
+        # __post_init__ whenever `reproduced` is False.
+        "not_reproducible_reason": r.not_reproducible_reason,
+        "input_contexts": [
+            {
+                "context_class": c.context_class,
+                "index": c.index,
+                "referent_guid": c.referent_guid,
+                "label": c.label,
+            }
+            for c in r.input_contexts
+        ],
+        "output_steps": [
+            {
+                "step_class": s.step_class,
+                "index": s.index,
+                "content": s.content,
+                "referent_guids": list(s.referent_guids),
+            }
+            for s in r.output_steps
+        ],
+        "reference_decisions": [
+            _reference_decision_json(d) for d in r.reference_decisions
+        ],
+    }
+
+
+def _census_json(census):
+    """T015 HOOK -- machine-readable side of `RunReport.census`.
+
+    `FidelityCensus` does not exist yet (T015 defines it; the annotation on
+    `RunReport.census` is a forward reference). Until then this deliberately
+    does NOT reach into the object's internals: it asks the census to render
+    itself and otherwise emits a marked, non-raising placeholder.
+    `census is None` -> None -> the `census` key is omitted entirely.
+
+    T015: give `FidelityCensus` a `to_snapshot_dict()` returning the
+    per-object-class rows (FR-009..FR-013) and this function needs no edit.
+    """
+    if census is None:
+        return None
+    for method_name in ("to_snapshot_dict", "to_dict", "as_dict"):
+        method = getattr(census, method_name, None)
+        if callable(method):
+            try:
+                return json.loads(json.dumps(method(), default=str))
+            except Exception:  # pragma: no cover - defensive
+                break
+    return {
+        "unrendered": repr(census),
+        "note": "census exposes no to_snapshot_dict(); see T015",
+    }
+
+
+def _rows(records, formatter, indent: str = "    ",
+          max_rows: int = _CONSOLE_MAX_ROWS):
+    """CONSOLE ONLY. Yield at most `max_rows` formatted rows and then -- if
+    and only if rows were actually held back -- one line stating exactly how
+    many were omitted and where the complete list lives.
+
+    The omitted count is computed from the very sequence that was sliced, so
+    it cannot drift from reality. Never called by `to_snapshot_json`.
+    """
+    records = tuple(records)
+    total = len(records)
+    for rec in records[:max_rows]:
+        yield formatter(rec)
+    omitted = total - min(total, max_rows)
+    if omitted:
+        yield (
+            f"{indent}... and {omitted} more not shown here "
+            f"({total} total; the run-report JSON artifact lists all of them)"
+        )
 
 
 def _to_snapshot_json(self) -> str:
@@ -244,6 +554,64 @@ def _to_snapshot_json(self) -> str:
             for guid, status in sorted(self.fidelity_by_guid.items())
         },
     }
+
+    # ---- Feature 038 (transfer fidelity gaps) --------------------------
+    # ADDITIVE and OMIT-WHEN-EMPTY (see the module comment above
+    # `_CONSOLE_MAX_ROWS`): a report carrying no 038 data adds no keys at
+    # all, so this block is a no-op for every pre-038 snapshot.
+    #
+    # NONE of these lists is capped. The artifact is the complete record;
+    # only `render_text_summary` is allowed to shorten anything, and only
+    # while saying so.
+
+    # FR-006 / FR-187: identity SUBSTITUTION reported on its own key, never
+    # folded into the ordinary match counts. A natural-key match is a
+    # materially weaker fidelity claim than a GUID match, and a reader must
+    # never have to infer which one happened.
+    identity_substitution = _counter_block(self, "identity_substitution")
+    if identity_substitution is not None:
+        identity_substitution["basis"] = MatchBasis.NATURAL_KEY.name
+        identity_substitution["note"] = (
+            "matched by a roster-admitted natural key because no GUID "
+            "counterpart existed; weaker than an identity (GUID) match"
+        )
+        payload["identity_substitution"] = identity_substitution
+
+    # FR-014 / FR-015: every materialised (dependency, dependent) pair.
+    if self.closure_edges:
+        payload["closure_edges"] = [
+            _closure_edge_json(e) for e in self.closure_edges
+        ]
+
+    # FR-016 / FR-017 / FR-019: items arriving knowingly incomplete.
+    if self.incompleteness:
+        payload["incompleteness"] = [
+            _incompleteness_json(r) for r in self.incompleteness
+        ]
+
+    # FR-020..FR-022: add-only updates to objects that already existed.
+    if self.enrichments:
+        payload["enrichments"] = [
+            _enrichment_json(r) for r in self.enrichments
+        ]
+    enriched = _counter_block(self, "enriched")
+    if enriched is not None:
+        payload["enriched_counts"] = enriched
+
+    # FR-023..FR-025: MoAffixProcess outcomes, reproduced or not.
+    if self.process_rules:
+        payload["process_rules"] = [
+            _process_rule_json(r) for r in self.process_rules
+        ]
+    not_reproducible = _counter_block(self, "not_reproducible")
+    if not_reproducible is not None:
+        payload["not_reproducible_counts"] = not_reproducible
+
+    # FR-009..FR-013 -- T015 hook; omitted while `census is None`.
+    census = _census_json(self.census)
+    if census is not None:
+        payload["census"] = census
+
     return json.dumps(payload, indent=2, sort_keys=False)
 
 
@@ -345,4 +713,203 @@ def render_text_summary(report: RunReport) -> Iterable[str]:
                 f"    - [{f.category.value}] {f.source_guid} - "
                 f"{f.exception_type}: {f.message}"
             )
+    # Feature 038 (transfer fidelity gaps): the new buckets. Every section is
+    # conditional on its bucket being non-empty, so a pre-038 run renders
+    # byte-identically to before this feature landed.
+    for line in _render_038_lines(report):
+        yield line
     yield f"  Wall clock: {report.wall_clock_seconds:.3f}s"
+
+
+# ============================================================================
+# Feature 038 -- console sections (human-readable surface)
+# ============================================================================
+
+def _render_038_lines(report: RunReport) -> Iterable[str]:
+    """Yield the console sections for the feature-038 buckets.
+
+    Split out of `render_text_summary` only for readability; it is called
+    from there, unconditionally, immediately before the wall-clock line.
+
+    Truncation policy: detail lists go through `_rows`, which appends an
+    explicit "... and N more not shown here" line whenever it holds anything
+    back. Aggregate counts are ALWAYS printed in full (they are bounded by
+    the number of categories / dependency kinds), so no section can hide the
+    size of what it summarises. ASCII only, per the Windows console rule.
+    """
+    # ---- FR-006 / FR-187: identity SUBSTITUTION, reported distinctly ------
+    # An object found by name is NOT an object found by GUID. Rendering these
+    # in the same bucket as ordinary matches would let the report overstate
+    # its own fidelity, so substitution gets its own labelled section and its
+    # own caveat line.
+    substituted = getattr(report, "identity_substituted", 0)
+    if substituted:
+        yield (
+            f"  Identity SUBSTITUTION (matched by NATURAL KEY, not by GUID) "
+            f"-- {substituted} total:"
+        )
+        for cat in _ordered_categories(report.per_category):
+            n = getattr(report.per_category[cat], "identity_substitution", 0)
+            if n:
+                yield f"    - [{cat.value}] {n}"
+        yield (
+            "    (a natural-key match is a weaker identity claim than a GUID "
+            "match -- verify these before relying on them)"
+        )
+
+    # ---- FR-014 / FR-015: closure edges ----------------------------------
+    edges = getattr(report, "closure_edges", ())
+    if edges:
+        yield f"  Closure edges (dependencies walked) -- {len(edges)} total:"
+        by_kind: dict = {}
+        for e in edges:
+            k = _enum_value(e.kind)
+            slot = by_kind.setdefault(k, [0, 0, 0])
+            slot[0] += 1
+            if e.verified:
+                slot[1] += 1
+            if e.deselected:
+                slot[2] += 1
+        for kind in sorted(by_kind):
+            total, verified, deselected = by_kind[kind]
+            yield (
+                f"    - {kind}: {total} (verified {verified}, unverified "
+                f"{total - verified}, deselected {deselected})"
+            )
+        attention = tuple(
+            e for e in edges if not e.verified or e.deselected
+        )
+        if attention:
+            yield (
+                f"    Edges needing attention (unverified or deselected) -- "
+                f"{len(attention)} of {len(edges)}; the verified remainder is "
+                f"counted above and listed in full in the JSON artifact:"
+            )
+
+            def _edge_row(e) -> str:
+                flags = []
+                if not e.verified:
+                    flags.append("unverified")
+                if e.deselected:
+                    flags.append("deselected")
+                return (
+                    f"      - [{','.join(flags)}] {_pair_text(e.dependent)} "
+                    f"needs {_pair_text(e.dependency)} "
+                    f"({_enum_value(e.kind)}, origin={e.origin})"
+                )
+
+            for line in _rows(attention, _edge_row, indent="      "):
+                yield line
+
+    # ---- FR-016 / FR-017 / FR-019 / SC-010: knowingly incomplete items ----
+    incompleteness = getattr(report, "incompleteness", ())
+    if incompleteness:
+        yield (
+            f"  Items arriving INCOMPLETE -- {len(incompleteness)} total "
+            f"(reported, never transferred silently broken):"
+        )
+
+        def _incomplete_row(r) -> str:
+            # `consequence` is what the user actually loses; it is non-empty
+            # by construction and is never dropped from this line.
+            return (
+                f"    - \"{r.incomplete_label}\" "
+                f"[{_pair_text(r.incomplete_item)}] is missing "
+                f"\"{r.missing_label}\" [{_pair_text(r.missing_dependency)}] "
+                f"({r.cause}) - consequence: {r.consequence}"
+            )
+
+        for line in _rows(incompleteness, _incomplete_row):
+            yield line
+
+    # ---- FR-020..FR-022: enrichments -------------------------------------
+    enrichments = getattr(report, "enrichments", ())
+    if enrichments:
+        empty = sum(1 for r in enrichments if getattr(r, "is_empty", False))
+        yield (
+            f"  ENRICHED existing target objects (add-only; nothing was "
+            f"blanked or overwritten) -- {len(enrichments)} total"
+            + (f", {empty} of them gained nothing" if empty else "")
+            + ":"
+        )
+
+        def _enrichment_row(r) -> str:
+            parts = []
+            if r.fields_updated:
+                parts.append("fields=" + ",".join(r.fields_updated))
+            for c in r.collections:
+                bits = f"{c.field_name} +{c.added}"
+                extra = []
+                if c.already_present:
+                    extra.append(f"{c.already_present} already present")
+                if c.dropped:
+                    extra.append(f"{c.dropped} dropped")
+                if extra:
+                    bits += " (" + ", ".join(extra) + ")"
+                parts.append(bits)
+            detail = "; ".join(parts) if parts else "nothing gained"
+            return (
+                f"    - {r.object_class} \"{r.label}\" "
+                f"{_guid8(r.source_guid)} -> {_guid8(r.target_guid)}: {detail}"
+            )
+
+        for line in _rows(enrichments, _enrichment_row):
+            yield line
+
+    # ---- FR-023..FR-025 / SC-006: process rules --------------------------
+    process_rules = getattr(report, "process_rules", ())
+    if process_rules:
+        not_reproduced = tuple(getattr(report, "rules_not_reproduced", ()))
+        reproduced = len(process_rules) - len(not_reproduced)
+        yield (
+            f"  Process rules (MoAffixProcess) -- {len(process_rules)} total: "
+            f"{reproduced} reproduced, {len(not_reproduced)} NOT reproduced:"
+        )
+        if not_reproduced:
+
+            def _rule_row(r) -> str:
+                # `not_reproducible_reason` is non-empty by construction for
+                # every record in this list -- always rendered.
+                return (
+                    f"    - [NOT REPRODUCED] {_guid8(r.source_guid)} "
+                    f"({len(r.input_contexts)} input contexts, "
+                    f"{len(r.output_steps)} output steps) - "
+                    f"{r.not_reproducible_reason}"
+                )
+
+            for line in _rows(not_reproduced, _rule_row):
+                yield line
+
+    # ---- FR-009..FR-013: the fidelity census (T015 hook) -----------------
+    for line in _render_census_lines(getattr(report, "census", None)):
+        yield line
+
+
+def _render_census_lines(census) -> Iterable[str]:
+    """T015 HOOK -- human-readable side of `RunReport.census`.
+
+    `FidelityCensus` is task T015's type and does not exist yet, so this
+    deliberately renders nothing from its internals. `census is None` (the
+    only state reachable today) yields no lines at all; a census that IS
+    present is announced rather than silently ignored, and asked for its own
+    one-line summary if it has one.
+
+    T015: give `FidelityCensus` a `summary_lines()` returning the
+    per-object-class rows and replace the placeholder branch below.
+    """
+    if census is None:
+        return
+    yield "  Fidelity census:"
+    summary_lines = getattr(census, "summary_lines", None)
+    if callable(summary_lines):
+        for line in summary_lines():
+            yield f"    {line}"
+        return
+    summary_line = getattr(census, "summary_line", None)
+    if callable(summary_line):
+        yield f"    {summary_line()}"
+        return
+    yield (
+        "    (present; per-object-class detail is in the run-report JSON "
+        "artifact)"
+    )

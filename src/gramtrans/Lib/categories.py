@@ -51,6 +51,7 @@ from typing import Iterable, Tuple
 if __package__:
     from .models import (
         CreateDefinitionAction,
+        DependencyKind,
         DroppedItemRecord,
         FidelityStatus,
         GrammarCategory,
@@ -70,6 +71,7 @@ if __package__:
 else:
     from models import (  # type: ignore
         CreateDefinitionAction,
+        DependencyKind,
         DroppedItemRecord,
         FidelityStatus,
         GrammarCategory,
@@ -8133,9 +8135,17 @@ def natural_classes_dependencies(piece):
     its referenced feature/value objects are missing from target. This
     function is correct and is intentionally KEPT AS-IS so the gate works
     the moment 038's Phase 2 closes RC-2 and wires the closure -- do not
-    delete it as "dead code," and do not attempt to wire the closure from
-    this branch (038 owns that work and it must not run concurrently with
-    feature 037)."""
+    delete it as "dead code."
+
+    Feature 038 (T010) makes that unconsumed-ness EXPLICIT rather than
+    merely documented: this producer is CURRENTLY UNCONSUMED because it is
+    not registered in `CLOSURE_EDGES_VERIFIED` (bottom of this module), and
+    while it is unregistered `closure_dependencies_for()` returns `()` for
+    PhNCSegments/PhNCFeatures without ever calling it. Registering it is
+    what makes it live, and FR-018 requires an audit plus a named
+    `verified_by` test first -- so do not assume a dependency gate exists
+    for natural classes until this function's key appears in that registry.
+    """
     try:
         from SIL.LCModel import (
             IPhNCSegments, IPhNCFeatures, IFsClosedValue, ICmObject,
@@ -10263,3 +10273,186 @@ def for_category(category: GrammarCategory) -> dict:
     MSAs) are transferred via the closure/plan path in `Lib/preview.py` +
     `Lib/transfer.py` + `_create_msa_for_closure`, not through this registry."""
     return LEAF_CATEGORIES[category]
+
+
+# ============================================================================
+# Closure-edge verification registry (feature 038 -- FR-014 / FR-018, R3)
+# ============================================================================
+#
+# `Lib/closure.py`'s `walk()` consumes a `dependencies(category, source_guid)`
+# callable. This module supplies 23 `*_dependencies(piece)` producers -- one
+# per entry in LEAF_CATEGORIES -- and every one of them is UNVERIFIED BY
+# CONSTRUCTION: `preview.build_run_plan` and `transfer.execute` have never read
+# `bundle["dependencies"]` for ANY category, so no producer's edge set has ever
+# been checked against a real project (see the RC-2 notes on
+# `natural_classes_dependencies` and `phonological_rules_dependencies`).
+#
+# FR-018 requires each dependency relationship to be verified on its OWN
+# evidence before it may influence a plan. One global `include_closure=True`
+# flag cannot express "AFFIX_TO_POS is verified but PROCESS_RULE_TO_PHONEME is
+# not" -- it switches all 23 producers on at once, which is precisely US3's
+# stated widest-regression risk. Hence a per-relationship allowlist keyed by
+# `models.DependencyKind`.
+#
+# THIS REGISTRY LANDS EMPTY, AND EMPTINESS IS THE SAFETY PROPERTY: with nothing
+# registered, `closure_dependencies_for()` returns `()` for every ref it is
+# asked about, the walk is a no-op by construction, and no existing plan can
+# change. Registering an entry is a DELIBERATE, EVIDENCE-BACKED ACT -- it turns
+# one producer's output loose on real plans -- so `verified_by` (the test or
+# probe that audited that producer's edge set against a fixture) is MANDATORY
+# and validated here, mirroring what `models.ClosureEdge` demands of the edges
+# this registry ultimately produces. Add producers ONE AT A TIME, each with its
+# own census diff.
+#
+# Entry shape (kept as a comment -- do NOT uncomment without the audit and the
+# unit test that `verified_by` names):
+#
+#     DependencyKind.AFFIX_TO_POS: {
+#         "category": GrammarCategory.AFFIXES,       # whose pieces are walked
+#         "producer": affixes_dependencies,          # the *_dependencies fn
+#         "dependency_category": None,               # producer yields refs
+#         "verified_by": "tests/unit/test_closure_edges.py::test_affix_to_pos",
+#     },
+#
+# `dependency_category` reconciles the two producer shapes in this file: most
+# already yield `(GrammarCategory, guid)` refs and set it to None; a few --
+# `natural_classes_dependencies`, `phonological_rules_dependencies` -- yield
+# BARE guid strings, and those name the category the guids belong to here. A
+# bare-guid producer whose guids span SEVERAL categories (phonological rules
+# return phonemes, natural classes and strata undifferentiated) cannot be
+# registered as-is: split it into per-category producers first, because the
+# audit that earns `verified_by` cannot certify an edge whose far endpoint
+# category is a guess.
+
+CLOSURE_EDGES_VERIFIED: dict = {}
+
+
+def _closure_registry_by_category(registry: dict) -> dict:
+    """Validate a `CLOSURE_EDGES_VERIFIED` mapping and group it by the source
+    `GrammarCategory` whose pieces its producers are called on.
+
+    Raises ValueError on a malformed entry -- most importantly on one with an
+    empty `verified_by`, since FR-018's whole point is that an edge nobody
+    audited must not be able to reach a plan. Failing loudly at registry-build
+    time is deliberate: a silently-dropped entry would be indistinguishable
+    from a correctly-empty registry.
+    """
+    by_category: dict = {}
+    for kind, entry in registry.items():
+        if not isinstance(kind, DependencyKind):
+            raise ValueError(
+                "CLOSURE_EDGES_VERIFIED keys must be DependencyKind members, "
+                "got " + repr(kind)
+            )
+        category = entry.get("category")
+        producer = entry.get("producer")
+        if category is None or producer is None:
+            raise ValueError(
+                "CLOSURE_EDGES_VERIFIED[" + str(kind) + "] must name both a "
+                "'category' and a 'producer'"
+            )
+        if not entry.get("verified_by"):
+            raise ValueError(
+                "CLOSURE_EDGES_VERIFIED[" + str(kind) + "] has an empty "
+                "'verified_by' -- FR-018 requires naming the evidence that "
+                "verified the edge before it may influence a plan"
+            )
+        by_category.setdefault(category, []).append((kind, entry))
+    return by_category
+
+
+def closure_dependencies_for(context, selection=None, registry=None):
+    """Build the `dependencies(category, source_guid)` callable that
+    `Lib/closure.py`'s `walk()` consumes (feature 038 -- FR-014, FR-018, R3).
+
+    The returned callable consults ONLY the producers registered in
+    `CLOSURE_EDGES_VERIFIED` and returns `()` for every relationship that is
+    not registered. That is the hard guarantee: an unregistered producer is
+    never invoked, so its output cannot reach a plan by any path -- there is no
+    fall-through to `LEAF_CATEGORIES[...]["dependencies"]` here. While the
+    registry is empty (its shipped state), the callable returns `()` for
+    everything and the closure walk is a no-op.
+
+    Args:
+        context: the `RunContext` whose `source_handle` the pieces come from.
+        selection: optional `Selection` forwarded to `enumerate_source` so a
+            producer sees the same pieces the plan does. None enumerates all.
+        registry: override for `CLOSURE_EDGES_VERIFIED`, for tests that need to
+            exercise a registered edge without mutating module state.
+
+    Returns:
+        A `closure.DepFn` -- `(GrammarCategory, source_guid) -> tuple[Ref, ...]`.
+
+    Wiring this into `build_run_plan` is `Lib/preview.py`'s job, not this
+    module's (Principle III: the plan builder owns plan shape).
+    """
+    import logging as _logging
+    log = _logging.getLogger("gramtrans.Lib.categories")
+
+    active = CLOSURE_EDGES_VERIFIED if registry is None else registry
+    by_category = _closure_registry_by_category(active)
+    if not by_category:
+        log.info(
+            "closure: CLOSURE_EDGES_VERIFIED is empty -- no dependency edge "
+            "is verified (FR-018), so the closure walk contributes nothing"
+        )
+    _piece_cache: dict = {}
+
+    def _pieces_for(category):
+        """Lazily index this category's source pieces by GUID. Only ever
+        called for a category that has a registered producer."""
+        if category in _piece_cache:
+            return _piece_cache[category]
+        index: dict = {}
+        try:
+            bundle = LEAF_CATEGORIES[category]
+            for piece in bundle["enumerate_source"](context, selection) or ():
+                g = _guid_str_from(piece)
+                if g and g not in index:
+                    index[g] = piece
+        except Exception as exc:  # enumeration is best-effort, never fatal
+            log.warning(
+                "closure: could not enumerate source pieces for %s (%s) -- "
+                "its verified edges contribute nothing this run",
+                getattr(category, "value", category), exc,
+            )
+            index = {}
+        _piece_cache[category] = index
+        return index
+
+    def _dependencies(category, source_guid):
+        registered = by_category.get(category)
+        if not registered:
+            # Unregistered relationship: no verified evidence, so no edges.
+            return ()
+        piece = _pieces_for(category).get((source_guid or "").lower())
+        if piece is None:
+            return ()
+        refs: list = []
+        for kind, entry in registered:
+            dep_category = entry.get("dependency_category")
+            try:
+                produced = entry["producer"](piece) or ()
+            except Exception as exc:
+                log.warning(
+                    "closure: producer for %s raised on guid=%s (%s) -- "
+                    "treated as no edges", kind, str(source_guid)[:8], exc,
+                )
+                continue
+            for item in produced:
+                if isinstance(item, tuple):
+                    ref = item
+                elif dep_category is not None and item:
+                    ref = (dep_category, str(item).lower())
+                else:
+                    log.warning(
+                        "closure: %s produced a bare guid but no "
+                        "'dependency_category' is registered -- edge dropped",
+                        kind,
+                    )
+                    continue
+                if ref not in refs:
+                    refs.append(ref)
+        return tuple(refs)
+
+    return _dependencies

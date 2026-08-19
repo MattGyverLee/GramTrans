@@ -12,6 +12,14 @@ FINGERPRINT_FNS    per-category registry: GrammarCategory -> callable
 fingerprint_for_msa(msa, ws_handle=None) -> Tuple
 fingerprint_for_allomorph(allo, ws_handle=None) -> Tuple
 
+Feature 038 (FR-003, research.md R1) natural-key roster surface:
+
+NATURAL_KEY_ROSTER_PATH             default location of 035's roster file
+NaturalKeyRosterHarnessError        raised by require_natural_key_roster_entry()
+natural_key_roster_entry_for(cls)   THE single roster accessor; None == no basis
+require_natural_key_roster_entry(cls)   enforcement gate for the matching step
+reset_natural_key_roster_cache()    test hook; also re-points the roster path
+
 Fingerprint definitions per FR-104.
 
 lookup_target() contract
@@ -34,16 +42,19 @@ The `target` argument must expose at least one of:
 """
 from __future__ import annotations
 
+import json
 import logging
+import os
 from dataclasses import dataclass
 from typing import Callable, Dict, Optional, Tuple
 
 _log = logging.getLogger(__name__)
 
 if __package__:
-    from .models import GrammarCategory
+    from .models import GrammarCategory, NaturalKeyRosterEntry
 else:
-    from models import GrammarCategory  # loaded via site.addsitedir("Lib")
+    # loaded via site.addsitedir("Lib")
+    from models import GrammarCategory, NaturalKeyRosterEntry
 
 
 # ---------------------------------------------------------------------------
@@ -231,6 +242,264 @@ FINGERPRINT_FNS: Dict[GrammarCategory, Callable] = {
     # will be added here as Phase 1 category planners are implemented.
     # Each entry is (obj, ws_handle=None) -> hashable tuple.
 }
+
+
+# ---------------------------------------------------------------------------
+# Natural-key identity roster (feature 038 FR-003 / research.md R1)
+# ---------------------------------------------------------------------------
+#
+# FR-003 admits a class to the NATURAL-KEY match basis "by enumeration on the
+# roster only". The roster file is owned by feature 035; this module only READS
+# it, through the single accessor below. Nothing here may hard-code a natural
+# key or a class name: the file is the one source of truth, so a class is
+# admitted exactly when 035's file says so and never because engine code
+# happened to know a key for it.
+#
+# WHY AN ABSENT CLASS IS NOT AN ERROR (R1). 035 has not yet appended 038's six
+# proposed entries (that append is 035's own task, not this feature's), and the
+# rows in the file today predate the executable `key_fn_id` / `scope_fn_id`
+# fields `NaturalKeyRosterEntry` requires. Both conditions therefore hold right
+# now for every class: nothing projects, so nothing has a natural-key basis, so
+# the engine degrades to the GUID-only behaviour it had before 038 -- which is
+# exactly how 038 lands green ahead of 035's append, and how it will start
+# matching on the day that append happens with NO code change here.
+
+_LIB_DIR = os.path.dirname(os.path.abspath(__file__))
+_REPO_ROOT = os.path.abspath(
+    os.path.join(_LIB_DIR, os.pardir, os.pardir, os.pardir)
+)
+
+#: Default location of 035's roster. Resolved relative to this module so any
+#: checkout path works. A FlexTools deployment that ships only ``Lib/`` has no
+#: ``specs/`` tree at all; see ``_load_natural_key_roster`` for why that is a
+#: degradation rather than a crash.
+NATURAL_KEY_ROSTER_PATH = os.path.join(
+    _REPO_ROOT,
+    "specs", "035-fullsweep-fidelity", "contracts",
+    "natural-key-identity-roster.json",
+)
+
+# Module-level cache. None == "not loaded yet"; an empty dict is a legitimate
+# loaded state (no class has a natural-key basis) and must not trigger a reload.
+_ROSTER_CACHE = None          # type: Optional[Dict[str, NaturalKeyRosterEntry]]
+_ROSTER_PATH_OVERRIDE = None  # type: Optional[str]
+
+
+class NaturalKeyRosterHarnessError(RuntimeError):
+    """Raised when a class that is NOT on the roster reaches the natural-key
+    matching step (035 ``enforcement.firing_for_a_class_not_on_this_roster``,
+    038 FR-003).
+
+    This is a harness error, never a run-time fallback: reaching the
+    natural-key step means the caller has already decided to match by key, and
+    doing that for an unadmitted class is precisely the fabricated
+    correspondence FR-185 / FR-186 exist to forbid. The message always names
+    the offending class.
+    """
+
+
+def reset_natural_key_roster_cache(roster_path: Optional[str] = None) -> None:
+    """Drop the cached roster; optionally re-point where it is read from.
+
+    Parameters:
+        roster_path: When given, subsequent loads read this path instead of
+                     ``NATURAL_KEY_ROSTER_PATH``. Pass None (the default) to
+                     clear both the cache and any previous override, restoring
+                     the real file.
+
+    Exists for tests -- a module-level cache that cannot be reset makes the
+    missing-file and malformed-file degradations untestable, and those two
+    paths are the ones that must never crash a live transfer run.
+    """
+    global _ROSTER_CACHE, _ROSTER_PATH_OVERRIDE
+    _ROSTER_CACHE = None
+    _ROSTER_PATH_OVERRIDE = roster_path
+
+
+def natural_key_roster_entry_for(
+    object_class: str,
+) -> Optional[NaturalKeyRosterEntry]:
+    """THE roster accessor (038 FR-003, research.md R1). Single point of read.
+
+    Parameters:
+        object_class: LCM class name as the roster spells it, e.g. "PhPhoneme".
+
+    Returns:
+        The projected ``NaturalKeyRosterEntry`` when the class is admitted to
+        the natural-key basis, or **None** meaning "no natural-key basis for
+        this class".
+
+    ``None`` is a NORMAL, EXPECTED, NON-ERROR return. The caller answers it by
+    degrading to GUID-only (identity) matching for that class -- the pre-038
+    behaviour -- and must not raise, must not warn per item, and must not
+    invent a key. It is the answer to the question "MAY I use a natural key
+    for this class?".
+
+    The different question "I am ABOUT to natural-key match this class" is
+    answered by ``require_natural_key_roster_entry``, which raises. Do not
+    conflate the two: only the second is a contract violation.
+    """
+    return _natural_key_roster().get(object_class)
+
+
+def require_natural_key_roster_entry(
+    object_class: str,
+) -> NaturalKeyRosterEntry:
+    """Return the roster entry for a class that has REACHED the natural-key
+    matching step, raising if that class is not admitted.
+
+    Raises:
+        NaturalKeyRosterHarnessError: naming ``object_class``, when the class
+            has no roster entry. An off-roster class arriving here is a harness
+            defect in the caller (it should have consulted
+            ``natural_key_roster_entry_for`` and degraded to GUID-only), not a
+            data condition to be tolerated, so it fails loudly rather than
+            matching on an unadmitted key.
+    """
+    entry = natural_key_roster_entry_for(object_class)
+    if entry is None:
+        raise NaturalKeyRosterHarnessError(
+            "natural-key matching was attempted for object class "
+            + repr(object_class) + ", which is NOT admitted to the "
+            "natural-key identity roster (" + NATURAL_KEY_ROSTER_PATH + "). "
+            "Admission is by enumeration on that roster only (038 FR-003 / "
+            "035 FR-185); a class absent from it must degrade to GUID-only "
+            "matching, which the caller detects as "
+            "natural_key_roster_entry_for(" + repr(object_class) + ") is None."
+        )
+    return entry
+
+
+def _natural_key_roster() -> Dict[str, NaturalKeyRosterEntry]:
+    """Return the cached class-name -> entry map, loading it on first use."""
+    global _ROSTER_CACHE
+    if _ROSTER_CACHE is None:
+        path = _ROSTER_PATH_OVERRIDE or NATURAL_KEY_ROSTER_PATH
+        _ROSTER_CACHE = _load_natural_key_roster(path)
+    return _ROSTER_CACHE
+
+
+def _load_natural_key_roster(path: str) -> Dict[str, NaturalKeyRosterEntry]:
+    """Parse the roster file into a class-name -> entry map.
+
+    Every failure mode degrades to an EMPTY roster plus one warning, never an
+    exception:
+
+    * missing file -- this module also runs from a FlexTools deployment that
+      ships ``Lib/`` without the ``specs/`` tree, and from a checkout made
+      before 035 landed the file. Crashing the engine because a planning
+      artefact is absent would turn a "no natural-key basis" degradation into
+      a total transfer failure, which is strictly worse than the pre-038
+      behaviour it would be replacing.
+    * malformed JSON -- same reasoning: an unreadable roster admits nobody,
+      and "admits nobody" is the safe state (GUID-only matching). A
+      half-parsed roster that admitted SOME classes would be the dangerous
+      state.
+
+    An individual entry that cannot be projected is skipped and counted in the
+    summary line; it does not poison the entries beside it.
+    """
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            raw = json.load(handle)
+    except (IOError, OSError):
+        _log.warning(
+            "natural-key roster not found at %s -- no class has a natural-key "
+            "basis; matching degrades to GUID-only (038 FR-003 / R1)", path,
+        )
+        return {}
+    except ValueError as exc:  # json.JSONDecodeError subclasses ValueError
+        _log.warning(
+            "natural-key roster at %s is not valid JSON (%s) -- no class has "
+            "a natural-key basis; matching degrades to GUID-only", path, exc,
+        )
+        return {}
+
+    entries = raw.get("entries") if isinstance(raw, dict) else None
+    if not isinstance(entries, list):
+        _log.warning(
+            "natural-key roster at %s carries no 'entries' list -- no class "
+            "has a natural-key basis; matching degrades to GUID-only", path,
+        )
+        return {}
+
+    roster = {}  # type: Dict[str, NaturalKeyRosterEntry]
+    skipped = 0
+    for raw_entry in entries:
+        entry = _project_roster_entry(raw_entry)
+        if entry is None:
+            skipped += 1
+            continue
+        roster[entry.object_class] = entry
+
+    _log.info(
+        "natural-key roster %s: %d of %d entries projected; %d not yet "
+        "executable (no key_fn_id) and therefore carrying no natural-key "
+        "basis", path, len(roster), len(entries), skipped,
+    )
+    return roster
+
+
+def _project_roster_entry(raw_entry) -> Optional[NaturalKeyRosterEntry]:
+    """Project one roster ``entries[]`` object to a ``NaturalKeyRosterEntry``.
+
+    Returns None -- "this class has no natural-key basis" -- for any row that
+    cannot be projected, which today is EVERY row: the file spells the class
+    name ``class`` (accepted here alongside ``object_class``) and carries none
+    of 038's executable ``key_fn_id`` / ``scope_fn_id`` fields, so
+    ``NaturalKeyRosterEntry``'s non-empty ``key_fn_id`` invariant rejects it.
+    That is deliberate and is R1's whole point: a declarative row nobody can
+    execute must not be treated as an admission. NEVER fill ``key_fn_id`` in
+    with a guess here -- inventing one would fabricate an admission the roster
+    never granted.
+    """
+    if not isinstance(raw_entry, dict):
+        return None
+    object_class = raw_entry.get("object_class") or raw_entry.get("class")
+    try:
+        return NaturalKeyRosterEntry(
+            object_class=object_class,
+            natural_key=raw_entry.get("natural_key"),
+            key_unique_by_construction=bool(
+                raw_entry.get("key_unique_by_construction")
+            ),
+            on_ambiguous_key=raw_entry.get("on_ambiguous_key"),
+            reason=raw_entry.get("reason"),
+            key_fn_id=raw_entry.get("key_fn_id"),
+            key_scoping_note=_as_optional_text(
+                raw_entry.get("key_scoping_note")
+            ),
+            uniqueness_caveat=_as_optional_text(
+                raw_entry.get("uniqueness_caveat")
+            ),
+            live_confirmation=(
+                raw_entry.get("live_confirmation")
+                if isinstance(raw_entry.get("live_confirmation"), dict)
+                else None
+            ),
+            scope_fn_id=raw_entry.get("scope_fn_id"),
+        )
+    except (ValueError, TypeError) as exc:
+        _log.debug(
+            "natural-key roster entry for %r is not projectable (%s) -- no "
+            "natural-key basis for that class", object_class, exc,
+        )
+        return None
+
+
+def _as_optional_text(value) -> Optional[str]:
+    """Coerce a roster field the model types as ``Optional[str]`` but the file
+    may spell as a nested object (035 writes ``uniqueness_caveat`` as a dict).
+
+    A stable JSON rendering keeps the evidence readable in a report without
+    letting a shape difference alone reject an otherwise-valid entry.
+    """
+    if value is None or isinstance(value, str):
+        return value
+    try:
+        return json.dumps(value, sort_keys=True)
+    except (TypeError, ValueError):
+        return str(value)
 
 
 # ---------------------------------------------------------------------------
