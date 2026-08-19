@@ -804,12 +804,76 @@ def read_data_model_version(fwdata: Path) -> Optional[int]:
 
 # ---------------------------------------------------------------------------
 # Per-class counts
+#
+# T023b -- LCM REPOSITORIES ARE POLYMORPHIC. DO NOT "SIMPLIFY" THIS BACK.
+#
+# `I<Class>Repository.Count` / `.AllInstances()` (which is what flexicon's
+# `ObjectCountFor` / `ObjectsIn` wrap) return the whole INHERITANCE SUBTREE, not
+# the objects whose own class is `<Class>`. Measured against a blank FieldWorks
+# starter project (the `Ngoreme Target 2026-08-19 0831` backup, digest
+# bc91a75b...), read straight out of `.fwdata` for ground truth:
+#
+#     class            repository reports    own <rt> rows
+#     CmPossibility               3014                 302
+#     LexEntryType                  14                  11
+#
+# 3014 = 302 own + 1792 CmSemanticDomain + 859 CmAnthroItem + 19 MoMorphType
+# + 14 LexEntryType(subtree) + 15 CmAnnotationDefn + 7 LexRefType
+# + 5 PartOfSpeech + 1 CmPerson -- the entire subtree, to the object.
+# 14 = 11 own + 3 LexEntryInflType.
+#
+# That is fatal for a census whose rows are supposed to PARTITION the project:
+#
+#   - the 74 class rows stop being disjoint (one `PartOfSpeech` object is
+#     counted in the `PartOfSpeech` row AND in the `CmPossibility` row),
+#   - the emitted object total double-counts,
+#   - a per-class `difference` is ambiguous for any class with subclasses, and
+#   - the match-basis invariant
+#     `identity + natural_key + created_new + unmatched_reported == source_count`
+#     runs against a polymorphic `source_count`, so T019's "no cross-class
+#     netting, ever" is undermined by the COUNTS rather than by the arithmetic.
+#
+# So every number this section publishes is the EXACT class. The two words are
+# used consistently and are not interchangeable:
+#
+#   EXACT       objects whose own class is this class. `ClassCounts.counts`,
+#               `count_for()`, every row, every difference, every total.
+#   CUMULATIVE  the polymorphic subtree, i.e. what LCM hands back raw.
+#               `ClassCounts.cumulative_counts` / `cumulative_count_for()`,
+#               retained ONLY so the raw reading stays inspectable.
+#
+# Exact is derived by SUBTRACTING the direct subclasses' cumulative counts from
+# the class's own cumulative count, which keeps T017's one-O(1)-read-per-class
+# contract (a `Count` read per class plus one per direct subclass -- 0.26s for
+# all 74 rows on the starter, versus 0.37s for the enumerate-and-filter walk).
+# The subclass names come from LCM's own metadata cache, never from a table
+# hand-maintained here. When the metadata cache cannot be reached at all the
+# code falls back to enumerating and filtering on `ClassName`, which is O(n) in
+# the subtree; that fallback is RECORDED per class in `ClassCounts.count_basis`
+# rather than taken silently, because it is a real change in cost.
 # ---------------------------------------------------------------------------
+
+
+#: `count_basis` value: exact = own cumulative count MINUS the cumulative counts
+#: of the direct subclasses LCM's metadata cache names. One O(1) `Count` read per
+#: class plus one per direct subclass, so T017's contract is intact.
+COUNT_BASIS_SUBTRACTION = "repository_subtraction"
+
+#: `count_basis` value: exact = enumerate the subtree ONCE and keep the objects
+#: whose `ClassName` is the class. Correct but O(n) in the subtree; only used
+#: when the metadata cache cannot be reached, and always recorded when it is.
+COUNT_BASIS_ENUMERATION = "enumerated_class_filter"
 
 
 @dataclass(frozen=True)
 class ClassCounts:
     """One project's per-class instance counts, plus what could NOT be counted.
+
+    `counts` is the EXACT class in every case -- objects whose own class is the
+    key, never the polymorphic LCM subtree (T023b; see this section's header).
+    That is what makes the 74 rows disjoint and a per-class `difference`
+    meaningful. The raw subtree reading is kept beside it in
+    `cumulative_counts`, under a name that cannot be mistaken for the other.
 
     `counts` holds only classes that were actually measured. A class the census
     could not measure is in `unmeasurable` and its reason is in
@@ -823,10 +887,25 @@ class ClassCounts:
     unmeasurable: tuple = ()
     unresolved_accessors: Optional[dict] = None
     object_count_total: Optional[int] = None
+    #: `{class: cumulative count}` -- the POLYMORPHIC subtree total LCM hands
+    #: back raw. Diagnostic only: nothing in the accounting reads it, because
+    #: subtracting one project's subtree from another's is exactly the
+    #: cross-class netting T019 forbids. It equals `counts[class]` for every
+    #: class with no subclasses.
+    cumulative_counts: Optional[dict] = None
+    #: `{class: basis}` -- how the exact count was obtained, one of
+    #: `COUNT_BASIS_SUBTRACTION` (O(1) reads) or `COUNT_BASIS_ENUMERATION`
+    #: (O(n) walk, the metadata-cache fallback). Emitted nowhere; it exists so
+    #: a run that quietly got slow can SAY so instead of being guessed at.
+    count_basis: Optional[dict] = None
 
     def __post_init__(self) -> None:
         if self.unresolved_accessors is None:
             object.__setattr__(self, "unresolved_accessors", {})
+        if self.cumulative_counts is None:
+            object.__setattr__(self, "cumulative_counts", {})
+        if self.count_basis is None:
+            object.__setattr__(self, "count_basis", {})
         missing = tuple(
             name for name in self.unmeasurable
             if name not in self.unresolved_accessors
@@ -848,12 +927,39 @@ class ClassCounts:
             )
 
     def count_for(self, object_class: str) -> Optional[int]:
-        """The count for one class, or None when it could not be measured.
+        """The EXACT count for one class, or None when it could not be measured.
 
-        None is `unmeasurable`, NOT zero. The caller must report it rather than
-        subtract it.
+        Exact means "own class is this class", not the polymorphic subtree --
+        see the section header. None is `unmeasurable`, NOT zero. The caller
+        must report it rather than subtract it.
         """
         return self.counts.get(object_class)
+
+    def cumulative_count_for(self, object_class: str) -> Optional[int]:
+        """The POLYMORPHIC subtree count for one class -- diagnostics only.
+
+        Never feed this to a difference or a total: subtree counts overlap, so
+        summing or subtracting them double-counts. `count_for` is the number
+        every row is built from.
+        """
+        return (self.cumulative_counts or {}).get(object_class)
+
+    def basis_for(self, object_class: str) -> Optional[str]:
+        """How this class's exact count was obtained -- see `count_basis`."""
+        return (self.count_basis or {}).get(object_class)
+
+    @property
+    def enumerated_classes(self) -> tuple:
+        """Classes that needed the O(n) fallback walk, sorted.
+
+        Empty on a healthy run. Non-empty means the metadata cache was
+        unreachable and the pass paid a walk per class; the caller should say so
+        rather than let the cost pass unremarked.
+        """
+        return tuple(sorted(
+            name for name, basis in (self.count_basis or {}).items()
+            if basis == COUNT_BASIS_ENUMERATION
+        ))
 
     @property
     def is_complete(self) -> bool:
@@ -874,77 +980,263 @@ def _repository_interface(object_class: str):
     return getattr(lcm, "I" + object_class + "Repository", None)
 
 
+def metadata_cache(handle):
+    """LCM's own metadata cache, or None when it cannot be reached.
+
+    This is where the class HIERARCHY comes from. There is deliberately no
+    hand-maintained subclass table in this module: LCM adds and moves classes
+    between data-model versions, and a stale local table would silently put the
+    subtree back into an "exact" count -- the very defect T023b removed, but
+    harder to notice the second time.
+
+    `LcmCache.MetaDataCacheAccessor` is typed `IFwMetaDataCache`, whose
+    interface does not carry `GetDirectSubclasses`; the managed subinterface
+    `SIL.LCModel.Infrastructure.IFwMetaDataCacheManaged` does. Measured on this
+    machine (liblcm 11.0.0) the raw proxy happens to answer it too, but that is
+    pythonnet resolving against whatever the concrete object exposes and is
+    exactly the kind of coincidence CLAUDE.md's `FeaturesOA` note records going
+    the other way -- so the cast is attempted FIRST, and the raw accessor is
+    used only when it can be shown to answer.
+    """
+    cache = getattr(handle, "project", None)
+    accessor = getattr(cache, "MetaDataCacheAccessor", None)
+    if accessor is None:
+        return None
+    candidates = []
+    try:
+        from SIL.LCModel.Infrastructure import (  # noqa: PLC0415
+            IFwMetaDataCacheManaged,
+        )
+
+        candidates.append(IFwMetaDataCacheManaged(accessor))
+    except Exception:  # noqa: BLE001 -- no managed cast available; try raw
+        pass
+    candidates.append(accessor)
+    for candidate in candidates:
+        if candidate is None:
+            continue
+        if all(hasattr(candidate, name) for name in
+               ("GetClassId", "GetClassName", "GetDirectSubclasses")):
+            return candidate
+    return None
+
+
+def direct_subclass_names(mdc, object_class: str) -> Optional[tuple]:
+    """The DIRECT subclasses of one class, or None when metadata cannot say.
+
+    Direct, not all: `exact = cumulative(C) - sum(cumulative(direct subclass))`
+    already telescopes over the whole subtree, because each direct subclass's
+    cumulative count contains its own descendants. Subtracting ALL subclasses
+    would double-subtract every grandchild (`LexEntryInflType` sits under
+    `LexEntryType` sits under `CmPossibility`).
+    """
+    try:
+        clid = int(mdc.GetClassId(object_class))
+    except Exception:  # noqa: BLE001 -- unknown class name, or drifted API
+        return None
+    if not clid:
+        return None
+    try:
+        return tuple(
+            str(mdc.GetClassName(sub))
+            for sub in mdc.GetDirectSubclasses(clid)
+        )
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def cumulative_count(handle, object_class: str) -> tuple:
+    """`(count, reason)` for the POLYMORPHIC subtree total of one class.
+
+    Exactly one `repository.Count` read. Success is `(int, None)`; failure is
+    `(None, reason)`, worded ready for `unresolved_accessors` -- a missing
+    repository interface, a service locator that returns nothing, a raising
+    accessor, and a count that is not an integer are four distinct reasons and
+    stay distinguishable.
+
+    THIS NUMBER IS NOT A ROW. It counts the class and every subclass; see the
+    section header. `count_classes` turns it into an exact count.
+    """
+    iface = _repository_interface(object_class)
+    if iface is None:
+        return None, (
+            "SIL.LCModel exposes no I" + object_class + "Repository -- the "
+            "class was renamed, removed, or is not a first-class LCM class"
+        )
+    try:
+        value = handle.ObjectCountFor(iface)
+    except Exception as exc:  # noqa: BLE001 -- LCM raises many types
+        return None, (
+            "I" + object_class + "Repository resolved but counting raised "
+            + type(exc).__name__ + ": " + str(exc)
+        )
+    if value is None:
+        return None, (
+            "the service locator returned no I" + object_class + "Repository"
+        )
+    try:
+        return int(value), None
+    except (TypeError, ValueError):
+        return None, (
+            "I" + object_class + "Repository.Count is not an integer: "
+            + repr(value)
+        )
+
+
 def count_classes(handle, class_names, *, project_name: str = "") -> ClassCounts:
     """Count each class ONCE against an open, read-only project handle.
 
-    One `repository.Count` read per class -- no per-object enumeration and no
-    per-object re-query, which is what makes the pass affordable over the 74
-    rows of a real project. `handle.ObjectCountFor(iface)` is flexicon's own
-    accessor for exactly this (`FLExProject.ObjectCountFor` ->
-    `ServiceLocator.GetService(repository).Count`).
+    Every returned count is the EXACT class -- objects whose own class is that
+    class. LCM's repositories are polymorphic, so the raw reading is not; the
+    section header above measures the damage that did, and must be read before
+    touching this function.
 
-    Every failure mode is recorded and named: a missing repository interface, a
-    service locator that returns nothing, a raising accessor, and a count that
-    is not an integer are four distinct `unresolved_accessors` reasons.
+    THE EFFICIENCY CONTRACT (T017) IS INTACT. Exact counting is arithmetic over
+    O(1) `repository.Count` reads, not a walk: one read for the class plus one
+    per DIRECT subclass named by LCM's metadata cache, with every read memoised
+    across the pass so a class that is several classes' subclass is still read
+    once. Measured over all 74 rows of the blank starter: 0.26s, against 0.37s
+    for the enumerate-and-filter alternative. No per-object re-query anywhere.
+
+    Only when `metadata_cache` cannot be reached at all does a class fall back
+    to enumerating its subtree once and filtering on `ClassName` -- correct, but
+    O(n). That is recorded per class in `count_basis` (and summarised by
+    `enumerated_classes`) rather than absorbed silently, because it changes the
+    cost of the pass.
+
+    Every failure mode is recorded and named: the four `cumulative_count`
+    reasons, plus a subclass whose own cumulative count could not be read (the
+    subtraction would be wrong, so the class is unmeasurable rather than
+    approximate) and a subtraction that comes out negative (LCM contradicted
+    itself, and a negative "count" is not a measurement).
     """
     requested = tuple(dict.fromkeys(class_names))
+    cumulative: dict = {}
+    reasons: dict = {}
+
+    def cumulative_for(name: str):
+        """Memoised `cumulative_count` -- one repository read per class, ever."""
+        if name not in cumulative:
+            value, reason = cumulative_count(handle, name)
+            cumulative[name] = value
+            if reason is not None:
+                reasons[name] = reason
+        return cumulative[name]
+
+    mdc = metadata_cache(handle)
     counts: dict = {}
+    basis: dict = {}
     unresolved: dict = {}
 
     for name in requested:
-        iface = _repository_interface(name)
-        if iface is None:
-            unresolved[name] = (
-                "SIL.LCModel exposes no I" + name + "Repository -- the class "
-                "was renamed, removed, or is not a first-class LCM class"
-            )
+        total = cumulative_for(name)
+        if total is None:
+            unresolved[name] = reasons[name]
             continue
-        try:
-            value = handle.ObjectCountFor(iface)
-        except Exception as exc:  # noqa: BLE001 -- LCM raises many types
-            unresolved[name] = (
-                "I" + name + "Repository resolved but counting raised "
-                + type(exc).__name__ + ": " + str(exc)
-            )
-            continue
-        if value is None:
-            unresolved[name] = (
-                "the service locator returned no I" + name + "Repository"
-            )
-            continue
-        try:
-            counts[name] = int(value)
-        except (TypeError, ValueError):
-            unresolved[name] = (
-                "I" + name + "Repository.Count is not an integer: "
-                + repr(value)
-            )
 
-    total: Optional[int] = None
+        subclasses = None if mdc is None else direct_subclass_names(mdc, name)
+        if subclasses is None:
+            # No hierarchy available: enumerate the subtree ONCE and keep the
+            # objects whose own class matches. Correct, and flagged as costly.
+            try:
+                counts[name] = len(objects_in_class(handle, name))
+            except CensusError as exc:
+                unresolved[name] = (
+                    "LCM's metadata cache could not name the subclasses of "
+                    + name + ", and the enumerate-and-filter fallback also "
+                    "failed: " + str(exc) + " -- an exact count cannot be "
+                    "proved either way, and the polymorphic subtree total ("
+                    + str(total) + ") is not a substitute for it"
+                )
+                continue
+            basis[name] = COUNT_BASIS_ENUMERATION
+            continue
+
+        own = total
+        blocked = None
+        for subclass in subclasses:
+            sub_total = cumulative_for(subclass)
+            if sub_total is None:
+                blocked = subclass
+                break
+            own -= sub_total
+        if blocked is not None:
+            unresolved[name] = (
+                "the exact count for " + name + " needs the subclass count "
+                "for " + blocked + ", which could not be read ("
+                + reasons[blocked] + ") -- LCM's I" + name + "Repository "
+                "reports " + str(total) + " for the whole subtree, and "
+                "publishing that as " + name + "'s own count is the "
+                "double-counting T023b removed"
+            )
+            continue
+        if own < 0:
+            unresolved[name] = (
+                "LCM reports " + str(total) + " objects in the " + name
+                + " subtree but " + str(total - own) + " in its direct "
+                "subclasses (" + ", ".join(subclasses) + "), leaving "
+                + str(own) + " for " + name + " itself -- a negative count is "
+                "not a measurement"
+            )
+            continue
+        counts[name] = own
+        basis[name] = COUNT_BASIS_SUBTRACTION
+
+    total_objects: Optional[int] = None
     try:
         import SIL.LCModel as lcm  # noqa: PLC0415
 
         repo = handle.ObjectRepository(lcm.ICmObjectRepository)
-        total = int(repo.Count) if repo is not None else None
+        total_objects = int(repo.Count) if repo is not None else None
     except Exception:  # noqa: BLE001 -- advisory figure only
-        total = None
+        total_objects = None
 
     return ClassCounts(
         project_name=project_name or str(getattr(handle, "ProjectName", "")),
         counts=counts,
         unmeasurable=tuple(sorted(unresolved)),
         unresolved_accessors=unresolved,
-        object_count_total=total,
+        object_count_total=total_objects,
+        cumulative_counts={
+            name: value for name, value in cumulative.items()
+            if value is not None
+        },
+        count_basis=basis,
     )
 
 
-def objects_in_class(handle, object_class: str) -> list:
-    """Every instance of one class, enumerated ONCE.
+def _exact_class_name(obj) -> Optional[str]:
+    """`obj.ClassName`, or None when the object will not say what it is.
 
-    T018's duplicate grouping is the only caller: grouping by natural key needs
-    the objects themselves, not just their number. Raises `CensusError` rather
-    than yielding nothing when the class cannot be enumerated, so a duplicate
-    count of 0 always means "measured, and none" and never "could not look".
+    `ClassName` is declared on `ICmObject`, so it is visible on every proxy LCM
+    hands back regardless of which repository interface it came through, and it
+    reports the RUNTIME class -- a `PartOfSpeech` reached through
+    `ICmPossibilityRepository` still answers `"PartOfSpeech"`. That is what
+    makes it a usable exact-class discriminator.
+    """
+    name = getattr(obj, "ClassName", None)
+    return None if name is None else str(name)
+
+
+def objects_in_class(handle, object_class: str) -> list:
+    """Every instance of EXACTLY `object_class`, enumerated ONCE.
+
+    Two callers: T018's duplicate grouping (which needs the objects themselves,
+    not just their number) and `count_classes`'s metadata-cache fallback.
+
+    The `ClassName` filter is not tidying. `handle.ObjectsIn` is
+    `AllInstances()`, which yields the whole inheritance subtree, so an
+    unfiltered `CmPossibility` enumeration hands duplicate grouping 3014 objects
+    of ten different classes on a blank starter that owns 302 -- and a
+    natural-key collision between a `PartOfSpeech` and a `CmSemanticDomain`
+    would be reported as a duplicate `CmPossibility`. Each object belongs to
+    exactly one row, so each row enumerates exactly its own objects.
+
+    Raises `CensusError` rather than yielding nothing when the class cannot be
+    enumerated, so a duplicate count of 0 always means "measured, and none" and
+    never "could not look" -- including when an object declines to name its own
+    class, because silently keeping an object of unknown class is how the
+    subtree gets back in.
     """
     iface = _repository_interface(object_class)
     if iface is None:
@@ -954,13 +1246,29 @@ def objects_in_class(handle, object_class: str) -> list:
             (object_class,),
         )
     try:
-        return list(handle.ObjectsIn(iface))
+        subtree = list(handle.ObjectsIn(iface))
     except Exception as exc:  # noqa: BLE001
         raise CensusError(
             "cannot enumerate " + repr(object_class) + ": "
             + type(exc).__name__ + ": " + str(exc),
             (object_class,),
         ) from exc
+
+    exact = []
+    for obj in subtree:
+        name = _exact_class_name(obj)
+        if name is None:
+            raise CensusError(
+                "cannot enumerate " + repr(object_class) + " exactly: an "
+                "object in the subtree has no ClassName, so it cannot be "
+                "assigned to one class row -- and I" + object_class
+                + "Repository.AllInstances() returns the whole subtree, so "
+                "keeping it anyway would count another class's object here",
+                (object_class,),
+            )
+        if name == object_class:
+            exact.append(obj)
+    return exact
 
 
 # ---------------------------------------------------------------------------

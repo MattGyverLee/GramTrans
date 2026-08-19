@@ -1791,3 +1791,309 @@ class TestCensusCliSurface:
 
     def test_missing_artifact_file_is_not_a_pass(self, tmp_path):
         assert cli_exit(["gate", "--artifact", str(tmp_path / "nope.json")]) != 0
+
+
+# The T023b block below is APPENDED on purpose: it is the only part of this
+# file that needs the census module as a MODULE (it patches one seam), and a
+# local import here keeps the addition purely additive to a file two tasks
+# were editing at once.
+from gramtrans.Lib import census  # noqa: E402
+
+
+# ===========================================================================
+# T023b -- the census counts the EXACT class, never the polymorphic subtree
+#
+# The fakes below are not invented numbers. They reproduce, object for object,
+# what LCM reports on a blank FieldWorks starter project (the
+# `Ngoreme Target 2026-08-19 0831` backup, `.fwdata` digest bc91a75b...), with
+# the own-class counts read straight out of `.fwdata` as independent ground
+# truth:
+#
+#     class            I<Class>Repository.Count    own <rt> rows
+#     CmPossibility                       3014              302
+#     LexEntryType                          14               11
+#
+# so `OWN_OBJECTS` is the answer the instrument must give and `cumulative()`
+# is what LCM hands back if nobody corrects for inheritance. A future reader who
+# "simplifies" the exact-class filter back to a bare `ObjectCountFor` /
+# `ObjectsIn` fails this class with the same two numbers that found the defect.
+# ===========================================================================
+
+#: `{class: direct subclasses}` -- exactly what LCM's metadata cache answered
+#: for these classes on liblcm 11.0.0 (trimmed to the classes that hold objects
+#: in the starter, plus the two that make the arithmetic interesting).
+STARTER_HIERARCHY: dict = {
+    "CmPossibility": (
+        "CmAnthroItem", "CmSemanticDomain", "CmPerson", "PartOfSpeech",
+        "LexRefType", "LexEntryType", "MoMorphType", "CmAnnotationDefn",
+    ),
+    "LexEntryType": ("LexEntryInflType",),
+}
+
+#: `{class: own objects}` -- counted from `<rt class="...">` in the starter's
+#: `.fwdata`, i.e. NOT through LCM at all. This is the ground truth.
+OWN_OBJECTS: dict = {
+    "CmPossibility": 302,
+    "CmSemanticDomain": 1792,
+    "CmAnthroItem": 859,
+    "CmAnnotationDefn": 15,
+    "MoMorphType": 19,
+    "LexEntryType": 11,
+    "LexEntryInflType": 3,
+    "LexRefType": 7,
+    "PartOfSpeech": 5,
+    "CmPerson": 1,
+    "PhPhoneme": 23,
+}
+
+
+def starter_cumulative(object_class: str) -> int:
+    """What `I<Class>Repository.Count` reports: the whole inheritance subtree."""
+    return OWN_OBJECTS[object_class] + sum(
+        starter_cumulative(sub)
+        for sub in STARTER_HIERARCHY.get(object_class, ())
+    )
+
+
+class FakeCmObject:
+    """An LCM proxy, reduced to the one property that identifies its class."""
+
+    def __init__(self, class_name: str, index: int = 0) -> None:
+        self.ClassName = class_name
+        self.Guid = "%s-%04d" % (class_name, index)
+
+
+class NamelessCmObject:
+    """A proxy that will not say what it is. `ClassName` is deliberately absent."""
+
+    def __init__(self) -> None:
+        self.Guid = "nameless-0000"
+
+
+class FakeMetaDataCache:
+    """`IFwMetaDataCacheManaged`, reduced to the three hierarchy accessors."""
+
+    def __init__(self, hierarchy: dict, known: tuple) -> None:
+        self._hierarchy = hierarchy
+        self._ids = {name: 1000 + i for i, name in enumerate(known)}
+        self._names = {clid: name for name, clid in self._ids.items()}
+
+    def GetClassId(self, class_name):  # noqa: N802 -- LCM's spelling
+        return self._ids.get(class_name, 0)
+
+    def GetClassName(self, clid):  # noqa: N802 -- LCM's spelling
+        return self._names[int(clid)]
+
+    def GetDirectSubclasses(self, clid):  # noqa: N802 -- LCM's spelling
+        return [
+            self._ids[sub]
+            for sub in self._hierarchy.get(self._names[int(clid)], ())
+        ]
+
+
+class FakeLcmCache:
+    def __init__(self, mdc) -> None:
+        self.MetaDataCacheAccessor = mdc
+
+
+class FakeProjectHandle:
+    """A `FLExProject` reduced to the census's counting surface.
+
+    `ObjectCountFor` is POLYMORPHIC, like the real one -- that is the whole
+    point of the fake. It records every read so T017's "each class enumerated
+    once" contract can be asserted rather than asserted-about.
+    """
+
+    ProjectName = "T023b fake starter"
+
+    def __init__(self, *, with_metadata: bool = True, raising: tuple = ()) -> None:
+        self.count_reads: list = []
+        self.enumerations: list = []
+        self._raising = set(raising)
+        if with_metadata:
+            self.project = FakeLcmCache(FakeMetaDataCache(
+                STARTER_HIERARCHY, tuple(OWN_OBJECTS)))
+
+    def ObjectCountFor(self, iface):  # noqa: N802 -- flexicon's spelling
+        self.count_reads.append(iface)
+        if iface in self._raising:
+            raise RuntimeError("LCM service locator refused " + iface)
+        return starter_cumulative(iface)
+
+    def ObjectsIn(self, iface):  # noqa: N802 -- flexicon's spelling
+        self.enumerations.append(iface)
+        objects = []
+        stack = [iface]
+        while stack:
+            name = stack.pop()
+            objects.extend(
+                FakeCmObject(name, i) for i in range(OWN_OBJECTS[name]))
+            stack.extend(STARTER_HIERARCHY.get(name, ()))
+        return objects
+
+    def ObjectRepository(self, iface):  # noqa: N802 -- flexicon's spelling
+        raise RuntimeError("no ICmObjectRepository in the fake")
+
+
+@pytest.fixture()
+def exact_class_seam(monkeypatch):
+    """Make `I<Class>Repository` the class name itself.
+
+    `census._repository_interface` imports `SIL.LCModel`, which this file must
+    never do (see the module docstring). Patching it is what keeps the T023b
+    tests running with no FieldWorks host, and the identity mapping keeps the
+    fake handle's bookkeeping readable.
+    """
+    monkeypatch.setattr(
+        census, "_repository_interface", lambda name: name, raising=True)
+
+
+class TestExactClassCounting:
+    """T023b: one object, one class row. No object counted twice."""
+
+    def test_the_fake_reproduces_the_measured_polymorphic_inflation(self):
+        """If this drifts, the rest of the class stops testing the real defect.
+
+        3014 = 302 own + the whole CmPossibility subtree; 14 = 11 + 3.
+        """
+        assert starter_cumulative("CmPossibility") == 3014
+        assert starter_cumulative("LexEntryType") == 14
+        assert starter_cumulative("PhPhoneme") == 23
+
+    def test_counts_are_the_exact_class_not_the_subtree(self, exact_class_seam):
+        handle = FakeProjectHandle()
+        counts = census.count_classes(handle, tuple(OWN_OBJECTS))
+        assert counts.unmeasurable == ()
+        assert counts.counts == OWN_OBJECTS
+
+    def test_the_two_measured_inflations_are_gone(self, exact_class_seam):
+        counts = census.count_classes(
+            FakeProjectHandle(), ("CmPossibility", "LexEntryType"))
+        assert counts.count_for("CmPossibility") == 302
+        assert counts.count_for("LexEntryType") == 11
+
+    def test_rows_partition_the_project(self, exact_class_seam):
+        """Section 4's whole premise: the rows are disjoint.
+
+        The polymorphic sum double-counts by 2731 objects on the starter; the
+        exact sum is the object population itself.
+        """
+        counts = census.count_classes(FakeProjectHandle(), tuple(OWN_OBJECTS))
+        assert sum(counts.counts.values()) == sum(OWN_OBJECTS.values())
+        assert sum(counts.cumulative_counts.values()) > sum(OWN_OBJECTS.values())
+
+    def test_a_grandchild_is_subtracted_once_not_twice(self, exact_class_seam):
+        """`LexEntryInflType` sits under `LexEntryType` sits under
+        `CmPossibility`. Subtracting ALL subclasses instead of the DIRECT ones
+        would charge its 3 objects twice and report 299."""
+        counts = census.count_classes(FakeProjectHandle(), ("CmPossibility",))
+        assert counts.count_for("CmPossibility") == 302
+
+    def test_a_leaf_class_is_unaffected(self, exact_class_seam):
+        counts = census.count_classes(FakeProjectHandle(), ("PhPhoneme",))
+        assert counts.count_for("PhPhoneme") == 23
+        assert counts.cumulative_count_for("PhPhoneme") == 23
+
+    def test_cumulative_is_retained_under_a_name_that_cannot_be_confused(
+            self, exact_class_seam):
+        counts = census.count_classes(FakeProjectHandle(), ("CmPossibility",))
+        assert counts.cumulative_count_for("CmPossibility") == 3014
+        assert counts.count_for("CmPossibility") == 302
+
+    def test_t017_one_repository_read_per_class(self, exact_class_seam):
+        """The efficiency contract survives: exact counting is arithmetic over
+        O(1) reads, not a walk. Every read is memoised, so a class that is
+        several classes' subclass is still read once, and no object is
+        enumerated at all."""
+        handle = FakeProjectHandle()
+        census.count_classes(
+            handle, ("CmPossibility", "LexEntryType", "LexEntryInflType"))
+        assert len(handle.count_reads) == len(set(handle.count_reads))
+        assert handle.enumerations == []
+
+    def test_the_basis_is_recorded_as_subtraction(self, exact_class_seam):
+        counts = census.count_classes(FakeProjectHandle(), tuple(OWN_OBJECTS))
+        assert set(counts.count_basis.values()) == {
+            census.COUNT_BASIS_SUBTRACTION}
+        assert counts.enumerated_classes == ()
+
+    def test_no_metadata_falls_back_to_a_walk_and_says_so(
+            self, exact_class_seam):
+        """A silent O(n) fallback would be a cost regression nobody could see.
+        It is still EXACT -- correctness never degrades, only speed."""
+        handle = FakeProjectHandle(with_metadata=False)
+        counts = census.count_classes(handle, ("CmPossibility", "PhPhoneme"))
+        assert counts.count_for("CmPossibility") == 302
+        assert counts.count_for("PhPhoneme") == 23
+        assert counts.enumerated_classes == ("CmPossibility", "PhPhoneme")
+        assert set(counts.count_basis.values()) == {
+            census.COUNT_BASIS_ENUMERATION}
+        assert handle.enumerations == ["CmPossibility", "PhPhoneme"]
+
+    def test_an_unreadable_subclass_is_unmeasurable_not_polymorphic(
+            self, exact_class_seam):
+        """The tempting fallback -- publish the subtree total -- is the defect.
+        The class goes to `unresolved_accessors` instead, naming the subclass."""
+        handle = FakeProjectHandle(raising=("CmSemanticDomain",))
+        counts = census.count_classes(handle, ("CmPossibility", "PhPhoneme"))
+        assert counts.count_for("CmPossibility") is None
+        assert "CmPossibility" in counts.unmeasurable
+        reason = counts.unresolved_accessors["CmPossibility"]
+        assert "CmSemanticDomain" in reason
+        assert "3014" in reason
+        assert counts.count_for("PhPhoneme") == 23
+
+    def test_objects_in_class_enumerates_only_the_exact_class(
+            self, exact_class_seam):
+        """T018's duplicate grouping sees 302 CmPossibility objects, not 3014
+        objects of nine classes -- otherwise a `PartOfSpeech` name collision is
+        reported as a duplicate `CmPossibility`."""
+        handle = FakeProjectHandle()
+        objects = census.objects_in_class(handle, "CmPossibility")
+        assert len(objects) == 302
+        assert {obj.ClassName for obj in objects} == {"CmPossibility"}
+        assert len(handle.ObjectsIn("CmPossibility")) == 3014
+
+    def test_objects_in_class_enumerates_exactly_once(self, exact_class_seam):
+        handle = FakeProjectHandle()
+        census.objects_in_class(handle, "LexEntryType")
+        assert handle.enumerations == ["LexEntryType"]
+
+    def test_an_object_that_will_not_name_its_class_is_refused(
+            self, exact_class_seam, monkeypatch):
+        """Keeping it "just in case" is how the subtree gets back in."""
+        handle = FakeProjectHandle()
+        monkeypatch.setattr(
+            handle, "ObjectsIn",
+            lambda iface: [FakeCmObject("PhPhoneme", 0), NamelessCmObject()])
+        with pytest.raises(census.CensusError):
+            census.objects_in_class(handle, "PhPhoneme")
+
+    def test_a_negative_subtraction_is_not_a_measurement(
+            self, exact_class_seam, monkeypatch):
+        """LCM contradicting itself must surface as unmeasurable, never as a
+        negative "count" that then flows into a difference."""
+        handle = FakeProjectHandle()
+        real = handle.ObjectCountFor
+
+        def understated(iface):
+            value = real(iface)
+            return 1 if iface == "CmPossibility" else value
+
+        monkeypatch.setattr(handle, "ObjectCountFor", understated)
+        counts = census.count_classes(handle, ("CmPossibility",))
+        assert counts.count_for("CmPossibility") is None
+        assert "negative count is not a measurement" in (
+            counts.unresolved_accessors["CmPossibility"])
+
+    def test_the_polymorphism_is_documented_at_the_counting_site(self):
+        """A future reader must not be able to reach `ObjectCountFor` without
+        meeting the reason it is not the answer (T023b: `census.py` mentioned
+        the polymorphism nowhere, which is how it survived T017-T023a)."""
+        source = (_repo_root() / "src" / "gramtrans" / "Lib" / "census.py"
+                  ).read_text(encoding="utf-8")
+        assert "POLYMORPHIC" in source
+        assert "3014" in source and "302" in source
+        for symbol in ("COUNT_BASIS_SUBTRACTION", "COUNT_BASIS_ENUMERATION",
+                       "cumulative_count_for", "direct_subclass_names"):
+            assert symbol in source
