@@ -1,5 +1,106 @@
 # GramTrans — Session Handoff
 
+## Session log — 2026-08-19d (039: wizard module split — ALL 54 TASKS DONE, MERGED to main)
+
+`src/gramtrans/Lib/ui/selection_wizard.py` was **6512 lines**. It is now a
+**1699-line facade** over ten `wizard_*.py` modules. Merged to `main` as
+`6400a89` (`--no-ff`); branch `039-wizard-split` retained so US1–US5 stay
+individually revertible in reverse order. Pure structural change — nothing about
+what GramTrans transfers, plans or writes moved.
+
+| Module | Contents | L |
+|---|---|---|
+| `selection_wizard.py` | facade: `SelectionWizard`, `flow()`, `page_*`, `_PagePreview`, `_PageFinish`, plan assembly, re-exports | 1699 |
+| `wizard_pages_blocks.py` | the four Model-B block pages | 1317 |
+| `wizard_pages_pickers.py` | `_PageItemPicker`, `_PageStemPicker` | 877 |
+| `wizard_pages_skeleton.py` | `_PageSkeleton`, `_PageGramDeps` | 829 |
+| `wizard_page_ws.py` | `_PageWritingSystems` + 2 enumerators | 517 |
+| `wizard_page_projects.py` | `_PageProjects` | 484 |
+| `wizard_page_base.py` | `_FlowPage` + the three shared bases | 414 |
+| `wizard_widgets.py` | cross-page widget/tree helpers | 337 |
+| `wizard_pages_deferred.py` | `_PageScopeConflict` + its constants | 239 |
+| `wizard_page_texts.py` | `_PageTexts` | 216 |
+| `wizard_roles.py` | every `UserRole + N` role, collision-free | 132 |
+
+**Six commits, each independently revertible:** page base/widgets/roles →
+the twelve page classes → the deduplication → the package-wide guards →
+role collision → the nested walk (+ the SC-007 harness).
+
+### What it fixed
+
+* **Role collision (latent).** `_RULES_*` and `_ET_*` both claimed
+  `UserRole + 70/71/72`, declared 800 lines apart. Item data is untyped, so this
+  was survivable only while the two pages owned disjoint trees. `_ET_*` moved to
+  `+ 80..83`.
+* **A discarded recursive generator (behaviour change).**
+  `_PageEntryTypes._iter_item_rows` called `_walk(child, False)` as a statement —
+  building a generator and throwing it away — so every row under a *nested* group
+  was invisible to the entire whole-block cluster. A block holding unchecked
+  nested entry types could report itself **fully selected**. Now `yield from`,
+  with the permanently-true `if in_group_item or True` guard removed. Pinned by
+  seven new tests; reverting the one-line fix turns four of them red.
+* **520 duplicate lines**, each *proved* equal to its base counterpart before
+  deletion (39 comparisons), not deleted on the plan's assertion.
+* **Two structural scans that had silently stopped asserting.** `Step \d+ of \d+`
+  and literal `\.page\(\d+\)` both degraded to `[] == []` once the pages moved.
+  Now package-wide with non-vacuity assertions, demonstrated by planting a
+  violation in a non-facade module.
+
+### Findings beyond the plan — all recorded in `specs/039-wizard-module-split/`
+
+1. **`_PageEntryTypes._get_target` diverges too**, not just `_get_source`. It
+   guards with `hasattr` where the canonical copy uses `try`/`except`, so it
+   **propagates** exceptions the mixin swallows. Kept as a second documented
+   override; recorded as OQ-002.
+2. **T023 was a no-op**, and applying it would have broken a passing test —
+   `_has_gram_deps` is a `SelectionWizard` method that stayed in the facade.
+3. **There is no `_PageProjectWS` class** and never was in this file; the legacy
+   name survives only as the accessor `page_project_ws()`. 14 page classes, not 13.
+4. **`ws_font_delegate.py` was the only module in `Lib/ui/` without a dual-mode
+   guard** — and since `selection_wizard.py` imports it in *both* branches of its
+   own guard, a **flat load of the entire wizard failed** on the FlexTools and
+   frozen path. Reproduced on `main` first, so pre-existing; fixed here because
+   SC-006 depends on it. Exception-table row 22.
+5. **The baseline is 27 known failures, not the one the plan claimed.** SC-002 and
+   SC-005 likewise overstate `main` (the FlexTools contract test already fails
+   standalone there; `ruff` already reports 138 errors in `Lib/ui/`), so both are
+   enforced as **delta vs `main`**.
+6. **`ruff` had been reporting both halves of defect 2 all along** — SIM222 for
+   `or True`, UP028 for the yield-over-for — unread among those 138 errors. Which
+   is its own argument for the 1750-line budget this feature introduces as a test.
+
+### Gates (all green on `main` post-merge)
+
+* `check_suite_baseline.py` — 27 known failures, **0 new**.
+* `ruff check src/gramtrans/Lib/ui/` — **4 errors better** than `main`
+  (B007 2→1, F401 9→8, SIM222 1→0, UP028 1→0), worse in no category.
+* `check_shared_exceptions.py --base main` — PASS, 13 changes, all enumerated.
+* `build/hiddenimports.py` — PASS, no flat-name collision.
+* **Flat import mode** imports *and constructs*: 14 page classes, 12 flow pages,
+  all 10 modules with `__package__ == ''`.
+* **Live SC-007 walk** against read-only `Ejagham Mini`, Preview only — headers at
+  layout row 0 on 12/12 pages, splitters `[514, 342]` vs mins `(360, 260)` at
+  900 px, block-page tristate correct at empty/partial/full on all four Model-B
+  pages against real inventory (rules is legitimately *empty* in this project →
+  unchecked **and** disabled). Automated as
+  `tests/integration/harness/sc007_live_wizard_walk.py`.
+
+### Still open
+
+* **The visual half of SC-007.** The harness checks the object-level facts under
+  the window; whether it *looks* right needs a person at a screen.
+* **Step numbering across a traversal is not verifiable Preview-only** — step 1
+  gates Next on a bound target, and `api.bind_target` opens the target
+  writeEnabled even for a Preview. Covered instead by
+  `test_036_wizard_flow_numbering.py` (37 tests, no live project).
+* **OQ-001 / OQ-002** in `spec.md`: whether `_PageEntryTypes` should read the
+  source handle like the other eight pages, and whether its `_get_target` should
+  keep propagating.
+* Feature 036's **SC-001b** (progress-indicator total mismatch) remains out of
+  scope, as planned.
+
+---
+
 ## Session log — 2026-08-19c (037: phonology transfer fidelity — MERGED to main)
 
 Started from a user report that "there are lots of broken items in the target rules"

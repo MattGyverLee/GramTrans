@@ -310,7 +310,7 @@ states an `of N` total; no Move executed.
 **⟶ Wait for Wave 2 to finish, then:**
 
 - [X] **T053** **SC-007 — live smoke, last.** A refactor that keeps every test green can still break the window. Launch the real wizard with `run_gui_harness.py` and walk all 12 pages against the read-only `Ejagham Mini` source, confirming: step numbering is consecutive with **no** `of N` total; each page's header renders with the theme strip following it; tree/preview splitters hold at a 900 px window; block-page tristate is correct at empty / partial / full. **Preview only — no Move.** Never point this at `Esperanto`, and never at `Ngoreme Target` or `Ejagham W Target`, which STATUS.md records as freshly verified clean; if a Move is wanted, restore the throwaway `Target` first via `tests/integration/harness/restore.py` · `run_gui_harness.py`
-- [ ] **T054** Merge `039-wizard-split` back to `main` and remove the worktree · git
+- [X] **T054** Merge `039-wizard-split` back to `main` (`--no-ff`, commit `6400a89`) and remove the worktree. Branch `039-wizard-split` is retained so US1-US5 stay individually revertible in reverse order · git
 
 ---
 
