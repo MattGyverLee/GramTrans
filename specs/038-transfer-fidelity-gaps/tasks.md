@@ -260,7 +260,7 @@ LCM type (Principle II, data-model.md:3-6).
 
 **--> Wait for the `categories.py` chain, then (different files):**
 
-- [ ] **T036** [P] [US1] Make the executor a resolve-or-create path consuming the plan's `match_basis` - one path, not the two opposite failure modes (create-anyway duplicating starter content, resolve-only dropping the analysis). The executor adds no matching logic of its own - `src/gramtrans/Lib/transfer.py`
+- [x] **T036** [P] [US1] Make the executor a resolve-or-create path consuming the plan's `match_basis` - one path, not the two opposite failure modes (create-anyway duplicating starter content, resolve-only dropping the analysis). The executor adds no matching logic of its own - `src/gramtrans/Lib/transfer.py`
 - [x] **T037** [P] [US1] Report every natural-key match as such, distinguishable from an identity match (FR-006), and feed `CategoryReport.identity_substitution` - `src/gramtrans/Lib/report.py`
 
 **--> Wait for Wave 5, then:**
