@@ -112,3 +112,93 @@ python debug/two_mode_delta.py \
 ```
 
 `GT_WS_FULL=1` selects the complete writing-system mapping.
+
+
+---
+
+# RESOLVED (T024g) -- root cause and post-fix measurement
+
+## Root cause: source writing-system handles written into the target
+
+Three sites enumerated the SOURCE writing systems and passed those handles
+straight to `set_String` on a TARGET multistring:
+
+| site | function | object |
+|---|---|---|
+| `categories.py:7521` | `slots_execute_action` | `IMoInflAffixSlot` |
+| `categories.py:2225` | `stem_names_execute_action` | `IMoStemName` |
+| `transfer.py:2561` | `_execute_gold_reserved_merge` | OW-MERGE fill |
+
+Because handles are per-project, this has two failure modes. A handle with no
+target counterpart (`swh`=999000012) reaches `MultiUnicodeAccessor.ToXml`,
+`WritingSystemManager.Get` throws, and LCM discards the whole unit of work --
+the observed total rollback. A handle that *does* exist but means something
+else (`999000002` = `en` in source, `ngq` in target) resolves **silently to the
+wrong writing system**, which raises nothing at all.
+
+The correct helper already existed and was in use at six other call sites:
+`_copy_multistrings_ws_mapped` (`categories.py:579`) translates source handle ->
+target handle by (mapped) WS Id and skips a source WS with no target
+counterpart -- *"so a string is never written to a wrong/absent handle"*. The
+three sites above had simply never adopted it.
+
+## Post-fix measurement (same pair, same blank restore, force-all)
+
+| | before fix | after fix |
+|---|---|---|
+| destination objects | 11,300 (unchanged) | **28,354** |
+| destination classes | 36 | **74** |
+| persist error | ArgumentOutOfRangeException | **none** |
+
+### Grammar-scope classes, by GUID set
+
+| class | source | arrived | missing | invented |
+|---|---|---|---|---|
+| MoStemMsa | 1949 | 1939 | 10 | 0 |
+| MoInflAffMsa | 134 | 134 | 0 | 0 |
+| MoInflAffixSlot | 19 | 19 | 0 | 0 |
+| MoInflAffixTemplate | 13 | 13 | 0 | 0 |
+| PartOfSpeech | 26 | 26 | 0 | 0 |
+| PhPhoneme | 41 | 41 | 0 | 0 |
+| PhNCFeatures | 41 | 41 | 0 | 0 |
+| PhNCSegments | 7 | 7 | 0 | 0 |
+| PhRegularRule | 21 | 21 | 0 | 0 |
+| PhEnvironment | 9 | 9 | 0 | 0 |
+| FsSymFeatVal | 90 | 90 | 0 | 0 |
+| MoAffixAllomorph | 146 | 146 | 0 | 0 |
+| MoStemAllomorph | 2136 | 2136 | 0 | 0 |
+| **PhCode** | 89 | **0** | 89 | 0 |
+| **FsClosedValue** | 2540 | 20 | 2520 | **855** |
+| **FsFeatStruc** | 1771 | 59 | 1712 | **41** |
+| **FsComplexValue** | 825 | **0** | 825 | 0 |
+| MoAffixProcess | 1 | 0 | 1 | 0 |
+| PhSequenceContext | 13 | 12 | 1 | 0 |
+| PhSimpleContextNC | 47 | 46 | 1 | 0 |
+
+**This invalidates T024's premise.** `MoStemMsa` 1949->0, `MoInflAffixTemplate`
+13->0 and `MoInflAffixSlot` 19->0 -- the "catastrophic" losses T024 was built to
+prove the census could see, and which it read as *"the lexicon arrived STRIPPED
+OF ITS MORPHO-SYNTACTIC ANALYSES"* -- were **entirely an artifact of this
+rollback**, not evidence of missing transfer logic. All three now arrive
+complete and GUID-preserved.
+
+The whole-database totals (arrived 18,105 / missing 187,874) are dominated by
+classes GramTrans does not claim -- `ChkRef` 86,611, `Segment` 28,926,
+`WfiWordform` 8,181, `CmDomainQ` 7,939, `ScrTxtPara` 7,923, `ChkTerm` 6,428 and
+the rest of the text/scripture/discourse layer. Those are out of scope, not
+lost; separating them is still what a run report would buy (T024d).
+
+## Remaining in-scope gaps -- carried to T024h
+
+- **`FsClosedValue` 855 invented / `FsFeatStruc` 41 invented.** Feature-structure
+  values are being RECREATED with fresh GUIDs instead of GUID-preserved. Content
+  may well be correct; identity is not.
+- **`PhCode` 89 -> 0.** All 41 phonemes arrive, none of their grapheme codes do.
+- **`FsComplexValue` 825 -> 0.**
+- `MoStemMsa` 10, `MoAffixProcess` 1, `PhSequenceContext` 1, `PhSimpleContextNC` 1.
+
+## Note on the test baseline
+
+The `038-transfer-fidelity-gaps` worktree carries **27 pre-existing unit-test
+failures** unrelated to this change (identical set before and after the fix).
+That baseline should be repaired before it hides a real regression.
