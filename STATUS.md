@@ -73,11 +73,22 @@ files fine.
 - **Duplicate phonemes: 20 by name in `Target`** (41 source + 23 target-native,
   GUID-only matching). This is **feature 038's** scope and is explicitly reported as a
   `[NOTE]`, not counted as a 037 defect.
-- **Defects A and B have live evidence but no committed unit test.**
-  `PhIterationContext` copy and the rule-feat drop records live inside
+- **Defects A and B have no committed *unit* test** — they live inside
   `_copy_context_cell`, a closure nested in the rule-copy function, and need the full
   `IPhRegularRule` graph scaffolded to reach. Recorded in the test file's docstring
   rather than quietly omitted.
+  **Defect A does now have direct live verification**, via
+  `tests/integration/harness/check_rule_cells.py`: `PhIterationContext` is
+  **6 in source → ZERO** in the pre-fix `Ngoreme Target` (the subtype was dropped
+  entirely) and **6 → 6** post-fix, with all 21 matched rules structurally identical.
+  Run that alongside `check_phon_fidelity.py` — the latter inspects only
+  `PhSimpleContextNC` cells and is therefore blind to a whole context subtype
+  vanishing, which is precisely how defect A hid. Defect B's evidence is the run
+  output (2× `ReqRuleFeatsRC` + 1× `ExclRuleFeatsRC` `DroppedItemRecord`s where the
+  pre-fix run showed nothing at all).
+  That checker also independently re-finds the already-present-by-GUID reconcile bug
+  on `nasal assim simple reb` (guid `33978942`), whose right context is `<null>` in
+  the old target where source has a `PhSimpleContextNC`.
 - **Sibling gaps found by inspection, not fixed:** `POSOperations.GetSyncableProperties`
   never captures `IPartOfSpeech.DefaultFeaturesOA` / `InherFeatValOA`, and
   `MSAOperations` has **no** sync methods at all — so `IMoStemMsa.MsFeaturesOA`,
