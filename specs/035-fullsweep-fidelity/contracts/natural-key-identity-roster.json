@@ -27,6 +27,53 @@
       "The reversal-entry form key is NOT unique by construction, contrary to reviews/cycle5-domain-identity.md section 3, which called form-keyed dedup an 'operationally-enforced' property. A live counterexample exists (see the ReversalIndexEntry entry below). The entry is still admitted, because the transfer engine must be able to match these objects, but it is admitted with an explicit ambiguity rule instead of a uniqueness claim."
     ]
   },
+  "live_confirmation_038": {
+    "_note": "Admission evidence for the six entries appended by feature 038's roster extension (entries 4-9). Recorded as a sibling key so live_confirmation's WP-0 and reviews/cycle5-domain-identity.md narrative is left intact, per specs/038-transfer-fidelity-gaps/contracts/natural-key-roster-extension.json coordination.step_4.",
+    "proposed_by": "feature 038-transfer-fidelity-gaps, task T028",
+    "proposal": "specs/038-transfer-fidelity-gaps/contracts/natural-key-roster-extension.json",
+    "landed_at": "2026-08-19",
+    "requirement": "038's spec Assumptions require admission evidence to follow the existing standard: read-only measurement against the shared corpus of test projects, recorded in the roster entry, as the three existing entries already do.",
+    "status": "COMPLETE for the uniqueness/collision test on all six proposed classes. Two named sub-measurements remain open and are listed under pending_measurements; neither blocks admission, and neither is claimed as confirmed anywhere in this file.",
+    "method": "read-only FLExToolsMCP flextools_run_module census; every project opened write_enabled=False, write_certification is_certified_readonly=true with mutating_calls_detected=[] on every op",
+    "date": "2026-08-19",
+    "flexicon_installed": "4.5.0 (FLExToolsMCP server 2.9.1; its flexicon API index was 4.4.1 on fallback_latest, liblcm 11.0.0 exact)",
+    "projects_measured": [
+      "Ejagham Mini (default vernacular etu, default analysis en; vernaculars [etu], analyses [en])",
+      "Esperanto (default vernacular eo, default analysis en; vernaculars [eo], analyses [en, fr])",
+      "Mbugwe LizzieHC practice (default vernacular mgz, default analysis en; vernaculars [mgz, mgz-fonipa-x-emic, mgz-fonipa-x-etic], analyses [en, swh])"
+    ],
+    "projects_deliberately_not_opened": [
+      "Target -- a concurrent feature-037 session holds a live restore-bounded write on C:/ProgramData/SIL/FieldWorks/Projects/Target/Target.fwdata. Not opened, not read.",
+      "Ejagham W Target / Ngoreme Target -- the two damaged run targets from census-evidence.md were NOT re-measured this session. Every duplication and drop figure quoted in a `reason` below is cited FROM census-evidence.md, not re-derived here."
+    ],
+    "ops": [
+      "op-042108840-002 (Ejagham Mini -- writing-system defaults, object shapes, lookup-surface confirmation)",
+      "op-042257913-004 (Ejagham Mini -- full collision census: phonemes, natural classes, POS, morph types, variant types)",
+      "op-042348815-006 (Esperanto -- full collision census)",
+      "op-042444146-009 (Mbugwe LizzieHC practice -- full collision census)",
+      "op-042820742-015 (Ejagham Mini -- writing-system isolation for natural-class and POS names)",
+      "op-042829643-016 (Mbugwe LizzieHC practice -- writing-system isolation)",
+      "op-042846227-017 (Esperanto -- writing-system isolation)"
+    ],
+    "pending_measurements": [
+      {
+        "id": "038-NK-P1",
+        "verdict": "PENDING",
+        "claim_not_confirmed": "That the phoneme, natural-class, part-of-speech, morph-type and variant-type content quoted here as FLEx's 'starter inventory' is what a genuinely NEW, empty FLEx project ships (038 FR-010, plan Phase 0's blank-project baseline)."
+      },
+      {
+        "id": "038-NK-P2",
+        "verdict": "PENDING",
+        "claim_not_confirmed": "That FLEx or the LCM enforces name/representation uniqueness for PhPhoneme, PartOfSpeech, MoMorphType or LexEntryInflType at any level -- UI validation, list constraint, or factory guard."
+      },
+      {
+        "id": "038-NK-P3",
+        "verdict": "PENDING",
+        "claim_not_confirmed": "That the natural-key fallback actually recovers the measured losses -- 2088 MSAs, the 21 duplicate phoneme names, the 41 missing parts of speech, the LexEntryInflType +1."
+      }
+    ],
+    "pending_measurements_note": "None of the three blocks admission. Every appended entry already sets key_unique_by_construction=false and relies on on_ambiguous_key=harness_error, which is safe under either outcome. Full text of each pending measurement, including its required_measurement, stays in the proposal file rather than being duplicated here."
+  },
   "entries": [
     {
       "class": "WfiWordform",
@@ -179,6 +226,471 @@
           "max_depth_reached": 3,
           "count_per_depth": {"1": 25045, "2": 70, "3": 1},
           "why_recorded": "FR-189's structural-depth guard needs a corpus witness that real nesting goes deeper than one level. It does, but the deeper levels are 71 objects against 25045 shallow ones -- 0.28% -- which is exactly the ratio that lets a recursion bug that stops one level early hide inside aggregate per-class counts. Depth reached MUST be recorded per class as an artifact discriminator."
+        }
+      }
+    },
+    {
+      "class": "PhPhoneme",
+      "natural_key": "(default vernacular writing system, exact Name string of the phoneme)",
+      "key_unique_by_construction": false,
+      "on_ambiguous_key": "harness_error",
+      "reason": "A newly created FLEx project ships a 23-phoneme starter inventory whose objects carry per-project GUIDs, so a source phoneme can never match one by identity. The engine's create-anyway path therefore mints a second phoneme beside it: census-evidence.md measures PhPhoneme 41 -> 64 (+23) in BOTH damaged targets, with 21 of the target's names now held by two objects each (a, b, d, e, f, g, i, j, k, l, m, n, o, p, r, s, t, u, w, z and eng), only 'v' and 'x' being genuinely target-only. Reusing the destination's existing phoneme of the same representation is not a fabricated match: within one project the representation IS how FLEx identifies a phoneme, and flexicon exposes that as a first-class lookup (PhonemeOperations.Find(representation, wsHandle) / .Exists, both confirmed present), which is the operational form of the correspondence. Admission also gates 038 FR-024: a transferred affix process rule's phonological contexts must resolve to the destination's MATCHED phonemes, and there is no correct destination phoneme to resolve to while the inventory is duplicated. Without this entry 038 SC-002 (no two destination phonemes sharing a name where the source had one) cannot be met at all.",
+      "key_scoping_note": "The key is scoped to the DEFAULT VERNACULAR writing system. Measured: 97 of 97 phonemes across three projects carry a Name in the default vernacular, while only 44 of 97 carry one in the default analysis writing system -- all 42 of Mbugwe LizzieHC practice's phonemes have no en name whatever. A secondary vernacular MUST NOT be used: Mbugwe LizzieHC practice enables mgz plus mgz-fonipa-x-emic and mgz-fonipa-x-etic, and an emic and an etic transcription of two distinct phonemes can coincide in the way 035's ii-Latn counterexample already documents for wordforms. The comparison is EXACT and CASE-SENSITIVE with no Unicode normalisation, no case folding and no whitespace trimming; a candidate that matches only after normalising is reported, never matched. The phoneme's PhCode representations are deliberately NOT the key: 95 of 97 phonemes carry a first code representation but Ejagham Mini has 2 phonemes with no code at all, so a code-keyed basis is strictly less complete than a Name-keyed one. The default vernacular writing system used MUST be the one the run's pre-run writing-system mapping (035 FR-069..FR-072) mapped the source's default vernacular onto; where that mapping is absent the key is not computable and the item is reported, not matched.",
+      "uniqueness_caveat": {
+        "claim_not_made": "No LCM constraint or FLEx UI validation preventing two phonemes from sharing a representation was located, so uniqueness by construction is NOT claimed. See pending_measurement 038-NK-P2.",
+        "measured": "Zero collisions in 97 phonemes across three projects, read in each project's default vernacular writing system.",
+        "why_false_is_the_safe_answer_here_and_not_pedantry": "Ambiguity is already REAL in the field this feature operates on. A destination that a previous GramTrans run has damaged holds 21 phoneme names twice over (census-evidence.md), so a re-run against such a target hits an ambiguous key on 21 of its own phonemes. Under on_ambiguous_key=harness_error that run stops and says so, which is constitution v8.0.0 Principle I behaviour and consistent with 038's Assumption that damaged targets are re-created rather than repaired. Had the entry claimed uniqueness, the same situation would have been an unhandled surprise inside a write path.",
+        "identity_never_yields": "The 21 duplicate names are NOT evidence that identity should be relaxed. 035 FR-186 ordering is absolute: a source phoneme whose GUID is present in the destination matches that object and the key is never computed."
+      },
+      "live_confirmation": {
+        "verdict": "CONFIRMED -- 97 phonemes enumerated across three projects; zero collisions on the default-vernacular Name; the same key read in the default analysis writing system covers only 44 of the 97 objects. Uniqueness BY CONSTRUCTION is not confirmed and is not claimed (pending_measurement 038-NK-P2).",
+        "measurements": [
+          {
+            "project": "Ejagham Mini",
+            "default_vernacular": "etu",
+            "phonemes": 32,
+            "keyed_in_default_vernacular": 32,
+            "distinct_keys": 32,
+            "collisions": 0,
+            "keyed_in_default_analysis": 21,
+            "with_a_first_phcode_representation": 30,
+            "op": "op-042257913-004"
+          },
+          {
+            "project": "Esperanto",
+            "default_vernacular": "eo",
+            "phonemes": 23,
+            "keyed_in_default_vernacular": 23,
+            "distinct_keys": 23,
+            "collisions": 0,
+            "keyed_in_default_analysis": 23,
+            "with_a_first_phcode_representation": 23,
+            "op": "op-042348815-006"
+          },
+          {
+            "project": "Mbugwe LizzieHC practice",
+            "default_vernacular": "mgz",
+            "phonemes": 42,
+            "keyed_in_default_vernacular": 42,
+            "distinct_keys": 42,
+            "collisions": 0,
+            "keyed_in_default_analysis": 0,
+            "with_a_first_phcode_representation": 42,
+            "op": "op-042444146-009",
+            "note": "The project with the most phonemes is also the project where an analysis-writing-system key would find nothing at all. It also holds several representations that are punctuation or diacritics only -- a hyphen, a diaeresis, a circumflex, a macron, an apostrophe, and a bare capital X -- which are the least linguistically self-identifying keys on the roster and the ones most likely to mean different things in two projects."
+          }
+        ],
+        "cross_project_guid_divergence": {
+          "why_recorded": "This is the direct, positive evidence that identity CANNOT match starter phonemes and that the fallback is therefore necessary rather than convenient.",
+          "starter_phoneme_a": {
+            "Ejagham Mini": "4f7a69a7-67fc-4b63-a85a-828ca8835bd2",
+            "Esperanto": "d74f40f6-ea5e-11de-8028-0013722f8dec",
+            "Mbugwe LizzieHC practice": "b7cc1829-8001-43d5-97bc-a6338b979fd8"
+          },
+          "interpretation": "Three distinct GUIDs for the same starter phoneme in three projects. Esperanto's 23 phoneme GUIDs additionally share one creation-time block (ea5e-11de), consistent with the whole inventory being minted at project creation."
+        },
+        "starter_inventory_corroboration": {
+          "observation": "Esperanto's 23 phoneme names are exactly the set census-evidence.md's damaged targets gained (+23), with the 21 duplicated names and the 2 target-only names ('v', 'x') both accounted for.",
+          "status": "CORROBORATION, not a blank-project measurement -- see pending_measurement 038-NK-P1."
+        }
+      }
+    },
+    {
+      "class": "PhNCSegments",
+      "natural_key": "(default analysis writing system, exact Name string of the natural class, restricted to members of the PhPhonData natural-class list whose class is PhNCSegments)",
+      "key_unique_by_construction": false,
+      "on_ambiguous_key": "harness_error",
+      "reason": "A newly created FLEx project ships example segment-based natural classes ('Consonants' and 'Vowels'), which carry per-project GUIDs and so are invisible to identity. census-evidence.md measures PhNCSegments 7 -> 4 (57%) on the Ngoreme pair, and the same starter-inventory blindness that produced the phoneme duplication applies here in the create-anyway direction. Reusing a destination's 'Consonants' for a source's 'Consonants' is the right behaviour because within a project the class name is how FLEx identifies a natural class, and flexicon exposes it as a lookup (NaturalClassOperations.Find(name, wsHandle) / .Exists, confirmed present). Admission also gates 038 FR-024, since a process rule's PhSimpleContextNC members reference natural classes and must resolve to the destination's matched class rather than to a duplicate. The match is a MATCH, never a skip: 038 FR-020 requires the matched destination class to gain the segment membership the source's copy holds and it lacks, which is the natural-class-level instance of the whole-object-skip defect (038 RC-3, SC-007).",
+      "key_scoping_note": "The key names the DEFAULT ANALYSIS writing system -- the OPPOSITE scoping from PhPhoneme on the same roster. Measured: natural-class Name is populated in the default analysis writing system in 121 of 121 objects across three projects and in the default vernacular in ZERO of 121 (ops -015, -016, -017). The key is subclass-RESTRICTED: PhNCSegments and PhNCFeatures share one PhPhonData natural-class list, and a segment-based class MUST NEVER be matched to a feature-based class of the same name, because their membership is expressed by different owned structure and merging them would produce an object of the wrong kind (038 FR-025 forbids converting an item into a different, simpler kind). A name that matches across the subclass boundary is reported, not matched. Comparison is EXACT and CASE-SENSITIVE with no normalisation: Esperanto holds 'Nasals' and Mbugwe LizzieHC practice holds 'nasals', so a case-folding key would equate two projects' independently chosen spellings on no evidence, and Ejagham Mini's 'Nasal Consonants' shows the same concept is also spelled differently outright -- correctly a non-match, correctly reported as a create.",
+      "uniqueness_caveat": {
+        "claim_refuted": "Uniqueness by construction is refuted, not merely unproven, even though this subclass's own 8 measured objects do not collide. PhNCSegments and PhNCFeatures are members of the SAME list (PhPhonData's natural classes), and that list demonstrably permits many objects to share a name: 66 collisions in 113 objects, measured on PhNCFeatures in Mbugwe LizzieHC practice. A list that does not enforce name uniqueness for one of its member classes does not enforce it for the other.",
+        "sample_size_disclosed": "Only 8 PhNCSegments objects exist across the three sanctioned read-only projects (Ejagham Mini 5, Esperanto 3, Mbugwe LizzieHC practice 0). Zero collisions in 8 is a real measurement and a weak uniqueness argument; the refutation above, not the sample, is what sets this field to false.",
+        "consequence": "A fallback resolving to more than one candidate is a harness error naming the class, the list, and the name -- never a pick, and never an IDENTITY-SUBSTITUTION record, since 035 FR-187's remap record cannot be written for a genuinely ambiguous correspondence."
+      },
+      "live_confirmation": {
+        "verdict": "CONFIRMED -- 8 PhNCSegments enumerated across two of the three projects, zero collisions on the default-analysis Name; writing-system scoping isolated (8 of 8 keyed in the default analysis writing system, 0 of 8 in the default vernacular). Uniqueness by construction is REFUTED via the shared list, see the caveat.",
+        "measurements": [
+          {
+            "project": "Ejagham Mini",
+            "default_analysis": "en",
+            "natural_classes_total": 5,
+            "phncsegments": 5,
+            "phncfeatures": 0,
+            "keyed_in_default_analysis": 5,
+            "keyed_in_default_vernacular": 0,
+            "distinct_keys": 5,
+            "collisions": 0,
+            "names": [
+              "Consonants",
+              "Nasal Consonants",
+              "Syllabic Nasal",
+              "Vowels",
+              "Labials"
+            ],
+            "ops": [
+              "op-042257913-004",
+              "op-042820742-015"
+            ]
+          },
+          {
+            "project": "Esperanto",
+            "default_analysis": "en",
+            "natural_classes_total": 3,
+            "phncsegments": 3,
+            "phncfeatures": 0,
+            "keyed_in_default_analysis": 3,
+            "keyed_in_default_vernacular": 0,
+            "distinct_keys": 3,
+            "collisions": 0,
+            "names": [
+              "Consonants",
+              "Nasals",
+              "Vowels"
+            ],
+            "ops": [
+              "op-042348815-006",
+              "op-042846227-017"
+            ]
+          },
+          {
+            "project": "Mbugwe LizzieHC practice",
+            "default_analysis": "en",
+            "natural_classes_total": 113,
+            "phncsegments": 0,
+            "phncfeatures": 113,
+            "note": "Carries no segment-based classes at all -- every one of its 113 natural classes is feature-based. A project can hold one subclass and none of the other, which is why the key is subclass-restricted rather than list-wide.",
+            "ops": [
+              "op-042444146-009",
+              "op-042829643-016"
+            ]
+          }
+        ],
+        "cross_project_guid_divergence": {
+          "starter_class_Consonants": {
+            "Ejagham Mini": "ec5d049f-a014-4a0b-a8de-bb0422190b95",
+            "Esperanto": "d69c7174-ea5e-11de-9a7d-0013722f8dec"
+          },
+          "starter_class_Vowels": {
+            "Ejagham Mini": "35970e0c-b1b9-4ffe-b8dd-56028c83df80",
+            "Esperanto": "d6a85d2c-ea5e-11de-83f4-0013722f8dec"
+          },
+          "interpretation": "The two starter classes carry different GUIDs in the two projects that have them, so identity cannot match them and the fallback is required."
+        }
+      }
+    },
+    {
+      "class": "PhNCFeatures",
+      "natural_key": "(default analysis writing system, exact Name string of the natural class, restricted to members of the PhPhonData natural-class list whose class is PhNCFeatures, and only where that name is not a FLEx auto-generated rule label)",
+      "key_unique_by_construction": false,
+      "on_ambiguous_key": "harness_error",
+      "reason": "census-evidence.md measures PhNCFeatures 15 -> 11 (73%) on the Ejagham pair and 41 -> 34 (82%) on the Ngoreme pair, and feature-based natural classes are referenced by the PhSimpleContextNC objects that 038 FR-024 requires a transferred process rule to resolve against. The class must be matchable or those references have nothing correct to point at. Admission is nevertheless the NARROWEST on this roster, because this is the one proposed class whose key was measured to be ambiguous at scale: reusing a destination class of the same name is correct ONLY for a linguist-chosen name, and is affirmatively WRONG for FLEx's auto-generated labels, so the entry admits the former and excludes the latter by predicate rather than admitting the class wholesale.",
+      "key_scoping_note": "DEFAULT ANALYSIS writing system, measured 113 of 113 keyed there and 0 of 113 in the default vernacular. Subclass-RESTRICTED as for PhNCSegments and for the same reason: never match a feature-based class to a segment-based one. Exact, case-sensitive, unnormalised comparison. AUTO-GENERATED NAMES ARE NOT ELIGIBLE KEYS: FLEx names a class it creates for a phonological rule 'Created automatically for rule \"<rule name>\"', and 66 of the 113 measured objects collide precisely on such labels. Such a name identifies the RULE that owns the class, not the class, so two objects sharing it are not the same linguistic object and matching them would be a fabricated correspondence of exactly the kind 038's Edge Cases forbid. An object whose name matches that pattern MUST be reported under a named, counted outcome and left to the owning rule's own transfer to create -- never matched, and not treated as an ambiguity either, since the ineligibility is decided before candidate counting. Additionally, because a feature-based class IS its feature structure, a match on an eligible name whose FeaturesOA content diverges from the source's MUST be reported alongside the IDENTITY-SUBSTITUTION record rather than silently accepted, and the destination's features MUST NOT be blanked from an empty source (constitution v8.0.0 Principle IV update semantics).",
+      "uniqueness_caveat": {
+        "claim_refuted": "Uniqueness by construction is REFUTED by live data, decisively. FLEx permits many feature-based natural classes with the same name in the same list.",
+        "rate_measured": "66 collisions in 113 objects (58.4% of the objects carry a non-unique name); 113 objects share only 47 distinct names -- Mbugwe LizzieHC practice, op-042444146-009, re-confirmed under an analysis-writing-system-only reading at op-042829643-016.",
+        "consequence": "For an eligible (non-auto-generated) name resolving to more than one candidate, the fallback MUST NOT pick: harness error naming the class, the list, and the name. Never a silent choice, never an IDENTITY-SUBSTITUTION match. This is the same discipline 035 applied to ReversalIndexEntry, at a collision rate four orders of magnitude higher (58.4% here against 0.004% there)."
+      },
+      "live_confirmation": {
+        "verdict": "CONFIRMED -- 113 feature-based natural classes enumerated, 47 distinct names, 66 collisions; writing-system scoping isolated (113 of 113 keyed in the default analysis writing system, 0 of 113 in the default vernacular). This is the roster's strongest live refutation of a uniqueness claim.",
+        "measurements": [
+          {
+            "project": "Mbugwe LizzieHC practice",
+            "default_analysis": "en",
+            "phncfeatures": 113,
+            "keyed_in_default_analysis": 113,
+            "keyed_in_default_vernacular": 0,
+            "distinct_keys": 47,
+            "collisions": 66,
+            "linguist_chosen_names_that_do_not_collide": [
+              "Consonants",
+              "Vowels",
+              "Long vowels",
+              "Short vowels",
+              "nasals",
+              "non-strident C",
+              "palatal obstruents",
+              "velar plosives"
+            ],
+            "ops": [
+              "op-042444146-009",
+              "op-042829643-016"
+            ]
+          },
+          {
+            "project": "Ejagham Mini",
+            "phncfeatures": 0,
+            "note": "no feature-based classes",
+            "op": "op-042257913-004"
+          },
+          {
+            "project": "Esperanto",
+            "phncfeatures": 0,
+            "note": "no feature-based classes",
+            "op": "op-042348815-006"
+          }
+        ],
+        "collision_forensics": {
+          "shape": "Every colliding key measured is a FLEx auto-generated label of the form 'Created automatically for rule \"<rule name>\"'. At least 20 distinct such labels are each held by two or more objects.",
+          "examples_of_colliding_labels": [
+            "Created automatically for rule \"glide formation\"",
+            "Created automatically for rule \"nasal assimilation\"",
+            "Created automatically for rule \"vowel lengthening before NC\"",
+            "Created automatically for rule \"make two short vowels long\"",
+            "Created automatically for rule \"i becomes y after a\""
+          ],
+          "interpretation": "Correct data, not a defect: one phonological rule can own several feature-based classes (input and output contexts), and FLEx labels them all after the rule. It is also the exact mechanism by which a name-keyed matcher would fabricate matches, which is why the entry excludes these names from the basis rather than relying on the ambiguity rule to catch them one by one.",
+          "why_the_exclusion_and_not_just_the_ambiguity_rule": "47 of the 113 objects carry a label that is unique WITHIN this project -- an auto-generated label can be a singleton here and still be meaningless as a cross-project identity. The ambiguity rule alone would let those 47 through. The eligibility predicate is what makes the basis truthful."
+        }
+      }
+    },
+    {
+      "class": "PartOfSpeech",
+      "natural_key": "(default analysis writing system, exact Name string of the category, matched project-wide across the whole recursive category hierarchy; the owning parent is NOT part of the key)",
+      "key_unique_by_construction": false,
+      "on_ambiguous_key": "harness_error",
+      "reason": "This is the largest measured loss in the feature and the reason 038 exists. A newly created FLEx project ships a 5-category starter list with per-project GUIDs. On the Ngoreme pair NONE of the target's 5 starter categories shared a GUID with any of the source's 26, the resolve-only path returned no match, and the caller abandoned the object: MoStemMsa 1949 -> 0, MoInflAffMsa 134 -> 0, MoDerivAffMsa 3 -> 0, MoUnclassifiedAffixMsa 2 -> 0 -- all 2088 grammatical analyses lost, and all 2015 dictionary entries arriving with no part of speech (census-evidence.md; 038 SC-001 measured baseline 0%). PartOfSpeech also arrived at 5 of 20 and 5 of 26. Reusing a destination's 'Verb' for a source's 'Verb' is correct rather than fabricated because FLEx draws category names from its own catalog, flexicon exposes the by-name lookup (POSOperations.Find(name), confirmed present), and the measured GUID evidence shows FLEx ITSELF treats catalog categories as the same object across projects -- 'Noun' (a8e41fd3-e343-4c7c-aa05-01ea3dd5cfb5) and 'Verb' (86ff66f6-0774-407a-a0dc-3eeaf873daf7) are GUID-identical in Ejagham Mini and Mbugwe LizzieHC practice. Admission is also the precondition for 038 FR-020/SC-007: the three surviving Ejagham categories were whole-object-skipped and each lacks 3 or 4 entire owned collections, and the SubPossibilities half of that gap is why 3 further categories (Verb Test, Exclamation, Verb Stative) never arrived at all. You cannot enrich an object you never matched.",
+      "key_scoping_note": "DEFAULT ANALYSIS writing system: 50 of 51 categories measured carry a Name there and ZERO carry one in the default vernacular (ops -015, -016, -017). THE OWNING PARENT IS NOT PART OF THE KEY, and this is a measured decision rather than a convenience: the catalog category 093264d7-06c3-42e1-bc4d-5a965ce63887 ('Demonstrative') is top-level in Ejagham Mini and a depth-2 subcategory in Mbugwe LizzieHC practice -- the SAME object at different places in two hierarchies. A parent-scoped key would refuse to match a category a linguist has re-parented, which is the failure mode this entry exists to remove. The parent is still load-bearing in two other ways: (a) the source's parent MUST be recorded next to the destination's parent, and a divergence reported alongside the IDENTITY-SUBSTITUTION record, because a matched category is NOT evidence that the two hierarchies agree; (b) the destination's category MUST NOT be re-parented to mirror the source (constitution v8.0.0 Principle IV -- enrichment never moves or overwrites what the destination already had). Matching is project-wide over the RECURSIVE list, so a source top-level category legitimately matches a destination subcategory of the same name and vice versa. Comparison is exact and case-sensitive with no normalisation. A category with NO name in the default analysis writing system has NO key: Ejagham Mini holds exactly such an object (400c5e75-12cc-40e2-9889-1af58ae27afe, no Name in either default writing system and no Abbreviation in the default analysis writing system). An unkeyable object MUST be reported under a named, counted outcome and MUST NOT match anything -- in particular an empty key must never match another empty key.",
+      "uniqueness_caveat": {
+        "claim_not_made": "No enforcement of category-name uniqueness -- project-wide or sibling-scoped -- was located, so uniqueness by construction is not claimed. See pending_measurement 038-NK-P2.",
+        "measured": "Zero project-wide collisions in the 50 keyed categories across three projects, and zero sibling-scoped collisions. Hierarchy depth never exceeded 2 in any project measured (Ejagham Mini 18 at depth 1 and 2 at depth 2; Esperanto 13 and 5; Mbugwe LizzieHC practice 9 and 4).",
+        "the_realistic_wrong_match": "Not a duplicate name in one project, but the same name meaning different things in two projects -- a source 'Adverb' that the linguist has redefined, or a hand-built category reusing a catalog name. The mitigation is not the ambiguity rule, which cannot see it: it is that every match is reported as an IDENTITY-SUBSTITUTION per 035 FR-187 / 038 FR-006 with the source and destination parents recorded, so a reviewer can see which categories were matched by name rather than by identity and on what hierarchy positions.",
+        "consequence": "More than one candidate is a harness error naming the class and the name; never a pick."
+      },
+      "live_confirmation": {
+        "verdict": "CONFIRMED -- 51 categories enumerated recursively across three projects, 50 keyed in the default analysis writing system, zero project-wide collisions and zero sibling-scoped collisions; writing-system scoping isolated; one unkeyable object found. Uniqueness by construction is not confirmed and is not claimed.",
+        "measurements": [
+          {
+            "project": "Ejagham Mini",
+            "default_analysis": "en",
+            "categories_recursive": 20,
+            "keyed_in_default_analysis": 19,
+            "keyed_in_default_vernacular": 0,
+            "distinct_keys": 19,
+            "collisions_project_wide": 0,
+            "collisions_sibling_scoped": 0,
+            "depth_counts": {
+              "1": 18,
+              "2": 2
+            },
+            "unkeyable": [
+              "400c5e75-12cc-40e2-9889-1af58ae27afe"
+            ],
+            "ops": [
+              "op-042257913-004",
+              "op-042820742-015"
+            ]
+          },
+          {
+            "project": "Esperanto",
+            "default_analysis": "en",
+            "categories_recursive": 18,
+            "keyed_in_default_analysis": 18,
+            "keyed_in_default_vernacular": 0,
+            "distinct_keys": 18,
+            "collisions_project_wide": 0,
+            "collisions_sibling_scoped": 0,
+            "depth_counts": {
+              "1": 13,
+              "2": 5
+            },
+            "ops": [
+              "op-042348815-006",
+              "op-042846227-017"
+            ]
+          },
+          {
+            "project": "Mbugwe LizzieHC practice",
+            "default_analysis": "en",
+            "categories_recursive": 13,
+            "keyed_in_default_analysis": 13,
+            "keyed_in_default_vernacular": 0,
+            "distinct_keys": 13,
+            "collisions_project_wide": 0,
+            "collisions_sibling_scoped": 0,
+            "depth_counts": {
+              "1": 9,
+              "2": 4
+            },
+            "ops": [
+              "op-042444146-009",
+              "op-042829643-016"
+            ]
+          }
+        ],
+        "guid_stability_is_mixed_and_that_matters": {
+          "catalog_sourced_categories_share_guids_across_projects": {
+            "Noun": "a8e41fd3-e343-4c7c-aa05-01ea3dd5cfb5 in BOTH Ejagham Mini and Mbugwe LizzieHC practice",
+            "Verb": "86ff66f6-0774-407a-a0dc-3eeaf873daf7 in BOTH",
+            "Adjective": "30d07580-5052-4d91-bc24-469b8b2d7df9 in BOTH",
+            "Adverb": "46e4fe08-ffa0-4c8b-bf98-2c56f38904d9 in BOTH",
+            "Numeral": "e680330e-2b41-4bec-b96b-514743c47cae in BOTH",
+            "Demonstrative": "093264d7-06c3-42e1-bc4d-5a965ce63887 in BOTH"
+          },
+          "categories_created_by_another_route_do_not": {
+            "Esperanto Noun": "e09a4354-61e4-45e7-889e-07b1ac7f1a58",
+            "Esperanto Verb": "49622d1c-d2cc-4ef8-ba81-3360c832976e"
+          },
+          "interpretation": "Whether identity matches a category depends on how each project's category was created. That is exactly the pattern census-evidence.md reports: 'Ejagham escaped total loss only by accident: its 5 target POSes happened to be GUID-identical to the source's', while Ngoreme's matched none. A GUID-only matcher is therefore not merely incomplete for this class -- its success rate is unpredictable from anything the linguist can see, which is why the fallback is required rather than optional.",
+          "re_parenting_witness": "093264d7-06c3-42e1-bc4d-5a965ce63887 is depth 1 in Ejagham Mini and depth 2 in Mbugwe LizzieHC practice. Same GUID, different owning parent. This is the measurement behind the decision to keep the parent out of the key."
+        }
+      }
+    },
+    {
+      "class": "MoMorphType",
+      "natural_key": "(default analysis writing system, exact Name string of the morph type, within the lexicon's morph-types list)",
+      "key_unique_by_construction": false,
+      "on_ambiguous_key": "harness_error",
+      "reason": "038 FR-005 requires morph types to be admitted, because every allomorph the transfer creates must carry one and a morph type that cannot be resolved would drop or mis-type the allomorph -- the failure shape 038 FR-025 forbids (MoAffixProcess was silently downgraded to MoAffixAllomorph, 13 -> 0 and 1 -> 0 with matching +13 and +1 excess). The measured situation, however, is the mirror image of PhPhoneme's: all 19 morph-type GUIDs are BYTE-IDENTICAL in all three projects examined, so identity already resolves the canonical list and this entry is a bounded safety net rather than the normal path. It is still correct to admit it: the list is user-visible and extensible, so a project-local morph type carries a project-local GUID, and a destination whose list was rebuilt by an import route would present canonical names on non-canonical GUIDs. Reusing a destination morph type of the same name is right in both cases because the name IS the type -- 'prefix' means one thing in FLEx.",
+      "key_scoping_note": "DEFAULT ANALYSIS writing system (all 57 measured objects keyed there). Matched within the lexicon's morph-types list only; never against any other possibility list. Exact and case-sensitive: FLEx's own names are lower-case ('prefix', 'bound stem'), so a case-folding key would risk equating them with a user's differently-cased additions. THE FALLBACK MUST NOT CREATE. If neither identity nor the name finds a destination morph type, the item MUST be reported under a named, counted outcome and the source object skipped -- NOT resolved by minting a new MoMorphType. The measured cross-project GUID stability is evidence that FLEx treats this list as project-independent fixed content; a freshly minted morph type would be an object that canonical list does not contain, and inventing one to satisfy a reference is precisely the fabricated-match risk this roster is meant to bound. BECAUSE identity normally succeeds, a nonzero IDENTITY-SUBSTITUTION count for this class is itself a finding: it means one side's morph-type list is not the canonical one, and the run report SHOULD surface it rather than bury it in the per-class total (035 FR-187 already requires per-class counting, which is sufficient if the reviewer knows to expect zero).",
+      "uniqueness_caveat": {
+        "claim_not_made": "No enforcement of morph-type name uniqueness was located; uniqueness by construction is not claimed (pending_measurement 038-NK-P2).",
+        "measured": "Zero collisions in 57 morph-type objects (19 in each of three projects).",
+        "consequence": "More than one candidate is a harness error naming the class and the name; never a pick."
+      },
+      "live_confirmation": {
+        "verdict": "CONFIRMED -- 19 morph types enumerated in each of three projects (57 objects), zero name collisions in the default analysis writing system, and all 19 GUIDs identical across all three projects.",
+        "measurements": [
+          {
+            "project": "Ejagham Mini",
+            "morph_types": 19,
+            "keyed_in_default_analysis": 19,
+            "distinct_keys": 19,
+            "collisions": 0,
+            "op": "op-042257913-004"
+          },
+          {
+            "project": "Esperanto",
+            "morph_types": 19,
+            "keyed_in_default_analysis": 19,
+            "distinct_keys": 19,
+            "collisions": 0,
+            "op": "op-042348815-006"
+          },
+          {
+            "project": "Mbugwe LizzieHC practice",
+            "morph_types": 19,
+            "keyed_in_default_analysis": 19,
+            "distinct_keys": 19,
+            "collisions": 0,
+            "op": "op-042444146-009"
+          }
+        ],
+        "cross_project_guid_identity": {
+          "result": "All 19 name-to-GUID pairs are identical in all three projects. Sample: stem d7f713e8-e8cf-11d3-9764-00c04f186933, root d7f713e5-e8cf-11d3-9764-00c04f186933, prefix d7f713db-e8cf-11d3-9764-00c04f186933, suffix d7f713dd-e8cf-11d3-9764-00c04f186933, infix d7f713da-e8cf-11d3-9764-00c04f186933, clitic c2d140e5-7ca9-41f4-a69a-22fc7049dd2c, phrase a23b6faa-1052-4f4d-984b-4b338bdaf95f.",
+          "names_measured": [
+            "particle",
+            "infix",
+            "prefix",
+            "simulfix",
+            "suffix",
+            "suprafix",
+            "circumfix",
+            "clitic",
+            "enclitic",
+            "proclitic",
+            "bound root",
+            "root",
+            "bound stem",
+            "stem",
+            "infixing interfix",
+            "prefixing interfix",
+            "suffixing interfix",
+            "phrase",
+            "discontiguous phrase"
+          ],
+          "interpretation": "Identity is authoritative and sufficient for the canonical list (035 FR-186 ordering means the key is never even computed for these). The entry earns its place by covering the residue -- project-local additions and rebuilt lists -- while forbidding creation, so the residue is reported rather than invented.",
+          "consistency_with_the_census": "census-evidence.md reports NO MoMorphType delta on either run, which is what this GUID stability predicts. The entry is admitted on FR-005's mandate and on the create-forbidding rule above, NOT on a measured loss."
+        }
+      }
+    },
+    {
+      "class": "LexEntryInflType",
+      "natural_key": "(default analysis writing system, exact Name string, within the lexicon's variant-entry-types list, restricted to members whose class is LexEntryInflType)",
+      "key_unique_by_construction": false,
+      "on_ambiguous_key": "harness_error",
+      "reason": "census-evidence.md measures LexEntryInflType 3 -> 4 (+1) on the Ngoreme pair -- one source inflection type was created beside a destination object instead of being recognised, the same duplicate-creation shape as the phonemes but at low volume. It is on this roster because the destination's copy is genuinely the same object: the starter types are FLEx's own, and reusing a destination 'Plural' for a source 'Plural' in the Irregularly Inflected Form list is what a linguist would expect. The class also has a strong measured reason NOT to be matched carelessly, which is why the key is subclass-restricted: the same list holds LexEntryType siblings, and creating or merging across that boundary would produce an object of the wrong kind (038 FR-025). Admission closes the last of the excess rows in census-evidence.md section 0 attributable to identity-only matching, and satisfies 038 FR-008/SC-008 for this class -- with a duplicate already created, a second run of the same transfer would otherwise add another.",
+      "key_scoping_note": "DEFAULT ANALYSIS writing system (all 15 measured objects keyed there). SUBCLASS-RESTRICTED: a LexEntryInflType MUST NEVER match a LexEntryType and vice versa, even on an identical name. Measured: the variant-entry-types list holds 4 LexEntryType objects in Ejagham Mini, 4 in Esperanto and 5 in Mbugwe LizzieHC practice (13 in total), and none of their names collides with any LexEntryInflType name in any project -- so the restriction costs nothing today and forbids a class error tomorrow. The OWNING PARENT IS NOT part of the key, for the same reason as PartOfSpeech, but a parent divergence is anomalous here rather than routine: every one of the 14 non-root inflection types measured is owned by 'Irregularly Inflected Form', and the root type itself is owned by the possibility list. A match whose source and destination parents differ MUST therefore be reported alongside the IDENTITY-SUBSTITUTION record. Exact, case-sensitive, unnormalised comparison. As with MoMorphType, the three starter types carry canonical cross-project GUIDs, so identity handles them and the fallback covers project-local additions; unlike MoMorphType, creating a missing type IS correct here, because a project-local inflection type is ordinary linguistic content rather than fixed FLEx list content -- creation follows 038 FR-007 with the GUID-preserving create surface.",
+      "uniqueness_caveat": {
+        "claim_not_made": "No enforcement of variant-type name uniqueness was located; uniqueness by construction is not claimed (pending_measurement 038-NK-P2).",
+        "measured": "Zero collisions in 15 LexEntryInflType objects across three projects, and no name overlap between the LexEntryInflType set and the 13 LexEntryType objects sharing their list.",
+        "sample_size_disclosed": "15 objects is the smallest sample supporting any entry on this roster after PhNCSegments. The uniqueness claim is correspondingly not made; only the collision count is claimed.",
+        "consequence": "More than one candidate is a harness error naming the class, the list, and the name; never a pick."
+      },
+      "live_confirmation": {
+        "verdict": "CONFIRMED -- 15 LexEntryInflType objects enumerated across three projects, zero name collisions in the default analysis writing system, and no name overlap with the 13 LexEntryType objects in the same list. Uniqueness by construction is not confirmed and is not claimed.",
+        "measurements": [
+          {
+            "project": "Ejagham Mini",
+            "default_analysis": "en",
+            "variant_types_total": 12,
+            "lexentryinfltype": 8,
+            "lexentrytype": 4,
+            "keyed_in_default_analysis": 8,
+            "distinct_keys": 8,
+            "collisions": 0,
+            "infl_type_names": [
+              "Irregularly Inflected Form",
+              "Perfective",
+              "Plural",
+              "Past",
+              "Retrospective",
+              "Hortative",
+              "Conditional",
+              "Habitual"
+            ],
+            "op": "op-042257913-004"
+          },
+          {
+            "project": "Esperanto",
+            "default_analysis": "en",
+            "variant_types_total": 7,
+            "lexentryinfltype": 3,
+            "lexentrytype": 4,
+            "keyed_in_default_analysis": 3,
+            "distinct_keys": 3,
+            "collisions": 0,
+            "infl_type_names": [
+              "Irregularly Inflected Form",
+              "Past",
+              "Plural"
+            ],
+            "op": "op-042348815-006"
+          },
+          {
+            "project": "Mbugwe LizzieHC practice",
+            "default_analysis": "en",
+            "variant_types_total": 9,
+            "lexentryinfltype": 4,
+            "lexentrytype": 5,
+            "keyed_in_default_analysis": 4,
+            "distinct_keys": 4,
+            "collisions": 0,
+            "infl_type_names": [
+              "Irregularly Inflected Form",
+              "Past",
+              "Plural",
+              "Class 10"
+            ],
+            "op": "op-042444146-009"
+          }
+        ],
+        "cross_project_guid_split": {
+          "canonical_in_all_three_projects": {
+            "Irregularly Inflected Form": "01d4fbc1-3b0c-4f52-9163-7ab0d4f4711c",
+            "Past": "837ebe72-8c1d-4864-95d9-fa313c499d78",
+            "Plural": "a32f1d1c-4832-46a2-9732-c2276d6547e8"
+          },
+          "project_local_additions_carry_project_local_guids": {
+            "Mbugwe LizzieHC practice 'Class 10'": "f84f013b-455f-4433-b378-3a2bfa7f574b",
+            "Ejagham Mini 'Perfective'": "50c5f5cb-b991-48e5-bc97-d8cf3336df7e",
+            "Ejagham Mini 'Habitual'": "238c51d4-2259-4a4c-af98-6c643a0a648a"
+          },
+          "interpretation": "Esperanto's 3 types are the starter set; Ejagham Mini has added 5 and Mbugwe LizzieHC practice 1. The starter set matches by identity; the additions are exactly the population the key must handle, and are exactly where census-evidence.md's +1 duplicate arose.",
+          "not_measured": "Which of the Ngoreme pair's inflection types produced the +1 was NOT determined -- that target was not opened this session. The figure is cited from census-evidence.md and the specific object remains unidentified until 038 plan Phase 0's census is re-run."
+        },
+        "owning_parent_uniformity": {
+          "observation": "14 of the 15 measured inflection types are owned by 'Irregularly Inflected Form'; the 15th is that root type, owned by the possibility list.",
+          "why_recorded": "It is the basis for treating a parent divergence as a reportable anomaly for this class rather than the routine variation it is for PartOfSpeech."
         }
       }
     }
