@@ -9,6 +9,59 @@ not the data. No target database was repaired by hand. Merged to `main` at **`a8
 (branch `037-phon-nc-features`, worktree
 `D:/Github/_Projects/_LEX/GramTrans-037-phon-nc-features`).
 
+### DATA REPAIR DONE — both real targets are now clean
+
+`Ngoreme Target` and `Ejagham W Target` were recreated clean by the user (with
+`.fwbackup`s in `backups/`) and re-transferred with the fixed tool. Both verify green
+on both checkers:
+
+| | Ngoreme Target | Ejagham W Target |
+|---|---|---|
+| writes (added / `leaf_failed`) | 139 / **0** | 84 / **0** |
+| PhNCFeatures with a structure | **41/41** | **15/15** |
+| spec-count mismatches | 0 | 0 |
+| rule cell trees identical | **21/21** | **6/6** |
+| `Disabled` flags carried | **8/8** | **3/3** |
+| `PhIterationContext` | **6 → 6** | n/a (source has none) |
+
+Both ran as **pure create** (`overwrites=0`), which is the verified path — see the
+next section for why that mattered.
+
+### DO NOT re-run a transfer into an ALREADY-POPULATED target yet
+
+The reconcile / already-present-by-GUID **update** path is broken, and this was found
+by rehearsing the repair on a clone rather than on real data. Re-running into the old
+broken `Ngoreme Target` died with:
+
+```
+System.InvalidOperationException: Can not create more than one object
+with identical GUIDs   at PhSimpleContextNCFactory.Create(Guid guid)
+```
+
+A prior transfer left context objects in the target's `PhPhonData.ContextsOS` pool
+holding the **source's** GUIDs; the update path then tries to create those same GUIDs
+in their correct owner and LCM refuses. In the old `Ngoreme Target` this was
+**29 of 29** pooled contexts — every one a collision, not an edge case. For rule
+`nasal assim simple reb` the context was pooled under `PhPhonData` in the target where
+the source owns it under `PhSegRuleRHS`, i.e. the old transfer filed it under the wrong
+owner and that stale copy then blocks the correct one.
+
+Two aggravating factors:
+
+- **The abort is not transactional.** The clone grew 3,218 bytes before dying, so a
+  crash leaves a half-repaired database — strictly worse than a consistently broken
+  one. Any future attempt must be restore-bounded.
+- **`_create_with_guid` misreports the cause**: it raised
+  `Factory IPhSimpleContextNCFactory does not support Create(Guid)` when the factory
+  supports it fine and the real error was the duplicate GUID above. That message will
+  send the next reader down entirely the wrong path — fix the handler to distinguish
+  "no such API" from "create failed".
+
+This matters well beyond repairing these two projects: **any** user re-running a
+transfer into a target that already has phonology hits it, which is the normal case.
+`Ngoreme RepairTest` is left in place, reset to the pristine broken state, as a ready
+fixture for whoever fixes this.
+
 ### PICKUP — read this before touching natural classes, phonemes, or any `*Operations`
 
 **The bug class that ate this session is pythonnet static-type attribute resolution.**
