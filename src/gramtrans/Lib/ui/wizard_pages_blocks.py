@@ -1204,19 +1204,42 @@ class _PageEntryTypes(_ProjectHandlesMixin, _BlockPage):
 
         Walks the full tree depth (groups -> items -> sub-items) so that
         nested child types are included in the whole-block count.
+
+        Feature 039 T042 made that sentence true. `_walk` is a GENERATOR, and
+        the nested-group branch called it as though it were a procedure: a bare
+        `_walk(child, False)` on its own line built a generator object and threw
+        it away, yielding nothing at all. Every row under a nested group was
+        therefore invisible here -- and since the entire whole-block cluster
+        (`_has_any_item`, `_all_items_checked`, `_refresh_whole_block`,
+        `whole_block_on`) reads the tree only through this method, those rows
+        counted toward nothing. The yield was also wrapped in
+        `if in_group_item or True:`, which can never be false, so the parameter
+        it tested had no effect either and is gone with it.
+
+        This is a BEHAVIOUR CHANGE, landed in its own commit for that reason: on
+        a tree with nested groups the whole-block checkbox now reflects rows it
+        used to ignore, so a block that read "fully selected" while holding
+        unselected nested rows now reads partial -- which is what an operator
+        needs it to say. `test_entry_types_display.py::TestNestedGroupWalk039`
+        pins the new counts and the resulting tristate at empty / partial / full.
+
+        Still only one level of sub-items beneath an item (the `grandchild` loop
+        does not recurse). That was the pre-existing shape, no live inventory
+        nests deeper, and widening it would be a second, separate behaviour
+        change.
         """
         root = self._tree.invisibleRootItem()
 
-        def _walk(parent, in_group_item):
+        def _walk(parent):
             for i in range(parent.childCount()):
                 child = parent.child(i)
                 kind = child.data(0, _ET_KIND_ROLE)
                 if kind == "group":
-                    # Recurse into group header's children
-                    _walk(child, False)
+                    # Recurse into the group header's children. `yield from`,
+                    # not a bare call -- see the docstring.
+                    yield from _walk(child)
                 elif kind == "item":
-                    if in_group_item or True:  # always yield items
-                        yield (parent, child)
+                    yield (parent, child)
                     # Also walk children of this item (sub-types)
                     for j in range(child.childCount()):
                         grandchild = child.child(j)
@@ -1227,8 +1250,7 @@ class _PageEntryTypes(_ProjectHandlesMixin, _BlockPage):
             group = root.child(i)
             if group.data(0, _ET_KIND_ROLE) != "group":
                 continue
-            for pair in _walk(group, False):
-                yield pair
+            yield from _walk(group)
 
 
 
