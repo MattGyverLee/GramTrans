@@ -248,7 +248,7 @@ it, and says so rather than guessing:
 | `starter_subtraction_basis` | Condition | Consequence |
 |---|---|---|
 | `baseline_matched` | baseline present AND run report present | `difference` is fully trustworthy |
-| `baseline_gross` | baseline present, run report absent | `starter_matched_to_source: null`; gross subtraction used; every row is advisory for SHORTFALL purposes and the run verdict cannot exceed `CENSUS_ACCOUNTED` |
+| `baseline_gross` | baseline present, run report absent | `starter_matched_to_source: null`; gross subtraction used; every row is advisory for SHORTFALL purposes and the run verdict cannot exceed `CENSUS_ACCOUNTED`. **CLARIFIED 2026-08-19:** "cannot exceed" suppresses exactly `UNEXPLAINED_SHORTFALL` and `UNEXPLAINED_SURPLUS`. It is a **ceiling on unexplained tallies, not on severity**: `CENSUS_ERROR`, `COVERAGE_INCOMPLETE`, `BASELINE_MISSING`, `BASELINE_STALE` and `DUPLICATE_IDENTITY` are unaffected and still win. Read against the published severity ordering (:459-469) the bare phrase would also suppress those, contradicting 5.3 ("Staleness and absence are **verdicts**, not warnings. There is no path on which a missing baseline yields exit 0", :80-81) and 5.2's own closing line ("Section 6 is what does, and it is not optional", :49). The governing clause is the local one in this same sentence: advisory *for SHORTFALL purposes*. The cap is also the **run** verdict only -- `row_passes` and `evaluate_phase` are untouched, so a phase cannot declare itself done on gross-basis arithmetic |
 | `no_baseline` | no baseline at all | see 5.3 |
 
 ### 5.3 Missing or stale baseline
