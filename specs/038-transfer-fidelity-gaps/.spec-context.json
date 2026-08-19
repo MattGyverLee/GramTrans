@@ -2,8 +2,8 @@
   "workflow": "speckit",
   "specName": "Transfer Fidelity Gaps",
   "branch": "main",
-  "currentStep": "plan",
-  "status": "planned",
+  "currentStep": "tasks",
+  "status": "ready-to-implement",
   "history": [
     {
       "step": "specify",
@@ -18,6 +18,27 @@
       "kind": "complete",
       "by": "ai",
       "at": "2026-08-19T01:45:43.447Z"
+    },
+    {
+      "step": "tasks",
+      "substep": "generate",
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-19T02:07:56.088Z"
+    },
+    {
+      "step": "tasks",
+      "substep": null,
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-19T02:09:11.875Z"
+    },
+    {
+      "step": "tasks",
+      "substep": null,
+      "kind": "start",
+      "by": "extension",
+      "at": "2026-08-19T02:09:29.357Z"
     }
   ],
   "decisions": [
@@ -107,5 +128,196 @@
     "CmAnthroItem and the anthropology category list are out of scope",
     "Texts, wordforms and the interlinear path are report-only beyond their census figures",
     "Reversal indexes are report-only beyond their census figures"
-  ]
+  ],
+  "coverage": {
+    "FR-001": {
+      "title": "Match by identity first; consult any other basis only when identity finds no match",
+      "tasks": [
+        "T007",
+        "T026",
+        "T031",
+        "T032"
+      ]
+    },
+    "FR-002": {
+      "title": "Support matching by an agreed natural key when identity finds no match",
+      "tasks": [
+        "T028",
+        "T029",
+        "T032",
+        "T036"
+      ]
+    },
+    "FR-003": {
+      "title": "Admission to natural-key matching is by explicit enumeration in a governed roster",
+      "tasks": [
+        "T009",
+        "T028"
+      ]
+    },
+    "FR-004": {
+      "title": "Each roster entry states the key, uniqueness, ambiguity behaviour, and evidence",
+      "tasks": [
+        "T028",
+        "T082"
+      ]
+    },
+    "FR-005": {
+      "title": "Roster admits the starter classes a transfer would duplicate or drop",
+      "tasks": [
+        "T028",
+        "T029"
+      ]
+    },
+    "FR-006": {
+      "title": "Every natural-key match is recorded in the report, distinguishable from identity",
+      "tasks": [
+        "T011",
+        "T037"
+      ]
+    },
+    "FR-007": {
+      "title": "An unmatchable grammatical category is created or reported, never silently dropped",
+      "tasks": [
+        "T030",
+        "T033"
+      ]
+    },
+    "FR-008": {
+      "title": "Re-running the same transfer reaches the same items and creates no duplicates",
+      "tasks": [
+        "T039"
+      ]
+    },
+    "FR-009": {
+      "title": "Produce a per-class comparison giving source count, destination count, difference",
+      "tasks": [
+        "T016",
+        "T017",
+        "T019"
+      ]
+    },
+    "FR-010": {
+      "title": "The comparison excludes the content a newly created FLEx project ships",
+      "tasks": [
+        "T019",
+        "T023"
+      ]
+    },
+    "FR-011": {
+      "title": "The comparison is available machine-readable for a gate, plus human-readable",
+      "tasks": [
+        "T014",
+        "T021",
+        "T022"
+      ]
+    },
+    "FR-012": {
+      "title": "The comparison covers every object class the engine can create",
+      "tasks": [
+        "T016"
+      ]
+    },
+    "FR-013": {
+      "title": "Any item the transfer cannot reproduce appears in the report with the reason",
+      "tasks": [
+        "T020",
+        "T056",
+        "T080"
+      ]
+    },
+    "FR-015": {
+      "title": "Items included by dependency are shown in preview, marked as pulled in",
+      "tasks": [
+        "T070"
+      ]
+    },
+    "FR-016": {
+      "title": "Each pulled-in item is individually deselectable",
+      "tasks": [
+        "T072"
+      ]
+    },
+    "FR-017": {
+      "title": "Every item left incomplete by a deselected or unsatisfiable dependency is reported",
+      "tasks": [
+        "T071",
+        "T073"
+      ]
+    },
+    "FR-018": {
+      "title": "Each declared dependency relationship is verified before it may influence a plan",
+      "tasks": [
+        "T010",
+        "T012",
+        "T065",
+        "T067",
+        "T068",
+        "T069"
+      ]
+    },
+    "FR-019": {
+      "title": "Each transferred affix is linked to its source template column, or the failure reported",
+      "tasks": [
+        "T074"
+      ]
+    },
+    "FR-020": {
+      "title": "A matched destination item gains the child items its copy lacks, not a whole-object skip",
+      "tasks": [
+        "T043",
+        "T045"
+      ]
+    },
+    "FR-021": {
+      "title": "Enrichment never removes, blanks, or overwrites existing destination content",
+      "tasks": [
+        "T041",
+        "T045"
+      ]
+    },
+    "FR-022": {
+      "title": "The run report distinguishes an enriched item from a created one",
+      "tasks": [
+        "T042",
+        "T046"
+      ]
+    },
+    "FR-023": {
+      "title": "Affix process rules are reproduced with their input and output content",
+      "tasks": [
+        "T053",
+        "T054"
+      ]
+    },
+    "FR-025": {
+      "title": "An unreproducible item is reported and skipped, never converted to a simpler kind",
+      "tasks": [
+        "T051",
+        "T055",
+        "T056",
+        "T057"
+      ]
+    },
+    "FR-014": {
+      "title": "Selecting an item includes the items it depends on by default",
+      "tasks": [
+        "T012",
+        "T067",
+        "T068",
+        "T069"
+      ]
+    },
+    "FR-024": {
+      "title": "Process-rule references resolve to the destination items matched under FR-001 and FR-002",
+      "tasks": [
+        "T060"
+      ]
+    }
+  },
+  "step_summaries": {
+    "tasks": {
+      "summary": "85 tasks in 9 phases (Setup, Foundational, then 6 story phases ordered by verifiability -- US2 census first as the acceptance instrument, then US1, US4 || US5a, US3, US5b -- plus Polish); waves serialized on categories.py and models.py; 2 hard external gates (035 roster append, 037 landing)"
+    }
+  }
 }
