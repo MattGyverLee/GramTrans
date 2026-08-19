@@ -146,7 +146,7 @@ LCM type (Principle II, data-model.md:3-6).
 
 ### Tests
 
-- [ ] **T014** [US2] Write the gate test first, failing: validate the artifact against `contracts/census-artifact.schema.json`, assert phase predicates P1..P5, and assert that a **missing or stale baseline is a failing verdict, not a warning** - there must be no path on which an absent baseline yields exit 0 - `tests/integration/test_object_census.py`
+- [x] **T014** [US2] Write the gate test first, failing: validate the artifact against `contracts/census-artifact.schema.json`, assert phase predicates P1..P5, and assert that a **missing or stale baseline is a failing verdict, not a warning** - there must be no path on which an absent baseline yields exit 0 - `tests/integration/test_object_census.py`
 
 ### Implementation
 
