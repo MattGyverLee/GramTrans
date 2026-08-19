@@ -87,12 +87,17 @@ class TestPreviewCollapsePreselectedAll:
         Inspects the source string rather than constructing a QWizardPage, so
         the check needs no QApplication (the original reason, unchanged).
         """
+        import inspect
         import re
-        from pathlib import Path
         from gramtrans.Lib.ui import selection_wizard as _sw
-        src = Path(_sw.__file__).read_text(encoding="utf-8")
-        match = re.search(r'class _PageEntryTypes.*?setTitle\("([^"]+)"\)', src,
-                          re.DOTALL)
+        # Feature 039 T025: scan the CLASS, not the module file.
+        # `inspect.getsource` follows the object, so this survives
+        # `_PageEntryTypes` moving to `wizard_pages_blocks.py` and any future
+        # move, without naming a module path. The `assert match` guard stays --
+        # it is what stops the scan passing vacuously if the pattern ever stops
+        # matching.
+        src = inspect.getsource(_sw._PageEntryTypes)
+        match = re.search(r'setTitle\("([^"]+)"\)', src, re.DOTALL)
         assert match, "_PageEntryTypes setTitle not found in source"
         title = match.group(1)
         assert not re.search(r"of \d+", title), (
@@ -106,12 +111,13 @@ class TestPreviewCollapsePreselectedAll:
 
     def test_page_title_contains_entry_types(self):
         """Check that the title string mentions 'Entry' or 'Types'."""
+        import inspect
         import re
-        from pathlib import Path
         from gramtrans.Lib.ui import selection_wizard as _sw
-        src = Path(_sw.__file__).read_text(encoding="utf-8")
-        match = re.search(r'class _PageEntryTypes.*?setTitle\("([^"]+)"\)', src,
-                          re.DOTALL)
+        # Feature 039 T025: see the sibling title test -- scans the class object,
+        # not the module file, so the relocation cannot silently defeat it.
+        src = inspect.getsource(_sw._PageEntryTypes)
+        match = re.search(r'setTitle\("([^"]+)"\)', src, re.DOTALL)
         assert match, "_PageEntryTypes setTitle not found in source"
         title = match.group(1)
         assert "entry" in title.lower() or "types" in title.lower(), (
@@ -128,14 +134,18 @@ class TestNoConflictModeControls:
         Inspects the source code string of _PageEntryTypes._build_ui to avoid
         creating a QWizardPage without a running QApplication.
         """
+        import inspect
         import re
-        from pathlib import Path
         from gramtrans.Lib.ui import selection_wizard as _sw
-        src = Path(_sw.__file__).read_text(encoding="utf-8")
-        # Extract the _PageEntryTypes class body
-        match = re.search(r'class _PageEntryTypes\(.*?(?=\nclass |\Z)', src, re.DOTALL)
-        assert match, "_PageEntryTypes class not found in wizard source"
-        class_body = match.group(0)
+        # Feature 039 T025: `inspect.getsource` returns exactly this class's
+        # body, so the old "from `class _PageEntryTypes(` up to the next
+        # `class `" regex is gone -- it silently depended on the class being
+        # followed by a sibling class in the same file, which the module split
+        # ends.
+        class_body = inspect.getsource(_sw._PageEntryTypes)
+        assert class_body.lstrip().startswith("class _PageEntryTypes"), (
+            "_PageEntryTypes source not located"
+        )
         # Conflict-mode WIDGET construction patterns must not appear in the class body.
         # Note: comment strings that *mention* ADD_NEW/OVERWRITE/MERGE to document
         # their absence are fine; we check for actual widget-construction patterns.

@@ -159,15 +159,14 @@ class _FlowPage(QtWidgets.QWizardPage):
                 return page_id
         return -1                           # last shown page ends the run
 
-
 # ---------------------------------------------------------------------------
 # Shared bases (feature 039 T008 declares them; T027 fills them in)
 # ---------------------------------------------------------------------------
-# Declared here in the relocation commit and left empty on purpose. US1 and US2
-# are reviewable as pure relocations -- `git diff -M` renders their hunks as
-# renames -- and a commit that both moved code and rewrote it would forfeit
-# that. The method bodies arrive in US3 (T027), together with the deletion of
-# the copies they replace, so the dedup is one self-contained diff.
+# Declared here in the relocation commit and left without method bodies on
+# purpose. US1 and US2 are reviewable as pure relocations; a commit that both
+# moved code and rewrote it would forfeit that. The bodies arrive in US3
+# (T027), together with the deletion of the copies they replace, so the
+# deduplication is one self-contained, separately revertible diff.
 
 
 class _ProjectHandlesMixin:
@@ -193,9 +192,9 @@ class _BlockPage(_FlowPage):
     `__init__`: `self._tree`, `self._whole_block`, `self._mirroring`.
     """
 
-    # Which item-data role the subclass's tree keys its "group" / "item"
-    # distinction on. The only thing that varied across the four otherwise
-    # identical `_iter_item_rows` copies, so it is the only thing the base
-    # takes as a parameter. Subclasses set it; `None` means the page has not
-    # declared one and `_iter_item_rows` yields nothing.
+    # Which item-data role this page's tree keys its "group" / "item"
+    # distinction on. It was the ONLY thing that varied across the four
+    # otherwise identical `_iter_item_rows` copies, so it is the only thing the
+    # base takes as a parameter. Subclasses set it; `None` means the page has
+    # not declared one and `_iter_item_rows` yields nothing.
     _kind_role = None
