@@ -9,8 +9,9 @@ spread over three thousand lines of `selection_wizard.py`. Nothing checked that
 two blocks had not claimed the same offset, and two of them had: the rules page
 and the entry-types page both sat on `UserRole + 70/71/72`, which was harmless
 only for as long as they owned disjoint trees. Collecting the offsets into one
-file is what makes that class of collision visible at a glance and checkable by
-a test (`test_039_module_split.py` guard 3).
+file is what made that collision visible at a glance; feature 039 T041 then
+moved `_ET_*` to `+ 80..83`, and `test_039_module_split.py` guard 3 is what
+stops the next one being introduced.
 
 The status-label maps travel with the roles because they are the display side of
 the same fact: `_STATUS_LABELS` renders what `_SKEL_STATUS_ROLE` and friends
@@ -25,8 +26,8 @@ What is deliberately absent
   cross-module imports, of which this module has none).
 * No `_PHON_MODE_*` / `_ET_MODE_*` aliases. Those are `merge_preview` conflict
   modes, not item-data roles; they stay beside the pages that read them.
-* No renumbering. The `_RULES_*` / `_ET_*` collision is retired in its own
-  revertible commit (feature 039 US5, T041), not here.
+* No page code. These are the offsets and their display labels; which page
+  writes which role is a fact about that page and lives with it.
 """
 from __future__ import annotations
 
@@ -111,7 +112,21 @@ _RULES_STATUS_LABELS = {
 
 
 # Data roles for _PageEntryTypes
-_ET_GUID_ROLE   = QtCore.Qt.ItemDataRole.UserRole + 70  # source GUID (item rows)
-_ET_KIND_ROLE   = QtCore.Qt.ItemDataRole.UserRole + 71  # "group" | "item"
-_ET_CAT_ROLE    = QtCore.Qt.ItemDataRole.UserRole + 72  # GrammarCategory
-_ET_STATUS_ROLE = QtCore.Qt.ItemDataRole.UserRole + 73  # "new" | "in_target" | ""
+#
+# Feature 039 T041 moved this block off UserRole + 70..73 onto 80..83. It
+# collided head-on with the _RULES_* block above -- _RULES_GUID/KIND/STATUS were
+# also on +70/+71/+72 -- and had been since spec 021 added this page, because the
+# two declarations sat 800 lines apart in a 6512-line file and nothing compared
+# them. It was harmless only for as long as _PageRules and _PageEntryTypes owned
+# disjoint trees, which is a property of today's UI, not a rule: item data is
+# untyped, so the moment one tree carried both kinds of row, or one page reused
+# the other's row helper, each would have read the other's values and reported
+# nothing wrong.
+#
+# Safe to renumber because no test hardcodes the numeric values --
+# test_032_preview_pane_wiring.py imports the constants. The offsets are
+# private to this process; nothing persists them.
+_ET_GUID_ROLE   = QtCore.Qt.ItemDataRole.UserRole + 80  # source GUID (item rows)
+_ET_KIND_ROLE   = QtCore.Qt.ItemDataRole.UserRole + 81  # "group" | "item"
+_ET_CAT_ROLE    = QtCore.Qt.ItemDataRole.UserRole + 82  # GrammarCategory
+_ET_STATUS_ROLE = QtCore.Qt.ItemDataRole.UserRole + 83  # "new" | "in_target" | ""
