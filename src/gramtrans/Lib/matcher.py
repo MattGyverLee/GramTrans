@@ -952,6 +952,7 @@ def resolve_match(
     candidates,
     *,
     ws_handles,
+    source_ws_handles=None,
     identity_remap=None,
     key_fn=None,
 ) -> MatchDecision:
@@ -963,9 +964,20 @@ def resolve_match(
         candidates:     the destination scope for this class. Production
                         resolves it through `NATURAL_KEY_SCOPE_FNS`; callers
                         may pass an already-assembled iterable.
-        ws_handles:     `{ws_scope: handle}`. A missing scope means the key is
-                        NOT COMPUTABLE, which is reported -- never answered by
-                        falling back to another writing system.
+        ws_handles:     `{ws_scope: handle}` for the DESTINATION project. A
+                        missing scope means the key is NOT COMPUTABLE, which is
+                        reported -- never answered by falling back to another
+                        writing system.
+        source_ws_handles:
+                        the same mapping for the SOURCE project. Defaults to
+                        `ws_handles`, which is right for a single-project
+                        caller and for the unit tests, and wrong for the real
+                        one: a transfer reads the source key from the SOURCE
+                        project's default writing system and each candidate's
+                        key from the DESTINATION's. They are different
+                        handles in different projects, and comparing a name
+                        read through the wrong project's handle is how a key
+                        silently evaluates to None for every object.
         identity_remap: `{source_guid: target_guid}` from a previous run.
         key_fn:         injection hook, mirroring `lookup_target`'s existing
                         `fingerprint_fn=`.
@@ -1030,21 +1042,23 @@ def resolve_match(
     if binding is None or entry is None:
         return _miss(KEY_INELIGIBLE_NOT_ADMITTED, False)
 
-    ws_handle = (ws_handles or {}).get(binding.ws_scope)
-    reason = natural_key_eligibility(object_class, source_obj, ws_handle)
+    target_ws = (ws_handles or {}).get(binding.ws_scope)
+    source_ws = (source_ws_handles or ws_handles or {}).get(binding.ws_scope)
+
+    reason = natural_key_eligibility(object_class, source_obj, source_ws)
     if reason:
         return _miss(reason, False)
 
     compute = key_fn or NATURAL_KEY_FNS[binding.key_fn_id]
-    key = compute(source_obj, ws_handle)
+    key = compute(source_obj, source_ws)
     if not key:
         return _miss(KEY_INELIGIBLE_NO_NAME_IN_SCOPED_WS, False)
 
     matched = []
     for candidate in candidates:
-        if natural_key_eligibility(object_class, candidate, ws_handle):
+        if natural_key_eligibility(object_class, candidate, target_ws):
             continue
-        if compute(candidate, ws_handle) == key:
+        if compute(candidate, target_ws) == key:
             matched.append(candidate)
 
     if len(matched) > 1:

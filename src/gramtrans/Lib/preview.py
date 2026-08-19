@@ -25,6 +25,8 @@ if __package__:
         CreateDefinitionAction,
         ExcludedLossy,
         GrammarCategory,
+        MatchBasis,
+        MatchBasisRecord,
         PlannedAction,
         PlannedOverwrite,
         RunContext,
@@ -35,14 +37,20 @@ if __package__:
         WSMapping,
     )
     from .ws_mapping import to_ws_map_dict
+    from . import census as _census
+    from . import matcher as _matcher
 else:
     from ws_mapping import to_ws_map_dict  # type: ignore
+    import census as _census  # type: ignore
+    import matcher as _matcher  # type: ignore
     from models import (
         CategoryScope,
         ClosureEdge,
         CreateDefinitionAction,
         ExcludedLossy,
         GrammarCategory,
+        MatchBasis,
+        MatchBasisRecord,
         PlannedAction,
         PlannedOverwrite,
         RunContext,
@@ -51,6 +59,148 @@ else:
         Skip,
         SkipReason,
         WSMapping,
+    )
+
+
+# ============================================================================
+# Feature 038 T031 -- the plan-time match decision (constitution Principle III)
+# ============================================================================
+#
+# WHY THIS LIVES IN THE PLAN BUILDER. Preview and Move must agree about which
+# destination object a source object corresponds to. Before 038 they agreed by
+# parallel construction: `preview.py` scanned for a GUID one way, `transfer.py`
+# scanned for it another (`_idempotency_guard` uses `target.Object(guid)`, a
+# cache lookup; the plan-side helpers use category-scoped linear scans), and
+# `categories.py` a third. Three implementations of one question, and the two
+# opposite failure modes 038 exists to remove -- create-anyway duplicating
+# starter content, resolve-only dropping the analysis -- are exactly what you
+# get when the plan and the executor answer it differently.
+#
+# So the whole decision is computed HERE, once, and travels on the plan as a
+# `MatchBasisRecord`. The executor consumes it (T036) and adds no matching
+# logic of its own. "Nothing about matching may be computed only in the
+# executor" is the contract, and a `MatchBasisRecord` on every
+# `PlannedAction` / `PlannedOverwrite` is how it is enforced: an object whose
+# record says NATURAL_KEY was matched by name in the plan, and the executor
+# has no licence to re-derive that and reach a different answer.
+#
+# BOTH STEPS RUN HERE. Step 1 is GUID identity (plus a previous run's
+# `identity_remap`); step 2 is the roster-admitted natural key. `matcher`
+# owns the ordering -- identity is authoritative and the key is consulted only
+# when identity finds nothing -- and this module owns only the wiring: which
+# candidates to offer, and which project's writing-system handle to read each
+# side's name through.
+#
+# THE TWO PROJECTS HAVE DIFFERENT WRITING-SYSTEM HANDLES, AND THAT MATTERS.
+# A handle is a per-project integer; the source's default-vernacular handle is
+# meaningless in the destination. Reading a destination object's name through
+# the source's handle does not raise -- it returns None, so every candidate
+# key would silently evaluate to "this object has no key" and the whole
+# natural-key step would quietly match nothing at all. `resolve_match` takes
+# the two mappings separately for exactly this reason.
+
+
+#: The plan-time match decision is available only for classes that have BOTH
+#: halves of the natural-key basis. For every other class this module keeps its
+#: pre-038 GUID-only behaviour, which is a degradation and not an error.
+def plan_match_decision(
+    object_class: str,
+    source_obj,
+    context: RunContext,
+    *,
+    candidates=None,
+    identity_remap=None,
+):
+    """The whole match decision for one source object, computed at plan time.
+
+    Parameters:
+        object_class:   LCM class name as 035's roster spells it.
+        source_obj:     the source object being placed.
+        context:        supplies both project handles.
+        candidates:     the destination candidate scope. When None, it is
+                        resolved through the class's own registered scope
+                        function, which enumerates instances of EXACTLY that
+                        class -- never the inheritance subtree.
+        identity_remap: `{source_guid: target_guid}` from a previous run.
+
+    Returns:
+        A `matcher.MatchDecision`, or **None** when the class has no
+        natural-key basis AND no candidate scope could be resolved -- that is,
+        when this module has nothing to add over the caller's existing
+        GUID-only lookup. None is a normal answer, not an error.
+
+    Never raises for a data condition. `NaturalKeyAmbiguityError` is allowed
+    through deliberately: an ambiguous key is a harness error the operator must
+    see, not something to be absorbed into a silent miss.
+    """
+    binding = _matcher.natural_key_binding_for(object_class)
+    if binding is None:
+        return None
+
+    if candidates is None:
+        scope_fn = _matcher.NATURAL_KEY_SCOPE_FNS.get(binding.scope_fn_id)
+        if scope_fn is None:
+            return None
+        try:
+            candidates = list(scope_fn(context.target_handle))
+        except Exception as exc:  # noqa: BLE001 -- see below
+            # A scope that cannot be enumerated is reported as "no candidates",
+            # never as an empty match that would license a create. The caller
+            # still gets a decision whose basis is NONE and whose may_create
+            # reflects the class rule, so the outcome is accounted for rather
+            # than silently turned into a duplicate.
+            _log.warning(
+                "038 T031: destination scope %r for %s could not be enumerated "
+                "(%s: %s) -- treating as no candidates, which reports a miss "
+                "rather than matching on a partial scan",
+                binding.scope_fn_id, object_class, type(exc).__name__, exc,
+            )
+            candidates = []
+
+    return _matcher.resolve_match(
+        object_class,
+        source_obj,
+        candidates,
+        ws_handles=_ws_handles_for(context.target_handle),
+        source_ws_handles=_ws_handles_for(context.source_handle),
+        identity_remap=identity_remap,
+    )
+
+
+def _ws_handles_for(handle) -> dict:
+    """`{ws_scope: writing-system handle}` for one project.
+
+    A scope missing from the returned mapping means the key is NOT COMPUTABLE
+    for that project -- for `PhPhoneme` that is the case the roster names
+    explicitly, where the pre-run writing-system mapping did not produce a
+    source -> target default vernacular. It is reported, never answered by
+    falling back to a secondary writing system: matching a secondary
+    vernacular would have fabricated 16 matches on `Yi Sichuan` alone.
+    """
+    handles = {}
+    for ws_scope in (_census.WS_SCOPE_VERNACULAR, _census.WS_SCOPE_ANALYSIS):
+        ws_handle = _census._ws_handle_for(handle, ws_scope)
+        if ws_handle is not None:
+            handles[ws_scope] = ws_handle
+    return handles
+
+
+def match_basis_for_present_by_guid(object_class: str, source_guid: str,
+                                    target_guid: str):
+    """The `MatchBasisRecord` for a caller that has ALREADY proven a GUID hit.
+
+    Several plan paths establish "the target already holds this GUID" through
+    their own category-scoped scan and never need the natural-key step, since
+    identity is authoritative and short-circuits. They still owe the plan a
+    record, because a `PlannedOverwrite` with no `match_basis` is
+    indistinguishable in the report from one whose basis was never determined.
+    """
+    return MatchBasisRecord(
+        basis=MatchBasis.IDENTITY,
+        object_class=object_class,
+        source_guid=source_guid,
+        target_guid=target_guid,
+        candidate_count=1,
     )
 
 
@@ -1319,6 +1469,7 @@ def _emit_present_outcome(
     pulled_in_by: tuple = (),
     match_via: str = "guid",
     owner_guid: str = "",
+    object_class: str = "",
 ) -> None:
     """Phase 0/1 dispatcher for "target already has source GUID":
 
@@ -1327,7 +1478,28 @@ def _emit_present_outcome(
     - Phase 1 (`selection.enable_overwrite=True`, per FR-108): emit
       `PlannedOverwrite` instead so the executor updates the existing
       target object's syncable properties from source.
+
+    `object_class` (038 T031) attaches the `MatchBasisRecord` the run report
+    needs to tell "found by GUID" from "found by name because the GUID was
+    absent". It is attached ONLY when the caller names the class AND the match
+    really was by GUID -- `match_via="guid"` or `"identity_remap"`, both of
+    which are `MatchBasis.IDENTITY` (FR-001 treats a previous run's remap entry
+    as identity, not as a substitution).
+
+    It is deliberately NOT attached for `match_via="fingerprint"`. A
+    fingerprint match is neither identity nor a roster-admitted natural key,
+    and `MatchBasis` has no member for it. Recording one as IDENTITY would
+    claim a GUID hit that never happened; recording it as NATURAL_KEY would
+    corrupt `CategoryReport.identity_substitution`, whose whole purpose is to
+    count roster-admitted name matches. Leaving the record absent is the
+    honest answer, and `report.py` already accounts for it under
+    `matches_unattributed`.
     """
+    match_basis = None
+    if object_class and match_via in ("guid", "identity_remap"):
+        match_basis = match_basis_for_present_by_guid(
+            object_class, src_guid, target_guid,
+        )
     if selection.enable_overwrite and overwrites is not None:
         overwrites.append(PlannedOverwrite(
             category=category,
@@ -1337,6 +1509,7 @@ def _emit_present_outcome(
             match_via=match_via,
             pulled_in_by=pulled_in_by,
             owner_guid=owner_guid,
+            match_basis=match_basis,
         ))
     else:
         skips.append(Skip(

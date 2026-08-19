@@ -40,14 +40,33 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
-from .models import (
-    CENSUS_FEATURE_SYSTEM_OWNERS,
-    CENSUS_NOT_EVALUATED_REASONS,
-    CENSUS_REASON_TOKENS,
-    CENSUS_REASONS_NOT_REQUIRING_REPORT_REF,
-    CENSUS_ROW_VERDICT_CLASSES,
-    CENSUS_SCHEMA_VERSION as _MODELS_CENSUS_SCHEMA_VERSION,
-)
+# Dual-mode import, matching every other module under `Lib/`. This file used
+# to import `.models` unconditionally, which made it importable ONLY as part of
+# the `gramtrans.Lib` package. That was invisible for as long as nothing in the
+# flat, `site.addsitedir("Lib")` load path reached it -- and it stopped being
+# invisible the moment 038 T031 gave `preview.py` a module-level dependency on
+# `census`, because the standalone FlexTools entry module loads `preview` flat.
+# The failure mode was an `ImportError: attempted relative import with no known
+# parent package` raised from this line, surfacing 10 files away in the feature
+# 034 standalone-contract tests.
+if __package__:
+    from .models import (
+        CENSUS_FEATURE_SYSTEM_OWNERS,
+        CENSUS_NOT_EVALUATED_REASONS,
+        CENSUS_REASON_TOKENS,
+        CENSUS_REASONS_NOT_REQUIRING_REPORT_REF,
+        CENSUS_ROW_VERDICT_CLASSES,
+        CENSUS_SCHEMA_VERSION as _MODELS_CENSUS_SCHEMA_VERSION,
+    )
+else:  # loaded via site.addsitedir("Lib")
+    from models import (  # type: ignore[no-redef]
+        CENSUS_FEATURE_SYSTEM_OWNERS,
+        CENSUS_NOT_EVALUATED_REASONS,
+        CENSUS_REASON_TOKENS,
+        CENSUS_REASONS_NOT_REQUIRING_REPORT_REF,
+        CENSUS_ROW_VERDICT_CLASSES,
+        CENSUS_SCHEMA_VERSION as _MODELS_CENSUS_SCHEMA_VERSION,
+    )
 
 # ---------------------------------------------------------------------------
 # Re-exported vocabularies (T020 assigns the rest; these three are needed from
