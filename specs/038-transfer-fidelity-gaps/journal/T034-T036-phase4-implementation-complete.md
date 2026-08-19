@@ -194,3 +194,67 @@ change:
    holds a live restore-bounded Move on `Projects\Target\Target.fwdata`.
    Creating that disposable project is a human decision, not something to do
    unattended.
+
+---
+
+## Addendum: the merge is done, and it found a real bug
+
+`main` was merged into `038-transfer-fidelity-gaps` (`0c33232`), bringing the
+roster and feature 039's wizard module split. The six classes are now
+**admitted at run time in the worktree for the first time** -- `PhPhoneme`,
+`PartOfSpeech` and `MoMorphType` all report a basis, and `WfiWordform`
+correctly reports none. That is the two-halves rule working end to end against
+the real shipped artifact rather than a `tmp_path` reconstruction.
+
+Turning the feature on for real exposed four failures: one genuine bug and
+three tests whose premise the merge invalidated (`035af38`).
+
+**The bug.** `matcher._guid_text` read only PascalCase `.Guid`, while
+`categories._guid_str_from` documents and implements a three-shape fallback --
+lowercase `.guid` **first**, then `.Guid`, lower-cased. `matcher` compares the
+string it produces against the one `categories` produces, so a shape one reads
+and the other does not makes identity **silently fail for that object** -- the
+exact defect 038 exists to remove. It surfaced as an opaque
+`MatchBasisRecord.source_guid must be non-empty` from a dataclass three frames
+down, taking out `inflection_classes_execute_action`.
+
+Worth noting *how* it was found: not by any unit test, all of which passed
+against a reconstructed roster, but by making the feature live. A test that
+builds its own fixture cannot catch a disagreement between two modules about
+what a real object looks like.
+
+`resolve_match` now also refuses an unreadable source GUID with a message that
+names the shape and says why -- every `MatchBasisRecord` is keyed by its source
+GUID, so such an object can be neither matched nor reported as a miss, and
+silently returning "no match" would drop it from the accounting entirely.
+`_resolve_target_pos_by_natural_key` guards before calling, because on that
+path identity has already failed and the caller is about to report the item
+anyway (T033); turning a reportable miss into an exception would take down a
+whole run over one unreadable object.
+
+**The three premise-obsolete tests** all made the same mistake, and it is the
+transferable lesson: they used the **shipped roster** as a stand-in for "a
+roster that does not admit the six". True when written, false one merge later.
+Both fixtures now build a roster from the shipped file's first three entries --
+which the T028 protocol guarantees stay first and byte-identical -- so they
+assert what they mean regardless of what the live artifact says today.
+
+Unit suite after the merge: **3081 passing**, FAILED set byte-identical to the
+pre-merge 27.
+
+## What T038/T039 still need, and why they stop here
+
+The starter baseline is **already captured** (`starter-baseline.json`, project
+`GT038 T023b Scratch`, 72 classes, FLEx 9.3.10), so that prerequisite is met.
+
+What is missing is the destination. Phase 4's header requires `Ejagham Mini` ->
+**a freshly created disposable target**, and explicitly *never open `Target`*,
+since 037 holds a live restore-bounded Move on it. No fresh target exists on
+disk: `Ejagham W Target` and `Ngoreme Target` are the two **damaged** measured
+targets from census-evidence.md, not clean ones.
+
+Creating that project is a FLEx GUI step (quickstart section 2: "In FLEx,
+create a brand-new, empty project"), and running the transfer into it is a live
+LCM write. Both are human-in-the-loop by the project's own rule that a live
+write is never performed unattended. **This is a `needs_human` stop, not a
+blocked task.**
