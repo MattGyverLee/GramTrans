@@ -351,6 +351,14 @@ def _headless_phase0(project, report, modifyAllowed):
         report.Info(f"  Tag:    {tag.serialize()}")
         report.Blank()
 
+        # Defend the writing-system store before any open: the SLDR is
+        # process-global and any `FLExCleanup()` in this process takes it down, after
+        # which LCM renames every `WritingSystemStore/*.ldml` to `*.ldml.bad` on
+        # open (read-only included) and the project loses its writing systems
+        # ("Can't add EN writing system"). See `Lib/flexinit.py`.
+        from gramtrans.Lib.flexinit import ensure_sldr_initialized
+        ensure_sldr_initialized()
+
         source = FLExProject()
         source.OpenProject(projectName=source_name, writeEnabled=False)
         try:
@@ -454,6 +462,14 @@ def phase2_interactive_move(
     """
     import datetime, time
     report.Info(f"[GramTrans Phase 2] interactive move start")
+    # Defend the writing-system store before any open: the SLDR is
+    # process-global and any `FLExCleanup()` in this process takes it down, after
+    # which LCM renames every `WritingSystemStore/*.ldml` to `*.ldml.bad` on
+    # open (read-only included) and the project loses its writing systems
+    # ("Can't add EN writing system"). See `Lib/flexinit.py`.
+    from gramtrans.Lib.flexinit import ensure_sldr_initialized
+    ensure_sldr_initialized()
+
     source = FLExProject()
     source.OpenProject(projectName=source_project_name, writeEnabled=False)
     try:

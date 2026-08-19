@@ -66,19 +66,26 @@ _FLEX_INITIALIZED = False
 
 
 def _ensure_flex_initialized() -> None:
-    """Call flexicon.FLExInitialize() exactly once per process.
+    """Make FieldWorks AND the SLDR ready for an OpenProject.
 
     Standalone (non-FlexTools-host) processes MUST initialize the FieldWorks
     libraries before any OpenProject; the host normally does this at startup.
     Skipping it surfaces as ``RegistryHelper.get_CompanyKey()`` throwing
     ArgumentNullException on the first open. Idempotent + safe to re-call.
+
+    Delegates to ``gramtrans.Lib.flexinit``, which re-verifies the SLDR on every
+    call rather than trusting a once-per-process latch. A pytest session runs
+    many features' fixtures in one process, so a ``FLExCleanup()`` in any of them
+    takes the SLDR down for all the rest; the old latch then suppressed re-init
+    and the next open quarantined the project's ``WritingSystemStore/*.ldml``
+    files. Test projects are shared, real, and in ``Esperanto``'s case
+    read-only-in-the-strong-sense, so this harness must not be the thing that
+    damages them.
     """
     global _FLEX_INITIALIZED
-    if _FLEX_INITIALIZED:
-        return
-    from flexicon import FLExInitialize  # lazy -- absent on hosts without flexicon
+    from gramtrans.Lib.flexinit import ensure_flex_initialized  # lazy
 
-    FLExInitialize()
+    ensure_flex_initialized()
     _FLEX_INITIALIZED = True
 
 

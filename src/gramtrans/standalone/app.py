@@ -213,6 +213,17 @@ class HostSession:
             ))
 
         self._close_source()
+        # The SLDR is process-global and `release()` below tears it down via
+        # `FLExCleanup()`. A second open in the same process therefore cannot
+        # assume step 3 of `start()` still holds: with the SLDR down, LCM
+        # renames every `WritingSystemStore/*.ldml` to `*.ldml.bad` on open --
+        # read-only opens included -- and the project loses its writing systems
+        # ("Can't add EN writing system"). Cheap to re-verify; see
+        # `Lib/flexinit.py`.
+        from gramtrans.Lib.flexinit import ensure_sldr_initialized
+
+        ensure_sldr_initialized()
+
         handle = self._flexicon.FLExProject()
         try:
             handle.OpenProject(projectName=project_name, writeEnabled=False)

@@ -744,20 +744,35 @@ _FLEX_INITIALIZED = False
 
 
 def _ensure_flex_initialized() -> None:
-    """Call `flexicon.FLExInitialize()` exactly once per process.
+    """Make FieldWorks AND the SLDR ready for an `OpenProject`.
 
     A non-FlexTools-host process MUST initialise the FieldWorks libraries
     before any `OpenProject`; skipping it surfaces as
     `RegistryHelper.get_CompanyKey()` throwing `ArgumentNullException` on the
-    first open. The import is function-level on purpose -- see this module's
-    docstring on why nothing here may touch FieldWorks at import time.
+    first open.
+
+    Delegates to `Lib/flexinit.py`, which additionally re-verifies the SLDR on
+    EVERY call. This used to be a bare once-per-process boolean latch, and that
+    was actively destructive: `flexicon.FLExCleanup()` (called by any
+    `HostSession.release()` in the same process) runs `Sldr.Cleanup()`, after
+    which the latch suppressed re-initialisation and the next open -- even a
+    READ-ONLY one -- renamed every `WritingSystemStore/*.ldml` to `*.ldml.bad`,
+    producing the user-visible "Can't add EN writing system". A census opens
+    both projects read-only, so it was one of the paths doing the damage. See
+    `Lib/flexinit.py` for the measurement.
+
+    The import is function-level on purpose -- see this module's docstring on
+    why nothing here may touch FieldWorks at import time. `flexinit` itself is
+    FieldWorks-free at import time, but keeping the call site lazy preserves
+    that guarantee locally rather than by reference.
     """
     global _FLEX_INITIALIZED
-    if _FLEX_INITIALIZED:
-        return
-    from flexicon import FLExInitialize  # noqa: PLC0415 -- see module docstring
+    if __package__:
+        from .flexinit import ensure_flex_initialized  # noqa: PLC0415
+    else:
+        from flexinit import ensure_flex_initialized  # type: ignore # noqa: PLC0415
 
-    FLExInitialize()
+    ensure_flex_initialized()
     _FLEX_INITIALIZED = True
 
 
