@@ -508,8 +508,31 @@ def test_no_step_of_total_literal_survives_in_the_wizard_source():
 
     A run-time walk only sees the pages a run shows; this catches a literal on
     a page nothing navigated to (which is exactly how `Step 3 of 5` survived).
+
+    Feature 039 T035 broadened this from the facade's own text to the WHOLE
+    wizard package. Read against `selection_wizard.py` alone it would have gone
+    on passing after the module split while a `Step N of M` literal sat in any
+    of the ten page modules -- `re.findall` on text that no longer contains the
+    pages returns `[]`, and `[] == []` passes. That is a scan that has stopped
+    asserting without saying so, which is the failure mode this whole guard
+    exists to prevent, so the non-vacuity assertions below are as load-bearing
+    as the offender check itself.
     """
-    src = Path(sw.__file__).read_text(encoding="utf-8")
+    from _wizard_source import wizard_module_paths, wizard_package_source
+
+    paths = wizard_module_paths()
+    assert len(paths) > 1, (
+        "expected the facade plus the wizard_* page modules; the scan must "
+        "cover the package, not one file"
+    )
+    src = wizard_package_source()
+    # Non-vacuity: the concatenation must actually contain the page classes,
+    # or this scan is reading text that cannot hold the literal it forbids.
+    for cls in ("_PageScopeConflict", "_PageEntryTypes", "_PageSkeleton"):
+        assert f"class {cls}" in src, (
+            f"{cls} not found in the scanned source -- the guard is reading the "
+            f"wrong files and would pass vacuously"
+        )
     offenders = re.findall(r"Step \d+ of \d+", src)
     assert offenders == [], f"hard-coded step totals remain: {offenders}"
 

@@ -200,16 +200,21 @@ def test_us1_no_conflict_mode_control_on_phonology_page():
     ADD_NEW/MERGE/OVERWRITE conflict-mode control. Verified by source scan
     (instantiating the QWizardPage pollutes sip state across the suite)."""
     import ast
-    from pathlib import Path
+    import inspect
+    import textwrap
 
     from gramtrans.Lib.ui import selection_wizard as _sw
 
-    src = Path(_sw.__file__).read_text(encoding="utf-8")
-    tree = ast.parse(src)
-    page_cls = next(
-        node for node in ast.walk(tree)
-        if isinstance(node, ast.ClassDef) and node.name == "_PagePhonology"
-    )
+    # Feature 039 T024: read the CLASS, not the module file. `inspect.getsource`
+    # follows the object, so this scan survives `_PagePhonology` moving to
+    # `wizard_pages_blocks.py` -- and any future move -- without naming a path.
+    # The previous form read `Path(_sw.__file__).read_text()` and located the
+    # class with `next(...)`, which raises StopIteration the moment the class is
+    # not in that file: loud, but for the wrong reason, and only by luck rather
+    # than by design.
+    src = textwrap.dedent(inspect.getsource(_sw._PagePhonology))
+    page_cls = ast.parse(src).body[0]
+    assert isinstance(page_cls, ast.ClassDef) and page_cls.name == "_PagePhonology"
     # Collect referenced identifiers (Name ids + Attribute attrs) — ignores
     # docstrings/comments, which legitimately spell out FR-012 by name.
     identifiers = set()

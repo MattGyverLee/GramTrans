@@ -18,7 +18,24 @@ from typing import Dict, Optional, Tuple
 
 from PyQt6 import QtCore, QtGui, QtWidgets
 
-from ..ws_fonts import LabelRun, WsFont, WsFontRegistry, WsRole
+# Feature 039 T049: the dual-mode guard every other module in this package
+# already carries. This was the ONE file in `Lib/ui/` importing a sibling with
+# an unguarded `from ..ws_fonts import ...`, and a relative import cannot
+# resolve at all when the module is loaded flat -- which is the FlexTools and
+# frozen-bundle path that constitution v5.1.0 mandates
+# (`site.addsitedir(r"Lib")`, .specify/memory/constitution.md:380-384).
+#
+# The effect was not local to this file: `selection_wizard.py` imports
+# `ws_font_delegate` unconditionally in BOTH branches of its own guard, so under
+# a flat load the whole wizard failed at import with
+# "attempted relative import with no known parent package". Verified against
+# `main` before feature 039 touched anything, so it is pre-existing, not a
+# consequence of the split -- but SC-006 of this feature is "the wizard imports
+# and constructs in flat mode", and it cannot hold while this line stands.
+if __package__:
+    from ..ws_fonts import LabelRun, WsFont, WsFontRegistry, WsRole
+else:
+    from ws_fonts import LabelRun, WsFont, WsFontRegistry, WsRole  # type: ignore
 
 # Item data role holding the tuple[LabelRun, ...] for a cell. High offset so it
 # never collides with the wizard's other UserRole payloads.

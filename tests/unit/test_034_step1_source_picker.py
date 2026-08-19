@@ -43,6 +43,14 @@ from PyQt6 import QtWidgets  # noqa: E402
 
 from gramtrans.Lib import api as gt_api  # noqa: E402
 from gramtrans.Lib.ui import selection_wizard as sw  # noqa: E402
+from gramtrans.Lib.ui import wizard_page_projects  # noqa: E402
+
+# Feature 039 T022: `SourcePickerDialog` is patched on `wizard_page_projects`,
+# not on `sw`. `_PageProjects` moved there in the module split, and it resolves
+# the name in ITS OWN module globals -- the facade still re-exports the name
+# (FR-006), so patching `sw` succeeds and then does nothing, which is worse than
+# failing: the real modal dialog opens and the run hangs with no test failure to
+# point at. Patch the module whose globals the caller actually reads.
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -251,7 +259,7 @@ def test_picking_a_source_binds_it_and_opens_the_target_row(qapp, tmp_path,
                  source_binder=binder, report_sink=sink)
 
     double = _PickerDouble(gt_api.SourceCandidate("Beta", str(tmp_path / "Beta")))
-    monkeypatch.setattr(sw, "SourcePickerDialog", double)
+    monkeypatch.setattr(wizard_page_projects, "SourcePickerDialog", double)
     page._on_pick_source()
 
     assert opened == ["Beta"]
@@ -272,7 +280,7 @@ def test_cancelling_the_source_picker_changes_nothing(qapp, tmp_path,
     page = _page(qapp, stub=_stub(projects_root=str(tmp_path)),
                  source_binder=lambda name: object())
 
-    monkeypatch.setattr(sw, "SourcePickerDialog",
+    monkeypatch.setattr(wizard_page_projects, "SourcePickerDialog",
                         _PickerDouble(None, accepted=False))
     page._on_pick_source()
 
@@ -292,10 +300,10 @@ def test_re_picking_the_source_keeps_the_run_id(qapp, tmp_path, monkeypatch):
                  source_binder=lambda name: object())
     before = (page._stub.run_id, page._stub.started_at)
 
-    monkeypatch.setattr(sw, "SourcePickerDialog", _PickerDouble(
+    monkeypatch.setattr(wizard_page_projects, "SourcePickerDialog", _PickerDouble(
         gt_api.SourceCandidate("Alpha", str(tmp_path / "Alpha"))))
     page._on_pick_source()
-    monkeypatch.setattr(sw, "SourcePickerDialog", _PickerDouble(
+    monkeypatch.setattr(wizard_page_projects, "SourcePickerDialog", _PickerDouble(
         gt_api.SourceCandidate("Beta", str(tmp_path / "Beta"))))
     page._on_pick_source()
 
@@ -324,7 +332,7 @@ def test_a_source_that_will_not_open_is_reported_and_nothing_is_bound(
     sink = _Sink()
     page = _page(qapp, stub=_stub(projects_root=str(tmp_path)),
                  source_binder=binder, report_sink=sink)
-    monkeypatch.setattr(sw, "SourcePickerDialog", _PickerDouble(
+    monkeypatch.setattr(wizard_page_projects, "SourcePickerDialog", _PickerDouble(
         gt_api.SourceCandidate("Alpha", str(tmp_path / "Alpha"))))
     page._on_pick_source()
 
@@ -387,7 +395,7 @@ def test_a_bound_target_is_excluded_from_the_source_list(qapp, tmp_path,
 
     double = _PickerDouble(gt_api.SourceCandidate("Alpha",
                                                   str(tmp_path / "Alpha")))
-    monkeypatch.setattr(sw, "SourcePickerDialog", double)
+    monkeypatch.setattr(wizard_page_projects, "SourcePickerDialog", double)
     monkeypatch.setattr(
         QtWidgets.QMessageBox, "question",
         staticmethod(lambda *a, **kw: QtWidgets.QMessageBox.StandardButton.Yes),
@@ -418,7 +426,7 @@ def test_changing_the_source_releases_a_bound_target(qapp, tmp_path,
     page._context = _Ctx()
     page._set_target_ready(True)
 
-    monkeypatch.setattr(sw, "SourcePickerDialog", _PickerDouble(
+    monkeypatch.setattr(wizard_page_projects, "SourcePickerDialog", _PickerDouble(
         gt_api.SourceCandidate("Alpha", str(tmp_path / "Alpha"))))
     monkeypatch.setattr(
         QtWidgets.QMessageBox, "question",
@@ -447,7 +455,7 @@ def test_declining_the_release_leaves_both_bindings_alone(qapp, tmp_path,
     page._context = ctx
 
     called = []
-    monkeypatch.setattr(sw, "SourcePickerDialog",
+    monkeypatch.setattr(wizard_page_projects, "SourcePickerDialog",
                         lambda *a, **kw: called.append(True))
     monkeypatch.setattr(
         QtWidgets.QMessageBox, "question",
@@ -498,7 +506,7 @@ def test_binding_a_source_updates_the_wizards_own_handle(qapp, tmp_path,
         projects_root=str(tmp_path),
         source_binder=lambda name: handle,
     )
-    monkeypatch.setattr(sw, "SourcePickerDialog", _PickerDouble(
+    monkeypatch.setattr(wizard_page_projects, "SourcePickerDialog", _PickerDouble(
         gt_api.SourceCandidate("Alpha", str(tmp_path / "Alpha"))))
     wizard.page_project_ws()._on_pick_source()
 

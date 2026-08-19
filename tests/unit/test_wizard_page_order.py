@@ -106,8 +106,31 @@ def test_accessors_are_distinct():
 
 
 def test_no_literal_page_index_calls_in_wizard_source():
-    """Regression guard: cross-page lookups must not use literal .page(<int>)."""
-    src = Path(_sw.__file__).read_text(encoding="utf-8")
+    """Regression guard: cross-page lookups must not use literal .page(<int>).
+
+    Feature 039 T036 broadened this from the facade's text to the whole wizard
+    package. A literal `.page(4)` is a cross-page lookup by position, and after
+    the module split the pages -- which is to say every plausible author of such
+    a call -- live in the ten `wizard_*.py` modules, not in the facade. Scanning
+    only the facade would have returned `[]` for the rest of time.
+
+    The `assert len(paths) > 1` and the class-presence checks are the
+    non-vacuity guard: `[] == []` cannot tell "nothing violates this" apart from
+    "nothing was read".
+    """
+    from _wizard_source import wizard_module_paths, wizard_package_source
+
+    paths = wizard_module_paths()
+    assert len(paths) > 1, (
+        "expected the facade plus the wizard_* page modules; the scan must "
+        "cover the package, not one file"
+    )
+    src = wizard_package_source()
+    for cls in ("_PageItemPicker", "_PageGramDeps", "_PagePhonology"):
+        assert f"class {cls}" in src, (
+            f"{cls} not found in the scanned source -- the guard is reading the "
+            f"wrong files and would pass vacuously"
+        )
     offenders = re.findall(r"\.page\(\d+\)", src)
     assert offenders == [], f"literal page-index calls found: {offenders}"
 
