@@ -127,3 +127,55 @@ scratch.
 
 `quickstart.md:194-206`'s exit-code table matches `fidelity-census.md` section 9
 exactly. The only quickstart drift is the instrument path (item 4).
+
+---
+
+## Addendum: baseline arithmetic, and the MECHANISM behind T006's hang
+
+### The pass count moved for a benign reason
+
+T006 recorded `27 failed, 2568 passed`. This branch now measures
+`27 failed, 2621 passed, 79 skipped, 14 xfailed, 14 xpassed` in 27.86s.
+
+The +53 is T013's `tests/unit/test_038_foundational.py`, which collects exactly
+53 tests (`--collect-only`) and landed after T006 measured. 2568 + 53 = 2621.
+Failures, skips, xfails and xpasses are all unchanged, and the 27 failing IDs
+match the documented clusters cluster-for-cluster with **nothing outside the
+list**. Use **27 / 2621** as the working baseline from here.
+
+### Root cause of the `FLExInitialize` access violation (new -- T006 saw only symptoms)
+
+`tests/integration/test_034_standalone_preview_live.py:109` declares `flex` as an
+**unconditional module-scoped fixture** that calls `FLExInitialize()` with **no
+`skipif` gate**. The module's only skip is at line 139
+(`"{name!r} not present under {root}"`) -- a project-presence check that fires
+*inside a test*, i.e. potentially AFTER the fixture has already initialised the
+CLR.
+
+So whether a run trips depends on fixture-vs-skip ordering and on what the live
+`flextoolsmcp` servers are holding. That is exactly the intermittency T006
+measured, and it explains why one full-suite run completed (336.93s) while three
+others hung. **This session both hazardous runs completed** -- full suite 285s
+(104 failed / 2696 passed), `tests/integration tests/verification` 92s
+(152 passed, 64 skipped, 0 failed), no access violation. That is load-bearing
+luck, not a fix. Keep treating whole-directory integration runs as unsafe.
+
+The 104-vs-27 gap is now fully decomposed: unit-only 27, integration+verification
+0, combined 104 -- so **77 failures are pure cross-directory ordering pollution**.
+
+**Not this feature's to fix** (`test_034` belongs to feature 034), but a one-line
+`skipif` on the fixture would remove the hazard for every future session.
+
+### Why the census gate does not inherit the hazard
+
+`test_object_census.py`'s entire import surface is `json`, `re`, `pathlib.Path`,
+`pytest`, the two census modules, and a lazy `jsonschema` import inside a helper.
+No `flexicon`, no `FLExInit`, no `fwglobals`, no `gramtrans.standalone`. The only
+occurrences of the string `flexicon` are two inert JSON fixture values
+(`instrument.flexicon_version` / `flexicon_path`, lines 526-527) -- contract data,
+not imports. Single-file run terminates in **0.35s**.
+
+**Preserve this property through T015-T025.** Every artifact is built in memory
+and written to `tmp_path`, so the gate stays runnable with no live project.
+T024's live sanity checks are the sole exception and must carry
+`@pytest.mark.integration` individually rather than promoting the whole module.
