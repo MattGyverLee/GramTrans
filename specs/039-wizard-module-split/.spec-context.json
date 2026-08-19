@@ -1,0 +1,151 @@
+{
+  "workflow": "companion",
+  "specName": "039-wizard-module-split",
+  "branch": "039-wizard-module-split",
+  "selectedAt": "2026-08-19T08:15:39.291Z",
+  "currentStep": "tasks",
+  "status": "ready-to-implement",
+  "history": [
+    {
+      "step": "plan",
+      "substep": null,
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-08-19T08:16:04.856Z"
+    },
+    {
+      "step": "tasks",
+      "substep": null,
+      "kind": "start",
+      "by": "extension",
+      "at": "2026-08-19T08:16:04.862Z"
+    },
+    {
+      "step": "tasks",
+      "substep": "generate",
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-19T08:24:11.931Z"
+    },
+    {
+      "step": "tasks",
+      "substep": null,
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-19T08:24:47.395Z"
+    }
+  ],
+  "telemetryInstanceId": "d54a9562-6fcd-4d81-9503-72d0f9fc74c7",
+  "coverage": {
+    "FR-001": {
+      "title": "Behaviour is unchanged: no page gains, loses, or alters a control, label, default, or navigation edge",
+      "tasks": [
+        "T007",
+        "T008",
+        "T009",
+        "T010",
+        "T011",
+        "T019",
+        "T020",
+        "T021",
+        "T026",
+        "T027",
+        "T028",
+        "T029",
+        "T030",
+        "T031",
+        "T032",
+        "T033",
+        "T053"
+      ]
+    },
+    "FR-002": {
+      "title": "The write point does not move: gt_api.execute_move stays called only from _PageFinish._on_move in selection_wizard.py",
+      "tasks": [
+        "T020",
+        "T026",
+        "T040"
+      ]
+    },
+    "FR-003": {
+      "title": "No module over ~1750 lines",
+      "tasks": [
+        "T020",
+        "T033",
+        "T050"
+      ]
+    },
+    "FR-004": {
+      "title": "The ~505 exactly duplicated lines are collapsed into shared bases, genuine divergence preserved as a documented override",
+      "tasks": [
+        "T027",
+        "T028",
+        "T029",
+        "T030",
+        "T031"
+      ]
+    },
+    "FR-005": {
+      "title": "Structural guards become package-wide: the Step N of M and literal .page(N) scans check every wizard module",
+      "tasks": [
+        "T034",
+        "T035",
+        "T036"
+      ]
+    },
+    "FR-006": {
+      "title": "The compatibility surface stays reachable: every name the suite binds off the module object remains importable as selection_wizard.X, enforced by a test",
+      "tasks": [
+        "T010",
+        "T021",
+        "T038"
+      ]
+    },
+    "FR-007": {
+      "title": "Both import modes keep working: every new module carries the if __package__ / else dual-mode guard in both branches",
+      "tasks": [
+        "T007",
+        "T008",
+        "T009",
+        "T019",
+        "T049"
+      ]
+    },
+    "FR-008": {
+      "title": "New module names may not claim generic top-level names; all new modules are prefixed wizard_",
+      "tasks": [
+        "T006",
+        "T012",
+        "T013",
+        "T014",
+        "T015",
+        "T016",
+        "T017",
+        "T018",
+        "T051"
+      ]
+    },
+    "FR-009": {
+      "title": "CI gates are satisfied: shared-code exception table rows and debuglog LOGGER_NAMES entries per new flat module",
+      "tasks": [
+        "T004",
+        "T005",
+        "T006",
+        "T051"
+      ]
+    },
+    "FR-010": {
+      "title": "Rationale comments survive: existing why-and-why-not commentary moves verbatim with the code it explains",
+      "tasks": [
+        "T007",
+        "T019",
+        "T030"
+      ]
+    }
+  },
+  "step_summaries": {
+    "tasks": {
+      "summary": "54 tasks across 8 phases: Setup, Foundational (CI gates), then one phase per increment US1-US5 matching the plan five commits, plus Polish; waves marked with explicit join points."
+    }
+  }
+}
