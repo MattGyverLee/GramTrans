@@ -2358,6 +2358,41 @@ def _t024_census(source: str, destination: str) -> dict:
             refuse("T024: project " + repr(name) + " has no .fwdata at "
                    + str(path))
 
+    # T024c: this block asserts fixed figures against projects AS THEY HAPPEN
+    # TO SIT ON DISK, and nothing binds either project to the state T024
+    # measured. When one moves, the assertions below stop describing anything
+    # -- they do not become wrong about the transfer, they become wrong about
+    # WHICH transfer, which is worse because the failure reads like a
+    # regression. So the pair is checked against the recorded digests first and
+    # the block STANDS DOWN rather than reporting a loss it can no longer
+    # attribute.
+    #
+    # This is not coverage being dropped. Every figure these tests assert is
+    # also asserted hermetically against the committed artifacts in
+    # `_snapshots/census-038-*.json` (TestMeasuredCensusSnapshots and the
+    # blocks below it), which is why those keep passing while these skip. And
+    # the LIVE coverage is now `TestT024cTheSanityCheckProducesItsOwnTransfer`,
+    # which restores the destination and performs the transfer itself instead
+    # of hoping the last session left the right one behind.
+    import hashlib  # noqa: PLC0415
+
+    for name in (source, destination):
+        recorded = MEASURED_PROJECT_DIGESTS.get(name)
+        if recorded is None:
+            continue
+        actual = hashlib.sha256(
+            _t024_fwdata(name).read_bytes()).hexdigest()
+        if actual != recorded:
+            refuse(
+                "T024/T024c: " + repr(name) + " has changed since T024 "
+                "measured it (digest " + actual[:12] + "... != recorded "
+                + recorded[:12] + "...), so the fixed figures in this block no "
+                "longer describe this file. The hermetic snapshot assertions "
+                "still cover every one of them; the live coverage is "
+                "TestT024cTheSanityCheckProducesItsOwnTransfer, which produces "
+                "the transfer it measures instead of measuring whatever is on "
+                "disk.")
+
     import tempfile  # noqa: PLC0415 -- only needed on the live path
 
     out = Path(tempfile.mkdtemp(prefix="gt038-t024-")) / "census.json"
@@ -3701,11 +3736,23 @@ class TestCorrectedPremiseNgoremeFlexIsTheSource:
             return hashlib.sha256(path.read_bytes()).hexdigest()
 
         before = {name: digest(path) for name, path in paths.items()}
-        assert before["Ngoreme FLEx"] == MEASURED_PROJECT_DIGESTS[
-            "Ngoreme FLEx"], (
-            "`Ngoreme FLEx` has changed since T024 measured it; the snapshot "
-            "counts below are no longer the counts of this file"
-        )
+        # NOT asserted equal to MEASURED_PROJECT_DIGESTS. That constant means
+        # "the digest the COMMITTED SNAPSHOT was measured at" and must stay
+        # fixed for `TestMeasuredCensusSnapshots`; this test does not read the
+        # snapshot at all -- it opens both projects and counts them itself, so
+        # a moved file makes it MORE useful, not less. Measured 2026-08-19: the
+        # user edited `Ngoreme FLEx` between the snapshot and this run, and the
+        # premise survived unchanged (1949/41 and 1945/37 both still exact), so
+        # a hard digest equality here would have failed a test whose subject
+        # was still true. Drift is reported, and read-only-ness is proved by
+        # the before/after comparison below rather than by a recorded constant.
+        if before["Ngoreme FLEx"] != MEASURED_PROJECT_DIGESTS["Ngoreme FLEx"]:
+            print("[INFO] `Ngoreme FLEx` has moved since the committed "
+                  "snapshot was measured (" + before["Ngoreme FLEx"][:12]
+                  + "... vs " + MEASURED_PROJECT_DIGESTS["Ngoreme FLEx"][:12]
+                  + "...). The counts below are measured live, so the premise "
+                  "is still settled here; it is the SNAPSHOT-based blocks that "
+                  "stand down on drift, via `_t024_census`.")
 
         measured = {}
         for name in expected:
@@ -3783,7 +3830,34 @@ _T024C_CACHE: dict = {}
 
 
 def _t024c_backup() -> Path:
-    return _repo_root() / T024C_BACKUP_RELPATH
+    """The 0831 starter backup, wherever this checkout can reach it.
+
+    `backups/` is NOT shared across git worktrees and is not tracked, so a
+    feature worktree has no copy of it -- which is precisely why an earlier
+    sweep concluded the backup did not exist and mis-blamed the
+    `--destination-freshly-created` declaration. Look in this checkout first,
+    then in the MAIN worktree, which `git worktree list --porcelain` names
+    authoritatively rather than by guessing a sibling directory name.
+    """
+    here = _repo_root() / T024C_BACKUP_RELPATH
+    if here.is_file():
+        return here
+    import subprocess  # noqa: PLC0415
+
+    try:
+        out = subprocess.run(
+            ["git", "worktree", "list", "--porcelain"],
+            cwd=str(_repo_root()), capture_output=True, text=True, check=True,
+        ).stdout
+    except Exception:  # noqa: BLE001
+        return here
+    for line in out.splitlines():
+        if line.startswith("worktree "):
+            candidate = Path(line[len("worktree "):].strip()) / T024C_BACKUP_RELPATH
+            if candidate.is_file():
+                return candidate
+            break  # the FIRST worktree line is the main one; do not scan on
+    return here
 
 
 def _t024c_assert_write_safe(destination: str, source: str) -> None:
@@ -4002,18 +4076,72 @@ class TestT024cTheSanityCheckProducesItsOwnTransfer:
     def test_the_transfer_actually_persisted(self):
         """T024g's regression guard, in the place that would notice. A report
         claiming additions over a byte-identical destination is the silent-loss
-        class this whole feature exists to eliminate, so once the report claims
-        additions the destination census total must have grown."""
+        class this whole feature exists to eliminate.
+
+        The two sides are read from DIFFERENT shapes on purpose, and getting
+        that wrong is how this assertion goes quietly vacuous: a
+        `--pre-transfer` artifact is a BASELINE document (`kind`,
+        `entries[{class,count,names}]`, `content_hash`) and carries no
+        `classes` array at all, while the post artifact is a census
+        (`classes[{destination_count_total,...}]`). Summing `classes` on the
+        baseline yields 0 and would make any comparison pass."""
         result = _t024c_live_run()
-        pre_total = sum(int(r.get("destination_count_total") or 0)
-                        for r in result["pre"].get("classes", ()))
+        pre_entries = result["pre"].get("entries", ())
+        assert pre_entries, (
+            "the pre-transfer baseline carries no entries -- it is not a "
+            "measurement of anything")
+        pre_total = sum(int(e.get("count") or 0) for e in pre_entries)
         post_total = sum(int(r.get("destination_count_total") or 0)
                          for r in result["post"].get("classes", ()))
-        added = getattr(result["report"], "total_added", 0) or 0
-        print("[INFO] T024c destination totals: pre=%d post=%d added=%s"
+        added = sum(int(getattr(c, "added", 0) or 0)
+                    for c in (result["report"].per_category or {}).values())
+        print("[INFO] T024c destination totals: pre=%d post=%d report_added=%d"
               % (pre_total, post_total, added))
-        if added:
-            assert post_total > pre_total, (
-                "the run report claims " + str(added) + " additions but the "
-                "destination census total did not grow (" + str(pre_total)
-                + " -> " + str(post_total) + ") -- nothing persisted")
+        assert added > 0, (
+            "the run report claims no additions at all, so this run measured "
+            "nothing -- that is a broken harness, not a clean transfer")
+        assert post_total > pre_total, (
+            "the run report claims " + str(added) + " additions but the "
+            "destination census total did not grow (" + str(pre_total)
+            + " -> " + str(post_total) + ") -- nothing persisted (T024g)")
+
+    def test_no_row_reaches_the_matched_basis_before_phase_4(self):
+        """MEASURED 2026-08-19, and the reason the verdict is still capped
+        even though `--run-report` WAS supplied.
+
+        The report carries `matched_to_source.total: 1806`, but
+        `by_object_class` is `{}` and `complete` is False: all 1,806 matches
+        landed in `unattributed_by_category` (SEMANTIC_DOMAINS 1792,
+        COMPLEX_FORM_TYPES 7, VARIANT_TYPES 7). T024d-a attributes ONLY from
+        `MatchBasisRecord.object_class` and `EnrichmentRecord.object_class`,
+        and Phase 4 (T028-T037) has not landed, so NO `MatchBasisRecord` is
+        produced at all -- every match is unattributable BY CONSTRUCTION, and
+        T024d-b's conservative rule then forbids `baseline_matched` on every
+        row.
+
+        So the chain is: no matcher -> no attribution -> no `baseline_matched`
+        -> the 5.2 cap fires on every row -> the verdict cannot exceed
+        CENSUS_ACCOUNTED. This is T024d behaving exactly as specified ("an
+        absent tally is no evidence the matcher ran -- never a zero"), not a
+        defect in it. It is pinned here because it is the sequencing fact that
+        makes the phase gates T038/T039 unreachable until Phase 4 lands, and
+        because a reader who supplies `--run-report` and still sees a capped
+        verdict deserves to find the reason written down rather than rediscover
+        it."""
+        result = _t024c_live_run()
+        matched = (json.loads(
+            result["run_report_path"].read_text(encoding="utf-8"))
+            .get("matched_to_source") or {})
+        assert matched.get("total"), (
+            "the run matched nothing at all; this test's premise no longer "
+            "holds and the chain below needs re-deriving")
+        assert matched.get("by_object_class") == {} , (
+            "a per-class matched tally EXISTS now -- Phase 4 has landed. "
+            "Re-run this block: rows the report covers should reach "
+            "baseline_matched and the cap should stop firing on them.")
+        assert matched.get("complete") is False
+        bases = {r.get("starter_subtraction_basis")
+                 for r in result["post"].get("classes", ())}
+        assert bases == {"baseline_gross"}, (
+            "not every row is on the gross basis any more: " + repr(bases))
+        assert result["post"].get("verdict") == "CENSUS_ACCOUNTED"
