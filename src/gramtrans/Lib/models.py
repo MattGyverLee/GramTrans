@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import enum
 import logging as _logging
+import re
 from dataclasses import dataclass, field
 from typing import Any, Callable, Optional
 
@@ -758,6 +759,663 @@ class NaturalKeyRosterEntry:
                     f"NaturalKeyRosterEntry.{name} must be non-empty "
                     f"(object_class={self.object_class!r})"
                 )
+
+
+# ============================================================================
+# Feature 038 -- the per-object-class fidelity census (data-model.md 4-5)
+# ============================================================================
+#
+# TWO NAMING LAYERS, ON PURPOSE. The types below are the IN-MEMORY model and
+# keep `data-model.md`'s field names. The JSON artifact uses the names in
+# `specs/038-transfer-fidelity-gaps/contracts/census-artifact.schema.json`,
+# which is `additionalProperties: false` and is the sole authority for
+# anything emitted. Several names differ, and `content_hash` has no schema
+# counterpart at all. The translation tables below (`*_ARTIFACT_FIELDS`) are
+# the single, machine-readable statement of that mapping; T019's emitter must
+# be driven by them rather than by a third, hand-written set of names.
+#
+# WHERE THE VOCABULARIES LIVE. The closed 16-token reason vocabulary, the
+# census schema version, and the 4-member row verdict-class vocabulary are
+# declared HERE, in `models.py`, and `Lib/census.py` (T020) MUST RE-EXPORT
+# them (`REASON_TOKENS = CENSUS_REASON_TOKENS`, etc.) rather than re-declare
+# them. Reason: the dependency direction is census -> models and never the
+# reverse, so `models.py` cannot import the vocabulary from `census.py`; and
+# `ClassCensusRow` has to reject an out-of-vocabulary token AT CONSTRUCTION
+# (the convention T013 established for this feature), which an injected, and
+# therefore optional, validator cannot guarantee. One literal list, two
+# names, no drift.
+
+#: Census artifact schema version -- `census-artifact.schema.json` top-level
+#: `schema_version`. Bumped only for ADDITIVE change (see that file's
+#: SCHEMA EVOLUTION RULE $comment). `Lib/census.py` re-exports this as
+#: `CENSUS_SCHEMA_VERSION`.
+CENSUS_SCHEMA_VERSION: int = 1
+
+#: FR-013's CLOSED reason vocabulary, in `$defs.reasonToken.enum` order.
+#: There is deliberately no `UNEXPLAINED` and no `OTHER` member: unexplained
+#: is the ABSENCE of an accounting line and must not be launderable into one.
+#: A reason the census cannot classify is a CENSUS_ERROR, not a 17th token.
+CENSUS_REASON_TOKENS: tuple = (
+    "MATCHED_EXISTING_IDENTITY",
+    "MATCHED_EXISTING_NATURAL_KEY",
+    "ENRICHED_EXISTING",
+    "STARTER_CONTENT",
+    "NO_CREATE_PATH",
+    "UNSUPPORTED_SUBTYPE",
+    "DEPENDENCY_UNRESOLVED",
+    "DEPENDENCY_DESELECTED",
+    "NOT_SELECTED",
+    "UNMAPPED_WS",
+    "IDENTITY_COLLISION",
+    "AMBIGUOUS_NATURAL_KEY",
+    "DUPLICATE_CREATED",
+    "GOVERNED_BY_OTHER_FEATURE",
+    "OUT_OF_SCOPE_CLASS",
+    "ABSENT_BY_CONSTRUCTION",
+)
+
+#: The four tokens exempt from `accountedLine.report_ref` (fidelity-census.md
+#: R-1). Every other token names run-report content that must be resolvable.
+CENSUS_REASONS_NOT_REQUIRING_REPORT_REF: frozenset = frozenset({
+    "STARTER_CONTENT",
+    "ABSENT_BY_CONSTRUCTION",
+    "OUT_OF_SCOPE_CLASS",
+    "GOVERNED_BY_OTHER_FEATURE",
+})
+
+#: Reasons that make a row NOT_EVALUATED rather than measured (the schema's
+#: `not_evaluated_reason` $comment). A row that declares itself out of scope
+#: must carry one of these, so the emitted NOT_EVALUATED row always has the
+#: `not_evaluated_reason` the schema requires of it.
+CENSUS_NOT_EVALUATED_REASONS: frozenset = frozenset({
+    "ABSENT_BY_CONSTRUCTION",
+    "OUT_OF_SCOPE_CLASS",
+    "GOVERNED_BY_OTHER_FEATURE",
+})
+
+#: `$defs.classRow.verdict_class.enum`. Carried explicitly in the artifact so
+#: no reader has to infer intent from the sign of an integer.
+CENSUS_ROW_VERDICT_CLASSES: tuple = (
+    "MATCHED", "SHORTFALL", "SURPLUS", "NOT_EVALUATED",
+)
+
+#: `census_id` / `FidelityCensus.run_id` format, deliberately distinct in
+#: prefix from a transfer run id ("GT-...") so the two cannot be confused.
+_CENSUS_ID_RE = re.compile(r"^CENSUS-[0-9]{8}-[0-9]{6}$")
+
+
+class StarterBaselineKind(enum.Enum):
+    """`$defs.starterBaseline.kind` -- WHAT KIND of claim a baseline is.
+
+    This enum is why `StarterBaseline` exists as a value even when there is
+    no baseline at all. `data-model.md` section 4 has no expression for the
+    absent case; the schema does, and it is load-bearing: an absent baseline
+    is the verdict BASELINE_MISSING, *never* an assumed zero, because a zero
+    baseline is a positive claim that the destination shipped empty. So
+    absence is modelled as `StarterBaseline.missing()` -- a real object whose
+    `is_missing` is True -- and never as `None`. `FidelityCensus.baseline`
+    rejects `None` outright, so the gate cannot reach a NoneType crash on the
+    one path where a hard failure verdict is mandatory.
+    """
+    #: A census of the destination taken BEFORE the transfer. Exact by
+    #: construction, and the only kind valid for a destination that is not a
+    #: freshly created project.
+    PRE_TRANSFER_CENSUS = "pre_transfer_census"
+    #: A per-class census of a genuinely fresh, empty FLEx project.
+    STARTER_CAPTURE = "starter_capture"
+    #: Recordable, never passable.
+    NONE = "none"
+
+
+@dataclass(frozen=True)
+class StarterBaselineEntry:
+    """Feature 038 (FR-010) -- one class's worth of a starter baseline.
+
+    `names` is optional and only populated where the 035 roster admits a name
+    key for the class. When present it is what makes the *matched*
+    subtraction of fidelity-census.md 5.2 possible; a count-only baseline
+    forces the weaker `baseline_gross` subtraction basis. Duplicate names are
+    legitimate content (the measured PhPhoneme case carries 21 duplicates),
+    so they are preserved rather than deduplicated.
+    """
+    object_class: str
+    count: int
+    names: tuple = ()
+
+    def __post_init__(self) -> None:
+        if not self.object_class:
+            raise ValueError(
+                "StarterBaselineEntry.object_class must be non-empty"
+            )
+        if self.count < 0:
+            raise ValueError(
+                "StarterBaselineEntry.count must be >= 0, got "
+                + repr(self.count)
+            )
+        if not isinstance(self.names, tuple):
+            raise ValueError(
+                "StarterBaselineEntry.names must be a tuple, got "
+                + type(self.names).__name__
+                + " (a bare str would iterate as characters)"
+            )
+        if len(self.names) > self.count:
+            raise ValueError(
+                "StarterBaselineEntry names more objects than it counts for "
+                + repr(self.object_class) + ": "
+                + str(len(self.names)) + " names vs count "
+                + str(self.count)
+            )
+
+
+@dataclass(frozen=True)
+class StarterBaseline:
+    """Feature 038 (FR-010) -- the inventory the destination already held,
+    subtracted before any difference is called a surplus.
+
+    Two shapes are trustworthy (`StarterBaselineKind`), one is not: `NONE`.
+    An absent baseline is representable ON PURPOSE -- see
+    `StarterBaselineKind` -- so the gate can turn it into a BASELINE_MISSING
+    verdict instead of crashing or silently assuming zero.
+
+    Subtraction is by COUNT per class, never by deletion: starter content the
+    linguist has since edited is no longer identical and must not be treated
+    as disposable (spec Edge Cases).
+
+    INTERNAL-ONLY FIELD: `content_hash`. `data-model.md`:90 declares it the
+    staleness detector, but `$defs.starterBaseline` has no such property and
+    detects staleness from `flex_version` / `data_model_version` instead. It
+    is kept here because it is genuinely useful when capturing a baseline
+    (T023) and for cheap equality between two captures, and it is NOT emitted
+    into the artifact. See `STARTER_BASELINE_ARTIFACT_FIELDS`.
+
+    Staleness itself is deliberately NOT stored: the schema's `staleness`
+    object is a *judgement* about this baseline relative to the running FLEx
+    version, and that judgement belongs to the gate (T020), which must not
+    find a pre-baked answer sitting here to trust instead of computing it.
+    """
+    kind: StarterBaselineKind
+    schema_version: int = CENSUS_SCHEMA_VERSION
+    flex_version: str = ""       # -> artifact `flex_version`
+    captured_at: str = ""        # -> artifact `captured_at`
+    captured_from: str = ""      # -> artifact `project_name`
+    entries: tuple = ()          # tuple[StarterBaselineEntry, ...]; NOT emitted
+    content_hash: str = ""       # INTERNAL ONLY -- no schema counterpart
+    path: str = ""               # -> artifact `path`
+    source_census_id: str = ""   # -> artifact `source_census_id`
+    data_model_version: Optional[int] = None  # -> artifact `data_model_version`
+
+    @classmethod
+    def missing(cls) -> "StarterBaseline":
+        """The absent baseline, as a VALUE. Use this -- never `None` -- when
+        no baseline could be located, so the gate reaches BASELINE_MISSING by
+        reading `is_missing` rather than by raising `AttributeError` on
+        `None`."""
+        return cls(kind=StarterBaselineKind.NONE)
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.kind, StarterBaselineKind):
+            raise ValueError(
+                "StarterBaseline.kind must be a StarterBaselineKind, got "
+                + repr(self.kind) + " -- an absent baseline is "
+                "StarterBaseline.missing(), not None and not a bare string"
+            )
+        if self.schema_version < 1:
+            raise ValueError(
+                "StarterBaseline.schema_version must be >= 1, got "
+                + repr(self.schema_version)
+            )
+        if not isinstance(self.entries, tuple):
+            raise ValueError(
+                "StarterBaseline.entries must be a tuple, got "
+                + type(self.entries).__name__
+            )
+        seen = set()
+        for ent in self.entries:
+            if ent.object_class in seen:
+                raise ValueError(
+                    "StarterBaseline carries two entries for class "
+                    + repr(ent.object_class) + " -- one row per class, so a "
+                    "subtraction can never be applied twice"
+                )
+            seen.add(ent.object_class)
+        if self.source_census_id and not _CENSUS_ID_RE.match(
+                self.source_census_id):
+            raise ValueError(
+                "StarterBaseline.source_census_id must match "
+                "CENSUS-YYYYMMDD-HHMMSS, got "
+                + repr(self.source_census_id)
+            )
+        if self.data_model_version is not None and self.data_model_version < 0:
+            raise ValueError(
+                "StarterBaseline.data_model_version must be >= 0, got "
+                + repr(self.data_model_version)
+            )
+        if self.kind is StarterBaselineKind.NONE:
+            # A missing baseline claims NOTHING. Letting it carry counts or a
+            # content hash would make "no baseline" indistinguishable from
+            # "measured, and empty" -- exactly the conflation FR-010 exists
+            # to prevent.
+            if self.entries:
+                raise ValueError(
+                    "StarterBaseline(kind=NONE) must carry no entries -- an "
+                    "absent baseline is not a measured zero (schema "
+                    "starter_baseline_source 'assumed_zero_not_permitted')"
+                )
+            if self.content_hash:
+                raise ValueError(
+                    "StarterBaseline(kind=NONE) must carry no content_hash: "
+                    "there is no content to hash"
+                )
+        else:
+            if not self.entries:
+                raise ValueError(
+                    "StarterBaseline(kind=" + self.kind.value + ") must carry "
+                    "at least one entry -- a baseline with no entries is "
+                    "indistinguishable from StarterBaseline.missing() and "
+                    "must not be passed off as a measurement"
+                )
+            for name in ("flex_version", "captured_at"):
+                if not getattr(self, name):
+                    raise ValueError(
+                        "StarterBaseline." + name + " must be non-empty for "
+                        "kind=" + self.kind.value + " -- a baseline whose "
+                        "staleness cannot be judged cannot be trusted "
+                        "(fidelity-census.md 5.3)"
+                    )
+
+    # ---- derived views (properties, never stored counters) -------------
+
+    @property
+    def is_missing(self) -> bool:
+        """True for `kind is NONE`. The BASELINE_MISSING trigger: T020 maps
+        this to that verdict, whose exit code is 4. There is no path on which
+        this being True yields exit 0."""
+        return self.kind is StarterBaselineKind.NONE
+
+    @property
+    def class_count(self) -> int:
+        """-> artifact `class_count`. Derived, so it cannot drift from
+        `entries`. A class the baseline does not mention is
+        `absent_from_baseline` for THAT class only -- see `count_for`."""
+        return len(self.entries)
+
+    @property
+    def carries_natural_keys(self) -> bool:
+        """-> artifact `carries_natural_keys`. True only when every counted
+        object is actually named, i.e. every entry with `count > 0` carries
+        exactly `count` names. Anything weaker cannot support the matched
+        subtraction of fidelity-census.md 5.2, so claiming it would overstate
+        the baseline."""
+        if not self.entries:
+            return False
+        return all(
+            len(e.names) == e.count
+            for e in self.entries if e.count > 0
+        )
+
+    def entry_for(self, object_class: str) -> Optional[StarterBaselineEntry]:
+        """The entry for one class, or None when the baseline does not mention
+        it. None means `absent_from_baseline`, which is a DIFFERENT statement
+        from a measured zero."""
+        for ent in self.entries:
+            if ent.object_class == object_class:
+                return ent
+        return None
+
+    def count_for(self, object_class: str) -> Optional[int]:
+        """The baseline count for one class, or None when the baseline does
+        not mention it. Returning None rather than 0 is the point: the caller
+        must decide between `baseline_document` and `absent_from_baseline` and
+        must never silently assume zero."""
+        ent = self.entry_for(object_class)
+        return None if ent is None else ent.count
+
+
+@dataclass(frozen=True)
+class ClassCensusRow:
+    """Feature 038 (FR-009..FR-013, SC-005) -- one class's source/destination
+    comparison.
+
+    NAMES DIFFER FROM THE ARTIFACT. This is the in-memory row and keeps
+    `data-model.md`:104-114's names; the emitted JSON row uses
+    `$defs.classRow`'s. See `CLASS_CENSUS_ROW_ARTIFACT_FIELDS` and the
+    per-field comments below. The derived properties supply every remaining
+    REQUIRED artifact quantity that is a pure function of these fields
+    (`destination_count_net`, `difference_raw`, `verdict_class`), so the
+    emitter cannot compute them a second, different way.
+
+    `starter_excluded` is the UNMATCHED starter count, i.e. the schema's
+    `starter_baseline_count - starter_matched_to_source`, not the gross
+    baseline count. Subtracting the gross count is wrong once natural-key
+    matching works, because a matched starter object stands in for a source
+    object rather than being surplus (fidelity-census.md 5.2). The gross
+    count and the matched count are provenance for the emitter to add from
+    the `StarterBaseline`; only the net subtrahend is load-bearing here.
+
+    Sign convention on `difference` is fixed and shared with the schema:
+    negative = SHORTFALL (loss), zero = MATCHED, positive = SURPLUS.
+    """
+    object_class: str          # -> artifact `class`
+    source_count: int          # -> artifact `source_count`
+    destination_count: int     # -> artifact `destination_count_total`
+    starter_excluded: int      # -> unmatched starter; feeds destination_count_net
+    difference: int            # -> artifact `difference`
+    explained: bool            # -> artifact: `accounted_for` being non-empty
+    engine_can_create: bool    # -> artifact `engine_can_create`
+    out_of_scope: bool         # -> artifact `verdict_class` NOT_EVALUATED
+    reasons: tuple = ()        # -> artifact `accounted_for[*].reason` tokens
+
+    def __post_init__(self) -> None:
+        if not self.object_class:
+            raise ValueError("ClassCensusRow.object_class must be non-empty")
+        for name in ("source_count", "destination_count", "starter_excluded"):
+            val = getattr(self, name)
+            if val < 0:
+                raise ValueError(
+                    "ClassCensusRow." + name + " must be >= 0, got "
+                    + repr(val) + " (class " + repr(self.object_class) + ")"
+                )
+        # `explained` / `engine_can_create` / `out_of_scope` are booleans with
+        # a defined meaning, not tri-state: None or an int would let a caller
+        # smuggle "unknown" past the gate as a falsy value.
+        for name in ("explained", "engine_can_create", "out_of_scope"):
+            if not isinstance(getattr(self, name), bool):
+                raise ValueError(
+                    "ClassCensusRow." + name + " must be a bool, got "
+                    + repr(getattr(self, name)) + " -- there is no "
+                    "'unknown' state (class " + repr(self.object_class) + ")"
+                )
+        if not isinstance(self.reasons, tuple):
+            raise ValueError(
+                "ClassCensusRow.reasons must be a tuple of reason tokens, got "
+                + type(self.reasons).__name__
+                + " (a bare str would iterate as characters)"
+            )
+        # `difference` is stored (data-model.md names it a field) but must
+        # agree with its inputs exactly. A row whose headline number does not
+        # follow from its own counts is the most dangerous shape this artifact
+        # can take.
+        expected = (self.destination_count - self.starter_excluded
+                    - self.source_count)
+        if self.difference != expected:
+            raise ValueError(
+                "ClassCensusRow.difference for " + repr(self.object_class)
+                + " is " + repr(self.difference) + " but its inputs give "
+                + str(self.destination_count) + " - "
+                + str(self.starter_excluded) + " - "
+                + str(self.source_count) + " = " + str(expected)
+            )
+        for token in self.reasons:
+            if token not in CENSUS_REASON_TOKENS:
+                raise ValueError(
+                    "ClassCensusRow reason " + repr(token) + " on class "
+                    + repr(self.object_class) + " is outside the closed "
+                    "16-token vocabulary (CENSUS_REASON_TOKENS). There is no "
+                    "UNEXPLAINED and no OTHER token: an unclassifiable "
+                    "reason is a CENSUS_ERROR, not a new token"
+                )
+        if self.explained and not self.reasons:
+            raise ValueError(
+                "ClassCensusRow for " + repr(self.object_class)
+                + " claims explained=True with no reasons -- SC-005 requires "
+                "the difference be accounted for by a line in the run "
+                "report, so an explanation with no content is not accounting"
+            )
+        if self.out_of_scope and not (
+                set(self.reasons) & CENSUS_NOT_EVALUATED_REASONS):
+            raise ValueError(
+                "ClassCensusRow for " + repr(self.object_class)
+                + " is out_of_scope but carries none of "
+                + repr(tuple(sorted(CENSUS_NOT_EVALUATED_REASONS)))
+                + " -- the artifact requires a NOT_EVALUATED row to name its "
+                "not_evaluated_reason"
+            )
+
+    # ---- derived views -------------------------------------------------
+
+    @property
+    def destination_count_net(self) -> int:
+        """-> artifact `destination_count_net`: the destination count less the
+        pre-existing objects that were NOT matched to a source object."""
+        return self.destination_count - self.starter_excluded
+
+    @property
+    def difference_raw(self) -> int:
+        """-> artifact `difference_raw`: before any baseline subtraction.
+        Stored in the artifact so a reader sees both what happened and what it
+        means -- the measured PhPhoneme row is difference_raw +23,
+        difference 0."""
+        return self.destination_count - self.source_count
+
+    @property
+    def verdict_class(self) -> str:
+        """-> artifact `verdict_class`. NOT_EVALUATED wins over the sign of
+        the difference, because a row that was never measured must not be
+        reported as MATCHED just because two numbers it does not trust happen
+        to be equal."""
+        if self.out_of_scope or (
+                set(self.reasons) & CENSUS_NOT_EVALUATED_REASONS):
+            return "NOT_EVALUATED"
+        if self.difference == 0:
+            return "MATCHED"
+        return "SHORTFALL" if self.difference < 0 else "SURPLUS"
+
+    @property
+    def is_gate_relevant(self) -> bool:
+        """True for the rows SC-005 actually gates on: the engine can create
+        the class and the class is in scope. False means report-only --
+        counted and rendered in full, but unable to fail the gate by itself
+        (the schema's `gate_scope: advisory`)."""
+        return self.engine_can_create and not self.out_of_scope
+
+    @property
+    def counts_pass(self) -> bool:
+        """The COUNT half of the row's gate condition (data-model.md:120):
+        matched, or explained with non-empty reasons. Deliberately NOT named
+        `passes`: a row also has to be free of duplicate natural keys
+        (`duplicates.extra_objects == 0`, or each group accounted), and that
+        quantity lives in the artifact, not on this row -- T020 combines the
+        two. A row that is not gate-relevant cannot fail on counts."""
+        if not self.is_gate_relevant:
+            return True
+        return self.difference == 0 or self.explained
+
+
+@dataclass(frozen=True)
+class FidelityCensus:
+    """Feature 038 (FR-009..FR-013, SC-005) -- one census run: every class,
+    both projects, one gate answer.
+
+    `run_id` is THIS census's own identity and maps to the artifact's
+    `census_id` (`CENSUS-YYYYMMDD-HHMMSS`), not to the transfer run's
+    `GT-...` id -- the two prefixes are deliberately distinct so a log or a
+    filename can never confuse them. The transfer run being judged is
+    identified by the `RunReport` this census hangs off (`RunReport.census`)
+    and by the artifact's separate `transfer_run` block.
+
+    `gate_pass` is INTERNAL-ONLY and is NOT emitted. The artifact top level is
+    `additionalProperties: false` and carries `verdict` + `exit_code`
+    instead; a `gate_pass` key there cannot validate, and T014 pins exactly
+    that. The gate RECOMPUTES its verdict from the rows and the baseline
+    rather than trusting any stored boolean.
+
+    The `gate_pass` invariant below is deliberately ONE-DIRECTIONAL:
+    `gate_pass=True` is rejected whenever the model can already see that it is
+    false (a missing baseline, or a gate-relevant row failing on counts), but
+    `gate_pass=False` is always accepted, because duplicate identity, stale
+    baselines and incomplete coverage can each fail the gate for reasons no
+    single row knows about.
+    """
+    run_id: str                 # -> artifact `census_id`
+    source_project: str         # -> artifact `projects.source`
+    destination_project: str    # -> artifact `projects.destination`
+    baseline: StarterBaseline   # -> artifact `starter_baseline`
+    taken_at: str               # -> artifact `generated_at`
+    rows: tuple = ()            # -> artifact `classes`
+    gate_pass: bool = False     # INTERNAL ONLY -- artifact has verdict/exit_code
+    schema_version: int = CENSUS_SCHEMA_VERSION  # -> artifact `schema_version`
+
+    def __post_init__(self) -> None:
+        if not self.run_id:
+            raise ValueError("FidelityCensus.run_id must be non-empty")
+        if not _CENSUS_ID_RE.match(self.run_id):
+            hint = (
+                " -- that looks like a TRANSFER run id; FidelityCensus.run_id "
+                "is the census's own id and maps to the artifact's census_id"
+                if self.run_id.startswith("GT-") else ""
+            )
+            raise ValueError(
+                "FidelityCensus.run_id must match CENSUS-YYYYMMDD-HHMMSS, got "
+                + repr(self.run_id) + hint
+            )
+        for name in ("source_project", "destination_project", "taken_at"):
+            if not getattr(self, name):
+                raise ValueError(
+                    "FidelityCensus." + name + " must be non-empty"
+                )
+        if not isinstance(self.baseline, StarterBaseline):
+            raise ValueError(
+                "FidelityCensus.baseline must be a StarterBaseline, got "
+                + repr(self.baseline) + " -- an absent baseline is "
+                "StarterBaseline.missing() (kind=NONE), never None, so the "
+                "gate reports BASELINE_MISSING instead of crashing on it"
+            )
+        if self.schema_version < 1:
+            raise ValueError(
+                "FidelityCensus.schema_version must be >= 1, got "
+                + repr(self.schema_version)
+            )
+        if not isinstance(self.rows, tuple):
+            raise ValueError(
+                "FidelityCensus.rows must be a tuple, got "
+                + type(self.rows).__name__
+            )
+        if not self.rows:
+            raise ValueError(
+                "FidelityCensus.rows must carry at least one row -- the "
+                "artifact's `classes` array is minItems 1, and a class with "
+                "no instances anywhere is a NOT_EVALUATED row, never an "
+                "omitted one (FR-012)"
+            )
+        seen = set()
+        for row in self.rows:
+            if row.object_class in seen:
+                raise ValueError(
+                    "FidelityCensus carries two rows for class "
+                    + repr(row.object_class) + " -- exactly one row per class"
+                )
+            seen.add(row.object_class)
+        if not isinstance(self.gate_pass, bool):
+            raise ValueError(
+                "FidelityCensus.gate_pass must be a bool, got "
+                + repr(self.gate_pass)
+            )
+        if self.gate_pass:
+            if self.baseline.is_missing:
+                raise ValueError(
+                    "FidelityCensus.gate_pass cannot be True with an absent "
+                    "baseline: absence is a verdict (BASELINE_MISSING, exit "
+                    "4), not a warning, and there is no path on which a "
+                    "missing baseline yields exit 0 (fidelity-census.md 5.3)"
+                )
+            failing = tuple(r.object_class for r in self.failing_rows)
+            if failing:
+                raise ValueError(
+                    "FidelityCensus.gate_pass is True but these gate-relevant "
+                    "classes have an unexplained difference: "
+                    + ", ".join(failing)
+                )
+
+    # ---- derived views -------------------------------------------------
+
+    @property
+    def gate_relevant_rows(self) -> tuple:
+        """The rows SC-005 gates on: `engine_can_create and not
+        out_of_scope`."""
+        return tuple(r for r in self.rows if r.is_gate_relevant)
+
+    @property
+    def failing_rows(self) -> tuple:
+        """Gate-relevant rows with an unexplained difference. Each is directly
+        renderable -- it names its class and carries its own counts."""
+        return tuple(r for r in self.gate_relevant_rows if not r.counts_pass)
+
+    @property
+    def counts_gate_pass(self) -> bool:
+        """The count half of the gate: no baseline problem and no failing
+        row. NOT the whole gate -- duplicate identity, baseline staleness and
+        coverage completeness are the other three ways to fail, and they are
+        T020's to judge from the artifact."""
+        return not self.baseline.is_missing and not self.failing_rows
+
+    def row_for(self, object_class: str) -> Optional[ClassCensusRow]:
+        """The row for one class, or None when the census has none -- which is
+        itself a coverage defect (FR-012 requires a row per class), not a
+        normal outcome."""
+        for row in self.rows:
+            if row.object_class == object_class:
+                return row
+        return None
+
+
+# ---------------------------------------------------------------------------
+# In-memory field name -> census artifact field name.
+#
+# The ONE place the two naming layers are reconciled. T019's emitter and
+# T020's validator must be driven by these tables; a `None` value means the
+# field is INTERNAL-ONLY and must not appear in the JSON at all (the artifact
+# objects are `additionalProperties: false`, so emitting one is a hard
+# validation failure, not a harmless extra).
+# ---------------------------------------------------------------------------
+
+#: `StarterBaseline` -> `$defs.starterBaseline`. `entries` is the working
+#: inventory the subtraction is computed FROM; the artifact carries only its
+#: shape (`class_count`, `carries_natural_keys`, both derived properties).
+STARTER_BASELINE_ARTIFACT_FIELDS: dict = {
+    "kind": "kind",
+    "flex_version": "flex_version",
+    "captured_at": "captured_at",
+    "captured_from": "project_name",
+    "path": "path",
+    "source_census_id": "source_census_id",
+    "data_model_version": "data_model_version",
+    "entries": None,         # inventory, not provenance
+    "schema_version": None,  # the artifact's schema_version is top-level
+    "content_hash": None,    # data-model.md:90 only; NO schema counterpart
+}
+
+#: `ClassCensusRow` -> `$defs.classRow`. The four remaining REQUIRED classRow
+#: keys are not functions of this row and must be supplied by the emitter:
+#: `gate_scope` and `in_class_list_via` (T016 class-list provenance),
+#: `accounted_for` (structured `accountedLine` objects -- this row carries
+#: only the reason TOKENS, not their counts, directions or report refs), and
+#: `unexplained_shortfall` / `unexplained_surplus` (per-direction arithmetic
+#: over those lines). `destination_count_net`, `difference_raw` and
+#: `verdict_class` are derived properties here -- read them, do not recompute.
+CLASS_CENSUS_ROW_ARTIFACT_FIELDS: dict = {
+    "object_class": "class",
+    "source_count": "source_count",
+    "destination_count": "destination_count_total",
+    "difference": "difference",
+    "engine_can_create": "engine_can_create",
+    "starter_excluded": None,  # = starter_baseline_count - starter_matched_to_source
+    "explained": None,         # expressed as a non-empty `accounted_for`
+    "reasons": None,           # -> `accounted_for[*].reason`
+    "out_of_scope": None,      # -> `verdict_class` NOT_EVALUATED + reason
+}
+
+#: `FidelityCensus` -> the artifact top level.
+FIDELITY_CENSUS_ARTIFACT_FIELDS: dict = {
+    "run_id": "census_id",
+    "taken_at": "generated_at",
+    "schema_version": "schema_version",
+    "baseline": "starter_baseline",
+    "rows": "classes",
+    "source_project": "projects.source",
+    "destination_project": "projects.destination",
+    "gate_pass": None,  # top level is additionalProperties:false and carries
+                        # `verdict` + `exit_code`; the gate RECOMPUTES both
+}
 
 
 class DependencyKind(enum.Enum):
