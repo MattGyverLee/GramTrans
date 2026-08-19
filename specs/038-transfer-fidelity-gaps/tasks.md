@@ -152,7 +152,7 @@ LCM type (Principle II, data-model.md:3-6).
 
 **Wave 1 - single task (`models.py`):**
 
-- [ ] **T015** [US2] Add `StarterBaseline` (`schema_version`, `flex_version`, `captured_at`, `captured_from`, `entries`, `content_hash`), `StarterBaselineEntry` (`object_class`, `count`, `names`), `ClassCensusRow` (`object_class`, `source_count`, `destination_count`, `starter_excluded`, `difference`, `explained`, `reasons`, `engine_can_create`, `out_of_scope`) and `FidelityCensus` (`run_id`, `source_project`, `destination_project`, `baseline`, `rows`, `taken_at`, `gate_pass`) - `src/gramtrans/Lib/models.py`
+- [x] **T015** [US2] Add `StarterBaseline` (`schema_version`, `flex_version`, `captured_at`, `captured_from`, `entries`, `content_hash`), `StarterBaselineEntry` (`object_class`, `count`, `names`), `ClassCensusRow` (`object_class`, `source_count`, `destination_count`, `starter_excluded`, `difference`, `explained`, `reasons`, `engine_can_create`, `out_of_scope`) and `FidelityCensus` (`run_id`, `source_project`, `destination_project`, `baseline`, `rows`, `taken_at`, `gate_pass`) - `src/gramtrans/Lib/models.py`
 
 **--> Wait for T015, then (T016-T020 all touch `census.py`, so each is its own wave):**
 
