@@ -1,5 +1,113 @@
 # GramTrans — Session Handoff
 
+## Session log — 2026-08-19c (037: phonology transfer fidelity — MERGED to main)
+
+Started from a user report that "there are lots of broken items in the target rules"
+in `Ngoreme Target`, refined to "the rules should have been copied exactly" — so the
+deliverable became a source↔target **diff**, and the fix had to land in the **tool**,
+not the data. No target database was repaired by hand. Merged to `main` at **`a824b8d`**
+(branch `037-phon-nc-features`, worktree
+`D:/Github/_Projects/_LEX/GramTrans-037-phon-nc-features`).
+
+### PICKUP — read this before touching natural classes, phonemes, or any `*Operations`
+
+**The bug class that ate this session is pythonnet static-type attribute resolution.**
+`hasattr(obj, "SubclassOnlyMember")` is **unconditionally False** on objects that
+flexicon's `GetAll()` / `Find()` / `Object()` return, because those are typed as the
+BASE interface (`IPhNaturalClass`), and pythonnet resolves attributes against the
+static wrapper type rather than the runtime CLR type. Always discriminate on
+`.ClassName` and **cast**: `IPhNCFeatures(nc).FeaturesOA`.
+
+This trap was hit **three separate times** in one session — `FeaturesOA` (the original
+defect), `PhonemeGuids` (silently 0/7, fixed to 7/7 as a side effect), and
+`_get_features_oa`. Assume any `hasattr`-gated LCM subclass member in this repo or in
+flexicon is dead code until proven otherwise. A grep for `hasattr(` near LCM casts is
+a genuinely productive audit.
+
+**Corollary for tests, which is why this shipped green twice:** a factory-fresh
+concrete-typed object never reproduces the base-interface view, so unit tests cannot
+see this failure. This repo's suite AND flexicon's 1467 tests were fully green while
+the feature was 100% non-functional live. Test through a fake that mimics the
+base-interface view, and confirm red-then-green by actually reverting the fix.
+
+### What was measured, live and restore-bounded
+
+`Ngoreme FLEx` → throwaway `Target`, restored from
+`backups/Target 2026-07-06 0218.fwbackup` before each Move:
+
+| | before | after |
+|---|---|---|
+| PhNCFeatures carrying a feature structure | 0/34 | **41/41** |
+| rule context cells → hollow natural class | 24 | **0** |
+| rules losing the `Disabled` flag | 8 | **0** |
+| leaf-dispatch writes (attempted/succeeded/failed) | 139/98/**41** | 139/139/**0** |
+
+The user's initial hypothesis — that a required natural class had been deselected —
+was **disproved**: zero dangling references. Every referenced NC and phoneme is
+present. They were empty shells, not missing objects.
+
+### The acceptance gate, and a warning about the old one
+
+`tests/integration/harness/check_phon_fidelity.py` reads `.fwdata` XML directly, so it
+works while FieldWorks holds the project lock. It is **calibrated**: it still reports
+the known 8 defects on the two untouched pairs (`Ngoreme Target`, `Ejagham W Target`)
+while the post-fix run reports 0. A checker that only ever prints 0 is worthless;
+re-run `--all` after changing it.
+
+It replaces a regex version that **mis-parsed self-closing `<rt ... />` elements** —
+`<rt ...>(.*?)</rt>` matched the empty tag and then swallowed the *following* object's
+body, so one `CmSemanticDomain`'s `Questions` were counted as a natural class's feature
+specs. That produced a phantom "3 source vs 8 target" mismatch and, far worse, could
+have produced a phantom `<Features>` and thus a **false clean pass**. Any `.fwdata`
+tooling must use a real XML parser. `iterparse` + `elem.clear()` handles the 73 MB
+files fine.
+
+### Known open items — deliberately not fixed here
+
+- **3 rules re-`overwrite` on every run, forever.** Their `ReqRuleFeatsRC` /
+  `ExclRuleFeatsRC` references (2 Req + 1 Excl) can never resolve in the target, so
+  source and target can never compare equal and the reconcile path re-fires each pass.
+  Benign — it rewrites identical content — but idempotency is **not** strict. The 19
+  `FsClosedFeature` overwrites are inherent to that category's merge-into-existing
+  semantics, not a bug.
+- **Duplicate phonemes: 20 by name in `Target`** (41 source + 23 target-native,
+  GUID-only matching). This is **feature 038's** scope and is explicitly reported as a
+  `[NOTE]`, not counted as a 037 defect.
+- **Defects A and B have live evidence but no committed unit test.**
+  `PhIterationContext` copy and the rule-feat drop records live inside
+  `_copy_context_cell`, a closure nested in the rule-copy function, and need the full
+  `IPhRegularRule` graph scaffolded to reach. Recorded in the test file's docstring
+  rather than quietly omitted.
+- **Sibling gaps found by inspection, not fixed:** `POSOperations.GetSyncableProperties`
+  never captures `IPartOfSpeech.DefaultFeaturesOA` / `InherFeatValOA`, and
+  `MSAOperations` has **no** sync methods at all — so `IMoStemMsa.MsFeaturesOA`,
+  `IMoInflAffMsa.InflFeatsOA` and `IMoDerivAffMsa.From/ToMsFeaturesOA` are captured
+  nowhere. Also `PhonemeOperations.__ApplyFeatures` skips unresolvable GUIDs silently,
+  where `NaturalClassOperations` raises.
+
+### Dependency floor moved: `pyflexicon>=4.5.2`
+
+Do not lower it. The three releases look equivalent by changelog and are not — 4.5.0's
+wiring is dead code, 4.5.1 works but reports 3 phantom losses on empty-but-present
+feature structures, 4.5.2 is clean. The full rationale is in
+[CLAUDE.md](CLAUDE.md#install); flexicon `main` is at `3abf6b5`.
+
+### Suite
+
+On `main` after the merge: **27 failed, 2559 passed**, 79 skipped, 14 xfailed,
+14 xpassed. The 27 are the unchanged pre-existing order-dependent baseline (they
+collapse to 1 when run as a subset); the passing count is **+19, exactly** the new
+test file. Failure set verified byte-identical to the pre-branch tree in both
+directions, so there are **zero regressions**.
+
+### Coordination note
+
+Feature 038 (transfer fidelity gaps) is being worked concurrently by another agent
+team and independently corroborated the duplicate-phoneme finding. Per their
+`census-evidence.md`, 037 lands first; the post-037 `main` is the baseline for their
+re-census. Their far larger losses — all 2,088 grammatical analyses in one target,
+templates/slots at zero in both — are **outside** 037's scope and remain open.
+
 ## Session log — 2026-08-19b (035: reconnaissance, four new tasks, T045c)
 
 A short session that spent most of its effort *measuring the work* rather than doing

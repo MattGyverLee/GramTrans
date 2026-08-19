@@ -59,7 +59,7 @@ for MCP-indexer visibility (the indexer's static analysis doesn't follow inherit
 
 ### Install
 
-`pyproject.toml` declares `pyflexicon>=4.5.0` — the floor carrying both:
+`pyproject.toml` declares `pyflexicon>=4.5.2` — the floor carrying both:
 
 - the GUID-preserving create surface feature 033 depends on
   (`BaseOperations._CreateWithGuid` plus the optional `guid=` kwarg on
@@ -73,6 +73,29 @@ for MCP-indexer visibility (the indexer's static analysis doesn't follow inherit
   specs) and `ApplySyncableProperties` rewires them against the target's
   `PhFeatureSystemOA` by GUID, mirroring what `PhonemeOperations` already
   does for phonemes (flexicon issue #222).
+
+> **The floor is 4.5.2, not 4.5.0 or 4.5.1 -- do not lower it.** Each of the
+> three releases looks equivalent by changelog and is not:
+>
+> - **4.5.0** wired FeaturesOA behind `hasattr(nc, "FeaturesOA")`, which is
+>   *unconditionally False*: pythonnet resolves attributes against the STATIC
+>   wrapper type, and `NaturalClasses.GetAll()` yields base-`IPhNaturalClass`
+>   proxies on which the `IPhNCFeatures`-only `FeaturesOA` is invisible. The
+>   feature was 100% dead while all 1467 flexicon tests passed, because they
+>   built factory-fresh CONCRETE-typed objects. Verified live: 41/41 natural
+>   classes still hollow.
+> - **4.5.1** discriminates on `.ClassName` and casts (`IPhNCFeatures(nc)`).
+>   This is the fix that actually transfers features. It gates the apply on
+>   `if features:`, so a class whose `FeatureSpecsOC` is genuinely EMPTY gets
+>   `Features == []`, which is falsy -- its `FeaturesOA` stays null and
+>   GramTrans's source-aware guard reports a loss that did not happen.
+> - **4.5.2** gates on key presence (`features or features_guid`) instead of
+>   truthiness, so an empty-but-present feature structure round-trips as an
+>   empty-but-present structure.
+>
+> Practical consequence: on 4.5.1 the transfer is correct for the 38 Ngoreme
+> classes that carry specs and reports 3 phantom losses; on 4.5.0 it silently
+> loses all 41. Only 4.5.2 is clean.
 
 Install from the local directory:
 

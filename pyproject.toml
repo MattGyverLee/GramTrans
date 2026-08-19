@@ -44,7 +44,7 @@ dependencies = [
     # Lib/categories.py's natural_classes_execute_action now fails loudly on
     # (RuntimeError, not a silent drop) rather than the previous behaviour
     # of reporting the transfer as fully successful.
-    "pyflexicon>=4.5.0",
+    "pyflexicon>=4.5.2",
     "PyQt6>=6.4",
 ]
 
