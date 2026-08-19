@@ -27,6 +27,53 @@ on both checkers:
 Both ran as **pure create** (`overwrites=0`), which is the verified path — see the
 next section for why that mattered.
 
+### The DEFAULT category copy writes NOTHING, and reports success — measured
+
+Attempted `Ngoreme FLEx` -> `Ngoreme Target` with the category set `gramtrans.py:495`
+falls back to when `categories is None` (POS, AFFIX_TEMPLATES, SLOTS, ENTRY, SENSE,
+MSA, ALLOMORPH, PH_ENVIRONMENT). Run twice — once with empty pick-sets, once with all
+26 source `PartOfSpeech` GUIDs supplied as `pos_picks`. **Identical result both times,
+and the target `.fwdata` was byte-identical (same SHA-256) afterwards: zero objects
+written.**
+
+What the report said, both runs:
+
+```
+plan: actions=32 overwrites=0
+totals: added=32  skipped=181
+     affix_templates  added=13  skipped=134
+     slots            added=19  skipped=0
+leaf-dispatch counts  attempted=32 succeeded=32 failed=0
+[OK] leaf_failed=0 -- every planned write actually landed
+```
+
+Every one of those signals is false. This independently reproduces 038's census
+finding ("templates/slots at zero in both") from the opposite direction.
+
+**Two lessons that outlive this run:**
+
+1. **`leaf_failed` (feature 037, defect C) does NOT catch this, and cannot.** It counts
+   `execute_action` calls that RAISED. A handler that returns normally while mutating
+   nothing is indistinguishable from success — `succeeded=32` means "did not raise",
+   not "wrote something". Any future truthfulness work has to compare against target
+   state, not against handler exit. Treat `leaf_failed=0` as necessary, never
+   sufficient.
+2. **`api.execute_move` passes a `_NullReportSink`,** so per-item `.Warning()` calls
+   are discarded (it says so in its own debug line). If the template/slot handlers did
+   explain themselves, the explanation was thrown away. That is the same
+   invisible-failure shape feature 037 existed to kill, still live in the one place
+   that would have told us why.
+
+Also measured: **POS, ENTRY, SENSE, MSA and ALLOMORPH plan ZERO actions** even with
+`pos_picks` fully populated, so the lexicon (2,015 entries / 2,231 senses / 1,949 stem
+MSAs / 2,136 stem allomorphs in this source) cannot currently be copied at all by this
+selection shape. Plausible mechanism for the templates/slots no-op, unverified:
+`MoInflAffixTemplate` is owned by `PartOfSpeech`, POS produced no actions, so the
+templates had no owner to attach to.
+
+Net: for `Ngoreme FLEx` -> `Ngoreme Target`, phonology (feature 037) is the only part
+that actually transfers. Everything else is 038's territory and 038 is 14/85.
+
 ### DO NOT re-run a transfer into an ALREADY-POPULATED target yet
 
 The reconcile / already-present-by-GUID **update** path is broken, and this was found
