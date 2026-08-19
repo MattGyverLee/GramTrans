@@ -112,7 +112,13 @@ def build_selection(mode, source_handle, target_handle):
 
 
 def transfer(source_name, target_name, target_path, mode):
-    """Open source RO, bind target, preview, move. -> (report, unchecked_map)."""
+    """Open source RO, bind target, preview, move.
+
+    -> (report, unchecked_map, plan). The PLAN is returned as well because
+    `match_basis` is a property of the planned action (T024h reads it to tell
+    "the natural-key path found nothing" from "the natural-key path never
+    ran"); the report carries only the substitution TALLY.
+    """
     from gramtrans.Lib import api
     from gramtrans.Lib.debuglog import DEBUG_ENV
     from gramtrans.Lib.models import WSKind, WSMapping, WSMappingEntry
@@ -165,7 +171,7 @@ def transfer(source_name, target_name, target_path, mode):
         if state is not api.PreviewState.PREVIEW_READY:
             raise RuntimeError("compute_preview -> %r (not PREVIEW_READY)" % (state,))
         report = api.execute_move(context, plan)
-        return report, unchecked
+        return report, unchecked, plan
     finally:
         if context is not None:
             try:
@@ -182,6 +188,83 @@ def transfer(source_name, target_name, target_path, mode):
             src.CloseProject()
         except Exception:  # noqa: BLE001
             pass
+
+
+def breakdown(report, plan) -> dict:
+    """T024h -- turn the two bare tallies into attributable breakdowns.
+
+    `dropped_items: 10,749` and `identity_substituted: 0` are both single
+    integers in the run summary, and neither can be read as expected or
+    unexpected without knowing what it is made of. Three questions, three
+    breakdowns:
+
+    (a) WHAT is being dropped -- by (owner_kind, reason), the two fields
+        `DroppedItemRecord` carries for exactly this purpose. A large number
+        against a 205,979-object source may be entirely ordinary (one record
+        per out-of-scope reference) or may be a defect; the pair tells them
+        apart, and the count alone cannot.
+    (b) WHETHER the natural-key match path engaged AT ALL -- read off the
+        PLAN's `match_basis`, not off the report. `identity_substituted`
+        counts SUBSTITUTIONS; `MatchBasis.IDENTITY` vs `NATURAL_KEY` vs `NONE`
+        says which arm each planned action took. Zero substitutions beside
+        zero `NATURAL_KEY` bases means the path never ran (FR-006 unreachable
+        on this pair); zero substitutions beside non-zero `NATURAL_KEY` would
+        mean it ran and found nothing to substitute. Opposite conclusions.
+    (c) WHICH leaf failed -- 037's `LeafExecutionFailure` records, so the
+        filtered-mode `leaf_failed: 1` that force-all did not report is
+        attributable instead of merely counted.
+    """
+    from collections import Counter
+
+    out = {}
+
+    dropped = list(getattr(report, "dropped_items", ()) or ())
+    pairs = Counter((getattr(r, "owner_kind", "?"), getattr(r, "reason", "?"))
+                    for r in dropped)
+    out["dropped_total"] = len(dropped)
+    out["dropped_by_owner_kind"] = dict(
+        Counter(getattr(r, "owner_kind", "?") for r in dropped).most_common())
+    out["dropped_by_reason"] = dict(
+        Counter(getattr(r, "reason", "?") for r in dropped).most_common())
+    out["dropped_by_owner_kind_and_reason"] = [
+        {"owner_kind": k, "reason": rsn, "count": n}
+        for (k, rsn), n in pairs.most_common()
+    ]
+    out["dropped_by_field"] = dict(
+        Counter(getattr(r, "field_name", "?") for r in dropped).most_common(40))
+    out["dropped_examples"] = [
+        {"owner_kind": r.owner_kind, "owner_label": r.owner_label,
+         "field_name": r.field_name, "item_name": r.item_name,
+         "item_guid": r.item_guid, "reason": r.reason}
+        for r in dropped[:20]
+    ]
+
+    bases = Counter()
+    by_class = Counter()
+    for action in list(getattr(plan, "actions", ()) or ()):
+        mb = getattr(action, "match_basis", None)
+        name = getattr(getattr(mb, "basis", None), "name", None)
+        if name is None:
+            name = "<no match_basis>"
+        bases[name] += 1
+        if name == "NATURAL_KEY":
+            by_class[getattr(mb, "object_class", "?")] += 1
+    out["plan_match_basis"] = dict(bases.most_common())
+    out["plan_natural_key_by_class"] = dict(by_class.most_common())
+    out["report_identity_substituted"] = getattr(
+        report, "identity_substituted", None)
+    out["report_matched_by_class"] = dict(
+        getattr(report, "matched_by_class", {}) or {})
+    out["report_matches_unattributed"] = {
+        str(k): v for k, v in
+        (getattr(report, "matches_unattributed", {}) or {}).items()}
+
+    out["leaf_failures"] = [
+        {f: str(getattr(lf, f, None))
+         for f in ("category", "source_guid", "exception_type", "message")}
+        for lf in (getattr(report, "leaf_execution_failures", ()) or ())
+    ]
+    return out
 
 
 def delta(source_inv, before, after) -> dict:
@@ -257,8 +340,8 @@ def main() -> int:
 
         entry = {"before_objects": sum(len(v) for v in before.values())}
         try:
-            report, unchecked = transfer(args.source, args.destination,
-                                         tgt_path, mode)
+            report, unchecked, plan = transfer(args.source, args.destination,
+                                               tgt_path, mode)
             entry["unchecked_preselection"] = {k: len(v)
                                                for k, v in unchecked.items()}
             entry["unchecked_guids"] = unchecked
@@ -282,6 +365,8 @@ def main() -> int:
                 for k, v in per_cat.items()
             }
             entry["report"] = rep
+            # T024h: the two bare tallies, broken down so they can be read.
+            entry["breakdown"] = breakdown(report, plan)
             entry["persist_error"] = globals().pop("_LAST_PERSIST_ERROR", None)
         except Exception as exc:  # noqa: BLE001
             entry["error"] = "%s: %s" % (type(exc).__name__, exc)
