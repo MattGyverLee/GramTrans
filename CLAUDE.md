@@ -59,12 +59,22 @@ for MCP-indexer visibility (the indexer's static analysis doesn't follow inherit
 
 ### Install
 
-`pyproject.toml` declares `pyflexicon>=4.4.1` — the floor carrying the
-GUID-preserving create surface feature 033 depends on
-(`BaseOperations._CreateWithGuid` plus the optional `guid=` kwarg on
-`Texts.Create`/`Paragraphs.Create`/`Segments.AppendSentence`/`Wordforms.Create`/
-`WfiAnalyses.Create`/`WfiGlosses.Create`/`WfiMorphBundles.Create`, flexicon
-PR #239). Install from the local directory:
+`pyproject.toml` declares `pyflexicon>=4.5.0` — the floor carrying both:
+
+- the GUID-preserving create surface feature 033 depends on
+  (`BaseOperations._CreateWithGuid` plus the optional `guid=` kwarg on
+  `Texts.Create`/`Paragraphs.Create`/`Segments.AppendSentence`/`Wordforms.Create`/
+  `WfiAnalyses.Create`/`WfiGlosses.Create`/`WfiMorphBundles.Create`, flexicon
+  PR #239), and
+- (feature 037, current floor) `NaturalClassOperations.GetSyncableProperties`/
+  `ApplySyncableProperties` FeaturesOA wiring for feature-based natural
+  classes (`IPhNCFeatures`) -- `GetSyncableProperties` now emits
+  `FeaturesGuid` + `Features` (a list of `{"FeatureGuid", "ValueGuid"}`
+  specs) and `ApplySyncableProperties` rewires them against the target's
+  `PhFeatureSystemOA` by GUID, mirroring what `PhonemeOperations` already
+  does for phonemes (flexicon issue #222).
+
+Install from the local directory:
 
 ```powershell
 pip install -e D:/Github/_Projects/_LEX/flexicon
@@ -76,10 +86,27 @@ Verify it resolves to the working tree rather than a stale site-packages copy:
 python -c "import flexicon; print(flexicon.__file__)"   # must NOT be site-packages
 ```
 
-> **Why the floor matters:** on an older flexicon every `guid=` kwarg raises
-> `TypeError`, which the engine's `_safe`/`except Exception` wrappers swallow
-> into a generic "create failed" drop. A too-low flexicon therefore makes the
-> transfer *silently* regenerate identities instead of failing loudly.
+> **Why the floor matters (GUID-preserving create):** on an older flexicon
+> every `guid=` kwarg raises `TypeError`, which the engine's `_safe`/
+> `except Exception` wrappers swallow into a generic "create failed" drop. A
+> too-low flexicon therefore makes the transfer *silently* regenerate
+> identities instead of failing loudly.
+
+> **Why the floor matters (natural-class features, feature 037):** below
+> flexicon 4.5.0, `NaturalClassOperations.GetSyncableProperties` returns only
+> `Name`/`Abbreviation`/`Description`/`PhonemeGuids` -- it never touches
+> `FeaturesOA` at all, and `ApplySyncableProperties` just delegates to
+> `BaseOperations`, which has no feature-structure handling. Every
+> feature-based natural class (`IPhNCFeatures`) therefore transferred as an
+> empty shell: correct Name, correct GUID, `FeaturesOA` silently null.
+> Measured against two live projects: 0 of 34 `PhNCFeatures` arrived with a
+> feature structure in one (source: 41 of 41), 0 of 11 in the other (source:
+> 15 of 15) -- silently breaking 14 of 21 and 1 of 6 phonological rules
+> respectively, since a rule referencing a feature-based natural class with
+> no features can no longer match anything. `Lib/categories.py`'s
+> `natural_classes_execute_action` now raises `RuntimeError` instead of
+> reporting a transfer with this defect as successful; the flexicon floor
+> bump is what makes the non-raising, fully-correct path possible at all.
 
 ### Constitution authority
 

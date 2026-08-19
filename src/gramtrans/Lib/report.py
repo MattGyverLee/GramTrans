@@ -55,7 +55,8 @@ def _build_from_plan(cls, plan: RunPlan, mode: RunMode,
                      extra_skips=(),
                      extra_excluded_lossy=(),
                      extra_dropped_items=(),
-                     fidelity_by_guid=None) -> RunReport:
+                     fidelity_by_guid=None,
+                     extra_leaf_execution_failures=()) -> RunReport:
     """Build a finalized RunReport from a RunPlan.
 
     Iterates plan.actions to accumulate per-category added/closure_pulled_in
@@ -71,6 +72,15 @@ def _build_from_plan(cls, plan: RunPlan, mode: RunMode,
     only — nothing appends to it yet; see contracts/dropped-item-report.md
     "Collection"). `fidelity_by_guid` is the per-object FidelityStatus map
     (FR-013); also empty by default until US4 (T023) computes it.
+
+    `extra_leaf_execution_failures` (feature 037, defect C): the per-run
+    ``list[LeafExecutionFailure]`` collector from transfer.execute()'s
+    leaf-dispatch loop -- every swallowed `execute_action` exception, one
+    record each. Empty by default (Preview mode never executes anything, so
+    it never has any). Threaded straight onto
+    ``RunReport.leaf_execution_failures``; `RunReport.leaf_failed` is a
+    property computed from its length, not a separate field, so it cannot
+    drift out of sync.
     """
     per_category: dict = {}
 
@@ -165,6 +175,7 @@ def _build_from_plan(cls, plan: RunPlan, mode: RunMode,
         excluded_lossy=tuple(excluded_lossy_all),
         dropped_items=tuple(extra_dropped_items),
         fidelity_by_guid=dict(fidelity_by_guid) if fidelity_by_guid else {},
+        leaf_execution_failures=tuple(extra_leaf_execution_failures),
     )
 
 
@@ -317,4 +328,21 @@ def render_text_summary(report: RunReport) -> Iterable[str]:
         yield "  Identity remap (LCM denied GUID-on-create):"
         for src, dst in sorted(report.identity_remap.items()):
             yield f"    - {src} -> {dst}"
+    # Feature 037 (defect C): swallowed execute_action failures -- without
+    # this section, a run that planned N actions and only wrote (N - k) of
+    # them (k execute_action calls raising and being swallowed) rendered
+    # identically to a fully clean run, since per_category[*].added is
+    # computed from the PLAN, not actual write outcomes. Empty
+    # `leaf_execution_failures` renders no section at all (matches the
+    # dropped_items convention above).
+    if report.leaf_execution_failures:
+        yield (
+            f"  Execute failures (swallowed, run continued) -- "
+            f"{report.leaf_failed} total:"
+        )
+        for f in report.leaf_execution_failures:
+            yield (
+                f"    - [{f.category.value}] {f.source_guid} - "
+                f"{f.exception_type}: {f.message}"
+            )
     yield f"  Wall clock: {report.wall_clock_seconds:.3f}s"

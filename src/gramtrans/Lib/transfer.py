@@ -23,6 +23,7 @@ if __package__:
     from .models import (
         DroppedItemRecord,
         GrammarCategory,
+        LeafExecutionFailure,
         MergeDecision,
         MergeDecisionLog,
         MergeResolution,
@@ -48,6 +49,7 @@ else:
     from models import (
         DroppedItemRecord,
         GrammarCategory,
+        LeafExecutionFailure,
         MergeDecision,
         MergeDecisionLog,
         MergeResolution,
@@ -206,6 +208,14 @@ def execute(plan: RunPlan, source, target, report_sink, tag: ImportResidueTag,
     leaf_attempted = 0
     leaf_succeeded = 0
     leaf_failed = 0
+    # Feature 037 (defect C): first-class per-item failure records, folded
+    # into RunReport.leaf_execution_failures below. `leaf_failed` (the plain
+    # int counter above) stays for the existing log line's behaviour-neutral
+    # diagnostics; `_leaf_execution_failures` is what actually reaches the
+    # report so a caller can tell "139 planned, 139 written" from
+    # "139 planned, 98 written, 41 swallowed" -- the swallow-and-continue
+    # policy itself is unchanged, only the report's truthfulness.
+    _leaf_execution_failures: list = []
 
     # Build index of source actions for quick lookup of pulled-in flag.
     # plan.actions is heterogeneous: CreateDefinitionAction has no
@@ -266,7 +276,8 @@ def execute(plan: RunPlan, source, target, report_sink, tag: ImportResidueTag,
             # Non-destructive UPDATE: compute disposition then apply_update_semantic.
             # LINK intent: item already present, no field writes.
             _update_skips = _execute_update_semantic(
-                ow, source, target, report_sink, tag, ws_map=ws_map
+                ow, source, target, report_sink, tag, ws_map=ws_map,
+                dropped=_dropped,
             )
             if _update_skips:
                 extra_skips.extend(_update_skips)
@@ -439,6 +450,18 @@ def execute(plan: RunPlan, source, target, report_sink, tag: ImportResidueTag,
                 f"  [{action.category.value}] execute_action raised "
                 f"{type(exc).__name__}: {exc}; skipping {action.source_guid[:8]}"
             )
+            # Feature 037 (defect C): the report_sink.Warning above is the
+            # ONLY prior trace of this failure, and an export-mode
+            # `_NullReportSink` discards it -- exactly the same shape as the
+            # FeaturesOA (task 4) and rule-ref (defect B) findings. Record it
+            # as a first-class LeafExecutionFailure so RunReport.leaf_failed
+            # is truthful regardless of report sink.
+            _leaf_execution_failures.append(LeafExecutionFailure(
+                category=action.category,
+                source_guid=action.source_guid,
+                exception_type=type(exc).__name__,
+                message=str(exc),
+            ))
     if leaf_count:
         report_sink.Info(f"[Move] Leaf-dispatch executed {leaf_count} action(s).")
 
@@ -553,6 +576,11 @@ def execute(plan: RunPlan, source, target, report_sink, tag: ImportResidueTag,
         # STEMS closure write.
         extra_dropped_items=tuple(_dropped),
         fidelity_by_guid=_compute_fidelity_by_guid(_dropped),
+        # Feature 037 (defect C): makes RunReport.leaf_failed truthful --
+        # previously a swallowed execute_action exception left no trace on
+        # the report at all (per_category[*].added is computed from the
+        # PLAN, not actual write outcomes).
+        extra_leaf_execution_failures=tuple(_leaf_execution_failures),
     )
 
 
@@ -1672,7 +1700,7 @@ def _resolve_and_tag(src_props, tgt_pre_props, tag, log, category, target_guid, 
 
 
 def _execute_update_semantic(overwrite, source, target, report_sink, tag: ImportResidueTag,
-                             ws_map=None):
+                             ws_map=None, dropped=None):
     """Apply the non-destructive UPDATE write semantic (T012, FR-003) for a
     PlannedOverwrite whose category mode is ConflictMode.UPDATE.
 
@@ -1688,6 +1716,12 @@ def _execute_update_semantic(overwrite, source, target, report_sink, tag: Import
 
     Only categories for which flexicon exposes a syncable-property ops accessor are
     handled here.  Unknown/unsupported categories fall through to a warning and no-op.
+
+    `dropped` (coordinator live-run defect B, feature 037): the per-run
+    `DroppedItemRecord` collector, threaded through to
+    `_execute_phon_rule_structural_update` -> `categories._phon_rule_apply_body`
+    for its InputPOSesRC/ReqRuleFeatsRC/ExclRuleFeatsRC unresolved-reference
+    reporting. Unused by the generic ops-accessor path below.
     """
     if __package__:
         from .models import ConflictMode as _ConflictMode
@@ -1697,6 +1731,29 @@ def _execute_update_semantic(overwrite, source, target, report_sink, tag: Import
     cat = overwrite.category
     src_guid = overwrite.source_guid
     tgt_guid = overwrite.target_guid
+
+    # Task 7 (feature 037): a PHONOLOGICAL_RULES overwrite whose
+    # `write_mode == "structural_rebuild"` came from
+    # `categories.phonological_rules_plan_action` finding the target rule
+    # already present by GUID but STRUCTURALLY different from source (a
+    # shallow GetSyncableProperties-only compare -- Name/Description/
+    # Direction/StratumGuid -- cannot see this; see
+    # `categories._phon_rule_fingerprint`'s docstring for the proven case).
+    # Route to the dedicated rebuild helper instead of the generic
+    # ops-accessor path below, which (a) is keyed on the wrong flexicon
+    # accessor name for this category (`PhonologicalRules`, which does not
+    # exist -- flexicon exposes `PhonRules`) and (b) only ever compares the
+    # same four shallow fields, so it could never detect or fix this class
+    # of drift even if the accessor name were corrected.
+    if cat == GrammarCategory.PHONOLOGICAL_RULES and getattr(overwrite, "write_mode", "") == "structural_rebuild":
+        if __package__:
+            from .categories import _execute_phon_rule_structural_update
+        else:
+            from categories import _execute_phon_rule_structural_update  # type: ignore
+        return _execute_phon_rule_structural_update(
+            overwrite, source, target, report_sink, tag, ws_map=ws_map,
+            dropped=dropped,
+        )
 
     # C6 guard: mirrors the leaf-path gate at execute():227 (_FIELD_DIFF_GATED).
     # Currently LATENT — PHONEMES/PH_ENVIRONMENT don't emit PlannedOverwrite today
@@ -1796,7 +1853,16 @@ _OPS_ACCESSOR_FOR_CATEGORY: dict = {
     GrammarCategory.EXCEPTION_FEATURES:     "ExceptionFeatures",
     GrammarCategory.NATURAL_CLASSES:        "NaturalClasses",
     GrammarCategory.PHONOLOGICAL_FEATURES:  "PhonologicalFeatures",
-    GrammarCategory.PHONOLOGICAL_RULES:     "PhonologicalRules",
+    # NOTE: flexicon's FLExProject exposes this Operations class as
+    # `.PhonRules`, never `.PhonologicalRules` (see FLExProject.py's
+    # `PhonRules` property) -- this entry previously pointed at a
+    # nonexistent attribute, silently no-op'ing (see the "ops accessor ...
+    # not found" Warning branch below) for any PHONOLOGICAL_RULES overwrite
+    # that reached the generic path. Corrected as part of task 7 (feature
+    # 037); moot in practice since a "structural_rebuild" write_mode
+    # PlannedOverwrite is intercepted above before reaching this table, but
+    # left correct rather than latent for any future write_mode.
+    GrammarCategory.PHONOLOGICAL_RULES:     "PhonRules",
     GrammarCategory.PHONEMES:               "Phonemes",
     GrammarCategory.PH_ENVIRONMENT:         "Environments",
     GrammarCategory.STRATA:                 "Strata",

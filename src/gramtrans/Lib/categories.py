@@ -8009,9 +8009,37 @@ def phonemes_execute_action(action, context, ws_mapping, tag):
 
 def natural_classes_dependencies(piece):
     """For IPhNCSegments, returns the GUIDs of referenced phonemes
-    (SegmentsRC). For IPhNCFeatures, returns empty (FeaturesOA is owned)."""
+    (SegmentsRC).  For IPhNCFeatures, returns the GUIDs of the
+    IFsClosedFeature / IFsSymFeatVal objects its FeaturesOA feature
+    structure references (FeatureSpecsOC's FeatureRA / ValueRA).
+
+    Historical defect (fixed here, task 2 of the 037 phon-nc-features fix):
+    this previously returned `()` for PhNCFeatures with the comment
+    "FeaturesOA is owned" -- true of the *feature struct object itself*, but
+    irrelevant: the struct's FeatureRA/ValueRA are REFERENCE (RA) fields
+    pointing at IFsClosedFeature/IFsSymFeatVal objects living in the
+    target's PhFeatureSystemOA, which must already be present before this
+    natural class executes (same shape as PhNCSegments' phoneme
+    dependency).
+
+    NOTE (RC-2, specs/038-transfer-fidelity-gaps/census-evidence.md): as of
+    this writing, the GUIDs this function returns are NOT CONSUMED BY
+    ANYTHING. `Lib/closure.py`'s `walk()` has exactly one importer in the
+    repository -- its own unit test -- and neither `preview.build_run_plan`
+    nor `transfer.execute` ever reads `bundle["dependencies"]` for any
+    category, this one included. The plan is built purely from what the
+    user toggled, category by category; there is no gate today that would
+    hold a PhNCFeatures item back (or emit DEPENDENCY_UNRESOLVED) because
+    its referenced feature/value objects are missing from target. This
+    function is correct and is intentionally KEPT AS-IS so the gate works
+    the moment 038's Phase 2 closes RC-2 and wires the closure -- do not
+    delete it as "dead code," and do not attempt to wire the closure from
+    this branch (038 owns that work and it must not run concurrently with
+    feature 037)."""
     try:
-        from SIL.LCModel import IPhNCSegments, ICmObject
+        from SIL.LCModel import (
+            IPhNCSegments, IPhNCFeatures, IFsClosedValue, ICmObject,
+        )
     except ImportError:
         return ()
     try:
@@ -8019,6 +8047,29 @@ def natural_classes_dependencies(piece):
         return tuple(
             str(ICmObject(seg).Guid).lower() for seg in nc_seg.SegmentsRC
         )
+    except (TypeError, AttributeError):
+        pass
+    try:
+        nc_feat = IPhNCFeatures(piece)
+        feat_struct = getattr(nc_feat, "FeaturesOA", None)
+        if feat_struct is None:
+            return ()
+        refs: list[str] = []
+        for raw_spec in feat_struct.FeatureSpecsOC:
+            try:
+                cv = IFsClosedValue(raw_spec)
+            except (TypeError, AttributeError):
+                continue
+            for ref_obj in (getattr(cv, "FeatureRA", None), getattr(cv, "ValueRA", None)):
+                if ref_obj is None:
+                    continue
+                try:
+                    g = str(ICmObject(ref_obj).Guid).lower()
+                except (TypeError, AttributeError):
+                    continue
+                if g not in refs:
+                    refs.append(g)
+        return tuple(refs)
     except (TypeError, AttributeError):
         return ()
 
@@ -8037,6 +8088,160 @@ def natural_classes_plan_action(piece, context, ws_mapping):
         piece, context, GrammarCategory.NATURAL_CLASSES,
         "NaturalClasses", "NaturalClass",
     )
+
+
+def _get_features_oa(obj):
+    """Read `FeaturesOA` through an explicit `IPhNCFeatures(obj)` cast
+    rather than a bare `getattr` (item 8 hygiene, coordinator round 3).
+
+    Why this matters: `FeaturesOA` is declared on the `IPhNCFeatures`
+    SUBCLASS, and objects yielded from `NaturalClassesOS`/
+    `NaturalClasses.GetAll()` may be base-`IPhNaturalClass`-typed pythonnet
+    proxies -- EXACTLY the shape of the pre-4.5.1 flexicon defect the
+    coordinator diagnosed live (`hasattr(nc, "FeaturesOA")` always False
+    because `GetAll()` yields base-typed objects). flexicon's OWN
+    `GetSyncableProperties` now casts before reading `FeaturesOA` (4.5.1);
+    this module's OWN direct `source.NaturalClasses.GetAll()` /
+    `target.NaturalClasses.GetAll()` reads (in
+    `natural_classes_execute_action`'s source-aware guard and
+    `_guard_nc_features_transferred`) never went through
+    `GetSyncableProperties` at all, so a bare `getattr(obj, "FeaturesOA",
+    None)` here would be equally vulnerable to a false "no features"
+    reading regardless of the flexicon-side fix.  A confirmed live smoke
+    test (scratch harness, not committed) reproduced exactly this false
+    negative against a base-interface-view fake before this helper existed.
+
+    Falls back to a bare `getattr` when `IPhNCFeatures` isn't importable
+    (duck-typed test fakes / no live LCM) or when `obj` is already a
+    concrete (already-cast) object, so this is safe to call unconditionally
+    on both the source and target sides.
+    """
+    try:
+        from SIL.LCModel import IPhNCFeatures as _IPhNCFeatures
+    except ImportError:
+        return getattr(obj, "FeaturesOA", None)
+    try:
+        return _IPhNCFeatures(obj).FeaturesOA
+    except (TypeError, AttributeError):
+        return getattr(obj, "FeaturesOA", None)
+
+
+def _count_feature_specs(feat_struct) -> int:
+    """Best-effort count of an IFsFeatStruc's FeatureSpecsOC (item 8,
+    coordinator round 3). Returns 0 for `None` or a non-iterable
+    `FeatureSpecsOC` -- a report-generation helper must never raise."""
+    if feat_struct is None:
+        return 0
+    try:
+        return sum(1 for _ in feat_struct.FeatureSpecsOC)
+    except (AttributeError, TypeError):
+        return 0
+
+
+def _guard_nc_features_transferred(context, target, tag):
+    """Tail-block (task 4, feature 037): after every NATURAL_CLASSES action in
+    this run has executed, re-verify that every PhNCFeatures natural class
+    this run touched actually ended up with a FeaturesOA on the target that
+    faithfully reflects source.
+
+    This is deliberately a SECOND, independent check on top of the immediate
+    RuntimeError natural_classes_execute_action raises when a PhNCFeatures
+    create leaves FeaturesOA null (task 1): that raise happens AFTER
+    `_create_with_guid` has already added the (broken) shell object to
+    `PhonologicalDataOA.NaturalClassesOS`, and the leaf-dispatch loop's
+    blanket `except Exception` (transfer.py) only turns the failure into a
+    `report_sink.Warning`, which an export-mode `_NullReportSink` silently
+    discards. Routing the same finding through `DroppedItemRecord` instead
+    guarantees it survives into `RunReport.extra_dropped_items` regardless of
+    which report sink is active -- the same never-silent guarantee feature
+    024 established for referenced-possibility drops elsewhere in this file.
+
+    SOURCE-AWARE (item 8, coordinator round 3): a target-null FeaturesOA is
+    only a defect when SOURCE's FeaturesOA is non-null -- a feature-based
+    natural class that legitimately has no feature structure at all
+    (FeatureSpecsOC empty) is not a loss (live-run false positive: 3 of 41
+    Ngoreme PhNCFeatures are exactly this shape). Also compares spec COUNTS,
+    not just null-vs-non-null: a target FeaturesOA with fewer specs than
+    source is a partial loss even though it is not null, and is recorded
+    the same way (never raised from this tail-block -- see task 4's
+    docstring note: the immediate RuntimeError in
+    natural_classes_execute_action is the fail-loud leg; this sweep is the
+    catch-stragglers leg and always reports, never raises).
+
+    Returns `[]` always (nothing belongs in `context._exec_skips`; violations
+    go to `context._dropped` instead).
+    """
+    guids = getattr(context, "_nc_features_guids", None)
+    if not guids:
+        return []
+    dropped = getattr(context, "_dropped", None)
+    if dropped is None:
+        return []
+    try:
+        tgt_by_guid = {
+            _guid_str_from(nc): nc for nc in target.NaturalClasses.GetAll()
+        }
+    except (AttributeError, TypeError):
+        return []
+    source = getattr(context, "source_handle", None)
+    src_by_guid = {}
+    if source is not None:
+        try:
+            src_by_guid = {
+                _guid_str_from(nc): nc for nc in source.NaturalClasses.GetAll()
+            }
+        except (AttributeError, TypeError):
+            src_by_guid = {}
+    for guid in guids:
+        tgt_nc = tgt_by_guid.get(guid)
+        if tgt_nc is None:
+            continue  # create itself never landed; already reported elsewhere
+        src_nc = src_by_guid.get(guid)
+        src_features_oa = _get_features_oa(src_nc) if src_nc is not None else None
+        if src_features_oa is None:
+            # No source lookup available, or source is legitimately
+            # feature-less -- neither is a defect this guard can prove.
+            continue
+        tgt_features_oa = _get_features_oa(tgt_nc)
+        name = ""
+        try:
+            name = str(getattr(tgt_nc, "Name", "")) or ""
+        except Exception:
+            pass
+        label = name or f"guid={_short_guid(guid)}"
+        if tgt_features_oa is None:
+            _append_dropped_once(dropped, DroppedItemRecord(
+                owner_kind="PhNCFeatures",
+                owner_guid=guid,
+                owner_label=label,
+                field_name="FeaturesOA",
+                item_name=label,
+                item_guid=guid,
+                reason=(
+                    "feature-based natural class transferred with a null "
+                    "FeaturesOA (empty shell) even though source's is "
+                    "non-null -- referencing phonological rules silently "
+                    "lose this natural class's feature constraints"
+                ),
+            ))
+            continue
+        src_spec_count = _count_feature_specs(src_features_oa)
+        tgt_spec_count = _count_feature_specs(tgt_features_oa)
+        if tgt_spec_count < src_spec_count:
+            _append_dropped_once(dropped, DroppedItemRecord(
+                owner_kind="PhNCFeatures",
+                owner_guid=guid,
+                owner_label=label,
+                field_name="FeaturesOA.FeatureSpecsOC",
+                item_name=label,
+                item_guid=guid,
+                reason=(
+                    f"target has {tgt_spec_count} of {src_spec_count} "
+                    f"source feature spec(s) -- partial feature-structure "
+                    f"loss"
+                ),
+            ))
+    return []
 
 
 def natural_classes_execute_action(action, context, ws_mapping, tag):
@@ -8068,53 +8273,156 @@ def natural_classes_execute_action(action, context, ws_mapping, tag):
     new_nc, _preserved = _create_with_guid(
         factory_iface, owner, src_guid, target,
     )
+
+    if class_name == "PhNCFeatures":
+        # Track this GUID for the post-transfer guard (task 4) regardless of
+        # whether the rest of this call succeeds or raises below -- the
+        # tail-block runs in a `finally` so it always gets a chance to sweep.
+        _nc_guids = getattr(context, "_nc_features_guids", None)
+        if _nc_guids is None:
+            _nc_guids = []
+            try:
+                object.__setattr__(context, "_nc_features_guids", _nc_guids)
+            except (AttributeError, TypeError):
+                pass
+        _nc_guids.append(src_guid)
+
     try:
-        props = source.NaturalClasses.GetSyncableProperties(src_nc)
-        target.NaturalClasses.ApplySyncableProperties(new_nc, props, ws_map=ws_mapping)
-    except (AttributeError, TypeError):
-        pass
-    # PhNCSegments: wire SegmentsRC to target-side phonemes by GUID.
-    # PhNCFeatures: FeaturesOA is OA (owned) and was handled by
-    # ApplySyncableProperties above — no extra wiring needed.
-    if class_name != "PhNCFeatures":
         try:
-            src_segs = IPhNCSegments(src_nc).SegmentsRC
-        except (AttributeError, TypeError):
-            src_segs = src_nc.SegmentsRC
-        # Build a GUID -> target phoneme lookup once.
-        tgt_phoneme_by_guid = {
-            _guid_str_from(p): p
-            for p in target.Phonemes.GetAll()
-        }
-        try:
-            nc_label = _guid_str_from(src_nc)
-            for src_phon in src_segs:
-                phon_guid = _guid_str_from(src_phon)
-                tgt_phon = tgt_phoneme_by_guid.get(phon_guid)
-                if tgt_phon is None:
-                    raise RuntimeError(
-                        f"natural_classes_execute_action: NC {nc_label} "
-                        f"references source phoneme {phon_guid} which has no "
-                        f"counterpart on the target.  Transfer the phoneme "
-                        f"before transferring natural classes."
-                    )
-                try:
-                    IPhNCSegments(new_nc).SegmentsRC.Add(tgt_phon)
-                except (AttributeError, TypeError):
-                    new_nc.SegmentsRC.Add(tgt_phon)
-        except RuntimeError:
-            raise
+            props = source.NaturalClasses.GetSyncableProperties(src_nc)
+            target.NaturalClasses.ApplySyncableProperties(new_nc, props, ws_map=ws_mapping)
         except Exception as e:
-            raise RuntimeError(
-                f"Orphan risk: NC {_guid_str_from(src_nc)} was added to target "
-                f"but SegmentsRC wiring failed mid-loop: {e!r}. "
-                f"Investigate target LCM state before retrying."
-            ) from e
-    try:
-        apply_carrier_b(new_nc, cache.DefaultAnalWs, tag, strict=False)
-    except Exception:
-        pass
-    return new_nc
+            # Broadened from (AttributeError, TypeError) -- but ONLY tolerated
+            # for PhNCSegments (Name/Abbreviation/Description/PhonemeGuids;
+            # SegmentsRC is wired explicitly below regardless of this call's
+            # outcome). For PhNCFeatures this IS the only place FeaturesOA is
+            # copied (flexicon >=4.5.0's NaturalClassOperations.
+            # ApplySyncableProperties rewires FeaturesGuid/Features against
+            # the target's PhFeatureSystemOA by GUID -- see pyproject.toml /
+            # CLAUDE.md flexicon-dependency section) -- a failure here must
+            # never be swallowed silently, or the natural class arrives as an
+            # empty shell exactly like the original bug this fix addresses.
+            if class_name == "PhNCFeatures":
+                raise RuntimeError(
+                    f"natural_classes_execute_action: PhNCFeatures guid="
+                    f"{src_guid} GetSyncableProperties/ApplySyncableProperties "
+                    f"raised {e!r} -- this is the only place FeaturesOA is "
+                    f"copied; requires pyflexicon>=4.5.0."
+                ) from e
+
+        if class_name == "PhNCFeatures":
+            # Verify FeaturesOA actually landed rather than trusting a silent
+            # no-op. This is the fix for the confirmed data-loss bug: the
+            # ORIGINAL code had a false `if class_name != "PhNCFeatures":`
+            # guard here that skipped PhNCFeatures entirely (the removed
+            # comment claimed "FeaturesOA is owned ... handled by
+            # ApplySyncableProperties above", which flexicon <4.5.0 never
+            # did). Even with flexicon >=4.5.0, a partial/failed rewire must
+            # be caught rather than assumed.
+            #
+            # SOURCE-AWARE (item 8, coordinator round 3): a feature-based
+            # natural class whose SOURCE FeaturesOA is genuinely null (an
+            # IPhNCFeatures with an empty FeatureSpecsOC) is not a loss --
+            # flexicon 4.5.1's `if features:` gate correctly skips the apply
+            # for those, and this guard must not raise on them (live-run
+            # false positive: 3 of 41 Ngoreme PhNCFeatures are exactly this
+            # shape). The genuine defect is source-non-null +
+            # target-null -- keep RAISING on that, unconditionally; this is
+            # the check that converted a silent 100% data loss into loud
+            # errors and must not be softened.
+            src_features_oa = _get_features_oa(src_nc)
+            tgt_features_oa = _get_features_oa(new_nc)
+            if src_features_oa is not None and tgt_features_oa is None:
+                raise RuntimeError(
+                    f"natural_classes_execute_action: PhNCFeatures guid="
+                    f"{src_guid} has a null FeaturesOA after "
+                    f"ApplySyncableProperties, but SOURCE has a non-null "
+                    f"FeaturesOA ({_count_feature_specs(src_features_oa)} "
+                    f"spec(s)) -- the feature-based natural class's "
+                    f"phonological feature structure was NOT transferred. "
+                    f"Requires pyflexicon>=4.5.0 (NaturalClassOperations "
+                    f"FeaturesOA wiring)."
+                )
+            # Partial loss (item 8): both non-null but target has fewer
+            # specs than source -- the class isn't an empty shell, but it IS
+            # missing constraints, which is a fidelity gap rather than a
+            # hard failure (the item still transferred; some of its
+            # substance did not). Recorded via DroppedItemRecord rather than
+            # raised, matching this codebase's established "partial
+            # fidelity, never-silent" convention (see
+            # tests/unit/test_cycle16_drop_reporting.py's module docstring)
+            # rather than aborting an otherwise-successful create.
+            if src_features_oa is not None and tgt_features_oa is not None:
+                src_spec_count = _count_feature_specs(src_features_oa)
+                tgt_spec_count = _count_feature_specs(tgt_features_oa)
+                if tgt_spec_count < src_spec_count:
+                    _dropped_for_nc = getattr(context, "_dropped", None)
+                    if _dropped_for_nc is not None:
+                        nc_label = f"guid={_short_guid(src_guid)}"
+                        try:
+                            nm = str(getattr(src_nc, "Name", "")) or ""
+                            if nm:
+                                nc_label = nm
+                        except Exception:
+                            pass
+                        _append_dropped_once(_dropped_for_nc, DroppedItemRecord(
+                            owner_kind="PhNCFeatures",
+                            owner_guid=src_guid,
+                            owner_label=nc_label,
+                            field_name="FeaturesOA.FeatureSpecsOC",
+                            item_name=nc_label,
+                            item_guid=src_guid,
+                            reason=(
+                                f"target has {tgt_spec_count} of "
+                                f"{src_spec_count} source feature spec(s) -- "
+                                f"partial feature-structure loss"
+                            ),
+                        ))
+        else:
+            # PhNCSegments: wire SegmentsRC to target-side phonemes by GUID.
+            try:
+                src_segs = IPhNCSegments(src_nc).SegmentsRC
+            except (AttributeError, TypeError):
+                src_segs = src_nc.SegmentsRC
+            # Build a GUID -> target phoneme lookup once.
+            tgt_phoneme_by_guid = {
+                _guid_str_from(p): p
+                for p in target.Phonemes.GetAll()
+            }
+            try:
+                nc_label = _guid_str_from(src_nc)
+                for src_phon in src_segs:
+                    phon_guid = _guid_str_from(src_phon)
+                    tgt_phon = tgt_phoneme_by_guid.get(phon_guid)
+                    if tgt_phon is None:
+                        raise RuntimeError(
+                            f"natural_classes_execute_action: NC {nc_label} "
+                            f"references source phoneme {phon_guid} which has no "
+                            f"counterpart on the target.  Transfer the phoneme "
+                            f"before transferring natural classes."
+                        )
+                    try:
+                        IPhNCSegments(new_nc).SegmentsRC.Add(tgt_phon)
+                    except (AttributeError, TypeError):
+                        new_nc.SegmentsRC.Add(tgt_phon)
+            except RuntimeError:
+                raise
+            except Exception as e:
+                raise RuntimeError(
+                    f"Orphan risk: NC {_guid_str_from(src_nc)} was added to target "
+                    f"but SegmentsRC wiring failed mid-loop: {e!r}. "
+                    f"Investigate target LCM state before retrying."
+                ) from e
+        try:
+            apply_carrier_b(new_nc, cache.DefaultAnalWs, tag, strict=False)
+        except Exception:
+            pass
+        return new_nc
+    finally:
+        _run_tail_once(
+            context, target, tag, "_did_nc_features_guard",
+            GrammarCategory.NATURAL_CLASSES, _guard_nc_features_transferred,
+        )
 
 
 # ----- ph_environment (memo step 4b -- project-wide, not allomorph-bundled) -
@@ -8321,28 +8629,50 @@ def phonological_rules_required_writing_systems(piece):
 
 
 def phonological_rules_dependencies(piece):
-    """FR-304: return GUIDs of the phonemes, natural classes, and strata a
-    phonological rule references, so the planner's closure pulls them in (or
-    emits Skip(DEPENDENCY_UNRESOLVED)) BEFORE the rule executes.
+    """FR-304: return GUIDs of the phonemes, natural classes, strata, and
+    RHS reference-collection items a phonological rule references, so the
+    planner's closure pulls them in (or emits Skip(DEPENDENCY_UNRESOLVED))
+    BEFORE the rule executes.
+
+    NOTE (RC-2, specs/038-transfer-fidelity-gaps/census-evidence.md):
+    as of this writing, NOTHING actually consumes this return value.
+    ``Lib/closure.py``'s ``walk()`` has exactly one importer in the
+    repository -- its own unit test -- and neither
+    ``preview.build_run_plan`` nor ``transfer.execute`` ever reads
+    ``bundle["dependencies"]`` for ANY category, this one included (the
+    "planner threading dependencies() through the closure walker" claim two
+    paragraphs below, and in ``phonological_rules_plan_action``'s docstring,
+    describes the INTENDED design, not current behaviour). This function
+    stays correct and is kept as-is so the closure gate works the moment
+    038's Phase 2 (RC-2) wires it up -- do not delete it as "dead code", and
+    do not attempt to wire the closure from this branch (038 owns that, and
+    it must not run concurrently with feature 037).
 
     The rule body is a PhRegularRule (base IPhSegmentRule): input context cells
     live in ``StrucDescOS``, and each right-hand side (IPhSegRuleRHS) owns
-    ``StrucChangeOS`` + ``LeftContextOA`` / ``RightContextOA``.  Every leaf
+    ``StrucChangeOS`` + ``LeftContextOA`` / ``RightContextOA`` +
+    ``InputPOSesRC`` / ``ReqRuleFeatsRC`` / ``ExclRuleFeatsRC``.  Every leaf
     context cell points at its target via ``FeatureStructureRA``:
       - PhSimpleContextSeg  -> a phoneme (IPhPhoneme)
       - PhSimpleContextNC   -> a natural class (IPhNaturalClass)
       - PhSimpleContextBdry -> a boundary marker
       - PhSequenceContext   -> a sequence whose ``MembersRS`` are more cells
-    This mirrors ``_copy_context_cell`` in phonological_rules_execute_action.
+      - PhIterationContext  -> ``MemberRA``, a single nested cell
+    This mirrors ``_copy_context_cell`` / ``_wire_iteration_context`` in
+    ``_phon_rule_apply_body``.
 
-    Only PhSimpleContextSeg / PhSimpleContextNC references make execute RAISE
-    (RuntimeError -> silently swallowed by the leaf-dispatch loop, leaving a
-    name/description-only shell) when the target lacks them, so those are the
-    hard dependencies.  Strata mirror the deferred Initial/FinalStratumRA
-    wiring.  Boundary markers and PhFeatureConstraints are deliberately NOT
-    returned: execute creates constraints inline (GUID-preserving pre-pass) and
-    only WARNs on a missing boundary marker, so surfacing them here would emit
-    spurious DEPENDENCY_UNRESOLVED skips that block an otherwise-copyable rule.
+    Only PhSimpleContextSeg / PhSimpleContextNC / InputPOSesRC /
+    ReqRuleFeatsRC / ExclRuleFeatsRC references make execute either RAISE
+    (context cells -- RuntimeError, silently swallowed by the leaf-dispatch
+    loop, leaving a name/description-only shell) or report a
+    DroppedItemRecord and skip the item (the three RC fields -- coordinator
+    live-run defect B, feature 037) when the target lacks them, so those are
+    the hard dependencies.  Strata mirror the deferred
+    Initial/FinalStratumRA wiring.  Boundary markers and PhFeatureConstraints
+    are deliberately NOT returned: execute creates constraints inline
+    (GUID-preserving pre-pass) and only WARNs on a missing boundary marker,
+    so surfacing them here would emit spurious DEPENDENCY_UNRESOLVED skips
+    that block an otherwise-copyable rule.
 
     Historical defect (fixed here): the previous walk cast to a non-existent
     ``IPhPhonologicalRule`` interface and read ``StratumRA`` plus
@@ -8356,6 +8686,7 @@ def phonological_rules_dependencies(piece):
         from SIL.LCModel import (
             IPhSegmentRule, IPhRegularRule,
             IPhSimpleContextSeg, IPhSimpleContextNC, IPhSequenceContext,
+            IPhIterationContext,
             ICmObject,
         )
     except ImportError:
@@ -8397,7 +8728,12 @@ def phonological_rules_dependencies(piece):
                     _collect_cell(member)
             except (AttributeError, TypeError):
                 pass
-        # PhSimpleContextBdry / PhIterationContext / unknown: no hard dep.
+        elif cn == "PhIterationContext":
+            try:
+                _collect_cell(getattr(IPhIterationContext(cell), "MemberRA", None))
+            except (AttributeError, TypeError):
+                pass
+        # PhSimpleContextBdry / unknown: no hard dep.
 
     # --- segment-rule level: StrucDescOS + Initial/FinalStratumRA ---
     try:
@@ -8434,21 +8770,263 @@ def phonological_rules_dependencies(piece):
                         _collect_cell(getattr(rhs, oa_attr, None))
                     except (AttributeError, TypeError):
                         pass
+                # InputPOSesRC / ReqRuleFeatsRC / ExclRuleFeatsRC (coordinator
+                # live-run defect B, feature 037): these reference
+                # IPartOfSpeech / IPhPhonRuleFeat objects that must already
+                # exist in target -- previously surfaced as no hard
+                # dependency at all, so a rule referencing an
+                # exception-feature the target lacked silently lost that
+                # conditioning (see _phon_rule_apply_body's matching rc_attr
+                # loop, which now reports a DroppedItemRecord for the same
+                # gap instead of a bare [WARN]).
+                for rc_attr in ("InputPOSesRC", "ReqRuleFeatsRC", "ExclRuleFeatsRC"):
+                    try:
+                        rc = getattr(rhs, rc_attr, None)
+                        if rc is None:
+                            continue
+                        for item in rc:
+                            _add(item)
+                    except (AttributeError, TypeError):
+                        pass
         except (AttributeError, TypeError):
             pass
 
     return tuple(refs)
 
 
+def _phon_rule_fingerprint(raw_rule):
+    """Build a GUID-keyed STRUCTURAL fingerprint of a phonological rule for
+    same-vs-different comparison (task 7, feature 037).
+
+    Why this exists: flexicon's `PhonologicalRuleOperations.
+    GetSyncableProperties`/`CompareTo` only look at Name/Description/
+    Direction/StratumGuid (and StratumGuid is dead -- see
+    `phonological_rules_execute_action`'s stratum-wiring note: the flexicon
+    guard checks `hasattr(rule, "StratumRA")`, which `IPhSegmentRule` never
+    has). Two rules can be byte-identical on every one of those four fields
+    while differing completely in their owned StrucDescOS/RightHandSidesOS
+    context tree (the proven case: rule "nasal assim simple reb",
+    33978942-cc6e-4655-afb2-b0a869b670c5, differs ONLY in RHS[0].
+    RightContextOA being present in source and null in target). A shallow
+    comparator would report "same" and this rule would never be repaired.
+
+    This walks the owned tree instead, comparing every reference by the
+    GUID of the object it points at (never by display name -- many
+    feature-based natural classes across these projects share a default
+    display name, e.g. "Unnamed", which is what let this bug hide).
+
+    Returns a plain, hashable, deep-comparable tuple. Degrades gracefully
+    (via getattr, no SIL.LCModel needed) when no live LCM/pythonnet runtime
+    is available, so callers can still get a coarse same/different signal
+    outside a live LCM host (e.g. unit tests, or a duck-typed fake).
+    """
+    try:
+        from SIL.LCModel import (
+            IPhRegularRule, ICmObject,
+            IPhSimpleContextSeg, IPhSimpleContextNC, IPhSimpleContextBdry,
+            IPhSequenceContext, IPhIterationContext,
+        )
+    except ImportError:
+        # No LCM available: fall back to plain attribute access. Every field
+        # read below is a getattr, so this still yields a real (if coarser)
+        # same/different signal for duck-typed fakes in a non-LCM test host.
+        initial = getattr(raw_rule, "InitialStratumRA", None)
+        final = getattr(raw_rule, "FinalStratumRA", None)
+        disabled = getattr(raw_rule, "Disabled", None)
+        return (
+            getattr(raw_rule, "ClassName", None),
+            getattr(raw_rule, "Direction", None),
+            bool(disabled) if disabled is not None else None,
+            _guid_str_from(initial) if initial is not None else None,
+            _guid_str_from(final) if final is not None else None,
+        )
+
+    def _g(obj):
+        if obj is None:
+            return None
+        try:
+            return str(ICmObject(obj).Guid).lower()
+        except (TypeError, AttributeError):
+            return _guid_str_from(obj) or None
+
+    def _cell_fp(cell):
+        if cell is None:
+            return None
+        try:
+            cn = ICmObject(cell).ClassName
+        except (AttributeError, TypeError):
+            return ("unknown", None)
+        if cn == "PhSimpleContextSeg":
+            try:
+                return ("Seg", _g(IPhSimpleContextSeg(cell).FeatureStructureRA))
+            except (AttributeError, TypeError):
+                return ("Seg", None)
+        if cn == "PhSimpleContextNC":
+            # Each field is resolved independently (rather than one big
+            # try/except around all three) so a fake/partial object missing
+            # PlusConstrRS/MinusConstrRS (real IPhSimpleContextNC always has
+            # both) doesn't erase the FeatureStructureRA GUID too -- that
+            # GUID is the one the proven regression (rule "nasal assim
+            # simple reb") turns on.
+            try:
+                nc = IPhSimpleContextNC(cell)
+            except (AttributeError, TypeError):
+                nc = cell
+            try:
+                fsra = _g(getattr(nc, "FeatureStructureRA", None))
+            except (AttributeError, TypeError):
+                fsra = None
+            try:
+                plus = tuple(sorted(
+                    g for g in (_g(c) for c in (getattr(nc, "PlusConstrRS", None) or ())) if g
+                ))
+            except (AttributeError, TypeError):
+                plus = ()
+            try:
+                minus = tuple(sorted(
+                    g for g in (_g(c) for c in (getattr(nc, "MinusConstrRS", None) or ())) if g
+                ))
+            except (AttributeError, TypeError):
+                minus = ()
+            return ("NC", fsra, plus, minus)
+        if cn == "PhSimpleContextBdry":
+            try:
+                return ("Bdry", _g(IPhSimpleContextBdry(cell).FeatureStructureRA))
+            except (AttributeError, TypeError):
+                return ("Bdry", None)
+        if cn == "PhSequenceContext":
+            try:
+                return ("Seq", tuple(_cell_fp(m) for m in IPhSequenceContext(cell).MembersRS))
+            except (AttributeError, TypeError):
+                return ("Seq", ())
+        if cn == "PhIterationContext":
+            try:
+                it = IPhIterationContext(cell)
+                return (
+                    "Iter", _cell_fp(getattr(it, "MemberRA", None)),
+                    getattr(it, "Minimum", None), getattr(it, "Maximum", None),
+                )
+            except (AttributeError, TypeError):
+                return ("Iter", None, None, None)
+        return ("other", cn)
+
+    try:
+        class_name = ICmObject(raw_rule).ClassName
+    except (AttributeError, TypeError):
+        class_name = None
+
+    disabled = getattr(raw_rule, "Disabled", None)
+    direction = getattr(raw_rule, "Direction", None)
+    initial_sg = _g(getattr(raw_rule, "InitialStratumRA", None))
+    final_sg = _g(getattr(raw_rule, "FinalStratumRA", None))
+
+    strucdesc_fp: tuple = ()
+    rhs_fp: tuple = ()
+    try:
+        rr = IPhRegularRule(raw_rule)
+    except (TypeError, AttributeError):
+        rr = None
+    if rr is not None:
+        try:
+            strucdesc_fp = tuple(_cell_fp(c) for c in rr.StrucDescOS)
+        except (AttributeError, TypeError):
+            strucdesc_fp = ()
+        try:
+            rhs_list = []
+            for rhs in rr.RightHandSidesOS:
+                try:
+                    struc_change = tuple(_cell_fp(c) for c in rhs.StrucChangeOS)
+                except (AttributeError, TypeError):
+                    struc_change = ()
+                left_fp = _cell_fp(getattr(rhs, "LeftContextOA", None))
+                right_fp = _cell_fp(getattr(rhs, "RightContextOA", None))
+                rc_fps = []
+                for rc_attr in ("InputPOSesRC", "ReqRuleFeatsRC", "ExclRuleFeatsRC"):
+                    try:
+                        rc = getattr(rhs, rc_attr, None)
+                        rc_fps.append(
+                            tuple(sorted(g for g in (_g(x) for x in rc) if g))
+                            if rc is not None else ()
+                        )
+                    except (AttributeError, TypeError):
+                        rc_fps.append(())
+                rhs_list.append((struc_change, left_fp, right_fp, tuple(rc_fps)))
+            rhs_fp = tuple(rhs_list)
+        except (AttributeError, TypeError):
+            rhs_fp = ()
+
+    return (
+        class_name, direction,
+        bool(disabled) if disabled is not None else None,
+        initial_sg, final_sg, strucdesc_fp, rhs_fp,
+    )
+
+
 def phonological_rules_plan_action(piece, context, ws_mapping):
-    """Standard plan_action plus FR-304 dependency check.
+    """Standard plan_action plus FR-304 dependency check, PLUS (task 7,
+    feature 037) a structural same-vs-different check for a rule that is
+    already present in target by GUID.
+
+    Historical behaviour (the bug this closes): ANY rule already present by
+    GUID was unconditionally Skip(ALREADY_PRESENT_BY_GUID)ed, even if its
+    owned StrucDescOS/RightHandSidesOS tree in target had drifted from
+    source (proven case: "nasal assim simple reb" missing its
+    RightContextOA). PHONOLOGICAL_RULES' ConflictMode default is UPDATE
+    (models.py `_build_default_conflict_modes`) -- this makes that default
+    actually true for structural content, not just the four
+    GetSyncableProperties scalars.
+
+    Behaviour:
+    - Absent from target -> unchanged: fall through to `_phonology_simple_plan`
+      (emits a plain PlannedAction / ADD).
+    - Present by GUID, `_phon_rule_fingerprint` IDENTICAL -> Skip
+      (ALREADY_PRESENT_BY_GUID), cheap, as before.
+    - Present by GUID, fingerprints DIFFERENT -> `PlannedOverwrite` with
+      `write_mode="structural_rebuild"`, executed by
+      `_execute_phon_rule_structural_update` (transfer.py's UPDATE dispatch,
+      gated the same as every other MULTI_INSTANCE UPDATE category).
 
     Note: the dependency-closure resolution against the in-flight plan
-    is the PLANNER's responsibility (not this callback's).  This
-    callback emits PlannedAction or ALREADY_PRESENT_BY_GUID Skip.
-    The planner threading dependencies() through the closure walker
-    handles DEPENDENCY_UNRESOLVED.
+    is the PLANNER's responsibility (not this callback's).  The planner
+    threading dependencies() through the closure walker handles
+    DEPENDENCY_UNRESOLVED.
     """
+    src_guid = _guid_str_from(piece)
+    target = context.target_handle
+    if target is not None and hasattr(target, "PhonRules"):
+        try:
+            target_iter = target.PhonRules.GetAll()
+        except (AttributeError, TypeError):
+            target_iter = ()
+        tgt_wrapped = _find_target_obj_by_guid(target_iter, src_guid)
+        if tgt_wrapped is not None:
+            raw_src = getattr(piece, "_obj", piece)
+            raw_tgt = getattr(tgt_wrapped, "_obj", tgt_wrapped)
+            src_fp = _phon_rule_fingerprint(raw_src)
+            tgt_fp = _phon_rule_fingerprint(raw_tgt)
+            if src_fp == tgt_fp:
+                return Skip(
+                    category=GrammarCategory.PHONOLOGICAL_RULES,
+                    source_guid=src_guid,
+                    reason=SkipReason.ALREADY_PRESENT_BY_GUID,
+                    detail=(
+                        f"PhonologicalRule GUID {src_guid[:8]}... already present "
+                        f"in target with an identical structural fingerprint "
+                        f"(Direction/Disabled/strata/StrucDesc/RHS)."
+                    ),
+                )
+            return PlannedOverwrite(
+                category=GrammarCategory.PHONOLOGICAL_RULES,
+                source_guid=src_guid,
+                target_guid=src_guid,
+                match_via="guid",
+                write_mode="structural_rebuild",
+                summary=(
+                    f"PhonologicalRule GUID {src_guid[:8]}... present in target "
+                    f"but structurally different from source; rebuilding "
+                    f"StrucDescOS + RightHandSidesOS from source (task 7)."
+                ),
+            )
     return _phonology_simple_plan(
         piece, context, GrammarCategory.PHONOLOGICAL_RULES,
         "PhonRules", "PhonologicalRule",
@@ -8482,48 +9060,13 @@ def _create_with_guid_oa(factory_iface, guid_str, target):
 
 
 def phonological_rules_execute_action(action, context, ws_mapping, tag):
-    """Deep-copy a PhRegularRule (and its StrucDesc/RHS/context tree) to target.
-
-    Strategy:
-    - Cast src_rule to IPhRegularRule; copy Direction scalar.
-    - CONSTRAINT PRE-PASS: for every PhFeatureConstraint referenced by NC
-      simple-contexts in this rule, create it GUID-preserving in target
-      FeatConstraintsOS (if absent) and wire FeatureRA by GUID.
-    - StrucDescOS cells: create each context GUID-preserving, .Add() to
-      new_rr.StrucDescOS preserving order.
-    - RightHandSidesOS: create each IPhSegRuleRHS GUID-preserving; copy
-      StrucChangeOS cells (RHS-owned, may be empty); assign LeftContextOA /
-      RightContextOA.
-    - Context cells branch on ClassName:
-        PhSimpleContextSeg  -> .Add() into StrucDescOS/StrucChangeOS/MembersRS
-        PhSimpleContextNC   -> same; PlusConstrRS/MinusConstrRS wired post-pass
-        PhSimpleContextBdry -> same
-        PhSequenceContext   -> created via _create_with_guid_oa (OA assignment);
-                               members created+owned in PhPhonData.ContextsOS,
-                               refs .Add()ed to MembersRS in RS order.
-        PhIterationContext  -> detect and warn; do not silently drop.
-    - InitialStratumRA / FinalStratumRA: DEFERRED -- enqueued into
-      context._phon_rule_stratum_wiring and drained in
-      _drain_phon_rule_stratum_wiring() after STRATA step completes.
-      (PHONOLOGICAL_RULES dispatches before STRATA; inline wiring would
-      always miss because target strata do not yet exist.)
-    - Dead no-op removed: new_rule.StratumRA no longer attempted.
-    """
+    """Create a phonological rule in target (GUID-preserving) and delegate
+    the property/tree copy to `_phon_rule_apply_body` (shared with the task 7
+    UPDATE/rebuild path, `_execute_phon_rule_structural_update`)."""
     from SIL.LCModel import (
         IPhRegularRuleFactory, IPhSegmentRuleFactory, IPhMetathesisRuleFactory,
-        IPhRegularRule,
-        IPhSegRuleRHSFactory,
-        IPhSimpleContextSegFactory, IPhSimpleContextNCFactory,
-        IPhSimpleContextBdryFactory, IPhSequenceContextFactory,
-        IPhSimpleContextSeg, IPhSimpleContextNC, IPhSimpleContextBdry,
-        IPhSequenceContext,
-        IPhFeatureConstraintFactory,
         ICmObject,
     )
-    if __package__:
-        from .residue import apply_carrier_b
-    else:
-        from residue import apply_carrier_b  # type: ignore
     source = context.source_handle
     target = context.target_handle
     src_guid = action.source_guid
@@ -8549,7 +9092,151 @@ def phonological_rules_execute_action(action, context, ws_mapping, tag):
     new_rule, _preserved = _create_with_guid(
         factory_iface, owner, src_guid, target,
     )
-    # Apply flat syncable properties (Name, Description, Disabled).
+    return _phon_rule_apply_body(
+        src_rule, new_rule, class_name, source, target, ws_mapping, tag,
+        src_guid, context=context,
+    )
+
+
+def _short_guid(guid) -> str:
+    """Defensively-safe GUID prefix for a report label: never raises,
+    regardless of ``guid`` being ``None``/non-string (a report-generation
+    helper that itself raises would be silently swallowed by the very
+    `except (AttributeError, TypeError)` blocks this fix exists to stop
+    hiding behind -- see _report_dropped_rule_ref's git history for the
+    concrete case this guarded against)."""
+    if not guid:
+        return "?"
+    return str(guid)[:8]
+
+
+def _report_dropped_rule_ref(dropped, rule_guid, rhs_guid, field_name, item_guid, src_item):
+    """DroppedItemRecord for an RHS reference-collection item
+    (InputPOSesRC/ReqRuleFeatsRC/ExclRuleFeatsRC) absent from the target
+    (coordinator live-run defect B, feature 037). Replaces the previous bare
+    `[WARN] print`, which vanished on an export-mode report sink exactly like
+    the FeaturesOA finding (task 4) -- the rule silently lost this
+    conditioning feature/POS restriction with no trace in the run report."""
+    if dropped is None:
+        return
+    item_name = ""
+    try:
+        item_name = str(getattr(src_item, "Name", "")) or ""
+    except Exception:
+        pass
+    label = item_name or f"guid={_short_guid(item_guid)}"
+    _append_dropped_once(dropped, DroppedItemRecord(
+        owner_kind="PhSegRuleRHS",
+        owner_guid=rhs_guid or "",
+        owner_label=f"rule={_short_guid(rule_guid)} rhs={_short_guid(rhs_guid)}",
+        field_name=field_name,
+        item_name=label,
+        item_guid=item_guid or "",
+        reason=(
+            f"{field_name} item absent from target -- rule silently lost "
+            f"this conditioning feature/POS restriction"
+        ),
+    ))
+
+
+def _phon_rule_apply_body(src_rule, new_rule, class_name, source, target,
+                           ws_mapping, tag, src_guid, context=None, dropped=None):
+    """Copy scalar/text properties, the explicit `Disabled` flag (task 3),
+    and -- for PhRegularRule -- the full StrucDesc/RHS context tree from
+    `src_rule` onto `new_rule`.  Extracted from the original single
+    `phonological_rules_execute_action` body (see git history) so it can be
+    shared by two callers with different lifecycles:
+
+    - `phonological_rules_execute_action` (ADD path): `new_rule` was just
+      created via `_create_with_guid`; `context` is the live exec_ctx from
+      transfer.py's leaf-dispatch loop, so InitialStratumRA/FinalStratumRA
+      can fall back to the existing deferred-queue + tail-block mechanism
+      (`context._phon_rule_stratum_wiring` / `_drain_phon_rule_stratum_wiring`)
+      when target strata don't exist yet this run (PHONOLOGICAL_RULES
+      dispatches before STRATA in leaf order).
+    - `_execute_phon_rule_structural_update` (task 7 UPDATE/rebuild path,
+      feature 037): `new_rule` is an EXISTING target rule whose owned
+      StrucDescOS/RightHandSidesOS have just been cleared by the caller.
+      This runs from transfer.py's OVERWRITE loop, which executes BEFORE
+      exec_ctx is constructed (see execute()'s ordering comments) -- so
+      `context` is None here. Stratum references are resolved immediately
+      against `target.Strata.GetAll()` instead (works whenever the
+      referenced strata already exist -- the common case for a rule that
+      was already present), with a `[WARN]` (not a silent drop) if a
+      referenced stratum genuinely cannot be resolved on this path.
+
+    Strategy (unchanged from the pre-refactor function):
+    - Apply flat syncable properties (Name, Description, Direction) via
+      flexicon's GetSyncableProperties/ApplySyncableProperties.
+    - Copy `Disabled` EXPLICITLY (task 3, feature 037): flexicon's
+      `PhonologicalRuleOperations.GetSyncableProperties` returns only
+      Name/Description/Direction/StratumGuid -- `Disabled` is not one of
+      those four, so ApplySyncableProperties above can never copy it.
+      Measured: 8 of 21 source rules were disabled and ALL 8 arrived
+      enabled in target before this fix.
+    - CONSTRAINT PRE-PASS: for every PhFeatureConstraint referenced by NC
+      simple-contexts in this rule, create it GUID-preserving in target
+      FeatConstraintsOS (if absent) and wire FeatureRA by GUID.
+    - StrucDescOS cells: create each context GUID-preserving, .Add() to
+      new_rr.StrucDescOS preserving order.
+    - RightHandSidesOS: create each IPhSegRuleRHS GUID-preserving; copy
+      StrucChangeOS cells (RHS-owned, may be empty); assign LeftContextOA /
+      RightContextOA.
+    - Context cells branch on ClassName:
+        PhSimpleContextSeg  -> .Add() into StrucDescOS/StrucChangeOS/MembersRS
+        PhSimpleContextNC   -> same; PlusConstrRS/MinusConstrRS wired post-pass
+        PhSimpleContextBdry -> same
+        PhSequenceContext   -> created via _create_with_guid_oa (OA assignment);
+                               members created+owned in PhPhonData.ContextsOS,
+                               refs .Add()ed to MembersRS in RS order.
+        PhIterationContext  -> created GUID-preserving; Minimum/Maximum
+                               scalars copied; MemberRA (a REFERENCE, not
+                               owned by the iteration context itself) is
+                               resolved/created into PhPhonData.ContextsOS
+                               via the same _copy_context_cell path
+                               (coordinator live-run defect A, feature 037 --
+                               previously [WARN]-and-dropped, 7 occurrences
+                               per Ngoreme run).
+        Any other/unrecognised ClassName -> RAISES (RuntimeError), it does
+        NOT [WARN]-and-skip. A silently dropped context is exactly the
+        failure mode this whole feature exists to eliminate, and a [WARN] on
+        a discarded report sink is invisible (coordinator live-run defect A).
+    - InitialStratumRA / FinalStratumRA: resolved immediately when the
+      target stratum already exists; otherwise (ADD path only, `context`
+      not None) DEFERRED -- enqueued into context._phon_rule_stratum_wiring
+      and drained in _drain_phon_rule_stratum_wiring() after STRATA step
+      completes.
+    - Dead no-op removed: new_rule.StratumRA no longer attempted (flexicon's
+      `hasattr(rule, "StratumRA")` guard is dead code -- `IPhSegmentRule` has
+      `InitialStratumRA`/`FinalStratumRA`, never a bare `StratumRA`).
+
+    `dropped` (coordinator live-run defect B, feature 037): the per-run
+    `DroppedItemRecord` collector. If `None`, falls back to
+    `context._dropped` (the ADD path always has this via exec_ctx); the
+    UPDATE path passes it explicitly since it has no live `context`. Used
+    only for InputPOSesRC/ReqRuleFeatsRC/ExclRuleFeatsRC items absent from
+    target -- everything else in this function keeps its existing
+    RuntimeError/print behaviour unchanged.
+    """
+    from SIL.LCModel import (
+        IPhRegularRule,
+        IPhSegRuleRHSFactory,
+        IPhSimpleContextSegFactory, IPhSimpleContextNCFactory,
+        IPhSimpleContextBdryFactory, IPhSequenceContextFactory,
+        IPhIterationContextFactory,
+        IPhSimpleContextSeg, IPhSimpleContextNC, IPhSimpleContextBdry,
+        IPhSequenceContext, IPhIterationContext,
+        IPhFeatureConstraintFactory,
+        ICmObject,
+    )
+    if __package__:
+        from .residue import apply_carrier_b
+    else:
+        from residue import apply_carrier_b  # type: ignore
+    cache = getattr(target, "Cache")
+    _dropped_list = dropped if dropped is not None else getattr(context, "_dropped", None)
+
+    # Apply flat syncable properties (Name, Description, Direction).
     # This may NotImplementedError for some subtypes; that is non-fatal --
     # the deep-copy below runs regardless.
     try:
@@ -8557,6 +9244,18 @@ def phonological_rules_execute_action(action, context, ws_mapping, tag):
         target.PhonRules.ApplySyncableProperties(new_rule, props, ws_map=ws_mapping)
     except Exception:
         pass
+
+    # Disabled: NOT part of GetSyncableProperties -- see docstring. Copy it
+    # explicitly. IPhSegmentRule.Disabled is a plain bool on every concrete
+    # rule subclass, so this applies regardless of class_name.
+    try:
+        if hasattr(src_rule, "Disabled") and hasattr(new_rule, "Disabled"):
+            new_rule.Disabled = bool(src_rule.Disabled)
+    except (AttributeError, TypeError) as e:
+        print(
+            f"[WARN] phonological_rules: failed to copy Disabled flag for "
+            f"rule guid={src_guid}: {e!r}"
+        )
 
     # Only PhRegularRule has the full StrucDesc/RHS tree.
     if class_name != "PhRegularRule":
@@ -8725,6 +9424,31 @@ def phonological_rules_execute_action(action, context, ws_mapping, tag):
         pass
 
     # -----------------------------------------------------------------------
+    # Helper: wire the scalar bounds + nested-context reference on a
+    # PhIterationContext (feature 037, coordinator live-run defect A).
+    # MemberRA is a REFERENCE (RA), not owned by the iteration context
+    # itself -- the nested context it points at lives in
+    # PhPhonData.ContextsOS, the same project-wide pool PhSequenceContext
+    # members live in, so it is created there via _copy_context_cell (mutual
+    # recursion: an iteration context's member may itself be a sequence or
+    # another iteration context).
+    # -----------------------------------------------------------------------
+    def _wire_iteration_context(it_src, it_new):
+        for bound_attr in ("Minimum", "Maximum"):
+            try:
+                setattr(it_new, bound_attr, getattr(it_src, bound_attr))
+            except (AttributeError, TypeError):
+                pass
+        try:
+            src_member = getattr(it_src, "MemberRA", None)
+            if src_member is not None:
+                member_new = _copy_context_cell(src_member, tgt_phon_data.ContextsOS)
+                if member_new is not None:
+                    it_new.MemberRA = member_new
+        except (AttributeError, TypeError):
+            pass
+
+    # -----------------------------------------------------------------------
     # Helper: create a context cell and populate its ref fields.
     # owner_collection = the OS/collection it is OWNED by (.Add() called).
     # Returns the new cell.
@@ -8840,13 +9564,29 @@ def phonological_rules_execute_action(action, context, ws_mapping, tag):
                 member_cell = _copy_context_cell(member, contexts_os)
                 seq_new.MembersRS.Add(member_cell)
 
-        else:
-            # PhIterationContext or unknown -- warn, do not drop silently
-            print(
-                f"[WARN] unhandled context type ClassName={cn!r} "
-                f"guid={cell_guid} in rule guid={src_guid}; skipped"
+        elif cn == "PhIterationContext":
+            # OS-owned here (this branch's owner_collection is StrucDescOS/
+            # StrucChangeOS/a ContextsOS pool -- an .Add()-based collection,
+            # unlike _copy_rhs_oa_context's OA slot, which has its own
+            # mirror branch below).
+            new_cell, _ = _create_with_guid(
+                IPhIterationContextFactory, owner_collection, cell_guid, target
             )
-            return None
+            _wire_iteration_context(
+                IPhIterationContext(src_cell), IPhIterationContext(new_cell),
+            )
+
+        else:
+            # Any other/unrecognised ClassName -- RAISE. A silently dropped
+            # context is exactly the failure mode this whole feature exists
+            # to eliminate; the previous [WARN]-and-skip here was invisible
+            # on a discarded report sink (coordinator live-run defect A).
+            raise RuntimeError(
+                f"_copy_context_cell: unhandled/unrecognised context "
+                f"ClassName={cn!r} guid={cell_guid} in rule guid={src_guid} "
+                f"-- refusing to silently drop it. If this is a legitimate "
+                f"new LCM context subtype, add explicit handling here."
+            )
 
         return new_cell
 
@@ -8884,12 +9624,22 @@ def phonological_rules_execute_action(action, context, ws_mapping, tag):
                 if member_cell is not None:
                     seq_new.MembersRS.Add(member_cell)
         elif cn == "PhIterationContext":
-            print(
-                f"[WARN] unhandled PhIterationContext guid={ctx_guid} "
-                f"in rule guid={src_guid} at {attr_name}; skipped"
+            # OA slot (LeftContextOA/RightContextOA) -- the iteration
+            # context itself is created via _create_with_guid_oa (mirrors
+            # the PhSequenceContext branch above); Minimum/Maximum + the
+            # MemberRA nested-context reference are wired via the same
+            # _wire_iteration_context helper _copy_context_cell's OS-owned
+            # branch uses (feature 037, coordinator live-run defect A).
+            new_it = _create_with_guid_oa(IPhIterationContextFactory, ctx_guid, target)
+            setattr(new_rhs, attr_name, new_it)
+            _wire_iteration_context(
+                IPhIterationContext(src_ctx_oa), IPhIterationContext(new_it),
             )
         else:
             # Simple context -- OA field: create into ContextsOS, then assign.
+            # (An unrecognised ClassName here RAISES inside
+            # _copy_context_cell rather than returning None -- see that
+            # function's fallback branch.)
             contexts_os = tgt_phon_data.ContextsOS
             new_cell = _copy_context_cell(src_ctx_oa, contexts_os)
             if new_cell is not None:
@@ -8915,7 +9665,11 @@ def phonological_rules_execute_action(action, context, ws_mapping, tag):
                         _copy_rhs_oa_context(src_oa, new_rhs, oa_attr)
                 except (AttributeError, TypeError):
                     pass
-            # Req/ExclRuleFeatsRC
+            # InputPOSesRC / ReqRuleFeatsRC / ExclRuleFeatsRC (coordinator
+            # live-run defect B, feature 037): a genuinely-unresolvable
+            # reference now reports a DroppedItemRecord instead of a bare
+            # [WARN] print, so it lands in the run report rather than
+            # vanishing on a discarded/export-mode report sink.
             for rc_attr in ("InputPOSesRC", "ReqRuleFeatsRC", "ExclRuleFeatsRC"):
                 try:
                     src_rc = getattr(src_rhs, rc_attr, None)
@@ -8928,9 +9682,9 @@ def phonological_rules_execute_action(action, context, ws_mapping, tag):
                         if tgt_item is not None:
                             new_rc.Add(tgt_item)
                         else:
-                            print(
-                                f"[WARN] rule guid={src_guid} RHS guid={rhs_guid} "
-                                f"{rc_attr} item guid={ig} absent from target; skipped"
+                            _report_dropped_rule_ref(
+                                _dropped_list, src_guid, rhs_guid, rc_attr,
+                                ig, src_item,
                             )
                 except (AttributeError, TypeError):
                     pass
@@ -8938,9 +9692,12 @@ def phonological_rules_execute_action(action, context, ws_mapping, tag):
         pass
 
     # -----------------------------------------------------------------------
-    # InitialStratumRA / FinalStratumRA -- DEFERRED wiring.
-    # Leaf dispatch order is PH_ENVIRONMENT -> PHONOLOGICAL_RULES -> STRATA,
-    # so target strata do not yet exist when rules execute.  Enqueue a
+    # InitialStratumRA / FinalStratumRA.
+    # Resolved immediately if the target stratum already exists (covers the
+    # task 7 UPDATE/rebuild path, which has no `context` to defer through --
+    # see this function's docstring).  Otherwise, ADD-path only: leaf
+    # dispatch order is PH_ENVIRONMENT -> PHONOLOGICAL_RULES -> STRATA, so
+    # target strata may not exist yet when rules execute.  Enqueue a
     # (rule_guid, initial_stratum_guid, final_stratum_guid) tuple into
     # context._phon_rule_stratum_wiring; the drain runs in
     # strata_execute_action's tail block after all strata are copied.
@@ -8960,20 +9717,271 @@ def phonological_rules_execute_action(action, context, ws_mapping, tag):
         except (AttributeError, TypeError):
             pass
     if deferred_initial_sg is not None or deferred_final_sg is not None:
-        pending = getattr(context, "_phon_rule_stratum_wiring", None)
-        if pending is None:
-            pending = []
-            try:
-                object.__setattr__(context, "_phon_rule_stratum_wiring", pending)
-            except (AttributeError, TypeError):
-                pass
-        pending.append((src_guid, deferred_initial_sg, deferred_final_sg))
+        tgt_strat_by_guid = {}
+        try:
+            for ts in target.Strata.GetAll():
+                tgt_strat_by_guid[_guid_str_from(ts)] = getattr(ts, "_obj", ts)
+        except (AttributeError, TypeError):
+            pass
+        resolved_initial = (
+            tgt_strat_by_guid.get(deferred_initial_sg) if deferred_initial_sg else None
+        )
+        resolved_final = (
+            tgt_strat_by_guid.get(deferred_final_sg) if deferred_final_sg else None
+        )
+        initial_ok = deferred_initial_sg is None or resolved_initial is not None
+        final_ok = deferred_final_sg is None or resolved_final is not None
+        if initial_ok and final_ok:
+            # Target stratum/strata already present -- wire immediately, no
+            # need to defer through the tail-block machinery at all.
+            if resolved_initial is not None:
+                try:
+                    new_rr.InitialStratumRA = resolved_initial
+                except (AttributeError, TypeError):
+                    pass
+            if resolved_final is not None:
+                try:
+                    new_rr.FinalStratumRA = resolved_final
+                except (AttributeError, TypeError):
+                    pass
+        elif context is not None:
+            pending = getattr(context, "_phon_rule_stratum_wiring", None)
+            if pending is None:
+                pending = []
+                try:
+                    object.__setattr__(context, "_phon_rule_stratum_wiring", pending)
+                except (AttributeError, TypeError):
+                    pass
+            pending.append((src_guid, deferred_initial_sg, deferred_final_sg))
+        else:
+            # UPDATE/rebuild path: no exec_ctx available on this call path to
+            # defer through (see docstring) -- surface the gap loudly rather
+            # than silently leaving the stratum reference unset.
+            print(
+                f"[WARN] phonological_rules structural update: rule "
+                f"guid={src_guid} references a stratum "
+                f"(initial={deferred_initial_sg!r}, final={deferred_final_sg!r}) "
+                f"not yet present in target and no deferred-wiring context is "
+                f"available on this path; stratum reference(s) left unset."
+            )
 
     try:
         apply_carrier_b(new_rule, cache.DefaultAnalWs, tag, strict=False)
     except Exception:
         pass
     return new_rule
+
+
+def _collect_sequence_members_for_cleanup(cell, out):
+    """Recursively collect every object owned in PhPhonData.ContextsOS that a
+    PhSequenceContext (reachable from `cell`) references via MembersRS, so
+    `_clear_phon_rule_owned_tree` can remove them before removing the
+    sequence's owning slot.
+
+    Removing the OWNING slot (StrucDescOS/StrucChangeOS/LeftContextOA/
+    RightContextOA) only deletes the sequence CONTAINER itself -- its
+    members are owned separately in PhPhonData.ContextsOS and merely
+    REFERENCED via MembersRS (the same distinction flexicon's WireRule
+    `__CleanupSequenceContextMembers` documents for its own 'replace' mode
+    cleanup). Mirrors `_copy_context_cell`'s ClassName branching."""
+    if cell is None:
+        return
+    try:
+        from SIL.LCModel import ICmObject, IPhSequenceContext
+    except ImportError:
+        return
+    try:
+        cn = ICmObject(cell).ClassName
+    except (AttributeError, TypeError):
+        return
+    if cn == "PhSequenceContext":
+        try:
+            for member in IPhSequenceContext(cell).MembersRS:
+                out.append(member)
+                _collect_sequence_members_for_cleanup(member, out)
+        except (AttributeError, TypeError):
+            pass
+
+
+def _clear_phon_rule_owned_tree(rule, target):
+    """Empty a target PhRegularRule's owned StrucDescOS/RightHandSidesOS tree
+    so `_phon_rule_apply_body` can rebuild it fresh from source (task 7's
+    structural-update path, feature 037).
+
+    1. Walk every context cell reachable from StrucDescOS and each RHS's
+       StrucChangeOS/LeftContextOA/RightContextOA; any PhSequenceContext's
+       MembersRS members are owned in PhPhonData.ContextsOS (not by the
+       sequence's owning slot -- see `_collect_sequence_members_for_cleanup`),
+       so collect and remove them explicitly first.
+    2. RemoveAt every element of RightHandSidesOS and StrucDescOS -- LCM
+       cascade-deletes each OWNED object (and, transitively, its OA-owned
+       LeftContextOA/RightContextOA container, if a simple context rather
+       than a sequence) when it is removed from an OwningSequence.
+
+    FeatConstraintsOS entries are intentionally left untouched here --
+    they are project-level/shared, not rule-owned, and
+    `_phon_rule_apply_body`'s constraint pre-pass already tolerates (reuses)
+    a pre-existing constraint with a matching GUID.
+    """
+    try:
+        from SIL.LCModel import IPhRegularRule
+    except ImportError:
+        return
+    try:
+        rr = IPhRegularRule(rule)
+    except (TypeError, AttributeError):
+        return
+    cache = getattr(target, "Cache")
+    phon_data = cache.LangProject.PhonologicalDataOA
+    contexts_os = phon_data.ContextsOS
+
+    seq_members: list = []
+    try:
+        for cell in rr.StrucDescOS:
+            _collect_sequence_members_for_cleanup(cell, seq_members)
+    except (AttributeError, TypeError):
+        pass
+    try:
+        for rhs in rr.RightHandSidesOS:
+            try:
+                for cell in rhs.StrucChangeOS:
+                    _collect_sequence_members_for_cleanup(cell, seq_members)
+            except (AttributeError, TypeError):
+                pass
+            for oa_attr in ("LeftContextOA", "RightContextOA"):
+                _collect_sequence_members_for_cleanup(
+                    getattr(rhs, oa_attr, None), seq_members,
+                )
+    except (AttributeError, TypeError):
+        pass
+    for member in seq_members:
+        try:
+            contexts_os.Remove(member)
+        except Exception:
+            pass
+
+    try:
+        while rr.RightHandSidesOS.Count > 0:
+            rr.RightHandSidesOS.RemoveAt(rr.RightHandSidesOS.Count - 1)
+    except (AttributeError, TypeError):
+        pass
+    try:
+        while rr.StrucDescOS.Count > 0:
+            rr.StrucDescOS.RemoveAt(rr.StrucDescOS.Count - 1)
+    except (AttributeError, TypeError):
+        pass
+
+
+def _execute_phon_rule_structural_update(overwrite, source, target, report_sink,
+                                          tag, ws_map=None, dropped=None):
+    """Rebuild an EXISTING target phonological rule's owned structure from
+    source (task 7, feature 037): the UPDATE leg of "already-present-by-GUID
+    rules that are the same should be skipped; if different, updated."
+
+    Called from `transfer._execute_update_semantic` for a
+    `PlannedOverwrite(category=PHONOLOGICAL_RULES,
+    write_mode="structural_rebuild")` -- emitted by
+    `phonological_rules_plan_action` when `_phon_rule_fingerprint` finds the
+    target rule structurally different from source (the proven case: rule
+    "nasal assim simple reb", guid 33978942-cc6e-4655-afb2-b0a869b670c5,
+    differing only in a null RHS[0].RightContextOA).
+
+    Strategy: rebuild the owned tree wholesale rather than a fine-grained
+    diff-patch -- the owned tree is small and a rebuild reuses
+    `_phon_rule_apply_body`'s exact GUID-preserving deep-copy verbatim
+    (same helper the ADD path uses):
+    1. Locate src_rule / tgt_rule (raw LCM objects) by GUID.
+    2. If the concrete rule type has changed (e.g. PhRegularRule ->
+       PhMetathesisRule) between source and target, refuse -- LCM cannot
+       re-class an existing object in place, and blowing it away + recreating
+       under the same GUID from inside an UPDATE step is out of scope here.
+    3. Clear tgt_rule's owned StrucDescOS/RightHandSidesOS
+       (`_clear_phon_rule_owned_tree`), freeing their GUIDs so
+       `_phon_rule_apply_body` can recreate the same child GUIDs cleanly.
+    4. Re-run `_phon_rule_apply_body` against the now-empty tgt_rule with
+       `context=None` (see that function's docstring for the one behavior
+       difference on this path: stratum wiring is immediate-only).
+
+    `dropped` (coordinator live-run defect B, feature 037): the per-run
+    `DroppedItemRecord` collector, threaded straight through to
+    `_phon_rule_apply_body` for its InputPOSesRC/ReqRuleFeatsRC/
+    ExclRuleFeatsRC unresolved-reference reporting.
+
+    Returns [] always -- this is a raw update, not a Skip-producing step;
+    outcome is reported via `report_sink` (Info on success, Warning on any
+    refusal/failure) so it is visible the same way every other UPDATE/
+    OVERWRITE outcome is.
+    """
+    try:
+        from SIL.LCModel import ICmObject
+    except ImportError:
+        report_sink.Warning(
+            f"  [{overwrite.category.value}] structural_rebuild: SIL.LCModel "
+            f"unavailable; cannot rebuild guid={overwrite.source_guid[:8]}"
+        )
+        return []
+
+    src_guid = overwrite.source_guid
+    tgt_guid = overwrite.target_guid
+
+    src_rule = None
+    for r in source.PhonRules.GetAll():
+        if _guid_str_from(r) == src_guid:
+            src_rule = getattr(r, "_obj", r)
+            break
+    if src_rule is None:
+        report_sink.Warning(
+            f"  [{overwrite.category.value}] structural_rebuild: source rule "
+            f"guid={src_guid[:8]} not found; skipped"
+        )
+        return []
+
+    cache = getattr(target, "Cache")
+    tgt_rule = None
+    try:
+        for tr in cache.LangProject.PhonologicalDataOA.PhonRulesOS:
+            if _guid_str_from(tr) == tgt_guid:
+                tgt_rule = tr
+                break
+    except (AttributeError, TypeError):
+        pass
+    if tgt_rule is None:
+        report_sink.Warning(
+            f"  [{overwrite.category.value}] structural_rebuild: target rule "
+            f"guid={tgt_guid[:8]} not found; skipped"
+        )
+        return []
+
+    try:
+        src_class = ICmObject(src_rule).ClassName
+    except (AttributeError, TypeError):
+        src_class = "PhRegularRule"
+    try:
+        tgt_class = ICmObject(tgt_rule).ClassName
+    except (AttributeError, TypeError):
+        tgt_class = "PhRegularRule"
+    if src_class != tgt_class:
+        report_sink.Warning(
+            f"  [{overwrite.category.value}] structural_rebuild: rule "
+            f"guid={src_guid[:8]} changed concrete type ({tgt_class} -> "
+            f"{src_class}) between source and target -- LCM cannot re-class "
+            f"an existing object in place; left unchanged. Investigate "
+            f"manually."
+        )
+        return []
+
+    if src_class == "PhRegularRule":
+        _clear_phon_rule_owned_tree(tgt_rule, target)
+
+    _phon_rule_apply_body(
+        src_rule, tgt_rule, src_class, source, target, ws_map, tag,
+        src_guid, context=None, dropped=dropped,
+    )
+    report_sink.Info(
+        f"  [{overwrite.category.value}] structural_rebuild applied "
+        f"guid={src_guid[:8]} (StrucDescOS + RightHandSidesOS rebuilt from source)"
+    )
+    return []
 
 
 LEAF_CATEGORIES = {
