@@ -474,3 +474,297 @@ implicated. No reopen was requested.
 No duplicates were found for any of the four issues. Search terms checked against both
 trackers (`--state all`): `SLDR`, `writing system`, `Exists`, `LDML`, `badldml`,
 `Sldr.Initialize`, `ws_wizard`, `FR-212`, `debuglog`, `pyflexicon`.
+
+---
+
+# Follow-up sweep — six candidate "deciding read vs guarding check vs writing read" sites, verified 2026-08-19
+
+Everything above this line is the original report and is unchanged. This section records a
+follow-up verification sweep that took the bug *shape* identified in section (C) — a
+decision made against one collection, guarded against a second, and written against a
+third — and hunted for siblings. Six candidate sites were examined. Each was pushed to a
+verdict: does the divergence exist, and can it actually fire?
+
+## Verdicts
+
+| # | file:line | verdict | severity | can fire? |
+|---|---|---|---|---|
+| 1 | `Lib/ui/ws_wizard.py:146` | CONFIRMED mechanism, consequence overstated | dead code, latent | No — orphaned entry point |
+| 2 | `Lib/ui/selection_wizard.py:1298` + `Lib/api.py:866` | CONFIRMED | silent data loss | Yes — firing today |
+| 3 | `Lib/transfer.py:755` | PARTIAL | silent misread, end-state unproven | Yes on live path; no false-negative constructible |
+| 4 | `Lib/texts.py:812` (key `:799`) | CONFIRMED (executed) | silent data loss | Yes — 328 texts / 25 projects |
+| 5 | `Lib/ws_mapping.py:592` | KILLED | none | No — invariant + unreachable |
+| 6 | `Lib/reversals.py:519` | PARTIAL, mechanism wrong | visible mid-write abort | Yes |
+
+## #1 — `ws_wizard.py:146` — mechanism confirmed, severity overstated
+
+Section F1 above says FR-212's CREATE side-effect is "100% dead". The **mechanism** is
+confirmed three ways: `flexicon/code/System/WritingSystemOperations.py` has no `def Add`
+(the creator is `Create(language_tag, name, is_vernacular=True)` at `:188`); the MCP index
+lists 23 methods with no `Add`, `Activate` or `Ensure`; and live on `Ejagham Mini`
+`hasattr(project.WritingSystems, 'Add')` is `False`. The
+`except (AttributeError, TypeError, Exception)` at `:147` swallows it unconditionally.
+
+The **consequence claim is wrong**. The call site is unreachable. `ws_wizard` is imported
+only at `gramtrans.py:563` inside `_build_default_ws_resolver` (`:559`), called only from
+`phase2_interactive_move` (`:397`) — which has **zero callers anywhere in the repo**. The
+only references are prose: `specs/005-phonology-block/spec.md:127`,
+`specs/006-inflection-prep-block/spec.md:133`, `STATUS.md:2754`, `STATUS.md:2807`. The
+live path is `MainFunction` -> `_run_gui` -> `selection_wizard` -> `gt_api.execute_move`,
+where FR-212's CREATE **is** implemented at `Lib/api.py:963` (`_ensure_writing_systems`).
+
+**User-visible consequence today: none.** Re-read F1's severity as dead code carrying
+latent risk, not active data loss. The risk is real if `phase2_interactive_move` is
+revived: it calls `execute()` directly at `gramtrans.py:546`, bypassing
+`_ensure_writing_systems`, at which point CREATE choices really would silently never
+create. Correction posted to GramTrans
+[#43](https://github.com/MattGyverLee/GramTrans/issues/43#issuecomment-5338263276); title
+amended to drop "100% dead"; issue deliberately left OPEN.
+
+## #2 — store-vs-active — confirmed FIRING, with a named reproduction
+
+Section (C) filed this as LATENT / never-fired. It is not latent.
+
+Three-way divergence, precisely: the **deciding read** is
+`_target_ws_ids = _enumerate_active_ws_ids(target)` (`selection_wizard.py:1225`, def
+`:6420`, `WritingSystems.GetAll()` at `:6431`), tested exact-case at `:1298`;
+`closest_ws_defaults`' `tgt_ids` is likewise active-only (`ws_mapping.py:459` via
+`_enumerate_ws`). The **guarding check** is `tgt_ops.Exists(tag)` at `api.py:866`. The
+**writing reads** are `id_to_handle` (`texts.py:245`) and
+`references._project_handle_to_id` (`:464`), both `GetAll()`.
+
+flexicon side: `GetAll()` filters to `CurVernWss | CurAnalysisWss`
+(`WritingSystemOperations.py:110-116`); `Exists()` -> `_GetWSByTag` (`:949-964`) scans the
+unfiltered `AllWritingSystems` and normalizes case plus `-`/`_`.
+
+**Named reproduction.** Source `Ejagham Full` (active vern `etu`, `etu-fonipa`; anal `en`,
+`fr`) -> target `Ejagham Mini` (active vern `etu`; anal `en`; store ALSO holds inactive
+LDMLs `es`, `etu-fonipa`, `etu-x-Eastern`, `fr`, `zh-CN`). Row `etu-fonipa`: absent from
+`['etu','en']` -> `closest_ws_defaults` pass-3 rebase yields `("create","etu-fonipa")` ->
+`WSMappingEntry(target_ws_id='etu-fonipa', create_in_target=True)` ->
+`Exists('etu-fonipa')` is **True** via the inactive store copy -> `continue`, no create,
+`_log.debug` only -> never activated -> `id_to_handle` lacks the key -> every
+`etu-fonipa`-tagged string silently dropped. Same for `fr`.
+
+**The triggering state is the norm.** A scan of all 88 local projects found store ⊋ active
+in `Ejagham Full`, `Ejagham W Mini`, `Ejagham025Src`, `Ejagham029Src`, `EjaghamCfgSrc`,
+`Korean-GIAL`, `Quenya`, `Egyptian Arabic Template`, `Lex Training Sample Project 1`,
+`Iceve-Maci Test-Iceve`, `Iceve-Maci Test-Ici`, `German-FLExTrans-Sample`,
+`Mbugwe LizzieHC practice`.
+
+The case route is live-confirmed independently: `Exists('EN')` is `True` while
+`'EN' in active_list` is `False`.
+
+Structural note worth keeping: `WritingSystemOperations.Exists` at `api.py:866` is the
+**only** whole-store tag-normalized WS lookup in GramTrans apart from `reversals.py:519`'s
+`WSHandle`. Everything else is active-only exact-case `GetAll()` — `texts.py:125`,
+`texts.py:245`, `references.py:464`, `reversals.py:139`, `categories.py:600`, `:604`,
+`:2223`, `:7419`, `config_views.py:174`. One outlier guard in a uniformly active-only
+codebase is exactly the shape that yields a false negative.
+
+Evidence posted to flexicon
+[#250](https://github.com/MattGyverLee/flexicon/issues/250#issuecomment-5338277832) and
+GramTrans
+[#44](https://github.com/MattGyverLee/GramTrans/issues/44#issuecomment-5338278157).
+
+## #3 — `transfer.py:755` — PARTIAL; blocked on a contradiction in the docs
+
+Scope is exactly `existing = target.Object(src_guid)` (`:754`) wrapped in
+`except Exception: existing = None` (`:755-756`). `None` -> `return (False, None)`
+(`:758-759`) = proceed with `Create`, with **no `DroppedItemRecord` and no `SkipReason`**.
+Six live call sites, all on the production Move path, all feeding raw LCM factories
+(`:833`): `:823` (PartOfSpeech), `:849` (MoInflAffixTemplate), `:876` (MoInflAffixSlot),
+`:1378` (PhEnvironment), `:1406` (LexEntry), `:1433` (LexSense).
+
+Live probe: `Object(<absent guid>)` raises `KeyNotFoundException` and
+`Object("not-a-guid")` raises `FP_ParameterError`. So the bare `except` **is** the absence
+signal — it cannot simply be narrowed without first distinguishing those two, and a
+genuine false negative could not be constructed from the probes available.
+
+**Unresolved contradiction — flag this prominently.** The two authorities disagree about
+what LCM does on a duplicate GUID:
+
+- `Lib/transfer.py:742-744`: *"LCM `factory.Create(existingGuid, owner)` does NOT throw --
+  it silently creates a duplicate object permanently written to `.fwdata` on
+  `CloseProject`."*
+- flexicon `BaseOperations.py:1915-1918`: *"If the GUID is already present in the project,
+  LCM raises and this falls back to a fresh identity, logging a warning that names the
+  GUID."*
+
+**One of the two is wrong**, and which one decides whether #3 is **data corruption**
+(duplicate objects in `.fwdata`) or **identity loss** (a fresh GUID silently minted). The
+severity of #3 cannot be set until this is settled.
+
+Settling it needs exactly one write: against a **throwaway** project, create an object
+with a GUID already present, then check `ObjectCountFor` and whether the returned object's
+GUID matches the requested one. **Not** against `Ejagham Mini`, `Esperanto`,
+`Mbugwe LizzieHC practice` or any other read-only test project.
+
+## #4 — `texts.py:812` — CONFIRMED BY EXECUTION; largest measured loss
+
+Deciding read `_text_disposition` (`texts.py:367-411`) = GUID scan -> `Find(title)` ->
+structural fingerprint. Guarding check `Exists(name)` where
+`name = plan.title or "(untitled)"` (`:799`), guard `:809-814` with
+`except -> already_exists = False`. Writing read `Find(name)` (`:820`).
+
+The three keys differ in flexicon: `GetName` reads the **source's** `DefaultAnalWs`
+(`TextOperations.py:565-570`); `Exists` reads `BestAnalysisAlternative` over the
+**target's** texts via `ObjectsIn(ITextRepository)` (`:457-467`); `Find` reads the
+**target's** `DefaultAnalWs` over `GetAll()` (`:507-517`).
+
+Executed against the repo's own fakes, empty target:
+
+```
+plan1 guid=src-A -> target guid='src-A' name='(untitled)'
+plan2 guid=src-B -> target guid='src-A' name='(untitled)'   <- same object
+texts in target: 1;  DroppedItemRecords: 0
+```
+
+Two distinct untitled source texts collapse into one; the second's GUID is never created;
+its paragraphs are appended into the first's `StText`; `_added` is incremented for **both**
+(`texts.py:759`).
+
+**Scale, measured:** 328 of 1207 texts are untitled in their default analysis WS across 25
+of 88 local projects — `Tlachichilco Tepehua-NT Noparse` 39/50, `Tlachichilco Tepehua`
+36/46, `Mbugwe Lizzie` 34/44, `Isenye Nora` 30/42, `blx-flex` 29/107, `Ngoreme` 15/64,
+`Vanaw` 10/26. Transferring `Tlachichilco Tepehua` into a clean target silently loses 38 of
+39 untitled texts. `texts.py:371-373` itself calls empty titles "the common shape for
+glossed/interlinear practice texts".
+
+**Secondary, visible route:** a target text named only in a non-default analysis WS gives
+`Exists` True / `Find` None, falling through to `Create`, whose own `Exists` check
+(`TextOperations.py:150-156`) raises `FP_ParameterError` -> `DroppedItemRecord "text create
+failed"`. So the `:809` mitigation **does not mitigate the case it was added for**.
+
+Filed as GramTrans [#45](https://github.com/MattGyverLee/GramTrans/issues/45).
+
+## #5 — `ws_mapping.py:592` — KILLED, twice over
+
+The suspicion was that `fold_choices_into_ws_mapping` discards a rebased target on a
+CREATE choice by writing `target_ws_id=c.source_ws_id` (`:592`) instead of
+`c.target_ws_id`. It discards nothing, for two independent reasons:
+
+1. **Invariant.** `WSMappingChoice.__post_init__` (`models.py:952-960`) raises
+   `ValueError(f"target_ws_id must be empty for choice={self.choice.value}")` whenever
+   `target_ws_id` is non-empty for a non-MAP choice. A CREATE choice carrying a rebased
+   target is therefore **unconstructible** — `c.target_ws_id` is provably `""` at `:592`,
+   so nothing is lost.
+2. **Unreachable.** `fold_choices_into_ws_mapping` is called only from the orphaned
+   `phase2_interactive_move` (`gramtrans.py:468`, `:488`) and from tests.
+
+The rebased tag from `closest_ws_defaults` pass 3 (`ws_mapping.py:540-547`, e.g.
+`mgz-fonipa-x-emic` -> `etu-fonipa-x-emic`) reaches the plan by a **different** route:
+`selection_wizard.py:1414-1450` (`ws_mapping()`), which **does** honour it —
+`target_ws_id=create_target` at `:1437`. No defect.
+
+## #6 — `reversals.py:519` — PARTIAL, and the presumed mechanism was wrong
+
+The gate `_target_ws_ids = target.WritingSystems.GetAll()` (`reversals.py:139`) is applied
+at `:461` to **the reversal index's own WS only**. Alt WSs are **never gated**:
+`_reversal_form_alts` passes an unmapped source id straight through
+(`:236`, `ws_map.get(src_id, src_id)`). The write read `target.WSHandle(ws_id)` (`:519`)
+scans `AllWritingSystems` normalizing case and `-`/`_`
+(`FLExProject.py:2814-2834`, `__NormaliseLangTag` at `:3292`) and returns `None` on a miss
+— live-verified: `WSHandle('zz-absent')` is `None`.
+
+**The escape, live-verified.** Python evaluates `TsStringUtils.MakeString(text, None)`
+*before* `set_String`, and it raises `System.ArgumentNullException`, whose MRO is
+`ArgumentNullException -> ArgumentException -> SystemException -> Exception`. So
+`isinstance(e, TypeError)` is **False** and it **escapes** the
+`except (AttributeError, TypeError)` at `:521`. This is why the verdict is "mechanism
+wrong": the failure is not a swallowed silent drop, it is an uncaught throw one call
+earlier than the handler anticipated.
+
+**Nothing catches it upstream.** The alt-write loop (`:919-922`) has no `try`;
+`_apply_one_entry` and `apply_reversals` (`:950-959`) both *claim* "Never raises" in their
+docstrings and do not; the calls at `transfer.py:521` and `categories.py:5471` are bare.
+
+**Consequence:** the Move aborts **mid-write** — after all lexical and text writes, before
+the config-view copy and the summary. A visible crash on a partially-written target, not a
+reported drop.
+
+**Scenario:** a source with an active `mgz-fonipa-x-etic` reversal alt whose index WS is
+`en` (so the gate passes on `en`), transferred into a target lacking `mgz-fonipa-x-etic`.
+
+Filed as GramTrans [#46](https://github.com/MattGyverLee/GramTrans/issues/46).
+
+## Cross-cutting cause: self-consistent test fakes
+
+Every confirmed bug in this sweep shares one enabling condition. The unit fake collapses
+the divergent collections into a single source of truth, making the bug **structurally
+unrepresentable** — so no test could have caught it, however thorough:
+
+- `tests/unit/test_ensure_writing_systems.py:50-54` — `GetAll()` and `Exists()` are two
+  reads of one `proj["existing"]` list. Store-vs-active cannot be expressed.
+- `tests/unit/_fakes_texts.py:236-262` — `GetName`, `Find` and `Exists` are three reads of
+  one `t.name` scalar. The source-DefaultAnalWs / BestAnalysisAlternative /
+  target-DefaultAnalWs split cannot be expressed.
+- `tests/unit/test_p0_idempotency_ws.py:51-64` — `fake_object` raises a generic
+  `Exception` for absence only, so "lookup failed" is indistinguishable from "absent" and
+  the `transfer.py:755` conflation cannot be expressed.
+
+This is the same shape as the flexicon 4.5.0 `FeaturesOA` trap documented in `CLAUDE.md`:
+1467 tests green over factory-fresh CONCRETE-typed objects while the live path, which
+yields base-typed proxies, was 100% dead. **A fake that is more self-consistent than the
+API it doubles converts a real defect into an untestable one.** Any fix in this area should
+begin by making the fakes diverge the way the real API diverges.
+
+## Fix first — three, in order
+
+1. **#4, `texts.py:799`/`:812`** — the largest measured silent loss (328 texts, 25
+   projects), proven by execution, and it hits a *first* Move into a clean target, which is
+   the normal case. An untitled text has no name-based identity; the placeholder string
+   must stop being used as a lookup key. Create unconditionally under the source GUID
+   (`texts.py:830` already passes `guid=plan.source_guid`).
+2. **#2, `api.py:866`** — firing today on ordinary projects, and silent. GramTrans can
+   mitigate ahead of flexicon #250 by testing the tag against the **same** active-only set
+   the decider and writer use, and treating "`Exists` true but not active" as a distinct
+   *reported* outcome instead of a `_log.debug` skip.
+3. **#6, `reversals.py:519` + the two docstrings** — the only candidate that leaves a
+   partially-written target. Gate the alts at decision time and record a
+   `DroppedItemRecord`; widening the `except` alone would only trade a crash for a silent
+   drop. Fix or delete the two "Never raises" docstrings — they are actively misleading
+   maintenance.
+
+**#3 is not on this list on purpose.** It needs the throwaway-project probe below before
+its severity can even be assigned; fixing it blind risks narrowing the one `except` that
+currently carries the absence signal.
+
+## Undetermined — two questions this sweep could not close
+
+1. **Does LCM throw on a duplicate GUID?** `transfer.py:742-744` and flexicon
+   `BaseOperations.py:1915-1918` state opposite behaviours (see #3). This decides whether
+   #3 is data corruption or identity loss. Resolution: one write against a **throwaway**
+   project — create an object with a GUID already present, check `ObjectCountFor` and
+   whether the returned object's GUID matches the requested one. Never against a read-only
+   test project.
+2. **Does the fingerprint fallback rescue any of the 328 untitled texts on a *non-empty*
+   target?** The #4 proof used an empty target, where `_text_disposition`'s structural
+   fingerprint (`texts.py:402-411`) has nothing to match against. On a populated target it
+   may return `UPDATE` with a real `target_guid` and short-circuit at `:791` before the
+   placeholder is synthesized. Residual loss is unquantified. Resolution: a live
+   repeat-Move against a populated target, comparing target text count and GUID set
+   before/after.
+
+## Two incidentals recorded in passing
+
+- **`WritingSystemOperations.py:906` `GetBestString` is dead on liblcm 11.0.0.** Its body
+  does `from SIL.LCModel.Core.KernelInterfaces import IMultiUnicode, IMultiString`, which
+  raises `ImportError` on liblcm 11.0.0 — live-verified. Harmless here only because
+  GramTrans never calls it; worth an upstream note.
+- **`"(untitled text)"` vs `"(untitled)"`.** `Lib/selection.py:3795` labels untitled texts
+  `"(untitled text)"` in the selection inventory while `Lib/texts.py:799` creates them as
+  `"(untitled)"`. The UI shows one string and the target receives another. Note that making
+  them agree is **not** a fix for #4 — any shared constant is still a colliding key.
+
+## Issues filed or amended by this sweep
+
+| Item | Repo | Issue | Action |
+|---|---|---|---|
+| #1 severity correction | GramTrans | [#43](https://github.com/MattGyverLee/GramTrans/issues/43) | correcting comment + title amended; left OPEN |
+| #2 firing-today evidence | flexicon | [#250](https://github.com/MattGyverLee/flexicon/issues/250) | evidence comment |
+| #2 firing-today evidence | GramTrans | [#44](https://github.com/MattGyverLee/GramTrans/issues/44) | evidence comment |
+| #4 untitled-text collision | GramTrans | [#45](https://github.com/MattGyverLee/GramTrans/issues/45) | NEW |
+| #6 reversal mid-write abort | GramTrans | [#46](https://github.com/MattGyverLee/GramTrans/issues/46) | NEW |
+| #3 duplicate-GUID contradiction | — | not filed | blocked on the throwaway-project probe |
+| #5 `ws_mapping.py:592` | — | not filed | KILLED — no defect |
