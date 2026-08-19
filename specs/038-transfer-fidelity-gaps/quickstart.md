@@ -26,7 +26,7 @@ Artifact schema: [`contracts/census-artifact.schema.json`](contracts/census-arti
   `.fwdata` projects through flexicon, so there is no Linux or macOS path.
 - Python from the repo's supported range (`requires-python >= 3.8`). The repo's own
   docs and commands use `python`; `python3` also resolves on this machine.
-- **flexicon installed editable, at or above the `pyflexicon>=4.4.1` floor**:
+- **flexicon installed editable, at or above the `pyflexicon>=4.5.2` floor**:
 
   ```powershell
   pip install -e D:/Github/_Projects/_LEX/flexicon
@@ -40,8 +40,43 @@ Artifact schema: [`contracts/census-artifact.schema.json`](contracts/census-arti
   pip show pyflexicon | Select-String '^Version:'
   ```
 
+  **T002 verification, recorded 2026-08-19 (this feature's Phase 1).** The
+  editable install was found STALE: the flexicon working tree already declared
+  `version = "4.5.2"` (`flexicon/__init__.py:15`) while the installed
+  distribution metadata still reported `4.4.1`, so a naive `pip show` check
+  passed the *wrong* number. `pip install -e D:/Github/_Projects/_LEX/flexicon`
+  reinstalled it (`Uninstalling pyflexicon-4.4.1 ... Successfully installed
+  pyflexicon-4.5.2`). Both commands then agreed:
+
+  ```text
+  python -c "import flexicon; print(flexicon.__file__)"
+  D:\Github\_Projects\_LEX\flexicon\flexicon\__init__.py      # not site-packages: OK
+
+  python -c "import importlib.metadata as m; print(m.version('pyflexicon'))"
+  4.5.2
+  ```
+
+  `NaturalClassOperations.GetSyncableProperties` (line 1039) and
+  `ApplySyncableProperties` (line 1169) are both present, which is the 037
+  surface this feature builds on.
+
+  **The floor is `>=4.5.2`, and three documents disagreed about it.**
+  `pyproject.toml:47` (authoritative) says `pyflexicon>=4.5.2`; `tasks.md` T002
+  says `>=4.5.0`; this file said `>=4.4.1`. Only this file is owned by feature
+  038, so only this line is corrected here -- `pyproject.toml` and `CLAUDE.md`
+  are claimed by 037 and are deliberately left untouched. The reason the exact
+  patch number matters is recorded in `CLAUDE.md`'s Install section: **4.5.0**
+  gated the natural-class `FeaturesOA` wiring behind `hasattr(nc, "FeaturesOA")`,
+  which is unconditionally False under pythonnet (attributes resolve against the
+  STATIC wrapper type, and `NaturalClasses.GetAll()` yields base-`IPhNaturalClass`
+  proxies), so the feature was 100% dead while every test passed; **4.5.1** fixed
+  that by discriminating on `.ClassName` and casting, but gated the apply on
+  `if features:`, so a genuinely empty feature structure reports a phantom loss;
+  **4.5.2** gates on key presence instead. Do not lower the floor to 4.5.0 or
+  4.5.1.
+
   **Why the floor matters, and why a lower one is worse than a hard failure.**
-  4.4.1 is the first release carrying the GUID-preserving create surface
+  4.4.1 was the first release carrying the GUID-preserving create surface
   (`BaseOperations._CreateWithGuid`, plus the optional `guid=` kwarg on
   `Texts.Create` / `Paragraphs.Create` / `Segments.AppendSentence` /
   `Wordforms.Create` / `WfiAnalyses.Create` / `WfiGlosses.Create` /

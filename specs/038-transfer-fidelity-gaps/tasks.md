@@ -88,21 +88,21 @@ commits on the `038-transfer-fidelity-gaps` worktree.
 
 **Wave 1 - independent (different targets):**
 
-- [ ] **T001** [P] Create the code worktree `../GramTrans-038-transfer-fidelity-gaps` on a new branch `038-transfer-fidelity-gaps` cut from `main` - `git worktree add ../GramTrans-038-transfer-fidelity-gaps -b 038-transfer-fidelity-gaps main`
-- [ ] **T002** [P] Verify the flexicon floor and that `flexicon` resolves to the working tree, not site-packages. **The effective floor is `pyflexicon>=4.5.0`, not the `>=4.4.1` plan.md and quickstart.md document** - 037 raised it for `NaturalClassOperations.GetSyncableProperties` / `ApplySyncableProperties` `FeaturesOA` wiring (flexicon issue #222), and that bump arrives with the T005 rebase. Verify against 4.5.0 and note the discrepancy; do not edit `pyproject.toml` or `CLAUDE.md` to reconcile it - both are claimed by 037. A too-low floor makes every `guid=` raise `TypeError`, which `_safe` swallows into a generic drop. Record both command outputs in the task journal - `specs/038-transfer-fidelity-gaps/quickstart.md` (prerequisites block)
-- [ ] **T003** [P] Create the census output directory and confirm it is git-ignored so artifacts never land in a commit - `scratchpad/038_census/`
+- [x] **T001** [P] Create the code worktree `../GramTrans-038-transfer-fidelity-gaps` on a new branch `038-transfer-fidelity-gaps` cut from `main` - `git worktree add ../GramTrans-038-transfer-fidelity-gaps -b 038-transfer-fidelity-gaps main`
+- [x] **T002** [P] Verify the flexicon floor and that `flexicon` resolves to the working tree, not site-packages. **The effective floor is `pyflexicon>=4.5.0`, not the `>=4.4.1` plan.md and quickstart.md document** - 037 raised it for `NaturalClassOperations.GetSyncableProperties` / `ApplySyncableProperties` `FeaturesOA` wiring (flexicon issue #222), and that bump arrives with the T005 rebase. Verify against 4.5.0 and note the discrepancy; do not edit `pyproject.toml` or `CLAUDE.md` to reconcile it - both are claimed by 037. A too-low floor makes every `guid=` raise `TypeError`, which `_safe` swallows into a generic drop. Record both command outputs in the task journal - `specs/038-transfer-fidelity-gaps/quickstart.md` (prerequisites block)
+- [x] **T003** [P] Create the census output directory and confirm it is git-ignored so artifacts never land in a commit - `scratchpad/038_census/`
 
 **--> Wait for Wave 1 to finish, then:**
 
-- [ ] **T004** Acquire `lockout` claims for team `transfer-fidelity-gaps-038` on the **main-worktree** paths of `src/gramtrans/Lib/{categories.py,transfer.py,models.py,report.py,preview.py}`, and run `lockout status --file` against 037's absolute worktree paths to confirm no live conflict. Record that 037's claims are path-scoped to its own worktree and therefore cannot collide by path - `~/.claude/skills/lockout/lockout.py`
+- [x] **T004** Acquire `lockout` claims for team `transfer-fidelity-gaps-038` on the **main-worktree** paths of `src/gramtrans/Lib/{categories.py,transfer.py,models.py,report.py,preview.py}`, and run `lockout status --file` against 037's absolute worktree paths to confirm no live conflict. Record that 037's claims are path-scoped to its own worktree and therefore cannot collide by path - `~/.claude/skills/lockout/lockout.py`
 
 **--> Wait for T004 (never rebase an unclaimed hazard file), then:**
 
-- [ ] **T005** Land-order rebase (R6): merge `037-phon-nc-features`, then `038-affix-fidelity`, into `038-transfer-fidelity-gaps`, resolving the `transfer.py` collision between 037's `@@ -439` and 038-affix's `@@ -442` inside `execute()`. Confirm afterwards that `RunReport.leaf_execution_failures` / `leaf_failed` and 038-affix's `_strip_ref_fields` are both present - `src/gramtrans/Lib/transfer.py`, `src/gramtrans/Lib/models.py`, `src/gramtrans/Lib/report.py`
+- [x] **T005** Land-order rebase (R6): merge `037-phon-nc-features`, then `038-affix-fidelity`, into `038-transfer-fidelity-gaps`, resolving the `transfer.py` collision between 037's `@@ -439` and 038-affix's `@@ -442` inside `execute()`. Confirm afterwards that `RunReport.leaf_execution_failures` / `leaf_failed` and 038-affix's `_strip_ref_fields` are both present - `src/gramtrans/Lib/transfer.py`, `src/gramtrans/Lib/models.py`, `src/gramtrans/Lib/report.py`
 
 **--> Wait for T005, then:**
 
-- [ ] **T006** Run the existing suite on the rebased branch to establish a green baseline before any 038 edit; record the pass count - `tests/`
+- [x] **T006** Run the existing suite on the rebased branch to establish a green baseline before any 038 edit; record the pass count - `tests/`
 
 ---
 

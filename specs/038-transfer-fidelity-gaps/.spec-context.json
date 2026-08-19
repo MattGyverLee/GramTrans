@@ -2,8 +2,8 @@
   "workflow": "speckit",
   "specName": "Transfer Fidelity Gaps",
   "branch": "main",
-  "currentStep": "tasks",
-  "status": "ready-to-implement",
+  "currentStep": "implement",
+  "status": "implementing",
   "history": [
     {
       "step": "specify",
@@ -39,6 +39,61 @@
       "kind": "start",
       "by": "extension",
       "at": "2026-08-19T02:09:29.357Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "kind": "start",
+      "by": "extension",
+      "at": "2026-08-19T02:25:09.347Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T001",
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-19T02:28:21.595Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T002",
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-19T02:28:21.828Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T003",
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-19T02:28:22.073Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T004",
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-19T02:30:04.807Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T005",
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-19T02:31:44.641Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T006",
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-19T03:34:16.973Z"
     }
   ],
   "decisions": [
@@ -94,6 +149,16 @@
     {
       "what": "037 concurrent session locks respected",
       "result": "git status shows zero changes under specs/035-fullsweep-fidelity/, src/, pyproject.toml, CLAUDE.md; Target.fwdata never opened"
+    },
+    {
+      "what": "T005 merge introduced no test regressions (tests/unit, same selection on both trees)",
+      "command": "python -m pytest -q --tb=no -rf tests/unit  (run on main b4fcd29 and branch fa47bdd, then diff of sorted FAILED node ids)",
+      "result": "PASS - failure sets byte-identical: 27 failed on both; branch 2568 passed vs main 2559 (+9 = new test_038_affix_fidelity.py). diff empty.",
+      "warnings": [
+        "27 unit failures are PRE-EXISTING on main and unrelated to this feature (029 pictures, adjacent-data, analysis idempotency, human-eval gate, morph-bundle wiring, segment alignment, wizard POS closure)",
+        "tests/integration hangs after Windows access violation in flexicon FLExInit.py:64 via the live flex fixture; 3 runs killed; NOT usable as a gate",
+        "a full-suite run inflates the same 27 unit failures to 104 via cross-test pollution once live-FLEx tests run in-process - only same-selection comparisons are meaningful"
+      ]
     }
   ],
   "concerns": [
@@ -121,6 +186,14 @@
       "note": "FR-012 required class count is 72, not 69: MoAffixProcess, PhCode and CmTranslation are absent from 035 coverage-floor in_scope_classes. Carried in a census_additions ledger with owed_to_035=true",
       "step": "plan",
       "kind": "open"
+    },
+    {
+      "note": "FLExInitialize() is process-global and NOT safe to run in two OS processes at once: two concurrent pytest runs both crashed with a Windows fatal access violation at flexicon/code/FLExInit.py:64, via the module-scoped live flex fixture in tests/integration/test_034_standalone_preview_live.py:114. Run the suite solo. This directly constrains the Phase 3 census instrument (T014-T025): decision 2 places it at tests/integration/test_object_census.py, so census_cli.py must never be invoked while a pytest run is live, and CI must not parallelise across processes.",
+      "step": "implement"
+    },
+    {
+      "note": "CORRECTION to the earlier concern on this list that blamed concurrency. The access violation in flexicon FLExInit.py:64 (via the live flex fixture at test_034_standalone_preview_live.py:114) reproduces on a SOLO run with nothing else in flight, so concurrency is not the established cause. What is established: tests/integration emits that native fault and then usually HANGS (~23s CPU over 40+ min = blocked, not slow); three runs had to be killed; and a run killed mid-flight leaves a summary-less output file that grep scores as 0 failures, which is a trap - never treat a missing summary line as a pass. Only tests/unit (16s, no live FLEx) is a usable regression gate. Aggravating but unproven factor: 6 flextoolsmcp servers held live COM handles throughout.",
+      "step": "implement"
     }
   ],
   "expectations": [
@@ -318,6 +391,53 @@
   "step_summaries": {
     "tasks": {
       "summary": "85 tasks in 9 phases (Setup, Foundational, then 6 story phases ordered by verifiability -- US2 census first as the acceptance instrument, then US1, US4 || US5a, US3, US5b -- plus Polish); waves serialized on categories.py and models.py; 2 hard external gates (035 roster append, 037 landing)"
+    }
+  },
+  "currentTask": "T006",
+  "task_summaries": {
+    "T001": {
+      "status": "DONE",
+      "did": "Created code worktree ../GramTrans-038-transfer-fidelity-gaps on new branch 038-transfer-fidelity-gaps cut from main (b4fcd29), which already carries the merged 037 work",
+      "files": [
+        "(git worktree)"
+      ]
+    },
+    "T002": {
+      "status": "DONE",
+      "did": "Verified flexicon floor: editable install was STALE (tree 4.5.2, metadata 4.4.1); reinstalled to 4.5.2, confirmed non-site-packages resolution and the 037 NaturalClassOperations Get/ApplySyncableProperties surface; corrected quickstart floor 4.4.1->4.5.2 and recorded the 4.5.0/4.5.1/4.5.2 discrepancy without touching 037-claimed pyproject.toml or CLAUDE.md",
+      "files": [
+        "specs/038-transfer-fidelity-gaps/quickstart.md"
+      ]
+    },
+    "T003": {
+      "status": "DONE",
+      "did": "Created scratchpad/038_census/ in the worktree and confirmed it is git-ignored via .gitignore:117 scratchpad/",
+      "files": [
+        "scratchpad/038_census/"
+      ]
+    },
+    "T004": {
+      "status": "DONE",
+      "did": "Acquired lockout claims (team transfer-fidelity-gaps-038, session be0d143d, ttl 480m) on the MAIN-worktree paths of Lib/{categories,transfer,models,report,preview}.py; verified no live conflict against all five of 037's absolute worktree paths -- registry is empty, 037's claims expired when it merged",
+      "files": [
+        "specs/038-transfer-fidelity-gaps/journal/T004-lockout-claims.md"
+      ]
+    },
+    "T005": {
+      "status": "DONE",
+      "did": "Land-order rebase: 037 was a no-op (branch cut from main b4fcd29 which already contains merge a824b8d); merged 038-affix-fidelity 18c0ece with NO textual conflict despite the predicted @@ -439/@@ -442 collision in execute(); verified both sides coexist -- LeafExecutionFailure/leaf_execution_failures/leaf_failed (037) and _strip_ref_fields + FR-333 subpass (038-affix). Merge commit fa47bdd",
+      "files": [
+        "src/gramtrans/Lib/transfer.py",
+        "src/gramtrans/Lib/categories.py",
+        "tests/unit/test_038_affix_fidelity.py"
+      ]
+    },
+    "T006": {
+      "status": "DONE",
+      "did": "Baseline established on rebased branch fa47bdd: tests/unit failure sets are BYTE-IDENTICAL to main (27 failed both sides), branch passes 2568 vs main 2559 (+9 from 038-affix new tests) -- merge introduced zero regressions. Baseline is stable but NOT green; T006's green premise is unachievable. tests/integration hangs after a native access violation in FLExInitialize and cannot serve as a gate.",
+      "files": [
+        "specs/038-transfer-fidelity-gaps/journal/T006-baseline.md"
+      ]
     }
   }
 }
