@@ -21,6 +21,7 @@ _log = logging.getLogger(__name__)
 if __package__:
     from .models import (
         CategoryScope,
+        ClosureEdge,
         CreateDefinitionAction,
         ExcludedLossy,
         GrammarCategory,
@@ -38,6 +39,7 @@ else:
     from ws_mapping import to_ws_map_dict  # type: ignore
     from models import (
         CategoryScope,
+        ClosureEdge,
         CreateDefinitionAction,
         ExcludedLossy,
         GrammarCategory,
@@ -110,6 +112,143 @@ def _overwrite_reference_decisions(owner_class, owner_guid, src_obj, target,
 # ============================================================================
 # Public API
 # ============================================================================
+
+
+# ============================================================================
+# Feature 038 (FR-014, FR-015, FR-018) -- dependency-closure materialisation
+# ============================================================================
+
+
+def _closure_kind_lookup(registry: dict) -> dict:
+    """Map ``(dependent_category, dependency_category)`` to the registry row
+    that authorises that edge.
+
+    The walk hands back refs, not relationship names, so materialising a
+    `ClosureEdge` means recovering which `DependencyKind` authorised each
+    ref. The registry is the only thing that knows, and it is also the only
+    thing that may authorise an edge at all (FR-018).
+
+    An ambiguous pair -- two registered kinds claiming the same
+    (dependent, dependency) category pair -- raises. Guessing which kind
+    produced an edge would put an unaudited relationship into a plan under
+    another relationship's `verified_by`, which is exactly the substitution
+    FR-018 exists to prevent.
+    """
+    lookup: dict = {}
+    for kind, entry in (registry or {}).items():
+        src_cat = entry.get("category")
+        dep_cat = entry.get("dependency_category")
+        key = (src_cat, dep_cat)
+        if key in lookup and lookup[key][0] is not kind:
+            raise ValueError(
+                "Feature 038 FR-018: closure registry is ambiguous -- "
+                + repr(lookup[key][0]) + " and " + repr(kind) + " both claim "
+                "the category pair " + repr(key) + ". An edge whose "
+                "DependencyKind cannot be determined must not reach a plan."
+            )
+        lookup[key] = (
+            kind,
+            bool(entry.get("verified", True)),
+            entry.get("verified_by", ""),
+        )
+    return lookup
+
+
+def _materialise_closure_edges(visit_order, pulled_in_by, registry) -> tuple:
+    """Turn `closure.walk`'s `(visit_order, pulled_in_by)` into `ClosureEdge`s.
+
+    FR-018 gate: this RAISES on any edge whose `verified` is False rather
+    than planning from it. An unverified dependency edge that silently
+    changes what gets transferred is the failure mode FR-018 exists to
+    prevent, so it must fail loudly at plan time -- before Move writes
+    anything -- not degrade to a warning nobody reads.
+
+    With `CLOSURE_EDGES_VERIFIED` empty (its shipped state) the walk pulls
+    nothing in, every ref is a seed with no parents, and this returns `()`:
+    a no-op by construction.
+    """
+    lookup = _closure_kind_lookup(registry)
+    edges = []
+    seeds = {ref for ref in visit_order if not pulled_in_by.get(ref)}
+    for ref in visit_order:
+        parents = pulled_in_by.get(ref) or ()
+        for parent in parents:
+            key = (parent[0], ref[0])
+            row = lookup.get(key) or lookup.get((parent[0], None))
+            if row is None:
+                # The walk cannot produce an edge no registry row authorised
+                # -- closure_dependencies_for() only ever calls registered
+                # producers. Reaching here means the registry changed under
+                # us mid-walk, which is a harness error, not a data case.
+                raise ValueError(
+                    "Feature 038 FR-018: closure produced an edge "
+                    + repr(parent) + " -> " + repr(ref) + " that no registry "
+                    "entry authorises. Every edge must name the relationship "
+                    "that admitted it."
+                )
+            kind, verified, verified_by = row
+            if not verified:
+                raise ValueError(
+                    "Feature 038 FR-018: refusing to build a plan from the "
+                    "UNVERIFIED closure edge " + repr(parent) + " -> "
+                    + repr(ref) + " (" + repr(kind) + "). Each dependency "
+                    "relationship must be verified on its own evidence "
+                    "before it may influence a plan."
+                )
+            edges.append(ClosureEdge(
+                dependent=parent,
+                dependency=ref,
+                kind=kind,
+                verified=True,
+                origin="chosen" if ref in seeds else "pulled_in",
+                verified_by=verified_by,
+            ))
+    return tuple(edges)
+
+
+def _walk_verified_closure(context, selection, actions, overwrites) -> tuple:
+    """Run the verified-edge closure walk over what the plan already decided.
+
+    Seeds are the items the plan is transferring -- the user's actual
+    choices -- so `closure.walk`'s seed semantics hold: a directly selected
+    item is `origin="chosen"` and is never reported as pulled in by
+    something else.
+
+    Fail-soft on wiring problems (a duck-typed test double without a real
+    source handle) but NEVER on an FR-018 violation: a ValueError raised by
+    the gate below propagates, because that is the whole point of the gate.
+    """
+    if __package__:
+        from . import categories as _categories
+        from . import closure as _closure
+    else:  # pragma: no cover - flat sys.path (FLExTools) import shape
+        import categories as _categories  # type: ignore
+        import closure as _closure  # type: ignore
+
+    registry = getattr(_categories, "CLOSURE_EDGES_VERIFIED", {}) or {}
+    if not registry:
+        # Nothing is verified, so nothing may influence the plan. Skip the
+        # walk entirely rather than doing work whose result must be empty.
+        _log.debug(
+            "build_run_plan: closure registry empty -- no dependency edge is "
+            "verified (FR-018); closure contributes nothing to this plan"
+        )
+        return ()
+
+    seeds = []
+    for item in list(actions) + list(overwrites):
+        ref = (item.category, item.source_guid)
+        if ref not in seeds:
+            seeds.append(ref)
+
+    dep_fn = _categories.closure_dependencies_for(context, selection)
+    visit_order, pulled_in_by = _closure.walk(seeds, dep_fn)
+    # topological() is called for its ordering contract (dependencies before
+    # dependents); the order itself is consumed by the executor, while the
+    # edges below are what the plan and report carry.
+    _closure.topological(visit_order, pulled_in_by)
+    return _materialise_closure_edges(visit_order, pulled_in_by, registry)
+
 
 def build_run_plan(
     context: RunContext,
@@ -447,10 +586,18 @@ def build_run_plan(
         _log.debug("build_run_plan: TEXTS on; plan_texts produced %d text plan(s)",
                    len(_text_plans))
 
+    # Feature 038 (FR-014/FR-015/FR-018): materialise the verified-edge
+    # closure. A no-op while CLOSURE_EDGES_VERIFIED is empty; raises rather
+    # than planning from an unverified edge once it is not.
+    _closure_edges = _walk_verified_closure(
+        context, selection, actions, overwrites
+    )
+
     _log.debug(
         "build_run_plan: done  actions=%d skips=%d overwrites=%d excluded_lossy=%d "
-        "dropped_items=%d",
+        "dropped_items=%d closure_edges=%d",
         len(actions), len(skips), len(overwrites), len(excluded_lossy), len(_dropped),
+        len(_closure_edges),
     )
     return RunPlan(
         context=context,
@@ -475,6 +622,9 @@ def build_run_plan(
         # (Move already surfaces `_dropped` via transfer.execute's
         # extra_dropped_items -> RunReport wiring).
         dropped_items=tuple(_dropped),
+        # Feature 038 (FR-014/FR-015): the verified dependency-closure edges.
+        # Empty by construction while CLOSURE_EDGES_VERIFIED ships empty.
+        closure_edges=_closure_edges,
         # Feature 026 (T010): per-text transfer plans consumed by transfer.py's
         # TEXTS apply hook. Empty tuple when TEXTS is not selected.
         text_plans=tuple(_text_plans),
