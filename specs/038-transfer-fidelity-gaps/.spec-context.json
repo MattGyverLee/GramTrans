@@ -1,0 +1,16 @@
+{
+  "workflow": "speckit",
+  "specName": "Transfer Fidelity Gaps",
+  "branch": "main",
+  "currentStep": "specify",
+  "status": "specified",
+  "history": [
+    {
+      "step": "specify",
+      "substep": null,
+      "kind": "start",
+      "by": "extension",
+      "at": "2026-08-19T01:03:41.334Z"
+    }
+  ]
+}
