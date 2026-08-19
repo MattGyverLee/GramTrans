@@ -1495,15 +1495,35 @@ class TestCappedVerdictIsVisibleInRenderedOutput:
 
     def test_the_cli_gate_announces_a_capped_pass(self, tmp_path, capsys):
         """The release-gate surface. A pass that only happened because of the
-        subtraction basis has to say so next to its exit 0."""
+        subtraction basis must not exit 0 (T024b).
+
+        Measured before T024b: both live sanity pairs reported
+        `CENSUS_ACCOUNTED` / exit 0 / `passed=True` while carrying 44-47 failing
+        rows and 74,157 units of unexplained shortfall. The cap was behaving as
+        specified and the headline still said success, so a caller keying on
+        exit 0 -- which is every CI script -- credited a catastrophically
+        incomplete transfer. The verdict TOKEN is deliberately unchanged; what
+        changed is that exit 0 now means "nothing was lost" and nothing else.
+        """
         artifact = gross_basis_artifact()
         path = write_artifact(tmp_path, artifact, "capped.json")
         code = cli_exit(["gate", "--artifact", str(path)])
         out = capsys.readouterr().out
-        assert code == 0
+        assert code == census_cli.CAPPED_PASS_EXIT_CODE
+        assert code != 0, "a capped pass must never be readable as success"
         assert "verdict " + GROSS_BASIS_VERDICT_CAP in out
+        assert "CAPPED" in out
         for note in gross_basis_cap_notes(artifact):
             assert note in out, "the gate passed a capped census silently"
+
+    def test_the_capped_exit_code_is_not_a_verdict_code(self):
+        """`CAPPED_PASS_EXIT_CODE` must not collide with section 9's table.
+
+        A non-verdict outcome that borrows a verdict's code is indistinguishable
+        from that verdict to every caller -- 3 would read as DUPLICATE_IDENTITY.
+        """
+        assert census_cli.CAPPED_PASS_EXIT_CODE not in set(
+            VERDICT_EXIT_CODES.values())
 
     def test_the_cli_gate_prints_no_notes_for_a_clean_census(self, tmp_path,
                                                              capsys):
@@ -1532,8 +1552,14 @@ class TestCappedVerdictIsVisibleInRenderedOutput:
         assert (recompute_verdict(absent),
                 gate_artifact(absent).exit_code) == before
 
+        # The CLI's code is compared against the CLI's own code on the SAME
+        # artifact with its notes intact -- not against the library's, which
+        # since T024b legitimately differs (the capped-pass code is a property
+        # of the process outcome, not of the document).
+        with_notes = write_artifact(tmp_path, artifact, "with-notes.json")
+        cli_before = cli_exit(["gate", "--artifact", str(with_notes)])
         path = write_artifact(tmp_path, absent, "no-notes.json")
-        assert cli_exit(["gate", "--artifact", str(path)]) == before[1]
+        assert cli_exit(["gate", "--artifact", str(path)]) == cli_before
         # ...and the cap is STILL announced, because the accessor derives the
         # sentence from the basis instead of reading the array back.
         assert "CAPPED" in render_census_section(absent)

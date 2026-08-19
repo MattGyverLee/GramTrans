@@ -118,6 +118,60 @@ def _build_from_plan(cls, plan: RunPlan, mode: RunMode,
             }
         return per_category[cat]
 
+    # T024d-a: per-LCM-class tally of destination objects that already existed
+    # and were matched to a source object -- the census's
+    # `starter_matched_to_source`. See `RunReport.matched_by_class` for why this
+    # is keyed by object class rather than by category, and
+    # `matched_class_is_complete` for what the unattributed bucket costs.
+    matched_by_class: dict = {}
+    matches_unattributed: dict = {}
+
+    def _matched_class(obj):
+        """The LCM class name for a matched item, or None when unattributable.
+
+        Only the two AUTHORITATIVE sources are consulted. There is deliberately
+        no fallback to a category->class guess: `GrammarCategory` is not 1:1
+        with object class for the affix and MSA categories, so a guess would
+        credit the wrong census row -- and a wrongly-credited match subtracts
+        the wrong number from the wrong class. Returning None routes the count
+        to `matches_unattributed`, which withholds the `baseline_matched` basis
+        instead of asserting a number nothing supports.
+        """
+        basis = getattr(obj, "match_basis", None)
+        if basis is not None and getattr(basis, "object_class", ""):
+            return basis.object_class
+        enrichment = getattr(obj, "enrichment", None)
+        if enrichment is not None and getattr(enrichment, "object_class", ""):
+            return enrichment.object_class
+        return None
+
+    def _count_matched(obj, category) -> None:
+        """Tally one match onto a pre-existing destination object."""
+        object_class = _matched_class(obj)
+        if object_class is None:
+            matches_unattributed[category] = (
+                matches_unattributed.get(category, 0) + 1
+            )
+        else:
+            matched_by_class[object_class] = (
+                matched_by_class.get(object_class, 0) + 1
+            )
+
+    def _action_matched_existing(action) -> bool:
+        """True when an ADD action nonetheless landed on a destination object
+        that already existed -- which is what a natural-key match on a starter
+        object IS (FR-006). `PlannedAction.match_basis` is None for a genuinely
+        brand-new create, so the default is correctly "not a match"; a record
+        naming a concrete `target_guid` with a real basis is the evidence that
+        an existing object was claimed.
+        """
+        basis = getattr(action, "match_basis", None)
+        if basis is None:
+            return False
+        if getattr(basis, "basis", None) is MatchBasis.NONE:
+            return False
+        return bool(getattr(basis, "target_guid", ""))
+
     def _count_substitution(bucket, obj) -> None:
         """Feature 038 (FR-006): tally objects matched by a roster-admitted
         NATURAL KEY rather than by GUID. Counted from the `match_basis`
@@ -132,6 +186,11 @@ def _build_from_plan(cls, plan: RunPlan, mode: RunMode,
         b = _bucket(action.category)
         b["added"] += 1
         _count_substitution(b, action)
+        # T024d-a: an ADD is normally a create and contributes nothing to the
+        # matched tally; a natural-key match on a starter object is the
+        # exception, and it is exactly the case the census needs counted.
+        if _action_matched_existing(action):
+            _count_matched(action, action.category)
         # plan.actions is heterogeneous: PlannedAction has `pulled_in_by`,
         # but CreateDefinitionAction (schema-level custom-field creates) does
         # not.  Tolerate its absence the same way the overwrites loop below does.
@@ -158,6 +217,11 @@ def _build_from_plan(cls, plan: RunPlan, mode: RunMode,
         if getattr(ow, "pulled_in_by", ()):
             b["closure_pulled_in"] += 1
         _count_substitution(b, ow)
+        # T024d-a: an OVERWRITE is by definition a write onto a destination
+        # object that already existed, so every one of them is a match --
+        # whether it was found by GUID, by identity remap, by fingerprint, or
+        # by natural key.
+        _count_matched(ow, ow.category)
 
     # Phase 2 (T030): account for INTERACTIVE_SKIP records emitted by
     # _apply_merge_decisions during execute().  These are not in
@@ -263,6 +327,14 @@ def _build_from_plan(cls, plan: RunPlan, mode: RunMode,
         process_rules=tuple(getattr(plan, "process_rules", ()))
         + tuple(extra_process_rules),
         census=census,
+        # T024d-a: the per-class matched tallies the census consumes as
+        # `starter_matched_to_source`. Sorted so the snapshot diffs
+        # deterministically; empty on any plan whose matcher has not run, which
+        # keeps `baseline_matched` correctly unreachable until it has.
+        matched_by_class=dict(sorted(matched_by_class.items())),
+        matches_unattributed=dict(
+            sorted(matches_unattributed.items(), key=lambda kv: kv[0].value)
+        ),
     )
 
 
@@ -1038,6 +1110,37 @@ def _to_snapshot_json(self) -> str:
             "counterpart existed; weaker than an identity (GUID) match"
         )
         payload["identity_substitution"] = identity_substitution
+
+    # T024d-a: the per-object-class matched tally the census reads as
+    # `starter_matched_to_source`. Emitted with its own completeness flag so a
+    # consumer can never read an absent class as a zero -- the distinction
+    # `census.unmatched_starter` insists on, and the whole reason the
+    # `baseline_matched` basis is withholdable.
+    if self.matched_by_class or self.matches_unattributed:
+        matched_block = {
+            "by_object_class": dict(sorted(self.matched_by_class.items())),
+            "total": self.matched_to_source_total,
+            "complete": not self.matches_unattributed,
+            "note": (
+                "destination objects that already existed and were matched to "
+                "a source object; an ABSENT class is not a zero -- it is no "
+                "evidence the matcher evaluated that class"
+            ),
+        }
+        if self.matches_unattributed:
+            matched_block["unattributed_by_category"] = {
+                _enum_name(cat): n
+                for cat, n in sorted(
+                    self.matches_unattributed.items(), key=lambda kv: kv[0].value
+                )
+            }
+            matched_block["unattributed_note"] = (
+                "matches whose LCM object class could not be determined from a "
+                "match_basis or enrichment record; while any exist, every "
+                "per-class tally may be understated and no census row may use "
+                "the baseline_matched subtraction basis"
+            )
+        payload["matched_to_source"] = matched_block
 
     # FR-014 / FR-015: every materialised (dependency, dependent) pair.
     if self.closure_edges:

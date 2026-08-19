@@ -2703,6 +2703,27 @@ class RunReport:
     # reference, which is safe because this module runs under
     # `from __future__ import annotations`.
     census: Optional["FidelityCensus"] = None
+    # T024d-a: per-LCM-object-class tally of destination objects that ALREADY
+    # EXISTED and were matched to a source object. This is the quantity
+    # `census.unmatched_starter` subtracts (`starter_matched_to_source`), and
+    # it is the reason `starter_subtraction_basis` can ever be
+    # `baseline_matched` instead of `baseline_gross`.
+    #
+    # Keyed by LCM class name ("PhPhoneme"), NOT by GrammarCategory: every
+    # census row is keyed by object class, and the category->class mapping is
+    # not 1:1 for the affix and MSA categories, so a per-category tally cannot
+    # be attributed to a row without guessing. Only two sources on a plan item
+    # name a class authoritatively -- `MatchBasisRecord.object_class` and
+    # `EnrichmentRecord.object_class` -- and only those are read.
+    matched_by_class: dict = field(default_factory=dict)  # class name -> count
+    # T024d-a: matches onto an existing destination object whose LCM class
+    # could NOT be determined (neither a match_basis nor an enrichment record),
+    # keyed by GrammarCategory. Kept SEPARATE and never folded into
+    # `matched_by_class` so a consumer can distinguish "this class matched
+    # nothing" from "this class's tally may be understated". A census row must
+    # not claim the `baseline_matched` basis while its category carries
+    # unattributed matches -- see `matched_class_is_complete`.
+    matches_unattributed: dict = field(default_factory=dict)  # category -> count
 
     def __post_init__(self) -> None:
         # FR-018: sum of per_category[*].skipped must equal len(skips)
@@ -2739,6 +2760,50 @@ class RunReport:
                 f"{cat_not_reproducible_total} != number of "
                 f"Skip(NOT_REPRODUCIBLE)={skips_not_reproducible}"
             )
+        # T024d-a: the matched tallies have no records tuple of their own to
+        # reconcile against (there is deliberately no per-matched-object record
+        # -- that would be one record per object on a 200k-object run), so the
+        # two checks that ARE available are enforced instead. Both are real:
+        # every natural-key match and every enrichment lands on a destination
+        # object that already existed, so neither can exceed the total matched.
+        for name, tally in (
+            ("matched_by_class", self.matched_by_class),
+            ("matches_unattributed", self.matches_unattributed),
+        ):
+            for key, count in tally.items():
+                if not isinstance(count, int) or count < 0:
+                    raise ValueError(
+                        "Feature 038 accounting violation: "
+                        f"{name}[{key!r}]={count!r} -- a matched tally must be "
+                        "a non-negative int"
+                    )
+        # An EMPTY pair of tallies means UNMEASURED, not zero -- the same rule
+        # `census.unmatched_starter` applies to an absent baseline. Only
+        # `report.build_from_plan` populates these, and a RunReport may legally
+        # be built without it (this dataclass's own docstring sanctions direct
+        # construction in tests, and every pre-038 caller predates the tallies).
+        # Cross-checking an unmeasured tally would reject those valid reports and
+        # prove nothing, so the checks below apply only once there is something
+        # to check against.
+        if not self.matched_by_class and not self.matches_unattributed:
+            return
+        matched_total = self.matched_to_source_total
+        if self.identity_substituted > matched_total:
+            raise ValueError(
+                "Feature 038 accounting violation: "
+                f"identity_substituted={self.identity_substituted} exceeds "
+                f"total matched-to-source={matched_total} -- every natural-key "
+                "match is a match onto a destination object that already "
+                "existed, so it cannot outnumber them"
+            )
+        if len(self.enrichments) > matched_total:
+            raise ValueError(
+                "Feature 038 accounting violation: "
+                f"len(enrichments)={len(self.enrichments)} exceeds total "
+                f"matched-to-source={matched_total} -- an enrichment is an "
+                "add-only update to an object that already existed, so it "
+                "cannot outnumber the matches"
+            )
 
     @property
     def leaf_failed(self) -> int:
@@ -2764,6 +2829,36 @@ class RunReport:
         return sum(
             r.identity_substitution for r in self.per_category.values()
         )
+
+    @property
+    def matched_to_source_total(self) -> int:
+        """Every destination object this run matched to a source object,
+        attributed or not (T024d-a). The denominator the accounting invariants
+        above are checked against."""
+        return (
+            sum(self.matched_by_class.values())
+            + sum(self.matches_unattributed.values())
+        )
+
+    def matched_class_is_complete(self, object_class: str) -> bool:
+        """True when `matched_by_class[object_class]` may be trusted as the
+        COMPLETE matched tally for that class -- the precondition for a census
+        row using the `baseline_matched` subtraction basis (T024d-b).
+
+        False when the class is absent from the tally (no evidence the matcher
+        ever evaluated it -- a missing key is NOT a zero, per
+        `census.unmatched_starter`) or when ANY match in this run went
+        unattributed. An unattributed match cannot be proven to belong to some
+        other class, so while one exists every class's tally is potentially
+        understated, and understating `starter_matched_to_source` overstates
+        `unmatched_starter` -- which subtracts too much and manufactures a
+        shortfall on a lossless run. Refusing the stronger basis leaves the row
+        on `baseline_gross`, which is capped and advisory: wrong in the safe
+        direction.
+        """
+        if self.matches_unattributed:
+            return False
+        return object_class in self.matched_by_class
 
     @property
     def rules_not_reproduced(self) -> tuple:

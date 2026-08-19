@@ -94,6 +94,26 @@ USAGE_EXIT_CODE = 2
 #: census run for its predicate exits 0 WITH the predicate satisfied".
 PHASE_UNSATISFIED_EXIT_CODE = census.exit_code_for("COVERAGE_INCOMPLETE")
 
+#: T024b -- "the census passes, but only because 5.2's gross-basis cap turned a
+#: measured shortfall into accounting". NOT a pass and NOT a hard failure.
+#:
+#: Measured before this existed: both live sanity pairs reported
+#: `CENSUS_ACCOUNTED` / exit 0 / `passed=True` while carrying 44-47 failing rows
+#: and 74,157 units of unexplained shortfall. That is the cap behaving exactly as
+#: specified, and it is still an unsafe default for a release gate -- the headline
+#: said success on a catastrophically incomplete transfer, and the failing
+#: evidence surfaced only when the caller happened to pass `--phase`. Section 9's
+#: own comment says there is deliberately no verdict meaning "loss reported,
+#: review advisable, exit success"; a bare exit 0 here was one anyway.
+#:
+#: 8, not 3: codes 0-7 are all spoken for by the verdict table (3 is
+#: DUPLICATE_IDENTITY), and a non-verdict outcome must never borrow a verdict's
+#: code -- that is the drift `USAGE_EXIT_CODE`'s comment warns about. The verdict
+#: TOKEN is unchanged (`CENSUS_ACCOUNTED`): the artifact schema is
+#: `additionalProperties: false` and inventing a tenth token is forbidden, so this
+#: is a property of the process outcome, not of the document.
+CAPPED_PASS_EXIT_CODE = 8
+
 #: The two baseline kinds this CLI can capture. `NONE` is not capturable: an
 #: absent baseline is `StarterBaseline.missing()`, produced by finding no
 #: `--baseline`, never written to a file and claimed as a measurement.
@@ -682,16 +702,67 @@ def transfer_run_block(path: Path) -> dict:
     return block
 
 
-def _row_for_entry(entry, source_counts, destination_counts, baseline):
+def matched_by_class_from_report(path: Path) -> tuple:
+    """`(per_class, complete)` read from a run report's `matched_to_source`.
+
+    T024d-b. `per_class` maps LCM class name -> count of destination objects that
+    already existed and were matched to a source object; `complete` is False when
+    the run left any match unattributed, in which case NO class's tally may be
+    trusted (an unattributed match cannot be proven to belong elsewhere, so every
+    tally is potentially understated -- see `RunReport.matched_class_is_complete`).
+
+    A report with no `matched_to_source` key yields `({}, False)`. That is the
+    correct reading, not a degenerate one: 038's snapshot surface OMITS the block
+    when nothing matched, and an absent tally is NO EVIDENCE the matcher ran --
+    never a zero. Every row then stays on `baseline_gross`, which is exactly what
+    a pre-T024d report, or a build whose matcher has not landed, deserves.
+    """
+    data = _load_json(path, "run report")
+    block = data.get("matched_to_source")
+    if not isinstance(block, dict):
+        return {}, False
+    raw = block.get("by_object_class")
+    per_class = {}
+    if isinstance(raw, dict):
+        for name, count in raw.items():
+            if isinstance(name, str) and isinstance(count, int) and count >= 0:
+                per_class[name] = count
+    # `complete` is authoritative when the producer states it; fall back to the
+    # unattributed split so an older/hand-built block cannot claim completeness
+    # by omission.
+    complete = block.get("complete")
+    if not isinstance(complete, bool):
+        complete = not block.get("unattributed_by_category")
+    return per_class, bool(complete) and bool(per_class)
+
+
+def _row_for_entry(
+    entry, source_counts, destination_counts, baseline,
+    matched_by_class=None, matched_complete=False,
+):
     """One `(ClassCensusRow, emitter kwargs)` pair for one class-list entry.
 
-    THE SUBTRACTION BASIS IS NEVER `baseline_matched` HERE. 5.2 ties the
-    matched count to the run report ("baseline_gross ... used when no run
-    report is available"), and reading per-class matched tallies out of a run
-    report is T022's seam, not this one's. So a `run` today reports on the
-    gross basis, exactly as the contract's own fallback prescribes, and says so
-    on every row rather than guessing a matched count.
+    THE SUBTRACTION BASIS IS PER ROW, and `baseline_matched` is EARNED, not
+    assumed. 5.2 ties the matched count to the run report ("baseline_gross ...
+    used when no run report is available"), so a row reaches the stronger basis
+    only when all three hold:
+
+    1. there is a baseline count for this row, and
+    2. the run report carries a matched tally for THIS object class, and
+    3. the report attributed every match it made (`matched_complete`).
+
+    Anything else stays on `baseline_gross`. That is deliberately conservative:
+    understating `starter_matched_to_source` overstates `unmatched_starter`, which
+    subtracts too much and manufactures a shortfall on a lossless run -- the very
+    mis-report 5.2 exists to name. Being wrong in the capped, advisory direction
+    is recoverable; silently claiming a trustworthy answer is not.
+
+    On the matched basis `starter_excluded` becomes `unmatched_starter`
+    (baseline - matched) rather than the gross baseline, which is the whole point:
+    a starter object the transfer matched to a source object is NOT surplus and
+    must not be subtracted from the destination.
     """
+    matched_by_class = matched_by_class or {}
     measured = entry.in_class_list_via != "excluded_not_measurable"
     notes = []
     if measured:
@@ -719,9 +790,29 @@ def _row_for_entry(entry, source_counts, destination_counts, baseline):
         if entry.owning_feature_system is not None:
             notes.append(_A1_BASELINE_NOTE)
     else:
-        basis = "baseline_gross"
         source_of_baseline = "baseline_document"
-        starter_excluded = baseline_count
+        # T024d-b: the one path that can earn `baseline_matched`. `row_key` is
+        # deliberately NOT used for the tally lookup -- a run report tallies by
+        # LCM class, and an A1 split row's key is not a class -- so a split row
+        # never reaches the matched basis. Correct: the report cannot say which
+        # feature system a matched FsFeatStrucType belonged to.
+        matched = matched_by_class.get(entry.object_class)
+        if (
+            matched_complete
+            and matched is not None
+            and entry.owning_feature_system is None
+        ):
+            basis = "baseline_matched"
+            starter_excluded = census.unmatched_starter(baseline_count, matched)
+            notes.append(
+                "starter_matched_to_source=" + str(matched)
+                + " read from the run report; subtracting "
+                + str(starter_excluded) + " unmatched starter object(s) rather "
+                "than the gross baseline of " + str(baseline_count)
+            )
+        else:
+            basis = "baseline_gross"
+            starter_excluded = baseline_count
 
     reasons = ()
     out_of_scope = False
@@ -747,6 +838,11 @@ def _row_for_entry(entry, source_counts, destination_counts, baseline):
     }
     if baseline_count is not None:
         kwargs["starter_baseline_count"] = baseline_count
+    if basis == "baseline_matched":
+        # Emitted ONLY on the matched basis. On the gross basis the count is
+        # unknown, and writing a 0 there would be the "absent read as zero"
+        # error `census.unmatched_starter` refuses to make.
+        kwargs["starter_matched_to_source"] = matched_by_class[entry.object_class]
     return row, kwargs
 
 
@@ -836,12 +932,19 @@ def census_run(
     source_counts = dict(source_reading.counts.counts)
     destination_counts = dict(destination_reading.counts.counts)
 
+    # T024d-b: per-class matched tallies, when the run report carries them.
+    matched_by_class, matched_complete = (
+        matched_by_class_from_report(run_report)
+        if run_report is not None else ({}, False)
+    )
+
     rows = []
     for entry in class_list.entries:
         owner = entry.owning_feature_system
         if owner is None:
             row, kwargs = _row_for_entry(
-                entry, source_counts, destination_counts, baseline)
+                entry, source_counts, destination_counts, baseline,
+                matched_by_class, matched_complete)
             duplicate_report = duplicates.get(entry.object_class)
         else:
             row, kwargs = _row_for_entry(
@@ -851,12 +954,25 @@ def census_run(
                 {entry.object_class:
                     destination_split.get(entry.object_class, {}).get(owner, 0)},
                 baseline,
+                matched_by_class, matched_complete,
             )
             # No natural-key definition covers a split class, and a whole-class
             # duplicate report attached to one half would double-count it.
             duplicate_report = None
         rows.append(census.class_row_artifact(
             row, entry, duplicates=duplicate_report, **kwargs))
+
+    if not baseline.is_missing and run_report is not None and not matched_complete:
+        # T024d-b: the run report was supplied but cannot lift the cap. Said out
+        # loud, because before this task the cap's remediation advice ("supply the
+        # run report") was unfollowable and the operator had no way to tell.
+        _warn("--run-report carries no usable per-class matched tally"
+              + (" (every match it made went unattributed, so no class's tally "
+                 "can be trusted)" if matched_by_class else
+                 " (no `matched_to_source` block -- the report predates it, or "
+                 "the run matched nothing)")
+              + ": every row stays on the `baseline_gross` basis and its "
+                "shortfalls remain advisory (fidelity-census.md 5.2).")
 
     if not baseline.is_missing and run_report is None:
         # 5.2 again, said out loud: with no run report the matched count is
@@ -1029,6 +1145,15 @@ def _print_gate(artifact: dict, outcome, invariant_failures) -> int:
         code = (census.exit_code_for("CENSUS_ERROR") if invariant_failures
                 else PHASE_UNSATISFIED_EXIT_CODE)
 
+    # T024b: a pass that only holds because the gross-basis cap suppressed a
+    # measured shortfall must not exit 0. Keyed off the SUPPRESSIONS, not off the
+    # basis: a gross-basis run that suppressed nothing hid nothing, and flipping
+    # it to non-zero would cry wolf on every honest run. Same accessor the cap
+    # and its notes use, so the three cannot disagree about which rows are capped.
+    capped = census.gross_basis_suppressions(artifact) if code == 0 else ()
+    if capped:
+        code = CAPPED_PASS_EXIT_CODE
+
     _info("census " + str(artifact.get("census_id", "?"))
           + " generated " + str(artifact.get("generated_at", "?")))
     _info("projects " + repr((projects.get("source") or {}).get("name", "?"))
@@ -1089,7 +1214,19 @@ def _print_gate(artifact: dict, outcome, invariant_failures) -> int:
         "verdict " + outcome.verdict + " (" + outcome.human_label
         + ")  exit " + str(code)
     )
-    if outcome.passed:
+    if capped:
+        # T024b: never [OK]. The gate's own conclusion is unchanged and is still
+        # printed verbatim -- what changes is that the operator and the exit code
+        # both learn the pass is CAPPED. `_warn`, not `_fail`: this is not a
+        # refusal, it is a refusal to call it success.
+        total = sum(count for _, _, count in capped)
+        _warn(str(len(capped)) + " capped row(s) totalling " + str(total)
+              + " unexplained object(s) were turned into accounting by the "
+                "gross-basis cap -- this is NOT a clean result. Supply a run "
+                "report carrying per-class matched tallies for a trustworthy "
+                "answer (fidelity-census.md 5.2).")
+        _warn(headline + "  [CAPPED -- advisory, not a pass]")
+    elif outcome.passed:
         _ok(headline)
     else:
         _fail(headline)
