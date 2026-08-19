@@ -165,7 +165,7 @@ LCM type (Principle II, data-model.md:3-6).
 **--> Wait for the census engine, then (different files):**
 
 - [ ] **T021** [P] [US2] Add the CLI with the four subcommands `capture-baseline` / `run` / `gate` / `diff` and the quickstart flag surface, invoked as `python -m gramtrans.census_cli`. **Resolve the recorded artifact conflict in favour of R2 for location and quickstart for surface**: R2 (binding, research.md:76-83) puts the instrument in `Lib/census.py` + `census_cli.py` and explicitly rejects `debug/audit_object_census.py` because "a release gate cannot live in unsupported scratch" (SC-009), while quickstart still names the `debug/` script. Use `--destination`, not R2's `--target`, because "destination" is the schema and contract vocabulary throughout. **No `pyproject.toml` change** - that file is claimed by 037 - `src/gramtrans/census_cli.py`
-- [ ] **T022** [P] [US2] Attach the census to the run report: machine-readable next to `to_snapshot_json`, human-readable table next to `render_text_summary` - `src/gramtrans/Lib/report.py`
+- [x] **T022** [P] [US2] Attach the census to the run report: machine-readable next to `to_snapshot_json`, human-readable table next to `render_text_summary` - `src/gramtrans/Lib/report.py`
 
 **--> Wait for T021, then:**
 
