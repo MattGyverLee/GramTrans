@@ -8350,6 +8350,100 @@ helper — their skip branch in _phonology_simple_plan is unchanged.
 """
 
 
+def _natural_key_object_class(piece, category):
+    """The LCM class name to key `piece` under, or "" when it is not keyable.
+
+    Deliberately narrow. `PhNCSegments` and `PhNCFeatures` are separate roster
+    entries that must NEVER match each other, so the natural class is resolved
+    from the object's own exact class rather than from its category -- a
+    category-level answer would collapse the two and undo the subclass
+    restriction at the point it matters most (they share one `PhPhonData`
+    list, so they are each other's nearest neighbours).
+    """
+    if category is GrammarCategory.PHONEMES:
+        return "PhPhoneme"
+    if category is GrammarCategory.NATURAL_CLASSES:
+        obj = _unwrap_lcm(piece)
+        name = getattr(obj, "ClassName", None) or getattr(piece, "ClassName", None)
+        name = str(name) if name else ""
+        return name if name in ("PhNCSegments", "PhNCFeatures") else ""
+    return ""
+
+
+def _plan_natural_key_match(piece, category, context, object_class,
+                            target_iter):
+    """Step 2 at PLAN time: a roster-admitted natural-key match, or None.
+
+    Returns a `PlannedOverwrite` carrying the `MatchBasisRecord`, so that
+
+      * the executor RESOLVES the matched destination instead of creating a
+        second object (T036 consumes `match_basis`), and
+      * the run report can say the match was by NAME and not by GUID
+        (FR-006), which `Skip` cannot carry -- it has no `match_basis` field.
+
+    `write_mode="merge"` mirrors what `_plan_gold_reserved_edit` already emits
+    on a divergence: the non-destructive UPDATE path that fills empty target
+    fields and updates diverged ones, and never blanks a populated target from
+    an empty source.
+
+    WHY THIS EXISTS. T032/T033 gave the fallback to `_resolve_target_pos`, and
+    that is `PartOfSpeech` ONLY. Phonemes and natural classes plan through
+    `_phonology_simple_plan`, which checked the GUID and went straight to a
+    create. Measured live on `Ejagham Mini` -> a freshly created target: 23
+    starter phonemes + 32 created = 55, with 21 duplicate names, and the census
+    returned DUPLICATE_IDENTITY. That is SC-002's defect exactly, and it
+    survived every unit test because the machinery was present and simply
+    never called on this path.
+
+    Returns None -- never raises -- for every reason a key cannot decide.
+    `NaturalKeyAmbiguityError` propagates by design.
+    """
+    if not object_class:
+        return None
+    if _matcher.natural_key_binding_for(object_class) is None:
+        return None
+    if _matcher.natural_key_roster_entry_for(object_class) is None:
+        return None
+
+    source = getattr(context, "source_handle", None)
+    target = getattr(context, "target_handle", None)
+    if source is None or target is None:
+        return None
+    if not _guid_str_from(piece):
+        return None
+
+    try:
+        candidates = [_unwrap_lcm(c) for c in (target_iter or ())]
+    except Exception:  # noqa: BLE001 -- an unenumerable scope is "no candidates"
+        return None
+
+    decision = _matcher.resolve_match(
+        object_class,
+        _unwrap_lcm(piece),
+        candidates,
+        ws_handles=_matcher.ws_handles_for(target),
+        source_ws_handles=_matcher.ws_handles_for(source),
+    )
+    if decision.record.basis is not _MatchBasis.NATURAL_KEY:
+        return None
+
+    src_guid = _guid_str_from(piece)
+    return PlannedOverwrite(
+        category=category,
+        source_guid=src_guid,
+        target_guid=decision.record.target_guid,
+        summary=(
+            "%s %s... matched an existing destination object by NAME (%r) "
+            "rather than by GUID -- reusing it instead of creating a second "
+            "one (FR-002 / SC-002)"
+            % (object_class, src_guid[:8], decision.record.key_value)
+        ),
+        match_via="natural_key",
+        write_mode="merge",
+        match_basis=decision.record,
+    )
+
+
 def _phonology_simple_plan(piece, context, category, ops_attr, label):
     """Shared plan_action helper for the 5 simple phonology categories.
 
@@ -8388,7 +8482,11 @@ def _phonology_simple_plan(piece, context, category, ops_attr, label):
     target = context.target_handle
     if target is not None and hasattr(target, ops_attr):
         try:
-            target_iter = getattr(target, ops_attr).GetAll()
+            # Materialised: it is consumed twice below (the GUID scan, then
+            # the natural-key candidate scope), and a one-shot iterator would
+            # silently present an EMPTY candidate list to the second consumer
+            # -- which reads as "no match" and creates a duplicate.
+            target_iter = list(getattr(target, ops_attr).GetAll())
         except (AttributeError, TypeError):
             target_iter = ()
         if _target_has_guid(target_iter, src_guid):
@@ -8398,6 +8496,15 @@ def _phonology_simple_plan(piece, context, category, ops_attr, label):
                 reason=SkipReason.ALREADY_PRESENT_BY_GUID,
                 detail=f"{label} GUID {src_guid[:8]}... already present in target.",
             )
+        # Identity found nothing. Step 2: the roster-admitted natural key,
+        # BEFORE emitting a create -- otherwise a starter object the source
+        # also has is duplicated rather than reused.
+        matched = _plan_natural_key_match(
+            piece, category, context,
+            _natural_key_object_class(piece, category), target_iter,
+        )
+        if matched is not None:
+            return matched
     return PlannedAction(
         category=category,
         source_guid=src_guid,
