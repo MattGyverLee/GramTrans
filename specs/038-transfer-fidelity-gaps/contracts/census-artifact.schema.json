@@ -362,6 +362,11 @@
           "type": "string",
           "$comment": "LCM class name WITHOUT the 'I' interface prefix, matching object-inventory.md convention: 'LexEntry', not 'ILexEntry'."
         },
+        "owning_feature_system": {
+          "type": "string",
+          "enum": ["LangProject.MsFeatureSystemOA", "LangProject.PhFeatureSystemOA"],
+          "$comment": "OPTIONAL, and present only on a row split by owning feature system (Amendment A1, fidelity-census.md:650-673). A FieldWorks project has TWO feature systems and both own FsFeatStrucType, so a single summed row is ambiguous: a shortfall in one system is masked by a surplus in the other, which is the same masking defect section 6 rule 2 exists to prevent for duplicate identity. A1 requires the row to CARRY THE OWNER so the two parts are never summed into one gate decision, and this property is that carrier -- the alternative, encoding the owner inside the 'class' string, would put an unvalidated convention where a class name belongs and force every consumer joining on 'class' to prefix-match it. 'class' therefore stays the plain LCM class name on both parts, and the two parts are distinguished by this property alone. Absent on every ordinary row; the same requirement applies to any other class reachable from both feature systems."
+        },
         "engine_can_create": {
           "type": "boolean",
           "$comment": "true when the class appears in object-inventory.md TABLE 1 (or in census_additions as a class the engine SHOULD create). false for the referenced-only classes the inventory records as never created by any path: LexRefType, LexAppendix, PhBdryMarker."
