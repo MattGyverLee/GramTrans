@@ -27,9 +27,11 @@ from typing import Callable, Dict, FrozenSet, Iterable, List, Optional, Set, Tup
 from gramtrans.Lib.ws_fonts import LabelRun, WsRole, runs_to_text
 
 if __package__:
-    from .models import CategoryScope, GrammarCategory, Selection, SimilarCandidate
+    from .models import (CategoryScope, DroppedItemRecord, GrammarCategory,
+                         Selection, SimilarCandidate)
 else:
-    from models import CategoryScope, GrammarCategory, Selection, SimilarCandidate  # type: ignore
+    from models import (CategoryScope, DroppedItemRecord, GrammarCategory,  # type: ignore
+                        Selection, SimilarCandidate)
 
 
 # ---------------------------------------------------------------------------
@@ -2492,6 +2494,20 @@ def _phon_is_empty(obj, *, phoneme: bool, category=None) -> bool:
     return True
 
 
+#: T024f -- the two `_phon_is_empty` drops are NOT the same event and must not
+#: share a token. The SOURCE drop removes an item from the inventory, so it is
+#: never previewed and never transferred; the TARGET drop only removes it from
+#: the pool of objects a source row may MATCH against, which changes a row's
+#: status (`in_target` / `similar` / `new`) but transfers nothing away. Reading
+#: one as the other would either overstate a loss or hide one.
+PHON_EMPTY_SOURCE_DROP_REASON = (
+    "phonology item empty in all fields -- excluded from the source inventory"
+)
+PHON_EMPTY_TARGET_CANDIDATE_REASON = (
+    "phonology item empty in all fields -- not offered as a target match "
+    "candidate"
+)
+
 # The five user-facing phonology categories, in page display order, paired with
 # the flexicon Operations accessor attribute each enumerates.
 _PHON_CATEGORY_ACCESSORS = (
@@ -2550,6 +2566,15 @@ class PhonologyInventory:
     # rule_guid -> True when the rule is a type whose refs we do NOT traverse
     # (metathesis / reduplication) — KL-010-1 guard input.
     untraversed_rule_guids: FrozenSet[str] = field(default_factory=frozenset)
+    # T024f: every item `_phon_is_empty` skipped, on EITHER side, as ordinary
+    # 024 `DroppedItemRecord`s. Additive with an empty default, so a build that
+    # skips nothing is byte-identical to one from before this field existed --
+    # and a build that DOES skip something can no longer be mistaken for one
+    # that did not. The drop happens while the inventory is being enumerated,
+    # which is before any plan exists, so this is the earliest carrier the
+    # record can ride; `RunReport.dropped_items` is downstream of the plan and
+    # therefore cannot see it.
+    dropped_items: Tuple[DroppedItemRecord, ...] = ()
 
     def group_for(self, category) -> Optional[PhonologyCategoryGroup]:
         for g in self.groups:
@@ -2558,9 +2583,37 @@ class PhonologyInventory:
         return None
 
 
+def _phon_empty_drop_record(obj, *, accessor: str, label: str,
+                            phoneme: bool, side: str,
+                            reason: str) -> DroppedItemRecord:
+    """One 024 record for an item `_phon_is_empty` skipped (T024f).
+
+    `owner_guid` is deliberately empty: the owner here is a possibility LIST,
+    not an object with a GUID of its own, and `DroppedItemRecord` validates
+    only `owner_kind` / `field_name` / `reason` as non-empty.
+
+    `item_name` reads `_phon_name_text`, NOT `_phon_label`. `_phon_label` is
+    the UI renderer and substitutes placeholders -- "(unnamed phoneme)", the
+    guid prefix, "?" -- exactly in the case that reaches this predicate, so it
+    would stamp a fabricated name onto every record. An item that got here has
+    by construction no name to report, and "" is the honest answer; the GUID is
+    what identifies it.
+    """
+    return DroppedItemRecord(
+        owner_kind=side,
+        owner_guid="",
+        owner_label=label,
+        field_name=accessor,
+        item_name=_phon_name_text(obj, phoneme=phoneme),
+        item_guid=_phon_guid(obj),
+        reason=reason,
+    )
+
+
 def _phon_target_sets(target, accessor: str, *,
                       phoneme: bool = False,
                       category=None,
+                      dropped=None,
                       ) -> Tuple[Set[str], Set[str], Dict[str, str]]:
     """Return (guids, labels, label_to_guid) for one category in the target.
 
@@ -2585,7 +2638,15 @@ def _phon_target_sets(target, accessor: str, *,
     try:
         for obj in getattr(target, accessor).GetAll():
             if _phon_is_empty(obj, phoneme=phoneme, category=category):
-                continue  # dangling empty — never a match source
+                # T024f: dangling empty — never a match source. Recorded
+                # rather than dropped in silence; this removes a MATCH
+                # CANDIDATE, it does not remove anything from the transfer.
+                if dropped is not None:
+                    dropped.append(_phon_empty_drop_record(
+                        obj, accessor=accessor, label=accessor,
+                        phoneme=phoneme, side="PhonologyTarget",
+                        reason=PHON_EMPTY_TARGET_CANDIDATE_REASON))
+                continue
             g = _phon_guid(obj)
             guids.add(g)
             lbl = _phon_label(obj, phoneme=phoneme)
@@ -2704,10 +2765,13 @@ def build_phonology_inventory(source, target=None, *,
     groups: List[PhonologyCategoryGroup] = []
     guid_sets: Dict[object, Set[str]] = {}
     objs_by_cat: Dict[object, List[object]] = {}
+    # T024f: both `_phon_is_empty` skips below append here instead of vanishing.
+    dropped: List[DroppedItemRecord] = []
     for category, accessor, label in _PHON_CATEGORY_ACCESSORS:
         is_phoneme = category == GrammarCategory.PHONEMES
         tgt_guids, tgt_labels, tgt_label_to_guid = _phon_target_sets(
-            target, accessor, phoneme=is_phoneme, category=category)
+            target, accessor, phoneme=is_phoneme, category=category,
+            dropped=dropped)
         rows: List[PhonologyRow] = []
         cat_guids: Set[str] = set()
         objs: List[object] = []
@@ -2723,7 +2787,15 @@ def build_phonology_inventory(source, target=None, *,
                 if progress is not None:
                     progress.tick()
                 if _phon_is_empty(obj, phoneme=is_phoneme, category=category):
-                    continue  # empty in all fields — silently skip (FR: dangling)
+                    # T024f: empty in all fields (FR: dangling). This one DOES
+                    # remove the item from the transfer, so in a
+                    # `source - after` comparison it is otherwise
+                    # indistinguishable from a real loss -- record it.
+                    dropped.append(_phon_empty_drop_record(
+                        obj, accessor=accessor, label=label,
+                        phoneme=is_phoneme, side="PhonologySource",
+                        reason=PHON_EMPTY_SOURCE_DROP_REASON))
+                    continue
                 g = _phon_guid(obj)
                 cat_guids.add(g)
                 objs.append(obj)
@@ -2843,6 +2915,7 @@ def build_phonology_inventory(source, target=None, *,
         phoneme_referenced_feature_guids=phoneme_feats,
         has_rules=bool(rules),
         untraversed_rule_guids=frozenset(untraversed),
+        dropped_items=tuple(dropped),
     )
 
 
