@@ -856,6 +856,30 @@ def natural_key_binding_for(
     return NATURAL_KEY_BINDINGS.get(object_class)
 
 
+def ws_handles_for(handle) -> Dict[str, object]:
+    """`{ws_scope: writing-system handle}` for ONE project.
+
+    A scope missing from the mapping means the key is NOT COMPUTABLE for that
+    project. For `PhPhoneme` that is the case the roster names explicitly: the
+    pre-run writing-system mapping did not produce a source -> target default
+    vernacular, so the key cannot be evaluated and the object is reported. It
+    is never answered by falling back to a secondary writing system -- matching
+    a secondary vernacular would have fabricated 16 matches on `Yi Sichuan`
+    alone.
+
+    Defined HERE rather than in a caller because both the plan-time seam in
+    `preview.py` and the per-category planners in `categories.py` need it, and
+    two copies would be two chances to differ about which writing system a
+    class is keyed on.
+    """
+    handles = {}
+    for ws_scope in (_census.WS_SCOPE_VERNACULAR, _census.WS_SCOPE_ANALYSIS):
+        ws_handle = _census._ws_handle_for(handle, ws_scope)
+        if ws_handle is not None:
+            handles[ws_scope] = ws_handle
+    return handles
+
+
 def _guid_text(obj) -> str:
     """An object's GUID as a string, or "" when it has none."""
     if obj is None:

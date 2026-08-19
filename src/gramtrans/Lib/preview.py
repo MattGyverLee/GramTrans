@@ -177,12 +177,7 @@ def _ws_handles_for(handle) -> dict:
     falling back to a secondary writing system: matching a secondary
     vernacular would have fabricated 16 matches on `Yi Sichuan` alone.
     """
-    handles = {}
-    for ws_scope in (_census.WS_SCOPE_VERNACULAR, _census.WS_SCOPE_ANALYSIS):
-        ws_handle = _census._ws_handle_for(handle, ws_scope)
-        if ws_handle is not None:
-            handles[ws_scope] = ws_handle
-    return handles
+    return _matcher.ws_handles_for(handle)
 
 
 def match_basis_for_present_by_guid(object_class: str, source_guid: str,

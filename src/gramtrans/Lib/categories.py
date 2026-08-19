@@ -68,6 +68,8 @@ if __package__:
         WSMapping,
     )
     from .residue import ImportResidueTag
+    from . import matcher as _matcher
+    from .models import MatchBasis as _MatchBasis
 else:
     from models import (  # type: ignore
         CreateDefinitionAction,
@@ -88,6 +90,8 @@ else:
         WSMapping,
     )
     from residue import ImportResidueTag  # type: ignore
+    import matcher as _matcher  # type: ignore
+    from models import MatchBasis as _MatchBasis  # type: ignore
 
 
 # ============================================================================
@@ -1437,12 +1441,14 @@ def inflection_classes_execute_action(action: PlannedAction, context: RunContext
 
     # Find the source inflection class and its owning POS's GUID.
     src_obj = None
+    src_owner_pos = None
     src_owner_pos_guid = None
     for pos in _iter_pos(source):
         pos_obj = _as_pos(pos)
         for ic in _inflection_classes_from_pos(pos_obj):
             if _guid_str_from(ic) == src_guid:
                 src_obj = ic
+                src_owner_pos = pos_obj
                 src_owner_pos_guid = _guid_str_from(pos_obj)
                 break
         if src_obj is not None:
@@ -1450,10 +1456,19 @@ def inflection_classes_execute_action(action: PlannedAction, context: RunContext
     if src_obj is None:
         return None
 
-    # Resolve the same POS (by source GUID) on the target side.
-    target_pos = _resolve_target_pos(target, src_owner_pos_guid)
+    # Resolve the same POS on the target side: identity first, then the
+    # roster-admitted natural key (T032). The source OBJECT is passed because
+    # the key is its Name and a GUID alone cannot supply one.
+    target_pos = _resolve_target_pos(
+        target, src_owner_pos_guid,
+        src_pos=src_owner_pos, source_handle=source,
+    )
     if target_pos is None:
-        return None  # Owner POS not in target; dependency unresolved.
+        _report_owner_pos_unresolved(
+            context, GrammarCategory.INFLECTION_CLASSES, src_guid,
+            src_owner_pos_guid, "inflection class",
+        )
+        return None
 
     cache = getattr(target, "Cache")
     ws = cache.DefaultAnalWs
@@ -2058,10 +2073,21 @@ def pos_inflectable_feats_execute_action(action: PlannedAction, context: RunCont
         return None
     pos_guid, feat_guid = src_compound.split("::", 1)
 
-    # Resolve the target POS by GUID.
-    target_pos = _resolve_target_pos(target, pos_guid)
+    # Resolve the target POS: identity first, then the natural key (T032).
+    # This site starts from a compound "pos_guid::feat_guid" key rather than
+    # from an object, so the source category is looked up to make the key
+    # computable at all.
+    source = context.source_handle
+    target_pos = _resolve_target_pos(
+        target, pos_guid,
+        src_pos=_source_pos_by_guid(source, pos_guid), source_handle=source,
+    )
     if target_pos is None:
-        return None  # POS not yet in target.
+        _report_owner_pos_unresolved(
+            context, GrammarCategory.POS_INFLECTABLE_FEATS, src_compound,
+            pos_guid, "inflectable-feature link",
+        )
+        return None
 
     # Resolve the target feature defn by GUID in MsFeatureSystemOA.FeaturesOC.
     cache = getattr(target, "Cache")
@@ -3854,15 +3880,163 @@ def _entry_pos_deps(entry):
     return deps
 
 
-def _resolve_target_pos(target, src_pos_guid):
-    """Return the target IPartOfSpeech whose GUID matches `src_pos_guid`, or
-    None. POS is created by the GRAM_CATEGORIES dependency closure first."""
+def _source_pos_by_guid(source, pos_guid):
+    """The SOURCE category object with this GUID, or None (T033).
+
+    The natural-key fallback needs the source OBJECT, not its GUID: the key is
+    the category's Name, and a GUID string cannot supply one. Several call
+    sites already hold the object while scanning and keep only the GUID; this
+    exists for the ones that genuinely start from a GUID alone.
+    """
+    if not pos_guid:
+        return None
+    try:
+        for pos in _iter_pos(source):
+            pos_obj = _as_pos(pos)
+            if _guid_str_from(pos_obj) == pos_guid:
+                return pos_obj
+    except Exception:  # noqa: BLE001 -- an unenumerable source is "not found"
+        return None
+    return None
+
+
+def _report_owner_pos_unresolved(context, category, source_guid, pos_guid,
+                                 item_kind):
+    """Record that an item was not transferred because its owning category
+    could not be resolved (T033, FR-007 / FR-013).
+
+    THE POINT OF THIS FUNCTION IS THAT IT IS NOT A LOG LINE. Four call sites
+    used to `return None` here with no record at all, and `transfer.py`
+    discards every `execute_action` return value and then increments
+    `leaf_succeeded` unconditionally -- so the item vanished AND the run
+    counted it as a success. FR-013 forbids exactly that: an item is created or
+    reported, never dropped silently.
+
+    A skip appended to `context._exec_skips` reaches the run report through
+    `RunReport.extra_skips`. When the context carries no such list (older
+    callers, and unit tests that build a bare context), no report is made --
+    this must never be the thing that raises, because the condition it
+    describes is already a degraded run.
+    """
+    exec_skips = getattr(context, "_exec_skips", None)
+    if exec_skips is None:
+        return
+    exec_skips.append(Skip(
+        category=category,
+        source_guid=source_guid,
+        reason=SkipReason.DEPENDENCY_UNRESOLVED,
+        detail=(
+            item_kind + " " + str(source_guid)[:8] + "... was not transferred: "
+            "its owning category (guid=" + str(pos_guid or "empty")[:8]
+            + "...) is not present in the destination and could not be matched "
+            "by identity or by the roster-admitted natural key. The item is "
+            "reported rather than dropped (FR-013); its owning category is "
+            "resolved, never invented (Principle V)."
+        ),
+    ))
+
+
+def _resolve_target_pos(target, src_pos_guid, *, src_pos=None,
+                        source_handle=None):
+    """The target `IPartOfSpeech` corresponding to `src_pos_guid`, or None.
+
+    IDENTITY FIRST, ALWAYS (FR-001). The GUID scan below is authoritative and
+    short-circuits; the natural key is consulted only when it finds nothing.
+    Inverting the two would let a name collision overwrite a category a GUID
+    had already correctly identified.
+
+    THEN THE FR-002 NATURAL-KEY FALLBACK (T032). This function was the
+    `None`-returns-and-caller-abandons path that lost **all 2,088 MSAs** on the
+    measured pair. Whether identity succeeds for a category is not something a
+    linguist can see or control: catalog-sourced categories share GUIDs across
+    projects (`Noun` is `a8e41fd3-...` in both `Ejagham Mini` and `Mbugwe
+    LizzieHC practice`) while categories created by any other route do not
+    (Esperanto's `Noun` is `e09a4354-...`). census-evidence.md records the
+    consequence exactly: "Ejagham escaped total loss only by accident: its 5
+    target POSes happened to be GUID-identical to the source's", while Ngoreme
+    matched none. A GUID-only matcher is therefore not merely incomplete for
+    this class -- its success rate is unpredictable from anything visible.
+
+    The fallback is inert unless BOTH halves of the basis are present: 035's
+    roster must admit `PartOfSpeech` and `matcher.NATURAL_KEY_BINDINGS` must
+    bind it. `src_pos` and `source_handle` are keyword-only and default to
+    None, so every pre-038 two-positional call site keeps its exact previous
+    behaviour and opts in only by passing them.
+
+    Parameters:
+        target:        the destination project handle.
+        src_pos_guid:  the source category's GUID.
+        src_pos:       the source category OBJECT. Required for the fallback --
+                       the key is its Name, and a GUID string cannot supply it.
+        source_handle: the SOURCE project handle. Required for the fallback,
+                       because the key is read in the source project's own
+                       default analysis writing system and a handle from the
+                       other project silently reads as None.
+    """
     if not src_pos_guid:
+        # No GUID means no identity AND no natural key: the fallback needs the
+        # source object, and a caller with no GUID has not got one either.
         return None
     for pos in _iter_pos(target):
         pos_obj = _as_pos(pos)
         if _guid_str_from(pos_obj) == src_pos_guid:
             return pos_obj
+    return _resolve_target_pos_by_natural_key(target, src_pos, source_handle)
+
+
+def _resolve_target_pos_by_natural_key(target, src_pos, source_handle):
+    """Step 2 for `PartOfSpeech`: the roster-admitted natural key, or None.
+
+    Returns None -- never raises, never creates -- for every reason a key
+    cannot decide: the class is not admitted, the caller passed no source
+    object or source handle, the name is missing in the scoped writing system,
+    or the destination scope cannot be enumerated. Each of those is a
+    "identity found nothing and the key could not help either", which leaves
+    the caller exactly where it was before 038 and is what makes this change
+    safe to land ahead of its call-site sweep.
+
+    `NaturalKeyAmbiguityError` is the one thing allowed to propagate. The
+    roster sets `on_ambiguous_key: harness_error` for `PartOfSpeech` and does
+    not claim the key is unique by construction, so more than one candidate is
+    a condition the operator must see -- picking one would fabricate a
+    correspondence and then record it as an identity substitution.
+    """
+    if src_pos is None or source_handle is None:
+        return None
+    if _matcher.natural_key_binding_for("PartOfSpeech") is None:
+        return None
+    if _matcher.natural_key_roster_entry_for("PartOfSpeech") is None:
+        return None
+
+    try:
+        candidates = [_as_pos(p) for p in _iter_pos(target)]
+    except Exception as exc:  # noqa: BLE001
+        import logging as _logging
+        _logging.getLogger("gramtrans.Lib.categories").warning(
+            "038 T032: the destination category hierarchy could not be "
+            "enumerated (%s: %s) -- the natural-key fallback reports no match "
+            "rather than matching on a partial scan",
+            type(exc).__name__, exc,
+        )
+        return None
+
+    decision = _matcher.resolve_match(
+        "PartOfSpeech",
+        src_pos,
+        candidates,
+        ws_handles=_matcher.ws_handles_for(target),
+        source_ws_handles=_matcher.ws_handles_for(source_handle),
+    )
+    if decision.record.basis is _MatchBasis.NATURAL_KEY:
+        if decision.parent_divergence:
+            # Recorded, never corrected. The owning parent is not part of the
+            # key -- `093264d7-...` ("Demonstrative") is depth-1 in one project
+            # and depth-2 in another -- but a match is NOT evidence that the
+            # two hierarchies agree, and the destination keeps its own parent.
+            import logging as _logging
+            _logging.getLogger("gramtrans.Lib.categories").info(
+                "038 T032: %s", decision.parent_divergence)
+        return decision.target_obj
     return None
 
 
@@ -7483,12 +7657,14 @@ def slots_execute_action(action, context, ws_mapping, tag):
     src_guid = action.source_guid
 
     src_slot = None
+    src_owner_pos = None
     src_owner_pos_guid = None
     for pos in _iter_pos(source):
         pos_obj = _as_pos(pos)
         for slot in getattr(pos_obj, "AffixSlotsOC", None) or []:
             if _guid_str_from(slot) == src_guid:
                 src_slot = slot
+                src_owner_pos = pos_obj
                 src_owner_pos_guid = _guid_str_from(pos_obj)
                 break
         if src_slot is not None:
@@ -7496,9 +7672,16 @@ def slots_execute_action(action, context, ws_mapping, tag):
     if src_slot is None:
         return None
 
-    target_pos = _resolve_target_pos(target, src_owner_pos_guid)
+    target_pos = _resolve_target_pos(
+        target, src_owner_pos_guid,
+        src_pos=src_owner_pos, source_handle=source,
+    )
     if target_pos is None:
-        return None  # owner POS not in target; dependency unresolved.
+        _report_owner_pos_unresolved(
+            context, GrammarCategory.SLOTS, src_guid, src_owner_pos_guid,
+            "affix slot",
+        )
+        return None
 
     cache = getattr(target, "Cache")
     ws = cache.DefaultAnalWs
@@ -7627,19 +7810,34 @@ def affix_templates_execute_action(action, context, ws_mapping, tag):
     src_guid = action.source_guid
 
     src_tpl = None
+    src_owner_pos = None
     src_owner_pos_guid = None
     for pos in _iter_pos(source):
         pos_obj = _as_pos(pos)
         for tpl in getattr(pos_obj, "AffixTemplatesOS", None) or []:
             if _guid_str_from(tpl) == src_guid:
                 src_tpl = tpl
+                src_owner_pos = pos_obj
                 src_owner_pos_guid = _guid_str_from(pos_obj)
                 break
         if src_tpl is not None:
             break
 
     if src_tpl is not None:
-        target_pos = _resolve_target_pos(target, src_owner_pos_guid)
+        target_pos = _resolve_target_pos(
+            target, src_owner_pos_guid,
+            src_pos=src_owner_pos, source_handle=source,
+        )
+        # T033: this was the worst of the eight, because the abandon was
+        # IMPLICIT -- there was no `else`, so an unresolved owner simply fell
+        # past the ~50-line create-and-wire body to the tail block and the
+        # shared `return None`, leaving nothing to distinguish "template
+        # written" from "template silently discarded".
+        if target_pos is None:
+            _report_owner_pos_unresolved(
+                context, GrammarCategory.AFFIX_TEMPLATES, src_guid,
+                src_owner_pos_guid, "affix template",
+            )
         if target_pos is not None:
             cache = getattr(target, "Cache")
             ws = cache.DefaultAnalWs
