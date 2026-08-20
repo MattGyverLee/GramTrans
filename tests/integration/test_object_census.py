@@ -4168,25 +4168,26 @@ class TestT024cTheSanityCheckProducesItsOwnTransfer:
 #      75 census entries (74 classes plus the A1 `FsFeatStrucType` split).
 #   3a. every `EnrichedCollection.added == 0` on run 2 -- PASS, strictly:
 #      all 10 collections across run 2's 4 enrichment records read 0.
-#   3b. `already_present` equal to run 1's `added` -- **NOT EVALUABLE**, and
-#      that is a finding rather than a pass. The two runs enrich DISJOINT
-#      object sets: run 1 enriches Noun / Pronoun / Verb (the starter POSes
-#      it filled), run 2 enriches Adjective / Demonstrative / Numeral /
-#      Interrogative (POSes run 1 CREATED, now matched and found complete).
-#      The intersection is EMPTY, so there is no object on which to compare
-#      run 2's `already_present` against run 1's `added`.
+#   3b. `already_present` equal to run 1's `added` -- **PASS**, on 10
+#      collections across 3 objects, every one equal. This became evaluable
+#      only with T048e; before it, the criterion could not be answered at all.
 #
-# WHY THE INTERSECTION IS EMPTY -- filed as T048e. On run 2 the three POSes
-# run 1 enriched arrive at `_plan_gold_reserved_edit` (`categories.py`), whose
-# owned-collection pass runs BEFORE either early skip and correctly finds every
-# collection already complete. T043 is working: the comparison happens, so the
-# constitutional SKIP clause (data-model.md 9 -- "emitting SKIP requires that
-# every scalar field and all seven owned collections were compared") IS
-# satisfied. The defect is evidentiary, not decisional: the computed
-# `collections` tuple -- which holds exactly the `already_present` tallies
-# criterion 3b wants -- is DISCARDED on the skip path, and the skip's detail
-# names only the writing-system slots ("all WS slots equal."). A correct no-op
-# enrichment therefore leaves no record that it happened.
+# WHY 3b NEEDED T048e FIRST. The two runs enrich DISJOINT object sets, and
+# inherently so: run 1 enriches Noun / Pronoun / Verb (the starter POSes it
+# filled), run 2 finds those complete and enriches Adjective / Demonstrative /
+# Numeral / Interrogative instead (POSes run 1 CREATED). So the enrichment
+# surface alone can NEVER answer 3b -- the objects it asks about are not on it.
+#
+# On run 2 those three arrive at `_plan_gold_reserved_edit` (`categories.py`),
+# whose owned-collection pass runs BEFORE either early skip and finds every
+# collection already complete. T043 was working all along: the comparison
+# happens, so the constitutional SKIP clause (data-model.md 9 -- "emitting SKIP
+# requires that every scalar field and all seven owned collections were
+# compared") was satisfied. The gap was evidentiary, not decisional -- the
+# computed `collections` tuple, holding exactly the `already_present` tallies
+# 3b wants, was DISCARDED, and the skip detail named only the writing-system
+# slots ("all WS slots equal."). T048e carries it on
+# `Skip.collections_compared`, and 3b reads BOTH surfaces.
 #
 # The basis drift these runs also show (`PhPhoneme` and `PhNCSegments` losing
 # `baseline_matched` on run 2 while their counts do not move) is NOT a T039
@@ -4231,7 +4232,7 @@ class TestT039IdempotenceIsMeasured:
         snap = load_t039_snapshot()
         assert sorted(snap["runs"]) == ["run1", "run2"]
         assert snap["source"] == "Ejagham Mini"
-        assert snap["destination"] == "GT038 T039c Target"
+        assert snap["destination"] == "GT038 T039d Target"
         # A restore between the runs would void the whole measurement; the
         # starter digest is recorded once because there is ONE restore.
         assert snap["starter_baseline_digest"] == "ab37b1cd60dd"
@@ -4306,22 +4307,75 @@ class TestT039IdempotenceIsMeasured:
         ]
         assert offenders == []
 
-    def test_criterion_3b_is_not_evaluable_because_the_runs_are_disjoint(self):
-        """The measurement, and the tripwire for T048e.
-
-        When T048e lands, the three POSes run 1 enriched will carry a record on
-        run 2 too, the intersection will stop being empty, and this test will
-        fail -- which is the signal to replace it with the real 3b comparison
-        (`already_present == run 1's added`, per object and per collection)."""
+    def test_the_two_runs_enrich_disjoint_object_sets(self):
+        """Inherent to idempotence, not a defect: run 1 fills the three starter
+        POSes, run 2 finds those complete and instead enriches the four POSes
+        run 1 CREATED. So the enrichment surface alone can never answer 3b --
+        which is why T048e made the skip surface carry the other half."""
         snap = load_t039_snapshot()
         r1 = {r["source_guid"]: r for r in snap["runs"]["run1"]["enrichments"]}
         r2 = {r["source_guid"]: r for r in snap["runs"]["run2"]["enrichments"]}
         assert {r["label"] for r in r1.values()} == T039_RUN1_ENRICHED_LABELS
         assert {r["label"] for r in r2.values()} == T039_RUN2_ENRICHED_LABELS
-        assert set(r1) & set(r2) == set(), (
-            "the two runs now enrich a common object -- criterion 3b has "
-            "become evaluable (T048e has landed?). Replace this test with "
-            "the real per-object comparison.")
+        assert set(r1) & set(r2) == set()
+
+    def test_criterion_3b_run_2_already_has_exactly_what_run_1_added(self):
+        """The criterion, evaluated -- what T048e unblocked.
+
+        Run 2's `already_present` is read from BOTH surfaces: the enrichment
+        records, and (T048e) the `collections_compared` evidence on the
+        identity skips, which is where the three objects run 1 enriched report
+        on a re-run. Measured: 10 collections across 3 objects, every one
+        equal."""
+        snap = load_t039_snapshot()
+        gained = {r["source_guid"]: r["collections"]
+                  for r in snap["runs"]["run1"]["enrichments"]}
+        have = {}
+        for rec in snap["runs"]["run2"]["enrichments"]:
+            have.setdefault(rec["source_guid"], {}).update(
+                {f: c["already_present"] for f, c in rec["collections"].items()})
+        for guid, colls in snap["runs"]["run2"][
+                "skip_collections_compared"].items():
+            have.setdefault(guid, {}).update(
+                {f: c["already_present"] for f, c in colls.items()})
+
+        assert set(gained) <= set(have), (
+            "an object run 1 enriched has NO run-2 record on either surface, "
+            "so 3b is unevaluable again: "
+            + repr(sorted(set(gained) - set(have))))
+
+        mismatches = [
+            (guid, field, coll["added"], have[guid].get(field))
+            for guid, colls in gained.items()
+            for field, coll in colls.items()
+            if have[guid].get(field) != coll["added"]
+        ]
+        assert mismatches == [], (
+            "run 2 does not already hold exactly what run 1 added -- "
+            "(guid, field, run1_added, run2_already_present): "
+            + repr(mismatches))
+        # Pin the shape too, so the assertion above cannot pass vacuously on a
+        # future run that records nothing.
+        assert len(gained) == 3
+        assert sum(len(c) for c in gained.values()) == 10
+
+    def test_criterion_3b_is_not_vacuous_the_skip_surface_carries_it(self):
+        """3b passes only because T048e exists. If `collections_compared` were
+        dropped again, the three objects would vanish from run 2 entirely and
+        the test above would fail on its `set(gained) <= set(have)` guard --
+        this pins the mechanism directly so the reason stays visible."""
+        snap = load_t039_snapshot()
+        run1_guids = {r["source_guid"]
+                      for r in snap["runs"]["run1"]["enrichments"]}
+        evidence = snap["runs"]["run2"]["skip_collections_compared"]
+        assert run1_guids <= set(evidence), (
+            "the run-1 enriched objects are not carrying T048e evidence on "
+            "run 2: " + repr(sorted(run1_guids - set(evidence))))
+        # And the evidence really is a no-op record, not a disguised write.
+        for guid in run1_guids:
+            for field, coll in evidence[guid].items():
+                assert coll["added"] == 0, (guid, field)
+                assert coll["dropped"] == 0, (guid, field)
 
     def test_the_totals_coincide_but_that_is_not_criterion_3b(self):
         """Both runs total 16 children, which is a coincidence of this corpus
@@ -4404,10 +4458,10 @@ class TestT039IdempotenceIsMeasured:
                 "starter_matched_to_source"]["PartOfSpeech"] == 5, tag
 
     def test_the_three_run1_enriched_poses_are_skipped_on_run_2(self):
-        """Where the missing records went: all three are among run 2's eleven
-        GRAM_CATEGORIES `ALREADY_PRESENT_BY_GUID` skips. The skip is correct
-        (T043's collection pass ran and found nothing to write); what is
-        missing is any record that the collections were compared."""
+        """Where they go on a re-run: all three are among run 2's eleven
+        GRAM_CATEGORIES `ALREADY_PRESENT_BY_GUID` skips. The skip is correct --
+        T043's collection pass ran and found nothing to write -- and since
+        T048e it also carries the evidence of that comparison."""
         snap = load_t039_snapshot()
         r1_guids = {r["source_guid"]
                     for r in snap["runs"]["run1"]["enrichments"]}

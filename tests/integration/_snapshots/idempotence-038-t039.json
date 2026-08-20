@@ -1,9 +1,9 @@
 {
-  "$comment": "T039 / SC-008 idempotence -- the measured raw material for the three criteria, captured 2026-08-20 from two CONSECUTIVE full transfers of 'Ejagham Mini' into 'GT038 T039c Target', restored pristine from backups/Ejagham W Target 2026-08-19 0830.fwbackup (starter digest ab37b1cd60dd). Trimmed to the fields the criteria read; the full artifacts are git-ignored under scratchpad/038_census/ per T003. Run 2 is the idempotence run: same source, same destination, no restore in between.",
-  "destination": "GT038 T039c Target",
+  "$comment": "T039 / SC-008 idempotence -- the measured raw material for all four criteria, captured 2026-08-20 from ONE interleaved sequence: restore, baseline, run 1, census, run 2, census -- no restore between the runs. Source 'Ejagham Mini' into 'GT038 T039d Target', restored pristine from backups/Ejagham W Target 2026-08-19 0830.fwbackup (starter digest ab37b1cd60dd). Taken AFTER T048e, so run 2's identity skips carry `collections_compared` and criterion 3b is evaluable. Trimmed to the fields the criteria read; full artifacts are git-ignored under scratchpad/038_census/ per T003.",
+  "destination": "GT038 T039d Target",
   "runs": {
     "run1": {
-      "census_id": "CENSUS-20260820-133634",
+      "census_id": "CENSUS-20260820-150540",
       "destination_count_total": {
         "CmAgent": 4,
         "CmAnthroItem": 859,
@@ -181,6 +181,15 @@
       },
       "plan_enrichment_count": 3,
       "plan_overwrite_count": 26,
+      "skip_collections_compared": {
+        "a4fc78d6-7591-4fb3-8edd-82f10ae3739d": {
+          "SubPossibilitiesOS": {
+            "added": 0,
+            "already_present": 1,
+            "dropped": 0
+          }
+        }
+      },
       "starter_matched_to_source": {
         "CmAgent": 4,
         "CmAnthroItem": null,
@@ -338,7 +347,7 @@
       "verdict": "CENSUS_ACCOUNTED"
     },
     "run2": {
-      "census_id": "CENSUS-20260820-133834",
+      "census_id": "CENSUS-20260820-150738",
       "destination_count_total": {
         "CmAgent": 4,
         "CmAnthroItem": 859,
@@ -537,6 +546,71 @@
       "plan_actions_by_class_and_basis": {},
       "plan_enrichment_count": 4,
       "plan_overwrite_count": 38,
+      "skip_collections_compared": {
+        "86ff66f6-0774-407a-a0dc-3eeaf873daf7": {
+          "AffixSlotsOC": {
+            "added": 0,
+            "already_present": 4,
+            "dropped": 0
+          },
+          "AffixTemplatesOS": {
+            "added": 0,
+            "already_present": 1,
+            "dropped": 0
+          },
+          "SubPossibilitiesOS": {
+            "added": 0,
+            "already_present": 1,
+            "dropped": 0
+          }
+        },
+        "a3274cfd-225f-45fd-8851-a7b1a1e1037a": {
+          "AffixSlotsOC": {
+            "added": 0,
+            "already_present": 1,
+            "dropped": 0
+          },
+          "AffixTemplatesOS": {
+            "added": 0,
+            "already_present": 1,
+            "dropped": 0
+          },
+          "InflectableFeatsRC": {
+            "added": 0,
+            "already_present": 2,
+            "dropped": 0
+          }
+        },
+        "a4fc78d6-7591-4fb3-8edd-82f10ae3739d": {
+          "SubPossibilitiesOS": {
+            "added": 0,
+            "already_present": 1,
+            "dropped": 0
+          }
+        },
+        "a8e41fd3-e343-4c7c-aa05-01ea3dd5cfb5": {
+          "AffixSlotsOC": {
+            "added": 0,
+            "already_present": 1,
+            "dropped": 0
+          },
+          "AffixTemplatesOS": {
+            "added": 0,
+            "already_present": 1,
+            "dropped": 0
+          },
+          "InflectableFeatsRC": {
+            "added": 0,
+            "already_present": 2,
+            "dropped": 0
+          },
+          "ReferenceFormsOC": {
+            "added": 0,
+            "already_present": 2,
+            "dropped": 0
+          }
+        }
+      },
       "starter_matched_to_source": {
         "CmAgent": 4,
         "CmAnthroItem": null,

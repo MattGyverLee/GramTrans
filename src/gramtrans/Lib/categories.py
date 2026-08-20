@@ -717,6 +717,28 @@ def _first_multistring_text(multistring, ws_list):
     return ""
 
 
+def _collections_compared_detail(collections) -> str:
+    """The human half of T048e -- name what was compared, in the skip detail.
+
+    `Skip.collections_compared` carries the machine-readable evidence; this
+    puts the same fact where a person reading the run report will see it,
+    because "all WS slots equal" alone reads as if the owned collections were
+    never looked at. Returns "" for the categories that own no collections, so
+    the five non-POS categories sharing `_plan_gold_reserved_edit` keep their
+    detail text byte-identical.
+    """
+    if not collections:
+        return ""
+    return (
+        "; " + str(len(collections)) + " owned collection(s) compared, "
+        "nothing to add ("
+        + ", ".join(
+            c.field_name + "=" + str(c.already_present) for c in collections
+        )
+        + ")"
+    )
+
+
 def _plan_gold_reserved_edit(piece, category, context, target_iter_fn):
     """Shared plan_action helper for the ontology/reserved categories (spec 017).
 
@@ -811,7 +833,16 @@ def _plan_gold_reserved_edit(piece, category, context, target_iter_fn):
                 category=category,
                 source_guid=src_guid,
                 reason=SkipReason.ALREADY_PRESENT_BY_GUID,
-                detail=f"GUID {src_guid[:8]}... present in target (no WS info for comparison).",
+                detail=(
+                    f"GUID {src_guid[:8]}... present in target (no WS info "
+                    "for comparison)"
+                    + _collections_compared_detail(collections)
+                    + "."
+                ),
+                # T048e: the collection pass ran even with no WS list -- an
+                # owned collection needs no writing system to be compared --
+                # so its result is evidence and is carried, not discarded.
+                collections_compared=collections,
             )
         # Otherwise fall through: the scalar comparison stays empty (it could
         # not run) and the collection delta alone carries the merge.
@@ -835,7 +866,19 @@ def _plan_gold_reserved_edit(piece, category, context, target_iter_fn):
                 category=category,
                 source_guid=src_guid,
                 reason=SkipReason.ALREADY_PRESENT_BY_GUID,
-                detail=f"GUID {src_guid[:8]}... present in target; all WS slots equal.",
+                detail=(
+                    f"GUID {src_guid[:8]}... present in target; all WS slots "
+                    "equal"
+                    + _collections_compared_detail(collections)
+                    + "."
+                ),
+                # T048e: THE EVIDENCE THAT THIS SKIP IS LEGAL. The clause
+                # (data-model.md 9) permits a SKIP only where every scalar
+                # field AND all seven owned collections were compared and
+                # needed no write. The comparison above is what earns it;
+                # discarding its result left the report unable to say so, and
+                # left T039's criterion 3b with nothing to compare.
+                collections_compared=collections,
             )
 
     # Any divergence -> non-destructive UPDATE merge (constitution v7.0.0).

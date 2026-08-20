@@ -2048,14 +2048,61 @@ class PlannedOverwrite:
 
 @dataclass(frozen=True)
 class Skip:
+    """An item the plan will not write, with the reason it need not be written.
+
+    `collections_compared` (feature 038 T048e) is the EVIDENCE that the
+    constitutional SKIP clause was satisfied, and is deliberately not a claim
+    that anything matched. data-model.md section 9 requires that "emitting SKIP
+    requires that every scalar field and all seven owned collections were
+    compared and needed no write"; T043 made `_plan_gold_reserved_edit` run
+    that comparison ahead of both its early skips, and the resulting
+    `EnrichedCollection` tuple -- which carries the per-collection
+    `already_present` counts -- was then DISCARDED. A correct no-op enrichment
+    therefore left no record that it had happened, which is what made T039's
+    SC-008 criterion 3b unevaluable: the objects a first run enriched produce
+    no enrichment surface on a second run to compare against.
+
+    THIS IS NOT THE REJECTED WIDENING. `journal/T039-idempotence.md` recorded
+    the neighbouring proposal -- giving `Skip` a `match_basis` -- as considered
+    and not recommended, because "a skip that carries a match is really a
+    link", and blurring LINK versus SKIP is the G3 boundary US4 exists to
+    sharpen. That objection is about asserting a MATCH. This field asserts only
+    that a comparison ran and found nothing to add, which is the precondition
+    the clause already demands of every SKIP; recording it narrows the
+    LINK/SKIP boundary rather than blurring it, because a skip that cannot show
+    its comparison is now distinguishable from one that can.
+
+    Every member must therefore be a no-op: `added == 0` and `dropped == 0`.
+    A collection that added or dropped a child is not evidence of a skip, it is
+    an enrichment, and it belongs on a `PlannedOverwrite` carrying an
+    `EnrichmentRecord`. The invariant is checked rather than documented so the
+    two dispositions cannot be conflated by a later caller.
+    """
     category: GrammarCategory
     source_guid: str
     reason: SkipReason
     detail: str
+    #: tuple[EnrichedCollection, ...] -- owned collections compared and found
+    #: complete. Empty means "no collection comparison applies or was made",
+    #: which is NOT the same as "compared and found complete"; only the
+    #: categories in `_POS_OWNED_COLLECTION_CATEGORIES` populate it.
+    collections_compared: tuple = ()
 
     def __post_init__(self) -> None:
         if not self.detail:
             raise ValueError("Skip.detail must be non-empty")
+        for coll in self.collections_compared:
+            if getattr(coll, "added", 0) or getattr(coll, "dropped", 0):
+                raise ValueError(
+                    "Skip.collections_compared may only hold no-op "
+                    "collections (added == 0 and dropped == 0): "
+                    + repr(getattr(coll, "field_name", coll))
+                    + " reports added=" + repr(getattr(coll, "added", 0))
+                    + " dropped=" + repr(getattr(coll, "dropped", 0))
+                    + ". A collection that gained or lost a child is an "
+                    "enrichment and belongs on a PlannedOverwrite carrying an "
+                    "EnrichmentRecord, not on a Skip."
+                )
 
 
 @dataclass(frozen=True)

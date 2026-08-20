@@ -1421,6 +1421,40 @@ def _rows(records, formatter, indent: str = "    ",
         )
 
 
+def _skip_snapshot(skip) -> dict:
+    """One `skips[]` row, with T048e's comparison evidence when it exists.
+
+    `collections_compared` is OMITTED rather than written as `[]` when the skip
+    carries none. The distinction is load-bearing and is the same one
+    `matched_to_source` makes for an absent class: an empty list would read as
+    "the owned collections were compared and there are none", when the truth is
+    "no collection comparison applies to this category, or none was made". Only
+    the POS-owning categories populate it, so writing `[]` on the other five
+    would manufacture evidence for a comparison that never ran.
+    """
+    row = {
+        "category": skip.category.name,
+        "source_guid": skip.source_guid,
+        "reason": skip.reason.name,
+        "detail": skip.detail,
+    }
+    compared = getattr(skip, "collections_compared", ())
+    if compared:
+        # Every member is a no-op by `Skip.__post_init__`, so `added` and
+        # `dropped` are written for completeness rather than as variables --
+        # a reader diffing two runs needs to see that they really are 0.
+        row["collections_compared"] = [
+            {
+                "field_name": c.field_name,
+                "added": c.added,
+                "already_present": c.already_present,
+                "dropped": c.dropped,
+            }
+            for c in compared
+        ]
+    return row
+
+
 def _to_snapshot_json(self) -> str:
     """Render a RunReport as a deterministic JSON string for snapshot diffing.
 
@@ -1453,12 +1487,7 @@ def _to_snapshot_json(self) -> str:
             for cat in ordered_cats
         },
         "skips": [
-            {
-                "category": s.category.name,
-                "source_guid": s.source_guid,
-                "reason": s.reason.name,
-                "detail": s.detail,
-            }
+            _skip_snapshot(s)
             for s in self.skips
         ],
         "identity_remap": dict(sorted(self.identity_remap.items())),
