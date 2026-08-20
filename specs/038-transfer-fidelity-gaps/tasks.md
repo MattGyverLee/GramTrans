@@ -283,14 +283,14 @@ LCM type (Principle II, data-model.md:3-6).
 
 ### Tests
 
-- [ ] **T040** [US4] Write failing tests that **SKIP is defined by field-identity comparison, not by mere GUID presence**: a matched GUID alone is a LINK, not a SKIP, and emitting SKIP requires that every scalar field **and all seven owned collections** were compared and needed no write (data-model.md:209-213). This is the constitutional clause defect G3 currently violates - `tests/unit/test_038_enrichment.py`
-- [ ] **T041** [US4] Write failing tests that enrichment is non-destructive: never remove, blank, overwrite or destructively reorder existing destination content, and never blank a target field from an empty source (FR-021, Principle IV `update`) - `tests/unit/test_038_enrichment.py`
+- [x] **T040** [US4] Write failing tests that **SKIP is defined by field-identity comparison, not by mere GUID presence**: a matched GUID alone is a LINK, not a SKIP, and emitting SKIP requires that every scalar field **and all seven owned collections** were compared and needed no write (data-model.md:209-213). This is the constitutional clause defect G3 currently violates - `tests/unit/test_038_enrichment.py`
+- [x] **T041** [US4] Write failing tests that enrichment is non-destructive: never remove, blank, overwrite or destructively reorder existing destination content, and never blank a target field from an empty source (FR-021, Principle IV `update`) - `tests/unit/test_038_enrichment.py`
 
 ### Implementation
 
 **Wave 1 - single task (`models.py`):**
 
-- [ ] **T042** [US4] Add `EnrichmentRecord` (`object_class`, `source_guid`, `target_guid`, `label`, `collections`, `fields_updated`, `was_created` always `False`) and `EnrichedCollection` (`field_name`, `added`, `already_present`, `dropped`), with `field_name` constrained to the seven POS collections: `AffixSlotsOC`, `AffixTemplatesOS`, `InflectableFeatsRC`, `SubPossibilitiesOS`, `StemNamesOC`, `InflectionClassesOC`, `ReferenceFormsOC`. Reuse `FidelityStatus` for enriched objects (FULL when every source child arrived, else PARTIAL) and `OwnedObjectSpec` to describe the seven collections - duplicate neither - `src/gramtrans/Lib/models.py`
+- [x] **T042** [US4] Add `EnrichmentRecord` (`object_class`, `source_guid`, `target_guid`, `label`, `collections`, `fields_updated`, `was_created` always `False`) and `EnrichedCollection` (`field_name`, `added`, `already_present`, `dropped`), with `field_name` constrained to the seven POS collections: `AffixSlotsOC`, `AffixTemplatesOS`, `InflectableFeatsRC`, `SubPossibilitiesOS`, `StemNamesOC`, `InflectionClassesOC`, `ReferenceFormsOC`. Reuse `FidelityStatus` for enriched objects (FULL when every source child arrived, else PARTIAL) and `OwnedObjectSpec` to describe the seven collections - duplicate neither - `src/gramtrans/Lib/models.py`
 
 **--> Wait for T042, then (both touch `categories.py`, serially):**
 
