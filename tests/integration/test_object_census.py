@@ -78,6 +78,7 @@ import json
 import os
 import re
 import sys
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -86,10 +87,12 @@ import pytest
 # ModuleNotFoundError naming the not-yet-written census modules.
 from gramtrans.Lib.census import (  # noqa: F401  (imported for the contract)
     CENSUS_SCHEMA_VERSION,
+    CensusError,
     GROSS_BASIS_CAPPED_VERDICTS,
     GROSS_BASIS_VERDICT_CAP,
     GROSS_SUBTRACTION_BASIS,
     PASSING_VERDICTS,
+    PHASE_1_MATCHED_CLASSES,
     PHASE_PREDICATES,
     REASON_TOKENS,
     REASONS_NOT_REQUIRING_REPORT_REF,
@@ -105,6 +108,8 @@ from gramtrans.Lib.census import (  # noqa: F401  (imported for the contract)
     gross_basis_cap_notes,
     gross_basis_suppressions,
     is_gross_basis_row,
+    phase_classes,
+    phase_scoped_suppressions,
     reason_requires_report_ref,
     row_passes,
     stamp_verdict,
@@ -4669,3 +4674,256 @@ class TestT039IdempotenceIsMeasured:
         assert r1_guids <= skipped, (
             "a POS enriched on run 1 is neither enriched nor skipped on run "
             "2: " + repr(sorted(r1_guids - skipped)))
+
+
+# ---------------------------------------------------------------------------
+# T086 -- the phase gate's third clause, and why it needed amending
+#
+# T038 (P1), T075 (P2) and T048 (P3) each state three clauses: the classes the
+# phase names are MATCHED, the phase-specific extra condition holds, and the
+# gate "exits 0". As of `CENSUS-20260820-150540` all three predicates are
+# SATISFIED and the gate still exits 8, because `census_cli`'s
+# CAPPED_PASS_EXIT_CODE (T024b) is a PROJECT-WIDE property: any 5.2 suppression
+# anywhere denies exit 0. The 13 suppressions on that run are `CmPossibility`,
+# `FsClosedValue`, `FsFeatStruc`, `PunctuationForm`, `ReversalIndex`,
+# `ReversalIndexEntry`, `StText`, `StTxtPara`, `WfiAnalysis`, `WfiGloss`,
+# `WfiMorphBundle`, `WfiWordform` and `PhCode` -- texts and wordforms (governed
+# by their own feature), R7 report-only residue (T079) and T081's scope. Not one
+# is named by P1, P2, P3 or P4.
+#
+# So the third clause as written made every early phase wait on Phase 9's
+# accounting: P1 could not be declared done until T079 gave the residual
+# classes their report lines, which inverts the phase ordering the plan depends
+# on.
+#
+# TWO WAYS OUT WERE ON THE TABLE, AND THE OTHER ONE WAS REJECTED. Bounding
+# `census_cli`'s capped-pass exit code to the named phase would have closed all
+# three tasks with no test at all -- and it would have made `gate --phase 1`
+# exit 0 on a run that lost 1643 objects, which is exactly the "loss reported,
+# review advisable, exit success" shape section 9 says it deliberately does not
+# provide, and which T024b was filed to remove. The gate is therefore UNCHANGED
+# and stays project-wide; what changed is the clause, from "exits 0" to "exits
+# 0 OR exits 8 with every capped row provably outside this phase's scope", and
+# the proof is these tests rather than a sentence in tasks.md.
+#
+# The clause is falsifiable, which is the only reason it is worth having: on the
+# two pre-fix snapshots (`census-038-ejagham`, `census-038-ngoreme`, T024b's own
+# 44/46-capped measurements) the capped rows DO land inside every phase's scope,
+# and `test_the_amended_clause_refuses_the_pre_fix_runs` pins that it refuses
+# them.
+# ---------------------------------------------------------------------------
+
+T086_SNAPSHOT = "census-038-t039d-run1.json"
+
+#: The census the three predicates were measured on. Same live run as
+#: `idempotence-038-t039.json`'s `run1` half -- one restore, one transfer, one
+#: census -- committed here as the RAW artifact rather than a distillation, so
+#: every assertion below is recomputed from the measurement instead of read out
+#: of a summary of it.
+T086_CENSUS_ID = "CENSUS-20260820-150540"
+
+#: Every row the 5.2 cap suppressed on that run. Pinned as data because "none
+#: of them is P1's" is the finding, and a finding that is not written down
+#: cannot be checked later.
+T086_CAPPED_ROWS = {
+    "CmPossibility": 304,
+    "FsClosedValue": 46,
+    "FsFeatStruc": 23,
+    "PunctuationForm": 586,
+    "ReversalIndex": 2,
+    "ReversalIndexEntry": 1,
+    "StText": 17,
+    "StTxtPara": 91,
+    "WfiAnalysis": 136,
+    "WfiGloss": 135,
+    "WfiMorphBundle": 219,
+    "WfiWordform": 49,
+    "PhCode": 34,
+}
+
+#: The phases whose third clause this closes, and the task that owns each.
+T086_GATED_PHASES = ((1, "T038"), (2, "T075"), (3, "T048"))
+
+
+def t086_snapshot_path() -> Path:
+    return Path(__file__).resolve().parent / "_snapshots" / T086_SNAPSHOT
+
+
+def load_t086_snapshot() -> dict:
+    path = t086_snapshot_path()
+    assert path.is_file(), (
+        "the T086 phase-gate snapshot is missing: " + str(path)
+        + " -- it is committed repo data recording a live census, not a "
+        "regenerable temp file; restore it from git rather than re-running a "
+        "transfer against a FLEx project"
+    )
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+class TestT086PhaseScopeIsDeclaredNotGuessed:
+    """`phase_classes` is read off the predicate, so it cannot drift from it."""
+
+    def test_every_phase_declares_a_scope(self):
+        for phase in sorted(PHASE_PREDICATES):
+            # Constructing the dict at import time already refused an empty
+            # tuple; this pins that all five are reachable through the
+            # accessor.
+            scope = phase_classes(phase)
+            assert scope is None or scope, phase
+
+    def test_the_transcribed_p1_tuple_matches_the_predicate(self):
+        """`PHASE_1_CLASSES` in this module is transcribed from
+        fidelity-census.md 9.1; `PHASE_1_CLASSES` in census.py is built from the
+        predicate's own constants. They must agree, and neither is derived from
+        the other."""
+        assert phase_classes(1) == frozenset(PHASE_1_CLASSES) | {"PhPhoneme"}
+
+    def test_the_transcribed_p2_and_p4_tuples_match_the_predicates(self):
+        assert phase_classes(2) == frozenset(PHASE_2_CLASSES)
+        assert phase_classes(4) == frozenset(PHASE_4_CLASSES)
+
+    def test_p1_scope_includes_the_class_it_does_not_require_matched(self):
+        """A phase's scope is every class it NAMES, not only the ones it counts.
+        P1 names `PhPhoneme` on the duplicates condition (SC-002) and never
+        requires it MATCHED, so a suppression on the phoneme row is P1's
+        business even though the predicate would still be satisfied with it.
+        Get this wrong in the other direction and P1 could pass its amended
+        clause while its own phoneme row was capped."""
+        assert "PhPhoneme" in phase_classes(1)
+        assert "PhPhoneme" not in frozenset(PHASE_1_MATCHED_CLASSES)
+
+    def test_p3_scope_includes_part_of_speech(self):
+        """Same shape: P3 names `PartOfSpeech` on the enrichment condition
+        (`match_basis.enriched > 0`) rather than on MATCHED."""
+        assert "PartOfSpeech" in phase_classes(3)
+
+    def test_p5_is_unbounded_so_t081_gets_no_escape_hatch(self):
+        """P5's predicate is "every remaining required row", so its scope is the
+        whole artifact and it can never call a suppressed row somebody else's
+        problem. This is the one property that keeps the amended clause from
+        being a general-purpose way to pass a gate."""
+        assert phase_classes(5) is None
+        artifact = load_t086_snapshot()
+        assert (phase_scoped_suppressions(artifact, 5)
+                == gross_basis_suppressions(artifact))
+        assert not evaluate_phase(artifact, 5).satisfied
+
+    def test_an_empty_scope_is_refused(self):
+        """`None` means "every required row"; an empty tuple would mean "no row
+        is in scope", which turns every capped row into somebody else's and
+        makes the phase-scoped reading unfalsifiable. Constructing one must
+        fail, not quietly produce the most permissive possible phase."""
+        template = PHASE_PREDICATES[1]
+        with pytest.raises(CensusError):
+            type(template)(1, template.name, template.description,
+                           template.check, ())
+
+
+class TestT086TheAmendedThirdClause:
+    """T038 / T075 / T048's third clause, checked instead of asserted in
+    prose."""
+
+    def test_the_snapshot_is_committed_repo_data(self):
+        path = t086_snapshot_path()
+        root = Path(__file__).resolve().parents[2]
+        assert (root / "tests" / "integration" / "_snapshots") == path.parent
+
+    def test_the_snapshot_is_the_census_the_tasks_name(self):
+        artifact = load_t086_snapshot()
+        assert artifact["census_id"] == T086_CENSUS_ID
+        projects = artifact["projects"]
+        assert projects["source"]["name"] == "Ejagham Mini"
+        assert projects["destination"]["name"] == "GT038 T039d Target"
+
+    @pytest.mark.parametrize("phase,task", T086_GATED_PHASES,
+                             ids=[t for _, t in T086_GATED_PHASES])
+    def test_clause_one_and_two_the_predicate_is_satisfied(self, phase, task):
+        result = evaluate_phase(load_t086_snapshot(), phase)
+        assert result.satisfied, (
+            task + " (P" + str(phase) + ") is not satisfied: "
+            + "; ".join(result.failures))
+
+    @pytest.mark.parametrize("phase,task", T086_GATED_PHASES,
+                             ids=[t for _, t in T086_GATED_PHASES])
+    def test_clause_three_no_capped_row_is_in_the_phases_scope(
+            self, phase, task):
+        """The amended clause. Not "the gate exits 0" -- it does not, and must
+        not -- but "every row the 5.2 cap suppressed lies outside the classes
+        this phase names"."""
+        artifact = load_t086_snapshot()
+        in_scope = phase_scoped_suppressions(artifact, phase)
+        assert in_scope == (), (
+            task + " (P" + str(phase) + ") has capped rows inside its own "
+            "scope, so its third clause is NOT satisfied: " + repr(in_scope))
+
+    def test_the_gate_still_exits_8_and_that_is_the_point(self):
+        """The clause was amended; the gate was not. `census_cli` still reports
+        a capped pass project-wide, so nothing here can be read as "the run is
+        clean" -- and SC-010's refusal to provide a "loss reported, exit
+        success" outcome is intact."""
+        artifact = load_t086_snapshot()
+        outcome = gate_artifact(artifact, phase=1)
+        assert outcome.verdict == "CENSUS_ACCOUNTED"
+        assert outcome.phase.satisfied
+        assert gross_basis_suppressions(artifact), (
+            "this snapshot is supposed to BE the capped case")
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "census.json"
+            path.write_text(json.dumps(artifact), encoding="utf-8")
+            code = cli_exit(["gate", "--artifact", str(path), "--phase", "1"])
+        assert code == census_cli.CAPPED_PASS_EXIT_CODE == 8
+
+    def test_the_capped_rows_are_the_ones_recorded(self):
+        """If a later change moves these, the tasks' prose is stale and the
+        finding needs re-stating rather than the test relaxing."""
+        artifact = load_t086_snapshot()
+        measured = {label: count
+                    for label, _direction, count
+                    in gross_basis_suppressions(artifact)}
+        assert measured == T086_CAPPED_ROWS
+        assert sum(measured.values()) == 1643
+
+    def test_no_capped_row_belongs_to_any_bounded_phase(self):
+        """Stronger than the per-phase clause, and the reason it is safe to
+        amend three tasks at once: the 13 suppressions are disjoint from P1, P2,
+        P3 AND P4's scopes together, so no bounded phase is being excused."""
+        artifact = load_t086_snapshot()
+        capped = {label for label, _, _ in gross_basis_suppressions(artifact)}
+        bounded = set()
+        for phase in sorted(PHASE_PREDICATES):
+            scope = phase_classes(phase)
+            if scope is not None:
+                bounded |= scope
+        assert capped & bounded == set()
+
+    @pytest.mark.parametrize("pre_fix", ["census-038-ejagham",
+                                        "census-038-ngoreme"])
+    def test_the_amended_clause_refuses_the_pre_fix_runs(self, pre_fix):
+        """Falsifiability, on real data. These are T024b's own measurements --
+        44 and 46 capped rows, `CENSUS_ACCOUNTED`, exit 0 at the time -- and on
+        both of them the capped rows land INSIDE every bounded phase's scope. An
+        amended clause that passed these would be worthless."""
+        path = (Path(__file__).resolve().parent / "_snapshots"
+                / (pre_fix + ".json"))
+        artifact = json.loads(path.read_text(encoding="utf-8"))
+        for phase, _task in T086_GATED_PHASES:
+            assert not evaluate_phase(artifact, phase).satisfied, phase
+            assert phase_scoped_suppressions(artifact, phase), (
+                "P" + str(phase) + " has no in-scope capped row on " + pre_fix
+                + ", so this snapshot no longer demonstrates the clause "
+                "refusing a bad run")
+
+    def test_a_suppression_inside_the_scope_would_fail_the_clause(self):
+        """The synthetic complement of the two tests above: move one capped row
+        INTO P1's scope and the clause must fail. Guards against a bound so
+        narrow that nothing could ever land in it."""
+        artifact = json.loads(json.dumps(load_t086_snapshot()))
+        for row in artifact["classes"]:
+            if row["class"] == "MoStemMsa":
+                row["starter_subtraction_basis"] = GROSS_SUBTRACTION_BASIS
+                row["unexplained_shortfall"] = 7
+                break
+        else:
+            pytest.fail("the snapshot has no MoStemMsa row to perturb")
+        assert phase_scoped_suppressions(artifact, 1) == (
+            ("MoStemMsa", "shortfall", 7),)

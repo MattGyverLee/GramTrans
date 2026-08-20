@@ -3455,7 +3455,7 @@ def is_gross_basis_row(row) -> bool:
     return row.get("starter_subtraction_basis") == GROSS_SUBTRACTION_BASIS
 
 
-def gross_basis_suppressions(artifact) -> tuple:
+def gross_basis_suppressions(artifact, classes=None) -> tuple:
     """Every shortfall/surplus 5.2's cap turns from a failure into accounting.
 
     Each entry is `(class_label, direction, count)`. Pure: derived from the
@@ -3465,10 +3465,25 @@ def gross_basis_suppressions(artifact) -> tuple:
     Empty means the cap changed nothing, which is the ordinary case on a
     `baseline_matched` run. Non-empty is what `gross_basis_cap_notes` renders,
     and what stops a capped `CENSUS_ACCOUNTED` from reading as `CENSUS_CLEAN`.
+
+    `classes` BOUNDS the answer to the rows the caller named, for the one
+    question that is legitimately phase-scoped -- see
+    `phase_scoped_suppressions`, which is the only caller that passes it. The
+    default is unbounded, so the cap, its notes and `census_cli`'s capped-pass
+    exit code all keep reading the same project-wide answer they always did;
+    T024b's comment is explicit that those three must not be able to disagree
+    about which rows are capped, and one implementation is how that is kept
+    true. A bound is tested against the row's LABEL *and* its bare `class`, so
+    an Amendment A1 split row -- whose label carries the owning feature system
+    -- is still recognised by a caller that named the plain class name.
     """
     found = []
     for row in _rows(artifact):
         if not _is_required(row) or not is_gross_basis_row(row):
+            continue
+        if (classes is not None
+                and _row_label(row) not in classes
+                and row.get("class") not in classes):
             continue
         for direction, key in (
                 ("shortfall", "unexplained_shortfall"),
@@ -3729,6 +3744,26 @@ PHASE_3_OWNED_CHILD_CLASSES: tuple = (
 #: checking only the allomorph difference would pass a whole-class downgrade.
 PHASE_4_CLASSES: tuple = ("MoAffixProcess", "MoAffixAllomorph")
 
+#: P1's full scope: the five classes it requires MATCHED, PLUS `PhPhoneme`,
+#: which it names on a DIFFERENT condition (duplicates, SC-002) and does not
+#: require MATCHED. The distinction matters here and nowhere else: a phase's
+#: scope is every class it NAMES, not only the ones it counts, so a suppression
+#: on the phoneme row is P1's business even though the predicate would still be
+#: satisfied with it.
+PHASE_1_CLASSES: tuple = PHASE_1_MATCHED_CLASSES + ("PhPhoneme",)
+
+#: P3's full scope: `PartOfSpeech`, named on the enrichment condition rather
+#: than on MATCHED, plus the owned children it does require MATCHED.
+PHASE_3_CLASSES: tuple = ("PartOfSpeech",) + PHASE_3_OWNED_CHILD_CLASSES
+
+#: P5 (residual) has NO closed class set, and that is not an omission. Its
+#: predicate is "every remaining `required` row", so its scope IS the whole
+#: artifact. Recorded as `None` rather than as a tuple because the difference
+#: is load-bearing: `phase_scoped_suppressions` returns EVERY suppression for
+#: an unbounded phase, which is what denies P5 the out-of-scope reading that
+#: P1..P4 may legitimately claim. T081 gets no escape hatch here.
+PHASE_5_CLASSES = None
+
 
 @dataclass(frozen=True)
 class PhaseResult:
@@ -3925,6 +3960,20 @@ class PhasePredicate:
     name: str
     description: str
     check: object
+    #: Every class this predicate NAMES, or `None` for "every required row".
+    #: Required, with no default: a phase that forgets to declare its scope
+    #: must fail to construct rather than quietly inherit somebody else's.
+    classes: object
+
+    def __post_init__(self) -> None:
+        if self.classes is not None and not self.classes:
+            raise CensusError(
+                "phase " + str(self.phase) + " declares an EMPTY class scope. "
+                "None means 'every required row' (P5's answer); an empty tuple "
+                "would mean 'no row is in scope', which turns every capped row "
+                "into somebody else's problem and makes the phase-scoped "
+                "reading of the gate unfalsifiable"
+            )
 
     def evaluate(self, artifact) -> PhaseResult:
         failures = tuple(self.check(artifact))
@@ -3938,44 +3987,89 @@ PHASE_PREDICATES: dict = {
         "MoStemMsa, MoInflAffMsa, MoDerivAffMsa, MoUnclassifiedAffixMsa and "
         "PartOfSpeech rows MATCHED; PhPhoneme.duplicates.extra_objects == 0 "
         "(SC-001, SC-002)",
-        _phase_1,
+        _phase_1, PHASE_1_CLASSES,
     ),
     2: PhasePredicate(
         2, "closure",
         "MoInflAffixTemplate and MoInflAffixSlot rows MATCHED (SC-004)",
-        _phase_2,
+        _phase_2, PHASE_2_MATCHED_CLASSES,
     ),
     3: PhasePredicate(
         3, "enrichment",
         "match_basis.enriched > 0 on PartOfSpeech, and the owned-child classes "
         "MATCHED (SC-007)",
-        _phase_3,
+        _phase_3, PHASE_3_CLASSES,
     ),
     4: PhasePredicate(
         4, "process rules",
         "MoAffixProcess MATCHED and MoAffixAllomorph difference == 0 -- both, "
         "because either alone can be satisfied by the defect itself (SC-006)",
-        _phase_4,
+        _phase_4, PHASE_4_CLASSES,
     ),
     5: PhasePredicate(
         5, "residual",
         "every remaining required row is either MATCHED or carries a valid "
         "GOVERNED_BY_OTHER_FEATURE / NO_CREATE_PATH line (SC-005)",
-        _phase_5,
+        _phase_5, PHASE_5_CLASSES,
     ),
 }
 
 
 def evaluate_phase(artifact, phase: int) -> PhaseResult:
     """Evaluate one phase predicate against an artifact."""
+    return _predicate(phase).evaluate(artifact)
+
+
+def _predicate(phase: int) -> PhasePredicate:
     try:
-        predicate = PHASE_PREDICATES[phase]
+        return PHASE_PREDICATES[phase]
     except KeyError:
         raise CensusError(
             "phase " + repr(phase) + " is not one of "
             + repr(tuple(sorted(PHASE_PREDICATES)))
         ) from None
-    return predicate.evaluate(artifact)
+
+
+def phase_classes(phase: int):
+    """The closed set of classes phase `phase` names, or `None` if unbounded.
+
+    Read off the predicate itself so no caller has to hand-maintain a second
+    copy that can drift from the one `evaluate_phase` actually enforces.
+    `None` is P5's answer and means "every required row".
+    """
+    classes = _predicate(phase).classes
+    return None if classes is None else frozenset(classes)
+
+
+def phase_scoped_suppressions(artifact, phase: int) -> tuple:
+    """The 5.2 suppressions that fall INSIDE phase `phase`'s declared scope.
+
+    9.1 says a phase "is done when the census run for its predicate exits 0
+    with the predicate satisfied", and `census_cli.CAPPED_PASS_EXIT_CODE`
+    (T024b) makes exit 0 a PROJECT-WIDE property: one suppressed row anywhere
+    denies it. That is right for the release gate and it has a consequence 9.1
+    does not mention -- no early phase can be declared done until the last one
+    is, because P1's exit code waits on accounting that belongs to Phase 9
+    (T079). Measured: on `CENSUS-20260820-150540` all of P1, P2 and P3 are
+    satisfied and the gate still exits 8, on 13 capped rows of which not one is
+    named by any of the three.
+
+    **This does not change the gate, by design.** The gate stays project-wide,
+    so `gate --phase 1` still exits 8 while anything at all is capped, and
+    SC-010's "there is deliberately no verdict meaning loss reported, review
+    advisable, exit success" is untouched. What this adds is the ability to say
+    MECHANICALLY, rather than in a task's prose, that every capped row lies
+    outside the phase being gated -- which is the amended third clause on
+    T038/T048/T075.
+
+    On an unbounded phase it returns every suppression. That is P5: the
+    residual phase's scope is every required row, so it can never claim a
+    suppressed row is somebody else's (T081 gets no escape hatch).
+    """
+    scope = phase_classes(phase)
+    if scope is None:
+        return gross_basis_suppressions(artifact)
+    return gross_basis_suppressions(artifact, classes=scope)
 
 
 # ---------------------------------------------------------------------------
