@@ -1107,3 +1107,169 @@ def test_a_refused_property_copy_is_reported_not_swallowed(_stub_lcm, spy):
     assert dropped[0].owner_kind == "MoAffixProcess"
     assert dropped[0].field_name == "Form"
     assert "AllomorphOperations" in dropped[0].reason
+
+
+# ============================================================================
+# Preview resolves against what the run WILL create, not only what is there
+# ============================================================================
+#
+# Found by the live Mbugwe run, not by inspection: Preview looks before
+# anything is written, so a phoneme this transfer is about to create is absent
+# when Preview asks. Resolving against the destination alone made Preview
+# predict 15 lost rules where Move then lost 6 and rebuilt 9. A Preview that
+# overstates the loss is not a safe error -- it is why a person declines a
+# transfer that would have worked.
+
+from gramtrans.Lib.models import GrammarCategory
+
+
+def _selection(**flags):
+    return SimpleNamespace(categories={
+        GrammarCategory.PHONEMES: flags.get("phonemes", True),
+        GrammarCategory.NATURAL_CLASSES: flags.get("natural_classes", True),
+    })
+
+
+def test_preview_does_not_predict_a_loss_the_run_will_not_have(
+    _stub_lcm, spy
+):
+    """The destination is EMPTY -- as it is at plan time -- and the run is
+    transferring phonemes and natural classes. Preview must not report the
+    rule as lost."""
+    rule, _destination = _reproducible_rule()
+    entry = _Entry("aaaaaaaa-0000-0000-0000-000000000030", lexeme_form=rule)
+
+    ctx, _target = _ctx_and_target(spy, destination=())
+    dropped: list = []
+    ctx._dropped = dropped
+    ctx._selection = _selection()
+
+    categories._plan_entry_reference_decisions(entry, ctx, target=object())
+
+    assert dropped == []
+    assert not _rule_records(ctx)
+
+
+def test_a_deselected_category_is_still_predicted_as_a_loss(_stub_lcm, spy):
+    """The predicate is the SELECTION, not mere presence in the source.
+
+    Under-reporting is the failure this must not commit: a rule whose phoneme
+    is in a category the user deselected really will be lost, and Preview is
+    where that has to be visible.
+    """
+    rule, _destination = _reproducible_rule()
+    entry = _Entry("aaaaaaaa-0000-0000-0000-000000000031", lexeme_form=rule)
+
+    ctx, _target = _ctx_and_target(spy, destination=())
+    dropped: list = []
+    ctx._dropped = dropped
+    ctx._selection = _selection(phonemes=False, natural_classes=False)
+
+    categories._plan_entry_reference_decisions(entry, ctx, target=object())
+
+    assert len(dropped) == 1
+    assert "absent from the destination" in dropped[0].reason
+
+
+def test_a_shared_context_is_predicted_as_a_loss_whatever_is_selected(
+    _stub_lcm, spy
+):
+    """Condition 4 is not softened by the plan-time leg. No category creates a
+    `PhSimpleContext*` owned by `PhPhonData.ContextsOS`, so nothing this run
+    does will bring it across -- which is exactly why Phase 7's closure is a
+    separate phase."""
+    shared = _TargetObj(SHARED_CTX, "PhSimpleContextSeg")
+    seq = _Member("PhSequenceContext", "ctx-seq-0030", MembersRS=[shared])
+    rule = _Rule("rule-seq-0030", inputs=[seq],
+                 outputs=[_Member("MoCopyFromInput", "out-0030",
+                                  ContentRA=seq)])
+    entry = _Entry("aaaaaaaa-0000-0000-0000-000000000032", lexeme_form=rule)
+
+    ctx, _target = _ctx_and_target(spy, destination=())
+    dropped: list = []
+    ctx._dropped = dropped
+    ctx._selection = _selection()
+
+    categories._plan_entry_reference_decisions(entry, ctx, target=object())
+
+    assert len(dropped) == 1
+    assert "PhPhonData.ContextsOS" in dropped[0].reason
+
+
+def test_move_never_takes_the_plan_time_leg(_stub_lcm, spy):
+    """Move's verdict stays decided entirely by what is really there. If the
+    plan-time leg leaked into Move, a rule would be created referencing a
+    phoneme that does not exist."""
+    rule, _destination = _reproducible_rule()
+    entry = _Entry("aaaaaaaa-0000-0000-0000-000000000033", lexeme_form=rule)
+
+    new_entry = SimpleNamespace(LexemeFormOA=None, AlternateFormsOS=_Seq())
+    ctx, _target = _ctx_and_target(spy, destination=())
+    ctx._selection = _selection()
+    dropped: list = []
+    categories._walk_entry_allomorphs(
+        entry, new_entry, ctx, tag=None, identity_remap={}, dropped=dropped)
+
+    assert new_entry.LexemeFormOA is None
+    assert len(dropped) == 1
+    assert "absent from the destination" in dropped[0].reason
+
+
+# ============================================================================
+# One record per rule: the run's outcome beats the plan's prediction
+# ============================================================================
+
+def test_the_run_record_replaces_the_plan_prediction():
+    """Also found live: plan and run records are NOT disjoint, and
+    concatenating them said the same loss happened twice.
+
+    The run wins because it is the outcome and the plan is a prediction -- not
+    a tie-break, the only direction that can be right. Measured on Mbugwe, the
+    plan named 15 rules unreproducible where the run rebuilt 9 of them; the
+    other direction would report those 9 as lost while the destination held
+    them.
+    """
+    from gramtrans.Lib.report import _merge_process_rules
+    from gramtrans.Lib.models import ProcessRuleTransferRecord
+
+    predicted = ProcessRuleTransferRecord(
+        source_guid="rule-1", reproduced=False,
+        not_reproducible_reason="phoneme absent from the destination")
+    actual = ProcessRuleTransferRecord(
+        source_guid="rule-1", reproduced=True, target_guid="rule-1")
+
+    merged = _merge_process_rules((predicted,), (actual,))
+
+    assert len(merged) == 1
+    assert merged[0].reproduced is True
+
+
+def test_a_rule_the_run_never_reached_keeps_its_plan_record():
+    """A Preview-only report, or a run that aborted, must not lose what the
+    plan already knew."""
+    from gramtrans.Lib.report import _merge_process_rules
+    from gramtrans.Lib.models import ProcessRuleTransferRecord
+
+    only_planned = ProcessRuleTransferRecord(
+        source_guid="rule-2", reproduced=False,
+        not_reproducible_reason="shared context absent")
+
+    merged = _merge_process_rules((only_planned,), ())
+
+    assert [r.source_guid for r in merged] == ["rule-2"]
+
+
+def test_merging_preserves_order_and_does_not_lose_unkeyed_records():
+    from gramtrans.Lib.report import _merge_process_rules
+    from gramtrans.Lib.models import ProcessRuleTransferRecord
+
+    a = ProcessRuleTransferRecord(
+        source_guid="a", reproduced=False, not_reproducible_reason="x")
+    b = ProcessRuleTransferRecord(
+        source_guid="b", reproduced=False, not_reproducible_reason="y")
+    c = ProcessRuleTransferRecord(
+        source_guid="c", reproduced=True, target_guid="c")
+
+    merged = _merge_process_rules((a, b), (c,))
+
+    assert [r.source_guid for r in merged] == ["a", "b", "c"]

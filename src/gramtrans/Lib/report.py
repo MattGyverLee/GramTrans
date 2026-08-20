@@ -375,8 +375,8 @@ def _build_from_plan(cls, plan: RunPlan, mode: RunMode,
         incompleteness=tuple(getattr(plan, "incompleteness", ()))
         + tuple(extra_incompleteness),
         enrichments=enrichments_all,
-        process_rules=tuple(getattr(plan, "process_rules", ()))
-        + tuple(extra_process_rules),
+        process_rules=_merge_process_rules(
+            getattr(plan, "process_rules", ()), extra_process_rules),
         census=census,
         # T024d-a: the per-class matched tallies the census consumes as
         # `starter_matched_to_source`. Sorted so the snapshot diffs
@@ -883,6 +883,43 @@ def _reference_decision_json(d) -> dict:
         "item_name": getattr(d, "item_name", ""),
         "item_guid": getattr(d, "item_guid", ""),
     }
+
+
+
+def _merge_process_rules(plan_rules, run_rules) -> tuple:
+    """One record per source rule: the RUN's outcome wins over the PLAN's
+    prediction (feature 038, T059/T060).
+
+    Both sides record process rules, and they are NOT disjoint -- a rule the
+    plan predicted unreproducible and the run then also skipped appears in
+    both. Concatenating them listed that rule twice in
+    `RunReport.rules_not_reproduced`, which is a report saying a loss happened
+    twice.
+
+    The run wins because it is the OUTCOME and the plan is a prediction. That
+    is not a tie-break; it is the only direction that can be right. A plan
+    resolves references against the destination as it stands BEFORE the
+    transfer, so it necessarily knows less than the run that followed it --
+    measured on the live `Mbugwe LizzieHC practice` run, the plan named 15
+    rules unreproducible where the run rebuilt 9 of them. Letting the plan win
+    would report those 9 as lost while the destination held them.
+
+    Plan order is preserved for rules the run never reached (a run that
+    aborted, or a Preview-only report with no run at all), so nothing the plan
+    knew is dropped.
+    """
+    merged = {}
+    order = []
+    for record in tuple(plan_rules) + tuple(run_rules):
+        guid = getattr(record, "source_guid", "")
+        if not guid:  # cannot be keyed; keep it rather than lose it
+            order.append(id(record))
+            merged[id(record)] = record
+            continue
+        if guid not in merged:
+            order.append(guid)
+        merged[guid] = record
+    return tuple(merged[key] for key in order)
 
 
 def _process_rule_json(r) -> dict:

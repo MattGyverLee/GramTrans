@@ -485,10 +485,13 @@ def execute(plan: RunPlan, source, target, report_sink, tag: ImportResidueTag,
     # so the two cannot disagree.
     #
     # `plan.process_rules` carries the PLAN's non-reproductions. Both are
-    # handed to `report.build`, which concatenates them, and the two sets are
-    # disjoint by construction: Preview records only `reproduced=False` and
-    # only for rules it already proved unbuildable, while Move records the
-    # outcome of the rules it actually attempted.
+    # handed to `report.build`, which MERGES them by source GUID with the
+    # run's record winning -- they are NOT disjoint, and an earlier version of
+    # this comment claimed they were. A rule the plan predicted unreproducible
+    # and the run then also skipped is in both, and concatenating them listed
+    # that rule twice in `rules_not_reproduced`. See
+    # `report._merge_process_rules` for why the run must win rather than the
+    # plan.
     _process_rules: list = []
     object.__setattr__(exec_ctx, '_process_rules', _process_rules)
     # Feature 038 T036: the CURRENT action's `PlannedDestination`, re-set on

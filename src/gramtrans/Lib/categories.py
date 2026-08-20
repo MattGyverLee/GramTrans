@@ -5852,7 +5852,9 @@ def _plan_entry_reference_decisions(src_entry, context, target):
                 # reproductions, Preview records what it already knows will
                 # not be reproduced (`RunReport.rules_not_reproduced`).
                 _plan_script, _plan_blocker = _resolve_process_graph(
-                    src_allo, context, getattr(context, "identity_remap", None))
+                    src_allo, context,
+                    getattr(context, "identity_remap", None),
+                    plan_time=True)
                 if _plan_script is None:
                     _append_dropped_once(dropped, DroppedItemRecord(
                         owner_kind="LexEntry",
@@ -7374,13 +7376,75 @@ def _process_referent_by_natural_key(context, src_obj, object_class):
     return _resolve_target_by_guid(target, decision.record.target_guid)
 
 
-def _resolve_process_referent(context, src_obj, identity_remap):
+class _PlanTimePending:
+    """Plan-time stand-in for a referent THIS RUN WILL CREATE.
+
+    Never returned in Move mode and never written to: pass 2 does not run at
+    plan time, so this only ever occupies a slot in the resolution script.
+    """
+
+    def __repr__(self) -> str:  # pragma: no cover -- diagnostics only
+        return "<referent this run will create>"
+
+
+PLAN_TIME_PENDING = _PlanTimePending()
+
+
+#: Referent class -> the category whose transfer creates it. A class ABSENT
+#: from this map is created by NO category, which is exactly the condition-4
+#: case: `PhSimpleContext*` objects owned by `PhPhonData.ContextsOS` have no
+#: category, so nothing this run does will bring them across.
+#:
+#: `PhBdryMarker` is deliberately absent and is NOT an omission: FLEx's
+#: boundary markers are fixed content with stable GUIDs, present in a
+#: brand-new project, so they resolve on the identity leg before this map is
+#: ever consulted. Measured on the Mbugwe run -- not one plan-time skip named
+#: a PhBdryMarker, while nine named a PhPhoneme or a natural class.
+_PROCESS_REFERENT_CATEGORY = {
+    "PhPhoneme": GrammarCategory.PHONEMES,
+    "PhNCSegments": GrammarCategory.NATURAL_CLASSES,
+    "PhNCFeatures": GrammarCategory.NATURAL_CLASSES,
+}
+
+
+def _process_referent_will_be_created(context, src_obj):
+    """Plan-time only: will THIS run create a destination counterpart?
+
+    WHY THIS EXISTS, measured rather than anticipated. Preview runs before
+    anything is written, so a phoneme this transfer is about to create is
+    absent from the destination when Preview looks. Resolving against the
+    destination alone therefore answered "unreproducible" for every rule
+    referencing a not-yet-transferred phoneme or natural class: on the live
+    `Mbugwe LizzieHC practice` run Preview predicted 15 lost rules where Move
+    then lost 6 and rebuilt 9. A Preview that overstates the loss is not a
+    safe error -- it is the reason a person declines a transfer that would
+    have worked.
+
+    The predicate is the SELECTION, not mere presence in the source, because
+    a deselected category is not transferred and a rule depending on it really
+    would be lost. Under-reporting is the failure this must not commit.
+    """
+    category = _PROCESS_REFERENT_CATEGORY.get(_class_name_of(src_obj))
+    if category is None:
+        return False
+    selection = getattr(context, "_selection", None)
+    categories = getattr(selection, "categories", None) or {}
+    return bool(categories.get(category))
+
+
+def _resolve_process_referent(context, src_obj, identity_remap,
+                              plan_time=False):
     """FR-024: the DESTINATION object matched under FR-001/FR-002 for one
     external reference out of a process rule, or None.
 
     Identity first, then the roster key -- `resolve_match`'s ordering, for its
     reason: a GUID that already identified an object must not be second-guessed
     by a name collision.
+
+    `plan_time` adds one final leg, and only that one: a referent absent today
+    whose class this run WILL create resolves to `PLAN_TIME_PENDING`. Move
+    never takes that leg, so Move's verdict is still decided entirely by what
+    is really there.
     """
     if src_obj is None:
         return None
@@ -7395,8 +7459,13 @@ def _resolve_process_referent(context, src_obj, identity_remap):
         found = _resolve_target_by_guid(target, guid)
         if found is not None:
             return found
-    return _process_referent_by_natural_key(
+    matched = _process_referent_by_natural_key(
         context, src_obj, _class_name_of(src_obj))
+    if matched is not None:
+        return matched
+    if plan_time and _process_referent_will_be_created(context, src_obj):
+        return PLAN_TIME_PENDING
+    return None
 
 
 def _process_referent_label(referent):
@@ -7435,7 +7504,7 @@ def _process_ref_seq(obj, iface_name, field):
     return list(getattr(_cast_lcm(obj, iface_name), field, None) or ())
 
 
-def _resolve_process_graph(src_rule, context, identity_remap):
+def _resolve_process_graph(src_rule, context, identity_remap, plan_time=False):
     """PASS 1 -- resolve the whole rule graph WITHOUT writing anything.
 
     Returns `(script, "")` when the rule is fully reproducible, or
@@ -7485,7 +7554,7 @@ def _resolve_process_graph(src_rule, context, identity_remap):
                     % (rule_guid, index, member_class, kind)
                 )
             resolved = _resolve_process_referent(
-                context, src_referent, identity_remap)
+                context, src_referent, identity_remap, plan_time)
             if resolved is None:
                 return None, (
                     "MoAffixProcess %s input member %d (%s) references %s %s, "
@@ -7534,7 +7603,7 @@ def _resolve_process_graph(src_rule, context, identity_remap):
             if ref_guid and ref_guid in input_by_guid:
                 continue  # owned by this rule -- created in the same pass
             resolved = _resolve_process_referent(
-                context, member_ref, identity_remap)
+                context, member_ref, identity_remap, plan_time)
             if resolved is None:
                 return None, (
                     "MoAffixProcess %s input member %d (PhSequenceContext) "
@@ -7601,7 +7670,7 @@ def _resolve_process_graph(src_rule, context, identity_remap):
                 )
             for position, terminal in enumerate(terminals):
                 resolved = _resolve_process_referent(
-                    context, terminal, identity_remap)
+                    context, terminal, identity_remap, plan_time)
                 if resolved is None:
                     return None, (
                         "MoAffixProcess %s output step %d (MoInsertPhones) "
