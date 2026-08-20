@@ -205,11 +205,20 @@ planners for one decision and the skip still fires first. Reusing `OVERWRITE` --
 permits blanking, forbidden by FR-021 and by the Edge Case "a destination that already holds
 substantial work". Reporting enriched as created -- rejected by FR-022.
 
-**Evidence.** `categories.py:194-300`, whose docstring at `:219` states "Owned collections are
-outside its scope"; skips at `:246`/`:269`; merge at `:298`; `transfer.py:268`, `:1674`,
+**Evidence.** `categories.py:194-300`, whose docstring `Behaviour:` step 3 (`:211`) enumerates
+only "Name/Abbreviation/Description per writing system" and never mentions owned collections
+at all; skips at `:246`/`:269`; merge at `:298`; `transfer.py:268`, `:1674`,
 `:2340`; `models.py:215`. Census: Verb/Noun/Pronoun each missing 3-4 whole collections, and the
 `SubPossibilitiesOS` gap alone accounts for 3 of 15 missing Ejagham POSes
 (census-evidence.md RC-3). FR-020..FR-022, SC-007.
+
+> **Correction (2026-08-20).** This Evidence line previously quoted the docstring as stating
+> "Owned collections are outside its scope". **That sentence exists in neither tree** -- not on
+> `main`, not in the code worktree. The wording is `census-evidence.md:155`'s own prose
+> describing the helper, never a quotation from it. Nothing needed striking; the docstring
+> simply omitted owned collections, which is why the pointer is now the `Behaviour:` step-3
+> clause instead. Line numbers above are **main-relative** and re-verified on 2026-08-20; the
+> code worktree drifts (measured `+526` at that date), so resolve by symbol name.
 
 **Residual risk.** Collection comparison needs its own child-identity rule (GUID first, then the
 R1 natural key for roster'd child classes); getting it wrong duplicates children instead of
