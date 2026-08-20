@@ -67,6 +67,9 @@ if __package__:
         PlannedOverwrite,
         POS_OWNED_COLLECTION_ALIASES,
         POS_OWNED_COLLECTION_FIELDS,
+        ProcessContextSpec,
+        ProcessOutputSpec,
+        ProcessRuleTransferRecord,
         ReferenceAction,
         ReferenceCardinality,
         ReferenceDecisionRecord,
@@ -93,6 +96,9 @@ else:
         PlannedOverwrite,
         POS_OWNED_COLLECTION_ALIASES,
         POS_OWNED_COLLECTION_FIELDS,
+        ProcessContextSpec,
+        ProcessOutputSpec,
+        ProcessRuleTransferRecord,
         ReferenceAction,
         ReferenceCardinality,
         ReferenceDecisionRecord,
@@ -5830,6 +5836,42 @@ def _plan_entry_reference_decisions(src_entry, context, target):
             # transferred at all, so it contributes no reference decisions --
             # report it here and move on, exactly as Move does.
             _allo_class = _class_name_of(src_allo)
+            if _allo_class == "MoAffixProcess":
+                # Feature 038 (T058, Principle III): Preview must take the
+                # SAME decision Move takes, and for a process rule that
+                # decision is not "is the class known" -- it is "can this
+                # rule's graph be rebuilt". `_resolve_process_graph` is the
+                # read-only half of the executor and writes NOTHING, so
+                # Preview reaches its verdict by running the identical
+                # resolution rather than by a parallel guess that could
+                # disagree.
+                #
+                # Only the SKIP is recorded here. A plan-time
+                # `reproduced=True` record would have to invent a target GUID
+                # for an object nothing has created yet; Move records the
+                # reproductions, Preview records what it already knows will
+                # not be reproduced (`RunReport.rules_not_reproduced`).
+                _plan_script, _plan_blocker = _resolve_process_graph(
+                    src_allo, context, getattr(context, "identity_remap", None))
+                if _plan_script is None:
+                    _append_dropped_once(dropped, DroppedItemRecord(
+                        owner_kind="LexEntry",
+                        owner_guid=_guid_str_from(src_entry),
+                        owner_label=_owner_label_for("LexEntry", src_entry),
+                        field_name=("LexemeFormOA" if src_allo is lf
+                                    else "AlternateFormsOS"),
+                        item_name="MoAffixProcess",
+                        item_guid=a_guid,
+                        reason=_plan_blocker,
+                    ))
+                    if a_guid:
+                        _record_process_rule(
+                            context, ProcessRuleTransferRecord(
+                                source_guid=a_guid,
+                                reproduced=False,
+                                not_reproducible_reason=_plan_blocker,
+                            ))
+                    continue
             if _dispatch_allomorph_subclass(_allo_class) is None:
                 _append_dropped_once(dropped, DroppedItemRecord(
                     owner_kind="LexEntry",
@@ -6480,9 +6522,25 @@ def _dispatch_msa_subclass(class_name):
 
 
 def _dispatch_allomorph_subclass(class_name):
-    """Return the allomorph subclass tag driving execute-time creation dispatch
-    (E3): 'MoAffixAllomorph' vs 'MoStemAllomorph'. Unknown -> None."""
-    known = {"MoAffixAllomorph", "MoStemAllomorph"}
+    """Return the `IMoForm` subclass tag driving execute-time creation dispatch
+    (E3). Unknown -> None.
+
+    THE ANSWER IS ALWAYS THE CLASS ITSELF OR NOTHING. This function may never
+    rename a class -- returning a different name is exactly the
+    `MoAffixProcess -> MoAffixAllomorph` downgrade FR-025 prohibits, and
+    `tests/unit/test_038_process_rules.py` asserts the property over the whole
+    corpus, not just over the classes listed here.
+
+    Feature 038 (T057) admits `MoAffixProcess`, and the timing was a contract
+    rather than a convenience: this entry landed in the SAME change as
+    `_reproduce_affix_process`, the real executor. Admitting it any earlier
+    would have sent every rule through the factory ternary's `else` to
+    `IMoAffixAllomorphFactory` -- the historic defect, restored by a one-word
+    edit. The whitelist and the executor are why that is now impossible in
+    either order: a rule the executor cannot rebuild is REPORTED and skipped,
+    never demoted.
+    """
+    known = {"MoAffixAllomorph", "MoStemAllomorph", "MoAffixProcess"}
     return class_name if class_name in known else None
 
 
@@ -7137,6 +7195,702 @@ def _walk_lex_entry_closure(src_entry, context, tag, category, dropped=None):
     return new_entry
 
 
+# ---------------------------------------------------------------------------
+# Feature 038 Phase 6 (US5) -- affix process rules (FR-023, FR-024, FR-025,
+# SC-006). Contract: contracts/process-morphology-create-path.md.
+# ---------------------------------------------------------------------------
+#
+# A `MoAffixProcess` is an `IMoForm` -- it hangs off `LexEntry.LexemeFormOA` or
+# `AlternateFormsOS` exactly as an allomorph does -- but it carries two owned
+# sequences no allomorph has: `InputOS` (the contexts the rule matches) and
+# `OutputOS` (the steps it performs). Copying one as a plain
+# `MoAffixAllomorph` keeps the GUID and the Form and destroys everything that
+# makes it a rule, which is what this engine did to 13/13 rules on the Ejagham
+# sweep while reporting a clean transfer.
+#
+# TWO PASSES, AND THE ORDER IS THE DESIGN.
+#
+# Pass 1 (`_resolve_process_graph`) RESOLVES and writes nothing: it walks the
+# whole graph, rejects any member class this engine does not implement, and
+# resolves every external reference against the destination. It returns either
+# a complete creation script or ONE reason naming the specific blocker.
+#
+# Pass 2 (`_create_process_graph`) creates, and only ever runs on a script that
+# pass 1 already proved complete.
+#
+# Splitting them is what makes FR-025's "create nothing in its place" true by
+# construction rather than by cleanup. The create-path contract lists rollback
+# granularity as an open question -- whether a half-built rule can be discarded
+# inside the executor's transaction scoping is UNVERIFIED -- and pre-validation
+# is the answer that does not depend on knowing. There is no repo-wide
+# precedent for deleting an LCM object; `Lib/*.py` contains no `.Delete()` call
+# at all. `_discard_partial_process_rule` exists for the residual case where a
+# factory fails after pass 1 said yes, and it detaches BEFORE it deletes,
+# because an unowned object is already out of the lexicon whether or not the
+# delete lands.
+#
+# WHAT IS NOT IMPLEMENTED, AND WHY IT IS A SKIP RATHER THAN A GUESS.
+#
+# `MoModifyFromInput`, `MoInsertNC`, `PhSimpleContextBdry` and
+# `PhIterationContext` have ZERO instances in any sanctioned project, so there
+# is no corpus that could tell a correct implementation from a plausible one.
+# They ship behind the skip, matching the "NEEDS_MANUAL until a corpus
+# exercises them" posture `_dispatch_msa_subclass` already takes. Same for a
+# non-empty `PlusConstrRS` / `MinusConstrRS` (live `totalFeatureConstraintRefs`
+# is 0), whose `PhFeatureConstraint` objects tie into the feature system.
+#
+# CONDITION 4, THE ONE THE PROBE ADDED. A `PhSequenceContext` in `InputOS` is
+# owned by the rule, but its `MembersRS` REFERENCE `PhSimpleContext*` objects
+# owned by the shared, project-level `PhPhonData.ContextsOS` -- true for 6 of
+# the 18 live rules. Those members are a Phase 7 closure problem, not a local
+# create. Until the closure pulls them, such a rule is reported and skipped:
+# an empty or partly-filled `MembersRS` is precisely the silent content loss
+# FR-023 and SC-006 forbid, and it would leave a rule that can no longer match
+# anything while the run reported success. The detector is written against
+# RESOLVABILITY, not against a hard-coded count, so those 6 rules start
+# transferring the moment the closure makes their contexts present -- no edit
+# here.
+
+#: Input-member class -> its LCM factory interface. Absence is the skip, so
+#: adding a class here is the ONLY way to make the engine build one.
+_PROCESS_INPUT_FACTORIES = {
+    "PhVariable": "IPhVariableFactory",
+    "PhSimpleContextSeg": "IPhSimpleContextSegFactory",
+    "PhSimpleContextNC": "IPhSimpleContextNCFactory",
+    "PhSequenceContext": "IPhSequenceContextFactory",
+}
+
+#: Output-step class -> its LCM factory interface. Same contract.
+_PROCESS_OUTPUT_FACTORIES = {
+    "MoCopyFromInput": "IMoCopyFromInputFactory",
+    "MoInsertPhones": "IMoInsertPhonesFactory",
+}
+
+#: Present in the LCM index, absent from every sanctioned corpus (create-path
+#: contract section 4). Named individually so the skip reason can say WHICH
+#: unexercised class blocked the rule instead of "unknown class".
+_PROCESS_UNEXERCISED_CLASSES = frozenset({
+    "MoModifyFromInput",
+    "MoInsertNC",
+    "PhSimpleContextBdry",
+    "PhIterationContext",
+})
+
+#: `PhSimpleContext*.FeatureStructureRA` target class per context class -- used
+#: only to name the referent in the skip reason and in `ProcessContextSpec`.
+_PROCESS_CONTEXT_REFERENT_KIND = {
+    "PhSimpleContextSeg": "phoneme",
+    "PhSimpleContextNC": "natural class",
+    "PhSimpleContextBdry": "boundary marker",
+}
+
+
+def _get_lcm_factory(target, iface_name):
+    """A factory by LCM interface NAME, fake-tolerant.
+
+    Generalises `_get_inflection_class_factory`'s ladder -- ServiceLocator
+    first (the create-path contract's `GetService(IMoAffixProcessFactory)`
+    leg, and the only one that works for a class no wrapper covers), then the
+    `GetFactory` interface-cast and string-key fallbacks the offline fakes
+    implement. `None` when no factory is obtainable, which every caller treats
+    as a blocker rather than as permission to use a different factory.
+    """
+    iface = None
+    try:
+        import sys as _sys
+        _lcm = _sys.modules.get("SIL.LCModel")
+        if _lcm is None:
+            import SIL.LCModel as _lcm  # noqa: F811
+        iface = getattr(_lcm, iface_name, None)
+    except Exception:  # noqa: BLE001 -- no pythonnet -> string-key fallback
+        iface = None
+    if iface is not None:
+        for getter in (
+            lambda: target.Cache.ServiceLocator.GetService(iface),
+            lambda: iface(target.GetFactory(iface)),
+        ):
+            try:
+                factory = getter()
+            except Exception:  # noqa: BLE001 -- try the next rung
+                continue
+            if factory is not None:
+                return factory
+    try:
+        return target.GetFactory(iface_name)
+    except Exception:  # noqa: BLE001 -- no factory obtainable
+        return None
+
+
+def _process_referent_by_natural_key(context, src_obj, object_class):
+    """FR-024 step 2: the destination object this source phoneme / natural
+    class matches by roster-admitted NAME, or None.
+
+    This is the leg that makes FR-024's "not to duplicates" true for STARTER
+    content: a newly created destination ships 23 example phonemes whose GUIDs
+    match nothing in any source, so a GUID-only lookup would report every rule
+    referencing a phoneme as unreproducible even after Phase 1 correctly reused
+    the starter object.
+
+    Ambiguity is NOT a pick. `resolve_match` raises `NaturalKeyAmbiguityError`
+    when an eligible key hits more than one candidate, and it is caught here
+    and turned into "unresolved" so the rule skips with a reason -- guessing
+    between two same-named destination phonemes is how a rule silently comes to
+    match the wrong segment.
+    """
+    if not object_class:
+        return None
+    binding = _matcher.natural_key_binding_for(object_class)
+    if binding is None:
+        return None
+    if _matcher.natural_key_roster_entry_for(object_class) is None:
+        return None
+    source = getattr(context, "source_handle", None)
+    target = getattr(context, "target_handle", None)
+    if source is None or target is None:
+        return None
+    scope = _matcher.NATURAL_KEY_SCOPE_FNS.get(binding.scope_fn_id)
+    if scope is None:
+        return None
+    try:
+        candidates = [_unwrap_lcm(c) for c in (scope(target) or ())]
+    except Exception:  # noqa: BLE001 -- an unenumerable scope is "no candidates"
+        return None
+    if not candidates:
+        return None
+    try:
+        decision = _matcher.resolve_match(
+            object_class,
+            _unwrap_lcm(src_obj),
+            candidates,
+            ws_handles=_matcher.ws_handles_for(target),
+            source_ws_handles=_matcher.ws_handles_for(source),
+        )
+    except _matcher.NaturalKeyAmbiguityError:
+        return None
+    except Exception:  # noqa: BLE001 -- an undecidable key is "no match"
+        return None
+    if decision.record.basis is not _MatchBasis.NATURAL_KEY:
+        return None
+    return _resolve_target_by_guid(target, decision.record.target_guid)
+
+
+def _resolve_process_referent(context, src_obj, identity_remap):
+    """FR-024: the DESTINATION object matched under FR-001/FR-002 for one
+    external reference out of a process rule, or None.
+
+    Identity first, then the roster key -- `resolve_match`'s ordering, for its
+    reason: a GUID that already identified an object must not be second-guessed
+    by a name collision.
+    """
+    if src_obj is None:
+        return None
+    target = getattr(context, "target_handle", None)
+    if target is None:
+        return None
+    src_guid = _guid_str_from(src_obj)
+    if not src_guid:
+        return None
+    remapped = (identity_remap or {}).get(src_guid)
+    for guid in ([remapped] if remapped else []) + [src_guid]:
+        found = _resolve_target_by_guid(target, guid)
+        if found is not None:
+            return found
+    return _process_referent_by_natural_key(
+        context, src_obj, _class_name_of(src_obj))
+
+
+def _process_referent_label(referent):
+    """Human label for a resolved phoneme / natural class, for the report.
+
+    A `PhVariable` resolves nothing and legitimately has no label, so "" is a
+    normal answer here rather than a missing one.
+    """
+    if referent is None:
+        return ""
+    if __package__:
+        from . import references as _references
+    else:
+        import references as _references  # type: ignore
+    try:
+        return _references._item_label(referent) or ""
+    except Exception:  # noqa: BLE001 -- an unlabelable fake still reports
+        return ""
+
+
+def _process_rule_members(src_rule, field):
+    """`InputOS` / `OutputOS` of a source rule, cast, order preserved.
+
+    The cast is not optional on a live host: `_walk_entry_allomorphs` receives
+    the rule as an `IMoForm`, and pythonnet resolves attributes against the
+    STATIC type, so uncast `.InputOS` is invisible (`None`) on an object that
+    really has one -- the same shape that made flexicon 4.5.0's natural-class
+    feature wiring 100% dead code while every test passed.
+    """
+    rule = _cast_lcm(_unwrap_lcm(src_rule), "IMoAffixProcess")
+    return list(getattr(rule, field, None) or ())
+
+
+def _process_ref_seq(obj, iface_name, field):
+    """One reference sequence off a cast member, as a list."""
+    return list(getattr(_cast_lcm(obj, iface_name), field, None) or ())
+
+
+def _resolve_process_graph(src_rule, context, identity_remap):
+    """PASS 1 -- resolve the whole rule graph WITHOUT writing anything.
+
+    Returns `(script, "")` when the rule is fully reproducible, or
+    `(None, reason)` naming the single specific blocker. The reason is what
+    reaches the `DroppedItemRecord` and the `ProcessRuleTransferRecord`, so it
+    must say which member and which referent, not merely that something failed.
+    """
+    rule_guid = _guid_str_from(src_rule)
+    inputs = []
+    input_by_guid = {}
+
+    for index, member in enumerate(_process_rule_members(src_rule, "InputOS")):
+        member_class = _class_name_of(member) or ""
+        member_guid = _guid_str_from(member)
+        if member_class in _PROCESS_UNEXERCISED_CLASSES:
+            return None, (
+                "MoAffixProcess %s input member %d is a %s, a class with zero "
+                "instances in any sanctioned corpus -- this engine ships it "
+                "behind the FR-025 skip rather than guessing an "
+                "implementation no data can check (create-path contract "
+                "section 4)" % (rule_guid, index, member_class)
+            )
+        if member_class not in _PROCESS_INPUT_FACTORIES:
+            return None, (
+                "MoAffixProcess %s input member %d is a %s, which this engine "
+                "cannot reproduce -- rule not transferred (FR-023/FR-025)"
+                % (rule_guid, index, member_class or "(unknown class)")
+            )
+        row = {
+            "class": member_class,
+            "guid": member_guid,
+            "index": index,
+            "referent": None,
+            "referent_guid": "",
+            "members": [],
+        }
+        if member_class in ("PhSimpleContextSeg", "PhSimpleContextNC"):
+            iface = "I" + member_class
+            src_referent = getattr(
+                _cast_lcm(member, iface), "FeatureStructureRA", None)
+            kind = _PROCESS_CONTEXT_REFERENT_KIND.get(member_class, "referent")
+            if src_referent is None:
+                return None, (
+                    "MoAffixProcess %s input member %d (%s) names no %s at "
+                    "all -- a context that matches nothing is not a faithful "
+                    "reproduction (FR-023)"
+                    % (rule_guid, index, member_class, kind)
+                )
+            resolved = _resolve_process_referent(
+                context, src_referent, identity_remap)
+            if resolved is None:
+                return None, (
+                    "MoAffixProcess %s input member %d (%s) references %s %s, "
+                    "which is absent from the destination and matched nothing "
+                    "by natural key -- rule not transferred, because a "
+                    "context with an unresolved %s would silently stop "
+                    "matching (FR-024/FR-025)"
+                    % (rule_guid, index, member_class, kind,
+                       _guid_str_from(src_referent), kind)
+                )
+            row["referent"] = resolved
+            row["referent_guid"] = _guid_str_from(src_referent)
+        if member_class == "PhSimpleContextNC":
+            for constr_field in ("PlusConstrRS", "MinusConstrRS"):
+                if _process_ref_seq(member, "IPhSimpleContextNC", constr_field):
+                    return None, (
+                        "MoAffixProcess %s input member %d (PhSimpleContextNC) "
+                        "carries a non-empty %s -- PhFeatureConstraint has "
+                        "zero live instances and ties into the feature "
+                        "system, so it ships behind the FR-025 skip rather "
+                        "than a guess (create-path contract section 4)"
+                        % (rule_guid, index, constr_field)
+                    )
+        if member_class == "PhSequenceContext":
+            row["members"] = _process_ref_seq(
+                member, "IPhSequenceContext", "MembersRS")
+            if not row["members"]:
+                return None, (
+                    "MoAffixProcess %s input member %d (PhSequenceContext) "
+                    "has an empty MembersRS in the SOURCE -- reproducing it "
+                    "would be indistinguishable from the content loss this "
+                    "skip exists to prevent (FR-023)"
+                    % (rule_guid, index)
+                )
+        inputs.append(row)
+        if member_guid:
+            input_by_guid[member_guid] = row
+
+    # Condition 4, and it must run AFTER every input member is known: a
+    # PhSequenceContext member may point either at a sibling in this same
+    # InputOS or at a shared PhPhonData.ContextsOS context, and only the
+    # complete input set can tell those apart.
+    for row in inputs:
+        for position, member_ref in enumerate(row["members"]):
+            ref_guid = _guid_str_from(member_ref)
+            if ref_guid and ref_guid in input_by_guid:
+                continue  # owned by this rule -- created in the same pass
+            resolved = _resolve_process_referent(
+                context, member_ref, identity_remap)
+            if resolved is None:
+                return None, (
+                    "MoAffixProcess %s input member %d (PhSequenceContext) "
+                    "references %s %s at position %d, which this rule does "
+                    "NOT own -- it belongs to the shared project-level "
+                    "PhPhonData.ContextsOS and is absent from the "
+                    "destination. The rule is not transferred until that "
+                    "closure lands; a partly-filled MembersRS is not an "
+                    "acceptable outcome (FR-023/FR-024/FR-025, create-path "
+                    "contract condition 4)"
+                    % (rule_guid, row["index"],
+                       _class_name_of(member_ref) or "context",
+                       ref_guid or "(no guid)", position)
+                )
+            row.setdefault("member_targets", {})[position] = resolved
+
+    outputs = []
+    for index, step in enumerate(_process_rule_members(src_rule, "OutputOS")):
+        step_class = _class_name_of(step) or ""
+        if step_class in _PROCESS_UNEXERCISED_CLASSES:
+            return None, (
+                "MoAffixProcess %s output step %d is a %s, a class with zero "
+                "instances in any sanctioned corpus -- this engine ships it "
+                "behind the FR-025 skip rather than guessing an "
+                "implementation no data can check (create-path contract "
+                "section 4)" % (rule_guid, index, step_class)
+            )
+        if step_class not in _PROCESS_OUTPUT_FACTORIES:
+            return None, (
+                "MoAffixProcess %s output step %d is a %s, which this engine "
+                "cannot reproduce -- rule not transferred (FR-023/FR-025)"
+                % (rule_guid, index, step_class or "(unknown class)")
+            )
+        row = {
+            "class": step_class,
+            "guid": _guid_str_from(step),
+            "index": index,
+            "content_guid": "",
+            "referents": [],
+            "referent_guids": [],
+        }
+        if step_class == "MoCopyFromInput":
+            content = getattr(
+                _cast_lcm(step, "IMoCopyFromInput"), "ContentRA", None)
+            content_guid = _guid_str_from(content) if content is not None else ""
+            if not content_guid or content_guid not in input_by_guid:
+                return None, (
+                    "MoAffixProcess %s output step %d (MoCopyFromInput) "
+                    "copies %s, which is not one of this rule's own input "
+                    "members -- the intra-rule back-reference cannot be "
+                    "rebuilt and the step would copy nothing (FR-023)"
+                    % (rule_guid, index, content_guid or "(no ContentRA)")
+                )
+            row["content_guid"] = content_guid
+        else:  # MoInsertPhones
+            terminals = _process_ref_seq(
+                step, "IMoInsertPhones", "ContentRS")
+            if not terminals:
+                return None, (
+                    "MoAffixProcess %s output step %d (MoInsertPhones) has an "
+                    "empty ContentRS in the SOURCE -- a step that inserts "
+                    "nothing is not a faithful reproduction (FR-023)"
+                    % (rule_guid, index)
+                )
+            for position, terminal in enumerate(terminals):
+                resolved = _resolve_process_referent(
+                    context, terminal, identity_remap)
+                if resolved is None:
+                    return None, (
+                        "MoAffixProcess %s output step %d (MoInsertPhones) "
+                        "inserts %s %s at position %d, which is absent from "
+                        "the destination and matched nothing by natural key "
+                        "-- rule not transferred (FR-024/FR-025)"
+                        % (rule_guid, index,
+                           _class_name_of(terminal) or "terminal unit",
+                           _guid_str_from(terminal) or "(no guid)", position)
+                    )
+                row["referents"].append(resolved)
+                row["referent_guids"].append(_guid_str_from(terminal))
+        outputs.append(row)
+
+    if not inputs and not outputs:
+        return None, (
+            "MoAffixProcess %s has an empty InputOS AND an empty OutputOS in "
+            "the SOURCE -- there is no rule content to reproduce, and "
+            "creating the shell would be indistinguishable from the "
+            "empty-OutputOS shell SC-006 forbids" % rule_guid
+        )
+    return {"inputs": inputs, "outputs": outputs}, ""
+
+
+def _discard_partial_process_rule(rule_obj, entry_ie, was_lexeme_form):
+    """Detach and, best effort, delete a rule shell whose graph failed to
+    build after pass 1 approved it.
+
+    Detach FIRST: an object no longer owned by the entry is already out of the
+    lexicon whether or not the delete lands, and `Lib/*.py` has no other
+    `.Delete()` call to copy a transaction posture from. Both steps are
+    fail-soft -- a discard that raised would replace a reported skip with a
+    crash, which is a worse answer to the same loss.
+    """
+    try:
+        if was_lexeme_form:
+            if entry_ie.LexemeFormOA is rule_obj:
+                entry_ie.LexemeFormOA = None
+        else:
+            entry_ie.AlternateFormsOS.Remove(rule_obj)
+    except Exception:  # noqa: BLE001 -- fake surfaces / already detached
+        pass
+    try:
+        _cast_lcm(rule_obj, "ICmObject").Delete()
+    except Exception:  # noqa: BLE001 -- undeletable / offline fake
+        pass
+
+
+def _create_process_graph(new_rule, script, target):
+    """PASS 2 -- create `InputOS` then `OutputOS` from an approved script.
+
+    Input BEFORE output, and that ordering is a data dependency rather than a
+    style: `MoCopyFromInput.ContentRA` points back at an `InputOS` member of
+    the SAME rule, so the map from source GUID to new object must already
+    exist when the output pass runs. The map is many-to-one tolerant because
+    one input member is referenced by two output steps in the live corpus
+    (rule `re-2`), and `OutputOS` order is significant, so both sequences are
+    built by appending in source order.
+
+    Returns `(input_specs, output_specs, "")`, or `(None, None, reason)` on a
+    create that failed despite pass 1.
+    """
+    rule_ie = _cast_lcm(new_rule, "IMoAffixProcess")
+    new_by_src_guid = {}
+    input_specs = []
+
+    for row in script["inputs"]:
+        factory = _get_lcm_factory(
+            target, _PROCESS_INPUT_FACTORIES[row["class"]])
+        if factory is None:
+            return None, None, (
+                "no %s is obtainable from the destination, so this rule's "
+                "input member %d could not be created"
+                % (_PROCESS_INPUT_FACTORIES[row["class"]], row["index"])
+            )
+        obj = create_with_guid(factory, row["guid"], row["class"])
+        if obj is None:
+            return None, None, (
+                "creating input member %d (%s) returned nothing"
+                % (row["index"], row["class"])
+            )
+        rule_ie.InputOS.Add(obj)
+        if row["guid"]:
+            new_by_src_guid[row["guid"]] = obj
+        row["new"] = obj
+
+    # References second, so a PhSequenceContext can point at a sibling that
+    # this same pass created.
+    for row in script["inputs"]:
+        obj = row["new"]
+        if row["referent"] is not None:
+            try:
+                _cast_lcm(obj, "I" + row["class"]).FeatureStructureRA = (
+                    row["referent"])
+            except Exception as exc:  # noqa: BLE001
+                return None, None, (
+                    "wiring input member %d (%s) FeatureStructureRA failed: "
+                    "%s" % (row["index"], row["class"], exc)
+                )
+        if row["class"] == "PhSequenceContext":
+            members = _cast_lcm(obj, "IPhSequenceContext").MembersRS
+            member_targets = row.get("member_targets", {})
+            for position, member_ref in enumerate(row["members"]):
+                ref_guid = _guid_str_from(member_ref)
+                target_obj = new_by_src_guid.get(ref_guid)
+                if target_obj is None:
+                    target_obj = member_targets.get(position)
+                if target_obj is None:
+                    return None, None, (
+                        "input member %d (PhSequenceContext) lost its member "
+                        "at position %d between resolution and creation"
+                        % (row["index"], position)
+                    )
+                members.Add(target_obj)
+        input_specs.append(ProcessContextSpec(
+            context_class=row["class"],
+            index=row["index"],
+            referent_guid=row["referent_guid"],
+            label=_process_referent_label(row["referent"]),
+        ))
+
+    output_specs = []
+    for row in script["outputs"]:
+        factory = _get_lcm_factory(
+            target, _PROCESS_OUTPUT_FACTORIES[row["class"]])
+        if factory is None:
+            return None, None, (
+                "no %s is obtainable from the destination, so this rule's "
+                "output step %d could not be created"
+                % (_PROCESS_OUTPUT_FACTORIES[row["class"]], row["index"])
+            )
+        obj = create_with_guid(factory, row["guid"], row["class"])
+        if obj is None:
+            return None, None, (
+                "creating output step %d (%s) returned nothing"
+                % (row["index"], row["class"])
+            )
+        rule_ie.OutputOS.Add(obj)
+        if row["class"] == "MoCopyFromInput":
+            content = new_by_src_guid.get(row["content_guid"])
+            if content is None:
+                return None, None, (
+                    "output step %d (MoCopyFromInput) lost its intra-rule "
+                    "back-reference between resolution and creation"
+                    % row["index"]
+                )
+            try:
+                _cast_lcm(obj, "IMoCopyFromInput").ContentRA = content
+            except Exception as exc:  # noqa: BLE001
+                return None, None, (
+                    "wiring output step %d (MoCopyFromInput) ContentRA "
+                    "failed: %s" % (row["index"], exc)
+                )
+            content_label = row["content_guid"]
+        else:
+            try:
+                seq = _cast_lcm(obj, "IMoInsertPhones").ContentRS
+                for referent in row["referents"]:
+                    seq.Add(referent)
+            except Exception as exc:  # noqa: BLE001
+                return None, None, (
+                    "wiring output step %d (MoInsertPhones) ContentRS "
+                    "failed: %s" % (row["index"], exc)
+                )
+            content_label = ""
+        output_specs.append(ProcessOutputSpec(
+            step_class=row["class"],
+            index=row["index"],
+            content=content_label,
+            referent_guids=tuple(row["referent_guids"]),
+        ))
+
+    return tuple(input_specs), tuple(output_specs), ""
+
+
+def _record_process_rule(context, record):
+    """Accumulate one `ProcessRuleTransferRecord` on the run context.
+
+    Same idiom as `context._dropped`: the executor collects, and
+    `Lib/transfer.py` hands the tuple to `report.build(extra_process_rules=)`.
+    A rule that transferred and a rule that skipped are BOTH recorded -- SC-010
+    needs the run to be able to say which rules it rebuilt, not only which it
+    could not.
+    """
+    records = getattr(context, "_process_rules", None)
+    if records is None:
+        records = []
+        try:
+            object.__setattr__(context, "_process_rules", records)
+        except Exception:  # noqa: BLE001 -- immutable fake context
+            return
+    records.append(record)
+
+
+def _reproduce_affix_process(src_rule, src_entry, entry_ie, is_lexeme_form,
+                             context, tag, identity_remap, dropped):
+    """Reproduce one `MoAffixProcess`, or report and skip it (FR-023..FR-025).
+
+    Returns the new rule object, or `None` when the rule was skipped -- and a
+    `None` return NEVER means "fall back to a simpler class". That fallback is
+    the historic downgrade; `_walk_entry_allomorphs._mk` returns on `None`.
+    """
+    target = context.target_handle
+    rule_guid = _guid_str_from(src_rule)
+    field_name = "LexemeFormOA" if is_lexeme_form else "AlternateFormsOS"
+
+    def _skip(reason):
+        _append_dropped_once(dropped, DroppedItemRecord(
+            owner_kind="LexEntry",
+            owner_guid=_guid_str_from(src_entry),
+            owner_label=_owner_label_for("LexEntry", src_entry),
+            field_name=field_name,
+            item_name="MoAffixProcess",
+            item_guid=rule_guid,
+            reason=reason,
+        ))
+        if rule_guid:
+            _record_process_rule(context, ProcessRuleTransferRecord(
+                source_guid=rule_guid,
+                reproduced=False,
+                not_reproducible_reason=reason,
+            ))
+        # FidelityStatus.PARTIAL for the owning entry is not set here and
+        # must not be: `compute_fidelity_by_guid` DERIVES it from exactly this
+        # record's `owner_guid`, so the entry is already PARTIAL the moment
+        # the record above exists. A second, hand-set marking would be a
+        # parallel source of truth that could disagree with the report.
+        return None
+
+    script, blocker = _resolve_process_graph(
+        src_rule, context, identity_remap)
+    if script is None:
+        return _skip(blocker)
+
+    factory = _get_lcm_factory(target, "IMoAffixProcessFactory")
+    if factory is None:
+        return _skip(
+            "MoAffixProcess %s could not be created: no "
+            "IMoAffixProcessFactory is obtainable from the destination. There "
+            "is no flexicon wrapper for this class, so the ServiceLocator leg "
+            "is the whole create surface (create-path contract section 1)"
+            % rule_guid
+        )
+    new_rule = create_with_guid(factory, rule_guid, "MoAffixProcess")
+    if new_rule is None:
+        return _skip(
+            "MoAffixProcess %s could not be created: IMoAffixProcessFactory "
+            "returned nothing" % rule_guid
+        )
+
+    if is_lexeme_form and entry_ie.LexemeFormOA is None:
+        entry_ie.LexemeFormOA = new_rule
+        attached_as_lexeme_form = True
+    else:
+        entry_ie.AlternateFormsOS.Add(new_rule)
+        attached_as_lexeme_form = False
+
+    input_specs, output_specs, failure = _create_process_graph(
+        new_rule, script, target)
+    if failure:
+        _discard_partial_process_rule(
+            new_rule, entry_ie, attached_as_lexeme_form)
+        return _skip(
+            "MoAffixProcess %s was rolled back after its graph failed to "
+            "build: %s. Nothing was left in its place -- a partially "
+            "populated rule is the silent alteration of kind FR-025 forbids"
+            % (rule_guid, failure)
+        )
+
+    new_guid = rule_guid
+    try:
+        from SIL.LCModel import ICmObject as _ICmObject
+        new_guid = str(_ICmObject(new_rule).Guid).lower()
+    except Exception:  # noqa: BLE001 -- offline fake
+        new_guid = str(getattr(new_rule, "guid", rule_guid) or rule_guid).lower()
+    if new_guid != rule_guid and identity_remap is not None and rule_guid:
+        identity_remap[rule_guid] = new_guid
+
+    if rule_guid:
+        _record_process_rule(context, ProcessRuleTransferRecord(
+            source_guid=rule_guid,
+            target_guid=new_guid or rule_guid,
+            reproduced=True,
+            input_contexts=input_specs,
+            output_steps=output_specs,
+        ))
+    return new_rule
+
+
 def _walk_entry_allomorphs(src_entry, new_entry, context, tag, identity_remap, dropped=None):
     """Create IMoForm allomorphs (E3) for an entry: LexemeFormOA then each
     AlternateFormsOS member. GUID is not factory-preservable for allomorphs;
@@ -7217,8 +7971,28 @@ def _walk_entry_allomorphs(src_entry, new_entry, context, tag, identity_remap, d
                 ),
             ))
             return
-        factory_iface = (IMoStemAllomorphFactory if subclass == "MoStemAllomorph"
-                         else IMoAffixAllomorphFactory)
+        if subclass == "MoAffixProcess":
+            # Feature 038 (T058): the real create path REPLACES the downgrade
+            # that used to live in the ternary below. `038-affix-fidelity`'s
+            # skip (18c0ece) is not removed -- it is now the FALLBACK, reached
+            # from inside `_reproduce_affix_process` whenever the rule's graph
+            # cannot be faithfully rebuilt. A None return means REPORTED AND
+            # SKIPPED and never "try a simpler class": returning here is what
+            # keeps the historic defect unreachable.
+            _reproduce_affix_process(
+                src_allo, src_entry, entry_ie, is_lexeme_form, context, tag,
+                identity_remap, dropped)
+            return
+        # The remaining two subclasses. This mapping is EXHAUSTIVE over
+        # `_dispatch_allomorph_subclass`'s `known` set by construction: every
+        # tag it can return is handled above or here, so a class added to that
+        # set without a create path is a KeyError at its first instance rather
+        # than a silent demotion to IMoAffixAllomorphFactory, which is what the
+        # `else` on the old ternary did to 13/13 MoAffixProcess.
+        factory_iface = {
+            "MoStemAllomorph": IMoStemAllomorphFactory,
+            "MoAffixAllomorph": IMoAffixAllomorphFactory,
+        }[subclass]
         try:
             factory = factory_iface(target.GetFactory(factory_iface))
             # GUID-preserved (033): this used to be a bare Create(), which

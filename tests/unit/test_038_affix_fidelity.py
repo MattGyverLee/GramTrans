@@ -123,9 +123,22 @@ def _ctx_and_target():
 # Defect 1 -- unreproducible allomorph subclasses must not be degraded
 # ============================================================================
 
-def test_dispatch_rejects_affix_process():
-    """Intent lock: MoAffixProcess is NOT a reproducible allomorph subclass."""
-    assert categories._dispatch_allomorph_subclass("MoAffixProcess") is None
+def test_dispatch_never_renames_a_subclass():
+    """Intent lock, RESTATED for feature 038 T057.
+
+    This used to assert `_dispatch_allomorph_subclass("MoAffixProcess") is
+    None`, which was the right lock while the engine had no create path for
+    the class. T057 admits it -- in the same change as the real executor
+    (`_reproduce_affix_process`), never earlier -- so the lock moves to the
+    property that actually forbids the defect: the dispatch answers with the
+    class ITSELF or with nothing, and never with a different, simpler name.
+    A rule this engine cannot rebuild is now reported and skipped from inside
+    the executor, not demoted here. See tests/unit/test_038_process_rules.py.
+    """
+    assert (
+        categories._dispatch_allomorph_subclass("MoAffixProcess")
+        == "MoAffixProcess"
+    )
     assert (
         categories._dispatch_allomorph_subclass("MoAffixAllomorph")
         == "MoAffixAllomorph"

@@ -60,7 +60,10 @@ IMOFORM_SUBCLASSES = ("MoAffixAllomorph", "MoStemAllomorph", "MoAffixProcess")
 #: subclasses, a plausible-looking future subclass, and degenerate inputs -- a
 #: whitelist that leaks would send any of these to an allomorph factory.
 REFUSED_CLASS_NAMES = (
-    "MoAffixProcess",
+    # NOT "MoAffixProcess" -- T057 admitted it to the whitelist in the same
+    # change as its real executor, so it is dispatchable now and its own
+    # coverage is the T049 section below. Leaving it here would have made this
+    # corpus assert the opposite of the shipped contract.
     "MoSomethingNew",
     "MoInflAffixSlot",
     "MoInflAffixTemplate",
@@ -142,7 +145,47 @@ class _Entry:
 
 
 class _Created:
-    """What a spied factory hands back: an object that knows its own class."""
+    """What a spied factory hands back: an object that knows its own class.
+
+    Carries the owning/reference sequences the process-rule create path writes
+    through, so a graph really is assembled rather than merely counted.
+    """
+
+    def __init__(self, guid: str, class_name: str) -> None:
+        self.guid = guid
+        self.ClassName = class_name
+        self.InputOS = _Seq()
+        self.OutputOS = _Seq()
+        self.MembersRS = _Seq()
+        self.ContentRS = _Seq()
+        self.FeatureStructureRA = None
+        self.ContentRA = None
+
+
+class _Member:
+    """A rule-graph member: a class name, a GUID, and whatever references its
+    class declares. Anything not passed simply is not there, which is what a
+    `PhVariable` (no own properties) looks like."""
+
+    def __init__(self, class_name: str, guid: str, **refs) -> None:
+        self.ClassName = class_name
+        self.guid = guid
+        for name, value in refs.items():
+            setattr(self, name, value)
+
+
+class _Rule(_Member):
+    """A source `MoAffixProcess` with its two owned sequences."""
+
+    def __init__(self, guid: str, inputs=(), outputs=()) -> None:
+        super().__init__("MoAffixProcess", guid)
+        self.InputOS = list(inputs)
+        self.OutputOS = list(outputs)
+
+
+class _TargetObj:
+    """A destination object reachable by GUID -- a phoneme, a natural class, a
+    shared project-level context."""
 
     def __init__(self, guid: str, class_name: str) -> None:
         self.guid = guid
@@ -232,15 +275,23 @@ def failing_create(monkeypatch, spy):
     return spy
 
 
-def _ctx_and_target(spy=None):
+def _ctx_and_target(spy=None, destination=()):
+    """A run context whose destination holds `destination` addressably by GUID.
+
+    `get_object_by_guid` is the offline half of `_resolve_target_by_guid` --
+    the live path goes through the LCM object repository -- so a destination
+    populated here is what FR-024's "resolve to the matched item" resolves to.
+    """
     def _get_factory(iface):
         if spy is not None:
             spy.factories_requested.append(getattr(iface, "name", repr(iface)))
         return iface
 
+    by_guid = {o.guid: o for o in destination}
     target = SimpleNamespace(
         Cache=SimpleNamespace(DefaultAnalWs=1),
         GetFactory=_get_factory,
+        get_object_by_guid=by_guid.get,
     )
     ctx = SimpleNamespace(
         target_handle=target,
@@ -250,15 +301,64 @@ def _ctx_and_target(spy=None):
     return ctx, target
 
 
-def _walk(entry, spy):
+def _walk(entry, spy, destination=()):
     """Run the Move-mode walk over `entry`, returning its dropped records."""
     new_entry = SimpleNamespace(LexemeFormOA=None, AlternateFormsOS=_Seq())
-    ctx, _target = _ctx_and_target(spy)
+    ctx, _target = _ctx_and_target(spy, destination)
     dropped: list = []
     categories._walk_entry_allomorphs(
         entry, new_entry, ctx, tag=None, identity_remap={}, dropped=dropped
     )
-    return new_entry, dropped
+    return new_entry, dropped, ctx
+
+
+# ============================================================================
+# The live corpus's rule shape, as a fixture
+# ============================================================================
+
+#: Destination phoneme and natural class, addressable by the SOURCE GUID --
+#: which is what "resolve to the destination item matched under FR-001/FR-002"
+#: means once Phase 1's creates preserve GUIDs.
+DEST_PHONEME = "7325210f-0000-0000-0000-00000000aaaa"
+DEST_NC = "8f5b331b-0000-0000-0000-00000000bbbb"
+SHARED_CTX = "cccccccc-0000-0000-0000-0000000000cc"
+
+
+def _reproducible_rule():
+    """The representative live rule from the create-path contract section 4
+    (`Mbugwe LizzieHC practice`, entry `re-2`), and its destination.
+
+    Input  = [PhSimpleContextNC -> NC, PhVariable]
+    Output = [MoInsertPhones -> phoneme, MoCopyFromInput -> that NC context,
+              MoCopyFromInput -> the same NC context]
+
+    The doubled `MoCopyFromInput` is the point: one input member referenced by
+    two output steps is what makes the intra-rule GUID map many-to-one
+    tolerant rather than a bijection, and it is measured, not invented.
+    """
+    ctx_nc = _Member("PhSimpleContextNC", "ctx-nc-0001",
+                     FeatureStructureRA=_TargetObj(DEST_NC, "PhNCSegments"),
+                     PlusConstrRS=[], MinusConstrRS=[])
+    ctx_var = _Member("PhVariable", "ctx-var-0002")
+    rule = _Rule(
+        "19bab2cf-6580-45db-b600-58857c4a6e65",
+        inputs=[ctx_nc, ctx_var],
+        outputs=[
+            _Member("MoInsertPhones", "out-ins-0003",
+                    ContentRS=[_TargetObj(DEST_PHONEME, "PhPhoneme")]),
+            _Member("MoCopyFromInput", "out-cpy-0004", ContentRA=ctx_nc),
+            _Member("MoCopyFromInput", "out-cpy-0005", ContentRA=ctx_nc),
+        ],
+    )
+    destination = (
+        _TargetObj(DEST_PHONEME, "PhPhoneme"),
+        _TargetObj(DEST_NC, "PhNCSegments"),
+    )
+    return rule, destination
+
+
+def _rule_records(ctx):
+    return list(getattr(ctx, "_process_rules", ()) or ())
 
 
 # ============================================================================
@@ -277,7 +377,7 @@ def test_affix_process_never_reaches_an_allomorph_factory(
     proc = _Form("19bab2cf-6580-45db-b600-58857c4a6e65", "MoAffixProcess")
     entry = _Entry("aaaaaaaa-0000-0000-0000-000000000001", lexeme_form=proc)
 
-    new_entry, dropped = _walk(entry, failing_create)
+    new_entry, dropped, _ctx = _walk(entry, failing_create)
 
     assert failing_create.factories_requested == []
     assert failing_create.classes_created == []
@@ -301,7 +401,7 @@ def test_affix_process_in_alternate_forms_is_reported_against_that_field(
     proc = _Form("bbbbbbbb-0000-0000-0000-000000000002", "MoAffixProcess")
     entry = _Entry("aaaaaaaa-0000-0000-0000-000000000003", alternates=[proc])
 
-    new_entry, dropped = _walk(entry, failing_create)
+    new_entry, dropped, _ctx = _walk(entry, failing_create)
 
     assert failing_create.factories_requested == []
     assert list(new_entry.AlternateFormsOS) == []
@@ -326,7 +426,7 @@ def test_one_rule_yields_exactly_one_record_even_beside_good_allomorphs(
         alternates=[good],
     )
 
-    new_entry, dropped = _walk(entry, spy)
+    new_entry, dropped, _ctx = _walk(entry, spy)
 
     assert spy.classes_created == ["MoAffixAllomorph"]
     assert [o.ClassName for o in new_entry.AlternateFormsOS] == [
@@ -344,7 +444,7 @@ def test_preview_reports_the_same_rule_move_refuses(_stub_lcm, spy):
     proc = _Form("eeeeeeee-0000-0000-0000-000000000007", "MoAffixProcess")
     entry = _Entry("aaaaaaaa-0000-0000-0000-000000000008", lexeme_form=proc)
 
-    _new_entry, move_dropped = _walk(entry, spy)
+    _new_entry, move_dropped, _mctx = _walk(entry, spy)
 
     preview_dropped: list = []
     ctx, _target = _ctx_and_target(spy)
@@ -382,7 +482,7 @@ def test_a_refused_class_never_reaches_a_factory(
     form = _Form("ffffffff-0000-0000-0000-000000000009", class_name)
     entry = _Entry("aaaaaaaa-0000-0000-0000-00000000000a", lexeme_form=form)
 
-    new_entry, dropped = _walk(entry, failing_create)
+    new_entry, dropped, _ctx = _walk(entry, failing_create)
 
     assert failing_create.factories_requested == []
     assert failing_create.classes_created == []
@@ -429,17 +529,26 @@ def test_the_dispatch_never_renames_a_class(_stub_lcm):
 def test_created_class_equals_source_class(_stub_lcm, spy, class_name):
     """Half two, and the trap T057 exists to avoid.
 
-    The whitelist is read at RUN TIME, so this covers `MoAffixProcess` the
-    moment T057 adds it to `known`. Adding it while
-    `_walk_entry_allomorphs._mk` still routes every non-stem subclass to
-    `IMoAffixAllomorphFactory` reinstates the exact historic defect: this test
-    then fails on the created class, which is why T057 and T058 must land in
-    one change.
+    The whitelist is read at RUN TIME and the harness derives each factory's
+    class from its interface NAME, so `MoAffixProcess` entered this invariant
+    automatically when T057 admitted it -- no edit here, and no way to admit a
+    class silently. Admitting it while `_walk_entry_allomorphs._mk` still
+    routed every non-stem subclass to `IMoAffixAllomorphFactory` reinstates
+    the historic defect, and this test then fails naming both classes. That is
+    why T057 and T058 landed in one change.
+
+    Each `IMoForm` subclass is fed the smallest source object that its own
+    create path accepts, because "nothing was created" and "the wrong thing
+    was created" are different answers and only the second is a defect.
     """
-    form = _Form("11111111-0000-0000-0000-00000000000b", class_name)
+    if class_name == "MoAffixProcess":
+        form, destination = _reproducible_rule()
+    else:
+        form, destination = _Form(
+            "11111111-0000-0000-0000-00000000000b", class_name), ()
     entry = _Entry("aaaaaaaa-0000-0000-0000-00000000000c", lexeme_form=form)
 
-    new_entry, dropped = _walk(entry, spy)
+    new_entry, dropped, _ctx = _walk(entry, spy, destination)
 
     dispatched = categories._dispatch_allomorph_subclass(class_name)
     if dispatched is None:
@@ -449,15 +558,24 @@ def test_created_class_equals_source_class(_stub_lcm, spy, class_name):
         assert len(dropped) == 1
         return
 
-    # Accepted: whatever was created is of the SOURCE's class, and the factory
-    # asked for is the one that builds that class.
-    assert spy.classes_created == [class_name], (
-        f"source {class_name} was created as {spy.classes_created} -- an "
+    # Accepted. The object attached to the entry is of the SOURCE's class,
+    # the rule's OWN factory was the first one asked for, and no allomorph
+    # factory was reached for a class that is not an allomorph.
+    assert new_entry.LexemeFormOA is not None
+    assert new_entry.LexemeFormOA.ClassName == class_name, (
+        f"source {class_name} arrived as "
+        f"{new_entry.LexemeFormOA.ClassName} -- an object may never be "
+        "created as a different kind (FR-025, SC-010)"
+    )
+    assert spy.classes_created[0] == class_name, (
+        f"source {class_name} was created as {spy.classes_created[0]} -- an "
         "object may never be created as a different kind (FR-025, SC-010)"
     )
-    assert spy.factories_requested == [f"I{class_name}Factory"]
-    assert new_entry.LexemeFormOA is not None
-    assert new_entry.LexemeFormOA.ClassName == class_name
+    assert spy.factories_requested[0] == f"I{class_name}Factory"
+    if class_name != "MoAffixAllomorph":
+        assert "IMoAffixAllomorphFactory" not in spy.factories_requested
+    if class_name != "MoStemAllomorph":
+        assert "IMoStemAllomorphFactory" not in spy.factories_requested
     assert dropped == []
 
 
@@ -484,3 +602,402 @@ def test_preview_plans_nothing_for_a_class_move_will_not_create(
     ]
     assert [r.item_guid for r in dropped] == [rule_guid]
     assert spy.factories_requested == []
+
+
+# ============================================================================
+# T053-T058 -- the create path itself
+# ============================================================================
+
+def test_a_wholly_owned_rule_is_rebuilt_with_its_input_and_output(
+    _stub_lcm, spy
+):
+    """SC-006: "with their input and output content". A rule that arrives as a
+    correctly-classed shell with an empty `OutputOS` is the same loss as the
+    downgrade wearing a better class name, so the assertions are on CONTENT."""
+    rule, destination = _reproducible_rule()
+    entry = _Entry("aaaaaaaa-0000-0000-0000-00000000000f", lexeme_form=rule)
+
+    new_entry, dropped, ctx = _walk(entry, spy, destination)
+
+    new_rule = new_entry.LexemeFormOA
+    assert new_rule.ClassName == "MoAffixProcess"
+    assert new_rule.guid == "19bab2cf-6580-45db-b600-58857c4a6e65"
+    assert dropped == []
+
+    # Input first, in source order.
+    assert [m.ClassName for m in new_rule.InputOS] == [
+        "PhSimpleContextNC", "PhVariable"]
+    assert new_rule.InputOS[0].FeatureStructureRA.guid == DEST_NC
+
+    # Output in source order -- order is significant.
+    assert [m.ClassName for m in new_rule.OutputOS] == [
+        "MoInsertPhones", "MoCopyFromInput", "MoCopyFromInput"]
+    assert [t.guid for t in new_rule.OutputOS[0].ContentRS] == [DEST_PHONEME]
+
+    # The intra-rule back-reference points at the NEW input member, not at the
+    # source object and not at a second copy of it.
+    assert new_rule.OutputOS[1].ContentRA is new_rule.InputOS[0]
+    assert new_rule.OutputOS[2].ContentRA is new_rule.InputOS[0]
+
+
+def test_the_intra_rule_map_is_many_to_one(_stub_lcm, spy):
+    """Two output steps naming ONE input member is the live shape (rule
+    `re-2`). A map that assumed a bijection would either raise or silently
+    create a second input member for the second reference."""
+    rule, destination = _reproducible_rule()
+    entry = _Entry("aaaaaaaa-0000-0000-0000-000000000010", lexeme_form=rule)
+
+    new_entry, _dropped, _ctx = _walk(entry, spy, destination)
+
+    new_rule = new_entry.LexemeFormOA
+    assert len(new_rule.InputOS) == 2  # not 3
+    assert new_rule.OutputOS[1].ContentRA is new_rule.OutputOS[2].ContentRA
+
+
+def test_every_member_is_created_with_its_source_guid(_stub_lcm, spy):
+    """Criterion 2: all creates go through `create_with_guid`, never a bare
+    `Create()`. A regenerated identity would make a re-run duplicate the whole
+    graph instead of recognising it (SC-008)."""
+    rule, destination = _reproducible_rule()
+    entry = _Entry("aaaaaaaa-0000-0000-0000-000000000011", lexeme_form=rule)
+
+    new_entry, _dropped, _ctx = _walk(entry, spy, destination)
+
+    new_rule = new_entry.LexemeFormOA
+    assert [m.guid for m in new_rule.InputOS] == ["ctx-nc-0001", "ctx-var-0002"]
+    assert [m.guid for m in new_rule.OutputOS] == [
+        "out-ins-0003", "out-cpy-0004", "out-cpy-0005"]
+
+
+def test_a_reproduced_rule_is_recorded_with_what_arrived(_stub_lcm, spy):
+    """SC-010 needs the run to be able to say which rules it REBUILT, not only
+    which it could not."""
+    rule, destination = _reproducible_rule()
+    entry = _Entry("aaaaaaaa-0000-0000-0000-000000000012", lexeme_form=rule)
+
+    _new_entry, _dropped, ctx = _walk(entry, spy, destination)
+
+    records = _rule_records(ctx)
+    assert len(records) == 1
+    rec = records[0]
+    assert rec.reproduced is True
+    assert rec.source_guid == "19bab2cf-6580-45db-b600-58857c4a6e65"
+    assert [c.context_class for c in rec.input_contexts] == [
+        "PhSimpleContextNC", "PhVariable"]
+    assert [o.step_class for o in rec.output_steps] == [
+        "MoInsertPhones", "MoCopyFromInput", "MoCopyFromInput"]
+    assert [o.index for o in rec.output_steps] == [0, 1, 2]
+
+
+# --- T055: the R5 condition-4 detector and the unexercised classes ---------
+
+def test_a_sequence_context_naming_a_shared_context_skips_the_rule(
+    _stub_lcm, spy
+):
+    """Condition 4, the finding that split Phase 4. A `PhSequenceContext` is
+    owned by the rule but its `MembersRS` name shared, project-level
+    `PhPhonData.ContextsOS` contexts -- 6 of the 18 live rules. Creating the
+    rule with an empty or partly-filled `MembersRS` is the silent content loss
+    FR-023 forbids, so the whole rule skips and the reason names the member."""
+    shared = _TargetObj(SHARED_CTX, "PhSimpleContextSeg")
+    seq = _Member("PhSequenceContext", "ctx-seq-0006", MembersRS=[shared])
+    rule = _Rule("rule-seq-0001", inputs=[seq],
+                 outputs=[_Member("MoCopyFromInput", "out-0007",
+                                  ContentRA=seq)])
+    entry = _Entry("aaaaaaaa-0000-0000-0000-000000000013", lexeme_form=rule)
+
+    new_entry, dropped, ctx = _walk(entry, spy, destination=())
+
+    assert new_entry.LexemeFormOA is None
+    assert not spy.reached_an_allomorph_factory
+    assert len(dropped) == 1
+    assert dropped[0].item_name == "MoAffixProcess"
+    assert SHARED_CTX in dropped[0].reason
+    assert "PhPhonData.ContextsOS" in dropped[0].reason
+    records = _rule_records(ctx)
+    assert len(records) == 1 and records[0].reproduced is False
+    assert records[0].not_reproducible_reason
+
+
+def test_the_same_rule_transfers_once_the_shared_context_is_present(
+    _stub_lcm, spy
+):
+    """The detector is written against RESOLVABILITY, not against a hard-coded
+    list of six rules -- so Phase 7's closure switches these rules on with no
+    edit to the create path. This is that claim, executed."""
+    shared = _TargetObj(SHARED_CTX, "PhSimpleContextSeg")
+    seq = _Member("PhSequenceContext", "ctx-seq-0006", MembersRS=[shared])
+    rule = _Rule("rule-seq-0001", inputs=[seq],
+                 outputs=[_Member("MoCopyFromInput", "out-0007",
+                                  ContentRA=seq)])
+    entry = _Entry("aaaaaaaa-0000-0000-0000-000000000014", lexeme_form=rule)
+
+    new_entry, dropped, _ctx = _walk(entry, spy, destination=(shared,))
+
+    assert dropped == []
+    new_rule = new_entry.LexemeFormOA
+    assert new_rule.ClassName == "MoAffixProcess"
+    assert [m.guid for m in new_rule.InputOS[0].MembersRS] == [SHARED_CTX]
+
+
+def test_a_sequence_context_member_owned_by_the_rule_is_wired_to_the_new_one(
+    _stub_lcm, spy
+):
+    """A member that IS a sibling input must resolve to the newly created
+    sibling, not to a destination lookup that would find the SOURCE object."""
+    ctx_seg = _Member("PhSimpleContextSeg", "ctx-seg-0008",
+                      FeatureStructureRA=_TargetObj(DEST_PHONEME, "PhPhoneme"))
+    seq = _Member("PhSequenceContext", "ctx-seq-0009", MembersRS=[ctx_seg])
+    rule = _Rule("rule-seq-0002", inputs=[ctx_seg, seq],
+                 outputs=[_Member("MoCopyFromInput", "out-0010",
+                                  ContentRA=seq)])
+    entry = _Entry("aaaaaaaa-0000-0000-0000-000000000015", lexeme_form=rule)
+
+    new_entry, dropped, _ctx = _walk(
+        entry, spy, destination=(_TargetObj(DEST_PHONEME, "PhPhoneme"),))
+
+    assert dropped == []
+    new_rule = new_entry.LexemeFormOA
+    assert new_rule.InputOS[1].MembersRS[0] is new_rule.InputOS[0]
+
+
+@pytest.mark.parametrize("unexercised", [
+    "MoModifyFromInput", "MoInsertNC", "PhSimpleContextBdry",
+    "PhIterationContext",
+])
+def test_an_unexercised_class_skips_rather_than_guesses(
+    _stub_lcm, spy, unexercised
+):
+    """Zero live instances means no corpus can tell a correct implementation
+    from a plausible one, so these ship behind the skip -- and the reason says
+    WHICH class, not "unknown class"."""
+    member = _Member(unexercised, "member-unexercised-0001")
+    is_input = unexercised in ("PhSimpleContextBdry", "PhIterationContext")
+    rule = _Rule(
+        "rule-unexercised-0001",
+        inputs=[member] if is_input else [_Member("PhVariable", "v-1")],
+        outputs=[] if is_input else [member],
+    )
+    entry = _Entry("aaaaaaaa-0000-0000-0000-000000000016", lexeme_form=rule)
+
+    new_entry, dropped, _ctx = _walk(entry, spy, destination=())
+
+    assert new_entry.LexemeFormOA is None
+    assert not spy.reached_an_allomorph_factory
+    assert len(dropped) == 1
+    assert unexercised in dropped[0].reason
+    assert "zero" in dropped[0].reason
+
+
+def test_a_feature_constraint_skips_the_rule(_stub_lcm, spy):
+    """`PhFeatureConstraint` has zero live refs and ties into the feature
+    system; a non-empty PlusConstrRS/MinusConstrRS is not silently ignored."""
+    ctx_nc = _Member("PhSimpleContextNC", "ctx-nc-0011",
+                     FeatureStructureRA=_TargetObj(DEST_NC, "PhNCSegments"),
+                     PlusConstrRS=[_TargetObj("fc-1", "PhFeatureConstraint")],
+                     MinusConstrRS=[])
+    rule = _Rule("rule-fc-0001", inputs=[ctx_nc],
+                 outputs=[_Member("MoCopyFromInput", "out-0012",
+                                  ContentRA=ctx_nc)])
+    entry = _Entry("aaaaaaaa-0000-0000-0000-000000000017", lexeme_form=rule)
+
+    new_entry, dropped, _ctx = _walk(
+        entry, spy, destination=(_TargetObj(DEST_NC, "PhNCSegments"),))
+
+    assert new_entry.LexemeFormOA is None
+    assert len(dropped) == 1
+    assert "PlusConstrRS" in dropped[0].reason
+
+
+# --- T054/FR-024: references resolve to the destination, never to duplicates
+
+def test_an_unresolvable_phoneme_skips_the_rule(_stub_lcm, spy):
+    """FR-024. A rule whose inserted phoneme is absent from the destination
+    cannot be rebuilt faithfully -- and inserting nothing in its place is
+    exactly the empty-content shell SC-006 fails."""
+    rule, _destination = _reproducible_rule()
+    entry = _Entry("aaaaaaaa-0000-0000-0000-000000000018", lexeme_form=rule)
+
+    new_entry, dropped, _ctx = _walk(
+        entry, spy, destination=(_TargetObj(DEST_NC, "PhNCSegments"),))
+
+    assert new_entry.LexemeFormOA is None
+    assert len(dropped) == 1
+    assert DEST_PHONEME in dropped[0].reason
+    assert "MoInsertPhones" in dropped[0].reason
+
+
+def test_a_context_naming_no_referent_at_all_skips_the_rule(_stub_lcm, spy):
+    ctx_seg = _Member("PhSimpleContextSeg", "ctx-seg-0013",
+                      FeatureStructureRA=None)
+    rule = _Rule("rule-noref-0001", inputs=[ctx_seg],
+                 outputs=[_Member("MoCopyFromInput", "out-0014",
+                                  ContentRA=ctx_seg)])
+    entry = _Entry("aaaaaaaa-0000-0000-0000-000000000019", lexeme_form=rule)
+
+    new_entry, dropped, _ctx = _walk(entry, spy, destination=())
+
+    assert new_entry.LexemeFormOA is None
+    assert "names no phoneme" in dropped[0].reason
+
+
+def test_a_copy_step_naming_a_foreign_input_skips_the_rule(_stub_lcm, spy):
+    """`MoCopyFromInput.ContentRA` must name an input member of the SAME rule.
+    A copy of something this rule does not own would copy nothing."""
+    foreign = _Member("PhVariable", "foreign-0015")
+    rule = _Rule("rule-foreign-0001",
+                 inputs=[_Member("PhVariable", "v-2")],
+                 outputs=[_Member("MoCopyFromInput", "out-0016",
+                                  ContentRA=foreign)])
+    entry = _Entry("aaaaaaaa-0000-0000-0000-00000000001a", lexeme_form=rule)
+
+    new_entry, dropped, _ctx = _walk(entry, spy, destination=())
+
+    assert new_entry.LexemeFormOA is None
+    assert "foreign-0015" in dropped[0].reason
+
+
+# --- T056: the skip contract ----------------------------------------------
+
+def test_a_skipped_rule_creates_nothing_at_all(_stub_lcm, spy):
+    """FR-025's first clause. Not an allomorph, not a partially populated
+    MoAffixProcess, not a shell: nothing."""
+    rule, _destination = _reproducible_rule()
+    entry = _Entry("aaaaaaaa-0000-0000-0000-00000000001b", lexeme_form=rule)
+
+    new_entry, dropped, _ctx = _walk(entry, spy, destination=())
+
+    assert new_entry.LexemeFormOA is None
+    assert list(new_entry.AlternateFormsOS) == []
+    assert spy.classes_created == []
+    assert not spy.reached_an_allomorph_factory
+    assert len(dropped) == 1
+
+
+def test_the_skip_record_carries_the_contract_fields(_stub_lcm, spy):
+    """The create-path contract section 5 fixes every field, because the
+    report line has to be actionable by a person who was not in the run."""
+    rule, _destination = _reproducible_rule()
+    entry = _Entry("aaaaaaaa-0000-0000-0000-00000000001c", alternates=[rule])
+
+    _new_entry, dropped, _ctx = _walk(entry, spy, destination=())
+
+    rec = dropped[0]
+    assert rec.owner_kind == "LexEntry"
+    assert rec.owner_guid == "aaaaaaaa-0000-0000-0000-00000000001c"
+    assert rec.field_name == "AlternateFormsOS"
+    assert rec.item_name == "MoAffixProcess"
+    assert rec.item_guid == "19bab2cf-6580-45db-b600-58857c4a6e65"
+    assert rec.reason.strip()
+
+
+def test_a_skipped_rule_leaves_the_entry_partial(_stub_lcm, spy):
+    """T056 asks for `FidelityStatus.PARTIAL` on the owning entry. It is
+    DERIVED from the record's `owner_guid` rather than set by hand, so this
+    proves the derivation actually reaches the entry -- a second, hand-set
+    marking would be a parallel source of truth that could disagree."""
+    from gramtrans.Lib.models import FidelityStatus
+
+    rule, _destination = _reproducible_rule()
+    entry = _Entry("aaaaaaaa-0000-0000-0000-00000000001d", lexeme_form=rule)
+
+    _new_entry, dropped, _ctx = _walk(entry, spy, destination=())
+
+    fidelity = categories.compute_fidelity_by_guid(dropped)
+    assert fidelity["aaaaaaaa-0000-0000-0000-00000000001d"] is (
+        FidelityStatus.PARTIAL)
+
+
+def test_one_skipped_rule_yields_one_record_however_often_it_is_walked(
+    _stub_lcm, spy
+):
+    """Dedup key is `(owner_guid, field_name, item_guid)`, so the reason is
+    diagnostic rather than identity."""
+    rule, _destination = _reproducible_rule()
+    entry = _Entry("aaaaaaaa-0000-0000-0000-00000000001e", lexeme_form=rule)
+    new_entry = SimpleNamespace(LexemeFormOA=None, AlternateFormsOS=_Seq())
+    ctx, _target = _ctx_and_target(spy, ())
+    dropped: list = []
+    for _ in range(3):
+        categories._walk_entry_allomorphs(
+            entry, new_entry, ctx, tag=None, identity_remap={},
+            dropped=dropped)
+    assert len(dropped) == 1
+
+
+# --- Principle III: Preview reaches the same verdict, without writing ------
+
+def test_preview_and_move_agree_on_a_blocked_rule(_stub_lcm, spy):
+    """Preview runs the SAME resolution pass -- `_resolve_process_graph`
+    writes nothing -- so it cannot disagree with Move about which rules a run
+    will skip or about why."""
+    rule, _destination = _reproducible_rule()
+    entry = _Entry("aaaaaaaa-0000-0000-0000-00000000001f", lexeme_form=rule)
+
+    _new_entry, move_dropped, _mctx = _walk(entry, spy, destination=())
+
+    preview_dropped: list = []
+    ctx, _target = _ctx_and_target(spy, ())
+    ctx._dropped = preview_dropped
+    categories._plan_entry_reference_decisions(entry, ctx, target=object())
+
+    assert [(r.owner_guid, r.field_name, r.item_guid, r.item_name, r.reason)
+            for r in preview_dropped] == [
+        (r.owner_guid, r.field_name, r.item_guid, r.item_name, r.reason)
+        for r in move_dropped]
+
+
+def test_preview_writes_nothing_for_a_reproducible_rule(_stub_lcm, spy):
+    """Preview must not create the rule it is only planning."""
+    rule, destination = _reproducible_rule()
+    entry = _Entry("aaaaaaaa-0000-0000-0000-000000000020", lexeme_form=rule)
+
+    ctx, _target = _ctx_and_target(spy, destination)
+    dropped: list = []
+    ctx._dropped = dropped
+    categories._plan_entry_reference_decisions(entry, ctx, target=object())
+
+    assert spy.classes_created == []
+    assert dropped == []
+
+
+def test_a_create_that_fails_after_pass_one_leaves_nothing_behind(
+    _stub_lcm, spy, monkeypatch
+):
+    """The residual path pass 1 is designed to make unreachable.
+
+    Pass 1 resolves the whole graph before the first write, so a rule can
+    normally only be skipped BEFORE anything exists. This forces the other
+    case -- a factory that fails after pass 1 approved the rule -- and proves
+    the shell is detached and nothing is left on the entry. The reason says
+    "rolled back", so a reader can tell this apart from a rule that was never
+    started.
+
+    It is reachable in practice: disabling pass 1's condition-4 check makes
+    pass 2's own guard fire on the live-shaped fixture, which is how this path
+    was first exercised.
+    """
+    real_create = _cat_mod.create_with_guid
+    calls = {"n": 0}
+
+    def _fails_on_the_second_create(factory, src_guid, kind):
+        calls["n"] += 1
+        if calls["n"] == 2:
+            return None
+        return real_create(factory, src_guid, kind)
+
+    monkeypatch.setattr(
+        _cat_mod, "create_with_guid", _fails_on_the_second_create)
+
+    rule, destination = _reproducible_rule()
+    entry = _Entry("aaaaaaaa-0000-0000-0000-000000000021", lexeme_form=rule)
+
+    new_entry, dropped, ctx = _walk(entry, spy, destination)
+
+    assert new_entry.LexemeFormOA is None
+    assert list(new_entry.AlternateFormsOS) == []
+    assert len(dropped) == 1
+    assert "rolled back" in dropped[0].reason
+    assert dropped[0].item_name == "MoAffixProcess"
+    records = _rule_records(ctx)
+    assert len(records) == 1 and records[0].reproduced is False
