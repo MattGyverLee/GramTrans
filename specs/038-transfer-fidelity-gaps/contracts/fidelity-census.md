@@ -373,6 +373,7 @@ human-readable table prints the label.
 | `GOVERNED_BY_OTHER_FEATURE` | either | Texts/wordforms, reversals, and sense pictures are governed by their own features; this feature reports their figures and does not fix them (spec Assumptions). Needs no `report_ref`. |
 | `OUT_OF_SCOPE_CLASS` | either | `CmAnthroItem`. Needs no `report_ref`. |
 | `ABSENT_BY_CONSTRUCTION` | either | Abstract LCM base with no factory (`MoForm`, `MoMorphSynAnalysis`). Needs no `report_ref`. |
+| `SOURCE_REFERENT_ABSENT` | shortfall | A referent the engine required is absent on the **source**, so the dependent object was not transferred. The source-side sibling of `DEPENDENCY_UNRESOLVED` (FR-017), which is destination-side; the two are not interchangeable. |
 
 There is deliberately **no `UNEXPLAINED` token and no `OTHER` token.** Unexplained
 is the *absence* of an accounting line, so it cannot be laundered into one.

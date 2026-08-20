@@ -602,7 +602,8 @@
         "DUPLICATE_CREATED",
         "GOVERNED_BY_OTHER_FEATURE",
         "OUT_OF_SCOPE_CLASS",
-        "ABSENT_BY_CONSTRUCTION"
+        "ABSENT_BY_CONSTRUCTION",
+        "SOURCE_REFERENT_ABSENT"
       ],
       "$comment": "FR-013's closed vocabulary; each token's meaning is tabulated in fidelity-census.md 7.1. There is deliberately NO 'UNEXPLAINED' and NO 'OTHER' member: unexplained is the ABSENCE of an accounting line, so it cannot be laundered into one. A reason the census cannot classify is CENSUS_ERROR. Later schema versions may APPEND members; they may never remove or rename one."
     },
