@@ -1644,26 +1644,122 @@ class IncompletenessRecord:
             )
 
 
+# ---------------------------------------------------------------------------
+# Feature 038 (T042, FR-020..FR-022, SC-007) -- the seven owned collections of
+# an `IPartOfSpeech` that enrichment covers. Declared here, ABOVE
+# `EnrichedCollection`, because that record validates against them; the
+# `OwnedObjectSpec` roster describing the same seven for the walk lives beside
+# `OwnedObjectSpec` itself (`POS_OWNED_COLLECTION_SPECS`, below) since the
+# descriptor is defined later in this module. One list, two views -- there is
+# deliberately no second name table.
+#
+# LIVE-VERIFIED SPELLING NOTE (2026-08-20, FLExToolsMCP `get_object_api`
+# `IPartOfSpeech` / `resolve_property ReferenceFormsOC`): the seventh field is
+# `ReferenceFormsOC` -- an owning COLLECTION -- not `ReferenceFormsOS`.
+# tasks.md T042, data-model.md section 7, research.md:186 and
+# census-evidence.md:252 all spell it `...OS`; no such property exists on
+# `IPartOfSpeech` (its owned collections are AffixSlotsOC, AffixTemplatesOS,
+# EmptyParadigmCellsOC, InflectionClassesOC, ReferenceFormsOC, RulesOfReferralOS,
+# StemNamesOC, plus inherited SubPossibilitiesOS). `ReferenceFormsOC` is
+# therefore the CANONICAL name here and the spec's `ReferenceFormsOS` is
+# accepted as an alias -- a record built straight from the spec text must be
+# reported, not crash a live run -- but it normalises to the canonical name for
+# the duplicate-collection check, so one collection can never be reported twice
+# under its two spellings.
+POS_OWNED_COLLECTION_FIELDS: tuple = (
+    "AffixSlotsOC",
+    "AffixTemplatesOS",
+    "InflectableFeatsRC",
+    "SubPossibilitiesOS",
+    "StemNamesOC",
+    "InflectionClassesOC",
+    "ReferenceFormsOC",
+)
+
+# spec spelling -> live LCM spelling.
+POS_OWNED_COLLECTION_ALIASES: dict = {"ReferenceFormsOS": "ReferenceFormsOC"}
+
+_POS_OWNED_COLLECTION_ACCEPTED: frozenset = frozenset(
+    POS_OWNED_COLLECTION_FIELDS) | frozenset(POS_OWNED_COLLECTION_ALIASES)
+
+
+def canonical_pos_collection_field(field_name: str) -> str:
+    """Canonical spelling of one of the seven POS owned collections.
+
+    Maps the spec's `ReferenceFormsOS` onto the live `ReferenceFormsOC` and
+    passes every other accepted name through unchanged. Raises `ValueError`
+    for anything outside the seven -- enrichment is defined over exactly that
+    set (T042), so an unknown field name is a caller bug, not a datum.
+    """
+    if field_name in POS_OWNED_COLLECTION_ALIASES:
+        return POS_OWNED_COLLECTION_ALIASES[field_name]
+    if field_name not in _POS_OWNED_COLLECTION_ACCEPTED:
+        raise ValueError(
+            "field_name must be one of the seven POS owned collections "
+            + repr(POS_OWNED_COLLECTION_FIELDS) + ", got "
+            + repr(field_name)
+        )
+    return field_name
+
+
 @dataclass(frozen=True)
 class EnrichedCollection:
     """Feature 038 (FR-020..FR-022) -- what one owned collection gained during
-    an enrichment. `field_name` is one of the seven POS owned collections
-    (AffixSlotsOC, AffixTemplatesOS, InflectableFeatsRC, SubPossibilitiesOS,
-    StemNamesOC, InflectionClassesOC, ReferenceFormsOS)."""
+    an enrichment.
+
+    `field_name` is constrained to the seven POS owned collections
+    (`POS_OWNED_COLLECTION_FIELDS`): AffixSlotsOC, AffixTemplatesOS,
+    InflectableFeatsRC, SubPossibilitiesOS, StemNamesOC, InflectionClassesOC,
+    ReferenceFormsOC (the spec's `ReferenceFormsOS` spelling is accepted as an
+    alias -- see the note above the constant).
+
+    Every source child of the collection lands in exactly one of three
+    buckets, and there is no fourth: `added` (written now), `already_present`
+    (the destination had it), `dropped` (could not be added). SC-010 forbids
+    an unreported outcome, so `dropped` is not a bare number: each dropped
+    child MUST carry a `DroppedItemRecord` in `dropped_records` naming its
+    reason, exactly as every other drop in this module is reported. Those
+    records feed `categories.compute_fidelity_by_guid` unchanged.
+    """
     field_name: str
     added: int = 0
     already_present: int = 0
     dropped: int = 0
+    dropped_records: tuple = ()  # tuple[DroppedItemRecord, ...]
 
     def __post_init__(self) -> None:
         if not self.field_name:
             raise ValueError("EnrichedCollection.field_name must be non-empty")
+        try:
+            canonical_pos_collection_field(self.field_name)
+        except ValueError as exc:
+            raise ValueError("EnrichedCollection." + str(exc)) from None
         for name in ("added", "already_present", "dropped"):
             if getattr(self, name) < 0:
                 raise ValueError(
                     "EnrichedCollection." + name + " must be >= 0, got "
                     + repr(getattr(self, name))
                 )
+        if self.dropped != len(self.dropped_records):
+            raise ValueError(
+                "EnrichedCollection.dropped (" + repr(self.dropped) + ") must "
+                "equal len(dropped_records) (" + repr(len(self.dropped_records))
+                + ") for " + repr(self.field_name) + " -- a child that could "
+                "not be added is reported with its reason, never counted "
+                "anonymously (SC-010)"
+            )
+
+    @property
+    def canonical_field_name(self) -> str:
+        """`field_name` in its live LCM spelling."""
+        return canonical_pos_collection_field(self.field_name)
+
+    @property
+    def source_child_count(self) -> int:
+        """How many source children this collection accounted for: added +
+        already_present + dropped. `dropped == 0` is what "every source child
+        arrived" means for this collection (see `EnrichmentRecord.fidelity`)."""
+        return self.added + self.already_present + self.dropped
 
 
 @dataclass(frozen=True)
@@ -1678,7 +1774,13 @@ class EnrichmentRecord:
 
     `was_created` is always False here; it exists so the report can state the
     created-vs-enriched distinction explicitly (FR-022) rather than leaving a
-    reader to infer it.
+    reader to infer it. It is ENFORCED, not merely defaulted -- an enrichment
+    is by definition not a creation, so `was_created=True` is unconstructible.
+
+    `collections` holds at most one `EnrichedCollection` per owned collection
+    (data-model.md section 7: "one per owned collection touched"), checked on
+    the canonical spelling so the same collection cannot appear twice under
+    `ReferenceFormsOC` and `ReferenceFormsOS`.
     """
     object_class: str
     source_guid: str
@@ -1700,13 +1802,44 @@ class EnrichmentRecord:
                 "acts on an object that already existed in the target "
                 "(FR-022). A creation is a PlannedAction, not an enrichment."
             )
+        seen: set = set()
+        for coll in self.collections:
+            key = coll.canonical_field_name
+            if key in seen:
+                raise ValueError(
+                    "EnrichmentRecord.collections holds two rows for "
+                    + repr(key) + " -- one EnrichedCollection per owned "
+                    "collection touched (data-model.md section 7); two rows "
+                    "would double-count the same children in the report."
+                )
+            seen.add(key)
 
     @property
     def is_empty(self) -> bool:
-        """True when nothing was actually gained. Per data-model.md section 7
-        this is the ONLY case that may degrade to a `Skip`."""
+        """True when nothing was actually gained AND nothing was lost. Per
+        data-model.md section 7 this is the ONLY case that may degrade to a
+        `Skip`; a collection with drops must stay a reported UPDATE, since a
+        `Skip` would take the drop out of the statistics panel (SC-010)."""
         return (not self.fields_updated
-                and all(c.added == 0 for c in self.collections))
+                and all(c.added == 0 and c.dropped == 0
+                        for c in self.collections))
+
+    @property
+    def fidelity(self) -> "FidelityStatus":
+        """`FidelityStatus` for an enriched object (T042): FULL when every
+        source child arrived, PARTIAL otherwise.
+
+        Reuses the FR-013 enum and the SAME rule the existing helper applies
+        to a created object -- `categories.compute_fidelity_by_guid` marks an
+        owner PARTIAL exactly when it has >=1 `DroppedItemRecord` and leaves
+        FULL implicit -- rather than introducing a second, divergent
+        computation. `EnrichedCollection.dropped_records` carries those very
+        records, so an enrichment feeds that helper unchanged.
+        """
+        for coll in self.collections:
+            if coll.dropped:
+                return FidelityStatus.PARTIAL
+        return FidelityStatus.FULL
 
 
 @dataclass(frozen=True)
@@ -2647,6 +2780,95 @@ class OwnedObjectSpec:
     recurse: bool = False
     create_kind: "OwnedCreateKind" = OwnedCreateKind.OWNER_TAKING
     type_ref_field: Optional[str] = None
+
+
+# Feature 038 (T042, FR-020..FR-022, SC-007) -- the seven `IPartOfSpeech`
+# owned collections enrichment covers, described with the EXISTING
+# `OwnedObjectSpec` descriptor rather than a second one, and ordered to match
+# `POS_OWNED_COLLECTION_FIELDS` (the single name list this roster is a view
+# of; `_check` below fails the import if the two ever drift apart).
+#
+# `factory` follows `Lib/owned.py`'s idiom: the LCM factory INTERFACE NAME as
+# a string, resolved against the target at runtime. `create_kind` is stated
+# per row rather than left at the default, because `OwnedCreateKind`'s own
+# docstring records that a uniformly-OWNER_TAKING table was a real defect.
+POS_OWNED_COLLECTION_SPECS: tuple = (
+    # IMoInflAffixSlotFactory exposes only the inherited `Create()` at the
+    # INTERFACE level (FLExToolsMCP, 2026-08-20); as tasks.md T053 notes for
+    # this same graph, the CONCRETE factory carries `Create(Guid)`. No
+    # owner-taking overload -> create unowned, then Add to the POS.
+    OwnedObjectSpec(
+        owner_class="PartOfSpeech",
+        owning_field="AffixSlotsOC",
+        factory="IMoInflAffixSlotFactory",
+        create_kind=OwnedCreateKind.UNOWNED_THEN_ADD,
+    ),
+    OwnedObjectSpec(
+        owner_class="PartOfSpeech",
+        owning_field="AffixTemplatesOS",
+        factory="IMoInflAffixTemplateFactory",
+        create_kind=OwnedCreateKind.UNOWNED_THEN_ADD,
+    ),
+    # InflectableFeatsRC is a REFERENCE collection (LcmReferenceCollection<
+    # IFsFeatDefn>, categories.py:2222) -- enriching it creates no object at
+    # all, it Adds an already-matched target IFsFeatDefn. `factory=None` is
+    # the accurate statement, not a gap: see
+    # `categories._wire_pos_inflectable_feat` (:2320), the existing writer.
+    OwnedObjectSpec(
+        owner_class="PartOfSpeech",
+        owning_field="InflectableFeatsRC",
+        factory=None,
+        create_kind=OwnedCreateKind.UNOWNED_THEN_ADD,
+    ),
+    # Sub-categories. `IPartOfSpeechFactory.Create(Guid, IPartOfSpeech)` /
+    # `Create(Guid, ICmPossibilityList)` -- owner-taking, already exercised
+    # live by `categories.py` (:693-719). `recurse=True`: a sub-category is
+    # itself a POS owning the same seven collections.
+    OwnedObjectSpec(
+        owner_class="PartOfSpeech",
+        owning_field="SubPossibilitiesOS",
+        factory="IPartOfSpeechFactory",
+        recurse=True,
+        create_kind=OwnedCreateKind.OWNER_TAKING,
+    ),
+    # `IMoStemNameFactory.Create(Guid)` + `pos.StemNamesOC.Add()` --
+    # categories.py:2451.
+    OwnedObjectSpec(
+        owner_class="PartOfSpeech",
+        owning_field="StemNamesOC",
+        factory="IMoStemNameFactory",
+        create_kind=OwnedCreateKind.UNOWNED_THEN_ADD,
+    ),
+    # `IMoInflClassFactory.Create(Guid)` + `pos.InflectionClassesOC.Add()` --
+    # categories.py:1668. `recurse=True`: an inflection class owns
+    # `SubclassesOC` (categories.py:1593).
+    OwnedObjectSpec(
+        owner_class="PartOfSpeech",
+        owning_field="InflectionClassesOC",
+        factory="IMoInflClassFactory",
+        recurse=True,
+        create_kind=OwnedCreateKind.UNOWNED_THEN_ADD,
+    ),
+    # Live name is `ReferenceFormsOC` (owning collection), NOT the spec's
+    # `ReferenceFormsOS` -- see the note above POS_OWNED_COLLECTION_FIELDS.
+    # `factory=None` here is a DELIBERATE unknown, not an assertion that none
+    # is needed: nothing in this repo writes ReferenceFormsOC today and its
+    # child class was not verified live. T043/T045 must resolve it before
+    # creating into this collection; until then a child that cannot be added
+    # is reported through `EnrichedCollection.dropped_records`.
+    OwnedObjectSpec(
+        owner_class="PartOfSpeech",
+        owning_field="ReferenceFormsOC",
+        factory=None,
+        create_kind=OwnedCreateKind.UNOWNED_THEN_ADD,
+    ),
+)
+
+if tuple(_s.owning_field for _s in POS_OWNED_COLLECTION_SPECS) !=         POS_OWNED_COLLECTION_FIELDS:  # pragma: no cover - import-time guard
+    raise RuntimeError(
+        "POS_OWNED_COLLECTION_SPECS and POS_OWNED_COLLECTION_FIELDS have "
+        "drifted apart; they are two views of ONE list of seven collections"
+    )
 
 
 # ============================================================================
