@@ -31,6 +31,8 @@ from gramtrans.Lib.models import (
     NaturalKeyRosterEntry,
     PlannedAction,
     PlannedOverwrite,
+    ProcessContextSpec,
+    ProcessOutputSpec,
     ProcessRuleTransferRecord,
     RunContext,
     RunMode,
@@ -225,6 +227,63 @@ class TestProcessRuleTransferRecord:
             source_guid="s", reproduced=False,
             not_reproducible_reason="no reproducible form")
         assert rec.not_reproducible_reason
+
+    def test_a_reproduced_rule_carries_its_input_and_output_content(self):
+        """SC-006 is "with their input and output content" -- a record that
+        can only say WHETHER a rule arrived, not WHAT arrived, cannot tell an
+        empty-`OutputOS` shell from a real rule. That shell is the shape the
+        census gate (T063) is built to fail, so the record must be able to
+        carry the same evidence."""
+        rec = ProcessRuleTransferRecord(
+            source_guid="rule-1", reproduced=True, target_guid="rule-1",
+            input_contexts=(
+                ProcessContextSpec(
+                    context_class="PhSimpleContextNC", index=0,
+                    referent_guid="nc-8f5b331b", label="V"),
+                ProcessContextSpec(context_class="PhVariable", index=1),
+            ),
+            output_steps=(
+                ProcessOutputSpec(
+                    step_class="MoInsertPhones", index=0,
+                    referent_guids=("ph-7325210f",)),
+                ProcessOutputSpec(
+                    step_class="MoCopyFromInput", index=1,
+                    referent_guids=("ctx-0",)),
+            ),
+        )
+        assert [c.context_class for c in rec.input_contexts] == [
+            "PhSimpleContextNC", "PhVariable"]
+        assert [o.index for o in rec.output_steps] == [0, 1]
+
+
+class TestProcessMemberSpecs:
+    """`OutputOS` order is significant (create-path contract section 4: one
+    input member referenced by two output mappings, in order), so `index` is
+    load-bearing and an unordered or negative one is a defect, not a default."""
+
+    def test_a_context_must_name_its_class(self):
+        with pytest.raises(ValueError, match="context_class"):
+            ProcessContextSpec(context_class="", index=0)
+
+    def test_an_output_step_must_name_its_class(self):
+        with pytest.raises(ValueError, match="step_class"):
+            ProcessOutputSpec(step_class="", index=0)
+
+    def test_a_context_index_is_a_position_not_a_flag(self):
+        with pytest.raises(ValueError, match="index"):
+            ProcessContextSpec(context_class="PhVariable", index=-1)
+
+    def test_an_output_index_is_a_position_not_a_flag(self):
+        with pytest.raises(ValueError, match="index"):
+            ProcessOutputSpec(step_class="MoCopyFromInput", index=-1)
+
+    def test_a_context_with_no_referent_is_legitimate(self):
+        """`PhVariable` is a pure placeholder with no own properties -- it
+        references nothing, and demanding a referent would make the one input
+        class that occurs most in the live corpus (21 of 44 members)
+        unrepresentable."""
+        spec = ProcessContextSpec(context_class="PhVariable", index=3)
+        assert spec.referent_guid == ""
 
 
 # ---------------------------------------------------------------------------

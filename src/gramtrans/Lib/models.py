@@ -1891,11 +1891,16 @@ class ProcessRuleTransferRecord:
     transferred.
     """
     source_guid: str
-    input_contexts: tuple = ()
-    output_steps: tuple = ()
+    input_contexts: tuple = ()       # tuple[ProcessContextSpec, ...]
+    output_steps: tuple = ()         # tuple[ProcessOutputSpec, ...]
     reproduced: bool = False
     target_guid: str = ""
     not_reproducible_reason: str = ""
+    # tuple[ReferenceDecisionRecord, ...] -- REUSED, not re-declared (T052).
+    # FR-024: the phoneme / natural-class references inside the rule graph
+    # resolve to the destination items matched under FR-001/FR-002, so their
+    # Add/Link/Update/Report decisions are the same kind of decision every
+    # other referenced field records, and Preview shows them the same way.
     reference_decisions: tuple = ()
 
     def __post_init__(self) -> None:
@@ -2474,6 +2479,22 @@ class DroppedItemRecord:
         - "ConfigView"         — a `.fwdictconfig` file whose reference
           (WS / custom field / style) is absent in the target; `field_name`
           carries the reference kind, `item_name` the referenced label.
+
+    Feature 038 (T052, US5) adds three more owner_kind values, documented on
+    the same terms — there is still no whitelist to extend, and the FR-025
+    skip contract fixes the value at each emission site rather than validating
+    it here:
+        - "MoAffixProcess"      — a member of a process rule's own `InputOS` /
+          `OutputOS` that could not be reproduced, e.g. a `PhSequenceContext`
+          whose `MembersRS` name shared `PhPhonData.ContextsOS` contexts the
+          destination lacks. NOTE the asymmetry with the rule ITSELF: a rule
+          dropped whole is reported against its OWNING entry
+          (`owner_kind="LexEntry"`, `field_name="LexemeFormOA"` or
+          `"AlternateFormsOS"`, `item_name="MoAffixProcess"`) per the create-
+          path contract section 5, so this value names the rule only when the
+          rule is the OWNER of the thing lost.
+        - "MoInflAffixSlot"     — an affix slot's own contents.
+        - "MoInflAffixTemplate" — a template's slot sequence.
     """
     owner_kind: str
     owner_guid: str
