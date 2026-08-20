@@ -777,11 +777,28 @@ def build_run_plan(
         context, selection, actions, overwrites
     )
 
+    # Feature 038 (FR-020..FR-022, plan.md:111): the enrich-vs-skip decision is
+    # a PLAN-TIME determination, so the enrichment records ride on the plan --
+    # Preview and Move read the same tuple and agree by construction
+    # (Principle III). Each record is attached by the category planner to the
+    # `PlannedOverwrite` it belongs to (write_mode="merge", enforced in
+    # `PlannedOverwrite.__post_init__`); harvesting them off `overwrites` here
+    # keeps every record attributable to a category via that overwrite's
+    # `source_guid`, which is what `report.build_from_plan` requires -- it
+    # raises rather than guess a category for an orphan record.
+    # Order follows plan order (the order the overwrites were planned in); no
+    # sorting, so the plan stays byte-deterministic across runs.
+    _enrichments = [
+        ow.enrichment
+        for ow in overwrites
+        if getattr(ow, "enrichment", None) is not None
+    ]
+
     _log.debug(
         "build_run_plan: done  actions=%d skips=%d overwrites=%d excluded_lossy=%d "
-        "dropped_items=%d closure_edges=%d",
+        "dropped_items=%d closure_edges=%d enrichments=%d",
         len(actions), len(skips), len(overwrites), len(excluded_lossy), len(_dropped),
-        len(_closure_edges),
+        len(_closure_edges), len(_enrichments),
     )
     return RunPlan(
         context=context,
@@ -809,6 +826,10 @@ def build_run_plan(
         # Feature 038 (FR-014/FR-015): the verified dependency-closure edges.
         # Empty by construction while CLOSURE_EDGES_VERIFIED ships empty.
         closure_edges=_closure_edges,
+        # Feature 038 (FR-020..FR-022): the plan-time enrich-vs-skip decision,
+        # harvested off the merge overwrites above so Preview reports the same
+        # ENRICHED set Move will write (see the accumulator just above).
+        enrichments=tuple(_enrichments),
         # Feature 026 (T010): per-text transfer plans consumed by transfer.py's
         # TEXTS apply hook. Empty tuple when TEXTS is not selected.
         text_plans=tuple(_text_plans),
