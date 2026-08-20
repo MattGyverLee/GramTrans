@@ -278,3 +278,118 @@ def test_subentries_recursion_builds_tree():
     assert sub_decision.source_entry_guid == "e-sub"
     assert sub_decision.reversal_form_alts == {"en": "running"}
     assert sub_decision.linked_sense_guids == ("s-sub",)
+
+
+# ============================================================================
+# _set_reversal_form_alt -- the write branches on the OBJECT, not the process
+# ============================================================================
+#
+# Regression guard for the liveness-test bug class: a helper must not decide
+# "live LCM or duck-typed fake?" by asking whether an `SIL.*` import
+# succeeds. That describes the PROCESS -- and any run that has imported
+# flexicon (pythonnet + the SIL assemblies) makes it succeed for every
+# object, fake ones included. These tests force the assemblies to be loaded
+# when they can be, which is exactly the condition under which the old code
+# reached for `TsStringUtils.MakeString` and wrote a real .NET `ITsString`
+# into a pure-Python fake.
+
+def _force_sil_loaded():
+    """True once pythonnet + the SIL assemblies are importable in-process.
+
+    Mirrors what `test_013_fill_gaps.py` does to the whole session as a side
+    effect of its own import. When the host is absent this returns False and
+    the tests below still assert the host-free contract, which the old code
+    ALSO got wrong (a silent `except ImportError: return`)."""
+    try:
+        import flexicon.code.BaseOperations  # noqa: F401
+        from SIL.LCModel.Core.Text import TsStringUtils  # noqa: F401
+    except Exception:  # noqa: BLE001 -- host-free is a legal state
+        return False
+    return True
+
+
+class _FakeLcmShapedMultiString:
+    """Duck-typed multistring exposing the LCM-style `set_String` and NOT
+    the lowercase `set_string` -- the dominant fake shape in this suite
+    (test_013_fill_gaps, test_residue_carriers, test_029_*, and a dozen
+    more). This is the shape the old code fell through to the live path
+    for."""
+
+    def __init__(self) -> None:
+        self.calls: list = []
+
+    def set_String(self, ws, value) -> None:  # noqa: N802 -- mirrors LCM
+        self.calls.append((ws, value))
+
+
+class _FakeEntryWithForm:
+    def __init__(self, ms) -> None:
+        self.ReversalForm = ms
+
+
+class _ExplodingTarget:
+    """A target whose `WSHandle` raises. A duck-typed write must never
+    consult it: reaching the live path at all is the bug."""
+
+    def WSHandle(self, ws_id):  # noqa: N802
+        raise AssertionError(
+            "live path taken for a duck-typed ReversalForm -- the helper "
+            "branched on the process, not the object")
+
+
+def test_lcm_shaped_fake_gets_plain_text_never_a_dotnet_tsstring():
+    """The write lands, keyed by WS id, carrying a plain `str`.
+
+    Two failures at once in the old code when the assemblies were loaded:
+    it consulted `target.WSHandle` (here: an assertion) and it built a real
+    `ITsString`. `TsStringUtils.MakeString('run', handle)` SUCCEEDS for a
+    plain Python string, so nothing raised -- the fake was silently
+    poisoned with a .NET object."""
+    _force_sil_loaded()
+    ms = _FakeLcmShapedMultiString()
+
+    reversals._set_reversal_form_alt(
+        _FakeEntryWithForm(ms), _ExplodingTarget(), "en", "run")
+
+    assert ms.calls == [("en", "run")]
+    assert type(ms.calls[0][1]) is str
+
+
+def test_lowercase_fake_setter_still_wins():
+    """The Id-keyed `set_string` shape this module's own fakes use keeps
+    priority over the LCM-shaped fallback."""
+    _force_sil_loaded()
+
+    class _Both:
+        def __init__(self):
+            self.lower = []
+            self.upper = []
+
+        def set_string(self, ws_id, text):
+            self.lower.append((ws_id, text))
+
+        def set_String(self, ws, value):  # noqa: N802
+            self.upper.append((ws, value))
+
+    ms = _Both()
+    reversals._set_reversal_form_alt(
+        _FakeEntryWithForm(ms), _ExplodingTarget(), "en", "run")
+
+    assert ms.lower == [("en", "run")]
+    assert ms.upper == []
+
+
+def test_absent_and_unwritable_forms_never_raise():
+    """`ReversalForm` absent, or present with no setter at all, stays a
+    silent no-op -- the helper's documented "never raises" contract."""
+    _force_sil_loaded()
+
+    class _NoForm:
+        ReversalForm = None
+
+    class _Inert:
+        pass
+
+    reversals._set_reversal_form_alt(_NoForm(), _ExplodingTarget(), "en", "run")
+    reversals._set_reversal_form_alt(
+        _FakeEntryWithForm(_Inert()), _ExplodingTarget(), "en", "run")
