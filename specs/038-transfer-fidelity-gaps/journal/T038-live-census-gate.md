@@ -190,3 +190,134 @@ python -m gramtrans.census_cli run `
 
 The census opens both projects read-only and writes to neither; the capture
 verified its own digest unchanged before and after.
+
+---
+
+## CORRECTION (2026-08-20): `MoStemMsa -2` IS explained
+
+**This corrects lines 151-156 above** -- the section headed *"`MoStemMsa -2` is
+REAL and is not yet explained"* -- and the summary row `| MoStemMsa | 164 -> 162,
+diff -2 |` at line 128. Nothing above is rewritten; this is what that section
+should have said.
+
+### The cause: two source MSAs carry a null `PartOfSpeechRA`
+
+Exactly **2 of 164** source `MoStemMsa` have a null `PartOfSpeechRA`. The engine
+drops any MSA whose POS it cannot resolve, in the `MoStemMsa` arm of
+`_create_msa_for_closure`:
+
+```python
+elif subclass == "MoStemMsa":
+    tgt_pos = _resolve_or_none("PartOfSpeechRA", "PartOfSpeechRA")
+    if tgt_pos is None:
+        return None
+```
+
+`src/gramtrans/Lib/categories.py:6417-6420`, main-relative and re-verified
+2026-08-20. The `why` branch inside `_resolve_or_none` (`:6403`) discriminates
+*"is empty on source"* from *"not resolvable in target"* and selected the first,
+which pins the cause to the **source** side -- and that wording is verbatim the
+reason string the census read back.
+
+> Line numbers here are **main-relative**. `categories.py` is edited
+> concurrently, so the code worktree drifts (`+526` at this date). Resolve by
+> symbol name.
+
+### It is NOT the subtraction-basis artifact that `PartOfSpeech -5` was
+
+The row's `starter_subtraction_basis` is indeed `baseline_gross`, but
+`starter_baseline_count` is **0** in both baselines, so gross subtraction
+subtracts nothing: `difference == difference_raw == -2`. Verified in the
+artifact:
+
+```jsonc
+{ "class": "MoStemMsa", "source_count": 164, "destination_count_total": 162,
+  "difference": -2, "difference_raw": -2, "starter_baseline_count": 0,
+  "starter_subtraction_basis": "baseline_gross",
+  "accounted_for": [], "unexplained_shortfall": 2 }
+```
+
+The journal was right to separate this row from `PartOfSpeech -5`. It was wrong
+only in calling it unexplained.
+
+### It IS real content loss -- but fully REPORTED, so Principle I holds
+
+The run report carries **exactly 2** matching `DroppedItemRecord`s (measured:
+`t038-run-report.json` holds 401 dropped items, of which 2 name
+`PartOfSpeechRA`). Nothing was silent. What failed was the census's ability to
+**read** them: `accounted_for` was never populated from a run report at all
+(`census.py:2385` is its single occurrence, as an emitter argument), which is why
+the row shows `"accounted_for": []`. `unexplained_shortfall: 2` was therefore a
+**mis-attribution** -- the loss was accounted for in the report and unaccounted
+for only in the instrument. That plumbing is now **T048a**.
+
+### Independently confirmed against the raw `.fwdata`
+
+Read-only XML parsing of both projects:
+
+| measure | value |
+|---|---|
+| source `MoStemMsa` total | 164 |
+| source with empty POS | **2** -- `8aa67141-4b32-43f3-ac6c-db0f67ef09cc`, `e746ab93-39a7-432f-8a94-972553c31388` |
+| destination `MoStemMsa` total | 162, every one carrying a POS |
+| source-only GUID set | **identical** to the drop-record set |
+
+164 - 2 = 162. The arithmetic closes with no residue.
+
+> **Note for any future `.fwdata` probe.** Element names in `.fwdata` carry
+> **no** `RA` / `OC` / `OS` suffix: it is `<PartOfSpeech>` and
+> `<MorphoSyntaxAnalysis>`, never `<PartOfSpeechRA>`. Probing with LCM property
+> names matches nothing and yields a false-clean **164/164**.
+
+### Prior art this journal missed: the identical drop, already tracked at scale 9
+
+This exact drop class had **already been measured** on the Ngoreme pair before
+T038 ran. Nobody connected it to the census row:
+
+- `tests/integration/_snapshots/two-mode-038-ngoreme.json:1948` carries the
+  **identical** reason string, with count **9**.
+- `tests/integration/test_038_two_mode_and_tallies.py:189-203`
+  (`test_the_in_scope_residue_is_small_and_named`) asserts it -- `len(pos) == 1
+  and reasons[pos[0]] == 9`.
+- [two-mode-live-evidence.md](../two-mode-live-evidence.md):323,330 tables it as
+  **IN-SCOPE residue**: *"nine senses lose their part-of-speech analysis (US1 /
+  FR-002)"*.
+
+So T038's blocker was a known, named, test-asserted loss reproducing at scale 2.
+The gap was never measurement. It was that no one joined a tracked reason string
+to a census row.
+
+### The guard is over-broad, and that is the actual defect
+
+A null `PartOfSpeechRA` is **legal** in FLEx -- it is what Category =
+`<Not Sure>` looks like, and the source project itself demonstrates it. So this
+is not a dependency failure. It is the engine refusing to reproduce a state the
+source legitimately holds.
+
+The guard exists for one narrow reason:
+
+| path | POS applied via | null POS |
+|---|---|---|
+| `_create_msa_with_guid` (`:6298`), the GUID-preserving PRIMARY path | `setattr` (`:6336-6337`) | **harmless** |
+| `target.MSA.CreateStem(new_sense, tgt_pos)` (`:6425`), the flexicon wrapper FALLBACK | positional argument | raises `FP_NullParameterError` and aborts the whole affix closure |
+
+The guard protects the fallback and penalises the primary path.
+
+### A re-run LAUNDERS the loss: reported becomes unreported
+
+Run 2 (`GT-20260820-003239`) has an **empty** `dropped_items` (measured: 0
+records) while `STEMS` reports 164 skipped against 162 present. The entry-level
+`Skip(ALREADY_PRESENT_BY_GUID)` short-circuits before the MSA closure is ever
+reached, so the two drop records are never emitted again. A loss correctly
+reported on run 1 is silently absent on run 2 -- the Principle I failure shape,
+arriving by idempotence rather than by omission.
+
+### Recommended fix -- filed as T043b, deliberately NOT implemented here
+
+For `MoStemMsa`, treat a genuinely-empty source POS as **faithfully
+reproducible**: create via `_create_msa_with_guid` with `PartOfSpeechRA=None`
+and skip the wrapper fallback in that case. **Keep** the drop for *"not
+resolvable in target"*, which is a real dependency failure. The two `why`
+branches must be distinguished **in control flow**, not merely in the message
+string. Consider the same for `MoUnclassifiedAffixMsa`; `MoInflAffMsa` and
+`MoDerivAffMsa` plausibly DO require a POS and should keep the guard.
