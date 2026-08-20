@@ -267,6 +267,32 @@ LCM type (Principle II, data-model.md:3-6).
 **--> Wait for Wave 5, then:**
 
 - [ ] **T038** [US1] Run the census gate for **predicate P1**: `MoStemMsa`, `MoInflAffMsa`, `MoDerivAffMsa`, `MoUnclassifiedAffixMsa` and `PartOfSpeech` all MATCHED **and** `PhPhoneme.duplicates.extra_objects == 0`, exit code 0. Both halves are required - counts alone would pass the single worst measured outcome, since `PhPhoneme` 41->64 against a 23-phoneme starter baseline nets to zero - `tests/integration/test_object_census.py`
+
+  > **Both count blockers are now FIXED IN CODE; the re-run is deliberately
+  > deferred, and not for want of the fix** (2026-08-20,
+  > [journal/T043b-null-pos-is-a-state.md](journal/T043b-null-pos-is-a-state.md)).
+  > `MoStemMsa -2` closed by **T043b** (`e4e7123`); `PartOfSpeech -5` closed by
+  > T043/T043a. Two reasons not to measure yet:
+  >
+  > 1. **The tree is not coherent.** T045 (`transfer.py`, +656) and T046
+  >    (`report.py`, +523) are uncommitted mid-edit in other sessions with live
+  >    `lockout` claims. A live transfer would execute half-finished executor
+  >    and reporting code, so the artifact would be unreproducible and could
+  >    abort mid-write. Measuring against an incoherent tree is worse than not
+  >    measuring.
+  > 2. **`exit 0` is unreachable by Phase 4 OR Phase 5 work.**
+  >    `carries_natural_keys: false` forces every row onto `baseline_gross` and
+  >    caps the verdict at `CENSUS_ACCOUNTED` / exit 8 regardless of run quality
+  >    (`contracts/fidelity-census.md` 5.2). Exit 8 is the *expected* outcome of
+  >    a perfect run today.
+  >
+  > **Run it once, after T045/T046 land** -- that same run also answers T048's P3
+  > predicate, so one live run settles P1's two count rows and P3 together
+  > instead of three runs settling one row each. Prediction on record BEFORE the
+  > measurement: `MoStemMsa` 164 -> **164** MATCHED, `PartOfSpeech` MATCHED on
+  > basis `baseline_matched`, `PhPhoneme` duplicates **0** (unchanged), exit
+  > **still 8**. If `MoStemMsa` misses, the drop records now say why -- T048a
+  > (`768c1a0`) reads `dropped_items` into `accounted_for`.
 - [ ] **T039** [US1] Verify SC-008 idempotence mechanically: on run 2, `RunPlan.actions` contains **zero** `PlannedAction` whose `match_basis.basis is MatchBasis.NONE` for any class run 1 created, every class's `destination_count_total` is unchanged, and every `EnrichedCollection.added == 0` with `already_present` equal to run 1's `added`. Any increase is a duplicate-creation defect **regardless of what either census's own verdict says** - `tests/integration/test_object_census.py`
 
 **Checkpoint**: US1 is independently functional. SC-001 (analyses 0% -> 100%), SC-002 (no duplicate phoneme names) and SC-008 (a re-run adds nothing) hold on the measured pair, proven by a census exit 0 rather than by unit tests alone.
@@ -312,7 +338,7 @@ LCM type (Principle II, data-model.md:3-6).
   > **Where a category's LCM class is NOT one-to-one, the bare `Skip` deliberately STANDS.** `lcm_class_for_category` returns `""` for those, and `object_class` is the field the report GROUPS BY, so emitting a guessed class name would file the match under a different class -- worse than leaving it unattributed. `PHONOLOGICAL_RULES` is the live instance: `PhRegularRule` and `PhMetathesisRule` share the one category.
   >
   > **Implemented but uncommitted at time of writing** -- a separate session holds the `categories.py` claim and is committing it. The deliberate scope guard `tests/unit/test_017_gold_reserved_edit_copy.py::test_phonemes_plan_action_apbg_unchanged` is **unchanged and still passing**, which is the point of the mode gate: 121 tests green across `test_017_gold_reserved_edit_copy.py`, `test_038_enrichment.py` and `test_038_census_report_evidence.py`.
-- [ ] **T043b** [US1] **P1 CONTENT BLOCKER (FR-002) -- stronger than the reporting items above: this one loses real linguistic data.** Stop dropping a `MoStemMsa` whose source `PartOfSpeechRA` is *genuinely empty*. A null POS is **legal** in FLEx -- it is what Category = `<Not Sure>` looks like, and the T038 source project demonstrates it -- so refusing to reproduce it is the engine declining a state the source legitimately holds, not a dependency failure. Measured on the T038 pair: exactly **2 of 164** source `MoStemMsa` are POS-empty, and both are dropped (`164 - 2 = 162`, confirmed independently by read-only `.fwdata` parsing and by the 2 matching `DroppedItemRecord`s). Already tracked at **scale 9** on the Ngoreme pair (`tests/integration/_snapshots/two-mode-038-ngoreme.json:1948`, asserted by `tests/integration/test_038_two_mode_and_tallies.py:189-203`, tabled as IN-SCOPE residue at `two-mode-live-evidence.md:323,330`) -- a known loss that was never joined to the census row. **The fix**: create via `_create_msa_with_guid` (`categories.py:6298` main-relative) with `PartOfSpeechRA=None`, which applies POS by `setattr` (`:6336-6337`) where `None` is harmless, and skip the flexicon wrapper fallback `target.MSA.CreateStem(new_sense, tgt_pos)` (`:6425`) for that case -- the fallback is the *only* reason the guard exists, since it raises `FP_NullParameterError` on a null and aborts the whole affix closure. **Keep** the drop for *"not resolvable in target"*, which is a real dependency failure: distinguish `_resolve_or_none`'s two `why` branches (`:6403`) **in control flow**, not merely in the message string. Consider the same for `MoUnclassifiedAffixMsa`; `MoInflAffMsa` / `MoDerivAffMsa` plausibly DO require a POS and should keep the guard - `src/gramtrans/Lib/categories.py`
+- [x] **T043b** [US1] **P1 CONTENT BLOCKER (FR-002) -- stronger than the reporting items above: this one loses real linguistic data.** Stop dropping a `MoStemMsa` whose source `PartOfSpeechRA` is *genuinely empty*. A null POS is **legal** in FLEx -- it is what Category = `<Not Sure>` looks like, and the T038 source project demonstrates it -- so refusing to reproduce it is the engine declining a state the source legitimately holds, not a dependency failure. Measured on the T038 pair: exactly **2 of 164** source `MoStemMsa` are POS-empty, and both are dropped (`164 - 2 = 162`, confirmed independently by read-only `.fwdata` parsing and by the 2 matching `DroppedItemRecord`s). Already tracked at **scale 9** on the Ngoreme pair (`tests/integration/_snapshots/two-mode-038-ngoreme.json:1948`, asserted by `tests/integration/test_038_two_mode_and_tallies.py:189-203`, tabled as IN-SCOPE residue at `two-mode-live-evidence.md:323,330`) -- a known loss that was never joined to the census row. **The fix**: create via `_create_msa_with_guid` (`categories.py:6298` main-relative) with `PartOfSpeechRA=None`, which applies POS by `setattr` (`:6336-6337`) where `None` is harmless, and skip the flexicon wrapper fallback `target.MSA.CreateStem(new_sense, tgt_pos)` (`:6425`) for that case -- the fallback is the *only* reason the guard exists, since it raises `FP_NullParameterError` on a null and aborts the whole affix closure. **Keep** the drop for *"not resolvable in target"*, which is a real dependency failure: distinguish `_resolve_or_none`'s two `why` branches (`:6403`) **in control flow**, not merely in the message string. Consider the same for `MoUnclassifiedAffixMsa`; `MoInflAffMsa` / `MoDerivAffMsa` plausibly DO require a POS and should keep the guard - `src/gramtrans/Lib/categories.py`
 
   > **Why this is not a census-reporting bug.** `MoStemMsa` has `starter_baseline_count: 0` in both baselines, so gross subtraction subtracts nothing and `difference == difference_raw == -2`. It is not the `baseline_gross` phantom T043/T043a fix. It IS real content loss -- 2 senses lose their entire morphosyntactic analysis -- and it was **fully reported**, so Principle I held; the census simply could not read `dropped_items` back (T048a).
   >
@@ -323,11 +349,11 @@ LCM type (Principle II, data-model.md:3-6).
 
 - [ ] **T045** [P] [US4] Extend `_execute_update_semantic` (:268, and the :1674 / :2340 sites) to **add-only** collection semantics: never remove, never destructively reorder. It already routes `write_mode="merge"`; this widens what merge means for a collection. Report the outcome as `disposition=UPDATE` with per-collection counts - `src/gramtrans/Lib/transfer.py`
 - [ ] **T046** [P] [US4] Distinguish an enriched item from a created one in the run report (FR-022), and honour the certainty clause: never claim "identical now" on a first transfer, and claim "untouched since last run" only where a residue baseline exists - `src/gramtrans/Lib/report.py`
-- [ ] **T047** [P] [US4] Mirror the enrich-vs-skip decision in the plan builder so Preview shows it (Principle III) - `src/gramtrans/Lib/preview.py`
+- [x] **T047** [P] [US4] Mirror the enrich-vs-skip decision in the plan builder so Preview shows it (Principle III) - `src/gramtrans/Lib/preview.py`
 
 **--> Wait for Wave 3, then:**
 
-- [ ] **T048a** [US4] **Prerequisite of T048 -- the census plumbing T048 silently depends on.** `census_cli.py` must (1) build a per-row `census.MatchBasis(basis_source="run_report", ..., enriched=...)` from the run report, deriving `enriched` per LCM class from `payload["enrichments"][].object_class` and **not** from `enriched_counts`, which is keyed by `GrammarCategory` and is **not 1:1 with an LCM class**; and (2) read `dropped_items` into `accounted_for`, with a `report_ref` of `kind: "dropped_item"`. Without both, `_phase_3` reads `match_basis` as `None` and **P3 fails on plumbing regardless of whether enrichment works** - `src/gramtrans/census_cli.py`
+- [x] **T048a** [US4] **Prerequisite of T048 -- the census plumbing T048 silently depends on.** `census_cli.py` must (1) build a per-row `census.MatchBasis(basis_source="run_report", ..., enriched=...)` from the run report, deriving `enriched` per LCM class from `payload["enrichments"][].object_class` and **not** from `enriched_counts`, which is keyed by `GrammarCategory` and is **not 1:1 with an LCM class**; and (2) read `dropped_items` into `accounted_for`, with a `report_ref` of `kind: "dropped_item"`. Without both, `_phase_3` reads `match_basis` as `None` and **P3 fails on plumbing regardless of whether enrichment works** - `src/gramtrans/census_cli.py`
 
   > **Implemented but uncommitted at time of writing**, in a session other than this one. `accounted_for` had exactly one occurrence as an emitter argument (`census.py:2385`) and was never populated from a run report, which is why T038's reported-and-dropped items could not be read back (see T043b).
 
