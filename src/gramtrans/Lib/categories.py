@@ -7166,6 +7166,27 @@ _MSA_FACTORY_BY_SUBCLASS = {
 }
 
 
+class _PosAbsent:
+    """Sentinel for "the source MSA names NO part of speech, and that is legal".
+
+    A null `PartOfSpeechRA` is a state FLEx itself produces -- it is what
+    Category = `<Not Sure>` looks like in the UI -- so an engine that refuses to
+    reproduce it is declining a state the source legitimately holds, which is a
+    content loss rather than a dependency failure (T043b / FR-002).
+
+    It exists so `_resolve_or_none` can separate its two failure modes IN
+    CONTROL FLOW instead of only in the message string: `None` still means
+    "drop and report", while `_POS_ABSENT` means "reproduce the null"."""
+
+    __slots__ = ()
+
+    def __repr__(self):  # pragma: no cover -- diagnostics only
+        return "<POS absent on source>"
+
+
+_POS_ABSENT = _PosAbsent()
+
+
 def _create_msa_with_guid(target, new_entry, new_sense, subclass, src_guid, pos_fields):
     """Create a GUID-preserved MSA owned by `new_entry`, pointed at by
     `new_sense`, with `pos_fields` applied.
@@ -7253,7 +7274,16 @@ def _create_msa_for_closure(src_msa, new_sense, new_entry, context, tag,
     silent), still recording the new GUID in identity_remap.
 
     Returns the new MSA, or None when the subclass is unsupported
-    (NEEDS_MANUAL) or POS is unresolved."""
+    (NEEDS_MANUAL) or a REQUIRED POS is unresolved.
+
+    On POS, "unresolved" is narrower than it once was (T043b / FR-002). A null
+    `PartOfSpeechRA` is a legal FLEx state -- Category = `<Not Sure>` -- so for
+    `MoStemMsa` and `MoUnclassifiedAffixMsa` an empty source POS is REPRODUCED
+    as a null rather than dropped; only a POS that is set on the source and not
+    resolvable in the target is a dependency failure worth dropping for.
+    `MoInflAffMsa` and `MoDerivAffMsa` keep the stricter guard, since an
+    inflectional or derivational affix with no category cannot be interpreted.
+    Every drop is still reported (Principle I / FR-010)."""
     from SIL.LCModel import ICmObject
     if __package__:
         from .residue import apply_residue
@@ -7284,12 +7314,38 @@ def _create_msa_for_closure(src_msa, new_sense, new_entry, context, tag,
         ref = getattr(src_msa, attr, None)
         return _guid_str_from(ref) if ref is not None else ""
 
-    def _resolve_or_none(attr, which):
-        """Resolve a required target POS; on failure log (empty vs unresolved)
-        and return None so the caller skips this MSA instead of passing a null
-        POS to MSAOperations (which raises FP_NullParameterError and aborts the
-        whole affix closure)."""
+    def _resolve_or_none(attr, which, *, empty_is_legal=False):
+        """Resolve a target POS. THREE outcomes, distinguished in control flow.
+
+        * the resolved target POS -- the source names one and the target has it.
+        * `_POS_ABSENT` -- the source POS is genuinely empty AND this subclass
+          permits that (`empty_is_legal`). The caller reproduces the null; it
+          does not drop. See `_PosAbsent` for why this is not a failure.
+        * `None` -- drop this MSA and report why. Either the source POS is empty
+          on a subclass that requires one, or it is set but NOT RESOLVABLE in
+          the target, which is a real dependency failure.
+
+        The two `None` cases used to be distinguished only inside the `why`
+        string while sharing one code path, so the legal-empty case was dropped
+        alongside the genuinely-broken one (T043b: 2 of 164 `MoStemMsa` on the
+        T038 pair, 9 on the Ngoreme pair)."""
         pg = _pos_guid_of(attr)
+        # `empty_is_legal` covers a slot that is genuinely NULL -- never one
+        # that is merely INVISIBLE. An uncast, base-interface-typed MSA hides
+        # its subclass-only slots (pythonnet resolves attributes against the
+        # static wrapper type), so a failed `_cast_msa_concrete` ALSO reads as
+        # empty. Reproducing that as a null POS would convert a loud, reported
+        # dependency failure into exactly the silent content loss FR-002
+        # forbids, so require the slot to be present before trusting its
+        # emptiness.
+        if not pg and empty_is_legal and hasattr(src_msa, attr):
+            _mlog.info(
+                "MSA %s (%s): %s.%s is empty on source; reproducing the null "
+                "POS rather than dropping the MSA (legal in FLEx -- this is "
+                "Category = <Not Sure>).",
+                src_g[:8], subclass, subclass, which,
+            )
+            return _POS_ABSENT
         tp = _resolve_target_pos(target, pg) if pg else None
         if tp is None:
             why = ("is empty on source" if not pg
@@ -7313,6 +7369,27 @@ def _create_msa_for_closure(src_msa, new_sense, new_entry, context, tag,
                 "but loses its part-of-speech analysis")
         return tp
 
+    def _null_pos_fallback_blocked(which):
+        """The GUID-preserving create failed AND the source POS is null.
+
+        The flexicon wrapper cannot stand in here: `MSAOperations.Create*`
+        raises `FP_NullParameterError` on a null POS and would abort the whole
+        affix closure -- which is the ONLY reason the over-broad guard existed.
+        So report the loss instead of inventing a part of speech the source does
+        not have. Never silent (Principle I / FR-010)."""
+        _mlog.warning(
+            "MSA %s (%s): %s.%s is null on source (legal) but the "
+            "GUID-preserving create path was unavailable, and the flexicon "
+            "wrapper fallback rejects a null POS; reporting this MSA instead.",
+            src_g[:8], subclass, subclass, which,
+        )
+        _report_dropped_msa(
+            dropped, src_entry, src_msa, subclass,
+            f"{subclass}.{which} is empty on source (legal in FLEx -- Category "
+            "= <Not Sure>) but the GUID-preserving create path was unavailable "
+            "and the flexicon wrapper fallback rejects a null part of speech "
+            "-- MSA not transferred")
+
     if subclass == "MoInflAffMsa":
         tgt_pos = _resolve_or_none("PartOfSpeechRA", "PartOfSpeechRA")
         if tgt_pos is None:
@@ -7324,13 +7401,20 @@ def _create_msa_for_closure(src_msa, new_sense, new_entry, context, tag,
         if new_msa is None:
             new_msa = target.MSA.CreateInflAff(new_sense, tgt_pos, slots=None)
     elif subclass == "MoStemMsa":
-        tgt_pos = _resolve_or_none("PartOfSpeechRA", "PartOfSpeechRA")
+        # A stem MSA may legally carry NO part of speech (Category =
+        # <Not Sure>), so an empty source POS is reproduced, not dropped.
+        tgt_pos = _resolve_or_none("PartOfSpeechRA", "PartOfSpeechRA",
+                                   empty_is_legal=True)
         if tgt_pos is None:
             return None
+        pos_absent = tgt_pos is _POS_ABSENT
         new_msa = _create_msa_with_guid(
             target, new_entry, new_sense, subclass, src_g,
-            {"PartOfSpeechRA": tgt_pos})
+            {"PartOfSpeechRA": None if pos_absent else tgt_pos})
         if new_msa is None:
+            if pos_absent:
+                _null_pos_fallback_blocked("PartOfSpeechRA")
+                return None
             new_msa = target.MSA.CreateStem(new_sense, tgt_pos)
         _wire_stratum(src_msa, new_msa, target)
     elif subclass == "MoDerivAffMsa":
@@ -7344,13 +7428,23 @@ def _create_msa_for_closure(src_msa, new_sense, new_entry, context, tag,
         if new_msa is None:
             new_msa = target.MSA.CreateDerivAff(new_sense, from_pos, to_pos)
     elif subclass == "MoUnclassifiedAffixMsa":
-        tgt_pos = _resolve_or_none("PartOfSpeechRA", "PartOfSpeechRA")
+        # "Unclassified" affix: an unspecified category is the whole point of
+        # the subclass, so a null POS is legal here for the same reason it is
+        # legal on MoStemMsa. MoInflAffMsa / MoDerivAffMsa keep the guard --
+        # an inflectional or derivational affix without a category cannot be
+        # interpreted, so there a null is a dependency failure, not a state.
+        tgt_pos = _resolve_or_none("PartOfSpeechRA", "PartOfSpeechRA",
+                                   empty_is_legal=True)
         if tgt_pos is None:
             return None
+        pos_absent = tgt_pos is _POS_ABSENT
         new_msa = _create_msa_with_guid(
             target, new_entry, new_sense, subclass, src_g,
-            {"PartOfSpeechRA": tgt_pos})
+            {"PartOfSpeechRA": None if pos_absent else tgt_pos})
         if new_msa is None:
+            if pos_absent:
+                _null_pos_fallback_blocked("PartOfSpeechRA")
+                return None
             new_msa = target.MSA.CreateUnclassifiedAffix(new_sense, tgt_pos)
 
     if new_msa is None:
