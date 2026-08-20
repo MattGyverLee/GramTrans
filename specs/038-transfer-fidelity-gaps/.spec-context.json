@@ -382,6 +382,134 @@
       "kind": "complete",
       "by": "extension",
       "at": "2026-08-20T06:21:12.312Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T028",
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-08-20T06:23:56.126Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T029",
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-08-20T06:23:56.126Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T030",
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-08-20T06:23:56.126Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T031",
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-08-20T06:23:56.126Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T032",
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-08-20T06:23:56.126Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T033",
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-08-20T06:23:56.126Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T034",
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-08-20T06:23:56.126Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T035",
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-08-20T06:23:56.127Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T036",
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-08-20T06:23:56.127Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T037",
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-08-20T06:23:56.127Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T040",
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-08-20T06:23:56.127Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T041",
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-08-20T06:23:56.127Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T042",
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-08-20T06:23:56.127Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T043",
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-08-20T06:23:56.127Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T043a",
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-08-20T06:23:56.127Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T044",
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-08-20T06:23:56.127Z"
     }
   ],
   "decisions": [
@@ -713,7 +841,7 @@
       "summary": "85 tasks in 9 phases (Setup, Foundational, then 6 story phases ordered by verifiability -- US2 census first as the acceptance instrument, then US1, US4 || US5a, US3, US5b -- plus Polish); waves serialized on categories.py and models.py; 2 hard external gates (035 roster append, 037 landing)"
     }
   },
-  "currentTask": "T048a",
+  "currentTask": "T038",
   "task_summaries": {
     "T001": {
       "status": "DONE",
