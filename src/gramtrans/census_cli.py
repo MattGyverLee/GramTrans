@@ -1285,11 +1285,54 @@ def accounted_for_drops(difference, drops, notes=None) -> tuple:
     return tuple(lines)
 
 
+# ---------------------------------------------------------------------------
+# T048d: THE IDENTITY AUDIT, WIRED
+#
+# `census.starter_matched_lower_bound` proves the arithmetic; this is where the
+# two GUID sets it needs get read. The pass runs inside the SAME open as the
+# counts -- in `_open_source` / `_open_destination`, beside `_count_split` and
+# `duplicate_reports_for` -- because `census.read_project` closes the handle in
+# a `finally` before it returns, and a second open of either project to finish
+# reading would widen the digest window that function exists to close.
+#
+# WHICH CLASSES ARE AUDITED IS DERIVED, NOT LISTED. A class the baseline counts
+# as ZERO cannot carry a phantom shortfall: gross subtraction subtracts nothing
+# from it, so the two bases already agree. Only a class with a NONZERO baseline
+# count can be over-subtracted, and that set comes from the baseline document
+# itself. A hand-maintained list of "the FW-global classes" would be the drift
+# this feature exists to end -- and it would also be wrong, because which
+# classes a starter project ships is a property of the FieldWorks version that
+# made it, not of this source file.
+#
+# THE COST IS BOUNDED BY THE BASELINE. The audited classes hold 3014 objects on
+# the measured starter baseline, and the pass enumerates each such class once
+# per project. `--no-identity-audit` turns it off for a project where even that
+# is too much; the consequence is stated where the flag is declared.
+# ---------------------------------------------------------------------------
+
+
+def identity_audit_classes(baseline, measurable) -> tuple:
+    """The classes worth a GUID pass: nonzero baseline count, and measurable.
+
+    Sorted, so two runs enumerate in the same order and a slow run is
+    diagnosable. Empty for a missing baseline -- there is no B to bound, so
+    every row would decline anyway and the pass would be pure cost.
+    """
+    if baseline.is_missing:
+        return ()
+    wanted = set(measurable)
+    return tuple(sorted(
+        entry.object_class for entry in baseline.entries
+        if entry.count > 0 and entry.object_class in wanted
+    ))
+
+
 def _row_for_entry(
     entry, source_counts, destination_counts, baseline,
     matched_by_class=None, matched_complete=False,
     *, evidence: Optional[ReportEvidence] = None,
     withheld_classes=frozenset(),
+    source_guids=None, destination_guids=None,
 ):
     """One `(ClassCensusRow, emitter kwargs)` pair for one class-list entry.
 
@@ -1312,10 +1355,24 @@ def _row_for_entry(
     (baseline - matched) rather than the gross baseline, which is the whole point:
     a starter object the transfer matched to a source object is NOT surplus and
     must not be subtracted from the destination.
+
+    T048D ADDS A SECOND WAY TO EARN THE SAME BASIS, and it is deliberately
+    SUBORDINATE to the first. The identity audit
+    (`census.starter_matched_lower_bound`) is consulted only when the three
+    conditions above did NOT hold, so no row that already reads its matched
+    count off the run report changes behaviour: the audit can only move rows
+    that were on `baseline_gross`, which is exactly the population T048d is
+    about. Where both could speak they agree in kind but not in strength -- the
+    report's tally is an attribution, the audit is a measurement -- and mixing
+    them by taking the larger would be the one arithmetic that can HIDE a
+    shortfall.
     """
     matched_by_class = matched_by_class or {}
     evidence = evidence or ReportEvidence()
     withheld_classes = withheld_classes or frozenset()
+    source_guids = source_guids or {}
+    destination_guids = destination_guids or {}
+    audited = None
     matched_effective = None
     measured = entry.in_class_list_via != "excluded_not_measurable"
     notes = []
@@ -1396,8 +1453,92 @@ def _row_for_entry(
                 "than the gross baseline of " + str(baseline_count)
             )
         else:
-            basis = "baseline_gross"
-            starter_excluded = baseline_count
+            # T048d: no report tally reached this row. Before falling back to
+            # gross subtraction, ask the projects directly. `withheld` is NOT
+            # consulted here: it exists because an unattributable identity skip
+            # may have understated the TALLY, and the audit does not read the
+            # tally -- it reads two GUID sets -- so the tally's incompleteness
+            # cannot corrupt it.
+            audited = (
+                census.starter_matched_lower_bound(
+                    baseline_count,
+                    destination_count,
+                    destination_guids.get(entry.object_class),
+                    source_guids.get(entry.object_class),
+                )
+                if entry.owning_feature_system is None else None
+            )
+            audited_excluded = (
+                census.unmatched_starter(baseline_count, audited)
+                if audited is not None else None
+            )
+            # A LOWER BOUND IS CONCLUSIVE IN EXACTLY ONE CASE, and this is the
+            # test for it. `audited` bounds the matched count from BELOW, so
+            # `audited_excluded` bounds the subtraction from ABOVE and the
+            # audited difference is the MOST NEGATIVE the row can be. When that
+            # figure is already >= 0 the row is PROVED to have lost nothing,
+            # and the matched basis states a fact.
+            #
+            # When it is still negative the audit has only narrowed an
+            # interval: the true difference lies somewhere between the audited
+            # figure and the gross one, and nothing here knows where. Taking
+            # the matched basis then would be a category error with a
+            # consequence -- `census.is_gross_basis_row` is the single
+            # predicate 5.2's verdict cap turns on, so a `baseline_matched` row
+            # is EVIDENCE and its unexplained shortfall FAILS the run. Measured
+            # on run CENSUS-20260820-125034, promoting the unresolved rows took
+            # the verdict from CENSUS_ACCOUNTED to UNEXPLAINED_SHORTFALL on
+            # numbers that are upper bounds -- the cap's own rationale ("it
+            # reports a shortfall on a correct run") reappearing one basis to
+            # the left. So an unresolved audit keeps the gross basis and puts
+            # its finding in a NOTE, where it is visible without being
+            # load-bearing.
+            audit_resolves = (
+                audited is not None
+                and destination_count - audited_excluded - source_count >= 0
+            )
+            if audit_resolves:
+                basis = "baseline_matched"
+                starter_excluded = audited_excluded
+                notes.append(
+                    "starter_matched_to_source=" + str(audited)
+                    + " from the T048d IDENTITY AUDIT, not from the run "
+                    "report: this class has no matched tally of any kind (no "
+                    "action, no overwrite, no skip), which is what FW-global "
+                    "fixed content looks like. The number is a PROVABLE LOWER "
+                    "BOUND, the starter baseline of " + str(baseline_count)
+                    + " minus the "
+                    + str(len(set(destination_guids.get(entry.object_class))
+                              - set(source_guids.get(entry.object_class))))
+                    + " destination object(s) whose GUID is absent from the "
+                    "source; subtracting " + str(audited_excluded)
+                    + " unmatched starter object(s) rather than the gross "
+                    "baseline of " + str(baseline_count) + ". The bound "
+                    "RESOLVES this row: it is the most negative the difference "
+                    "can be, and it is not negative, so no source object of "
+                    "this class failed to arrive."
+                )
+            else:
+                basis = "baseline_gross"
+                starter_excluded = baseline_count
+                if audited is not None:
+                    notes.append(
+                        "the T048d IDENTITY AUDIT narrows this row's shortfall "
+                        "to AT MOST " + str(abs(min(
+                            0, destination_count - audited_excluded
+                            - source_count)))
+                        + " (starter_matched_to_source >= " + str(audited)
+                        + " by GUID), against the "
+                        + str(abs(min(
+                            0,
+                            destination_count - baseline_count - source_count)))
+                        + " the gross basis reports. The row KEEPS the gross "
+                        "basis and its shortfall stays advisory: the audit "
+                        "supplies a lower bound on the matched count, so the "
+                        "narrowed figure is an UPPER bound on the loss and not "
+                        "the loss itself, and 5.2's cap exists for exactly the "
+                        "arithmetic that can over-report a shortfall."
+                    )
             if withheld:
                 notes.append(
                     "the `baseline_matched` basis is WITHHELD from this class "
@@ -1439,7 +1580,12 @@ def _row_for_entry(
         # publishing the raw tally beside a different subtraction would make
         # the artifact's own arithmetic unreproducible. The raw value is in
         # `notes` whenever the cap bit.
-        kwargs["starter_matched_to_source"] = matched_effective
+        # T048d: `audited` is the same field from the other evidence source,
+        # and the two are mutually exclusive by construction -- the audit is
+        # only consulted on the branch where `matched_effective` stayed None.
+        kwargs["starter_matched_to_source"] = (
+            matched_effective if matched_effective is not None else audited
+        )
 
     # ---- T024c sub-point 3: a REPORTED drop is accounting -----------------
     # An A1 split row is excluded for the same reason it cannot reach the
@@ -1497,6 +1643,7 @@ def census_run(
     projects_root: Optional[str] = None,
     root: Optional[Path] = None,
     open_project=None,
+    identity_audit: bool = True,
 ) -> int:
     """Census one source -> destination pair, write the artifact, gate it.
 
@@ -1535,23 +1682,51 @@ def census_run(
     duplicates: dict = {}
     admitted = census.roster_admitted_classes(base)
 
+    # T048d: the GUID pass, over the classes the baseline counts as nonzero.
+    audit_classes = (
+        identity_audit_classes(baseline, wanted) if identity_audit else ()
+    )
+    source_guids: dict = {}
+    destination_guids: dict = {}
+    audit_unreadable: dict = {}
+    if audit_classes:
+        _info("identity audit " + str(len(audit_classes))
+              + " class(es) with a nonzero starter baseline, by GUID")
+    elif identity_audit and not baseline.is_missing:
+        _info("identity audit skipped: no class carries a nonzero starter "
+              "baseline count, so no row can be over-subtracted")
+
     def _count_split(handle, into: dict) -> None:
         for split_class in split_classes:
             into[split_class] = census.count_by_feature_system(
                 handle, split_class)
 
+    def _audit_guids(handle, into: dict) -> None:
+        if not audit_classes:
+            return
+        found, unreadable = census.guid_sets_for(handle, audit_classes)
+        into.update(found)
+        # Merged rather than assigned: a class unreadable on EITHER side must
+        # decline, and `starter_matched_lower_bound` declines on a missing set
+        # from either project, so recording both sides' failures is what makes
+        # the message name the real reason.
+        for name, why in unreadable.items():
+            audit_unreadable.setdefault(name, why)
+
     def _open_source(name: str):
         handle = opener(name)
         _count_split(handle, source_split)
+        _audit_guids(handle, source_guids)
         return handle
 
     def _open_destination(name: str):
         handle = opener(name)
-        # Both extra passes run while the handle is open, because
+        # Every extra pass runs while the handle is open, because
         # `read_project` closes it in a `finally` before it returns.
         duplicates.update(census.duplicate_reports_for(
             handle, wanted, admitted=admitted))
         _count_split(handle, destination_split)
+        _audit_guids(handle, destination_guids)
         return handle
 
     source_reading = census.read_project(
@@ -1614,7 +1789,9 @@ def census_run(
             row, kwargs = _row_for_entry(
                 entry, source_counts, destination_counts, baseline,
                 matched_by_class, matched_complete, evidence=evidence,
-                withheld_classes=withheld_classes)
+                withheld_classes=withheld_classes,
+                source_guids=source_guids,
+                destination_guids=destination_guids)
             duplicate_report = duplicates.get(entry.object_class)
         else:
             row, kwargs = _row_for_entry(
@@ -1627,12 +1804,38 @@ def census_run(
                 matched_by_class, matched_complete, evidence=evidence,
                 withheld_classes=withheld_classes,
             )
+            # No GUID sets, for the same reason a split row cannot reach the
+            # matched basis from the report: a GUID set is per LCM CLASS, and
+            # crediting one class's audit to a feature-system half would
+            # subtract the same starter objects twice. `_row_for_entry` guards
+            # this independently on `owning_feature_system`.
             # No natural-key definition covers a split class, and a whole-class
             # duplicate report attached to one half would double-count it.
             duplicate_report = None
         rows.append(census.class_row_artifact(
             row, entry, duplicates=duplicate_report, **kwargs))
 
+    if audit_unreadable:
+        _warn(
+            "T048d: the identity audit could not read "
+            + str(len(audit_unreadable)) + " class(es) ("
+            + ", ".join(sorted(audit_unreadable)) + "), so each of them keeps "
+            "the gross basis and its shortfall stays advisory. First reason: "
+            + audit_unreadable[sorted(audit_unreadable)[0]]
+        )
+    audited_rows = tuple(sorted(
+        row["class"] for row in rows
+        if row.get("starter_subtraction_basis") == "baseline_matched"
+        and any("IDENTITY AUDIT" in note for note in row.get("notes", ()))
+    ))
+    if audited_rows:
+        _info(
+            "T048d: the identity audit earned the `baseline_matched` basis for "
+            + str(len(audited_rows)) + " row(s) that no run-report tally "
+            "reached: " + ", ".join(audited_rows)
+            + " -- FW-global fixed content arrives correct and is recorded "
+            "nowhere, so the evidence has to come from the projects."
+        )
     if identity_skips.measured and identity_skips.total():
         _info(
             "T048b: counted " + str(identity_skips.total())
@@ -2123,6 +2326,14 @@ def build_parser() -> argparse.ArgumentParser:
               "starter_capture baseline and CENSUS_ERROR without it"))
     run.add_argument("--projects-root", metavar="PATH", default=None,
                      help="override where FLEx projects live on disk")
+    run.add_argument(
+        "--no-identity-audit", dest="identity_audit", action="store_false",
+        help=("skip the T048d GUID pass over the classes with a nonzero "
+              "starter baseline. The pass is what lets a class that arrives "
+              "correct and is recorded NOWHERE (FW-global fixed content such "
+              "as MoMorphType) reach the `baseline_matched` basis; without it "
+              "those rows stay on gross subtraction and report a shortfall "
+              "they do not have"))
 
     gate_parser = subparsers.add_parser(
         "gate",
@@ -2186,7 +2397,8 @@ def _dispatch(args, parser: argparse.ArgumentParser) -> int:
             baseline_path=args.baseline,
             run_report=args.run_report,
             destination_freshly_created=args.destination_freshly_created,
-            projects_root=args.projects_root)
+            projects_root=args.projects_root,
+            identity_audit=args.identity_audit)
     if args.command == "gate":
         return gate(args.artifact, args.phase)
     if args.command == "diff":

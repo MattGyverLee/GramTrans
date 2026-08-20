@@ -1815,6 +1815,190 @@ def duplicate_reports_for(
 
 
 # ---------------------------------------------------------------------------
+# T048d -- THE IDENTITY AUDIT: a GUID-level comparison, for the class that
+# arrives correct with no record of arriving
+#
+# THE DEFECT. `MoMorphType` reported `difference -19` on run
+# `CENSUS-20260820-114752` while the two `.fwdata` files held the SAME 19 morph
+# types by GUID -- source 19, destination 19, 0 missing, 0 destination-only,
+# identical GUID sets. Nothing was wrong with the transfer. The row was wrong.
+#
+# WHY NOTHING ALREADY IN THE CENSUS COULD FIX IT. `_row_for_entry` earns the
+# `baseline_matched` basis from ONE source of evidence: a per-class matched
+# tally in the run report. T048b widened what feeds that tally (an
+# `ALREADY_PRESENT_BY_GUID` skip is a match) and still could not reach this row,
+# because `MoMorphType` has no record of ANY kind -- no action, no overwrite, no
+# skip. The morph-types list is FW-global fixed content: `Lib/categories.py`'s
+# `_resolve_target_morph_type` states it outright ("Morph types live in the
+# global (shared) list at LangProject.LexDbOA.MorphTypesOA and carry identical
+# GUIDs across every FW project"), and `_entry_all_deps` adds "MorphType is
+# FW-global; no dependency edge is emitted for it". So the class arrives
+# correct, nothing happens, nothing is recorded, and gross subtraction removes
+# all 19 starters as surplus.
+#
+# A run report can never close this. The evidence has to come from the projects
+# themselves, which is what this section adds.
+#
+# ---------------------------- THE BOUND, PROVED ----------------------------
+# Write S for the starter set (|S| = the baseline count B), D for the
+# destination set and Q for the source set. `starter_matched_to_source` is
+# |S n Q| and `unmatched_starter` is |S \ Q|. The baseline document records
+# `class`, `count` and `names` and NO GUIDS, so S itself is not addressable --
+# but it does not need to be:
+#
+#     S subset of D                        (no starter object was deleted)
+#     => S \ Q  subset of  D \ Q
+#     => |S \ Q| <= |D \ Q|
+#     => |S n Q| = B - |S \ Q| >= B - |D \ Q|
+#
+# So `B - |D \ Q|`, clamped to [0, B], is a PROVABLE LOWER BOUND on
+# `starter_matched_to_source` computed from two GUID sets the census can read
+# directly. On `MoMorphType` it is exact and tight: |D \ Q| is 0, so the bound
+# is 19 of 19, `unmatched_starter` is 0, and `difference` is 0.
+#
+# A LOWER BOUND IS THE SAFE DIRECTION, and that is why a bound is acceptable
+# here at all. Understating `starter_matched_to_source` OVER-subtracts, which
+# can only ever manufacture a shortfall the run does not have; overstating it
+# under-subtracts and HIDES a real one. `_row_for_entry` already reasons this
+# way about the gross basis, and this bound errs the same way for the same
+# reason: "being wrong in the capped, advisory direction is recoverable;
+# silently claiming a trustworthy answer is not".
+#
+# THE ONE ASSUMPTION, NAMED, AND ITS GUARD. The proof needs `S subset of D`,
+# i.e. that no starter object was deleted. This feature's engine is additive
+# (FR-021: enrichment "MUST NOT remove, blank, or overwrite content already
+# present"), but that is the engine's own contract and an instrument that
+# audits the engine should not simply believe it. So the assumption is guarded
+# by its own arithmetic: a deleted starter shows up as `|D| < B`, and
+# `starter_matched_lower_bound` REFUSES (returns None, leaving the row on the
+# gross basis) whenever the destination holds fewer objects than the starter
+# did. What the guard does not catch is a delete-one-create-one within a single
+# class, which would leave |D| unchanged; that residue is stated in
+# `starter_matched_lower_bound`'s docstring rather than papered over.
+#
+# WHY NOT PUT GUIDS IN THE STARTER BASELINE INSTEAD. That was the other route
+# and it would make |S n Q| exact rather than bounded. It was not taken: the
+# baseline document is a captured artifact, the capture that produced the one in
+# use ("GT038 T023b Scratch") no longer exists on disk, and a re-capture from a
+# different blank project would move `content_hash` and `fwdata_sha256` and so
+# invalidate the comparability of every measurement already taken against it.
+# A bound that needs no re-capture, and that errs toward reporting a shortfall,
+# buys the same row for none of that.
+#
+# THIS IS NOT AN ATTRIBUTED MATCH. Nothing here reads a plan, a report or a
+# disposition, and nothing credits a match to a class on the strength of a
+# record that does not exist. Both numbers are read off the two projects the
+# census already opens, by GUID.
+# ---------------------------------------------------------------------------
+
+
+def guids_in_class(handle, object_class: str) -> frozenset:
+    r"""Every GUID of exactly `object_class` in one project, as a set.
+
+    Built on `objects_in_class`, so the exact-class filter and its raise-rather-
+    than-yield-nothing posture are inherited verbatim: an empty set always
+    means "measured, and none", never "could not look".
+
+    An object that will not produce a GUID RAISES rather than being dropped.
+    A silently short GUID set would understate `|D \ Q|` and so OVERSTATE the
+    lower bound, which is the one direction this whole section must not be
+    wrong in.
+    """
+    out = set()
+    for obj in objects_in_class(handle, object_class):
+        guid = _guid_str(obj)
+        if not guid:
+            raise CensusError(
+                "cannot audit " + repr(object_class) + " by identity: an "
+                "object of that class will not produce a Guid, and dropping "
+                "it would shrink the destination-only set and OVERSTATE "
+                "starter_matched_to_source -- the one direction the identity "
+                "audit must never be wrong in",
+                (object_class,),
+            )
+        out.add(guid)
+    return frozenset(out)
+
+
+def guid_sets_for(handle, class_names, *, objects_for=None) -> tuple:
+    """`({class: frozenset(guid)}, {class: why not})` for one open project.
+
+    Per class rather than per project: a class the census cannot enumerate is
+    recorded in the second dict and simply absent from the first, so the audit
+    declines for THAT row alone and every other row keeps its evidence. The
+    alternative -- failing the whole pass -- would let one unreadable class
+    push every row back onto the gross basis.
+
+    `objects_for` is the same enumeration seam `duplicate_reports_for` takes,
+    so a test can drive this without a live project.
+    """
+    enumerate_objects = objects_for or objects_in_class
+    out: dict = {}
+    unreadable: dict = {}
+    for name in dict.fromkeys(class_names):
+        try:
+            found = set()
+            for obj in enumerate_objects(handle, name):
+                guid = _guid_str(obj)
+                if not guid:
+                    raise CensusError(
+                        "an object of class " + repr(name) + " will not "
+                        "produce a Guid", (name,))
+                found.add(guid)
+            out[name] = frozenset(found)
+        except Exception as exc:  # noqa: BLE001 -- one class, not the pass
+            unreadable[name] = type(exc).__name__ + ": " + str(exc)
+    return out, unreadable
+
+
+#: What `starter_matched_lower_bound` returns instead of a number when the
+#: audit declines, spelled as a name so the caller's branch reads as a refusal
+#: rather than as a missing value.
+IDENTITY_AUDIT_DECLINED = None
+
+
+def starter_matched_lower_bound(
+    baseline_count: Optional[int],
+    destination_count: Optional[int],
+    destination_guids,
+    source_guids,
+) -> Optional[int]:
+    r"""`B - |D \ Q|` clamped to `[0, B]` -- a lower bound on the starter
+    objects matched to a source object, or None when the audit declines.
+
+    The derivation is in this section's header. Four refusals, each of which
+    leaves the row on the gross basis:
+
+    * no baseline count for the row -- there is no B to bound;
+    * either GUID set unread -- `guid_sets_for` recorded why;
+    * `|D|` disagrees with the row's own `destination_count` -- the audit would
+      then be measuring a different population from the row it is about to
+      change, and reconciling the two by preferring one is exactly the kind of
+      silent choice this instrument exists to avoid;
+    * `|D| < B` -- a starter object is provably gone, so `S subset of D` (the
+      proof's one assumption) has already failed and the bound does not hold.
+
+    KNOWN RESIDUE, stated rather than hidden: a run that deleted one starter of
+    a class AND created one object of the same class leaves `|D|` equal to `B`,
+    passes the guard, and lets the bound overstate by one. Closing that needs
+    the starter's GUIDs, which the baseline document does not carry (see the
+    header). Nothing in this feature's engine has such a path for the classes
+    the audit moves -- the FW-global lists are never created and never deleted
+    -- but the bound does not prove that and does not claim to.
+    """
+    if baseline_count is None or destination_count is None:
+        return IDENTITY_AUDIT_DECLINED
+    if destination_guids is None or source_guids is None:
+        return IDENTITY_AUDIT_DECLINED
+    if len(destination_guids) != destination_count:
+        return IDENTITY_AUDIT_DECLINED
+    if destination_count < baseline_count:
+        return IDENTITY_AUDIT_DECLINED
+    destination_only = len(set(destination_guids) - set(source_guids))
+    return max(0, min(baseline_count, baseline_count - destination_only))
+
+
+# ---------------------------------------------------------------------------
 # Amendment A1 -- `FsFeatStrucType` is counted PER FEATURE SYSTEM
 #
 # A FieldWorks project has TWO feature systems, and both own
