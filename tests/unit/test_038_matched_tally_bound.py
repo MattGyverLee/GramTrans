@@ -130,13 +130,55 @@ class TestTheBoundIsRead:
         assert "PhPhoneme" not in bound.withheld
         assert "PhNCSegments" not in bound.withheld
 
-    def test_an_unknown_category_is_unbounded(self, tmp_path):
-        """`AFFIXES` is in neither table. Bounding it would be a guess, and a
-        wrong bound lets a row claim a basis its tally cannot support."""
+    def test_the_three_t048g_categories_bound_to_lexentry_and_nothing(
+            self, tmp_path):
+        """T048g. `AFFIXES` and `STEMS` skip on a `LexEntry` GUID hit and
+        nothing else; `POS_INFLECTABLE_FEATS` skips on a reference that is
+        already wired and creates no object at all. Together they are 265 of
+        run 2's unattributed matches, and while they were unknown they made
+        the bound unbounded -- which withheld the strong basis from all 75
+        rows, `PhPhoneme` and `PhNCSegments` included."""
+        from gramtrans import census_cli
+        path = _write(tmp_path, {"matched_to_source": _matched(
+            {"PartOfSpeech": 4, "PhNCSegments": 2, "PhPhoneme": 21},
+            complete=False,
+            unattributed={"AFFIXES": 88, "STEMS": 164,
+                          "POS_INFLECTABLE_FEATS": 13})})
+        bound = census_cli.matched_tally_bound_from_report(path)
+
+        assert bound.unbounded is False, "all three are bounded now"
+        assert bound.withheld == frozenset({"LexEntry"})
+        assert "PhPhoneme" not in bound.withheld
+        assert "PhNCSegments" not in bound.withheld
+
+    def test_a_link_only_category_bounds_to_nothing_at_all(self, tmp_path):
+        """KEY PRESENCE, NOT TRUTHINESS. `POS_INFLECTABLE_FEATS` wires an
+        existing feature defn into an existing POS -- no object is created, so
+        its candidate set is legitimately EMPTY. A reader that tests the set
+        for truthiness cannot tell that from an absent one and falls through to
+        `unbounded`, withholding the strong basis from every row on the
+        strength of a match that could not have been any of them."""
         from gramtrans import census_cli
         path = _write(tmp_path, {"matched_to_source": _matched(
             {"PhPhoneme": 21}, complete=False,
-            unattributed={"AFFIXES": 88})})
+            unattributed={"POS_INFLECTABLE_FEATS": 13})})
+        bound = census_cli.matched_tally_bound_from_report(path)
+
+        assert bound.unbounded is False
+        assert bound.withheld == frozenset()
+
+    def test_an_unknown_category_is_unbounded(self, tmp_path):
+        """`ADHOC_COMPOUND_RULES` is in neither table, and unlike `AFFIXES`
+        (T048g) it is genuinely unbounded rather than merely unmeasured: its
+        identity skip (`Lib/categories.py:4090`) tests membership of a single
+        iterator that yields from BOTH `AdhocCoProhibitionsOC` and
+        `CompoundRulesOS`, two unrelated class families. Bounding it would be a
+        guess, and a wrong bound lets a row claim a basis its tally cannot
+        support."""
+        from gramtrans import census_cli
+        path = _write(tmp_path, {"matched_to_source": _matched(
+            {"PhPhoneme": 21}, complete=False,
+            unattributed={"ADHOC_COMPOUND_RULES": 88})})
         bound = census_cli.matched_tally_bound_from_report(path)
         assert bound.unbounded is True
 
@@ -146,7 +188,8 @@ class TestTheBoundIsRead:
         from gramtrans import census_cli
         path = _write(tmp_path, {"matched_to_source": _matched(
             {"PhPhoneme": 21}, complete=False,
-            unattributed={"GRAM_CATEGORIES": 5, "STEMS": 164})})
+            unattributed={"GRAM_CATEGORIES": 5,
+                          "ADHOC_COMPOUND_RULES": 164})})
         bound = census_cli.matched_tally_bound_from_report(path)
         assert bound.unbounded is True
 
@@ -191,9 +234,9 @@ class TestTheBoundErrsTowardWithholding:
     which HIDES a real loss. Only the first is acceptable."""
 
     @pytest.mark.parametrize("unattributed", [
-        {"AFFIXES": 1},
-        {"STEMS": 164},
-        {"POS_INFLECTABLE_FEATS": 13},
+        {"ADHOC_COMPOUND_RULES": 1},
+        {"PHONOLOGICAL_RULES": 164},
+        {"EXCEPTION_FEATURES": 13},
         {"SOMETHING_NOBODY_HAS_NAMED_YET": 1},
     ])
     def test_every_unrecognised_category_declines_rather_than_guesses(

@@ -139,15 +139,72 @@ class TestIdentitySkipIsAMatch:
         """No bound on which class it could have been means no class's tally
         can be trusted -- the pre-T048b behaviour of
         `RunReport.matched_class_is_complete`, and the honest answer when the
-        damage cannot be located."""
+        damage cannot be located.
+
+        `ADHOC_COMPOUND_RULES`, not `AFFIXES` (re-pointed by T048g, which gave
+        `AFFIXES` a real bound). This one earns the example: its identity skip
+        at `Lib/categories.py:4090` tests a single iterator that yields from
+        BOTH `AdhocCoProhibitionsOC` and `CompoundRulesOS`, so the classes it
+        could have found span two unrelated families and no one has enumerated
+        them."""
         from gramtrans import census_cli
 
-        path = _write(tmp_path, {"skips": [_skip("AFFIXES", "a-1")]})
+        path = _write(tmp_path, {"skips": [_skip("ADHOC_COMPOUND_RULES", "a-1")]})
         tally = census_cli.identity_skips_from_report(path)
 
         assert tally.by_class == {}
         assert tally.unbounded is True
-        assert tally.unattributed_by_category == {"AFFIXES": 1}
+        assert tally.unattributed_by_category == {"ADHOC_COMPOUND_RULES": 1}
+
+    def test_the_entry_walks_withhold_from_lexentry_only(self, tmp_path):
+        """T048g. `affixes_plan_action` (`Lib/categories.py:8466`) and
+        `stems_plan_action` (:8882) emit their ONE identity skip apiece behind
+        the same predicate, `_target_has_guid(_iter_lex_entries(...), guid)`,
+        so the object found is a `LexEntry` and can be nothing else.
+
+        Measured on T039's run 2 these two are 252 of the 286 unattributed
+        skips, and while they were unknown every one of them set `unbounded`
+        and cost all 75 rows the `baseline_matched` basis -- including
+        `PhPhoneme` and `PhNCSegments`, which an entry walk cannot possibly
+        have matched."""
+        from gramtrans import census_cli
+
+        path = _write(tmp_path, {"skips": [
+            _skip("AFFIXES", "a-1"),
+            _skip("STEMS", "s-1"),
+            _skip("PHONEMES", "p-1"),
+        ]})
+        tally = census_cli.identity_skips_from_report(path)
+
+        assert tally.unbounded is False
+        assert tally.by_class == {"PhPhoneme": 1}, "the bounded one still counts"
+        assert tally.unattributed_by_category == {"AFFIXES": 1, "STEMS": 1}
+        assert tally.withheld == frozenset({"LexEntry"})
+        assert "PhPhoneme" not in tally.withheld
+        assert "MoStemMsa" not in tally.withheld, (
+            "the skip asserts the entry, not the owned closure under it")
+
+    def test_a_link_only_category_withholds_from_nothing(self, tmp_path):
+        """`POS_INFLECTABLE_FEATS` wires an existing `IFsFeatDefn` into an
+        existing POS's `InflectableFeatsRC` -- "No new LCM object is created"
+        (`Lib/categories.py:2859`) -- and its `source_guid` is the compound
+        `"pos_guid::feat_guid"`, not any object's GUID. An object census has no
+        row for a link, so this bounds to the EMPTY set.
+
+        Empty is an answer, and a different one from absent: a reader that
+        tested the candidate set for truthiness would fall through to
+        `unbounded` and withhold the strong basis from every row."""
+        from gramtrans import census_cli
+
+        path = _write(tmp_path, {"skips": [
+            _skip("POS_INFLECTABLE_FEATS", "pos-1::feat-1"),
+        ]})
+        tally = census_cli.identity_skips_from_report(path)
+
+        assert tally.unbounded is False
+        assert tally.by_class == {}, "a link is not an object and counts for none"
+        assert tally.withheld == frozenset()
+        assert tally.unattributed_by_category == {"POS_INFLECTABLE_FEATS": 1}
 
     @pytest.mark.parametrize("guid_field", ["target_guid", "source_guid"])
     def test_deduped_against_an_enrichment(self, tmp_path, guid_field):

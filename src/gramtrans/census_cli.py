@@ -801,9 +801,31 @@ IDENTITY_SKIP_REASON = "ALREADY_PRESENT_BY_GUID"
 #: `PartOfSpeech`, so poisoning `PartOfSpeech` for it would withhold the
 #: stronger basis from a row that was never in doubt.
 #:
-#: Every entry is copied from the reasons `preview._LCM_CLASS_FOR_CATEGORY`
-#: states for its own omissions, and a category in NEITHER table is treated as
-#: UNBOUNDED -- see `IdentitySkipTally.unbounded`.
+#: An entry is admitted here on ONE of exactly two grounds, and the comment
+#: above it must say which:
+#:
+#: * the reason `preview._LCM_CLASS_FOR_CATEGORY` states for its own omission
+#:   (quoted verbatim), or
+#: * a set DERIVED FROM THE CATEGORY'S OWN WALK -- every `SkipReason
+#:   .ALREADY_PRESENT_BY_GUID` emission site the category has, cited by
+#:   file:line, and the classes the predicate at each of those sites can
+#:   possibly have found. Nothing here is inferred from a category's NAME.
+#:
+#: A category in NEITHER table is treated as UNBOUNDED -- see
+#: `IdentitySkipTally.unbounded`. Note that membership is decided by KEY
+#: PRESENCE, never by truthiness: an empty candidate set is a real and
+#: different answer from an absent one (see `_LINK_ONLY_IDENTITY_SKIP`), and
+#: a reader who collapses the two turns a bounded category back into an
+#: unbounded one.
+#: The candidate set for a category whose identity skip found a LINK rather
+#: than an object -- a reference already present in a reference collection,
+#: where nothing was created and nothing could have been. An object census
+#: has no row for a link, so such a skip understates no class's tally and
+#: puts no class at risk. EMPTY IS THE ANSWER, not the absence of one:
+#: leaving the category out of the table instead would declare the damage
+#: unlocatable and withhold the strong basis from every row in the census.
+_LINK_ONLY_IDENTITY_SKIP = frozenset()
+
 _AMBIGUOUS_IDENTITY_SKIP_CLASSES = {
     # "ALLOMORPH covers both MoStemAllomorph and MoAffixAllomorph"
     "ALLOMORPH": frozenset({"MoStemAllomorph", "MoAffixAllomorph"}),
@@ -824,6 +846,31 @@ _AMBIGUOUS_IDENTITY_SKIP_CLASSES = {
     "COMPLEX_FORM_TYPES": frozenset({"LexEntryType", "LexEntryInflType"}),
     # "INFLECTION_FEATURES covers FsClosedFeature and FsComplexFeature"
     "INFLECTION_FEATURES": frozenset({"FsClosedFeature", "FsComplexFeature"}),
+    # ---- T048g: derived from the walk, not quoted from an omission -------
+    # AFFIXES and STEMS are entry walks, and each has EXACTLY ONE
+    # `ALREADY_PRESENT_BY_GUID` emission site: `affixes_plan_action`
+    # (`Lib/categories.py:8466`) and `stems_plan_action`
+    # (`Lib/categories.py:8882`). Both are guarded by the SAME predicate,
+    # `_target_has_guid(_iter_lex_entries(context.target_handle), src_guid)`
+    # (:8465 and :8881), so the object the skip found is a `LexEntry` and
+    # can be nothing else.
+    #
+    # The walk goes on to transfer that entry's owned closure -- senses,
+    # MSAs, allomorphs -- but the SKIP asserts only the entry, and the
+    # candidate set is what the skip asserts. Widening it to the closure
+    # would withhold the strong basis from `MoStemMsa` and the allomorph
+    # rows on the strength of a match that never named them, which is the
+    # over-poisoning T048f exists to prevent.
+    "AFFIXES": frozenset({"LexEntry"}),
+    "STEMS": frozenset({"LexEntry"}),
+    # POS_INFLECTABLE_FEATS wires an EXISTING `IFsFeatDefn` into an EXISTING
+    # POS's `InflectableFeatsRC` -- "No new LCM object is created"
+    # (`Lib/categories.py:2859`, and again at :2758). Its one identity-skip
+    # site (`Lib/categories.py:2829`) fires when that reference is already
+    # in `InflectableFeatsRC`, and the `source_guid` it carries is the
+    # COMPOUND key `"pos_guid::feat_guid"` -- not any object's GUID, and so
+    # not a GUID the census could match a row against at all.
+    "POS_INFLECTABLE_FEATS": _LINK_ONLY_IDENTITY_SKIP,
 }
 
 
@@ -1106,7 +1153,15 @@ def matched_tally_bound_from_report(path: Path) -> MatchedTallyBound:
             withheld.add(named)
             continue
         candidates = _AMBIGUOUS_IDENTITY_SKIP_CLASSES.get(category)
-        if candidates:
+        if candidates is not None:
+            # KEY PRESENCE, not truthiness, and the sibling
+            # `identity_skips_from_report` tests the same way. A category whose
+            # candidate set is legitimately EMPTY -- `_LINK_ONLY_IDENTITY_SKIP`,
+            # a match on a reference rather than on an object -- is bounded, and
+            # bounded to nothing. Reading that empty set as "no answer" would
+            # fall through to `unbounded` and withhold the strong basis from
+            # every row in the census on the strength of a match that could not
+            # have been any of them.
             withheld.update(candidates)
             continue
         # A category no table knows. Bounding it would be a guess, and a wrong

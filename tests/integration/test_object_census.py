@@ -4191,9 +4191,29 @@ class TestT024cTheSanityCheckProducesItsOwnTransfer:
 #
 # The basis drift these runs also show (`PhPhoneme` and `PhNCSegments` losing
 # `baseline_matched` on run 2 while their counts do not move) is NOT a T039
-# criterion and is filed separately as T048f. T039's own text forecloses
-# reading it as a failure here: "Any increase is a duplicate-creation defect
-# REGARDLESS of what either census's own verdict says."
+# criterion and was filed separately, as T048f and then T048g. T039's own text
+# forecloses reading it as a failure here: "Any increase is a duplicate-creation
+# defect REGARDLESS of what either census's own verdict says."
+#
+# BOTH HALVES ARE NOW CLOSED, AND THIS SNAPSHOT PREDATES THE SECOND. T048f
+# stopped an unattributed match from poisoning every class; T048g removed the
+# last reason to declare the damage unlocatable at all, by bounding the three
+# categories that were in neither attribution table -- `AFFIXES` and `STEMS`
+# to `LexEntry` (both skip on a `_iter_lex_entries` GUID hit and nothing else)
+# and `POS_INFLECTABLE_FEATS` to the empty set (it wires a reference and
+# creates no object). On run 2 those three produce 286 of the identity skips,
+# which is what set `IdentitySkipTally.unbounded` and cost all 75 rows the
+# strong basis.
+#
+# So the `baseline_gross` this file reads off run 2 for `PhPhoneme` and
+# `PhNCSegments` is a RECORD OF THE DEFECT, not of current behaviour: a third
+# live run would now leave both on `baseline_matched`, as run 1 already does.
+# Nothing here asserts that value, and the snapshot is deliberately NOT
+# regenerated -- it is the committed evidence the two fixes were measured
+# against, and re-running it would destroy the before-picture while proving
+# nothing the unit tests
+# (`tests/unit/test_038_identity_skip_matches.py`,
+# `tests/unit/test_038_matched_tally_bound.py`) do not already pin.
 # ---------------------------------------------------------------------------
 
 T039_SNAPSHOT = "idempotence-038-t039.json"
