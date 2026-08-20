@@ -4145,3 +4145,274 @@ class TestT024cTheSanityCheckProducesItsOwnTransfer:
         assert bases == {"baseline_gross"}, (
             "not every row is on the gross basis any more: " + repr(bases))
         assert result["post"].get("verdict") == "CENSUS_ACCOUNTED"
+
+
+# ---------------------------------------------------------------------------
+# T039 -- SC-008 IDEMPOTENCE, MEASURED ON A SECOND LIVE RUN
+#
+# Re-measured 2026-08-20 after enrichment (T042..T047) landed. The earlier
+# measurement (journal/T039-idempotence.md) could evaluate only two of the
+# three criteria because enrichment did not yet exist; this block is the
+# re-run that criterion 3 was waiting for.
+#
+# The pair is two CONSECUTIVE full transfers of `Ejagham Mini` into a
+# `GT038 T039c Target` restored pristine from the committed starter backup --
+# no restore between the runs, which is the whole point.
+#
+# WHAT THE THREE CRITERIA MEASURED:
+#
+#   1. run 2 plans no PlannedAction whose `match_basis.basis` is
+#      `MatchBasis.NONE` for any class run 1 created  -- PASS, and by the
+#      widest possible margin: run 2 plans ZERO actions of any kind.
+#   2. every class's `destination_count_total` is unchanged -- PASS on all
+#      75 census entries (74 classes plus the A1 `FsFeatStrucType` split).
+#   3a. every `EnrichedCollection.added == 0` on run 2 -- PASS, strictly:
+#      all 10 collections across run 2's 4 enrichment records read 0.
+#   3b. `already_present` equal to run 1's `added` -- **NOT EVALUABLE**, and
+#      that is a finding rather than a pass. The two runs enrich DISJOINT
+#      object sets: run 1 enriches Noun / Pronoun / Verb (the starter POSes
+#      it filled), run 2 enriches Adjective / Demonstrative / Numeral /
+#      Interrogative (POSes run 1 CREATED, now matched and found complete).
+#      The intersection is EMPTY, so there is no object on which to compare
+#      run 2's `already_present` against run 1's `added`.
+#
+# WHY THE INTERSECTION IS EMPTY -- filed as T048e. On run 2 the three POSes
+# run 1 enriched arrive at `_plan_gold_reserved_edit` (`categories.py`), whose
+# owned-collection pass runs BEFORE either early skip and correctly finds every
+# collection already complete. T043 is working: the comparison happens, so the
+# constitutional SKIP clause (data-model.md 9 -- "emitting SKIP requires that
+# every scalar field and all seven owned collections were compared") IS
+# satisfied. The defect is evidentiary, not decisional: the computed
+# `collections` tuple -- which holds exactly the `already_present` tallies
+# criterion 3b wants -- is DISCARDED on the skip path, and the skip's detail
+# names only the writing-system slots ("all WS slots equal."). A correct no-op
+# enrichment therefore leaves no record that it happened.
+#
+# The basis drift these runs also show (`PhPhoneme` and `PhNCSegments` losing
+# `baseline_matched` on run 2 while their counts do not move) is NOT a T039
+# criterion and is filed separately as T048f. T039's own text forecloses
+# reading it as a failure here: "Any increase is a duplicate-creation defect
+# REGARDLESS of what either census's own verdict says."
+# ---------------------------------------------------------------------------
+
+T039_SNAPSHOT = "idempotence-038-t039.json"
+
+#: The three POSes run 1 enriched, and the four run 2 enriched. Pinned as
+#: labels because the emptiness of the intersection is the finding.
+T039_RUN1_ENRICHED_LABELS = frozenset({"Noun", "Pronoun", "Verb"})
+T039_RUN2_ENRICHED_LABELS = frozenset(
+    {"Adjective", "Demonstrative", "Numeral", "Interrogative"})
+
+
+def t039_snapshot_path() -> Path:
+    return Path(__file__).resolve().parent / "_snapshots" / T039_SNAPSHOT
+
+
+def load_t039_snapshot() -> dict:
+    path = t039_snapshot_path()
+    assert path.is_file(), (
+        "the T039 idempotence snapshot is missing: " + str(path)
+        + " -- it is committed repo data recording a two-run live "
+        "measurement, not a regenerable temp file; restore it from git "
+        "rather than re-running two full transfers"
+    )
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+class TestT039IdempotenceIsMeasured:
+    """SC-008 read off the committed two-run measurement. No live project."""
+
+    def test_the_snapshot_is_committed_repo_data(self):
+        path = t039_snapshot_path()
+        root = Path(__file__).resolve().parents[2]
+        assert (root / "tests" / "integration" / "_snapshots") == path.parent
+
+    def test_the_snapshot_records_two_consecutive_runs_on_one_destination(self):
+        snap = load_t039_snapshot()
+        assert sorted(snap["runs"]) == ["run1", "run2"]
+        assert snap["source"] == "Ejagham Mini"
+        assert snap["destination"] == "GT038 T039c Target"
+        # A restore between the runs would void the whole measurement; the
+        # starter digest is recorded once because there is ONE restore.
+        assert snap["starter_baseline_digest"] == "ab37b1cd60dd"
+        assert (snap["runs"]["run1"]["census_id"]
+                != snap["runs"]["run2"]["census_id"])
+
+    # -- criterion 1 ------------------------------------------------------
+    def test_criterion_1_run_2_plans_no_creation_at_all(self):
+        """Zero actions is the strong form of "no PlannedAction with basis
+        NONE": there is no action of any basis to inspect."""
+        snap = load_t039_snapshot()
+        assert snap["runs"]["run1"]["plan_action_count"] == 329
+        assert snap["runs"]["run2"]["plan_action_count"] == 0
+        assert snap["runs"]["run2"]["plan_actions_by_class_and_basis"] == {}
+
+    def test_criterion_1_is_unfalsifiable_as_literally_written(self):
+        """The criterion names `match_basis.basis is MatchBasis.NONE`, but NO
+        `PlannedAction` carries a `match_basis` at all -- `transfer.py` says so
+        in as many words ("With `match_basis=None` (every plan built today)").
+        Run 1's 329 actions are all unattributed, so a duplicate create on run
+        2 would arrive with `match_basis is None`, and `None.basis` is not
+        `MatchBasis.NONE`. The load-bearing assertion is therefore the action
+        COUNT above, not the basis predicate. Pinned so that a later reader
+        does not mistake the basis clause for a working tripwire, and so that
+        populating `PlannedAction.match_basis` trips this test rather than
+        silently making the clause meaningful."""
+        snap = load_t039_snapshot()
+        by_basis = snap["runs"]["run1"]["plan_actions_by_class_and_basis"]
+        assert by_basis == {"<unattributed>|None": 329}, (
+            "run 1's actions now carry a match_basis -- criterion 1's basis "
+            "clause has become meaningful and should be asserted directly "
+            "instead of leaning on the action count: " + repr(by_basis))
+
+    # -- criterion 2 ------------------------------------------------------
+    def test_criterion_2_every_destination_count_is_unchanged(self):
+        snap = load_t039_snapshot()
+        a = snap["runs"]["run1"]["destination_count_total"]
+        b = snap["runs"]["run2"]["destination_count_total"]
+        assert set(a) == set(b), (
+            "the two censuses do not cover the same entries: "
+            + repr(sorted(set(a) ^ set(b))))
+        assert len(a) == 75, (
+            "expected 74 classes plus the A1 FsFeatStrucType split, got "
+            + str(len(a)))
+        changed = {k: (a[k], b[k]) for k in a if a[k] != b[k]}
+        assert changed == {}, (
+            "a re-run changed a destination count -- SC-008 is broken and "
+            "this is a duplicate-creation defect regardless of either "
+            "census's verdict: " + repr(changed))
+
+    # -- criterion 3 ------------------------------------------------------
+    def test_criterion_3a_run_2_adds_nothing_to_any_collection(self):
+        snap = load_t039_snapshot()
+        offenders = [
+            (rec["label"], field, coll)
+            for rec in snap["runs"]["run2"]["enrichments"]
+            for field, coll in rec["collections"].items()
+            if coll["added"] != 0
+        ]
+        assert offenders == [], (
+            "run 2 added children to an owned collection: " + repr(offenders))
+
+    def test_criterion_3a_run_2_dropped_nothing_either(self):
+        """`dropped != 0` would mean a child could not be added on a re-run
+        that should have needed no writes at all."""
+        snap = load_t039_snapshot()
+        offenders = [
+            (rec["label"], field, coll)
+            for rec in snap["runs"]["run2"]["enrichments"]
+            for field, coll in rec["collections"].items()
+            if coll["dropped"] != 0
+        ]
+        assert offenders == []
+
+    def test_criterion_3b_is_not_evaluable_because_the_runs_are_disjoint(self):
+        """The measurement, and the tripwire for T048e.
+
+        When T048e lands, the three POSes run 1 enriched will carry a record on
+        run 2 too, the intersection will stop being empty, and this test will
+        fail -- which is the signal to replace it with the real 3b comparison
+        (`already_present == run 1's added`, per object and per collection)."""
+        snap = load_t039_snapshot()
+        r1 = {r["source_guid"]: r for r in snap["runs"]["run1"]["enrichments"]}
+        r2 = {r["source_guid"]: r for r in snap["runs"]["run2"]["enrichments"]}
+        assert {r["label"] for r in r1.values()} == T039_RUN1_ENRICHED_LABELS
+        assert {r["label"] for r in r2.values()} == T039_RUN2_ENRICHED_LABELS
+        assert set(r1) & set(r2) == set(), (
+            "the two runs now enrich a common object -- criterion 3b has "
+            "become evaluable (T048e has landed?). Replace this test with "
+            "the real per-object comparison.")
+
+    def test_the_totals_coincide_but_that_is_not_criterion_3b(self):
+        """Both runs total 16 children, which is a coincidence of this corpus
+        and NOT evidence for 3b -- the 16 belong to different objects. Pinned
+        so nobody promotes the coincidence into a pass."""
+        snap = load_t039_snapshot()
+        added1 = sum(c["added"]
+                     for rec in snap["runs"]["run1"]["enrichments"]
+                     for c in rec["collections"].values())
+        already2 = sum(c["already_present"]
+                       for rec in snap["runs"]["run2"]["enrichments"]
+                       for c in rec["collections"].values())
+        assert added1 == 16 and already2 == 16
+
+        # ... and the per-collection distributions differ, which is the proof
+        # that the equal totals are not the same 16 children.
+        def by_field(tag, key):
+            out = {}
+            for rec in snap["runs"][tag]["enrichments"]:
+                for field, coll in rec["collections"].items():
+                    out[field] = out.get(field, 0) + coll[key]
+            return out
+
+        assert by_field("run1", "added") != by_field("run2", "already_present")
+
+    # -- the drift that is NOT a T039 criterion (evidence for T048f) ------
+    def test_two_rows_lose_the_matched_basis_on_run_2_without_moving(self):
+        """`PhPhoneme` and `PhNCSegments` keep identical destination counts and
+        still fall from `baseline_matched` to `baseline_gross`, manufacturing a
+        21-object and a 2-object phantom shortfall. Filed as T048f: the
+        `matched_complete` signal is a single GLOBAL boolean, while T048b's
+        equivalent withholding is bounded to the classes actually at risk."""
+        snap = load_t039_snapshot()
+        r1, r2 = snap["runs"]["run1"], snap["runs"]["run2"]
+        drifted = {
+            k: (r1["starter_subtraction_basis"][k],
+                r2["starter_subtraction_basis"][k])
+            for k in r1["starter_subtraction_basis"]
+            if (r1["starter_subtraction_basis"][k]
+                != r2["starter_subtraction_basis"][k])
+        }
+        assert drifted == {
+            "PhPhoneme": ("baseline_matched", "baseline_gross"),
+            "PhNCSegments": ("baseline_matched", "baseline_gross"),
+        }, repr(drifted)
+        for cls in ("PhPhoneme", "PhNCSegments"):
+            assert (r1["destination_count_total"][cls]
+                    == r2["destination_count_total"][cls]), cls
+            assert r2["starter_matched_to_source"][cls] is None, cls
+
+    def test_the_run_report_still_holds_the_tallies_the_census_refused(self):
+        """T048f's whole point: the counts are NOT missing from run 2's report
+        -- `by_object_class` carries `PhPhoneme: 21` and `PhNCSegments: 2`,
+        identical to run 1. They are refused because 11 matches in three OTHER
+        categories went unattributed and `matched_complete` is global."""
+        snap = load_t039_snapshot()
+        for tag in ("run1", "run2"):
+            block = snap["runs"][tag]["matched_to_source"]
+            assert block["by_object_class"]["PhPhoneme"] == 21, tag
+            assert block["by_object_class"]["PhNCSegments"] == 2, tag
+        assert snap["runs"]["run1"]["matched_to_source"]["complete"] is True
+        assert snap["runs"]["run2"]["matched_to_source"]["complete"] is False
+        assert (snap["runs"]["run2"]["matched_to_source"]
+                ["unattributed_by_category"]
+                == {"GRAM_CATEGORIES": 5, "INFLECTION_FEATURES": 5,
+                    "VARIANT_TYPES": 1})
+
+    def test_partofspeech_does_NOT_drift_because_T048b_and_T048d_reach_it(self):
+        """The contrast that localises T048f. `PartOfSpeech` holds
+        `baseline_matched` on BOTH runs -- T048d's GUID audit rescues it
+        because its starters match by GUID. The audit cannot rescue
+        `PhPhoneme`: a natural-key match links objects with DIFFERENT GUIDs,
+        so a GUID-set comparison is blind to it by construction. That is why
+        T048f needs the bounded-withholding fix and not another audit."""
+        snap = load_t039_snapshot()
+        for tag in ("run1", "run2"):
+            basis = snap["runs"][tag]["starter_subtraction_basis"]
+            assert basis["PartOfSpeech"] == "baseline_matched", tag
+            assert snap["runs"][tag][
+                "starter_matched_to_source"]["PartOfSpeech"] == 5, tag
+
+    def test_the_three_run1_enriched_poses_are_skipped_on_run_2(self):
+        """Where the missing records went: all three are among run 2's eleven
+        GRAM_CATEGORIES `ALREADY_PRESENT_BY_GUID` skips. The skip is correct
+        (T043's collection pass ran and found nothing to write); what is
+        missing is any record that the collections were compared."""
+        snap = load_t039_snapshot()
+        r1_guids = {r["source_guid"]
+                    for r in snap["runs"]["run1"]["enrichments"]}
+        skipped = set(snap["runs"]["run2"]["gram_category_skips"])
+        assert len(skipped) == 11
+        assert r1_guids <= skipped, (
+            "a POS enriched on run 1 is neither enriched nor skipped on run "
+            "2: " + repr(sorted(r1_guids - skipped)))
