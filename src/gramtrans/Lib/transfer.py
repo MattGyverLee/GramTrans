@@ -310,6 +310,16 @@ def execute(plan: RunPlan, source, target, report_sink, tag: ImportResidueTag,
     else:
         from models import ConflictMode as _ConflictMode  # type: ignore
     extra_skips = []
+    # Feature 038 T045: the MEASURED enrichment records (what the writes
+    # actually achieved) and the GUIDs the plan will create through their own
+    # PlannedAction. The latter is what lets the owned-collection pass DEFER a
+    # child whose dedicated category create path runs later in this same
+    # execute() -- see `_enrich_owned_collections`.
+    _measured_enrichments: list = []
+    _planned_action_guids = frozenset(
+        a.source_guid for a in getattr(plan, "actions", ())
+        if getattr(a, "source_guid", None)
+    )
     for ow in getattr(plan, "overwrites", ()):
         # identity_remap ENTRY overwrites are handled inside _execute_layer3
         # (where identity_remap, target_verb, target_slot_by_guid, env_guid_to_target
@@ -325,6 +335,8 @@ def execute(plan: RunPlan, source, target, report_sink, tag: ImportResidueTag,
             _update_skips = _execute_update_semantic(
                 ow, source, target, report_sink, tag, ws_map=ws_map,
                 dropped=_dropped,
+                enrichments=_measured_enrichments,
+                planned_action_guids=_planned_action_guids,
             )
             if _update_skips:
                 extra_skips.extend(_update_skips)
@@ -685,6 +697,31 @@ def execute(plan: RunPlan, source, target, report_sink, tag: ImportResidueTag,
         from .categories import compute_fidelity_by_guid as _compute_fidelity_by_guid
     else:
         from categories import compute_fidelity_by_guid as _compute_fidelity_by_guid  # type: ignore
+    # Feature 038 T045: hand the report the MEASURED enrichment records in
+    # place of the plan's PROJECTION, so a Move report says what the writes
+    # achieved. Substitution, never addition: `report._build_from_plan` UNIONs
+    # `plan.enrichments` with `extra_enrichments`, so appending would report
+    # every enrichment twice and break the `per_category[*].enriched ==
+    # len(enrichments)` reconciliation in `RunReport.__post_init__`.
+    #
+    # Guarded on an exact one-to-one GUID cover: anything less means some
+    # planned enrichment never reached the executor (a category whose
+    # ConflictMode is not UPDATE, an object the resolve half could not find),
+    # and a partial swap would silently DELETE those rows from the report. In
+    # that case the projection stands, which is the pre-T045 behaviour.
+    _planned_enrichments = tuple(getattr(plan, "enrichments", ()))
+    if _measured_enrichments and _planned_enrichments:
+        _planned_keys = [r.source_guid for r in _planned_enrichments]
+        _measured_keys = [r.source_guid for r in _measured_enrichments]
+        if sorted(_planned_keys) == sorted(_measured_keys):
+            import dataclasses as _dc
+            plan = _dc.replace(plan, enrichments=tuple(_measured_enrichments))
+        else:
+            _log.warning(
+                "execute: %d planned enrichment(s) but %d measured; keeping the "
+                "plan's projection in the report rather than dropping rows",
+                len(_planned_enrichments), len(_measured_enrichments),
+            )
     return RunReport.build_from_plan(
         plan, RunMode.MOVE,
         wall_clock_seconds=elapsed,
@@ -2302,8 +2339,545 @@ def _resolve_and_tag(src_props, tgt_pre_props, tag, log, category, target_guid, 
     return filtered, tagged, skips
 
 
+# ============================================================================
+# Feature 038 T045 (US4, FR-020..FR-022, SC-007/SC-008/SC-010) -- the ADD-ONLY
+# owned-collection merge, executor half.
+# ============================================================================
+#
+# T043/T044 made the PLAN honest: a GUID-matched `IPartOfSpeech` that lacks
+# children its source counterpart holds is no longer `Skip(ALREADY_PRESENT_BY_
+# GUID)` but a `PlannedOverwrite(write_mode="merge")` carrying an
+# `EnrichmentRecord` whose `EnrichedCollection` rows PROJECT what each of the
+# seven collections would gain. This section is the other half: it actually
+# writes those children, and it re-measures the outcome so the report states
+# what happened rather than what was projected.
+#
+# THE FOUR RULES THIS SECTION IS BUILT AROUND
+#
+# 1. ADD-ONLY, BY CONSTRUCTION (FR-021). The executor only ever CREATES a new
+#    child and APPENDS it. It never removes a child, never blanks one, and
+#    never writes a single field into a destination child that already
+#    existed -- a child matched by `_match_collection_child` is counted
+#    `already_present` and then left completely alone. "Non-destructive" is
+#    therefore not a property of a careful field-by-field comparison here; it
+#    is a property of the code never touching pre-existing content at all.
+#
+# 2. NEVER REORDER. Two of the seven are ordered SEQUENCES -- `AffixTemplatesOS`
+#    and `SubPossibilitiesOS` -- where index is meaning; on the five unordered
+#    COLLECTIONS (`AffixSlotsOC`, `InflectableFeatsRC`, `StemNamesOC`,
+#    `InflectionClassesOC`, `ReferenceFormsOC`) "order" is not a fact about the
+#    data and "never reorder" is vacuous. Appending via `.Add()` is
+#    order-preserving for both shapes, and `_check_add_only` re-reads the
+#    destination afterwards and WARNS if any pre-existing member moved or
+#    vanished. That check is evidence, not enforcement: it cannot undo a write,
+#    but it makes a violation loud instead of silent.
+#
+# 3. ALL SEVEN COLLECTIONS REQUIRE A PYTHONNET CAST. Live-verified
+#    (FLExToolsMCP `get_object_api IPartOfSpeech` / `resolve_property
+#    ReferenceFormsOC`, 2026-08-20): `requires_cast: true` on every one. An
+#    UNCAST `getattr` on a base-interface proxy returns None, which reads as
+#    "the collection is empty" -- so an uncast executor would write nothing and
+#    report success. That is the trap that made flexicon 4.5.0's `FeaturesOA`
+#    wiring 100% dead behind an unconditionally-False `hasattr` (CLAUDE.md).
+#    The cast table and the receiver-probe ORDER are NOT duplicated here:
+#    `_pos_writable_collection` reads `categories._POS_OWNED_COLLECTION_CASTS`
+#    and calls `categories._cast_lcm`, exactly as the planner's
+#    `categories._pos_owned_collection` does. The only reason a second accessor
+#    exists at all is that the planner needs a SNAPSHOT (`list(raw)`) while the
+#    executor needs the LIVE collection object to `.Add()` to.
+#
+# 4. GUID-PRESERVING CREATES ONLY (CLAUDE.md). Every create routes through
+#    `categories.create_with_guid` -> `owned._create_owned_via_factory`, which
+#    tries `Create(Guid)` first and LOGS the reason whenever it has to fall
+#    back to a minted identity. A bare `Create()` would silently regenerate
+#    identity and break SC-008 idempotence on the next run.
+#
+# WHY SOME CHILDREN ARE DEFERRED RATHER THAN WRITTEN. Five of the seven
+# collections hold children that are ALSO independently enumerated items of
+# another GramTrans category, with their own richer create path:
+# `SubPossibilitiesOS` children are POSes yielded by
+# `categories.gram_categories_enumerate_source` (`POS.GetAll(recursive=True)`),
+# `InflectionClassesOC` by `inflection_classes_enumerate_source`, `StemNamesOC`
+# by `stem_names_enumerate_source`, and so on. When the plan already carries a
+# `PlannedAction` for a child's GUID, creating it HERE would win the race --
+# the overwrite/UPDATE loop in `execute()` runs BEFORE leaf dispatch -- and the
+# dedicated path's own `_target_has_guid` guard would then turn its richer
+# create (residue carrier-B, per-category field handling) into a silent no-op.
+# So such a child is DEFERRED: not written here, and counted `added` because it
+# does land this run. Counting it `dropped` instead would report a loss that
+# does not happen -- the same phantom-loss defect CLAUDE.md records for
+# flexicon 4.5.1.
+#
+# WHAT IS NOT DONE HERE, STATED PLAINLY. A child created by this pass gets its
+# GUID and its `Name`/`Abbreviation`/`Description` multistrings (WS-mapped via
+# `categories._copy_multistrings_ws_mapped`). It does NOT get its own owned
+# grandchildren (e.g. an `MoInflAffixTemplate`'s slot sequence) or its own
+# reference fields. For the five collections whose children have a dedicated
+# category that is what the deferral above is for; for `AffixSlotsOC` and
+# `ReferenceFormsOC` this is a real, acknowledged depth limit of T045.
+
+#: The categories whose `PlannedOverwrite` may carry an `EnrichmentRecord`.
+#: Mirrors `categories._POS_OWNED_COLLECTION_CATEGORIES` (POS is ALIASED to
+#: gram_categories); the seven collections are POS-only.
+_ENRICHMENT_CATEGORIES = frozenset({
+    GrammarCategory.GRAM_CATEGORIES,
+    GrammarCategory.POS,
+})
+
+#: Scalar multistrings copied onto a child this pass creates. Same three the
+#: scalar half of the merge compares (`categories._plan_gold_reserved_edit`).
+_ENRICH_CHILD_SCALARS = ("Name", "Abbreviation", "Description")
+
+#: `owner_kind` for a `DroppedItemRecord` raised by this pass. Free-form by
+#: contract (`models.DroppedItemRecord`), but the owner really is the POS.
+_ENRICH_OWNER_KIND = "PartOfSpeech"
+
+#: THE ONE DELIBERATE UNKNOWN `POS_OWNED_COLLECTION_SPECS` LEFT FOR T045.
+#: That roster gives `ReferenceFormsOC` `factory=None` and says so in as many
+#: words -- "a DELIBERATE unknown, not an assertion that none is needed ...
+#: T043/T045 must resolve it before creating into this collection". This is
+#: that resolution, and it is deliberately NOT a competing factory table: the
+#: other six still come from the roster, and this dict holds exactly the row
+#: the roster declined to answer.
+#:
+#: Resolved live, read-only, via FLExToolsMCP on 2026-08-20:
+#: `get_object_api IPartOfSpeech` reports `ReferenceFormsOC` as
+#: `target_type: IFsFeatStruc` (an owning COLLECTION, requires_cast: true), and
+#: `resolve_type IFsFeatStrucFactory` confirms
+#: `from SIL.LCModel import IFsFeatStrucFactory`. Reflection over the INTERFACE
+#: shows only the inherited no-arg `Create()` -- the same thing tasks.md T053
+#: records for every factory in its graph, where the CONCRETE implementation
+#: carries `Create(Guid)`. `create_with_guid` tries the GUID overload first and
+#: LOGS the fallback, so a factory that really lacks it degrades loudly instead
+#: of silently minting a new identity.
+_ENRICH_FACTORY_RESOLVED = {
+    "ReferenceFormsOC": "IFsFeatStrucFactory",
+}
+
+
+def _enrichment_factory_name(spec):
+    """The factory interface name for `spec`, resolving the roster's one
+    deliberate `factory=None` unknown (`ReferenceFormsOC`). Returns "" when the
+    row genuinely creates nothing (`InflectableFeatsRC`, a reference
+    collection) or when no factory is known at all."""
+    if spec is None:
+        return ""
+    if spec.factory:
+        return str(spec.factory)
+    return _ENRICH_FACTORY_RESOLVED.get(spec.owning_field, "")
+
+
+def _categories_mod():
+    """`Lib.categories`, imported lazily (it imports this module at runtime)."""
+    if __package__:
+        from . import categories as _cats
+    else:
+        import categories as _cats  # type: ignore
+    return _cats
+
+
+def _owned_mod():
+    """`Lib.owned`, imported lazily for its factory/GUID helpers."""
+    if __package__:
+        from . import owned as _own
+    else:
+        import owned as _own  # type: ignore
+    return _own
+
+
+def _enrichment_specs() -> dict:
+    """`{canonical_field: OwnedObjectSpec}` for the seven POS collections.
+
+    Reads `models.POS_OWNED_COLLECTION_SPECS` -- the roster T042 declared and
+    that models.py's own import-time guard keeps in lockstep with
+    `POS_OWNED_COLLECTION_FIELDS`. No second factory/create-kind table.
+    """
+    if __package__:
+        from .models import POS_OWNED_COLLECTION_SPECS
+    else:
+        from models import POS_OWNED_COLLECTION_SPECS  # type: ignore
+    return {spec.owning_field: spec for spec in POS_OWNED_COLLECTION_SPECS}
+
+
+def _pos_writable_collection(obj, field_name):
+    """`(receiver, spelling, live_collection)` for one of the seven, else a
+    triple of Nones.
+
+    The executor twin of `categories._pos_owned_collection`: SAME cast table
+    (`categories._POS_OWNED_COLLECTION_CASTS`), SAME cast function
+    (`categories._cast_lcm`), SAME receiver order (uncast first, then each
+    declared interface) and SAME both-spellings probe. It differs in exactly
+    one respect, which is why it exists: it returns the LIVE collection object
+    (the thing `.Add()` is called on) and the cast receiver that owns it,
+    rather than the planner's read-only `list(raw)` snapshot.
+
+    A `(None, None, None)` return means the field is not reachable on this
+    object at all -- which, per rule 3 above, must never be inferred from an
+    UNCAST read.
+    """
+    cats = _categories_mod()
+    if obj is None:
+        return None, None, None
+    if __package__:
+        from .models import POS_OWNED_COLLECTION_ALIASES
+    else:
+        from models import POS_OWNED_COLLECTION_ALIASES  # type: ignore
+
+    spellings = [field_name]
+    for alias, canonical in POS_OWNED_COLLECTION_ALIASES.items():
+        if canonical == field_name and alias not in spellings:
+            spellings.append(alias)
+
+    receivers = [obj]
+    for iface_name in cats._POS_OWNED_COLLECTION_CASTS.get(field_name, ()):
+        cast = cats._cast_lcm(obj, iface_name)
+        if cast is not None and cast is not obj:
+            receivers.append(cast)
+
+    for receiver in receivers:
+        for spelling in spellings:
+            try:
+                raw = getattr(receiver, spelling, None)
+            except Exception:  # noqa: BLE001 -- unreadable member is "absent"
+                continue
+            if raw is None:
+                continue
+            try:
+                list(raw)
+            except TypeError:
+                continue
+            return receiver, spelling, raw
+    return None, None, None
+
+
+def _check_add_only(field_name, before, live, report_sink, src_guid):
+    """Warn if the write pass disturbed pre-existing destination content.
+
+    `before` is the member list snapshotted BEFORE any `.Add()`. Add-only means
+    the post-write membership must still start with exactly those objects, in
+    exactly that order -- appending cannot change either. This cannot undo a
+    violation; it exists so a violation is loud (Principle I) instead of a
+    silently reordered `AffixTemplatesOS`, where index is meaning.
+
+    Returns True when the invariant held (or could not be checked).
+    """
+    if live is None:
+        return True
+    try:
+        after = list(live)
+    except TypeError:
+        return True
+    if len(after) < len(before):
+        report_sink.Warning(
+            f"  [enrich] {field_name}: ADD-ONLY VIOLATED -- destination went"
+            f" from {len(before)} to {len(after)} member(s); enrichment must"
+            f" never remove  guid={src_guid[:8]}"
+        )
+        return False
+    for index, original in enumerate(before):
+        if after[index] is not original:
+            report_sink.Warning(
+                f"  [enrich] {field_name}: ADD-ONLY VIOLATED -- pre-existing"
+                f" member at index {index} moved or was replaced; enrichment"
+                f" must never reorder  guid={src_guid[:8]}"
+            )
+            return False
+    return True
+
+
+def _add_reference_collection_member(child, live, target):
+    """`InflectableFeatsRC` leg: LINK an existing target `IFsFeatDefn`.
+
+    A REFERENCE collection creates NOTHING (`POS_OWNED_COLLECTION_SPECS` gives
+    this row `factory=None` for exactly that reason). The source child is a
+    feature that must already exist in the destination -- resolved by GUID
+    through `categories._resolve_target_by_guid`, the same resolver
+    `categories._run_infl_feature_link_pass` uses for this very field. An
+    unresolved feature is a REPORTED drop, never a created duplicate.
+
+    Returns `(added_object, reason)`; `added_object is None` means dropped.
+    """
+    cats = _categories_mod()
+    child_guid = cats._guid_str_from(child)
+    if not child_guid:
+        return None, "source feature carries no GUID to resolve against target"
+    target_feat = cats._resolve_target_by_guid(target, child_guid)
+    if target_feat is None:
+        return None, (
+            "referenced IFsFeatDefn is absent from the target -- a reference "
+            "collection links an existing feature and never creates one; "
+            "select INFLECTION_FEATURES so the feature transfers first"
+        )
+    live.Add(target_feat)
+    return target_feat, ""
+
+
+def _create_collection_child(spec, child, receiver, live, target):
+    """Create one owned child, GUID preserved, and attach it.
+
+    UNOWNED_THEN_ADD -> `categories.create_with_guid(factory, guid, kind)` then
+    `live.Add(new)`. OWNER_TAKING -> `factory.Create(guid, owner)`, the shape
+    `categories.gram_categories_execute_action` already uses live for a
+    sub-POS, with the SAME GUID-fallback logging `create_with_guid` performs
+    (`owned._log_guid_fallback`) so an unpreserved identity is never silent.
+
+    Returns `(new_child, reason)`; `new_child is None` means dropped.
+    """
+    cats = _categories_mod()
+    own = _owned_mod()
+    if __package__:
+        from .models import OwnedCreateKind
+    else:
+        from models import OwnedCreateKind  # type: ignore
+
+    factory_name = _enrichment_factory_name(spec)
+    if not factory_name:
+        return None, (
+            "no LCM factory is wired for " + spec.owning_field + " -- the "
+            "child cannot be created, so it is reported rather than lost "
+            "silently"
+        )
+    child_guid = cats._guid_str_from(child)
+    factory = own._get_owned_factory(target, factory_name)
+    if factory is None:
+        return None, "factory " + factory_name + " not available on the target"
+
+    if spec.create_kind == OwnedCreateKind.OWNER_TAKING:
+        guid_arg = own._guid_for_create(child_guid) if child_guid else None
+        new_child = None
+        if guid_arg is not None:
+            try:
+                new_child = factory.Create(guid_arg, receiver)
+            except Exception as exc:  # noqa: BLE001 -- overload absent/GUID taken
+                own._log_guid_fallback(spec.owning_field, child_guid, exc)
+        if new_child is None:
+            try:
+                new_child = factory.Create()
+            except Exception as exc:  # noqa: BLE001
+                return None, f"create failed: {type(exc).__name__}: {exc}"
+            live.Add(new_child)
+        return new_child, ""
+
+    new_child = cats.create_with_guid(factory, child_guid, spec.owning_field)
+    if new_child is None:
+        return None, f"create failed for {spec.owning_field} via {factory_name}"
+    live.Add(new_child)
+    return new_child, ""
+
+
+def _enrich_one_collection(field_name, spec, src_obj, tgt_obj, source, target,
+                           report_sink, src_guid, ws_map, ws_handles,
+                           source_ws_handles, planned_action_guids):
+    """Add every source child the destination lacks, for ONE collection.
+
+    Returns `(EnrichedCollection, [DroppedItemRecord, ...])` whose three
+    buckets account for every source child exactly once: `added` (written now,
+    or deferred to a dedicated PlannedAction that lands this same run),
+    `already_present` (the destination had it -- left entirely untouched),
+    `dropped` (could not be added, each one carrying a `DroppedItemRecord`).
+    `EnrichedCollection.__post_init__` refuses an anonymous drop, so there is
+    no fourth outcome (SC-010).
+    """
+    cats = _categories_mod()
+    if __package__:
+        from .models import EnrichedCollection
+    else:
+        from models import EnrichedCollection  # type: ignore
+
+    spelling, src_children = cats._pos_owned_collection(src_obj, field_name)
+    if spelling is None:
+        src_children = []
+    receiver, _tgt_spelling, live = _pos_writable_collection(tgt_obj, field_name)
+    try:
+        before = list(live) if live is not None else []
+    except TypeError:
+        before = []
+    candidates = list(before)
+    child_class = cats._POS_OWNED_COLLECTION_CHILD_CLASS.get(field_name, "")
+
+    added = 0
+    already_present = 0
+    drops: list = []
+
+    def _drop(child, reason):
+        drops.append(DroppedItemRecord(
+            owner_kind=_ENRICH_OWNER_KIND,
+            owner_guid=src_guid,
+            owner_label=src_guid,
+            field_name=field_name,
+            item_name=str(getattr(child, "ClassName", "") or child_class
+                          or field_name),
+            item_guid=cats._guid_str_from(child) or "",
+            reason=reason,
+        ))
+        report_sink.Warning(
+            f"  [enrich] {field_name}: child not added -- {reason}"
+            f"  guid={src_guid[:8]}"
+        )
+
+    for child in src_children or ():
+        # T044's rule, not a second matcher: GUID first, then the R1 roster
+        # key, scoped to THIS collection. This is what makes a re-run report
+        # `already_present` instead of appending a duplicate (SC-008).
+        try:
+            matched = cats._match_collection_child(
+                child, candidates, child_class, ws_handles, source_ws_handles,
+            )
+        except Exception as exc:  # noqa: BLE001 -- ambiguity/roster failure
+            _drop(child, f"identity match failed: {type(exc).__name__}: {exc}")
+            continue
+        if matched is not None:
+            already_present += 1
+            continue
+
+        child_guid = cats._guid_str_from(child)
+        if child_guid and child_guid in planned_action_guids:
+            # A dedicated category owns this child's create and runs later in
+            # THIS run (leaf dispatch follows the overwrite loop). Writing it
+            # here would pre-empt the richer path; reporting it dropped would
+            # report a loss that does not happen.
+            added += 1
+            report_sink.Info(
+                f"  [enrich] {field_name}: child {child_guid[:8]} deferred to"
+                f" its own PlannedAction (dedicated create path)"
+            )
+            continue
+
+        if live is None:
+            _drop(child, (
+                field_name + " is not reachable on the destination object -- "
+                "no declared interface cast exposed it"
+            ))
+            continue
+
+        try:
+            if spec is None:
+                new_child, reason = None, (
+                    field_name + " has no OwnedObjectSpec row")
+            elif field_name == "InflectableFeatsRC":
+                new_child, reason = _add_reference_collection_member(
+                    child, live, target)
+            else:
+                new_child, reason = _create_collection_child(
+                    spec, child, receiver, live, target)
+        except Exception as exc:  # noqa: BLE001 -- LCM/COM failures are wide
+            _log.exception(
+                "_enrich_one_collection: add failed field=%s owner=%s",
+                field_name, src_guid,
+            )
+            new_child, reason = None, f"add failed: {type(exc).__name__}: {exc}"
+
+        if new_child is None:
+            _drop(child, reason or "child could not be added")
+            continue
+
+        # A brand-new child has no content to preserve, so copying its scalars
+        # cannot overwrite anything -- which is why this is the ONLY write the
+        # pass makes into a child, and why it happens only for children it
+        # created itself.
+        if field_name != "InflectableFeatsRC":
+            try:
+                cats._copy_multistrings_ws_mapped(
+                    child, new_child, _ENRICH_CHILD_SCALARS,
+                    source=source, target=target, ws_map=ws_map or {},
+                )
+            except Exception as exc:  # noqa: BLE001 -- scalar copy is best-effort
+                report_sink.Warning(
+                    f"  [enrich] {field_name}: a child was created but its"
+                    f" scalars did not copy ({type(exc).__name__}: {exc})"
+                    f"  guid={src_guid[:8]}"
+                )
+        added += 1
+        candidates.append(new_child)
+
+    _check_add_only(field_name, before, live, report_sink, src_guid)
+
+    return EnrichedCollection(
+        field_name=spelling or field_name,
+        added=added,
+        already_present=already_present,
+        dropped=len(drops),
+        dropped_records=tuple(drops),
+    ), drops
+
+
+def _enrich_owned_collections(overwrite, src_obj, tgt_obj, source, target,
+                              report_sink, ws_map=None, dropped=None,
+                              planned_action_guids=frozenset()):
+    """Execute the plan's `EnrichmentRecord` and return the MEASURED one.
+
+    The plan's record PROJECTS what each collection would gain; this returns a
+    record of the same shape whose counts are what actually happened, so the
+    run report states an outcome rather than an intention. `was_created` stays
+    False by construction (`EnrichmentRecord` refuses True) -- an enrichment
+    acts on an object that already existed, which is the created-vs-enriched
+    distinction FR-022 requires.
+
+    Returns None when there is nothing to execute.
+    """
+    planned = getattr(overwrite, "enrichment", None)
+    if planned is None or not planned.collections:
+        return None
+    if overwrite.category not in _ENRICHMENT_CATEGORIES:
+        return None
+    if src_obj is None or tgt_obj is None:
+        return None
+
+    cats = _categories_mod()
+    if __package__:
+        from .models import EnrichmentRecord
+    else:
+        from models import EnrichmentRecord  # type: ignore
+
+    src_guid = overwrite.source_guid or ""
+    specs = _enrichment_specs()
+    ws_handles = cats._matcher.ws_handles_for(target)
+    source_ws_handles = cats._matcher.ws_handles_for(source)
+    src_inner = cats._unwrap_lcm(src_obj)
+    tgt_inner = cats._unwrap_lcm(tgt_obj)
+
+    rows = []
+    for planned_row in planned.collections:
+        field_name = planned_row.canonical_field_name
+        row, drops = _enrich_one_collection(
+            field_name, specs.get(field_name), src_inner, tgt_inner,
+            source, target, report_sink, src_guid, ws_map, ws_handles,
+            source_ws_handles, planned_action_guids,
+        )
+        rows.append(row)
+        if dropped is not None:
+            dropped.extend(drops)
+
+    measured = EnrichmentRecord(
+        object_class=planned.object_class,
+        source_guid=planned.source_guid,
+        target_guid=planned.target_guid,
+        label=planned.label,
+        collections=tuple(rows),
+        fields_updated=planned.fields_updated,
+        was_created=False,
+    )
+
+    # THE T045 REPORT LINE: disposition plus per-collection counts. `UPDATE` is
+    # stated literally because data-model.md section 9 binds this situation
+    # ("Identity match, delta found") to that disposition, and because an
+    # enrichment whose every bucket is `already_present` is precisely the
+    # SC-008 re-run signal -- worth being able to read straight off the log.
+    counts = " | ".join(
+        f"{c.field_name}: added={c.added} already_present={c.already_present}"
+        f" dropped={c.dropped}"
+        for c in rows
+    )
+    report_sink.Info(
+        f"  [{overwrite.category.value}] disposition=UPDATE enrichment"
+        f" (add-only)  guid={src_guid[:8]}  {counts}"
+    )
+    return measured
+
+
 def _execute_update_semantic(overwrite, source, target, report_sink, tag: ImportResidueTag,
-                             ws_map=None, dropped=None):
+                             ws_map=None, dropped=None, enrichments=None,
+                             planned_action_guids=frozenset()):
     """Apply the non-destructive UPDATE write semantic (T012, FR-003) for a
     PlannedOverwrite whose category mode is ConflictMode.UPDATE.
 
@@ -2324,7 +2898,28 @@ def _execute_update_semantic(overwrite, source, target, report_sink, tag: Import
     `DroppedItemRecord` collector, threaded through to
     `_execute_phon_rule_structural_update` -> `categories._phon_rule_apply_body`
     for its InputPOSesRC/ReqRuleFeatsRC/ExclRuleFeatsRC unresolved-reference
-    reporting. Unused by the generic ops-accessor path below.
+    reporting. Used by the generic ops-accessor path below only to carry the
+    owned-collection enrichment's own drops (feature 038 T045).
+
+    `enrichments` (feature 038 T045, FR-020..FR-022): the per-run MEASURED
+    `EnrichmentRecord` collector. `overwrite.enrichment` is what the PLANNER
+    projected; the record appended here is what the writes actually achieved,
+    so the report can state an outcome. Optional -- a caller that does not care
+    passes None and only the report_sink line is produced.
+
+    `planned_action_guids` (feature 038 T045): source GUIDs the plan will
+    CREATE through their own `PlannedAction`. A collection child in this set is
+    deferred to that dedicated create path rather than written here -- see the
+    "WHY SOME CHILDREN ARE DEFERRED" note above `_enrich_owned_collections`.
+
+    STEP ORDER MATTERS FOR THE ENRICHMENT (feature 038 T045). The owned-
+    collection pass runs REGARDLESS of the scalar disposition, including when
+    `compute_disposition` returns SKIP. `compute_disposition` compares
+    GetSyncableProperties, and none of the seven owned collections appears
+    there -- so a POS whose Name/Abbreviation/Description already match returns
+    SKIP while still missing whole collections. Returning early on that SKIP is
+    defect G3 regenerating itself one layer down: the plan would correctly say
+    UPDATE and the executor would silently write nothing.
     """
     if __package__:
         from .models import ConflictMode as _ConflictMode
@@ -2392,6 +2987,13 @@ def _execute_update_semantic(overwrite, source, target, report_sink, tag: Import
     # `except Exception` there cannot turn a harness error into a warning.
     dest = planned_destination_for(overwrite, target)
 
+    # Feature 038 T045: hoisted so the owned-collection pass below can still
+    # see the resolved pair after the scalar half has finished -- including
+    # after it took the UPDATE-SKIP exit, which says nothing about the seven
+    # collections (see the step-order note in the docstring).
+    src_obj = None
+    tgt_obj = None
+
     try:
         src_ops = getattr(source, ops_key, None)
         tgt_ops = getattr(target, ops_key, None)
@@ -2425,20 +3027,24 @@ def _execute_update_semantic(overwrite, source, target, report_sink, tag: Import
         )
 
         if disposition == ItemDisposition.SKIP:
+            # NOT a return (feature 038 T045). `compute_disposition` only ever
+            # saw GetSyncableProperties, which carries none of the seven owned
+            # collections, so "all fields identical" is a statement about the
+            # scalars alone. Falling through lets the enrichment pass below
+            # still run -- returning here is defect G3, one layer down.
             report_sink.Info(
-                f"  [{cat.value}] UPDATE-SKIP (all fields identical)"
+                f"  [{cat.value}] UPDATE-SKIP (all scalar fields identical)"
                 f"  guid={src_guid[:8]}"
             )
-            return []
-
-        # UPDATE: non-destructive field writes.
-        written = apply_update_semantic(src_props, tgt_props, tgt_ops, tgt_obj, ws_map=ws_map)
-        cache = getattr(target, "Cache")
-        apply_residue(tgt_obj, cache.DefaultAnalWs, tag.with_snapshot(tgt_props))
-        report_sink.Info(
-            f"  [{cat.value}] UPDATE applied ({written} field(s) written)"
-            f"  guid={src_guid[:8]}"
-        )
+        else:
+            # UPDATE: non-destructive field writes.
+            written = apply_update_semantic(src_props, tgt_props, tgt_ops, tgt_obj, ws_map=ws_map)
+            cache = getattr(target, "Cache")
+            apply_residue(tgt_obj, cache.DefaultAnalWs, tag.with_snapshot(tgt_props))
+            report_sink.Info(
+                f"  [{cat.value}] UPDATE applied ({written} field(s) written)"
+                f"  guid={src_guid[:8]}"
+            )
     except Exception as exc:
         _log.exception(
             "_execute_update_semantic: FAILED (swallowed) category=%s guid=%s",
@@ -2448,6 +3054,30 @@ def _execute_update_semantic(overwrite, source, target, report_sink, tag: Import
             f"  [{cat.value}] _execute_update_semantic raised"
             f" {type(exc).__name__}: {exc}  guid={src_guid[:8]}"
         )
+
+    # ---- Feature 038 T045 (FR-020..FR-022): the add-only collection half ----
+    # In its OWN try, deliberately: a collection-level failure must not be able
+    # to make the scalar half look like it failed, and vice versa. Each half
+    # already reports its own outcome, so neither swallows the other's.
+    if getattr(overwrite, "enrichment", None) is not None:
+        try:
+            measured = _enrich_owned_collections(
+                overwrite, src_obj, tgt_obj, source, target, report_sink,
+                ws_map=ws_map, dropped=dropped,
+                planned_action_guids=planned_action_guids,
+            )
+        except Exception as exc:  # noqa: BLE001 -- LCM/COM failures are wide
+            _log.exception(
+                "_execute_update_semantic: enrichment FAILED (swallowed) "
+                "category=%s guid=%s", cat.value, src_guid,
+            )
+            report_sink.Warning(
+                f"  [{cat.value}] owned-collection enrichment raised"
+                f" {type(exc).__name__}: {exc}  guid={src_guid[:8]}"
+            )
+        else:
+            if measured is not None and enrichments is not None:
+                enrichments.append(measured)
     return []
 
 

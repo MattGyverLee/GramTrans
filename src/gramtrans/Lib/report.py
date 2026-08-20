@@ -8,6 +8,12 @@ Per constitution Principle III closing clause + FR-018, every PlannedAction
 in the run plan must end up in either `per_category[*].added` or `skips` —
 nothing disappears silently. The FR-018 invariant is enforced by
 `RunReport.__post_init__` at construction time.
+
+Feature 038 (FR-022 + SC-010) widens that promise from "nothing disappears"
+to "every outcome is named": see `disposition_totals` /
+`_render_disposition_lines` for the four-bucket panel (ADD / UPDATE-enriched /
+SKIP / dropped-with-reason) and `certainty_note` for the one sentence this
+report is allowed to say about how much its sameness claims are worth.
 """
 from __future__ import annotations
 
@@ -302,6 +308,22 @@ def _build_from_plan(cls, plan: RunPlan, mode: RunMode,
                 )
             _bucket(cat)["enriched"] += 1
 
+    # SC-010: a source child an enrichment could not add is a
+    # `DroppedItemRecord` like any other, and it MUST reach the statistics
+    # panel. Fold those records into the ONE existing dropped channel instead
+    # of leaving them visible only inside the enrichment detail list -- deduped
+    # on the published `(owner_guid, field_name, item_guid)` identity so a
+    # record the executor already appended to `extra_dropped_items` is not
+    # reported twice.
+    dropped_items_all = list(extra_dropped_items)
+    _dropped_seen = {_dropped_dedup_key(d) for d in dropped_items_all}
+    for _rec in _enrichment_dropped_records(enrichments_all):
+        _key = _dropped_dedup_key(_rec)
+        if _key in _dropped_seen:
+            continue
+        _dropped_seen.add(_key)
+        dropped_items_all.append(_rec)
+
     per_category_final = {
         cat: CategoryReport(
             added=counts["added"],
@@ -341,7 +363,7 @@ def _build_from_plan(cls, plan: RunPlan, mode: RunMode,
         wall_clock_seconds=wall_clock_seconds,
         empty_categories=empty_cats,
         excluded_lossy=tuple(excluded_lossy_all),
-        dropped_items=tuple(extra_dropped_items),
+        dropped_items=tuple(dropped_items_all),
         fidelity_by_guid=dict(fidelity_by_guid) if fidelity_by_guid else {},
         leaf_execution_failures=tuple(extra_leaf_execution_failures),
         # Feature 038: the four plan-side buckets flow straight through, so
@@ -455,6 +477,277 @@ def _counter_block(report, attr: str):
     return {"total": total, "per_category": per} if total else None
 
 
+# ============================================================================
+# Feature 038 (FR-022 + SC-010) -- disposition accounting and the certainty
+# clause
+# ============================================================================
+# Two obligations meet here, and both are about the report claiming exactly as
+# much as its evidence supports and not one word more.
+#
+#   FR-022  The run report MUST distinguish an ENRICHED item from a CREATED
+#           one. `EnrichmentRecord.was_created` is False by construction (it
+#           is UNCONSTRUCTIBLE as True -- models.py raises), so the
+#           distinction already exists in the data. What did not exist is the
+#           distinction in the OUTPUT: an enriched object had no row of its
+#           own in the statistics panel, so a reader had to infer "not
+#           created" from the absence of a `PlannedAction` they cannot see.
+#
+#   SC-010  Every selected item reaches exactly one of ADD, UPDATE (enriched),
+#           SKIP, or dropped-with-reason, and each appears in the post-run
+#           statistics panel: there is no fifth, unreported outcome. Nothing
+#           in this section RE-TALLIES anything. The counters are already
+#           reconciled against their records by `RunReport.__post_init__`
+#           (`sum(per_category[*].enriched) == len(enrichments)`, and likewise
+#           for `not_reproducible`); this section only reads those counters and
+#           names which record type each one is answerable to, which is what
+#           makes the four-bucket claim auditable instead of decorative.
+#
+# THE CERTAINTY CLAUSE (plan.md's Principle IV row; research.md R4). Two
+# sentences are forbidden unless the evidence for them exists:
+#
+#   "identical now"            -- a claim that source and target now agree.
+#                                 On a FIRST transfer the run has verified no
+#                                 such thing; it wrote what it had. Per R4 the
+#                                 strongest TRUE line is "the target already
+#                                 held this object; N children added, M
+#                                 already present", and that is the line the
+#                                 enrichment rows below actually print.
+#   "untouched since last run" -- a claim about a PRIOR state of the target.
+#                                 The only prior state this system records is
+#                                 the import-residue tag an earlier GramTrans
+#                                 run left on the object (`Lib/residue.py`:
+#                                 `GT|<run_id>|<source>|<iso_ts>`, optionally
+#                                 carrying a `snap=` props snapshot). With no
+#                                 such baseline there is nothing for an object
+#                                 to be untouched SINCE, so the sentence is
+#                                 not said -- and its absence is stated, so a
+#                                 reader is not left to wonder which way to
+#                                 read the silence.
+#
+# This is the discipline T039 forced on the census, applied to the prose: do
+# not assert a difference -- or a sameness -- with more confidence than its
+# basis supports.
+
+#: Skip reasons that mean "a field-identity comparison actually ran and found
+#: no delta", as opposed to "a GUID lookup hit something" -- which is exactly
+#: the meaning feature 038's G3 narrowing removed from
+#: `ALREADY_PRESENT_BY_GUID`. Every other skip reason names a reason the item
+#: did NOT transfer, and so belongs with dropped-with-reason, never with
+#: "source and target already agreed".
+_NO_DELTA_SKIP_REASONS = frozenset({
+    SkipReason.ALREADY_PRESENT_BY_GUID,
+    SkipReason.ALREADY_PRESENT_BY_IDENTITY,
+})
+
+
+def residue_baseline_run_id(report) -> str:
+    """The run_id of the residue baseline this report may compare against, or
+    `""` when there is none -- which is the case for every run today.
+
+    NOTHING currently establishes a run-level baseline. `Lib/residue.py`
+    WRITES the tag and `Lib/conflict.py.load_prior_log` can read one back for
+    a single object, but no caller aggregates that into a fact about the run,
+    and `RunReport` accordingly has no field for it. Hard-coding "there is
+    never a baseline" would be true today and would silently keep the weaker
+    wording forever after someone wires one up, so the lookup is by ATTRIBUTE,
+    in the same tolerant style the rest of this module already uses for
+    additive fields (`getattr(plan, "overwrites", ())`). Two spellings are
+    honoured, whichever a future producer picks:
+
+      * ``report.residue_baseline`` -- an object exposing ``run_id``, or the
+        run-id string itself;
+      * ``report.context.prior_run_id`` -- a run-id string.
+
+    With neither present the answer is `""` and every claim resting on a
+    baseline is withheld. An absent baseline is NOT evidence that the target
+    is unchanged: it is the absence of evidence in either direction, the same
+    rule `census.unmatched_starter` applies to an absent starter baseline.
+    """
+    baseline = getattr(report, "residue_baseline", None)
+    if baseline is None:
+        baseline = getattr(
+            getattr(report, "context", None), "prior_run_id", None
+        )
+    if baseline is None:
+        return ""
+    run_id = getattr(baseline, "run_id", baseline)
+    return str(run_id) if run_id else ""
+
+
+def certainty_note(report) -> str:
+    """The ONE sentence this report is allowed to say about what its sameness
+    claims are worth.
+
+    Single source of the wording, so the console panel and the JSON artifact
+    cannot drift into two different promises -- drift being how the report
+    came to overclaim in the first place.
+    """
+    prior = residue_baseline_run_id(report)
+    if not prior:
+        return (
+            "FIRST TRANSFER (no residue baseline from an earlier GramTrans "
+            "run was available on this target). This report states only what "
+            "this run wrote and what it compared. It does NOT claim the "
+            "target is identical to the source now, and nothing here means "
+            "an item was untouched since a previous run -- there is no "
+            "recorded earlier run for anything to be untouched since."
+        )
+    return (
+        "A residue baseline from run " + prior + " was available, so an item "
+        "this run neither created nor changed is untouched since " + prior +
+        ". A sameness claim still covers only the fields and owned "
+        "collections actually compared, never the whole object."
+    )
+
+
+def disposition_totals(report) -> dict:
+    """SC-010's outcomes for this run, each counted from ONE record type.
+
+    Returned as a plain dict so the console panel and the JSON artifact render
+    the same numbers from the same call; a second derivation is a second
+    chance to disagree.
+
+    Source of truth per bucket -- this mapping is the report's answer to "is
+    there a fifth outcome?", and T080's audit hangs on it:
+
+      ``add_created``         one per `PlannedAction`    -> `per_category[*].added`
+      ``update_enriched``     one per `EnrichmentRecord` -> `enrichments`
+      ``update_overwritten``  one per `PlannedOverwrite` -> `per_category[*].overwritten`
+      ``skip``                one per `Skip`             -> `skips`
+      ``dropped_with_reason`` one per `DroppedItemRecord`-> `dropped_items`
+
+    The buckets are counted from DISJOINT record types, which is precisely why
+    an enrichment can never land in the created tally: an `EnrichmentRecord`
+    is not a `PlannedAction`, and carries `was_created is False` besides.
+
+    The one genuine overlap is stated rather than hidden. An enrichment is
+    CARRIED on a `PlannedOverwrite` (`write_mode="merge"`, enforced by
+    `PlannedOverwrite.__post_init__`), so `update_overwritten` includes the
+    enrichments and `update_overwritten_not_enriched` is the remainder. When
+    the enrichment records outnumber the overwrites that subtraction has no
+    valid basis, so it yields ``None`` and ``overwrite_split_reconciles`` is
+    False -- the T039 lesson, that a number whose basis does not support it is
+    worse than no number.
+    """
+    per_cat = getattr(report, "per_category", {}) or {}
+    enrichments = tuple(getattr(report, "enrichments", ()))
+    created = sum(getattr(r, "added", 0) for r in per_cat.values())
+    overwritten = sum(getattr(r, "overwritten", 0) for r in per_cat.values())
+    enriched = len(enrichments)
+    skipped = sum(getattr(r, "skipped", 0) for r in per_cat.values())
+    no_delta = sum(
+        1 for s in getattr(report, "skips", ())
+        if getattr(s, "reason", None) in _NO_DELTA_SKIP_REASONS
+    )
+    dropped = len(getattr(report, "dropped_items", ()))
+    reconciles = enriched <= overwritten
+    # FidelityStatus is REUSED here, never re-derived: `EnrichmentRecord.
+    # fidelity` already applies the same FULL/PARTIAL rule
+    # `categories.compute_fidelity_by_guid` applies to a created object.
+    partial = sum(
+        1 for r in enrichments
+        if getattr(r, "fidelity", None) is FidelityStatus.PARTIAL
+    )
+    collections = tuple(
+        c for r in enrichments for c in getattr(r, "collections", ())
+    )
+    return {
+        "add_created": created,
+        "update_enriched": enriched,
+        "update_overwritten": overwritten,
+        "update_overwritten_not_enriched": (
+            overwritten - enriched if reconciles else None
+        ),
+        "overwrite_split_reconciles": reconciles,
+        "skip": skipped,
+        "skip_no_delta_after_comparison": no_delta,
+        "skip_other_reason": skipped - no_delta,
+        "dropped_with_reason": dropped,
+        "enriched_partial": partial,
+        "enriched_full": enriched - partial,
+        "enriched_gained_nothing": sum(
+            1 for r in enrichments if getattr(r, "is_empty", False)
+        ),
+        "enriched_children_added": sum(c.added for c in collections),
+        "enriched_children_already_present": sum(
+            c.already_present for c in collections
+        ),
+        "enriched_children_dropped": sum(c.dropped for c in collections),
+    }
+
+
+#: The five keys whose emptiness means "this run had no outcome to account
+#: for". Used to keep the disposition panel off a genuinely empty report
+#: without ever hiding a bucket that has something in it.
+_DISPOSITION_OUTCOME_KEYS = (
+    "add_created",
+    "update_enriched",
+    "update_overwritten",
+    "skip",
+    "dropped_with_reason",
+)
+
+
+def _has_reportable_outcome(totals: dict) -> bool:
+    return any(totals.get(k) for k in _DISPOSITION_OUTCOME_KEYS)
+
+
+def _has_038_data(report) -> bool:
+    """True when this report carries any feature-038 fidelity data.
+
+    Gates the ARTIFACT's `disposition` / `certainty` keys, so the
+    snapshot-compatibility promise stated above the helpers ("a run with no
+    038 data produces a BYTE-IDENTICAL snapshot to the pre-038 build")
+    survives this addition. The CONSOLE panel is deliberately NOT gated this
+    way: it has no byte-compatibility contract, and SC-010's "each appears in
+    the post-run statistics panel" is unconditional there.
+    """
+    if (getattr(report, "enrichments", ())
+            or getattr(report, "closure_edges", ())
+            or getattr(report, "incompleteness", ())
+            or getattr(report, "process_rules", ())):
+        return True
+    if getattr(report, "census", None) is not None:
+        return True
+    per_cat = getattr(report, "per_category", {}) or {}
+    return any(
+        getattr(r, attr, 0)
+        for r in per_cat.values()
+        for attr in ("identity_substitution", "enriched", "not_reproducible")
+    )
+
+
+def _enrichment_dropped_records(enrichments) -> tuple:
+    """Every `DroppedItemRecord` carried inside an enrichment's collections.
+
+    SC-010 forbids an anonymous drop, and `EnrichedCollection.__post_init__`
+    already guarantees `dropped == len(dropped_records)`. These are ordinary
+    `DroppedItemRecord`s, so they belong in the report's ONE existing dropped
+    channel (`RunReport.dropped_items`, rendered by the "Dropped references /
+    owned items" section) rather than in a second, enrichment-only list that
+    no other consumer reads.
+    """
+    return tuple(
+        rec
+        for r in enrichments
+        for c in getattr(r, "collections", ())
+        for rec in getattr(c, "dropped_records", ())
+    )
+
+
+def _dropped_dedup_key(record):
+    """`(owner_guid, field_name, item_guid)` -- the dedup identity
+    `DroppedItemRecord`'s own docstring publishes and
+    `categories._dropped_key` enforces. Reused verbatim so folding the
+    enrichment drops into `dropped_items` cannot double-report a drop the
+    executor already appended."""
+    return (
+        getattr(record, "owner_guid", ""),
+        getattr(record, "field_name", ""),
+        getattr(record, "item_guid", ""),
+    )
+
+
 def _closure_edge_json(e) -> dict:
     return {
         "dependent": _pair_json(e.dependent),
@@ -480,6 +773,22 @@ def _incompleteness_json(r) -> dict:
     }
 
 
+def _dropped_item_json(d) -> dict:
+    """One `DroppedItemRecord`, in the shape `to_snapshot_json`'s
+    `dropped_items` list has always used. Extracted so the enrichment
+    collections below serialise their `dropped_records` in the SAME shape --
+    one serializer, one shape, no second dialect of the same record."""
+    return {
+        "owner_kind": d.owner_kind,
+        "owner_guid": d.owner_guid,
+        "owner_label": d.owner_label,
+        "field_name": d.field_name,
+        "item_name": d.item_name,
+        "item_guid": d.item_guid,
+        "reason": d.reason,
+    }
+
+
 def _enrichment_json(r) -> dict:
     return {
         "object_class": r.object_class,
@@ -487,8 +796,16 @@ def _enrichment_json(r) -> dict:
         "target_guid": r.target_guid,
         "label": r.label,
         # FR-022: the created-vs-enriched distinction is STATED, not inferred.
+        # Always False -- `EnrichmentRecord` refuses to be built with True --
+        # and emitted anyway, because a reader must be able to read the
+        # distinction off the artifact without knowing that rule.
         "was_created": bool(r.was_created),
         "is_empty": bool(getattr(r, "is_empty", False)),
+        # FR-013's enum, REUSED: `EnrichmentRecord.fidelity` derives FULL /
+        # PARTIAL under the same rule `categories.compute_fidelity_by_guid`
+        # uses for a created object, so an enriched object's fidelity reads
+        # the same way as a created one's.
+        "fidelity": _enum_name(getattr(r, "fidelity", "")),
         "fields_updated": list(r.fields_updated),
         "collections": [
             {
@@ -496,6 +813,14 @@ def _enrichment_json(r) -> dict:
                 "added": c.added,
                 "already_present": c.already_present,
                 "dropped": c.dropped,
+                # SC-010: a dropped child is never an anonymous number. The
+                # same records also appear in the report's top-level
+                # `dropped_items` (folded in by `build_from_plan`); they are
+                # repeated here so the enrichment row is self-contained.
+                "dropped_records": [
+                    _dropped_item_json(d)
+                    for d in getattr(c, "dropped_records", ())
+                ],
             }
             for c in r.collections
         ],
@@ -1101,16 +1426,7 @@ def _to_snapshot_json(self) -> str:
         # sees the same empty defaults this run report carries when nothing
         # has been dropped, so old snapshots remain loadable/comparable.
         "dropped_items": [
-            {
-                "owner_kind": d.owner_kind,
-                "owner_guid": d.owner_guid,
-                "owner_label": d.owner_label,
-                "field_name": d.field_name,
-                "item_name": d.item_name,
-                "item_guid": d.item_guid,
-                "reason": d.reason,
-            }
-            for d in self.dropped_items
+            _dropped_item_json(d) for d in self.dropped_items
         ],
         "fidelity_by_guid": {
             guid: status.name
@@ -1238,6 +1554,58 @@ def _to_snapshot_json(self) -> str:
     if not_reproducible is not None:
         payload["not_reproducible_counts"] = not_reproducible
 
+    # ---- FR-022 / SC-010: the four-outcome disposition block -----------
+    # The machine-readable half of the console panel, rendered from the SAME
+    # `disposition_totals` call so the two can never disagree. Gated on the
+    # report carrying 038 data (see `_has_038_data`) to keep the
+    # byte-identical-snapshot promise for pre-038 runs.
+    if _has_038_data(self):
+        disposition = disposition_totals(self)
+        if _has_reportable_outcome(disposition):
+            # FR-022, stated rather than implied: the created tally and the
+            # enriched tally are counted from disjoint record types, so an
+            # enriched object is structurally incapable of appearing in
+            # `add_created`.
+            disposition["created_excludes_enriched"] = True
+            disposition["counted_from"] = {
+                "add_created": "PlannedAction (per_category[*].added)",
+                "update_enriched":
+                    "EnrichmentRecord (enrichments); was_created is always "
+                    "false and unconstructible as true",
+                "update_overwritten":
+                    "PlannedOverwrite (per_category[*].overwritten); an "
+                    "enrichment is CARRIED on one, so this total includes "
+                    "update_enriched",
+                "skip": "Skip (skips)",
+                "dropped_with_reason": "DroppedItemRecord (dropped_items)",
+            }
+            disposition["note"] = (
+                "SC-010: every selected item reaches exactly one of ADD, "
+                "UPDATE (enriched), SKIP, or dropped-with-reason -- there is "
+                "no fifth, unreported outcome. The buckets are NOT summed: a "
+                "dropped child is reported against its owner, not instead of "
+                "it, so a grand total would count two different granularities "
+                "as one"
+            )
+            payload["disposition"] = disposition
+
+            # The certainty clause, machine-readable. Both flags hang on the
+            # same evidence -- a residue baseline from an earlier GramTrans
+            # run -- because both sentences are claims about a prior state of
+            # the target that only that baseline records.
+            prior_run_id = residue_baseline_run_id(self)
+            payload["certainty"] = {
+                "residue_baseline_run_id": prior_run_id or None,
+                "is_first_transfer": not prior_run_id,
+                "may_claim_identical_now": bool(prior_run_id),
+                "may_claim_untouched_since_last_run": bool(prior_run_id),
+                "strongest_true_line_for_an_enriched_item": (
+                    "the target already held this object; N children added, "
+                    "M already present"
+                ),
+                "note": certainty_note(self),
+            }
+
     # FR-009..FR-013 -- T015 hook; omitted while `census is None`.
     census = _census_json(self.census)
     if census is not None:
@@ -1277,22 +1645,38 @@ def render_text_summary(report: RunReport) -> Iterable[str]:
     total_added = 0
     total_skipped = 0
     total_overwritten = 0
+    total_enriched = 0
     for cat in sorted(report.per_category.keys(), key=lambda c: c.value):
         r = report.per_category[cat]
         total_added += r.added
         total_skipped += r.skipped
         ow = getattr(r, "overwritten", 0)
         total_overwritten += ow
+        # FR-022: `enriched` rides beside `overwritten` because an enrichment
+        # IS carried on a PlannedOverwrite -- and pointedly NOT beside `added`,
+        # which counts creations only.
+        enr = getattr(r, "enriched", 0)
+        total_enriched += enr
         suffix = (
             f"  added={r.added}  skipped={r.skipped}"
             + (f"  overwritten={ow}" if ow else "")
+            + (f"  enriched={enr}" if enr else "")
             + (f"  pulled_in={r.closure_pulled_in}" if r.closure_pulled_in else "")
         )
         yield f"  {cat.value:18s}{suffix}"
     yield (
         f"  {'TOTAL':18s}  added={total_added}  skipped={total_skipped}"
         + (f"  overwritten={total_overwritten}" if total_overwritten else "")
+        + (f"  enriched={total_enriched}" if total_enriched else "")
     )
+    if total_enriched:
+        # FR-022 stated inline, where the two numbers sit side by side and a
+        # reader might otherwise add them together.
+        yield (
+            f"  ({total_enriched} of the overwritten were ENRICHED -- add-only "
+            "updates to objects the target ALREADY HAD; an enriched object is "
+            "never counted in added)"
+        )
     # Phase 3a FR-308: surface selected-but-empty categories explicitly so
     # the linguist sees the scan happened even when nothing transferred.
     for cat in getattr(report, "empty_categories", ()):
@@ -1356,6 +1740,89 @@ def render_text_summary(report: RunReport) -> Iterable[str]:
 # Feature 038 -- console sections (human-readable surface)
 # ============================================================================
 
+def _render_disposition_lines(report) -> Iterable[str]:
+    """FR-022 + SC-010: the four-outcome disposition panel.
+
+    Every selected item reaches exactly one of ADD, UPDATE (enriched), SKIP,
+    or dropped-with-reason, and this is where each one appears. The rows are
+    deliberately NOT summed into a single grand total: a dropped child is
+    reported AGAINST its owner, not INSTEAD of it, so the buckets count
+    different granularities and an added-up figure would be a fiction. What
+    the panel guarantees instead is that every bucket is named, non-empty or
+    not, together with the record type it is answerable to -- which is what
+    makes "there is no fifth outcome" a checkable claim.
+
+    ASCII only, per the Windows console rule.
+    """
+    d = disposition_totals(report)
+    if not _has_reportable_outcome(d):
+        return
+
+    def _row(tag: str, label: str, value) -> str:
+        """One panel row, column-aligned so the numbers line up and a zero is
+        as visible as a hundred."""
+        return f"    - {tag:<8} {label:<36}: {value}"
+
+    yield (
+        "  Disposition -- every selected item reaches exactly ONE of these "
+        "(SC-010: no fifth, unreported outcome):"
+    )
+    yield _row("ADD", "created in target (new object)", d["add_created"])
+    enriched_bits = []
+    if d["enriched_partial"]:
+        enriched_bits.append(
+            f"{d['enriched_full']} FULL, {d['enriched_partial']} PARTIAL"
+        )
+    if d["enriched_gained_nothing"]:
+        enriched_bits.append(f"{d['enriched_gained_nothing']} gained nothing")
+    yield _row(
+        "UPDATE", "ENRICHED, add-only, already existed",
+        f"{d['update_enriched']}"
+        + (" (" + "; ".join(enriched_bits) + ")" if enriched_bits else ""),
+    )
+    if d["overwrite_split_reconciles"]:
+        yield _row(
+            "UPDATE", "overwritten, source wins",
+            d["update_overwritten_not_enriched"],
+        )
+    else:
+        # T039's lesson: never state a subtraction whose basis does not
+        # support it. An enrichment is carried ON a PlannedOverwrite, so
+        # more enrichments than overwrites means the two tallies cannot be
+        # split apart -- so the split is withheld and said to be withheld.
+        yield _row(
+            "UPDATE", "planned overwrites (total)", d["update_overwritten"],
+        )
+        yield (
+            f"      (WITHHELD: {d['update_enriched']} enrichment records "
+            f"against {d['update_overwritten']} planned overwrites -- an "
+            "enrichment is carried on an overwrite, so the source-wins "
+            "remainder has no valid subtraction basis here and is not guessed)"
+        )
+    yield _row(
+        "SKIP", "matched; comparison found no delta",
+        d["skip_no_delta_after_comparison"],
+    )
+    yield _row(
+        "SKIP", "other reason (each named in Skips)", d["skip_other_reason"],
+    )
+    yield _row(
+        "DROPPED", "reported with a reason", d["dropped_with_reason"],
+    )
+    if d["update_enriched"]:
+        yield (
+            f"    Enriched children: {d['enriched_children_added']} added, "
+            f"{d['enriched_children_already_present']} already present in the "
+            f"target, {d['enriched_children_dropped']} dropped with a reason"
+        )
+    yield (
+        "    (created and enriched come from DIFFERENT records -- a "
+        "PlannedAction versus an EnrichmentRecord, whose was_created is False "
+        "by construction -- so no enriched object is counted as created)"
+    )
+    yield f"    Certainty: {certainty_note(report)}"
+
+
 def _render_038_lines(report: RunReport) -> Iterable[str]:
     """Yield the console sections for the feature-038 buckets.
 
@@ -1374,6 +1841,13 @@ def _render_038_lines(report: RunReport) -> Iterable[str]:
     zero is indistinguishable from an unrun matcher, which is the one reading
     a fidelity report must never leave open.
     """
+    # ---- FR-022 / SC-010: the four-outcome disposition panel, FIRST --------
+    # It is the frame every section below is read inside: how many items
+    # arrived by each route, and how much the report's sameness claims are
+    # worth. Detail lists follow.
+    for line in _render_disposition_lines(report):
+        yield line
+
     # ---- FR-006 / FR-187: identity SUBSTITUTION, reported distinctly ------
     # An object found by name is NOT an object found by GUID. Rendering these
     # in the same bucket as ordinary matches would let the report overstate
@@ -1515,31 +1989,52 @@ def _render_038_lines(report: RunReport) -> Iterable[str]:
     enrichments = getattr(report, "enrichments", ())
     if enrichments:
         empty = sum(1 for r in enrichments if getattr(r, "is_empty", False))
+        partial = sum(
+            1 for r in enrichments
+            if getattr(r, "fidelity", None) is FidelityStatus.PARTIAL
+        )
+        # FR-022 in the header itself: "were NOT created by this run" is the
+        # whole point of the section, and a header that only said "enriched"
+        # left the reader to know what the word means here.
         yield (
-            f"  ENRICHED existing target objects (add-only; nothing was "
-            f"blanked or overwritten) -- {len(enrichments)} total"
+            f"  ENRICHED existing target objects -- UPDATE, add-only; these "
+            f"objects were NOT created by this run, and nothing was blanked "
+            f"or overwritten -- {len(enrichments)} total"
             + (f", {empty} of them gained nothing" if empty else "")
+            + (f", {partial} PARTIAL (a source child was dropped)"
+               if partial else "")
             + ":"
         )
 
         def _enrichment_row(r) -> str:
+            # research.md R4: on a first transfer the strongest TRUE line is
+            # "the target already held this object; N children added, M
+            # already present" -- never "identical now", which Principle IV
+            # reserves for a re-run against a known prior baseline. The
+            # per-run certainty statement is printed once, by the disposition
+            # panel, rather than repeated on every row.
             parts = []
-            if r.fields_updated:
-                parts.append("fields=" + ",".join(r.fields_updated))
             for c in r.collections:
                 bits = f"{c.field_name} +{c.added}"
                 extra = []
                 if c.already_present:
                     extra.append(f"{c.already_present} already present")
                 if c.dropped:
-                    extra.append(f"{c.dropped} dropped")
+                    extra.append(f"{c.dropped} dropped with a reason")
                 if extra:
                     bits += " (" + ", ".join(extra) + ")"
                 parts.append(bits)
+            if r.fields_updated:
+                parts.append(
+                    "fields filled where the target was empty: "
+                    + ",".join(r.fields_updated)
+                )
             detail = "; ".join(parts) if parts else "nothing gained"
             return (
                 f"    - {r.object_class} \"{r.label}\" "
-                f"{_guid8(r.source_guid)} -> {_guid8(r.target_guid)}: {detail}"
+                f"{_guid8(r.source_guid)} -> {_guid8(r.target_guid)}: "
+                f"[{_enum_name(getattr(r, 'fidelity', ''))}] the target "
+                f"already held this object; {detail}"
             )
 
         for line in _rows(enrichments, _enrichment_row):
