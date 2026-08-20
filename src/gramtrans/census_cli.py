@@ -737,6 +737,264 @@ def matched_by_class_from_report(path: Path) -> tuple:
     return per_class, bool(complete) and bool(per_class)
 
 
+# ---------------------------------------------------------------------------
+# T048b: AN IDENTITY SKIP IS A STARTER MATCH
+#
+# Raised by the 2026-08-20 gate run (journal/T038-T048-live-gate-rerun.md),
+# which proved against the raw `.fwdata` that `PartOfSpeech` transferred
+# perfectly -- 20 source GUIDs, 20 destination GUIDs, none missing, no
+# destination-only leftovers -- while the census still reported `difference:
+# -2` and the gate exited 1.
+#
+# The arithmetic that produced the -2: the destination starter held 5 parts of
+# speech and the run matched all five, but by TWO different mechanisms. Three
+# were matched and then ENRICHED, so they reached
+# `matched_to_source.by_object_class` through the plan item that carried the
+# enrichment record. The other two were matched by GUID and then SKIPPED,
+# landing in `skips[]` as `ALREADY_PRESENT_BY_GUID` -- and
+# `report.build_from_plan` never calls `_count_matched` on the skips loop, so
+# those two entered no tally at all. `starter_matched_to_source` read 3,
+# `unmatched_starter` read 5 - 3 = 2, and two starter objects the run had
+# positively identified were subtracted from the destination as though they
+# were surplus.
+#
+# An `ALREADY_PRESENT_BY_GUID` skip is a match, and it is the STRONGEST kind --
+# identity. Nothing was written because nothing needed to be; that is a
+# statement about the disposition, not about whether the object was found.
+# Counting it is the whole of this fix.
+#
+# THE SKIP'S `source_guid` IS ALSO ITS TARGET GUID. That is what matching by
+# GUID means, and it is why deduping against the enrichment records is possible
+# from the artifact alone: `Skip` carries no `target_guid` field (see
+# `models.Skip` -- category, source_guid, reason, detail, and nothing else),
+# but for this one reason the source GUID names the destination object too.
+#
+# ------------------------- WHY NOT FIX THE REPORT --------------------------
+# Considered and rejected for this task. `report.build_from_plan` could count
+# the skips itself, but `Skip` has no `object_class`, so the producer would
+# have to grow one on ~12 emit sites in `Lib/categories.py` -- a claimed file,
+# and a change that alters what the ENGINE records rather than what the
+# instrument reads. The defect measured here is an accounting defect in the
+# census (the journal's words: "The `-2` is arithmetic inside the census"), so
+# it is fixed where the arithmetic lives. `Lib/categories.py` already carries
+# the better long-term answer for the overwrite-enabled mode --
+# `_plan_present_by_guid_outcome` emits a `PlannedOverwrite` with a real
+# `MatchBasisRecord` when the class is known -- and that path is untouched
+# here; this reads the skips that path still, correctly, leaves as skips.
+# ---------------------------------------------------------------------------
+
+#: The one `SkipReason` name that denotes a match. A skip for any other reason
+#: is a genuine non-event and must never be counted.
+IDENTITY_SKIP_REASON = "ALREADY_PRESENT_BY_GUID"
+
+#: For a category the one-to-one table in `Lib/preview.py` deliberately OMITS,
+#: the CLOSED set of LCM classes an identity skip in that category can name.
+#:
+#: This is NOT a second attribution table -- attribution goes through
+#: `preview._LCM_CLASS_FOR_CATEGORY` and nothing else, so there is one
+#: authority for "which class does this category name". This table answers a
+#: different and weaker question: when that authority declines to answer, WHICH
+#: ROWS ARE PUT AT RISK by the match we could not attribute. Bounding the
+#: damage is the point. An unattributed match understates some class's tally,
+#: and understating the tally over-subtracts and manufactures a shortfall --
+#: but a match in category `VARIANT_TYPES` cannot possibly have been a
+#: `PartOfSpeech`, so poisoning `PartOfSpeech` for it would withhold the
+#: stronger basis from a row that was never in doubt.
+#:
+#: Every entry is copied from the reasons `preview._LCM_CLASS_FOR_CATEGORY`
+#: states for its own omissions, and a category in NEITHER table is treated as
+#: UNBOUNDED -- see `IdentitySkipTally.unbounded`.
+_AMBIGUOUS_IDENTITY_SKIP_CLASSES = {
+    # "ALLOMORPH covers both MoStemAllomorph and MoAffixAllomorph"
+    "ALLOMORPH": frozenset({"MoStemAllomorph", "MoAffixAllomorph"}),
+    # "MSA covers the four Mo*Msa subclasses"
+    "MSA": frozenset({
+        "MoStemMsa", "MoInflAffMsa", "MoDerivAffMsa", "MoUnclassifiedAffixMsa",
+    }),
+    # "NATURAL_CLASSES covers PhNCSegments and PhNCFeatures, which 038's own
+    #  roster keeps strictly apart"
+    "NATURAL_CLASSES": frozenset({"PhNCSegments", "PhNCFeatures"}),
+    # "VARIANT_TYPES covers LexEntryType and LexEntryInflType, the same
+    #  problem again"
+    "VARIANT_TYPES": frozenset({"LexEntryType", "LexEntryInflType"}),
+    # COMPLEX_FORM_TYPES is absent from the one-to-one table for the same
+    # reason VARIANT_TYPES is: both name members of a LexDb possibility list
+    # whose objects are ILexEntryType, and LexEntryInflType is a subclass the
+    # census counts as its own row.
+    "COMPLEX_FORM_TYPES": frozenset({"LexEntryType", "LexEntryInflType"}),
+    # "INFLECTION_FEATURES covers FsClosedFeature and FsComplexFeature"
+    "INFLECTION_FEATURES": frozenset({"FsClosedFeature", "FsComplexFeature"}),
+}
+
+
+def identity_skip_class_table() -> tuple:
+    """`(table, available)` -- `{category NAME: LCM class}` for identity skips.
+
+    Read from `Lib/preview._LCM_CLASS_FOR_CATEGORY`, THE one-to-one table, and
+    re-keyed by the category's `name` because that is what a run report's
+    `skips[].category` carries (`report.to_snapshot_json` writes
+    `s.category.name`). Deliberately not a copy: a second table next to a CLI
+    is the drift this feature exists to end, and the same reasoning is already
+    written down at `categories._lcm_class_for_category`, which reaches for the
+    same table through the same kind of lazy import.
+
+    The import is lazy and total-failure-tolerant for the reason this module's
+    header states: nothing may pull a live-FLEx dependency in at module scope.
+    `available` False means NO identity skip can be attributed, so every one of
+    them becomes an unattributed match and every row keeps the `baseline_gross`
+    basis -- the capped, advisory direction, which is the safe one.
+    """
+    try:
+        if __package__:
+            from .Lib.preview import _LCM_CLASS_FOR_CATEGORY as table
+        else:  # pragma: no cover - script-mode import shim
+            from Lib.preview import (  # type: ignore
+                _LCM_CLASS_FOR_CATEGORY as table,
+            )
+    except Exception:  # noqa: BLE001 -- an unavailable table names no class
+        return {}, False
+    out = {}
+    for category, name in table.items():
+        key = getattr(category, "name", None)
+        if isinstance(key, str) and key and isinstance(name, str) and name:
+            out[key] = name
+    return out, True
+
+
+@dataclass(frozen=True)
+class IdentitySkipTally:
+    """What a run report's `ALREADY_PRESENT_BY_GUID` skips add to the census.
+
+    `by_class` is the per-LCM-class count to ADD to the report's own
+    `matched_to_source.by_object_class` tally. `withheld` is the set of classes
+    that may not claim the `baseline_matched` basis because an identity skip
+    that could have belonged to them went unattributed. `unbounded` is the same
+    fact with no bound at all -- a category neither table knows -- and it
+    withholds the stronger basis from EVERY class, which is the pre-T048b
+    behaviour of `matched_class_is_complete` and the correct answer when the
+    damage cannot be located.
+
+    `measured` False means the report carried no `skips` list, which is NOT a
+    zero: it is a report that predates the surface, and reading it as "no
+    identity skips" would be the absent-read-as-zero error
+    `census.unmatched_starter` refuses to make.
+    """
+
+    by_class: dict = field(default_factory=dict)
+    unattributed_by_category: dict = field(default_factory=dict)
+    withheld: frozenset = frozenset()
+    unbounded: bool = False
+    measured: bool = False
+    counted: int = 0
+    deduped: int = 0
+
+    def total(self) -> int:
+        return sum(self.by_class.values())
+
+
+def identity_skips_from_report(path: Path) -> IdentitySkipTally:
+    """The `ALREADY_PRESENT_BY_GUID` skips in a run report, tallied by class.
+
+    Each such skip is one destination object the run found by GUID and left
+    alone -- a match, and the strongest kind. Attributed through
+    `identity_skip_class_table` and NOTHING else; a skip whose category is not
+    one-to-one is counted as unattributed rather than guessed at, and takes the
+    `baseline_matched` basis away from the classes it might have been (or from
+    all of them, when even that is unknown).
+
+    DEDUPED AGAINST THE ENRICHMENTS by GUID, so an object that was both matched
+    and enriched is counted once. The report's `by_object_class` tally already
+    counts every enrichment, and an identity skip's `source_guid` is also its
+    target GUID, so the two surfaces can be compared directly. Measured on run
+    `CENSUS-20260820-094825` the two sets are disjoint (3 enriched
+    `PartOfSpeech` GUIDs, 2 skipped ones, no overlap) -- as they should be,
+    since a whole-object skip and an enrichment are different dispositions of
+    the same object and data-model.md section 7 permits only one of them per
+    object. The dedup is not there because the overlap was observed; it is
+    there because double-counting a match would OVERSTATE
+    `starter_matched_to_source`, which under-subtracts and can hide a real
+    shortfall -- the one direction this instrument must never be wrong in.
+    """
+    data = _load_json(path, "run report")
+    skips = data.get("skips")
+    if not isinstance(skips, list):
+        return IdentitySkipTally()
+
+    # Every GUID the report's own matched tally has already accounted for
+    # through an enrichment record. Both GUID fields are read: `target_guid` is
+    # the destination object and is what a skip's `source_guid` equals on a
+    # GUID match, and `source_guid` is included because on this path the two
+    # name the same object and a producer that emitted only one of them must
+    # still be deduped.
+    already: set = set()
+    records = data.get("enrichments")
+    if isinstance(records, list):
+        for record in records:
+            if not isinstance(record, dict):
+                continue
+            for key in ("target_guid", "source_guid"):
+                guid = record.get(key)
+                if isinstance(guid, str) and guid:
+                    already.add(guid)
+
+    table, available = identity_skip_class_table()
+    by_class: dict = {}
+    unattributed: dict = {}
+    withheld: set = set()
+    unbounded = False
+    counted = 0
+    deduped = 0
+    seen: set = set()
+    for skip in skips:
+        if not isinstance(skip, dict):
+            continue
+        if skip.get("reason") != IDENTITY_SKIP_REASON:
+            continue
+        guid = skip.get("source_guid")
+        guid = guid if isinstance(guid, str) else ""
+        if guid and (guid in already or guid in seen):
+            deduped += 1
+            continue
+        if guid:
+            seen.add(guid)
+        category = skip.get("category")
+        category = category if isinstance(category, str) else ""
+        object_class = table.get(category, "") if available else ""
+        if object_class:
+            by_class[object_class] = by_class.get(object_class, 0) + 1
+            counted += 1
+            continue
+        unattributed[category] = unattributed.get(category, 0) + 1
+        candidates = _AMBIGUOUS_IDENTITY_SKIP_CLASSES.get(category)
+        if candidates is None:
+            unbounded = True
+        else:
+            withheld |= set(candidates)
+    return IdentitySkipTally(
+        by_class=dict(sorted(by_class.items())),
+        unattributed_by_category=dict(sorted(unattributed.items())),
+        withheld=frozenset(withheld),
+        unbounded=unbounded,
+        measured=True,
+        counted=counted,
+        deduped=deduped,
+    )
+
+
+def merge_identity_skip_matches(matched_by_class: dict, tally) -> dict:
+    """`matched_by_class` plus the identity skips, as a new sorted dict.
+
+    A class present in only one of the two sources appears with that source's
+    count; the report's tally and the skip tally count DISJOINT dispositions of
+    disjoint objects (a match that wrote or enriched, versus a match that did
+    neither), so they add rather than override.
+    """
+    merged = dict(matched_by_class)
+    for name, count in getattr(tally, "by_class", {}).items():
+        merged[name] = merged.get(name, 0) + count
+    return dict(sorted(merged.items()))
+
+
 #: `^GT-YYYYMMDD-HHMMSS$` -- `reportRef.run_id`'s schema pattern
 #: (`census-artifact.schema.json` `$defs.reportRef.run_id`). A run id that does
 #: not match is OMITTED rather than written through: `run_id` is optional on a
@@ -1031,6 +1289,7 @@ def _row_for_entry(
     entry, source_counts, destination_counts, baseline,
     matched_by_class=None, matched_complete=False,
     *, evidence: Optional[ReportEvidence] = None,
+    withheld_classes=frozenset(),
 ):
     """One `(ClassCensusRow, emitter kwargs)` pair for one class-list entry.
 
@@ -1056,6 +1315,8 @@ def _row_for_entry(
     """
     matched_by_class = matched_by_class or {}
     evidence = evidence or ReportEvidence()
+    withheld_classes = withheld_classes or frozenset()
+    matched_effective = None
     measured = entry.in_class_list_via != "excluded_not_measurable"
     notes = []
     if measured:
@@ -1090,15 +1351,46 @@ def _row_for_entry(
         # never reaches the matched basis. Correct: the report cannot say which
         # feature system a matched FsFeatStrucType belonged to.
         matched = matched_by_class.get(entry.object_class)
+        # T048b: a class whose tally may be understated by an identity skip
+        # nobody could attribute does not reach the stronger basis. Same rule
+        # as `matched_complete`, bounded to the classes actually at risk --
+        # see `_AMBIGUOUS_IDENTITY_SKIP_CLASSES`.
+        withheld = entry.object_class in withheld_classes
         if (
             matched_complete
             and matched is not None
             and entry.owning_feature_system is None
+            and not withheld
         ):
             basis = "baseline_matched"
-            starter_excluded = census.unmatched_starter(baseline_count, matched)
+            # T048b: THE TALLY IS CAPPED AT THE BASELINE, and the cap is not
+            # cosmetic. `starter_matched_to_source` counts STARTER objects the
+            # run matched, so it cannot exceed the number of starter objects
+            # that exist. On a SECOND run against the same destination every
+            # object the first run created is matched too -- measured on T039's
+            # run 2, 164 `MoStemMsa` matches against a starter baseline of 0 --
+            # and `census.unmatched_starter` does not clamp, so an uncapped
+            # tally would return -164, be subtracted as a NEGATIVE, and inflate
+            # `destination_count_net` by 164. That hides a real shortfall,
+            # which is the one direction this instrument must never be wrong
+            # in. Capping errs the other way: it subtracts more, so a capped
+            # row can only ever report a shortfall it does not have, and the
+            # note below says so out loud (the T023c rule -- a capped number is
+            # never silent).
+            matched_effective = min(matched, baseline_count)
+            if matched_effective != matched:
+                notes.append(
+                    "starter_matched_to_source CAPPED from " + str(matched)
+                    + " to the starter baseline of " + str(baseline_count)
+                    + ": a matched count above the baseline names objects that "
+                    "were not in the starter (a re-run matches what the "
+                    "previous run created), and only starter objects may be "
+                    "subtracted"
+                )
+            starter_excluded = census.unmatched_starter(
+                baseline_count, matched_effective)
             notes.append(
-                "starter_matched_to_source=" + str(matched)
+                "starter_matched_to_source=" + str(matched_effective)
                 + " read from the run report; subtracting "
                 + str(starter_excluded) + " unmatched starter object(s) rather "
                 "than the gross baseline of " + str(baseline_count)
@@ -1106,6 +1398,15 @@ def _row_for_entry(
         else:
             basis = "baseline_gross"
             starter_excluded = baseline_count
+            if withheld:
+                notes.append(
+                    "the `baseline_matched` basis is WITHHELD from this class "
+                    "(T048b): the run report carries an identity skip whose "
+                    "LCM class could not be determined and which could have "
+                    "been a " + entry.object_class + ", so this class's "
+                    "matched tally may be understated. Shortfalls on this row "
+                    "are advisory (fidelity-census.md 5.2)."
+                )
 
     reasons = ()
     out_of_scope = False
@@ -1134,7 +1435,11 @@ def _row_for_entry(
         # Emitted ONLY on the matched basis. On the gross basis the count is
         # unknown, and writing a 0 there would be the "absent read as zero"
         # error `census.unmatched_starter` refuses to make.
-        kwargs["starter_matched_to_source"] = matched_by_class[entry.object_class]
+        # The CAPPED value, because it is the number actually subtracted --
+        # publishing the raw tally beside a different subtraction would make
+        # the artifact's own arithmetic unreproducible. The raw value is in
+        # `notes` whenever the cap bit.
+        kwargs["starter_matched_to_source"] = matched_effective
 
     # ---- T024c sub-point 3: a REPORTED drop is accounting -----------------
     # An A1 split row is excluded for the same reason it cannot reach the
@@ -1272,6 +1577,30 @@ def census_run(
         matched_by_class_from_report(run_report)
         if run_report is not None else ({}, False)
     )
+    # T048b: an `ALREADY_PRESENT_BY_GUID` skip is a match the report's own
+    # tally never counted, because `report.build_from_plan` calls
+    # `_count_matched` on the actions and overwrites loops and not on the skips
+    # loop. Read them here and add them in, deduped by GUID against the
+    # enrichments the report DID count.
+    identity_skips = (
+        identity_skips_from_report(run_report)
+        if run_report is not None else IdentitySkipTally()
+    )
+    if identity_skips.by_class:
+        matched_by_class = merge_identity_skip_matches(
+            matched_by_class, identity_skips)
+        # `matched_complete` is the report's claim about the tally IT built. An
+        # identity skip this instrument attributed itself is attributed by
+        # construction -- it went into `by_class` precisely because the
+        # one-to-one table named its class -- so counting it cannot make the
+        # merged tally less complete than the report's was.
+        matched_complete = matched_complete or bool(matched_by_class)
+    withheld_classes = frozenset(identity_skips.withheld)
+    if identity_skips.unbounded:
+        # No bound on which class the unattributed skip belonged to, so the
+        # stronger basis is withheld from every class -- the pre-T048b
+        # behaviour, and the honest answer when the damage cannot be located.
+        matched_complete = False
     # T024c sub-point 3 + the P3 seam: the enrichment tally `match_basis`
     # needs and the reported drops `accounted_for` needs, both read from the
     # SAME report and both keyed by LCM class. `wanted` is passed so a drop can
@@ -1284,7 +1613,8 @@ def census_run(
         if owner is None:
             row, kwargs = _row_for_entry(
                 entry, source_counts, destination_counts, baseline,
-                matched_by_class, matched_complete, evidence=evidence)
+                matched_by_class, matched_complete, evidence=evidence,
+                withheld_classes=withheld_classes)
             duplicate_report = duplicates.get(entry.object_class)
         else:
             row, kwargs = _row_for_entry(
@@ -1295,12 +1625,41 @@ def census_run(
                     destination_split.get(entry.object_class, {}).get(owner, 0)},
                 baseline,
                 matched_by_class, matched_complete, evidence=evidence,
+                withheld_classes=withheld_classes,
             )
             # No natural-key definition covers a split class, and a whole-class
             # duplicate report attached to one half would double-count it.
             duplicate_report = None
         rows.append(census.class_row_artifact(
             row, entry, duplicates=duplicate_report, **kwargs))
+
+    if identity_skips.measured and identity_skips.total():
+        _info(
+            "T048b: counted " + str(identity_skips.total())
+            + " ALREADY_PRESENT_BY_GUID skip(s) as starter matches across "
+            + str(len(identity_skips.by_class)) + " class(es)"
+            + (" (" + str(identity_skips.deduped)
+               + " deduped against the enrichments)"
+               if identity_skips.deduped else "")
+            + " -- an identity skip is a match, and the strongest kind."
+        )
+    if identity_skips.unattributed_by_category:
+        _warn(
+            "T048b: " + str(sum(identity_skips.unattributed_by_category.values()))
+            + " identity skip(s) name a category whose LCM class is not "
+            "one-to-one ("
+            + ", ".join(
+                name + "=" + str(count) for name, count
+                in identity_skips.unattributed_by_category.items()
+            )
+            + "), so they are counted as matches for NO class rather than "
+            "guessed at. The `baseline_matched` basis is withheld from "
+            + ("EVERY class (a category neither table bounds)"
+               if identity_skips.unbounded else
+               str(len(withheld_classes)) + " class(es) they could have been: "
+               + ", ".join(sorted(withheld_classes)))
+            + "."
+        )
 
     if not baseline.is_missing and run_report is not None and not matched_complete:
         # T024d-b: the run report was supplied but cannot lift the cap. Said out
