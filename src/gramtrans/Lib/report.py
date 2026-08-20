@@ -615,6 +615,30 @@ def disposition_totals(report) -> dict:
       ``update_overwritten``  one per `PlannedOverwrite` -> `per_category[*].overwritten`
       ``skip``                one per `Skip`             -> `skips`
       ``dropped_with_reason`` one per `DroppedItemRecord`-> `dropped_items`
+      ``add_write_failed``    one per `LeafExecutionFailure`
+                                                         -> `leaf_execution_failures`
+
+    ``add_created`` IS COUNTED FROM THE PLAN, AND T048c IS WHY THAT MATTERS.
+    `per_category[*].added` is one per `PlannedAction`, so it says what the run
+    INTENDED to write, not what it wrote. The leaf-dispatch loop swallows a
+    failing `execute_action` by policy (feature 037 defect C, deliberately
+    unchanged), and its own debug line states the consequence in as many words:
+    *"swallowed write failures do NOT reduce the reported 'added' count"*.
+    Measured on run `CENSUS-20260820-094825`: the log read `attempted=329
+    succeeded=326 failed=3` while `disposition.add_created` read 329 and the
+    artifact carried no failure surface at all -- a real loss, unreported,
+    which is the Principle I shape.
+
+    `add_created` is left alone rather than silently reduced, because it is the
+    honest answer to the question it names ("how many creates were planned")
+    and three existing invariants are checked against it. The write outcome
+    gets its own two keys instead: ``add_write_failed`` (the count of swallowed
+    failures) and ``add_created_written`` (the remainder that actually
+    reached the database). The remainder follows the `update_overwritten_not_
+    enriched` precedent exactly -- when the subtraction has no valid basis
+    (more failures than planned creates, which would mean the counters
+    disagree) it yields ``None`` and ``create_split_reconciles`` is False,
+    because a number whose basis does not support it is worse than no number.
 
     The buckets are counted from DISJOINT record types, which is precisely why
     an enrichment can never land in the created tally: an `EnrichmentRecord`
@@ -641,6 +665,10 @@ def disposition_totals(report) -> dict:
     )
     dropped = len(getattr(report, "dropped_items", ()))
     reconciles = enriched <= overwritten
+    # T048c: read from the records, never from a counter -- `leaf_failed` is a
+    # property over this same tuple for exactly that reason.
+    write_failed = len(getattr(report, "leaf_execution_failures", ()))
+    create_reconciles = write_failed <= created
     # FidelityStatus is REUSED here, never re-derived: `EnrichmentRecord.
     # fidelity` already applies the same FULL/PARTIAL rule
     # `categories.compute_fidelity_by_guid` applies to a created object.
@@ -653,6 +681,13 @@ def disposition_totals(report) -> dict:
     )
     return {
         "add_created": created,
+        # T048c: planned versus written. `add_created` is the plan's number;
+        # these two are the outcome's.
+        "add_write_failed": write_failed,
+        "add_created_written": (
+            created - write_failed if create_reconciles else None
+        ),
+        "create_split_reconciles": create_reconciles,
         "update_enriched": enriched,
         "update_overwritten": overwritten,
         "update_overwritten_not_enriched": (
@@ -708,6 +743,15 @@ def _has_038_data(report) -> bool:
             or getattr(report, "process_rules", ())):
         return True
     if getattr(report, "census", None) is not None:
+        return True
+    # T048c: a run whose only anomaly is a SWALLOWED WRITE is exactly the run
+    # that needs the disposition block, because `add_created` is the plan's
+    # number and `add_created_written` is the only place the difference is
+    # stated. Byte-identity is not weakened by this: such a report already
+    # emits the `leaf_execution_failures` key above, so it was never
+    # byte-identical to a pre-038 snapshot in the first place. A report with
+    # ZERO failures is unaffected and stays byte-identical.
+    if getattr(report, "leaf_execution_failures", ()):
         return True
     per_cat = getattr(report, "per_category", {}) or {}
     return any(
@@ -1554,6 +1598,42 @@ def _to_snapshot_json(self) -> str:
     if not_reproducible is not None:
         payload["not_reproducible_counts"] = not_reproducible
 
+    # ---- T048c: the swallowed write failures reach the ARTIFACT ---------
+    # Feature 037 built `LeafExecutionFailure`, carried it onto `RunReport`,
+    # and rendered it in `render_text_summary` -- but never emitted it here.
+    # So the one surface that survives after the console has scrolled away,
+    # and the one the census reads, said nothing at all: run
+    # `CENSUS-20260820-094825` logged `failed=3` and its artifact had no
+    # `leaf_execution_failures` key, so every reader doing `.get(...)` saw
+    # `None` and could not distinguish "three writes failed" from "this build
+    # does not report write failures".
+    #
+    # Emitted when non-empty, like every other record bucket, which keeps the
+    # byte-identical-snapshot promise for a clean run. The measured ZERO is
+    # not homeless as a result: `disposition.add_write_failed` carries it
+    # whenever the disposition panel is emitted at all, which is the lesson
+    # `matched_to_source`'s `by_natural_key` already records about
+    # omit-when-empty. NOT truncated -- a swallowed write failure is the
+    # least truncatable record this report holds.
+    if self.leaf_execution_failures:
+        payload["leaf_execution_failures"] = [
+            {
+                "category": _enum_name(f.category),
+                "source_guid": f.source_guid,
+                "exception_type": f.exception_type,
+                "message": f.message,
+            }
+            for f in self.leaf_execution_failures
+        ]
+        payload["leaf_failed"] = self.leaf_failed
+        payload["leaf_failed_note"] = (
+            "execute_action calls that RAISED and were swallowed by the "
+            "leaf-dispatch loop's swallow-and-continue policy (feature 037 "
+            "defect C). These writes did NOT happen. per_category[*].added "
+            "and disposition.add_created are counted from the PLAN and do not "
+            "reflect them -- disposition.add_created_written does"
+        )
+
     # ---- FR-022 / SC-010: the four-outcome disposition block -----------
     # The machine-readable half of the console panel, rendered from the SAME
     # `disposition_totals` call so the two can never disagree. Gated on the
@@ -1568,7 +1648,12 @@ def _to_snapshot_json(self) -> str:
             # `add_created`.
             disposition["created_excludes_enriched"] = True
             disposition["counted_from"] = {
-                "add_created": "PlannedAction (per_category[*].added)",
+                "add_created":
+                    "PlannedAction (per_category[*].added) -- the PLAN's "
+                    "count of intended creates, which a swallowed write "
+                    "failure does not reduce; see add_write_failed",
+                "add_write_failed":
+                    "LeafExecutionFailure (leaf_execution_failures)",
                 "update_enriched":
                     "EnrichmentRecord (enrichments); was_created is always "
                     "false and unconstructible as true",
@@ -1768,6 +1853,25 @@ def _render_disposition_lines(report) -> Iterable[str]:
         "(SC-010: no fifth, unreported outcome):"
     )
     yield _row("ADD", "created in target (new object)", d["add_created"])
+    if d["add_write_failed"]:
+        # T048c: never a silent difference between planned and written. The
+        # row above is the plan's number; this one says what became of it.
+        if d["create_split_reconciles"]:
+            yield _row(
+                "ADD", "of those, WRITE FAILED (swallowed)",
+                f"{d['add_write_failed']} -- {d['add_created_written']} "
+                "actually written",
+            )
+        else:
+            yield _row(
+                "ADD", "WRITE FAILED (swallowed)", d["add_write_failed"],
+            )
+            yield (
+                f"      (WITHHELD: {d['add_write_failed']} swallowed write "
+                f"failures against {d['add_created']} planned creates -- the "
+                "written remainder has no valid subtraction basis and is not "
+                "guessed)"
+            )
     enriched_bits = []
     if d["enriched_partial"]:
         enriched_bits.append(
