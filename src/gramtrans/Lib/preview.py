@@ -577,6 +577,15 @@ def build_run_plan(
         GrammarCategory.STRATA,
         # Phase 3b (memo steps 6-13b)
         GrammarCategory.GRAM_CATEGORIES,
+        # POS is the pick-driven ALIAS of GRAM_CATEGORIES (see the banner
+        # above `categories.pos_enumerate_source`). It MUST dispatch here --
+        # after GRAM_CATEGORIES, before every category whose executor resolves
+        # an owning POS (INFLECTION_CLASSES, STEM_NAMES, POS_INFLECTABLE_FEATS,
+        # SLOTS, AFFIX_TEMPLATES, AFFIXES) -- so a wizard-picked POS exists in
+        # the target before those wire to it. `pos_enumerate_source` yields
+        # nothing unless `selection.pos_picks` is non-empty AND
+        # GRAM_CATEGORIES is off, so no existing selection changes shape.
+        GrammarCategory.POS,
         GrammarCategory.INFLECTION_FEATURES,
         GrammarCategory.CUSTOM_FIELDS,
         GrammarCategory.INFLECTION_CLASSES,

@@ -962,12 +962,15 @@ def gram_categories_required_writing_systems(piece) -> Iterable[Tuple[str, WSKin
     return ()
 
 
-def gram_categories_plan_action(piece, context: RunContext, ws_mapping: WSMapping):
-    """GOLD-aware: skip GOLD; edit-copy merge for present custom; Add for absent.
+def _plan_pos_piece(piece, context: RunContext, category: GrammarCategory):
+    """Shared planner body for the two categories that plan an IPartOfSpeech.
 
-    Uses the shared _plan_gold_reserved_edit helper (spec 017 FR-E10).
-    POS is ALIASED to gram_categories (shares execute at gram_categories L193+,
-    Phase 0 routing) — this function handles both.
+    `GRAM_CATEGORIES` (the whole-inventory pass) and `POS` (the pick-driven
+    pass -- see `pos_enumerate_source`) differ ONLY in the category stamped on
+    the decision they emit; the target lookup, the GOLD-reserved merge/skip
+    decision and the owned-collection comparison are identical, and both
+    members are already listed in `_POS_OWNED_COLLECTION_CATEGORIES` so
+    `_plan_gold_reserved_edit` runs the seven-collection pass for either one.
     """
     def _target_iter(target):
         if hasattr(target, "POS"):
@@ -978,19 +981,97 @@ def gram_categories_plan_action(piece, context: RunContext, ws_mapping: WSMappin
     # wiring post-pass, whether the POS is created (ADD) or matched (SKIP).
     _stash_feature_category_links(piece, context)
 
-    result = _plan_gold_reserved_edit(
-        piece, GrammarCategory.GRAM_CATEGORIES, context, _target_iter,
-    )
+    result = _plan_gold_reserved_edit(piece, category, context, _target_iter)
     if result is not None:
         return result
     # Absent -> PlannedAction (add)
     src_guid = _guid_str_from(piece)
     return PlannedAction(
-        category=GrammarCategory.GRAM_CATEGORIES,
+        category=category,
         source_guid=src_guid,
         intended_target_guid=src_guid,
         summary=f"POS guid={src_guid[:8]}...",
     )
+
+
+def gram_categories_plan_action(piece, context: RunContext, ws_mapping: WSMapping):
+    """GOLD-aware: skip GOLD; edit-copy merge for present custom; Add for absent.
+
+    Uses the shared _plan_gold_reserved_edit helper (spec 017 FR-E10).
+    POS is ALIASED to gram_categories (shares execute at gram_categories L193+,
+    Phase 0 routing) — this function handles both.
+    """
+    return _plan_pos_piece(piece, context, GrammarCategory.GRAM_CATEGORIES)
+
+
+# ----- pos (pick-driven ALIAS of gram_categories) --------------------------
+#
+# WHY THIS EXISTS. `Selection.pos_picks` is the wizard's Skeleton-page output:
+# exactly the POSes the picked affixes' MSAs attach to
+# (`Lib/ui/selection_wizard.py` step 5e). That step deliberately does NOT flag
+# the whole-inventory `GRAM_CATEGORIES` pass -- flagging it would enumerate
+# EVERY source POS, which is precisely what the pick is there to avoid, and
+# `tests/unit/test_wizard_page_flow.py::test_pos_picks_do_not_flag_leaf_gram_categories`
+# locks that in. It flags `GrammarCategory.POS` + `pos_picks` instead.
+#
+# Until this bundle existed, that flag reached NOTHING. Its only consumer was
+# `preview._select_source_poses` -> the verb-vertical closure, and that whole
+# path has been gated off since 2026-07-06 (`_VERB_VERTICAL_ENABLED = False`
+# in BOTH `preview.build_run_plan` and `transfer.execute`, the double-dispatch
+# GUID-collision fix). `POS` was not in either module's
+# `_LEAF_DISPATCH_CATEGORIES` and not in `LEAF_CATEGORIES`, so a
+# `Selection{POS: True, pos_picks={...}}` produced an EMPTY plan: the picked
+# POS was never created in the target, and every execute-time consumer that
+# needs it -- `slots_execute_action`, `affix_templates_execute_action`,
+# `inflection_classes_execute_action`, `pos_inflectable_feats_execute_action`,
+# each via `_resolve_target_pos` -> `_report_owner_pos_unresolved` -- abandoned
+# its item, while affix/stem MSAs wired to None ("no grammatical info"). That
+# is the exact defect the wizard fix was written to close.
+#
+# Registering POS as an alias of the gram_categories bundle restores the flag's
+# meaning through the ACTIVE path: same enumeration source, same GOLD-reserved
+# merge decision, same GUID-preserving creator -- only the item set is narrowed
+# to the picks and the emitted decision is stamped `POS`.
+
+def pos_enumerate_source(context: RunContext, selection: Selection):
+    """Yield exactly the source POSes named by `selection.pos_picks`.
+
+    PICK-DRIVEN BY DESIGN, and deliberately EMPTY in two cases:
+
+    * `pos_picks` empty -- `categories[POS] = True` with no picks is the
+      legacy verb-vertical "walk every top-level POS" mode, which
+      `GRAM_CATEGORIES` now owns. Enumerating the whole inventory here would
+      silently reinstate the superseded behaviour behind an unrelated flag.
+    * `GRAM_CATEGORIES` also on -- that pass already enumerates every POS,
+      including the picked ones, so running both would plan each picked POS
+      TWICE under two different categories. Yielding nothing here keeps the
+      single-path invariant the 2026-07-06 supersede decision established.
+    """
+    picks = {str(g).lower() for g in (getattr(selection, "pos_picks", None) or ())}
+    if not picks:
+        return ()
+    try:
+        if selection.is_on(GrammarCategory.GRAM_CATEGORIES):
+            return ()
+    except (AttributeError, TypeError):
+        pass
+    source = context.source_handle
+    if not hasattr(source, "POS"):
+        return ()
+    return [p for p in source.POS.GetAll(recursive=True)
+            if _guid_str_from(p) in picks]
+
+
+def pos_plan_action(piece, context: RunContext, ws_mapping: WSMapping):
+    """Same decision as `gram_categories_plan_action`, stamped `POS`.
+
+    The category on the decision is load-bearing on the Move side: the
+    overwrite executor already routes `cat == GrammarCategory.POS` through
+    `POS.ApplySyncableProperties` (`transfer._execute_overwrite`), and
+    `_ENRICHMENT_CATEGORIES` already admits POS, so a POS-stamped decision is
+    handled end to end exactly like its gram_categories twin.
+    """
+    return _plan_pos_piece(piece, context, GrammarCategory.POS)
 
 
 def gram_categories_execute_action(action: PlannedAction, context: RunContext, ws_mapping: WSMapping, tag: ImportResidueTag):
@@ -1174,14 +1255,41 @@ def _ws_map_dict(ws_mapping):
     return {}
 
 
+def _is_dotnet(obj) -> bool:
+    """True when `obj` is a genuine .NET (pythonnet) object, False for a
+    duck-typed Python fake and for plain Python builtins. Always False when
+    pythonnet is absent.
+
+    This is the correct liveness test for the ITsString helpers below. The
+    previous test -- "can `SIL.LCModel` be imported?" -- described the PROCESS,
+    not the OBJECT: once anything in the process imported flexicon (which loads
+    pythonnet and the SIL assemblies), every duck-typed caller flipped to the
+    live branch and `ITsString(fake)` raised `TypeError`, which callers swallow
+    as "nothing to copy". Keying off the object itself keeps the live path
+    unchanged while staying correct for host-free callers.
+
+    Delegates to the single definition in `Lib/texts.py` (imported lazily, the
+    idiom this module already uses for `residue`/`preview`, so no module-scope
+    edge is added to the import graph). One definition, so the two callers
+    cannot drift apart on so subtle a predicate.
+    """
+    if __package__:
+        from . import texts as _texts
+    else:
+        import texts as _texts  # type: ignore
+    return _texts._is_dotnet_object(obj)
+
+
 def _tss_read_text(tss):
     """Read `.Text` from an ITsString (via cast on the live runtime) or a
     duck-typed fake offline. SIL-optional."""
-    try:
-        from SIL.LCModel.Core.KernelInterfaces import ITsString
-    except Exception:  # noqa: BLE001 -- offline: no pythonnet
-        return getattr(tss, "Text", tss)
-    return ITsString(tss).Text
+    if _is_dotnet(tss):
+        try:
+            from SIL.LCModel.Core.KernelInterfaces import ITsString
+            return ITsString(tss).Text
+        except Exception:  # noqa: BLE001 -- not an ITsString; duck-type below
+            pass
+    return getattr(tss, "Text", tss)
 
 
 def _tss_make_string(text, handle):
@@ -1192,6 +1300,13 @@ def _tss_make_string(text, handle):
     except Exception:  # noqa: BLE001 -- offline: no pythonnet
         return text
     return TsStringUtils.MakeString(text, handle)
+
+
+def _plain_make_string(text, handle):
+    """`make_string` for duck-typed destinations: a fake multistring stores the
+    plain text, so building a real `ITsString` would poison it with a .NET
+    object. Signature matches `_tss_make_string`."""
+    return text
 
 
 def _copy_multistrings_ws_mapped(src_typed, new_typed, prop_names, *,
@@ -1213,8 +1328,6 @@ def _copy_multistrings_ws_mapped(src_typed, new_typed, prop_names, *,
     the real callables (or lets these SIL-optional defaults resolve them)."""
     if read_text is None:
         read_text = _tss_read_text
-    if make_string is None:
-        make_string = _tss_make_string
     ws_map = ws_map or {}
     try:
         src_id_by_handle = {ws.Handle: ws.Id for ws in source.WritingSystems.GetAll()}
@@ -1229,6 +1342,14 @@ def _copy_multistrings_ws_mapped(src_typed, new_typed, prop_names, *,
         tgt_prop = getattr(new_typed, prop_name, None)
         if src_prop is None or tgt_prop is None:
             continue
+        # Resolve the string builder against the ACTUAL destination object: a
+        # live .NET IMultiString needs a real ITsString, a duck-typed fake
+        # stores the plain text. Choosing on "is pythonnet importable?" wrote
+        # .NET strings into fakes as soon as any other caller in the process
+        # had loaded flexicon. An explicitly supplied `make_string` still wins.
+        mk = make_string
+        if mk is None:
+            mk = _tss_make_string if _is_dotnet(tgt_prop) else _plain_make_string
         for src_handle, src_id in src_id_by_handle.items():
             text = read_text(src_prop.get_String(src_handle))
             if not text:
@@ -1237,7 +1358,7 @@ def _copy_multistrings_ws_mapped(src_typed, new_typed, prop_names, *,
             tgt_handle = tgt_handle_by_id.get(tgt_id)
             if tgt_handle is None:
                 continue  # no counterpart target WS -> skip (never wrong handle)
-            tgt_prop.set_String(tgt_handle, make_string(text, tgt_handle))
+            tgt_prop.set_String(tgt_handle, mk(text, tgt_handle))
 
 
 def inflection_features_execute_action(action: PlannedAction, context: RunContext, ws_mapping: WSMapping, tag: ImportResidueTag):
@@ -11275,6 +11396,18 @@ LEAF_CATEGORIES = {
         "dependencies": gram_categories_dependencies,
         "required_writing_systems": gram_categories_required_writing_systems,
         "plan_action": gram_categories_plan_action,
+        "execute_action": gram_categories_execute_action,
+    },
+    # POS: the pick-driven ALIAS of gram_categories (see the banner above
+    # `pos_enumerate_source`). Shares dependencies / required_writing_systems /
+    # execute_action verbatim -- `gram_categories_execute_action` reads only
+    # `action.source_guid` and is category-agnostic -- and differs only in the
+    # narrowed enumeration and the category stamped on the decision.
+    GrammarCategory.POS: {
+        "enumerate_source": pos_enumerate_source,
+        "dependencies": gram_categories_dependencies,
+        "required_writing_systems": gram_categories_required_writing_systems,
+        "plan_action": pos_plan_action,
         "execute_action": gram_categories_execute_action,
     },
     GrammarCategory.INFLECTION_FEATURES: {

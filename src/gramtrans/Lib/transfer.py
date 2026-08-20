@@ -381,6 +381,13 @@ def execute(plan: RunPlan, source, target, report_sink, tag: ImportResidueTag,
         GrammarCategory.STRATA,
         # Phase 3b (memo steps 6-13b)
         GrammarCategory.GRAM_CATEGORIES,
+        # POS: the pick-driven ALIAS of GRAM_CATEGORIES. Kept in lockstep with
+        # `preview.build_run_plan`'s identical list -- a POS-stamped
+        # PlannedAction that the planner emits but this filter drops would be
+        # a Preview/Move divergence (Principle III): Preview would promise a
+        # POS the run never creates, and every downstream executor that
+        # resolves an owning POS would then abandon its item.
+        GrammarCategory.POS,
         GrammarCategory.INFLECTION_FEATURES,
         GrammarCategory.CUSTOM_FIELDS,
         GrammarCategory.INFLECTION_CLASSES,

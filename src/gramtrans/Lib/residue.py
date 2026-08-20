@@ -331,6 +331,14 @@ def apply_residue(obj, ws, tag: ImportResidueTag, class_name: Optional[str] = No
     to Carrier B (Description-append).
     """
     if class_name is None:
+        class_name = getattr(obj, "ClassName", None)
+    if class_name is None:
+        # Only a live LCM object needs the cast. Reading `obj.ClassName` first
+        # (as the docstring always promised) keeps a duck-typed object off a
+        # cast that can only raise for it: `from SIL.LCModel import` succeeds in
+        # any process that has loaded the LCM assemblies, which is a different
+        # question from "is this object a .NET object". A genuine live failure
+        # still propagates -- unresolvable class = loud, never silent.
         from SIL.LCModel import ICmObject  # lazy
         class_name = ICmObject(obj).ClassName
     if class_uses_carrier_a(class_name):

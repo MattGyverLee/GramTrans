@@ -76,6 +76,7 @@ capture_per_ws = _texts.capture_per_ws
 target_ws_ids = _texts.target_ws_ids
 gate_ws_id = _texts.gate_ws_id
 id_to_handle = _texts.id_to_handle
+_is_dotnet_object = _texts._is_dotnet_object
 
 _AGENT_NAME = "GramTrans"  # provisioned human agent name (FR-009)
 
@@ -383,15 +384,22 @@ def _normalize_token_to_analysis(token):
     `owning_analysis`; a token exposing `is_analysis == False` is a non-analysis
     (skip); any other fake token is treated as the analysis itself -- back-compat
     with the pre-existing fakes that model segment tokens as bare analyses."""
-    try:
-        from SIL.LCModel import IWfiAnalysis, IWfiGloss  # noqa: PLC0415
-    except Exception:
+    if not _is_dotnet_object(token):
+        # Duck-typed offline fake. Branch on the OBJECT, not on whether
+        # SIL.LCModel happens to be importable: once anything in the process
+        # has loaded the LCM assemblies (e.g. another test importing flexicon),
+        # the import below succeeds and every cast of a pure-Python fake raises
+        # -- which used to return None and silently drop every fake token.
         owning = getattr(token, "owning_analysis", None)
         if owning is not None:
             return owning
         if getattr(token, "is_analysis", True) is False:
             return None
         return token
+    try:
+        from SIL.LCModel import IWfiAnalysis, IWfiGloss  # noqa: PLC0415
+    except Exception:
+        return None
     try:
         return IWfiAnalysis(token)
     except Exception:
@@ -575,23 +583,24 @@ def _live_gloss_human_evaluation(gloss):
     `_live_human_evaluation` on the owning analysis (icon 1/2 -> eval, else
     None). Offline duck-typed fallback: a fake gloss exposing `owning_analysis`
     or a direct `ApprovalStatusIcon`."""
-    try:
-        from SIL.LCModel import IWfiGloss, IWfiAnalysis  # noqa: PLC0415
+    if _is_dotnet_object(gloss):
         try:
+            from SIL.LCModel import IWfiGloss, IWfiAnalysis  # noqa: PLC0415
             owner = IWfiAnalysis(IWfiGloss(gloss).Owner)
             return _live_human_evaluation(owner)
         except Exception:
             return None
-    except Exception:
-        owning = getattr(gloss, "owning_analysis", None)
-        if owning is not None:
-            return _live_human_evaluation(owning)
-        icon = getattr(gloss, "ApprovalStatusIcon", None)
-        if icon == 1:
-            return _ApprovalEval(True)
-        if icon == 2:
-            return _ApprovalEval(False)
-        return None
+    # Duck-typed offline fake -- reached whether or not the LCM assemblies are
+    # loadable in this process (see `_is_dotnet_object`).
+    owning = getattr(gloss, "owning_analysis", None)
+    if owning is not None:
+        return _live_human_evaluation(owning)
+    icon = getattr(gloss, "ApprovalStatusIcon", None)
+    if icon == 1:
+        return _ApprovalEval(True)
+    if icon == 2:
+        return _ApprovalEval(False)
+    return None
 
 
 def plan_glosses(analysis, source, target, ctx, dropped) -> List:

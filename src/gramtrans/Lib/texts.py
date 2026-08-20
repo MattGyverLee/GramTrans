@@ -68,6 +68,32 @@ _log = logging.getLogger("gramtrans.Lib.texts")
 # self-contained. `wordforms.py` imports these by name — a single definition of
 # the WS gate + GUID reader across both 026 modules.
 
+def _is_dotnet_object(obj) -> bool:
+    """True iff `obj` is a live .NET/LCM object (a pythonnet `System.Object`).
+
+    Why this exists. Several helpers branch between the LIVE LCM surface (cast
+    through an `SIL.LCModel` interface) and a duck-typed offline fake. Writing
+    that branch as ``try: from SIL.LCModel import X / except: <fake path>``
+    keys it on whether the ASSEMBLIES ARE LOADABLE in this process -- not on
+    what kind of object is actually in hand. That is wrong whenever both are
+    true at once: in a unit-test process where anything has already imported
+    flexicon (which loads pythonnet + the LCM assemblies), the import succeeds,
+    the fake path becomes unreachable, and every duck-typed fake falls off the
+    end of the LCM path as "not an analysis" / "no evaluation".
+
+    Branch on the OBJECT instead. Returns False when pythonnet/`System` is not
+    importable at all (host-free offline) and for any pure-Python object.
+    Never raises."""
+    try:
+        import System  # noqa: PLC0415 -- lazy; absent host-free
+    except Exception:  # noqa: BLE001
+        return False
+    try:
+        return isinstance(obj, System.Object)
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def _guid_str(obj) -> str:
     """Lower-cased GUID string for a source/target object, or "".
 
