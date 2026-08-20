@@ -184,7 +184,7 @@ first three and waits for the post-037 re-census (R6).
 already identical". `_plan_gold_reserved_edit` (`categories.py:194`) gains an owned-collection
 pass beside its `("Name", "Abbreviation", "Description")` loop, covering for `PartOfSpeech`:
 `AffixSlotsOC`, `AffixTemplatesOS`, `InflectableFeatsRC`, `SubPossibilitiesOS`, `StemNamesOC`,
-`InflectionClassesOC`, `ReferenceFormsOS`. Its two early `Skip(ALREADY_PRESENT_BY_GUID)`
+`InflectionClassesOC`, `ReferenceFormsOC`. Its two early `Skip(ALREADY_PRESENT_BY_GUID)`
 returns fire only when that pass also finds nothing to add; any missing child yields the
 existing `PlannedOverwrite(write_mode="merge")`, which `transfer.py:268` already routes to
 `_execute_update_semantic`. The write semantic is the constitution's `update` -- source where

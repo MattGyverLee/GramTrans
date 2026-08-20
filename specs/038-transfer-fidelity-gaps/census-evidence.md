@@ -251,7 +251,7 @@ half of the missing-POS count.
 - Extend `_plan_present_or_merge` beyond Name/Abbreviation/Description to owned
   collections, starting with `PartOfSpeech`: `AffixSlotsOC`, `AffixTemplatesOS`,
   `InflectableFeatsRC`, `SubPossibilitiesOS`, `StemNamesOC`,
-  `InflectionClassesOC`, `ReferenceFormsOS`.
+  `InflectionClassesOC`, `ReferenceFormsOC`.
 - Semantics must stay non-destructive, matching the existing merge contract: add
   what the target lacks, never blank a populated target from an empty source.
 - Sequenced **after** Phase 1 — enriching an object you matched by GUID only is

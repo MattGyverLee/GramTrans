@@ -166,7 +166,18 @@ What a matched-and-enriched destination object gained (FR-020..FR-022, SC-007).
 `EnrichedCollection`: `field_name: str`, `added: int`, `already_present: int`,
 `dropped: int`. `field_name` is one of the seven POS owned collections:
 `AffixSlotsOC`, `AffixTemplatesOS`, `InflectableFeatsRC`, `SubPossibilitiesOS`,
-`StemNamesOC`, `InflectionClassesOC`, `ReferenceFormsOS`.
+`StemNamesOC`, `InflectionClassesOC`, `ReferenceFormsOC`.
+
+> **Correction (T042, live-verified).** The seventh collection is
+> **`ReferenceFormsOC`**, not `ReferenceFormsOS`. FLExToolsMCP `resolve_property`
+> and `get_object_api IPartOfSpeech` both report an owning **collection** whose
+> `target_type` is `IFsFeatStruc`; no `ReferenceFormsOS` exists on
+> `IPartOfSpeech`. It also **requires a pythonnet cast** - it is declared on
+> `IMoInflClass` and `IPartOfSpeech` only, so it is invisible on a base-interface
+> proxy (the same trap T035 records for the `Fs*` factories). `models.py` makes
+> `ReferenceFormsOC` canonical and accepts `ReferenceFormsOS` as an alias, so code
+> written from the old spec text reports instead of crashing a live run.
+
 
 Enrichment never removes, blanks, or overwrites existing destination content
 (FR-021): write mode is `PlannedOverwrite.write_mode == "merge"`, Principle IV's

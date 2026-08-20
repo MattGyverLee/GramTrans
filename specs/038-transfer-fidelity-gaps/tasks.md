@@ -290,7 +290,7 @@ LCM type (Principle II, data-model.md:3-6).
 
 **Wave 1 - single task (`models.py`):**
 
-- [ ] **T042** [US4] Add `EnrichmentRecord` (`object_class`, `source_guid`, `target_guid`, `label`, `collections`, `fields_updated`, `was_created` always `False`) and `EnrichedCollection` (`field_name`, `added`, `already_present`, `dropped`), with `field_name` constrained to the seven POS collections: `AffixSlotsOC`, `AffixTemplatesOS`, `InflectableFeatsRC`, `SubPossibilitiesOS`, `StemNamesOC`, `InflectionClassesOC`, `ReferenceFormsOS`. Reuse `FidelityStatus` for enriched objects (FULL when every source child arrived, else PARTIAL) and `OwnedObjectSpec` to describe the seven collections - duplicate neither - `src/gramtrans/Lib/models.py`
+- [ ] **T042** [US4] Add `EnrichmentRecord` (`object_class`, `source_guid`, `target_guid`, `label`, `collections`, `fields_updated`, `was_created` always `False`) and `EnrichedCollection` (`field_name`, `added`, `already_present`, `dropped`), with `field_name` constrained to the seven POS collections: `AffixSlotsOC`, `AffixTemplatesOS`, `InflectableFeatsRC`, `SubPossibilitiesOS`, `StemNamesOC`, `InflectionClassesOC`, `ReferenceFormsOC`. Reuse `FidelityStatus` for enriched objects (FULL when every source child arrived, else PARTIAL) and `OwnedObjectSpec` to describe the seven collections - duplicate neither - `src/gramtrans/Lib/models.py`
 
 **--> Wait for T042, then (both touch `categories.py`, serially):**
 
