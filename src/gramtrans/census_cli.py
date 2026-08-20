@@ -995,6 +995,132 @@ def merge_identity_skip_matches(matched_by_class: dict, tally) -> dict:
     return dict(sorted(merged.items()))
 
 
+# ---------------------------------------------------------------------------
+# T048f: AN UNATTRIBUTED MATCH POISONS ONLY THE CLASSES IT COULD HAVE BEEN
+#
+# Raised by the T039 idempotence re-run (journal/T039-idempotence-rerun.md).
+# `PhPhoneme` and `PhNCSegments` fell from `baseline_matched` to
+# `baseline_gross` between two runs whose destination counts were IDENTICAL,
+# manufacturing a 21-object and a 2-object phantom shortfall on a run that
+# lost nothing. Their tallies were not missing: run 2's
+# `matched_to_source.by_object_class` carried `PhPhoneme: 21` and
+# `PhNCSegments: 2`, byte-for-byte what run 1 carried. They were REFUSED,
+# because `matched_by_class_from_report` reports completeness as ONE GLOBAL
+# BOOLEAN and run 2 left 11 matches unattributed in three unrelated
+# categories (`GRAM_CATEGORIES`, `INFLECTION_FEATURES`, `VARIANT_TYPES`).
+# Every one of the 75 rows lost the stronger basis for it.
+#
+# T048b already settled the principle for the OTHER incompleteness signal, in
+# this same file, twenty lines from the site this fixes: an unattributable
+# identity skip withholds `baseline_matched` "from only the classes it could
+# have been" (`_AMBIGUOUS_IDENTITY_SKIP_CLASSES`). This applies that rule to
+# the report's own unattributed matches, using the same two tables and the
+# same unbounded fallback. Nothing new is trusted; a second signal stops
+# being blunter than the first.
+#
+# `matched_to_source` already publishes `unattributed_by_category`, which is
+# exactly the bounding data the rule needs -- so the bound is READ, never
+# guessed. A category neither table knows is UNBOUNDED and still withholds
+# the stronger basis from every class, which is the pre-T048f behaviour and
+# the honest answer when the damage cannot be located.
+#
+# Why a third GUID audit would NOT have fixed this: T048d's
+# `starter_matched_lower_bound` rescues `PartOfSpeech` on run 2 because its
+# starters match by GUID. It is blind to `PhPhoneme` BY CONSTRUCTION -- a
+# natural-key match links a source object to a destination object with a
+# DIFFERENT guid, so `B - |D \ Q|` counts those 21 starters as
+# destination-only. The bound below is the only thing that reaches them.
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class MatchedTallyBound:
+    """Which classes a report's UNATTRIBUTED matches put at risk.
+
+    `withheld` is the set of LCM classes whose `matched_to_source` tally may be
+    understated, and which therefore may not claim the `baseline_matched`
+    basis. `unbounded` is the same fact with no bound -- an incompleteness
+    whose category neither attribution table knows, or an incompleteness the
+    report asserts without saying where -- and it withholds the stronger basis
+    from EVERY class.
+
+    `measured` False means the report carried no `matched_to_source` block at
+    all. That is not a clean bill of health, but it needs no bound either: with
+    no block there is no per-class tally, so no row can reach the matched basis
+    in the first place.
+    """
+    withheld: frozenset = frozenset()
+    unbounded: bool = False
+    measured: bool = False
+    unattributed_by_category: dict = field(default_factory=dict)
+
+
+def matched_tally_bound_from_report(path: Path) -> MatchedTallyBound:
+    """Bound the damage from a report's unattributed matches.
+
+    Resolution order per category, deliberately the same as
+    `identity_skips_from_report`'s and for the same reason -- there is ONE
+    authority for "which class does this category name":
+
+    1. `preview._LCM_CLASS_FOR_CATEGORY`, the one-to-one table. A
+       `GRAM_CATEGORIES` match can only ever have been a `PartOfSpeech`, so
+       that is the only row it may poison.
+    2. `_AMBIGUOUS_IDENTITY_SKIP_CLASSES`, the closed candidate sets for the
+       categories that table deliberately omits.
+    3. Neither -> `unbounded`.
+
+    An `unattributed_by_category` entry with a non-positive count is not a
+    risk and contributes nothing. A report claiming `complete is False` while
+    publishing no `unattributed_by_category` is `unbounded`: it asserts an
+    incompleteness and declines to locate it, which is precisely the case the
+    global flag used to handle and the one case where being blunt is right.
+    """
+    data = _load_json(path, "run report")
+    block = data.get("matched_to_source")
+    if not isinstance(block, dict):
+        return MatchedTallyBound()
+
+    raw = block.get("unattributed_by_category")
+    unattributed = {}
+    if isinstance(raw, dict):
+        for category, count in raw.items():
+            if isinstance(category, str) and isinstance(count, int) and count > 0:
+                unattributed[category] = count
+
+    complete = block.get("complete")
+    if not unattributed:
+        # Nothing to bound. An explicit `complete is False` with no breakdown
+        # is an unlocatable incompleteness; `complete` True or absent-with-no
+        # -breakdown is a clean tally.
+        return MatchedTallyBound(
+            unbounded=complete is False,
+            measured=True,
+        )
+
+    one_to_one, available = identity_skip_class_table()
+    withheld = set()
+    unbounded = False
+    for category in unattributed:
+        named = one_to_one.get(category) if available else None
+        if named:
+            withheld.add(named)
+            continue
+        candidates = _AMBIGUOUS_IDENTITY_SKIP_CLASSES.get(category)
+        if candidates:
+            withheld.update(candidates)
+            continue
+        # A category no table knows. Bounding it would be a guess, and a wrong
+        # bound lets a row claim a basis its tally cannot support.
+        unbounded = True
+
+    return MatchedTallyBound(
+        withheld=frozenset(withheld),
+        unbounded=unbounded,
+        measured=True,
+        unattributed_by_category=dict(sorted(unattributed.items())),
+    )
+
+
 #: `^GT-YYYYMMDD-HHMMSS$` -- `reportRef.run_id`'s schema pattern
 #: (`census-artifact.schema.json` `$defs.reportRef.run_id`). A run id that does
 #: not match is OMITTED rather than written through: `run_id` is optional on a
@@ -1770,12 +1896,29 @@ def census_run(
         # one-to-one table named its class -- so counting it cannot make the
         # merged tally less complete than the report's was.
         matched_complete = matched_complete or bool(matched_by_class)
-    withheld_classes = frozenset(identity_skips.withheld)
-    if identity_skips.unbounded:
-        # No bound on which class the unattributed skip belonged to, so the
+    # T048f: bound the report's OWN unattributed matches the way T048b bounds
+    # unattributable identity skips, instead of collapsing every row on one
+    # global flag.
+    matched_bound = (
+        matched_tally_bound_from_report(run_report)
+        if run_report is not None else MatchedTallyBound()
+    )
+    withheld_classes = frozenset(identity_skips.withheld) | matched_bound.withheld
+    if identity_skips.unbounded or matched_bound.unbounded:
+        # No bound on which class the unattributed evidence belonged to, so the
         # stronger basis is withheld from every class -- the pre-T048b
         # behaviour, and the honest answer when the damage cannot be located.
         matched_complete = False
+    elif matched_by_class:
+        # T048f: every incompleteness this report carries is now LOCATED, and
+        # `withheld_classes` above names exactly the rows it can have
+        # understated. A class outside that set has a tally that provably
+        # cannot be understated, so `matched_complete` -- which the report
+        # states globally -- must not keep denying it. This is the same move
+        # T048b's line above makes for the skip tally, and it is safe for the
+        # same reason: the per-row `withheld` check, not this flag, is what
+        # protects the rows actually at risk.
+        matched_complete = True
     # T024c sub-point 3 + the P3 seam: the enrichment tally `match_basis`
     # needs and the reported drops `accounted_for` needs, both read from the
     # SAME report and both keyed by LCM class. `wanted` is passed so a drop can
@@ -1859,8 +2002,28 @@ def census_run(
             "guessed at. The `baseline_matched` basis is withheld from "
             + ("EVERY class (a category neither table bounds)"
                if identity_skips.unbounded else
-               str(len(withheld_classes)) + " class(es) they could have been: "
-               + ", ".join(sorted(withheld_classes)))
+               str(len(identity_skips.withheld))
+               + " class(es) they could have been: "
+               + ", ".join(sorted(identity_skips.withheld)))
+            + "."
+        )
+    if matched_bound.unattributed_by_category:
+        _warn(
+            "T048f: the run report left "
+            + str(sum(matched_bound.unattributed_by_category.values()))
+            + " match(es) unattributed ("
+            + ", ".join(
+                name + "=" + str(count) for name, count
+                in matched_bound.unattributed_by_category.items()
+            )
+            + "), so its own `complete` flag is False. The `baseline_matched` "
+            "basis is withheld from "
+            + ("EVERY class (a category neither table bounds)"
+               if matched_bound.unbounded else
+               str(len(matched_bound.withheld))
+               + " class(es) those matches could have been: "
+               + ", ".join(sorted(matched_bound.withheld))
+               + " -- and from those only, rather than from every row")
             + "."
         )
 
