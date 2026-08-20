@@ -316,7 +316,40 @@ LCM type (Principle II, data-model.md:3-6).
   > as `ALREADY_PRESENT_BY_GUID` skips -- so `unmatched_starter` reads 2 instead
   > of 0. **Blocked on T048b**; nothing in Phase 4 or 5 can move this row.
 
-- [ ] **T039** [US1] Verify SC-008 idempotence mechanically: on run 2, `RunPlan.actions` contains **zero** `PlannedAction` whose `match_basis.basis is MatchBasis.NONE` for any class run 1 created, every class's `destination_count_total` is unchanged, and every `EnrichedCollection.added == 0` with `already_present` equal to run 1's `added`. Any increase is a duplicate-creation defect **regardless of what either census's own verdict says** - `tests/integration/test_object_census.py`
+- [ ] **T039** [US1] Verify SC-008 idempotence mechanically: on run 2, `RunPlan.actions` contains **zero** `PlannedAction` whose `match_basis.basis is MatchBasis.NONE` for any class run 1 created, every class's `destination_count_total` is unchanged, and every `EnrichedCollection.added == 0` with `already_present` equal to run 1's `added`. Any increase is a duplicate-creation defect **regardless of what either census's own verdict says** - `tests/integration/test_object_census.py`. **RE-MEASURED 2026-08-20 now that enrichment exists** (the first measurement, `journal/T039-idempotence.md`, could not evaluate criterion 3 at all). Source `Ejagham Mini` -> `GT038 T039c Target`, restored pristine from `backups/Ejagham W Target 2026-08-19 0830.fwbackup`; two CONSECUTIVE runs, no restore between them; censuses `CENSUS-20260820-133634` and `CENSUS-20260820-133834`. 13 hermetic tests over a committed snapshot; **no source file changed**. See journal/T039-idempotence-rerun.md
+
+  > | # | criterion | result |
+  > |---|---|---|
+  > | 1 | no `PlannedAction` with basis `NONE` | **PASS** -- run 2 plans **0 actions of any kind** (run 1: 329) |
+  > | 2 | `destination_count_total` unchanged | **PASS** -- identical across all **75** census entries |
+  > | 3a | every `EnrichedCollection.added == 0` | **PASS**, strictly -- all 10 collections across run 2's 4 records read 0, `dropped` 0 throughout |
+  > | 3b | `already_present` equal to run 1's `added` | **NOT EVALUABLE** -- blocked on **T048e** |
+  >
+  > **Stays unchecked on 3b, which is blocked by a defect rather than by
+  > absence of opportunity.** The two runs enrich **disjoint object sets** --
+  > run 1 fills the three starter POSes (Noun, Pronoun, Verb), run 2 enriches
+  > four POSes run 1 *created* (Adjective, Demonstrative, Numeral,
+  > Interrogative) -- so no object exists on which to compare. The totals
+  > coincide at 16 both ways; that is a corpus coincidence, not a pass, and
+  > the per-collection distributions differ.
+  >
+  > **T043 is NOT at fault and the run-2 skip is correct**: the owned-collection
+  > pass runs at `categories.py:788-790` *before* either early skip, and the
+  > skip at `:831` fires only on `not all_gaps and not all_conflicts and not
+  > collection_delta`. data-model.md 9 is satisfied. The gap is evidentiary --
+  > the computed `collections` tuple, holding exactly the `already_present`
+  > tallies 3b wants, is **discarded** on the skip path. Filed as T048e.
+  >
+  > Two further findings recorded rather than acted on: **criterion 1's basis
+  > clause is unfalsifiable as written** (no `PlannedAction` carries a
+  > `match_basis` at all -- `transfer.py:546`/`:1298`/`:3199` say so; the
+  > load-bearing assertion is the action count, and a test pins this), and the
+  > **`PhPhoneme` / `PhNCSegments` basis drift** persists with counts
+  > unmoved -- filed as T048f, and NOT a T039 criterion.
+
+- [ ] **T048e** [US4] **A correct no-op enrichment leaves no record that it happened.** Raised by the T039 re-run 2026-08-20, and the **sole blocker on T039's criterion 3b**. When `_plan_gold_reserved_edit`'s owned-collection pass finds every collection already complete, `categories.py:831` returns a bare `Skip(ALREADY_PRESENT_BY_GUID)` whose detail names only the writing-system slots ("all WS slots equal."). The comparison genuinely ran -- T043 put it ahead of both early skips and the skip is gated on `not collection_delta` -- so the constitutional SKIP clause is met and **this is not defect G3 recurring**. What is lost is the evidence: the `collections` tuple computed at `:788-790` holds precisely the `already_present` tallies criterion 3b needs, and it is discarded. Emit it -- an `EnrichmentRecord` with `is_empty` True (the model already supports exactly this: `models.py:1824` gates `is_empty` on `all(c.added == 0 and c.dropped == 0 ...)`), and/or name the collections in the skip detail. Measured: the three POSes enriched on run 1 produce **no enrichment surface at all** on run 2, appearing only among the eleven `GRAM_CATEGORIES` identity skips. `test_criterion_3b_is_not_evaluable_because_the_runs_are_disjoint` fails when this lands, by design -- replace it then with the real per-object, per-collection 3b comparison and close T039 - `src/gramtrans/Lib/categories.py`
+
+- [ ] **T048f** [US2] **One unattributable match anywhere degrades every class's subtraction basis.** Raised by the T039 re-run 2026-08-20; third appearance of the root cause first named in `journal/T039-idempotence.md`. `PhPhoneme` and `PhNCSegments` fall from `baseline_matched` to `baseline_gross` between run 1 and run 2 with `destination_count_total` **unmoved** (34 and 5), manufacturing a 21-object and a 2-object phantom shortfall. The tallies are **not missing** -- run 2's `matched_to_source.by_object_class` carries `PhPhoneme: 21` and `PhNCSegments: 2`, byte-identical to run 1. They are refused because `census_cli.py:1416` gates on `matched_complete`, which `matched_by_class_from_report` (`:734-737`) derives as a **single global boolean**: run 2 left 11 matches unattributed in three *other* categories (`GRAM_CATEGORIES: 5`, `INFLECTION_FEATURES: 5`, `VARIANT_TYPES: 1`) and all 75 rows lose the strong basis. Twenty lines below, the same file already solves this correctly: T048b's withholding is **bounded to the classes actually at risk** (`withheld_classes` / `_AMBIGUOUS_IDENTITY_SKIP_CLASSES`, `:1414-1415`). Apply that same rule here -- `matched_to_source` already publishes `unattributed_by_category`, which is the bounding data required. **T048d's audit cannot substitute**: a natural-key match links objects with *different* GUIDs, so `starter_matched_lower_bound`'s `B - |D \ Q|` is blind to it by construction -- which is exactly why `PartOfSpeech` survives run 2 and these two do not - `src/gramtrans/census_cli.py`
 
 **Checkpoint**: US1 is independently functional. SC-001 (analyses 0% -> 100%), SC-002 (no duplicate phoneme names) and SC-008 (a re-run adds nothing) hold on the measured pair, proven by a census exit 0 rather than by unit tests alone.
 
