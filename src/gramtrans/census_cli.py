@@ -58,8 +58,9 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
@@ -736,9 +737,300 @@ def matched_by_class_from_report(path: Path) -> tuple:
     return per_class, bool(complete) and bool(per_class)
 
 
+#: `^GT-YYYYMMDD-HHMMSS$` -- `reportRef.run_id`'s schema pattern
+#: (`census-artifact.schema.json` `$defs.reportRef.run_id`). A run id that does
+#: not match is OMITTED rather than written through: `run_id` is optional on a
+#: `reportRef`, so omitting it costs a convenience while writing a malformed one
+#: costs schema validity of the whole artifact.
+_RUN_ID_PATTERN = re.compile(r"^GT-[0-9]{8}-[0-9]{6}$")
+
+
+def enriched_by_class_from_report(path: Path) -> tuple:
+    """`(per_class, measured)` read from a run report's `enrichments[]`.
+
+    `per_class` maps LCM class name -> count of destination objects that already
+    existed and GAINED content (`match_basis.enriched`, fidelity-census.md 8);
+    `measured` is False when the report carries no `enrichments` key at all.
+
+    THE CLASS KEY IS `enrichments[].object_class`, AND NOTHING ELSE. The report
+    also carries `enriched_counts` (`Lib/report.py`'s `_counter_block`), which is
+    keyed by `GrammarCategory` -- and a category is NOT 1:1 with an LCM class for
+    the affix and MSA categories, so crediting a category total to a class row
+    would attribute an enrichment to a class the run may never have touched. That
+    is the same mis-attribution `matched_by_class_from_report` refuses to make,
+    for the same reason.
+
+    An enrichment record is counted only when it is not `is_empty`. `is_empty`
+    means, in `models.EnrichmentRecord`'s own words, "nothing was actually gained
+    AND nothing was lost" -- the ONE case data-model.md section 7 permits to
+    degrade to a `Skip`. Counting one would let a whole-object skip satisfy the
+    phase-3 predicate, which exists precisely to catch a skip masquerading as a
+    match (defect G3).
+
+    `measured` False is NOT a per-class zero. A report predating feature 038, or
+    one from a build whose enrichment recorder has not landed, omits the key
+    entirely; reading that as "0 enriched" would be the absent-read-as-zero error
+    `census.unmatched_starter` refuses to make. When the key IS present the list
+    is the complete record (`Lib/report.py`: "NONE of these lists is capped"), so
+    a class absent from a present list is a PROVEN zero.
+    """
+    data = _load_json(path, "run report")
+    records = data.get("enrichments")
+    if not isinstance(records, list):
+        return {}, False
+    per_class: dict = {}
+    for record in records:
+        if not isinstance(record, dict):
+            continue
+        name = record.get("object_class")
+        if not isinstance(name, str) or not name:
+            continue
+        if record.get("is_empty") is True:
+            continue
+        per_class[name] = per_class.get(name, 0) + 1
+    return per_class, True
+
+
+# ---------------------------------------------------------------------------
+# Reading a REPORTED drop as accounting (T024c sub-point 3)
+#
+# `census.class_row_artifact` has accepted `accounted_for` since T019 and
+# nothing ever populated it, so a loss the engine REPORTED still read as
+# `unexplained_shortfall` -- the exact mis-attribution SC-005 is about. Measured
+# on run GT-20260820-002806: MoStemMsa 164 -> 162, `difference -2`,
+# `unexplained_shortfall: 2`, beside two `DroppedItemRecord`s naming those two
+# objects by GUID.
+#
+# ------------------------- THE VOCABULARY GAP ------------------------------
+# `fidelity-census.md` 7.1 is a CLOSED 16-token enum and it has NO token for
+# "the source referent is legitimately absent, and the engine required it".
+# The nearest member is
+#
+#     DEPENDENCY_UNRESOLVED | shortfall | A required referent is absent in the
+#                                         destination (FR-017).
+#
+# and "absent in the destination" is NOT this case: an MSA whose
+# `PartOfSpeechRA` is empty ON THE SOURCE was never resolvable anywhere, and
+# nothing about the destination would fix it. `NO_CREATE_PATH` is wrong too --
+# there IS a create path for `MoStemMsa` and this very run exercised it 162
+# times -- and so is `UNSUPPORTED_SUBTYPE`, which is about a subtype the engine
+# cannot reproduce.
+#
+# Contracts are spec artifacts and are not this module's to edit, and the enum
+# forbids inventing a 17th token here. So the token is a NAMED, OVERRIDABLE
+# CONSTANT rather than a literal buried in a mapping: the mechanism ships, the
+# mis-attribution is visible in one place and stated in every emitted line's
+# `detail`, and closing the gap is a one-line change once the contract grows
+# the token it needs.
+# ---------------------------------------------------------------------------
+
+#: PROVISIONAL. The token stamped on a drop whose referent was absent on the
+#: SOURCE. Least-wrong member of the closed enum, and still wrong: see the
+#: block comment above. TODO(contract): replace with the token
+#: `fidelity-census.md` 7.1 adds for "required source referent absent".
+SOURCE_REFERENT_ABSENT_TOKEN: str = "DEPENDENCY_UNRESOLVED"
+
+#: Said in every line that token produces, so the substitution is auditable in
+#: the artifact and not only in this source file.
+SOURCE_REFERENT_ABSENT_DETAIL: str = (
+    "PROVISIONAL TOKEN: the referent was absent ON THE SOURCE, which the "
+    "closed FR-013 vocabulary has no member for; DEPENDENCY_UNRESOLVED is the "
+    "least-wrong existing token and means 'absent in the destination' "
+    "(fidelity-census.md 7.1)"
+)
+
+#: `(substring of DroppedItemRecord.reason, FR-013 token)`, most specific first.
+#: `reason` is free text by construction (`models.DroppedItemRecord`: "reason :
+#: e.g. 'shared-default diverged', ..."), so classification is by distinctive
+#: substring -- and a reason matching NOTHING here yields NO LINE AT ALL rather
+#: than a fallback token. That asymmetry is the point: an unclassifiable drop
+#: leaves the shortfall unexplained, which is the honest answer, whereas a
+#: catch-all token would launder it into accounting. There is no `OTHER`.
+DROP_REASON_TOKENS: tuple = (
+    ("is not reproducible by this engine", "UNSUPPORTED_SUBTYPE"),
+    ("not resolvable in target", "DEPENDENCY_UNRESOLVED"),
+    ("is empty on source", SOURCE_REFERENT_ABSENT_TOKEN),
+)
+
+
+def drop_reason_token(reason):
+    """-> the FR-013 token for one free-text drop reason, or None.
+
+    None means "the census cannot classify this drop", and per FR-013 that is
+    an ABSENT accounting line, never a 17th token.
+    """
+    if not isinstance(reason, str):
+        return None
+    for needle, token in DROP_REASON_TOKENS:
+        if needle in reason:
+            return token
+    return None
+
+
+def dropped_by_class_from_report(path: Path, classes=()) -> dict:
+    """`{object_class: ((token, census.ReportRef), ...)}` from `dropped_items`.
+
+    THE CLASS OF A DROPPED OBJECT IS `item_name`, NOT `owner_kind`.
+    `models.DroppedItemRecord.owner_kind` names the class of the OWNER, so the
+    two MSA drops measured on GT-20260820-002806 are recorded as
+    `owner_kind="LexEntry", field_name="MorphoSyntaxAnalysesOC",
+    item_name="MoStemMsa"` -- crediting them to `LexEntry` would pay down a
+    shortfall on a class that lost nothing.
+
+    A drop is admitted as accounting ONLY when `item_name` is one of `classes`,
+    the classes this census measures. That filter is doing real work, not
+    defensive noise: the same run reported 169 drops of
+    `MoForm.MorphTypeRA -> item_name "stem"`. Those are dropped REFERENCES --
+    the `MoMorphType` named "stem" is still in the destination, and the object
+    count of no class moved -- so crediting them anywhere would explain away a
+    loss that did not happen and trip R-2 (`CENSUS_ERROR`). Under-accounting
+    leaves an honest `unexplained_shortfall`; over-accounting is a verdict
+    failure. Only one of those two errors is recoverable.
+
+    The returned `ReportRef` states `count_in_report` (how many records the
+    report ACTUALLY names) and every non-empty `item_guid` as `record_ids`. The
+    CLAIMING count is the caller's, because only the caller knows the row's
+    difference and R-2 caps a claim at it.
+    """
+    data = _load_json(path, "run report")
+    records = data.get("dropped_items")
+    if not isinstance(records, list):
+        return {}
+    admitted = frozenset(classes)
+    context = data.get("context") or {}
+    run_id = data.get("run_id") or context.get("run_id") or ""
+    if not (isinstance(run_id, str) and _RUN_ID_PATTERN.match(run_id)):
+        run_id = ""
+
+    grouped: dict = {}
+    for record in records:
+        if not isinstance(record, dict):
+            continue
+        object_class = record.get("item_name")
+        if not isinstance(object_class, str) or object_class not in admitted:
+            continue
+        token = drop_reason_token(record.get("reason"))
+        if token is None:
+            continue
+        guid = record.get("item_guid")
+        grouped.setdefault(object_class, {}).setdefault(token, []).append(
+            guid if isinstance(guid, str) else "")
+
+    out: dict = {}
+    for object_class, by_token in grouped.items():
+        out[object_class] = tuple(
+            (token, census.ReportRef(
+                kind="dropped_item",
+                count_in_report=len(guids),
+                run_id=run_id,
+                report_path=str(path),
+                record_ids=tuple(g for g in guids if g),
+            ))
+            for token, guids in sorted(by_token.items())
+        )
+    return out
+
+
+@dataclass(frozen=True)
+class ReportEvidence:
+    """What one run report proves about a class, beyond its matched tally.
+
+    Grouped into one object rather than added as four more positional
+    parameters on `_row_for_entry`, whose existing six are pinned positionally
+    by `tests/unit/test_038_matched_by_class.py`.
+
+    `present` is the fact that a report was supplied AT ALL, and it is what
+    licenses `match_basis.basis_source == "run_report"`. Without it the row
+    carries no `match_basis` block at all -- 5.2's `basis_source: "unavailable"`
+    is emitted by the row builder only when it was asked for a basis it cannot
+    source, and a row nobody offered a report to is not that case.
+    """
+
+    present: bool = False
+    enriched_by_class: dict = field(default_factory=dict)
+    enriched_measured: bool = False
+    dropped_by_class: dict = field(default_factory=dict)
+
+    def enriched_for(self, object_class: str):
+        """-> the `enriched` tally for one class, or None when unmeasured.
+
+        A PROVEN zero when the report carried an `enrichments` list and this
+        class is absent from it; None when it carried no list at all. The two
+        must not collapse: the first says the enrichment pass ran and this class
+        gained nothing, the second says nothing is known.
+        """
+        if not self.enriched_measured:
+            return None
+        return int(self.enriched_by_class.get(object_class, 0))
+
+    def drops_for(self, object_class: str) -> tuple:
+        return tuple(self.dropped_by_class.get(object_class) or ())
+
+
+def read_report_evidence(path: Optional[Path], classes=()) -> ReportEvidence:
+    """`ReportEvidence` for a run report, or the empty one for no report."""
+    if path is None:
+        return ReportEvidence()
+    enriched, measured = enriched_by_class_from_report(path)
+    return ReportEvidence(
+        present=True,
+        enriched_by_class=enriched,
+        enriched_measured=measured,
+        dropped_by_class=dropped_by_class_from_report(path, classes),
+    )
+
+
+def accounted_for_drops(difference, drops, notes=None) -> tuple:
+    """-> `tuple[census.AccountedLine, ...]` for one row's reported drops.
+
+    R-2 IS ENFORCED HERE, BY CAPPING. A row may hold more reported drops than
+    its difference has room for -- the destination may have gained objects
+    elsewhere in the same class -- and a claim exceeding `max(0, -difference)`
+    is `CENSUS_ERROR`, so the claim is capped at the room and the cap is stated
+    in `notes`. The `report_ref` still names the FULL count the report carries,
+    which is what R-1 compares against, so capping never invents evidence.
+
+    Nothing is emitted for a zero or positive difference: a dropped object
+    cannot pay down a SURPLUS, and a MATCHED row that also reports a drop is a
+    real finding (something was lost and something else over-created) that an
+    accounting line would hide.
+    """
+    if difference is None or difference >= 0:
+        return ()
+    room = -difference
+    lines = []
+    for token, ref in drops:
+        if room <= 0:
+            break
+        count = min(ref.count_in_report, room)
+        detail = (
+            SOURCE_REFERENT_ABSENT_DETAIL
+            if token == SOURCE_REFERENT_ABSENT_TOKEN else
+            "reported as a DroppedItemRecord on run "
+            + (ref.run_id or "(unstamped)")
+        )
+        if count < ref.count_in_report:
+            capped = (
+                "the run report names " + str(ref.count_in_report)
+                + " dropped " + token + " item(s) but the row's shortfall is "
+                + str(-difference) + ", so the accounting line claims only "
+                + str(count) + " (R-2: the census must not explain away more "
+                "than actually happened)"
+            )
+            if notes is not None:
+                notes.append(capped)
+            detail = detail + " -- CLAIM CAPPED, see notes"
+        lines.append(census.AccountedLine(
+            reason=token, count=count, direction="shortfall",
+            report_ref=ref, detail=detail))
+        room -= count
+    return tuple(lines)
+
+
 def _row_for_entry(
     entry, source_counts, destination_counts, baseline,
     matched_by_class=None, matched_complete=False,
+    *, evidence: Optional[ReportEvidence] = None,
 ):
     """One `(ClassCensusRow, emitter kwargs)` pair for one class-list entry.
 
@@ -763,6 +1055,7 @@ def _row_for_entry(
     must not be subtracted from the destination.
     """
     matched_by_class = matched_by_class or {}
+    evidence = evidence or ReportEvidence()
     measured = entry.in_class_list_via != "excluded_not_measurable"
     notes = []
     if measured:
@@ -834,7 +1127,6 @@ def _row_for_entry(
     kwargs = {
         "starter_subtraction_basis": basis,
         "starter_baseline_source": source_of_baseline,
-        "notes": tuple(notes),
     }
     if baseline_count is not None:
         kwargs["starter_baseline_count"] = baseline_count
@@ -843,6 +1135,49 @@ def _row_for_entry(
         # unknown, and writing a 0 there would be the "absent read as zero"
         # error `census.unmatched_starter` refuses to make.
         kwargs["starter_matched_to_source"] = matched_by_class[entry.object_class]
+
+    # ---- T024c sub-point 3: a REPORTED drop is accounting -----------------
+    # An A1 split row is excluded for the same reason it cannot reach the
+    # matched basis: a `dropped_items` record names an LCM CLASS, not a feature
+    # system, so crediting one to a split half would pay down a shortfall the
+    # report cannot attribute -- and crediting it to BOTH halves would double it.
+    drops = (
+        evidence.drops_for(entry.object_class)
+        if entry.owning_feature_system is None else ()
+    )
+    lines = accounted_for_drops(row.difference, drops, notes)
+    if lines:
+        kwargs["accounted_for"] = lines
+
+    # ---- match_basis: P3's only input --------------------------------------
+    # Emitted whenever a run report was supplied, because `basis_source:
+    # "run_report"` is itself the load-bearing fact -- `census._phase_3` reads
+    # `match_basis.enriched` off this block and there is nowhere else for it to
+    # come from. Every SUMMAND stays null: `identity`/`natural_key` need a
+    # PER-CLASS basis split the report does not carry (`matched_to_source`
+    # publishes `by_natural_key` as a run-wide scalar), and `created_new` /
+    # `unmatched_reported` have no per-class surface at all. Null is not a
+    # shortcut here -- `census.MatchBasis.summed` returns None unless all four
+    # are known, so invariant 11 is correctly SKIPPED rather than checked
+    # against a number nothing supports. `enriched` is deliberately NOT added
+    # to any sum: `census.MATCH_BASIS_SUMMANDS` excludes it because it is a
+    # SUBSET of identity + natural_key, and including it would double-count
+    # every enriched object.
+    if evidence.present:
+        enriched = (
+            evidence.enriched_for(entry.object_class)
+            if entry.owning_feature_system is None else None
+        )
+        kwargs["match_basis"] = census.MatchBasis(
+            basis_source="run_report", enriched=enriched)
+        if enriched is None and entry.owning_feature_system is None:
+            notes.append(
+                "match_basis.enriched is null: the run report carries no "
+                "`enrichments` list, and an absent list is no evidence the "
+                "enrichment pass ran -- never a measured zero"
+            )
+
+    kwargs["notes"] = tuple(notes)
     return row, kwargs
 
 
@@ -937,6 +1272,11 @@ def census_run(
         matched_by_class_from_report(run_report)
         if run_report is not None else ({}, False)
     )
+    # T024c sub-point 3 + the P3 seam: the enrichment tally `match_basis`
+    # needs and the reported drops `accounted_for` needs, both read from the
+    # SAME report and both keyed by LCM class. `wanted` is passed so a drop can
+    # only ever be credited to a class this census actually measures.
+    evidence = read_report_evidence(run_report, wanted)
 
     rows = []
     for entry in class_list.entries:
@@ -944,7 +1284,7 @@ def census_run(
         if owner is None:
             row, kwargs = _row_for_entry(
                 entry, source_counts, destination_counts, baseline,
-                matched_by_class, matched_complete)
+                matched_by_class, matched_complete, evidence=evidence)
             duplicate_report = duplicates.get(entry.object_class)
         else:
             row, kwargs = _row_for_entry(
@@ -954,7 +1294,7 @@ def census_run(
                 {entry.object_class:
                     destination_split.get(entry.object_class, {}).get(owner, 0)},
                 baseline,
-                matched_by_class, matched_complete,
+                matched_by_class, matched_complete, evidence=evidence,
             )
             # No natural-key definition covers a split class, and a whole-class
             # duplicate report attached to one half would double-count it.
