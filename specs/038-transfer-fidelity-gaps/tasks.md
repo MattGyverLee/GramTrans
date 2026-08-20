@@ -293,6 +293,29 @@ LCM type (Principle II, data-model.md:3-6).
   > basis `baseline_matched`, `PhPhoneme` duplicates **0** (unchanged), exit
   > **still 8**. If `MoStemMsa` misses, the drop records now say why -- T048a
   > (`768c1a0`) reads `dropped_items` into `accounted_for`.
+  > **MEASURED 2026-08-20 -- the run happened; T038 is measured, not passed.**
+  > Source `Ejagham Mini` -> `GT038 Phase5 Target` (restored pristine from
+  > `backups/Ejagham W Target 2026-08-19 0830.fwbackup`, so no project was
+  > overwritten and `CreateNewLangProj` was not needed). Census
+  > `CENSUS-20260820-094825`. Full analysis:
+  > [journal/T038-T048-live-gate-rerun.md](journal/T038-T048-live-gate-rerun.md).
+  >
+  > | row | predicted | measured |
+  > |---|---|---|
+  > | `MoStemMsa` | 164 -> 164 MATCHED | **164 -> 164 MATCHED** (T043b confirmed live) |
+  > | `MoInflAffMsa` / `MoDerivAffMsa` / `MoUnclassifiedAffixMsa` | -- | **all MATCHED** |
+  > | `PhPhoneme.duplicates.extra_objects` | 0 | **0** |
+  > | `PartOfSpeech` | MATCHED | **SHORTFALL -2** |
+  > | exit code | 8 | **1** (`UNEXPLAINED_SHORTFALL` outranks the 5.2 ceiling -- the cap bounds how *good* a verdict gets, not how bad) |
+  >
+  > **The `-2` is not a transfer defect.** Counted straight out of the two
+  > `.fwdata` files: all 20 source `PartOfSpeech` GUIDs are in the destination
+  > and the destination holds exactly 20, zero starter leftovers. The census
+  > derives `starter_matched_to_source` from `enrichments[]` only (3: Noun,
+  > Pronoun, Verb) and ignores the 2 starter POS matched by GUID and recorded
+  > as `ALREADY_PRESENT_BY_GUID` skips -- so `unmatched_starter` reads 2 instead
+  > of 0. **Blocked on T048b**; nothing in Phase 4 or 5 can move this row.
+
 - [ ] **T039** [US1] Verify SC-008 idempotence mechanically: on run 2, `RunPlan.actions` contains **zero** `PlannedAction` whose `match_basis.basis is MatchBasis.NONE` for any class run 1 created, every class's `destination_count_total` is unchanged, and every `EnrichedCollection.added == 0` with `already_present` equal to run 1's `added`. Any increase is a duplicate-creation defect **regardless of what either census's own verdict says** - `tests/integration/test_object_census.py`
 
 **Checkpoint**: US1 is independently functional. SC-001 (analyses 0% -> 100%), SC-002 (no duplicate phoneme names) and SC-008 (a re-run adds nothing) hold on the measured pair, proven by a census exit 0 rather than by unit tests alone.
@@ -347,8 +370,8 @@ LCM type (Principle II, data-model.md:3-6).
 
 **--> Wait for the `categories.py` chain, then (different files):**
 
-- [ ] **T045** [P] [US4] Extend `_execute_update_semantic` (:268, and the :1674 / :2340 sites) to **add-only** collection semantics: never remove, never destructively reorder. It already routes `write_mode="merge"`; this widens what merge means for a collection. Report the outcome as `disposition=UPDATE` with per-collection counts - `src/gramtrans/Lib/transfer.py`
-- [ ] **T046** [P] [US4] Distinguish an enriched item from a created one in the run report (FR-022), and honour the certainty clause: never claim "identical now" on a first transfer, and claim "untouched since last run" only where a residue baseline exists - `src/gramtrans/Lib/report.py`
+- [x] **T045** [P] [US4] Extend `_execute_update_semantic` (:268, and the :1674 / :2340 sites) to **add-only** collection semantics: never remove, never destructively reorder. It already routes `write_mode="merge"`; this widens what merge means for a collection. Report the outcome as `disposition=UPDATE` with per-collection counts - `src/gramtrans/Lib/transfer.py`
+- [x] **T046** [P] [US4] Distinguish an enriched item from a created one in the run report (FR-022), and honour the certainty clause: never claim "identical now" on a first transfer, and claim "untouched since last run" only where a residue baseline exists - `src/gramtrans/Lib/report.py`
 - [x] **T047** [P] [US4] Mirror the enrich-vs-skip decision in the plan builder so Preview shows it (Principle III) - `src/gramtrans/Lib/preview.py`
 
 **--> Wait for Wave 3, then:**
@@ -358,6 +381,10 @@ LCM type (Principle II, data-model.md:3-6).
   > **Implemented but uncommitted at time of writing**, in a session other than this one. `accounted_for` had exactly one occurrence as an emitter argument (`census.py:2385`) and was never populated from a run report, which is why T038's reported-and-dropped items could not be read back (see T043b).
 
 - [ ] **T048** [US4] Run the census gate for **predicate P3**: `PartOfSpeech.match_basis.enriched > 0` **and** the owned-child classes MATCHED (SC-007). Measured baseline: 3 matched categories, each missing between 3 and 4 whole collections - `tests/integration/test_object_census.py`
+
+- [ ] **T048b** [US2+US4] **Count an identity SKIP as a starter match.** Raised by the 2026-08-20 gate run, which proved against the raw `.fwdata` that `PartOfSpeech` transferred perfectly and the census still reported `-2`. `starter_matched_to_source` is built from `payload["enrichments"][]` alone (T048a), so a starter object the run matched by GUID and recorded as a `skips[]` row with `reason == "ALREADY_PRESENT_BY_GUID"` never enters the tally, and `unmatched_starter` is overstated by exactly that count. Read those skips into `starter_matched_to_source` beside the enrichments, deduping by target GUID so an object that was both matched and enriched is counted once. **This is the sole blocker on T038's `PartOfSpeech` row** and it also moves whatever other rows carry identity skips - `src/gramtrans/census_cli.py`
+
+- [ ] **T048c** **Three writes failed and the report said nothing.** The same run logged `leaf-dispatch counts attempted=329 succeeded=326 failed=3` while `RunReport.leaf_execution_failures` and `leaf_failed` were both `None` and `disposition.add_created` still read 329, because the report is built from the PLAN. The executor's own debug line states the mechanism: *"swallowed write failures do NOT reduce the reported 'added' count"*. A real loss going unreported is the Principle I shape, so this is a defect rather than a cosmetic gap. Populate `leaf_execution_failures` from the dispatch loop's failure list and subtract them from the created tally, or report them as a distinct bucket - `src/gramtrans/Lib/transfer.py`, `src/gramtrans/Lib/report.py`
 
 **Checkpoint**: US4 is independently functional. A matched destination item gains 100% of the child items its source counterpart holds and it lacked, and loses none of its own.
 
