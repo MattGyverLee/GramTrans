@@ -530,6 +530,26 @@ def build_run_plan(
     _dropped: list = []
     object.__setattr__(context, '_dropped', _dropped)
 
+    # Feature 038 (T059, US5, FR-023..FR-025): per-run process-rule collector,
+    # threaded exactly like `_dropped` above and for the same reason. The
+    # entry closure's Preview twin runs `_resolve_process_graph` -- the
+    # READ-ONLY half of the executor, byte-for-byte the same resolution Move
+    # performs -- so a rule Move will skip is already named here, with its
+    # reason, before anything is written.
+    #
+    # Only NON-reproductions are recorded at plan time. A `reproduced=True`
+    # record would have to invent a target GUID for an object nothing has
+    # created; Move records the reproductions, and `rules_not_reproduced` is
+    # what a Preview reader needs in order to decide whether to run at all.
+    #
+    # Ordering (create-path contract criterion 1): the plan walks `InputOS`
+    # before `OutputOS` because `MoCopyFromInput.ContentRA` names an `InputOS`
+    # member of the same rule, and `_resolve_process_graph` is where that
+    # ordering lives -- so Preview and Move share ONE implementation of it
+    # rather than two that could drift.
+    _process_rules: list = []
+    object.__setattr__(context, '_process_rules', _process_rules)
+
     # Feature 024 (T016, FR-012): per-run GUID -> resolved/created target
     # item cache for the resolver, mirroring `_dropped` above. Shared across
     # every reference field/owner so a possibility already resolved earlier
@@ -849,6 +869,10 @@ def build_run_plan(
         # site above); `missing_refs` on each record are already folded
         # into `dropped_items` above.
         config_view_records=tuple(_config_view_records),
+        # Feature 038 (T059, US5): the rules this plan already knows cannot be
+        # reproduced, each with the reason naming its specific blocker (see
+        # the `_process_rules` accumulator attachment above).
+        process_rules=tuple(_process_rules),
     )
 
 

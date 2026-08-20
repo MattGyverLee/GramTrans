@@ -464,6 +464,33 @@ def execute(plan: RunPlan, source, target, report_sink, tag: ImportResidueTag,
     # APR copy-set gate sees every allomorph already copied earlier in this
     # SAME run (across every entry, not just the one currently being copied).
     object.__setattr__(exec_ctx, '_copy_set', {})
+    # Feature 038 (T060, US5, FR-023..FR-025): per-run process-rule collector,
+    # threaded exactly like `_dropped` above and folded into the RunReport
+    # below (`extra_process_rules`).
+    #
+    # WHERE THE EXECUTOR LIVES, and why it is not a leaf-dispatch category. A
+    # `MoAffixProcess` is an `IMoForm` owned by `LexEntry.LexemeFormOA` /
+    # `AlternateFormsOS` -- it IS an allomorph as far as ownership goes, so it
+    # is reproduced inside the entry closure walk
+    # (`categories._reproduce_affix_process`, reached from
+    # `_walk_entry_allomorphs`) rather than from a category action of its own.
+    # Giving it a parallel executor here would mean walking the entries a
+    # second time and creating the rule after its owning entry, which is the
+    # ordering that made the original defect invisible.
+    #
+    # FR-024's resolution -- every phoneme and natural-class reference
+    # resolving to the destination item matched under FR-001/FR-002, identity
+    # first and then a roster-admitted natural key, never a duplicate -- lives
+    # in `categories._resolve_process_referent`, shared with the Preview twin
+    # so the two cannot disagree.
+    #
+    # `plan.process_rules` carries the PLAN's non-reproductions. Both are
+    # handed to `report.build`, which concatenates them, and the two sets are
+    # disjoint by construction: Preview records only `reproduced=False` and
+    # only for rules it already proved unbuildable, while Move records the
+    # outcome of the rules it actually attempted.
+    _process_rules: list = []
+    object.__setattr__(exec_ctx, '_process_rules', _process_rules)
     # Feature 038 T036: the CURRENT action's `PlannedDestination`, re-set on
     # every leaf-dispatch iteration below. Seeded here with the
     # "plan decided nothing" value so a consumer added later never has to
@@ -744,6 +771,12 @@ def execute(plan: RunPlan, source, target, report_sink, tag: ImportResidueTag,
         # the report at all (per_category[*].added is computed from the
         # PLAN, not actual write outcomes).
         extra_leaf_execution_failures=tuple(_leaf_execution_failures),
+        # Feature 038 (T060, US5): what the entry closure's process-rule
+        # executor did with each MoAffixProcess it met -- rebuilt, with its
+        # input and output content recorded, or skipped with the reason
+        # naming the blocker (SC-010: a run that skipped a rule must not read
+        # as clean).
+        extra_process_rules=tuple(_process_rules),
     )
 
 

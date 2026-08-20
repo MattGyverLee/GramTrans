@@ -192,6 +192,39 @@ class _TargetObj:
         self.ClassName = class_name
 
 
+class _FlexiconRefusal(Exception):
+    """Stands in for flexicon's `FP_ParameterError`, which
+    `AllomorphOperations` raises for any ClassName outside the two allomorph
+    factories it manages."""
+
+
+class _AllomorphOps:
+    """flexicon's `AllomorphOperations` surface, as the engine uses it.
+
+    On a live host `source_handle.Allomorphs` always EXISTS -- so the
+    field-level drop the engine reports here fires only when flexicon actually
+    refuses the class, which is the case worth reporting. A fake without this
+    attribute would have made the drop fire on a harness gap instead.
+    """
+
+    def __init__(self, refuses: bool = False) -> None:
+        self.refuses = refuses
+        self.applied = []
+
+    def GetSyncableProperties(self, obj):
+        if self.refuses:
+            raise _FlexiconRefusal(
+                "AllomorphOperations does not manage " + str(obj.ClassName))
+        return {"Form": {"vernacular": "src-form"}}
+
+    def ApplySyncableProperties(self, obj, props, ws_map=None):
+        if self.refuses:
+            raise _FlexiconRefusal(
+                "AllomorphOperations does not manage " + str(obj.ClassName))
+        self.applied.append((obj, props))
+        obj.Form = props.get("Form")
+
+
 class _Spy:
     """Records every factory the engine asks for and every object it creates."""
 
@@ -275,7 +308,7 @@ def failing_create(monkeypatch, spy):
     return spy
 
 
-def _ctx_and_target(spy=None, destination=()):
+def _ctx_and_target(spy=None, destination=(), allomorph_ops_refuses=False):
     """A run context whose destination holds `destination` addressably by GUID.
 
     `get_object_by_guid` is the offline half of `_resolve_target_by_guid` --
@@ -292,19 +325,21 @@ def _ctx_and_target(spy=None, destination=()):
         Cache=SimpleNamespace(DefaultAnalWs=1),
         GetFactory=_get_factory,
         get_object_by_guid=by_guid.get,
+        Allomorphs=_AllomorphOps(allomorph_ops_refuses),
     )
     ctx = SimpleNamespace(
         target_handle=target,
-        source_handle=SimpleNamespace(),
+        source_handle=SimpleNamespace(
+            Allomorphs=_AllomorphOps(allomorph_ops_refuses)),
         _ws_map=None,
     )
     return ctx, target
 
 
-def _walk(entry, spy, destination=()):
+def _walk(entry, spy, destination=(), allomorph_ops_refuses=False):
     """Run the Move-mode walk over `entry`, returning its dropped records."""
     new_entry = SimpleNamespace(LexemeFormOA=None, AlternateFormsOS=_Seq())
-    ctx, _target = _ctx_and_target(spy, destination)
+    ctx, _target = _ctx_and_target(spy, destination, allomorph_ops_refuses)
     dropped: list = []
     categories._walk_entry_allomorphs(
         entry, new_entry, ctx, tag=None, identity_remap={}, dropped=dropped
@@ -1001,3 +1036,74 @@ def test_a_create_that_fails_after_pass_one_leaves_nothing_behind(
     assert dropped[0].item_name == "MoAffixProcess"
     records = _rule_records(ctx)
     assert len(records) == 1 and records[0].reproduced is False
+
+
+# ============================================================================
+# T061 -- residue and the inherited IMoForm half
+# ============================================================================
+
+def test_a_reproduced_rule_is_residue_tagged(_stub_lcm, spy, monkeypatch):
+    """`MoAffixProcess` was ALREADY in `residue.CARRIER_A_CLASSES` (:43), so
+    T061's confirmation stands: no new carrier. What was missing was the
+    CALL -- a reproduced rule carrying no GT tag would be invisible to every
+    residue-based audit while the allomorph beside it was tagged."""
+    tagged = []
+    monkeypatch.setattr(
+        _residue_mod, "apply_residue",
+        lambda obj, ws, tag, class_name=None: tagged.append(obj))
+
+    rule, destination = _reproducible_rule()
+    entry = _Entry("aaaaaaaa-0000-0000-0000-000000000022", lexeme_form=rule)
+
+    new_entry, _dropped, _ctx = _walk(entry, spy, destination)
+
+    assert tagged == [new_entry.LexemeFormOA]
+
+
+def test_the_carrier_table_already_covers_the_class(_stub_lcm):
+    """The confirmation itself, executable rather than asserted in prose."""
+    from gramtrans.Lib import residue
+
+    assert "MoAffixProcess" in residue.CARRIER_A_CLASSES
+    assert residue.class_uses_carrier_a("MoAffixProcess")
+
+
+def test_the_inherited_form_fields_are_copied(_stub_lcm, spy):
+    """A rule keeps the IMoForm half it shares with an allomorph."""
+    rule, destination = _reproducible_rule()
+    entry = _Entry("aaaaaaaa-0000-0000-0000-000000000023", lexeme_form=rule)
+
+    new_entry, dropped, ctx = _walk(entry, spy, destination)
+
+    assert dropped == []
+    assert ctx.target_handle.Allomorphs.applied
+    assert new_entry.LexemeFormOA.Form == {"vernacular": "src-form"}
+
+
+def test_a_refused_property_copy_is_reported_not_swallowed(_stub_lcm, spy):
+    """flexicon's AllomorphOperations manages only the two allomorph factories
+    and raises on any other ClassName, so this leg may legitimately be
+    unavailable for a rule.
+
+    That is a FIELD-level loss and is reported as one. It is deliberately NOT
+    escalated into a rule-level skip: the Input/Output content -- what makes
+    the object a rule at all -- has already transferred, and discarding it to
+    punish a missing Form would destroy more than it protects.
+    """
+    rule, destination = _reproducible_rule()
+    entry = _Entry("aaaaaaaa-0000-0000-0000-000000000024", lexeme_form=rule)
+
+    new_entry, dropped, ctx = _walk(
+        entry, spy, destination, allomorph_ops_refuses=True)
+
+    # The rule still arrived, with its content.
+    new_rule = new_entry.LexemeFormOA
+    assert new_rule.ClassName == "MoAffixProcess"
+    assert len(new_rule.InputOS) == 2 and len(new_rule.OutputOS) == 3
+    assert _rule_records(ctx)[0].reproduced is True
+
+    # ...and the loss reached the report rather than a log line.
+    assert len(dropped) == 1
+    assert dropped[0].owner_kind == "MoAffixProcess"
+    assert dropped[0].field_name == "Form"
+    assert "AllomorphOperations" in dropped[0].reason

@@ -7871,6 +7871,59 @@ def _reproduce_affix_process(src_rule, src_entry, entry_ie, is_lexeme_form,
             % (rule_guid, failure)
         )
 
+    # The inherited IMoForm half. `InputOS`/`OutputOS` are what make this a
+    # RULE, and they are done; these are the fields it shares with an
+    # allomorph, applied the same way the allomorph path applies them.
+    #
+    # T061 confirmation, recorded here rather than in a task note alone:
+    # residue needs NO new carrier. `MoAffixProcess` is already in
+    # `residue.CARRIER_A_CLASSES` (:43), consistent with its inherited
+    # `LiftResidue`, and `apply_residue` dispatches on `ClassName` -- so the
+    # only thing that was missing was this CALL. A reproduced rule that
+    # carried no GT tag would be invisible to every residue-based audit while
+    # the allomorph beside it was tagged.
+    if __package__:
+        from .residue import apply_residue as _apply_residue
+    else:
+        from residue import apply_residue as _apply_residue  # type: ignore
+    ws = getattr(getattr(target, "Cache", None), "DefaultAnalWs", None)
+    resolver_cache = _get_resolver_cache(context)
+    try:
+        aprops = context.source_handle.Allomorphs.GetSyncableProperties(
+            src_rule)
+        target.Allomorphs.ApplySyncableProperties(
+            new_rule, aprops, ws_map=getattr(context, "_ws_map", None))
+    except Exception as exc:  # noqa: BLE001 -- flexicon disclaims this class
+        # NOT swallowed. flexicon's `AllomorphOperations` explicitly manages
+        # only the two allomorph factories and raises `FP_ParameterError` on
+        # any other ClassName, so this leg may legitimately be unavailable for
+        # a process rule. The rule's own content (Input/Output, identity) has
+        # already transferred, so this is a FIELD-level loss and is reported
+        # as one rather than being escalated into a rule-level skip that would
+        # discard content that did arrive.
+        _append_dropped_once(dropped, DroppedItemRecord(
+            owner_kind="MoAffixProcess",
+            owner_guid=rule_guid,
+            owner_label="",
+            field_name="Form",
+            item_name="MoAffixProcess inherited IMoForm fields",
+            item_guid=rule_guid,
+            reason=(
+                "the rule's Input/Output content transferred, but its "
+                "inherited IMoForm fields (Form and the rest of the allomorph "
+                "property set) could not be copied: flexicon's "
+                "AllomorphOperations manages only MoStemAllomorph and "
+                "MoAffixAllomorph and disclaims MoAffixProcess (%s: %s)"
+                % (type(exc).__name__, exc)
+            ),
+        ))
+    _apply_reference_fields(
+        "MoForm", src_rule, new_rule, target, tag, resolver_cache, dropped,
+        skip_fields=_MOFORM_DEFERRED_FIELDS,
+        ws_map=getattr(context, "_ws_map", None),
+        source=context.source_handle, owner_guid=rule_guid)
+    _apply_residue(new_rule, ws, tag)
+
     new_guid = rule_guid
     try:
         from SIL.LCModel import ICmObject as _ICmObject
