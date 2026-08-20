@@ -2625,40 +2625,55 @@ class TestT024PhonemeStarterSubtraction:
 
     @pytest.mark.integration
     @pytest.mark.parametrize("pair", T024_PAIRS)
-    def test_the_duplicates_do_NOT_raise_the_verdict_to_duplicate_identity(
+    def test_the_duplicates_DO_raise_the_verdict_now_that_t028_landed(
             self, pair):
-        """A FINDING, pinned as behaviour rather than quietly filed as a defect.
+        """T024's finding, INVERTED by T028 -- and the inversion is the point.
 
         T024's brief expected `DUPLICATE_IDENTITY` (severity above the
-        gross-basis cap, exit 3) here. It does NOT fire, and the reason is
-        neither the cap nor a bug: `PhPhoneme` is not in 035's natural-key
-        roster, so `duplicates.roster_admitted` is False, and
-        `census.duplicates_unaccounted` returns 0 for unadmitted classes BY
+        gross-basis cap, exit 3) here, and it did NOT fire. The reason was
+        neither the cap nor a bug: `PhPhoneme` was not in 035's natural-key
+        roster, so `duplicates.roster_admitted` was False and
+        `census.duplicates_unaccounted` returned 0 for unadmitted classes BY
         DESIGN -- "a duplicate name on an unadmitted class is advisory, because
-        homographs are legitimate content" (census.py).
+        homographs are legitimate content" (census.py). The consequence was a
+        real gap: `totals.duplicate_extra_objects` read 0 on a destination
+        holding 20-21 duplicate phonemes, and only the phase-1 predicate in the
+        test above stopped the transfer being called done.
 
-        Consequence, and it is a real gap worth staring at:
-        `totals.duplicate_extra_objects` reads 0 on a destination holding 20-21
-        duplicate phonemes, and the run exits 0. Only the phase-1 predicate in
-        the test above stops the transfer being called done.
+        T028 admitted `PhPhoneme` (2026-08-19, commit `d8635d9`), and this test
+        is what that closes. It reads a LIVE census, so `roster_admitted` is
+        derived from the roster as it stands at run time (`census.py:1810`) --
+        no re-derivation helper needed here, unlike the committed snapshots in
+        `TestDuplicatePhonemesWereInertUntilT028Landed`, which predate the
+        landing and are kept as the before-picture.
 
+        The old assertion's own remedy note demanded exactly this rewrite, and
         `test_admitting_phphoneme_to_the_roster_makes_the_duplicates_fail`
-        proves roster admission is the ONLY thing in the way, so 038's roster
-        extension flips this without touching census.py."""
+        proved beforehand that admission was the ONLY thing in the way -- so
+        census.py is untouched, as predicted.
+
+        The headline total is asserted as `>=` the phoneme count, not `==`:
+        T028 admitted six classes, and `PhNCFeatures` / `PhNCSegments` carry
+        duplicates of their own on these pairs."""
         artifact = _t024_census(*pair)
         row = _t024_row(artifact, "PhPhoneme")
-        assert row["duplicates"]["roster_admitted"] is False
-        assert census.duplicates_unaccounted(row) == 0
-        assert "PhPhoneme" not in census.roster_admitted_classes(_repo_root()), (
-            "PhPhoneme has joined the roster -- its duplicates are now "
-            "gate-failing, so this test and the totals expectation below must "
-            "be updated to the DUPLICATE_IDENTITY behaviour T024 predicted")
-        assert census.gate_artifact(artifact).verdict != "DUPLICATE_IDENTITY"
-        assert artifact["totals"]["duplicate_extra_objects"] == 0, (
+        expected = T024_EXPECTED_PHONEME_DUPLICATES[pair]
+
+        assert "PhPhoneme" in census.roster_admitted_classes(_repo_root()), (
+            "PhPhoneme has LEFT 035's roster -- its duplicates would be "
+            "advisory again, so this test must go back to the pre-T028 "
+            "expectation it replaced")
+        assert row["duplicates"]["roster_admitted"] is True
+        assert census.duplicates_unaccounted(row) == expected
+        assert census.row_passes(row) is False
+        assert census.gate_artifact(artifact).verdict == "DUPLICATE_IDENTITY"
+        assert census.exit_code_for(
+            census.gate_artifact(artifact).verdict) == 3
+        assert artifact["totals"]["duplicate_extra_objects"] >= expected, (
             "the artifact's headline duplicate tally counts admitted classes "
-            "only; the per-row block is where the "
-            + str(T024_EXPECTED_PHONEME_DUPLICATES[pair])
-            + " duplicates are visible")
+            "only, and T028 admitted six -- so it is at least the "
+            + str(expected) + " phoneme duplicates, plus any PhNCFeatures / "
+            "PhNCSegments duplicates on this pair")
 
     def test_admitting_phphoneme_to_the_roster_makes_the_duplicates_fail(self):
         """Hermetic counterpart to the finding above -- NO live project needed,
@@ -2914,8 +2929,11 @@ class TestT024TheGreenVerdictIsNotEvidence:
 #    Loss evidence is asserted per row (`difference`,
 #    `unexplained_shortfall`, `verdict_class`, `row_passes`) and through
 #    `evaluate_phase` / `gate_artifact(phase=N)`, which the cap never touches.
-# 2. `DUPLICATE_IDENTITY` for the duplicate phonemes. It does not fire and
-#    must not be asserted -- see `TestDuplicatePhonemesAreInertUntilT028`.
+# 2. `DUPLICATE_IDENTITY` for the duplicate phonemes -- on the snapshot AS
+#    STORED. It did not fire while `PhPhoneme` was off 035's roster, and
+#    the raw fixtures still carry that pre-admission derivation. T028 has
+#    since landed, so the verdict IS asserted now, against the re-derived
+#    artifact -- see `TestDuplicatePhonemesWereInertUntilT028Landed`.
 # ===========================================================================
 
 MEASURED_CENSUS_SNAPSHOTS = {
@@ -2967,6 +2985,61 @@ def ngoreme_census() -> dict:
 def ejagham_census() -> dict:
     """`Ejagham W Mini` -> `Ejagham W Target`, measured 2026-08-19."""
     return load_measured_census("ejagham")
+
+
+#: The date `PhPhoneme` and five siblings joined 035's roster (T028, commit
+#: `d8635d9`, 2026-08-19 22:15). The two measured snapshots were committed at
+#: 13:47 the SAME DAY, so their stored `duplicates.roster_admitted: false` was
+#: correct when written and is stale now.
+ROSTER_T028_LANDED_AT = "2026-08-19T22:15:04"
+
+#: What T028 admitted, in the roster's own order. Pinned so a later change to
+#: 035's roster is visible here rather than silently altering what
+#: `with_current_roster_admission` derives.
+T028_ADMITTED_CLASSES = (
+    "PhPhoneme", "PhNCSegments", "PhNCFeatures",
+    "PartOfSpeech", "MoMorphType", "LexEntryInflType",
+)
+
+
+def with_current_roster_admission(artifact) -> dict:
+    """A COPY of `artifact` with `duplicates.roster_admitted` re-derived from
+    035's roster AS IT STANDS TODAY.
+
+    `roster_admitted` is not a measurement. `census._class_row` computes it at
+    run time as `name in roster_admitted_classes()` (`census.py:1810`), and
+    `roster_admitted_classes` reads the roster file precisely so that "the six
+    entries feature 038 proposes (T028) become gate-failing the moment 035
+    merges them, with no edit here" (`census.py:1604`). The stored flag is a
+    cached derivation, and T028 landed AFTER these snapshots were written.
+
+    So this is not forging a measurement: it re-runs the one derived field
+    against the current roster and refreshes the one total that reads it
+    (`census.py:2708`), leaving every measured count -- groups, extra objects,
+    example GUIDs, differences -- exactly as measured. It is what a census
+    would derive today from the same observations.
+
+    What it deliberately does NOT do is stand in for a live re-census. Under
+    natural-key matching the transfer should now MATCH those phonemes instead
+    of duplicating them, so a real re-run would measure FEWER duplicates, not
+    the same ones re-derived. That measurement is `038-NK-P3`, owned by T082.
+    """
+    from copy import deepcopy
+
+    admitted = census.roster_admitted_classes(_repo_root())
+    out = deepcopy(artifact)
+    for row in out.get("classes", ()):
+        duplicates = row.get("duplicates")
+        if isinstance(duplicates, dict):
+            duplicates["roster_admitted"] = row.get("class") in admitted
+    totals = out.get("totals")
+    if isinstance(totals, dict):
+        totals["duplicate_extra_objects"] = sum(
+            (r.get("duplicates") or {}).get("extra_objects", 0)
+            for r in out.get("classes", ())
+            if (r.get("duplicates") or {}).get("roster_admitted")
+        )
+    return out
 
 
 def measured_row(artifact, object_class: str) -> dict:
@@ -3516,24 +3589,49 @@ class TestCappedExitZeroCoexistsWithFailingRows:
 # FINDING 1 -- the duplicate phonemes are INERT, and that is a T028 dependency
 # ---------------------------------------------------------------------------
 
-class TestDuplicatePhonemesAreInertUntilT028:
-    """21 duplicate phoneme names in the Ejagham destination (20 in Ngoreme),
-    and `DUPLICATE_IDENTITY` NEVER FIRES. `totals.duplicate_extra_objects`
-    reads 0.
+class TestDuplicatePhonemesWereInertUntilT028Landed:
+    """21 duplicate phoneme names in the Ejagham destination (20 in Ngoreme).
+    While `PhPhoneme` was absent from 035's natural-key roster,
+    `duplicates.roster_admitted` was False, `duplicates_unaccounted()` returned
+    0 BY DESIGN -- a duplicate name on an unadmitted class is advisory, because
+    homographs are legitimate content -- and `DUPLICATE_IDENTITY` never fired.
+    The correct assertion then was PHASE 1 UNSATISFIED.
 
-    Not a bug and not the cap: `PhPhoneme` is absent from 035's natural-key
-    roster (admitted: `WfiWordform`, `ReversalIndex`, `ReversalIndexEntry`), so
-    `duplicates.roster_admitted` is False and `duplicates_unaccounted()`
-    returns 0 BY DESIGN -- a duplicate name on an unadmitted class is advisory,
-    because homographs are legitimate content.
+    **T028 LANDED** (2026-08-19 22:15, commit `d8635d9`), admitting all six of
+    038's proposed classes. The tripwire that guarded this block fired, and
+    these tests are its remedy: the duplicate assertions have moved from
+    "phase 1 unsatisfied" to `DUPLICATE_IDENTITY` / exit 3, derived through
+    `with_current_roster_admission`.
 
-    So the correct assertion is PHASE 1 UNSATISFIED, not `DUPLICATE_IDENTITY`.
-    `test_t028_has_not_yet_admitted_phphoneme_to_the_roster` is the tripwire
-    that makes the inertness stop reading as correctness once T028 lands."""
+    THE SNAPSHOTS ARE NOT REGENERATED, AND CANNOT BE. Three separate reasons,
+    each sufficient:
+
+    * `roster_admitted` is a DERIVED field, not a measurement
+      (`census.py:1810`), so the stale flag needs re-deriving, not re-measuring.
+    * The source projects have moved since: the T024 live block a few hundred
+      lines up already skips itself because `Ejagham W Mini` and `Ngoreme FLEx`
+      no longer match their recorded digests. A census run today measures a
+      different world.
+    * `Ngoreme Target` is pinned in `MEASURED_PROJECT_DIGESTS` as
+      "irreplaceable evidence of a ruined transfer: it must never be
+      write-enabled or restored".
+
+    What a real re-run WOULD show is a different thing again, and better: under
+    natural-key matching the transfer should match these phonemes instead of
+    duplicating them, so the duplicates should largely disappear. That is
+    `038-NK-P3` ("recovery verified by re-census"), owned by **T082**, and it
+    is the measurement that will eventually replace these fixtures.
+
+    NOT ONLY PhPhoneme. T028's remedy note named the phoneme row, but T028
+    admitted six classes and three of them carry duplicates here, so the
+    artifact-level total moves further than the row does -- see
+    `test_admission_moves_the_headline_total_past_the_phoneme_row`."""
 
     @pytest.mark.parametrize("pair,groups", [("ngoreme", 20),
                                              ("ejagham", 21)])
     def test_the_duplicates_are_measured_and_recorded(self, pair, groups):
+        """Unchanged by T028: these are OBSERVATIONS, and roster admission
+        decides what they mean, never whether they happened."""
         row = measured_row(load_measured_census(pair), "PhPhoneme")
         duplicates = row["duplicates"]
         assert duplicates["groups"] == groups
@@ -3544,78 +3642,159 @@ class TestDuplicatePhonemesAreInertUntilT028:
         assert all(len(set(example["guids"])) == 2
                    for example in duplicates["examples"])
 
-    @pytest.mark.parametrize("pair", sorted(MEASURED_CENSUS_SNAPSHOTS))
-    def test_duplicate_identity_does_not_fire_and_must_not_be_asserted(
-            self, pair):
-        artifact = load_measured_census(pair)
-        row = measured_row(artifact, "PhPhoneme")
-        assert row["duplicates"]["roster_admitted"] is False
-        assert census.duplicates_unaccounted(row) == 0
-        assert artifact["totals"]["duplicate_extra_objects"] == 0
-        assert recompute_verdict(artifact) != "DUPLICATE_IDENTITY"
-        assert row_passes(row) is True, (
-            "the phoneme row PASSES on its own conditions -- which is exactly "
-            "why the loss has to be caught somewhere else"
-        )
+    # -- the moved assertions ---------------------------------------------
 
     @pytest.mark.parametrize("pair,extra", [("ngoreme", 20), ("ejagham", 21)])
-    def test_phase_1_catches_it_with_the_sc_002_wording(self, pair, extra):
-        """`census.py`'s dedicated PhPhoneme check in `_phase_1`. Its wording
-        is the whole point: SC-002 exists because count arithmetic alone
-        cannot see a duplicated identity."""
-        result = evaluate_phase(load_measured_census(pair), 1)
-        assert result.satisfied is False
-        matching = [f for f in result.failures
-                    if "PhPhoneme" in f and "duplicates.extra_objects" in f]
-        assert len(matching) == 1, result.failures
-        failure = matching[0]
-        assert "duplicates.extra_objects is " + str(extra) in failure
-        assert "difference is 0" in failure
-        assert "baseline arithmetic alone would have passed this row" in failure
-        assert "SC-002" in failure
-
-    @pytest.mark.parametrize("pair,extra", [("ngoreme", 20), ("ejagham", 21)])
-    def test_the_inertness_is_roster_gating_not_a_broken_detector(
-            self, pair, extra):
-        """Admit the class on a COPY and the detector fires immediately, with
-        the right count and the right verdict. So nothing is broken: the
-        roster is simply not populated yet."""
-        from copy import deepcopy
-
-        artifact = deepcopy(load_measured_census(pair))
+    def test_the_duplicates_are_now_gate_failing(self, pair, extra):
+        """THE MOVED ASSERTION -- what the spent tripwire required. With
+        `PhPhoneme` admitted, the same measurement yields `DUPLICATE_IDENTITY`
+        and exit 3 rather than an advisory 0."""
+        artifact = with_current_roster_admission(load_measured_census(pair))
         row = measured_row(artifact, "PhPhoneme")
-        row["duplicates"]["roster_admitted"] = True
 
+        assert row["duplicates"]["roster_admitted"] is True
         assert census.duplicates_unaccounted(row) == extra
-        assert row_passes(row) is False
+        assert row_passes(row) is False, (
+            "the phoneme row used to PASS on its own conditions; admission is "
+            "what makes the duplicated identity able to fail it")
         assert recompute_verdict(artifact) == "DUPLICATE_IDENTITY"
         assert exit_code_for(recompute_verdict(artifact)) == 3
         assert gate_artifact(artifact).passed is False
 
-    def test_t028_has_not_yet_admitted_phphoneme_to_the_roster(self):
-        """THE TRIPWIRE. This test FAILS THE MOMENT T028 lands, and that is
-        its job: the moment `PhPhoneme` is admitted, the two snapshots above
-        become stale (they were measured with `roster_admitted: false`) and
-        the duplicate assertions must be re-run and moved from "phase 1
-        unsatisfied" to `DUPLICATE_IDENTITY` / exit 3.
+    @pytest.mark.parametrize("pair,phonemes,total", [("ngoreme", 20, 42),
+                                                     ("ejagham", 21, 25)])
+    def test_admission_moves_the_headline_total_past_the_phoneme_row(
+            self, pair, phonemes, total):
+        """T028 admitted SIX classes, and three of them carry duplicates in
+        these snapshots -- `PhPhoneme`, `PhNCFeatures` and `PhNCSegments`. The
+        remedy note named only the phoneme row, so pin the rest: Ngoreme's
+        `PhNCFeatures` alone contributes 21 extra objects across 12 groups,
+        slightly MORE than its 20 duplicate phonemes.
 
-        Without this, a future reader finds `duplicate_extra_objects: 0` and
-        reads DESIGNED INERTNESS as A CLEAN RESULT."""
+        `totals.duplicate_extra_objects` counts admitted classes only
+        (`census.py:2708`), which is why a number that read 0 on a destination
+        holding dozens of duplicates now reads the real figure."""
+        artifact = with_current_roster_admission(load_measured_census(pair))
+
+        assert artifact["totals"]["duplicate_extra_objects"] == total
+        contributors = {
+            row["class"]: row["duplicates"]["extra_objects"]
+            for row in artifact["classes"]
+            if (row.get("duplicates") or {}).get("roster_admitted")
+            and row["duplicates"].get("extra_objects")
+        }
+        assert set(contributors) == {"PhPhoneme", "PhNCFeatures",
+                                     "PhNCSegments"}
+        assert contributors["PhPhoneme"] == phonemes
+        assert sum(contributors.values()) == total
+
+    @pytest.mark.parametrize("pair,extra", [("ngoreme", 20), ("ejagham", 21)])
+    def test_phase_1_catches_it_with_the_sc_002_wording(self, pair, extra):
+        """`census.py`'s dedicated PhPhoneme check in `_phase_1`, which reads
+        `duplicates.extra_objects` and NOT admission -- so it caught this
+        before T028 and still catches it after. Asserted on BOTH readings of
+        the artifact, because the two surfaces are independent: this predicate
+        is what stood between the inertness and a transfer being called done,
+        and it must not quietly become redundant now the verdict fires too."""
+        for artifact in (load_measured_census(pair),
+                         with_current_roster_admission(
+                             load_measured_census(pair))):
+            result = evaluate_phase(artifact, 1)
+            assert result.satisfied is False
+            matching = [f for f in result.failures
+                        if "PhPhoneme" in f and "duplicates.extra_objects" in f]
+            assert len(matching) == 1, result.failures
+            failure = matching[0]
+            assert "duplicates.extra_objects is " + str(extra) in failure
+            assert "difference is 0" in failure
+            assert ("baseline arithmetic alone would have passed this row"
+                    in failure)
+            assert "SC-002" in failure
+
+    # -- what the snapshots still record, and why it disagrees -------------
+
+    @pytest.mark.parametrize("pair", sorted(MEASURED_CENSUS_SNAPSHOTS))
+    def test_the_snapshot_still_stores_the_pre_admission_derivation(self, pair):
+        """The BEFORE-PICTURE, asserted deliberately rather than tolerated.
+
+        Read raw, the snapshot still says `roster_admitted: false` and
+        `duplicate_extra_objects: 0` on a destination holding 20-21 duplicate
+        phonemes. That was correct when written, and it is exactly the reading
+        the old tripwire existed to stop anyone taking as a clean result. It
+        stays because it is the measured state the fix gets compared against."""
+        artifact = load_measured_census(pair)
+        row = measured_row(artifact, "PhPhoneme")
+
+        assert row["duplicates"]["roster_admitted"] is False
+        assert census.duplicates_unaccounted(row) == 0
+        assert artifact["totals"]["duplicate_extra_objects"] == 0
+        assert recompute_verdict(artifact) != "DUPLICATE_IDENTITY"
+        assert row_passes(row) is True
+
+    @pytest.mark.parametrize("pair", sorted(MEASURED_CENSUS_SNAPSHOTS))
+    def test_the_snapshots_predate_the_roster_landing(self, pair):
+        """THE REPLACEMENT TRIPWIRE. The old one asked "has T028 landed yet?",
+        and its answer is now permanently yes, so it can no longer detect
+        anything. This asks the question that stays live: are these fixtures
+        still the pre-admission measurement they are documented to be?
+
+        It fires if a snapshot is regenerated -- at which point
+        `roster_admitted` arrives already True, `with_current_roster_admission`
+        becomes a no-op, and the before/after split this class is built on has
+        to be retired rather than quietly kept."""
+        artifact = load_measured_census(pair)
+        assert artifact["generated_at"] < ROSTER_T028_LANDED_AT, (
+            "a census-038 snapshot was regenerated after T028 landed. Its "
+            "`roster_admitted` flags now come from the CURRENT roster, so "
+            "`with_current_roster_admission` no longer changes anything and "
+            "`test_the_snapshot_still_stores_the_pre_admission_derivation` is "
+            "asserting a state that no longer exists. Retire the before/after "
+            "split here rather than re-pointing this date."
+        )
+
+    def test_t028_has_landed_and_admitted_all_six_proposed_classes(self):
+        """What replaced `test_t028_has_not_yet_admitted_phphoneme_to_the_
+        roster`. That test's job was to FAIL the moment T028 landed; it did,
+        and this records the outcome instead of re-arming a spent tripwire.
+
+        The six are asserted as a SUBSET rather than as the roster's full
+        ordered tuple, deliberately: pinning the exact list would fire again on
+        any later 035 admission, and a seventh class joining is not by itself a
+        reason to revisit these fixtures. What matters here is that 038's six
+        are in, and that 035's original three were APPENDED to, not rewritten
+        (the T028 journal pins 512 insertions, 0 deletions)."""
         roster = json.loads(
             (_repo_root() / "specs" / "035-fullsweep-fidelity" / "contracts"
              / "natural-key-identity-roster.json").read_text(encoding="utf-8")
         )
         admitted = tuple(entry["class"] for entry in roster["entries"])
-        assert admitted == (
-            "WfiWordform", "ReversalIndex", "ReversalIndexEntry"), (
-            "035's natural-key roster changed. If T028 landed, REGENERATE "
-            "tests/integration/_snapshots/census-038-*.json and move the "
-            "duplicate assertions in "
-            "TestDuplicatePhonemesAreInertUntilT028 from 'phase 1 "
-            "unsatisfied' to DUPLICATE_IDENTITY / exit 3. Do not simply "
-            "update this list."
-        )
-        assert "PhPhoneme" not in admitted
+
+        assert admitted[:3] == (
+            "WfiWordform", "ReversalIndex", "ReversalIndexEntry")
+        assert set(T028_ADMITTED_CLASSES) <= set(admitted)
+        assert "PhPhoneme" in admitted
+        assert census.roster_admitted_classes(_repo_root()) >= frozenset(
+            T028_ADMITTED_CLASSES)
+
+    def test_the_detector_was_never_broken_only_ungated(self):
+        """The old `test_the_inertness_is_roster_gating_not_a_broken_detector`
+        proved this by flipping the flag ON. Now that admission is real, prove
+        it the other way: force the flag back OFF and the inertness returns
+        exactly. Neither reading is a code path that rotted -- both are the
+        roster speaking, which is the design."""
+        artifact = with_current_roster_admission(
+            load_measured_census("ejagham"))
+        assert recompute_verdict(artifact) == "DUPLICATE_IDENTITY"
+
+        for row in artifact["classes"]:
+            duplicates = row.get("duplicates")
+            if isinstance(duplicates, dict):
+                duplicates["roster_admitted"] = False
+        artifact["totals"]["duplicate_extra_objects"] = 0
+
+        assert census.duplicates_unaccounted(
+            measured_row(artifact, "PhPhoneme")) == 0
+        assert recompute_verdict(artifact) != "DUPLICATE_IDENTITY"
 
     def test_the_038_proposal_exists_and_names_phphoneme(self):
         """The other half of the T028 dependency: the extension document is
