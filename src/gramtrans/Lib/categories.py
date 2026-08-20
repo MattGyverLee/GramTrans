@@ -59,10 +59,14 @@ if __package__:
         CreateDefinitionAction,
         DependencyKind,
         DroppedItemRecord,
+        EnrichedCollection,
+        EnrichmentRecord,
         FidelityStatus,
         GrammarCategory,
         PlannedAction,
         PlannedOverwrite,
+        POS_OWNED_COLLECTION_ALIASES,
+        POS_OWNED_COLLECTION_FIELDS,
         ReferenceAction,
         ReferenceCardinality,
         ReferenceDecisionRecord,
@@ -81,10 +85,14 @@ else:
         CreateDefinitionAction,
         DependencyKind,
         DroppedItemRecord,
+        EnrichedCollection,
+        EnrichmentRecord,
         FidelityStatus,
         GrammarCategory,
         PlannedAction,
         PlannedOverwrite,
+        POS_OWNED_COLLECTION_ALIASES,
+        POS_OWNED_COLLECTION_FIELDS,
         ReferenceAction,
         ReferenceCardinality,
         ReferenceDecisionRecord,
@@ -420,6 +428,295 @@ def _compare_multistring_per_ws(src_ms, tgt_ms, ws_list):
     return gaps, conflicts
 
 
+# ---------------------------------------------------------------------------
+# Feature 038 T043/T044 (US4, FR-020..FR-022, SC-007) -- the owned-collection
+# pass of the gold/reserved edit-detection helper.
+# ---------------------------------------------------------------------------
+#
+# DEFECT G3. `_plan_gold_reserved_edit` compared exactly three multistring
+# fields and then took a whole-object `Skip(ALREADY_PRESENT_BY_GUID)` without
+# having looked at a single owned collection. A destination `Verb` carrying the
+# right name and NONE of its source counterpart's slots, templates, features,
+# sub-categories, stem names, inflection classes or reference forms was
+# therefore reported as already present, and the run claimed success while the
+# categories arrived hollow. Measured baseline (SC-007): 3 matched categories,
+# each missing between 3 and 4 WHOLE collections.
+#
+# data-model.md section 9, the clause this pass exists to satisfy:
+#
+#     SKIP is defined by field-identity comparison, not by mere GUID presence.
+#     A matched GUID alone is a LINK, not a SKIP. Emitting SKIP requires that
+#     every scalar field and all seven owned collections were compared and
+#     needed no write; otherwise it is UPDATE.
+#
+# KEYED OFF THE CATEGORY, DELIBERATELY. `_plan_gold_reserved_edit` is SHARED by
+# six categories -- gram_categories, inflection_features, variant_types,
+# complex_form_types, semantic_domains and phonological_features. The seven
+# collections are POS-only, so the pass runs only for the POS categories below
+# AND only where the object actually exposes the field; the other five pay
+# nothing for a comparison that can never apply to them.
+_POS_OWNED_COLLECTION_CATEGORIES = frozenset({
+    GrammarCategory.GRAM_CATEGORIES,  # POS is ALIASED to gram_categories
+    GrammarCategory.POS,
+})
+
+# LIVE-VERIFIED (FLExToolsMCP `flextools_get_object_api IPartOfSpeech` and
+# `flextools_resolve_property ReferenceFormsOC`, 2026-08-20): ALL SEVEN report
+# `requires_cast: true`. Six are declared on `IPartOfSpeech` (`StemNamesOC` and
+# `ReferenceFormsOC` additionally on `IMoInflClass`); `SubPossibilitiesOS` is
+# `inherited_from: ICmPossibility`. `IPartOfSpeech` extends `ICmPossibility`, so
+# one `IPartOfSpeech` cast exposes all seven -- the second interface is listed
+# where the property has one so a non-POS owner of the same field still
+# resolves.
+#
+# WHY THE CAST IS LOAD-BEARING. pythonnet resolves attributes against the
+# STATIC wrapper type, so on a base-interface proxy an uncast
+# `getattr(obj, "ReferenceFormsOC", None)` is None -- indistinguishable here
+# from "the collection is empty", which would produce a clean-looking SKIP over
+# real content: defect G3 all over again. It is the same trap that made
+# flexicon 4.5.0's `FeaturesOA` wiring 100% dead behind an unconditionally-False
+# `hasattr` (CLAUDE.md) while all 1467 of its tests passed.
+_POS_OWNED_COLLECTION_CASTS = {
+    "AffixSlotsOC": ("IPartOfSpeech",),
+    "AffixTemplatesOS": ("IPartOfSpeech",),
+    "InflectableFeatsRC": ("IPartOfSpeech",),
+    "SubPossibilitiesOS": ("IPartOfSpeech", "ICmPossibility"),
+    "StemNamesOC": ("IPartOfSpeech", "IMoInflClass"),
+    "InflectionClassesOC": ("IPartOfSpeech", "IMoInflClass"),
+    "ReferenceFormsOC": ("IPartOfSpeech", "IMoInflClass"),
+}
+
+# The child's LCM class per collection (`target_type`, same MCP lookup), used
+# as the T044 natural-key class for a child that does not declare its own
+# `ClassName`. Only `PartOfSpeech` is admitted by 035's roster today, so for the
+# other six this resolves to "identity only" -- which is the correct answer, not
+# a gap: an unadmitted class has no natural-key basis (FR-002).
+_POS_OWNED_COLLECTION_CHILD_CLASS = {
+    "AffixSlotsOC": "MoInflAffixSlot",
+    "AffixTemplatesOS": "MoInflAffixTemplate",
+    "InflectableFeatsRC": "FsFeatDefn",
+    "SubPossibilitiesOS": "PartOfSpeech",
+    "StemNamesOC": "MoStemName",
+    "InflectionClassesOC": "MoInflClass",
+    "ReferenceFormsOC": "FsFeatStruc",
+}
+
+
+def _pos_owned_collection(obj, field_name):
+    """`(spelling, [children])` for one of the seven, or `(None, None)`.
+
+    `(None, None)` means the object does not expose the field AT ALL -- it is
+    not POS-shaped -- and is the second half of the category key above. An
+    EMPTY collection returns `(spelling, [])`, which is a different fact and
+    must stay distinguishable from the first: "absent" was never compared,
+    "empty" was compared and had nothing to offer.
+
+    Both spellings are probed. `POS_OWNED_COLLECTION_FIELDS` is canonical
+    (`ReferenceFormsOC`, live-verified) and `POS_OWNED_COLLECTION_ALIASES`
+    records the spec's `ReferenceFormsOS`; whichever spelling the object
+    actually carries is returned and reported, since `EnrichedCollection`
+    accepts either and normalises them for its duplicate check.
+
+    The uncast receiver is tried first (offline fakes and already-cast live
+    objects answer immediately) and the declared interfaces after, because on a
+    base-interface proxy the uncast read is invisible -- see the note above
+    `_POS_OWNED_COLLECTION_CASTS`.
+    """
+    if obj is None:
+        return None, None
+    spellings = [field_name]
+    for alias, canonical in POS_OWNED_COLLECTION_ALIASES.items():
+        if canonical == field_name and alias not in spellings:
+            spellings.append(alias)
+
+    receivers = [obj]
+    for iface_name in _POS_OWNED_COLLECTION_CASTS.get(field_name, ()):
+        cast = _cast_lcm(obj, iface_name)
+        if cast is not None and cast is not obj:
+            receivers.append(cast)
+
+    for receiver in receivers:
+        for spelling in spellings:
+            try:
+                raw = getattr(receiver, spelling, None)
+            except Exception:  # noqa: BLE001 -- an unreadable member is "absent"
+                continue
+            if raw is None:
+                continue
+            try:
+                return spelling, list(raw)
+            except TypeError:
+                continue
+    return None, None
+
+
+def _collection_child_by_guid(child, candidates):
+    """The candidate whose GUID equals `child`'s, or None. Identity only."""
+    child_guid = _guid_str_from(child)
+    if not child_guid:
+        return None
+    for candidate in candidates:
+        if _guid_str_from(candidate) == child_guid:
+            return candidate
+    return None
+
+
+def _match_collection_child(child, candidates, child_class, ws_handles,
+                            source_ws_handles):
+    """The destination child `child` corresponds to, or None (T044).
+
+    GUID FIRST, THEN THE R1 ROSTER KEY. A collection child is MATCHED, not
+    blindly appended -- without this, run 2 would re-add every child run 1
+    wrote and SC-008's re-run check would never hold. The ordering is the same
+    contract `matcher.resolve_match` already enforces for top-level objects,
+    and this routes straight through it: the machinery T032/T033 wired into
+    `_resolve_target_pos`, not a second matcher.
+
+    The candidate scope is THIS collection, not the class's project-wide roster
+    scope. The question a collection child asks is "is this child already in
+    this collection?", and answering it from a wider scope would report a child
+    owned by some other category as already present here.
+
+    `NaturalKeyAmbiguityError` propagates by design, exactly as it does from
+    `_resolve_target_pos_by_natural_key`: the roster does not claim the key is
+    unique by construction, so two candidates is a condition the operator must
+    see rather than a coin the planner flips.
+    """
+    if not candidates:
+        return None
+    declared = getattr(_unwrap_lcm(child), "ClassName", None) or child_class
+    object_class = str(declared) if declared else ""
+    if not object_class or not _guid_str_from(child):
+        # `resolve_match` keys every `MatchBasisRecord` by the source GUID and
+        # raises rather than answer without one. A child that cannot be keyed
+        # still gets the identity half of the rule.
+        return _collection_child_by_guid(child, candidates)
+    decision = _matcher.resolve_match(
+        object_class,
+        _unwrap_lcm(child),
+        [_unwrap_lcm(c) for c in candidates],
+        ws_handles=ws_handles,
+        source_ws_handles=source_ws_handles,
+    )
+    if decision.record.basis is _MatchBasis.NONE:
+        return None
+    return decision.target_obj
+
+
+def _compare_pos_owned_collections(piece, tgt_obj, context):
+    """Compare all seven `IPartOfSpeech` owned collections (T043 + T044).
+
+    Returns `tuple[EnrichedCollection, ...]`, one row per collection that has
+    at least one SOURCE child. A collection empty on both sides contributes
+    nothing, and an EMPTY SOURCE collection can never propose a write against a
+    populated destination -- Principle IV's "never blank a target field from an
+    empty source", restated for collections (FR-021).
+
+    `dropped` is 0 on every row here and that is not an omission: this is PLAN
+    time and a plan proposes. A child that cannot actually be added is
+    discovered by the executor (T045) and reported there through
+    `EnrichedCollection.dropped_records`, which `EnrichedCollection` already
+    reconciles against the count.
+
+    Read-only throughout (Principle III): nothing on either side is mutated,
+    reordered or sorted -- an existing destination child keeps its index and the
+    new one arrives beside it.
+    """
+    rows = []
+    ws_handles = _matcher.ws_handles_for(getattr(context, "target_handle", None))
+    source_ws_handles = _matcher.ws_handles_for(
+        getattr(context, "source_handle", None))
+    src_obj = _unwrap_lcm(piece)
+    dst_obj = _unwrap_lcm(tgt_obj)
+
+    for field_name in POS_OWNED_COLLECTION_FIELDS:
+        spelling, src_children = _pos_owned_collection(src_obj, field_name)
+        if spelling is None or not src_children:
+            continue
+        _tgt_spelling, tgt_children = _pos_owned_collection(dst_obj, field_name)
+        candidates = list(tgt_children or ())
+        child_class = _POS_OWNED_COLLECTION_CHILD_CLASS.get(field_name, "")
+        added = 0
+        already_present = 0
+        for child in src_children:
+            matched = _match_collection_child(
+                child, candidates, child_class, ws_handles, source_ws_handles,
+            )
+            if matched is None:
+                added += 1
+            else:
+                already_present += 1
+        rows.append(EnrichedCollection(
+            field_name=spelling,
+            added=added,
+            already_present=already_present,
+            dropped=0,
+            dropped_records=(),
+        ))
+    return tuple(rows)
+
+
+def _lcm_class_for_category(category) -> str:
+    """`preview.lcm_class_for_category`, imported lazily.
+
+    ONE table answers "which LCM class does this category name", and it lives
+    in `preview.py` beside `_emit_present_outcome`, the caller that established
+    the rule. `preview` imports `categories`, so a module-level import here
+    would close the cycle; the lazy import is what lets both T043 and T043a
+    reuse the table instead of copying it.
+    """
+    try:
+        if __package__:
+            from .preview import lcm_class_for_category
+        else:  # pragma: no cover - script-mode import shim
+            from preview import lcm_class_for_category  # type: ignore
+        return lcm_class_for_category(category) or ""
+    except Exception:  # noqa: BLE001 -- an unavailable table names no class
+        return ""
+
+
+def _match_basis_for_present_by_guid(object_class, source_guid, target_guid):
+    """`preview.match_basis_for_present_by_guid`, imported lazily (T043a).
+
+    The SAME constructor `_emit_present_outcome` uses, for the same reason:
+    "a `PlannedOverwrite` with no `match_basis` is indistinguishable in the
+    report from one whose basis was never determined". Lazy for the cycle
+    reason above.
+    """
+    if __package__:
+        from .preview import match_basis_for_present_by_guid
+    else:  # pragma: no cover - script-mode import shim
+        from preview import match_basis_for_present_by_guid  # type: ignore
+    return match_basis_for_present_by_guid(
+        object_class, source_guid, target_guid,
+    )
+
+
+def _pos_enrichment_object_class(category):
+    """The LCM class name `EnrichmentRecord.object_class` must carry.
+
+    `EnrichmentRecord` rejects an empty `object_class`, and this path only ever
+    runs for the POS categories, so the table's answer falls back to
+    `PartOfSpeech` rather than to nothing.
+    """
+    return _lcm_class_for_category(category) or "PartOfSpeech"
+
+
+def _first_multistring_text(multistring, ws_list):
+    """The first non-empty alt of `multistring` across `ws_list`, or ""."""
+    if multistring is None:
+        return ""
+    for _ws_id, ws_handle in ws_list:
+        try:
+            ts = multistring.get_String(ws_handle)
+        except Exception:  # noqa: BLE001
+            continue
+        text = getattr(ts, "Text", None)
+        if text:
+            return str(text)
+    return ""
+
+
 def _plan_gold_reserved_edit(piece, category, context, target_iter_fn):
     """Shared plan_action helper for the ontology/reserved categories (spec 017).
 
@@ -437,17 +734,44 @@ def _plan_gold_reserved_edit(piece, category, context, target_iter_fn):
        (GUID-equality lookup is binding preservation, not a lock -- KEPT.)
     2. If absent -> return None (caller emits PlannedAction / create).
        Creation is unconditional, exactly like any ordinary item.
-    3. If present, compare Name/Abbreviation/Description per writing system:
-       - All slots equal -> Skip(ALREADY_PRESENT_BY_GUID).
-       - Any gap (empty in target) and/or any diverged field -> a
-         PlannedOverwrite(write_mode="merge"). The executor routes write_mode
-         "merge" through apply_update_semantic when the category's ConflictMode
-         is UPDATE (the v7.0.0 default for these categories), which fills empty
-         target fields AND updates diverged fields from a non-empty source,
-         while never blanking a populated target from an empty source.
+    3. If present, compare Name/Abbreviation/Description per writing system
+       AND, for the POS categories, all seven owned collections (T043):
+       - All scalar slots equal AND the collection pass finds nothing ->
+         Skip(ALREADY_PRESENT_BY_GUID).
+       - Any gap (empty in target), any diverged field, and/or any source
+         child the destination lacks -> a PlannedOverwrite(write_mode="merge").
+         The executor routes write_mode "merge" through apply_update_semantic
+         when the category's ConflictMode is UPDATE (the v7.0.0 default for
+         these categories), which fills empty target fields AND updates
+         diverged fields from a non-empty source, while never blanking a
+         populated target from an empty source.
+
+    THE OWNED-COLLECTION PASS (feature 038 T043/T044, FR-020..FR-022, SC-007).
+    Both early skips below owe the same comparison. data-model.md section 9:
+    "SKIP is defined by field-identity comparison, not by mere GUID presence.
+    A matched GUID alone is a LINK, not a SKIP. Emitting SKIP requires that
+    every scalar field and all seven owned collections were compared and needed
+    no write; otherwise it is UPDATE." So `_compare_pos_owned_collections` runs
+    BEFORE either skip can be taken, and a skip stands only when it also found
+    nothing to add. The collections are POS-only, so the pass is keyed off
+    `_POS_OWNED_COLLECTION_CATEGORIES` and off attribute presence -- the other
+    five categories sharing this helper are unaffected.
+
+    The pass runs even when the source project yields NO writing-system list.
+    An owned collection needs no writing system to be compared: the child is
+    either there by GUID (then by the R1 roster key, T044) or it is not. An
+    unavailable ws_list is a reason the SCALAR comparison could not run and
+    says nothing about the collections, so it may no longer stand alone as
+    proof that the object is already present. Where the collection pass IS
+    clean, the residual conservative skip keeps `ALREADY_PRESENT_BY_GUID`
+    rather than minting a new reason: the object really is present by GUID and
+    everything this helper was able to compare compared equal.
 
     Returns a Skip, PlannedOverwrite, or None.
     - None means "not present in target" -> caller emits PlannedAction.
+    - A PlannedOverwrite carrying an `EnrichmentRecord` is an ENRICHMENT: the
+      add-only, `write_mode="merge"` update of FR-021, never a removal, a
+      blanking or a destructive reorder.
     """
     src_guid = _guid_str_from(piece)
 
@@ -456,6 +780,14 @@ def _plan_gold_reserved_edit(piece, category, context, target_iter_fn):
 
     if tgt_obj is None:
         return None  # absent -> caller emits PlannedAction
+
+    # T043: the owned-collection pass, ahead of BOTH early skips. Needs no
+    # writing-system information, so it is computed before ws_list is even
+    # enumerated.
+    collections = ()
+    if category in _POS_OWNED_COLLECTION_CATEGORIES:
+        collections = _compare_pos_owned_collections(piece, tgt_obj, context)
+    collection_delta = any(c.added or c.dropped for c in collections)
 
     # Per-WS edit detection (FR-E04 to FR-E07).
     # Enumerate writing systems from source side.
@@ -467,42 +799,49 @@ def _plan_gold_reserved_edit(piece, category, context, target_iter_fn):
     except Exception:
         pass
 
-    if not ws_list:
-        # No WS info available -> conservative skip (cannot prove edit).
-        return Skip(
-            category=category,
-            source_guid=src_guid,
-            reason=SkipReason.ALREADY_PRESENT_BY_GUID,
-            detail=f"GUID {src_guid[:8]}... present in target (no WS info for comparison).",
-        )
-
     all_gaps = []    # (field_name, ws_handle, src_text)
     all_conflicts = []  # (field_name, ws_handle, src_text, tgt_text)
 
-    for field_name in ("Name", "Abbreviation", "Description"):
-        src_ms = getattr(piece, field_name, None)
-        tgt_ms = getattr(tgt_obj, field_name, None)
-        if src_ms is None or tgt_ms is None:
-            continue
-        gaps, conflicts = _compare_multistring_per_ws(src_ms, tgt_ms, ws_list)
-        for ws_handle, src_text in gaps:
-            all_gaps.append((field_name, ws_handle, src_text))
-        for ws_handle, src_text, tgt_text in conflicts:
-            all_conflicts.append((field_name, ws_handle, src_text, tgt_text))
+    if not ws_list:
+        if not collection_delta:
+            # No WS info available AND nothing to add to any owned collection
+            # -> conservative skip (cannot prove a scalar edit, and proved
+            # there is no collection edit).
+            return Skip(
+                category=category,
+                source_guid=src_guid,
+                reason=SkipReason.ALREADY_PRESENT_BY_GUID,
+                detail=f"GUID {src_guid[:8]}... present in target (no WS info for comparison).",
+            )
+        # Otherwise fall through: the scalar comparison stays empty (it could
+        # not run) and the collection delta alone carries the merge.
+    else:
+        for field_name in ("Name", "Abbreviation", "Description"):
+            src_ms = getattr(piece, field_name, None)
+            tgt_ms = getattr(tgt_obj, field_name, None)
+            if src_ms is None or tgt_ms is None:
+                continue
+            gaps, conflicts = _compare_multistring_per_ws(src_ms, tgt_ms, ws_list)
+            for ws_handle, src_text in gaps:
+                all_gaps.append((field_name, ws_handle, src_text))
+            for ws_handle, src_text, tgt_text in conflicts:
+                all_conflicts.append((field_name, ws_handle, src_text, tgt_text))
 
-    if not all_gaps and not all_conflicts:
-        # Fully identical across every WS slot -> nothing to write.
-        return Skip(
-            category=category,
-            source_guid=src_guid,
-            reason=SkipReason.ALREADY_PRESENT_BY_GUID,
-            detail=f"GUID {src_guid[:8]}... present in target; all WS slots equal.",
-        )
+        if not all_gaps and not all_conflicts and not collection_delta:
+            # Fully identical across every WS slot AND every owned collection
+            # -> nothing to write. This is the one SKIP the clause still
+            # allows, and T043 must not make it unreachable.
+            return Skip(
+                category=category,
+                source_guid=src_guid,
+                reason=SkipReason.ALREADY_PRESENT_BY_GUID,
+                detail=f"GUID {src_guid[:8]}... present in target; all WS slots equal.",
+            )
 
     # Any divergence -> non-destructive UPDATE merge (constitution v7.0.0).
     # Both empty-target gaps AND diverged (both-non-empty-differ) fields are
     # written by the executor's apply_update_semantic pass. An empty source
-    # never blanks a populated target field.
+    # never blanks a populated target field, and a collection is add-only.
     summary_parts = []
     if all_gaps:
         gap_summary = ", ".join(
@@ -515,10 +854,36 @@ def _plan_gold_reserved_edit(piece, category, context, target_iter_fn):
             for f, wh, s, t in all_conflicts
         )
         summary_parts.append(f"update diverged {diverged_summary}")
+    if collection_delta:
+        summary_parts.append("enrich " + ", ".join(
+            f"{c.field_name}: +{c.added} (have {c.already_present})"
+            for c in collections if c.added or c.dropped
+        ))
     summary = (
         f"Merge GUID {src_guid[:8]}... [{category.value}]: "
         + " | ".join(summary_parts)
     )
+
+    # FR-020..FR-022: an ENRICHMENT record whenever the collection pass had
+    # anything to say. `was_created` is False by construction -- this path only
+    # ever runs on an object the GUID scan already found in the destination --
+    # which is how the report tells an enriched item from a created one.
+    enrichment = None
+    if collections:
+        enrichment = EnrichmentRecord(
+            object_class=_pos_enrichment_object_class(category),
+            source_guid=src_guid,
+            target_guid=src_guid,
+            label=(_first_multistring_text(getattr(piece, "Name", None), ws_list)
+                   or src_guid),
+            collections=collections,
+            # Scalar fields the merge fills where the destination was EMPTY.
+            # Diverged-but-populated fields are an update, not a gap fill, and
+            # are carried by the summary above rather than counted here.
+            fields_updated=tuple(dict.fromkeys(f for f, _wh, _s in all_gaps)),
+            was_created=False,
+        )
+
     return PlannedOverwrite(
         category=category,
         source_guid=src_guid,
@@ -526,6 +891,7 @@ def _plan_gold_reserved_edit(piece, category, context, target_iter_fn):
         match_via="guid",
         write_mode="merge",
         summary=summary,
+        enrichment=enrichment,
     )
 
 
@@ -8444,6 +8810,90 @@ def _plan_natural_key_match(piece, category, context, object_class,
     )
 
 
+def _phonology_present_outcome(piece, context, category, src_guid, label):
+    """The outcome for "the target already holds this GUID" (T043a).
+
+    SAME ROOT CAUSE AS T043, DIFFERENT SITE. `_phonology_simple_plan` used to
+    return a BARE `Skip` here. A `Skip` carries no `match_basis`, so
+    `report.py::_matched_class` cannot attribute the object, the class lands in
+    `matches_unattributed`, its census row falls back to `baseline_gross`, and
+    gross subtraction then removes starter objects the transfer had CORRECTLY
+    matched. Measured on the T039 live run (`c65579a`): run 2 flipped
+    `PhPhoneme` MATCHED -> SHORTFALL (unexplained 21) and `PhNCSegments`
+    MATCHED -> SHORTFALL (2) with BYTE-IDENTICAL destination counts in both
+    runs -- both phantoms. Stated plainly: the better the transfer got, the
+    worse the census reported it, because working matches turn creates into
+    identity skips and every identity skip degraded its row's subtraction
+    basis.
+
+    GIVING `Skip` A `match_basis` FIELD IS RECORDED AS CONSIDERED AND REJECTED.
+    `Skip` means "nothing will be written"; a skip carrying a match is really a
+    LINK, which is exactly the boundary US4 exists to sharpen. So this routes
+    through the SAME mechanism `preview._emit_present_outcome` already uses --
+    `lcm_class_for_category` + `match_basis_for_present_by_guid` -- and carries
+    the record on a `PlannedOverwrite(write_mode="merge")`, the non-destructive
+    fill-gaps mode `_plan_natural_key_match` already emits from this very
+    function for the natural-key half of the same decision.
+
+    WHEN THE CLASS IS NOT KNOWN, THE SKIP STANDS. `_emit_present_outcome`'s own
+    rule: "A category whose LCM class is NOT one-to-one yields no record rather
+    than a guessed one -- `object_class` is the field the report groups by, so
+    a wrong name would file the match under another class." That is
+    `PHONOLOGICAL_RULES` here (`PhRegularRule` / `PhMetathesisRule` share the
+    category), and for it the bare `Skip` remains the honest answer.
+    """
+    def _bare_skip():
+        return Skip(
+            category=category,
+            source_guid=src_guid,
+            reason=SkipReason.ALREADY_PRESENT_BY_GUID,
+            detail=f"{label} GUID {src_guid[:8]}... already present in target.",
+        )
+
+    # PHASE 0 EMITS A SKIP, AND THAT IS FR-009, NOT THE DEFECT.
+    # `_emit_present_outcome` (preview.py:1514) gates on exactly this: Phase 0
+    # (`enable_overwrite=False`, the DEFAULT) emits `Skip(ALREADY_PRESENT_BY_GUID)`
+    # per FR-009; only Phase 1 (`enable_overwrite=True`, FR-108) may emit a
+    # `PlannedOverwrite`. An unconditional overwrite here would make the mode
+    # whose entire contract is "nothing is overwritten" start planning merges.
+    # The live Selection is already threaded onto the context for precisely this
+    # purpose -- see preview.py:515-518, "so entry-shaped leaf plan_actions can
+    # honor enable_overwrite by emitting a PlannedOverwrite instead of a Skip
+    # when the target already has the GUID".
+    #
+    # This still fixes the measured T039 phantom, because the census runs are
+    # Phase 1: run 2 planned 38 overwrites (run 1: 23). The attribution gap that
+    # flipped PhPhoneme and PhNCSegments MATCHED -> SHORTFALL lives in the
+    # overwrite-enabled mode, which is the mode this now records a basis in.
+    _selection = getattr(context, "_selection", None)
+    if _selection is None or not getattr(_selection, "enable_overwrite", False):
+        return _bare_skip()
+
+    object_class = (_natural_key_object_class(piece, category)
+                    or _lcm_class_for_category(category))
+    if not object_class:
+        return Skip(
+            category=category,
+            source_guid=src_guid,
+            reason=SkipReason.ALREADY_PRESENT_BY_GUID,
+            detail=f"{label} GUID {src_guid[:8]}... already present in target.",
+        )
+    return PlannedOverwrite(
+        category=category,
+        source_guid=src_guid,
+        target_guid=src_guid,
+        summary=(
+            f"{label} GUID {src_guid[:8]}... already present in target -- "
+            f"matched by GUID and reused ({object_class})"
+        ),
+        match_via="guid",
+        write_mode="merge",
+        match_basis=_match_basis_for_present_by_guid(
+            object_class, src_guid, src_guid,
+        ),
+    )
+
+
 def _phonology_simple_plan(piece, context, category, ops_attr, label):
     """Shared plan_action helper for the 5 simple phonology categories.
 
@@ -8490,11 +8940,8 @@ def _phonology_simple_plan(piece, context, category, ops_attr, label):
         except (AttributeError, TypeError):
             target_iter = ()
         if _target_has_guid(target_iter, src_guid):
-            return Skip(
-                category=category,
-                source_guid=src_guid,
-                reason=SkipReason.ALREADY_PRESENT_BY_GUID,
-                detail=f"{label} GUID {src_guid[:8]}... already present in target.",
+            return _phonology_present_outcome(
+                piece, context, category, src_guid, label,
             )
         # Identity found nothing. Step 2: the roster-admitted natural key,
         # BEFORE emitting a create -- otherwise a starter object the source
