@@ -252,3 +252,83 @@ python -m gramtrans.census_cli run --source "Ejagham Mini" `
 ws_mapping_mode="full")` that also dumps the plan/enrichment side-data the
 snapshot is built from. Both censuses opened both projects read-only and
 verified their digests unchanged.
+
+---
+
+## Addendum -- T048f landed, and it is inert on this pair
+
+**T048f is fixed** (`dcfa990`, worktree): `MatchedTallyBound` /
+`matched_tally_bound_from_report` apply T048b's bounded-withholding rule to
+`matched_to_source`, reading the bound out of `unattributed_by_category` rather
+than guessing it. On run 2's report it bounds to exactly five classes --
+`PartOfSpeech`, `FsClosedFeature`, `FsComplexFeature`, `LexEntryType`,
+`LexEntryInflType` -- and `PhPhoneme` / `PhNCSegments` are correctly **not**
+among them. 16 unit tests.
+
+**And the phantom survives anyway.** Re-censusing run 2 with the fix in place
+changes no row: still 15 capped rows, still 1666 advisory objects, `PhPhoneme`
+still `-21` and `PhNCSegments` still `-2`. The console names the reason:
+
+```
+[WARN] T048b: 286 identity skip(s) name a category whose LCM class is not
+one-to-one (AFFIXES=88, COMPLEX_FORM_TYPES=7, NATURAL_CLASSES=3,
+POS_INFLECTABLE_FEATS=13, STEMS=164, VARIANT_TYPES=11) ... The
+`baseline_matched` basis is withheld from EVERY class (a category neither
+table bounds).
+```
+
+`AFFIXES`, `POS_INFLECTABLE_FEATS` and `STEMS` are in **neither**
+`preview._LCM_CLASS_FOR_CATEGORY` nor `_AMBIGUOUS_IDENTITY_SKIP_CLASSES`, so
+`IdentitySkipTally.unbounded` fires and denies every class *before* T048f's
+bound is ever consulted. **Filed as T048g.**
+
+The asymmetry that hid this for two sessions is worth stating: on run 1 those
+three categories produce **actions**, not skips, so the skip tally is bounded
+and both rows reach `baseline_matched`. Only a *second* run turns 164 stems and
+88 affixes into identity skips. The defect is therefore invisible to any
+single-run gate -- which is exactly why T039 is the task that found it.
+
+T048g is deliberately not closed here. Each of the three needs a closed
+candidate set **derived from its category's actual walk**, and
+`_AMBIGUOUS_IDENTITY_SKIP_CLASSES`'s own docstring says why guessing is not
+allowed: a wrong bound lets a row claim a basis its tally cannot support, which
+is the one direction this instrument must never be wrong in.
+
+## Addendum -- T048e needs a design decision, not just an edit
+
+T048e is a one-line problem with a contested fix, and the contest is already on
+the record in this feature.
+
+The evidence to emit exists at `categories.py:788-790` as a tuple of
+`EnrichedCollection`, each carrying the `already_present` count criterion 3b
+wants. What is missing is a **carrier**. `RunPlan.enrichments` is derived
+exclusively from `PlannedOverwrite.enrichment` (`preview.py:800-804`), and
+`report.build_from_plan` "raises rather than guess a category for an orphan
+record" -- so an `EnrichmentRecord` cannot reach the report without an
+overwrite to travel on.
+
+Emitting a `PlannedOverwrite` instead is **wrong**: nothing needs writing, SKIP
+is the correct disposition, and `categories.py:829-831` says so in terms --
+*"This is the one SKIP the clause still allows, and T043 must not make it
+unreachable."* Promoting it would inflate the overwrite tally and blur the very
+LINK-vs-SKIP boundary US4 exists to sharpen.
+
+That leaves two candidates, and the first T039 journal already argued against
+the shape of the second:
+
+1. **Name the collections in the skip's `detail`.** No model change, correct
+   disposition, evidence visible to a human reader. But it is prose: criterion
+   3b would still have no numbers to compare, so T039 could not close on it.
+2. **Give `Skip` an optional `collections_compared` tuple.** Directly serves
+   3b and the constitutional clause. But
+   [T039-idempotence.md](T039-idempotence.md) recorded the neighbouring
+   proposal as *considered and NOT recommended*: *"a skip that carries a match
+   is really a link, which is the LINK-vs-SKIP distinction defect G3 already
+   turns on."* That objection was aimed at `match_basis` rather than at
+   collection evidence -- recording that a comparison happened is not claiming
+   a match -- but it is close enough that a reviewer could fairly read the
+   earlier decision as covering it.
+
+**Left for a decision rather than chosen unilaterally**, because option 2
+widens a constitutionally-load-bearing model in the area a prior journal
+deliberated on, and option 1 cannot close T039.
