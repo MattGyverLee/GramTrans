@@ -332,3 +332,88 @@ the shape of the second:
 **Left for a decision rather than chosen unilaterally**, because option 2
 widens a constitutionally-load-bearing model in the area a prior journal
 deliberated on, and option 1 cannot close T039.
+
+---
+
+## Resolution -- T048e landed, criterion 3b passes, T039 closes
+
+**Decision taken by the user**: `Skip.collections_compared`, not a
+detail-text-only fix. The reasoning that settled it is that prose cannot close
+3b -- a gate needs numbers, and naming the collections in the skip detail would
+have left the criterion permanently unevaluable and forced T039's 3b clause to
+be amended instead.
+
+### What landed (`12d495c`)
+
+Three edits, all small, none of them to the *decision* the skip makes:
+
+- **`models.py`** -- `Skip.collections_compared: tuple = ()`, with a **checked**
+  no-op invariant: every member must report `added == 0` and `dropped == 0`, or
+  it is an enrichment and belongs on a `PlannedOverwrite` carrying an
+  `EnrichmentRecord`. Checked rather than documented, because the failure mode
+  is a later caller conflating the two dispositions, and the error message says
+  where the record belongs so the next person does not simply zero the counts
+  to get past it.
+- **`categories.py`** -- carried at **both** early skips. The no-WS skip gets it
+  too: an owned collection needs no writing system to be compared, which the
+  function's own docstring already argued. `_collections_compared_detail` puts
+  the same fact in the detail text and returns `""` when there are no
+  collections, so the five non-POS categories sharing
+  `_plan_gold_reserved_edit` keep their detail byte-identical.
+- **`report.py`** -- a new `_skip_snapshot` emits it, and **omits the key rather
+  than writing `[]`**. That distinction is load-bearing and is the same one
+  `matched_to_source` makes for an absent class: `[]` would read as "compared,
+  and there are none", manufacturing evidence for a comparison that never ran.
+
+### Measured
+
+Re-run on **one interleaved sequence** -- restore, baseline, run 1, census,
+run 2, census -- against `GT038 T039d Target`, so a single pair carries all
+four criteria rather than two pairs carrying two each. Censuses
+`CENSUS-20260820-150540` and `CENSUS-20260820-150738`.
+
+| # | criterion | result |
+|---|---|---|
+| 1 | no `PlannedAction` with basis `NONE` | **PASS** -- 0 actions (run 1: 329) |
+| 2 | `destination_count_total` unchanged | **PASS** -- all 75 entries |
+| 3a | every `added == 0` on run 2 | **PASS** -- and `dropped` 0 throughout |
+| 3b | `already_present` == run 1's `added` | **PASS** -- 10 collections, 3 objects, every one equal |
+
+```
+[OK]  Noun     AffixSlotsOC        added=1 already_present=1
+[OK]  Noun     AffixTemplatesOS    added=1 already_present=1
+[OK]  Noun     InflectableFeatsRC  added=2 already_present=2
+[OK]  Noun     ReferenceFormsOC    added=2 already_present=2
+[OK]  Pronoun  AffixSlotsOC        added=1 already_present=1
+[OK]  Pronoun  AffixTemplatesOS    added=1 already_present=1
+[OK]  Pronoun  InflectableFeatsRC  added=2 already_present=2
+[OK]  Verb     AffixSlotsOC        added=4 already_present=4
+[OK]  Verb     AffixTemplatesOS    added=1 already_present=1
+[OK]  Verb     SubPossibilitiesOS  added=1 already_present=1
+```
+
+The **enrichment surfaces are still disjoint**, and that is not a defect but a
+property of idempotence: run 1 fills the three starter POSes, run 2 finds them
+complete and enriches the four it created instead. 3b is answerable because it
+now reads **both** surfaces -- the enrichment records and T048e's skip
+evidence. `test_criterion_3b_is_not_vacuous_the_skip_surface_carries_it` pins
+that dependency directly, so the reason 3b passes stays visible rather than
+looking like it always would have.
+
+### What did NOT change
+
+`PhPhoneme` and `PhNCSegments` still drift from `baseline_matched` to
+`baseline_gross` on run 2 with their counts unmoved. **T048g remains open**,
+and T048e was never going to touch it -- one is a plan-side reporting gap, the
+other a census-side attribution bound.
+
+### Tests
+
+`tests/unit/test_038_skip_collection_evidence.py` (14) plus the rewritten T039
+block (15, was 13). **Full unit suite: 3348 passed, 0 failed.**
+`tests/integration/test_object_census.py`: 224 passed, 1 failed -- the
+pre-existing T028 roster tripwire, unchanged.
+
+**T039 is checked off.** All four criteria were evaluated and all four passed,
+on one pair, with the evidence committed as a snapshot rather than asserted
+from a hand count.
