@@ -968,3 +968,183 @@ def test_every_registration_census_agrees_with_the_pre_phase7_baseline() -> None
     assert post["totals"] == base["totals"]
     assert (post["verdict"], post["exit_code"]) \
         == (base["verdict"], base["exit_code"])
+
+
+# ---------------------------------------------------------------------------
+# T070 / T071 / T072 -- the pull-in, and the first measurement of what a
+# narrow transfer was LOSING
+# ---------------------------------------------------------------------------
+#
+# Driver: `debug/run038_pull_in_census.py`. Artifact:
+# `_snapshots/closure-pull-in-038-t070.json`.
+#
+# Everything above this line measures EDGES. T069's driver says so in as many
+# words -- `plan_composition_unchanged_by_registration` was true "at this
+# stage" only "because T070 (marking pulled-in items) and T072 (deselecting
+# them) have not landed". These tests measure the moment that stops holding:
+# the same AFFIX_TEMPLATES-only selection, the same source, the same backup,
+# and now the plan gains MEMBERS for the 23 refs the edges named.
+#
+# The row that makes the case is not any of the plan-shape numbers. It is
+# `D_arrival_in_target`: transferring templates alone used to land 8 of 11
+# templates and ZERO of their 19 slots, because the 3 templates whose owning
+# POS was not already in the destination could not resolve an owner and were
+# abandoned. Nothing reported a closure failure -- the plan had never claimed
+# to transfer a POS.
+
+_PULL_IN = _SNAPSHOT_DIR / "closure-pull-in-038-t070.json"
+
+
+def _pull_in() -> dict:
+    if not _PULL_IN.is_file():
+        pytest.skip(
+            "no committed pull-in measurement at " + str(_PULL_IN)
+            + " -- produce it with `python debug/run038_pull_in_census.py`")
+    return json.loads(_PULL_IN.read_text(encoding="utf-8"))
+
+
+def test_a_templates_only_plan_now_carries_the_pulled_in_members() -> None:
+    """FR-014/FR-015 at plan level. 23 members, matching T069's 23 distinct
+    pulled-in refs exactly -- 5 POSes and 18 slots.
+
+    The member count and the EDGE count are asserted separately on purpose:
+    53 edges over 23 refs means a ref can be named by more than one edge, and
+    a pull-in that planned one member per EDGE would duplicate objects.
+    """
+    reg = _pull_in()
+    assert reg["narrow_selection"] == "AFFIX_TEMPLATES"
+    live = reg["A_narrow_registry_live"]
+    assert {cat: row["count"]
+            for cat, row in live["pulled_in_members"].items()} == {
+        "gram_categories": 5, "slots": 18}
+    assert live["closure"]["total_edges"] == 53
+    assert live["closure"]["distinct_pulled_in_refs"] == 23
+
+
+def test_the_pulled_in_members_split_into_adds_and_matches() -> None:
+    """The pull-in routes through the category's own `plan_action`, so it
+    inherits the match decision rather than creating blindly: of the 5 POSes,
+    3 are ADDs and 2 are OVERWRITEs onto destination objects that already
+    existed. A pull-in that hand-rolled its own create would have made two
+    duplicate POSes here -- the create-anyway defect 038 exists to remove.
+    """
+    live = _pull_in()["A_narrow_registry_live"]["composition"]
+    assert live["actions"] == {
+        "affix_templates": 11, "gram_categories": 3, "slots": 18}
+    assert live["overwrites"] == {"gram_categories": 2}
+
+
+def test_nothing_is_pulled_in_without_the_registry() -> None:
+    """The FR-018 column. Without it "the plan gained 23 members" is satisfied
+    by a pull-in that ignores `CLOSURE_EDGES_VERIFIED` -- and this is the layer
+    that CREATES OBJECTS, so a fall-through here writes data."""
+    reg = _pull_in()
+    empty = reg["A_narrow_registry_empty"]
+    assert empty["pulled_in_members"] == {}
+    assert empty["composition"]["actions"] == {"affix_templates": 11}
+    assert reg["A_pull_in_requires_the_registry"] is True
+
+
+def test_every_pulled_in_member_is_planned_before_the_selection() -> None:
+    """`transfer.execute` walks `plan.actions` in order, so a dependency
+    planned after its dependent is created after it. All 23 pulled-in members
+    sit at indices 0..20, the first template at 21."""
+    ordering = _pull_in()["A_narrow_registry_live"]["ordering"]
+    assert ordering["every_pulled_in_member_precedes_the_selection"] is True
+    assert ordering["first_selected_member_index"] == 21
+
+
+def test_the_run_report_counts_what_the_plan_marked() -> None:
+    """The mark has to TRAVEL: `report.build_from_plan` counts a member with a
+    non-empty `pulled_in_by` into `CategoryReport.closure_pulled_in`, which is
+    the column `Lib/ui/stats_panel.py` renders. A plan-level number the report
+    does not show would mean the marking stopped at the plan."""
+    assert _pull_in()["D_run_report_closure_pulled_in"] == {
+        "gram_categories": 5, "slots": 18}
+
+
+def test_deselecting_every_pulled_in_guid_restores_the_narrow_plan() -> None:
+    """FR-016 (T071/T072) live. With all 23 GUIDs in
+    `Selection.excluded_deps` -- what the wizard's deps and skeleton pages now
+    put there -- the plan returns to exactly the registry-emptied composition.
+    Same registry, same source, same selection; the ONLY difference is the
+    user's refusal."""
+    reg = _pull_in()
+    b = reg["B_narrow_all_deselected"]
+    assert b["composition"]["actions"] == {"affix_templates": 11}
+    assert b["pulled_in_members"] == {}
+    assert reg["B_deselection_restores_the_unregistered_composition"] is True
+
+
+def test_a_deselection_is_reported_and_not_merely_absent() -> None:
+    """23 `DEPENDENCY_DESELECTED` skips, each naming the item that needed the
+    thing the user refused. The reason existed since the Phase 2 foundational
+    work with no emitter; a deselection that leaves no trace is
+    indistinguishable from a closure that never found the dependency."""
+    b = _pull_in()["B_narrow_all_deselected"]
+    assert b["deselection_skips"]["count"] == 23
+    assert b["deselection_skips"]["by_category"] == {
+        "gram_categories": 5, "slots": 18}
+    assert b["deselection_skips"]["every_skip_names_its_puller"] is True
+
+
+def test_the_deselection_is_recorded_on_the_edges_too() -> None:
+    """`ClosureEdge.deselected` landed with T066 and was never written. T073
+    builds its `IncompletenessRecord`s from it, so all 53 edges -- not just
+    the 23 refs -- have to carry the fact."""
+    by_kind = _pull_in()["B_narrow_all_deselected"]["closure"]["by_kind"]
+    assert {k: (v["edges"], v["deselected"]) for k, v in by_kind.items()} == {
+        "TEMPLATE_TO_POS": (11, 11),
+        "TEMPLATE_TO_SLOT": (24, 24),
+        "SLOT_TO_POS": (18, 18),
+    }
+
+
+def test_a_full_copy_is_untouched_by_the_pull_in() -> None:
+    """The regression guard, and the reason the whole mechanism is safe to
+    land: in a full copy every far endpoint is already a seed, `walk` records
+    no seed as pulled in, so there are 0 edges and nothing to pull. The
+    feature that completes a narrow selection must change a full copy by
+    nothing at all."""
+    reg = _pull_in()
+    assert reg["C_full_copy_registry_live"]["closure"]["total_edges"] == 0
+    assert reg["C_full_copy_registry_live"]["pulled_in_members"] == {}
+    assert reg["C_full_copy_unchanged_by_the_pull_in"] is True
+
+
+def test_the_narrow_transfer_used_to_lose_three_templates_and_all_its_slots():
+    """THE MEASUREMENT THIS TASK EXISTS FOR, and the only one stated the way a
+    linguist would ask it: after transferring templates alone, is what they
+    need actually in the target?
+
+    Two real transfers into the same restored throwaway target, differing only
+    in whether the registry is live:
+
+        class                 baseline   with T070   without
+        PartOfSpeech                 5           8         5
+        MoInflAffixSlot              0          19         0
+        MoInflAffixTemplate          0          11         8
+
+    Without the pull-in, 3 of 11 templates never arrive: their owning POS is
+    absent from the destination, `_resolve_target_pos` returns None and the
+    item is abandoned -- and the run reports no closure failure, because the
+    plan never claimed to transfer a POS. The 19 slots are a cleaner loss
+    still: not one of them arrives.
+
+    The 19th slot is worth naming rather than rounding off: 18 slots are
+    pulled in by the closure and the 19th arrives through the ENRICHMENT pass
+    (FR-020..FR-022) on a pulled-in POS, whose `AffixSlotsOC` is add-only
+    merged. The arrival column is therefore the union of two mechanisms, not
+    a restatement of the pull-in count -- which is exactly why the isolating
+    claims are A and B above, and this one is the outcome.
+    """
+    arrival = _pull_in()["D_arrival_in_target"]
+    assert arrival["MoInflAffixTemplate"] == {
+        "before": 0, "after": 11, "arrived": 11,
+        "after_without_pull_in": 8, "arrived_without_pull_in": 8}
+    assert arrival["MoInflAffixSlot"] == {
+        "before": 0, "after": 19, "arrived": 19,
+        "after_without_pull_in": 0, "arrived_without_pull_in": 0}
+    assert arrival["PartOfSpeech"] == {
+        "before": 5, "after": 8, "arrived": 3,
+        "after_without_pull_in": 5, "arrived_without_pull_in": 0}

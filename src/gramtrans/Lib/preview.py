@@ -434,6 +434,235 @@ def _walk_verified_closure(context, selection, actions, overwrites) -> tuple:
     return _materialise_closure_edges(visit_order, pulled_in_by, registry)
 
 
+def _dispatch_index(category, dispatch_order):
+    """Position of `category` in the leaf-dispatch order, or None."""
+    try:
+        return dispatch_order.index(category)
+    except ValueError:
+        return None
+
+
+def _insert_in_dispatch_order(members, item, dispatch_order):
+    """Insert `item` into `members` keeping leaf-dispatch order.
+
+    `transfer.execute` walks `plan.actions` IN ORDER (transfer.py:516), so a
+    dependency appended at the end is created AFTER the item that wires to
+    it. The leaf loop already emits its members in `_LEAF_DISPATCH_CATEGORIES`
+    order, so inserting before the first member of a later category keeps the
+    whole list in that order and leaves every existing member's relative
+    position untouched.
+    """
+    idx = _dispatch_index(item.category, dispatch_order)
+    if idx is None:
+        members.append(item)
+        return
+    for pos, existing in enumerate(members):
+        existing_idx = _dispatch_index(existing.category, dispatch_order)
+        if existing_idx is not None and existing_idx > idx:
+            members.insert(pos, item)
+            return
+    members.append(item)
+
+
+def _pull_in_is_deselected(selection, category, guid) -> bool:
+    """Did the user turn this pulled-in dependency off? (FR-016, T071)
+
+    Reuses the two knobs that already exist rather than adding a third
+    (research.md R3): the per-item set (`Selection.excluded_deps` via
+    `is_dep_excluded`) and the whole-category scope
+    (`Selection.scope_for` -> `CategoryScope.NONE`, which is also what the
+    back-compatible `include_closure=False` resolves to).
+    """
+    if selection is None:
+        return False
+    try:
+        if selection.is_dep_excluded(guid):
+            return True
+    except AttributeError:
+        pass
+    try:
+        return selection.scope_for(category) == CategoryScope.NONE
+    except AttributeError:
+        return False
+
+
+def _plan_pulled_in_items(context, selection, ws_mapping, edges,
+                          actions, overwrites, skips, dispatch_order):
+    """Feature 038 T070/T071 (FR-014, FR-015, FR-016) -- give every pulled-in
+    dependency a plan member, marked as pulled in rather than chosen.
+
+    WHAT THIS CLOSES. T067-T069 registered five closure edges and measured
+    them against two live corpora, and T069's census asserted -- as the thing
+    that made two-hop closure safe to land ahead of this task -- that the
+    pulled-in items were NOT in the plan: an AFFIX_TEMPLATES-only selection
+    produced 53 edges naming 23 distinct pulled-in refs and `actions` holding
+    nothing but templates. The walk knew what was needed and the plan
+    transferred none of it, which is FR-014 unmet.
+
+    NO NEW SURFACE (research.md R3). The mark is `pulled_in_by` on the plan
+    member -- the field `report.build_from_plan` already counts into
+    `CategoryReport.closure_pulled_in` and `Lib/ui/stats_panel.py` already
+    renders. Deselection is `Selection.excluded_deps` / `scope_for`, and a
+    deselected dependency emits the `SkipReason.DEPENDENCY_DESELECTED` that
+    the Phase 2 foundational work defined for this case and left with no
+    emitter.
+
+    ORDER. Members are inserted in leaf-dispatch order, not walk order, so a
+    pulled-in POS is created before the affix that wires to it and is
+    positionally indistinguishable from one the user selected directly.
+
+    NEVER SILENT (FR-023). A ref whose own category cannot enumerate a source
+    piece for it -- T089's live shape -- becomes a
+    `SkipReason.DEPENDENCY_UNRESOLVED` skip rather than a quiet omission.
+
+    Returns the edge tuple, re-stamped with `deselected=True` on every edge
+    whose dependency the user turned off (T073 builds its
+    `IncompletenessRecord`s from that flag).
+    """
+    if not edges:
+        return edges
+
+    import dataclasses as _dc
+
+    if __package__:
+        from . import categories as _categories
+    else:  # pragma: no cover - flat sys.path (FLExTools) import shape
+        import categories as _categories  # type: ignore
+
+    planned = set()
+    for item in list(actions) + list(overwrites):
+        planned.add(
+            (item.category, str(getattr(item, "source_guid", "") or "").lower())
+        )
+
+    # Walk order, first-seen wins. The value is every dependent that asked for
+    # this ref: a POS pulled in by three affixes names all three, because
+    # "who needs this" is what makes a later deselection explainable.
+    pullers: dict = {}
+    for edge in edges:
+        if edge.origin != "pulled_in":
+            continue
+        ref = (edge.dependency[0], str(edge.dependency[1]).lower())
+        parent_guid = str(edge.dependent[1]).lower()
+        bucket = pullers.setdefault(ref, [])
+        if parent_guid not in bucket:
+            bucket.append(parent_guid)
+
+    if not pullers:
+        return edges
+
+    _piece_cache: dict = {}
+
+    def _piece_for(category, guid):
+        """Resolve the source object a pulled-in ref names.
+
+        Indexed the same way `categories.closure_dependencies_for._pieces_for`
+        does, with one deliberate difference: the fallback enumeration passes
+        `selection=None`. A pulled-in item is BY DEFINITION one the user did
+        not select, so a category whose `enumerate_source` narrows to the
+        user's picks (`pos_enumerate_source`, every `leaf_picks_for` filter)
+        would hide exactly the piece the closure needs.
+        """
+        for sel in (selection, None):
+            key = (category, sel is not None)
+            if key not in _piece_cache:
+                index: dict = {}
+                try:
+                    bundle = _categories.LEAF_CATEGORIES[category]
+                    for piece in bundle["enumerate_source"](context, sel) or ():
+                        g = _categories._guid_str_from(piece)
+                        if g and g not in index:
+                            index[g] = piece
+                except Exception as exc:  # noqa: BLE001 - best-effort, reported below
+                    _log.warning(
+                        "closure pull-in: could not enumerate source pieces "
+                        "for %s (%s) -- its pulled-in items are reported "
+                        "unresolved", getattr(category, "value", category), exc,
+                    )
+                    index = {}
+                _piece_cache[key] = index
+            piece = _piece_cache[key].get(guid)
+            if piece is not None:
+                return piece
+        return None
+
+    deselected_refs = set()
+    for ref, parents in pullers.items():
+        category, guid = ref
+        if ref in planned:
+            # Already in the plan because its own category was selected: the
+            # user CHOSE it. Restamping would overstate the closure's
+            # contribution in the counter the report renders.
+            continue
+        if _pull_in_is_deselected(selection, category, guid):
+            deselected_refs.add(ref)
+            skips.append(Skip(
+                category=category,
+                source_guid=guid,
+                reason=SkipReason.DEPENDENCY_DESELECTED,
+                detail=(
+                    "closure dependency deselected by the user; needed by "
+                    + ", ".join(p[:8] for p in parents)
+                ),
+            ))
+            continue
+        try:
+            bundle = _categories.LEAF_CATEGORIES[category]
+        except KeyError:
+            bundle = None
+        piece = _piece_for(category, guid) if bundle is not None else None
+        if piece is None:
+            skips.append(Skip(
+                category=category,
+                source_guid=guid,
+                reason=SkipReason.DEPENDENCY_UNRESOLVED,
+                detail=(
+                    "closure pulled this in but "
+                    + getattr(category, "value", str(category))
+                    + " could not enumerate a source object for it; needed by "
+                    + ", ".join(p[:8] for p in parents)
+                ),
+            ))
+            continue
+        try:
+            result = bundle["plan_action"](piece, context, ws_mapping)
+        except Exception as exc:  # noqa: BLE001 - planner failure becomes a skip
+            skips.append(Skip(
+                category=category,
+                source_guid=guid,
+                reason=SkipReason.DEPENDENCY_UNRESOLVED,
+                detail=(
+                    "closure pull-in: plan_action raised "
+                    + type(exc).__name__ + ": " + str(exc)
+                ),
+            ))
+            continue
+        if isinstance(result, Skip):
+            skips.append(result)
+            continue
+        if isinstance(result, (PlannedAction, PlannedOverwrite)):
+            marked = _dc.replace(result, pulled_in_by=tuple(parents))
+            target_list = (
+                overwrites if isinstance(result, PlannedOverwrite) else actions
+            )
+            _insert_in_dispatch_order(target_list, marked, dispatch_order)
+            planned.add(ref)
+        elif result is not None:
+            # CreateDefinitionAction and anything else a category may grow:
+            # planned unmarked rather than dropped (it has no `pulled_in_by`).
+            _insert_in_dispatch_order(actions, result, dispatch_order)
+            planned.add(ref)
+
+    if not deselected_refs:
+        return edges
+    return tuple(
+        _dc.replace(edge, deselected=True)
+        if (edge.dependency[0], str(edge.dependency[1]).lower())
+        in deselected_refs else edge
+        for edge in edges
+    )
+
+
 def build_run_plan(
     context: RunContext,
     selection: Selection,
@@ -804,6 +1033,16 @@ def build_run_plan(
     # than planning from an unverified edge once it is not.
     _closure_edges = _walk_verified_closure(
         context, selection, actions, overwrites
+    )
+
+    # Feature 038 (T070/T071, FR-014/FR-015/FR-016): the edges say what is
+    # needed; this is what puts it in the plan, marked `pulled_in_by` and
+    # deselectable through the machinery that already existed. Mutates
+    # `actions`/`overwrites`/`skips` in place and hands back the edges with
+    # `deselected` stamped, so the plan and the edge set cannot disagree.
+    _closure_edges = _plan_pulled_in_items(
+        context, selection, ws_mapping, _closure_edges,
+        actions, overwrites, skips, _LEAF_DISPATCH_CATEGORIES,
     )
 
     # Feature 038 (FR-020..FR-022, plan.md:111): the enrich-vs-skip decision is

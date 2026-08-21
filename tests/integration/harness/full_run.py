@@ -163,6 +163,7 @@ def run_full_transfer(
     ws_mapping_mode: str = "default-vernacular",
     report_path: Optional[str] = None,
     preview_only: bool = False,
+    selection_transform=None,
 ) -> Tuple[RunPlan, RunReport]:
     """Run a full (all-categories-except-STEMS by default) transfer end to end.
 
@@ -195,6 +196,12 @@ def run_full_transfer(
         it on disk because `census run --run-report` is a separate process:
         without it the post-transfer census cannot attribute a single match and
         every out-of-scope class stays in `unexplained_shortfall`.
+    ``selection_transform``
+        Optional ``Selection -> Selection`` applied after
+        `build_full_selection`. Feature 038 T070-T072 uses it to set
+        `excluded_deps` on an otherwise identical run, so the deselection is
+        the only difference between the two plans being compared. ``None``
+        (the default) leaves every existing caller byte-identical.
     ``preview_only``
         Stop after `compute_preview` and return ``(plan, None)`` -- NO
         `execute_move`, so nothing is written. Added for feature 038 T067,
@@ -225,6 +232,12 @@ def run_full_transfer(
 
         selection = (build_full_selection() if exclude is None
                      else build_full_selection(exclude=exclude))
+        if selection_transform is not None:
+            # Feature 038 T070-T072: the ONLY way to measure a deselection
+            # live is to build the same plan twice and change nothing but the
+            # Selection. A caller that hand-rolled the second Selection could
+            # not promise "nothing else differs", which is the whole claim.
+            selection = selection_transform(selection)
         # Map the source's default vernacular WS -> the target's default
         # vernacular WS (identity for the default vern). This is the DEFAULT
         # mode, kept exactly as it was for every pre-T024c caller.
