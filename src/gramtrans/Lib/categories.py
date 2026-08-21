@@ -268,6 +268,55 @@ def _unwrap_lcm(obj):
     return obj if inner is None else inner
 
 
+def _cast_to_concrete(obj):
+    """`obj` cast to the LCM interface its own `ClassName` names (T088).
+
+    `_unwrap_lcm` is not enough on its own, and the difference is the whole of
+    defect T088. pythonnet resolves attribute lookup against an object's
+    STATIC type, and LCM's owning collections are POLYMORPHIC: the members of
+    `ILexEntry.MorphoSyntaxAnalysesOC` are typed `IMoMorphSynAnalysis`, on
+    which `PartOfSpeechRA`, `InflFeatsOA` and `MsFeaturesOA` are NOT declared
+    -- they live on the concrete MSA subclasses. So `getattr(msa,
+    "PartOfSpeechRA", None)` on a collection member returns None for every
+    object in a real project, while every duck-typed unit test passes because
+    the fake carries the attribute directly on the fake.
+
+    T067's live audit measured exactly that: 0 POS references found uncast
+    against 296 found after a cast on `Mbugwe LizzieHC practice`, and 0
+    against 245 on `Ejagham Mini`. This is the same shape as the flexicon
+    4.5.0 defect CLAUDE.md records, where a `hasattr(nc, "FeaturesOA")` gate
+    was unconditionally False and 100% of live natural classes lost their
+    feature structure while all 1467 flexicon tests passed -- because those
+    tests built factory-fresh CONCRETE-typed objects.
+
+    `ClassName` is the discriminator because it is the ONLY one available on a
+    base-typed proxy, and `"I" + ClassName` is LCM's interface-naming
+    convention (`MoStemMsa` -> `IMoStemMsa`, `PhNCSegments` ->
+    `IPhNCSegments`). Discriminating on `ClassName` WITHOUT then casting is
+    not sufficient and is its own bug -- `adhoc_compound_rules_dependencies`
+    branched on `ClassName` and still read the members off the uncast object,
+    measuring 0 against 4 live. That is precisely the flexicon 4.5.0 vs 4.5.1
+    distinction.
+
+    Fails soft, in the direction that keeps the offline fakes working: an
+    object with no readable `ClassName`, an interface absent from the loaded
+    `SIL.LCModel`, or a cast pythonnet refuses all return `obj` unchanged, via
+    `_cast_lcm`'s existing fake-passthrough. So this is a no-op under the unit
+    suite and a real cast on a live project.
+    """
+    if obj is None:
+        return None
+    target = _unwrap_lcm(obj)
+    class_name = getattr(target, "ClassName", None)
+    if class_name is None:
+        # A raw LCM object may only expose ClassName through ICmObject.
+        cast_base = _cast_lcm(target, "ICmObject")
+        class_name = getattr(cast_base, "ClassName", None)
+    if not class_name:
+        return target
+    return _cast_lcm(target, "I" + str(class_name))
+
+
 def _feat_struc_type_categories(piece) -> dict:
     """`{struct_type_guid: GrammarCategory}` across BOTH feature systems,
     read off `piece`'s own cache.
@@ -366,7 +415,13 @@ def _entry_feat_struc_deps(entry):
     index = _feat_struc_type_categories(entry)
     deps: list = []
     for msa in getattr(_unwrap_lcm(entry), "MorphoSyntaxAnalysesOC", None) or []:
-        msa_obj = _unwrap_lcm(msa)
+        # T088: `_unwrap_lcm` alone left this dead. Every attribute in
+        # `_MSA_FEAT_STRUC_ATTRS` is declared on a concrete MSA subclass, not
+        # on the `IMoMorphSynAnalysis` that `MorphoSyntaxAnalysesOC` members
+        # are statically typed as, so the reads below returned None for all
+        # 279 / 247 MSAs measured live and `_feat_struc_deps` -- which DOES
+        # cast correctly once it has a structure -- was never reached.
+        msa_obj = _cast_to_concrete(msa)
         for attr in _MSA_FEAT_STRUC_ATTRS:
             _feat_struc_deps(
                 getattr(msa_obj, attr, None),
@@ -3960,12 +4015,25 @@ def adhoc_compound_rules_dependencies(piece):
 
     All GUIDs pass through _guid_str_from (GUID-normalization invariant).
     """
-    concrete = getattr(piece, "concrete", piece)
+    # T088: `.concrete` is a duck-typed fake convention -- a live LCM object
+    # has no such property, so this used to leave `concrete` as the base
+    # `IMoAdhocProhib` proxy on which AllomorphsRS / MorphemesRS / MembersOC
+    # are all invisible. Branching on `ClassName` below WITHOUT casting is not
+    # enough (it is exactly the flexicon 4.5.0 vs 4.5.1 distinction), and this
+    # producer measured 0 member refs against 4 found after a cast on the 2
+    # live `MoMorphAdhocProhib` rules in `Mbugwe LizzieHC practice`.
+    #
+    # This site is NOT closure-only: `preview.py`'s
+    # `_warn_stranded_adhoc_refs` calls this producer directly to emit
+    # ExcludedLossy warnings, so while it read nothing, a rule referencing a
+    # morpheme absent from the target transferred with NO warning -- a silent
+    # incompleteness Principle I forbids.
+    concrete = _cast_to_concrete(getattr(piece, "concrete", piece))
 
     def _pos_guid_from_msa(msa):
         """Return normalized POS GUID from an owned IMoStemMsa, or None."""
         try:
-            pos = getattr(msa, "PartOfSpeechRA", None)
+            pos = getattr(_cast_to_concrete(msa), "PartOfSpeechRA", None)
             if pos is None:
                 return None
             return _guid_str_from(pos)
@@ -4671,7 +4739,14 @@ def _entry_pos_deps(entry):
     """Yield (GRAM_CATEGORIES, pos_guid) for every POS owned-referenced by the
     entry's MSAs. Shared by AFFIXES + STEMS dependencies (E4)."""
     deps = []
-    for msa in getattr(entry, "MorphoSyntaxAnalysesOC", None) or []:
+    for raw_msa in getattr(entry, "MorphoSyntaxAnalysesOC", None) or []:
+        # T088: cast before reading. `PartOfSpeechRA` is declared on
+        # IMoStemMsa / IMoInflAffMsa / IMoDerivStepMsa /
+        # IMoUnclassifiedAffixMsa and the From-/To- pair on IMoDerivAffMsa --
+        # none of them on the `IMoMorphSynAnalysis` these members are
+        # statically typed as. Measured live before the cast: 0 POS refs
+        # found where a cast finds 296 (Mbugwe) and 245 (Ejagham Mini).
+        msa = _cast_to_concrete(raw_msa)
         for attr in ("PartOfSpeechRA", "FromPartOfSpeechRA", "ToPartOfSpeechRA"):
             pos = getattr(msa, attr, None)
             if pos is None:
@@ -9747,7 +9822,11 @@ def stems_dependencies(piece):
     for edge in _entry_feat_struc_deps(piece):
         if edge not in deps:
             deps.append(edge)
-    for msa in getattr(piece, "MorphoSyntaxAnalysesOC", None) or []:
+    for raw_msa in getattr(piece, "MorphoSyntaxAnalysesOC", None) or []:
+        # T088: same polymorphic-member cast as `_entry_pos_deps`. `StratumRA`
+        # is declared on IMoStemMsa / IMoDerivAffMsa, not on the base
+        # `IMoMorphSynAnalysis` this collection's members are typed as.
+        msa = _cast_to_concrete(raw_msa)
         stratum = getattr(msa, "StratumRA", None)
         if stratum is not None:
             g = _guid_str_from(stratum)

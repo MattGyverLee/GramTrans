@@ -12,7 +12,7 @@
       ],
       "task": "T067",
       "uncast": 0,
-      "verdict": "DEAD"
+      "verdict": "CAST_REQUIRED"
     },
     "AFFIX_TO_SLOT": {
       "cast": 24,
@@ -27,7 +27,7 @@
       ],
       "task": "T069",
       "uncast": 24,
-      "verdict": "OK"
+      "verdict": "NO_CAST_NEEDED"
     },
     "MSA_TO_FEAT_STRUC_TYPE": {
       "cast": 216,
@@ -41,7 +41,7 @@
       ],
       "task": "T067 (edges landed by T034)",
       "uncast": 0,
-      "verdict": "DEAD"
+      "verdict": "CAST_REQUIRED"
     },
     "SLOT_TO_POS": {
       "cast": 19,
@@ -52,7 +52,7 @@
       ],
       "task": "T068",
       "uncast": 19,
-      "verdict": "OK"
+      "verdict": "NO_CAST_NEEDED"
     },
     "TEMPLATE_TO_POS": {
       "cast": 11,
@@ -63,7 +63,7 @@
       ],
       "task": "T069",
       "uncast": 11,
-      "verdict": "OK"
+      "verdict": "NO_CAST_NEEDED"
     }
   },
   "population": {
@@ -77,6 +77,31 @@
     "poses": 13,
     "slots": 19,
     "templates": 11
+  },
+  "producer_output": {
+    "adhoc_compound_rules_dependencies": {
+      "by_far_category": {},
+      "population": 3,
+      "total_edges": 4
+    },
+    "affixes_dependencies": {
+      "by_far_category": {
+        "feature_struct_types": 177,
+        "gram_categories": 280,
+        "inflection_features": 606
+      },
+      "population": 255,
+      "total_edges": 1063
+    },
+    "stems_dependencies": {
+      "by_far_category": {
+        "feature_struct_types": 177,
+        "gram_categories": 280,
+        "inflection_features": 606
+      },
+      "population": 255,
+      "total_edges": 1063
+    }
   },
   "read_only": true,
   "source_project": "Mbugwe LizzieHC practice"

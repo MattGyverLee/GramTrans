@@ -22,12 +22,24 @@ tests passed, because those tests built factory-fresh CONCRETE-typed objects.
 An edge registered on the strength of unit tests alone would carry a
 `verified_by` naming an audit that never touched a real database.
 
-HOW IT ANSWERS. For each producer, the same attribute is read twice per piece:
-once exactly as the producer reads it (uncast), and once after an explicit cast
-to the concrete interface named by `ClassName`. If the uncast count is 0 while
-the cast count is positive, the edge is DEAD -- registering it would switch on
-a relationship that contributes nothing. Equal counts mean the producer reads
-correctly on live data and the edge is eligible for registration.
+HOW IT ANSWERS -- TWO SEPARATE SIGNALS, deliberately not merged.
+
+1. `edges` measures the READ PATTERN: the same attribute read twice per piece,
+   once with a bare `getattr` and once after an explicit cast to the interface
+   named by `ClassName`. `CAST_REQUIRED` means a cast is mandatory at that
+   site. This is a fact about pythonnet and LCM, so it NEVER changes when
+   this repo is fixed.
+
+2. `producer_output` measures THIS REPO: it calls the real producers and
+   counts the edges they hand back. This is the signal that changes when a
+   producer is fixed, and it drives the exit code.
+
+Keeping them apart is a lesson from the first version of this driver, which
+had only signal 1 and was therefore useless for verifying T088's fix -- it
+reported the same DEAD verdict before and after, because it never called a
+producer at all. A `population` of 0 reports NO_DATA rather than a pass or a
+failure: Ejagham Mini holds no adhoc rules, so 0 edges is the correct answer
+there and must not be mistaken for a silent producer.
 
 WHY A DRIVER AND NOT A TEST. Same reason as `run038_phase6_live.py`: this needs
 a real project and pythonnet. The measurement is run once here and COMMITTED to
@@ -54,8 +66,8 @@ sys.path.insert(0, str(_REPO / "tests" / "integration"))
 SOURCE = os.environ.get("GT038_AUDIT_SOURCE", "Mbugwe LizzieHC practice")
 
 #: One snapshot PER SOURCE, not one shared file. Two corpora agreeing is the
-#: evidence that a DEAD verdict is a property of the producer rather than of
-#: one project's data, so a second run must not overwrite the first.
+#: evidence that a verdict is a property of the producer rather than of one
+#: project's data, so a second run must not overwrite the first.
 SNAPSHOT = (_REPO / "tests" / "integration" / "_snapshots"
             / ("closure-edge-audit-038-%s.json"
                % SOURCE.lower().replace(" ", "-")))
@@ -83,21 +95,33 @@ _TPL_SEQS = ("PrefixSlotsRS", "SuffixSlotsRS", "EncliticSlotsRS",
 
 
 def _verdict(uncast: int, cast: int, population: int) -> str:
-    """DEAD / OK / PARTIAL / NO_DATA for one measured pair.
+    """What the READ PATTERN requires, for one measured attribute group.
 
-    NO_DATA is distinguished from OK deliberately: a producer that found
-    nothing because the corpus holds nothing has NOT been audited, and
-    reporting that as a pass is how an unverified edge acquires a
-    `verified_by` it did not earn.
+    This describes pythonnet and LCM, not this repo's code, so it does not
+    change when a producer is fixed -- `CAST_REQUIRED` stays `CAST_REQUIRED`
+    forever, because a bare `getattr` on a base-typed proxy will never see a
+    subclass-only property. Read it as "a cast is mandatory here", not as
+    "the producer is broken".
+
+    Whether the producer is broken is a different question with a different
+    answer, and conflating the two is what made the first version of this
+    driver useless for verifying T088's fix: it reported DEAD both before and
+    after, because it was never measuring the producer at all. The
+    `producer_output` block answers that one.
+
+    NO_DATA is distinguished from NO_CAST_NEEDED deliberately: an attribute
+    group that found nothing because the corpus holds nothing has NOT been
+    audited, and reporting that as a pass is how an unverified edge acquires
+    a `verified_by` it did not earn.
     """
     if population == 0:
         return "NO_DATA"
     if cast == 0 and uncast == 0:
         return "NO_DATA"
     if uncast == 0 and cast > 0:
-        return "DEAD"
+        return "CAST_REQUIRED"
     if uncast == cast:
-        return "OK"
+        return "NO_CAST_NEEDED"
     return "PARTIAL"
 
 
@@ -240,10 +264,53 @@ def main() -> int:
         },
     }
 
+    # ---- What the PRODUCERS actually return
+    #
+    # The `edges` block above measures the LCM read pattern -- bare `getattr`
+    # versus a cast -- which is a fact about pythonnet and is DEAD by
+    # construction no matter what this repo does. It is the right measurement
+    # for deciding whether a cast is NEEDED, and the wrong one for checking
+    # whether a producer has been FIXED. So call the real producers too and
+    # count the edges they hand back, bucketed by far category.
+    from gramtrans.Lib import categories as _cats
+    from gramtrans.Lib.models import GrammarCategory as _GC
+
+    producer_out: dict = {}
+    for label, fn in (("affixes_dependencies", _cats.affixes_dependencies),
+                      ("stems_dependencies", _cats.stems_dependencies)):
+        by_far: dict = {}
+        total = 0
+        for entry in entries:
+            for ref in fn(entry) or ():
+                if not (isinstance(ref, tuple) and len(ref) == 2):
+                    continue
+                far = getattr(ref[0], "value", str(ref[0]))
+                by_far[far] = by_far.get(far, 0) + 1
+                total += 1
+        producer_out[label] = {"population": len(entries),
+                               "total_edges": total,
+                               "by_far_category": by_far}
+
+    adhoc_rules = list(_cats._rules_enumerate_all(proj) or ())
+    adhoc_total = 0
+    for rule in adhoc_rules:
+        adhoc_total += len(_cats.adhoc_compound_rules_dependencies(rule) or ())
+    producer_out["adhoc_compound_rules_dependencies"] = {
+        # `population` is the RULE count here, not the entry count: Ejagham
+        # Mini holds 0 adhoc rules, so 0 edges is the correct answer there and
+        # must not be reported as a silent producer.
+        "population": len(adhoc_rules),
+        "total_edges": adhoc_total,
+        "by_far_category": {},
+    }
+
+    _ = _GC  # imported for the category vocabulary these buckets name
+
     artifact = {
         "audit": "038-phase7-closure-edges",
         "source_project": SOURCE,
         "read_only": True,
+        "producer_output": producer_out,
         "population": {
             "lex_entries": len(entries),
             "msas": n_msa,
@@ -275,15 +342,38 @@ def main() -> int:
         if row["verdict"] == "DEAD":
             dead.append(name)
     print()
+    print("       PRODUCER OUTPUT (what the fixed code actually returns)")
+    print("       " + "-" * 56)
+    for label in sorted(producer_out):
+        row = producer_out[label]
+        print("       %-38s %d edge(s)" % (label, row["total_edges"]))
+        for far in sorted(row["by_far_category"]):
+            print("           -> %-26s %d" % (far, row["by_far_category"][far]))
+
+    print()
     print("[INFO] Wrote %s" % SNAPSHOT)
     if dead:
-        print("[FAIL] %d edge(s) are DEAD on live data and MUST NOT be "
-              "registered: %s" % (len(dead), ", ".join(dead)))
-        print("       The producer reads a subclass-only property off a "
-              "base-typed proxy, so it returns nothing on a real project "
-              "while every duck-typed unit test passes.")
+        print("[INFO] %d attribute group(s) REQUIRE a cast (a fact about "
+              "pythonnet, not a defect): %s" % (len(dead), ", ".join(dead)))
+
+    # The pass/fail signal is whether the PRODUCERS return anything, because
+    # that is the part this repo controls. A producer that must cast and does
+    # is correct; one that must cast and does not is T088.
+    silent = [label for label, row in producer_out.items()
+              if row["total_edges"] == 0 and row["population"] > 0]
+    no_data = [label for label, row in producer_out.items()
+               if row["population"] == 0]
+    for label in sorted(no_data):
+        print("[INFO] %s: nothing of its kind in this corpus -- NOT audited "
+              "here" % label)
+    if silent:
+        print("[FAIL] %d producer(s) returned NO edges over a corpus that has "
+              "them: %s" % (len(silent), ", ".join(sorted(silent))))
+        print("       That is T088: a subclass-only property read off a "
+              "base-typed proxy returns nothing on a real project while every "
+              "duck-typed unit test passes.")
         return 1
-    print("[OK]   No dead edge among those measured.")
+    print("[OK]   Every measured producer returns edges on live data.")
     return 0
 
 

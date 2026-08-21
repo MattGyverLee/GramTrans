@@ -12,7 +12,7 @@
       ],
       "task": "T067",
       "uncast": 0,
-      "verdict": "DEAD"
+      "verdict": "CAST_REQUIRED"
     },
     "AFFIX_TO_SLOT": {
       "cast": 9,
@@ -27,7 +27,7 @@
       ],
       "task": "T069",
       "uncast": 9,
-      "verdict": "OK"
+      "verdict": "NO_CAST_NEEDED"
     },
     "MSA_TO_FEAT_STRUC_TYPE": {
       "cast": 40,
@@ -41,7 +41,7 @@
       ],
       "task": "T067 (edges landed by T034)",
       "uncast": 0,
-      "verdict": "DEAD"
+      "verdict": "CAST_REQUIRED"
     },
     "SLOT_TO_POS": {
       "cast": 9,
@@ -52,7 +52,7 @@
       ],
       "task": "T068",
       "uncast": 9,
-      "verdict": "OK"
+      "verdict": "NO_CAST_NEEDED"
     },
     "TEMPLATE_TO_POS": {
       "cast": 7,
@@ -63,7 +63,7 @@
       ],
       "task": "T069",
       "uncast": 7,
-      "verdict": "OK"
+      "verdict": "NO_CAST_NEEDED"
     }
   },
   "population": {
@@ -76,6 +76,31 @@
     "poses": 20,
     "slots": 9,
     "templates": 7
+  },
+  "producer_output": {
+    "adhoc_compound_rules_dependencies": {
+      "by_far_category": {},
+      "population": 0,
+      "total_edges": 0
+    },
+    "affixes_dependencies": {
+      "by_far_category": {
+        "feature_struct_types": 40,
+        "gram_categories": 245,
+        "inflection_features": 120
+      },
+      "population": 252,
+      "total_edges": 405
+    },
+    "stems_dependencies": {
+      "by_far_category": {
+        "feature_struct_types": 40,
+        "gram_categories": 245,
+        "inflection_features": 120
+      },
+      "population": 252,
+      "total_edges": 405
+    }
   },
   "read_only": true,
   "source_project": "Ejagham Mini"
