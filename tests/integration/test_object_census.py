@@ -32,7 +32,7 @@ WHAT THIS PINS
 5. PASS iff the verdict is `CENSUS_CLEAN` or `CENSUS_ACCOUNTED`. There is
    deliberately no verdict meaning "loss reported, review advisable, exit
    success" (SC-010).
-6. The closed 16-token reason vocabulary: no `UNEXPLAINED`, no `OTHER`, and
+6. The closed 17-token reason vocabulary: no `UNEXPLAINED`, no `OTHER`, and
    exactly four tokens exempt from `report_ref`.
 
 THE SURFACE T015-T021 MUST CREATE (this file is the specification of it)
@@ -40,7 +40,7 @@ THE SURFACE T015-T021 MUST CREATE (this file is the specification of it)
 `gramtrans.Lib.census`:
 
 - `CENSUS_SCHEMA_VERSION: int`                          -- 1
-- `REASON_TOKENS: tuple[str, ...] | frozenset[str]`     -- the closed 16
+- `REASON_TOKENS: tuple[str, ...] | frozenset[str]`     -- the closed 17
 - `REASONS_NOT_REQUIRING_REPORT_REF: frozenset[str]`    -- the 4 exempt tokens
 - `VERDICT_EXIT_CODES: Mapping[str, int]`               -- the 9 verdicts -> 0..7
 - `VERDICT_HUMAN_LABELS: Mapping[str, str]`             -- console labels
@@ -139,6 +139,11 @@ EXPECTED_REASON_TOKENS = (
     "GOVERNED_BY_OTHER_FEATURE",
     "OUT_OF_SCOPE_CLASS",
     "ABSENT_BY_CONSTRUCTION",
+    # Appended by contract commit b2cb356 (2026-08-20). APPEND-ONLY: this
+    # tuple is transcribed from `$defs.reasonToken.enum` in enum order, and
+    # `test_tokens_match_the_schema_enum_exactly` compares the two as LISTS,
+    # so a reorder here is a failure even when the sets agree.
+    "SOURCE_REFERENT_ABSENT",
 )
 
 # contracts/fidelity-census.md R-1 / invariant 5, and the schema's accountedLine
@@ -1698,19 +1703,57 @@ class TestVerdictModel:
 
 
 # ===========================================================================
-# 5. The closed 16-token reason vocabulary
+# 5. The closed 17-token reason vocabulary
 # ===========================================================================
 
 class TestReasonVocabulary:
-    def test_exactly_sixteen_tokens(self):
-        assert len(EXPECTED_REASON_TOKENS) == 16
+    def test_exactly_seventeen_tokens(self):
+        """16 until contract commit b2cb356 appended `SOURCE_REFERENT_ABSENT`.
+        The count moves ONLY alongside the schema; it is pinned so an
+        accidental token cannot arrive without this line being touched."""
+        assert len(EXPECTED_REASON_TOKENS) == 17
         assert set(REASON_TOKENS) == set(EXPECTED_REASON_TOKENS)
-        assert len(set(REASON_TOKENS)) == 16
+        assert len(set(REASON_TOKENS)) == 17
 
     def test_tokens_match_the_schema_enum_exactly(self, census_schema):
         enum = census_schema["$defs"]["reasonToken"]["enum"]
         assert list(enum) == list(EXPECTED_REASON_TOKENS)
         assert set(REASON_TOKENS) == set(enum)
+
+    def test_the_source_side_token_is_emittable_and_schema_valid(
+            self, census_schema):
+        """T096. A vocabulary member nothing can emit is not a vocabulary
+        member; it is a comment in an enum. `SOURCE_REFERENT_ABSENT` is the
+        newest member and the one with no live producer in any corpus this
+        feature can reach today (measured: 0 `MoInflAffMsa` and 0
+        `MoDerivAffMsa` with a null required POS across `Ngoreme FLEx`,
+        `Ejagham W Mini`, `Mbugwe LizzieHC practice` and `Esperanto`), so the
+        emit path is pinned HERE rather than left to a live run that cannot
+        currently exercise it."""
+        rows = replace_row(
+            phase_rows(), "MoStemMsa",
+            source_count=164, destination_count_total=162,
+            destination_count_net=162, verdict_class="SHORTFALL",
+            accounted_for=[make_accounted(
+                "SOURCE_REFERENT_ABSENT", 2, "shortfall")])
+        artifact = make_artifact(rows, verdict="CENSUS_ACCOUNTED")
+
+        assert schema_errors(artifact, census_schema) == []
+        assert list(validate_artifact(artifact)) == []
+        assert artifact["schema_version"] == 1, (
+            "b2cb356 appended the token WITHOUT bumping schema_version, and "
+            "an append is exactly what the schema's own EVOLUTION RULE "
+            "$comment sanctions"
+        )
+
+    def test_the_two_referent_absent_tokens_are_distinct(self):
+        """They name opposite sides of the transfer. `DEPENDENCY_UNRESOLVED`
+        is absence in the DESTINATION (FR-017); `SOURCE_REFERENT_ABSENT` is
+        absence on the SOURCE. Collapsing them -- which is what stamping the
+        least-wrong token did -- makes the artifact unable to say which."""
+        assert "DEPENDENCY_UNRESOLVED" in REASON_TOKENS
+        assert "SOURCE_REFERENT_ABSENT" in REASON_TOKENS
+        assert reason_requires_report_ref("SOURCE_REFERENT_ABSENT") is True
 
     def test_there_is_no_unexplained_and_no_other_token(self):
         """'Unexplained is the ABSENCE of an accounting line, so it cannot be
@@ -3405,7 +3448,7 @@ class TestConversionSignatureIsNotNetted:
     def test_neither_half_claims_the_other_as_its_explanation(
             self, ngoreme_census):
         """There is no accounting line linking them, and there must not be:
-        `MoAffixProcess` -> `MoAffixAllomorph` is not one of the 16 reason
+        `MoAffixProcess` -> `MoAffixAllomorph` is not one of the 17 reason
         tokens, so a conversion CANNOT be explained away as bookkeeping."""
         for name in ("MoAffixProcess", "MoAffixAllomorph"):
             assert measured_row(ngoreme_census, name)["accounted_for"] == []

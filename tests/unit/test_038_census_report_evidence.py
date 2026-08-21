@@ -417,18 +417,24 @@ class TestCensusAccountsForReportedDrops:
             "detail": census_cli.SOURCE_REFERENT_ABSENT_DETAIL,
         }
 
-    def test_the_provisional_token_is_stated_in_the_artifact(self, tmp_path):
-        """The closed vocabulary has no member for 'the required referent was
-        absent ON THE SOURCE'. `DEPENDENCY_UNRESOLVED` means absent in the
-        DESTINATION. The substitution must be legible to a reviewer holding only
-        the artifact, not just to a reader of this module."""
+    def test_the_side_of_the_transfer_is_stated_in_the_artifact(self, tmp_path):
+        """Was `test_the_provisional_token_is_stated_in_the_artifact` (T096).
+
+        It used to pin the SUBSTITUTION -- `DEPENDENCY_UNRESOLVED` plus a
+        `PROVISIONAL TOKEN` detail -- because the closed vocabulary had no
+        member for "the required referent was absent ON THE SOURCE". Contract
+        commit b2cb356 added `SOURCE_REFERENT_ABSENT`, so what must now be
+        legible to a reviewer holding only the artifact is not an apology for
+        the wrong word but WHICH SIDE of the transfer the referent was missing
+        from -- and the detail must NOT still claim a substitution that no
+        longer happens."""
         row = emit("MoStemMsa", 164, 163, evidence=self._evidence(
             tmp_path, [drop("MoStemMsa")]))
         line, = row["accounted_for"]
 
-        assert line["reason"] == "DEPENDENCY_UNRESOLVED"
-        assert "PROVISIONAL TOKEN" in line["detail"]
+        assert line["reason"] == "SOURCE_REFERENT_ABSENT"
         assert "absent ON THE SOURCE" in line["detail"]
+        assert "PROVISIONAL" not in line["detail"]
 
     def test_over_accounting_is_capped_not_claimed(self, tmp_path):
         """R-2: the census must not explain away more than happened. Five
@@ -481,8 +487,12 @@ class TestCensusAccountsForReportedDrops:
                             "this engine (NEEDS_MANUAL)"),
             ]))
 
+        # `drop()`'s default reason is `LIVE_MSA_REASON` ("is empty on
+        # source"), so line 1 is the SOURCE-side token. It read
+        # `DEPENDENCY_UNRESOLVED` until T096, when the contract's
+        # `SOURCE_REFERENT_ABSENT` replaced the least-wrong substitute.
         assert sorted(line["reason"] for line in row["accounted_for"]) == [
-            "DEPENDENCY_UNRESOLVED", "UNSUPPORTED_SUBTYPE"]
+            "SOURCE_REFERENT_ABSENT", "UNSUPPORTED_SUBTYPE"]
         assert sum(line["count"] for line in row["accounted_for"]) == 2
         assert row["unexplained_shortfall"] == 0
 
@@ -494,32 +504,65 @@ class TestCensusAccountsForReportedDrops:
 
 
 class TestCensusVocabularyGapIsNamedNotHidden:
-    """The blocker this work surfaces rather than papers over.
+    """The blocker this work surfaced rather than papered over -- now closed.
 
-    `fidelity-census.md` 7.1's enum is CLOSED and has no token for "the source
-    referent is legitimately absent and the engine required it". Every candidate
-    is wrong for a different reason, and the contract is a spec artifact this
-    module may not edit -- so the substitution is a named constant, and this
-    test is the tripwire that fires when the contract finally closes the gap.
+    `fidelity-census.md` 7.1's enum is CLOSED and, until contract commit
+    b2cb356, had no token for "the source referent is legitimately absent and
+    the engine required it". Every candidate was wrong for a different reason,
+    and the contract is a spec artifact this module may not edit -- so the
+    substitution was a named constant and this class was the tripwire that
+    would fire when the contract closed the gap. It fired (T096), by way of a
+    rebase rather than a live run. The tests below now guard the OTHER
+    direction: that nobody regresses to the substitute.
     """
 
-    def test_the_substitute_is_inside_the_closed_vocabulary(self):
+    def test_the_token_is_inside_the_closed_vocabulary(self):
         assert (census_cli.SOURCE_REFERENT_ABSENT_TOKEN
                 in census.REASON_TOKENS)
 
     def test_no_invented_token_leaks_into_the_artifact(self):
         for _, token in census_cli.DROP_REASON_TOKENS:
             assert token in census.REASON_TOKENS, (
-                "there is no 17th token: an unclassifiable drop must produce "
+                "there is no 18th token: an unclassifiable drop must produce "
                 "NO line, never a new reason"
             )
 
-    def test_the_substitution_is_flagged_for_the_contract(self):
-        """Fails the moment someone quietly drops the provisional marker
-        without the contract having grown the token that makes it honest."""
-        assert census_cli.SOURCE_REFERENT_ABSENT_TOKEN == "DEPENDENCY_UNRESOLVED"
-        assert "PROVISIONAL" in census_cli.SOURCE_REFERENT_ABSENT_DETAIL
+    def test_the_contract_token_is_used_not_the_least_wrong_substitute(self):
+        """Was `test_the_substitution_is_flagged_for_the_contract`, which
+        pinned `== "DEPENDENCY_UNRESOLVED"` and required the word PROVISIONAL
+        in the detail. Both pins are now backwards."""
+        assert census_cli.SOURCE_REFERENT_ABSENT_TOKEN == "SOURCE_REFERENT_ABSENT"
+        assert "PROVISIONAL" not in census_cli.SOURCE_REFERENT_ABSENT_DETAIL
         assert "fidelity-census.md" in census_cli.SOURCE_REFERENT_ABSENT_DETAIL
+
+    def test_the_two_sides_of_the_transfer_no_longer_collide(self):
+        """The substitute's real cost. While `SOURCE_REFERENT_ABSENT_TOKEN`
+        held `"DEPENDENCY_UNRESOLVED"`, both rows of `DROP_REASON_TOKENS` that
+        classify a missing referent yielded the SAME token -- so source-side
+        and destination-side losses grouped into ONE accounting line per class
+        and could not be told apart in the artifact."""
+        by_needle = dict(census_cli.DROP_REASON_TOKENS)
+        assert by_needle["is empty on source"] == "SOURCE_REFERENT_ABSENT"
+        assert by_needle["not resolvable in target"] == "DEPENDENCY_UNRESOLVED"
+        assert (by_needle["is empty on source"]
+                != by_needle["not resolvable in target"])
+
+    def test_no_needle_shadows_another(self):
+        """`drop_reason_token` returns the FIRST match, so a needle that is a
+        substring of another would make the later row unreachable."""
+        needles = [n for n, _ in census_cli.DROP_REASON_TOKENS]
+        for i, outer in enumerate(needles):
+            for j, inner in enumerate(needles):
+                if i != j:
+                    assert inner not in outer, (inner, outer)
+
+    def test_a_source_side_drop_classifies_to_the_source_side_token(self):
+        """End to end over the live reason string this feature measured."""
+        assert (census_cli.drop_reason_token(LIVE_MSA_REASON)
+                == "SOURCE_REFERENT_ABSENT")
+        assert (census_cli.drop_reason_token(
+            "MoForm.MorphTypeRA not resolvable in target")
+            == "DEPENDENCY_UNRESOLVED")
 
     def test_a_reported_reference_drop_needs_no_token(self, tmp_path):
         """Why the gap is narrow: the 169 MorphTypeRA drops need no vocabulary

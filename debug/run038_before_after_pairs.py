@@ -39,6 +39,14 @@ Usage:
 
 Add `--compare-only` to re-diff the already-committed censuses without
 restoring, transferring or re-censusing anything.
+
+Add `--tag NAME` to write the after-census and the diff under a task-tagged
+name (`census-038-NAME-<pair>.json`, `before-after-038-NAME-<pair>.json`)
+instead of the plain `-after` name. Without it, a re-run OVERWRITES the
+committed `census-038-<pair>-after.json` in place -- which is how a committed
+measurement quietly becomes a different measurement under the same filename.
+The `t091`/`t094` artifacts already in `_snapshots` are exactly this shape and
+were produced by hand; the flag makes them reproducible.
 """
 from __future__ import annotations
 
@@ -114,10 +122,19 @@ def main(argv) -> int:
     from harness.restore import restore_target
     from gramtrans import census_cli
 
-    scratch = _REPO / "scratchpad" / ("038_after_" + pair)
+    tag = ""
+    if "--tag" in argv:
+        i = argv.index("--tag")
+        if i + 1 >= len(argv):
+            print("[FAIL] --tag needs a name")
+            return 2
+        tag = argv[i + 1].strip().lower()
+
+    scratch = _REPO / "scratchpad" / ("038_after_" + (tag or pair))
     scratch.mkdir(parents=True, exist_ok=True)
     target_path = str(PROJECTS_ROOT / target / (target + ".fwdata"))
-    after_path = _SNAPS / ("census-038-%s-after.json" % pair)
+    after_path = (_SNAPS / ("census-038-%s-%s.json" % (tag, pair)) if tag
+                  else _SNAPS / ("census-038-%s-after.json" % pair))
 
     compare_only = "--compare-only" in argv
     if compare_only:
@@ -139,7 +156,7 @@ def main(argv) -> int:
         restore_target(target, BACKUP)
 
     report_path = str(_REPO / "_run_reports"
-                      / ("038-after-%s-report.json" % pair))
+                      / ("038-%s-%s-report.json" % (tag or "after", pair)))
     report = None
     if not compare_only:
         Path(report_path).parent.mkdir(parents=True, exist_ok=True)
@@ -150,7 +167,7 @@ def main(argv) -> int:
             report_path=report_path,
         )
 
-        census_path = scratch / ("%s-after-census.json" % pair)
+        census_path = scratch / ("%s-%s-census.json" % (pair, tag or "after"))
         print("[INFO] census")
         census_code = census_cli.main([
             "run",
@@ -231,7 +248,8 @@ def main(argv) -> int:
         "run_id": (getattr(report, "run_id", "") if report is not None
                    else ((after.get("transfer_run") or {}).get("run_id") or "")),
     }
-    out = _SNAPS / ("before-after-038-%s.json" % pair)
+    out = (_SNAPS / ("before-after-038-%s-%s.json" % (tag, pair)) if tag
+           else _SNAPS / ("before-after-038-%s.json" % pair))
     out.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n",
                    encoding="utf-8")
     print("[OK] wrote %s" % out)

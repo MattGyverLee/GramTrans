@@ -774,7 +774,7 @@ class NaturalKeyRosterEntry:
 # the single, machine-readable statement of that mapping; T019's emitter must
 # be driven by them rather than by a third, hand-written set of names.
 #
-# WHERE THE VOCABULARIES LIVE. The closed 16-token reason vocabulary, the
+# WHERE THE VOCABULARIES LIVE. The closed 17-token reason vocabulary, the
 # census schema version, and the 4-member row verdict-class vocabulary are
 # declared HERE, in `models.py`, and `Lib/census.py` (T020) MUST RE-EXPORT
 # them (`REASON_TOKENS = CENSUS_REASON_TOKENS`, etc.) rather than re-declare
@@ -794,7 +794,14 @@ CENSUS_SCHEMA_VERSION: int = 1
 #: FR-013's CLOSED reason vocabulary, in `$defs.reasonToken.enum` order.
 #: There is deliberately no `UNEXPLAINED` and no `OTHER` member: unexplained
 #: is the ABSENCE of an accounting line and must not be launderable into one.
-#: A reason the census cannot classify is a CENSUS_ERROR, not a 17th token.
+#: A reason the census cannot classify is a CENSUS_ERROR, not an 18th token.
+#:
+#: APPEND-ONLY, IN SCHEMA ORDER. `SOURCE_REFERENT_ABSENT` was appended (never
+#: reordered, never reworded) by the contract commit b2cb356, which added it
+#: to both places the closed vocabulary lives -- `fidelity-census.md` 7.1 and
+#: `census-artifact.schema.json` `$defs.reasonToken.enum`. `schema_version`
+#: was deliberately NOT bumped: the EVOLUTION RULE's bump clause governs a
+#: SHIPPED version and this format has not shipped.
 CENSUS_REASON_TOKENS: tuple = (
     "MATCHED_EXISTING_IDENTITY",
     "MATCHED_EXISTING_NATURAL_KEY",
@@ -812,6 +819,7 @@ CENSUS_REASON_TOKENS: tuple = (
     "GOVERNED_BY_OTHER_FEATURE",
     "OUT_OF_SCOPE_CLASS",
     "ABSENT_BY_CONSTRUCTION",
+    "SOURCE_REFERENT_ABSENT",
 )
 
 #: The four tokens exempt from `accountedLine.report_ref` (fidelity-census.md
@@ -1179,7 +1187,7 @@ class ClassCensusRow:
                 raise ValueError(
                     "ClassCensusRow reason " + repr(token) + " on class "
                     + repr(self.object_class) + " is outside the closed "
-                    "16-token vocabulary (CENSUS_REASON_TOKENS). There is no "
+                    "17-token vocabulary (CENSUS_REASON_TOKENS). There is no "
                     "UNEXPLAINED and no OTHER token: an unclassifiable "
                     "reason is a CENSUS_ERROR, not a new token"
                 )

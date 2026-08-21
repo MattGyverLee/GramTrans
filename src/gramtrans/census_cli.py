@@ -1240,45 +1240,72 @@ def enriched_by_class_from_report(path: Path) -> tuple:
 # `unexplained_shortfall: 2`, beside two `DroppedItemRecord`s naming those two
 # objects by GUID.
 #
-# ------------------------- THE VOCABULARY GAP ------------------------------
-# `fidelity-census.md` 7.1 is a CLOSED 16-token enum and it has NO token for
-# "the source referent is legitimately absent, and the engine required it".
-# The nearest member is
+# ------------------- THE VOCABULARY GAP, NOW CLOSED ------------------------
+# This block used to describe a gap. `fidelity-census.md` 7.1 had no token for
+# "the source referent is legitimately absent, and the engine required it", so
+# the least-wrong member of the closed enum was stamped instead, under a
+# `TODO(contract)` and a `PROVISIONAL` marker in every emitted line's `detail`.
+# Contract commit b2cb356 (2026-08-20) appended `SOURCE_REFERENT_ABSENT` to
+# both places the closed vocabulary lives, and this module now stamps it. The
+# TODO is discharged; the history is kept because it names what the substitute
+# was costing.
+#
+# WHAT THE SUBSTITUTE COST, beyond being the wrong word. While the constant
+# held "DEPENDENCY_UNRESOLVED", the source-side and destination-side drops were
+# THE SAME TOKEN, so `dropped_by_class_from_report` grouped them into ONE
+# accounting line per class -- two different causes, one number, no way to tell
+# them apart in the artifact -- and the `detail ==` test below stamped the
+# PROVISIONAL wording onto genuine destination-side drops that were never
+# provisional at all. Measured on GT-20260821-184426 (census-038-t091-ngoreme):
+# 4 classes, 1890 accounted items, every one of them carrying a `detail` that
+# said the referent was absent on the SOURCE. A least-wrong token is not a
+# smaller version of the right one; it is a collision.
+#
+# Why each rejected candidate stays rejected (b2cb356's argument, kept here so
+# the next reader does not have to reopen the enum to re-derive it):
 #
 #     DEPENDENCY_UNRESOLVED | shortfall | A required referent is absent in the
 #                                         destination (FR-017).
 #
-# and "absent in the destination" is NOT this case: an MSA whose
-# `PartOfSpeechRA` is empty ON THE SOURCE was never resolvable anywhere, and
-# nothing about the destination would fix it. `NO_CREATE_PATH` is wrong too --
-# there IS a create path for `MoStemMsa` and this very run exercised it 162
-# times -- and so is `UNSUPPORTED_SUBTYPE`, which is about a subtype the engine
-# cannot reproduce.
-#
-# Contracts are spec artifacts and are not this module's to edit, and the enum
-# forbids inventing a 17th token here. So the token is a NAMED, OVERRIDABLE
-# CONSTANT rather than a literal buried in a mapping: the mechanism ships, the
-# mis-attribution is visible in one place and stated in every emitted line's
-# `detail`, and closing the gap is a one-line change once the contract grows
-# the token it needs.
+# "absent in the destination" is NOT this case: an MSA whose `PartOfSpeechRA`
+# is empty ON THE SOURCE was never resolvable anywhere, and nothing about the
+# destination would fix it. `NO_CREATE_PATH` is wrong too -- there IS a create
+# path for `MoStemMsa` and the motivating run exercised it 162 times -- and so
+# is `UNSUPPORTED_SUBTYPE`, which is about a subtype the engine cannot
+# reproduce. The token is still a NAMED CONSTANT rather than a literal buried
+# in the mapping below, because the mapping is not where a reader looks to ask
+# "which token means which side of the transfer".
 # ---------------------------------------------------------------------------
 
-#: PROVISIONAL. The token stamped on a drop whose referent was absent on the
-#: SOURCE. Least-wrong member of the closed enum, and still wrong: see the
-#: block comment above. TODO(contract): replace with the token
-#: `fidelity-census.md` 7.1 adds for "required source referent absent".
-SOURCE_REFERENT_ABSENT_TOKEN: str = "DEPENDENCY_UNRESOLVED"
+#: The token stamped on a drop whose referent was absent on the SOURCE
+#: (`fidelity-census.md` 7.1; `$defs.reasonToken.enum`). The source-side
+#: sibling of `DEPENDENCY_UNRESOLVED`, which is destination-side (FR-017); the
+#: two are not interchangeable and no longer collide.
+SOURCE_REFERENT_ABSENT_TOKEN: str = "SOURCE_REFERENT_ABSENT"
 
-#: Said in every line that token produces, so the substitution is auditable in
-#: the artifact and not only in this source file.
+#: Said in every line that token produces. It used to explain a SUBSTITUTION,
+#: and there is no longer a substitution to explain -- leaving that text in
+#: place would put a false statement ("PROVISIONAL TOKEN ... the vocabulary has
+#: no member for this") into every artifact line the token produces, which is
+#: the same defect one layer down. Rewritten, not deleted: the `detail` slot is
+#: what tells a reader of the ARTIFACT which side of the transfer the referent
+#: was missing from, and that is worth saying in the artifact rather than only
+#: in this source file.
 SOURCE_REFERENT_ABSENT_DETAIL: str = (
-    "PROVISIONAL TOKEN: the referent was absent ON THE SOURCE, which the "
-    "closed FR-013 vocabulary has no member for; DEPENDENCY_UNRESOLVED is the "
-    "least-wrong existing token and means 'absent in the destination' "
-    "(fidelity-census.md 7.1)"
+    "the referent was absent ON THE SOURCE, so the dependent object was never "
+    "transferable; distinct from DEPENDENCY_UNRESOLVED, which is absence in "
+    "the destination (fidelity-census.md 7.1)"
 )
 
 #: `(substring of DroppedItemRecord.reason, FR-013 token)`, most specific first.
+#: ORDER RE-VERIFIED when `SOURCE_REFERENT_ABSENT` landed (T096). The three
+#: needles are mutually exclusive on the reasons `Lib/categories.py` actually
+#: emits: `_resolve_or_none` picks "is empty on source" XOR "not resolvable in
+#: target" for the same slot, `_null_pos_fallback_blocked` extends the former
+#: and matches only it, and "is not reproducible by this engine" comes from a
+#: different producer entirely. No needle is a substring of another, so nothing
+#: shadows the new row and "most specific first" still holds by construction
+#: rather than by luck.
 #: `reason` is free text by construction (`models.DroppedItemRecord`: "reason :
 #: e.g. 'shared-default diverged', ..."), so classification is by distinctive
 #: substring -- and a reason matching NOTHING here yields NO LINE AT ALL rather
@@ -1296,7 +1323,7 @@ def drop_reason_token(reason):
     """-> the FR-013 token for one free-text drop reason, or None.
 
     None means "the census cannot classify this drop", and per FR-013 that is
-    an ABSENT accounting line, never a 17th token.
+    an ABSENT accounting line, never an 18th token.
     """
     if not isinstance(reason, str):
         return None
