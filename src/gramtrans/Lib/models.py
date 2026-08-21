@@ -1547,8 +1547,9 @@ class DependencyKind(enum.Enum):
     #: `IMoInflAffixSlot` is OWNED by its `IPartOfSpeech.AffixSlotsOC` and knows
     #: nothing about templates, while `IMoInflAffixTemplate` REFERENCES its
     #: slots through five `*SlotsRS` sequences. So the dependent is the
-    #: TEMPLATE (T069's business), and what a slot actually depends on is its
-    #: owning POS (see `SLOT_TO_POS`). Retained rather than deleted so the
+    #: TEMPLATE (see `TEMPLATE_TO_SLOT`, added by T069), and what a slot
+    #: actually depends on is its owning POS (see `SLOT_TO_POS`, added by
+    #: T068). Retained rather than deleted so the
     #: record of the plan's assumption survives next to the measurement that
     #: corrected it; deliberately unregistrable, because no producer emits it.
     SLOT_TO_TEMPLATE = "slot_to_template"
@@ -1563,6 +1564,17 @@ class DependencyKind(enum.Enum):
     #: borrowed. Audited by `debug/audit038_closure_edges.py`.
     SLOT_TO_POS = "slot_to_pos"
     TEMPLATE_TO_POS = "template_to_pos"
+    #: Feature 038 (T069). The arrow `SLOT_TO_TEMPLATE` was named for and got
+    #: backwards: `IMoInflAffixTemplate` REFERENCES its slots through five
+    #: sequences (`PrefixSlotsRS`, `SuffixSlotsRS`, `EncliticSlotsRS`,
+    #: `ProcliticSlotsRS`, `SlotsRS`), so the template is the dependent and the
+    #: slot is the dependency. `categories.affix_templates_dependencies` has
+    #: emitted exactly this edge since the T010 probe; until T069 there was no
+    #: member for it and the first audit reported it under `AFFIX_TO_SLOT`,
+    #: which is a DIFFERENT relationship (an affix MSA's own `SlotsRC`).
+    #: Registering it under that member would have put a live template->slot
+    #: edge into every FR-015 surface labelled as an affix->slot one.
+    TEMPLATE_TO_SLOT = "template_to_slot"
     MSA_TO_INFL_FEATURE = "msa_to_infl_feature"
     #: Feature 038 (T034). An MSA's `InflFeatsOA`/`MsFeaturesOA` is an
     #: `IFsFeatStruc` whose `TypeRA` REFERENCES an `IFsFeatStrucType` owned by

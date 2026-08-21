@@ -9772,6 +9772,67 @@ def affix_templates_dependencies(piece):
     return tuple(deps)
 
 
+# ---------------------------------------------------------------------------
+# NARROW per-relationship producers for AFFIX_TEMPLATES (feature 038 -- T069)
+# ---------------------------------------------------------------------------
+#
+# `affix_templates_dependencies` returns a MIXED edge set from one call: the
+# owning POS (GRAM_CATEGORIES) plus every slot referenced across the five
+# `*SlotsRS` sequences (SLOTS). That is the right shape for its callers and the
+# WRONG shape for `CLOSURE_EDGES_VERIFIED`, whose keys are one `DependencyKind`
+# each -- exactly T067's composite-producer problem, on a second producer. The
+# composite itself is UNCHANGED (it has non-closure callers, and narrowing it
+# would be a live-behaviour change smuggled into a registration).
+#
+# Unlike T067's case the split is bookkeeping rather than a blocked audit: both
+# far categories are unambiguous, both halves measured live-correct
+# (`NO_CAST_NEEDED`, uncast == cast on both corpora), and `Owner` plus the
+# `*SlotsRS` sequences are all declared on the types the collections yield, so
+# T088's polymorphic-member defect cannot apply here either.
+#
+# ONE MEASURABLE DIFFERENCE FROM THE COMPOSITE, worth stating because it shows
+# up in the numbers. `affix_templates_dependencies` appends without
+# de-duplicating, so a slot referenced from two sequences (or twice from one)
+# is emitted twice; `_narrow_deps` de-duplicates. The audit driver therefore
+# reports the narrow producer's DISTINCT edge count, which is the count the
+# closure walk acts on -- `closure.walk` visits a ref once however many times
+# it is handed.
+
+
+def affix_templates_pos_dependencies(piece):
+    """NARROW producer for `DependencyKind.TEMPLATE_TO_POS`: only
+    `(GRAM_CATEGORIES, owning_pos_guid)`, the `IPartOfSpeech.AffixTemplatesOS`
+    owner of this `IMoInflAffixTemplate`.
+
+    No cast needed, and measured rather than assumed: `Owner` is declared on
+    `ICmObject`, and `debug/audit038_closure_edges.py` reports
+    `edges.TEMPLATE_TO_POS = NO_CAST_NEEDED` (11 == 11 on `Mbugwe LizzieHC
+    practice`, 7 == 7 on `Ejagham Mini`).
+    """
+    return _narrow_deps(affix_templates_dependencies(piece),
+                        GrammarCategory.GRAM_CATEGORIES)
+
+
+def affix_templates_slot_dependencies(piece):
+    """NARROW producer for `DependencyKind.TEMPLATE_TO_SLOT`: only
+    `(SLOTS, slot_guid)`, across all five slot reference sequences in source
+    order (`PrefixSlotsRS`, `SuffixSlotsRS`, `EncliticSlotsRS`,
+    `ProcliticSlotsRS`, `SlotsRS`) per the T010 probe.
+
+    The relationship is TEMPLATE -> SLOT, not slot -> template: an
+    `IMoInflAffixSlot` carries no template reference at all (its own properties
+    are Name, Description, Optional, Affixes and
+    OtherInflectionalAffixLexEntries), so the reference this walks exists only
+    on the template side. `DependencyKind.SLOT_TO_TEMPLATE` names the arrow the
+    other way round and is emitted by nothing; `AFFIX_TO_SLOT`, which the first
+    audit used as this relationship's label, is `IMoInflAffMsa.SlotsRC` and is
+    carried as `RunPlan.msa_slot_bindings` for the 17.1 sub-pass (FR-019 /
+    T074) rather than as a closure edge. Hence a third member.
+    """
+    return _narrow_deps(affix_templates_dependencies(piece),
+                        GrammarCategory.SLOTS)
+
+
 def affix_templates_required_writing_systems(piece):
     return ()
 
@@ -12883,6 +12944,43 @@ def for_category(category: GrammarCategory) -> dict:
 # the whole reason closure is worth having and the reason the census reports
 # both numbers.
 
+# ---------------------------------------------------------------------------
+# T069 (2026-08-21) -- the AFFIX_TEMPLATES rows: T067's composite split, on a
+# producer whose halves both audited clean
+# ---------------------------------------------------------------------------
+#
+# `affix_templates_dependencies` is the second MIXED producer in this module:
+# one call returns the owning POS (GRAM_CATEGORIES) and every slot referenced
+# across the five `*SlotsRS` sequences (SLOTS). So it needs T067's treatment --
+# two narrow producers, two rows, each with an EXPLICIT `dependency_category`
+# so the `_closure_kind_lookup` keys are `(AFFIX_TEMPLATES, GRAM_CATEGORIES)`
+# and `(AFFIX_TEMPLATES, SLOTS)` rather than one `(AFFIX_TEMPLATES, None)`
+# wildcard that would stamp both relationships with one `verified_by`.
+#
+# The difference from T067 is that here the split is bookkeeping rather than a
+# blocked audit. Both halves measured live-correct on both corpora
+# (`NO_CAST_NEEDED`, uncast == cast: 11/11 and 7/7 for the owner, 24/24 and
+# 9/9 for the sequences; 11 edges over 5 distinct POSes and 24 over 18 distinct
+# slots on Mbugwe, 7 over 6 and 9 over 9 on Ejagham Mini) because `Owner` is
+# declared on `ICmObject` and the `*SlotsRS`
+# sequences are on `IMoInflAffixTemplate` itself -- T088's polymorphic-member
+# defect has no purchase on either.
+#
+# THE MEMBER, again. `TEMPLATE_TO_POS` already existed. The slot half did not:
+# the plan's `SLOT_TO_TEMPLATE` names the arrow BACKWARDS (an
+# `IMoInflAffixSlot` carries no template reference -- its own properties are
+# Name, Description, Optional, Affixes, OtherInflectionalAffixLexEntries), and
+# `AFFIX_TO_SLOT`, which the first audit borrowed as this relationship's label,
+# is `IMoInflAffMsa.SlotsRC` -- carried as `RunPlan.msa_slot_bindings` for the
+# 17.1 sub-pass, which is FR-019 / SC-003 / T074's surface. So
+# `DependencyKind.TEMPLATE_TO_SLOT` was added, and the audit driver's `edges`
+# key was RENAMED from `AFFIX_TO_SLOT` to match what it has always measured.
+#
+# What the two rows claim: for AFFIX_TEMPLATES pieces, each narrow producer
+# emits ONLY its own far category (`foreign_edges == 0`) and every distinct far
+# GUID resolves to a piece that far category's own `enumerate_source` yields
+# (`unresolved == 0`, `resolved_as_owned_value == 0`), on BOTH corpora.
+
 CLOSURE_EDGES_VERIFIED: dict = {
     DependencyKind.AFFIX_TO_POS: {
         "category": GrammarCategory.AFFIXES,
@@ -12937,6 +13035,55 @@ CLOSURE_EDGES_VERIFIED: dict = {
             "asserted by tests/integration/test_038_closure_edge_audit.py::"
             "test_only_the_confirmed_relationships_are_registered and "
             "::test_a_slots_only_plan_carries_the_registered_slot_to_pos_edges"
+        ),
+    },
+    # -----------------------------------------------------------------------
+    # T069 (2026-08-21) -- the AFFIX_TEMPLATES rows, both halves of the
+    # composite, each with its own far category and its own evidence
+    # -----------------------------------------------------------------------
+    DependencyKind.TEMPLATE_TO_POS: {
+        "category": GrammarCategory.AFFIX_TEMPLATES,
+        "producer": affix_templates_pos_dependencies,
+        "dependency_category": GrammarCategory.GRAM_CATEGORIES,
+        "verified_by": (
+            "debug/audit038_closure_edges.py (read-only, 2026-08-21) over "
+            "'Mbugwe LizzieHC practice' and 'Ejagham Mini': "
+            "relationships.TEMPLATE_TO_POS = CONFIRMED (11 edges over 5 "
+            "distinct POSes / 7 over 6, foreign_edges 0, unresolved 0, "
+            "resolved_as_owned_value 0; edges.TEMPLATE_TO_POS = "
+            "NO_CAST_NEEDED 11==11 / 7==7) in "
+            "tests/integration/_snapshots/closure-edge-audit-038-*.json, plus "
+            "the census in "
+            "tests/integration/_snapshots/closure-registration-038-t069.json "
+            "(debug/run038_closure_census.py, AFFIX_TEMPLATES-only selection "
+            "against a target restored from 'Target 2026-07-06 "
+            "0218.fwbackup'), both asserted by "
+            "tests/integration/test_038_closure_edge_audit.py::"
+            "test_only_the_confirmed_relationships_are_registered and "
+            "::test_a_templates_only_plan_carries_the_registered_edges"
+        ),
+    },
+    DependencyKind.TEMPLATE_TO_SLOT: {
+        "category": GrammarCategory.AFFIX_TEMPLATES,
+        "producer": affix_templates_slot_dependencies,
+        "dependency_category": GrammarCategory.SLOTS,
+        "verified_by": (
+            "debug/audit038_closure_edges.py (read-only, 2026-08-21) over "
+            "'Mbugwe LizzieHC practice' and 'Ejagham Mini': "
+            "relationships.TEMPLATE_TO_SLOT = CONFIRMED (24 edges over 18 "
+            "distinct slots / 9 over 9, foreign_edges 0, unresolved 0, "
+            "resolved_as_owned_value 0 -- every distinct far GUID resolves "
+            "against slots_enumerate_source; edges.TEMPLATE_TO_SLOT = "
+            "NO_CAST_NEEDED 24==24 / 9==9) in "
+            "tests/integration/_snapshots/closure-edge-audit-038-*.json, plus "
+            "the census in "
+            "tests/integration/_snapshots/closure-registration-038-t069.json "
+            "(debug/run038_closure_census.py, AFFIX_TEMPLATES-only selection "
+            "against a target restored from 'Target 2026-07-06 "
+            "0218.fwbackup'), both asserted by "
+            "tests/integration/test_038_closure_edge_audit.py::"
+            "test_only_the_confirmed_relationships_are_registered and "
+            "::test_a_templates_only_plan_carries_the_registered_edges"
         ),
     },
     # DependencyKind.MSA_TO_INFL_FEATURE: REFUSED -- see (3) above and T089.

@@ -44,10 +44,12 @@ HOW IT ANSWERS -- TWO SEPARATE SIGNALS, deliberately not merged.
    under a third's evidence, which is the substitution FR-018 exists to
    prevent. So this block calls the NARROW producers (T067's
    `affixes_pos_dependencies`, `affixes_feat_struc_type_dependencies`,
-   `affixes_infl_feature_dependencies`; T068's `slots_pos_dependencies`)
-   over the pieces the registry will actually walk -- each relationship's
-   OWN source-category `enumerate_source`, not every LexEntry -- and per
-   relationship measures three things:
+   `affixes_infl_feature_dependencies`; T068's `slots_pos_dependencies`;
+   T069's `affix_templates_pos_dependencies` and
+   `affix_templates_slot_dependencies`) over the pieces the registry will
+   actually walk -- each relationship's OWN source-category
+   `enumerate_source`, not every LexEntry -- and per relationship measures
+   three things:
 
      * `foreign_edges`   -- edges of a far category the row does NOT claim.
        Non-zero means the producer is not narrow and must not be registered.
@@ -129,6 +131,8 @@ _CANDIDATE_TASK = {
     "MSA_TO_FEAT_STRUC_TYPE": "T067",
     "MSA_TO_INFL_FEATURE": "T067",
     "SLOT_TO_POS": "T068",
+    "TEMPLATE_TO_POS": "T069",
+    "TEMPLATE_TO_SLOT": "T069",
 }
 
 
@@ -290,7 +294,12 @@ def main() -> int:
             "verdict": _verdict(stats["tpl_owner"], stats["templates"],
                                 stats["templates"]),
         },
-        "AFFIX_TO_SLOT": {
+        # RENAMED by T069 from `AFFIX_TO_SLOT`. This block has always
+        # measured `IMoInflAffixTemplate`'s five `*SlotsRS` sequences -- a
+        # TEMPLATE->slot reference. `AFFIX_TO_SLOT` is `IMoInflAffMsa.SlotsRC`,
+        # a different arrow off a different owner, and is carried as
+        # `RunPlan.msa_slot_bindings` rather than as a dependency edge.
+        "TEMPLATE_TO_SLOT": {
             "task": "T069",
             "producer": "categories.affix_templates_dependencies (slot seqs)",
             "reads": list(_TPL_SEQS),
@@ -419,6 +428,7 @@ def main() -> int:
 
     _far_index = {
         _GC.GRAM_CATEGORIES: (_piece_guids(_GC.GRAM_CATEGORIES), set()),
+        _GC.SLOTS: (_piece_guids(_GC.SLOTS), set()),
         _GC.FEATURE_STRUCT_TYPES: (_piece_guids(_GC.FEATURE_STRUCT_TYPES), set()),
         _GC.INFLECTION_FEATURES: (_piece_guids(_GC.INFLECTION_FEATURES),
                                   _owned_symbolic_value_guids()),
@@ -443,6 +453,16 @@ def main() -> int:
         # first audit called `SLOT_TO_POS` without a member existing for it.
         ("SLOT_TO_POS", "slots_pos_dependencies",
          _cats.slots_pos_dependencies, _GC.SLOTS, _GC.GRAM_CATEGORIES),
+        # T069. Both halves of `affix_templates_dependencies`, split the way
+        # T067 split `affixes_dependencies`. TEMPLATE_TO_SLOT is the member
+        # this relationship needed: the first audit labelled it
+        # `AFFIX_TO_SLOT`, which is a different arrow off a different owner.
+        ("TEMPLATE_TO_POS", "affix_templates_pos_dependencies",
+         _cats.affix_templates_pos_dependencies, _GC.AFFIX_TEMPLATES,
+         _GC.GRAM_CATEGORIES),
+        ("TEMPLATE_TO_SLOT", "affix_templates_slot_dependencies",
+         _cats.affix_templates_slot_dependencies, _GC.AFFIX_TEMPLATES,
+         _GC.SLOTS),
     )
 
     relationships: dict = {}

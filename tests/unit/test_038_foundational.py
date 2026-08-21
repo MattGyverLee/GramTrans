@@ -477,18 +477,21 @@ class TestClosureRegistryShipsEmpty:
         Emptiness WAS the property while nothing had been audited. T067
         audited two relationships against two live corpora and registered
         those two; T068 audited and registered a third (a SLOTS piece needing
-        its owning POS). So the property is now the exact set: anything else
-        in here would be a producer's unaudited edge set reaching a plan,
-        which is the failure FR-018 exists to prevent. Every row must also
-        carry evidence, which `_closure_registry_by_category` enforces --
-        calling it here is what makes that enforcement cover the SHIPPED
-        registry and not only the hand-built ones below.
+        its owning POS); T069 split `affix_templates_dependencies` and
+        registered both of its halves. So the property is now the exact set:
+        anything else in here would be a producer's unaudited edge set
+        reaching a plan, which is the failure FR-018 exists to prevent. Every
+        row must also carry evidence, which `_closure_registry_by_category`
+        enforces -- calling it here is what makes that enforcement cover the
+        SHIPPED registry and not only the hand-built ones below.
         """
         registry = categories_mod.CLOSURE_EDGES_VERIFIED
         assert set(registry) == {
             DependencyKind.AFFIX_TO_POS,
             DependencyKind.MSA_TO_FEAT_STRUC_TYPE,
             DependencyKind.SLOT_TO_POS,
+            DependencyKind.TEMPLATE_TO_POS,
+            DependencyKind.TEMPLATE_TO_SLOT,
         }
         categories_mod._closure_registry_by_category(registry)
         for kind, entry in registry.items():
@@ -501,15 +504,20 @@ class TestClosureRegistryShipsEmpty:
 
         The excluded set is DERIVED from the registry rather than listed, so
         this test cannot drift into asserting the gate for a category that has
-        since been registered (AFFIXES by T067, SLOTS by T068). A duck-typed
-        context makes their enumeration empty anyway, so asserting `()` for
-        them would be asserting the fake rather than the gate -- while
-        hard-coding the exclusion would quietly stop covering the category the
-        NEXT registration adds.
+        since been registered (AFFIXES by T067, SLOTS by T068, AFFIX_TEMPLATES
+        by T069). A duck-typed context makes their enumeration empty anyway,
+        so asserting `()` for them would be asserting the fake rather than the
+        gate -- while hard-coding the exclusion would quietly stop covering the
+        category the NEXT registration adds.
+
+        The derived set is asserted too. Without that, this loop would still
+        pass on a registry that had grown a row for EVERY category, having
+        excluded them all.
         """
         registered = {entry["category"] for entry
                       in categories_mod.CLOSURE_EDGES_VERIFIED.values()}
-        assert registered == {GrammarCategory.AFFIXES, GrammarCategory.SLOTS}
+        assert registered == {GrammarCategory.AFFIXES, GrammarCategory.SLOTS,
+                              GrammarCategory.AFFIX_TEMPLATES}
         dep_fn = categories_mod.closure_dependencies_for(_ctx())
         for cat in GrammarCategory:
             if cat in registered:

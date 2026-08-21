@@ -14,21 +14,6 @@
       "uncast": 0,
       "verdict": "CAST_REQUIRED"
     },
-    "AFFIX_TO_SLOT": {
-      "cast": 9,
-      "population": 7,
-      "producer": "categories.affix_templates_dependencies (slot seqs)",
-      "reads": [
-        "PrefixSlotsRS",
-        "SuffixSlotsRS",
-        "EncliticSlotsRS",
-        "ProcliticSlotsRS",
-        "SlotsRS"
-      ],
-      "task": "T069",
-      "uncast": 9,
-      "verdict": "NO_CAST_NEEDED"
-    },
     "MSA_TO_FEAT_STRUC_TYPE": {
       "cast": 40,
       "population": 247,
@@ -63,6 +48,21 @@
       ],
       "task": "T069",
       "uncast": 7,
+      "verdict": "NO_CAST_NEEDED"
+    },
+    "TEMPLATE_TO_SLOT": {
+      "cast": 9,
+      "population": 7,
+      "producer": "categories.affix_templates_dependencies (slot seqs)",
+      "reads": [
+        "PrefixSlotsRS",
+        "SuffixSlotsRS",
+        "EncliticSlotsRS",
+        "ProcliticSlotsRS",
+        "SlotsRS"
+      ],
+      "task": "T069",
+      "uncast": 9,
       "verdict": "NO_CAST_NEEDED"
     }
   },
@@ -160,6 +160,36 @@
       "resolved_as_piece": 6,
       "source_category": "slots",
       "task": "T068",
+      "unresolved": 0,
+      "unresolved_sample": [],
+      "verdict": "CONFIRMED"
+    },
+    "TEMPLATE_TO_POS": {
+      "dependency_category": "gram_categories",
+      "distinct_far_guids": 6,
+      "edges": 7,
+      "foreign_edges": 0,
+      "population": 7,
+      "producer": "categories.affix_templates_pos_dependencies",
+      "resolved_as_owned_value": 0,
+      "resolved_as_piece": 6,
+      "source_category": "affix_templates",
+      "task": "T069",
+      "unresolved": 0,
+      "unresolved_sample": [],
+      "verdict": "CONFIRMED"
+    },
+    "TEMPLATE_TO_SLOT": {
+      "dependency_category": "slots",
+      "distinct_far_guids": 9,
+      "edges": 9,
+      "foreign_edges": 0,
+      "population": 7,
+      "producer": "categories.affix_templates_slot_dependencies",
+      "resolved_as_owned_value": 0,
+      "resolved_as_piece": 9,
+      "source_category": "affix_templates",
+      "task": "T069",
       "unresolved": 0,
       "unresolved_sample": [],
       "verdict": "CONFIRMED"

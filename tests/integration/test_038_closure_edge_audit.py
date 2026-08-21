@@ -19,7 +19,7 @@ at all, because their producers did not work on live data:
     MSA_TO_FEAT_STRUC_TYPE  uncast 0, cast 216 /  40   cast mandatory
     SLOT_TO_POS             uncast/cast equal          no cast needed
     TEMPLATE_TO_POS         uncast/cast equal          no cast needed
-    AFFIX_TO_SLOT           uncast/cast equal          no cast needed
+    TEMPLATE_TO_SLOT        uncast/cast equal          no cast needed
 
 T088 supplied the missing cast (`categories._cast_to_concrete`). The
 `CAST_REQUIRED` verdicts above did NOT change and never will -- they describe
@@ -97,6 +97,26 @@ borrowed. A live relationship filed under another relationship's name passes
 registration and then mislabels every FR-015 surface (T070) and every
 deselection (T072) -- the substitution FR-018 forbids, moved one step
 downstream to where nothing checks for it.
+
+WHAT T069 REGISTERED, AND THE SECOND MEMBER IT HAD TO ADD.
+
+    TEMPLATE_TO_POS          11 /  7 edges, foreign 0, unresolved 0  REGISTERED
+    TEMPLATE_TO_SLOT         24 /  9 edges, foreign 0, unresolved 0  REGISTERED
+
+`affix_templates_dependencies` is the module's second MIXED producer -- one
+call returns the owning POS (GRAM_CATEGORIES) and every slot referenced across
+the five `*SlotsRS` sequences (SLOTS) -- so it needed T067's split: two narrow
+producers, two rows, each with an EXPLICIT `dependency_category`. Unlike T067
+the split is bookkeeping rather than a blocked audit: both halves measured
+`NO_CAST_NEEDED` on both corpora, because `Owner` is on `ICmObject` and the
+`*SlotsRS` sequences are on `IMoInflAffixTemplate` itself.
+
+`TEMPLATE_TO_POS` already existed. The slot half did not, and the `edges` block
+above was reporting it under `AFFIX_TO_SLOT` -- a different arrow off a
+different owner (`IMoInflAffMsa.SlotsRC`, carried as
+`RunPlan.msa_slot_bindings` for the 17.1 sub-pass, FR-019 / SC-003 / T074's
+surface). T069 added `DependencyKind.TEMPLATE_TO_SLOT` and RENAMED the `edges`
+key to match what it has always measured.
 """
 from __future__ import annotations
 
@@ -119,7 +139,12 @@ _CAST_REQUIRED_EDGES = ("AFFIX_TO_POS", "MSA_TO_FEAT_STRUC_TYPE")
 #: collection's element type (`Owner` on `ICmObject`, the `*SlotsRS`
 #: sequences on `IMoInflAffixTemplate`). This is why T068 / T069 audited
 #: clean while T067 did not.
-_NO_CAST_EDGES = ("SLOT_TO_POS", "TEMPLATE_TO_POS", "AFFIX_TO_SLOT")
+#: `TEMPLATE_TO_SLOT` was called `AFFIX_TO_SLOT` here until T069. The block
+#: has always measured `IMoInflAffixTemplate`'s five `*SlotsRS` sequences --
+#: a TEMPLATE->slot reference. `AFFIX_TO_SLOT` is `IMoInflAffMsa.SlotsRC`, a
+#: different arrow off a different owner, carried as
+#: `RunPlan.msa_slot_bindings` rather than as a dependency edge.
+_NO_CAST_EDGES = ("SLOT_TO_POS", "TEMPLATE_TO_POS", "TEMPLATE_TO_SLOT")
 
 #: Producers that must return edges on any corpus that actually holds their
 #: input. This is the T088 regression guard: it is the signal that moved.
@@ -196,7 +221,8 @@ def test_a_cast_is_still_mandatory_at_the_msa_sites(snap) -> None:
 #: The relationships T067 registered, and the one it did not. Keyed by the
 #: `DependencyKind` NAME so the table can be read next to the snapshot's
 #: `relationships` block, which is keyed the same way.
-_REGISTERED = ("AFFIX_TO_POS", "MSA_TO_FEAT_STRUC_TYPE", "SLOT_TO_POS")
+_REGISTERED = ("AFFIX_TO_POS", "MSA_TO_FEAT_STRUC_TYPE", "SLOT_TO_POS",
+               "TEMPLATE_TO_POS", "TEMPLATE_TO_SLOT")
 _REFUSED = ("MSA_TO_INFL_FEATURE",)
 
 
@@ -294,12 +320,16 @@ def test_the_per_relationship_counts_are_recorded_per_corpus() -> None:
             "MSA_TO_FEAT_STRUC_TYPE": 73,
             "MSA_TO_INFL_FEATURE": 206,
             "SLOT_TO_POS": 19,
+            "TEMPLATE_TO_POS": 11,
+            "TEMPLATE_TO_SLOT": 24,
         },
         "Ejagham Mini": {
             "AFFIX_TO_POS": 88,
             "MSA_TO_FEAT_STRUC_TYPE": 17,
             "MSA_TO_INFL_FEATURE": 34,
             "SLOT_TO_POS": 9,
+            "TEMPLATE_TO_POS": 7,
+            "TEMPLATE_TO_SLOT": 9,
         },
     }
     got = {
@@ -336,24 +366,30 @@ def test_each_relationship_was_measured_over_its_own_source_category(snap) -> No
     matches some other category's.
     """
     pop = snap["population"]
-    expected_population = {
-        "AFFIX_TO_POS": None,          # AFFIXES: a subset of lex_entries
-        "MSA_TO_FEAT_STRUC_TYPE": None,
-        "MSA_TO_INFL_FEATURE": None,
-        "SLOT_TO_POS": pop["slots"],
+    expected = {
+        # AFFIXES enumerates a SUBSET of the lexicon, so the exact number is
+        # the corpus's business -- but it must not silently become the whole
+        # lexicon, which is what the discredited measurement did.
+        "AFFIX_TO_POS": ("affixes", None),
+        "MSA_TO_FEAT_STRUC_TYPE": ("affixes", None),
+        "MSA_TO_INFL_FEATURE": ("affixes", None),
+        "SLOT_TO_POS": ("slots", pop["slots"]),
+        "TEMPLATE_TO_POS": ("affix_templates", pop["templates"]),
+        "TEMPLATE_TO_SLOT": ("affix_templates", pop["templates"]),
     }
-    for name, want in expected_population.items():
+    assert set(expected) == set(snap["relationships"]), (
+        "a relationship was added to or removed from the audit without this "
+        "population check being extended: "
+        + repr(sorted(set(expected) ^ set(snap["relationships"])))
+    )
+    for name, (src_cat, want) in expected.items():
         row = snap["relationships"][name]
         assert row["population"] > 0, name
+        assert row["source_category"] == src_cat, (name, row["source_category"])
         if want is None:
-            # AFFIXES enumerates a SUBSET of the lexicon, so the exact number
-            # is the corpus's business -- but it must not silently become the
-            # whole lexicon, which is what the discredited measurement did.
             assert row["population"] <= pop["lex_entries"], name
-            assert row["source_category"] == "affixes", name
         else:
             assert row["population"] == want, (name, row["population"], want)
-            assert row["source_category"] == "slots", name
 
 
 @pytest.mark.parametrize("snap", _snapshots(), ids=_ids(_snapshots()))
@@ -746,3 +782,189 @@ def test_the_census_is_unchanged_by_the_slots_registration() -> None:
     assert post["totals"] == pre["totals"]
     assert (post["verdict"], post["exit_code"]) \
         == (pre["verdict"], pre["exit_code"]) == ("DUPLICATE_IDENTITY", 3)
+
+
+# ---------------------------------------------------------------------------
+# T069's CENSUS -- and the first TWO-HOP closure this feature has measured
+# ---------------------------------------------------------------------------
+#
+# Driver: `debug/run038_closure_census.py T069`. Artifacts:
+# `_snapshots/closure-registration-038-t069.json` and
+# `_snapshots/census-038-t069-registered.json`, the latter compared row for row
+# against T068's.
+#
+# The narrow selection here is AFFIX_TEMPLATES-only, and it produces something
+# neither earlier registration could: a closure walk TWO HOPS deep. The
+# templates pull in their slots (`TEMPLATE_TO_SLOT`), and the walk then applies
+# T068's registered row to each pulled-in slot, pulling in the slots' owning
+# POSes (`SLOT_TO_POS`). The third kind in this plan is therefore not an
+# accident to be tolerated -- it is the closure doing the job FR-014 asks for,
+# and it only works because T068 landed first.
+
+_REG_T069 = _SNAPSHOT_DIR / "closure-registration-038-t069.json"
+_CENSUS_T069 = _SNAPSHOT_DIR / "census-038-t069-registered.json"
+
+
+def _reg_t069() -> dict:
+    if not _REG_T069.is_file():
+        pytest.skip(
+            "no committed registration measurement at " + str(_REG_T069)
+            + " -- produce it with `python debug/run038_closure_census.py "
+            "T069`")
+    return json.loads(_REG_T069.read_text(encoding="utf-8"))
+
+
+def test_a_templates_only_plan_carries_the_registered_edges() -> None:
+    """THE TEST BOTH T069 ROWS NAME IN THEIR `verified_by`.
+
+    Each kind is asserted separately and by far category, because a single
+    total of 53 would be satisfied by the POS half working while the slot half
+    stayed dead -- the exact asymmetry the first audit found on the MSA sites.
+
+    Every edge must be `origin="pulled_in"` (a "chosen" edge here would mean
+    the seed set leaked into the closure) and must carry a non-empty
+    `verified_by` (a registry validated at build time and then losing its
+    evidence on the way to the plan would defeat FR-018 silently).
+    """
+    reg = _reg_t069()
+    assert reg["task"] == "T069"
+    assert reg["narrow_selection"] == "AFFIX_TEMPLATES"
+    live = reg["narrow"]["registry_live"]["closure"]
+    assert live["by_kind"]["TEMPLATE_TO_POS"] == {
+        "edges": 11,
+        "far_categories": {"gram_categories": 11},
+        "origins": {"pulled_in": 11},
+        "verified_by_nonempty": True,
+    }
+    assert live["by_kind"]["TEMPLATE_TO_SLOT"] == {
+        "edges": 24,
+        "far_categories": {"slots": 24},
+        "origins": {"pulled_in": 24},
+        "verified_by_nonempty": True,
+    }
+    assert live["total_edges"] == 53
+
+
+def test_the_templates_plan_walks_two_hops_through_t068s_row() -> None:
+    """The finding this selection produced, pinned as a claim rather than
+    tolerated as extra output.
+
+    53 edges over 23 distinct pulled-in refs decomposes as: 11 template->POS,
+    24 template->slot, and **18 slot->POS** -- the second hop. The walk applies
+    T068's `SLOT_TO_POS` row to each slot it just pulled in, so the 18 slots
+    bring their owning POSes with them. That is FR-014's promise ("include the
+    items it depends on") holding transitively, and it is only reachable
+    because T068 landed first: with `SLOT_TO_POS` unregistered,
+    `closure_dependencies_for` returns `()` for SLOTS and the walk stops one
+    hop short.
+
+    The 5 distinct POSes against 29 POS-bound edges (11 + 18) is the same
+    many-to-one shape T067 and T068 measured, now arriving from two different
+    source categories at once.
+    """
+    reg = _reg_t069()
+    live = reg["narrow"]["registry_live"]["closure"]
+    assert set(live["by_kind"]) == {"TEMPLATE_TO_POS", "TEMPLATE_TO_SLOT",
+                                   "SLOT_TO_POS"}
+    assert live["by_kind"]["SLOT_TO_POS"] == {
+        "edges": 18,
+        "far_categories": {"gram_categories": 18},
+        "origins": {"pulled_in": 18},
+        "verified_by_nonempty": True,
+    }
+    assert live["distinct_pulled_in_refs"] == 23
+    assert live["pulled_in_by_category"] == {"gram_categories": 5, "slots": 18}
+    assert reg["expected_kinds"] == ["TEMPLATE_TO_POS", "TEMPLATE_TO_SLOT",
+                                     "SLOT_TO_POS"]
+
+
+def test_the_template_edges_come_from_the_registry_and_nowhere_else() -> None:
+    """Emptying the registry must take all 53 edges with it, including the
+    transitive hop.
+
+    Without this, the two tests above are satisfied by any code path that
+    produces closure edges -- including one that ignores
+    `CLOSURE_EDGES_VERIFIED` entirely, the fall-through FR-018 forbids.
+    """
+    reg = _reg_t069()
+    assert reg["narrow"]["registry_empty"]["closure"]["total_edges"] == 0
+
+
+def test_a_full_copy_still_carries_no_closure_edges_after_t069() -> None:
+    """Seed semantics, re-measured with five rows registered instead of three.
+
+    Pinned per registration rather than once, because the claim is about the
+    SEED SET and each new row adds a source category whose far endpoints might
+    not have been seeds. Two-hop closure makes this worth re-checking rather
+    than assuming: in a full copy the slots are seeds too, so the second hop
+    has nothing to pull in either.
+    """
+    reg = _reg_t069()
+    assert reg["full_copy"]["registry_live"]["closure"]["total_edges"] == 0
+    assert reg["full_copy"]["registry_empty"]["closure"]["total_edges"] == 0
+    assert reg["full_copy"]["closure_edges_expected"] == 0
+
+
+def test_t069_changed_no_plan_decision_under_either_selection() -> None:
+    """T070 and T072 have not landed, so at this stage a registration must add
+    EDGES and change nothing else -- not one action, skip or overwrite, under
+    either selection. Including the transitive hop: pulling 18 slots and 5
+    POSes into the closure must not put them into the PLAN, because
+    `Selection` still says AFFIX_TEMPLATES only.
+
+    That last clause is what makes two-hop closure safe to land ahead of T070:
+    the edges record a dependency, they do not (yet) transfer anything.
+    """
+    reg = _reg_t069()
+    assert reg["full_copy"]["composition_unchanged_by_registration"] is True
+    assert reg["narrow"]["composition_unchanged_by_registration"] is True
+    assert reg["plan_composition_unchanged_by_registration"] is True
+    for scope in ("full_copy", "narrow"):
+        assert (reg[scope]["registry_live"]["composition"]
+                == reg[scope]["registry_empty"]["composition"]), scope
+    narrow_actions = reg["narrow"]["registry_live"]["composition"]["actions"]
+    assert set(narrow_actions) == {"affix_templates"}, narrow_actions
+
+
+def test_the_census_is_unchanged_by_the_template_registration() -> None:
+    """The census T069 owed, compared against T068's -- same source, same
+    backup, same full-copy selection, separately restored targets, registry
+    holding three rows instead of five.
+
+    Identical class tables and identical totals is the answer: registering
+    both template rows moved no object count. The shared `DUPLICATE_IDENTITY`
+    / exit 3 is `PhNCFeatures`' 23 duplicate natural-key groups over 66 extra
+    objects, recorded under T064 and unrelated to US3; asserting the two runs
+    agree on it keeps that reading intact rather than letting exit 3 be
+    re-read later as a Phase 7 regression.
+    """
+    for path in (_CENSUS_T068, _CENSUS_T069):
+        if not path.is_file():
+            pytest.skip("missing census artifact " + str(path))
+    pre = json.loads(_CENSUS_T068.read_text(encoding="utf-8"))
+    post = json.loads(_CENSUS_T069.read_text(encoding="utf-8"))
+    assert _census_table(post) == _census_table(pre)
+    assert post["totals"] == pre["totals"]
+    assert (post["verdict"], post["exit_code"]) \
+        == (pre["verdict"], pre["exit_code"]) == ("DUPLICATE_IDENTITY", 3)
+
+
+def test_every_registration_census_agrees_with_the_pre_phase7_baseline() -> None:
+    """The chain, closed end to end rather than link by link.
+
+    Each registration is compared with the one before it, which is the right
+    diff for finding what a single row did -- but a chain of pairwise
+    comparisons can drift if one link is ever re-measured and the others are
+    not. So the LAST artifact is also compared with `census-038-mbugwe-
+    phase6.json`: T063/T064's run with the registry EMPTY, before any of
+    Phase 7 existed. Five registered relationships, no object count moved.
+    """
+    for path in (_CENSUS_PRE, _CENSUS_T069):
+        if not path.is_file():
+            pytest.skip("missing census artifact " + str(path))
+    base = json.loads(_CENSUS_PRE.read_text(encoding="utf-8"))
+    post = json.loads(_CENSUS_T069.read_text(encoding="utf-8"))
+    assert _census_table(post) == _census_table(base)
+    assert post["totals"] == base["totals"]
+    assert (post["verdict"], post["exit_code"]) \
+        == (base["verdict"], base["exit_code"])

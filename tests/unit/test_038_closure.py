@@ -347,31 +347,38 @@ def test_the_shipped_registry_holds_only_what_was_audited() -> None:
 
     Its first version asserted the registry was empty and said in so many
     words that it "is expected to CHANGE when T067 lands". T067 landed two
-    rows and T068 a third, so this is that change, twice: an exact set, not a
-    non-emptiness check.
+    rows, T068 a third and T069 the last two, so this is that change three
+    times over: an exact set, not a non-emptiness check.
 
     An exact set is the point. A `>= 1 row` assertion would pass on a registry
     that had quietly grown a row nobody audited, which is the one thing FR-018
-    must never allow. The refusal set is named on purpose, and its two members
-    are refused for DIFFERENT reasons:
+    must never allow. The refusal set is named on purpose, and its members are
+    refused for DIFFERENT reasons:
 
     * `MSA_TO_INFL_FEATURE` has a working, narrow producer with live edges and
       is STILL not registrable, because 30 of 34 distinct far GUIDs on Mbugwe
       (8 of 10 on Ejagham Mini) are `IFsSymFeatVal` symbolic values that
       `inflection_features_enumerate_source` never yields (T089).
-    * `SLOT_TO_TEMPLATE` and `AFFIX_TO_SLOT` are unregistrable for a reason
-      T068 had to establish first: NO producer in `categories.py` emits either
-      edge. A slot is owned by its POS and references no template, so the
-      arrow the plan named runs backwards -- what exists is template->slot --
-      and the affix-to-slot link is carried as `RunPlan.msa_slot_bindings` for
-      the 17.1 sub-pass, which is FR-019/T074's surface rather than a closure
-      edge. Asserting their absence is what stops a later registration from
-      reaching for a member whose name merely looks right.
+    * `SLOT_TO_TEMPLATE` is unregistrable because NOTHING emits it and nothing
+      can: an `IMoInflAffixSlot` carries no template reference at all, so the
+      arrow the plan named runs backwards. The edge that exists is
+      `TEMPLATE_TO_SLOT`, added and registered by T069.
+    * `AFFIX_TO_SLOT` is a real LCM arrow (`IMoInflAffMsa.SlotsRC`) that no
+      `*_dependencies` producer emits: GramTrans carries it as
+      `RunPlan.msa_slot_bindings` for the 17.1 sub-pass, which is FR-019 /
+      SC-003 / T074's surface rather than a closure edge. The first audit used
+      this member as the LABEL for the template->slot sequences, which is what
+      made a separate `TEMPLATE_TO_SLOT` necessary.
+
+    Asserting the refusals is what stops a later registration from reaching
+    for a member whose name merely looks right.
     """
     assert set(categories_mod.CLOSURE_EDGES_VERIFIED) == {
         DependencyKind.AFFIX_TO_POS,
         DependencyKind.MSA_TO_FEAT_STRUC_TYPE,
         DependencyKind.SLOT_TO_POS,
+        DependencyKind.TEMPLATE_TO_POS,
+        DependencyKind.TEMPLATE_TO_SLOT,
     }
     for refused in (DependencyKind.MSA_TO_INFL_FEATURE,
                     DependencyKind.SLOT_TO_TEMPLATE,
@@ -447,11 +454,17 @@ def test_the_registered_rows_do_not_collide_in_the_kind_lookup() -> None:
     pair and RAISES on a collision. Both T067 rows are `category=AFFIXES`, so
     this is the assertion that keeps that legal.
 
-    T068's row adds the mirror-image case: two rows now name GRAM_CATEGORIES
-    as their far category, from DIFFERENT source categories. Legal for the
+    T068's row adds the mirror-image case: rows now name GRAM_CATEGORIES as
+    their far category from THREE different source categories. Legal for the
     same reason -- the key is the PAIR -- and worth pinning, because a row
     that lost its explicit `category` would collide here, in a unit test,
     rather than mislabel edges in a live plan.
+
+    The count is the point as much as the membership: five rows, five distinct
+    keys. `_closure_kind_lookup` RAISES on a duplicate key, so a fifth row
+    that quietly reused a fourth's pair could not reach a plan -- but a row
+    that reused a pair with a `None` in it would not raise, it would WIN, and
+    that is the substitution this set makes visible.
     """
     from gramtrans.Lib import preview as preview_module
 
@@ -461,4 +474,7 @@ def test_the_registered_rows_do_not_collide_in_the_kind_lookup() -> None:
         (GrammarCategory.AFFIXES, GrammarCategory.GRAM_CATEGORIES),
         (GrammarCategory.AFFIXES, GrammarCategory.FEATURE_STRUCT_TYPES),
         (GrammarCategory.SLOTS, GrammarCategory.GRAM_CATEGORIES),
+        (GrammarCategory.AFFIX_TEMPLATES, GrammarCategory.GRAM_CATEGORIES),
+        (GrammarCategory.AFFIX_TEMPLATES, GrammarCategory.SLOTS),
     }
+    assert len(lookup) == len(categories_mod.CLOSURE_EDGES_VERIFIED) == 5

@@ -19,20 +19,28 @@ import types
 
 import pytest
 
-# Phase 3c leaf-dispatch for templates + the 17.1 sub-pass (T034-T040) is still
-# stubbed in categories.py (`raise NotImplementedError("Phase 3c T051")`). These
-# are red-by-design TDD tests for that pending work (spec 007); mark xfail so the
-# trunk suite stays green and they auto-flip to passing once implemented.
-# The whole file exercises Phase 3c T051 template leaf-dispatch + the 17.1
-# sub-pass, none of which is implemented yet in categories.py (stubs raise
-# NotImplementedError, _run_171_subpass is undefined, and dependencies() returns
-# empty). These tests guard nothing until T051 lands, so the whole module is
-# xfail (strict=False) -- they auto-flip to xpass once implemented, at which
-# point this mark should be removed. Tracked under spec 007.
-pytestmark = pytest.mark.xfail(
-    reason="Phase 3c T051 template leaf-dispatch + 17.1 sub-pass not yet implemented (spec 007)",
-    strict=False,
-)
+# THE MODULE-LEVEL `xfail` MARK IS GONE (feature 038, T069).
+#
+# It was added when Phase 3c T051 template leaf-dispatch and the 17.1 sub-pass
+# were still `raise NotImplementedError` stubs, and it said so in its own
+# comment: "they auto-flip to xpass once implemented, at which point this mark
+# should be removed." T051 landed; the mark did not. Every one of the 10 tests
+# in this file was XPASSING, and a non-strict xfail that xpasses is a test that
+# CANNOT FAIL -- pytest reports XPASS, the run stays green, and no gate
+# notices.
+#
+# That was measured, not inferred. T069 registers a `CLOSURE_EDGES_VERIFIED`
+# row on `affix_templates_dependencies`, so its mutation verification broke the
+# producer on purpose: with the five `*SlotsRS` sequences unread,
+# `test_template_dependencies_cover_all_five_ref_seqs` and
+# `test_template_dependencies_yield_slot_refs_in_source_order` flipped from
+# XPASS to XFAIL -- and `tests/unit` still reported "3426 passed" with zero
+# failures. The only signal was two counters moving in a summary line.
+#
+# A registry row whose producer's entire unit coverage cannot fail is the
+# hollow-assertion pattern this feature keeps finding elsewhere, so the mark is
+# removed rather than re-pointed at a newer excuse. All 10 tests pass on their
+# own merits.
 
 from gramtrans.Lib import categories
 from gramtrans.Lib.models import (
