@@ -1148,3 +1148,164 @@ def test_the_narrow_transfer_used_to_lose_three_templates_and_all_its_slots():
     assert arrival["PartOfSpeech"] == {
         "before": 5, "after": 8, "arrived": 3,
         "after_without_pull_in": 5, "arrived_without_pull_in": 0}
+
+
+# ===========================================================================
+# T073 -- FR-017 / SC-010: the items that ARRIVE INCOMPLETE, measured live
+# ===========================================================================
+#
+# Asserted against `_snapshots/incompleteness-038-t073.json`, produced by
+# `debug/run038_incompleteness_census.py` against the same pair and the same
+# AFFIX_TEMPLATES-only selection as the T070 block above, so the two artifacts
+# are directly comparable. That driver WRITES NOTHING: FR-017 is a plan-time
+# determination, so every measurement is `preview_only=True` -- the restore is
+# only so "is this dependency already in the destination" is a known quantity.
+#
+# THE BEFORE. `closure-pull-in-038-t070.json`, committed at the parent commit,
+# carries no `incompleteness` key anywhere: 53 edges marked deselected, 23
+# DEPENDENCY_DESELECTED skips naming the refused DEPENDENCIES, and not one word
+# about the 11 templates that still transfer and now arrive unwired.
+
+_INCOMPLETE = _SNAPSHOT_DIR / "incompleteness-038-t073.json"
+
+
+def _incompleteness() -> dict:
+    if not _INCOMPLETE.is_file():
+        pytest.skip(
+            "no committed incompleteness measurement at " + str(_INCOMPLETE)
+            + " -- produce it with "
+            "`python debug/run038_incompleteness_census.py`")
+    return json.loads(_INCOMPLETE.read_text(encoding="utf-8"))
+
+
+def test_a_satisfied_closure_reports_no_incompleteness() -> None:
+    """THE QUIET CASE FIRST, because it is what makes the loud one mean
+    anything. Same registry, same narrow selection, nothing deselected: all 53
+    edges resolve, all 23 dependencies are pulled in, and the report says
+    nothing. A warning that is always on is indistinguishable from no
+    warning."""
+    p0 = _incompleteness()["measured"]["P0_nothing_deselected"]
+    assert p0["closure"]["total_edges"] == 53
+    assert p0["incompleteness"]["records"] == 0
+
+
+def test_a_full_deselection_reports_every_item_it_leaves_incomplete() -> None:
+    """FR-017 live. With all 23 pulled-in GUIDs refused, 11 templates still
+    transfer and each loses its POS and its slots: 35 records over 11 distinct
+    arriving items, naming 23 distinct missing dependencies.
+
+        TEMPLATE_TO_POS    11 edges  ->  11 records
+        TEMPLATE_TO_SLOT   24 edges  ->  24 records
+        SLOT_TO_POS        18 edges  ->   0 records
+    """
+    p1 = _incompleteness()["measured"]["P1_everything_deselected"]
+    assert p1["closure"]["edges_marked_deselected"] == 53
+    assert p1["incompleteness"]["records"] == 35
+    assert p1["incompleteness"]["by_category_pair"] == {
+        "affix_templates": {"gram_categories": 11, "slots": 24}}
+    assert p1["incompleteness"]["distinct_incomplete_items"] == 11
+    assert p1["incompleteness"]["distinct_missing_dependencies"] == 23
+    assert p1["incompleteness"]["by_cause"] == {"deselected": 35}
+
+
+def test_an_item_that_does_not_arrive_is_not_reported_as_incomplete() -> None:
+    """WHY 35 AND NOT 53, stated as its own claim because it is a deliberate
+    accounting decision and not a shortfall. The 18 `SLOT_TO_POS` edges name
+    slots that were themselves deselected: they do not arrive at all, so they
+    are dropped-with-reason (their own `DEPENDENCY_DESELECTED` skip, 18 of the
+    23) and not "arriving incomplete". Reporting both would count one loss
+    twice under two SC-010 buckets and would assert, of an object that never
+    reaches the destination, that it arrives broken."""
+    p1 = _incompleteness()["measured"]["P1_everything_deselected"]
+    assert p1["skips"] == {"gram_categories": 5, "slots": 18}
+    assert p1["closure"]["by_kind"]["SLOT_TO_POS"]["edges"] == 18
+    assert "slots" not in p1["incompleteness"]["by_category_pair"]
+
+
+def test_a_pulled_in_item_can_itself_arrive_incomplete() -> None:
+    """THE TWO-HOP CASE T069's census warned Phase 7 to expect, and the one a
+    full deselection cannot show. Deselect only the 5 POSes: the 18 slots are
+    still pulled in, so they arrive -- and they arrive missing their part of
+    speech. 29 records over 29 distinct items (11 templates + 18 slots) and 5
+    distinct missing dependencies."""
+    p2 = _incompleteness()["measured"][
+        "P2_only_the_parts_of_speech_deselected"]
+    assert p2["incompleteness"]["records"] == 29
+    assert p2["incompleteness"]["by_category_pair"] == {
+        "affix_templates": {"gram_categories": 11},
+        "slots": {"gram_categories": 18}}
+    assert p2["incompleteness"]["distinct_incomplete_items"] == 29
+    assert p2["incompleteness"]["distinct_missing_dependencies"] == 5
+
+
+def test_a_full_copy_reports_no_incompleteness() -> None:
+    """The regression guard, in the same shape T070's carries: a full copy has
+    every far endpoint as a seed, so 0 edges, so 0 records. A mechanism that
+    completes a narrow selection must change the case every existing caller
+    uses by nothing at all."""
+    p3 = _incompleteness()["measured"]["P3_full_copy"]
+    assert p3["closure"]["total_edges"] == 0
+    assert p3["incompleteness"]["records"] == 0
+
+
+def test_the_record_reaches_every_surface_a_user_reads() -> None:
+    """SC-010 is stated in terms of the REPORT, not the plan.
+    `RunReport.incompleteness`, `has_incomplete_items`, the snapshot JSON's
+    `incompleteness` list and the console's "Items arriving INCOMPLETE" block
+    all predate this task and all rendered an empty tuple."""
+    s = _incompleteness()["measured"]["P4_surfaces_for_P1"]
+    assert s["run_report_records"] == 35
+    assert s["snapshot_json_records"] == 35
+    assert s["has_incomplete_items"] is True
+    assert s["console_block_present"] is True
+    assert s["console_states_a_cause"] is True
+
+
+def test_every_record_names_its_items_or_says_it_cannot() -> None:
+    """A record whose labels are blank tells the reader which GUIDs are
+    involved and nothing about which ITEMS. 63 of 70 labels in P1 are real
+    source names ("basic noun" needs "Noun", "aug", "np"); the 7 fallbacks are
+    3 AFFIX TEMPLATES whose source `Name` is genuinely empty -- a fact about
+    the corpus, not a failure of the label reader, which is why the fallback
+    is the console form of the ref rather than an empty string."""
+    p1 = _incompleteness()["measured"][
+        "P1_everything_deselected"]["incompleteness"]
+    assert p1["labels_total"] == 70
+    assert p1["labels_falling_back_to_the_ref"] == 7
+    assert len(p1["distinct_refs_with_no_resolvable_name"]) == 3
+    assert all(ref.startswith("affix_templates:")
+               for ref in p1["distinct_refs_with_no_resolvable_name"])
+    assert p1["every_record_has_a_consequence"] is True
+
+
+def test_the_over_report_this_task_deliberately_did_not_fix() -> None:
+    """T093, PINNED AS THE CURRENT DEFECTIVE BEHAVIOUR so closing it is a
+    deliberate edit and not silent drift.
+
+    2 of the 5 pulled-in POSes ALREADY EXIST in the restored destination --
+    T070 measured them as OVERWRITEs, not ADDs. When the user deselects one,
+    the dependent's reference still resolves against the object that is
+    already there, so nothing is incomplete; T073 reports 8 of its 35 records
+    anyway. It cannot currently tell: T071 suppresses a deselected ref BEFORE
+    its planner runs, which is correct for the plan and leaves no
+    `ALREADY_PRESENT_BY_*` skip for this reader to consult.
+
+    The number is asserted so that a fix has to change it on purpose."""
+    t092 = _incompleteness()["measured"][
+        "T093_dependencies_already_in_the_destination"]
+    assert len(t092["refs_already_there"]) == 2
+    assert all(ref.startswith("gram_categories:")
+               for ref in t092["refs_already_there"])
+    assert t092["P1_records_naming_one_of_them"] == 8
+
+
+def test_the_pre_t073_artifact_reported_none_of_this() -> None:
+    """THE BEFORE, from the committed record rather than from memory. T070's
+    own snapshot -- same source, same target, same selection, same full
+    deselection -- carries 53 edges marked deselected and no `incompleteness`
+    key at any depth."""
+    blob = json.dumps(_pull_in())
+    assert "incompleteness" not in blob
+    b = _pull_in()["B_narrow_all_deselected"]
+    assert b["deselection_skips"]["count"] == 23
+    assert sum(r["deselected"] for r in b["closure"]["by_kind"].values()) == 53

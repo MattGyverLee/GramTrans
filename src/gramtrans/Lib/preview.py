@@ -25,6 +25,7 @@ if __package__:
         CreateDefinitionAction,
         ExcludedLossy,
         GrammarCategory,
+        IncompletenessRecord,
         MatchBasis,
         MatchBasisRecord,
         PlannedAction,
@@ -49,6 +50,7 @@ else:
         CreateDefinitionAction,
         ExcludedLossy,
         GrammarCategory,
+        IncompletenessRecord,
         MatchBasis,
         MatchBasisRecord,
         PlannedAction,
@@ -486,8 +488,87 @@ def _pull_in_is_deselected(selection, category, guid) -> bool:
         return False
 
 
+def _pull_in_piece_resolver(context, selection):
+    """Build the `(category, guid) -> source piece` resolver the pull-in uses.
+
+    Extracted from `_plan_pulled_in_items` by T073 for one reason: the
+    `IncompletenessRecord`s it emits have to LABEL both ends of an edge
+    ("Verb", "Subject prefix"), and the labels come from the same source
+    pieces the pull-in already resolves. One resolver, one enumeration cache,
+    shared by both readers -- a second resolver would enumerate every category
+    twice and could disagree with the first about what a ref names.
+
+    Indexed the same way `categories.closure_dependencies_for._pieces_for`
+    does, with one deliberate difference: the fallback enumeration passes
+    `selection=None`. A pulled-in item is BY DEFINITION one the user did not
+    select, so a category whose `enumerate_source` narrows to the user's picks
+    (`pos_enumerate_source`, every `leaf_picks_for` filter) would hide exactly
+    the piece the closure needs.
+    """
+    if __package__:
+        from . import categories as _categories
+    else:  # pragma: no cover - flat sys.path (FLExTools) import shape
+        import categories as _categories  # type: ignore
+
+    _piece_cache: dict = {}
+
+    def _piece_for(category, guid):
+        for sel in (selection, None):
+            key = (category, sel is not None)
+            if key not in _piece_cache:
+                index: dict = {}
+                try:
+                    bundle = _categories.LEAF_CATEGORIES[category]
+                    for piece in bundle["enumerate_source"](context, sel) or ():
+                        g = _categories._guid_str_from(piece)
+                        if g and g not in index:
+                            index[g] = piece
+                except Exception as exc:  # noqa: BLE001 - best-effort, reported below
+                    _log.warning(
+                        "closure pull-in: could not enumerate source pieces "
+                        "for %s (%s) -- its pulled-in items are reported "
+                        "unresolved", getattr(category, "value", category), exc,
+                    )
+                    index = {}
+                _piece_cache[key] = index
+            piece = _piece_cache[key].get(str(guid).lower())
+            if piece is not None:
+                return piece
+        return None
+
+    return _piece_for
+
+
+def _pull_in_label(piece_for, ref) -> str:
+    """Display label for one closure endpoint, never empty.
+
+    `references._item_label` is the existing best-effort Name reader (the one
+    `DroppedItemRecord.item_name` uses); the fallback is the console form of
+    the ref itself, because an `IncompletenessRecord` whose two labels are
+    blank tells the reader which GUIDs are involved and nothing about which
+    ITEMS -- and a record the user cannot act on is not a report (SC-010).
+    """
+    if __package__:
+        from . import references as _references
+    else:  # pragma: no cover - flat sys.path (FLExTools) import shape
+        import references as _references  # type: ignore
+
+    category, guid = ref
+    label = ""
+    try:
+        piece = piece_for(category, str(guid).lower())
+        if piece is not None:
+            label = _references._item_label(piece) or ""
+    except Exception:  # noqa: BLE001 - a label is never worth failing a plan
+        label = ""
+    if label:
+        return label
+    return getattr(category, "value", str(category)) + " " + str(guid)[:8]
+
+
 def _plan_pulled_in_items(context, selection, ws_mapping, edges,
-                          actions, overwrites, skips, dispatch_order):
+                          actions, overwrites, skips, dispatch_order,
+                          piece_for=None):
     """Feature 038 T070/T071 (FR-014, FR-015, FR-016) -- give every pulled-in
     dependency a plan member, marked as pulled in rather than chosen.
 
@@ -516,8 +597,9 @@ def _plan_pulled_in_items(context, selection, ws_mapping, edges,
     `SkipReason.DEPENDENCY_UNRESOLVED` skip rather than a quiet omission.
 
     Returns the edge tuple, re-stamped with `deselected=True` on every edge
-    whose dependency the user turned off (T073 builds its
-    `IncompletenessRecord`s from that flag).
+    whose dependency the user turned off. `_plan_incompleteness` (T073) reads
+    that flag to say which items therefore ARRIVE INCOMPLETE -- this function
+    reports the missing DEPENDENCY, that one reports the DEPENDENTS.
     """
     if not edges:
         return edges
@@ -551,40 +633,10 @@ def _plan_pulled_in_items(context, selection, ws_mapping, edges,
     if not pullers:
         return edges
 
-    _piece_cache: dict = {}
-
-    def _piece_for(category, guid):
-        """Resolve the source object a pulled-in ref names.
-
-        Indexed the same way `categories.closure_dependencies_for._pieces_for`
-        does, with one deliberate difference: the fallback enumeration passes
-        `selection=None`. A pulled-in item is BY DEFINITION one the user did
-        not select, so a category whose `enumerate_source` narrows to the
-        user's picks (`pos_enumerate_source`, every `leaf_picks_for` filter)
-        would hide exactly the piece the closure needs.
-        """
-        for sel in (selection, None):
-            key = (category, sel is not None)
-            if key not in _piece_cache:
-                index: dict = {}
-                try:
-                    bundle = _categories.LEAF_CATEGORIES[category]
-                    for piece in bundle["enumerate_source"](context, sel) or ():
-                        g = _categories._guid_str_from(piece)
-                        if g and g not in index:
-                            index[g] = piece
-                except Exception as exc:  # noqa: BLE001 - best-effort, reported below
-                    _log.warning(
-                        "closure pull-in: could not enumerate source pieces "
-                        "for %s (%s) -- its pulled-in items are reported "
-                        "unresolved", getattr(category, "value", category), exc,
-                    )
-                    index = {}
-                _piece_cache[key] = index
-            piece = _piece_cache[key].get(guid)
-            if piece is not None:
-                return piece
-        return None
+    _piece_for = (
+        piece_for if piece_for is not None
+        else _pull_in_piece_resolver(context, selection)
+    )
 
     deselected_refs = set()
     for ref, parents in pullers.items():
@@ -661,6 +713,206 @@ def _plan_pulled_in_items(context, selection, ws_mapping, edges,
         in deselected_refs else edge
         for edge in edges
     )
+
+
+#: Skip reasons under which a pulled-in dependency IS satisfied after all: the
+#: object the dependent needs is ALREADY IN THE DESTINATION, so the reference
+#: resolves and nothing is incomplete. Counting these as unsatisfiable would
+#: make FR-017's report fire loudest on the case where nothing was lost --
+#: exactly the phantom-loss failure the flexicon 4.5.1 note in CLAUDE.md
+#: records for natural-class features.
+_DEPENDENCY_PRESENT_SKIPS = frozenset({
+    SkipReason.ALREADY_PRESENT_BY_GUID,
+    SkipReason.ALREADY_PRESENT_BY_IDENTITY,
+})
+
+
+def _closure_cycle_groups(edges) -> dict:
+    """Refs that sit in a dependency CYCLE, each mapped to its whole cycle.
+
+    Feature 038 T073, the third `IncompletenessRecord.cause`. `closure.walk`
+    is cycle-TOLERANT by construction (it dedups on `(category, guid)`, so it
+    cannot loop) and `closure.topological` DETECTS a cycle -- `if
+    len(result) != len(visit_order)` -- and then throws the finding away,
+    emitting the survivors "by rank to keep output total" and telling nobody.
+    That is this feature's recurring shape once more: a signal that exists and
+    is read at a level where it cannot do its job. Rather than change
+    `topological`'s contract (its callers want a total order), T073 recovers
+    the fact from the EDGES, which is where the plan and the report both
+    already read.
+
+    Tarjan's SCC, iterated rather than recursed because a source project's
+    closure depth is data, not a constant. A component of one is a cycle only
+    when it carries a self-loop (an item that depends on itself).
+
+    Arc direction is "needs": `dependent -> dependency`. A cycle is therefore
+    a set of items that each, transitively, need one another.
+    """
+    graph: dict = {}
+    for edge in edges:
+        dependent = (edge.dependent[0], str(edge.dependent[1]).lower())
+        dependency = (edge.dependency[0], str(edge.dependency[1]).lower())
+        graph.setdefault(dependent, [])
+        graph.setdefault(dependency, [])
+        if dependency not in graph[dependent]:
+            graph[dependent].append(dependency)
+
+    index: dict = {}
+    low: dict = {}
+    on_stack: dict = {}
+    stack: list = []
+    counter = 0
+    groups: dict = {}
+
+    for root in list(graph):
+        if root in index:
+            continue
+        work = [(root, 0)]
+        while work:
+            node, pos = work[-1]
+            if pos == 0:
+                index[node] = low[node] = counter
+                counter += 1
+                stack.append(node)
+                on_stack[node] = True
+            descended = False
+            succs = graph[node]
+            while pos < len(succs):
+                nxt = succs[pos]
+                pos += 1
+                if nxt not in index:
+                    work[-1] = (node, pos)
+                    work.append((nxt, 0))
+                    descended = True
+                    break
+                if on_stack.get(nxt):
+                    low[node] = min(low[node], index[nxt])
+            if descended:
+                continue
+            work.pop()
+            if low[node] == index[node]:
+                component = []
+                while True:
+                    member = stack.pop()
+                    on_stack[member] = False
+                    component.append(member)
+                    if member == node:
+                        break
+                if len(component) > 1 or node in graph[node]:
+                    whole = frozenset(component)
+                    for member in component:
+                        groups[member] = whole
+            if work:
+                parent = work[-1][0]
+                low[parent] = min(low[parent], low[node])
+    return groups
+
+
+def _plan_incompleteness(edges, actions, overwrites, skips, label_of=None):
+    """Feature 038 T073 (FR-017, SC-010) -- one `IncompletenessRecord` per
+    item that WILL ARRIVE in the destination missing something it needs.
+
+    WHAT THIS CLOSES. T070/T071 put the pulled-in items in the plan and made
+    them refusable, and T071 wrote `ClosureEdge.deselected` -- 53 of 53 edges
+    under a full deselection. Nothing read it. A user who unticked a
+    dependency got a `DEPENDENCY_DESELECTED` skip for the DEPENDENCY (correct,
+    and T071's own measurement) and not one word about the ITEMS that still
+    transfer and now arrive unwired. That is FR-017 unmet, and it is the same
+    shape for the eighth time: a written signal read where it cannot do its
+    job.
+
+    THE GATE IS "DOES IT ARRIVE". A record is emitted only when the DEPENDENT
+    is in `actions` or `overwrites` -- an item this run is actually writing.
+    An item that is not being written is not "left incomplete"; it is
+    dropped-with-reason, and its own `Skip` already reports it. Emitting both
+    would double-count one loss under two buckets and would state, of an
+    object that never reaches the destination, that it "arrives incomplete".
+    Concretely, under the templates-only full deselection this turns 53 edges
+    into 35 records: the 18 `SLOT_TO_POS` edges name slots that are themselves
+    deselected, so the slots do not arrive at all and their POS is reported
+    once -- on the slot's own skip -- not twice.
+
+    THE DEPENDENCY IS SATISFIED THREE WAYS, not one: it is being written
+    (`actions`/`overwrites`), or it is ALREADY in the destination (an
+    `ALREADY_PRESENT_BY_*` skip, `_DEPENDENCY_PRESENT_SKIPS`), or -- the case
+    that pays for deriving this from plan membership rather than from the
+    skips -- neither, which is `unsatisfiable` whether or not any skip was
+    emitted. `_plan_pulled_in_items` has one silent exit (a `plan_action`
+    returning None plans nothing and skips nothing), and reading the PLAN
+    instead of the skip list means that hole is reported anyway.
+
+    CAUSE PRECEDENCE: `deselected` > `cycle` > `unsatisfiable`. The user's own
+    action is the most actionable explanation there is, so it names itself
+    even when the deselected item also happens to sit in a cycle.
+    """
+    if not edges:
+        return ()
+
+    if label_of is None:
+        def label_of(ref):
+            return (getattr(ref[0], "value", str(ref[0]))
+                    + " " + str(ref[1])[:8])
+
+    arriving = set()
+    for item in list(actions) + list(overwrites):
+        arriving.add(
+            (item.category, str(getattr(item, "source_guid", "") or "").lower())
+        )
+    already_present = set()
+    for skip in skips:
+        if getattr(skip, "reason", None) in _DEPENDENCY_PRESENT_SKIPS:
+            already_present.add(
+                (skip.category,
+                 str(getattr(skip, "source_guid", "") or "").lower())
+            )
+
+    cycles = _closure_cycle_groups(edges)
+    records = []
+    seen = set()
+    for edge in edges:
+        if edge.origin != "pulled_in":
+            continue
+        dependent = (edge.dependent[0], str(edge.dependent[1]).lower())
+        dependency = (edge.dependency[0], str(edge.dependency[1]).lower())
+        if dependent not in arriving:
+            continue
+        cycle = cycles.get(dependent)
+        kind = getattr(edge.kind, "value", str(edge.kind))
+        if edge.deselected:
+            cause = "deselected"
+            consequence = (
+                "arrives without the " + kind + " dependency the user "
+                "deselected; the reference is left unwired in the destination"
+            )
+        elif cycle is not None and dependency in cycle:
+            cause = "cycle"
+            consequence = (
+                "dependency cycle over " + str(len(cycle)) + " items -- each "
+                "needs the other, so whichever is written first cannot "
+                "resolve its " + kind + " reference"
+            )
+        elif dependency in arriving or dependency in already_present:
+            continue
+        else:
+            cause = "unsatisfiable"
+            consequence = (
+                "the " + kind + " dependency could not be satisfied: it is "
+                "neither transferred by this run nor already present in the "
+                "destination, so the reference is left unwired"
+            )
+        key = (dependent, dependency, cause)
+        if key in seen:
+            continue
+        seen.add(key)
+        records.append(IncompletenessRecord(
+            incomplete_item=edge.dependent,
+            incomplete_label=label_of(edge.dependent),
+            missing_dependency=edge.dependency,
+            missing_label=label_of(edge.dependency),
+            cause=cause,
+            consequence=consequence,
+        ))
+    return tuple(records)
 
 
 def build_run_plan(
@@ -1040,9 +1292,22 @@ def build_run_plan(
     # deselectable through the machinery that already existed. Mutates
     # `actions`/`overwrites`/`skips` in place and hands back the edges with
     # `deselected` stamped, so the plan and the edge set cannot disagree.
+    _pull_in_pieces = _pull_in_piece_resolver(context, selection)
     _closure_edges = _plan_pulled_in_items(
         context, selection, ws_mapping, _closure_edges,
         actions, overwrites, skips, _LEAF_DISPATCH_CATEGORIES,
+        _pull_in_pieces,
+    )
+
+    # Feature 038 (T073, FR-017, SC-010): the edges now say what was refused
+    # or unreachable; this is what tells the user which items therefore ARRIVE
+    # INCOMPLETE. Read after the pull-in, because "is the dependency
+    # satisfied" is a question about the finished plan -- and read off the
+    # plan rather than off the skip list, so a dependency that vanished
+    # without a skip is reported too.
+    _incompleteness = _plan_incompleteness(
+        _closure_edges, actions, overwrites, skips,
+        lambda ref: _pull_in_label(_pull_in_pieces, ref),
     )
 
     # Feature 038 (FR-020..FR-022, plan.md:111): the enrich-vs-skip decision is
@@ -1064,9 +1329,9 @@ def build_run_plan(
 
     _log.debug(
         "build_run_plan: done  actions=%d skips=%d overwrites=%d excluded_lossy=%d "
-        "dropped_items=%d closure_edges=%d enrichments=%d",
+        "dropped_items=%d closure_edges=%d incompleteness=%d enrichments=%d",
         len(actions), len(skips), len(overwrites), len(excluded_lossy), len(_dropped),
-        len(_closure_edges), len(_enrichments),
+        len(_closure_edges), len(_incompleteness), len(_enrichments),
     )
     return RunPlan(
         context=context,
@@ -1094,6 +1359,11 @@ def build_run_plan(
         # Feature 038 (FR-014/FR-015): the verified dependency-closure edges.
         # Empty by construction while CLOSURE_EDGES_VERIFIED ships empty.
         closure_edges=_closure_edges,
+        # Feature 038 (T073, FR-017/SC-010): the items that will arrive
+        # KNOWINGLY incomplete because a dependency was deselected, could not
+        # be satisfied, or sits in a cycle. Empty whenever `closure_edges` is,
+        # so a full copy and every pre-038 caller are untouched.
+        incompleteness=_incompleteness,
         # Feature 038 (FR-020..FR-022): the plan-time enrich-vs-skip decision,
         # harvested off the merge overwrites above so Preview reports the same
         # ENRICHED set Move will write (see the accumulator just above).
