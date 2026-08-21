@@ -3,16 +3,36 @@
 Standalone CLI. NOT a plugin-host module; run it directly with
 ``python debug/run_fullcopy_sweep.py ...``.
 
-SCOPE OF THIS FILE (per the feature-035 dispatch brief, 2026-08-18): build
-everything the spec has already settled -- Group A (corpus enumeration),
-Group B (write safety), Group C (parallel target pool), Group D (double-move
-and idempotency), Group K (artifact/provenance), Group L (batched, gated,
-fix-forward execution) -- and leave the COMPARATOR / VERDICT TAXONOMY
-(spec.md Groups E, F, G, H, and the identity-substitution rules of Group P)
-as an explicit, documented extension point. That taxonomy is still in review
-(cycle3-amendments.md / cycle3-safety-amendments.md are not yet folded into
-spec.md's settled requirement groups) and MUST NOT be invented here. See
-``compare_objects`` below for the pluggable seam.
+THIN CLI ENTRY POINT (T008, specs/035-fullsweep-fidelity/tasks.md Phase 1):
+this file used to hold the sweep's six mechanical implementation groups
+directly; they have been promoted, unchanged, into the ``debug/fullsweep``
+package (see ``debug/fullsweep/__init__.py`` for the map). What remains here:
+
+  * the per-project double-move loop (``run_one_project``), wiring Groups
+    B/D/K together for exactly one project;
+  * plane 1, the object-level reconciliation (``reconcile_project_objects``),
+    a thin adapter over ``fullsweep.compare.reconcile_objects``;
+  * the measurement-to-guard wiring (``build_run_context``,
+    ``MEASURABLE_RUN_CONTEXT_FIELDS``, ``UNMEASURED_RUN_CONTEXT_FIELDS``);
+  * the CLI itself (``list`` / ``project`` / ``batch`` subcommands), with
+    every existing flag spelling preserved exactly.
+
+SCOPE UPDATE, 2026-08-19 (T045a). The verdict taxonomy is no longer in review:
+the ratified spec settled Groups E/F/G/H and Group P, ``fullsweep.compare``
+implements both accounting planes (T031, T036-T043), and ``fullsweep.guards``
+carries real pass/fail logic for all fifteen guards (T033). The
+``compare_objects`` stub that stood in for that taxonomy is GONE -- it emitted
+one ``NOT_YET_CLASSIFIED_MISSING_FROM_TARGET`` row per absent GUID and populated
+no accounting block, so TOTAL-ACCOUNTING could only report ``not-evaluated``.
+
+The one thing still missing is plane 2's LIVE FIELD READ: ``census.census_fields``
+needs a ``field_source(cls, guid)`` over live LCM objects before ``comparisons``
+and ``measured_categories`` can be measured. Until that lands, this driver's
+payload comparator is ``payload_never_compared``, which returns None for every
+object -- and FR-097 makes "present under a matching identity with no payload
+comparison performed" unexplained loss, so those objects are REPORTED as
+unverified rather than assumed equal. See ``UNMEASURED_RUN_CONTEXT_FIELDS`` for
+the full, per-field list of what is still unmeasured and why.
 
 Reused rather than reinvented (per instructions):
   * ``debug/prescan_type_coverage.py`` -- corpus enumeration
@@ -25,21 +45,26 @@ Reused rather than reinvented (per instructions):
     for WHATEVER name it is given, so this driver never calls it without
     first passing every name through ``assert_destination_safe``).
   * ``tests/integration/harness/full_run.py`` -- ``build_full_selection`` and
-    ``run_full_transfer``. This driver ALWAYS calls
-    ``build_full_selection(exclude=frozenset())`` -- an explicit EMPTY
-    exclusion set -- because ``full_run``'s own default excludes
-    ``GrammarCategory.STEMS`` and the user has explicitly decided stems are
-    required for this sweep. The resulting coverage set is recorded in every
-    artifact (Group K, FR-142).
+    ``run_full_transfer``. This driver resolves its exclusion set ONCE, into
+    ``GrammarCategory`` MEMBERS (``resolve_excluded_categories``), and hands the
+    same set to the recorded selection AND to both transfers. It never relies on
+    ``full_run``'s own STEMS-excluding default: the user has explicitly decided
+    stems are required for this sweep (FR-134), and an exclusion expressed as a
+    default argument is what FR-135 forbids. The resulting coverage set is
+    recorded in every artifact (Group K, FR-142).
+
+    Before T045a this comment was accurate about intent and wrong about
+    behaviour twice over -- see ``resolve_excluded_categories`` for both defects.
   * ``debug/audit_guid_preservation.py`` -- the ``AllInstances`` identity-keyed
     inventory shape (``{class_name: {guid, ...}}``), reused here as
     ``census_project``.
 
-WRITE SAFETY (Group B) is the highest-severity section of this file. See
-``assert_destination_safe`` -- the single choke-point every restore call and
-every write-enabled-open call in this driver goes through, computed fresh
-from the literal value about to be used, never cached or inherited from an
-enumeration helper (FR-013/FR-014/FR-015).
+WRITE SAFETY (Group B) is the highest-severity section of this driver's
+dependency package. See ``debug.fullsweep.safety.assert_destination_safe`` --
+the single choke-point every restore call and every write-enabled-open call
+in this driver goes through, computed fresh from the literal value about to
+be used, never cached or inherited from an enumeration helper
+(FR-013/FR-014/FR-015).
 
 NO SILENT ANYTHING (per the dispatch brief): every recorded exception below
 carries its ``traceback.format_exc()``; there is no bare ``except: pass`` in
@@ -52,977 +77,371 @@ ASCII-only console output (Windows-terminal safe).
 from __future__ import annotations
 
 import argparse
-import ctypes
-import hashlib
-import io
-import json
 import os
 import re
 import subprocess
 import sys
 import time
 import traceback
-from dataclasses import dataclass, field, asdict
+from dataclasses import asdict
 from pathlib import Path
 from typing import Callable, Optional, Sequence
 
 _ROOT = Path(__file__).resolve().parents[1]
-for _p in (_ROOT / "src", _ROOT / "tests" / "integration", _ROOT / "debug"):
+for _p in (_ROOT, _ROOT / "src", _ROOT / "tests" / "integration", _ROOT / "debug"):
     if str(_p) not in sys.path:
         sys.path.insert(0, str(_p))
 
-# Reused, not reinvented (see module docstring).
-import prescan_type_coverage as prescan          # noqa: E402
-import audit_guid_preservation as guid_audit     # noqa: E402
+from debug.fullsweep import *  # noqa: F401,F403,E402 -- the package's public surface
 
-# ---------------------------------------------------------------------------
-# Constants / defaults
-# ---------------------------------------------------------------------------
-
-DEFAULT_PROJECTS_ROOT = r"C:\ProgramData\SIL\FieldWorks\Projects"
-
-# Reuse prescan's exact anchored pattern text (not just its intent) as the
-# sweep's own narrowest allowlist. FR-011: the sweep supplies the narrowest
-# allowlist sufficient for ITS OWN disposable targets, never a shared default.
-DEFAULT_ALLOWLIST: tuple[str, ...] = (prescan._TARGET_RE.pattern,)
-
-# FR-006/FR-002: directories that are never a source, by construction, and
-# the recorded reason for each.
-SWEEP_OWN_ADDITIONAL_WORKING_DIRS: dict[str, str] = {
-    # This machine's Ejagham-Mini -> Ejagham-Full-GT-Test additional working
-    # directory, used by this repo's other live-parity harnesses (see
-    # STATUS.md). It matches the project-on-disk rule and must be excluded
-    # by name, not merely by being outside the enumeration root (it is
-    # INSIDE the projects root).
-    "Ejagham Full GT-Test": (
-        "the repo's own additional working directory for prior harness "
-        "runs, not a sweep source (FR-006)"
-    ),
-}
-
-# FR-004: exact spelling the known-good regression set must use, and the
-# empty-shell decoy it must never admit.
-CANARY_PROJECTS = ("Ejagham Mini", "Esperanto", "Mbugwe LizzieHC practice")
-FORBIDDEN_SHELL_DECOY = "Mbugwe Lizzie HCPractice"  # empty shell, no data file
-
-# FR-028/FR-030: PROVISIONAL per-worker memory model. Single-observation
-# regression (see specs/035-fullsweep-fidelity/probe-results-live.md): a
-# roughly fixed ~190 MB per-process floor (CLR + LCM/FLEx assembly load)
-# plus ~1.9 MB of additional RSS per 1 MB of on-disk fwdata. NOT settled
-# physics -- replace with observed peak-RSS-per-project once actuals exist
-# (FR-030 requires preferring observed actuals over this model wherever
-# they exist).
-MEM_MODEL_FLOOR_MB_PROVISIONAL = 190.0
-MEM_MODEL_SLOPE_MB_PER_MB_PROVISIONAL = 1.9
-MEM_MODEL_RESERVE_MB_DEFAULT = 512.0
-
-DEFAULT_ARTIFACTS_DIR = _ROOT / "specs" / "035-fullsweep-fidelity" / "artifacts"
-DEFAULT_RUNTIME_DIR = _ROOT / "scratchpad" / "035_sweep"  # ephemeral, gitignored
-
-VALID_LEDGER_STATUSES = ("pending", "running", "passed", "failed", "skipped")
 VALID_RUN_INTENTS = ("baseline", "gate")
 
-
 # ---------------------------------------------------------------------------
-# Exceptions
+# T024 CLI surface constants (contracts/sweep-cli.md)
 # ---------------------------------------------------------------------------
 
-class WriteSafetyError(RuntimeError):
-    """Group B violation. MUST abort the WHOLE run, never just one project."""
+#: CHANGED DEFAULT (research D-10): per-run result artifacts are EVIDENCE, not
+#: reviewed source, so they move out of the tracked spec folder into the
+#: gitignored runtime dir. What stays tracked is exactly what FR-149 names --
+#: the driver, the rosters, the allowlist, the capability fingerprint, the
+#: negative-control artifact and the ledger.
+DEFAULT_ARTIFACTS_DIR = DEFAULT_RUNTIME_DIR / "artifacts"
 
+#: FR-149 tracked inputs.
+DEFAULT_CONTRACTS_DIR = _ROOT / "specs" / "035-fullsweep-fidelity" / "contracts"
+DEFAULT_LEDGER_PATH = _ROOT / "specs" / "035-fullsweep-fidelity" / "ledger.json"
 
-class SourceTamperError(RuntimeError):
-    """Group B, FR-022: an unexplained fingerprint delta on a SOURCE. MUST
-    abort the whole worker pool and escalate to a human."""
-
-
-class HarnessError(RuntimeError):
-    """A structural defect in the sweep's own measurement (e.g. a written
-    class absent from the idempotency comparison, FR-046) -- distinct from an
-    ordinary project fidelity failure."""
+#: ``--diagnostic-level`` is set explicitly and recorded; it is NEVER
+#: setdefault-ed from the environment, because a level silently inherited
+#: from an operator's shell makes two runs incomparable while both look
+#: configured.
+DIAGNOSTIC_LEVELS = ("quiet", "normal", "verbose")
 
 
 # ===========================================================================
-# GROUP B -- WRITE SAFETY (the highest-severity section of this file)
+# CATEGORY RESOLUTION (T045a part a -- FR-134, FR-135, FR-136)
 # ===========================================================================
 
-def resolve_projects_root(projects_root: Optional[str] = None) -> Path:
-    """FR-017: resolve the projects collection from exactly ONE authority.
+def resolve_excluded_categories(spec: Sequence[str]) -> tuple:
+    """Turn ``--exclude-categories`` strings into ``(members, records)``.
 
-    Same env-var-then-Windows-default resolution used by
-    ``prescan_type_coverage``, ``restore.py`` and ``full_run.py`` elsewhere in
-    this repo, so the sweep's restore side and write side can never disagree
-    about where "the projects collection" is.
+    ``members`` is a frozenset of ``GrammarCategory`` MEMBERS, which is what
+    ``build_full_selection`` compares against. ``records`` is the FR-135 field:
+    one ``{"category": value, "reason": str}`` per exclusion.
+
+    TWO DEFECTS THIS FUNCTION EXISTS TO CLOSE, both live before T045a:
+
+    1. ``run_one_project`` built its exclusion as ``frozenset(exclude_categories)``
+       -- a set of *strings* -- and passed it to ``build_full_selection``, whose
+       body tests ``if cat not in exclude`` against enum MEMBERS. A string never
+       equals a member, so the exclusion was a silent no-op: the recorded
+       ``coverage_categories`` always listed every category no matter what the
+       operator asked to exclude.
+    2. ``run_full_transfer`` then built its OWN selection with no arguments,
+       inheriting ``build_full_selection``'s STEMS-excluding default. So the
+       transfer excluded STEMS while the artifact claimed STEMS was covered --
+       FR-136's "MUST NOT allow a reader to mistake" defect, in the strongest
+       form available: the artifact described a run that did not happen.
+
+    An unknown category name RAISES. Ignoring it is how (1) stayed invisible for
+    a whole live batch, and FR-135's "explicit, recorded" cannot be satisfied by
+    a name the harness silently discarded.
+
+    A reason may be attached as ``NAME=reason``. Supplying none leaves the reason
+    empty, which makes CATEGORY-COVERAGE FAIL rather than pass -- FR-135 requires
+    every exclusion to be explicit, and "the operator did not say why" is a
+    recorded fact, not a detail to fill in on their behalf.
     """
-    root = projects_root or os.environ.get("GRAMTRANS_PROJECTS_ROOT") or DEFAULT_PROJECTS_ROOT
-    p = Path(root)
-    if not p.is_dir():
-        raise WriteSafetyError(
-            "[FR-017] projects root does not exist or is not a directory: %r" % (str(p),)
-        )
-    return p.resolve()
-
-
-def _reject_unsafe_name_shape(name) -> None:
-    """FR-018: a bare single name only -- no separator, drive, relative
-    component, or empty string, checked BEFORE any allowlist match."""
-    if name is None or name == "":
-        raise WriteSafetyError("[FR-018] destination name is empty")
-    if not isinstance(name, str):
-        raise WriteSafetyError("[FR-018] destination name is not a string: %r" % (name,))
-    # Path(name).name strips any separator, drive designator, or leading
-    # relative-path component; if that transformation changes anything, the
-    # original was not a bare single name.
-    if Path(name).name != name or name in (".", ".."):
-        raise WriteSafetyError(
-            "[FR-018] destination %r is not a single bare name (contains a "
-            "path separator, drive designator, or relative-path component)" % (name,)
-        )
-
-
-def assert_name_allowlisted(name: str, allowlist: Sequence[str]) -> None:
-    """FR-011/FR-012: deny-by-default, anchored FULL-match only.
-
-    ``allowlist`` is a parameter, never a constant baked into this function
-    (FR-011) -- other legitimate callers write to differently-named
-    disposable targets. An empty or absent allowlist MUST raise, never
-    silently admit or deny (FR-011). Matching is ``re.fullmatch`` only --
-    never ``search``/``match``/``startswith``/``in`` -- so a name that merely
-    begins with, ends with, or contains an allowlisted pattern is refused
-    (FR-012; this is what keeps ``Target.pre025bak`` / ``Target.pre029bak``
-    archived-evidence directories un-writable even though they begin with
-    ``Target``).
-    """
-    if not allowlist:
-        raise WriteSafetyError(
-            "[FR-011] allowlist is empty or absent -- refusing to authorize ANY "
-            "destination. The caller must supply an explicit, narrow allowlist "
-            "of its own disposable targets."
-        )
-    _reject_unsafe_name_shape(name)
-    for pattern in allowlist:
-        try:
-            m = re.fullmatch(pattern, name)
-        except re.error as exc:
-            raise WriteSafetyError(
-                "[FR-011] allowlist entry %r is not a valid regular expression: %s"
-                % (pattern, exc)
-            ) from exc
-        if m is not None:
-            return
-    raise WriteSafetyError(
-        "[FR-011/FR-012] destination %r does not fully match any entry in the "
-        "allowlist %r (anchored full-match required; prefix/substring/glob/"
-        "case-insensitive matching is forbidden)" % (name, tuple(allowlist))
-    )
-
-
-def assert_destination_safe(
-    name: str,
-    *,
-    source_name,
-    frozen_sources,
-    allowlist: Sequence[str],
-    projects_root: Optional[str] = None,
-) -> Path:
-    """THE write-safety choke point (Group B).
-
-    Call this at BOTH boundaries required by FR-013:
-      (a) the moment a project is selected as a restore destination, before
-          any directory for it is created;
-      (b) immediately before any write-enabled open, computed from the value
-          actually about to be used -- never a flag computed once and read
-          twice.
-
-    Every argument is REQUIRED (no defaults for ``source_name`` /
-    ``frozen_sources`` / ``allowlist``) so that FR-015 ("no assertion may be
-    skipped because an input it compares is absent") cannot be satisfied by
-    quietly omitting the comparison: passing ``None`` explicitly is a loud
-    failure here, not a bypass.
-
-    Returns the resolved destination ``Path`` on success. Raises
-    ``WriteSafetyError`` on ANY violation; callers MUST let that exception
-    propagate all the way out and abort the entire run (Group B is explicit
-    that a violation aborts the WHOLE run, not just one project/worker).
-    """
-    assert_name_allowlisted(name, allowlist)
-
-    if source_name is None:
-        raise WriteSafetyError(
-            "[FR-015] source_name was omitted (None) -- a write-safety check "
-            "with no source to compare against is a bypass, not a pass"
-        )
-    if name == source_name:
-        raise WriteSafetyError(
-            "[FR-016] destination %r equals its own assigned source -- refusing" % (name,)
-        )
-
-    if frozen_sources is None:
-        raise WriteSafetyError(
-            "[FR-015] frozen_sources manifest was omitted (None) -- the "
-            "manifest-wide check of FR-016 cannot be skipped"
-        )
-    if name in frozen_sources:
-        raise WriteSafetyError(
-            "[FR-016] destination %r appears in the run's frozen source "
-            "manifest -- refusing regardless of the worker's current pairing "
-            "(catches a mis-ordered pairing / stale retry, not just today's "
-            "assignment)" % (name,)
-        )
-
-    root = resolve_projects_root(projects_root)
-    dest = (root / name).resolve()
-    if dest.parent != root:
-        raise WriteSafetyError(
-            "[FR-017] resolved destination %r is not a direct child of the "
-            "single-authority projects root %r" % (str(dest), str(root))
-        )
-    return dest
-
-
-def assert_distinct_target_pool(target_pool: Sequence[str], frozen_sources) -> None:
-    """FR-034 last sentence: the configured destination pool MUST itself be a
-    set of distinct, individually admitted names, and none may collide with a
-    frozen source name."""
-    if not target_pool:
-        raise WriteSafetyError("[FR-034] target pool is empty")
-    seen = set()
-    for t in target_pool:
-        _reject_unsafe_name_shape(t)
-        if t in seen:
-            raise WriteSafetyError(
-                "[FR-034] target pool contains a duplicate destination: %r" % (t,)
-            )
-        seen.add(t)
-        if frozen_sources and t in frozen_sources:
-            raise WriteSafetyError(
-                "[FR-034] target-pool entry %r collides with a frozen source name" % (t,)
-            )
-
-
-class ExclusiveTargetClaim:
-    """FR-034: an OS-level exclusive claim on a destination, created
-    atomically, held for the worker's entire project, and living OUTSIDE the
-    projects collection so a ``restore_target`` call can never remove it and
-    it is never mistaken for project content.
-
-    Identifier reuse (a crash-and-restart, or a stale pool record) is the
-    named failure mode FR-034 calls out, so a PID match alone is not trusted:
-    a pre-existing claim file is only ever removed here after confirming the
-    PID it names is not alive (the same staleness test ``self_heal_stale_lock``
-    uses for a project's own ``.lock`` file, below).
-    """
-
-    def __init__(self, target_name: str, runtime_dir: Path = DEFAULT_RUNTIME_DIR):
-        _reject_unsafe_name_shape(target_name)
-        self.target_name = target_name
-        self._dir = runtime_dir / "claims"
-        self._path = self._dir / ("%s.claim" % target_name)
-        self._acquired = False
-
-    def acquire(self) -> None:
-        self._dir.mkdir(parents=True, exist_ok=True)
-        payload = json.dumps({"pid": os.getpid(), "target": self.target_name,
-                               "acquired_at": time.time()}).encode("utf-8")
-        for attempt in (1, 2):
-            try:
-                fd = os.open(str(self._path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-            except FileExistsError:
-                if attempt == 2:
-                    raise WriteSafetyError(
-                        "[FR-034] could not acquire exclusive claim on %r after "
-                        "clearing one stale claim -- another live worker may hold "
-                        "it" % (self.target_name,)
-                    )
-                self._clear_if_stale()
-                continue
-            else:
-                with os.fdopen(fd, "wb") as fh:
-                    fh.write(payload)
-                self._acquired = True
-                return
-
-    def _clear_if_stale(self) -> None:
-        try:
-            existing = json.loads(self._path.read_text(encoding="utf-8"))
-        except Exception as exc:  # noqa: BLE001 -- recorded, not silent
-            raise WriteSafetyError(
-                "[FR-034] existing claim file %r is unreadable/corrupt (%s); "
-                "refusing to guess whether it is stale" % (str(self._path), exc)
-            ) from exc
-        pid = existing.get("pid")
-        if pid is not None and _pid_is_alive(int(pid)):
-            raise WriteSafetyError(
-                "[FR-034] destination %r is already claimed by a LIVE process "
-                "(pid=%s) -- refusing to proceed" % (self.target_name, pid)
-            )
-        self._path.unlink()  # confirmed dead owner; safe to clear
-
-    def release(self) -> None:
-        if self._acquired:
-            try:
-                self._path.unlink()
-            except FileNotFoundError:
-                pass
-        self._acquired = False
-
-    def __enter__(self):
-        self.acquire()
-        return self
-
-    def __exit__(self, exc_type, exc, tb):
-        self.release()
-        return False
-
-
-def _pid_is_alive(pid: int) -> bool:
-    """Best-effort liveness check (Windows). Returns False only when we can
-    positively confirm the process is gone; on ambiguity, treat as alive
-    (FR-040: "where ownership cannot be determined, treat the lock as live")."""
-    try:
-        import psutil
-        return psutil.pid_exists(pid)
-    except ImportError:
-        pass
-    PROCESS_QUERY_LIMITED = 0x1000
-    handle = ctypes.windll.kernel32.OpenProcess(PROCESS_QUERY_LIMITED, False, pid)
-    if not handle:
-        return False
-    ctypes.windll.kernel32.CloseHandle(handle)
-    return True
-
-
-def self_heal_stale_lock(target_dir: Path, target_name: str) -> Optional[str]:
-    """FR-040: self-heal a stale ``*.lock`` left by a crashed prior attempt on
-    a DESTINATION that has ALREADY passed ``assert_destination_safe`` --
-    never on a source. Returns a human-readable note of what happened, or
-    None if there was no lock to consider.
-
-    A lock is confirmed stale only when the owning PID recorded in the lock's
-    JSON payload (``{"PID": ..., "ProcessName": ...}``, the observed
-    ``SimpleFileLock``/Palaso.IO.FileLock shape) is no longer alive, OR is
-    alive but running under a different process image than the one recorded
-    (PID reuse). Where ownership cannot be determined at all, this function
-    raises rather than guesses (fail toward "live").
-    """
-    lock_path = target_dir / ("%s.fwdata.lock" % target_name)
-    if not lock_path.is_file():
-        return None
-    try:
-        payload = json.loads(lock_path.read_text(encoding="utf-8"))
-    except Exception as exc:  # noqa: BLE001 -- recorded, not silent
-        raise WriteSafetyError(
-            "[FR-040] lock file %r is unreadable/corrupt (%s); refusing to "
-            "guess whether its owner is alive" % (str(lock_path), exc)
-        ) from exc
-    pid = payload.get("PID")
-    if pid is None:
-        raise WriteSafetyError(
-            "[FR-040] lock file %r has no PID field; ownership cannot be "
-            "determined -- treating as LIVE and aborting" % (str(lock_path),)
-        )
-    alive = _pid_is_alive(int(pid))
-    if alive:
-        # PID reuse cannot be distinguished from a genuinely live owner without
-        # a process-name check; best-effort only (psutil, if present).
-        same_identity = True
-        try:
-            import psutil
-            proc = psutil.Process(int(pid))
-            recorded_name = payload.get("ProcessName")
-            same_identity = (recorded_name is None) or (proc.name() == recorded_name) \
-                or (recorded_name in proc.name()) or (proc.name() in str(recorded_name))
-        except ImportError:
-            pass
-        except Exception:  # noqa: BLE001 -- process vanished mid-check etc.
-            same_identity = False
-        if same_identity:
-            raise WriteSafetyError(
-                "[FR-040] lock owner pid=%s on %r is ALIVE -- refusing to "
-                "remove the lock; another process believes it owns this "
-                "target" % (pid, str(lock_path))
-            )
-    lock_path.unlink()
-    return "removed stale lock (recorded pid=%s, confirmed not-alive-as-recorded)" % (pid,)
-
-
-# ===========================================================================
-# GROUP A -- CORPUS AND ENUMERATION
-# ===========================================================================
-
-@dataclass
-class CorpusEntry:
-    project: str
-    path: str
-    fwdata_mb: float
-    admitted: bool
-    reason: str
-
-
-def enumerate_corpus(projects_root: Optional[str] = None) -> list[CorpusEntry]:
-    """FR-001..FR-009: derive the source corpus at runtime.
-
-    Reuses ``prescan_type_coverage._enumerate`` (which already reuses the
-    engine's own project-on-disk rule and already refuses the disposable
-    ``Target[0-9]*`` pattern) and layers on this sweep's own additional
-    exclusion: its additional working directory (FR-006/FR-002).
-    """
-    if projects_root is not None:
-        os.environ["GRAMTRANS_PROJECTS_ROOT"] = projects_root
-    rows = prescan._enumerate()
-    out: list[CorpusEntry] = []
-    for r in rows:
-        name = r["project"]
-        admitted = r["disposition"] == "scan"
-        reason = r["reason"]
-        if admitted and name in SWEEP_OWN_ADDITIONAL_WORKING_DIRS:
-            admitted = False
-            reason = SWEEP_OWN_ADDITIONAL_WORKING_DIRS[name]
-        if admitted and name == FORBIDDEN_SHELL_DECOY:
-            # FR-004 belt-and-suspenders: never admit this exact name even if
-            # a future disk state somehow gives it a data file.
-            admitted = False
-            reason = "FR-004: forbidden decoy name, never admitted regardless of disk state"
-        out.append(CorpusEntry(project=name, path=r["path"], fwdata_mb=r["fwdata_mb"],
-                                admitted=admitted, reason=reason))
-    return out
-
-
-def freeze_source_manifest(corpus: list[CorpusEntry]) -> tuple[str, ...]:
-    """FR-035: freeze the admitted source list ONCE before any worker starts."""
-    return tuple(sorted(e.project for e in corpus if e.admitted))
-
-
-# ===========================================================================
-# GROUP B (continued) -- SOURCE TAMPER GUARD (fingerprint + classification)
-# ===========================================================================
-
-@dataclass(frozen=True)
-class SourceFingerprint:
-    """FR-020: exactly five recorded fields."""
-    size: Optional[int]
-    mtime_ns: Optional[int]
-    content_sha256: Optional[str]
-    data_model_version: Optional[int]
-    sharing_settings_sha256: Optional[str]
-    sharing_enabled: Optional[bool]  # recorded per FR-010, never used to exclude
-    error: str = ""
-
-
-def _sha256_file(path: Path, chunk_size: int = 1 << 20) -> Optional[str]:
-    try:
-        h = hashlib.sha256()
-        with open(path, "rb") as fh:
-            for chunk in iter(lambda: fh.read(chunk_size), b""):
-                h.update(chunk)
-        return h.hexdigest()
-    except OSError:
-        return None
-
-
-def _data_model_version(fwdata_path: Path) -> Optional[int]:
-    """Best-effort, cheap version read: the fwdata root element's own
-    ``version="..."`` attribute, from the first few KB only (FR-021 forbids
-    hashing/reading the whole directory as a fingerprint measure, and reading
-    the whole multi-hundred-MB file just for this would be wasteful; the
-    version attribute is at the very top of the XML)."""
-    try:
-        with open(fwdata_path, "rb") as fh:
-            head = fh.read(4096)
-        text = head.decode("utf-8", errors="replace")
-        m = re.search(r'\bversion\s*=\s*"(\d+)"', text)
-        return int(m.group(1)) if m else None
-    except OSError:
-        return None
-
-
-def _sharing_settings_fingerprint(proj_dir: Path) -> tuple[Optional[str], Optional[bool]]:
-    """PROVISIONAL resolution of FR-020's "sharing-settings file" and FR-010's
-    "does this source have project sharing enabled" flag.
-
-    No single, unambiguously-named "sharing settings file" was identified in
-    flexicon/LCM source during this skeleton's construction (see the
-    dispatch session's research: FLEx's "Share project contents with programs
-    on this computer" checkbox did not resolve to one named file on disk).
-    As a documented, honest stand-in: this hashes the SORTED
-    (relative_path, size) listing of the project's ``SharedSettings/``
-    directory (present on every project inspected during construction), and
-    treats a non-empty ``SharedSettings/`` as the sharing-enabled proxy.
-
-    TODO(035-sharing-settings): confirm the true on-disk sharing-settings
-    file/flag against FieldWorks/liblcm source before this proxy is trusted
-    for anything beyond the recording FR-010 requires. Never used here to
-    EXCLUDE a source -- only recorded, per FR-010.
-    """
-    d = proj_dir / "SharedSettings"
-    if not d.is_dir():
-        return None, False
-    try:
-        entries = sorted(
-            (str(p.relative_to(d)).replace("\\", "/"), p.stat().st_size)
-            for p in d.rglob("*") if p.is_file()
-        )
-    except OSError:
-        return None, None
-    if not entries:
-        return None, False
-    h = hashlib.sha256(json.dumps(entries, sort_keys=True).encode("utf-8")).hexdigest()
-    return h, True
-
-
-def capture_fingerprint(project_name: str, projects_root: Optional[str] = None) -> SourceFingerprint:
-    """FR-020: capture a source's fingerprint. Read-only; touches only the
-    data file's own stat/bytes and the SharedSettings listing -- never a
-    whole-directory hash (FR-021 forbids that; a read-only open legitimately
-    touches lock files, WS-store logs, Temp, and shared-settings areas, and a
-    whole-directory hash would false-alarm on every run)."""
-    root = resolve_projects_root(projects_root)
-    proj_dir = root / project_name
-    fwdata = proj_dir / ("%s.fwdata" % project_name)
-    try:
-        st = fwdata.stat()
-        size, mtime_ns = st.st_size, st.st_mtime_ns
-    except OSError as exc:
-        return SourceFingerprint(None, None, None, None, None, None,
-                                  error="data file stat failed: %s" % exc)
-    content_hash = _sha256_file(fwdata)
-    version = _data_model_version(fwdata)
-    sharing_hash, sharing_enabled = _sharing_settings_fingerprint(proj_dir)
-    return SourceFingerprint(size, mtime_ns, content_hash, version,
-                              sharing_hash, sharing_enabled)
-
-
-def capture_source_manifest(
-    source_names: Sequence[str], projects_root: Optional[str] = None,
-) -> dict[str, SourceFingerprint]:
-    """FR-020: capture every source's fingerprint ONCE, before any worker
-    starts, into a single recorded manifest. A per-worker just-in-time
-    pre-fingerprint is forbidden (it would baseline damage another worker has
-    already done)."""
-    return {name: capture_fingerprint(name, projects_root) for name in source_names}
-
-
-FINGERPRINT_VERDICT_UNCHANGED = "UNCHANGED"
-FINGERPRINT_VERDICT_MIGRATION = "MIGRATION_FINDING"
-FINGERPRINT_VERDICT_UNEXPLAINED_WRITE = "UNEXPLAINED_WRITE_ABORT"
-FINGERPRINT_VERDICT_HASH_ONLY = "HASH_ONLY_CHANGE_ABORT"
-FINGERPRINT_VERDICT_SHARING_CHANGED = "SHARING_SETTINGS_CHANGED_ABORT"
-FINGERPRINT_VERDICT_SOURCE_MISSING = "SOURCE_DATA_FILE_MISSING_ABORT"
-
-
-def classify_fingerprint_delta(before: SourceFingerprint, after: SourceFingerprint) -> str:
-    """FR-022: classify a fingerprint delta. Each class has ONE mandated
-    response; this function returns the classification label only -- the
-    caller (the per-project loop / the pool driver) is responsible for
-    actually acting on an *_ABORT label by aborting the whole pool and
-    escalating to a human. Never silently ignored."""
-    if after.size is None and after.error:
-        return FINGERPRINT_VERDICT_SOURCE_MISSING
-
-    if before.sharing_settings_sha256 != after.sharing_settings_sha256:
-        return FINGERPRINT_VERDICT_SHARING_CHANGED
-
-    hash_changed = before.content_sha256 != after.content_sha256
-    size_changed = before.size != after.size
-    mtime_changed = before.mtime_ns != after.mtime_ns
-
-    if not hash_changed and not size_changed and not mtime_changed:
-        return FINGERPRINT_VERDICT_UNCHANGED
-
-    if hash_changed and not size_changed and not mtime_changed:
-        # Hash differs while size+timestamp are identical: not a migration,
-        # a write that reached the source, or the filesystem lying.
-        return FINGERPRINT_VERDICT_HASH_ONLY
-
-    if hash_changed and size_changed and mtime_changed:
-        # "the file still parses" is approximated here by: we could still
-        # read a data-model version out of it post-use. A full-fidelity
-        # parse check is deferred (see TODO below).
-        parses = after.data_model_version is not None
-        if parses and before.data_model_version is not None \
-                and after.data_model_version > before.data_model_version:
-            return FINGERPRINT_VERDICT_MIGRATION
-        return FINGERPRINT_VERDICT_UNEXPLAINED_WRITE
-
-    # Any other partial-change shape (e.g. size+mtime changed but hash did
-    # not, which should be impossible for a real content change) is itself
-    # suspicious; fail closed toward the more severe classification rather
-    # than inventing a sixth bucket.
-    # TODO(035-parse-check): replace the data-model-version proxy above with
-    # an actual "does this file still parse as valid LCM XML" check once a
-    # cheap one is available; today's proxy can't distinguish "did not parse"
-    # from "no version attribute found".
-    return FINGERPRINT_VERDICT_UNEXPLAINED_WRITE
-
-
-# ===========================================================================
-# GROUP C -- PARALLEL TARGET POOL
-# ===========================================================================
-
-def default_target_pool(n_workers: int) -> tuple[str, ...]:
-    """FR-025/FR-027: N disposable targets, all restorable from the SAME
-    single archived backup (``restore_target`` renames the archived fwdata to
-    match whatever destination name it is given, so one backup seeds any
-    number of targets). Names are drawn from the sweep's own
-    ``DEFAULT_ALLOWLIST`` pattern by construction.
-
-    NOTE: raising ``n_workers`` above 1 additionally requires the FR-032
-    concurrency-trial gate (see ``assert_concurrency_gate_satisfied``) --
-    this function only names the pool, it does not authorize using more than
-    one member of it concurrently.
-    """
-    if n_workers < 1:
-        raise WriteSafetyError("[FR-031] n_workers must be >= 1")
-    pool = ["Target"] + ["Target%d" % i for i in range(2, n_workers + 1)]
-    return tuple(pool)
-
-
-CONCURRENCY_TRIAL_ARTIFACT = DEFAULT_ARTIFACTS_DIR / "concurrency-trial.json"
-
-
-def assert_concurrency_gate_satisfied(n_workers: int) -> None:
-    """FR-031/FR-032/FR-033: default worker count is 1; anything higher
-    requires a recorded concurrency-trial artifact. No such artifact exists
-    as of this skeleton, so this MUST refuse -- it is a named, explicit gate,
-    not an assumed capability."""
-    if n_workers <= 1:
-        return
-    if not CONCURRENCY_TRIAL_ARTIFACT.is_file():
-        raise WriteSafetyError(
-            "[FR-032] --workers %d requested, but no recorded concurrency-trial "
-            "artifact exists at %r. Concurrent opens against the host database "
-            "service are UNMEASURED for safety; this is an explicit gate, not "
-            "an assumed capability. Run and record a concurrency trial first."
-            % (n_workers, str(CONCURRENCY_TRIAL_ARTIFACT))
-        )
-
-
-def predicted_footprint_mb(fwdata_mb: float) -> float:
-    """FR-028/FR-030: PROVISIONAL per-worker memory prediction."""
-    return MEM_MODEL_FLOOR_MB_PROVISIONAL + MEM_MODEL_SLOPE_MB_PER_MB_PROVISIONAL * fwdata_mb
-
-
-def free_memory_mb() -> Optional[float]:
-    """Measured free physical memory (Windows), never core count (FR-028)."""
-    class _MEMSTATUSEX(ctypes.Structure):
-        _fields_ = [
-            ("dwLength", ctypes.c_ulong), ("dwMemoryLoad", ctypes.c_ulong),
-            ("ullTotalPhys", ctypes.c_ulonglong), ("ullAvailPhys", ctypes.c_ulonglong),
-            ("ullTotalPageFile", ctypes.c_ulonglong), ("ullAvailPageFile", ctypes.c_ulonglong),
-            ("ullTotalVirtual", ctypes.c_ulonglong), ("ullAvailVirtual", ctypes.c_ulonglong),
-            ("ullAvailExtendedVirtual", ctypes.c_ulonglong),
-        ]
-    stat = _MEMSTATUSEX()
-    stat.dwLength = ctypes.sizeof(_MEMSTATUSEX)
-    if not ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(stat)):
-        return None
-    return stat.ullAvailPhys / (1024.0 * 1024.0)
-
-
-class MemoryShortfall(RuntimeError):
-    """Raised to signal 'wait or admit fewer workers' -- explicitly NOT a
-    WriteSafetyError/SourceTamperError; the two must never share an error
-    path (a memory wait is an operational retry, a safety abort never is)."""
-
-
-def assert_memory_admits(fwdata_mb: float, reserve_mb: float = MEM_MODEL_RESERVE_MB_DEFAULT) -> None:
-    predicted = predicted_footprint_mb(fwdata_mb)
-    free = free_memory_mb()
-    if free is None:
-        raise MemoryShortfall(
-            "[FR-028] could not measure free physical memory; refusing to "
-            "admit (fail toward waiting, not toward guessing free RAM)"
-        )
-    if free < predicted + reserve_mb:
-        raise MemoryShortfall(
-            "[FR-028] predicted footprint %.0f MB + reserve %.0f MB exceeds "
-            "measured free memory %.0f MB" % (predicted, reserve_mb, free)
-        )
-
-
-# ===========================================================================
-# GROUP D -- DOUBLE-MOVE AND IDEMPOTENCY
-# ===========================================================================
-
-def census_project(project_name: str) -> dict[str, set]:
-    """FR-043/FR-044: a per-class object inventory keyed by identity (GUID),
-    reusing the exact ``AllInstances`` shape ``audit_guid_preservation.py``
-    already proved out (``{class_name: {guid, ...}}``). Opens read-only."""
-    return dict(guid_audit.inventory_all(project_name))
-
-
-def written_classes(before: dict[str, set], after: dict[str, set]) -> dict[str, dict]:
-    """FR-045: the set of classes the FIRST transfer is observed to have
-    written, computed as the after-minus-before delta -- never a hand-picked
-    list. Returns {class: {"new": [...], "removed": [...]}} for every class
-    where the identity SET actually changed (new members, missing members,
-    or both)."""
-    out: dict[str, dict] = {}
-    for cls in set(before) | set(after):
-        b, a = before.get(cls, set()), after.get(cls, set())
-        new, removed = a - b, b - a
-        if new or removed:
-            out[cls] = {"new": sorted(new), "removed": sorted(removed)}
-    return out
-
-
-@dataclass
-class IdempotencyResult:
-    written_class_set: tuple[str, ...]
-    unchanged_classes: tuple[str, ...]
-    diverged_classes: dict  # class -> {"only_after_1": [...], "only_after_2": [...]}
-    passed: bool
-    harness_error: str = ""
-
-
-def check_idempotency(
-    after_first: dict[str, set], after_second: dict[str, set], written: dict[str, dict],
-) -> IdempotencyResult:
-    """FR-045/FR-046/FR-047/FR-048/FR-049.
-
-    Idempotency is measured EXACTLY over ``written`` (the class set the first
-    transfer is observed to have touched, per ``written_classes`` above) --
-    never a fixed, hand-picked counter list. If the second transfer's
-    inventory shows a changed class that is absent from ``written``, that is
-    a harness error (FR-046), not a quiet pass, because FR-049 makes that
-    shape structurally impossible for a correct measurement.
-    """
-    written_set = set(written)
-    diverged: dict = {}
-    for cls in set(after_first) | set(after_second):
-        a1, a2 = after_first.get(cls, set()), after_second.get(cls, set())
-        if a1 == a2:
+    from gramtrans.Lib.models import GrammarCategory
+
+    by_value = {c.value: c for c in GrammarCategory}
+    by_name = {c.name: c for c in GrammarCategory}
+    members, records, unknown = set(), [], []
+    for raw in spec or ():
+        token = str(raw).strip()
+        if not token:
             continue
-        only_1, only_2 = a1 - a2, a2 - a1
-        diverged[cls] = {"only_after_1": sorted(only_1), "only_after_2": sorted(only_2)}
-        if cls not in written_set:
-            return IdempotencyResult(
-                written_class_set=tuple(sorted(written_set)),
-                unchanged_classes=(), diverged_classes=diverged, passed=False,
-                harness_error=(
-                    "[FR-046/FR-049] class %r changed between the first and "
-                    "second transfer's inventories but was not in the set of "
-                    "classes the first transfer is recorded to have written -- "
-                    "this measurement is structurally invalid" % (cls,)
-                ),
-            )
-    unchanged = tuple(sorted(written_set - set(diverged)))
-    return IdempotencyResult(
-        written_class_set=tuple(sorted(written_set)),
-        unchanged_classes=unchanged, diverged_classes=diverged,
-        passed=not diverged,
-    )
+        name, _, reason = token.partition("=")
+        name, reason = name.strip(), reason.strip()
+        member = by_value.get(name) or by_name.get(name.upper())
+        if member is None:
+            unknown.append(name)
+            continue
+        members.add(member)
+        records.append({"category": member.value, "reason": reason})
+    if unknown:
+        raise HarnessError(
+            "[FR-135] --exclude-categories names %r, which are not "
+            "GrammarCategory members. A name the harness cannot resolve is "
+            "silently NOT excluded, so the artifact would record coverage the "
+            "run did not have. Valid values: %s"
+            % (sorted(unknown), ", ".join(sorted(by_value)))
+        )
+    return frozenset(members), records
 
 
-# ===========================================================================
-# GROUP E/F/G/H PLUGGABLE SEAM -- NOT BUILT HERE (still in review)
-# ===========================================================================
+def plan_conservation_counters(plan, report) -> dict:
+    """FR-101's per-category and total counters, read off the plan and report.
 
-def compare_objects(source_inventory: dict, target_inventory: dict) -> list[dict]:
-    """EXTENSION POINT for the field-level fidelity comparator.
+    ``planned`` is counted from the PLAN's own action rows, and ``added`` /
+    ``skipped`` from the REPORT's per-category record -- two independent
+    surfaces, which is the point: a conservation check that read both sides from
+    the same object could not detect a discrepancy.
 
-    Deliberately NOT the taxonomy from spec.md Groups E (field-level
-    semantics), F (vacuity guards), G (verdict/exit model), H (loss
-    allowlist), or the identity-substitution rules of Group P -- those are
-    still in review as of 2026-08-18 (cycle3-amendments.md and
-    cycle3-safety-amendments.md have not yet been folded into spec.md's
-    settled requirement groups) and inventing them here would hardcode a
-    taxonomy this feature does not yet have authority to hardcode.
-
-    Contract for the eventual real implementation:
-        source_inventory / target_inventory: ``{class_name: {guid, ...}}``,
-            the same identity-keyed shape ``census_project`` returns.
-        Returns: ``list[dict]`` "findings". Per FR-145 (settled, Group K),
-            every real finding MUST eventually carry AT LEAST:
-                {"class": str, "category": str | None, "field": str | None,
-                 "source_value": Any, "target_value": Any,
-                 "verdict": str, "guid": str}
-            -- but the legal ``verdict`` vocabulary (RESOLVED / DANGLING /
-            SILENTLY_UNSET / LOST-BUT-ACCOUNTED / RESOLVED-BY-EQUIVALENCE for
-            links; DISTORTED / EXPECTED_DIVERGENT / etc. for field content;
-            the five FR-094..FR-099 vacuity guards; the allowlist-consumption
-            accounting of Group H) is exactly what has not been settled.
-
-    TODO(035-verdict-taxonomy): replace this stub once Groups E-P leave
-    review. Until then this performs ONLY the total-accounting
-    presence/absence reconciliation that the identity-keyed census already
-    gives for free -- no taxonomy decision required for that much: a source
-    GUID is either present in the target's post-transfer inventory for its
-    class, or it is not.
-
-    ``run_one_project`` (below) takes this function as an injectable
-    parameter (default: this stub) so a future comparator can be wired in
-    without touching the driver's control flow.
+    Every other counter the report carries travels through untouched.
+    ``guards.PLAN_ACCOUNTED_COUNTERS`` decides which ones close the identity and
+    reports the rest in its evidence, so widening the formula stays a deliberate
+    edit there rather than a quiet reshaping here.
     """
-    findings: list[dict] = []
-    for cls, src_guids in source_inventory.items():
-        tgt_guids = target_inventory.get(cls, set())
-        for g in sorted(src_guids - tgt_guids):
-            findings.append({
-                "class": cls, "category": None, "field": None,
-                "source_value": g, "target_value": None,
-                "verdict": "NOT_YET_CLASSIFIED_MISSING_FROM_TARGET",
-                "guid": g,
-            })
+    def _cat(x):
+        c = getattr(x, "category", None)
+        return getattr(c, "value", None) or str(c)
+
+    planned_by_cat: dict = {}
+    for action in getattr(plan, "actions", ()) or ():
+        key = _cat(action)
+        planned_by_cat[key] = planned_by_cat.get(key, 0) + 1
+
+    per_category: dict = {}
+    for category, rec in (getattr(report, "per_category", {}) or {}).items():
+        key = getattr(category, "value", None) or str(category)
+        row = {"planned": planned_by_cat.get(key, 0)}
+        for counter in ("added", "skipped", "closure_pulled_in", "overwritten",
+                        "excluded_lossy", "interactive_resolved", "interactive_skipped"):
+            row[counter] = int(getattr(rec, counter, 0) or 0)
+        per_category[key] = row
+    # A category the plan planned for but the report never mentioned still has
+    # to be accounted for; omitting it would hide the very gap FR-101 checks.
+    for key, planned in planned_by_cat.items():
+        per_category.setdefault(key, {"planned": planned, "added": 0, "skipped": 0})
+
+    total = {"planned": sum(r["planned"] for r in per_category.values())}
+    for counter in ("added", "skipped", "closure_pulled_in", "overwritten",
+                    "excluded_lossy", "interactive_resolved", "interactive_skipped"):
+        total[counter] = sum(r.get(counter, 0) for r in per_category.values())
+    return {"per_category": per_category, "total": total}
+
+
+def observed_drop_reasons(drops_block: dict) -> list:
+    """Every drop reason the engine reported, across both transfers.
+
+    NO-ENGINE-BUG-AS-LOSS matches its roster against these. Duplicates are kept:
+    the guard counts matches, and collapsing identical reasons would understate
+    how many objects an engine-bug signature actually claimed.
+    """
+    reasons: list = []
+    for phase in ("first", "second"):
+        block = (drops_block or {}).get(phase) or {}
+        for record in block.get("records") or ():
+            reason = record.get("reason")
+            if reason:
+                reasons.append(reason)
+    return reasons
+
+
+# ===========================================================================
+# PLANE 1 -- OBJECT-LEVEL RECONCILIATION (T045a part b)
+#
+# This replaces the ``compare_objects`` stub. The stub emitted one
+# ``NOT_YET_CLASSIFIED_MISSING_FROM_TARGET`` finding per absent source GUID and
+# populated no accounting block at all, so TOTAL-ACCOUNTING could only ever
+# report ``not-evaluated``. Its TODO said the verdict taxonomy was still in
+# review; the ratified spec settled it, and ``fullsweep.compare.reconcile_objects``
+# implements it (T031).
+#
+# FR-091 is the load-bearing ordering here: the WALK detects loss, and drop
+# records only ever EXPLAIN it. So the reconciliation is driven by the source
+# census, and ``drops`` is consulted only once an object is already known to be
+# absent -- never the other way round.
+# ===========================================================================
+
+#: FR-097 requires a payload comparison for every object present under a
+#: matching identity. Plane 2 (the field census) is what performs it; until it is
+#: wired, NO comparison happens, and this callback says so by returning None for
+#: every object rather than a cheerful True.
+#:
+#: ``reconcile_objects`` turns None into
+#: ``unaccounted: present-under-matching-identity-but-never-compared``, which
+#: fails TOTAL-ACCOUNTING. That is the correct reading of FR-097 -- "an object
+#: merely present under a matching identity with no payload comparison performed
+#: ... is unexplained loss and MUST fail the run" -- and it is a far more useful
+#: answer than the stub's silence, because it names how many objects are
+#: unverified instead of implying there are none.
+def payload_never_compared(class_name: str, source_id: str, target_id: str):
+    """The honest no-op payload comparator: no comparison was performed."""
+    return None
+
+
+def drop_records_from_artifact(drops_block: dict) -> tuple:
+    """Rebuild ``compare.DropRecord``s from the artifact's recorded drop channel.
+
+    Keyed on ``item_guid``, not ``item_name``: ``reconcile_objects`` matches a
+    drop against a source IDENTIFIER, and a label would match nothing (or, worse,
+    the wrong object -- labels are not unique).
+    """
+    out: list = []
+    for phase in ("first", "second"):
+        block = (drops_block or {}).get(phase) or {}
+        for record in block.get("records") or ():
+            item = record.get("item_guid")
+            if not item:
+                # An unidentified drop cannot be attributed to a source object.
+                # It is still evidence, and ``observed_drop_reasons`` still feeds
+                # it to NO-ENGINE-BUG-AS-LOSS; it simply cannot explain a
+                # specific absence, which is a fact about the engine's record,
+                # not something to paper over with a synthetic identifier.
+                continue
+            out.append(DropRecord(
+                owner=str(record.get("owner_guid") or ""),
+                field_name=str(record.get("field_name") or ""),
+                item=str(item).lower(),
+                reason=str(record.get("reason") or ""),
+            ))
+    return tuple(out)
+
+
+def findings_from_accounting(accounting) -> list:
+    """FR-145 finding rows for every object the reconciliation could not explain.
+
+    One row per unaccounted object, carrying the bucket's own detail string as
+    the verdict -- so a reader sees WHICH of FR-097's failure modes applied
+    (dropped-with-no-allowlist-entry, present-but-never-compared, absent-with-no-
+    explanation, over-cap) instead of the stub's single undifferentiated token.
+    """
+    findings: list = []
+    for item in accounting.unaccounted:
+        findings.append({
+            "class": item.class_name,
+            "category": None,
+            "field": None,
+            "source_value": item.source_id,
+            "target_value": item.target_id,
+            "verdict": item.detail or UNACCOUNTED_ABSENT_NO_EXPLANATION,
+            "guid": item.source_id,
+        })
     return findings
 
 
-# ===========================================================================
-# GROUP K -- ARTIFACT AND PROVENANCE
-# ===========================================================================
+#: Every ``RunContext`` field ``run_one_project`` is able to measure today, and
+#: therefore every field ``build_run_context`` will pass through. A field NOT on
+#: this tuple is one no per-project measurement exists for yet; it stays None and
+#: its guard reports ``not-evaluated``.
+#:
+#: This tuple is the deliberate, reviewable line between "measured" and "not
+#: measured". Adding a name here without also depositing it into ``measured`` is
+#: harmless (absent key -> None -> not-evaluated); depositing a key that is NOT
+#: named here is a defect, and ``build_run_context`` raises on it rather than
+#: silently discarding a measurement the run paid for.
+MEASURABLE_RUN_CONTEXT_FIELDS: tuple = (
+    "census_baseline",
+    "census_after_first",
+    "census_after_second",
+    "written",
+    "idempotency",
+    "planned_action_count",
+    "plan_conservation",
+    "accounting",
+    "enabled_categories",
+    "measured_categories",   # awaits plane 2 -- see PENDING_PLANE_2_FIELDS
+    "excluded_categories",
+    "comparisons",           # awaits plane 2 -- see PENDING_PLANE_2_FIELDS
+    "drop_reasons",
+    "engine_bug_signatures",
+)
 
-def _run_git(args: list[str], cwd: Path) -> str:
-    cp = subprocess.run(["git", *args], cwd=str(cwd), capture_output=True, text=True)
-    if cp.returncode != 0:
-        raise RuntimeError("git %s failed in %s: %s" % (" ".join(args), cwd, cp.stderr.strip()))
-    return cp.stdout.strip()
+#: Named measurable, but NOT yet deposited by ``run_one_project``: both need
+#: plane 2's live field read (``census.census_fields`` with a real
+#: ``field_source(cls, guid)`` over LCM objects), which T045a part (c) covers.
+#: They are listed as measurable because the shape is settled and the guard is
+#: built -- only the reader is missing. Until it lands they stay absent from
+#: ``measured`` and their guards report ``not-evaluated``, which is the honest
+#: answer and not a defect in this wiring.
+PENDING_PLANE_2_FIELDS: tuple = ("comparisons", "measured_categories")
 
-
-def _git_revision(repo_dir: Path) -> dict:
-    """Returns {"sha": str, "dirty": bool} or {"sha": None, "error": str}."""
-    try:
-        sha = _run_git(["rev-parse", "HEAD"], repo_dir)
-        status = _run_git(["status", "--porcelain"], repo_dir)
-        return {"sha": sha, "dirty": bool(status.strip()), "error": ""}
-    except Exception as exc:  # noqa: BLE001 -- recorded, never silent
-        return {"sha": None, "dirty": None, "error": "%s: %s" % (type(exc).__name__, exc)}
-
-
-def gramtrans_revision() -> dict:
-    """FR-138: this driver's own source-revision identity + dirty flag."""
-    return _git_revision(_ROOT)
-
-
-def flexicon_revision() -> dict:
-    """FR-139/FR-157: the transfer engine dependency's revision identity --
-    a git SHA, NOT its version string (per this repo's CLAUDE.md: "flexicon
-    reports a version string that is not reliably bumped when its runtime
-    behavior changes"; also independently observed live, see
-    probe-results-live.md's "undoable default" finding)."""
-    try:
-        import flexicon
-        pkg_dir = Path(flexicon.__file__).resolve().parent
-    except Exception as exc:  # noqa: BLE001
-        return {"sha": None, "dirty": None,
-                "error": "could not import flexicon: %s: %s" % (type(exc).__name__, exc)}
-    d = pkg_dir
-    for _ in range(6):
-        if (d / ".git").exists():
-            return _git_revision(d)
-        if d.parent == d:
-            break
-        d = d.parent
-    return {"sha": None, "dirty": None,
-            "error": "no .git found walking up from %s" % pkg_dir}
-
-
-def revision_pair() -> dict:
-    return {"gramtrans": gramtrans_revision(), "flexicon": flexicon_revision()}
-
-
-@dataclass
-class ProjectArtifact:
-    """Group K durable, per-project artifact. Every field required by the
-    settled FR-138..FR-151 stamps is present; findings/detail lists are
-    NEVER truncated here (FR-144 -- truncation is a console-only concern)."""
-    project: str
-    run_intent: str                    # FR-188/FR-166: "baseline" | "gate"
-    revision_pair: dict                # FR-157
-    dirty_gramtrans: Optional[bool]    # FR-138
-    coverage_categories: list          # FR-142 (the categories actually run)
-    phases_completed: list = field(default_factory=list)  # FR-150
-    source_fingerprint_before: dict = field(default_factory=dict)
-    source_fingerprint_after: dict = field(default_factory=dict)
-    fingerprint_verdict: str = ""      # FR-022 classification
-    census_before: dict = field(default_factory=dict)      # class -> sorted [guid,...]
-    census_after_first: dict = field(default_factory=dict)
-    census_after_second: dict = field(default_factory=dict)
-    written_classes: dict = field(default_factory=dict)
-    idempotency: dict = field(default_factory=dict)
-    findings: list = field(default_factory=list)           # compare_objects() output
-    status: str = "running"            # FR-156 ledger vocabulary
-    reason: str = ""
-    errors: list = field(default_factory=list)             # [{phase, error, traceback}]
-    started_at: float = 0.0
-    finished_at: float = 0.0
+#: The guard inputs ``run_one_project`` has NO measurement for, with the reason.
+#: Recorded here, in code, so "why is this run still VACUOUS?" has a written
+#: answer instead of requiring an archaeology session through fifteen guards.
+UNMEASURED_RUN_CONTEXT_FIELDS: dict = {
+    "empty_measurements": "plane 2 has to record, per empty source collection, "
+                          "which of FR-098's two distinct outcomes applied and "
+                          "the independent corroborating count",
+    "unhandled_subtypes": "plane 2 has to name and count each subtype the engine "
+                          "did not handle (FR-099)",
+    "extras": "the reverse walk -- target objects absent from the source, with "
+              "traceable_to_source and tool_owned_duplicate decided per object "
+              "(FR-102/FR-183)",
+    "accessor_counters": "audit_guid_preservation.inventory_all currently "
+                         "swallows a per-object read failure with "
+                         "`except Exception: continue`, so the four FR-103 "
+                         "counters are not merely unmeasured -- they are "
+                         "actively discarded at the point they occur",
+    "handle_operations": "no project-handle operation log exists (FR-104)",
+    "truncation": "the durable artifact writer keeps no omission counters, so "
+                  "FR-105's two zeros cannot be asserted -- and hardcoding them "
+                  "to 0 would be a claim, not a measurement",
+    "close_operations": "CloseProject outcomes are not logged; both inventory_all "
+                        "and run_full_transfer close inside a bare except "
+                        "(FR-108)",
+    "corpus_projects": "corpus-level, not per-project: only the batch driver "
+                       "knows the frozen project list (FR-106)",
+    "artifacts_present": "corpus-level, as above -- an artifact index over the "
+                         "whole run",
+}
 
 
-def _atomic_write_json(path: Path, obj) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(json.dumps(obj, indent=2, default=str), encoding="utf-8")
-    os.replace(str(tmp), str(path))
+def build_run_context(project: str, measured: dict) -> RunContext:
+    """Build the guard context from what this run ACTUALLY measured.
+
+    The one rule: a key present in ``measured`` is passed through; a key absent
+    keeps ``RunContext``'s ``None`` default and its guard reports
+    ``not-evaluated``. Nothing here substitutes an empty container for a missing
+    measurement -- per ``RunContext``'s docstring, an empty accessor-counter dict
+    would let ACCESSOR-INTEGRITY report all-zeros and pass a project it never
+    opened.
+
+    A key that is not a known measurable field raises. Silently dropping it would
+    reproduce, one level up, exactly the bug this function was written to fix: a
+    measurement taken and then never handed to the guard that needed it.
+    """
+    unknown = sorted(set(measured) - set(MEASURABLE_RUN_CONTEXT_FIELDS))
+    if unknown:
+        raise HarnessError(
+            "[FR-109] %r were measured but are not named in "
+            "MEASURABLE_RUN_CONTEXT_FIELDS, so no guard would ever see them. "
+            "Add them to that tuple (and check the field spelling against "
+            "guards.RunContext) rather than letting the measurement be "
+            "discarded." % (unknown,)
+        )
+    return RunContext(
+        project=project,
+        **{k: v for k, v in measured.items()},
+    )
 
 
-def flush_artifact(artifact: ProjectArtifact, artifacts_dir: Path) -> Path:
-    """FR-150: flush after every phase, so a crash leaves a partial artifact
-    naming the last completed phase, never no evidence at all."""
-    out = artifacts_dir / ("%s.json" % re.sub(r"[^A-Za-z0-9._ -]", "_", artifact.project))
-    _atomic_write_json(out, asdict(artifact))
-    return out
+def reconcile_project_objects(
+    source_inventory: dict,
+    target_before: dict,
+    target_after: dict,
+    *,
+    project: str,
+    drops: Sequence = (),
+    matcher=None,
+    roster=None,
+    remap=None,
+    payload_equal: Callable = payload_never_compared,
+):
+    """Plane 1 for one project: ``(ObjectAccounting, findings)``.
 
-
-# ===========================================================================
-# GROUP L -- LEDGER (batched, gated, fix-forward execution)
-# ===========================================================================
-
-class Ledger:
-    """FR-156: a durable, per-project status ledger surviving restarts,
-    tracked in git (default path lives under specs/035-fullsweep-fidelity/,
-    which this repo's CLAUDE.md workflow commits to main -- never a
-    gitignored scratch path)."""
-
-    def __init__(self, path: Path = DEFAULT_ARTIFACTS_DIR / "ledger.json"):
-        self.path = path
-        self._data: dict = {}
-        self.load()
-
-    def load(self) -> None:
-        if self.path.is_file():
-            self._data = json.loads(self.path.read_text(encoding="utf-8"))
-        else:
-            self._data = {}
-
-    def save(self) -> None:
-        _atomic_write_json(self.path, self._data)
-
-    def set_status(self, project: str, status: str, *, reason: str = "",
-                   revision_pair: Optional[dict] = None) -> None:
-        if status not in VALID_LEDGER_STATUSES:
-            raise ValueError("invalid ledger status %r" % (status,))
-        self._data[project] = {
-            "status": status, "reason": reason,
-            "revision_pair": revision_pair or {},
-            "updated_at": time.time(),
-        }
-        self.save()
-
-    def get(self, project: str) -> Optional[dict]:
-        return self._data.get(project)
-
-    def all(self) -> dict:
-        return dict(self._data)
-
-
-def corpus_status_summary(ledger: Ledger, current_pair: dict) -> dict:
-    """FR-157/FR-158: separate currently-valid passes from STALE ones; never
-    report a single unqualified "all green" unless every pass shares the
-    current driver-and-dependency revision pair."""
-    valid, stale, other = [], [], []
-    for name, row in ledger.all().items():
-        if row.get("status") != "passed":
-            other.append(name)
-            continue
-        if row.get("revision_pair") == current_pair:
-            valid.append(name)
-        else:
-            stale.append(name)
-    return {
-        "currently_valid_passes": sorted(valid),
-        "stale_passes": sorted(stale),
-        "other": sorted(other),
-        "all_green": bool(valid) and not stale and not other,
-    }
+    Thin on purpose. Every rule lives in ``fullsweep.compare.reconcile_objects``
+    and ``fullsweep.identity``; this function only supplies the project's
+    measurements and shapes the findings list the artifact carries.
+    """
+    accounting = reconcile_objects(
+        source_inventory, target_before, target_after,
+        project=project, payload_equal=payload_equal,
+        roster=roster, remap=remap, matcher=matcher, drops=drops,
+    )
+    return accounting, findings_from_accounting(accounting)
 
 
 # ===========================================================================
@@ -1036,26 +455,102 @@ def run_one_project(
     frozen_sources: tuple,
     allowlist: Sequence[str],
     run_intent: str,
-    backup_path=None,
+    pinned_baseline,
+    exclude_categories: Sequence[str],
+    diagnostic_level: str,
     projects_root: Optional[str] = None,
     artifacts_dir: Path = DEFAULT_ARTIFACTS_DIR,
-    comparator: Callable[[dict, dict], list] = compare_objects,
+    contracts_dir: Path = DEFAULT_CONTRACTS_DIR,
+    reconciler: Callable = reconcile_project_objects,
+    payload_equal: Callable = payload_never_compared,
+    allowlist_matcher=None,
+    natural_key_roster=None,
+    tolerated_residue: Sequence[str] = (),
 ) -> ProjectArtifact:
     """FR-043: restore -> census -> Move #1 -> census -> Move #2 -> census ->
     restore, for exactly one project, with the write-safety choke point
-    re-evaluated at every restore/write boundary (never cached)."""
+    re-evaluated INDEPENDENTLY at each of FR-013's two boundaries (never
+    cached, never inherited).
+
+    ``pinned_baseline`` is a REQUIRED ``PinnedBaseline`` (T020): the restore
+    goes through ``restore_from_pinned_baseline``, never through
+    ``harness.restore_target``, so there is no newest-archive glob fallback
+    on this path and every restored item's containment is proven before a
+    byte is written.
+    """
     if run_intent not in VALID_RUN_INTENTS:
         raise ValueError("run_intent must be one of %r" % (VALID_RUN_INTENTS,))
+    if diagnostic_level not in DIAGNOSTIC_LEVELS:
+        raise ValueError("diagnostic_level must be one of %r" % (DIAGNOSTIC_LEVELS,))
+    if pinned_baseline is None:
+        raise BaselineError(
+            "[FR-170] run_one_project requires a pinned baseline. A run that "
+            "cannot name and hash its baseline does not start."
+        )
 
-    from harness import restore as restore_mod  # lazy: harness package on sys.path
     from harness import full_run
 
     artifact = ProjectArtifact(
-        project=source_name, run_intent=run_intent, revision_pair=revision_pair(),
+        project=source_name, run_intent=normalize_intent(run_intent), revision_pair=revision_pair(),
         dirty_gramtrans=None, coverage_categories=[], started_at=time.time(),
     )
     rp = artifact.revision_pair
     artifact.dirty_gramtrans = rp.get("gramtrans", {}).get("dirty")
+
+    # T045a: resolved ONCE, here, and used for BOTH the recorded coverage set
+    # and the transfer that actually runs. Resolving it twice is how the two
+    # drifted apart (see resolve_excluded_categories).
+    excluded_members, excluded_records = resolve_excluded_categories(exclude_categories)
+    artifact.excluded_categories = [r["category"] for r in excluded_records]
+    artifact.excluded_category_records = excluded_records
+    artifact.diagnostic_level = diagnostic_level
+    artifact.baseline = pinned_baseline.as_dict()
+
+    # FR-024: the per-project record that each assertion was IN FACT
+    # evaluated, at which boundary, against which literal values.
+    ledger = AssertionLedger(project=source_name)
+
+    # ---- T045a: the guard-input accumulator -----------------------------
+    # The guards run in the ``finally`` below, so they must be able to read
+    # whatever this run got as far as measuring -- including on a run that died
+    # at the first transfer. Every measurement is deposited here the moment it is
+    # taken; a key that never appears stays absent, and RunContext's own default
+    # (None) then makes its guard report ``not-evaluated``.
+    #
+    # This dict is the WHOLE of T045a part (a). Before it, the finally block
+    # called ``run_all_guards(RunContext(project=source_name))`` -- positionally
+    # empty -- so all fifteen guards reported ``not-evaluated`` and FR-109 sank
+    # every run to VACUOUS no matter how much it had measured. Batch 1 measured
+    # the census triple, the written-class delta, idempotency and 210/27,929/879
+    # drop reasons, and handed none of them to a single guard.
+    measured: dict = {}
+
+    # ---- T045a: the tracked rosters, read BEFORE any database is touched.
+    # NO-ENGINE-BUG-AS-LOSS needs its signature roster; the reconciliation needs
+    # the allowlist matcher and the natural-key roster. All three are read up
+    # front so a malformed contract refuses the run instead of surfacing halfway
+    # through a double move, with a target already written to.
+    #
+    # Note the deliberate asymmetry with the guard-input rule above: these
+    # loaders RAISE on a missing or malformed file rather than yielding None. A
+    # missing roster is not an unmeasured input -- it is a broken instrument, and
+    # each loader's docstring says why treating it as "empty" would silently
+    # change which losses count as explained.
+    measured["engine_bug_signatures"] = load_engine_bug_signatures(
+        contracts_dir=Path(contracts_dir))
+    if allowlist_matcher is None:
+        allowlist_matcher = LossAllowlistMatcher(
+            entries=load_loss_allowlist(contracts_dir=Path(contracts_dir)))
+    if natural_key_roster is None:
+        natural_key_roster = NaturalKeyRoster.load(Path(contracts_dir))
+
+    # FR-133..FR-137: allowlisting a structurally absent class is refused, and
+    # refused HERE -- at load time, before a run can report a reduced-coverage
+    # pass as a pass (T044).
+    assert_allowlist_respects_floor(
+        load_coverage_floor(Path(contracts_dir) / COVERAGE_FLOOR_NAME),
+        {e.class_name for e in allowlist_matcher.entries if getattr(e, "class_name", None)},
+    )
 
     root = resolve_projects_root(projects_root)
     target_path = str(root / target_name)
@@ -1065,64 +560,104 @@ def run_one_project(
     flush_artifact(artifact, artifacts_dir)
 
     try:
-        # ---- boundary (a): restore, first pass -------------------------
-        dest = assert_destination_safe(
-            target_name, source_name=source_name, frozen_sources=frozen_sources,
-            allowlist=allowlist, projects_root=projects_root,
+        # ---- boundary (a): pinned, contained restore --------------------
+        # assert_restore_boundary fires INSIDE restore_from_pinned_baseline,
+        # before the archive is even opened and long before the first removal
+        # (FR-023's load-bearing ordering).
+        restored = restore_from_pinned_baseline(
+            target_name, pinned=pinned_baseline, source_name=source_name,
+            frozen_sources=frozen_sources, allowlist=allowlist,
+            projects_root=projects_root, tolerated_residue=tolerated_residue,
+            ledger=ledger,
         )
-        self_heal_stale_lock(dest, target_name)
-        restore_mod.restore_target(target_name, backup_path=backup_path,
-                                    projects_root=str(root))
+        artifact.restore_evidence = restored.as_dict()
         artifact.phases_completed.append("restore_initial")
-        flush_artifact(artifact, artifacts_dir)
+        advance_phase(artifact, "restore", artifacts_dir)
 
         census_before = census_project(target_name)
         artifact.census_before = {k: sorted(v) for k, v in census_before.items()}
+        measured["census_baseline"] = census_before
         artifact.phases_completed.append("census_before")
-        flush_artifact(artifact, artifacts_dir)
+        flush_artifact(artifact, artifacts_dir)  # still within the "restore" phase (T013)
 
-        selection = full_run.build_full_selection(exclude=frozenset())
+        # T045a: ONE selection object, built from the resolved enum members,
+        # recorded here AND handed to both transfers below. Before this, the
+        # recorded set and the executed set were computed independently and
+        # disagreed (see resolve_excluded_categories).
+        selection = full_run.build_full_selection(exclude=excluded_members)
         artifact.coverage_categories = sorted(c.value for c, on in selection.categories.items() if on)
+        measured["enabled_categories"] = list(artifact.coverage_categories)
+        measured["excluded_categories"] = excluded_records
 
-        # ---- boundary (b): re-asserted immediately before the write-
-        # enabled open that run_full_transfer performs internally, computed
-        # fresh from the literal target_name about to be used -----------
-        assert_destination_safe(
+        # ---- boundary (b): re-asserted immediately before the first byte
+        # written beneath the target, computed fresh from the literal
+        # target_name about to be used. An INDEPENDENT evaluation -- it
+        # shares no flag with boundary (a) ------------------------------
+        assert_first_write_boundary(
             target_name, source_name=source_name, frozen_sources=frozen_sources,
-            allowlist=allowlist, projects_root=projects_root,
+            allowlist=allowlist, projects_root=projects_root, ledger=ledger,
         )
-        plan1, report1 = full_run.run_full_transfer(source_name, target_name, target_path)
+        plan1, report1 = full_run.run_full_transfer(
+            source_name, target_name, target_path, exclude=excluded_members)
+        # FR-161/SC-005: the engine's drop channel is the ONLY place the two
+        # historically dominant loss classes and the named residual list can be
+        # read from. Recorded per transfer, before anything downstream can lose
+        # the report object.
+        artifact.drops["first"] = summarize_drops(report1)
+        measured["planned_action_count"] = len(getattr(plan1, "actions", ()) or ())
+        measured["plan_conservation"] = plan_conservation_counters(plan1, report1)
+        measured["drop_reasons"] = observed_drop_reasons(artifact.drops)
         artifact.phases_completed.append("first_transfer")
-        flush_artifact(artifact, artifacts_dir)
+        advance_phase(artifact, "transfer_1", artifacts_dir)
 
         census_after_1 = census_project(target_name)
         artifact.census_after_first = {k: sorted(v) for k, v in census_after_1.items()}
+        measured["census_after_first"] = census_after_1
         artifact.phases_completed.append("census_after_first")
-        flush_artifact(artifact, artifacts_dir)
+        advance_phase(artifact, "census_1", artifacts_dir)
 
         written = written_classes(census_before, census_after_1)
         artifact.written_classes = written
+        measured["written"] = written
 
-        assert_destination_safe(
+        assert_first_write_boundary(
             target_name, source_name=source_name, frozen_sources=frozen_sources,
-            allowlist=allowlist, projects_root=projects_root,
+            allowlist=allowlist, projects_root=projects_root, ledger=ledger,
         )
-        plan2, report2 = full_run.run_full_transfer(source_name, target_name, target_path)
+        plan2, report2 = full_run.run_full_transfer(
+            source_name, target_name, target_path, exclude=excluded_members)
+        artifact.drops["second"] = summarize_drops(report2)
+        measured["drop_reasons"] = observed_drop_reasons(artifact.drops)
         artifact.phases_completed.append("second_transfer")
-        flush_artifact(artifact, artifacts_dir)
+        advance_phase(artifact, "transfer_2", artifacts_dir)
 
         census_after_2 = census_project(target_name)
         artifact.census_after_second = {k: sorted(v) for k, v in census_after_2.items()}
+        measured["census_after_second"] = census_after_2
         artifact.phases_completed.append("census_after_second")
-        flush_artifact(artifact, artifacts_dir)
+        advance_phase(artifact, "census_2", artifacts_dir)
 
         idem = check_idempotency(census_after_1, census_after_2, written)
         artifact.idempotency = asdict(idem)
+        measured["idempotency"] = idem
         if idem.harness_error:
             raise HarnessError(idem.harness_error)
 
+        # ---- plane 1: the object-level reconciliation (T045a part b) -----
+        # FR-091: THIS walk detects loss. The drop channel recorded above is
+        # consulted only to explain an absence the walk already found.
         source_inventory = census_project(source_name)
-        artifact.findings = comparator(source_inventory, census_after_2)
+        accounting, findings = reconciler(
+            source_inventory, census_before, census_after_2,
+            project=source_name,
+            drops=drop_records_from_artifact(artifact.drops),
+            matcher=allowlist_matcher, roster=natural_key_roster,
+            payload_equal=payload_equal,
+        )
+        measured["accounting"] = accounting
+        artifact.accounting = accounting.as_dict()
+        assert_object_plane_only(artifact.accounting)   # FR-093: planes stay apart
+        artifact.findings = findings
 
         artifact.status = "passed" if (idem.passed and not artifact.findings) else "failed"
         artifact.reason = "" if artifact.status == "passed" else (
@@ -1139,16 +674,18 @@ def run_one_project(
         raise
     finally:
         # FR-050: restore the target to baseline and write the artifact even
-        # on an unhandled failure.
+        # on an unhandled failure. FR-172: recovery is idempotent per project
+        # -- always restore, never resume mid-transfer.
         try:
-            dest = assert_destination_safe(
-                target_name, source_name=source_name, frozen_sources=frozen_sources,
-                allowlist=allowlist, projects_root=projects_root,
+            restored_final = restore_from_pinned_baseline(
+                target_name, pinned=pinned_baseline, source_name=source_name,
+                frozen_sources=frozen_sources, allowlist=allowlist,
+                projects_root=projects_root, tolerated_residue=tolerated_residue,
+                ledger=ledger,
             )
-            self_heal_stale_lock(dest, target_name)
-            restore_mod.restore_target(target_name, backup_path=backup_path,
-                                        projects_root=str(root))
+            artifact.restore_evidence_final = restored_final.as_dict()
             artifact.phases_completed.append("restore_final")
+            artifact.phase_reached = "restore_final"
         except Exception as exc:  # noqa: BLE001 -- recorded, not swallowed
             artifact.errors.append({
                 "phase": "restore_final", "error": "%s: %s" % (type(exc).__name__, exc),
@@ -1157,11 +694,47 @@ def run_one_project(
 
         src_fp_after = capture_fingerprint(source_name, projects_root)
         artifact.source_fingerprint_after = asdict(src_fp_after)
-        verdict = classify_fingerprint_delta(src_fp_before, src_fp_after)
-        artifact.fingerprint_verdict = verdict
-        if verdict not in (FINGERPRINT_VERDICT_UNCHANGED, FINGERPRINT_VERDICT_MIGRATION):
+        fp_verdict = classify_fingerprint_delta(src_fp_before, src_fp_after)
+        artifact.fingerprint_verdict = fp_verdict
+        if fp_verdict not in (FINGERPRINT_VERDICT_UNCHANGED, FINGERPRINT_VERDICT_MIGRATION):
             artifact.status = "failed"
-            artifact.reason = ("SOURCE TAMPER GUARD: %s -- %s" % (verdict, artifact.reason)).strip(" -")
+            artifact.reason = ("SOURCE TAMPER GUARD: %s -- %s" % (fp_verdict, artifact.reason)).strip(" -")
+
+        # ---- FR-024: the assertion record goes into the artifact, and both
+        # FR-013 boundaries must have been independently evaluated. Recorded
+        # BEFORE the check, so a run that failed the check still shows what
+        # it did evaluate. -----------------------------------------------
+        artifact.assertions = ledger.as_list()
+        try:
+            assert_both_boundaries_evaluated(ledger)
+            artifact.assertions_complete = True
+        except WriteSafetyError as exc:
+            artifact.assertions_complete = False
+            artifact.errors.append({
+                "phase": artifact.phase_reached or "setup",
+                "error": "%s: %s" % (type(exc).__name__, exc), "traceback": "",
+            })
+            artifact.status = "failed"
+            artifact.reason = ("%s -- %s" % (exc, artifact.reason)).strip(" -")
+
+        # ---- T016/T045a: wire measurements -> registry -> verdict -------
+        # FR-109 meta-rule: asserted BOTH before the verdict is computed AND
+        # again before the artifact is flushed.
+        #
+        # T045a: the context is built from ``measured``, so every guard whose
+        # input this run actually took now reports pass or fail. Anything the run
+        # did NOT measure is simply absent from the dict and keeps RunContext's
+        # None default, which reports ``not-evaluated`` -- honestly. Handing a
+        # guard an empty container instead would let it report all-zeros and pass
+        # a project it never opened, which is the trap RunContext's own docstring
+        # names and the reason the fields default to None rather than to {}.
+        guard_results = run_all_guards(build_run_context(source_name, measured))
+        artifact.guards = guard_block_as_dict(guard_results)
+        artifact.guard_inputs_measured = sorted(measured)
+        assert_guard_block_complete(artifact.guards)
+        artifact.verdict = verdict_for_guard_results(guard_results)
+        artifact.exit_code = exit_code_for(artifact.verdict)
+        assert_guard_block_complete(artifact.guards)
 
         artifact.finished_at = time.time()
         flush_artifact(artifact, artifacts_dir)
@@ -1172,6 +745,34 @@ def run_one_project(
 # ===========================================================================
 # CLI
 # ===========================================================================
+
+def _preflight_gate(args) -> Optional[int]:
+    """FR-124/SC-008: performed ONCE at startup, BEFORE any restore or write.
+
+    Returns an exit code when the run must refuse, or None to proceed. There
+    is no third outcome: FR-132 forbids a best-effort degradation and FR-133
+    forbids selecting a different runtime path around a mismatch.
+    """
+    result = run_preflight(Path(args.contracts_dir))
+    if result.ok:
+        return None
+    print(format_diff_report(result, max_rows=getattr(args, "max_console_rows", None)))
+    artifact_path = write_preflight_artifact(result, Path(args.artifacts_dir))
+    print("[ARTIFACT] %s" % artifact_path)
+    print("[REFUSED] capability preflight mismatch -- no project database was "
+          "touched, no restore and no write attempted (SC-008).")
+    return result.exit_code
+
+
+def _pinned_baseline_from_args(args):
+    """FR-170: build the pinned baseline from the caller's EXPLICIT --backup
+    and --baseline-sha256. Absent both, the run has no baseline to pin and
+    ``run_one_project`` refuses -- there is deliberately no fallback here
+    that would select one."""
+    if not getattr(args, "backup", None):
+        return None
+    return pin_baseline(args.backup, args.baseline_sha256)
+
 
 def _cmd_list(args) -> int:
     corpus = enumerate_corpus(args.projects_root)
@@ -1194,22 +795,79 @@ def _cmd_project(args) -> int:
     corpus = enumerate_corpus(args.projects_root)
     frozen = freeze_source_manifest(corpus)
     if args.source not in frozen:
-        print("[ERROR] %r is not in the frozen admitted-source manifest" % args.source)
-        return 2
+        # T013/T016: a project this run never attempts (excluded from the
+        # frozen admitted-source manifest) MUST STILL get a written
+        # artifact naming it SKIPPED (FR-151/FR-188) -- never a bare CLI
+        # error with nothing recorded to back it. No FLEx project is
+        # opened on this path.
+        reason = ("[FR-004/FR-006] %r is not in the frozen admitted-source "
+                  "manifest -- no work attempted" % (args.source,))
+        print("[SKIP] %s" % reason)
+        artifact_path = write_skipped_artifact(
+            args.source, reason=reason, run_intent=args.intent,
+            artifacts_dir=Path(args.artifacts_dir),
+        )
+        print("[ARTIFACT] %s" % artifact_path)
+        print("[RESULT] %s -> %s (verdict=VACUOUS, exit=%d)"
+              % (args.source, STATUS_SKIPPED, exit_code_for("VACUOUS")))
+        return exit_code_for("VACUOUS")
     allowlist = tuple(args.allowlist) if args.allowlist else DEFAULT_ALLOWLIST
+    refused = _preflight_gate(args)
+    if refused is not None:
+        return refused
     try:
         artifact = run_one_project(
             args.source, target_name=args.target, frozen_sources=frozen,
             allowlist=allowlist, run_intent=args.intent,
-            backup_path=args.backup, projects_root=args.projects_root,
+            pinned_baseline=_pinned_baseline_from_args(args),
+            exclude_categories=args.exclude_categories,
+            diagnostic_level=args.diagnostic_level,
+            projects_root=args.projects_root,
             artifacts_dir=Path(args.artifacts_dir),
+            contracts_dir=Path(args.contracts_dir),
         )
-    except (WriteSafetyError, SourceTamperError) as exc:
+    except (WriteSafetyError, SourceTamperError, EvidenceProvenanceError) as exc:
         # These MUST abort the whole run -- re-raise after making that loud.
         print("[ABORT-WHOLE-RUN] %s: %s" % (type(exc).__name__, exc))
         raise
-    print("[RESULT] %s -> %s" % (args.source, artifact.status))
-    return 0 if artifact.status == "passed" else 1
+    print("[RESULT] %s -> %s (verdict=%s, exit=%d)"
+          % (args.source, artifact.status, artifact.verdict, artifact.exit_code))
+    return artifact.exit_code
+
+
+def compose_batch(frozen, ledger, *, only, batch_size, canary):
+    """Decide WHICH sources this batch runs, and say where that came from.
+
+    Two compositions, and the difference is recorded rather than inferred:
+
+    * ``only`` -- FR-160: the caller dictates the batch, named source by named
+      source, in the order given. Batch 1's composition is specified as exactly
+      the three pilot projects with prior recorded historical results, so it
+      must never be a by-product of corpus enumeration order or of whatever the
+      ledger happens to hold. ``batch_size`` does NOT truncate an explicit
+      composition -- a caller who names four sources and leaves the default
+      size of three would otherwise silently measure three.
+    * derived -- the ledger's not-yet-passed list, capped at ``batch_size``.
+
+    ``canary`` is prepended when absent under EITHER composition: FR-159 wants
+    it re-run in every batch regardless of its ledger status, and naming a
+    composition is not a way around that. A no-op whenever the composition
+    already contains it, as batch 1's does.
+
+    Returns ``(batch, composition_label)`` and reads nothing but the ledger.
+    """
+    if only:
+        batch = list(only)
+        composition = "explicit (--only)"
+    else:
+        batch = [n for n in frozen if (ledger.get(n) or {}).get("status") != "passed"]
+        if canary and canary not in batch:
+            batch = [canary] + batch
+        batch = batch[:batch_size]
+        composition = "derived (ledger pending, size %d)" % batch_size
+    if canary and canary not in batch:
+        batch = [canary] + batch
+    return batch, composition
 
 
 def _cmd_batch(args) -> int:
@@ -1219,6 +877,15 @@ def _cmd_batch(args) -> int:
     skeleton runs workers SERIALLY when --workers=1 (the FR-031 default);
     it refuses to do otherwise without a recorded concurrency-trial
     artifact (assert_concurrency_gate_satisfied)."""
+    refused = _preflight_gate(args)
+    if refused is not None:
+        return refused
+    # FR-149: the driver, the capability expectation and the ledger this
+    # verdict will depend on must be tracked and un-ignored BEFORE any work.
+    assert_evidence_base_tracked({
+        EVIDENCE_KIND_DRIVER: [Path(__file__).resolve()],
+        EVIDENCE_KIND_CAPABILITY: [Path(args.contracts_dir) / "flexicon-capability.json"],
+    })
     assert_concurrency_gate_satisfied(args.workers)
     corpus = enumerate_corpus(args.projects_root)
     frozen = freeze_source_manifest(corpus)
@@ -1229,19 +896,26 @@ def _cmd_batch(args) -> int:
     manifest_fp = capture_source_manifest(frozen, args.projects_root)
     print("[INFO] captured fingerprints for %d frozen sources" % len(manifest_fp))
 
-    ledger = Ledger(Path(args.artifacts_dir) / "ledger.json")
-    pending = [n for n in frozen if (ledger.get(n) or {}).get("status") != "passed"]
-    if args.canary and args.canary not in pending:
-        pending = [args.canary] + pending  # FR-159: canary re-runs every batch
-    batch = pending[: args.batch_size]
+    ledger = Ledger(Path(args.ledger))  # FR-149: tracked, not a runtime artifact
+    batch, composition = compose_batch(
+        frozen, ledger, only=args.only, batch_size=args.batch_size,
+        canary=args.canary,
+    )
+    unknown = [n for n in batch if n not in frozen]
 
-    print("[INFO] batch of %d: %s" % (len(batch), ", ".join(batch)))
+    print("[INFO] batch of %d, composition %s: %s"
+          % (len(batch), composition, ", ".join(batch)))
+    if unknown:
+        # Not an abort: FR-151/FR-188 want every named-but-unattempted project
+        # to reach a WRITTEN artifact saying SKIPPED, which the worker does.
+        print("[WARN] not in the frozen admitted-source manifest, will be "
+              "recorded SKIPPED rather than attempted: %s" % ", ".join(unknown))
     exit_code = 0
     for i, source in enumerate(batch):
         target = target_pool[i % len(target_pool)]
         row = next((e for e in corpus if e.project == source), None)
         try:
-            assert_memory_admits(row.fwdata_mb if row else 0.0)
+            assert_memory_admits_project(source, row.fwdata_mb if row else 0.0)
         except MemoryShortfall as exc:
             print("[WAIT] %s: %s (admitting fewer workers / waiting is an "
                   "operational concern, NOT a safety abort)" % (source, exc))
@@ -1256,7 +930,12 @@ def _cmd_batch(args) -> int:
         if args.projects_root:
             cmd += ["--projects-root", args.projects_root]
         cmd += ["--artifacts-dir", args.artifacts_dir, "--runtime-dir", args.runtime_dir,
-                "project", "--source", source, "--target", target, "--intent", args.intent]
+                "--contracts-dir", args.contracts_dir, "--ledger", args.ledger,
+                "project", "--source", source, "--target", target, "--intent", args.intent,
+                "--exclude-categories", ",".join(args.exclude_categories),
+                "--diagnostic-level", args.diagnostic_level]
+        if args.backup:
+            cmd += ["--backup", args.backup, "--baseline-sha256", args.baseline_sha256]
         log_dir = Path(args.runtime_dir) / "logs"
         log_dir.mkdir(parents=True, exist_ok=True)
         log_path = log_dir / ("%s.log" % re.sub(r"[^A-Za-z0-9._ -]", "_", source))
@@ -1276,34 +955,170 @@ def _cmd_batch(args) -> int:
     return exit_code
 
 
-def main() -> int:
-    ap = argparse.ArgumentParser(description=__doc__)
+def _cmd_preflight(args) -> int:
+    """T024/FR-124/SC-008: introspect the dependency against the pinned
+    fingerprint and exit. Touches no database, performs no restore and no
+    write. Exit 0 on match, 6 with a field-by-field diff on mismatch."""
+    result = run_preflight(Path(args.contracts_dir))
+    print(format_diff_report(result, max_rows=args.max_console_rows))
+    artifact_path = write_preflight_artifact(result, Path(args.artifacts_dir))
+    print("[ARTIFACT] %s" % artifact_path)
+    return result.exit_code
+
+
+class _ArgumentErrorExits5(argparse.ArgumentParser):
+    """Contracts/sweep-cli.md, "Exit codes": there is no separate CLI-usage
+    exit-code space. An argument error raises BEFORE any verdict exists and
+    exits 5 (``HARNESS_ERROR``), since a run that could not be configured
+    measured nothing.
+
+    argparse's own default is exit 2, which collides with ``NON_IDEMPOTENT``
+    -- a misconfigured invocation would otherwise be indistinguishable from a
+    real second-transfer divergence in a batch driver reading exit codes.
+    """
+
+    def error(self, message):
+        self.print_usage(sys.stderr)
+        sys.stderr.write("[HARNESS_ERROR] %s: %s\n" % (self.prog, message))
+        raise SystemExit(exit_code_for("HARNESS_ERROR"))
+
+
+def _split_categories(value: str) -> list:
+    """``--exclude-categories`` is REQUIRED AND EXPLICIT, and may legitimately
+    be EMPTY. An empty string therefore means "exclude nothing", stated
+    deliberately -- never a default argument that silently excludes STEMS the
+    way ``full_run.build_full_selection`` does on its own."""
+    if value is None:
+        raise argparse.ArgumentTypeError(
+            "--exclude-categories must be given explicitly (pass '' to exclude "
+            "nothing); it is never defaulted"
+        )
+    return [c.strip() for c in value.split(",") if c.strip()]
+
+
+def _cmd_negative_controls(args) -> int:
+    """T034: run the seeded-defect suite and write the durable negative-control
+    artifact, stamping each guard's module content hash (FR-178..FR-181).
+
+    Touches no database: every seeded defect is a hand-built ``RunContext``, so
+    this subcommand is safe to run anywhere and needs no target project.
+    """
+    import datetime
+
+    recorded_at = args.recorded_at or datetime.date.today().isoformat()
+    outcomes = run_negative_controls()
+
+    print("[INFO] seeded-defect suite: %d guard(s)" % len(outcomes))
+    for o in outcomes:
+        flag = "UNFALSIFIABLE" if o.unfalsifiable else "ok"
+        print("  %-32s %-13s produced %-18s (%s)"
+              % (o.guard, flag, o.verdict_produced, o.result))
+
+    path = write_negative_controls(
+        outcomes,
+        contracts_dir=Path(args.contracts_dir),
+        recorded_at=recorded_at,
+    )
+    print("[INFO] wrote %s" % path)
+
+    # FR-181: a guard no constructible defect can fail is itself a defect in
+    # the sweep. That is a harness error, not a passing run.
+    unfalsifiable = [o.guard for o in outcomes if o.unfalsifiable]
+    if unfalsifiable:
+        print("[ERROR] %d guard(s) could not be made to fail by their seeded "
+              "defect; per FR-181 this is a defect in the sweep, never evidence "
+              "of robustness: %r" % (len(unfalsifiable), unfalsifiable))
+        return exit_code_for("HARNESS_ERROR")
+    print("[OK] every guard was demonstrated capable of failing")
+    return 0
+
+
+def main(argv=None) -> int:
+    ap = _ArgumentErrorExits5(description=__doc__)
     ap.add_argument("--projects-root")
-    ap.add_argument("--artifacts-dir", default=str(DEFAULT_ARTIFACTS_DIR))
+    ap.add_argument("--artifacts-dir", default=str(DEFAULT_ARTIFACTS_DIR),
+                     help="per-run result artifacts (evidence, not reviewed source)")
     ap.add_argument("--runtime-dir", default=str(DEFAULT_RUNTIME_DIR))
     ap.add_argument("--allowlist", nargs="*", default=None,
                      help="anchored regex patterns; default: this sweep's own "
                           "Target[0-9]* pool only")
+    # ---- T024 NEW globals -------------------------------------------------
+    ap.add_argument("--contracts-dir", default=str(DEFAULT_CONTRACTS_DIR),
+                     help="where the tracked rosters, allowlist and capability "
+                          "fingerprint are read from")
+    ap.add_argument("--ledger", default=str(DEFAULT_LEDGER_PATH),
+                     help="the tracked per-project status ledger")
+    ap.add_argument("--max-console-rows", type=int, default=None,
+                     help="truncate CONSOLE listings only, always stating the "
+                          "omitted count; the artifact never truncates (FR-144)")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     p_list = sub.add_parser("list", help="enumerate the corpus")
     p_list.set_defaults(func=_cmd_list)
 
+    p_preflight = sub.add_parser(
+        "preflight", help="capability check: introspect the dependency against "
+                          "the pinned fingerprint and exit (touches no database)")
+    p_preflight.set_defaults(func=_cmd_preflight)
+
     p_project = sub.add_parser("project", help="worker mode: run one project")
     p_project.add_argument("--source", required=True)
     p_project.add_argument("--target", required=True)
     p_project.add_argument("--backup", default=None)
+    p_project.add_argument("--baseline-sha256", default=None,
+                            help="REQUIRED with --backup. A run that cannot name "
+                                 "and hash its baseline does not start; there is "
+                                 "no newest-archive glob fallback (FR-170)")
     p_project.add_argument("--intent", required=True, choices=VALID_RUN_INTENTS)
+    p_project.add_argument("--exclude-categories", required=True,
+                            type=_split_categories,
+                            help="EXPLICIT, possibly empty (pass ''). A non-empty "
+                                 "value forces COVERAGE_REDUCED")
+    p_project.add_argument("--diagnostic-level", required=True,
+                            choices=DIAGNOSTIC_LEVELS,
+                            help="set explicitly and recorded; never setdefault "
+                                 "from the environment")
     p_project.set_defaults(func=_cmd_project)
 
     p_batch = sub.add_parser("batch", help="driver mode: admit and run one batch")
     p_batch.add_argument("--batch-size", type=int, default=3)
     p_batch.add_argument("--workers", type=int, default=1)
     p_batch.add_argument("--canary", default=CANARY_PROJECTS[0])
+    p_batch.add_argument("--only", nargs="*", default=None, metavar="SOURCE",
+                          help="FR-160: compose the batch from EXACTLY these "
+                               "named sources, in this order, instead of "
+                               "deriving it from the ledger's pending list. "
+                               "--batch-size does not truncate it; --canary is "
+                               "still prepended if absent (FR-159).")
     p_batch.add_argument("--intent", required=True, choices=VALID_RUN_INTENTS)
+    p_batch.add_argument("--backup", default=None)
+    p_batch.add_argument("--baseline-sha256", default=None)
+    p_batch.add_argument("--exclude-categories", required=True,
+                          type=_split_categories)
+    p_batch.add_argument("--diagnostic-level", required=True,
+                          choices=DIAGNOSTIC_LEVELS)
     p_batch.set_defaults(func=_cmd_batch)
 
-    args = ap.parse_args()
+    p_controls = sub.add_parser(
+        "negative-controls",
+        help="run the seeded-defect suite and write the durable negative-control "
+             "artifact, stamping each guard's module content hash (touches no "
+             "database)")
+    p_controls.add_argument("--recorded-at", default=None,
+                            help="ISO date stamped onto each control record; "
+                                 "defaults to today")
+    p_controls.set_defaults(func=_cmd_negative_controls)
+
+    args = ap.parse_args(argv)
+
+    # FR-170: --baseline-sha256 is required WITH --backup. Enforced here rather
+    # than by argparse because argparse has no native "required-with" relation;
+    # routing it through ap.error() keeps the exit code at 5 (HARNESS_ERROR).
+    if getattr(args, "backup", None) and not getattr(args, "baseline_sha256", None):
+        ap.error("--baseline-sha256 is REQUIRED with --backup (FR-170: a "
+                  "baseline is pinned by content hash by the caller; the sweep "
+                  "never selects one by recency or directory scan)")
+
     return args.func(args)
 
 

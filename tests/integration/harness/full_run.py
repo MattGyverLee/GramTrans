@@ -14,9 +14,14 @@ build_full_selection(exclude=frozenset({GrammarCategory.STEMS})) -> Selection
     Every GrammarCategory member set True except those in ``exclude``. All
     pick-sets left empty (engine walks all POSes / transfer-all leaf items).
 
-run_full_transfer(source_name, target_name, target_path) -> (RunPlan, RunReport)
+run_full_transfer(source_name, target_name, target_path, exclude=None)
+        -> (RunPlan, RunReport)
     Opens source RO, binds target, compute_preview, execute_move. Sets the
     GRAMTRANS_DEBUG env var first so export/persist diagnostics fire.
+    ``exclude`` is a frozenset of GrammarCategory MEMBERS; None keeps
+    build_full_selection's own default (which excludes STEMS). Pass an explicit
+    set when the caller must be able to state, on its artifact, what actually
+    ran -- see the note on that function.
 
 reopen_and_count(target_name) -> dict[str, int]
     Reopens the target fresh (read-only) and returns a few cheap, robust
@@ -135,12 +140,29 @@ def run_full_transfer(
     source_name: str,
     target_name: str,
     target_path: str,
+    exclude: Optional[frozenset] = None,
 ) -> Tuple[RunPlan, RunReport]:
-    """Run a full (all-categories-except-STEMS) transfer end to end.
+    """Run a full (all-categories-except-STEMS by default) transfer end to end.
 
     Sets GRAMTRANS_DEBUG=1 (so export/persist diagnostics fire), opens the
     source read-only, binds the target for write, computes the preview plan,
     and executes the move. Returns ``(plan, report)``.
+
+    ``exclude`` is a frozenset of ``GrammarCategory`` MEMBERS (not value
+    strings) to leave out of the selection. ``None`` keeps this function's
+    historical behaviour -- ``build_full_selection``'s own default, which
+    excludes ``STEMS``.
+
+    WHY THIS PARAMETER EXISTS (feature 035 T045a): before it, this function
+    built its selection with ``build_full_selection()`` and no arguments, so a
+    caller that computed its own exclusion set could not apply it. The 035 sweep
+    did exactly that -- it built a selection to RECORD ``coverage_categories``
+    on every artifact, then called this function, which silently used a
+    different selection. The artifact therefore described a run that did not
+    happen. FR-135 forbids expressing an exclusion "as an invisible default
+    argument that a reader of the results cannot see", and FR-134 forbids
+    inheriting this harness's narrower STEMS exclusion unexamined. Both required
+    the exclusion to become a parameter.
 
     The source handle is closed in a finally block; the target handle is
     closed there too (execute_move never closes the caller's handle -- on the
@@ -163,7 +185,8 @@ def run_full_transfer(
         )
         context = api.bind_target(stub, choice)
 
-        selection = build_full_selection()
+        selection = (build_full_selection() if exclude is None
+                     else build_full_selection(exclude=exclude))
         # Map the source's default vernacular WS -> the target's default
         # vernacular WS (identity for the default vern). Not customizable: the
         # coverage/full-run harness always uses the default vernacular on both
