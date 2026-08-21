@@ -126,15 +126,54 @@ def test_dependency_kind_member_exists() -> None:
     assert DependencyKind.MSA_TO_FEAT_STRUC_TYPE.value == "msa_to_feat_struc_type"
 
 
-def test_registry_still_ships_empty() -> None:
-    """T034 deliberately did NOT register itself: `verified_by` must name a
-    real audit, and no audit of these edge sets against a live project exists
-    yet. Registration belongs to the Phase 7 closure tasks (T067-T069)."""
-    assert categories.CLOSURE_EDGES_VERIFIED == {}
+def test_t034s_edge_is_registered_for_exactly_one_of_its_four_sources() -> None:
+    """T034 emitted the `TypeRA` arrow from FOUR kinds of owner -- MSAs (via
+    AFFIXES and STEMS), `IPartOfSpeech.DefaultFeaturesOA`, `IPhPhoneme` and
+    `IPhNCFeatures` -- and deliberately registered NONE of them, because
+    `verified_by` must name a real audit and none existed.
+
+    T067 audited ONE of them: the AFFIXES producer, on two live corpora. So
+    exactly one row exists, and the others are still unregistered -- which is
+    not a technicality but the mechanism: `DependencyKind` keys are unique, so
+    a second source would need its own member and therefore its own audit.
+
+    STEMS is asserted absent explicitly. It shares `_entry_feat_struc_deps`
+    with AFFIXES and would very likely audit identically, and "would likely
+    audit identically" is precisely the reasoning FR-018 refuses to accept.
+    """
+    row = categories.CLOSURE_EDGES_VERIFIED[
+        DependencyKind.MSA_TO_FEAT_STRUC_TYPE]
+    assert row["category"] is GrammarCategory.AFFIXES
+    assert row["dependency_category"] is GrammarCategory.FEATURE_STRUCT_TYPES
+    assert row["producer"] is categories.affixes_feat_struc_type_dependencies
+    # The evidence has to name the audit, not gesture at one.
+    assert "audit038_closure_edges" in row["verified_by"]
+    assert "Mbugwe LizzieHC practice" in row["verified_by"]
+    assert "Ejagham Mini" in row["verified_by"]
+
+    # Unregistered sources contribute nothing, by the same mechanism as before
+    # T067: `closure_dependencies_for` never calls an unregistered producer.
     dep_fn = categories.closure_dependencies_for(context=None)
-    for category in (GrammarCategory.AFFIXES, GrammarCategory.STEMS,
-                     GrammarCategory.GRAM_CATEGORIES, GrammarCategory.PHONEMES):
+    for category in (GrammarCategory.STEMS, GrammarCategory.GRAM_CATEGORIES,
+                     GrammarCategory.PHONEMES):
         assert dep_fn(category, TYPE_G) == ()
+
+
+def test_the_inflection_feature_half_is_still_not_registered() -> None:
+    """`_entry_feat_struc_deps` emits TWO relationships -- the `TypeRA` arrow
+    and the `FeatureSpecsOC` -> `FeatureRA`/`ValueRA` arrows -- and only the
+    first is registered.
+
+    That asymmetry is the whole reason T067 needed narrow producers. The
+    INFLECTION_FEATURES half is live and narrow but its far endpoints are
+    mostly `IFsSymFeatVal` symbolic values, which
+    `inflection_features_enumerate_source` never yields (it walks
+    `FeatureGetAll()`, the DEFNS). Registering it would put a pulled-in item
+    into a plan that no category can enumerate, plan or deselect. Filed as
+    T089.
+    """
+    assert DependencyKind.MSA_TO_INFL_FEATURE \
+        not in categories.CLOSURE_EDGES_VERIFIED
 
 
 # ===========================================================================

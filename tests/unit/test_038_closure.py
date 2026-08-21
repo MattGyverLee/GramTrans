@@ -341,10 +341,85 @@ def test_a_row_without_evidence_cannot_influence_a_plan(monkeypatch) -> None:
         _build(monkeypatch, _registry(spy, verified_by=""), spy)
 
 
-def test_the_shipped_registry_leaves_this_gate_dormant() -> None:
-    """The canary for Phase 7's landing order: T067-T069 register the three
-    real edges one at a time, each behind its own live audit and census run.
-    Until the first of them lands, the shipped registry is empty and every
-    producer is inert. This test is expected to CHANGE when T067 lands -- it
-    is not expected to be deleted."""
-    assert categories_mod.CLOSURE_EDGES_VERIFIED == {}
+def test_the_shipped_registry_holds_only_what_was_audited() -> None:
+    """The Phase 7 landing-order canary, updated BY T067 rather than deleted.
+
+    Its predecessor asserted the registry was empty and said in so many words
+    that it "is expected to CHANGE when T067 lands". T067 landed two rows, so
+    this is that change: an exact set, not a non-emptiness check.
+
+    An exact set is the point. A `>= 1 row` assertion would pass on a registry
+    that had quietly grown a third row nobody audited, which is the one thing
+    FR-018 must never allow. `MSA_TO_INFL_FEATURE` is named in the refusal set
+    on purpose: its producer works and its edges are live, and it is STILL not
+    registrable because 30 of 34 distinct far GUIDs on Mbugwe (8 of 10 on
+    Ejagham Mini) are `IFsSymFeatVal` symbolic values that
+    `inflection_features_enumerate_source` never yields (T089).
+    """
+    assert set(categories_mod.CLOSURE_EDGES_VERIFIED) == {
+        DependencyKind.AFFIX_TO_POS,
+        DependencyKind.MSA_TO_FEAT_STRUC_TYPE,
+    }
+    assert DependencyKind.MSA_TO_INFL_FEATURE not in \
+        categories_mod.CLOSURE_EDGES_VERIFIED
+
+
+def test_every_registered_row_names_a_narrow_producer() -> None:
+    """The composite-producer trap T067 had to avoid, asserted rather than
+    described.
+
+    `affixes_dependencies` returns GRAM_CATEGORIES, FEATURE_STRUCT_TYPES and
+    INFLECTION_FEATURES edges from one call. Registering it under a single
+    `DependencyKind` would file two unaudited relationships under a third's
+    `verified_by` -- so no row may name it, and every row must declare an
+    EXPLICIT `dependency_category` (a `None` there is the `(AFFIXES, None)`
+    wildcard in `preview._closure_kind_lookup`, which swallows its own
+    siblings).
+    """
+    for kind, entry in categories_mod.CLOSURE_EDGES_VERIFIED.items():
+        assert entry["producer"] is not categories_mod.affixes_dependencies, kind
+        assert entry["dependency_category"] is not None, kind
+        assert isinstance(entry["dependency_category"], GrammarCategory), kind
+        assert entry["producer"].__name__.startswith("affixes_"), kind
+
+
+def test_an_unregistered_far_category_from_a_registered_source_raises() -> None:
+    """Why the narrow producers filter STRICTLY, stated as a consequence.
+
+    `_feat_struc_deps` classifies a `TypeRA` by OWNERSHIP across BOTH feature
+    systems, so an MSA whose structure pointed into `PhFeatureSystemOA` would
+    hand back a `(PHON_FEAT_TYPES, guid)` edge. AFFIXES is a registered source
+    but that far category is not a registered relationship, so
+    `_materialise_closure_edges` RAISES -- which is correct (an edge no row
+    authorises must not reach a plan) and is also why the producers drop such
+    edges rather than passing them on and gambling on the raise.
+
+    Neither corpus produced one (`foreign_edges == 0` on both), so this guard
+    is live and currently unexercised by real data. That is exactly the kind of
+    thing worth pinning rather than assuming.
+    """
+    from gramtrans.Lib import preview as preview_module
+
+    affix = (GrammarCategory.AFFIXES, "a" * 8)
+    phon_type = (GrammarCategory.PHON_FEAT_TYPES, "b" * 8)
+    with pytest.raises(ValueError, match="FR-018"):
+        preview_module._materialise_closure_edges(
+            visit_order=(affix, phon_type),
+            pulled_in_by={affix: (), phon_type: (affix,)},
+            registry=categories_mod.CLOSURE_EDGES_VERIFIED,
+        )
+
+
+def test_the_registered_rows_do_not_collide_in_the_kind_lookup() -> None:
+    """Two rows on the same source category is legal ONLY while their
+    `dependency_category` values differ -- `_closure_kind_lookup` keys on the
+    pair and RAISES on a collision. Both T067 rows are `category=AFFIXES`, so
+    this is the assertion that keeps that legal."""
+    from gramtrans.Lib import preview as preview_module
+
+    lookup = preview_module._closure_kind_lookup(
+        categories_mod.CLOSURE_EDGES_VERIFIED)
+    assert set(lookup) == {
+        (GrammarCategory.AFFIXES, GrammarCategory.GRAM_CATEGORIES),
+        (GrammarCategory.AFFIXES, GrammarCategory.FEATURE_STRUCT_TYPES),
+    }

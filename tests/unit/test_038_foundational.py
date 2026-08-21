@@ -470,14 +470,41 @@ class TestNaturalKeyRosterEntryType:
 # ---------------------------------------------------------------------------
 
 class TestClosureRegistryShipsEmpty:
-    def test_registry_is_empty_at_rest(self):
-        """Emptiness IS the safety property: nothing registered means no
-        producer's unaudited edge set can reach a plan."""
-        assert categories_mod.CLOSURE_EDGES_VERIFIED == {}
+    def test_only_audited_relationships_are_registered(self):
+        """Phase 2's safety property, restated for a registry that is no
+        longer empty.
 
-    def test_callable_returns_nothing_for_every_category(self):
+        Emptiness WAS the property while nothing had been audited. T067
+        audited two relationships against two live corpora and registered
+        those two, so the property is now the exact set: anything else in here
+        would be a producer's unaudited edge set reaching a plan, which is the
+        failure FR-018 exists to prevent. Every row must also carry evidence,
+        which `_closure_registry_by_category` enforces -- calling it here is
+        what makes that enforcement cover the SHIPPED registry and not only
+        the hand-built ones below.
+        """
+        registry = categories_mod.CLOSURE_EDGES_VERIFIED
+        assert set(registry) == {
+            DependencyKind.AFFIX_TO_POS,
+            DependencyKind.MSA_TO_FEAT_STRUC_TYPE,
+        }
+        categories_mod._closure_registry_by_category(registry)
+        for kind, entry in registry.items():
+            assert entry["verified_by"], kind
+
+    def test_callable_returns_nothing_for_an_unregistered_category(self):
+        """An unregistered relationship still contributes nothing -- the
+        guarantee that let two rows go live without switching on the other 21
+        producers.
+
+        AFFIXES is excluded because it IS registered now; a duck-typed context
+        makes its enumeration empty anyway, but asserting `()` for it would be
+        asserting the fake rather than the gate.
+        """
         dep_fn = categories_mod.closure_dependencies_for(_ctx())
         for cat in GrammarCategory:
+            if cat is GrammarCategory.AFFIXES:
+                continue
             assert dep_fn(cat, "any-guid") == ()
 
     def test_registry_rejects_an_entry_without_evidence(self):

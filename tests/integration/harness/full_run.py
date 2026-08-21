@@ -162,6 +162,7 @@ def run_full_transfer(
     exclude: Optional[frozenset] = None,
     ws_mapping_mode: str = "default-vernacular",
     report_path: Optional[str] = None,
+    preview_only: bool = False,
 ) -> Tuple[RunPlan, RunReport]:
     """Run a full (all-categories-except-STEMS by default) transfer end to end.
 
@@ -194,6 +195,16 @@ def run_full_transfer(
         it on disk because `census run --run-report` is a separate process:
         without it the post-transfer census cannot attribute a single match and
         every out-of-scope class stays in `unexplained_shortfall`.
+    ``preview_only``
+        Stop after `compute_preview` and return ``(plan, None)`` -- NO
+        `execute_move`, so nothing is written. Added for feature 038 T067,
+        which has to compare the SAME plan built twice (once with
+        `CLOSURE_EDGES_VERIFIED` live, once with it emptied) to establish that
+        registering a closure edge added edges to the plan and changed nothing
+        else. Building the plan through this function rather than a second
+        hand-rolled copy of the writing-system setup above is the point: two
+        plans are only comparable if everything except the registry was
+        identical, and a duplicated harness cannot promise that.
     """
     # Ensure the export/persist diagnostics fire for this run.
     os.environ.setdefault(DEBUG_ENV, "1")
@@ -260,6 +271,12 @@ def run_full_transfer(
                 % (state,)
             )
         _dump_plan_composition(plan)
+
+        if preview_only:
+            # Principle III: Preview writes nothing, so there is nothing to
+            # flush and no report to build. The finally block still closes
+            # both handles.
+            return plan, None
 
         report = api.execute_move(context, plan)
         if report_path is not None:

@@ -47,13 +47,34 @@ that project's data. `Mbugwe LizzieHC practice` (255 entries, 279 MSAs) and
 `Ejagham Mini` (252 entries, 247 MSAs) return identical verdicts on all five
 edges, which makes it a property of the producer.
 
-WHAT IS STILL NOT REGISTERED. T088 made the producers read. It did NOT
-register anything: `CLOSURE_EDGES_VERIFIED` is still empty, so no edge
-influences a plan yet, and T067 still owes the member-split decision --
-`affixes_dependencies` returns a MIXED edge set (measured: gram_categories,
-feature_struct_types and inflection_features all in one return value), which a
-single-`DependencyKind` registry row would mislabel under one `verified_by`.
-The counts asserted here are what make that concrete rather than theoretical.
+WHAT T067 REGISTERED, AND WHAT IT REFUSED A SECOND TIME.
+
+T088 made the producers read. It registered nothing, because "the producer
+works" is not "the edge is verified" -- and because `affixes_dependencies`
+returns a MIXED edge set (measured: gram_categories, feature_struct_types and
+inflection_features all in one return value) that a single-`DependencyKind`
+registry row would mislabel under one `verified_by`.
+
+T067 resolved that with NARROW per-relationship producers and then audited each
+one separately -- the `relationships` block of the snapshot. Per relationship it
+measures three things a composite count cannot: `foreign_edges` (is the producer
+actually narrow?), and whether each distinct far GUID resolves against the far
+category's OWN `enumerate_source` as an enumerable piece, as a co-created owned
+value, or not at all.
+
+    AFFIX_TO_POS            144 / 88 edges, foreign 0, unresolved 0  REGISTERED
+    MSA_TO_FEAT_STRUC_TYPE   73 / 17 edges, foreign 0, unresolved 0  REGISTERED
+    MSA_TO_INFL_FEATURE     206 / 34 edges, foreign 0               REFUSED
+
+The refusal is the interesting one, and it is a different defect from T088's.
+The producer is narrow and its edges are live. But of its 34 distinct far GUIDs
+on Mbugwe (10 on Ejagham Mini), only 4 (2) are pieces
+`inflection_features_enumerate_source` yields -- that enumerator walks
+`FeatureGetAll()`, the feature DEFNS. The other 30 (8) are `IFsSymFeatVal`
+SYMBOLIC VALUES, which `inflection_features_dependencies` itself records are
+"co-created in execute_action, not separately planned". A pulled-in ref naming
+a piece no category can enumerate cannot be planned, marked (T070) or
+deselected (T072). Filed as T089; NOT registered.
 """
 from __future__ import annotations
 
@@ -150,18 +171,126 @@ def test_a_cast_is_still_mandatory_at_the_msa_sites(snap) -> None:
         assert row["cast"] > 0
 
 
-@pytest.mark.parametrize("snap", _snapshots(), ids=_ids(_snapshots()))
-def test_nothing_is_registered_on_the_strength_of_this_audit(snap) -> None:
-    """T088 made the producers read; it did not earn anyone a `verified_by`.
+#: The relationships T067 registered, and the one it did not. Keyed by the
+#: `DependencyKind` NAME so the table can be read next to the snapshot's
+#: `relationships` block, which is keyed the same way.
+_REGISTERED = ("AFFIX_TO_POS", "MSA_TO_FEAT_STRUC_TYPE")
+_REFUSED = ("MSA_TO_INFL_FEATURE",)
 
-    Registration is still T067's / T068's / T069's, each behind its own census
-    run. Asserting the registry is empty keeps "the producer works" from
-    silently becoming "the edge is verified" -- which is the substitution
-    FR-018 exists to prevent.
+
+def test_only_the_confirmed_relationships_are_registered() -> None:
+    """THE TEST BOTH REGISTERED ROWS NAME IN THEIR `verified_by`.
+
+    It closes the loop FR-018 depends on: the registry may hold a row only if
+    the committed live measurement says CONFIRMED for that relationship, and
+    must hold no row whose measurement says otherwise. Both directions are
+    asserted, on every corpus, because either one alone is satisfiable by a
+    mistake -- a missing row passes a "registered implies confirmed" check, and
+    a rubber-stamped row passes a "confirmed implies registered" one.
+
+    This is deliberately NOT "the registry is non-empty". A count assertion
+    would pass on a registry that had grown a row nobody measured.
     """
     from gramtrans.Lib import categories
+    from gramtrans.Lib.models import DependencyKind
 
-    assert categories.CLOSURE_EDGES_VERIFIED == {}
+    registered_names = {k.name for k in categories.CLOSURE_EDGES_VERIFIED}
+    assert registered_names == set(_REGISTERED)
+
+    for snap in _snapshots():
+        rels = snap["relationships"]
+        for name in _REGISTERED:
+            assert rels[name]["verdict"] == "CONFIRMED", (
+                name + " is REGISTERED but " + snap["source_project"]
+                + " measured it " + rels[name]["verdict"]
+            )
+        for name in _REFUSED:
+            assert rels[name]["verdict"].startswith("REFUSED"), (
+                name + " measured " + rels[name]["verdict"] + " on "
+                + snap["source_project"] + " -- if that is now CONFIRMED the "
+                "registration decision has to be revisited deliberately, not "
+                "by relaxing this test"
+            )
+            assert getattr(DependencyKind, name) \
+                not in categories.CLOSURE_EDGES_VERIFIED
+
+
+@pytest.mark.parametrize("snap", _snapshots(), ids=_ids(_snapshots()))
+def test_a_confirmed_relationship_means_narrow_and_resolvable(snap) -> None:
+    """What CONFIRMED is allowed to mean, spelled out so the verdict string
+    cannot drift away from the numbers behind it.
+
+    `foreign_edges == 0` is the narrowness half: a producer emitting a second
+    far category would put an unaudited relationship into a plan under this
+    one's `verified_by`. `unresolved == 0` and `resolved_as_owned_value == 0`
+    are the far-endpoint half: every GUID the producer emits must name a piece
+    the far category's own `enumerate_source` yields, or the pulled-in item
+    cannot be planned or deselected.
+    """
+    for name in _REGISTERED:
+        row = snap["relationships"][name]
+        assert row["edges"] > 0, name
+        assert row["foreign_edges"] == 0, name
+        assert row["unresolved"] == 0, (name, row["unresolved_sample"])
+        assert row["resolved_as_owned_value"] == 0, name
+        assert row["resolved_as_piece"] == row["distinct_far_guids"], name
+
+
+@pytest.mark.parametrize("snap", _snapshots(), ids=_ids(_snapshots()))
+def test_the_refused_relationship_is_refused_for_the_recorded_reason(snap) -> None:
+    """The refusal, pinned to its cause rather than to its verdict string.
+
+    `MSA_TO_INFL_FEATURE` is not refused because its producer is broken -- it
+    returns edges, and none of them is foreign. It is refused because most of
+    its far GUIDs are `IFsSymFeatVal` symbolic values that
+    `inflection_features_enumerate_source` never yields. If that ever stops
+    being true, this test fails and the registration decision gets made again
+    on new evidence, which is the correct way for it to change.
+    """
+    row = snap["relationships"]["MSA_TO_INFL_FEATURE"]
+    assert row["edges"] > 0
+    assert row["foreign_edges"] == 0
+    assert row["resolved_as_owned_value"] > 0, (
+        "the refusal rests on far GUIDs that are owned symbolic values; none "
+        "was found, so the recorded reason no longer holds: " + repr(row)
+    )
+    assert row["verdict"] == "REFUSED_FAR_ENDPOINT_NOT_ENUMERABLE"
+
+
+def test_the_per_relationship_counts_are_recorded_per_corpus() -> None:
+    """The narrow-producer figures, pinned like the composite ones above.
+
+    Note they do NOT sum to `affixes_dependencies`' total: that producer is
+    measured over EVERY LexEntry, while these are measured over
+    `affixes_enumerate_source`'s output -- the pieces the registry will
+    actually hand them. The gap is stems, and it is the reason the composite
+    count could not have earned these rows their `verified_by`.
+    """
+    expected = {
+        "Mbugwe LizzieHC practice": {
+            "AFFIX_TO_POS": 144,
+            "MSA_TO_FEAT_STRUC_TYPE": 73,
+            "MSA_TO_INFL_FEATURE": 206,
+        },
+        "Ejagham Mini": {
+            "AFFIX_TO_POS": 88,
+            "MSA_TO_FEAT_STRUC_TYPE": 17,
+            "MSA_TO_INFL_FEATURE": 34,
+        },
+    }
+    got = {
+        snap["source_project"]: {
+            name: snap["relationships"][name]["edges"]
+            for name in expected[snap["source_project"]]
+        }
+        for snap in _snapshots()
+        if snap["source_project"] in expected
+    }
+    assert got == expected, (
+        "narrow-producer edge counts moved: " + repr(got) + " -- re-run "
+        "debug/audit038_closure_edges.py and update this if the change is "
+        "intended"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -260,3 +389,158 @@ def test_the_verdicts_agree_across_corpora() -> None:
         "verdict is a property of the data rather than of the producer: "
         + repr(disagreements)
     )
+
+
+# ---------------------------------------------------------------------------
+# T067's CENSUS -- what registering the two rows actually did to a live plan
+# ---------------------------------------------------------------------------
+#
+# Driver: `debug/run038_t067_census.py` (restores a throwaway target first).
+# Artifacts: `_snapshots/closure-registration-038-t067.json` (the plan
+# measurements) and `_snapshots/census-038-t067-registered.json` (the census
+# run), the latter directly comparable with `census-038-mbugwe-phase6.json` --
+# T063/T064's run over the SAME source, the SAME backup and the SAME full-copy
+# selection, with the registry EMPTY.
+#
+# THE SEED-SEMANTICS FINDING, which the driver's first version got wrong. A
+# FULL COPY carries ZERO closure edges with the registry live, and that is
+# correct: `closure.walk` never records a seed as pulled in, and in a full copy
+# every POS and every `FsFeatStrucType` is a seed in its own right. So a
+# registered edge is observable ONLY under a partial selection -- Phase 7's own
+# Independent Test, "select only affixes". Both selections are asserted below,
+# because each one alone is satisfied by a different mistake: the full copy
+# alone would call a working edge inert, and the narrow one alone could not
+# tell "adds edges" from "changes the plan".
+
+_REG_SNAPSHOT = _SNAPSHOT_DIR / "closure-registration-038-t067.json"
+_CENSUS_POST = _SNAPSHOT_DIR / "census-038-t067-registered.json"
+_CENSUS_PRE = _SNAPSHOT_DIR / "census-038-mbugwe-phase6.json"
+
+
+def _registration() -> dict:
+    if not _REG_SNAPSHOT.is_file():
+        pytest.skip(
+            "no committed registration measurement at " + str(_REG_SNAPSHOT)
+            + " -- produce it with `python debug/run038_t067_census.py`")
+    return json.loads(_REG_SNAPSHOT.read_text(encoding="utf-8"))
+
+
+def test_a_full_copy_carries_no_closure_edges_and_that_is_correct() -> None:
+    """Seed semantics, pinned so nobody reads this 0 as "the rows are inert".
+
+    Every far endpoint of both registered relationships is itself a seed in a
+    full copy, and `closure.walk`'s contract is that an item the user picked
+    directly is never reported as pulled in by another. A non-zero count here
+    would mean the walk started manufacturing edges for items already chosen,
+    which would double-count them in every downstream FR-015 surface.
+    """
+    reg = _registration()
+    assert reg["full_copy"]["registry_live"]["closure"]["total_edges"] == 0
+    assert reg["full_copy"]["registry_empty"]["closure"]["total_edges"] == 0
+
+
+def test_an_affixes_only_plan_carries_the_registered_edges() -> None:
+    """The claim registration actually makes, measured on the one selection
+    that can observe it.
+
+    Both relationships are asserted separately and by far category, because a
+    single total would be satisfied by the POS half working while T034's
+    feature-structure half stayed dead -- the exact state the first audit
+    found. Every edge must be `origin="pulled_in"` (a "chosen" edge here would
+    mean the seed set leaked into the closure) and must carry a non-empty
+    `verified_by` (a registry validated at build time and then losing its
+    evidence on the way to the plan would defeat FR-018 silently).
+    """
+    reg = _registration()
+    live = reg["affixes_only"]["registry_live"]["closure"]
+    assert live["total_edges"] == 217
+    assert set(live["by_kind"]) == {"AFFIX_TO_POS", "MSA_TO_FEAT_STRUC_TYPE"}
+    assert live["by_kind"]["AFFIX_TO_POS"] == {
+        "edges": 144,
+        "far_categories": {"gram_categories": 144},
+        "origins": {"pulled_in": 144},
+        "verified_by_nonempty": True,
+    }
+    assert live["by_kind"]["MSA_TO_FEAT_STRUC_TYPE"] == {
+        "edges": 73,
+        "far_categories": {"feature_struct_types": 73},
+        "origins": {"pulled_in": 73},
+        "verified_by_nonempty": True,
+    }
+    # 217 edges over only 8 distinct dependencies: many affixes share a POS.
+    # That is what makes closure worth having, and it is also why the edge
+    # count and the pulled-in-item count are reported separately.
+    assert live["distinct_pulled_in_refs"] == 8
+    assert live["pulled_in_by_category"] == {
+        "feature_struct_types": 2, "gram_categories": 6}
+
+
+def test_the_edges_come_from_the_registry_and_nowhere_else() -> None:
+    """Emptying the registry must take the edges with it.
+
+    Without this, `test_an_affixes_only_plan_carries_the_registered_edges` is
+    satisfied by any code path that produces closure edges -- including one
+    that ignores `CLOSURE_EDGES_VERIFIED` entirely, which is precisely the
+    fall-through FR-018 forbids.
+    """
+    reg = _registration()
+    assert reg["affixes_only"]["registry_empty"]["closure"]["total_edges"] == 0
+
+
+def test_registration_changed_no_plan_decision_under_either_selection() -> None:
+    """T070 (marking pulled-in items) and T072 (deselecting them) have not
+    landed, so at this stage registration must add EDGES and change nothing
+    else -- not one action, skip or overwrite, under either selection.
+
+    This is the assertion that makes the registration safe to land ahead of
+    T070/T072 rather than a silent change of what gets transferred.
+    """
+    reg = _registration()
+    assert reg["full_copy"]["composition_unchanged_by_registration"] is True
+    assert reg["affixes_only"]["composition_unchanged_by_registration"] is True
+    assert reg["plan_composition_unchanged_by_registration"] is True
+    for scope in ("full_copy", "affixes_only"):
+        assert (reg[scope]["registry_live"]["composition"]
+                == reg[scope]["registry_empty"]["composition"]), scope
+
+
+def test_the_census_is_unchanged_by_the_registration() -> None:
+    """The census T067 owed, expressed as the comparison that makes it mean
+    something.
+
+    A census artifact on its own says only "this transfer lost these objects".
+    The question registration raises is whether it lost DIFFERENT ones, so the
+    post-registration artifact is compared row by row against T063/T064's
+    pre-registration run -- same source, same backup, same full-copy selection,
+    two separately restored targets. Identical class tables and identical
+    totals is the answer: registering the two rows moved no object count.
+
+    The shared `DUPLICATE_IDENTITY` / exit 3 is NOT a US3 regression and is
+    already recorded under T064: `PhNCFeatures` carries 23 duplicate
+    natural-key groups over 66 extra objects, all FLEx-auto-generated
+    "Created automatically for rule ..." classes that the source itself
+    duplicates. Asserting the two runs agree on it keeps that reading intact.
+    """
+    for path in (_CENSUS_PRE, _CENSUS_POST):
+        if not path.is_file():
+            pytest.skip("missing census artifact " + str(path))
+    pre = json.loads(_CENSUS_PRE.read_text(encoding="utf-8"))
+    post = json.loads(_CENSUS_POST.read_text(encoding="utf-8"))
+
+    def table(doc):
+        return {
+            row["class"]: (
+                row["source_count"],
+                row["destination_count_total"],
+                row["destination_count_net"],
+                row["difference"],
+                row["verdict_class"],
+                row["unexplained_shortfall"],
+            )
+            for row in doc["classes"]
+        }
+
+    assert table(post) == table(pre)
+    assert post["totals"] == pre["totals"]
+    assert (post["verdict"], post["exit_code"]) \
+        == (pre["verdict"], pre["exit_code"]) == ("DUPLICATE_IDENTITY", 3)

@@ -104,5 +104,52 @@
     }
   },
   "read_only": true,
+  "relationships": {
+    "AFFIX_TO_POS": {
+      "dependency_category": "gram_categories",
+      "distinct_far_guids": 6,
+      "edges": 144,
+      "foreign_edges": 0,
+      "population": 118,
+      "producer": "categories.affixes_pos_dependencies",
+      "resolved_as_owned_value": 0,
+      "resolved_as_piece": 6,
+      "source_category": "affixes",
+      "task": "T067",
+      "unresolved": 0,
+      "unresolved_sample": [],
+      "verdict": "CONFIRMED"
+    },
+    "MSA_TO_FEAT_STRUC_TYPE": {
+      "dependency_category": "feature_struct_types",
+      "distinct_far_guids": 2,
+      "edges": 73,
+      "foreign_edges": 0,
+      "population": 118,
+      "producer": "categories.affixes_feat_struc_type_dependencies",
+      "resolved_as_owned_value": 0,
+      "resolved_as_piece": 2,
+      "source_category": "affixes",
+      "task": "T067",
+      "unresolved": 0,
+      "unresolved_sample": [],
+      "verdict": "CONFIRMED"
+    },
+    "MSA_TO_INFL_FEATURE": {
+      "dependency_category": "inflection_features",
+      "distinct_far_guids": 34,
+      "edges": 206,
+      "foreign_edges": 0,
+      "population": 118,
+      "producer": "categories.affixes_infl_feature_dependencies",
+      "resolved_as_owned_value": 30,
+      "resolved_as_piece": 4,
+      "source_category": "affixes",
+      "task": "T067",
+      "unresolved": 0,
+      "unresolved_sample": [],
+      "verdict": "REFUSED_FAR_ENDPOINT_NOT_ENUMERABLE"
+    }
+  },
   "source_project": "Mbugwe LizzieHC practice"
 }

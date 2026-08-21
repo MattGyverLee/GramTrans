@@ -34,6 +34,32 @@ HOW IT ANSWERS -- TWO SEPARATE SIGNALS, deliberately not merged.
    counts the edges they hand back. This is the signal that changes when a
    producer is fixed, and it drives the exit code.
 
+3. `relationships` measures ONE RELATIONSHIP AT A TIME -- the T067 addition.
+   Signals 1 and 2 both answer questions about a COMPOSITE producer:
+   `affixes_dependencies` returns GRAM_CATEGORIES, FEATURE_STRUCT_TYPES and
+   INFLECTION_FEATURES edges from a single call. `CLOSURE_EDGES_VERIFIED` is
+   keyed by ONE `DependencyKind` per row and a dict key is unique, so an audit
+   that can only report "the composite returns 1063 edges" cannot earn three
+   separate `verified_by` values -- it would file two unaudited relationships
+   under a third's evidence, which is the substitution FR-018 exists to
+   prevent. So this block calls the NARROW producers
+   (`affixes_pos_dependencies`, `affixes_feat_struc_type_dependencies`,
+   `affixes_infl_feature_dependencies`) over the pieces the registry will
+   actually walk -- `affixes_enumerate_source`, not every LexEntry -- and per
+   relationship measures three things:
+
+     * `foreign_edges`   -- edges of a far category the row does NOT claim.
+       Non-zero means the producer is not narrow and must not be registered.
+     * `unresolved`      -- far GUIDs that the far category's OWN
+       `enumerate_source` never yields. A pulled-in ref that names no
+       enumerable piece cannot be planned, marked (T070) or deselected
+       (T072); registering it would put an unplannable item into a plan.
+     * `resolved`        -- far GUIDs that do resolve. This is the "the edge
+       is correct against a live pair" half of T067's own wording.
+
+   A relationship is CONFIRMED only with `foreign_edges == 0`,
+   `unresolved == 0` and `edges > 0`, on BOTH corpora.
+
 Keeping them apart is a lesson from the first version of this driver, which
 had only signal 1 and was therefore useless for verifying T088's fix -- it
 reported the same DEAD verdict before and after, because it never called a
@@ -304,6 +330,133 @@ def main() -> int:
         "by_far_category": {},
     }
 
+    # ---- T067: ONE RELATIONSHIP AT A TIME
+    #
+    # `producer_output` above is a composite measurement and cannot earn three
+    # separate `verified_by` values. This block calls the NARROW producers over
+    # the pieces `closure_dependencies_for` will actually hand them -- the
+    # AFFIXES category's own `enumerate_source`, not every LexEntry -- and
+    # resolves each far GUID against the far category's own enumerator, which
+    # is the same lookup `_pieces_for` performs during the walk.
+
+    class _AuditContext:
+        """The one attribute `*_enumerate_source` reads off a RunContext.
+
+        A real `RunContext` needs a bound TARGET, and this audit is read-only
+        with no target at all. Every enumerator used here touches
+        `context.source_handle` and nothing else.
+        """
+
+        def __init__(self, handle):
+            self.source_handle = handle
+
+    audit_ctx = _AuditContext(proj)
+    affix_pieces = list(_cats.affixes_enumerate_source(audit_ctx, None) or ())
+
+    def _piece_guids(category):
+        """Lower-cased GUIDs of every piece `category`'s enumerator yields.
+
+        Deliberately the REAL enumerator rather than a hand-rolled LCM walk:
+        the question is whether a pulled-in ref names something this repo can
+        enumerate, plan and deselect, and `enumerate_source` is what decides
+        that.
+        """
+        bundle = _cats.LEAF_CATEGORIES[category]
+        out = set()
+        for piece in bundle["enumerate_source"](audit_ctx, None) or ():
+            g = _cats._guid_str_from(piece)
+            if g:
+                out.add(g.lower())
+        return out
+
+    def _owned_symbolic_value_guids():
+        """GUIDs of the `IFsSymFeatVal`s owned by the enumerated features.
+
+        `inflection_features_enumerate_source` yields feature DEFNS only, and
+        `inflection_features_dependencies` records that the values are
+        "co-created in execute_action, not separately planned". So a value GUID
+        is neither unresolvable-in-the-source nor an enumerable piece: it is a
+        third state, and collapsing it into either would misreport the finding.
+        """
+        out = set()
+        enumerate_source = _cats.LEAF_CATEGORIES[
+            _GC.INFLECTION_FEATURES]["enumerate_source"]
+        for defn in enumerate_source(audit_ctx, None) or ():
+            closed = _cats._cast_lcm(_cats._unwrap_lcm(defn), "IFsClosedFeature")
+            for val in getattr(closed, "ValuesOC", None) or ():
+                g = _cats._guid_str_from(val)
+                if g:
+                    out.add(g.lower())
+        return out
+
+    _far_index = {
+        _GC.GRAM_CATEGORIES: (_piece_guids(_GC.GRAM_CATEGORIES), set()),
+        _GC.FEATURE_STRUCT_TYPES: (_piece_guids(_GC.FEATURE_STRUCT_TYPES), set()),
+        _GC.INFLECTION_FEATURES: (_piece_guids(_GC.INFLECTION_FEATURES),
+                                  _owned_symbolic_value_guids()),
+    }
+
+    _CANDIDATES = (
+        ("AFFIX_TO_POS", "affixes_pos_dependencies",
+         _cats.affixes_pos_dependencies, _GC.GRAM_CATEGORIES),
+        ("MSA_TO_FEAT_STRUC_TYPE", "affixes_feat_struc_type_dependencies",
+         _cats.affixes_feat_struc_type_dependencies, _GC.FEATURE_STRUCT_TYPES),
+        ("MSA_TO_INFL_FEATURE", "affixes_infl_feature_dependencies",
+         _cats.affixes_infl_feature_dependencies, _GC.INFLECTION_FEATURES),
+    )
+
+    relationships: dict = {}
+    for kind_name, producer_name, producer, far_cat in _CANDIDATES:
+        pieces_ok, owned_values = _far_index[far_cat]
+        edge_count = 0
+        foreign = 0
+        distinct = set()
+        resolved = 0
+        owned = 0
+        unresolved_guids: list = []
+        for piece in affix_pieces:
+            for ref in producer(piece) or ():
+                if not (isinstance(ref, tuple) and len(ref) == 2):
+                    foreign += 1
+                    continue
+                if ref[0] is not far_cat:
+                    foreign += 1
+                    continue
+                edge_count += 1
+                distinct.add(ref[1])
+        for guid in sorted(distinct):
+            if guid in pieces_ok:
+                resolved += 1
+            elif guid in owned_values:
+                owned += 1
+            else:
+                unresolved_guids.append(guid)
+        if not affix_pieces or edge_count == 0:
+            verdict = "NO_DATA"
+        elif foreign:
+            verdict = "REFUSED_NOT_NARROW"
+        elif unresolved_guids:
+            verdict = "REFUSED_UNRESOLVED_FAR_ENDPOINT"
+        elif owned:
+            verdict = "REFUSED_FAR_ENDPOINT_NOT_ENUMERABLE"
+        else:
+            verdict = "CONFIRMED"
+        relationships[kind_name] = {
+            "task": "T067",
+            "producer": "categories." + producer_name,
+            "source_category": _GC.AFFIXES.value,
+            "dependency_category": far_cat.value,
+            "population": len(affix_pieces),
+            "edges": edge_count,
+            "distinct_far_guids": len(distinct),
+            "foreign_edges": foreign,
+            "resolved_as_piece": resolved,
+            "resolved_as_owned_value": owned,
+            "unresolved": len(unresolved_guids),
+            "unresolved_sample": unresolved_guids[:5],
+            "verdict": verdict,
+        }
+
     _ = _GC  # imported for the category vocabulary these buckets name
 
     artifact = {
@@ -311,6 +464,7 @@ def main() -> int:
         "source_project": SOURCE,
         "read_only": True,
         "producer_output": producer_out,
+        "relationships": relationships,
         "population": {
             "lex_entries": len(entries),
             "msas": n_msa,
@@ -351,6 +505,20 @@ def main() -> int:
             print("           -> %-26s %d" % (far, row["by_far_category"][far]))
 
     print()
+    print("       PER-RELATIONSHIP AUDIT (T067 -- what may be REGISTERED)")
+    print("       " + "-" * 68)
+    print("       %-24s %-7s %-8s %-6s %-6s %s"
+          % ("RELATIONSHIP", "EDGES", "FOREIGN", "RESLV", "OWNED", "VERDICT"))
+    for name, row in relationships.items():
+        print("       %-24s %-7d %-8d %-6d %-6d %s"
+              % (name, row["edges"], row["foreign_edges"],
+                 row["resolved_as_piece"], row["resolved_as_owned_value"],
+                 row["verdict"]))
+        if row["unresolved"]:
+            print("           unresolved far GUIDs: %d (e.g. %s)"
+                  % (row["unresolved"], ", ".join(row["unresolved_sample"])))
+
+    print()
     print("[INFO] Wrote %s" % SNAPSHOT)
     if dead:
         print("[INFO] %d attribute group(s) REQUIRE a cast (a fact about "
@@ -374,6 +542,17 @@ def main() -> int:
               "duck-typed unit test passes.")
         return 1
     print("[OK]   Every measured producer returns edges on live data.")
+
+    confirmed = [n for n, r in relationships.items()
+                 if r["verdict"] == "CONFIRMED"]
+    refused = [n for n, r in relationships.items()
+               if r["verdict"].startswith("REFUSED")]
+    print("[INFO] Registrable (CONFIRMED): %s"
+          % (", ".join(confirmed) or "none"))
+    if refused:
+        print("[INFO] NOT registrable: %s" % ", ".join(refused))
+        print("       A refused relationship is the audit working. Do not "
+              "register it and do not give it a verified_by.")
     return 0
 
 

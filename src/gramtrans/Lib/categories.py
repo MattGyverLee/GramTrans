@@ -9415,6 +9415,87 @@ def affixes_dependencies(piece):
     return tuple(deps)
 
 
+# ---------------------------------------------------------------------------
+# NARROW per-relationship producers for AFFIXES (feature 038 -- T067)
+# ---------------------------------------------------------------------------
+#
+# `affixes_dependencies` above returns a MIXED edge set: GRAM_CATEGORIES from
+# `_entry_pos_deps` plus FEATURE_STRUCT_TYPES *and* INFLECTION_FEATURES from
+# `_entry_feat_struc_deps`. That is the right shape for its callers (one pass
+# over the entry's MSAs, all of its outward references), and the WRONG shape
+# for `CLOSURE_EDGES_VERIFIED`, which is keyed by a single `DependencyKind`
+# and whose keys are unique. Registering the composite under `AFFIX_TO_POS`
+# would make `preview._closure_kind_lookup` file all three relationships under
+# one `verified_by` -- the substitution FR-018 exists to prevent, and the
+# decision the registry banner defers to "Phase 7's call".
+#
+# So the registry gets three NARROW producers instead, one per relationship,
+# each emitting only its own far category. `_closure_kind_lookup` keys on
+# `(category, dependency_category)`, so three rows with
+# `category=GrammarCategory.AFFIXES` and DISTINCT `dependency_category` values
+# are unambiguous by construction and each carries its own evidence.
+#
+# `affixes_dependencies` itself is UNCHANGED and still composite: it has
+# non-closure callers, and narrowing it would be a live-behaviour change
+# smuggled into a registration.
+#
+# The filter is STRICT (`is`, on the far category), and that is deliberate
+# rather than defensive. `_feat_struc_deps` classifies a `TypeRA` by OWNERSHIP
+# via `_feat_struc_type_categories`, which walks BOTH feature systems -- so an
+# MSA whose structure pointed into `PhFeatureSystemOA` would yield
+# PHON_FEAT_TYPES / PHONOLOGICAL_FEATURES edges. Those relationships are
+# unaudited and unregistered, and `preview._materialise_closure_edges` RAISES
+# on an edge no registry row authorises. Dropping them here is the correct
+# behaviour for an unregistered relationship (no verified evidence, no edge),
+# and the audit driver counts what was dropped rather than discarding it
+# silently (`foreign_edges` in the snapshot; measured 0 on both corpora).
+
+
+def _narrow_deps(deps, far_category):
+    """`deps` filtered to the single far `GrammarCategory` (T067).
+
+    Returns a tuple of `(far_category, guid)` refs, order and de-duplication
+    inherited from the composite producer that built `deps`.
+    """
+    out: list = []
+    for dep in deps or ():
+        if not (isinstance(dep, tuple) and len(dep) == 2):
+            continue
+        if dep[0] is not far_category:
+            continue
+        if dep not in out:
+            out.append(dep)
+    return tuple(out)
+
+
+def affixes_pos_dependencies(piece):
+    """NARROW producer for `DependencyKind.AFFIX_TO_POS`: only
+    `(GRAM_CATEGORIES, pos_guid)`.
+
+    `_entry_pos_deps` already emits nothing else, so the filter is a
+    no-op today; it is applied anyway so all three narrow producers share one
+    mechanism and a future change to `_entry_pos_deps` cannot leak a second
+    relationship into this one's `verified_by`.
+    """
+    return _narrow_deps(_entry_pos_deps(piece), GrammarCategory.GRAM_CATEGORIES)
+
+
+def affixes_feat_struc_type_dependencies(piece):
+    """NARROW producer for `DependencyKind.MSA_TO_FEAT_STRUC_TYPE`: only
+    `(FEATURE_STRUCT_TYPES, type_guid)`, the `IFsFeatStruc.TypeRA` arrow off
+    this entry's MSAs."""
+    return _narrow_deps(_entry_feat_struc_deps(piece),
+                        GrammarCategory.FEATURE_STRUCT_TYPES)
+
+
+def affixes_infl_feature_dependencies(piece):
+    """NARROW producer for `DependencyKind.MSA_TO_INFL_FEATURE`: only
+    `(INFLECTION_FEATURES, guid)`, the `FeatureSpecsOC` -> `FeatureRA` /
+    `ValueRA` arrows off this entry's MSAs."""
+    return _narrow_deps(_entry_feat_struc_deps(piece),
+                        GrammarCategory.INFLECTION_FEATURES)
+
+
 def affixes_required_writing_systems(piece):
     return ()
 
@@ -12668,8 +12749,102 @@ def for_category(category: GrammarCategory) -> dict:
 #      each one its evidence.
 #
 # Until then the producers are correct and inert, exactly like the other 23.
+#
+# ---------------------------------------------------------------------------
+# T067 (2026-08-21) -- the FIRST two rows, and the one it REFUSED
+# ---------------------------------------------------------------------------
+#
+# T067's job was "confirm the edge is correct against a live pair, THEN
+# register". It took three attempts to get to a row, and the two failures are
+# the reason the rows below can be trusted:
+#
+#   1. The FIRST audit (`73a8b73`) measured both MSA-side relationships DEAD on
+#      live data -- 0 edges uncast against 296/245 cast. `_entry_pos_deps` read
+#      `PartOfSpeechRA` off members of `ILexEntry.MorphoSyntaxAnalysesOC`, a
+#      POLYMORPHIC collection typed `IMoMorphSynAnalysis` on which that property
+#      is not declared, so pythonnet's static-type resolution returned None for
+#      every MSA in every real project while all 3422 unit tests passed on
+#      duck-typed fakes. Registration was REFUSED; the defect was filed and
+#      fixed as T088 (`_cast_to_concrete`, `955267e`).
+#
+#   2. The COMPOSITE-PRODUCER problem, which is why these rows do not name
+#      `affixes_dependencies`. That producer returns a MIXED edge set --
+#      GRAM_CATEGORIES from `_entry_pos_deps` plus FEATURE_STRUCT_TYPES *and*
+#      INFLECTION_FEATURES from `_entry_feat_struc_deps` -- and this registry is
+#      keyed by ONE `DependencyKind` per row with unique keys. Registering the
+#      composite under `AFFIX_TO_POS` with `dependency_category: None` makes
+#      `preview._closure_kind_lookup` match every edge on the `(AFFIXES, None)`
+#      wildcard and stamp all three relationships `AFFIX_TO_POS`, filing two
+#      unaudited relationships under a third's `verified_by`. So the rows name
+#      NARROW per-relationship producers, each emitting one far category, and
+#      each row's `dependency_category` is EXPLICIT -- which also makes the
+#      lookup key `(AFFIXES, <far>)` unique per row instead of colliding.
+#      `affixes_dependencies` itself is unchanged and still composite for its
+#      non-closure callers.
+#
+#   3. `MSA_TO_INFL_FEATURE` is STILL REFUSED, on its own third kind of
+#      evidence, and this is the finding T067's second pass added. Its producer
+#      is narrow and its edges are live (206 on Mbugwe / 34 on Ejagham Mini,
+#      foreign_edges 0 on both). But the audit also resolves every far GUID
+#      against the far category's OWN `enumerate_source`, and 30 of 34 distinct
+#      far GUIDs on Mbugwe -- 8 of 10 on Ejagham Mini -- are `IFsSymFeatVal`
+#      SYMBOLIC VALUES, which `inflection_features_enumerate_source` never
+#      yields: it walks `FeatureGetAll()`, the feature DEFNS, and
+#      `inflection_features_dependencies` records that the values are
+#      "co-created in execute_action, not separately planned". An edge naming a
+#      piece the category cannot enumerate cannot be planned, marked pulled-in
+#      (T070) or deselected (T072), so registering it would put an unplannable
+#      item into a plan under a `verified_by`. Filed as T089.
+#
+# What each row therefore claims, and nothing more: for AFFIXES pieces, the
+# named narrow producer emits ONLY its own far category (measured
+# `foreign_edges == 0`) and EVERY distinct far GUID it emits resolves to a
+# piece the far category's own `enumerate_source` yields (measured
+# `unresolved == 0`, `resolved_as_owned_value == 0`), on BOTH corpora.
+#
+# STEMS is deliberately absent. `stems_dependencies` shares `_entry_pos_deps`
+# and `_entry_feat_struc_deps`, so it would very likely audit the same way --
+# but "likely" is not an audit, `DependencyKind` keys are unique so a STEMS row
+# would need its own member anyway, and T067 names the AFFIXES producer.
 
-CLOSURE_EDGES_VERIFIED: dict = {}
+CLOSURE_EDGES_VERIFIED: dict = {
+    DependencyKind.AFFIX_TO_POS: {
+        "category": GrammarCategory.AFFIXES,
+        "producer": affixes_pos_dependencies,
+        # EXPLICIT, not None: it makes `_closure_kind_lookup`'s key
+        # `(AFFIXES, GRAM_CATEGORIES)` rather than the `(AFFIXES, None)`
+        # wildcard that would also swallow this row's two siblings.
+        "dependency_category": GrammarCategory.GRAM_CATEGORIES,
+        "verified_by": (
+            "debug/audit038_closure_edges.py (read-only, 2026-08-21) over "
+            "'Mbugwe LizzieHC practice' and 'Ejagham Mini': "
+            "relationships.AFFIX_TO_POS = CONFIRMED (144/88 edges, "
+            "foreign_edges 0, unresolved 0) in "
+            "tests/integration/_snapshots/closure-edge-audit-038-*.json, "
+            "asserted by tests/integration/test_038_closure_edge_audit.py::"
+            "test_only_the_confirmed_relationships_are_registered"
+        ),
+    },
+    DependencyKind.MSA_TO_FEAT_STRUC_TYPE: {
+        "category": GrammarCategory.AFFIXES,
+        "producer": affixes_feat_struc_type_dependencies,
+        "dependency_category": GrammarCategory.FEATURE_STRUCT_TYPES,
+        "verified_by": (
+            "debug/audit038_closure_edges.py (read-only, 2026-08-21) over "
+            "'Mbugwe LizzieHC practice' and 'Ejagham Mini': "
+            "relationships.MSA_TO_FEAT_STRUC_TYPE = CONFIRMED (73/17 edges, "
+            "foreign_edges 0, unresolved 0) in "
+            "tests/integration/_snapshots/closure-edge-audit-038-*.json, "
+            "asserted by tests/integration/test_038_closure_edge_audit.py::"
+            "test_only_the_confirmed_relationships_are_registered"
+        ),
+    },
+    # DependencyKind.MSA_TO_INFL_FEATURE: REFUSED -- see (3) above and T089.
+    # The producer (`affixes_infl_feature_dependencies`) exists and is narrow;
+    # what it lacks is a far endpoint the INFLECTION_FEATURES category can
+    # enumerate. Do NOT add this row without re-running the driver and seeing
+    # `resolved_as_owned_value == 0`.
+}
 
 
 def _closure_registry_by_category(registry: dict) -> dict:
