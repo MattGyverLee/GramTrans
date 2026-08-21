@@ -577,3 +577,261 @@ class TestCensusVocabularyGapIsNamedNotHidden:
             "the class filter, not the vocabulary, is what keeps a dropped "
             "reference out of the accounting"
         )
+
+
+# ===========================================================================
+# PIECE 3 (T087) -- a loss that IS reported, on a surface nothing read
+#
+# The third instance of this file's shape and the narrowest. The 6 condition-4
+# `MoAffixProcess` rules of run GT-20260821-020541 are reported TWICE -- a
+# `DroppedItemRecord` and a `ProcessRuleTransferRecord` with
+# `reproduced=False` and a non-empty `not_reproducible_reason` -- and the
+# census still scored the row `unexplained_shortfall: 6` with an empty
+# `accounted_for`, because `read_report_evidence` read `dropped_items` only
+# and no needle in `DROP_REASON_TOKENS` matches what
+# `_reproduce_affix_process` writes.
+#
+# The direction matters. Piece 2's defect inflated a real loss into an
+# unexplained one; this one inflates a NAMED, DELIBERATE deferral into an
+# unaccounted loss, which is the direction 5.2's cap rationale says an
+# instrument must not be wrong in. A report that cries loss where the loss was
+# announced teaches the reader to stop reading it.
+# ===========================================================================
+
+PROCESS_RULE_RUN = "GT-20260821-020541"
+
+#: The live reason, verbatim from `_run_reports/038-phase6-mbugwe-report.json`
+#: (rule `fda9c04e-...`). Kept whole rather than abbreviated because the
+#: classification is a substring match and a paraphrase would test the
+#: paraphrase.
+LIVE_PROCESS_RULE_REASON = (
+    "MoAffixProcess fda9c04e-e71b-43ed-b4a1-c977610fa3b9 input member 0 "
+    "(PhSequenceContext) references PhSimpleContextNC "
+    "6464f7f4-1405-4427-a397-983ddb0b06fc at position 0, which this rule does "
+    "NOT own -- it belongs to the shared project-level PhPhonData.ContextsOS "
+    "and is absent from the destination. The rule is not transferred until "
+    "that closure lands; a partly-filled MembersRS is not an acceptable "
+    "outcome (FR-023/FR-024/FR-025, create-path contract condition 4)"
+)
+
+LIVE_RULE_GUID = "fda9c04e-e71b-43ed-b4a1-c977610fa3b9"
+
+
+def process_rule(source_guid, *, reproduced=False,
+                 reason=LIVE_PROCESS_RULE_REASON):
+    """One `process_rules[]` record, shaped as the live report emits."""
+    return {
+        "source_guid": source_guid,
+        "target_guid": ("t-" + source_guid) if reproduced else None,
+        "reproduced": reproduced,
+        "not_reproducible_reason": None if reproduced else reason,
+        "input_contexts": [],
+        "output_steps": [],
+        "reference_decisions": [],
+    }
+
+
+def rule_drop(item_guid, *, reason=LIVE_PROCESS_RULE_REASON):
+    return drop("MoAffixProcess", owner_kind="MoAffixProcess",
+                field_name="InputOS", item_guid=item_guid, reason=reason)
+
+
+def rule_report(tmp_path, rules, drops):
+    """A report carrying BOTH surfaces, which is the only shape that can be
+    credited -- see `process_rules_by_class_from_report`."""
+    body = {
+        "context": {"run_id": PROCESS_RULE_RUN},
+        "process_rules": rules,
+        "dropped_items": drops,
+    }
+    path = tmp_path / "rule-report.json"
+    path.write_text(json.dumps(body), encoding="utf-8")
+    return path
+
+
+class TestTheProcessRuleSurfaceIsRead:
+    def test_a_corroborated_non_reproduction_is_classified(self, tmp_path):
+        grouped = census_cli.process_rules_by_class_from_report(
+            rule_report(tmp_path, [process_rule(LIVE_RULE_GUID)],
+                        [rule_drop(LIVE_RULE_GUID)]),
+            ("MoAffixProcess",))
+
+        (token, ref, detail), = grouped["MoAffixProcess"]
+        assert token == "DEPENDENCY_UNRESOLVED"
+        assert ref.kind == "dropped_item"
+        assert ref.count_in_report == 1
+        assert ref.run_id == PROCESS_RULE_RUN
+        assert ref.record_ids == (LIVE_RULE_GUID,)
+        assert "ProcessRuleTransferRecord" in detail
+        assert "is absent from the destination" in detail
+
+    def test_a_reproduced_rule_is_not_a_loss(self, tmp_path):
+        assert census_cli.process_rules_by_class_from_report(
+            rule_report(tmp_path,
+                        [process_rule(LIVE_RULE_GUID, reproduced=True)], []),
+            ("MoAffixProcess",)) == {}
+
+    def test_an_uncorroborated_record_is_not_credited(self, tmp_path):
+        """A `ProcessRuleTransferRecord` with no paired `DroppedItemRecord`.
+        Two surfaces are available, so requiring both is the strongest claim
+        the evidence supports -- and a producer that writes one without the
+        other is a bug this must not absorb."""
+        assert census_cli.process_rules_by_class_from_report(
+            rule_report(tmp_path, [process_rule(LIVE_RULE_GUID)], []),
+            ("MoAffixProcess",)) == {}
+
+    def test_a_reason_that_drifted_between_surfaces_is_not_credited(
+            self, tmp_path):
+        """Verbatim agreement, not merely same-GUID agreement. If the two
+        reasons disagree the run is describing one event two ways and the
+        census may not pick a winner."""
+        assert census_cli.process_rules_by_class_from_report(
+            rule_report(
+                tmp_path, [process_rule(LIVE_RULE_GUID)],
+                [rule_drop(LIVE_RULE_GUID,
+                           reason=LIVE_PROCESS_RULE_REASON + " (edited)")]),
+            ("MoAffixProcess",)) == {}
+
+    def test_a_drop_on_another_guid_does_not_corroborate(self, tmp_path):
+        assert census_cli.process_rules_by_class_from_report(
+            rule_report(tmp_path, [process_rule(LIVE_RULE_GUID)],
+                        [rule_drop("some-other-guid")]),
+            ("MoAffixProcess",)) == {}
+
+    def test_an_unclassifiable_reason_yields_no_line(self, tmp_path):
+        """FR-013 again: unclassified is an ABSENT line, never an 18th token.
+        The source-side empty-MembersRS skips land here."""
+        reason = ("MoAffixProcess " + LIVE_RULE_GUID
+                  + " has an empty MembersRS in the SOURCE")
+        assert census_cli.process_rules_by_class_from_report(
+            rule_report(tmp_path,
+                        [process_rule(LIVE_RULE_GUID, reason=reason)],
+                        [rule_drop(LIVE_RULE_GUID, reason=reason)]),
+            ("MoAffixProcess",)) == {}
+
+    def test_the_class_filter_still_governs(self, tmp_path):
+        path = rule_report(tmp_path, [process_rule(LIVE_RULE_GUID)],
+                           [rule_drop(LIVE_RULE_GUID)])
+        assert census_cli.process_rules_by_class_from_report(
+            path, ("MoStemMsa",)) == {}
+
+    def test_an_absent_process_rules_key_is_not_an_error(self, tmp_path):
+        assert census_cli.process_rules_by_class_from_report(
+            write_report(tmp_path, {}), ("MoAffixProcess",)) == {}
+
+
+class TestTheTwoTablesDoNotMerge:
+    """Why `PROCESS_RULE_REASON_TOKENS` is separate from
+    `DROP_REASON_TOKENS` -- asserted, rather than asserted in a comment."""
+
+    def test_no_general_needle_matches_a_process_rule_reason(self):
+        """The disjointness the no-double-credit argument rests on. If a
+        general needle ever matched, `dropped_by_class_from_report` would
+        classify the SAME drop on its own uncorroborated path and the merge
+        would credit one lost rule as two accounted objects (R-2)."""
+        assert census_cli.drop_reason_token(LIVE_PROCESS_RULE_REASON) is None
+
+    def test_no_process_needle_matches_the_general_live_reason(self):
+        assert census_cli.process_rule_reason_token(LIVE_MSA_REASON) is None
+
+    def test_every_process_token_is_inside_the_closed_vocabulary(self):
+        for _, token in census_cli.PROCESS_RULE_REASON_TOKENS:
+            assert token in census.REASON_TOKENS
+
+    def test_no_process_needle_shadows_another(self):
+        needles = [n for n, _ in census_cli.PROCESS_RULE_REASON_TOKENS]
+        for i, outer in enumerate(needles):
+            for j, inner in enumerate(needles):
+                if i != j:
+                    assert inner not in outer, (inner, outer)
+
+    def test_the_needle_is_returned_so_the_detail_can_quote_it(self):
+        needle, token = census_cli.process_rule_reason_match(
+            LIVE_PROCESS_RULE_REASON)
+        assert needle == "is absent from the destination"
+        assert token == "DEPENDENCY_UNRESOLVED"
+        assert census_cli.process_rule_reason_match("nothing here") is None
+
+    def test_a_non_string_reason_is_none_not_a_crash(self):
+        assert census_cli.process_rule_reason_token(None) is None
+        assert census_cli.process_rule_reason_match(42) is None
+
+
+class TestTheProcessRuleShortfallBecomesAccounted:
+    """The row-level payoff, on the live 6."""
+
+    def _evidence(self, tmp_path, n):
+        guids = ["rule-%d" % i for i in range(n)]
+        return census_cli.read_report_evidence(
+            rule_report(tmp_path, [process_rule(g) for g in guids],
+                        [rule_drop(g) for g in guids]),
+            ("MoAffixProcess",))
+
+    def test_the_live_six_are_accounted_not_unexplained(self, tmp_path):
+        """Run GT-20260821-020541: 18 -> 12, `difference -6`, and 6 rules
+        reported twice each. Before this piece the row read
+        `unexplained_shortfall: 6` with `accounted_for: []`."""
+        row = emit("MoAffixProcess", 18, 12,
+                   evidence=self._evidence(tmp_path, 6))
+
+        assert row["difference"] == -6
+        assert row["unexplained_shortfall"] == 0
+        assert row["verdict_class"] == "SHORTFALL", (
+            "the rules really are missing -- accounting says the loss was "
+            "named, not that it did not happen"
+        )
+        line, = row["accounted_for"]
+        assert line["reason"] == "DEPENDENCY_UNRESOLVED"
+        assert line["count"] == 6
+        assert line["report_ref"]["count_in_report"] == 6
+        assert len(line["report_ref"]["record_ids"]) == 6
+
+    def test_the_line_names_its_own_corroboration(self, tmp_path):
+        """T087's requirement: the entry carries the report reference AND the
+        reason, so the shortfall is explained by evidence that exists. The
+        default detail names only the `DroppedItemRecord`, which is half of
+        what this line rests on."""
+        row = emit("MoAffixProcess", 18, 12,
+                   evidence=self._evidence(tmp_path, 6))
+        line, = row["accounted_for"]
+
+        assert "ProcessRuleTransferRecord" in line["detail"]
+        assert "corroborated" in line["detail"]
+        assert PROCESS_RULE_RUN in line["detail"]
+        assert "is absent from the destination" in line["detail"]
+
+    def test_the_accounted_row_trips_no_accounting_rule(self, tmp_path):
+        """Scoped to the ROW rules, as `test_over_accounting_is_still_capped`
+        already is: a bare `{"classes": [row]}` has no `census_id`, no
+        provenance and no verdict, so the document-level failures it collects
+        say nothing about this line."""
+        row = emit("MoAffixProcess", 18, 12,
+                   evidence=self._evidence(tmp_path, 6))
+        failures = census.validate_artifact({"classes": [row]})
+
+        assert not [f for f in failures
+                    if "R-1" in f or "R-2" in f or "R-3" in f]
+        assert not [f for f in failures if "MoAffixProcess" in f]
+
+    def test_over_accounting_is_still_capped(self, tmp_path):
+        """R-2 holds on the new surface too: 6 reported non-reproductions
+        against a 4-object shortfall claim 4, and the `report_ref` still names
+        all 6."""
+        row = emit("MoAffixProcess", 18, 14,
+                   evidence=self._evidence(tmp_path, 6))
+        line, = row["accounted_for"]
+
+        assert line["count"] == 4
+        assert line["report_ref"]["count_in_report"] == 6
+        assert "CLAIM CAPPED" in line["detail"]
+        assert "ProcessRuleTransferRecord" in line["detail"], (
+            "the cap suffix must be appended to the overridden detail, not "
+            "replace it"
+        )
+        assert any("R-2" in n for n in row["notes"])
+
+    def test_a_non_reproduction_never_pays_down_a_surplus(self, tmp_path):
+        row = emit("MoAffixProcess", 12, 18,
+                   evidence=self._evidence(tmp_path, 6))
+        assert row["accounted_for"] == []
+        assert row["unexplained_surplus"] == 6

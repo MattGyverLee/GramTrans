@@ -1444,6 +1444,183 @@ def drop_reason_token(reason):
     return None
 
 
+# ---------------------------------------------------------------------------
+# T087: a rule that IS reported reads as unexplained, because nothing here
+# consumed `RunReport.rules_not_reproduced` (`process_rules` in the report
+# JSON) at all -- only `dropped_items`, via `drop_reason_token` above.
+#
+# `Lib/categories.py._reproduce_affix_process._skip(reason)` writes the
+# IDENTICAL `reason` string to BOTH a `DroppedItemRecord`
+# (`item_name="MoAffixProcess", item_guid=<rule guid>`) and a
+# `ProcessRuleTransferRecord` (`source_guid=<rule guid>,
+# not_reproducible_reason=<same string>`) in the same call -- so a
+# non-reproduction is corroborated on TWO independent report surfaces before
+# this ever runs, and `process_rules_by_class_from_report` below requires
+# BOTH to agree (same guid, same reason, verbatim) before crediting anything.
+# Trusting either surface alone would be weaker than the evidence actually
+# available, and the live corroboration ratio is 6/6
+# (`_run_reports/038-phase6-mbugwe-report.json`, GT-20260821-020541).
+#
+# THIS TABLE IS KEPT SEPARATE FROM `DROP_REASON_TOKENS`, not merged into it.
+# Folding the needle below into the general table would make
+# `dropped_by_class_from_report` classify the SAME `MoAffixProcess` drop a
+# second time on its own (free-text, uncorroborated) path, and merging the
+# two classifications would double-credit one lost rule as two accounted
+# objects -- the over-accounting R-2 forbids. `MoAffixProcess` process-rule
+# non-reproductions are therefore accounted EXCLUSIVELY through this table;
+# `dropped_by_class_from_report` never needs to be told to skip them, because
+# none of `DROP_REASON_TOKENS`' three needles occur in any reason
+# `_reproduce_affix_process` produces (verified against every `_skip(...)`
+# call site in `Lib/categories.py`, 2026-08-22).
+#
+# "which this rule does NOT own -- it belongs to the shared project-level
+# PhPhonData.ContextsOS and is absent from the destination" (create-path
+# contract condition 4, the T063/T064 live run's 6 skips) and its two
+# siblings in the same function (an unresolved `PhSimpleContextSeg` /
+# `PhSimpleContextNC` referent, and an unresolved `MoInsertPhones` terminal)
+# all read "... is absent from the destination ...", and all three are the
+# SAME shape: a reference the rule cannot own resolving to nothing in the
+# target. `DEPENDENCY_UNRESOLVED` (FR-017, destination-side absence) is the
+# exact existing token for that shape -- not a new, 18th one (FR-013).
+PROCESS_RULE_REASON_TOKENS: tuple = (
+    ("is absent from the destination", "DEPENDENCY_UNRESOLVED"),
+)
+
+
+def process_rule_reason_match(reason):
+    """-> `(needle, token)` for one free-text `not_reproducible_reason`, or
+    None. The NEEDLE is returned as well as the token so the accounting
+    line's `detail` can quote the text that produced the classification
+    rather than merely asserting one (see `_process_rule_detail`).
+    """
+    if not isinstance(reason, str):
+        return None
+    for needle, token in PROCESS_RULE_REASON_TOKENS:
+        if needle in reason:
+            return (needle, token)
+    return None
+
+
+def process_rule_reason_token(reason):
+    """-> the FR-013 token for one free-text `not_reproducible_reason`, or
+    None. Sibling of `drop_reason_token`, over a separate, smaller table
+    (see `PROCESS_RULE_REASON_TOKENS` for why it is not the same table).
+    """
+    matched = process_rule_reason_match(reason)
+    return None if matched is None else matched[1]
+
+
+def _process_rule_detail(needle: str, count: int, run_id: str) -> str:
+    """The `AccountedLine.detail` for one process-rule accounting line.
+
+    T087's requirement is that an `accounted_for` entry carry the report
+    reference AND the reason, "so a shortfall is only ever explained by
+    evidence that actually exists". The GUIDs are in `report_ref.record_ids`
+    and the classified reason is the line's `reason` token, but neither says
+    WHICH report surfaces were read or that they were required to agree --
+    and `accounted_for_drops`' default detail names only the
+    `DroppedItemRecord`, which would describe half the evidence this line
+    actually rests on. So the corroboration is stated, with the matched
+    needle quoted verbatim: a reader who disagrees with the classification
+    can see exactly what text produced it without opening the report.
+    """
+    return (
+        "reproduced=False on " + str(count) + " ProcessRuleTransferRecord(s), "
+        "each corroborated by a DroppedItemRecord carrying the SAME reason "
+        "verbatim on run " + (run_id or "(unstamped)") + "; classified from "
+        + repr(needle) + " -- see report_ref.record_ids for the rule GUIDs "
+        "and the report for each full reason"
+    )
+
+
+def process_rules_by_class_from_report(path: Path, classes=()) -> dict:
+    """`{"MoAffixProcess": ((token, census.ReportRef, detail), ...)}` from the
+    STRUCTURED `process_rules` array (FR-023..FR-025), corroborated against
+    `dropped_items`.
+
+    The third element is the per-line `detail` override `accounted_for_drops`
+    accepts (see `_process_rule_detail`); `dropped_by_class_from_report`
+    emits 2-tuples and takes that function's default.
+
+    Every `ProcessRuleTransferRecord` is an outcome of transferring one
+    source `MoAffixProcess` (`Lib/models.py` docstring), so the object class
+    is not read off the record at all -- it is the one constant this
+    function ever emits, and it is emitted only when `"MoAffixProcess"` is
+    one of `classes`.
+
+    CORROBORATION IS REQUIRED, NOT ASSUMED. A `reproduced=False` record is
+    credited only when `dropped_items` ALSO carries a `DroppedItemRecord`
+    with `item_name="MoAffixProcess"`, the same `item_guid` as this record's
+    `source_guid`, and the SAME `reason` text verbatim. Two independent
+    surfaces of the same run report agreeing is stronger evidence than
+    either alone, and it means a future producer bug -- a
+    `ProcessRuleTransferRecord` written without its paired
+    `DroppedItemRecord`, or with a reason that drifted between the two -- is
+    read as UNCLASSIFIABLE rather than silently trusted.
+
+    Classification of the (corroborated) reason is via
+    `process_rule_reason_token`, not `drop_reason_token` -- see
+    `PROCESS_RULE_REASON_TOKENS` for why the two tables must not merge. A
+    reason neither table can read (the source-side "empty MembersRS in the
+    SOURCE" skips, for instance) yields no line, per FR-013: unclassified is
+    an absent line, never a guess.
+    """
+    if "MoAffixProcess" not in frozenset(classes):
+        return {}
+    data = _load_json(path, "run report")
+    rules = data.get("process_rules")
+    if not isinstance(rules, list):
+        return {}
+    dropped = data.get("dropped_items")
+    corroborated: dict = {}
+    if isinstance(dropped, list):
+        for record in dropped:
+            if not isinstance(record, dict):
+                continue
+            if record.get("item_name") != "MoAffixProcess":
+                continue
+            guid = record.get("item_guid")
+            reason = record.get("reason")
+            if isinstance(guid, str) and guid and isinstance(reason, str):
+                corroborated.setdefault(guid, set()).add(reason)
+
+    context = data.get("context") or {}
+    run_id = data.get("run_id") or context.get("run_id") or ""
+    if not (isinstance(run_id, str) and _RUN_ID_PATTERN.match(run_id)):
+        run_id = ""
+
+    by_token: dict = {}
+    for record in rules:
+        if not isinstance(record, dict) or record.get("reproduced"):
+            continue
+        guid = record.get("source_guid")
+        reason = record.get("not_reproducible_reason")
+        if not isinstance(guid, str) or not guid:
+            continue
+        if not isinstance(reason, str) or not reason:
+            continue
+        if reason not in corroborated.get(guid, ()):
+            continue  # the two surfaces disagree (or the drop is absent)
+        matched = process_rule_reason_match(reason)
+        if matched is None:
+            continue
+        needle, token = matched
+        by_token.setdefault((token, needle), []).append(guid)
+
+    if not by_token:
+        return {}
+    return {"MoAffixProcess": tuple(
+        (token, census.ReportRef(
+            kind="dropped_item",
+            count_in_report=len(guids),
+            run_id=run_id,
+            report_path=str(path),
+            record_ids=tuple(guids),
+        ), _process_rule_detail(needle, len(guids), run_id))
+        for (token, needle), guids in sorted(by_token.items())
+    )}
+
+
 def dropped_by_class_from_report(path: Path, classes=()) -> dict:
     """`{object_class: ((token, census.ReportRef), ...)}` from `dropped_items`.
 
@@ -1544,6 +1721,27 @@ class ReportEvidence:
         return tuple(self.dropped_by_class.get(object_class) or ())
 
 
+def _merge_by_class_tokens(a: dict, b: dict) -> dict:
+    """Union two `{object_class: ((token, ReportRef[, detail]), ...)}` maps.
+
+    Concatenation, not replacement: `dropped_by_class_from_report` and
+    `process_rules_by_class_from_report` (T087) read two DIFFERENT report
+    arrays for two DISJOINT sets of tokens by construction (see the latter's
+    module comment), so a class present in both never collides on a token --
+    but nothing here assumes that to stay safe. Two lines with the same
+    reason on the same class is still one room-capped claim per line at the
+    `accounted_for_drops` seam (R-2), never a double credit of one object.
+    """
+    if not b:
+        return a
+    if not a:
+        return b
+    merged = {cls: list(pairs) for cls, pairs in a.items()}
+    for cls, pairs in b.items():
+        merged.setdefault(cls, []).extend(pairs)
+    return {cls: tuple(pairs) for cls, pairs in merged.items()}
+
+
 def read_report_evidence(path: Optional[Path], classes=()) -> ReportEvidence:
     """`ReportEvidence` for a run report, or the empty one for no report."""
     if path is None:
@@ -1553,7 +1751,10 @@ def read_report_evidence(path: Optional[Path], classes=()) -> ReportEvidence:
         present=True,
         enriched_by_class=enriched,
         enriched_measured=measured,
-        dropped_by_class=dropped_by_class_from_report(path, classes),
+        dropped_by_class=_merge_by_class_tokens(
+            dropped_by_class_from_report(path, classes),
+            process_rules_by_class_from_report(path, classes),
+        ),
     )
 
 
@@ -1571,16 +1772,25 @@ def accounted_for_drops(difference, drops, notes=None) -> tuple:
     cannot pay down a SURPLUS, and a MATCHED row that also reports a drop is a
     real finding (something was lost and something else over-created) that an
     accounting line would hide.
+
+    A `drops` entry is `(token, ref)` or `(token, ref, detail)`. The optional
+    third element OVERRIDES the default detail, which names only a
+    `DroppedItemRecord` -- true of `dropped_by_class_from_report`'s entries
+    and only half the story for `process_rules_by_class_from_report`'s, which
+    require two report surfaces to agree (T087). The cap suffix is appended to
+    whichever detail applies, so an overridden line still says it was capped.
     """
     if difference is None or difference >= 0:
         return ()
     room = -difference
     lines = []
-    for token, ref in drops:
+    for entry in drops:
+        token, ref = entry[0], entry[1]
+        override = entry[2] if len(entry) > 2 else None
         if room <= 0:
             break
         count = min(ref.count_in_report, room)
-        detail = (
+        detail = override if override else (
             SOURCE_REFERENT_ABSENT_DETAIL
             if token == SOURCE_REFERENT_ABSENT_TOKEN else
             "reported as a DroppedItemRecord on run "

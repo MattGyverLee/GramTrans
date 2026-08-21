@@ -264,12 +264,38 @@ def test_the_phase_6a_split_is_what_was_measured(snapshot):
 _CENSUS = (Path(__file__).parent / "_snapshots"
            / "census-038-mbugwe-phase6.json")
 
+# T087's re-census. A SECOND artifact rather than a replacement of the one
+# above, and the reason is a chain: `test_038_closure_edge_audit.py` asserts
+# `census-038-mbugwe-phase6.json`'s class table EQUAL to
+# `census-038-t067-registered.json`, `-t068-`, and `-t069-` -- four artifacts
+# from four separately restored targets, compared against each other to prove
+# that registering a closure edge moved no object count. That comparison
+# includes `unexplained_shortfall`, so overwriting one link with a
+# newer-instrument reading would turn three passing tests red for a reason
+# that has nothing to do with what they assert. Its own docstring names the
+# hazard: "a chain of pairwise comparisons can drift if one link is ever
+# re-measured and the others are not."
+#
+# So the pre-fix artifact stays exactly as measured, and T087's reading lands
+# beside it. Both projects were byte-identical for the two runs (asserted
+# below), which is what makes the pair a measurement of the INSTRUMENT and of
+# nothing else.
+_CENSUS_T087 = (Path(__file__).parent / "_snapshots"
+                / "census-038-t087-mbugwe.json")
+
 
 @pytest.fixture(scope="module")
 def census():
     if not _CENSUS.is_file():
         pytest.skip("no committed census artifact at " + str(_CENSUS))
     return json.loads(_CENSUS.read_text(encoding="utf-8"))
+
+
+@pytest.fixture(scope="module")
+def census_t087():
+    if not _CENSUS_T087.is_file():
+        pytest.skip("no committed census artifact at " + str(_CENSUS_T087))
+    return json.loads(_CENSUS_T087.read_text(encoding="utf-8"))
 
 
 def _row(census_artifact, class_name):
@@ -338,19 +364,115 @@ def test_the_duplicate_identity_verdict_is_a_source_property(census):
     assert census["verdict"] == "DUPLICATE_IDENTITY"
 
 
-def test_the_reported_rules_are_not_yet_readable_as_accounted(census):
-    """A finding, pinned so it cannot be lost.
+def test_the_reported_rules_are_readable_as_accounted(census_t087):
+    """T087, CLOSED. Was `test_the_reported_rules_are_not_yet_readable_as_
+    accounted`, which pinned `unexplained_shortfall == 6` and
+    `accounted_for == []` so that closing the gap would have to be a
+    deliberate edit here. This is that edit.
 
-    All 6 skipped rules ARE reported -- a `DroppedItemRecord` each and a
-    `ProcessRuleTransferRecord` with a non-empty reason -- so the loss is not
-    silent under Principle I. But the census scores the row
-    `unexplained_shortfall: 6` with an EMPTY `accounted_for`, because it does
-    not consume `RunReport.rules_not_reproduced` as an explanation. The
-    instrument therefore cannot see an explanation the run really produced.
+    All 6 skipped rules were always reported -- a `DroppedItemRecord` each and
+    a `ProcessRuleTransferRecord` with a non-empty reason -- so the loss was
+    never silent under Principle I. What the census could not do was READ the
+    second surface: `read_report_evidence` consumed `dropped_items` only, and
+    no needle in `DROP_REASON_TOKENS` matches what `_reproduce_affix_process`
+    writes. A named, deliberate deferral therefore scored as an unaccounted
+    loss, which is the direction 5.2's cap rationale says an instrument must
+    not be wrong in.
 
-    This asserts the CURRENT behaviour so that closing the gap is a visible,
-    deliberate change to this test rather than a silent drift.
+    The line is required to carry its evidence, not merely a token: all 6 rule
+    GUIDs, the run id, the report path, and a detail naming the corroboration
+    the credit rests on.
     """
-    row = _row(census, "MoAffixProcess")
-    assert row["unexplained_shortfall"] == 6
-    assert row["accounted_for"] == []
+    row = _row(census_t087, "MoAffixProcess")
+    assert row["unexplained_shortfall"] == 0
+    line, = row["accounted_for"]
+
+    assert line["reason"] == "DEPENDENCY_UNRESOLVED"
+    assert line["count"] == 6
+    assert line["direction"] == "shortfall"
+    assert line["report_ref"]["kind"] == "dropped_item"
+    assert line["report_ref"]["count_in_report"] == 6
+    assert line["report_ref"]["run_id"] == "GT-20260821-020541"
+    assert len(line["report_ref"]["record_ids"]) == 6
+    assert "ProcessRuleTransferRecord" in line["detail"]
+    assert "corroborated" in line["detail"]
+
+    assert row["verdict_class"] == "SHORTFALL", (
+        "accounting does not change WHAT HAPPENED. The 6 rules really are "
+        "missing and T077 is the task that transfers them; what changed is "
+        "that the census can now see the run had already said so"
+    )
+
+
+def test_the_accounted_guids_are_the_rules_the_run_named(census_t087, snapshot):
+    """R-1 at the corpus level: the 6 GUIDs the accounting line claims are the
+    6 the run report actually reported as not reproduced -- not merely six of
+    something. A line whose record_ids drifted from the report would be
+    accounting against evidence that does not exist."""
+    line, = _row(census_t087, "MoAffixProcess")["accounted_for"]
+    reported = snapshot["report"]["process_rules_not_reproduced"]
+    assert (sorted(line["report_ref"]["record_ids"])
+            == sorted(record["source_guid"] for record in reported))
+    assert all("is absent from the destination" in record["reason"]
+               for record in reported), (
+        "the needle the classification rests on, checked against the corpus "
+        "measurement rather than only against a hand-built report"
+    )
+
+
+def test_the_pre_fix_artifact_is_kept_and_differs_only_by_the_instrument(
+        census, census_t087):
+    """The before/after pair, and why both files are committed.
+
+    `census-038-mbugwe-phase6.json` still reads `unexplained_shortfall: 6` /
+    `accounted_for: []` because it is a load-bearing link in
+    `test_038_closure_edge_audit.py`'s four-artifact equality chain (see the
+    comment on `_CENSUS_T087`). Keeping it is only defensible if the pair is
+    demonstrably a measurement of the instrument and of nothing else -- so the
+    project digests and every counted quantity are asserted equal, and the
+    delta is required to be confined to the accounting fields.
+
+    The two `MoForm` / `MoMorphSynAnalysis` rows are excluded from the
+    row-by-row comparison: T099 landed between the two runs and turned their
+    placeholder zeros into the nulls the schema always specified. That is a
+    different fix's expected delta, recorded here rather than absorbed.
+    """
+    for side in ("source", "destination"):
+        for when in ("before", "after"):
+            key = "fwdata_sha256_" + when
+            assert (census_t087["projects"][side][key]
+                    == census["projects"][side][key]), side
+        assert census_t087["projects"][side]["opened_read_only"] is True
+
+    assert _row(census, "MoAffixProcess")["unexplained_shortfall"] == 6
+    assert _row(census, "MoAffixProcess")["accounted_for"] == []
+
+    t099_rows = {"MoForm", "MoMorphSynAnalysis"}
+    counted = ("source_count", "destination_count_total",
+               "destination_count_net", "difference", "difference_raw",
+               "verdict_class", "duplicates")
+    before = {r["class"]: r for r in census["classes"]}
+    after = {r["class"]: r for r in census_t087["classes"]}
+    assert set(before) == set(after)
+    for name in sorted(set(before) - t099_rows):
+        for key in counted:
+            assert before[name].get(key) == after[name].get(key), (name, key)
+
+    moved = {name for name in set(before) - t099_rows
+             if before[name].get("accounted_for")
+             != after[name].get("accounted_for")}
+    assert moved == {"MoAffixProcess"}, (
+        "T087 reads ONE report surface for ONE class; a second row gaining an "
+        "accounting line would mean the change is wider than its filing"
+    )
+
+    assert (census["totals"]["accounted_shortfall"],
+            census_t087["totals"]["accounted_shortfall"]) == (0, 6)
+    assert (census["totals"]["unexplained_shortfall"]
+            - census_t087["totals"]["unexplained_shortfall"]) == 6
+    assert ((census_t087["verdict"], census_t087["exit_code"])
+            == (census["verdict"], census["exit_code"])
+            == ("DUPLICATE_IDENTITY", 3)), (
+        "exit 3 is the PhNCFeatures duplicate finding this file already pins "
+        "as a source property; accounting 6 rules does not and must not move it"
+    )
