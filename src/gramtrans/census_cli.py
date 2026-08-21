@@ -2014,7 +2014,14 @@ def census_run(
     the counts are still written, the run cannot pass". The exit code is the
     gate's, taken from `census.gate_artifact`.
     """
+    # T098: the instrument's own provenance, checked before a project is
+    # opened. `NaturalKeyDefinition.roster_source` names the document that
+    # admits each natural key, and until T098 nothing read it -- so six entries
+    # went on naming 038's proposal for two days after 035 admitted them. A
+    # census that is wrong about which classes can fail its own duplicate gate
+    # should not be measuring anything, so this raises rather than warns.
     base = census.repo_root() if root is None else Path(root)
+    census.verify_roster_sources(base)
     class_list = census.split_feature_system_entries(
         census.derive_class_list(base))
     wanted = _measurable_classes(class_list)

@@ -154,6 +154,23 @@ NATURAL_KEY_ROSTER_DOCUMENT = (
     "specs/035-fullsweep-fidelity/contracts/natural-key-identity-roster.json"
 )
 
+#: T098. Feature 038's own PROPOSAL for the six classes it asked 035 to admit.
+#: It is not a roster and never becomes one: it stays populated after landing
+#: (it is the proposal record), which is why admission is read from
+#: `NATURAL_KEY_ROSTER_DOCUMENT` and provenance is CHECKED against both.
+NATURAL_KEY_ROSTER_EXTENSION_DOCUMENT = (
+    "specs/038-transfer-fidelity-gaps/contracts/"
+    "natural-key-roster-extension.json"
+)
+
+#: The two documents a `NaturalKeyDefinition.roster_source` may name, and the
+#: whole vocabulary. `ROSTER_SOURCE_035` means the class is ADMITTED and its
+#: duplicates can fail the gate; `ROSTER_SOURCE_038_PROPOSAL` means 038 has
+#: proposed it and 035 has not taken it yet, so its duplicates are advisory.
+ROSTER_SOURCE_035 = "natural_key_identity_roster_035"
+ROSTER_SOURCE_038_PROPOSAL = "roster_extension_038"
+ROSTER_SOURCES: tuple = (ROSTER_SOURCE_035, ROSTER_SOURCE_038_PROPOSAL)
+
 #: The tables of `object-inventory.md` the class list is derived from. TABLE 3
 #: (ride-along owned children) and TABLE 4 (writing-system / configuration
 #: artifacts) are deliberately NOT derivation inputs -- see `CENSUS_ADDITIONS`,
@@ -1542,13 +1559,36 @@ class NaturalKeyDefinition:
     without reading this file. `roster_source` records which document admits the
     class, because admission to gate-failing duplicate detection is by roster
     enumeration only (FR-003's rule for matching, applied to duplicates).
+
+    T098: `roster_source` IS A CHECKED CLAIM, and it took a filing to make it
+    one. It had a DEFAULT (`"roster_extension_038"`) that six of the seven
+    entries inherited and a seventh overrode with the other spelling -- two
+    writers disagreeing about which document admits the roster, and no reader
+    anywhere in `src/` or `tests/` to notice. 035 admitted all six on
+    2026-08-19, so every one of those six inherited values had been WRONG for
+    two days and nothing could say so. A field with no reader is not a tripwire;
+    it is decoration.
+
+    Two changes make it one. The default is GONE, so a new definition cannot
+    acquire a provenance claim by omission -- it has to state which document
+    admits the class. And `roster_source_disagreements` compares every claim
+    against the two documents on disk, with `verify_roster_sources` raising on
+    any disagreement before a census opens a project.
+
+    Note what this field can NOT do, so it is not mistaken for the admission
+    mechanism: `duplicates.roster_admitted` is computed by
+    `roster_admitted_classes`, which READS 035's roster at run time. That is the
+    tripwire the docstring below describes and it worked exactly as designed --
+    the six classes became gate-failing on the merge with no edit here.
+    `roster_source` is the code's own record of WHY it believes what it
+    believes, and its job is to disagree out loud when that belief goes stale.
     """
 
     object_class: str
     property_name: str
     ws_scope: str
     description: str
-    roster_source: str = "roster_extension_038"
+    roster_source: str
 
     def __post_init__(self) -> None:
         if self.ws_scope not in (WS_SCOPE_VERNACULAR, WS_SCOPE_ANALYSIS):
@@ -1556,47 +1596,67 @@ class NaturalKeyDefinition:
                 "NaturalKeyDefinition.ws_scope for "
                 + repr(self.object_class) + " is " + repr(self.ws_scope)
             )
+        if self.roster_source not in ROSTER_SOURCES:
+            raise CensusError(
+                "NaturalKeyDefinition.roster_source for "
+                + repr(self.object_class) + " is " + repr(self.roster_source)
+                + ", outside " + repr(ROSTER_SOURCES) + " -- the two documents "
+                "that can admit or propose a natural key are enumerated, so a "
+                "third spelling is a typo that would be checked against "
+                "nothing"
+            )
 
 
-#: The classes whose duplicate keys the census can compute. Transcribed from
-#: 035's `natural-key-identity-roster.json` (the three entries it already
-#: carries) and 038's `natural-key-roster-extension.json` (the six proposed by
-#: FR-005). A class absent from this table gets NO `duplicates` block rather
-#: than an `extra_objects: 0` block, because 0 would claim the census looked.
+#: The classes whose duplicate keys the census can compute. A class absent from
+#: this table gets NO `duplicates` block rather than an `extra_objects: 0`
+#: block, because 0 would claim the census looked.
+#:
+#: T098: every entry now names its admitting document, and all seven name 035's
+#: roster. Six of them used to name 038's PROPOSAL by inheriting the field's
+#: default -- accurate when written (2026-08-18) and stale from 2026-08-19,
+#: when 035 appended all six in the order 038 asked for. The values are checked
+#: against the documents by `verify_roster_sources`, so this comment is not the
+#: thing keeping them true.
 NATURAL_KEY_DEFINITIONS: dict = {
     "PhPhoneme": NaturalKeyDefinition(
         "PhPhoneme", "Name", WS_SCOPE_VERNACULAR,
         "Name (default vernacular alt), exact and case-sensitive",
+        roster_source=ROSTER_SOURCE_035,
     ),
     "PhNCSegments": NaturalKeyDefinition(
         "PhNCSegments", "Name", WS_SCOPE_ANALYSIS,
         "Name (default analysis alt), exact and case-sensitive, within the "
         "PhPhonData natural-class list and restricted to PhNCSegments",
+        roster_source=ROSTER_SOURCE_035,
     ),
     "PhNCFeatures": NaturalKeyDefinition(
         "PhNCFeatures", "Name", WS_SCOPE_ANALYSIS,
         "Name (default analysis alt), exact and case-sensitive, within the "
         "PhPhonData natural-class list and restricted to PhNCFeatures",
+        roster_source=ROSTER_SOURCE_035,
     ),
     "PartOfSpeech": NaturalKeyDefinition(
         "PartOfSpeech", "Name", WS_SCOPE_ANALYSIS,
         "Name (default analysis alt), exact and case-sensitive, project-wide "
         "over the recursive hierarchy; the owning parent is NOT part of the key",
+        roster_source=ROSTER_SOURCE_035,
     ),
     "MoMorphType": NaturalKeyDefinition(
         "MoMorphType", "Name", WS_SCOPE_ANALYSIS,
         "Name (default analysis alt), exact and case-sensitive, within the "
         "lexicon's morph-types list",
+        roster_source=ROSTER_SOURCE_035,
     ),
     "LexEntryInflType": NaturalKeyDefinition(
         "LexEntryInflType", "Name", WS_SCOPE_ANALYSIS,
         "Name (default analysis alt), exact and case-sensitive, within the "
         "variant-entry-types list and restricted to LexEntryInflType",
+        roster_source=ROSTER_SOURCE_035,
     ),
     "WfiWordform": NaturalKeyDefinition(
         "WfiWordform", "Form", WS_SCOPE_VERNACULAR,
         "Form (default vernacular alt), exact and case-sensitive",
-        roster_source="natural_key_identity_roster_035",
+        roster_source=ROSTER_SOURCE_035,
     ),
 }
 
@@ -1620,6 +1680,93 @@ def roster_admitted_classes(root: Optional[Path] = None) -> frozenset:
         entry["class"] for entry in data.get("entries", ())
         if entry.get("class")
     )
+
+
+def roster_extension_proposed_classes(root: Optional[Path] = None) -> frozenset:
+    """The classes 038's extension PROPOSES, read at run time.
+
+    A proposal is not an admission and this file is not emptied when 035 takes
+    an entry -- it is the proposal record -- so a class can legitimately appear
+    here and in 035's roster at the same time. That is exactly why provenance
+    has to be checked against BOTH documents rather than inferred from either.
+    """
+    base = repo_root() if root is None else Path(root)
+    path = base / NATURAL_KEY_ROSTER_EXTENSION_DOCUMENT
+    if not path.is_file():
+        return frozenset()
+    data = json.loads(path.read_text(encoding="utf-8"))
+    return frozenset(
+        entry["class"] for entry in data.get("proposed_entries", ())
+        if entry.get("class")
+    )
+
+
+def roster_source_disagreements(root: Optional[Path] = None) -> tuple:
+    """T098: every `roster_source` claim, checked against the two documents.
+
+    THE READER THIS FIELD DID NOT HAVE. `roster_source` was written three times
+    in `src/` and `tests/` and read none of them, so the six entries that
+    claimed 038's proposal went on claiming it for two days after 035 admitted
+    them. This is the check that makes the claim falsifiable.
+
+    IT FIRES IN BOTH DIRECTIONS, and the second direction is the one worth
+    having. A definition claiming `ROSTER_SOURCE_035` for a class 035 does NOT
+    admit means the census believes that class's duplicates can fail the gate
+    when `roster_admitted_classes` will quietly mark them advisory -- which is
+    what a roster REMOVAL looks like from in here, and there is nothing else in
+    the tree that would notice one. A definition claiming
+    `ROSTER_SOURCE_038_PROPOSAL` for a class 035 has since admitted is the
+    staleness T098 was filed for.
+
+    Returns one human-readable line per disagreement, empty when the code and
+    the documents agree.
+    """
+    base = repo_root() if root is None else Path(root)
+    admitted = roster_admitted_classes(base)
+    proposed = roster_extension_proposed_classes(base)
+    out = []
+    for name, definition in sorted(NATURAL_KEY_DEFINITIONS.items()):
+        source = definition.roster_source
+        if source == ROSTER_SOURCE_035 and name not in admitted:
+            out.append(
+                name + " claims roster_source " + repr(source) + " but "
+                + NATURAL_KEY_ROSTER_DOCUMENT + " does not admit it -- the "
+                "census believes this class's duplicates can FAIL the gate "
+                "while roster_admitted_classes will mark them advisory"
+            )
+        elif source == ROSTER_SOURCE_038_PROPOSAL:
+            if name in admitted:
+                out.append(
+                    name + " claims roster_source " + repr(source) + " but "
+                    + NATURAL_KEY_ROSTER_DOCUMENT + " has ADMITTED it -- the "
+                    "proposal landed and this claim is stale (T098)"
+                )
+            elif name not in proposed:
+                out.append(
+                    name + " claims roster_source " + repr(source) + " but "
+                    + NATURAL_KEY_ROSTER_EXTENSION_DOCUMENT + " does not "
+                    "propose it either, so no document accounts for this key"
+                )
+    return tuple(out)
+
+
+def verify_roster_sources(root: Optional[Path] = None) -> None:
+    """Raise `CensusError` naming every `roster_source` disagreement.
+
+    Called before a census opens a project, for the same reason
+    `derive_class_list` raises `CoverageIncomplete` on a CP-1 derivation
+    mismatch: a disagreement between the code's belief and the contracts on
+    disk is a defect in the instrument, and an instrument that is wrong about
+    which classes can fail its own gate should not be measuring anything.
+    """
+    disagreements = roster_source_disagreements(root)
+    if disagreements:
+        raise CensusError(
+            "the natural-key definitions disagree with the roster documents "
+            "about which document admits which class: "
+            + "; ".join(disagreements),
+            tuple(line.split(" ", 1)[0] for line in disagreements),
+        )
 
 
 def _ws_handle_for(handle, ws_scope: str):

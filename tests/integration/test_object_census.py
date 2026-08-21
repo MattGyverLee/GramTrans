@@ -5229,3 +5229,58 @@ class TestT099TheAbortBecameARowWithoutBecomingQuiet:
         assert not outcome.phase.satisfied
         assert any("MoStemMsa" in line and "NOT_EVALUATED" in line
                    for line in outcome.phase.failures)
+
+
+# ---------------------------------------------------------------------------
+# T098: the roster provenance field, and the second-corpus confirmation
+#
+# The artifact below is a live read-only census of `Ejagham W Mini` ->
+# `GT038 Ejagham After` taken WITH `census.verify_roster_sources` in the run
+# path, which is the measurement T098 owes: the pre-flight check does not break
+# a real run, and all seven natural-key classes report `roster_admitted: true`
+# on live data. It doubles as T099's second corpus.
+# ---------------------------------------------------------------------------
+
+T098_EJAGHAM = "census-038-t098-ejagham.json"
+
+
+class TestT098RosterAdmissionIsLive:
+
+    def test_the_artifact_validates_and_holds_its_invariants(
+            self, census_schema):
+        artifact = _t099(T098_EJAGHAM)
+        assert schema_errors(artifact, census_schema) == []
+        assert validate_artifact(artifact) == ()
+
+    def test_every_natural_key_class_is_roster_admitted_on_live_data(self):
+        """The designed tripwire, measured rather than reasoned about.
+        `roster_admitted` is computed by `census.roster_admitted_classes`, which
+        reads 035's roster at run time -- so this is the assertion that 035's
+        2026-08-19 merge actually made the six 038 classes able to FAIL the gate,
+        with no edit in `NATURAL_KEY_DEFINITIONS`."""
+        from gramtrans.Lib import census as census_mod
+
+        rows = {r["class"]: r for r in _t099(T098_EJAGHAM)["classes"]}
+        for name in sorted(census_mod.NATURAL_KEY_DEFINITIONS):
+            duplicates = rows[name].get("duplicates")
+            assert duplicates is not None, name
+            assert duplicates["roster_admitted"] is True, name
+
+    def test_an_admitted_class_actually_fails_the_run(self):
+        """Admission is only meaningful if it can fail something. `PhNCFeatures`
+        carries 1 duplicate group / 3 extra objects on this pair and the run is
+        DUPLICATE_IDENTITY exit 3 -- one of the six classes 038 proposed, doing
+        the job it was proposed for."""
+        artifact = _t099(T098_EJAGHAM)
+        rows = {r["class"]: r for r in artifact["classes"]}
+        assert rows["PhNCFeatures"]["duplicates"]["extra_objects"] == 3
+        assert artifact["totals"]["duplicate_extra_objects"] == 3
+        assert (artifact["verdict"], artifact["exit_code"]) == (
+            "DUPLICATE_IDENTITY", 3)
+
+    def test_t099s_nulls_reproduce_on_a_second_corpus(self):
+        rows = {r["class"]: r for r in _t099(T098_EJAGHAM)["classes"]}
+        for name in T099_NULLED_CLASSES:
+            for field in T099_NULLED_FIELDS:
+                assert rows[name][field] is None, name + "." + field
+            assert rows[name]["verdict_class"] == "NOT_EVALUATED"
