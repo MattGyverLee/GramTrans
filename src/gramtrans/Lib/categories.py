@@ -9576,6 +9576,50 @@ def slots_dependencies(piece):
     return ((GrammarCategory.GRAM_CATEGORIES, g),) if g else ()
 
 
+# ---------------------------------------------------------------------------
+# NARROW per-relationship producer for SLOTS (feature 038 -- T068)
+# ---------------------------------------------------------------------------
+#
+# `slots_dependencies` is already narrow -- `Owner` is one atomic reference and
+# a slot's owner is always the `IPartOfSpeech` whose `AffixSlotsOC` holds it --
+# so this wrapper adds no filtering TODAY. It is added anyway, for the same
+# reason T067's `affixes_pos_dependencies` is a wrapper over an already-narrow
+# `_entry_pos_deps`: the registry row names THIS function, so a later change
+# that made `slots_dependencies` emit a second far category (a `StratumRA`, a
+# template back-reference) would be dropped here instead of arriving in a plan
+# under `SLOT_TO_POS`'s `verified_by`. `_narrow_deps` is the single mechanism
+# all narrow producers share, and the audit driver's `foreign_edges` column is
+# what makes the filter observable rather than decorative (measured 0 on both
+# corpora).
+#
+# THE MEMBER. This relationship had no `DependencyKind` before T068. The plan
+# listed `SLOT_TO_TEMPLATE`, which is the arrow in the opposite direction and
+# is emitted by nothing: in LCM a slot is OWNED by a POS and holds no reference
+# to any template, while `IMoInflAffixTemplate` references its slots through
+# five `*SlotsRS` sequences. `DependencyKind.SLOT_TO_POS` was added rather than
+# borrowing the wrong member, because a live relationship filed under another
+# relationship's name is the same substitution FR-018 refuses for `verified_by`
+# -- it would just fail in the FR-015 surfaces instead of at registration.
+
+
+def slots_pos_dependencies(piece):
+    """NARROW producer for `DependencyKind.SLOT_TO_POS`: only
+    `(GRAM_CATEGORIES, owning_pos_guid)`, the `IPartOfSpeech.AffixSlotsOC`
+    owner of this `IMoInflAffixSlot`.
+
+    No cast is needed at this site and that is a measured fact, not an
+    assumption: `Owner` is declared on `ICmObject`, so the bare `getattr` in
+    `slots_dependencies` sees it on the base-typed proxy `AffixSlotsOC` yields.
+    `debug/audit038_closure_edges.py` measures the uncast read against an
+    explicit cast and reports `NO_CAST_NEEDED` (19/19 on `Mbugwe LizzieHC
+    practice`, 9/9 on `Ejagham Mini`) -- which is what makes T088's
+    `CAST_REQUIRED` verdict on the MSA sites a real difference rather than the
+    instrument failing to see anything.
+    """
+    return _narrow_deps(slots_dependencies(piece),
+                        GrammarCategory.GRAM_CATEGORIES)
+
+
 def slots_required_writing_systems(piece):
     return ()
 
@@ -12807,6 +12851,38 @@ def for_category(category: GrammarCategory) -> dict:
 # but "likely" is not an audit, `DependencyKind` keys are unique so a STEMS row
 # would need its own member anyway, and T067 names the AFFIXES producer.
 
+# ---------------------------------------------------------------------------
+# T068 (2026-08-21) -- the SLOTS row, and the member the plan got backwards
+# ---------------------------------------------------------------------------
+#
+# `slots_dependencies` audited CLEAN the first time it was measured (`73a8b73`)
+# and for a reason that is checkable rather than lucky: it reads only `Owner`,
+# which IS declared on `ICmObject`, so the bare `getattr` sees it on the
+# base-typed proxy `AffixSlotsOC` yields and T088's polymorphic-member defect
+# cannot apply. Measured `NO_CAST_NEEDED`, 19 uncast == 19 cast on `Mbugwe
+# LizzieHC practice` and 9 == 9 on `Ejagham Mini`.
+#
+# What it did NOT have was a `DependencyKind`. The plan's member list named
+# `SLOT_TO_TEMPLATE`, which is a DIFFERENT relationship pointing the other way:
+# in LCM an `IMoInflAffixSlot` is owned by `IPartOfSpeech.AffixSlotsOC` and
+# holds no reference to any template, while `IMoInflAffixTemplate` references
+# its slots through five `*SlotsRS` sequences. Nothing in this module emits a
+# slot->template edge, and `slots_dependencies` emits only slot->POS. So
+# `DependencyKind.SLOT_TO_POS` was ADDED rather than the wrong member borrowed:
+# a live relationship filed under another relationship's name would pass
+# registration and then mislabel every FR-015 surface (T070) and every
+# deselection (T072), which is the substitution FR-018 exists to prevent moved
+# one step downstream where nothing checks for it.
+#
+# What the row claims: for SLOTS pieces, `slots_pos_dependencies` emits ONLY
+# `(GRAM_CATEGORIES, guid)` (measured `foreign_edges == 0`) and every distinct
+# far GUID resolves to a piece `gram_categories_enumerate_source` yields
+# (measured `unresolved == 0`, `resolved_as_owned_value == 0`) -- 19 edges over
+# 5 distinct POSes on Mbugwe, 9 over 6 on Ejagham Mini. The edge count and the
+# distinct-POS count differ because several slots share an owning POS, which is
+# the whole reason closure is worth having and the reason the census reports
+# both numbers.
+
 CLOSURE_EDGES_VERIFIED: dict = {
     DependencyKind.AFFIX_TO_POS: {
         "category": GrammarCategory.AFFIXES,
@@ -12837,6 +12913,30 @@ CLOSURE_EDGES_VERIFIED: dict = {
             "tests/integration/_snapshots/closure-edge-audit-038-*.json, "
             "asserted by tests/integration/test_038_closure_edge_audit.py::"
             "test_only_the_confirmed_relationships_are_registered"
+        ),
+    },
+    # -----------------------------------------------------------------------
+    # T068 (2026-08-21) -- the SLOTS row
+    # -----------------------------------------------------------------------
+    DependencyKind.SLOT_TO_POS: {
+        "category": GrammarCategory.SLOTS,
+        "producer": slots_pos_dependencies,
+        "dependency_category": GrammarCategory.GRAM_CATEGORIES,
+        "verified_by": (
+            "debug/audit038_closure_edges.py (read-only, 2026-08-21) over "
+            "'Mbugwe LizzieHC practice' and 'Ejagham Mini': "
+            "relationships.SLOT_TO_POS = CONFIRMED (19 edges over 5 distinct "
+            "POSes / 9 over 6, foreign_edges 0, unresolved 0, "
+            "resolved_as_owned_value 0; edges.SLOT_TO_POS = NO_CAST_NEEDED "
+            "19==19 / 9==9) in "
+            "tests/integration/_snapshots/closure-edge-audit-038-*.json, plus "
+            "the census in "
+            "tests/integration/_snapshots/closure-registration-038-t068.json "
+            "(debug/run038_closure_census.py, SLOTS-only selection against a "
+            "target restored from 'Target 2026-07-06 0218.fwbackup'), both "
+            "asserted by tests/integration/test_038_closure_edge_audit.py::"
+            "test_only_the_confirmed_relationships_are_registered and "
+            "::test_a_slots_only_plan_carries_the_registered_slot_to_pos_edges"
         ),
     },
     # DependencyKind.MSA_TO_INFL_FEATURE: REFUSED -- see (3) above and T089.

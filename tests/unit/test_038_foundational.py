@@ -476,17 +476,19 @@ class TestClosureRegistryShipsEmpty:
 
         Emptiness WAS the property while nothing had been audited. T067
         audited two relationships against two live corpora and registered
-        those two, so the property is now the exact set: anything else in here
-        would be a producer's unaudited edge set reaching a plan, which is the
-        failure FR-018 exists to prevent. Every row must also carry evidence,
-        which `_closure_registry_by_category` enforces -- calling it here is
-        what makes that enforcement cover the SHIPPED registry and not only
-        the hand-built ones below.
+        those two; T068 audited and registered a third (a SLOTS piece needing
+        its owning POS). So the property is now the exact set: anything else
+        in here would be a producer's unaudited edge set reaching a plan,
+        which is the failure FR-018 exists to prevent. Every row must also
+        carry evidence, which `_closure_registry_by_category` enforces --
+        calling it here is what makes that enforcement cover the SHIPPED
+        registry and not only the hand-built ones below.
         """
         registry = categories_mod.CLOSURE_EDGES_VERIFIED
         assert set(registry) == {
             DependencyKind.AFFIX_TO_POS,
             DependencyKind.MSA_TO_FEAT_STRUC_TYPE,
+            DependencyKind.SLOT_TO_POS,
         }
         categories_mod._closure_registry_by_category(registry)
         for kind, entry in registry.items():
@@ -497,13 +499,20 @@ class TestClosureRegistryShipsEmpty:
         guarantee that let two rows go live without switching on the other 21
         producers.
 
-        AFFIXES is excluded because it IS registered now; a duck-typed context
-        makes its enumeration empty anyway, but asserting `()` for it would be
-        asserting the fake rather than the gate.
+        The excluded set is DERIVED from the registry rather than listed, so
+        this test cannot drift into asserting the gate for a category that has
+        since been registered (AFFIXES by T067, SLOTS by T068). A duck-typed
+        context makes their enumeration empty anyway, so asserting `()` for
+        them would be asserting the fake rather than the gate -- while
+        hard-coding the exclusion would quietly stop covering the category the
+        NEXT registration adds.
         """
+        registered = {entry["category"] for entry
+                      in categories_mod.CLOSURE_EDGES_VERIFIED.values()}
+        assert registered == {GrammarCategory.AFFIXES, GrammarCategory.SLOTS}
         dep_fn = categories_mod.closure_dependencies_for(_ctx())
         for cat in GrammarCategory:
-            if cat is GrammarCategory.AFFIXES:
+            if cat in registered:
                 continue
             assert dep_fn(cat, "any-guid") == ()
 

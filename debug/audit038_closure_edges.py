@@ -42,10 +42,11 @@ HOW IT ANSWERS -- TWO SEPARATE SIGNALS, deliberately not merged.
    that can only report "the composite returns 1063 edges" cannot earn three
    separate `verified_by` values -- it would file two unaudited relationships
    under a third's evidence, which is the substitution FR-018 exists to
-   prevent. So this block calls the NARROW producers
-   (`affixes_pos_dependencies`, `affixes_feat_struc_type_dependencies`,
-   `affixes_infl_feature_dependencies`) over the pieces the registry will
-   actually walk -- `affixes_enumerate_source`, not every LexEntry -- and per
+   prevent. So this block calls the NARROW producers (T067's
+   `affixes_pos_dependencies`, `affixes_feat_struc_type_dependencies`,
+   `affixes_infl_feature_dependencies`; T068's `slots_pos_dependencies`)
+   over the pieces the registry will actually walk -- each relationship's
+   OWN source-category `enumerate_source`, not every LexEntry -- and per
    relationship measures three things:
 
      * `foreign_edges`   -- edges of a far category the row does NOT claim.
@@ -118,6 +119,17 @@ _FEAT_ATTRS = ("InflFeatsOA", "MsFeaturesOA", "FromMsFeaturesOA",
 #: (`categories._TEMPLATE_SLOT_SEQS`), verbatim.
 _TPL_SEQS = ("PrefixSlotsRS", "SuffixSlotsRS", "EncliticSlotsRS",
              "ProcliticSlotsRS", "SlotsRS")
+
+#: Which task owns each candidate relationship in the `relationships` block.
+#: Recorded in the snapshot so a reader can tell which audit a row belongs to
+#: without consulting tasks.md -- the `relationships` block started as T067's
+#: and now spans three tasks.
+_CANDIDATE_TASK = {
+    "AFFIX_TO_POS": "T067",
+    "MSA_TO_FEAT_STRUC_TYPE": "T067",
+    "MSA_TO_INFL_FEATURE": "T067",
+    "SLOT_TO_POS": "T068",
+}
 
 
 def _verdict(uncast: int, cast: int, population: int) -> str:
@@ -351,7 +363,23 @@ def main() -> int:
             self.source_handle = handle
 
     audit_ctx = _AuditContext(proj)
-    affix_pieces = list(_cats.affixes_enumerate_source(audit_ctx, None) or ())
+
+    _pieces_cache: dict = {}
+
+    def _source_pieces(category):
+        """The pieces the registry will actually hand a producer for
+        `category` -- its own `enumerate_source`, not a hand-rolled LCM walk.
+
+        Cached because several candidate relationships share one source
+        category (AFFIXES has three, AFFIX_TEMPLATES has two) and re-walking
+        the project per relationship would make the numbers depend on the
+        order the candidates happen to be listed in.
+        """
+        if category not in _pieces_cache:
+            bundle = _cats.LEAF_CATEGORIES[category]
+            _pieces_cache[category] = list(
+                bundle["enumerate_source"](audit_ctx, None) or ())
+        return _pieces_cache[category]
 
     def _piece_guids(category):
         """Lower-cased GUIDs of every piece `category`'s enumerator yields.
@@ -396,25 +424,38 @@ def main() -> int:
                                   _owned_symbolic_value_guids()),
     }
 
+    #: `(DependencyKind name, producer name, producer, SOURCE category, FAR
+    #: category)`. The SOURCE category is not decoration: it decides which
+    #: `enumerate_source` supplies the pieces, and measuring a producer over
+    #: the wrong pieces is how T067's composite measurement came to be worth
+    #: nothing (it counted `affixes_dependencies` over every LexEntry, not
+    #: over the AFFIXES category's own output).
     _CANDIDATES = (
         ("AFFIX_TO_POS", "affixes_pos_dependencies",
-         _cats.affixes_pos_dependencies, _GC.GRAM_CATEGORIES),
+         _cats.affixes_pos_dependencies, _GC.AFFIXES, _GC.GRAM_CATEGORIES),
         ("MSA_TO_FEAT_STRUC_TYPE", "affixes_feat_struc_type_dependencies",
-         _cats.affixes_feat_struc_type_dependencies, _GC.FEATURE_STRUCT_TYPES),
+         _cats.affixes_feat_struc_type_dependencies, _GC.AFFIXES,
+         _GC.FEATURE_STRUCT_TYPES),
         ("MSA_TO_INFL_FEATURE", "affixes_infl_feature_dependencies",
-         _cats.affixes_infl_feature_dependencies, _GC.INFLECTION_FEATURES),
+         _cats.affixes_infl_feature_dependencies, _GC.AFFIXES,
+         _GC.INFLECTION_FEATURES),
+        # T068. The relationship the plan called `SLOT_TO_TEMPLATE` and the
+        # first audit called `SLOT_TO_POS` without a member existing for it.
+        ("SLOT_TO_POS", "slots_pos_dependencies",
+         _cats.slots_pos_dependencies, _GC.SLOTS, _GC.GRAM_CATEGORIES),
     )
 
     relationships: dict = {}
-    for kind_name, producer_name, producer, far_cat in _CANDIDATES:
+    for kind_name, producer_name, producer, src_cat, far_cat in _CANDIDATES:
         pieces_ok, owned_values = _far_index[far_cat]
+        src_pieces = _source_pieces(src_cat)
         edge_count = 0
         foreign = 0
         distinct = set()
         resolved = 0
         owned = 0
         unresolved_guids: list = []
-        for piece in affix_pieces:
+        for piece in src_pieces:
             for ref in producer(piece) or ():
                 if not (isinstance(ref, tuple) and len(ref) == 2):
                     foreign += 1
@@ -431,7 +472,7 @@ def main() -> int:
                 owned += 1
             else:
                 unresolved_guids.append(guid)
-        if not affix_pieces or edge_count == 0:
+        if not src_pieces or edge_count == 0:
             verdict = "NO_DATA"
         elif foreign:
             verdict = "REFUSED_NOT_NARROW"
@@ -442,11 +483,11 @@ def main() -> int:
         else:
             verdict = "CONFIRMED"
         relationships[kind_name] = {
-            "task": "T067",
+            "task": _CANDIDATE_TASK[kind_name],
             "producer": "categories." + producer_name,
-            "source_category": _GC.AFFIXES.value,
+            "source_category": src_cat.value,
             "dependency_category": far_cat.value,
-            "population": len(affix_pieces),
+            "population": len(src_pieces),
             "edges": edge_count,
             "distinct_far_guids": len(distinct),
             "foreign_edges": foreign,
@@ -505,7 +546,8 @@ def main() -> int:
             print("           -> %-26s %d" % (far, row["by_far_category"][far]))
 
     print()
-    print("       PER-RELATIONSHIP AUDIT (T067 -- what may be REGISTERED)")
+    print("       PER-RELATIONSHIP AUDIT (T067/T068/T069 -- what may "
+          "be REGISTERED)")
     print("       " + "-" * 68)
     print("       %-24s %-7s %-8s %-6s %-6s %s"
           % ("RELATIONSHIP", "EDGES", "FOREIGN", "RESLV", "OWNED", "VERDICT"))

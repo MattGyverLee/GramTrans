@@ -1535,8 +1535,33 @@ class DependencyKind(enum.Enum):
     (Lib/categories.py) is a per-relationship allowlist keyed by this enum.
     """
     AFFIX_TO_POS = "affix_to_pos"
+    #: `IMoInflAffMsa.SlotsRC` -- an inflectional affix MSA naming the template
+    #: column it occupies. REAL in LCM and real in this repo, but GramTrans
+    #: carries it as `RunPlan.msa_slot_bindings` for the deferred 17.1 sub-pass
+    #: (FR-333/FR-019), NOT as a `*_dependencies` edge, so NO producer emits it
+    #: and no registry row can name it yet. Kept because FR-019/SC-003 is T074's
+    #: job and that is where it would be earned.
     AFFIX_TO_SLOT = "affix_to_slot"
+    #: Named by the plan, emitted by NOTHING -- and T068 measured why. The
+    #: LCM arrow between a slot and a template runs the other way: an
+    #: `IMoInflAffixSlot` is OWNED by its `IPartOfSpeech.AffixSlotsOC` and knows
+    #: nothing about templates, while `IMoInflAffixTemplate` REFERENCES its
+    #: slots through five `*SlotsRS` sequences. So the dependent is the
+    #: TEMPLATE (T069's business), and what a slot actually depends on is its
+    #: owning POS (see `SLOT_TO_POS`). Retained rather than deleted so the
+    #: record of the plan's assumption survives next to the measurement that
+    #: corrected it; deliberately unregistrable, because no producer emits it.
     SLOT_TO_TEMPLATE = "slot_to_template"
+    #: Feature 038 (T068). `categories.slots_dependencies` emits exactly one
+    #: far endpoint -- `(GRAM_CATEGORIES, slot.Owner)`, the `IPartOfSpeech`
+    #: whose `AffixSlotsOC` owns the slot -- and there was no member for it.
+    #: The plan's list named `SLOT_TO_TEMPLATE` instead, which is a DIFFERENT
+    #: relationship in the opposite direction (see above). Registering the
+    #: measured slot->POS edge under that member would have put a live
+    #: relationship into every FR-015 surface under the wrong name, which is
+    #: the same substitution FR-018 forbids for `verified_by`. Added, not
+    #: borrowed. Audited by `debug/audit038_closure_edges.py`.
+    SLOT_TO_POS = "slot_to_pos"
     TEMPLATE_TO_POS = "template_to_pos"
     MSA_TO_INFL_FEATURE = "msa_to_infl_feature"
     #: Feature 038 (T034). An MSA's `InflFeatsOA`/`MsFeaturesOA` is an

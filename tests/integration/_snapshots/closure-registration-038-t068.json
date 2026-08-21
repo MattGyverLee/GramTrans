@@ -1,0 +1,230 @@
+{
+  "backup": "Target 2026-07-06 0218.fwbackup",
+  "census": {
+    "artifact": "census-038-t068-registered.json",
+    "comparable_prior_artifact": "census-038-t067-registered.json",
+    "gate_exit_code": 3,
+    "run_exit_code": 3
+  },
+  "destination": "GT038 Closure Target",
+  "expected_kinds": [
+    "SLOT_TO_POS"
+  ],
+  "full_copy": {
+    "closure_edges_expected": 0,
+    "composition_unchanged_by_registration": true,
+    "registry_empty": {
+      "closure": {
+        "by_kind": {},
+        "distinct_pulled_in_refs": 0,
+        "pulled_in_by_category": {},
+        "total_edges": 0
+      },
+      "composition": {
+        "actions": {
+          "adhoc_compound_rules": 3,
+          "affix_templates": 11,
+          "affixes": 118,
+          "custom_fields": 5,
+          "feature_struct_types": 6,
+          "gram_categories": 10,
+          "inflection_features": 5,
+          "natural_classes": 113,
+          "ph_environment": 3,
+          "phon_feat_types": 1,
+          "phonemes": 23,
+          "phonological_features": 17,
+          "phonological_rules": 39,
+          "pos_inflectable_feats": 13,
+          "slots": 19,
+          "stems": 137,
+          "variant_types": 2
+        },
+        "actions_total": 525,
+        "dropped_items": 8879,
+        "enrichments": 2,
+        "excluded_lossy": 2,
+        "overwrites": {
+          "gram_categories": 2,
+          "phonemes": 19,
+          "semantic_domains": 1730
+        },
+        "overwrites_total": 1751,
+        "process_rules": 6,
+        "skips": {
+          "complex_form_types": 7,
+          "gram_categories": 1,
+          "semantic_domains": 62,
+          "variant_types": 7
+        },
+        "skips_total": 77
+      }
+    },
+    "registry_live": {
+      "closure": {
+        "by_kind": {},
+        "distinct_pulled_in_refs": 0,
+        "pulled_in_by_category": {},
+        "total_edges": 0
+      },
+      "composition": {
+        "actions": {
+          "adhoc_compound_rules": 3,
+          "affix_templates": 11,
+          "affixes": 118,
+          "custom_fields": 5,
+          "feature_struct_types": 6,
+          "gram_categories": 10,
+          "inflection_features": 5,
+          "natural_classes": 113,
+          "ph_environment": 3,
+          "phon_feat_types": 1,
+          "phonemes": 23,
+          "phonological_features": 17,
+          "phonological_rules": 39,
+          "pos_inflectable_feats": 13,
+          "slots": 19,
+          "stems": 137,
+          "variant_types": 2
+        },
+        "actions_total": 525,
+        "dropped_items": 8879,
+        "enrichments": 2,
+        "excluded_lossy": 2,
+        "overwrites": {
+          "gram_categories": 2,
+          "phonemes": 19,
+          "semantic_domains": 1730
+        },
+        "overwrites_total": 1751,
+        "process_rules": 6,
+        "skips": {
+          "complex_form_types": 7,
+          "gram_categories": 1,
+          "semantic_domains": 62,
+          "variant_types": 7
+        },
+        "skips_total": 77
+      }
+    }
+  },
+  "narrow": {
+    "composition_unchanged_by_registration": true,
+    "registry_empty": {
+      "closure": {
+        "by_kind": {},
+        "distinct_pulled_in_refs": 0,
+        "pulled_in_by_category": {},
+        "total_edges": 0
+      },
+      "composition": {
+        "actions": {
+          "slots": 19
+        },
+        "actions_total": 19,
+        "dropped_items": 55,
+        "enrichments": 0,
+        "excluded_lossy": 0,
+        "overwrites": {},
+        "overwrites_total": 0,
+        "process_rules": 0,
+        "skips": {},
+        "skips_total": 0
+      }
+    },
+    "registry_live": {
+      "closure": {
+        "by_kind": {
+          "SLOT_TO_POS": {
+            "edges": 19,
+            "far_categories": {
+              "gram_categories": 19
+            },
+            "origins": {
+              "pulled_in": 19
+            },
+            "verified_by_nonempty": true
+          }
+        },
+        "distinct_pulled_in_refs": 5,
+        "pulled_in_by_category": {
+          "gram_categories": 5
+        },
+        "total_edges": 19
+      },
+      "composition": {
+        "actions": {
+          "slots": 19
+        },
+        "actions_total": 19,
+        "dropped_items": 55,
+        "enrichments": 0,
+        "excluded_lossy": 0,
+        "overwrites": {},
+        "overwrites_total": 0,
+        "process_rules": 0,
+        "skips": {},
+        "skips_total": 0
+      }
+    }
+  },
+  "narrow_selection": "SLOTS",
+  "plan_composition_unchanged_by_registration": true,
+  "registered": [
+    "AFFIX_TO_POS",
+    "MSA_TO_FEAT_STRUC_TYPE",
+    "SLOT_TO_POS"
+  ],
+  "report": {
+    "run_id": ""
+  },
+  "source": "Mbugwe LizzieHC practice",
+  "task": "T068",
+  "transfer_plan": {
+    "closure": {
+      "by_kind": {},
+      "distinct_pulled_in_refs": 0,
+      "pulled_in_by_category": {},
+      "total_edges": 0
+    },
+    "composition": {
+      "actions": {
+        "adhoc_compound_rules": 3,
+        "affix_templates": 11,
+        "affixes": 118,
+        "custom_fields": 5,
+        "feature_struct_types": 6,
+        "gram_categories": 10,
+        "inflection_features": 5,
+        "natural_classes": 113,
+        "ph_environment": 3,
+        "phon_feat_types": 1,
+        "phonemes": 23,
+        "phonological_features": 17,
+        "phonological_rules": 39,
+        "pos_inflectable_feats": 13,
+        "slots": 19,
+        "stems": 137,
+        "variant_types": 2
+      },
+      "actions_total": 525,
+      "dropped_items": 8879,
+      "enrichments": 2,
+      "excluded_lossy": 2,
+      "overwrites": {
+        "gram_categories": 2,
+        "phonemes": 19,
+        "semantic_domains": 1730
+      },
+      "overwrites_total": 1751,
+      "process_rules": 6,
+      "skips": {
+        "complex_form_types": 7,
+        "gram_categories": 1,
+        "semantic_domains": 62,
+        "variant_types": 7
+      },
+      "skips_total": 77
+    }
+  }
+}

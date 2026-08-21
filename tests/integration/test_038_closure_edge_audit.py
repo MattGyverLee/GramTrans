@@ -75,6 +75,28 @@ SYMBOLIC VALUES, which `inflection_features_dependencies` itself records are
 "co-created in execute_action, not separately planned". A pulled-in ref naming
 a piece no category can enumerate cannot be planned, marked (T070) or
 deselected (T072). Filed as T089; NOT registered.
+
+WHAT T068 REGISTERED, AND THE MEMBER IT HAD TO ADD.
+
+    SLOT_TO_POS              19 /  9 edges, foreign 0, unresolved 0  REGISTERED
+
+`slots_dependencies` audited clean the first time it was measured, and the
+reason is checkable rather than lucky: it reads only `Owner`, which IS declared
+on `ICmObject`, so the bare `getattr` sees it on the base-typed proxy
+`AffixSlotsOC` yields and T088's defect cannot apply. 19 edges over 5 distinct
+POSes on Mbugwe, 9 over 6 on Ejagham Mini.
+
+What it did NOT have was a `DependencyKind`. The plan's member list named
+`SLOT_TO_TEMPLATE`, and that is a different relationship pointing the other
+way: `IMoInflAffixSlot`'s own properties are Name, Description, Optional,
+Affixes and OtherInflectionalAffixLexEntries -- no template reference exists to
+read, so no producer can emit a slot->template edge, while
+`IMoInflAffixTemplate` references its slots through five `*SlotsRS` sequences.
+`DependencyKind.SLOT_TO_POS` was added instead of the wrong member being
+borrowed. A live relationship filed under another relationship's name passes
+registration and then mislabels every FR-015 surface (T070) and every
+deselection (T072) -- the substitution FR-018 forbids, moved one step
+downstream to where nothing checks for it.
 """
 from __future__ import annotations
 
@@ -174,7 +196,7 @@ def test_a_cast_is_still_mandatory_at_the_msa_sites(snap) -> None:
 #: The relationships T067 registered, and the one it did not. Keyed by the
 #: `DependencyKind` NAME so the table can be read next to the snapshot's
 #: `relationships` block, which is keyed the same way.
-_REGISTERED = ("AFFIX_TO_POS", "MSA_TO_FEAT_STRUC_TYPE")
+_REGISTERED = ("AFFIX_TO_POS", "MSA_TO_FEAT_STRUC_TYPE", "SLOT_TO_POS")
 _REFUSED = ("MSA_TO_INFL_FEATURE",)
 
 
@@ -271,11 +293,13 @@ def test_the_per_relationship_counts_are_recorded_per_corpus() -> None:
             "AFFIX_TO_POS": 144,
             "MSA_TO_FEAT_STRUC_TYPE": 73,
             "MSA_TO_INFL_FEATURE": 206,
+            "SLOT_TO_POS": 19,
         },
         "Ejagham Mini": {
             "AFFIX_TO_POS": 88,
             "MSA_TO_FEAT_STRUC_TYPE": 17,
             "MSA_TO_INFL_FEATURE": 34,
+            "SLOT_TO_POS": 9,
         },
     }
     got = {
@@ -296,6 +320,41 @@ def test_the_per_relationship_counts_are_recorded_per_corpus() -> None:
 # ---------------------------------------------------------------------------
 # Signal 2 -- what the producers return. This is the T088 regression guard.
 # ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("snap", _snapshots(), ids=_ids(_snapshots()))
+def test_each_relationship_was_measured_over_its_own_source_category(snap) -> None:
+    """The instrument error T067's journal records, pinned so it cannot come
+    back when a fourth relationship is added.
+
+    T067's first per-relationship measurement counted a COMPOSITE producer
+    over every LexEntry, and was therefore worth nothing to a registry keyed
+    per relationship. The fix was to measure each producer over the pieces the
+    registry will actually hand it -- its OWN source category's
+    `enumerate_source`. `SLOT_TO_POS` is the row that makes that concrete: its
+    population is the SLOT count (19 / 9), not the entry count, and a row
+    measured over the wrong pieces would show up here as a population that
+    matches some other category's.
+    """
+    pop = snap["population"]
+    expected_population = {
+        "AFFIX_TO_POS": None,          # AFFIXES: a subset of lex_entries
+        "MSA_TO_FEAT_STRUC_TYPE": None,
+        "MSA_TO_INFL_FEATURE": None,
+        "SLOT_TO_POS": pop["slots"],
+    }
+    for name, want in expected_population.items():
+        row = snap["relationships"][name]
+        assert row["population"] > 0, name
+        if want is None:
+            # AFFIXES enumerates a SUBSET of the lexicon, so the exact number
+            # is the corpus's business -- but it must not silently become the
+            # whole lexicon, which is what the discredited measurement did.
+            assert row["population"] <= pop["lex_entries"], name
+            assert row["source_category"] == "affixes", name
+        else:
+            assert row["population"] == want, (name, row["population"], want)
+            assert row["source_category"] == "slots", name
+
 
 @pytest.mark.parametrize("snap", _snapshots(), ids=_ids(_snapshots()))
 def test_every_producer_returns_edges_on_a_corpus_that_has_them(snap) -> None:
@@ -412,6 +471,27 @@ def test_the_verdicts_agree_across_corpora() -> None:
 # alone would call a working edge inert, and the narrow one alone could not
 # tell "adds edges" from "changes the plan".
 
+def _census_table(doc) -> dict:
+    """One census artifact reduced to the per-class row every comparison
+    below is made on.
+
+    Shared rather than nested inside one test, because each registration is
+    compared against the PREVIOUS one and a second copy of this projection is
+    how two comparisons quietly stop meaning the same thing.
+    """
+    return {
+        row["class"]: (
+            row["source_count"],
+            row["destination_count_total"],
+            row["destination_count_net"],
+            row["difference"],
+            row["verdict_class"],
+            row["unexplained_shortfall"],
+        )
+        for row in doc["classes"]
+    }
+
+
 _REG_SNAPSHOT = _SNAPSHOT_DIR / "closure-registration-038-t067.json"
 _CENSUS_POST = _SNAPSHOT_DIR / "census-038-t067-registered.json"
 _CENSUS_PRE = _SNAPSHOT_DIR / "census-038-mbugwe-phase6.json"
@@ -527,20 +607,142 @@ def test_the_census_is_unchanged_by_the_registration() -> None:
     pre = json.loads(_CENSUS_PRE.read_text(encoding="utf-8"))
     post = json.loads(_CENSUS_POST.read_text(encoding="utf-8"))
 
-    def table(doc):
-        return {
-            row["class"]: (
-                row["source_count"],
-                row["destination_count_total"],
-                row["destination_count_net"],
-                row["difference"],
-                row["verdict_class"],
-                row["unexplained_shortfall"],
-            )
-            for row in doc["classes"]
-        }
+    assert _census_table(post) == _census_table(pre)
+    assert post["totals"] == pre["totals"]
+    assert (post["verdict"], post["exit_code"]) \
+        == (pre["verdict"], pre["exit_code"]) == ("DUPLICATE_IDENTITY", 3)
 
-    assert table(post) == table(pre)
+
+# ---------------------------------------------------------------------------
+# T068's CENSUS -- what registering the SLOTS row did to a live plan
+# ---------------------------------------------------------------------------
+#
+# Driver: `debug/run038_closure_census.py T068` (restores a throwaway target
+# first). Artifacts: `_snapshots/closure-registration-038-t068.json` (the plan
+# measurements) and `_snapshots/census-038-t068-registered.json` (the census
+# run), the latter directly comparable with `census-038-t067-registered.json`
+# -- the SAME source, the SAME backup and the SAME full-copy selection, with
+# the registry holding T067's two rows instead of three.
+#
+# The selection that can observe this row is SLOTS-only, for the reason T067's
+# journal records: `closure.walk` never reports a seed as pulled in, so in a
+# full copy -- where every owning POS is a seed in its own right -- a correctly
+# registered edge is INVISIBLE. Reading that 0 as "the row is inert" is the
+# instrument error, not a finding.
+
+_REG_T068 = _SNAPSHOT_DIR / "closure-registration-038-t068.json"
+_CENSUS_T068 = _SNAPSHOT_DIR / "census-038-t068-registered.json"
+
+
+def _reg_t068() -> dict:
+    if not _REG_T068.is_file():
+        pytest.skip(
+            "no committed registration measurement at " + str(_REG_T068)
+            + " -- produce it with `python debug/run038_closure_census.py "
+            "T068`")
+    return json.loads(_REG_T068.read_text(encoding="utf-8"))
+
+
+def test_a_slots_only_plan_carries_the_registered_slot_to_pos_edges() -> None:
+    """THE TEST T068's `verified_by` NAMES, alongside the audit one.
+
+    19 edges over 5 distinct POSes is the shape that makes closure worth
+    having, and it is why the EDGE count and the pulled-in ITEM count are
+    asserted separately -- FR-015's surfaces (T070) and FR-016's deselection
+    (T072) both act on the second number, not the first.
+
+    Every edge must be `origin="pulled_in"` (a "chosen" edge here would mean
+    the seed set leaked into the closure and every downstream surface would
+    double-count it) and must carry a non-empty `verified_by` (a registry
+    validated at build time and then losing its evidence on the way to the plan
+    would defeat FR-018 silently).
+
+    `by_kind` is asserted as an EXACT set: under a SLOTS-only selection the
+    AFFIXES rows have no seeds, so an AFFIX_TO_POS edge appearing here would
+    mean the walk had started from something the user did not select.
+    """
+    reg = _reg_t068()
+    assert reg["task"] == "T068"
+    assert reg["narrow_selection"] == "SLOTS"
+    live = reg["narrow"]["registry_live"]["closure"]
+    assert set(live["by_kind"]) == {"SLOT_TO_POS"}
+    assert live["by_kind"]["SLOT_TO_POS"] == {
+        "edges": 19,
+        "far_categories": {"gram_categories": 19},
+        "origins": {"pulled_in": 19},
+        "verified_by_nonempty": True,
+    }
+    assert live["total_edges"] == 19
+    assert live["distinct_pulled_in_refs"] == 5
+    assert live["pulled_in_by_category"] == {"gram_categories": 5}
+
+
+def test_the_slot_edges_come_from_the_registry_and_nowhere_else() -> None:
+    """Emptying the registry must take the edges with it.
+
+    Without this, the test above is satisfied by any code path that produces
+    closure edges -- including one that ignores `CLOSURE_EDGES_VERIFIED`
+    entirely, which is precisely the fall-through FR-018 forbids.
+    """
+    reg = _reg_t068()
+    assert reg["narrow"]["registry_empty"]["closure"]["total_edges"] == 0
+
+
+def test_a_full_copy_still_carries_no_closure_edges_after_t068() -> None:
+    """Seed semantics, re-measured with three rows registered instead of two.
+
+    Pinned per registration rather than once, because the claim is about the
+    SEED SET and each new row adds a source category whose far endpoints might
+    not have been seeds. A non-zero count here would mean the walk had started
+    manufacturing edges for items the user picked directly.
+    """
+    reg = _reg_t068()
+    assert reg["full_copy"]["registry_live"]["closure"]["total_edges"] == 0
+    assert reg["full_copy"]["registry_empty"]["closure"]["total_edges"] == 0
+    assert reg["full_copy"]["closure_edges_expected"] == 0
+
+
+def test_t068_changed_no_plan_decision_under_either_selection() -> None:
+    """T070 (marking pulled-in items) and T072 (deselecting them) have not
+    landed, so at this stage a registration must add EDGES and change nothing
+    else -- not one action, skip or overwrite, under either selection.
+
+    This is the assertion that makes the row safe to land ahead of T070/T072
+    rather than a silent change of what gets transferred.
+    """
+    reg = _reg_t068()
+    assert reg["full_copy"]["composition_unchanged_by_registration"] is True
+    assert reg["narrow"]["composition_unchanged_by_registration"] is True
+    assert reg["plan_composition_unchanged_by_registration"] is True
+    for scope in ("full_copy", "narrow"):
+        assert (reg[scope]["registry_live"]["composition"]
+                == reg[scope]["registry_empty"]["composition"]), scope
+
+
+def test_the_census_is_unchanged_by_the_slots_registration() -> None:
+    """The census T068 owed, expressed as the comparison that makes it mean
+    something.
+
+    A census artifact on its own says only "this transfer lost these objects".
+    The question a registration raises is whether it lost DIFFERENT ones, so
+    the post-registration artifact is compared row by row against T067's --
+    same source, same backup, same full-copy selection, two separately
+    restored targets. Identical class tables and identical totals is the
+    answer: registering the SLOTS row moved no object count.
+
+    The shared `DUPLICATE_IDENTITY` / exit 3 is NOT a US3 regression and is
+    already recorded under T064: `PhNCFeatures` carries 23 duplicate
+    natural-key groups over 66 extra objects, all FLEx-auto-generated
+    "Created automatically for rule ..." classes that the source itself
+    duplicates. Asserting the two runs agree on it keeps that reading intact
+    rather than letting exit 3 be re-read later as a Phase 7 regression.
+    """
+    for path in (_CENSUS_POST, _CENSUS_T068):
+        if not path.is_file():
+            pytest.skip("missing census artifact " + str(path))
+    pre = json.loads(_CENSUS_POST.read_text(encoding="utf-8"))
+    post = json.loads(_CENSUS_T068.read_text(encoding="utf-8"))
+    assert _census_table(post) == _census_table(pre)
     assert post["totals"] == pre["totals"]
     assert (post["verdict"], post["exit_code"]) \
         == (pre["verdict"], pre["exit_code"]) == ("DUPLICATE_IDENTITY", 3)

@@ -148,6 +148,21 @@
       "unresolved": 0,
       "unresolved_sample": [],
       "verdict": "REFUSED_FAR_ENDPOINT_NOT_ENUMERABLE"
+    },
+    "SLOT_TO_POS": {
+      "dependency_category": "gram_categories",
+      "distinct_far_guids": 6,
+      "edges": 9,
+      "foreign_edges": 0,
+      "population": 9,
+      "producer": "categories.slots_pos_dependencies",
+      "resolved_as_owned_value": 0,
+      "resolved_as_piece": 6,
+      "source_category": "slots",
+      "task": "T068",
+      "unresolved": 0,
+      "unresolved_sample": [],
+      "verdict": "CONFIRMED"
     }
   },
   "source_project": "Ejagham Mini"
