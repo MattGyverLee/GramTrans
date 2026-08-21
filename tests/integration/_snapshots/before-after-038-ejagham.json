@@ -5,8 +5,9 @@
   "counts": {
     "fixed": 26,
     "matched_both": 26,
+    "not_evaluated": 3,
     "regressed": 0,
-    "still_short": 22
+    "still_short": 19
   },
   "destination": "GT038 Ejagham After",
   "fixed": [
@@ -297,12 +298,7 @@
       "verdict_before": "SHORTFALL"
     }
   ],
-  "pair": "ejagham",
-  "regressed": [],
-  "run_id": "",
-  "source": "Ejagham W Mini",
-  "starter_baseline": "D:\\Github\\_Projects\\_LEX\\GramTrans\\specs\\038-transfer-fidelity-gaps\\contracts\\starter-baseline.json",
-  "still_short": [
+  "not_evaluated": [
     {
       "class": "CmAnthroItem",
       "dest_after": -859,
@@ -314,6 +310,35 @@
       "verdict_after": "NOT_EVALUATED",
       "verdict_before": "NOT_EVALUATED"
     },
+    {
+      "class": "MoForm",
+      "dest_after": 0,
+      "dest_before": 0,
+      "diff_after": 0,
+      "diff_before": 0,
+      "source_after": 0,
+      "source_before": 0,
+      "verdict_after": "NOT_EVALUATED",
+      "verdict_before": "NOT_EVALUATED"
+    },
+    {
+      "class": "MoMorphSynAnalysis",
+      "dest_after": 0,
+      "dest_before": 0,
+      "diff_after": 0,
+      "diff_before": 0,
+      "source_after": 0,
+      "source_before": 0,
+      "verdict_after": "NOT_EVALUATED",
+      "verdict_before": "NOT_EVALUATED"
+    }
+  ],
+  "pair": "ejagham",
+  "regressed": [],
+  "run_id": "GT-20260821-172709",
+  "source": "Ejagham W Mini",
+  "starter_baseline": "D:\\Github\\_Projects\\_LEX\\GramTrans\\specs\\038-transfer-fidelity-gaps\\contracts\\starter-baseline.json",
+  "still_short": [
     {
       "class": "CmPossibility",
       "dest_after": 0,
@@ -368,28 +393,6 @@
       "source_before": 13,
       "verdict_after": "SHORTFALL",
       "verdict_before": "SHORTFALL"
-    },
-    {
-      "class": "MoForm",
-      "dest_after": 0,
-      "dest_before": 0,
-      "diff_after": 0,
-      "diff_before": 0,
-      "source_after": 0,
-      "source_before": 0,
-      "verdict_after": "NOT_EVALUATED",
-      "verdict_before": "NOT_EVALUATED"
-    },
-    {
-      "class": "MoMorphSynAnalysis",
-      "dest_after": 0,
-      "dest_before": 0,
-      "diff_after": 0,
-      "diff_before": 0,
-      "source_after": 0,
-      "source_before": 0,
-      "verdict_after": "NOT_EVALUATED",
-      "verdict_before": "NOT_EVALUATED"
     },
     {
       "class": "PhCode",

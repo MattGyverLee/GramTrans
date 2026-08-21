@@ -5,8 +5,9 @@
   "counts": {
     "fixed": 22,
     "matched_both": 21,
+    "not_evaluated": 3,
     "regressed": 3,
-    "still_short": 28
+    "still_short": 25
   },
   "destination": "GT038 Ngoreme After",
   "fixed": [
@@ -253,6 +254,41 @@
       "verdict_before": "SHORTFALL"
     }
   ],
+  "not_evaluated": [
+    {
+      "class": "CmAnthroItem",
+      "dest_after": -859,
+      "dest_before": 0,
+      "diff_after": -1718,
+      "diff_before": -859,
+      "source_after": 859,
+      "source_before": 859,
+      "verdict_after": "NOT_EVALUATED",
+      "verdict_before": "NOT_EVALUATED"
+    },
+    {
+      "class": "MoForm",
+      "dest_after": 0,
+      "dest_before": 0,
+      "diff_after": 0,
+      "diff_before": 0,
+      "source_after": 0,
+      "source_before": 0,
+      "verdict_after": "NOT_EVALUATED",
+      "verdict_before": "NOT_EVALUATED"
+    },
+    {
+      "class": "MoMorphSynAnalysis",
+      "dest_after": 0,
+      "dest_before": 0,
+      "diff_after": 0,
+      "diff_before": 0,
+      "source_after": 0,
+      "source_before": 0,
+      "verdict_after": "NOT_EVALUATED",
+      "verdict_before": "NOT_EVALUATED"
+    }
+  ],
   "pair": "ngoreme",
   "regressed": [
     {
@@ -289,21 +325,10 @@
       "verdict_before": "MATCHED"
     }
   ],
-  "run_id": "",
+  "run_id": "GT-20260821-172958",
   "source": "Ngoreme FLEx",
   "starter_baseline": "D:\\Github\\_Projects\\_LEX\\GramTrans\\specs\\038-transfer-fidelity-gaps\\contracts\\starter-baseline.json",
   "still_short": [
-    {
-      "class": "CmAnthroItem",
-      "dest_after": -859,
-      "dest_before": 0,
-      "diff_after": -1718,
-      "diff_before": -859,
-      "source_after": 859,
-      "source_before": 859,
-      "verdict_after": "NOT_EVALUATED",
-      "verdict_before": "NOT_EVALUATED"
-    },
     {
       "class": "CmFile",
       "dest_after": 0,
@@ -413,28 +438,6 @@
       "source_before": 1,
       "verdict_after": "SHORTFALL",
       "verdict_before": "SHORTFALL"
-    },
-    {
-      "class": "MoForm",
-      "dest_after": 0,
-      "dest_before": 0,
-      "diff_after": 0,
-      "diff_before": 0,
-      "source_after": 0,
-      "source_before": 0,
-      "verdict_after": "NOT_EVALUATED",
-      "verdict_before": "NOT_EVALUATED"
-    },
-    {
-      "class": "MoMorphSynAnalysis",
-      "dest_after": 0,
-      "dest_before": 0,
-      "diff_after": 0,
-      "diff_before": 0,
-      "source_after": 0,
-      "source_before": 0,
-      "verdict_after": "NOT_EVALUATED",
-      "verdict_before": "NOT_EVALUATED"
     },
     {
       "class": "MoStemMsa",

@@ -36,6 +36,9 @@ Usage:
 
     python debug/run038_before_after_pairs.py ejagham
     python debug/run038_before_after_pairs.py ngoreme
+
+Add `--compare-only` to re-diff the already-committed censuses without
+restoring, transferring or re-censusing anything.
 """
 from __future__ import annotations
 
@@ -116,43 +119,62 @@ def main(argv) -> int:
     target_path = str(PROJECTS_ROOT / target / (target + ".fwdata"))
     after_path = _SNAPS / ("census-038-%s-after.json" % pair)
 
-    print("[INFO] %s: %r -> %r (throwaway, restored first)"
-          % (pair, source, target))
-    restore_target(target, BACKUP)
+    compare_only = "--compare-only" in argv
+    if compare_only:
+        # The diff is pure post-processing over two committed artifacts, so it
+        # must be reproducible without a 50-second transfer and a restore.
+        # Without this, correcting a presentation bug in the tables below
+        # would mean re-running the measurement -- and a measurement re-run to
+        # fix a display bug is how committed numbers quietly drift.
+        if not after_path.is_file():
+            print("[FAIL] --compare-only needs a committed after-census at %s"
+                  % after_path)
+            return 1
+        print("[INFO] %s: --compare-only, re-diffing committed artifacts"
+              % pair)
+
+    if not compare_only:
+        print("[INFO] %s: %r -> %r (throwaway, restored first)"
+              % (pair, source, target))
+        restore_target(target, BACKUP)
 
     report_path = str(_REPO / "_run_reports"
                       / ("038-after-%s-report.json" % pair))
-    Path(report_path).parent.mkdir(parents=True, exist_ok=True)
-    print("[INFO] full transfer on the CURRENT branch (this takes a while)")
-    _plan, report = full_run.run_full_transfer(
-        source, target, target_path,
-        exclude=frozenset(), ws_mapping_mode="full", report_path=report_path,
-    )
+    report = None
+    if not compare_only:
+        Path(report_path).parent.mkdir(parents=True, exist_ok=True)
+        print("[INFO] full transfer on the CURRENT branch (this takes a while)")
+        _plan, report = full_run.run_full_transfer(
+            source, target, target_path,
+            exclude=frozenset(), ws_mapping_mode="full",
+            report_path=report_path,
+        )
 
-    census_path = scratch / ("%s-after-census.json" % pair)
-    print("[INFO] census")
-    census_code = census_cli.main([
-        "run",
-        "--source", source,
-        "--destination", target,
-        "--baseline", str(_BASELINE),
-        "--destination-freshly-created",
-        "--run-report", report_path,
-        "--out", str(census_path),
-    ])
-    print("[INFO] census run exit code = %s" % census_code)
-    if not census_path.is_file():
-        print("[FAIL] no census artifact produced")
-        return 1
-    after_path.write_text(census_path.read_text(encoding="utf-8"),
-                          encoding="utf-8")
-    print("[OK] wrote %s" % after_path)
+        census_path = scratch / ("%s-after-census.json" % pair)
+        print("[INFO] census")
+        census_code = census_cli.main([
+            "run",
+            "--source", source,
+            "--destination", target,
+            "--baseline", str(_BASELINE),
+            "--destination-freshly-created",
+            "--run-report", report_path,
+            "--out", str(census_path),
+        ])
+        print("[INFO] census run exit code = %s" % census_code)
+        if not census_path.is_file():
+            print("[FAIL] no census artifact produced")
+            return 1
+        after_path.write_text(census_path.read_text(encoding="utf-8"),
+                              encoding="utf-8")
+        print("[OK] wrote %s" % after_path)
 
     before = json.loads(before_path.read_text(encoding="utf-8"))
     after = json.loads(after_path.read_text(encoding="utf-8"))
     b_rows, a_rows = _rows(before), _rows(after)
 
     fixed, still_short, regressed, unchanged_ok = [], [], [], []
+    not_evaluated = []
     for cls in sorted(set(b_rows) | set(a_rows)):
         b, a = b_rows.get(cls), a_rows.get(cls)
         bv = (b or {}).get("verdict_class")
@@ -166,7 +188,16 @@ def main(argv) -> int:
             "diff_after": (a or {}).get("difference"),
             "verdict_before": bv, "verdict_after": av,
         }
-        if bv != "MATCHED" and av == "MATCHED":
+        # NOT_EVALUATED is not a shortfall and must not be listed as one.
+        # `CmAnthroItem` is the live example: the restored backup omits the
+        # anthropology list that the shared starter baseline carries, so the
+        # row nets negative and the census declines to evaluate it. It
+        # contributes 0 to `total_shortfall` and 0 to `unexplained_shortfall`
+        # and is counted under `classes_not_evaluated`, so filing it beside
+        # real losses reads as a regression that the totals do not contain.
+        if av == "NOT_EVALUATED":
+            not_evaluated.append(row)
+        elif bv != "MATCHED" and av == "MATCHED":
             fixed.append(row)
         elif bv == "MATCHED" and av not in ("MATCHED", None):
             regressed.append(row)
@@ -190,10 +221,15 @@ def main(argv) -> int:
         "fixed": fixed,
         "regressed": regressed,
         "still_short": still_short,
+        "not_evaluated": not_evaluated,
         "counts": {"fixed": len(fixed), "regressed": len(regressed),
                    "still_short": len(still_short),
+                   "not_evaluated": len(not_evaluated),
                    "matched_both": len(unchanged_ok)},
-        "run_id": getattr(report, "run_id", ""),
+        # Preserved across --compare-only: re-diffing a committed
+        # measurement must not blank the run that produced it.
+        "run_id": (getattr(report, "run_id", "") if report is not None
+                   else ((after.get("transfer_run") or {}).get("run_id") or "")),
     }
     out = _SNAPS / ("before-after-038-%s.json" % pair)
     out.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n",
@@ -224,6 +260,8 @@ def main(argv) -> int:
     _table("FIXED -- was not MATCHED, now MATCHED", fixed)
     _table("REGRESSED -- was MATCHED, now is not", regressed)
     _table("STILL SHORT", still_short)
+    _table("NOT EVALUATED -- contributes 0 to either shortfall total",
+           not_evaluated)
     return 0
 
 
