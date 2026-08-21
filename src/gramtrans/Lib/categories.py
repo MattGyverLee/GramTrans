@@ -1088,6 +1088,45 @@ def _plan_pos_piece(piece, context: RunContext, category: GrammarCategory):
     result = _plan_gold_reserved_edit(piece, category, context, _target_iter)
     if result is not None:
         return result
+
+    # Identity found nothing. Step 2: the roster-admitted natural key, BEFORE
+    # emitting a create -- otherwise a starter object the source also has is
+    # duplicated rather than reused. THIS IS RC-1 (feature 038, T091).
+    #
+    # `PartOfSpeech` has been on 035's natural-key roster from the start, and a
+    # correct `PartOfSpeech` fallback has existed since T032/T033 -- but it was
+    # given to `_resolve_target_pos`, the OWNER-resolution path. That path
+    # answers "which target POS does this slot belong to?"; it is never asked
+    # "should I create this POS at all?". So `_plan_gold_reserved_edit`
+    # returned None on a GUID miss and control fell straight through to the
+    # create below. Measured on a full copy of `Ngoreme FLEx`: five duplicate
+    # name groups over `Verb`/`Noun`/`Pronoun`/`Adverb`/`Pro-form` -- exactly
+    # the five names in the starter baseline -- while the census row read
+    # MATCHED 26 -> 26, because 31 destination minus 5 starter is 26 and the
+    # duplicate detector works on the gross basis. `Ejagham W Mini` CANNOT see
+    # this: its starters carry the GOLD catalog GUIDs and match on identity, so
+    # Ngoreme is the only pair in the corpus that reaches this line at all.
+    #
+    # Two details are load-bearing, both mirroring `_phonology_simple_plan`:
+    #
+    # * `object_class` is passed LITERALLY. `_natural_key_object_class` answers
+    #   only for the two phonology categories (it exists to keep `PhNCSegments`
+    #   and `PhNCFeatures` from matching each other) and would return "" here,
+    #   which `_plan_natural_key_match` reads as "not keyable".
+    # * the scope is MATERIALISED. `_target_iter` is re-invoked here, and
+    #   `POS.GetAll(recursive=True)` may be one-shot; an already-exhausted
+    #   iterator presents an EMPTY candidate list, which reads as "no match"
+    #   and creates the very duplicate this step exists to prevent.
+    try:
+        pos_scope = list(_target_iter(context.target_handle))
+    except (AttributeError, TypeError):
+        pos_scope = []
+    matched = _plan_natural_key_match(
+        piece, category, context, "PartOfSpeech", pos_scope,
+    )
+    if matched is not None:
+        return matched
+
     # Absent -> PlannedAction (add)
     src_guid = _guid_str_from(piece)
     return PlannedAction(
@@ -1231,7 +1270,21 @@ def gram_categories_execute_action(action: PlannedAction, context: RunContext, w
     if src_owner is not None:
         try:
             from SIL.LCModel import IPartOfSpeech
-            IPartOfSpeech(src_owner)  # cast probe: raises if owner isn't a POS
+            # KEEP THE CAST -- this line used to discard it (feature 038,
+            # T091, and T088's defect class exactly). `Owner` is declared
+            # `ICmObject`, and pythonnet resolves attributes against the STATIC
+            # wrapper type, so `Name` is INVISIBLE on the uncast proxy. The
+            # cast was already being computed here purely as a "raises if the
+            # owner isn't a POS" probe and then thrown away, which was harmless
+            # while the only thing read off the owner was its GUID (`ICmObject`
+            # has one). The moment `_resolve_target_pos` needs the owner's NAME
+            # -- which is what T091's natural key is -- the uncast object
+            # answers `None`, the key is not computable, and the resolver
+            # reports a miss it would otherwise have matched. MEASURED: with
+            # the cast discarded, all 12 remapped-parent descendants were
+            # reported unresolved (correctly reported, still lost); with it
+            # kept, they resolve.
+            src_owner = IPartOfSpeech(src_owner)
             is_sub_pos = True
             src_owner_guid = _guid_str_from(src_owner)
         except Exception:
@@ -1244,14 +1297,48 @@ def gram_categories_execute_action(action: PlannedAction, context: RunContext, w
     factory = IPartOfSpeechFactory(target.GetFactory(IPartOfSpeechFactory))
 
     if is_sub_pos and src_owner_guid:
-        # Find the matching target parent POS.
-        target_parent = None
-        for p in target.POS.GetAll(recursive=True):
-            if _guid_str_from(p) == src_owner_guid:
-                target_parent = p
-                break
+        # THE PARENT IS RESOLVED, NOT SCANNED (feature 038, T091).
+        #
+        # This used to be a bare `for p in target.POS.GetAll(recursive=True)`
+        # GUID comparison with a silent `return None` on a miss -- and it was
+        # CORRECT for as long as the planner could only ever create a POS under
+        # its own source GUID, because then the parent's source GUID and its
+        # destination GUID were the same string by construction. T091's
+        # plan-time natural-key match is what ends that: a source POS whose
+        # name matches an existing destination object is now REUSED, so its
+        # destination GUID is the destination's, and every descendant's source
+        # owner GUID no longer names anything in the target.
+        #
+        # MEASURED, and this is why the diagnosis's "the executor needs
+        # nothing" was wrong. `Ngoreme FLEx` -> a freshly restored target, with
+        # the plan half of T091 in and this half out: the plan was exactly
+        # right (`GRAM_CATEGORIES {added: 21, overwritten: 5}`, the five
+        # starter duplicates gone) and the destination held **14** of 26
+        # categories. Ngoreme has 13 descendants of the five starter-named
+        # POSes -- `Augmentative Noun`, `Copulative verb`, `Interrogative
+        # pro-form`, the whole `Pro-form > Pronoun` subtree -- and 12 of them
+        # were abandoned here, silently, one per ancestor whose GUID had been
+        # remapped. The census read `PartOfSpeech 26 -> 14, difference -12,
+        # SHORTFALL`: five duplicate objects traded for twelve missing ones.
+        #
+        # `_resolve_target_pos` is the identity-then-natural-key resolver T032
+        # built and T033 swept four call sites onto. This was not a fifth
+        # missed site: until the plan could remap a POS, it had nothing to do
+        # here. And a miss is now REPORTED (FR-013) rather than returning None
+        # into `transfer.py`, which discards every `execute_action` return
+        # value and then increments `leaf_succeeded` unconditionally -- the
+        # exact "the item vanished AND the run counted it a success" shape
+        # `_report_owner_pos_unresolved` exists to end.
+        target_parent = _resolve_target_pos(
+            target, src_owner_guid,
+            src_pos=src_owner, source_handle=source,
+        )
         if target_parent is None:
-            return None  # parent not in target; skip (will retry next run)
+            _report_owner_pos_unresolved(
+                context, action.category, src_guid, src_owner_guid,
+                "part of speech",
+            )
+            return None
         try:
             new_pos = factory.Create(parsed_guid, target_parent)
         except Exception as e:
@@ -3371,6 +3458,37 @@ def variant_types_plan_action(piece, context, ws_mapping):
     )
     if result is not None:
         return result
+
+    # Step 2, the same insertion as `_plan_pos_piece` (feature 038, T091).
+    # `LexEntryInflType` is the second -- and only other -- site where the
+    # `_plan_gold_reserved_edit`-returns-None shape meets a roster-admitted,
+    # creates-on-miss class. It is LATENT rather than measured: on the pair
+    # that exposed the POS defect this row is 3 -> 4 with zero duplicate name
+    # groups, so the extra object's name differs and the key would not have
+    # fired. Closed here anyway rather than left for whichever corpus does trip
+    # it, since it is the same defect one class over.
+    #
+    # `"LexEntryInflType"` is passed literally and is safe even though this
+    # walk also yields base `ILexEntryType` possibilities: `matcher`'s
+    # `natural_key_eligibility` checks the object's own `ClassName` against the
+    # roster class on BOTH sides, so a base variant type is refused as
+    # KEY_INELIGIBLE_SUBCLASS_MISMATCH on the source side and is never offered
+    # as a candidate on the target side. `_walk_possibilities_via_lexdb`
+    # already returns a list, but it is re-wrapped for the same reason the POS
+    # site materialises: the invariant this step depends on is "the candidate
+    # scope can be read twice", and it should not rest on a helper's current
+    # return type.
+    try:
+        variant_scope = list(_target_iter(context.target_handle))
+    except (AttributeError, TypeError):
+        variant_scope = []
+    matched = _plan_natural_key_match(
+        piece, GrammarCategory.VARIANT_TYPES, context,
+        "LexEntryInflType", variant_scope,
+    )
+    if matched is not None:
+        return matched
+
     src_guid = _guid_str_from(piece)
     return PlannedAction(
         category=GrammarCategory.VARIANT_TYPES,
