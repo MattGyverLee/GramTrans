@@ -1,0 +1,83 @@
+{
+  "audit": "038-phase7-closure-edges",
+  "edges": {
+    "AFFIX_TO_POS": {
+      "cast": 296,
+      "population": 279,
+      "producer": "categories._entry_pos_deps (affixes/stems_dependencies)",
+      "reads": [
+        "PartOfSpeechRA",
+        "FromPartOfSpeechRA",
+        "ToPartOfSpeechRA"
+      ],
+      "task": "T067",
+      "uncast": 0,
+      "verdict": "DEAD"
+    },
+    "AFFIX_TO_SLOT": {
+      "cast": 24,
+      "population": 11,
+      "producer": "categories.affix_templates_dependencies (slot seqs)",
+      "reads": [
+        "PrefixSlotsRS",
+        "SuffixSlotsRS",
+        "EncliticSlotsRS",
+        "ProcliticSlotsRS",
+        "SlotsRS"
+      ],
+      "task": "T069",
+      "uncast": 24,
+      "verdict": "OK"
+    },
+    "MSA_TO_FEAT_STRUC_TYPE": {
+      "cast": 216,
+      "population": 279,
+      "producer": "categories._entry_feat_struc_deps",
+      "reads": [
+        "InflFeatsOA",
+        "MsFeaturesOA",
+        "FromMsFeaturesOA",
+        "ToMsFeaturesOA"
+      ],
+      "task": "T067 (edges landed by T034)",
+      "uncast": 0,
+      "verdict": "DEAD"
+    },
+    "SLOT_TO_POS": {
+      "cast": 19,
+      "population": 19,
+      "producer": "categories.slots_dependencies",
+      "reads": [
+        "Owner"
+      ],
+      "task": "T068",
+      "uncast": 19,
+      "verdict": "OK"
+    },
+    "TEMPLATE_TO_POS": {
+      "cast": 11,
+      "population": 11,
+      "producer": "categories.affix_templates_dependencies (owner half)",
+      "reads": [
+        "Owner"
+      ],
+      "task": "T069",
+      "uncast": 11,
+      "verdict": "OK"
+    }
+  },
+  "population": {
+    "lex_entries": 255,
+    "msas": 279,
+    "msas_by_class": {
+      "MoDerivAffMsa": 17,
+      "MoInflAffMsa": 126,
+      "MoStemMsa": 136
+    },
+    "poses": 13,
+    "slots": 19,
+    "templates": 11
+  },
+  "read_only": true,
+  "source_project": "Mbugwe LizzieHC practice"
+}

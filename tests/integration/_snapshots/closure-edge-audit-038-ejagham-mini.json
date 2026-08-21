@@ -1,0 +1,82 @@
+{
+  "audit": "038-phase7-closure-edges",
+  "edges": {
+    "AFFIX_TO_POS": {
+      "cast": 245,
+      "population": 247,
+      "producer": "categories._entry_pos_deps (affixes/stems_dependencies)",
+      "reads": [
+        "PartOfSpeechRA",
+        "FromPartOfSpeechRA",
+        "ToPartOfSpeechRA"
+      ],
+      "task": "T067",
+      "uncast": 0,
+      "verdict": "DEAD"
+    },
+    "AFFIX_TO_SLOT": {
+      "cast": 9,
+      "population": 7,
+      "producer": "categories.affix_templates_dependencies (slot seqs)",
+      "reads": [
+        "PrefixSlotsRS",
+        "SuffixSlotsRS",
+        "EncliticSlotsRS",
+        "ProcliticSlotsRS",
+        "SlotsRS"
+      ],
+      "task": "T069",
+      "uncast": 9,
+      "verdict": "OK"
+    },
+    "MSA_TO_FEAT_STRUC_TYPE": {
+      "cast": 40,
+      "population": 247,
+      "producer": "categories._entry_feat_struc_deps",
+      "reads": [
+        "InflFeatsOA",
+        "MsFeaturesOA",
+        "FromMsFeaturesOA",
+        "ToMsFeaturesOA"
+      ],
+      "task": "T067 (edges landed by T034)",
+      "uncast": 0,
+      "verdict": "DEAD"
+    },
+    "SLOT_TO_POS": {
+      "cast": 9,
+      "population": 9,
+      "producer": "categories.slots_dependencies",
+      "reads": [
+        "Owner"
+      ],
+      "task": "T068",
+      "uncast": 9,
+      "verdict": "OK"
+    },
+    "TEMPLATE_TO_POS": {
+      "cast": 7,
+      "population": 7,
+      "producer": "categories.affix_templates_dependencies (owner half)",
+      "reads": [
+        "Owner"
+      ],
+      "task": "T069",
+      "uncast": 7,
+      "verdict": "OK"
+    }
+  },
+  "population": {
+    "lex_entries": 252,
+    "msas": 247,
+    "msas_by_class": {
+      "MoInflAffMsa": 83,
+      "MoStemMsa": 164
+    },
+    "poses": 20,
+    "slots": 9,
+    "templates": 7
+  },
+  "read_only": true,
+  "source_project": "Ejagham Mini"
+}
