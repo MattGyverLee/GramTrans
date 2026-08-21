@@ -1131,10 +1131,18 @@ class ClassCensusRow:
     per owner, so the ambiguous figure cannot reach a row in the first place.
     """
     object_class: str          # -> artifact `class`
-    source_count: int          # -> artifact `source_count`
-    destination_count: int     # -> artifact `destination_count_total`
+    #: T099. `["integer", "null"]`, the schema's own type. `null` is NOT a
+    #: smaller zero: `$defs.classRow.source_count` says it in as many words --
+    #: "null only on a NOT_EVALUATED row where the class could not be counted
+    #: at all; a genuine zero is 0, never null". A class this census could not
+    #: count and a class the project genuinely holds none of are two different
+    #: findings, and an `int`-only field can only state one of them.
+    source_count: Optional[int]          # -> artifact `source_count`
+    destination_count: Optional[int]     # -> artifact `destination_count_total`
     starter_excluded: int      # -> unmatched starter; feeds destination_count_net
-    difference: int            # -> artifact `difference`
+    #: `None` exactly when either count is None -- see `__post_init__`. There
+    #: is no "difference of an unknown", and a 0 here would be read as MATCHED.
+    difference: Optional[int]  # -> artifact `difference`
     explained: bool            # -> artifact: `accounted_for` being non-empty
     engine_can_create: bool    # -> artifact `engine_can_create`
     out_of_scope: bool         # -> artifact `verdict_class` NOT_EVALUATED
@@ -1147,11 +1155,27 @@ class ClassCensusRow:
             raise ValueError("ClassCensusRow.object_class must be non-empty")
         for name in ("source_count", "destination_count", "starter_excluded"):
             val = getattr(self, name)
+            # T099: None is admissible on the two nullable counts and is
+            # checked by `_check_null_counts` below, which is stricter than a
+            # sign test -- it asks WHETHER the row is allowed to be unmeasured.
+            # `starter_excluded` is NOT nullable: it is the subtrahend, and an
+            # unknown subtrahend has no honest artifact representation (5.2's
+            # `no_baseline` basis expresses that as 0 plus a failing verdict).
+            if val is None:
+                if name == "starter_excluded":
+                    raise ValueError(
+                        "ClassCensusRow.starter_excluded must be an int, got "
+                        "None -- an unknown starter subtraction is expressed "
+                        "as 0 on the `no_baseline` basis, never as a null "
+                        "subtrahend (class " + repr(self.object_class) + ")"
+                    )
+                continue
             if val < 0:
                 raise ValueError(
                     "ClassCensusRow." + name + " must be >= 0, got "
                     + repr(val) + " (class " + repr(self.object_class) + ")"
                 )
+        self._check_null_counts()
         # `explained` / `engine_can_create` / `out_of_scope` are booleans with
         # a defined meaning, not tri-state: None or an int would let a caller
         # smuggle "unknown" past the gate as a falsy value.
@@ -1172,16 +1196,39 @@ class ClassCensusRow:
         # agree with its inputs exactly. A row whose headline number does not
         # follow from its own counts is the most dangerous shape this artifact
         # can take.
-        expected = (self.destination_count - self.starter_excluded
-                    - self.source_count)
-        if self.difference != expected:
-            raise ValueError(
-                "ClassCensusRow.difference for " + repr(self.object_class)
-                + " is " + repr(self.difference) + " but its inputs give "
-                + str(self.destination_count) + " - "
-                + str(self.starter_excluded) + " - "
-                + str(self.source_count) + " = " + str(expected)
-            )
+        # T099: with either count unknown there IS no difference, and the one
+        # value that must never appear here is 0 -- `verdict_class` reads 0 as
+        # MATCHED, so a placeholder zero would report a class nobody counted
+        # as agreeing.
+        if self.source_count is None or self.destination_count is None:
+            if self.difference is not None:
+                raise ValueError(
+                    "ClassCensusRow.difference for " + repr(self.object_class)
+                    + " is " + repr(self.difference) + " but one of its counts "
+                    "is None (source_count=" + repr(self.source_count)
+                    + ", destination_count=" + repr(self.destination_count)
+                    + ") -- an unmeasured row has no difference, and 0 here "
+                    "would be emitted as verdict_class MATCHED"
+                )
+        else:
+            if self.difference is None:
+                raise ValueError(
+                    "ClassCensusRow.difference for " + repr(self.object_class)
+                    + " is None but both counts are known ("
+                    + str(self.source_count) + ", "
+                    + str(self.destination_count) + ") -- a measured row owes "
+                    "its difference"
+                )
+            expected = (self.destination_count - self.starter_excluded
+                        - self.source_count)
+            if self.difference != expected:
+                raise ValueError(
+                    "ClassCensusRow.difference for " + repr(self.object_class)
+                    + " is " + repr(self.difference) + " but its inputs give "
+                    + str(self.destination_count) + " - "
+                    + str(self.starter_excluded) + " - "
+                    + str(self.source_count) + " = " + str(expected)
+                )
         for token in self.reasons:
             if token not in CENSUS_REASON_TOKENS:
                 raise ValueError(
@@ -1224,20 +1271,100 @@ class ClassCensusRow:
                 "verbatim and would fail schema validation"
             )
 
+    # ---- T099: where a null count is and is not admissible -------------
+
+    def _check_null_counts(self) -> None:
+        """What a null count obliges the rest of the row to say.
+
+        `$defs.classRow.source_count` fixes the meaning: "null only on a
+        NOT_EVALUATED row where the class could not be counted at all; a
+        genuine zero is 0, never null". The NOT_EVALUATED half of that is
+        satisfied by construction -- `difference` is None whenever a count is
+        (checked above) and `verdict_class` reads a None difference as
+        NOT_EVALUATED -- and it is RE-ASSERTED here rather than assumed,
+        because it holds only as long as those two rules agree with each other.
+
+        The two clauses below are the ones that are not automatic, and both
+        close a laundering path that opened the moment the counts became
+        nullable.
+
+        `explained` is the first. An `accounted_for` line credits a named
+        quantity against a DIFFERENCE, and `unexplained_shortfall` is
+        `max(0, -difference)` less those lines. With no difference there is
+        nothing to credit, so a row claiming to be explained would be claiming
+        to have accounted for a loss it cannot demonstrate -- and R-2's
+        over-accounting check, which is what would normally catch that, is
+        skipped on a null difference (`census.unexplained_counts` returns
+        `(0, 0)` and stops).
+
+        `starter_excluded` is the second. It is the subtrahend, and
+        `destination_count_net` returns None without applying it, so a non-zero
+        value would be published in the row's provenance (and in
+        `starter_matched_to_source`) as a subtraction that never happened.
+
+        Nullability is per SIDE, deliberately. An unresolved accessor is a
+        property of one PROJECT (`census.ClassCounts.unmeasurable`), so a class
+        can be countable in the source and not in the destination; collapsing
+        the two would report a source count as unknown when it is known.
+
+        Deliberately NOT required here: a `not_evaluated_reason` token. The
+        vocabulary is CLOSED at 17 and none of its three NOT_EVALUATED members
+        means "the accessor did not resolve" -- `ABSENT_BY_CONSTRUCTION` is the
+        abstract-base case and would be a false statement about a class whose
+        repository merely drifted. An unresolved accessor states its cause in
+        the artifact's `errors[]` array instead, which is CENSUS_ERROR on its
+        own. Filed as T100 rather than settled by inventing an 18th token.
+        """
+        if self.source_count is not None and self.destination_count is not None:
+            return
+        if self.verdict_class != "NOT_EVALUATED":
+            raise ValueError(
+                "ClassCensusRow for " + repr(self.object_class) + " carries a "
+                "null count (source_count=" + repr(self.source_count)
+                + ", destination_count=" + repr(self.destination_count)
+                + ") but its verdict_class is " + repr(self.verdict_class)
+                + " -- the schema admits a null count only on a NOT_EVALUATED "
+                "row, and a genuine zero is 0"
+            )
+        if self.explained:
+            raise ValueError(
+                "ClassCensusRow for " + repr(self.object_class) + " carries a "
+                "null count and claims explained=True -- an accounted_for line "
+                "credits a quantity against a DIFFERENCE, and this row has "
+                "none, so there is nothing for an explanation to account for"
+            )
+        if self.destination_count is None and self.starter_excluded:
+            raise ValueError(
+                "ClassCensusRow for " + repr(self.object_class) + " has a null "
+                "destination_count but starter_excluded="
+                + repr(self.starter_excluded) + " -- the subtrahend is never "
+                "applied to an unknown total (destination_count_net is None), "
+                "so publishing a non-zero one would name a subtraction that "
+                "did not happen"
+            )
+
     # ---- derived views -------------------------------------------------
 
     @property
-    def destination_count_net(self) -> int:
+    def destination_count_net(self) -> Optional[int]:
         """-> artifact `destination_count_net`: the destination count less the
-        pre-existing objects that were NOT matched to a source object."""
+        pre-existing objects that were NOT matched to a source object.
+
+        T099: None when the destination count is, because a subtraction from
+        an unknown is not a net -- it is the unknown with a number taken off
+        it, which reads as a measurement."""
+        if self.destination_count is None:
+            return None
         return self.destination_count - self.starter_excluded
 
     @property
-    def difference_raw(self) -> int:
+    def difference_raw(self) -> Optional[int]:
         """-> artifact `difference_raw`: before any baseline subtraction.
         Stored in the artifact so a reader sees both what happened and what it
         means -- the measured PhPhoneme row is difference_raw +23,
-        difference 0."""
+        difference 0. T099: None when either count is."""
+        if self.source_count is None or self.destination_count is None:
+            return None
         return self.destination_count - self.source_count
 
     @property
@@ -1245,9 +1372,16 @@ class ClassCensusRow:
         """-> artifact `verdict_class`. NOT_EVALUATED wins over the sign of
         the difference, because a row that was never measured must not be
         reported as MATCHED just because two numbers it does not trust happen
-        to be equal."""
+        to be equal.
+
+        T099: an unknown difference is NOT_EVALUATED for exactly that reason,
+        and it is checked BEFORE the `== 0` test -- this property is the one
+        place where a placeholder zero would have become the word "MATCHED".
+        `census.row_verdict_class` makes the same call on the same input."""
         if self.out_of_scope or (
                 set(self.reasons) & CENSUS_NOT_EVALUATED_REASONS):
+            return "NOT_EVALUATED"
+        if self.difference is None:
             return "NOT_EVALUATED"
         if self.difference == 0:
             return "MATCHED"
@@ -1270,6 +1404,14 @@ class ClassCensusRow:
         quantity lives in the artifact, not on this row -- T020 combines the
         two. A row that is not gate-relevant cannot fail on counts."""
         if not self.is_gate_relevant:
+            return True
+        # T099: an unknown difference cannot be compared to 0, and must not be
+        # allowed to pass by being "not equal to 0 but explained" either. A row
+        # nobody could count fails nothing and proves nothing; the reason it is
+        # unknown reaches the reader as an `errors[]` entry, which is
+        # CENSUS_ERROR on its own (`census.unmeasurable_errors`), so the run
+        # still fails -- just not by pretending this row's counts agreed.
+        if self.difference is None:
             return True
         return self.difference == 0 or self.explained
 
@@ -1518,6 +1660,24 @@ CLASS_CENSUS_ROW_ARTIFACT_FIELDS: dict = {
     "reasons": None,           # -> `accounted_for[*].reason`
     "out_of_scope": None,      # -> `verdict_class` NOT_EVALUATED + reason
 }
+
+#: T099. The mapped fields above that `$defs.classRow` lists as REQUIRED and
+#: types `["integer", "null"]`. The emitter omits a mapped field whose value is
+#: None -- correct for `owning_feature_system`, which is an OPTIONAL property
+#: on an object that is `additionalProperties: false` -- but omitting one of
+#: these would drop a required key and fail validation outright. So the two
+#: cases have to be told apart by NAME rather than by the value being None,
+#: which is the distinction this set carries.
+#:
+#: `object_class` and `engine_can_create` are required and mapped too, and are
+#: deliberately absent: neither is nullable in the schema and neither can be
+#: None on a constructed row, so listing them would invite a null through a
+#: door the schema keeps shut.
+CLASS_ROW_REQUIRED_NULLABLE_FIELDS: frozenset = frozenset({
+    "source_count",
+    "destination_count",
+    "difference",
+})
 
 #: `FidelityCensus` -> the artifact top level.
 FIDELITY_CENSUS_ARTIFACT_FIELDS: dict = {

@@ -4970,3 +4970,262 @@ class TestT086TheAmendedThirdClause:
             pytest.fail("the snapshot has no MoStemMsa row to perturb")
         assert phase_scoped_suppressions(artifact, 1) == (
             ("MoStemMsa", "shortfall", 7),)
+
+
+# ---------------------------------------------------------------------------
+# T099: null is not a smaller zero
+#
+# THE ARTIFACT-LEVEL HALF. `tests/unit/test_038_null_counts.py` pins the model
+# and the emitter; what belongs here is the MEASUREMENT, because feature 038's
+# acceptance rule is "a phase is not done when its unit tests pass; it is done
+# when the census run for its predicate exits 0 with the predicate satisfied" --
+# so a change to emitted COUNTS has to be judged on two real census runs, not on
+# a hand-built row.
+#
+# The pair below is one census run of `Ngoreme FLEx` -> `GT038 Ngoreme After`
+# taken immediately before the fix and one immediately after, with the SAME
+# baseline, the SAME run report, and both projects unchanged between them (the
+# `.fwdata` digests are asserted equal, which is what makes the delta
+# attributable to the instrument and nothing else).
+# ---------------------------------------------------------------------------
+
+T099_BEFORE = "census-038-t099-ngoreme-before.json"
+T099_AFTER = "census-038-t099-ngoreme-after.json"
+
+#: The two classes the defect touched, and the only two it could touch: the
+#: `excluded_not_measurable` arm of the class list holds exactly these.
+T099_NULLED_CLASSES = ("MoForm", "MoMorphSynAnalysis")
+
+#: The five row quantities that went 0 -> null. All five are derived from the
+#: two counts, and three of them (`source_count`, `destination_count_total`,
+#: `difference`) are REQUIRED in `$defs.classRow` -- which is why the emitter
+#: had to learn to emit a null instead of dropping the key.
+T099_NULLED_FIELDS = (
+    "source_count", "destination_count_total", "destination_count_net",
+    "difference", "difference_raw",
+)
+
+
+def _t099(name: str) -> dict:
+    path = _repo_root() / "tests" / "integration" / "_snapshots" / name
+    assert path.is_file(), "missing T099 measurement artifact: " + str(path)
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+class TestT099TheMeasuredDelta:
+    """Two real runs, one instrument change, and a stated delta."""
+
+    @pytest.mark.parametrize("name", [T099_BEFORE, T099_AFTER])
+    def test_both_artifacts_validate_against_the_published_schema(
+            self, name, census_schema):
+        errors = schema_errors(_t099(name), census_schema)
+        assert errors == [], "; ".join(errors[:5])
+
+    @pytest.mark.parametrize("name", [T099_BEFORE, T099_AFTER])
+    def test_both_artifacts_pass_the_section_11_invariants(self, name):
+        """Invariant 3 recomputes both differences from the counts. It is
+        SKIPPED on a null rather than failing, and a skipped invariant is the
+        thing to be suspicious of -- hence the schema check above, which is
+        what actually holds a null row to its shape."""
+        assert validate_artifact(_t099(name)) == ()
+
+    def test_neither_project_moved_between_the_two_runs(self):
+        """Without this the delta below could be data drift rather than the
+        fix. `Ngoreme FLEx` is a live project and HAS drifted during this
+        feature (the T096 snapshot reads 21 shortfall lower than a re-run on
+        2026-08-21), which is exactly why the pair is measured back to back and
+        pinned by digest."""
+        before, after = _t099(T099_BEFORE), _t099(T099_AFTER)
+        for role in ("source", "destination"):
+            for key in ("fwdata_sha256_before", "fwdata_sha256_after",
+                        "object_count_total"):
+                assert (before["projects"][role][key]
+                        == after["projects"][role][key]), role + "." + key
+
+    def test_the_gate_quantities_are_byte_identical(self):
+        """THE HEADLINE. The fix changes what two rows SAY and nothing a phase
+        gate adds up: `build_totals` skips a null difference, so
+        `total_shortfall` is 70659 on both sides and the verdict is unchanged.
+        A count change that moved the gate quantity would need its own
+        argument; this one does not."""
+        before, after = _t099(T099_BEFORE), _t099(T099_AFTER)
+        assert before["totals"] == after["totals"]
+        assert before["totals"]["total_shortfall"] == 70659
+        assert before["totals"]["classes_not_evaluated"] == 3
+        assert (before["verdict"], before["exit_code"]) == (
+            "DUPLICATE_IDENTITY", 3)
+        assert (after["verdict"], after["exit_code"]) == (
+            "DUPLICATE_IDENTITY", 3)
+
+    def test_exactly_two_rows_changed(self):
+        before = {r["class"]: r for r in _t099(T099_BEFORE)["classes"]}
+        after = {r["class"]: r for r in _t099(T099_AFTER)["classes"]}
+        assert set(before) == set(after)
+        changed = tuple(sorted(
+            cls for cls in before
+            if json.dumps(before[cls], sort_keys=True)
+            != json.dumps(after[cls], sort_keys=True)
+        ))
+        assert changed == tuple(sorted(T099_NULLED_CLASSES))
+
+    @pytest.mark.parametrize("object_class", T099_NULLED_CLASSES)
+    def test_the_knowingly_false_zero_became_a_null(self, object_class):
+        before = {r["class"]: r for r in _t099(T099_BEFORE)["classes"]}
+        after = {r["class"]: r for r in _t099(T099_AFTER)["classes"]}
+        for field in T099_NULLED_FIELDS:
+            assert before[object_class][field] == 0, (
+                field + " was expected to be the old placeholder 0")
+            assert after[object_class][field] is None, field
+        # The row was ALREADY NOT_EVALUATED. That is the point: the verdict was
+        # right and the numbers under it were false, so no reader checking the
+        # verdict would have found the defect.
+        assert before[object_class]["verdict_class"] == "NOT_EVALUATED"
+        assert after[object_class]["verdict_class"] == "NOT_EVALUATED"
+        assert (after[object_class]["in_class_list_via"]
+                == "excluded_not_measurable")
+
+    @pytest.mark.parametrize("object_class", T099_NULLED_CLASSES)
+    def test_the_note_stopped_apologising_for_its_own_data(self, object_class):
+        before = {r["class"]: r for r in _t099(T099_BEFORE)["classes"]}
+        after = {r["class"]: r for r in _t099(T099_AFTER)["classes"]}
+        assert any("placeholder" in n for n in before[object_class]["notes"])
+        assert not any("placeholder" in n for n in after[object_class]["notes"])
+        assert any("null, not 0" in n for n in after[object_class]["notes"])
+
+    def test_the_committed_measurement_satisfies_the_producer_guard(self):
+        """PROVENANCE, and it is here because the order of work matters.
+        `_refuse_uncorroborated_nulls` was written AFTER these two artifacts
+        were measured (it closes a hole T099's own fix opens -- see
+        `TestT099TheAbortBecameARowWithoutBecomingQuiet`). A guard added after a
+        measurement is worth nothing unless the measurement is re-checked
+        against it, and re-running the census was not available: `Ngoreme FLEx`
+        was opened in FieldWorks at 23:43, eleven minutes after the second run,
+        and the census correctly refuses a locked project. So the guard is run
+        over the committed rows instead, which is the same check the producer
+        would have made."""
+        from gramtrans import census_cli
+
+        for name in (T099_BEFORE, T099_AFTER):
+            artifact = _t099(name)
+            census_cli._refuse_uncorroborated_nulls(
+                artifact["classes"], artifact.get("errors", ()))
+
+    def test_no_other_row_gained_a_null_count(self):
+        """The direction a careless fix breaks: sweeping a genuine zero into
+        null. Every other row must still carry integers."""
+        after = _t099(T099_AFTER)["classes"]
+        for row in after:
+            if row["class"] in T099_NULLED_CLASSES:
+                continue
+            for field in T099_NULLED_FIELDS:
+                assert isinstance(row[field], int), (
+                    row["class"] + "." + field + " is " + repr(row[field])
+                    + " -- a genuine zero is 0, never null")
+
+
+class TestT099TheAbortBecameARowWithoutBecomingQuiet:
+    """The other half of the same root cause, from the opposite direction."""
+
+    def _rows_with_an_uncounted_class(self):
+        rows = [make_row("PhPhoneme", source_count=23)]
+        uncounted = make_row(
+            "MoStemMsa", verdict_class="NOT_EVALUATED", gate_scope="required")
+        for field in T099_NULLED_FIELDS:
+            uncounted[field] = None
+        uncounted["notes"] = [
+            "not measured: this repository accessor could not be resolved in "
+            "the destination, so the count is null rather than 0."
+        ]
+        rows.append(uncounted)
+        return rows
+
+    def _errors(self):
+        return [{
+            "code": "UNHANDLED_EXCEPTION",
+            "message": ("class MoStemMsa could not be counted in project Dst; "
+                        "the census makes no claim about it"),
+            "class": "MoStemMsa",
+            "evidence": "IMoStemMsaRepository could not be resolved",
+        }]
+
+    def test_the_artifact_that_used_to_not_exist_now_validates(
+            self, census_schema):
+        """Before T099 an unresolved accessor raised and NOTHING was written,
+        so the one document that could name the uncounted class did not exist.
+        The abort was loud in the console and silent in the record."""
+        artifact = make_artifact(
+            self._rows_with_an_uncounted_class(),
+            verdict="CENSUS_ERROR", errors=self._errors())
+        assert schema_errors(artifact, census_schema) == []
+
+    def test_an_uncounted_class_is_census_error_not_a_pass(self):
+        """The reason the abort becoming a row is not a silencing: a non-empty
+        `errors[]` array is CENSUS_ERROR on its own, and the gate RECOMPUTES the
+        verdict rather than reading the stored one."""
+        artifact = make_artifact(
+            self._rows_with_an_uncounted_class(),
+            verdict="CENSUS_ERROR", errors=self._errors())
+        assert recompute_verdict(artifact) == "CENSUS_ERROR"
+        assert gate_artifact(artifact).exit_code == 7
+
+    def test_the_producer_refuses_an_uncorroborated_null_on_a_required_row(
+            self):
+        """The failure mode to be afraid of, and the one T099 itself could have
+        opened. An uncounted row is NOT_EVALUATED and `row_passes` returns True
+        for NOT_EVALUATED, so nulling a required class would retire its
+        shortfall without measuring anything. Before T099 the MODEL made that
+        unreachable by refusing to hold a null at all; it no longer does, so the
+        producer states the prohibition instead."""
+        from gramtrans import census_cli
+        from gramtrans.Lib import census as census_mod
+
+        rows = self._rows_with_an_uncounted_class()
+        with pytest.raises(census_mod.CensusError, match="uncorroborated null"):
+            census_cli._refuse_uncorroborated_nulls(rows, ())
+        # With the class named in `errors[]` the same rows are admissible --
+        # that entry is CENSUS_ERROR, so the run still fails.
+        census_cli._refuse_uncorroborated_nulls(rows, self._errors())
+
+    def test_an_advisory_null_row_needs_no_errors_entry(self):
+        """The `excluded_not_measurable` case, which is every null this CLI
+        emits on a healthy run. `census.derive_class_list` hardcodes those
+        entries `gate_scope: advisory`, so they can neither fail a gate nor
+        excuse one."""
+        from gramtrans import census_cli
+
+        row = make_row("MoForm", verdict_class="NOT_EVALUATED",
+                       gate_scope="advisory", engine_can_create=False,
+                       in_class_list_via="excluded_not_measurable",
+                       not_evaluated_reason="ABSENT_BY_CONSTRUCTION")
+        for field in T099_NULLED_FIELDS:
+            row[field] = None
+        census_cli._refuse_uncorroborated_nulls([row], ())
+
+    def test_the_gate_alone_does_not_yet_refuse_a_forged_null(self):
+        """CURRENT BEHAVIOUR, PINNED, AND FILED AS T101 -- not an endorsement.
+        `validate_artifact` and `recompute_verdict` are null-tolerant by design
+        and have no invariant tying a null count on a required row to a
+        corroborating `errors[]` entry, so a hand-authored artifact still gates
+        clean. That is a property of the ARTIFACT FORMAT, not of this producer:
+        adding the invariant changes what the gate refuses about every artifact
+        already committed, which needs its own before/after. When T101 lands,
+        THIS TEST FAILS and must be updated deliberately."""
+        forged = make_artifact(
+            self._rows_with_an_uncounted_class(),
+            verdict="CENSUS_CLEAN", errors=())
+        assert validate_artifact(forged) == ()
+        assert gate_artifact(forged).exit_code == 0
+
+    def test_a_p1_class_that_could_not_be_counted_fails_its_phase(self):
+        """`_require_matched` reads `verdict_class`, so an uncounted P1 class
+        reports NOT_EVALUATED and FAILS -- the safe direction. Pinned because
+        the other direction (a phase quietly skipping a class nobody counted)
+        is the shape this feature keeps meeting."""
+        artifact = make_artifact(
+            self._rows_with_an_uncounted_class(),
+            verdict="CENSUS_ERROR", errors=self._errors())
+        outcome = gate_artifact(artifact, phase=1)
+        assert outcome.phase is not None
+        assert not outcome.phase.satisfied
+        assert any("MoStemMsa" in line and "NOT_EVALUATED" in line
+                   for line in outcome.phase.failures)

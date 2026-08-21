@@ -123,16 +123,38 @@ CAPTURABLE_BASELINE_KINDS: tuple = (
     models.StarterBaselineKind.PRE_TRANSFER_CENSUS.value,
 )
 
-#: Rows whose `class` is reported without being measured carry these counts.
+#: Rows whose `class` is reported without being measured carry NULL counts.
 #: `$defs.classRow` says a count is `null` "only on a NOT_EVALUATED row where
-#: the class could not be counted at all", but `models.ClassCensusRow` requires
-#: an int, so an `excluded_not_measurable` row is emitted as 0/0 plus the note
-#: below. OPEN ITEM, flagged rather than papered over: the schema's honest value
-#: here is null and the in-memory model cannot express it.
+#: the class could not be counted at all", and T099 widened
+#: `models.ClassCensusRow` to that same type, so the row now says so.
+#:
+#: WHAT THIS NOTE USED TO SAY, and it is worth keeping the record. Until T099
+#: these rows were emitted as 0/0 with a note calling the zeroes
+#: "placeholders". A reader holding only the artifact therefore could not tell
+#: `MoForm 0 -> 0` ("this project holds no MoForms") from `MoForm 0 -> 0`
+#: ("nobody counted MoForms, and could not have"). The note was honest about
+#: the zeroes being false; the DATA was not, and a phase gate reads the data.
 _NOT_MEASURED_NOTE = (
     "not measured: in_class_list_via 'excluded_not_measurable' (an abstract "
-    "LCM base with no factory). The 0 counts are placeholders -- the schema's "
-    "honest value is null, which models.ClassCensusRow cannot carry."
+    "LCM base with no factory). The counts are null, not 0: null says the "
+    "class could not be counted at all, where 0 would claim the project holds "
+    "none of them."
+)
+
+#: T099. The other half of the same defect, from the opposite direction. A
+#: class this census ASKED for and could not count used to abort the whole run
+#: (`_report_unmeasurable`), because "models.ClassCensusRow cannot carry a null
+#: count, so there is no honest row to write". There is now, so the run writes
+#: it -- and stays exactly as loud as it was: every unresolved accessor is
+#: still printed as a [FAIL] line, still becomes an `errors[]` entry, and a
+#: non-empty `errors[]` array is CENSUS_ERROR / exit 7 in
+#: `census.recompute_verdict`. The change is that the failure now names itself
+#: IN the artifact instead of leaving no artifact at all.
+_UNRESOLVED_ACCESSOR_NOTE = (
+    "not measured: this class's repository accessor could not be resolved in "
+    "{project}, so its count is null rather than 0. The reason is in the "
+    "artifact's `errors[]` array, which is CENSUS_ERROR on its own -- this row "
+    "reports the gap, it does not excuse it."
 )
 
 _A1_BASELINE_NOTE = (
@@ -515,21 +537,110 @@ def _measurable_classes(class_list) -> tuple:
     ))
 
 
-def _report_unmeasurable(reading) -> None:
-    """Print every unresolved accessor, one line per class, and raise.
+def _refuse_uncorroborated_nulls(rows, errors) -> None:
+    """T099: a null count on a GATE-REQUIRED row must be corroborated.
+
+    THE HOLE THIS CLOSES, and it is the one a fix like T099 opens. A row whose
+    `difference` is null reads `verdict_class: NOT_EVALUATED`, and
+    `census.row_passes` returns True for NOT_EVALUATED -- so if a producer could
+    null a required class's counts on its own initiative, nulling would be a way
+    to make that class's shortfall disappear. Before T099 the model made that
+    unreachable by refusing to hold a null at all; the model no longer does, so
+    the prohibition has to be stated somewhere, and it is stated here rather
+    than as a comment.
+
+    TWO CORROBORATIONS ARE ACCEPTED, and they are the only two this CLI can
+    produce. `gate_scope: advisory` -- every `excluded_not_measurable` entry is
+    hardcoded advisory in `census.derive_class_list`, so an abstract LCM base
+    cannot fail or excuse a gate either way. Or an `errors[]` entry naming the
+    class, which is what an unresolved accessor produces and which is
+    CENSUS_ERROR on its own.
+
+    NOT a validator invariant. `census.validate_artifact` and
+    `recompute_verdict` accept an uncorroborated null on a required row today,
+    which is a property of the ARTIFACT FORMAT rather than of this producer and
+    would change what the gate refuses about every artifact already committed.
+    Filed as T101; this guard bounds the producer in the meantime, which is the
+    half T099 is responsible for.
+    """
+    named = {
+        entry.get("class") for entry in errors if isinstance(entry, dict)
+    }
+    offenders = []
+    for row in rows:
+        if row.get("gate_scope") != "required":
+            continue
+        nulled = tuple(
+            key for key in ("source_count", "destination_count_total",
+                            "difference")
+            if row.get(key) is None
+        )
+        if nulled and row.get("class") not in named:
+            offenders.append(str(row.get("class")) + " (" + ", ".join(nulled)
+                             + ")")
+    if offenders:
+        raise census.CensusError(
+            "these gate-required row(s) carry a null count with no `errors[]`"
+            " entry naming the class: " + "; ".join(sorted(offenders))
+            + " -- a null difference reads NOT_EVALUATED and NOT_EVALUATED "
+            "passes `row_passes`, so an uncorroborated null is a way to retire "
+            "a class's shortfall without measuring it"
+        )
+
+
+def _print_unmeasurable(reading) -> tuple:
+    """Print every unresolved accessor, one line per class; return the entries.
 
     An unresolved accessor is a REPORTED OUTCOME, never a skip
-    (`Lib/census.py` T017 header). The run stops here rather than emitting
-    rows: `models.ClassCensusRow` cannot carry a null count, so there is no
-    honest row to write for a class nobody could count.
+    (`Lib/census.py` T017 header). Every one of them is printed as a [FAIL]
+    line here and returned as an `errors[]` entry -- and `errors[]` non-empty
+    is CENSUS_ERROR / exit 7 in `census.recompute_verdict`, so nothing about
+    this is quiet.
+
+    T099. This used to RAISE, on the stated grounds that
+    "`models.ClassCensusRow` cannot carry a null count, so there is no honest
+    row to write". The premise was true and is not any more, and the raise cost
+    something real: the run produced NO artifact, so the one document that
+    could have named which class went uncounted, in which project, and for what
+    reason did not exist. The abort was loud in the console and silent in the
+    record. What replaces it is louder in both -- same [FAIL] lines, same
+    non-zero exit, plus a null-counted NOT_EVALUATED row and an `errors[]`
+    entry that a reader can find six months later.
+
+    NOT a downgrade to a warning. If a caller ignores the returned entries the
+    verdict does not soften: `recompute_verdict` reads `errors[]` off the
+    artifact, and `stamp_verdict` is the only thing that writes a verdict.
     """
-    for entry in census.unmeasurable_errors(reading):
+    entries = tuple(census.unmeasurable_errors(reading))
+    for entry in entries:
         _fail(json.dumps(entry, ensure_ascii=False))
-    raise census.CensusError(
+    _fail(
         str(len(reading.counts.unmeasurable)) + " class(es) could not be "
         "counted in " + repr(reading.name) + ": "
         + ", ".join(reading.counts.unmeasurable)
         + " -- the census may fail to measure a class; it may not fail QUIETLY"
+    )
+    return entries
+
+
+def _report_unmeasurable(reading) -> None:
+    """Print every unresolved accessor and RAISE -- the no-rows callers.
+
+    `capture_baseline` keeps the abort deliberately, and the reason is not
+    inertia. A baseline document is a count MAP that a later run subtracts, and
+    `census.unmatched_starter` refuses to read an absent count as zero; a null
+    baseline count would be subtracted as 0 by exactly the arithmetic 5.2
+    forbids. There is also no row to write here -- `capture-baseline` emits no
+    `classes` array at all -- so T099's "the abort becomes a row" has nothing
+    to become.
+    """
+    _print_unmeasurable(reading)
+    raise census.CensusError(
+        str(len(reading.counts.unmeasurable)) + " class(es) could not be "
+        "counted in " + repr(reading.name) + ": "
+        + ", ".join(reading.counts.unmeasurable)
+        + " -- a baseline document is a count map a later run SUBTRACTS, and a "
+        "null count there would be subtracted as 0"
     )
 
 
@@ -1541,6 +1652,8 @@ def _row_for_entry(
     *, evidence: Optional[ReportEvidence] = None,
     withheld_classes=frozenset(),
     source_guids=None, destination_guids=None,
+    source_unmeasurable=frozenset(), destination_unmeasurable=frozenset(),
+    source_name: str = "", destination_name: str = "",
 ):
     """One `(ClassCensusRow, emitter kwargs)` pair for one class-list entry.
 
@@ -1582,15 +1695,36 @@ def _row_for_entry(
     destination_guids = destination_guids or {}
     audited = None
     matched_effective = None
-    measured = entry.in_class_list_via != "excluded_not_measurable"
+    # T099: nullability is decided PER SIDE, because unmeasurability is a
+    # property of one project. `in_class_list_via == 'excluded_not_measurable'`
+    # is the class-wide case (an abstract LCM base, never asked for in either
+    # project); the two `*_unmeasurable` sets are the per-project case (the
+    # accessor did not resolve THERE). A class can be countable in the source
+    # and not in the destination, and reporting the source count as unknown
+    # because the destination's accessor drifted would lose a number the census
+    # actually holds.
+    #
+    # Indexing stays `[...]`, not `.get(..., None)`, for the measured sides: a
+    # class absent from `counts` with no recorded reason is a bug in the
+    # counting pass, and a KeyError says so where a defaulted None would look
+    # exactly like an honest "could not count".
+    in_class_list = entry.in_class_list_via != "excluded_not_measurable"
+    source_ok = in_class_list and entry.object_class not in source_unmeasurable
+    destination_ok = (
+        in_class_list and entry.object_class not in destination_unmeasurable)
+    measured = source_ok and destination_ok
     notes = []
-    if measured:
-        source_count = source_counts[entry.object_class]
-        destination_count = destination_counts[entry.object_class]
-    else:
-        source_count = 0
-        destination_count = 0
+    source_count = source_counts[entry.object_class] if source_ok else None
+    destination_count = (
+        destination_counts[entry.object_class] if destination_ok else None)
+    if not in_class_list:
         notes.append(_NOT_MEASURED_NOTE)
+    else:
+        for ok, project in ((source_ok, source_name),
+                            (destination_ok, destination_name)):
+            if not ok:
+                notes.append(_UNRESOLVED_ACCESSOR_NOTE.format(
+                    project=repr(project) if project else "the project"))
 
     # Looked up by `row_key`, not by class: an A1 split row's key is not in the
     # baseline, so both halves land on `absent_from_baseline` and the class's
@@ -1598,6 +1732,22 @@ def _row_for_entry(
     baseline_count = (
         None if baseline.is_missing else baseline.count_for(entry.row_key)
     )
+    # T099: the `else` arm below does arithmetic on both counts, so it must be
+    # unreachable when either is null. It is, by construction -- a baseline is
+    # captured over `_measurable_classes` only, so an unmeasured class cannot
+    # appear in a baseline document and `baseline_count` is None for it -- and
+    # this raise is here so that "by construction" stays checked rather than
+    # remembered. Doing the arithmetic on a null would produce a TypeError deep
+    # inside a note string, which is a worse way to learn the same thing.
+    if not measured and baseline_count is not None:
+        raise census.CensusError(
+            "class " + repr(entry.object_class) + " could not be counted but "
+            "the baseline document carries a count of " + str(baseline_count)
+            + " for it -- a baseline is captured over measurable classes only, "
+            "so this baseline and this class list disagree about what is "
+            "countable, and subtracting the one from the other would be "
+            "arithmetic over an unknown"
+        )
     if baseline.is_missing:
         basis = "no_baseline"
         source_of_baseline = "assumed_zero_not_permitted"
@@ -1768,7 +1918,12 @@ def _row_for_entry(
         source_count=source_count,
         destination_count=destination_count,
         starter_excluded=starter_excluded,
-        difference=destination_count - starter_excluded - source_count,
+        # T099: None when either count is. `ClassCensusRow` enforces the same
+        # rule from the other side, so a caller cannot pass 0 here instead.
+        difference=(
+            None if (source_count is None or destination_count is None)
+            else destination_count - starter_excluded - source_count
+        ),
         explained=False,
         engine_can_create=entry.engine_can_create,
         out_of_scope=out_of_scope,
@@ -1937,11 +2092,18 @@ def census_run(
         _audit_guids(handle, destination_guids)
         return handle
 
+    # T099: an unresolved accessor is REPORTED, not raised. It prints as a
+    # [FAIL] line, becomes an `errors[]` entry (CENSUS_ERROR / exit 7 in
+    # `census.recompute_verdict`), and leaves the class a null-counted
+    # NOT_EVALUATED row -- so the run still fails, and now the artifact says
+    # which class, in which project, and why. Before this the run raised and
+    # produced no artifact at all: loud in the console, silent in the record.
+    census_errors: list = []
     source_reading = census.read_project(
         source, wanted, projects_root=projects_root,
         open_project=_open_source)
     if source_reading.counts.unmeasurable:
-        _report_unmeasurable(source_reading)
+        census_errors.extend(_print_unmeasurable(source_reading))
 
     destination_reading = census.read_project(
         destination, wanted,
@@ -1950,10 +2112,13 @@ def census_run(
         open_project=_open_destination,
     )
     if destination_reading.counts.unmeasurable:
-        _report_unmeasurable(destination_reading)
+        census_errors.extend(_print_unmeasurable(destination_reading))
 
     source_counts = dict(source_reading.counts.counts)
     destination_counts = dict(destination_reading.counts.counts)
+    source_unmeasurable = frozenset(source_reading.counts.unmeasurable)
+    destination_unmeasurable = frozenset(
+        destination_reading.counts.unmeasurable)
 
     # T024d-b: per-class matched tallies, when the run report carries them.
     matched_by_class, matched_complete = (
@@ -2016,7 +2181,11 @@ def census_run(
                 matched_by_class, matched_complete, evidence=evidence,
                 withheld_classes=withheld_classes,
                 source_guids=source_guids,
-                destination_guids=destination_guids)
+                destination_guids=destination_guids,
+                source_unmeasurable=source_unmeasurable,
+                destination_unmeasurable=destination_unmeasurable,
+                source_name=source_reading.name,
+                destination_name=destination_reading.name)
             duplicate_report = duplicates.get(entry.object_class)
         else:
             row, kwargs = _row_for_entry(
@@ -2028,6 +2197,10 @@ def census_run(
                 baseline,
                 matched_by_class, matched_complete, evidence=evidence,
                 withheld_classes=withheld_classes,
+                source_unmeasurable=source_unmeasurable,
+                destination_unmeasurable=destination_unmeasurable,
+                source_name=source_reading.name,
+                destination_name=destination_reading.name,
             )
             # No GUID sets, for the same reason a split row cannot reach the
             # matched basis from the report: a GUID set is per LCM CLASS, and
@@ -2134,6 +2307,9 @@ def census_run(
               "on this basis are advisory (fidelity-census.md 5.2); supply "
               "the run report for the `baseline_matched` basis.")
 
+    # T099: the producer's own prohibition, checked before anything is written.
+    _refuse_uncorroborated_nulls(rows, census_errors)
+
     taken_at = destination_reading.counted_at
     identity = _CensusIdentity(
         run_id=_census_id(taken_at), taken_at=taken_at, baseline=baseline)
@@ -2144,6 +2320,10 @@ def census_run(
             root=base, flex_version=running_flex_version()),
         transfer_run=(transfer_run_block(run_report)
                       if run_report is not None else None),
+        # T099: a non-empty `errors[]` is CENSUS_ERROR on its own, which is
+        # what makes the reported-not-raised unresolved accessor above a
+        # FAILING outcome rather than a note.
+        errors=tuple(census_errors),
     )
     census.stamp_verdict(artifact)
 

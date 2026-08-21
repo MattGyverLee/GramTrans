@@ -2583,21 +2583,33 @@ def class_row_artifact(
     `additionalProperties: false`, so an extra key is a hard failure and not a
     harmless addition. Nothing here re-derives a name the table already states.
     """
-    from .models import CLASS_CENSUS_ROW_ARTIFACT_FIELDS  # noqa: PLC0415
+    from .models import (  # noqa: PLC0415
+        CLASS_CENSUS_ROW_ARTIFACT_FIELDS,
+        CLASS_ROW_REQUIRED_NULLABLE_FIELDS,
+    )
 
     block: dict = {}
     for internal, artifact_key in CLASS_CENSUS_ROW_ARTIFACT_FIELDS.items():
         if artifact_key is None:  # internal-only: never emitted
             continue
         value = getattr(row, internal, None)
-        if value is None:
+        if value is None and internal not in CLASS_ROW_REQUIRED_NULLABLE_FIELDS:
             # An OPTIONAL artifact property the row does not carry -- currently
             # only A1's `owning_feature_system` on an ordinary class. Omitted,
             # never emitted as null: the property is enumerated and every
             # artifact object is `additionalProperties: false`, so a null is a
-            # hard validation failure. No REQUIRED mapped field can be None
-            # (the row's own invariants reject that), so this cannot silently
-            # drop one.
+            # hard validation failure.
+            #
+            # T099: the guard is on the NAME, not on the value. It used to be
+            # on the value alone, with a comment asserting "no REQUIRED mapped
+            # field can be None (the row's own invariants reject that)" -- true
+            # only because `ClassCensusRow` typed the counts `int`. The moment
+            # the model told the truth about a class it could not count, this
+            # branch would have DROPPED `source_count`,
+            # `destination_count_total` and `difference` from a row where the
+            # schema requires all three, turning an honest null into an invalid
+            # artifact. The three names are the schema's own required-and-
+            # nullable set; anything else still gets omitted.
             continue
         block[artifact_key] = value
 
