@@ -5000,6 +5000,17 @@ def _resolve_target_pos_by_natural_key(target, src_pos, source_handle):
     """
     if src_pos is None or source_handle is None:
         return None
+    # T094: CAST BEFORE KEYING, ONCE, HERE. The key is the category's `Name`,
+    # and pythonnet resolves attributes against the STATIC wrapper type -- so a
+    # source category reached through a base-typed slot (`ICmObject.Owner`,
+    # `IMoStemMsa` before `_cast_msa_concrete`, a flexicon `.concrete` wrapper)
+    # has NO visible `Name` and is merely UNKEYABLE, which `natural_key_of`
+    # reports as "this object has no key" and the caller reads as "no such
+    # category in the target". That is T088's defect class, and it cost T091 a
+    # whole live run: the same discarded-cast shape lost all 12 descendants of
+    # the remapped POSes. Doing it in the resolver rather than at each of the
+    # ten call sites means a site swept later cannot re-introduce it.
+    src_pos = _as_pos(src_pos)
     if not _guid_str_from(src_pos):
         # `resolve_match` raises rather than silently dropping an object it
         # cannot key its accounting record by. On this path that is the wrong
@@ -5163,7 +5174,17 @@ def resolve_or_create_target_pos(context, src_pos, ws_mapping, tag, _seen=None):
     pos_guid = _guid_str_from(src_pos)
     if not pos_guid:
         return None
-    existing = _resolve_target_pos(target, pos_guid)
+    # T094: identity first, then the roster-admitted natural key. Passing the
+    # keywords is what makes the create below a LAST resort rather than a
+    # duplicate-maker: once T091 lets the planner reuse a same-named
+    # destination category, its destination GUID is no longer its source GUID,
+    # and a GUID-only lookup here would create a SECOND copy of a category the
+    # planner had already decided to reuse.
+    existing = _resolve_target_pos(
+        target, pos_guid,
+        src_pos=src_pos,
+        source_handle=getattr(context, "source_handle", None),
+    )
     if existing is not None:
         return existing
     _seen = _seen if _seen is not None else set()
@@ -5303,14 +5324,26 @@ def _get_inflection_class_factory(target):
         return None
 
 
-def can_create_inflection_class(target, src_class) -> bool:
+def can_create_inflection_class(target, src_class, *,
+                                source_handle=None) -> bool:
     """Read-only predicate for the Preview twin's CREATE-vs-REPORT parity (G6):
     True iff the class could be created -- its owning POS is present in the
-    target (closure-scoped) AND a factory is obtainable."""
+    target (closure-scoped) AND a factory is obtainable.
+
+    T094: `source_handle` is keyword-only and optional because this is a G6
+    PARITY predicate, and parity is the whole point. Its twin,
+    `resolve_or_create_inflection_class`, resolves the owning POS with the
+    natural key as well as by identity; a predicate that asked identity only
+    would answer REPORT_DROPPED for exactly the classes the executor goes on to
+    CREATE -- a preview that understates the run, which G6 exists to forbid.
+    Omitting the handle keeps the pre-038 GUID-only answer, so a caller that
+    has no source project (there is none in the tree today) is not silently
+    given a different one."""
     pos = _owning_pos_of_class(src_class)
     if pos is None:
         return False
-    if _resolve_target_pos(target, _guid_str_from(pos)) is None:
+    if _resolve_target_pos(target, _guid_str_from(pos),
+                           src_pos=pos, source_handle=source_handle) is None:
         return False
     return _get_inflection_class_factory(target) is not None
 
@@ -5364,7 +5397,14 @@ def resolve_or_create_inflection_class(context, src_class, ws_mapping, tag,
 
     owner = getattr(src_class, "Owner", None)
     if _owner_is_pos(owner):
-        target_owner = _resolve_target_pos(target, _guid_str_from(owner))
+        # T094: identity, then the natural key. `owner` comes off `.Owner`, so
+        # it is base-typed and its `Name` is invisible until cast --
+        # `_resolve_target_pos_by_natural_key` does that cast centrally.
+        target_owner = _resolve_target_pos(
+            target, _guid_str_from(owner),
+            src_pos=owner,
+            source_handle=getattr(context, "source_handle", None),
+        )
         owner_coll_attr = "InflectionClassesOC"
     elif _owner_is_inflection_class(owner):
         target_owner = resolve_or_create_inflection_class(
@@ -8563,9 +8603,20 @@ def _create_msa_for_closure(src_msa, new_sense, new_entry, context, tag,
     import logging as _logging
     _mlog = _logging.getLogger("gramtrans.Lib.categories")
 
-    def _pos_guid_of(attr):
+    def _pos_ref_of(attr):
+        """The source POS OBJECT this MSA slot names, and its GUID.
+
+        T094: this used to return the GUID alone and DISCARD the reference it
+        had just read. That was correct for exactly as long as a category's
+        destination GUID was always its source GUID. T091 ends that -- the
+        planner now reuses a same-named destination category -- and the
+        discarded object is precisely what the natural-key fallback needs,
+        because the key is the category's `Name` and a GUID string cannot
+        supply one. 1,848 MSAs on `Ngoreme FLEx` lost their entire
+        morphosyntactic analysis to this one thrown-away value.
+        """
         ref = getattr(src_msa, attr, None)
-        return _guid_str_from(ref) if ref is not None else ""
+        return ref, (_guid_str_from(ref) if ref is not None else "")
 
     def _resolve_or_none(attr, which, *, empty_is_legal=False):
         """Resolve a target POS. THREE outcomes, distinguished in control flow.
@@ -8582,7 +8633,7 @@ def _create_msa_for_closure(src_msa, new_sense, new_entry, context, tag,
         string while sharing one code path, so the legal-empty case was dropped
         alongside the genuinely-broken one (T043b: 2 of 164 `MoStemMsa` on the
         T038 pair, 9 on the Ngoreme pair)."""
-        pg = _pos_guid_of(attr)
+        src_pos_ref, pg = _pos_ref_of(attr)
         # `empty_is_legal` covers a slot that is genuinely NULL -- never one
         # that is merely INVISIBLE. An uncast, base-interface-typed MSA hides
         # its subclass-only slots (pythonnet resolves attributes against the
@@ -8599,7 +8650,11 @@ def _create_msa_for_closure(src_msa, new_sense, new_entry, context, tag,
                 src_g[:8], subclass, subclass, which,
             )
             return _POS_ABSENT
-        tp = _resolve_target_pos(target, pg) if pg else None
+        tp = _resolve_target_pos(
+            target, pg,
+            src_pos=src_pos_ref,
+            source_handle=getattr(context, "source_handle", None),
+        ) if pg else None
         if tp is None:
             why = ("is empty on source" if not pg
                    else "not resolvable in target")

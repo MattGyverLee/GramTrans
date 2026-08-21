@@ -18,10 +18,19 @@ they are separate defects fixed by separate tasks:
   value and then increments `leaf_succeeded` unconditionally, so the item
   vanished AND the run counted it a success.
 
-The most important test in this file is the FIRST one. The fallback had to be
-landable ahead of its call-site sweep, so a two-positional call must behave
-exactly as it did before 038. If that ever stops being true, every caller not
-yet swept changes behaviour silently.
+The most important test in this file WAS the first one, and T094 changed what
+it means. The fallback had to be landable ahead of its call-site sweep, so a
+two-positional call had to behave exactly as it did before 038 -- and while
+production callers were still unswept, that test was the guarantee that they
+had not changed behaviour silently. **T094 swept the last of them**, so the
+test no longer guards any production caller. It is deliberately kept and
+NARROWED to what it now pins: the HELPER's opt-in contract, which the
+still-optional `source_handle` on `can_create_inflection_class` and on
+`owned._resolve_target_pos_by_guid` continues to depend on. The property that
+replaced it -- no production call site passes a GUID alone -- is pinned
+structurally in `test_038_pos_natural_key_call_site_sweep.py::
+test_no_production_call_site_is_two_positional`, because a NEW two-positional
+call is how this defect returns and no host-free fake can watch for that.
 """
 import json
 import pathlib
@@ -141,10 +150,25 @@ def not_admitted(tmp_path):
 # ---------------------------------------------------------------------------
 
 def test_two_positional_call_never_consults_the_key(admitted):
-    """THE landing-safety test. `src_pos` and `source_handle` are keyword-only
-    and default to None, so a caller that has not been swept gets exactly its
-    pre-038 behaviour even when the roster admits the class and a name would
-    have matched."""
+    """THE HELPER CONTRACT. `src_pos` and `source_handle` are keyword-only and
+    default to None, so a call that omits them gets exactly the pre-038
+    GUID-only answer even when the roster admits the class and a name would
+    have matched.
+
+    EDITED BY T094, deliberately, and this is the whole of the change. This was
+    "THE landing-safety test": while production callers were still unswept, it
+    was the guarantee that none of them had changed behaviour by accident.
+    T094 swept the last of them, so it guards no caller any more -- and a test
+    whose stated purpose has gone is worse than no test, because it reads as
+    coverage. What it still pins is real and still relied upon: the opt-in
+    shape itself, which `can_create_inflection_class(target, src_class)` and
+    `owned._resolve_target_pos_by_guid(target, guid)` both still use to mean
+    "answer by identity only". Retired-and-replaced rather than deleted: the
+    property that used to matter here is now
+    `test_038_pos_natural_key_call_site_sweep.py::
+    test_no_production_call_site_is_two_positional`, which reads the source
+    because that is the only place a NEW two-positional call is visible.
+    """
     target = _Handle([_Pos("guid-dst", "Noun", TGT_ANAL)], TGT_VERN, TGT_ANAL)
     assert cat_mod._resolve_target_pos(target, "guid-src") is None
 
