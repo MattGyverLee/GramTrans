@@ -902,6 +902,30 @@
       "kind": "complete",
       "by": "extension",
       "at": "2026-08-22T02:06:09.169Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T076",
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-22T06:09:27.750Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T077",
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-22T06:09:28.011Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T064",
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-22T06:09:28.241Z"
     }
   ],
   "decisions": [
@@ -1408,6 +1432,40 @@
       "did": "P3 gate closed: predicate satisfied and no capped row is in P3's scope",
       "files": [
         "tests/integration/test_object_census.py"
+      ]
+    },
+    "T076": {
+      "status": "DONE",
+      "did": "Condition-4 shared PhPhonData.ContextsOS contexts are co-created (no category enumerates them, so a closure edge would repeat T089); the referent edge one hop out is registered as PROCESS_RULE_TO_PHONEME / PROCESS_RULE_TO_NATURAL_CLASS on audited single-corpus evidence",
+      "files": [
+        "src/gramtrans/Lib/categories.py",
+        "src/gramtrans/Lib/models.py",
+        "debug/audit038_t076_process_contexts.py",
+        "debug/audit038_closure_edges.py",
+        "debug/run038_closure_census.py",
+        "tests/unit/test_038_process_rules.py",
+        "tests/unit/test_038_closure.py",
+        "tests/unit/test_038_foundational.py",
+        "tests/integration/test_038_closure_edge_audit.py"
+      ]
+    },
+    "T077": {
+      "status": "DONE",
+      "did": "Live corpus acceptance re-run: 18/18 MoAffixProcess transfer, 6/6 sequences arrive with identical MembersRS, 6/6 shared contexts co-created; new artifacts beside T063's rather than overwriting the T102 chain",
+      "files": [
+        "debug/run038_phase6_live.py",
+        "debug/verify038_t077_membersrs.py",
+        "tests/integration/test_038_process_rules.py",
+        "tests/integration/_snapshots/process-rules-038-t077-mbugwe.json",
+        "tests/integration/_snapshots/census-038-t077-mbugwe-phase6.json",
+        "tests/integration/_snapshots/t077-membersrs-completeness.json"
+      ]
+    },
+    "T064": {
+      "status": "DONE",
+      "did": "Census gate predicate P4 satisfied in both halves (MoAffixProcess 18/18 MATCHED, MoAffixAllomorph 124/124); exit 3 stands on PhNCFeatures, proved outside phase 4's scope the way T086 amended T075",
+      "files": [
+        "tests/integration/test_038_process_rules.py"
       ]
     }
   }
