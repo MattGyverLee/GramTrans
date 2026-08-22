@@ -15,6 +15,91 @@ dependency) and may be built in any order.
 
 ---
 
+---
+
+## Amendment (2026-08-22) -- the 038 cut
+
+Feature 038 landed a second fidelity instrument while this feature's driver sat
+dormant on `main`: `src/gramtrans/Lib/census.py` + `src/gramtrans/census_cli.py`,
+7,442 lines, live-validated, at 111/125 tasks on worktree branch
+`038-transfer-fidelity-gaps` (82 commits ahead of `main`, unmerged). This file was
+cut against that overlap on 2026-08-22. Four measured facts shape every ruling
+below:
+
+1. **The dependency runs 035 -> 038, and only that way.** 038's census re-derives
+   its class list from [object-inventory.md](./object-inventory.md) TABLE 1 +
+   TABLE 2 **at run time**, and loads `contracts/natural-key-identity-roster.json`
+   and `contracts/coverage-floor.json`. This feature's **contracts are load-bearing
+   production inputs** and are NOT touched by this amendment -- no entry removed,
+   no file renamed, no identifier renumbered. What shrinks is the **driver**.
+2. **038's census is count-only.** Grepped 2026-08-22: `Lib/census.py` contains no
+   `GetSyncableProperties` call and no field reader of any kind. A class can arrive
+   at the correct count with every field blank and 038's gate reports `MATCHED`.
+   The **field plane -- User Story 2's actual claim -- is uncovered by 038** and
+   stays in scope here.
+3. **038's plane-1 counting is strictly better than this driver's.** It fixed the
+   polymorphic-repository double-count (2,731 objects over-counted), subtracts a
+   captured starter baseline, and groups duplicate natural keys per class.
+   Re-implementing any of that here would install a second, worse truth source.
+4. **038 chose the opposite escape-hatch design.** Its reason vocabulary is closed
+   at 16 tokens with no `UNEXPLAINED` and no `OTHER`. This feature's loss allowlist
+   is an explicit, expiring, capped way to *forgive* a loss. Shipping both would
+   give the repo two competing ways to bless a known loss -- the precise failure
+   mode this feature exists to retire. **The allowlist loses.**
+
+### The buckets
+
+| bucket | tasks | ruling |
+| --- | --- | --- |
+| **KEEP** -- uniquely valuable, no 038 equivalent | T045d, T047, T050, T056, T063 | Build as written |
+| **KEEP** -- cheap, closes an honesty gap | T064, T065 | Build as written |
+| **RETARGET** -- consume 038's census instead of re-deriving plane 1 | T045a(c), T045b, T045e, T045f, T045, T048, T051, T052, T053, T057, **T068 (new)** | Scope narrowed in place; see each task's note |
+| **CUT** -- superseded by 038's closed vocabulary | T058, T059, T060, T061 | Struck. Not deferred -- struck |
+| **GATED** -- only meaningful once a full corpus run is authorized | T035, T046, T049, T054, T055, T062, T066, T067 | Text unchanged; blocked on an explicit go/no-go |
+
+A **CUT** task keeps its `- [ ]` box. It is not checked: checking it would claim
+work that was deliberately not done, and this file's whole discipline is that a
+box means a measurement happened. Read the box plus the `CUT` marker together.
+
+### Ordering: nothing re-runs before 038 merges
+
+038's T085 merges `038-transfer-fidelity-gaps` to `main`, and its T078..T084 are
+still open. A measurement taken now is taken under a revision pair about to be
+superseded, which **this feature's own FR-158 / SC-010 would mark STALE**. Every
+KEEP and RETARGET task that opens a live project therefore waits on 038 T085. The
+two that open nothing -- **T045d** (the field reader) and **T063** (instrument
+retirement) -- may start immediately.
+
+### What the cut leaves behind, and who cleans it
+
+The loss allowlist is **partly built already**: T032 is `[x]`, so
+`debug/fullsweep/allowlist.py` (323 lines: exact-reason matching plus the per-entry
+cap, FR-115..FR-117) and `contracts/loss-allowlist.json` exist, with a live call
+site at `debug/run_fullcopy_sweep.py:543` (`load_loss_allowlist`) and a star-export
+at `debug/fullsweep/__init__.py:71`. Do **not** confuse it with the
+destination-project-name allowlist in `safety.py` -- an unrelated concept that
+happens to share an English word, and which stays. Retiring the loss-allowlist
+module, its contract file, its export and its one call site is folded into **T063**.
+
+The cut also creates one defect that must not be left standing, which is why
+**T068** is new below. `verdict.py:210` returns `PASS_WITH_ALLOWLIST` whenever
+`allowlist_consumed is None`, and `None` is today's only call site -- a deliberate
+under-claim, pending a caller that would pass the real fact. With the allowlist
+struck, no run can ever consume an entry, so every clean run would report
+`PASS_WITH_ALLOWLIST` forever and `CLEAN_PASS` would be **unreachable**. The cut is
+not finished until that collapses.
+
+### Spec consequences (recorded, not silently absorbed)
+
+`spec.md` Section H and these identifiers describe a surface this amendment struck:
+**FR-115..FR-122, FR-182, SC-007, SC-015**. They are marked CUT-BY-DECISION in
+`spec.md` rather than deleted, so the reasoning stays readable and a later reader
+cannot mistake the gap for an oversight. FR-097's dropped-and-allowlisted bucket
+loses its allowlisted arm: a drop is henceforth either explained by a
+closed-vocabulary reason or it fails.
+
+---
+
 ## Phase 1: Setup -- package promotion
 
 Mechanical only. No behavior changes, no new checks. `tests/unit/test_035_sweep_safety.py`
@@ -429,6 +514,15 @@ the comparator's verdict for each -- no corpus-wide run needed.
       `NOT_YET_CLASSIFIED_MISSING_FROM_TARGET`.
       · `debug/run_fullcopy_sweep.py`, `debug/fullsweep/guards.py`
 
+  > **RETARGETED 2026-08-22 (the 038 cut).** Parts (a) and (b) are done and
+  > unaffected. Part (c) stands **minus plane 1**: do not re-derive object counts here.
+  > 038's census artifact already carries per-class source / destination / net counts
+  > with the starter baseline subtracted, exact-class (non-polymorphic) counting, and
+  > per-class duplicate-natural-key grouping -- all three of which this driver either
+  > lacks or got wrong. Consume that artifact as the plane-1 input and keep this task's
+  > remaining work on the **field** plane: the five comparison rules and the
+  > `comparisons` shape.
+
   > **(a) and (b) DONE 2026-08-19.** The guard block went from **0/15 to 5/15
   > answering**: `BASELINE-DELTA`, `TOTAL-ACCOUNTING`,
   > `IDEMPOTENCY-IN-WRITTEN-CLASSES`, `PLAN-CONSERVATION` and
@@ -486,6 +580,22 @@ the comparator's verdict for each -- no corpus-wide run needed.
       one belongs to `_cmd_batch`, not `run_one_project`.
       · `debug/run_fullcopy_sweep.py`, `debug/audit_guid_preservation.py`,
       `debug/fullsweep/moves.py`, `debug/fullsweep/artifact.py`
+
+  > **RETARGETED 2026-08-22 (the 038 cut).** Two of the eight inputs stop being
+  > measurements this driver takes: (i) `empty_measurements` is **derivable** from the
+  > census's per-class source counts plus its duplicate grouping -- take it from there
+  > rather than measuring the same thing twice; and (iii) `extras` -- the reverse walk,
+  > target objects absent from the source, with `tool_owned_duplicate` -- is covered by
+  > the census's `destination_count_net` arithmetic and its duplicate rows. What remains
+  > is the real reason this task survives the cut: the **anti-silence plumbing**, which
+  > has no 038 equivalent because it does not measure the transfer, it measures whether
+  > the instrument is telling the truth about its own coverage -- (ii)
+  > `unhandled_subtypes`, (iv) `accessor_counters`, (v) `close_operations`, (vi)
+  > `handle_operations`, (vii) `truncation`, (viii) `corpus_projects` +
+  > `artifacts_present`. (iv) is the sharpest of them and the cut does not touch it:
+  > `audit_guid_preservation.inventory_all` still swallows every per-object read failure
+  > in a bare `except Exception: continue`, at the exact point the counter should
+  > increment.
 
 **⟶ A non-`VACUOUS` verdict requires T045a(c) AND T045b -- and, as of the 2026-08-19
 reconnaissance below, four further tasks neither of them names. T035's re-run before all
@@ -565,6 +675,12 @@ points, then the corrections to claims already written in this file.
       target-side read must NOT inherit, since reading `Target<N>` is the sweep's whole job.
       · `debug/fullsweep/census.py`, new dispatch module, `debug/probe_field_census_api.py`
 
+  > **KEEP, unblocked 2026-08-22 (the 038 cut).** The highest-leverage item left in
+  > this feature, and the one thing 038 cannot substitute for: 038's census is
+  > count-only, so without this reader **nothing anywhere** measures whether a
+  > correctly-counted object arrived with its fields intact. It opens no live project
+  > of its own, so it does not wait on 038 T085. Start here.
+
 - [ ] **T045e** [US2] The class -> `GrammarCategory` mapping, as a tracked contract.
       `guard_comparisons_performed` keys its counters on **category**
       (`debug/fullsweep/guards.py:323`); every plane-2 surface keys on **class**
@@ -580,6 +696,15 @@ points, then the corrections to claims already written in this file.
       · new `specs/035-fullsweep-fidelity/contracts/class-category-map.json`,
       `debug/fullsweep/coverage.py`
 
+  > **RETARGETED 2026-08-22 (the 038 cut).** Still needed for the reason stated above
+  > -- `guard_comparisons_performed` keys on category, every plane-2 surface keys on
+  > class -- but the mapping is now **shared**, not local: 038's census keys on class
+  > and states its gate predicates per class. Write
+  > `contracts/class-category-map.json` as the one tracked mapping both instruments
+  > read. Do not fork a second copy inside `debug/fullsweep/`; a class-to-category
+  > mapping that disagrees between the two instruments is a silent divergence neither
+  > one can detect.
+
 - [ ] **T045f** [US2] Give plane-2 output a home in the artifact. `ProjectArtifact`
       (`debug/fullsweep/artifact.py:71-137`) has **no** `comparisons`, `census`, `coverage`,
       `link_findings` or `depth` field -- all of which
@@ -592,6 +717,12 @@ points, then the corrections to claims already written in this file.
       the keys `link_findings` / `findings` / `field_verdicts` / `verdict_plane`. Plane-2
       output must land on its own artifact field, never folded into `accounting`.
       · `debug/fullsweep/artifact.py`, `contracts/artifact-schema.md`
+
+  > **RETARGETED 2026-08-22 (the 038 cut).** The new artifact block narrows to the
+  > field plane -- `comparisons`, `link_findings`, `depth`, `coverage`. The `census`
+  > block becomes a **reference to** 038's census artifact (path plus content hash),
+  > never a second census embedded here. The `assert_object_plane_only` constraint at
+  > `compare.py:187-196` is unaffected and still applies.
 
 #### Rulings taken on T045b's under-specified points (2026-08-19)
 
@@ -707,6 +838,12 @@ Four were ruled; three remain open and are marked as such.
       negative-control artifact (FR-096, FR-134, FR-135, FR-137, FR-179) ·
       `debug/fullsweep/guards.py`, `specs/035-fullsweep-fidelity/contracts/negative-controls.json`
 
+  > **RETARGETED 2026-08-22 (the 038 cut).** The `CATEGORY-COVERAGE` half stands
+  > unchanged, FR-137 ruling above included. The negative-control half narrows: seed a
+  > defect only for the guards this feature still owns after T045b's retarget. Seeding
+  > one for a guard whose input now arrives from 038's census would be testing 038's
+  > instrument through this one, and a failure would not say which of the two broke.
+
   > Note for the implementer: today `guard_category_coverage` PASSES a run whose
   > exclusions all carry a reason. FR-137 forbids that -- "a run performed with any
   > category excluded MUST NOT report the same success status as a full-coverage run" --
@@ -736,6 +873,9 @@ Four were ruled; three remain open and are marked as such.
       (c) FR-149: batch 1's artifacts are in gitignored `scratchpad/` (`.gitignore:117`) and
       `assert_evidence_base_tracked()` does not cover the artifact dir -- fix before T049/T050.
 
+  > **GATED 2026-08-22 (the 038 cut).** Text unchanged. Blocked on 038 T085 and on an
+  > explicit go/no-go for the full corpus run; see the amendment's GATED bucket.
+
 **Checkpoint**: User Story 2 is independently functional. "Faithful" now means every
 field the engine exposes, with a reviewed, tracked exclusion list and an honest count
 of what was not looked at.
@@ -759,6 +899,9 @@ passes from stale ones.
       per-axis maxima beside the corpus's; and `NOT-EVALUATED` for any claim whose axis the
       subset does not reach (FR-190..FR-193) · `tests/unit/test_035_selection.py`
 
+  > **GATED 2026-08-22 (the 038 cut).** Text unchanged. Blocked on 038 T085 and on an
+  > explicit go/no-go for the full corpus run; see the amendment's GATED bucket.
+
 ### Implementation
 
 **Wave 1 -- independent (different modules):**
@@ -766,16 +909,33 @@ passes from stale ones.
 - [ ] **T047** [P] [US3] Extend the read-only survey with the two axes the presence-only scan
       lacks: writing-system breadth and same-class structural depth (FR-190, FR-192) ·
       `debug/prescan_type_coverage.py`
+
+  > **KEEP 2026-08-22 (the 038 cut).** Read-only, cannot write to a source, and the
+  > cheapest de-risking available for what 038 just landed: 038 validated two or three
+  > project pairs, and nobody knows which of the roughly 82 transferable projects carry
+  > constructs never once exercised.
+
 - [ ] **T048** [P] [US3] Batching and gating: batches of 3 to 5, a hard stop for analysis after
       each, failed-only re-run, the canary re-run in every batch regardless of its ledger
       status, every result stamped with the driver-and-dependency revision pair, a pass under a
       superseded pair reported STALE, and the ledger's status derived solely from artifact
       presence and content -- never hand-set (FR-152..FR-161, SC-010, SC-011) ·
       `debug/fullsweep/batch.py`, `specs/035-fullsweep-fidelity/ledger.json`
+
+  > **RETARGETED 2026-08-22 (the 038 cut).** Batching, the hard stop, failed-only
+  > re-run, the canary, the revision stamp and the artifact-derived ledger status all
+  > stand: 038 has no corpus notion whatever. What changes is what a batch **runs** --
+  > per project, invoke 038's census gate (`python -m gramtrans.census_cli`) for plane
+  > 1 alongside this driver's field plane, and record both verdicts on the artifact.
+  > Blocked on 038 T085.
+
 - [ ] **T049** [P] [US3] Three-axis selection: order and compose batches to maximize distinct
       object-category diversity earliest, retaining each axis's MEASURED maximum carrier rather
       than naming projects, and recording the selection axes and measured maxima on every run
       artifact (FR-168, FR-190..FR-193) · `debug/fullsweep/select.py`
+
+  > **GATED 2026-08-22 (the 038 cut).** Text unchanged. Blocked on 038 T085 and on an
+  > explicit go/no-go for the full corpus run; see the amendment's GATED bucket.
 
 **⟶ Wait for Wave 1 to finish, then:**
 
@@ -785,17 +945,40 @@ passes from stale ones.
       Group B write-safety regime, writes per-project axis JSON, never writes to a source; then
       run it over the corpus and commit the measured maxima (FR-192, SC-001) ·
       `debug/run_fullcopy_sweep.py`, `scratchpad/prescan_results/`
+
+  > **KEEP 2026-08-22 (the 038 cut).** Pairs with T047 -- the survey is the corpus
+  > reconnaissance 038 never had. Blocked on 038 T085 only because it opens live
+  > projects, not because its scope changed.
+
 - [ ] **T051** [P] [US3] Mechanical re-run scope derivation from changed files' transitive
       importers, failing closed to the full corpus whenever narrowness cannot be proven; no
       scope is ever narrowed on a human's or an agent's judgement about what a change
       "probably" affects (FR-163..FR-166, SC-013) · `debug/fullsweep/batch.py`
+
+  > **RETARGETED 2026-08-22 (the 038 cut).** Unchanged in substance, wider in input:
+  > the transitive-importer derivation must treat `src/gramtrans/Lib/census.py` and
+  > `src/gramtrans/census_cli.py` as sweep-invalidating files too. Miss them and a
+  > census change silently leaves every prior pass looking current -- the precise
+  > failure FR-163..FR-166 exist to prevent. Blocked on 038 T085.
+
 - [ ] **T052** [P] [US3] The `report` subcommand: aggregate per-project artifacts to the single
       most severe verdict and exit with its code; refuse a corpus-level fidelity claim assembled
       across more than one revision pair, or from any artifact recording the `BASELINE` intent
       (FR-113, FR-114, SC-014, SC-016) · `debug/run_fullcopy_sweep.py`
+
+  > **RETARGETED 2026-08-22 (the 038 cut).** The aggregation and the
+  > one-revision-pair refusal stand, over a **triple** rather than a pair: this driver,
+  > the dependency, and the census instrument. A corpus claim assembled across two
+  > census revisions is exactly the staleness this task exists to refuse. Blocked on
+  > 038 T085.
+
 - [ ] **T053** [P] [US3] Pin and record the dependency revision for the whole duration of a
       sweep, so a mid-sweep dependency change is a recorded finding rather than an invisible
       one (FR-167) · `debug/fullsweep/batch.py`
+
+  > **RETARGETED 2026-08-22 (the 038 cut).** Same widening as T052 -- pin and record
+  > the census instrument's revision for the whole duration of a sweep, not only the
+  > dependency's.
 
 **⟶ Wait for Wave 2 to finish, then:**
 
@@ -805,17 +988,37 @@ passes from stale ones.
       host data layer and write the authorizing artifact -- or record the trial's absence and
       keep the worker count at 1, publishing no runtime estimate that presumes otherwise
       (FR-032, FR-033, SC-012) · `scratchpad/035_sweep/concurrency-trial.json`
+
+  > **GATED 2026-08-22 (the 038 cut).** Text unchanged. Blocked on 038 T085 and on an
+  > explicit go/no-go for the full corpus run; see the amendment's GATED bucket.
+
 - [ ] **T055** [US3] Census cost run against the corpus's largest project, recording the actual
       per-project census cost that every artifact carries thereafter, so a pathological case is
       caught in flight · `scratchpad/035_sweep/census-cost.json`
+
+  > **GATED 2026-08-22 (the 038 cut).** Text unchanged. Blocked on 038 T085 and on an
+  > explicit go/no-go for the full corpus run; see the amendment's GATED bucket.
+
 - [ ] **T056** [US3] Settle FR-162 with a measured answer: does a diverged shared/default item
       leave the target link `RESOLVED`, or `SILENTLY_UNSET`? This is the link census's first
       question and it covers 109 of the 160 residual pilot records (FR-162) ·
       `specs/035-fullsweep-fidelity/probe-results-live.md`
+
+  > **KEEP 2026-08-22 (the 038 cut), and now more valuable than its P3 position
+  > suggests.** 038's census counts objects, so it **structurally cannot see this**: an
+  > unset link on an object that is present and correctly counted reports `MATCHED`.
+  > This single question covers 109 of the 160 residual pilot records, and it is a
+  > question about the **engine**, not about either instrument.
+
 - [ ] **T057** [US3] Run the corpus in gated batches: canary in every batch, stop for analysis
       after each, fix forward, re-run only what the mechanical scope derivation invalidates, and
       keep the ledger current from artifacts alone (FR-152..FR-159, SC-006, SC-011) ·
       `specs/035-fullsweep-fidelity/ledger.json`, `scratchpad/035_sweep/`
+
+  > **RETARGETED 2026-08-22 (the 038 cut).** Scope unchanged, and now the largest
+  > single piece of uncovered value in the feature: 038 validated two or three project
+  > pairs against a corpus of roughly 82. Blocked on 038 T085 **and** on the go/no-go
+  > this amendment's GATED bucket names.
 
 **Checkpoint**: User Story 3 is independently functional. The corpus is covered in
 gated batches, and no stale pass can pose as current evidence.
@@ -834,16 +1037,21 @@ passing quietly.
 
 ### Tests
 
-- [ ] **T058** [P] [US5] Allowlist tests: required-field validity, exact-reason matching,
+- [ ] **T058** [P] [US5] **CUT 2026-08-22 (the 038 cut) -- DO NOT BUILD.**
+      Allowlist tests: required-field validity, exact-reason matching,
       over-cap, expiry, closed issue, two-run staleness, the 25-entry and 1%-of-project hard
       caps, an engine-bug-signature reason refused however written, and FR-182's inverted
       trigger (FR-115..FR-122, FR-182) · `tests/unit/test_035_allowlist.py`
+
+  > **CUT 2026-08-22 (the 038 cut).** These are the tests for a mechanism the cut
+  > struck. There is nothing left to test.
 
 ### Implementation
 
 **Wave 1 -- single task (one module owns every rule):**
 
-- [ ] **T059** [US5] Full allowlist validity: every field present; EXACT reason match, no
+- [ ] **T059** [US5] **CUT 2026-08-22 (the 038 cut) -- DO NOT BUILD.**
+      Full allowlist validity: every field present; EXACT reason match, no
       wildcards or patterns; over-cap is unexplained loss, never a widened allowance; `expires`
       at most 120 days after `first_observed` and an expired entry fails the run; the tracking
       issue verified OPEN at run time; zero matches across two consecutive full-corpus runs is
@@ -855,17 +1063,35 @@ passing quietly.
       violation yields `ALLOWLIST_INVALID` (FR-115..FR-122, FR-182, SC-015) ·
       `debug/fullsweep/allowlist.py`
 
+  > **CUT 2026-08-22 (the 038 cut).** 038's closed 16-token reason vocabulary replaces
+  > the entire regime: a loss is either explained by a vocabulary member or the run
+  > fails, so there is no entry to validate, cap, expire, or verify an open issue for.
+  > Two competing ways to forgive a loss is worse than either one alone.
+  > FR-115..FR-122 / FR-182 / SC-015 are marked CUT-BY-DECISION in `spec.md`.
+
 **⟶ Wait for Wave 1 to finish, then:**
 
 **Wave 2 -- independent (the data and the disclosure):**
 
-- [ ] **T060** [P] [US5] Populate the allowlist from the measured residual only -- each entry
+- [ ] **T060** [P] [US5] **CUT 2026-08-22 (the 038 cut) -- DO NOT BUILD.**
+      Populate the allowlist from the measured residual only -- each entry
       with its owner, its verified-open issue, exact project names, exact reason, cap, and
       expiry. An entry that cannot name all of those is not written (FR-115..FR-119) ·
       `specs/035-fullsweep-fidelity/contracts/loss-allowlist.json`
-- [ ] **T061** [P] [US5] Every consumed entry listed on the artifact with its identifier,
+
+  > **CUT 2026-08-22 (the 038 cut).** No allowlist to populate. The measured residual
+  > does **not** disappear with it: every record must be accounted for by a
+  > closed-vocabulary reason under the retargeted T045b, or the run fails. T056 -- KEPT
+  > -- is the open question covering 109 of those 160 records.
+
+- [ ] **T061** [P] [US5] **CUT 2026-08-22 (the 038 cut) -- DO NOT BUILD.**
+      Every consumed entry listed on the artifact with its identifier,
       matched count, and remaining headroom, so a passing result never leaves a reader unable to
       reconstruct what was forgiven (FR-114, SC-007) · `debug/fullsweep/artifact.py`
+
+  > **CUT 2026-08-22 (the 038 cut).** Nothing is forgiven, so there is nothing to
+  > disclose. The artifact's `allowlist_hits` block retires with the module under
+  > T063.
 
 **Checkpoint**: User Story 5 is independently functional. `PASS_WITH_ALLOWLIST` is
 reachable, bounded, disclosed, and self-retiring.
@@ -877,25 +1103,88 @@ reachable, bounded, disclosed, and self-retiring.
 - [ ] **T062** [P] Prove the Anti-Silence Acceptance Surface live: all 65 rows S-01..S-65 map
       to a module that exists and a test that runs, asserted as a completeness check rather than
       a hand-maintained checklist. Waivers: none · `tests/unit/test_035_silence_ledger.py`
+
+  > **GATED 2026-08-22 (the 038 cut), and its row count is now wrong.** The 65-row
+  > surface asserts that every row maps to a module that exists and a test that runs.
+  > The rows covering FR-115..FR-122 / FR-182 / SC-007 / SC-015 map to a module T063
+  > retires, so the surface must be **re-derived** -- not hand-trimmed -- before this
+  > task can pass. A completeness check that was hand-adjusted to fit is the very thing
+  > this task exists to replace.
+
 - [ ] **T063** [P] Retire the four instruments per research D-11: promote `inventory_all` out of
       the GUID audit as a library and drop its verdict; delete `reopen_and_count` and give the
       harness an explicit exclude argument; fold the domain diff of the verify driver into the
       comparator and retire it · `debug/audit_guid_preservation.py`,
       `debug/run_fullsweep_verify.py`, `tests/integration/harness/full_run.py`
+
+  > **KEEP and WIDENED 2026-08-22 (the 038 cut).** More urgent than when written: 038
+  > added a fifth instrument to the four this task retires. Added to its scope, all of
+  > it dead on the T058-T061 cut -- the loss-allowlist module
+  > `debug/fullsweep/allowlist.py`, its contract file `contracts/loss-allowlist.json`,
+  > its star-export at `debug/fullsweep/__init__.py:71`, and its call site
+  > `load_loss_allowlist` at `debug/run_fullcopy_sweep.py:543`. **Leave the
+  > destination-project-name allowlist in `safety.py` alone** -- a different concept
+  > that happens to share an English word, and it stays. Opens no live project, so it
+  > does not wait on 038 T085.
+
+
+- [ ] **T068** [P] **NEW 2026-08-22 (the 038 cut).** Collapse the now-unreachable
+      `PASS_WITH_ALLOWLIST` verdict -- without this, the cut is not finished. With the
+      loss allowlist struck (T058-T061 CUT), no run can ever consume an entry, so
+      `verdict.py:210`'s cautious `allowlist_consumed in (True, None) ->
+      PASS_WITH_ALLOWLIST` default -- whose `None` arm is today's only call site --
+      would make **every** clean run report `PASS_WITH_ALLOWLIST` and leave `CLEAN_PASS`
+      unreachable forever. Remove the `allowlist_consumed` keyword, return `CLEAN_PASS`
+      when no guard failed, and retire the token from `VERDICT_SPECS` (`verdict.py:33`)
+      and from the severity ordering (`:68`). Both tokens are exit code 0 under FR-111,
+      so this changes no exit code -- it changes what a passing run *claims*, from a
+      permanent under-claim to the truth · `debug/fullsweep/verdict.py`,
+      `specs/035-fullsweep-fidelity/contracts/verdict-exit-model.md`
+
+  > **NEW 2026-08-22.** Created by the cut, not by a measurement. `GUARD_FAILURE_VERDICT`
+  > is asserted total over all fifteen guard names and `VERDICT_SPECS` is asserted against
+  > the contract, so retiring a token by deletion alone will fail those tests -- update
+  > the contract in the same change, which is why it is on the path line.
+  >
+  > **Checked 2026-08-22: 038 does not block this.** `Lib/census.py:2976` cites
+  > `contracts/verdict-exit-model.md` for its *house style* only -- the
+  > machine-token / human-label / exit-code split -- and carries its own verdict
+  > tokens (`CENSUS_CLEAN` and peers). Retiring `PASS_WITH_ALLOWLIST` from this
+  > feature's token list touches nothing 038 reads.
+
 - [ ] **T064** [P] Crash-resume evidence: a simulated mid-project kill leaves a partial artifact
       naming the last completed phase, in place of no evidence at all (FR-150, SC-009) ·
       `tests/unit/test_035_guards.py`
+
+  > **KEEP 2026-08-22 (the 038 cut).** Unchanged. Cheap, and it is the difference
+  > between a killed run leaving partial evidence and leaving none.
+
 - [ ] **T065** [P] Document the delivered sweep -- subcommands, tracked inputs, exit codes, and
       how to read an artifact -- and walk the quickstart end to end against a pilot ·
       `debug/README.md`, `specs/035-fullsweep-fidelity/quickstart.md`
+
+  > **KEEP 2026-08-22 (the 038 cut), with one addition.** Document the **reduced**
+  > surface this amendment leaves, and say plainly which plane comes from 038's census
+  > and which from this driver -- a reader holding an artifact must be able to tell
+  > which instrument made which claim.
+
 - [ ] **T066** The uniform final sweep: one frozen revision pair, `--intent gate`, whole corpus,
       no results carried over from an earlier pair. This is the only run from which a
       corpus-level fidelity claim may be issued (FR-166, SC-014, SC-016) ·
       `specs/035-fullsweep-fidelity/ledger.json`
+
+  > **GATED 2026-08-22 (the 038 cut).** Text unchanged. Blocked on 038 T085 and on an
+  > explicit go/no-go for the full corpus run; see the amendment's GATED bucket.
+
 - [ ] **T067** Validate all seventeen Success Criteria against the final run's artifacts and
       record the evidence per criterion, naming any that the corpus cannot reach as
       `NOT-EVALUATED` rather than clean (SC-001..SC-017) ·
       `specs/035-fullsweep-fidelity/verification.md`
+
+  > **GATED 2026-08-22 (the 038 cut).** Two of the seventeen -- **SC-007** and
+  > **SC-015** -- are CUT-BY-DECISION and must be recorded as exactly that, never as
+  > `NOT-EVALUATED`. The difference matters: `NOT-EVALUATED` says the corpus could not
+  > reach the criterion; CUT-BY-DECISION says nothing will ever evaluate it.
 
 ---
 
@@ -903,7 +1192,24 @@ reachable, bounded, disclosed, and self-retiring.
 
 **Phase order**: Setup (T001-T010) → Foundational (T011-T016) → US4 (T017-T024) →
 US1 (T025-T034) → US2 (T036-T045f, then T035) → US3 (T046-T057) → US5 (T058-T061) →
-Polish (T062-T067).
+Polish (T062-T068).
+
+**Amended 2026-08-22 by the 038 cut** -- the phase order above is the ORIGINAL plan and
+is kept for the record. What is actually left to build no longer follows it:
+
+- **US5 is gone.** T058-T061 are CUT, so the phase has no remaining work; T032, its one
+  built task, is retired by T063.
+- **The critical path is now two tasks that open no live project**, independent of each
+  other and startable today: **T045d** (the generic field reader -- the only route to
+  the field plane, which 038 does not cover) and **T063** (retiring five instruments,
+  the loss-allowlist module now among them).
+- **Everything that opens a live project waits on 038 T085**, the merge of
+  `038-transfer-fidelity-gaps` to `main`. Measuring before it lands means measuring
+  under a revision pair about to be superseded, which FR-158 / SC-010 would mark STALE.
+  That covers T035, T047, T048, T050-T057, T066 and T067.
+- **T068 gates the closing claim** alongside T066/T067: a run reporting
+  `PASS_WITH_ALLOWLIST` for a mechanism that no longer exists is not a claim anyone
+  should accept.
 
 Story phases are ordered by priority, but the ordering is also a real dependency
 chain: US1's `TOTAL-ACCOUNTING` consumes US4's preflight and the exact-match
@@ -937,8 +1243,11 @@ cannot start before both planes measure; and US5 hardens the valve US1 opened.
   run gates the estimate, FR-162 gates the residual accounting, and only then does the
   corpus run.
 - **US5** — T059 alone → T060/T061 independent.
-- **Polish** — T062-T065 independent → T066 (needs everything green under one revision
-  pair) → T067 (reads T066's artifacts).
+- **Polish** — T062-T065 and T068 independent → T066 (needs everything green under one revision
+  pair) → T067 (reads T066's artifacts). **CUT 2026-08-22: no remaining work.**
+  **Amended 2026-08-22:** T063 and T068 are the two Polish tasks that block
+  nothing and are blocked by nothing; T062's row count must be re-derived after
+  T063 retires the allowlist module some of its rows map to.
 
 **Parallel opportunities**: the largest are Setup Wave 2 (six independent Group moves),
 US2 Wave 2 (five independent comparison rules), and US3 Wave 2 (four independent CLI
