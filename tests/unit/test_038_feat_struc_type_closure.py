@@ -48,10 +48,19 @@ from gramtrans.Lib.models import DependencyKind, GrammarCategory
 # ===========================================================================
 
 class _Obj:
-    """Anything with a GUID -- a struct type, a feature defn, a value."""
+    """Anything with a GUID -- a struct type, a feature defn, a value.
 
-    def __init__(self, guid: str) -> None:
+    `owner` models `ICmObject.Owner`, which T089 made load-bearing: an
+    `IFsSymFeatVal` is owned by the `IFsClosedFeature` whose `ValuesOC` holds
+    it, and that owner is the endpoint the closure edge now names. It is
+    OPTIONAL so an owner-less fake still stands in for the malformed case the
+    production code has to survive.
+    """
+
+    def __init__(self, guid: str, owner=None) -> None:
         self.guid = guid
+        if owner is not None:
+            self.Owner = owner
 
 
 class _Spec:
@@ -110,9 +119,12 @@ NESTED_TYPE_G = "55555555-5555-5555-5555-555555555555"
 
 
 def _full_struc(type_guid=TYPE_G):
+    """The well-formed shape: `FsClosedFeature.ValuesOC` owns the value, so
+    the spec's `ValueRA.Owner` IS its `FeatureRA` (T089)."""
+    feature = _Obj(FEAT_G)
     return _Struc(
         type_ra=_Obj(type_guid),
-        specs=[_Spec(feature=_Obj(FEAT_G), value=_Obj(VAL_G))],
+        specs=[_Spec(feature=feature, value=_Obj(VAL_G, owner=feature))],
     )
 
 
@@ -195,7 +207,10 @@ def test_affixes_emit_type_and_feature_edges_for_every_msa_slot(slot) -> None:
 
     assert (GrammarCategory.FEATURE_STRUCT_TYPES, TYPE_G) in deps
     assert (GrammarCategory.INFLECTION_FEATURES, FEAT_G) in deps
-    assert (GrammarCategory.INFLECTION_FEATURES, VAL_G) in deps
+    # T089: the value's OWNING feature, not the value. `IFsSymFeatVal` is not
+    # something `inflection_features_enumerate_source` yields, so an edge
+    # naming one could be neither planned (FR-015) nor deselected (FR-016).
+    assert (GrammarCategory.INFLECTION_FEATURES, VAL_G) not in deps
 
 
 def test_affixes_keep_the_pos_edge_and_append_the_new_ones() -> None:
@@ -230,7 +245,8 @@ def test_stems_emit_the_same_msa_edges_alongside_strata() -> None:
     ])
     deps = categories.stems_dependencies(entry)
     assert (GrammarCategory.FEATURE_STRUCT_TYPES, TYPE_G) in deps
-    assert (GrammarCategory.INFLECTION_FEATURES, VAL_G) in deps
+    assert (GrammarCategory.INFLECTION_FEATURES, FEAT_G) in deps
+    assert (GrammarCategory.INFLECTION_FEATURES, VAL_G) not in deps  # T089
     assert (GrammarCategory.STRATA, "strat-1") in deps
 
 
@@ -240,6 +256,111 @@ def test_msa_with_no_feature_structure_emits_nothing_new() -> None:
     entry = _Entry("aff-1", msas=[_MSA(PartOfSpeechRA=_Obj(POS_G))])
     assert categories.affixes_dependencies(entry) == (
         (GrammarCategory.GRAM_CATEGORIES, POS_G),
+    )
+
+
+# ===========================================================================
+# T089 -- the ValueRA edge names the feature that OWNS the value
+#
+# `inflection_features_enumerate_source` walks `FeatureGetAll()` -- the feature
+# DEFNS -- and `inflection_features_dependencies` records that the values are
+# "co-created in execute_action, not separately planned". So an edge naming an
+# `IFsSymFeatVal` has no `PlannedAction`, no FR-015 row and no FR-016
+# checkbox, and the closure promise fails on it SILENTLY.
+#
+# Measured before the fix (`debug/audit038_closure_edges.py`, read-only,
+# two corpora): 30 of 34 distinct far GUIDs on `Mbugwe LizzieHC practice` and
+# 8 of 10 on `Ejagham Mini` were owned symbolic values.
+#
+# COVERAGE HONESTY, same as this file's header. `ICmObject.Owner` being
+# readable on a base-typed proxy WITHOUT a cast -- the property that makes
+# T088's defect inapplicable here -- is asserted by reading LCM's declaration,
+# not by execution; the fakes below expose `Owner` directly. What these tests
+# DO establish is the branch structure of `_value_defn_ref` and that no value
+# guid survives into an edge.
+# ===========================================================================
+
+def test_the_value_edge_collapses_onto_its_owning_feature() -> None:
+    """The well-formed case, and the whole measured effect: the value's owner
+    IS the spec's `FeatureRA`, so the edge set gets SMALLER rather than
+    re-pointed -- 30 endpoints collapsing onto the 4 that already existed."""
+    entry = _Entry("aff-1", msas=[_MSA(InflFeatsOA=_full_struc())])
+    infl = [d for d in categories.affixes_dependencies(entry)
+            if d[0] is GrammarCategory.INFLECTION_FEATURES]
+    assert infl == [(GrammarCategory.INFLECTION_FEATURES, FEAT_G)]
+
+
+def test_the_owner_is_read_even_when_the_spec_declares_no_feature() -> None:
+    """`Owner` is consulted FIRST, not as a fallback, and this is the case
+    that proves it: a spec with a `ValueRA` and a null `FeatureRA` still
+    yields a plannable defn. Falling back to `FeatureRA` alone would drop it.
+    """
+    owner = _Obj(FEAT_G)
+    struc = _Struc(specs=[_Spec(value=_Obj(VAL_G, owner=owner))])
+    entry = _Entry("aff-1", msas=[_MSA(InflFeatsOA=struc)])
+    deps = categories.affixes_dependencies(entry)
+    assert deps == ((GrammarCategory.INFLECTION_FEATURES, FEAT_G),)
+
+
+def test_a_value_whose_owner_is_unreadable_falls_back_to_the_declared_feature() -> None:
+    """An owner-less fake stands in for a value whose `Owner` read fails. The
+    spec's own `FeatureRA` is the declared feature for that value, so it is
+    the correct fallback -- and it is already emitted, which makes the fallback
+    a de-duplicated no-op rather than a second edge."""
+    struc = _Struc(specs=[_Spec(feature=_Obj(FEAT_G), value=_Obj(VAL_G))])
+    entry = _Entry("aff-1", msas=[_MSA(InflFeatsOA=struc)])
+    assert categories.affixes_dependencies(entry) == (
+        (GrammarCategory.INFLECTION_FEATURES, FEAT_G),
+    )
+
+
+def test_a_value_with_neither_an_owner_nor_a_feature_yields_no_edge() -> None:
+    """The absence of a plannable endpoint, not the dropping of one. Emitting
+    the value guid here is precisely the defect: it would put a ref nothing
+    can enumerate back into the plan. Measured 0 occurrences on both corpora.
+    """
+    struc = _Struc(specs=[_Spec(value=_Obj(VAL_G))])
+    entry = _Entry("aff-1", msas=[_MSA(InflFeatsOA=struc)])
+    assert categories.affixes_dependencies(entry) == ()
+
+
+def test_two_values_of_one_feature_yield_one_edge() -> None:
+    """The de-duplication the collapse makes necessary. A `+sg` / `-pl`
+    constraint used to be two distinct value guids and is now one feature
+    guid; without de-duplication the closure walk would count it twice and
+    inflate `pulled_in_by`."""
+    feature = _Obj(FEAT_G)
+    struc = _Struc(specs=[
+        _Spec(feature=feature, value=_Obj(VAL_G, owner=feature)),
+        _Spec(feature=feature, value=_Obj("99999999-9999-9999-9999-999999999999",
+                                          owner=feature)),
+    ])
+    entry = _Entry("aff-1", msas=[_MSA(InflFeatsOA=struc)])
+    assert categories.affixes_dependencies(entry) == (
+        (GrammarCategory.INFLECTION_FEATURES, FEAT_G),
+    )
+
+
+def test_the_narrow_infl_feature_producer_emits_no_value_guid() -> None:
+    """The producer the registry would consult (`MSA_TO_INFL_FEATURE`). T089
+    is what blocked its registration, so the assertion belongs on it directly
+    and not only on the composite."""
+    entry = _Entry("aff-1", msas=[_MSA(InflFeatsOA=_full_struc())])
+    assert categories.affixes_infl_feature_dependencies(entry) == (
+        (GrammarCategory.INFLECTION_FEATURES, FEAT_G),
+    )
+
+
+def test_the_variant_type_sibling_names_the_owning_feature_too() -> None:
+    """`variant_types_dependencies` carried the same defect independently and
+    is fixed by the same helper. It is UNREGISTERED, so this changes no plan
+    -- what it changes is that its own registration will not hit T089's
+    refusal later."""
+    feature = _Obj(FEAT_G)
+    vt = _MSA(guid="vt-1", InflFeatsOA=_Struc(
+        specs=[_Spec(feature=feature, value=_Obj(VAL_G, owner=feature))]))
+    assert categories.variant_types_dependencies(vt) == (
+        (GrammarCategory.INFLECTION_FEATURES, FEAT_G),
     )
 
 
@@ -254,8 +375,8 @@ def test_gram_categories_emit_default_features_edges() -> None:
     deps = categories.gram_categories_dependencies(pos)
     assert set(deps) == {
         (GrammarCategory.FEATURE_STRUCT_TYPES, TYPE_G),
+        # T089: two edges, not three -- the value collapses onto its owner.
         (GrammarCategory.INFLECTION_FEATURES, FEAT_G),
-        (GrammarCategory.INFLECTION_FEATURES, VAL_G),
     }
 
 
@@ -278,8 +399,12 @@ def test_phonemes_emit_phon_feat_types_not_feature_struct_types() -> None:
     deps = categories.phonemes_dependencies(phoneme)
     assert set(deps) == {
         (GrammarCategory.PHON_FEAT_TYPES, TYPE_G),
+        # T089 applies to the phonological twin for the same reason:
+        # `phonological_features_enumerate_source` walks `PhonFeatures` (the
+        # DEFNS) and `phonological_features_execute_action` co-creates the
+        # values, so a value guid is unplannable on this side too. One helper
+        # fixes both because both go through `_feat_struc_deps`.
         (GrammarCategory.PHONOLOGICAL_FEATURES, FEAT_G),
-        (GrammarCategory.PHONOLOGICAL_FEATURES, VAL_G),
     }
 
 

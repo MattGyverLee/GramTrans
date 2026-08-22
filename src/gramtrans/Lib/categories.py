@@ -357,6 +357,57 @@ def _feat_struc_type_categories(piece) -> dict:
     return index
 
 
+def _value_defn_ref(value, declared_feature):
+    """The FEATURE DEFN a `FeatureSpecsOC` entry's `ValueRA` should be filed
+    under, or `None` when the spec names no plannable defn at all (T089).
+
+    A `ValueRA` names an `IFsSymFeatVal`, and NO category in this repo
+    enumerates one. `inflection_features_enumerate_source` walks
+    `FeatureGetAll()` -- the DEFNS -- and `inflection_features_dependencies`
+    records why in its own docstring: the values are "co-created in
+    execute_action, not separately planned". Its phonological twin behaves the
+    same way (`phonological_features_enumerate_source` walks `PhonFeatures`,
+    and `phonological_features_execute_action` creates the values with the
+    feature). So emitting the VALUE's guid produced a closure edge whose far
+    endpoint has no `PlannedAction`, no FR-015 row to mark and no FR-016
+    checkbox to clear -- the promise fails on it silently, which is the one
+    direction Principle I forbids.
+
+    Measured before the fix (`debug/audit038_closure_edges.py`,
+    `relationships.MSA_TO_INFL_FEATURE`, read-only over two corpora): 206
+    edges over 34 distinct far GUIDs on `Mbugwe LizzieHC practice`, of which
+    only 4 were enumerable pieces and 30 were owned symbolic values; 34 over
+    10 on `Ejagham Mini`, 2 and 8. ~88% / ~80% of the relationship's far
+    endpoints named something nothing could plan.
+
+    The OWNING feature is the piece that is actually planned, and its
+    `execute_action` is what creates the value -- so re-pointing the edge at
+    the owner makes every remaining endpoint plannable, and in the measured
+    data collapses the 30 (8) onto the 4 (2) that already existed via
+    `FeatureRA`. The edge set gets SMALLER, not larger.
+
+    `Owner` is read WITHOUT a cast on purpose, and that is checkable rather
+    than lucky: it is declared on `ICmObject`, so T088's polymorphic-member
+    defect cannot apply to it -- the same argument that made
+    `slots_dependencies` audit clean the first time it was measured.
+
+    `declared_feature` is the fallback, not the primary: LCM owns an
+    `IFsSymFeatVal` through `FsClosedFeature.ValuesOC`, so the owner IS the
+    spec's `FeatureRA` in well-formed data and the caller's de-duplication
+    makes the second `_add` a no-op. Reading `Owner` first is what covers the
+    one case the fallback cannot -- a spec with a `ValueRA` and a null
+    `FeatureRA`. When BOTH are unreadable there is no plannable defn to name
+    and `None` is returned; that is the absence of an endpoint, not the
+    dropping of one (measured 0 occurrences on both corpora).
+    """
+    if value is None:
+        return None
+    owner = getattr(_unwrap_lcm(value), "Owner", None)
+    if owner is not None and _guid_str_from(owner):
+        return owner
+    return declared_feature
+
+
 def _feat_struc_deps(struc, type_category, defn_category, type_index=None,
                      deps=None, depth=0):
     """Closure refs for ONE `IFsFeatStruc`, appended to `deps` and returned.
@@ -366,7 +417,11 @@ def _feat_struc_deps(struc, type_category, defn_category, type_index=None,
         category taken from `type_index` when the piece's cache made the
         ownership walk possible and from `type_category` otherwise; and
       - `(INFLECTION_FEATURES | PHONOLOGICAL_FEATURES, guid)` for each
-        `FeatureSpecsOC` entry's `FeatureRA` and `ValueRA`,
+        `FeatureSpecsOC` entry's `FeatureRA`, and for its `ValueRA` the guid
+        of the feature that OWNS that value rather than the value's own
+        (T089 -- no category enumerates an `IFsSymFeatVal`; see
+        `_value_defn_ref`), which in well-formed data is the same feature and
+        de-duplicates away,
 
     recursing through `IFsComplexValue.ValueOA` (itself an `IFsFeatStruc`) up
     to `_FEAT_STRUC_MAX_DEPTH`.
@@ -400,8 +455,13 @@ def _feat_struc_deps(struc, type_category, defn_category, type_index=None,
     for raw_spec in getattr(struc, "FeatureSpecsOC", None) or ():
         spec = _unwrap_lcm(raw_spec)
         closed = _cast_lcm(spec, "IFsClosedValue")
-        _add(defn_category, getattr(closed, "FeatureRA", None))
-        _add(defn_category, getattr(closed, "ValueRA", None))
+        feature_ra = getattr(closed, "FeatureRA", None)
+        _add(defn_category, feature_ra)
+        # T089: the `ValueRA` edge is filed under its OWNING feature, which is
+        # the endpoint the far category can actually enumerate, plan, mark
+        # (FR-015) and deselect (FR-016). See `_value_defn_ref`.
+        _add(defn_category,
+             _value_defn_ref(getattr(closed, "ValueRA", None), feature_ra))
         nested = getattr(_cast_lcm(spec, "IFsComplexValue"), "ValueOA", None)
         if nested is not None:
             _feat_struc_deps(nested, type_category, defn_category,
@@ -3420,11 +3480,24 @@ def variant_types_enumerate_source(context, selection):
 
 
 def variant_types_dependencies(piece):
-    """FR-327: yield (INFLECTION_FEATURES, val_guid) for each
-    IFsSymFeatVal referenced by the variant type's InflFeatsOA constraint.
+    """FR-327: yield (INFLECTION_FEATURES, guid) for each `IFsSymFeatVal`
+    referenced by the variant type's InflFeatsOA constraint -- naming, as of
+    T089, the feature that OWNS the value rather than the value itself.
 
     ILexEntryInflType only -- base ILexEntryType has no InflFeatsOA.
     Empty tuple when piece is a base variant type or InflFeatsOA is None.
+
+    T089 SIBLING, fixed here rather than reported. This producer had
+    `_feat_struc_deps`' defect independently: an `IFsSymFeatVal` guid is not
+    something `inflection_features_enumerate_source` yields, so the far
+    endpoint could be neither planned nor deselected. It is UNREGISTERED in
+    `CLOSURE_EDGES_VERIFIED` and therefore unconsumed today, so this changes
+    no plan -- what it changes is that registering VARIANT_TYPES ->
+    INFLECTION_FEATURES later will not hit the refusal T089 hit. The third
+    sibling, `natural_classes_dependencies`, is deliberately NOT changed here:
+    it returns BARE guids by contract and its registration is separately
+    blocked on splitting the producer per far category, which is where that
+    fix belongs.
     """
     struct = getattr(piece, "InflFeatsOA", None)
     if struct is None:
@@ -3437,11 +3510,22 @@ def variant_types_dependencies(piece):
         val = getattr(spec, "ValueRA", None)
         if val is None:
             continue
+        defn = _value_defn_ref(val, getattr(spec, "FeatureRA", None))
+        if defn is None:
+            continue
         try:
-            val_guid = _guid_str_from(val)
+            defn_guid = _guid_str_from(defn)
         except Exception:
             continue
-        deps.append((GrammarCategory.INFLECTION_FEATURES, val_guid))
+        if not defn_guid:
+            continue
+        # De-duplicated, which the pre-T089 shape did not need to be: two
+        # values of the SAME feature used to be two distinct value guids and
+        # are now one feature guid, so without this a constraint naming
+        # +sg/-pl would emit its feature twice and inflate `pulled_in_by`.
+        edge = (GrammarCategory.INFLECTION_FEATURES, defn_guid)
+        if edge not in deps:
+            deps.append(edge)
     return tuple(deps)
 
 
@@ -13772,11 +13856,30 @@ CLOSURE_EDGES_VERIFIED: dict = {
             "test_only_the_confirmed_relationships_are_registered"
         ),
     },
-    # DependencyKind.MSA_TO_INFL_FEATURE: REFUSED -- see (3) above and T089.
-    # The producer (`affixes_infl_feature_dependencies`) exists and is narrow;
-    # what it lacks is a far endpoint the INFLECTION_FEATURES category can
-    # enumerate. Do NOT add this row without re-running the driver and seeing
-    # `resolved_as_owned_value == 0`.
+    # -----------------------------------------------------------------------
+    # DependencyKind.MSA_TO_INFL_FEATURE: CONFIRMED by the audit, and STILL
+    # NOT REGISTERED. Read both halves before changing either.
+    #
+    # It was REFUSED until 2026-08-22 -- not for a broken producer
+    # (`affixes_infl_feature_dependencies` is narrow and its edges are live)
+    # but for a far endpoint nothing could enumerate: its `ValueRA` edges
+    # named `IFsSymFeatVal` symbolic values, and 30 of 34 distinct far GUIDs
+    # on `Mbugwe LizzieHC practice` (8 of 10 on `Ejagham Mini`) were of that
+    # kind. T089 re-pointed them at the OWNING feature (`_value_defn_ref`),
+    # and the driver now measures CONFIRMED on both corpora with
+    # `resolved_as_owned_value == 0`, `unresolved == 0`, and a SMALLER edge
+    # set: 206 -> 99 over 4 far GUIDs, 34 -> 17 over 2.
+    #
+    # The instruction that used to stand here -- "do NOT add this row without
+    # re-running the driver and seeing `resolved_as_owned_value == 0`" -- has
+    # been satisfied, and it was necessary rather than sufficient. What a
+    # registration still needs is its OWN census against a restored target
+    # (`debug/run038_closure_census.py`), proving the row changes no decision
+    # it should not under the one selection that can observe it. That is T104.
+    # T089's census (`debug/run038_t089_census.py`) is a different measurement
+    # answering a different question -- it holds the registry FIXED and varies
+    # the producer -- and it does not substitute for the registration one.
+    # -----------------------------------------------------------------------
 }
 
 

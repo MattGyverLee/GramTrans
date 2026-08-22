@@ -5514,6 +5514,17 @@ class TestT101TheCommittedCorpusIsUnmovedByInvariant12:
         `excluded_not_measurable` rows T099 nulled in the other three, from
         the same post-T099 producer. Nothing new is being nulled.
 
+        T089 (2026-08-22) took it 10 -> 12, and the reading is stronger than
+        "same two rows again". `census-038-t089-fixed.json` is asserted
+        ELSEWHERE to reproduce `census-038-t076-registered.json` ROW FOR ROW
+        (`test_038_closure_edge_audit.py::
+        test_t089_reproduces_the_previous_census_row_for_row`), which is the
+        whole point of that run -- T089 changes a producer whose relationship
+        is unregistered, so the transfer must be the same transfer. Its two
+        nulls are therefore not merely the same CLASSES as T076's, they are
+        the same ROWS, and an artifact of that provenance nulling anything
+        else would have failed that comparison before reaching this one.
+
         THE PIN IS NOW THREE CLAIMS RATHER THAN ONE MAGIC NUMBER, because a
         bare total that has to be edited for every new artifact degrades into
         a number nobody can interpret -- and a number nobody interprets gets
@@ -5543,11 +5554,11 @@ class TestT101TheCommittedCorpusIsUnmovedByInvariant12:
             assert classes == {"MoForm", "MoMorphSynAnalysis"}, (
                 name + " nulls something other than the two "
                 "excluded_not_measurable rows: " + repr(sorted(classes)))
-        assert len(by_artifact) == 5, (
+        assert len(by_artifact) == 6, (
             "a census artifact arrived or left; the corpus that nulls the two "
             "excluded_not_measurable rows is now "
             + repr(sorted(by_artifact)))
-        assert advisory_nulls == 2 * len(by_artifact) == 10
+        assert advisory_nulls == 2 * len(by_artifact) == 12
 
 
 class TestT100TheVocabularyStaysClosedAtSeventeen:

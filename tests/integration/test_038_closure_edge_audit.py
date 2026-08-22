@@ -76,6 +76,31 @@ SYMBOLIC VALUES, which `inflection_features_dependencies` itself records are
 a piece no category can enumerate cannot be planned, marked (T070) or
 deselected (T072). Filed as T089; NOT registered.
 
+WHAT T089 DID TO THAT REFUSAL, AND WHY THE ROW IS STILL NOT REGISTERED.
+
+    MSA_TO_INFL_FEATURE      99 /  4 edges, foreign 0, unresolved 0  CONFIRMED
+                             17 /  2 edges, owned 0                  CONFIRMED
+
+T089 re-pointed each `ValueRA` edge at the feature that OWNS the value -- the
+piece that IS planned, and whose `execute_action` creates the value -- so the
+far endpoint became one the category can enumerate. The numbers moved the way
+a CORRECTION moves numbers rather than the way a registration does: the edge
+set got SMALLER (206 -> 99, 34 -> 17) and the distinct far GUIDs collapsed onto
+the ones that already existed (34 -> 4, 10 -> 2), because many values of one
+feature are one feature. `resolved_as_owned_value` is 0 on both corpora.
+
+The row is still absent from `CLOSURE_EDGES_VERIFIED`, and that is not an
+oversight -- see `_CONFIRMED_NOT_REGISTERED` below, which is the vocabulary
+this file grew to say so. T089's own task text separates the two: "the fix is a
+live-behaviour change and must not be folded into a registration". The fix has
+its OWN census (`debug/run038_t089_census.py`,
+`_snapshots/closure-producer-038-t089.json`), whose axis is the producer rather
+than the registry, and which measured what the structural argument predicted:
+with the registry held fixed at 7 rows, the full-copy plan and the AFFIXES-only
+plan are IDENTICAL before and after the fix (0 and 259 closure edges either
+way), and the resulting census reproduces `census-038-t076-registered.json` row
+for row. The registration is T104.
+
 WHAT T068 REGISTERED, AND THE MEMBER IT HAD TO ADD.
 
     SLOT_TO_POS              19 /  9 edges, foreign 0, unresolved 0  REGISTERED
@@ -224,7 +249,37 @@ def test_a_cast_is_still_mandatory_at_the_msa_sites(snap) -> None:
 _REGISTERED = ("AFFIX_TO_POS", "MSA_TO_FEAT_STRUC_TYPE", "SLOT_TO_POS",
                "TEMPLATE_TO_POS", "TEMPLATE_TO_SLOT",
                "PROCESS_RULE_TO_PHONEME", "PROCESS_RULE_TO_NATURAL_CLASS")
-_REFUSED = ("MSA_TO_INFL_FEATURE",)
+#: Relationships the audit REFUSES. Empty since T089, and deliberately kept
+#: as a name rather than deleted: it is the list a future refusal goes on, and
+#: the tests below still enforce that everything on it stays out of the
+#: registry.
+_REFUSED: tuple = ()
+
+#: CONFIRMED by the audit and NOT registered, on purpose (T089).
+#:
+#: This third state did not exist before T089 and is the one that most needs
+#: writing down, because it is indistinguishable from an oversight if it is
+#: not. `MSA_TO_INFL_FEATURE` measured
+#: `REFUSED_FAR_ENDPOINT_NOT_ENUMERABLE` until 2026-08-22: 30 of its 34
+#: distinct far GUIDs on `Mbugwe LizzieHC practice` (8 of 10 on `Ejagham
+#: Mini`) were `IFsSymFeatVal` symbolic values that
+#: `inflection_features_enumerate_source` never yields, so a pulled-in ref
+#: naming one could be neither planned (FR-015) nor deselected (FR-016).
+#:
+#: T089 re-pointed the `ValueRA` edge at the feature that OWNS the value --
+#: the piece that IS planned, and whose `execute_action` creates the value --
+#: and the relationship now measures CONFIRMED on both corpora with the edge
+#: set SMALLER: 206 edges over 34 far GUIDs -> 99 over 4, and 34 over 10 ->
+#: 17 over 2, `resolved_as_owned_value` 0 in both.
+#:
+#: It is still not registered, and that is T089's own task text: the fix "is
+#: a live-behaviour change and must not be folded into a registration". A
+#: registration needs its own census against a restored target proving the
+#: row changes no decision it should not, which is T104. Until then the
+#: audit says "registrable" and the registry says "not registered", and the
+#: tests below assert BOTH halves so neither can drift into the other by
+#: accident.
+_CONFIRMED_NOT_REGISTERED = ("MSA_TO_INFL_FEATURE",)
 
 #: How many of the audited corpora must return CONFIRMED for each registered
 #: relationship. T076 is the reason this is a table rather than "all of them".
@@ -322,6 +377,31 @@ def test_only_the_confirmed_relationships_are_registered() -> None:
             assert getattr(DependencyKind, name) \
                 not in categories.CLOSURE_EDGES_VERIFIED
 
+        # T089's third state. Both halves, because each alone is satisfied
+        # by the mistake the other catches: asserting only "confirmed" would
+        # pass on a row that had been quietly registered, and asserting only
+        # "not registered" would pass on a row that had quietly gone back to
+        # being refused.
+        for name in _CONFIRMED_NOT_REGISTERED:
+            assert rels[name]["verdict"] == "CONFIRMED", (
+                name + " measured " + rels[name]["verdict"] + " on "
+                + snap["source_project"] + " -- T089 fixed its far endpoint, "
+                "so a non-CONFIRMED reading means the fix regressed or the "
+                "corpus changed under it"
+            )
+            assert getattr(DependencyKind, name) not in (
+                categories.CLOSURE_EDGES_VERIFIED), (
+                name + " is CONFIRMED and is now REGISTERED. That is the "
+                "right end state reached the wrong way: registering it needs "
+                "its own census against a restored target (T104), and T089's "
+                "task text forbids folding the two together. Move the name "
+                "from _CONFIRMED_NOT_REGISTERED to _REGISTERED when that "
+                "census exists."
+            )
+
+    assert not (set(_REGISTERED) & set(_CONFIRMED_NOT_REGISTERED))
+    assert not (set(_REFUSED) & set(_CONFIRMED_NOT_REGISTERED))
+
 
 @pytest.mark.parametrize("snap", _snapshots(), ids=_ids(_snapshots()))
 def test_a_confirmed_relationship_means_narrow_and_resolvable(snap) -> None:
@@ -345,7 +425,11 @@ def test_a_confirmed_relationship_means_narrow_and_resolvable(snap) -> None:
     with no affix process rules would be asserting that `Ejagham Mini` has
     data it does not have.
     """
-    for name in _REGISTERED:
+    # T089 adds `_CONFIRMED_NOT_REGISTERED`. Its whole content is a claim
+    # about resolvability -- the fix exists so every far GUID names a piece
+    # the far category can enumerate -- so the row that carries that claim
+    # has to be held to it here, not only where registration is checked.
+    for name in _REGISTERED + _CONFIRMED_NOT_REGISTERED:
         row = snap["relationships"][name]
         if row["verdict"] == "NO_DATA":
             assert row["edges"] == 0, name
@@ -361,24 +445,40 @@ def test_a_confirmed_relationship_means_narrow_and_resolvable(snap) -> None:
 
 
 @pytest.mark.parametrize("snap", _snapshots(), ids=_ids(_snapshots()))
-def test_the_refused_relationship_is_refused_for_the_recorded_reason(snap) -> None:
-    """The refusal, pinned to its cause rather than to its verdict string.
+def test_the_formerly_refused_relationship_now_names_only_enumerable_defns(snap) -> None:
+    """T089, and the inversion of what this test used to assert.
 
-    `MSA_TO_INFL_FEATURE` is not refused because its producer is broken -- it
-    returns edges, and none of them is foreign. It is refused because most of
-    its far GUIDs are `IFsSymFeatVal` symbolic values that
-    `inflection_features_enumerate_source` never yields. If that ever stops
-    being true, this test fails and the registration decision gets made again
-    on new evidence, which is the correct way for it to change.
+    It used to demand `resolved_as_owned_value > 0` and the
+    `REFUSED_FAR_ENDPOINT_NOT_ENUMERABLE` verdict, with the note that "if that
+    ever stops being true, this test fails and the registration decision gets
+    made again on new evidence, which is the correct way for it to change."
+    That is what happened: it was made to stop being true, deliberately, and
+    the decision was made again on the new numbers.
+
+    `MSA_TO_INFL_FEATURE` was never refused for a broken producer -- it
+    returned edges and none was foreign. It was refused because most of its
+    far GUIDs were `IFsSymFeatVal` symbolic values that
+    `inflection_features_enumerate_source` never yields, so a pulled-in ref
+    naming one had no `PlannedAction`, no FR-015 row and no FR-016 checkbox.
+    T089 re-pointed those edges at the feature that OWNS the value.
+
+    What is asserted now is the SAME property from the other side, and it is
+    stricter than the old assertion rather than looser: not merely "few owned
+    values" but ZERO, every distinct far GUID resolving as an enumerable
+    piece, and the edge set SMALLER than before (99 / 17 against 206 / 34) --
+    because the fix collapses many values onto the one feature that owns them
+    rather than adding a second endpoint beside each.
     """
     row = snap["relationships"]["MSA_TO_INFL_FEATURE"]
     assert row["edges"] > 0
     assert row["foreign_edges"] == 0
-    assert row["resolved_as_owned_value"] > 0, (
-        "the refusal rests on far GUIDs that are owned symbolic values; none "
-        "was found, so the recorded reason no longer holds: " + repr(row)
+    assert row["resolved_as_owned_value"] == 0, (
+        "an owned symbolic value is still reaching the far endpoint, which is "
+        "the defect T089 fixed: " + repr(row)
     )
-    assert row["verdict"] == "REFUSED_FAR_ENDPOINT_NOT_ENUMERABLE"
+    assert row["unresolved"] == 0, (row["unresolved_sample"],)
+    assert row["resolved_as_piece"] == row["distinct_far_guids"] > 0
+    assert row["verdict"] == "CONFIRMED"
 
 
 def test_the_per_relationship_counts_are_recorded_per_corpus() -> None:
@@ -394,7 +494,7 @@ def test_the_per_relationship_counts_are_recorded_per_corpus() -> None:
         "Mbugwe LizzieHC practice": {
             "AFFIX_TO_POS": 144,
             "MSA_TO_FEAT_STRUC_TYPE": 73,
-            "MSA_TO_INFL_FEATURE": 206,
+            "MSA_TO_INFL_FEATURE": 99,   # T089: was 206 over 34 far GUIDs
             "SLOT_TO_POS": 19,
             "TEMPLATE_TO_POS": 11,
             "TEMPLATE_TO_SLOT": 24,
@@ -402,7 +502,7 @@ def test_the_per_relationship_counts_are_recorded_per_corpus() -> None:
         "Ejagham Mini": {
             "AFFIX_TO_POS": 88,
             "MSA_TO_FEAT_STRUC_TYPE": 17,
-            "MSA_TO_INFL_FEATURE": 34,
+            "MSA_TO_INFL_FEATURE": 17,   # T089: was 34 over 10 far GUIDs
             "SLOT_TO_POS": 9,
             "TEMPLATE_TO_POS": 7,
             "TEMPLATE_TO_SLOT": 9,
@@ -516,8 +616,16 @@ def test_the_producer_counts_are_recorded_per_corpus() -> None:
     """The measured figures, pinned so a change is visible rather than
     inferred. These are the numbers that were 0 before T088."""
     expected = {
-        "Mbugwe LizzieHC practice": 1063,
-        "Ejagham Mini": 405,
+        # T089 moved both, and DOWNWARD: 1063 -> 756 and 405 -> 345. The
+        # composite's `inflection_features` half is where it all happened
+        # (606 -> 299 and 120 -> 60), because each `FeatureSpecsOC` entry used
+        # to contribute a `FeatureRA` edge AND a distinct `ValueRA` edge and
+        # now contributes one de-duplicated edge naming the owning feature.
+        # A registration is the only thing that can make a plan larger; this
+        # was a correction, and a correction that ADDED edges would have been
+        # the suspicious outcome.
+        "Mbugwe LizzieHC practice": 756,
+        "Ejagham Mini": 345,
     }
     got = {
         snap["source_project"]:
@@ -1522,3 +1630,137 @@ def test_t076_added_exactly_one_decision_per_pulled_in_reference():
                 "skips_total"):
         assert live[key] == empty[key], key
     assert live["enrichments"] - empty["enrichments"] == 2
+
+
+# ---------------------------------------------------------------------------
+# T089 -- the fix's OWN census. The axis is the PRODUCER, not the registry.
+#
+# Every block above this one measures a REGISTRATION: two plans differing only
+# in whether `CLOSURE_EDGES_VERIFIED` holds a row. T089 registers nothing, so
+# that instrument cannot answer its question. Its task text is explicit that
+# the fix "is a live-behaviour change and must not be folded into a
+# registration ... it changes `affixes_dependencies`' output for every caller,
+# so it needs its own census", and `debug/run038_t089_census.py` is it: the
+# registry is held FIXED at its 7 rows and `categories._value_defn_ref` is
+# monkeypatched back to the pre-T089 identity.
+#
+# The expected answer is zero plan difference, and the reason is structural --
+# of the producers the fix reaches, only `affixes_feat_struc_type_dependencies`
+# is registered at all, and it is narrowed to FEATURE_STRUCT_TYPES, the far
+# category the `TypeRA` arrow lands in and the fix does not touch. A structural
+# argument is exactly what T088 and flexicon 4.5.0 both refuted on live data,
+# which is why it was measured.
+# ---------------------------------------------------------------------------
+
+_PRODUCER_T089 = _SNAPSHOT_DIR / "closure-producer-038-t089.json"
+
+
+def _prod_t089():
+    if not _PRODUCER_T089.is_file():
+        pytest.skip(
+            "no committed producer census at " + str(_PRODUCER_T089)
+            + " -- produce it with `python debug/run038_t089_census.py`"
+        )
+    return json.loads(_PRODUCER_T089.read_text(encoding="utf-8"))
+
+
+def test_t089_was_measured_with_the_row_still_unregistered() -> None:
+    """The precondition that makes the rest of this block mean anything.
+
+    With `MSA_TO_INFL_FEATURE` registered, the run would be varying the
+    producer AND the registry at once and could attribute the outcome to
+    neither. The driver refuses to run in that state; this asserts the
+    committed artifact came from a run that did not have to.
+    """
+    prod = _prod_t089()
+    assert prod["task"] == "T089"
+    assert prod["msa_to_infl_feature_registered"] is False
+    assert "MSA_TO_INFL_FEATURE" not in prod["registered"]
+    assert set(prod["registered"]) == set(_REGISTERED)
+    assert prod["axis"].startswith("categories._value_defn_ref")
+
+
+def test_t089_changed_no_plan_under_either_selection() -> None:
+    """The claim itself, on both selections the fix could reach.
+
+    A FULL COPY is unconditional: every far endpoint is its own seed there, so
+    the closure is empty and any difference at all would mean the fix had
+    leaked into the seed set. AFFIXES-only is the selection that can observe
+    the registered AFFIXES rows -- 259 closure edges either way, which is the
+    number that would move if `_feat_struc_deps`' INFLECTION_FEATURES half
+    were reaching a plan by some path the registry does not describe.
+    """
+    prod = _prod_t089()
+    assert prod["plan_unchanged_by_fix"] is True
+    for label, expected_edges in (("full copy", 0), ("AFFIXES only", 259)):
+        pair = prod["selections"][label]
+        assert pair["composition_unchanged_by_fix"] is True, label
+        assert pair["closure_unchanged_by_fix"] is True, label
+        assert pair["fixed"]["closure"]["total_edges"] == expected_edges, label
+        assert pair["pre_t089"]["closure"]["total_edges"] == expected_edges, label
+        assert pair["fixed"]["composition"] == pair["pre_t089"]["composition"]
+
+
+def test_t089_reproduces_the_previous_census_row_for_row() -> None:
+    """The other half, and the one a plan comparison cannot give.
+
+    A plan is what the engine INTENDS; a census is what the target actually
+    holds afterwards. The fix changes no registered edge, so the transfer it
+    produces must be the same transfer -- and `census-038-t076-registered.json`
+    is the right comparand precisely because it is the most recent full-copy
+    census over the same source, backup and selection, with T089 as the only
+    code difference between the two runs.
+    """
+    prod = _prod_t089()
+    assert prod["census"]["comparable_prior_artifact"] == (
+        "census-038-t076-registered.json")
+    assert prod["census"]["rows_match_prior"] is True, (
+        "the census did not reproduce the prior artifact row for row, so "
+        "either the fix reached the writer or something else drifted"
+    )
+    # Same gate reading as the run it reproduces. Asserted as EQUALITY to that
+    # artifact rather than to a literal: the value is the pre-existing state of
+    # the corpus pair (DUPLICATE_IDENTITY, exit 3), not something T089 is
+    # entitled to change, and pinning it to a literal here would quietly make
+    # this test a second, weaker copy of the census gate.
+    prior = json.loads(
+        (_SNAPSHOT_DIR / "census-038-t076-registered.json").read_text(
+            encoding="utf-8"))
+    current = json.loads(
+        (_SNAPSHOT_DIR / "census-038-t089-fixed.json").read_text(
+            encoding="utf-8"))
+    assert current["verdict"] == prior["verdict"]
+    assert current["exit_code"] == prior["exit_code"]
+    assert prod["census"]["gate_exit_code"] == prior["exit_code"]
+
+
+def test_t089_recorded_the_producer_change_it_did_not_measure_here() -> None:
+    """Coverage honesty, made mechanical.
+
+    This driver deliberately does NOT re-measure the producer -- that is
+    `debug/audit038_closure_edges.py`'s job over two corpora. What it carries
+    is the BEFORE numbers, so a reader of one artifact can see that the
+    producer really did change on the very run where the plan did not, and so
+    that "no plan changed" can never be read as "nothing changed".
+    """
+    prod = _prod_t089()
+    before = prod["producer_change_recorded_by_the_audit"]
+    for corpus, edges, distinct, owned in (
+            ("Mbugwe LizzieHC practice", 206, 34, 30),
+            ("Ejagham Mini", 34, 10, 8)):
+        row = before[corpus]["before"]
+        assert row["edges"] == edges
+        assert row["distinct_far_guids"] == distinct
+        assert row["resolved_as_owned_value"] == owned
+        assert row["verdict"] == "REFUSED_FAR_ENDPOINT_NOT_ENUMERABLE"
+
+    # ...and the AFTER numbers really are smaller, read from the audit
+    # snapshots rather than from the census artifact's own prose.
+    after = {s["source_project"]: s["relationships"]["MSA_TO_INFL_FEATURE"]
+             for s in _snapshots()}
+    for corpus in ("Mbugwe LizzieHC practice", "Ejagham Mini"):
+        row = after[corpus]
+        assert row["edges"] < before[corpus]["before"]["edges"]
+        assert row["distinct_far_guids"] < before[corpus]["before"][
+            "distinct_far_guids"]
+        assert row["resolved_as_owned_value"] == 0

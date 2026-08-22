@@ -87,19 +87,19 @@
       "by_far_category": {
         "feature_struct_types": 40,
         "gram_categories": 245,
-        "inflection_features": 120
+        "inflection_features": 60
       },
       "population": 252,
-      "total_edges": 405
+      "total_edges": 345
     },
     "stems_dependencies": {
       "by_far_category": {
         "feature_struct_types": 40,
         "gram_categories": 245,
-        "inflection_features": 120
+        "inflection_features": 60
       },
       "population": 252,
-      "total_edges": 405
+      "total_edges": 345
     }
   },
   "read_only": true,
@@ -136,18 +136,18 @@
     },
     "MSA_TO_INFL_FEATURE": {
       "dependency_category": "inflection_features",
-      "distinct_far_guids": 10,
-      "edges": 34,
+      "distinct_far_guids": 2,
+      "edges": 17,
       "foreign_edges": 0,
       "population": 88,
       "producer": "categories.affixes_infl_feature_dependencies",
-      "resolved_as_owned_value": 8,
+      "resolved_as_owned_value": 0,
       "resolved_as_piece": 2,
       "source_category": "affixes",
       "task": "T067",
       "unresolved": 0,
       "unresolved_sample": [],
-      "verdict": "REFUSED_FAR_ENDPOINT_NOT_ENUMERABLE"
+      "verdict": "CONFIRMED"
     },
     "PROCESS_RULE_TO_NATURAL_CLASS": {
       "dependency_category": "natural_classes",
