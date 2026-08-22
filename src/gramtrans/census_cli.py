@@ -556,12 +556,14 @@ def _refuse_uncorroborated_nulls(rows, errors) -> None:
     class, which is what an unresolved accessor produces and which is
     CENSUS_ERROR on its own.
 
-    NOT a validator invariant. `census.validate_artifact` and
-    `recompute_verdict` accept an uncorroborated null on a required row today,
-    which is a property of the ARTIFACT FORMAT rather than of this producer and
-    would change what the gate refuses about every artifact already committed.
-    Filed as T101; this guard bounds the producer in the meantime, which is the
-    half T099 is responsible for.
+    ALSO A VALIDATOR INVARIANT SINCE T101, and this guard is still not
+    redundant. `census.uncorroborated_null_rows` (invariant 12) refuses the same
+    shape in any artifact, from any producer, and drives it to CENSUS_ERROR;
+    this raises BEFORE an artifact is written, so the operator gets the class
+    name at the console instead of a document to validate. The two also differ
+    deliberately in one direction: the invariant additionally accepts a
+    `not_evaluated_reason` as corroboration, which this CLI cannot mint for a
+    required row -- a tighter producer inside a looser format.
     """
     named = {
         entry.get("class") for entry in errors if isinstance(entry, dict)

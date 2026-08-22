@@ -3303,8 +3303,70 @@ def baseline_misdeclared(artifact) -> bool:
     return destination.get("declared_freshly_created") is not True
 
 
+#: The three counted fields a row may carry as `null`. `destination_count_net`
+#: is deliberately NOT here: it is derived from `destination_count_total`, so a
+#: null net with an integer total is invariant 3's business, not invariant 12's.
+NULLABLE_COUNT_FIELDS: tuple = (
+    "source_count", "destination_count_total", "difference",
+)
+
+
+def uncorroborated_null_rows(artifact) -> tuple:
+    """Invariant 12: gate-required rows nulled without corroboration.
+
+    Returns `((label, nulled_field_names), ...)`, empty when every null count on
+    a required row is either named by an `errors[]` entry or carries a
+    `not_evaluated_reason`.
+
+    WHY THIS IS AN INVARIANT AND NOT A ROW FAILURE. Every step of the path it
+    closes is individually right, which is why nothing caught it: a null
+    `difference` reads `NOT_EVALUATED` (an unmeasured row must not report
+    MATCHED); `row_passes` returns True on NOT_EVALUATED before reading any
+    count (a row nobody measured proves nothing); `unexplained_counts(None, ..)`
+    is `(0, 0)` so R-2's over-accounting check is skipped (there is no
+    difference to over-account against); and invariants 3, 4 and 11 are all
+    guarded `None not in (...)` (they cannot recompute what is not there).
+    COMPOSED, they mean nulling a class retires its shortfall without measuring
+    anything. The refusal therefore belongs where the CORROBORATION is.
+
+    THE FIX NOT TO MAKE is failing `row_passes` on a null count: the
+    `excluded_not_measurable` rows every artifact carries -- `MoForm` and
+    `MoMorphSynAnalysis`, abstract LCM bases with no factory -- are legitimately
+    null, and they are exempt here because they are `advisory`, never because a
+    null is tolerated on a row that could fail a gate.
+
+    Corroboration by `errors[]` buys nothing: a non-empty `errors[]` is
+    CENSUS_ERROR on its own, so the admissible shape still exits 7.
+
+    The producer states the same prohibition earlier and slightly TIGHTER --
+    `census_cli._refuse_uncorroborated_nulls` accepts only the two shapes that
+    CLI can emit and cannot mint a `not_evaluated_reason` for a required row.
+    A tighter producer inside a looser format is the safe direction.
+    """
+    named = {
+        entry.get("class")
+        for entry in (artifact.get("errors") or [])
+        if isinstance(entry, dict)
+    }
+    offenders = []
+    for row in _rows(artifact):
+        if not _is_required(row):
+            continue
+        nulled = tuple(
+            key for key in NULLABLE_COUNT_FIELDS if row.get(key) is None
+        )
+        if not nulled:
+            continue
+        if row.get("class") in named:
+            continue
+        if row.get("not_evaluated_reason") is not None:
+            continue
+        offenders.append((_row_label(row), nulled))
+    return tuple(offenders)
+
+
 # ---------------------------------------------------------------------------
-# The 11 validator invariants (section 11) plus the R-1..R-5 fail triggers
+# The 12 validator invariants (section 11) plus the R-1..R-5 fail triggers
 # ---------------------------------------------------------------------------
 
 
@@ -3537,6 +3599,17 @@ def validate_artifact(artifact) -> tuple:
                 + " does not match ^GT-\\d{8}-\\d{6}$"
             )
 
+    # -- 12. a required row nulled with nothing to corroborate it ----------
+    for label, nulled in uncorroborated_null_rows(artifact):
+        failures.append(
+            "UNCORROBORATED_NULL: " + label + " is gate_scope 'required' and "
+            "carries a null " + ", ".join(nulled) + " with no errors[] entry "
+            "naming the class and no not_evaluated_reason -- a null difference "
+            "reads NOT_EVALUATED and NOT_EVALUATED passes the section 6 row "
+            "test, so an uncorroborated null retires the class's shortfall "
+            "without measuring it (invariant 12)"
+        )
+
     # -- the baseline's own two hard failures ------------------------------
     if baseline_misdeclared(artifact):
         failures.append(
@@ -3720,6 +3793,8 @@ def recompute_verdict(artifact) -> str:
             applicable.append("CENSUS_ERROR")
     if baseline_misdeclared(artifact):
         applicable.append("CENSUS_ERROR")
+    if uncorroborated_null_rows(artifact):
+        applicable.append("CENSUS_ERROR")  # invariant 12
     for row in rows:
         difference = _int_or_none(row.get("difference"))
         for line in _lines(row):

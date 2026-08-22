@@ -5201,20 +5201,131 @@ class TestT099TheAbortBecameARowWithoutBecomingQuiet:
             row[field] = None
         census_cli._refuse_uncorroborated_nulls([row], ())
 
-    def test_the_gate_alone_does_not_yet_refuse_a_forged_null(self):
-        """CURRENT BEHAVIOUR, PINNED, AND FILED AS T101 -- not an endorsement.
-        `validate_artifact` and `recompute_verdict` are null-tolerant by design
-        and have no invariant tying a null count on a required row to a
-        corroborating `errors[]` entry, so a hand-authored artifact still gates
-        clean. That is a property of the ARTIFACT FORMAT, not of this producer:
-        adding the invariant changes what the gate refuses about every artifact
-        already committed, which needs its own before/after. When T101 lands,
-        THIS TEST FAILS and must be updated deliberately."""
+    def test_the_gate_now_refuses_a_forged_null(self):
+        """T101, and this is the DELIBERATE EDIT the pin asked for. Until
+        invariant 12 landed this same artifact passed `validate_artifact` with
+        0 failures and gated CENSUS_CLEAN / exit 0, and the assertions below
+        read `== ()` and `== 0`. The old test named itself
+        `test_the_gate_alone_does_not_yet_refuse_a_forged_null` and said in its
+        own docstring: "When T101 lands, THIS TEST FAILS and must be updated
+        deliberately." It landed; this is that update, and the numbers it
+        asserts are the ones that moved."""
         forged = make_artifact(
             self._rows_with_an_uncounted_class(),
             verdict="CENSUS_CLEAN", errors=())
-        assert validate_artifact(forged) == ()
-        assert gate_artifact(forged).exit_code == 0
+        failures = validate_artifact(forged)
+        assert len(failures) == 2, failures
+        # The new invariant names the row and says what nulling it would buy.
+        assert failures[0].startswith("UNCORROBORATED_NULL: MoStemMsa")
+        assert "retires the class's shortfall without measuring it" in failures[0]
+        # And invariant 8 fires SECOND, as a consequence rather than a
+        # duplicate: the recomputed verdict is now CENSUS_ERROR, so the stored
+        # CENSUS_CLEAN stops agreeing with the artifact's own evidence. Before
+        # T101 the two agreed, which is exactly why the forgery passed.
+        assert failures[1].startswith("invariant 8:")
+        assert "CENSUS_CLEAN" in failures[1] and "CENSUS_ERROR" in failures[1]
+        # CENSUS_ERROR, not merely a non-passing gate: the recomputed verdict
+        # moves too, so the exit code cannot stay 0.
+        assert recompute_verdict(forged) == "CENSUS_ERROR"
+        outcome = gate_artifact(forged)
+        assert outcome.exit_code == 7
+        assert outcome.passed is False
+
+    def test_a_null_counted_row_cannot_forge_a_clean_run(self):
+        """T101's headline, and the test that FAILED when T099 wrote it -- it
+        was written to prove the opposite and could not. One `gate_scope:
+        required` row whose `source_count`, `destination_count_total` and
+        `difference` are ALL null, with an EMPTY `errors[]`, must not be able
+        to buy exit 0.
+
+        Note what is NOT asserted: that the row fails. `row_passes` still
+        returns True for NOT_EVALUATED, which is 5.2's rule and not an
+        oversight -- a row nobody measured proves nothing, in either direction.
+        The refusal is the artifact's, at the one place the corroboration
+        lives."""
+        forged = make_artifact(
+            self._rows_with_an_uncounted_class(),
+            verdict="CENSUS_CLEAN", errors=())
+        nulled = next(r for r in forged["classes"] if r["class"] == "MoStemMsa")
+        assert nulled["gate_scope"] == "required"
+        for field in T099_NULLED_FIELDS:
+            assert nulled[field] is None, field
+        assert not forged.get("errors")
+        assert row_passes(nulled) is True, (
+            "5.2's rule is unchanged: NOT_EVALUATED passes the row test, and "
+            "T101 is not closed by breaking that")
+        assert gate_artifact(forged).exit_code != 0
+
+    def test_the_two_legitimate_null_rows_are_exempt_by_scope_not_tolerance(
+            self):
+        """THE FIX NOT TO MAKE, pinned from the other side. `MoForm` and
+        `MoMorphSynAnalysis` are abstract LCM bases with no factory; every
+        artifact carries them null, and a validator that failed a row on a null
+        count would fail both. They pass because they are `advisory` -- a row
+        that can neither fail a gate nor excuse one -- and NOT because a null is
+        tolerated on a row that could."""
+        advisory = make_row(
+            "MoForm", verdict_class="NOT_EVALUATED", gate_scope="advisory",
+            engine_can_create=False,
+            in_class_list_via="excluded_not_measurable",
+            not_evaluated_reason="ABSENT_BY_CONSTRUCTION")
+        for field in T099_NULLED_FIELDS:
+            advisory[field] = None
+        artifact = make_artifact(
+            [make_row("PhPhoneme", source_count=23), advisory],
+            verdict="CENSUS_CLEAN", errors=())
+        assert census.uncorroborated_null_rows(artifact) == ()
+        assert validate_artifact(artifact) == ()
+        assert gate_artifact(artifact).exit_code == 0
+
+        # The SAME row promoted to `required` is refused, which is what proves
+        # the exemption is scope and not the null.
+        advisory["gate_scope"] = "required"
+        advisory.pop("not_evaluated_reason")
+        assert [label for label, _ in
+                census.uncorroborated_null_rows(artifact)] == ["MoForm"]
+
+    def test_a_declared_reason_corroborates_a_required_null(self):
+        """The second admissible corroboration (T100). A `not_evaluated_reason`
+        is a vocabulary-bound CLAIM about why the class was not measured, which
+        is what distinguishes an excuse from a silence -- so a required row
+        carrying one is admissible with no `errors[]` entry, and the run does
+        not become CENSUS_ERROR on its account."""
+        governed = make_row(
+            "MoStemMsa", verdict_class="NOT_EVALUATED", gate_scope="required",
+            not_evaluated_reason="GOVERNED_BY_OTHER_FEATURE")
+        for field in T099_NULLED_FIELDS:
+            governed[field] = None
+        artifact = make_artifact(
+            [make_row("PhPhoneme", source_count=23), governed],
+            verdict="CENSUS_CLEAN", errors=())
+        assert census.uncorroborated_null_rows(artifact) == ()
+        assert validate_artifact(artifact) == ()
+        assert recompute_verdict(artifact) == "CENSUS_CLEAN"
+
+    def test_the_corroborated_null_still_cannot_buy_a_passing_exit(self):
+        """Corroboration by `errors[]` admits the ROW; it does not admit the
+        RUN. A non-empty `errors[]` is CENSUS_ERROR on its own, so the shape
+        invariant 12 accepts still exits 7 -- which is why accepting it is not
+        a loophole."""
+        artifact = make_artifact(
+            self._rows_with_an_uncounted_class(),
+            verdict="CENSUS_ERROR", errors=self._errors())
+        assert census.uncorroborated_null_rows(artifact) == ()
+        assert validate_artifact(artifact) == ()
+        assert gate_artifact(artifact).exit_code == 7
+
+    def test_a_null_net_count_alone_is_invariant_3s_business(self):
+        """The field deliberately left out of `NULLABLE_COUNT_FIELDS`.
+        `destination_count_net` is DERIVED from `destination_count_total`, so a
+        null net beside integer counts is an arithmetic defect, not an
+        unmeasured class -- and folding it in here would have made invariant 12
+        report a class nobody failed to measure."""
+        assert "destination_count_net" not in census.NULLABLE_COUNT_FIELDS
+        row = make_row("MoStemMsa", source_count=164)
+        row["destination_count_net"] = None
+        artifact = make_artifact([row], verdict="CENSUS_CLEAN")
+        assert census.uncorroborated_null_rows(artifact) == ()
 
     def test_a_p1_class_that_could_not_be_counted_fails_its_phase(self):
         """`_require_matched` reads `verdict_class`, so an uncounted P1 class
@@ -5229,6 +5340,148 @@ class TestT099TheAbortBecameARowWithoutBecomingQuiet:
         assert not outcome.phase.satisfied
         assert any("MoStemMsa" in line and "NOT_EVALUATED" in line
                    for line in outcome.phase.failures)
+
+class TestT101TheCommittedCorpusIsUnmovedByInvariant12:
+    """T101's before/after, which is what let the invariant land at all.
+
+    Adding an invariant changes what the gate refuses about every artifact
+    ALREADY COMMITTED, and that is why T099 bounded the producer instead and
+    filed this half. Measured over every committed census artifact under
+    `_snapshots/`: **0 refused, before and after**. The exemption doing the work
+    is SCOPE -- 6 advisory null rows across the corpus, and not one required row
+    carrying a null anywhere in it.
+    """
+
+    def _artifacts(self):
+        directory = _repo_root() / "tests" / "integration" / "_snapshots"
+        out = []
+        for path in sorted(directory.glob("*.json")):
+            artifact = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(artifact, dict) and "classes" in artifact:
+                out.append((path.name, artifact))
+        return out
+
+    def test_the_corpus_is_the_size_the_measurement_was_taken_over(self):
+        """A count, so the claims below cannot quietly shrink their own scope:
+        a corpus test that silently stopped finding artifacts would pass."""
+        assert len(self._artifacts()) >= 18
+
+    def test_no_committed_artifact_is_newly_refused(self):
+        for name, artifact in self._artifacts():
+            assert census.uncorroborated_null_rows(artifact) == (), name
+
+    def test_no_committed_artifact_carries_a_null_on_a_required_row(self):
+        """The reason the invariant costs nothing: the shape it refuses does not
+        occur in anything this repo has measured. It is reachable only by hand
+        or by a producer bug, which is precisely what it is for."""
+        for name, artifact in self._artifacts():
+            for row in artifact["classes"]:
+                if row.get("gate_scope") != "required":
+                    continue
+                for field in census.NULLABLE_COUNT_FIELDS:
+                    assert row.get(field) is not None, (
+                        name + ": " + str(row.get("class")) + "." + field)
+
+    def test_every_committed_null_row_is_advisory(self):
+        """The same fact stated positively -- and the count is pinned so a
+        future artifact that nulls a row cannot arrive unremarked."""
+        advisory_nulls = 0
+        for name, artifact in self._artifacts():
+            for row in artifact["classes"]:
+                if any(row.get(f) is None
+                       for f in census.NULLABLE_COUNT_FIELDS):
+                    assert row.get("gate_scope") == "advisory", (
+                        name + ": " + str(row.get("class")))
+                    advisory_nulls += 1
+        assert advisory_nulls == 6, (
+            "3 artifacts x the 2 excluded_not_measurable rows T099 nulled; a "
+            "change here is a new null in the corpus and wants reading")
+
+
+class TestT100TheVocabularyStaysClosedAtSeventeen:
+    """T100: the `$comment` overreached, and the enum was right all along.
+
+    `$defs.classRow.not_evaluated_reason` said "Required when verdict_class is
+    NOT_EVALUATED" while being absent from `$defs.classRow.required` and
+    unenforced by `validate_artifact`. The resolution was to narrow the prose,
+    NOT to mint an 18th token -- and the tests below are the evidence for that
+    choice rather than a restatement of it.
+    """
+
+    def test_an_eighteenth_token_would_be_admissible_as_an_accounting_line(
+            self, census_schema):
+        """THE DECIDING FACT. `not_evaluated_reason` and `accountedLine.reason`
+        are the SAME `$ref`, so a token minted to say "this class could not be
+        counted" would immediately be usable to ACCOUNT FOR a shortfall -- to
+        retire units nobody measured, which is T101's defect one field to the
+        left."""
+        classrow = census_schema["$defs"]["classRow"]["properties"]
+        line = census_schema["$defs"]["accountedLine"]["properties"]
+        assert classrow["not_evaluated_reason"]["$ref"] == "#/$defs/reasonToken"
+        assert line["reason"]["$ref"] == "#/$defs/reasonToken"
+
+    def test_the_vocabulary_did_not_grow(self, census_schema):
+        """No token was appended, so `schema_version` stays 1 and the
+        exact-match tripwire (`test_tokens_match_the_schema_enum_exactly`) is
+        untouched."""
+        assert len(census_schema["$defs"]["reasonToken"]["enum"]) == 17
+        assert len(REASON_TOKENS) == 17
+
+    def test_no_member_of_the_vocabulary_is_true_of_an_unresolved_accessor(
+            self):
+        """Why the least-wrong token was not stamped. `ABSENT_BY_CONSTRUCTION`
+        is the abstract-LCM-base case -- what `MoForm` and `MoMorphSynAnalysis`
+        correctly carry -- and asserting it of a class whose repository name
+        merely DRIFTED would claim the class cannot exist. That is a different
+        and false statement, and emitting a false statement in the artifact is
+        the defect T099 had just closed one field to the left."""
+        from gramtrans.Lib.models import CENSUS_NOT_EVALUATED_REASONS
+
+        assert CENSUS_NOT_EVALUATED_REASONS == frozenset({
+            "ABSENT_BY_CONSTRUCTION",
+            "OUT_OF_SCOPE_CLASS",
+            "GOVERNED_BY_OTHER_FEATURE",
+        })
+        assert CENSUS_NOT_EVALUATED_REASONS <= set(REASON_TOKENS)
+
+    def test_the_comment_no_longer_claims_the_field_is_required(
+            self, census_schema):
+        """The narrowing itself, read from the contract rather than asserted
+        about it -- and the `required` list it now agrees with."""
+        comment = (census_schema["$defs"]["classRow"]["properties"]
+                   ["not_evaluated_reason"]["$comment"])
+        assert "Required when verdict_class is NOT_EVALUATED" not in comment
+        assert "WHEN THERE IS ONE" in comment
+        assert ("not_evaluated_reason"
+                not in census_schema["$defs"]["classRow"]["required"])
+
+    def test_a_not_evaluated_row_with_no_reason_is_schema_legal(
+            self, census_schema):
+        """The row T099 emits, validated against the narrowed contract: legal
+        without a reason, and refused by invariant 12 unless corroborated --
+        the two halves that make the narrowing non-permissive."""
+        row = make_row("MoStemMsa", verdict_class="NOT_EVALUATED",
+                       gate_scope="required")
+        for field in T099_NULLED_FIELDS:
+            row[field] = None
+        assert "not_evaluated_reason" not in row
+        errors = [{
+            "code": "UNHANDLED_EXCEPTION",
+            "message": "class MoStemMsa could not be counted in project Dst",
+            "class": "MoStemMsa",
+            "evidence": "IMoStemMsaRepository could not be resolved",
+        }]
+        artifact = make_artifact([row], verdict="CENSUS_ERROR", errors=errors)
+        assert schema_errors(artifact, census_schema) == []
+        assert validate_artifact(artifact) == ()
+        assert gate_artifact(artifact).exit_code == 7
+
+        # ... and uncorroborated, the same schema-legal row is refused.
+        bare = make_artifact([row], verdict="CENSUS_CLEAN", errors=())
+        assert schema_errors(bare, census_schema) == []
+        assert [label for label, _ in
+                census.uncorroborated_null_rows(bare)] == ["MoStemMsa"]
+
 
 
 # ---------------------------------------------------------------------------

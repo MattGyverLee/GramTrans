@@ -832,9 +832,26 @@ CENSUS_REASONS_NOT_REQUIRING_REPORT_REF: frozenset = frozenset({
 })
 
 #: Reasons that make a row NOT_EVALUATED rather than measured (the schema's
-#: `not_evaluated_reason` $comment). A row that declares itself out of scope
-#: must carry one of these, so the emitted NOT_EVALUATED row always has the
-#: `not_evaluated_reason` the schema requires of it.
+#: `not_evaluated_reason` $comment). A row that DECLARES ITSELF out of scope
+#: carries one of these.
+#:
+#: T100: this is a subset of `CENSUS_REASON_TOKENS`, and it stays one. A
+#: NOT_EVALUATED row names its reason WHEN THERE IS ONE -- the field is not in
+#: `$defs.classRow.required` and a row is not obliged to carry it. The case
+#: that made the difference visible is an unresolved repository accessor
+#: (T099): none of these three is true of it, and `ABSENT_BY_CONSTRUCTION` is
+#: the abstract-LCM-base case, so stamping it on a class whose repository name
+#: merely DRIFTED would assert the class cannot exist -- a different and false
+#: claim. An 18th token was rejected on evidence: `not_evaluated_reason` is
+#: `$ref: reasonToken`, the SAME def as `accountedLine.reason`, so a token
+#: minted for an uncountable class would immediately be admissible as an
+#: ACCOUNTING line and could retire a shortfall nobody measured; and it would
+#: have to join `CENSUS_REASONS_NOT_REQUIRING_REPORT_REF`, since an unresolved
+#: accessor names no run-report content. The enum's own $comment already rules
+#: on it: "A reason the census cannot classify is CENSUS_ERROR." Such a row
+#: therefore carries NO reason and states its cause in `errors[]`, and
+#: `census.uncorroborated_null_rows` (invariant 12) is what stops that from
+#: being a way to go quiet.
 CENSUS_NOT_EVALUATED_REASONS: frozenset = frozenset({
     "ABSENT_BY_CONSTRUCTION",
     "OUT_OF_SCOPE_CLASS",
