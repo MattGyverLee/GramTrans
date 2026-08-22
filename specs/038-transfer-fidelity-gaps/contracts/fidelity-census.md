@@ -630,6 +630,21 @@ remaining 15 still fail the gate.
     matches `^CENSUS-\d{8}-\d{6}$`.
 11. `match_basis` sums as specified in Section 8 on every `required` row whose
     `basis_source` is `run_report`.
+12. **UNCORROBORATED_NULL.** A `gate_scope: required` row whose `source_count`,
+    `destination_count_total` or `difference` is `null` MUST either be named by an
+    `errors[]` entry or carry a `not_evaluated_reason`. Nulling is otherwise a way
+    to retire a class's shortfall without measuring anything: a null `difference`
+    reads `NOT_EVALUATED`, `NOT_EVALUATED` passes Section 6's row test before any
+    count is read, `unexplained_counts(None, ...)` is `(0, 0)` so R-2 is skipped,
+    and invariants 3, 4 and 11 are all guarded against `None`. Every one of those
+    is individually correct -- an unmeasured row must not read `MATCHED`, and a row
+    nobody measured proves nothing -- so the refusal belongs where the
+    CORROBORATION is and not in any of them. In particular a validator MUST NOT
+    close this by failing a row on a null count: the `excluded_not_measurable`
+    rows every artifact carries are legitimately null, and they are exempt because
+    they are `advisory`, not because a null is tolerated. An `errors[]` entry is
+    `CENSUS_ERROR` on its own, so the corroborated case cannot buy a passing exit
+    code either. A row carrying neither is `CENSUS_ERROR`.
 
 ---
 
