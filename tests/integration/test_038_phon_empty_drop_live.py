@@ -42,9 +42,17 @@ number.
 """
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 import pytest
+
+# T090: the harness owns the "is this lock still real?" answer.
+_THIS_DIR = str(Path(__file__).parent)
+if _THIS_DIR not in sys.path:
+    sys.path.insert(0, _THIS_DIR)
+
+from harness import full_run  # noqa: E402
 
 from gramtrans.Lib.selection import (
     PHON_EMPTY_SOURCE_DROP_REASON, PHON_EMPTY_TARGET_CANDIDATE_REASON,
@@ -72,11 +80,36 @@ def _open_or_skip(name: str):
     fwdata = PROJECTS_ROOT / name / (name + ".fwdata")
     if not fwdata.is_file():
         pytest.skip("live project not on this machine: " + str(fwdata))
-    if (PROJECTS_ROOT / name / (name + ".fwdata.lock")).exists():
+
+    # T090: the PRESENCE of `<project>.fwdata.lock` used to be the whole test.
+    # It is not a fact about the file, it is a claim about a PROCESS -- and a
+    # driver that opened this project read-only and exited without closing
+    # leaves the claim behind naming a PID that is long gone. Skipping on that
+    # is a measurement this repo declined to make for no reason, and it made
+    # the suite QUIETER after every Phase 7 driver run: 77 skipped instead of
+    # 75, four live assertions across two parametrisations silently gone.
+    #
+    # `harness.full_run.read_project_lock` answers the question the file was
+    # standing in for, and answers it asymmetrically on purpose: only a PID
+    # that is DEFINITIVELY not running yields LOCK_STALE. Nothing here deletes
+    # a lock file -- a fixture that removed one could not tell a stale lock
+    # from a live FieldWorks session, and stealing a lock from a running FLEx
+    # is exactly the blast radius CLAUDE.md's restore-before-write rule exists
+    # to avoid.
+    lock = full_run.read_project_lock(name, projects_root=PROJECTS_ROOT)
+    if lock.blocks_open:
         pytest.skip(
-            "live project " + repr(name) + " is locked by FieldWorks; a "
-            "locked project is a refusal, not a measurement"
+            "live project " + repr(name) + " is locked; a locked project is a "
+            "refusal, not a measurement -- " + lock.detail
         )
+    if lock.state == full_run.LOCK_STALE:
+        # Reported, not skipped, and not cleaned up: flexicon takes the lock
+        # again on open and drops it on CloseProject, so the stale file is
+        # replaced by a live one for the duration of this test and removed
+        # afterwards. Printing it is the point -- a stale lock means some
+        # driver did not close, and that is T090's other half.
+        print("[WARN] %s: %s -- measuring anyway (T090)" % (name, lock.detail))
+
     try:
         from gramtrans.Lib.flexinit import ensure_flex_initialized
         from flexicon import FLExProject

@@ -3930,25 +3930,111 @@ def _live_project_or_skip(name: str) -> Path:
     fwdata = root / name / (name + ".fwdata")
     if not fwdata.is_file():
         pytest.skip("live project not on this machine: " + str(fwdata))
-    if (root / name / (name + ".fwdata.lock")).exists():
+    # T090, second site. The PRESENCE of `<project>.fwdata.lock` was the whole
+    # test here too, and it is not a fact about a file -- it is a claim about a
+    # process. Every driver that opens a project read-only and exits without
+    # closing leaves that claim behind naming a dead PID, and this refusal then
+    # turns live coverage into skips for no reason. `read_project_lock` asks
+    # whether the recorded PID is still running and answers asymmetrically:
+    # only a PID that is DEFINITIVELY gone unlocks the project, so a live
+    # FieldWorks session is still refused. Nothing here deletes a lock file.
+    import sys as _sys  # noqa: PLC0415
+
+    _here = str(Path(__file__).resolve().parent)
+    if _here not in _sys.path:
+        _sys.path.insert(0, _here)
+    from harness import full_run  # noqa: PLC0415
+
+    lock = full_run.read_project_lock(name, projects_root=root)
+    if lock.blocks_open:
         pytest.skip(
-            "live project " + repr(name) + " is locked by FieldWorks; the "
-            "census correctly refuses a locked project (FP_FileLockedError -> "
-            "CENSUS_ERROR exit 7), so this test skips rather than measuring a "
-            "half-written file"
+            "live project " + repr(name) + " is locked; the census correctly "
+            "refuses a locked project (FP_FileLockedError -> CENSUS_ERROR "
+            "exit 7), so this test skips rather than measuring a half-written "
+            "file -- " + lock.detail
         )
+    if lock.state == full_run.LOCK_STALE:
+        print("[WARN] %s: %s -- measuring anyway (T090)" % (name, lock.detail))
     return fwdata
 
 
+#: T103. An APPEND-ONLY ledger of `sha256(.fwdata) -> (MoStemMsa, PhPhoneme)`.
+#:
+#: The test below used to assert `{'Ngoreme FLEx': (1949, 41), 'Ngoreme':
+#: (1945, 37)}` outright. `Ngoreme FLEx` is a project a human is still working
+#: in, and that number moved three times -- 1949 when the test was written,
+#: 1952 at T087, 1953 at T100/T101 -- so what kept failing was never the claim
+#: the test is named for but the decision to hardcode an exact count of a
+#: living project. (The 1952 reading has no row here: it was observed in a
+#: failure message, and no digest was recorded with it. A count without the
+#: bytes it was counted from is exactly what this ledger exists to stop.)
+#:
+#: Keying on the digest is what makes the number safe to keep. At UNCHANGED
+#: bytes an exact count is a real tripwire -- the same file must count the same
+#: way, and a counting regression would show here. At CHANGED bytes it is a
+#: statement about a file that no longer exists, so the block stands down and
+#: REPORTS, which is what `_t024_census` already does for snapshot-based
+#: blocks. Appending a row is optional and never required to keep the suite
+#: green; nothing needs re-pinning when the user edits a project again.
+#:
+#: The PREMISE is asserted unconditionally, below, against whatever is on disk.
+_NGOREME_OBSERVATIONS = {
+    "Ngoreme FLEx": {
+        # 2026-08-19: the digest the committed `ngoreme` snapshot was measured
+        # at (`MEASURED_PROJECT_DIGESTS['Ngoreme FLEx']`).
+        "052243ea76405eed520c17e3d61562f09fa5efd171f65eb02f1abf1c8f09843b":
+            (1949, 41),
+        # 2026-08-22, T103: the user edited the project. MoStemMsa moved,
+        # PhPhoneme did not, and the premise is untouched either way.
+        "e10a44ef1b745e59e13f86e37f1fbda2f9b15eebd08ce4b0bcba53e3bd6ef330":
+            (1953, 41),
+    },
+    "Ngoreme": {
+        # 2026-08-22, T103. `Ngoreme` has read 1945/37 on every run since
+        # 2026-08-19; this is the first one to record the bytes it read them
+        # from, which is what lets the exact pair stay asserted.
+        "6d35c9575fc6094089dff757da4f54f266aa5a0d7e4ea16cd1fd3bd64abe472d":
+            (1945, 37),
+    },
+}
+
+
 class TestCorrectedPremiseNgoremeFlexIsTheSource:
-    """tasks.md named `Ngoreme` as the 1949-object source. It is not:
-    `Ngoreme` holds 1945 MoStemMsa / 37 PhPhoneme, and `Ngoreme FLEx` holds
-    exactly 1949 / 41. The snapshots pin `Ngoreme FLEx`; only a live open can
-    pin that `Ngoreme` is a DIFFERENT project, which is what stops a future
-    reader "correcting" the name back."""
+    """tasks.md named `Ngoreme` as the 1949-object source. It is not.
+
+    The premise, and the whole of it: `Ngoreme FLEx` and `Ngoreme` are
+    DIFFERENT projects, and `Ngoreme FLEx` is the larger one -- more MoStemMsa
+    AND more PhPhoneme. The snapshots pin `Ngoreme FLEx`; only a live open can
+    pin that `Ngoreme` is a different project, which is what stops a future
+    reader "correcting" the name back.
+
+    T103: the premise is asserted against whatever is on disk. The exact counts
+    are asserted only against bytes they were actually measured from -- see
+    `_NGOREME_OBSERVATIONS`.
+    """
 
     @pytest.mark.integration
-    def test_ngoreme_flex_holds_1949_and_ngoreme_holds_1945(self):
+    def test_every_recorded_observation_satisfies_the_premise(self):
+        """Offline, and it runs on a host with no FieldWorks at all.
+
+        The digest gate below can stand down; this cannot. It stops the ledger
+        from becoming a place where a row that CONTRADICTS the premise could be
+        appended to make a live run go green, and it stops the whole block from
+        quietly becoming a no-op if the ledger were emptied.
+        """
+        flex = _NGOREME_OBSERVATIONS["Ngoreme FLEx"]
+        ngoreme = _NGOREME_OBSERVATIONS["Ngoreme"]
+        assert flex and ngoreme, "an empty ledger asserts nothing"
+        for digest, counts in list(flex.items()) + list(ngoreme.items()):
+            assert len(digest) == 64, digest
+            assert all(n > 0 for n in counts), (digest, counts)
+        for f_digest, f_counts in flex.items():
+            for n_digest, n_counts in ngoreme.items():
+                assert f_counts[0] > n_counts[0], (f_digest, n_digest)
+                assert f_counts[1] > n_counts[1], (f_digest, n_digest)
+
+    @pytest.mark.integration
+    def test_ngoreme_flex_is_a_different_and_larger_project_than_ngoreme(self):
         """Read-only, both projects, digests checked before open and after
         close. Neither is a transfer target, so nothing here can write."""
         import hashlib
@@ -3956,33 +4042,15 @@ class TestCorrectedPremiseNgoremeFlexIsTheSource:
         pytest.importorskip(
             "flexicon", reason="the FlexTools host is not available")
 
-        expected = {"Ngoreme FLEx": (1949, 41), "Ngoreme": (1945, 37)}
-        paths = {name: _live_project_or_skip(name) for name in expected}
+        paths = {name: _live_project_or_skip(name)
+                 for name in _NGOREME_OBSERVATIONS}
 
         def digest(path: Path) -> str:
             return hashlib.sha256(path.read_bytes()).hexdigest()
 
         before = {name: digest(path) for name, path in paths.items()}
-        # NOT asserted equal to MEASURED_PROJECT_DIGESTS. That constant means
-        # "the digest the COMMITTED SNAPSHOT was measured at" and must stay
-        # fixed for `TestMeasuredCensusSnapshots`; this test does not read the
-        # snapshot at all -- it opens both projects and counts them itself, so
-        # a moved file makes it MORE useful, not less. Measured 2026-08-19: the
-        # user edited `Ngoreme FLEx` between the snapshot and this run, and the
-        # premise survived unchanged (1949/41 and 1945/37 both still exact), so
-        # a hard digest equality here would have failed a test whose subject
-        # was still true. Drift is reported, and read-only-ness is proved by
-        # the before/after comparison below rather than by a recorded constant.
-        if before["Ngoreme FLEx"] != MEASURED_PROJECT_DIGESTS["Ngoreme FLEx"]:
-            print("[INFO] `Ngoreme FLEx` has moved since the committed "
-                  "snapshot was measured (" + before["Ngoreme FLEx"][:12]
-                  + "... vs " + MEASURED_PROJECT_DIGESTS["Ngoreme FLEx"][:12]
-                  + "...). The counts below are measured live, so the premise "
-                  "is still settled here; it is the SNAPSHOT-based blocks that "
-                  "stand down on drift, via `_t024_census`.")
-
         measured = {}
-        for name in expected:
+        for name in _NGOREME_OBSERVATIONS:
             handle = census_cli._read_only_handle(name)  # noqa: SLF001
             try:
                 counts = census.count_classes(
@@ -3991,18 +4059,70 @@ class TestCorrectedPremiseNgoremeFlexIsTheSource:
                                   counts.count_for("PhPhoneme"))
             finally:
                 handle.CloseProject()
-
-        assert measured == expected, (
-            "the corrected premise no longer holds: measured " + repr(measured)
-        )
         after = {name: digest(path) for name, path in paths.items()}
         assert after == before, "a read-only census changed a .fwdata"
 
-        snapshot = load_measured_census("ngoreme")
-        assert measured["Ngoreme FLEx"] == (
-            measured_row(snapshot, "MoStemMsa")["source_count"],
-            measured_row(snapshot, "PhPhoneme")["source_count"],
-        )
+        # ---- THE PREMISE. Unconditional, measured live, no constants. ------
+        flex = measured["Ngoreme FLEx"]
+        ngoreme = measured["Ngoreme"]
+        assert all(n > 0 for n in flex + ngoreme), (
+            "a premise about which project is larger cannot be settled by two "
+            "projects that count zero of everything: " + repr(measured))
+        assert flex != ngoreme, (
+            "`Ngoreme FLEx` and `Ngoreme` measured identically " + repr(flex)
+            + " -- if they are the same project the corrected premise is "
+            "wrong and tasks.md's original name should be restored")
+        assert flex[0] > ngoreme[0], (
+            "`Ngoreme FLEx` no longer holds MORE MoStemMsa than `Ngoreme`: "
+            + repr(measured))
+        assert flex[1] > ngoreme[1], (
+            "`Ngoreme FLEx` no longer holds MORE PhPhoneme than `Ngoreme`: "
+            + repr(measured))
+
+        # ---- THE EXACT COUNTS. Only against bytes they were measured from. -
+        stood_down = []
+        for name, counts in measured.items():
+            recorded = _NGOREME_OBSERVATIONS[name].get(before[name])
+            if recorded is None:
+                stood_down.append(name)
+                print(
+                    "[INFO] %s has moved since any recorded observation (%s..."
+                    "). Measured live: MoStemMsa=%d PhPhoneme=%d. The premise "
+                    "above is asserted against these numbers; the EXACT-count "
+                    "check stands down rather than failing on an edit somebody "
+                    "made to their own project. Appending "
+                    '"%s": %r to _NGOREME_OBSERVATIONS[%r] restores it.'
+                    % (name, before[name][:12], counts[0], counts[1],
+                       before[name], counts, name))
+                continue
+            assert counts == recorded, (
+                name + " counted " + repr(counts) + " at the SAME bytes that "
+                "previously counted " + repr(recorded) + " (" + before[name][:12]
+                + "...). The file did not move, so this is the counting code "
+                "changing, not the data")
+
+        # ---- THE SNAPSHOT TIE. Same rule, one level up. --------------------
+        if before["Ngoreme FLEx"] == MEASURED_PROJECT_DIGESTS["Ngoreme FLEx"]:
+            snapshot = load_measured_census("ngoreme")
+            assert measured["Ngoreme FLEx"] == (
+                measured_row(snapshot, "MoStemMsa")["source_count"],
+                measured_row(snapshot, "PhPhoneme")["source_count"],
+            )
+        else:
+            print(
+                "[INFO] `Ngoreme FLEx` has moved since the committed snapshot "
+                "was measured (" + before["Ngoreme FLEx"][:12] + "... vs "
+                + MEASURED_PROJECT_DIGESTS["Ngoreme FLEx"][:12] + "...), so "
+                "the snapshot's source_count is a count of different bytes and "
+                "is not compared here. It is the SNAPSHOT-based blocks that "
+                "stand down on drift, via `_t024_census`; the premise above "
+                "does not.")
+
+        assert sorted(stood_down) != sorted(_NGOREME_OBSERVATIONS), (
+            "BOTH projects have drifted off the ledger, so no exact count was "
+            "checked anywhere in this run. The premise still held, but nothing "
+            "is watching the counting code any more -- append the measurements "
+            "printed above to `_NGOREME_OBSERVATIONS`")
 
 
 # ---------------------------------------------------------------------------

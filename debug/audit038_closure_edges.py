@@ -171,11 +171,24 @@ def main() -> int:
     from harness import full_run
 
     # `SIL.LCModel` only becomes importable once FLExInit has run, which
-    # `_open_source_readonly` does -- so the project is opened FIRST and the
-    # LCM interfaces are imported after it, not at module scope.
+    # `source_readonly` does -- so the project is opened FIRST and the LCM
+    # interfaces are imported after it, not at module scope.
+    #
+    # T090: this used to call `full_run._open_source_readonly` and return
+    # without ever closing. flexicon takes the Palaso file lock on ANY open,
+    # read-only included ("the project must be closed with `CloseProject()`
+    # to save any changes, AND RELEASE THE LOCK"), so every run of this driver
+    # left a `<project>.fwdata.lock` behind naming a PID that had exited --
+    # and the next `tests/integration` run read that file as "locked by
+    # FieldWorks" and turned four live assertions into skips. The audit body
+    # lives in `_audit` so the pairing is by construction, not by remembering
+    # to close on every return path.
     print("[INFO] Opening %r read-only" % SOURCE)
-    proj = full_run._open_source_readonly(SOURCE)
+    with full_run.source_readonly(SOURCE) as proj:
+        return _audit(proj)
 
+
+def _audit(proj) -> int:
     from SIL.LCModel import (
         ILangProject,
         IMoDerivAffMsa,
