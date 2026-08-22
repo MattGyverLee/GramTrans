@@ -44,10 +44,23 @@ SOURCE = "Mbugwe LizzieHC practice"
 TARGET = os.environ.get("GT038_PHASE6_TARGET", "GT038 Phase6 Target")
 BACKUP = _REPO / "backups" / "Target 2026-07-06 0218.fwbackup"
 PROJECTS_ROOT = Path("C:/ProgramData/SIL/FieldWorks/Projects")
+#: Snapshot basenames, overridable so a LATER pass can re-measure without
+#: overwriting an earlier pass's committed artifact.
+#:
+#: T102 is the reason this is a knob and not a constant.
+#: `census-038-mbugwe-phase6.json` is one link in a chain of pairwise equality
+#: comparisons (`test_038_closure_edge_audit.py` compares it row by row
+#: against the `-t067-`, `-t068-` and `-t069-` artifacts to prove that
+#: registering a closure edge moved no object count). T076 DOES move counts --
+#: that is the whole point of it -- so overwriting this link would turn three
+#: passing tests red for a reason unrelated to what they assert, which is
+#: exactly the drift T102 says not to cause. T077 therefore writes its own
+#: pair and leaves T063's evidence standing as the BEFORE.
+_SNAP_SUFFIX = os.environ.get("GT038_PHASE6_SNAPSHOT_SUFFIX", "")
 SNAPSHOT = (_REPO / "tests" / "integration" / "_snapshots"
-            / "process-rules-038-mbugwe.json")
+            / ("process-rules-038%s-mbugwe.json" % _SNAP_SUFFIX))
 CENSUS_SNAPSHOT = (_REPO / "tests" / "integration" / "_snapshots"
-                   / "census-038-mbugwe-phase6.json")
+                   / ("census-038%s-mbugwe-phase6.json" % _SNAP_SUFFIX))
 _SCRATCH = _REPO / "scratchpad" / "038_census"
 
 #: Every class in the process-rule graph, plus the two allomorph classes the
@@ -165,7 +178,7 @@ def main() -> int:
 
     print("[INFO] transferring %r -> %r (this takes minutes)" % (SOURCE, TARGET))
     report_path = str(_REPO / "_run_reports"
-                      / "038-phase6-mbugwe-report.json")
+                      / ("038-phase6%s-mbugwe-report.json" % _SNAP_SUFFIX))
     Path(report_path).parent.mkdir(parents=True, exist_ok=True)
     _plan, report = full_run.run_full_transfer(
         SOURCE, TARGET, target_path,

@@ -7481,14 +7481,48 @@ def _walk_lex_entry_closure(src_entry, context, tag, category, dropped=None):
 # CONDITION 4, THE ONE THE PROBE ADDED. A `PhSequenceContext` in `InputOS` is
 # owned by the rule, but its `MembersRS` REFERENCE `PhSimpleContext*` objects
 # owned by the shared, project-level `PhPhonData.ContextsOS` -- true for 6 of
-# the 18 live rules. Those members are a Phase 7 closure problem, not a local
-# create. Until the closure pulls them, such a rule is reported and skipped:
-# an empty or partly-filled `MembersRS` is precisely the silent content loss
-# FR-023 and SC-006 forbid, and it would leave a rule that can no longer match
-# anything while the run reported success. The detector is written against
-# RESOLVABILITY, not against a hard-coded count, so those 6 rules start
-# transferring the moment the closure makes their contexts present -- no edit
-# here.
+# the 18 live rules. An empty or partly-filled `MembersRS` is precisely the
+# silent content loss FR-023 and SC-006 forbid: it would leave a rule that can
+# no longer match anything while the run reported success. So until something
+# could put those contexts in the destination, such a rule was reported and
+# skipped.
+#
+# T076 (2026-08-22) CLOSED IT, AND NOT THE WAY THE TASK PREDICTED. The task
+# said "extend closure to pull" those contexts. The read-only audit
+# (`debug/audit038_t076_process_contexts.py`, both corpora) says that premise
+# is wrong, and the measurement is the whole reason this comment changed:
+#
+#   * All 6 far endpoints ARE owned by `PhPhonData.ContextsOS` (owner
+#     `PhPhonData`, flid 5099004) -- 5 `PhSimpleContextNC`, 1
+#     `PhSimpleContextSeg`.
+#   * **0 of 6 are reachable from `PhPhonData.PhonRulesOS`.** The one path in
+#     this engine that already creates `PhSimpleContext*` into a destination's
+#     `ContextsOS` is the phonological-rule copy (`_copy_context_cell`), and it
+#     never touches these. Nothing else creates them either: no
+#     `GrammarCategory` enumerates a member of `ContextsOS`.
+#
+# An edge whose far endpoint NO category can enumerate is exactly what T089
+# refused to register, for the reason FR-015/FR-016 give: an item no
+# `enumerate_source` yields has no `PlannedAction`, so it cannot be shown as
+# pulled in (T070) or individually deselected (T072). Registering a
+# rule -> ContextsOS-context edge would have repeated T089's defect with a
+# `verified_by` on it.
+#
+# So the context object is **CO-CREATED**, the same contract
+# `inflection_features_execute_action` uses for its symbolic values and the
+# same one this rule's own `InputOS` members already ride: the executor builds
+# it into the destination's `PhPhonData.ContextsOS`, GUID-preserving, as part
+# of building the rule. What IS registered under `CLOSURE_EDGES_VERIFIED` is
+# the edge one hop further out -- the context's `FeatureStructureRA` referent,
+# a `PhNCFeatures`/`PhNCSegments` or a `PhPhoneme`, measured **6 of 6
+# enumerable** by `natural_classes_enumerate_source` /
+# `phonemes_enumerate_source`. That is the endpoint a user can see and
+# deselect, and it is the one that decides whether the rule can be rebuilt at
+# all.
+#
+# The detector is still written against RESOLVABILITY rather than a
+# hard-coded count: a shared context whose referent does not resolve, or whose
+# class has no factory here, still takes the FR-025 skip.
 
 #: Input-member class -> its LCM factory interface. Absence is the skip, so
 #: adding a class here is the ONLY way to make the engine build one.
@@ -7705,6 +7739,108 @@ def _resolve_process_referent(context, src_obj, identity_remap,
     return None
 
 
+#: The `ContextsOS` member classes T076 co-creates. Both are already in
+#: `_PROCESS_INPUT_FACTORIES` -- a shared context is structurally the SAME
+#: object as one of the rule's own input members and differs only in who owns
+#: it -- so this set adds no new create code, only permission to run the
+#: existing one against a different owner.
+#:
+#: `PhSimpleContextBdry` and `PhIterationContext` are deliberately ABSENT and
+#: that is not an oversight: they stay behind `_PROCESS_UNEXERCISED_CLASSES`.
+#: `Mbugwe LizzieHC practice` really does hold 22 and 11 of them in
+#: `ContextsOS`, and **not one is referenced by any of the 18 affix process
+#: rules** (measured), so admitting them here would be shipping a create path
+#: no corpus can check -- the posture create-path contract section 4 takes.
+_PROCESS_SHARED_CONTEXT_CLASSES = frozenset({
+    "PhSimpleContextSeg",
+    "PhSimpleContextNC",
+})
+
+#: `ClassName` of the object that owns `ContextsOS`. Checked by name rather
+#: than by flid so a duck-typed unit fake and a live LCM object answer the
+#: same way; the live flid is 5099004 and is recorded in the audit artifact.
+_PROCESS_SHARED_CONTEXT_OWNER = "PhPhonData"
+
+
+def _process_shared_context_owner_is_phon_data(member_ref):
+    """Is `member_ref` owned by `PhPhonData.ContextsOS`?
+
+    The narrowness is the point. A `PhSequenceContext.MembersRS` entry this
+    rule does not own could in principle be owned by anything; only the
+    project-level context pool is a thing T076 measured and knows how to
+    rebuild. Anything else keeps the FR-025 skip, so an unmeasured owner
+    cannot silently acquire a create path.
+    """
+    owner = getattr(_unwrap_lcm(member_ref), "Owner", None)
+    if owner is None:
+        return False
+    return (_class_name_of(owner) or "") == _PROCESS_SHARED_CONTEXT_OWNER
+
+
+def _resolve_shared_process_context(context, member_ref, identity_remap,
+                                    plan_time=False):
+    """T076: can this shared `ContextsOS` context be CO-CREATED here?
+
+    Returns `(spec, "")` when yes, `(None, reason)` when the rule must still
+    take the FR-025 skip. `spec` is what `_create_process_graph` needs and
+    nothing more: the class to build, the source GUID to preserve, and the
+    already-resolved destination referent to wire into
+    `FeatureStructureRA`.
+
+    WHY THE REFERENT AND NOT THE CONTEXT IS THE QUESTION. The context is a
+    two-field object -- a class and a pointer at a phoneme or a natural class
+    -- and this engine already creates that exact object for the rule's own
+    `InputOS` members. What it cannot invent is the thing pointed AT. So the
+    resolvability test is applied one hop out, where it decides something,
+    rather than on the context, where a `None` only ever meant "nobody has
+    copied this yet".
+    """
+    member_class = _class_name_of(member_ref) or ""
+    if member_class not in _PROCESS_SHARED_CONTEXT_CLASSES:
+        return None, ""
+    if not _process_shared_context_owner_is_phon_data(member_ref):
+        return None, ""
+    iface = "I" + member_class
+    if member_class == "PhSimpleContextNC":
+        for constr_field in ("PlusConstrRS", "MinusConstrRS"):
+            if _process_ref_seq(member_ref, iface, constr_field):
+                return None, (
+                    "the shared PhPhonData.ContextsOS context %s carries a "
+                    "non-empty %s -- PhFeatureConstraint has zero live "
+                    "instances and ties into the feature system, so it ships "
+                    "behind the FR-025 skip rather than a guess (create-path "
+                    "contract section 4)"
+                    % (_guid_str_from(member_ref) or "(no guid)", constr_field)
+                )
+    src_referent = getattr(_cast_lcm(member_ref, iface),
+                           "FeatureStructureRA", None)
+    kind = _PROCESS_CONTEXT_REFERENT_KIND.get(member_class, "referent")
+    if src_referent is None:
+        return None, (
+            "the shared PhPhonData.ContextsOS context %s names no %s at all "
+            "-- a context that matches nothing is not a faithful "
+            "reproduction (FR-023)"
+            % (_guid_str_from(member_ref) or "(no guid)", kind)
+        )
+    resolved = _resolve_process_referent(
+        context, src_referent, identity_remap, plan_time)
+    if resolved is None:
+        return None, (
+            "the shared PhPhonData.ContextsOS context %s references %s %s, "
+            "which is absent from the destination and matched nothing by "
+            "natural key -- co-creating the context would produce one that "
+            "matches nothing (FR-024/FR-025)"
+            % (_guid_str_from(member_ref) or "(no guid)", kind,
+               _guid_str_from(src_referent) or "(no guid)")
+        )
+    return {
+        "class": member_class,
+        "guid": _guid_str_from(member_ref),
+        "referent": resolved,
+        "referent_guid": _guid_str_from(src_referent),
+    }, ""
+
+
 def _process_referent_label(referent):
     """Human label for a resolved phoneme / natural class, for the report.
 
@@ -7841,21 +7977,39 @@ def _resolve_process_graph(src_rule, context, identity_remap, plan_time=False):
                 continue  # owned by this rule -- created in the same pass
             resolved = _resolve_process_referent(
                 context, member_ref, identity_remap, plan_time)
-            if resolved is None:
+            if resolved is not None:
+                # Already in the destination -- a re-run, or a context some
+                # other pass brought across. Identity first, as everywhere
+                # else, and this is what keeps T076 idempotent under SC-008:
+                # run 2 finds the context it created on run 1 and co-creates
+                # nothing.
+                row.setdefault("member_targets", {})[position] = resolved
+                continue
+            # T076: absent, so ask whether this engine can BUILD it rather
+            # than only whether someone else already has.
+            spec, blocked = _resolve_shared_process_context(
+                context, member_ref, identity_remap, plan_time)
+            if spec is not None:
+                row.setdefault("shared_contexts", {})[position] = spec
+                continue
+            if blocked:
                 return None, (
                     "MoAffixProcess %s input member %d (PhSequenceContext) "
-                    "references %s %s at position %d, which this rule does "
-                    "NOT own -- it belongs to the shared project-level "
-                    "PhPhonData.ContextsOS and is absent from the "
-                    "destination. The rule is not transferred until that "
-                    "closure lands; a partly-filled MembersRS is not an "
-                    "acceptable outcome (FR-023/FR-024/FR-025, create-path "
-                    "contract condition 4)"
-                    % (rule_guid, row["index"],
-                       _class_name_of(member_ref) or "context",
-                       ref_guid or "(no guid)", position)
+                    "at position %d cannot be reproduced: %s"
+                    % (rule_guid, row["index"], position, blocked)
                 )
-            row.setdefault("member_targets", {})[position] = resolved
+            return None, (
+                "MoAffixProcess %s input member %d (PhSequenceContext) "
+                "references %s %s at position %d, which this rule does "
+                "NOT own and which is neither present in the destination "
+                "nor a PhPhonData.ContextsOS context this engine can "
+                "co-create -- a partly-filled MembersRS is not an "
+                "acceptable outcome (FR-023/FR-024/FR-025, create-path "
+                "contract condition 4)"
+                % (rule_guid, row["index"],
+                   _class_name_of(member_ref) or "context",
+                   ref_guid or "(no guid)", position)
+            )
 
     outputs = []
     for index, step in enumerate(_process_rule_members(src_rule, "OutputOS")):
@@ -7956,6 +8110,61 @@ def _discard_partial_process_rule(rule_obj, entry_ie, was_lexeme_form):
         pass
 
 
+def _target_contexts_os(target):
+    """The destination's `PhPhonData.ContextsOS`, or None on a fake/absent one.
+
+    Fail-soft on purpose: an offline fake that has no phonological data must
+    make the co-create return a REASON, which becomes an FR-025 skip, rather
+    than raise -- a crash would replace a reported loss with an unreported
+    one.
+    """
+    try:
+        return target.Cache.LangProject.PhonologicalDataOA.ContextsOS
+    except Exception:  # noqa: BLE001 -- fake surfaces / no phon data
+        return None
+
+
+def _create_shared_process_context(spec, target):
+    """T076 PASS 2 leg: build one shared context into `ContextsOS`.
+
+    Returns `(obj, "")` or `(None, reason)`. GUID-preserving through the same
+    `create_with_guid` every other create here uses, so a re-run recognises
+    the context as the same object and the identity leg in
+    `_resolve_process_graph` finds it instead of building a second one.
+
+    THE OWNER IS THE WHOLE DIFFERENCE from a rule-owned input member. The
+    object is added to the project-level `ContextsOS`, not to the rule's
+    `InputOS`, because that is where the source keeps it -- putting it under
+    the rule would change what the destination MEANS while making the counts
+    look right, the class of error SC-006 exists to catch.
+    """
+    contexts_os = _target_contexts_os(target)
+    if contexts_os is None:
+        return None, (
+            "the destination exposes no PhPhonData.ContextsOS to own it"
+        )
+    iface_name = _PROCESS_INPUT_FACTORIES.get(spec["class"])
+    factory = _get_lcm_factory(target, iface_name) if iface_name else None
+    if factory is None:
+        return None, (
+            "no %s is obtainable from the destination"
+            % (iface_name or spec["class"])
+        )
+    obj = create_with_guid(factory, spec["guid"], spec["class"])
+    if obj is None:
+        return None, "creating the %s returned nothing" % spec["class"]
+    try:
+        contexts_os.Add(obj)
+    except Exception as exc:  # noqa: BLE001
+        return None, "adding it to PhPhonData.ContextsOS failed: %s" % exc
+    try:
+        _cast_lcm(obj, "I" + spec["class"]).FeatureStructureRA = (
+            spec["referent"])
+    except Exception as exc:  # noqa: BLE001
+        return None, "wiring its FeatureStructureRA failed: %s" % exc
+    return obj, ""
+
+
 def _create_process_graph(new_rule, script, target):
     """PASS 2 -- create `InputOS` then `OutputOS` from an approved script.
 
@@ -7998,6 +8207,7 @@ def _create_process_graph(new_rule, script, target):
     # this same pass created.
     for row in script["inputs"]:
         obj = row["new"]
+        co_created: list = []
         if row["referent"] is not None:
             try:
                 _cast_lcm(obj, "I" + row["class"]).FeatureStructureRA = (
@@ -8010,11 +8220,25 @@ def _create_process_graph(new_rule, script, target):
         if row["class"] == "PhSequenceContext":
             members = _cast_lcm(obj, "IPhSequenceContext").MembersRS
             member_targets = row.get("member_targets", {})
+            shared_specs = row.get("shared_contexts", {})
             for position, member_ref in enumerate(row["members"]):
                 ref_guid = _guid_str_from(member_ref)
                 target_obj = new_by_src_guid.get(ref_guid)
                 if target_obj is None:
                     target_obj = member_targets.get(position)
+                if target_obj is None and position in shared_specs:
+                    target_obj, why = _create_shared_process_context(
+                        shared_specs[position], target)
+                    if target_obj is None:
+                        return None, None, (
+                            "input member %d (PhSequenceContext) could not "
+                            "co-create its shared PhPhonData.ContextsOS "
+                            "member at position %d: %s"
+                            % (row["index"], position, why)
+                        )
+                    co_created.append(shared_specs[position]["guid"])
+                    if ref_guid:
+                        new_by_src_guid[ref_guid] = target_obj
                 if target_obj is None:
                     return None, None, (
                         "input member %d (PhSequenceContext) lost its member "
@@ -8027,6 +8251,7 @@ def _create_process_graph(new_rule, script, target):
             index=row["index"],
             referent_guid=row["referent_guid"],
             label=_process_referent_label(row["referent"]),
+            co_created_shared=tuple(co_created),
         ))
 
     output_specs = []
@@ -9796,6 +10021,112 @@ def affixes_infl_feature_dependencies(piece):
     `ValueRA` arrows off this entry's MSAs."""
     return _narrow_deps(_entry_feat_struc_deps(piece),
                         GrammarCategory.INFLECTION_FEATURES)
+
+
+# ---------------------------------------------------------------------------
+# T076 (2026-08-22) -- the process-rule referent edges
+# ---------------------------------------------------------------------------
+#
+# An affix process rule reaches OUT of its own graph in exactly three places,
+# and all three land on the same two categories:
+#
+#   * `PhSimpleContextSeg.FeatureStructureRA`  -> `PhPhoneme`      (PHONEMES)
+#   * `PhSimpleContextNC.FeatureStructureRA`   -> `PhNC*`   (NATURAL_CLASSES)
+#   * `MoInsertPhones.ContentRS`               -> `PhPhoneme`      (PHONEMES)
+#
+# ...whether the context carrying the reference is OWNED by the rule
+# (`InputOS`) or shared through `PhPhonData.ContextsOS` and reached through a
+# `PhSequenceContext.MembersRS`. Both are walked here, deliberately: the
+# closure question is "what must exist for this rule to be rebuildable", and
+# the answer does not depend on who owns the context that points at it. The
+# shared CONTEXT itself is NOT an edge -- no category enumerates a member of
+# `ContextsOS`, so it is co-created (see condition 4 above and T089).
+
+
+def _iter_entry_allomorph_forms(entry):
+    """`LexemeFormOA` then `AlternateFormsOS`, the same order and the same two
+    slots `_walk_entry_allomorphs` walks -- an affix process rule can occupy
+    either, so a producer that read only one would silently miss rules."""
+    forms = []
+    lf = getattr(entry, "LexemeFormOA", None)
+    if lf is not None:
+        forms.append(lf)
+    forms.extend(getattr(entry, "AlternateFormsOS", None) or [])
+    return forms
+
+
+def _entry_process_rule_deps(entry):
+    """Every outward reference of every `MoAffixProcess` on this entry, as
+    `(PHONEMES | NATURAL_CLASSES, guid)` refs.
+
+    Fail-soft throughout: a dependency producer that raises would take down
+    the closure walk for an entry, which is strictly worse than one that
+    under-reports and lets the FR-025 skip do its job.
+    """
+    deps: list = []
+
+    def _add(obj):
+        if obj is None:
+            return
+        category = _PROCESS_REFERENT_CATEGORY.get(_class_name_of(obj) or "")
+        if category is None:
+            return
+        g = _guid_str_from(obj)
+        if not g:
+            return
+        edge = (category, g)
+        if edge not in deps:
+            deps.append(edge)
+
+    def _add_context(ctx):
+        cls = _class_name_of(ctx) or ""
+        if cls not in ("PhSimpleContextSeg", "PhSimpleContextNC"):
+            return
+        _add(getattr(_cast_lcm(ctx, "I" + cls), "FeatureStructureRA", None))
+
+    for form in _iter_entry_allomorph_forms(entry):
+        if (_class_name_of(form) or "") != "MoAffixProcess":
+            continue
+        try:
+            owned = {}
+            for member in _process_rule_members(form, "InputOS"):
+                g = _guid_str_from(member)
+                if g:
+                    owned[g] = member
+                _add_context(member)
+            for member in _process_rule_members(form, "InputOS"):
+                if (_class_name_of(member) or "") != "PhSequenceContext":
+                    continue
+                for ref in _process_ref_seq(
+                        member, "IPhSequenceContext", "MembersRS"):
+                    if _guid_str_from(ref) in owned:
+                        continue  # already walked as an owned member
+                    _add_context(ref)
+            for step in _process_rule_members(form, "OutputOS"):
+                if (_class_name_of(step) or "") != "MoInsertPhones":
+                    continue
+                for terminal in _process_ref_seq(
+                        step, "IMoInsertPhones", "ContentRS"):
+                    _add(terminal)
+        except Exception:  # noqa: BLE001 -- an unwalkable rule is not an edge
+            continue
+    return deps
+
+
+def affixes_process_rule_phoneme_dependencies(piece):
+    """NARROW producer for `DependencyKind.PROCESS_RULE_TO_PHONEME`: only
+    `(PHONEMES, guid)`, the phonemes this entry's affix process rules match
+    on or insert."""
+    return _narrow_deps(_entry_process_rule_deps(piece),
+                        GrammarCategory.PHONEMES)
+
+
+def affixes_process_rule_natural_class_dependencies(piece):
+    """NARROW producer for `DependencyKind.PROCESS_RULE_TO_NATURAL_CLASS`:
+    only `(NATURAL_CLASSES, guid)`, the natural classes this entry's affix
+    process rules match on."""
+    return _narrow_deps(_entry_process_rule_deps(piece),
+                        GrammarCategory.NATURAL_CLASSES)
 
 
 def affixes_required_writing_systems(piece):
@@ -13386,6 +13717,59 @@ CLOSURE_EDGES_VERIFIED: dict = {
             "tests/integration/test_038_closure_edge_audit.py::"
             "test_only_the_confirmed_relationships_are_registered and "
             "::test_a_templates_only_plan_carries_the_registered_edges"
+        ),
+    },
+    # -----------------------------------------------------------------------
+    # T076 (2026-08-22) -- the process-rule referent rows.
+    #
+    # READ THE `verified_by` CAREFULLY BEFORE TRUSTING THESE TWO: their
+    # evidence is SINGLE-CORPUS, and that is not the same standard the five
+    # rows above meet. `Ejagham Mini` holds ZERO `MoAffixProcess` rules, so
+    # the audit returns `NO_DATA` there -- which the driver deliberately
+    # distinguishes from `CONFIRMED`, because "found nothing because the
+    # corpus holds nothing" is not an audit. `Mbugwe LizzieHC practice` is
+    # the only sanctioned corpus that exercises this relationship at all, and
+    # it is also the corpus the defect was measured on. A second corpus with
+    # affix process rules would strengthen these rows; none exists today, and
+    # inventing one would be worse than saying so.
+    # -----------------------------------------------------------------------
+    DependencyKind.PROCESS_RULE_TO_PHONEME: {
+        "category": GrammarCategory.AFFIXES,
+        "producer": affixes_process_rule_phoneme_dependencies,
+        "dependency_category": GrammarCategory.PHONEMES,
+        "verified_by": (
+            "debug/audit038_closure_edges.py (read-only, 2026-08-22): "
+            "relationships.PROCESS_RULE_TO_PHONEME = CONFIRMED on 'Mbugwe "
+            "LizzieHC practice' (32 edges over 16 distinct phonemes, "
+            "foreign_edges 0, unresolved 0, resolved_as_owned_value 0) and "
+            "NO_DATA on 'Ejagham Mini', which holds zero MoAffixProcess "
+            "rules -- SINGLE-CORPUS evidence, stated rather than rounded up. "
+            "Snapshots tests/integration/_snapshots/"
+            "closure-edge-audit-038-*.json plus the condition-4 audit in "
+            "_snapshots/t076-process-context-audit.json "
+            "(debug/audit038_t076_process_contexts.py), asserted by "
+            "tests/integration/test_038_closure_edge_audit.py::"
+            "test_only_the_confirmed_relationships_are_registered"
+        ),
+    },
+    DependencyKind.PROCESS_RULE_TO_NATURAL_CLASS: {
+        "category": GrammarCategory.AFFIXES,
+        "producer": affixes_process_rule_natural_class_dependencies,
+        "dependency_category": GrammarCategory.NATURAL_CLASSES,
+        "verified_by": (
+            "debug/audit038_closure_edges.py (read-only, 2026-08-22): "
+            "relationships.PROCESS_RULE_TO_NATURAL_CLASS = CONFIRMED on "
+            "'Mbugwe LizzieHC practice' (10 edges over 2 distinct natural "
+            "classes, foreign_edges 0, unresolved 0, "
+            "resolved_as_owned_value 0) and NO_DATA on 'Ejagham Mini', which "
+            "holds zero MoAffixProcess rules -- SINGLE-CORPUS evidence, "
+            "stated rather than rounded up. Snapshots "
+            "tests/integration/_snapshots/closure-edge-audit-038-*.json plus "
+            "the condition-4 audit in "
+            "_snapshots/t076-process-context-audit.json "
+            "(debug/audit038_t076_process_contexts.py), asserted by "
+            "tests/integration/test_038_closure_edge_audit.py::"
+            "test_only_the_confirmed_relationships_are_registered"
         ),
     },
     # DependencyKind.MSA_TO_INFL_FEATURE: REFUSED -- see (3) above and T089.

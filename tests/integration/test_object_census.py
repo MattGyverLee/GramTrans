@@ -5504,7 +5504,31 @@ class TestT101TheCommittedCorpusIsUnmovedByInvariant12:
 
     def test_every_committed_null_row_is_advisory(self):
         """The same fact stated positively -- and the count is pinned so a
-        future artifact that nulls a row cannot arrive unremarked."""
+        future artifact that nulls a row cannot arrive unremarked.
+
+        T076/T077 (2026-08-22) are the first artifacts to arrive since this
+        pin was written, and they took the count 6 -> 10. Read rather than
+        bumped: the four new nulls are `MoForm` and `MoMorphSynAnalysis` on
+        `census-038-t077-mbugwe-phase6.json` and
+        `census-038-t076-registered.json` -- the SAME two
+        `excluded_not_measurable` rows T099 nulled in the other three, from
+        the same post-T099 producer. Nothing new is being nulled.
+
+        THE PIN IS NOW THREE CLAIMS RATHER THAN ONE MAGIC NUMBER, because a
+        bare total that has to be edited for every new artifact degrades into
+        a number nobody can interpret -- and a number nobody interprets gets
+        bumped rather than read, which is how a real finding slips through a
+        tripwire that is technically still there. So:
+
+          1. every artifact that nulls anything nulls exactly `MoForm` and
+             `MoMorphSynAnalysis` -- this is the one that fails on a
+             genuinely new null, and it holds no matter how the corpus grows;
+          2. the artifact COUNT is pinned, so a new census arriving is still
+             a deliberate edit here;
+          3. the total is the product of the two, asserted as such rather
+             than written out, so it cannot drift away from them.
+        """
+        by_artifact: dict = {}
         advisory_nulls = 0
         for name, artifact in self._artifacts():
             for row in artifact["classes"]:
@@ -5513,9 +5537,17 @@ class TestT101TheCommittedCorpusIsUnmovedByInvariant12:
                     assert row.get("gate_scope") == "advisory", (
                         name + ": " + str(row.get("class")))
                     advisory_nulls += 1
-        assert advisory_nulls == 6, (
-            "3 artifacts x the 2 excluded_not_measurable rows T099 nulled; a "
-            "change here is a new null in the corpus and wants reading")
+                    by_artifact.setdefault(name, set()).add(row.get("class"))
+
+        for name, classes in sorted(by_artifact.items()):
+            assert classes == {"MoForm", "MoMorphSynAnalysis"}, (
+                name + " nulls something other than the two "
+                "excluded_not_measurable rows: " + repr(sorted(classes)))
+        assert len(by_artifact) == 5, (
+            "a census artifact arrived or left; the corpus that nulls the two "
+            "excluded_not_measurable rows is now "
+            + repr(sorted(by_artifact)))
+        assert advisory_nulls == 2 * len(by_artifact) == 10
 
 
 class TestT100TheVocabularyStaysClosedAtSeventeen:

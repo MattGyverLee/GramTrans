@@ -2067,11 +2067,22 @@ class EnrichmentRecord:
 @dataclass(frozen=True)
 class ProcessContextSpec:
     """Feature 038 (FR-023) -- one input context row of a `MoAffixProcess`
-    (`PhSimpleContextSeg` / `PhSimpleContextNC` / `PhSimpleContextBdry`)."""
+    (`PhSimpleContextSeg` / `PhSimpleContextNC` / `PhSimpleContextBdry`).
+
+    `co_created_shared` (T076) is additive and defaults empty. It names the
+    source GUIDs of the `PhPhonData.ContextsOS` contexts this member's
+    `MembersRS` needed and that the run BUILT, rather than found. It is
+    recorded because SC-010 admits no unreported outcome: an object written
+    into a shared, project-level collection as a side effect of transferring
+    a lexical entry is exactly the kind of write a reader would otherwise
+    have no way to see. An empty tuple is the normal answer -- 12 of the 18
+    live rules co-create nothing.
+    """
     context_class: str
     index: int
     referent_guid: str = ""
     label: str = ""
+    co_created_shared: tuple = ()
 
     def __post_init__(self) -> None:
         if not self.context_class:

@@ -492,6 +492,11 @@ class TestClosureRegistryShipsEmpty:
             DependencyKind.SLOT_TO_POS,
             DependencyKind.TEMPLATE_TO_POS,
             DependencyKind.TEMPLATE_TO_SLOT,
+            # T076, and the two whose evidence is single-corpus: `Ejagham
+            # Mini` holds zero MoAffixProcess rules, so the audit reports
+            # NO_DATA there rather than CONFIRMED.
+            DependencyKind.PROCESS_RULE_TO_PHONEME,
+            DependencyKind.PROCESS_RULE_TO_NATURAL_CLASS,
         }
         categories_mod._closure_registry_by_category(registry)
         for kind, entry in registry.items():

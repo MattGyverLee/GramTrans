@@ -149,6 +149,36 @@
       "unresolved_sample": [],
       "verdict": "REFUSED_FAR_ENDPOINT_NOT_ENUMERABLE"
     },
+    "PROCESS_RULE_TO_NATURAL_CLASS": {
+      "dependency_category": "natural_classes",
+      "distinct_far_guids": 0,
+      "edges": 0,
+      "foreign_edges": 0,
+      "population": 88,
+      "producer": "categories.affixes_process_rule_natural_class_dependencies",
+      "resolved_as_owned_value": 0,
+      "resolved_as_piece": 0,
+      "source_category": "affixes",
+      "task": "T076",
+      "unresolved": 0,
+      "unresolved_sample": [],
+      "verdict": "NO_DATA"
+    },
+    "PROCESS_RULE_TO_PHONEME": {
+      "dependency_category": "phonemes",
+      "distinct_far_guids": 0,
+      "edges": 0,
+      "foreign_edges": 0,
+      "population": 88,
+      "producer": "categories.affixes_process_rule_phoneme_dependencies",
+      "resolved_as_owned_value": 0,
+      "resolved_as_piece": 0,
+      "source_category": "affixes",
+      "task": "T076",
+      "unresolved": 0,
+      "unresolved_sample": [],
+      "verdict": "NO_DATA"
+    },
     "SLOT_TO_POS": {
       "dependency_category": "gram_categories",
       "distinct_far_guids": 6,

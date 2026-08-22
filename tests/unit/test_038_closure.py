@@ -372,6 +372,24 @@ def test_the_shipped_registry_holds_only_what_was_audited() -> None:
 
     Asserting the refusals is what stops a later registration from reaching
     for a member whose name merely looks right.
+
+    T076 (2026-08-22) added the last two, and they are the first rows in this
+    set whose evidence is SINGLE-CORPUS: `Ejagham Mini` holds zero
+    `MoAffixProcess` rules, so the audit reports `NO_DATA` there rather than
+    `CONFIRMED`, and `Mbugwe LizzieHC practice` is the only sanctioned corpus
+    that exercises the relationship. That limitation is written into both
+    rows' `verified_by` and is asserted below, so it cannot quietly be
+    forgotten the next time someone reads these rows as equals of the five
+    above.
+
+    T076 also declined a third row it was asked for. The task said "register
+    the edge that pulls the `PhSimpleContext*` objects owned by
+    `PhPhonData.ContextsOS`"; the audit
+    (`debug/audit038_t076_process_contexts.py`) measured that NO category
+    enumerates a member of `ContextsOS` -- 0 of 6 far endpoints are even
+    reachable from `PhonRulesOS` -- which is precisely the endpoint T089
+    refused. Those contexts are co-created instead, and what is registered is
+    the referent one hop out, where the far endpoint is 6 of 6 enumerable.
     """
     assert set(categories_mod.CLOSURE_EDGES_VERIFIED) == {
         DependencyKind.AFFIX_TO_POS,
@@ -379,7 +397,17 @@ def test_the_shipped_registry_holds_only_what_was_audited() -> None:
         DependencyKind.SLOT_TO_POS,
         DependencyKind.TEMPLATE_TO_POS,
         DependencyKind.TEMPLATE_TO_SLOT,
+        DependencyKind.PROCESS_RULE_TO_PHONEME,
+        DependencyKind.PROCESS_RULE_TO_NATURAL_CLASS,
     }
+    # The single-corpus caveat is part of what these two rows CLAIM, so it is
+    # asserted rather than left to prose that can drift away from the code.
+    for single_corpus in (DependencyKind.PROCESS_RULE_TO_PHONEME,
+                          DependencyKind.PROCESS_RULE_TO_NATURAL_CLASS):
+        evidence = categories_mod.CLOSURE_EDGES_VERIFIED[
+            single_corpus]["verified_by"]
+        assert "NO_DATA on 'Ejagham Mini'" in evidence, single_corpus
+        assert "SINGLE-CORPUS" in evidence, single_corpus
     for refused in (DependencyKind.MSA_TO_INFL_FEATURE,
                     DependencyKind.SLOT_TO_TEMPLATE,
                     DependencyKind.AFFIX_TO_SLOT):
@@ -460,11 +488,16 @@ def test_the_registered_rows_do_not_collide_in_the_kind_lookup() -> None:
     that lost its explicit `category` would collide here, in a unit test,
     rather than mislabel edges in a live plan.
 
-    The count is the point as much as the membership: five rows, five distinct
-    keys. `_closure_kind_lookup` RAISES on a duplicate key, so a fifth row
-    that quietly reused a fourth's pair could not reach a plan -- but a row
+    The count is the point as much as the membership: seven rows, seven
+    distinct keys. `_closure_kind_lookup` RAISES on a duplicate key, so a row
+    that quietly reused another's pair could not reach a plan -- but a row
     that reused a pair with a `None` in it would not raise, it would WIN, and
     that is the substitution this set makes visible.
+
+    T076's two rows put FOUR rows on `AFFIXES`, which is what makes the
+    explicit `dependency_category` on every one of them load-bearing rather
+    than tidy: drop it from any single row and that row becomes the
+    `(AFFIXES, None)` wildcard, which would swallow the other three.
     """
     from gramtrans.Lib import preview as preview_module
 
@@ -476,5 +509,7 @@ def test_the_registered_rows_do_not_collide_in_the_kind_lookup() -> None:
         (GrammarCategory.SLOTS, GrammarCategory.GRAM_CATEGORIES),
         (GrammarCategory.AFFIX_TEMPLATES, GrammarCategory.GRAM_CATEGORIES),
         (GrammarCategory.AFFIX_TEMPLATES, GrammarCategory.SLOTS),
+        (GrammarCategory.AFFIXES, GrammarCategory.PHONEMES),
+        (GrammarCategory.AFFIXES, GrammarCategory.NATURAL_CLASSES),
     }
-    assert len(lookup) == len(categories_mod.CLOSURE_EDGES_VERIFIED) == 5
+    assert len(lookup) == len(categories_mod.CLOSURE_EDGES_VERIFIED) == 7

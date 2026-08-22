@@ -218,12 +218,40 @@ def test_a_cast_is_still_mandatory_at_the_msa_sites(snap) -> None:
         assert row["cast"] > 0
 
 
-#: The relationships T067 registered, and the one it did not. Keyed by the
+#: The registered relationships, and the one that is not. Keyed by the
 #: `DependencyKind` NAME so the table can be read next to the snapshot's
 #: `relationships` block, which is keyed the same way.
 _REGISTERED = ("AFFIX_TO_POS", "MSA_TO_FEAT_STRUC_TYPE", "SLOT_TO_POS",
-               "TEMPLATE_TO_POS", "TEMPLATE_TO_SLOT")
+               "TEMPLATE_TO_POS", "TEMPLATE_TO_SLOT",
+               "PROCESS_RULE_TO_PHONEME", "PROCESS_RULE_TO_NATURAL_CLASS")
 _REFUSED = ("MSA_TO_INFL_FEATURE",)
+
+#: How many of the audited corpora must return CONFIRMED for each registered
+#: relationship. T076 is the reason this is a table rather than "all of them".
+#:
+#: `Ejagham Mini` holds ZERO `MoAffixProcess` rules, so its reading for the
+#: two process-rule rows is `NO_DATA` -- which the driver deliberately
+#: distinguishes from `CONFIRMED` precisely so a corpus that holds nothing
+#: cannot rubber-stamp an edge. A corpus with no instances can neither confirm
+#: NOR refuse a relationship, and demanding CONFIRMED from it would force one
+#: of two bad answers: refuse a relationship whose only corpus confirms it, or
+#: teach `NO_DATA` to count as a pass, which is the exact failure the verdict
+#: vocabulary exists to prevent.
+#:
+#: So the rule the tests enforce is: **CONFIRMED by at least this many
+#: corpora, and REFUSED by none.** The number is pinned per relationship so a
+#: single-corpus row stays visibly weaker than a two-corpus one, and so that
+#: a second corpus with affix process rules -- if one is ever sanctioned --
+#: has to be reckoned with here rather than absorbed silently.
+_MIN_CONFIRMING_CORPORA = {
+    "AFFIX_TO_POS": 2,
+    "MSA_TO_FEAT_STRUC_TYPE": 2,
+    "SLOT_TO_POS": 2,
+    "TEMPLATE_TO_POS": 2,
+    "TEMPLATE_TO_SLOT": 2,
+    "PROCESS_RULE_TO_PHONEME": 1,
+    "PROCESS_RULE_TO_NATURAL_CLASS": 1,
+}
 
 
 def test_only_the_confirmed_relationships_are_registered() -> None:
@@ -238,20 +266,52 @@ def test_only_the_confirmed_relationships_are_registered() -> None:
 
     This is deliberately NOT "the registry is non-empty". A count assertion
     would pass on a registry that had grown a row nobody measured.
+
+    T076 WIDENED the CONFIRMED clause, and the widening is narrow enough to
+    state exactly. It used to read "CONFIRMED on every corpus". `Ejagham Mini`
+    holds zero `MoAffixProcess` rules, so it reads `NO_DATA` for the two
+    process-rule rows -- a verdict that is neither evidence for the
+    relationship nor against it. The clause is now:
+
+      * REFUSED on NO corpus (unchanged, and this is the half that bites);
+      * CONFIRMED on at least `_MIN_CONFIRMING_CORPORA[name]` of them, which
+        is 2 for every row that has data on both and 1 for the two that can
+        only be measured where the rules exist;
+      * every non-CONFIRMED reading is `NO_DATA` and nothing else, so
+        "confirmed by fewer corpora" can only ever mean "the corpus held
+        none", never "the corpus disagreed".
+
+    That last clause is what keeps this from being a relaxation: a row cannot
+    reach the registry on zero confirmations, and it cannot reach it with a
+    single dissent hidden behind a single agreement.
     """
     from gramtrans.Lib import categories
     from gramtrans.Lib.models import DependencyKind
 
     registered_names = {k.name for k in categories.CLOSURE_EDGES_VERIFIED}
     assert registered_names == set(_REGISTERED)
+    assert set(_MIN_CONFIRMING_CORPORA) == set(_REGISTERED), (
+        "every registered relationship needs a confirming-corpora floor"
+    )
 
-    for snap in _snapshots():
+    snaps = _snapshots()
+    for name in _REGISTERED:
+        verdicts = {s["source_project"]: s["relationships"][name]["verdict"]
+                    for s in snaps}
+        confirmed = [p for p, v in verdicts.items() if v == "CONFIRMED"]
+        others = {p: v for p, v in verdicts.items() if v != "CONFIRMED"}
+        assert all(v == "NO_DATA" for v in others.values()), (
+            name + " is REGISTERED but some corpus measured it something "
+            "other than CONFIRMED or NO_DATA: " + repr(others)
+        )
+        assert len(confirmed) >= _MIN_CONFIRMING_CORPORA[name], (
+            name + " is REGISTERED on " + str(len(confirmed))
+            + " confirming corpus/corpora, below its recorded floor of "
+            + str(_MIN_CONFIRMING_CORPORA[name]) + ": " + repr(verdicts)
+        )
+
+    for snap in snaps:
         rels = snap["relationships"]
-        for name in _REGISTERED:
-            assert rels[name]["verdict"] == "CONFIRMED", (
-                name + " is REGISTERED but " + snap["source_project"]
-                + " measured it " + rels[name]["verdict"]
-            )
         for name in _REFUSED:
             assert rels[name]["verdict"].startswith("REFUSED"), (
                 name + " measured " + rels[name]["verdict"] + " on "
@@ -274,9 +334,25 @@ def test_a_confirmed_relationship_means_narrow_and_resolvable(snap) -> None:
     are the far-endpoint half: every GUID the producer emits must name a piece
     the far category's own `enumerate_source` yields, or the pulled-in item
     cannot be planned or deselected.
+
+    T076: a `NO_DATA` row on a corpus that holds none of the relationship is
+    skipped HERE and only here, because these five numbers describe what a
+    producer returned and a producer that was handed nothing returned nothing.
+    The zero-edge case is not waved through, though -- the four assertions
+    below still run on it, and `test_only_the_confirmed_relationships_are_
+    registered` separately proves that every `NO_DATA` reading belongs to a
+    relationship confirmed somewhere else. Asserting `edges > 0` on a corpus
+    with no affix process rules would be asserting that `Ejagham Mini` has
+    data it does not have.
     """
     for name in _REGISTERED:
         row = snap["relationships"][name]
+        if row["verdict"] == "NO_DATA":
+            assert row["edges"] == 0, name
+            assert row["foreign_edges"] == 0, name
+            assert row["unresolved"] == 0, name
+            assert row["distinct_far_guids"] == 0, name
+            continue
         assert row["edges"] > 0, name
         assert row["foreign_edges"] == 0, name
         assert row["unresolved"] == 0, (name, row["unresolved_sample"])
@@ -376,6 +452,12 @@ def test_each_relationship_was_measured_over_its_own_source_category(snap) -> No
         "SLOT_TO_POS": ("slots", pop["slots"]),
         "TEMPLATE_TO_POS": ("affix_templates", pop["templates"]),
         "TEMPLATE_TO_SLOT": ("affix_templates", pop["templates"]),
+        # T076. Measured over AFFIXES pieces, the same population as the three
+        # rows above -- the rules are allomorphs hanging off those entries, so
+        # a population equal to the SLOT or TEMPLATE count here would mean the
+        # producer had been handed the wrong pieces.
+        "PROCESS_RULE_TO_PHONEME": ("affixes", None),
+        "PROCESS_RULE_TO_NATURAL_CLASS": ("affixes", None),
     }
     assert set(expected) == set(snap["relationships"]), (
         "a relationship was added to or removed from the audit without this "
@@ -1309,3 +1391,134 @@ def test_the_pre_t073_artifact_reported_none_of_this() -> None:
     b = _pull_in()["B_narrow_all_deselected"]
     assert b["deselection_skips"]["count"] == 23
     assert sum(r["deselected"] for r in b["closure"]["by_kind"].values()) == 53
+
+
+# ===========================================================================
+# T076 (2026-08-22) -- the process-rule referent rows, and the claim that
+# expired between T069 and this registration
+# ===========================================================================
+#
+# Artifact: `_snapshots/closure-registration-038-t076.json`
+# (`python debug/run038_closure_census.py T076`, AFFIXES-only against a target
+# restored from `Target 2026-07-06 0218.fwbackup`).
+#
+# TWO THINGS ARE DIFFERENT HERE and both are deliberate.
+#
+# 1. `comparable_prior_artifact` is None. The `-t067-`/`-t068-`/`-t069-`
+#    census artifacts form a chain of pairwise equality comparisons that T102
+#    measured as ALREADY behind the instrument (3 changed rows, 2 changed
+#    totals, from T087 and T099). A fourth link would fail for that
+#    pre-existing drift and say nothing about T076, so this registration's
+#    census stands alone and the chain stays T102's to repair.
+#
+# 2. The narrow selection's composition CHANGES, and that is the registration
+#    working rather than a regression. `test_t069_changed_no_plan_decision_
+#    under_either_selection` above is still true OF ITS OWN ARTIFACT, which
+#    was measured before T070 and T072 landed; planning the pulled-in items IS
+#    T070. What replaces "nothing changed" is a one-for-one accounting.
+
+_REG_T076 = _SNAPSHOT_DIR / "closure-registration-038-t076.json"
+
+
+def _reg_t076() -> dict:
+    if not _REG_T076.is_file():
+        pytest.skip(
+            "no committed registration measurement at " + str(_REG_T076)
+            + " -- produce it with `python debug/run038_closure_census.py "
+            "T076`")
+    return json.loads(_REG_T076.read_text(encoding="utf-8"))
+
+
+def test_an_affixes_only_plan_carries_the_registered_process_rule_edges():
+    """THE TEST BOTH T076 ROWS NAME IN THEIR `verified_by`.
+
+    Each kind separately and by far category: one total would be satisfied by
+    the phoneme half working while the natural-class half stayed dead, which
+    is the asymmetry every audit in this file exists to catch.
+    """
+    reg = _reg_t076()
+    assert reg["task"] == "T076"
+    assert reg["narrow_selection"] == "AFFIXES"
+    live = reg["narrow"]["registry_live"]["closure"]
+    assert live["by_kind"]["PROCESS_RULE_TO_PHONEME"] == {
+        "edges": 32,
+        "far_categories": {"phonemes": 32},
+        "origins": {"pulled_in": 32},
+        "verified_by_nonempty": True,
+    }
+    assert live["by_kind"]["PROCESS_RULE_TO_NATURAL_CLASS"] == {
+        "edges": 10,
+        "far_categories": {"natural_classes": 10},
+        "origins": {"pulled_in": 10},
+        "verified_by_nonempty": True,
+    }
+    assert set(live["by_kind"]) == {
+        "AFFIX_TO_POS", "MSA_TO_FEAT_STRUC_TYPE",
+        "PROCESS_RULE_TO_PHONEME", "PROCESS_RULE_TO_NATURAL_CLASS",
+    }
+    assert live["total_edges"] == 259
+    assert live["pulled_in_by_category"] == {
+        "feature_struct_types": 2, "gram_categories": 6,
+        "natural_classes": 2, "phonemes": 16,
+    }
+
+
+def test_the_process_rule_edges_come_from_the_registry_and_nowhere_else():
+    """Emptying the registry must take all 259 edges with it. Without this,
+    the test above is satisfied by any code path that produces closure edges,
+    including one that ignores `CLOSURE_EDGES_VERIFIED` -- the fall-through
+    FR-018 forbids."""
+    reg = _reg_t076()
+    assert reg["narrow"]["registry_empty"]["closure"]["total_edges"] == 0
+
+
+def test_a_full_copy_still_carries_no_closure_edges_after_t076():
+    """Seed semantics, re-measured with seven rows registered instead of five.
+
+    Pinned per registration rather than once, because each new row adds far
+    endpoints that might not have been seeds. Phonemes and natural classes
+    are, so a full copy still records nothing -- and its composition is
+    therefore still required to be byte-identical with the registry emptied.
+    """
+    reg = _reg_t076()
+    assert reg["full_copy"]["registry_live"]["closure"]["total_edges"] == 0
+    assert reg["full_copy"]["registry_empty"]["closure"]["total_edges"] == 0
+    assert reg["full_copy"]["composition_unchanged_by_registration"] is True
+    assert (reg["full_copy"]["registry_live"]["composition"]
+            == reg["full_copy"]["registry_empty"]["composition"])
+
+
+def test_t076_added_exactly_one_decision_per_pulled_in_reference():
+    """What replaced "the registration changed no decision", and it is a
+    stronger claim than the one it replaced was by the time T076 ran.
+
+    26 distinct pulled-in references and 26 added decisions, matching per
+    category. Actions and overwrites BOTH count, because a pulled-in item the
+    destination already holds arrives as an overwrite -- 5 phoneme adds beside
+    11 phoneme overwrites is 16, the phoneme pull-in exactly.
+
+    A registration that perturbed anything else -- a skip, a dropped item, a
+    lost process rule, an action in a category nothing was pulled into --
+    breaks this even though the composition is allowed to move.
+    """
+    reg = _reg_t076()
+    live = reg["narrow"]["registry_live"]["composition"]
+    empty = reg["narrow"]["registry_empty"]["composition"]
+    pulled = reg["narrow"]["registry_live"]["closure"]["pulled_in_by_category"]
+
+    added: dict = {}
+    for bucket in ("actions", "overwrites"):
+        for category in set(live[bucket]) | set(empty[bucket]):
+            delta = live[bucket].get(category, 0) - empty[bucket].get(category, 0)
+            if delta:
+                added[category] = added.get(category, 0) + delta
+    assert added == pulled
+    assert sum(added.values()) == 26
+
+    # AFFIXES itself is untouched: the selection decided those, not the walk.
+    assert live["actions"]["affixes"] == empty["actions"]["affixes"] == 118
+    # ...and nothing but `enrichments` moved among the un-categorised counters.
+    for key in ("excluded_lossy", "dropped_items", "process_rules",
+                "skips_total"):
+        assert live[key] == empty[key], key
+    assert live["enrichments"] - empty["enrichments"] == 2

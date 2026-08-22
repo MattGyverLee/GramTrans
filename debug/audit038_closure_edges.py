@@ -133,6 +133,8 @@ _CANDIDATE_TASK = {
     "SLOT_TO_POS": "T068",
     "TEMPLATE_TO_POS": "T069",
     "TEMPLATE_TO_SLOT": "T069",
+    "PROCESS_RULE_TO_PHONEME": "T076",
+    "PROCESS_RULE_TO_NATURAL_CLASS": "T076",
 }
 
 
@@ -445,6 +447,12 @@ def _audit(proj) -> int:
         _GC.FEATURE_STRUCT_TYPES: (_piece_guids(_GC.FEATURE_STRUCT_TYPES), set()),
         _GC.INFLECTION_FEATURES: (_piece_guids(_GC.INFLECTION_FEATURES),
                                   _owned_symbolic_value_guids()),
+        # T076. Both are plain piece sets: `PhPhoneme` and the `PhNC*`
+        # classes are yielded directly by their own `enumerate_source`, so
+        # there is no owned-value analogue to the `IFsSymFeatVal` case that
+        # refused MSA_TO_INFL_FEATURE.
+        _GC.PHONEMES: (_piece_guids(_GC.PHONEMES), set()),
+        _GC.NATURAL_CLASSES: (_piece_guids(_GC.NATURAL_CLASSES), set()),
     }
 
     #: `(DependencyKind name, producer name, producer, SOURCE category, FAR
@@ -476,6 +484,22 @@ def _audit(proj) -> int:
         ("TEMPLATE_TO_SLOT", "affix_templates_slot_dependencies",
          _cats.affix_templates_slot_dependencies, _GC.AFFIX_TEMPLATES,
          _GC.SLOTS),
+        # T076. The outward references of an entry's MoAffixProcess rules,
+        # split the way T067 split `affixes_dependencies`. Both halves walk
+        # the rule's OWN InputOS contexts AND the shared
+        # PhPhonData.ContextsOS contexts its PhSequenceContext members
+        # reference -- the closure question is what must EXIST for the rule
+        # to be rebuildable, and that does not depend on who owns the context
+        # holding the pointer. The shared CONTEXT itself is deliberately not
+        # a candidate: no category enumerates a member of ContextsOS, which
+        # is the endpoint T089 refused, so it is co-created instead.
+        ("PROCESS_RULE_TO_PHONEME", "affixes_process_rule_phoneme_dependencies",
+         _cats.affixes_process_rule_phoneme_dependencies, _GC.AFFIXES,
+         _GC.PHONEMES),
+        ("PROCESS_RULE_TO_NATURAL_CLASS",
+         "affixes_process_rule_natural_class_dependencies",
+         _cats.affixes_process_rule_natural_class_dependencies, _GC.AFFIXES,
+         _GC.NATURAL_CLASSES),
     )
 
     relationships: dict = {}

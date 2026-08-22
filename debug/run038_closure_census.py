@@ -19,9 +19,9 @@ WHAT IT MEASURES, per task:
   1. FULL COPY, registry live vs emptied. Claim: **0** closure edges either
      way (seed semantics), and the plan's composition -- every action, skip,
      overwrite, excluded-lossy, dropped item, enrichment and process-rule
-     record, bucketed by category -- IDENTICAL. T070 (marking pulled-in items)
-     and T072 (deselecting them) have not landed, so at this stage a
-     registration must add EDGES and change no decision.
+     record, bucketed by category -- IDENTICAL. Unconditional, and it stays
+     that way: with every far endpoint already a seed the pulled-in set is
+     empty, so there is nothing a registration is entitled to change.
 
   2. NARROW SELECTION, registry live vs emptied. Claim: the registered edges
      are THERE, every one `origin="pulled_in"` with a non-empty `verified_by`,
@@ -29,6 +29,20 @@ WHAT IT MEASURES, per task:
      without it "the plan has N edges" is satisfied by any code path that
      produces closure edges, including one that ignores
      `CLOSURE_EDGES_VERIFIED` entirely -- the fall-through FR-018 forbids.
+
+     T076 CORRECTED THIS CLAIM'S OTHER HALF. It read "and change no decision",
+     on the stated premise that "T070 (marking pulled-in items) and T072
+     (deselecting them) have not landed". They have. PLANNING the pulled-in
+     items IS T070 -- an item with no `PlannedAction` cannot be shown as
+     pulled in (FR-015) or individually deselected (FR-016) -- so a narrow
+     selection's composition SHOULD change now, and a driver still demanding
+     otherwise would refuse every future registration for working. What is
+     asserted instead is ONE FOR ONE: every action or overwrite the
+     registration added is accounted for by a pulled-in reference, and no
+     other counter moves except `enrichments` (the UPDATE leg for a pulled-in
+     item the destination already held). On T076's AFFIXES-only run that
+     closes exactly at 26 = 16 phonemes + 6 POSes + 2 natural classes + 2
+     struct types.
 
   3. THE CENSUS. A real full transfer with the registry live, then the census
      gate, so the artifact is row-for-row comparable with the PREVIOUS task's
@@ -96,6 +110,26 @@ _TASKS = {
                          "SLOT_TO_POS"),
         "compare_census_to": "census-038-t068-registered.json",
     },
+    # T076. AFFIXES-only is the selection that can see these two: under a full
+    # copy the phonemes and natural classes are seeds in their own right, so
+    # no edge is recorded at all (the seed semantics this module's docstring
+    # explains). The three AFFIXES rows already registered appear here too,
+    # which is correct and is why `expect_kinds` names them: the same pieces
+    # carry all four relationships.
+    #
+    # `compare_census_to` is deliberately None, and that is a FINDING rather
+    # than an omission. The `-t067-`/`-t068-`/`-t069-` artifacts form a chain
+    # of pairwise equality comparisons that T102 measured as already behind
+    # the instrument (3 changed rows, 2 changed totals, from T087 and T099).
+    # Adding a fourth link would fail for that pre-existing drift and say
+    # nothing about T076. The chain is T102's to repair.
+    "T076": {
+        "select": "AFFIXES",
+        "expect_kinds": ("AFFIX_TO_POS", "MSA_TO_FEAT_STRUC_TYPE",
+                         "PROCESS_RULE_TO_PHONEME",
+                         "PROCESS_RULE_TO_NATURAL_CLASS"),
+        "compare_census_to": None,
+    },
 }
 
 
@@ -147,6 +181,44 @@ def _tally(values) -> dict:
     for v in values:
         out[v] = out.get(v, 0) + 1
     return out
+
+
+def _composition_delta(before: dict, after: dict) -> dict:
+    """Per-category DECISIONS added between two compositions (T076).
+
+    A decision is an action or an overwrite, and both count, because a
+    pulled-in item that the destination already holds arrives as an OVERWRITE
+    rather than an ADD -- T070 measured exactly that, and a delta that counted
+    only actions would under-report the pull-in and then "prove" the numbers
+    disagree.
+
+    Only positive deltas are reported: a registration that REMOVED a decision
+    is caught by `_composition_scalar_delta` and by the totals, and folding a
+    removal into this map as a negative would let it cancel an unrelated
+    addition.
+    """
+    out: dict = {}
+    for bucket in ("actions", "overwrites"):
+        for category in set(before.get(bucket, {})) | set(after.get(bucket, {})):
+            delta = (after.get(bucket, {}).get(category, 0)
+                     - before.get(bucket, {}).get(category, 0))
+            if delta:
+                out[category] = out.get(category, 0) + delta
+    return {k: v for k, v in sorted(out.items()) if v}
+
+
+def _composition_scalar_delta(before: dict, after: dict) -> dict:
+    """The non-per-category counters that moved.
+
+    `enrichments` is the one a registration is allowed to move: an
+    already-present pulled-in item is enriched rather than added. Anything
+    else moving -- a skip, a dropped item, a lost process rule -- is a
+    decision the registration changed and must be read, not absorbed.
+    """
+    keys = ("excluded_lossy", "dropped_items", "enrichments",
+            "process_rules", "skips_total")
+    return {k: after.get(k, 0) - before.get(k, 0)
+            for k in keys if after.get(k, 0) != before.get(k, 0)}
 
 
 def _closure_summary(plan) -> dict:
@@ -343,20 +415,73 @@ def main(argv) -> int:
                      row["origins"]))
 
     failures = []
+    nlive = narrow["registry_live"]["closure"]
     if not full["composition_unchanged_by_registration"]:
         failures.append("full-copy plan composition CHANGED: %r vs %r"
                         % (full["registry_live"]["composition"],
                            full["registry_empty"]["composition"]))
+    # T076 (2026-08-22) -- THE NARROW-SELECTION CLAIM HAD EXPIRED.
+    #
+    # This used to be an unconditional "the narrow composition must not
+    # change either", and the module docstring says why in its own words:
+    # "T070 (marking pulled-in items) and T072 (deselecting them) have not
+    # landed, so at this stage a registration must add EDGES and change no
+    # decision."
+    #
+    # T070 and T072 HAVE landed. Planning the pulled-in items IS T070 -- an
+    # item with no `PlannedAction` cannot be shown as pulled in (FR-015) or
+    # individually deselected (FR-016) -- so under a narrow selection the
+    # composition SHOULD now change, and a driver still demanding otherwise
+    # would refuse every future registration for doing its job. This is the
+    # same shape the rest of feature 038 keeps filing: a check written at one
+    # phase, still being read at a later one where it no longer means what it
+    # says.
+    #
+    # What replaces it is stricter than a removal, and is the assertion that
+    # actually says "the registration changed nothing it should not have":
+    # every planned action or overwrite the registration ADDED must be
+    # accounted for by a pulled-in reference, ONE FOR ONE. On T076's run that
+    # closes exactly -- 26 distinct pulled-in refs (16 phonemes, 6 POSes, 2
+    # natural classes, 2 struct types) against 26 added decisions (5+11
+    # phoneme, 4+2 POS, 2 natural class, 2 struct type) -- so a registration
+    # that perturbed anything else would still fail here.
+    #
+    # The FULL-COPY claim above is untouched and stays unconditional: there
+    # the pulled-in set is empty, so nothing may change at all.
     if not narrow["composition_unchanged_by_registration"]:
-        failures.append("%s-only plan composition CHANGED: %r vs %r"
-                        % (spec["select"], narrow["registry_live"]["composition"],
-                           narrow["registry_empty"]["composition"]))
+        added = _composition_delta(narrow["registry_empty"]["composition"],
+                                   narrow["registry_live"]["composition"])
+        pulled = dict(nlive["pulled_in_by_category"])
+        if added != pulled:
+            failures.append(
+                "%s-only composition changed by something OTHER than the "
+                "pulled-in items: added-per-category %r vs pulled-in "
+                "%r (live %r vs empty %r)"
+                % (spec["select"], added, pulled,
+                   narrow["registry_live"]["composition"],
+                   narrow["registry_empty"]["composition"]))
+        else:
+            print("[INFO] %s-only composition changed by EXACTLY the "
+                  "pulled-in items (%d), which is T070 working: %r"
+                  % (spec["select"], sum(added.values()), added))
+        scalars = _composition_scalar_delta(
+            narrow["registry_empty"]["composition"],
+            narrow["registry_live"]["composition"])
+        unexpected = {k: v for k, v in scalars.items() if k != "enrichments"}
+        if unexpected:
+            failures.append(
+                "%s-only registration moved a counter it must not: %r "
+                "(enrichments may move; a skip, a dropped item or a lost "
+                "process rule may not)" % (spec["select"], unexpected))
+        elif scalars:
+            print("[INFO] %s-only enrichments moved by %+d -- the UPDATE leg "
+                  "for pulled-in items the destination already held"
+                  % (spec["select"], scalars["enrichments"]))
     if full["registry_live"]["closure"]["total_edges"] != 0:
         failures.append(
             "a FULL COPY produced %d closure edge(s); seed semantics say it "
             "must produce none, so either walk() or the seed set moved"
             % full["registry_live"]["closure"]["total_edges"])
-    nlive = narrow["registry_live"]["closure"]
     if nlive["total_edges"] == 0:
         failures.append(
             "the %s-ONLY plan carries NO closure edges -- the registered "

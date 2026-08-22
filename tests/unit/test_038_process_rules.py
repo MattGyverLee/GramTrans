@@ -308,12 +308,19 @@ def failing_create(monkeypatch, spy):
     return spy
 
 
-def _ctx_and_target(spy=None, destination=(), allomorph_ops_refuses=False):
+def _ctx_and_target(spy=None, destination=(), allomorph_ops_refuses=False,
+                    contexts_os=None):
     """A run context whose destination holds `destination` addressably by GUID.
 
     `get_object_by_guid` is the offline half of `_resolve_target_by_guid` --
     the live path goes through the LCM object repository -- so a destination
     populated here is what FR-024's "resolve to the matched item" resolves to.
+
+    `contexts_os` (T076) is the destination's `PhPhonData.ContextsOS`. It
+    DEFAULTS TO ABSENT on purpose: a target with no phonological data is the
+    shape every pre-T076 test in this file was written against, and the
+    co-create path must report a reason on it rather than raise. Pass a
+    `_Seq()` to exercise the co-create.
     """
     def _get_factory(iface):
         if spy is not None:
@@ -321,8 +328,12 @@ def _ctx_and_target(spy=None, destination=(), allomorph_ops_refuses=False):
         return iface
 
     by_guid = {o.guid: o for o in destination}
+    cache = SimpleNamespace(DefaultAnalWs=1)
+    if contexts_os is not None:
+        cache.LangProject = SimpleNamespace(
+            PhonologicalDataOA=SimpleNamespace(ContextsOS=contexts_os))
     target = SimpleNamespace(
-        Cache=SimpleNamespace(DefaultAnalWs=1),
+        Cache=cache,
         GetFactory=_get_factory,
         get_object_by_guid=by_guid.get,
         Allomorphs=_AllomorphOps(allomorph_ops_refuses),
@@ -336,10 +347,12 @@ def _ctx_and_target(spy=None, destination=(), allomorph_ops_refuses=False):
     return ctx, target
 
 
-def _walk(entry, spy, destination=(), allomorph_ops_refuses=False):
+def _walk(entry, spy, destination=(), allomorph_ops_refuses=False,
+          contexts_os=None):
     """Run the Move-mode walk over `entry`, returning its dropped records."""
     new_entry = SimpleNamespace(LexemeFormOA=None, AlternateFormsOS=_Seq())
-    ctx, _target = _ctx_and_target(spy, destination, allomorph_ops_refuses)
+    ctx, _target = _ctx_and_target(spy, destination, allomorph_ops_refuses,
+                                   contexts_os)
     dropped: list = []
     categories._walk_entry_allomorphs(
         entry, new_entry, ctx, tag=None, identity_remap={}, dropped=dropped
@@ -733,7 +746,17 @@ def test_a_sequence_context_naming_a_shared_context_skips_the_rule(
     owned by the rule but its `MembersRS` name shared, project-level
     `PhPhonData.ContextsOS` contexts -- 6 of the 18 live rules. Creating the
     rule with an empty or partly-filled `MembersRS` is the silent content loss
-    FR-023 forbids, so the whole rule skips and the reason names the member."""
+    FR-023 forbids, so the whole rule skips and the reason names the member.
+
+    RE-POINTED BY T076, not left to pass by accident. T076 gave this engine a
+    co-create path for a shared context, so "absent from the destination" is
+    no longer sufficient on its own to skip -- the rule now skips only when
+    the context ALSO fails the co-create test. This fake fails it in the
+    plainest way available (`shared` has no `Owner`, so it is not a
+    `PhPhonData.ContextsOS` member as far as this engine can tell), and the
+    assertion below pins WHICH branch refused it. Without that pin this test
+    would keep passing while testing something it was never about.
+    """
     shared = _TargetObj(SHARED_CTX, "PhSimpleContextSeg")
     seq = _Member("PhSequenceContext", "ctx-seq-0006", MembersRS=[shared])
     rule = _Rule("rule-seq-0001", inputs=[seq],
@@ -749,6 +772,10 @@ def test_a_sequence_context_naming_a_shared_context_skips_the_rule(
     assert dropped[0].item_name == "MoAffixProcess"
     assert SHARED_CTX in dropped[0].reason
     assert "PhPhonData.ContextsOS" in dropped[0].reason
+    # T076: WHICH refusal. This is the "neither present nor co-createable"
+    # branch, not the co-create's own "the referent did not resolve".
+    assert "nor a PhPhonData.ContextsOS context this engine can co-create" \
+        in " ".join(dropped[0].reason.split())
     records = _rule_records(ctx)
     assert len(records) == 1 and records[0].reproduced is False
     assert records[0].not_reproducible_reason
@@ -794,6 +821,335 @@ def test_a_sequence_context_member_owned_by_the_rule_is_wired_to_the_new_one(
     assert dropped == []
     new_rule = new_entry.LexemeFormOA
     assert new_rule.InputOS[1].MembersRS[0] is new_rule.InputOS[0]
+
+
+# ===========================================================================
+# T076 -- the shared PhPhonData.ContextsOS context is CO-CREATED
+# ===========================================================================
+#
+# WHY CO-CREATE AND NOT CLOSURE, which is what T076's task line asked for.
+# Measured read-only on both corpora
+# (`debug/audit038_t076_process_contexts.py`, artifact
+# `tests/integration/_snapshots/t076-process-context-audit.json`): all 6 far
+# endpoints on `Mbugwe LizzieHC practice` are owned by
+# `PhPhonData.ContextsOS`, and **0 of 6 are reachable from
+# `PhPhonData.PhonRulesOS`** -- the only path in this engine that ever creates
+# a `PhSimpleContext*` into a destination's `ContextsOS`. No `GrammarCategory`
+# enumerates a member of `ContextsOS` either, so an edge naming one is the
+# unplannable far endpoint T089 refused to register. What IS registered is the
+# referent one hop out (`PROCESS_RULE_TO_PHONEME` /
+# `PROCESS_RULE_TO_NATURAL_CLASS`), measured 6 of 6 enumerable.
+
+
+def _phon_data_owned(guid, class_name, referent=None, plus=(), minus=()):
+    """A shared context as the SOURCE holds it: owned by `PhPhonData`.
+
+    The `Owner` is what distinguishes a co-createable shared context from any
+    other unowned member, so it is set explicitly here rather than defaulted
+    -- a fake that carried it by accident would make the narrowing untestable.
+    """
+    kwargs = {"Owner": _TargetObj("owner-phondata", "PhPhonData")}
+    if referent is not None:
+        kwargs["FeatureStructureRA"] = referent
+    if class_name == "PhSimpleContextNC":
+        kwargs["PlusConstrRS"] = list(plus)
+        kwargs["MinusConstrRS"] = list(minus)
+    return _Member(class_name, guid, **kwargs)
+
+
+def _shared_ctx_rule(shared, rule_guid="rule-shared-0001",
+                     entry_guid="aaaaaaaa-0000-0000-0000-0000000000c4"):
+    seq = _Member("PhSequenceContext", "ctx-seq-c4", MembersRS=[shared])
+    rule = _Rule(rule_guid, inputs=[seq],
+                 outputs=[_Member("MoCopyFromInput", "out-c4",
+                                  ContentRA=seq)])
+    return _Entry(entry_guid, lexeme_form=rule)
+
+
+def test_a_shared_phon_data_context_is_co_created_and_wired(_stub_lcm, spy):
+    """The headline: the rule that used to skip now transfers, and the
+    context it needed was BUILT rather than found.
+
+    Three things are asserted together because any one alone would pass on a
+    wrong fix: the rule arrives, the context lands in the destination's
+    `ContextsOS` carrying its SOURCE GUID (so a re-run recognises it), and the
+    sequence's `MembersRS` points at that very object. A rule that arrived
+    with an empty `MembersRS` would satisfy the first assertion alone, and
+    that is exactly the silent content loss FR-023 forbids.
+    """
+    referent = _TargetObj(DEST_PHONEME, "PhPhoneme")
+    shared = _phon_data_owned(SHARED_CTX, "PhSimpleContextSeg", referent)
+    contexts_os = _Seq()
+
+    new_entry, dropped, ctx = _walk(
+        _shared_ctx_rule(shared), spy, destination=(referent,),
+        contexts_os=contexts_os)
+
+    assert dropped == []
+    new_rule = new_entry.LexemeFormOA
+    assert new_rule.ClassName == "MoAffixProcess"
+    assert [c.ClassName for c in contexts_os] == ["PhSimpleContextSeg"]
+    assert [c.guid for c in contexts_os] == [SHARED_CTX]
+    assert contexts_os[0].FeatureStructureRA is referent
+    assert new_rule.InputOS[0].MembersRS[0] is contexts_os[0]
+    records = _rule_records(ctx)
+    assert len(records) == 1 and records[0].reproduced is True
+
+
+def test_the_co_created_context_is_reported_on_the_input_spec(_stub_lcm, spy):
+    """SC-010 admits no unreported outcome, and a write into a SHARED,
+    project-level collection made as a side effect of transferring a lexical
+    entry is the write a reader is least able to see coming. So the source
+    GUID of every co-created context is recorded on the input spec.
+
+    The negative half is the one that makes the field mean something: a rule
+    that co-creates nothing must record an EMPTY tuple, or "this run created
+    a shared context" would be indistinguishable from "this field exists".
+    """
+    referent = _TargetObj(DEST_NC, "PhNCFeatures")
+    shared = _phon_data_owned(SHARED_CTX, "PhSimpleContextNC", referent)
+
+    _entry, dropped, ctx = _walk(
+        _shared_ctx_rule(shared), spy, destination=(referent,),
+        contexts_os=_Seq())
+    assert dropped == []
+    specs = _rule_records(ctx)[0].input_contexts
+    assert [s.co_created_shared for s in specs] == [(SHARED_CTX,)]
+
+    # ...and the ordinary rule, which co-creates nothing.
+    rule, destination = _reproducible_rule()
+    _entry2, dropped2, ctx2 = _walk(
+        _Entry("aaaaaaaa-0000-0000-0000-0000000000c5", lexeme_form=rule),
+        spy, destination=destination, contexts_os=_Seq())
+    assert dropped2 == []
+    assert all(s.co_created_shared == ()
+               for s in _rule_records(ctx2)[0].input_contexts)
+
+
+def test_a_shared_context_already_present_is_not_co_created_twice(
+    _stub_lcm, spy
+):
+    """SC-008 idempotence, and the reason identity is still tried FIRST.
+
+    On run 2 the context created by run 1 is in the destination under its
+    source GUID, so `_resolve_process_referent` finds it and the co-create
+    never runs. If the co-create ran anyway the destination would grow a
+    second context per run -- the duplication this feature exists to remove,
+    reintroduced by its own fix.
+    """
+    referent = _TargetObj(DEST_PHONEME, "PhPhoneme")
+    shared = _phon_data_owned(SHARED_CTX, "PhSimpleContextSeg", referent)
+    already_there = _TargetObj(SHARED_CTX, "PhSimpleContextSeg")
+    contexts_os = _Seq()
+
+    new_entry, dropped, _ctx = _walk(
+        _shared_ctx_rule(shared), spy,
+        destination=(referent, already_there), contexts_os=contexts_os)
+
+    assert dropped == []
+    assert list(contexts_os) == []          # nothing was built
+    assert new_entry.LexemeFormOA.InputOS[0].MembersRS[0] is already_there
+
+
+def test_a_context_owned_by_anything_but_phon_data_is_not_co_created(
+    _stub_lcm, spy
+):
+    """The narrowing, and it needed its OWN test rather than riding on the
+    unowned case.
+
+    Mutation M2 found this gap: flipping the owner comparison to `return True`
+    left every test green, because the one fake that reached the check had no
+    `Owner` at all and was refused one line earlier. So the half of the
+    predicate that says WHICH owner counts was untested, and a context owned
+    by some other object would have quietly acquired a create path this task
+    measured nothing about.
+
+    The measurement this test protects: all 6 live far endpoints are owned by
+    `PhPhonData` (flid 5099004). Anything else is unmeasured, and an
+    unmeasured owner must keep the FR-025 skip rather than inherit one.
+    """
+    referent = _TargetObj(DEST_PHONEME, "PhPhoneme")
+    elsewhere = _Member(
+        "PhSimpleContextSeg", SHARED_CTX,
+        Owner=_TargetObj("owner-other", "PhRegularRule"),
+        FeatureStructureRA=referent)
+    contexts_os = _Seq()
+
+    new_entry, dropped, _ctx = _walk(
+        _shared_ctx_rule(elsewhere), spy, destination=(referent,),
+        contexts_os=contexts_os)
+
+    assert new_entry.LexemeFormOA is None
+    assert list(contexts_os) == []
+    assert len(dropped) == 1
+    assert "nor a PhPhonData.ContextsOS context this engine can co-create" \
+        in " ".join(dropped[0].reason.split())
+
+
+def test_a_shared_context_whose_referent_is_absent_still_skips(_stub_lcm, spy):
+    """The co-create is not a licence to build a context that matches nothing.
+
+    This engine can manufacture the two-field context object; it cannot
+    manufacture the phoneme or natural class it points AT. When that referent
+    does not resolve, co-creating would produce a context matching nothing --
+    a rule that silently stops firing while the run reports success, which is
+    the FR-024 failure the whole skip exists for. So the rule still skips and
+    the reason names the referent, not the context.
+    """
+    referent = _TargetObj(DEST_PHONEME, "PhPhoneme")
+    shared = _phon_data_owned(SHARED_CTX, "PhSimpleContextSeg", referent)
+
+    new_entry, dropped, ctx = _walk(
+        _shared_ctx_rule(shared), spy, destination=(), contexts_os=_Seq())
+
+    assert new_entry.LexemeFormOA is None
+    assert len(dropped) == 1
+    reason = " ".join(dropped[0].reason.split())
+    assert DEST_PHONEME in reason
+    assert "co-creating the context would produce one that matches nothing" \
+        in reason
+    assert _rule_records(ctx)[0].reproduced is False
+
+
+def test_a_shared_context_naming_no_referent_at_all_skips(_stub_lcm, spy):
+    """A `FeatureStructureRA` of None in the SOURCE. Reproducing it faithfully
+    would mean creating a context that matches nothing by construction, which
+    FR-023 refuses for the same reason the rule's own members refuse it."""
+    shared = _phon_data_owned(SHARED_CTX, "PhSimpleContextNC", None)
+
+    _entry, dropped, _ctx = _walk(
+        _shared_ctx_rule(shared), spy, destination=(), contexts_os=_Seq())
+
+    assert len(dropped) == 1
+    assert "names no natural class at all" in " ".join(
+        dropped[0].reason.split()) or "names no" in dropped[0].reason
+
+
+def test_a_shared_context_carrying_feature_constraints_skips(_stub_lcm, spy):
+    """`PhFeatureConstraint` has zero live instances and ties into the feature
+    system. The rule's OWN `PhSimpleContextNC` members already ship behind
+    that skip (create-path contract section 4); a shared one gets the same
+    treatment, because widening the create path to a class no corpus
+    exercises is the guess that contract refuses."""
+    referent = _TargetObj(DEST_NC, "PhNCFeatures")
+    shared = _phon_data_owned(SHARED_CTX, "PhSimpleContextNC", referent,
+                              plus=[_TargetObj("constr-1",
+                                               "PhFeatureConstraint")])
+
+    _entry, dropped, _ctx = _walk(
+        _shared_ctx_rule(shared), spy, destination=(referent,),
+        contexts_os=_Seq())
+
+    assert len(dropped) == 1
+    assert "PlusConstrRS" in dropped[0].reason
+
+
+@pytest.mark.parametrize("unexercised_class", [
+    "PhSimpleContextBdry", "PhIterationContext",
+])
+def test_an_unexercised_shared_context_class_is_not_co_created(
+    _stub_lcm, spy, unexercised_class
+):
+    """`Mbugwe LizzieHC practice` really does hold 22 `PhSimpleContextBdry`
+    and 11 `PhIterationContext` in `ContextsOS`, and NOT ONE is referenced by
+    any of its 18 affix process rules -- measured, not assumed. So admitting
+    them to the co-create would ship a create path no corpus can check. They
+    stay behind the FR-025 skip, and the destination's `ContextsOS` is left
+    untouched."""
+    shared = _phon_data_owned(SHARED_CTX, unexercised_class,
+                              _TargetObj(DEST_PHONEME, "PhPhoneme"))
+    contexts_os = _Seq()
+
+    _entry, dropped, _ctx = _walk(
+        _shared_ctx_rule(shared), spy,
+        destination=(_TargetObj(DEST_PHONEME, "PhPhoneme"),),
+        contexts_os=contexts_os)
+
+    assert len(dropped) == 1
+    assert list(contexts_os) == []
+
+
+def test_a_destination_with_no_contexts_os_reports_rather_than_raises(
+    _stub_lcm, spy
+):
+    """Fail-soft, and it is not politeness. A crash here would replace a
+    REPORTED loss with an unreported one -- the run would die mid-entry
+    instead of skipping one rule with a reason -- which is strictly worse
+    under Principle I."""
+    referent = _TargetObj(DEST_PHONEME, "PhPhoneme")
+    shared = _phon_data_owned(SHARED_CTX, "PhSimpleContextSeg", referent)
+
+    new_entry, dropped, _ctx = _walk(
+        _shared_ctx_rule(shared), spy, destination=(referent,),
+        contexts_os=None)          # no PhPhonData on the destination at all
+
+    assert new_entry.LexemeFormOA is None
+    assert len(dropped) == 1
+    assert "ContextsOS" in dropped[0].reason
+
+
+# --- T076: the two registered closure producers ----------------------------
+
+def test_the_process_rule_producers_are_narrow_and_see_shared_contexts(
+    _stub_lcm
+):
+    """The producers registered under `PROCESS_RULE_TO_PHONEME` and
+    `PROCESS_RULE_TO_NATURAL_CLASS`.
+
+    NARROW is asserted in both directions -- each returns only its own far
+    category -- because a producer that leaked the other's edges would make
+    one row's `verified_by` cover two relationships, the substitution FR-018
+    exists to prevent and the reason T067 split the composite at all.
+
+    The SHARED context is in this fixture on purpose: the closure question is
+    what must exist for the rule to be rebuildable, and that does not depend
+    on whether the context holding the pointer is owned by the rule or by
+    `PhPhonData`. A producer that walked only `InputOS` would miss the
+    referent of every condition-4 rule -- the 6 this task is about.
+    """
+    from gramtrans.Lib.models import GrammarCategory
+
+    own_nc = _Member("PhSimpleContextNC", "ctx-nc-own",
+                     FeatureStructureRA=_TargetObj(DEST_NC, "PhNCSegments"),
+                     PlusConstrRS=[], MinusConstrRS=[])
+    shared_seg = _phon_data_owned(
+        SHARED_CTX, "PhSimpleContextSeg",
+        _TargetObj(DEST_PHONEME, "PhPhoneme"))
+    seq = _Member("PhSequenceContext", "ctx-seq-prod",
+                  MembersRS=[own_nc, shared_seg])
+    inserted = "9999210f-0000-0000-0000-00000000dddd"
+    rule = _Rule("rule-prod-0001", inputs=[own_nc, seq],
+                 outputs=[_Member("MoInsertPhones", "out-prod",
+                                  ContentRS=[_TargetObj(inserted,
+                                                        "PhPhoneme")])])
+    entry = _Entry("aaaaaaaa-0000-0000-0000-0000000000c6", lexeme_form=rule)
+
+    phonemes = categories.affixes_process_rule_phoneme_dependencies(entry)
+    classes = categories.affixes_process_rule_natural_class_dependencies(entry)
+
+    assert set(phonemes) == {
+        (GrammarCategory.PHONEMES, DEST_PHONEME),   # via the SHARED context
+        (GrammarCategory.PHONEMES, inserted),       # via MoInsertPhones
+    }
+    assert set(classes) == {(GrammarCategory.NATURAL_CLASSES, DEST_NC)}
+    assert all(ref[0] is GrammarCategory.PHONEMES for ref in phonemes)
+    assert all(ref[0] is GrammarCategory.NATURAL_CLASSES for ref in classes)
+
+
+def test_the_process_rule_producers_are_silent_on_an_entry_with_no_rules(
+    _stub_lcm
+):
+    """`Ejagham Mini` holds zero `MoAffixProcess` rules and the audit reports
+    NO_DATA there rather than CONFIRMED. An entry with an ordinary allomorph
+    must contribute no edges at all -- otherwise the closure would pull in
+    phonemes for a rule that does not exist, and every AFFIXES piece in a
+    corpus like that would acquire dependencies it has no use for."""
+    entry = _Entry("aaaaaaaa-0000-0000-0000-0000000000c7",
+                   lexeme_form=_Form("plain-allo", "MoAffixAllomorph"))
+
+    assert categories.affixes_process_rule_phoneme_dependencies(entry) == ()
+    assert categories.affixes_process_rule_natural_class_dependencies(
+        entry) == ()
 
 
 @pytest.mark.parametrize("unexercised", [

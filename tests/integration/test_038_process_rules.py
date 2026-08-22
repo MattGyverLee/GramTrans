@@ -219,9 +219,12 @@ def test_the_only_rules_skipped_are_the_shared_context_ones(snapshot):
     failure would be a different defect wearing the same skip, and this is
     what tells them apart.
 
-    T077 (Phase 8) re-runs the driver after T076's closure lands; this
-    assertion then holds vacuously over an empty set, and
-    `test_the_phase_6a_split_is_what_was_measured` is the one that changes.
+    T077 LANDED 2026-08-22 and did NOT make this vacuous, because it did not
+    overwrite this artifact -- see the Phase 8 block below for why (T102's
+    chain). This now reads as the recorded BEFORE: at the moment it was
+    measured, 6 rules were skipped and condition 4 was the only cause. The
+    AFTER is `test_t077_all_eighteen_rules_transfer`, and keeping both is what
+    makes T076's claim a measurable delta rather than an assertion.
     """
     for row in snapshot["report"]["process_rules_not_reproduced"]:
         assert "PhPhonData.ContextsOS" in row["reason"], (
@@ -233,9 +236,11 @@ def test_the_only_rules_skipped_are_the_shared_context_ones(snapshot):
 def test_the_phase_6a_split_is_what_was_measured(snapshot):
     """The measured split, pinned so a regression is visible.
 
-    This is the ONE assertion T077 updates -- to 18 reproduced and 0 skipped --
-    and it is deliberately separate from the invariants above so that flipping
-    the phase does not mean rewriting the file.
+    Written expecting T077 to CHANGE this line to 18/0. T077 instead added a
+    second artifact and left this one standing, so the line still says 12/6 --
+    and that is the better outcome: an expectation edited in place erases the
+    before, while a second artifact lets the delta itself be asserted
+    (`test_t077_moved_exactly_nineteen_objects_and_no_others`).
     """
     report = snapshot["report"]
     expected_skipped = sum(
@@ -364,6 +369,196 @@ def test_the_duplicate_identity_verdict_is_a_source_property(census):
     assert census["verdict"] == "DUPLICATE_IDENTITY"
 
 
+# ===========================================================================
+# T076 / T077 (2026-08-22) -- Phase 8: the AFTER, beside the BEFORE
+# ===========================================================================
+#
+# The three artifacts above are NOT overwritten, and that is deliberate rather
+# than cautious. `census-038-mbugwe-phase6.json` is one link in the pairwise
+# equality chain `test_038_closure_edge_audit.py` maintains, and T076 MOVES
+# object counts -- which is what it is for -- so replacing that link would
+# turn three unrelated tests red. T102 records exactly this hazard. So T077's
+# run wrote its own pair (`GT038_PHASE6_SNAPSHOT_SUFFIX=-t077`) and the
+# earlier pair stands as the recorded BEFORE.
+#
+# Keeping both is worth more than tidiness: the claim T076 makes is a DELTA
+# ("the 6 condition-4 rules now transfer, and nothing else moved"), and a
+# delta cannot be asserted from one artifact.
+
+_SNAPSHOT_T077 = (Path(__file__).parent / "_snapshots"
+                  / "process-rules-038-t077-mbugwe.json")
+_CENSUS_T077 = (Path(__file__).parent / "_snapshots"
+                / "census-038-t077-mbugwe-phase6.json")
+_MEMBERS_T077 = (Path(__file__).parent / "_snapshots"
+                 / "t077-membersrs-completeness.json")
+
+
+@pytest.fixture(scope="module")
+def snapshot_t077():
+    if not _SNAPSHOT_T077.is_file():
+        pytest.skip("no committed T077 measurement at " + str(_SNAPSHOT_T077))
+    return json.loads(_SNAPSHOT_T077.read_text(encoding="utf-8"))
+
+
+@pytest.fixture(scope="module")
+def census_t077():
+    if not _CENSUS_T077.is_file():
+        pytest.skip("no committed T077 census at " + str(_CENSUS_T077))
+    return json.loads(_CENSUS_T077.read_text(encoding="utf-8"))
+
+
+@pytest.fixture(scope="module")
+def members_t077():
+    if not _MEMBERS_T077.is_file():
+        pytest.skip("no committed T077 MembersRS reading at "
+                    + str(_MEMBERS_T077))
+    return json.loads(_MEMBERS_T077.read_text(encoding="utf-8"))
+
+
+def test_t077_all_eighteen_rules_transfer(snapshot_t077):
+    """T077's headline. 18 of 18, and NO rule left on any skip path.
+
+    The empty `process_rules_not_reproduced` is asserted as well as the count
+    because "18 reproduced" and "0 skipped" are different claims: a run that
+    reproduced 18 and ALSO reported skips would mean the report double-counts,
+    which is the defect T063 found in `report.build` and fixed.
+    """
+    report = snapshot_t077["report"]
+    assert report["process_rules_total"] == SOURCE_RULES
+    assert report["process_rules_reproduced"] == SOURCE_RULES
+    assert report["process_rules_not_reproduced"] == []
+    assert snapshot_t077["delta"]["MoAffixProcess"] == SOURCE_RULES
+
+
+def test_t077_no_rule_was_downgraded_either(snapshot_t077):
+    """The invariant that had to survive the fix, re-asserted on the AFTER.
+
+    `MoAffixAllomorph` gaining exactly its source count is the signal that
+    distinguishes 18 rebuilt rules from 18 rules quietly turned into plain
+    allomorphs. Six more rules now transfer, and this number did NOT move --
+    which is what says the six arrived as rules.
+    """
+    assert snapshot_t077["delta"]["MoAffixAllomorph"] == SOURCE_AFFIX_ALLOMORPHS
+    assert snapshot_t077["delta"]["MoStemAllomorph"] == 137
+
+
+def test_t077_every_rule_matches_its_source_shape(snapshot_t077):
+    """Per rule, not merely in aggregate. Aggregate totals can balance while
+    individual rules are wrong in compensating directions."""
+    src = {r["guid"]: r for r in snapshot_t077["source_rule_shapes"]}
+    dest = {r["guid"]: r for r in snapshot_t077["after_rule_shapes"]}
+    assert set(src) == set(dest)
+    for guid, shape in sorted(src.items()):
+        assert dest[guid] == shape, guid
+
+
+def test_t077_every_sequence_arrived_with_its_members_intact(members_t077):
+    """The clause T077 is actually about, and the one no count can answer.
+
+    A `PhSequenceContext` counts as ONE input member whether its `MembersRS`
+    holds three references or none, so every assertion above would be
+    satisfied by a rule that arrived with an EMPTY sequence -- the
+    partly-filled `MembersRS` FR-023 calls silent content loss and the exact
+    outcome the condition-4 skip existed to prevent. So the ORDERED member
+    GUID list is compared per sequence
+    (`debug/verify038_t077_membersrs.py`, both projects read-only).
+    """
+    assert members_t077["source_rules"] == SOURCE_RULES
+    assert members_t077["destination_rules"] == SOURCE_RULES
+    assert members_t077["source_sequences"] == 6
+    assert members_t077["sequences_identical"] == 6
+    assert members_t077["sequences_empty_in_destination"] == 0
+    assert members_t077["findings"] == []
+
+
+def test_t077_the_six_shared_contexts_were_co_created(members_t077):
+    """The mechanism, measured in the destination rather than inferred from
+    the rule count.
+
+    6 shared `PhPhonData.ContextsOS` contexts are referenced by a rule
+    sequence and 6 are present in the destination, none missing. Before T076
+    that number was 0 -- nothing in this engine created a `ContextsOS` member
+    that a phonological rule did not also reference, and the audit measured
+    0 of these 6 as reachable from `PhonRulesOS`.
+    """
+    assert members_t077["shared_contexts_referenced_by_a_sequence"] == 6
+    assert members_t077["shared_contexts_present_in_destination"] == 6
+    assert members_t077["shared_contexts_missing_from_destination"] == []
+
+
+def test_t077_p4_is_now_satisfied_in_both_halves(census_t077):
+    """T064's predicate P4, which four passes deliberately left open.
+
+    Both halves, because either alone can be satisfied by the defect itself.
+    """
+    proc = _row(census_t077, "MoAffixProcess")
+    assert proc["source_count"] == SOURCE_RULES
+    assert proc["destination_count_total"] == SOURCE_RULES
+    assert proc["difference"] == 0
+    assert proc["verdict_class"] == "MATCHED"
+
+    allo = _row(census_t077, "MoAffixAllomorph")
+    assert allo["source_count"] == SOURCE_AFFIX_ALLOMORPHS
+    assert allo["destination_count_total"] == SOURCE_AFFIX_ALLOMORPHS
+    assert allo["difference"] == 0
+    assert allo["verdict_class"] == "MATCHED"
+
+
+def test_t077_moved_exactly_nineteen_objects_and_no_others(census, census_t077):
+    """The delta, and the reason both artifacts are kept.
+
+    Four rows move and their arithmetic closes exactly against
+    `total_shortfall`:
+
+        MoAffixProcess      -6  ->   0   (+6, the six rules)
+        PhSequenceContext  -17  -> -11   (+6, their own sequences)
+        PhSimpleContextNC  -28  -> -23   (+5, co-created shared contexts)
+        PhSimpleContextSeg -23  -> -21   (+2, one co-created, one rule-owned)
+                                    ----
+                                     19  == 10262 - 10243
+
+    Asserting the TOTAL as well as the rows is what makes this a claim about
+    the whole project rather than about four rows somebody remembered to look
+    at: a fifth row that moved would break the sum even if nobody named it.
+    """
+    expected = {
+        "MoAffixProcess": (-6, 0),
+        "PhSequenceContext": (-17, -11),
+        "PhSimpleContextNC": (-28, -23),
+        "PhSimpleContextSeg": (-23, -21),
+    }
+    for cls, (was, now) in expected.items():
+        assert _row(census, cls)["difference"] == was, cls
+        assert _row(census_t077, cls)["difference"] == now, cls
+
+    moved = sum(now - was for was, now in expected.values())
+    assert moved == 19
+    assert (census["totals"]["total_shortfall"]
+            - census_t077["totals"]["total_shortfall"]) == moved
+    assert (census["totals"]["unexplained_shortfall"]
+            - census_t077["totals"]["unexplained_shortfall"]) == moved
+    assert census_t077["totals"]["classes_matched"] == (
+        census["totals"]["classes_matched"] + 1)
+
+
+def test_t077_did_not_change_the_duplicate_identity_verdict(census,
+                                                            census_t077):
+    """Exit 3 stands, for the SAME cause it always had.
+
+    `PhNCFeatures`'s 66 duplicate extras are a faithfully reproduced source
+    property (FLEx auto-names one natural class per phonological rule), and
+    they are unchanged by T076. Asserting that the verdict did NOT improve is
+    as important as asserting the rows that did: a fix that quietly silenced
+    an unrelated failure would be indistinguishable here from one that
+    addressed it.
+    """
+    assert census["verdict"] == census_t077["verdict"] == "DUPLICATE_IDENTITY"
+    assert census["exit_code"] == census_t077["exit_code"] == 3
+    assert (census["totals"]["duplicate_extra_objects"]
+            == census_t077["totals"]["duplicate_extra_objects"] == 66)
+    assert _row(census_t077, "PhNCFeatures")["verdict_class"] == "MATCHED"
+
+
 def test_the_reported_rules_are_readable_as_accounted(census_t087):
     """T087, CLOSED. Was `test_the_reported_rules_are_not_yet_readable_as_
     accounted`, which pinned `unexplained_shortfall == 6` and
@@ -476,3 +671,51 @@ def test_the_pre_fix_artifact_is_kept_and_differs_only_by_the_instrument(
         "exit 3 is the PhNCFeatures duplicate finding this file already pins "
         "as a source property; accounting 6 rules does not and must not move it"
     )
+
+
+def test_t064_the_gate_clause_is_met_the_way_t086_amended_it(census_t077):
+    """T064's third clause, satisfied MECHANICALLY rather than in prose.
+
+    T064's own text set the bar: "a gate that has not returned its own green
+    is not a gate that passed". `gate --phase 4` still exits 3, so that bar is
+    not cleared by the exit code alone -- and T086 already met this exact
+    situation on T075/P2 and amended the clause rather than bending the gate.
+    The amended form is: **the predicate is satisfied, and every row that
+    decides the exit code lies provably OUTSIDE the classes this phase names,
+    proved in a test rather than asserted in prose.**
+
+    All three legs are checked here, off the shipped predicate rather than a
+    hand-copied class list, so the scope cannot drift from the one
+    `evaluate_phase` enforces:
+
+      * the predicate is satisfied with no failures;
+      * `phase_scoped_suppressions(artifact, 4)` is EMPTY -- no capped row
+        falls inside phase 4;
+      * the ONLY row carrying duplicates is `PhNCFeatures`, which is not one
+        of phase 4's two classes, and which T063 measured as a faithfully
+        reproduced source property (113 -> 113 MATCHED, FLEx auto-names one
+        natural class per phonological rule).
+
+    Bounding the EXIT CODE to the phase was rejected by T086 and is still
+    rejected: it would exit 0 on a run that lost 1643 objects. The gate is
+    unchanged and still exits 3.
+    """
+    from gramtrans.Lib import census as census_mod
+
+    scope = census_mod.phase_classes(4)
+    assert scope == {"MoAffixProcess", "MoAffixAllomorph"}
+
+    result = census_mod.evaluate_phase(census_t077, 4)
+    assert result.satisfied is True
+    assert result.failures == ()
+
+    assert census_mod.phase_scoped_suppressions(census_t077, 4) == ()
+
+    duplicated = {row["class"] for row in census_t077["classes"]
+                  if (row.get("duplicates") or {}).get("extra_objects")}
+    assert duplicated == {"PhNCFeatures"}
+    assert not (duplicated & scope), (
+        "a phase-4 class now carries duplicates -- the exit code is no longer "
+        "decided outside this phase and T064's clause is no longer met"
+    )
+    assert census_t077["exit_code"] == 3
