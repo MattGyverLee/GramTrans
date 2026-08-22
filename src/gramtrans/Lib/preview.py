@@ -102,6 +102,78 @@ else:
 # the two mappings separately for exactly this reason.
 
 
+# WHO CALLS THIS, AND THE TWO SITES THAT DELIBERATELY DO NOT (T105).
+#
+# T031 landed this seam with no production caller. T092 measured the
+# consequence: the question it answers was being answered FOUR more times in
+# `categories.py` by open-coded `matcher.resolve_match` calls, and one of the
+# four had already drifted -- it lost the enumeration-failure warning below and
+# converted the ambiguity error this function propagates into a silent
+# "unresolved". T092 kept the seam on that evidence and filed T105 to route the
+# bypasses "or record per site why not". Both outcomes happened, so the list is
+# written out here: an unexplained entry is how T092's condition returns.
+#
+# ROUTED (T105). Both hold a `RunContext`, so both reach this function without
+# a signature change, and both routings are behaviour-preserving:
+#
+#   * `categories._process_referent_by_natural_key` -- reproduced the candidate
+#     branch below line for line. Routing it is what recovers the
+#     `_log.warning`, the ONE behaviour this change adds. It keeps its own
+#     `except NaturalKeyAmbiguityError` at the call site: this function's
+#     contract is what it RAISES, that caller's is what it does with the raise,
+#     and the two were never the same question. Its docstring says which
+#     reading won and on what measurement.
+#   * `categories._plan_natural_key_match` -- supplies its caller's own
+#     candidate enumeration through `candidates=`, which is the parameter's
+#     purpose. It propagates ambiguity, agreeing with this function already.
+#
+# NOT ROUTED, AND WHY -- the deviation is load-bearing in both cases. Each
+# takes the two project handles ALREADY RESOLVED rather than a `RunContext`, so
+# routing them needs a handle-pair entry point on this seam. That entry point
+# was considered and rejected, because each site also needs this function to
+# SKIP two of the four services it exists to provide, which leaves nothing for
+# it to do but forward its arguments:
+#
+#   * `categories._match_collection_child` (T044) -- answers "is this child
+#     already in THIS collection?", so the registered project-wide scope is
+#     wrong for it by design. More decisively, six of the seven POS-owned
+#     collections hold classes with NO natural-key binding at all --
+#     `MoInflAffixSlot`, `MoInflAffixTemplate`, `FsFeatDefn`, `MoStemName`,
+#     `MoInflClass`, and `ReferenceFormsOC`, whose target type is `IFsFeatStruc`
+#     (verified read-only via FLExToolsMCP against `IPartOfSpeech`). Only
+#     `SubPossibilitiesOS` carries one: the slot is DECLARED `ICmPossibility`
+#     and its runtime children under a category owner are `PartOfSpeech`, which
+#     is why that site keys on the child's own `ClassName` rather than on the
+#     slot's declared type. This function returns None for an unbound class --
+#     correctly -- so routing that site would answer None for six collections
+#     in seven, its caller would stop matching existing children, and run 2
+#     would re-add every child that run 1 wrote. That is the exact SC-008
+#     re-run defect T044 exists to prevent.
+#   * `categories._resolve_target_pos_by_natural_key` (T032) -- enumerates
+#     candidates with `_iter_pos`, i.e. `handle.POS.GetAll(recursive=True)`,
+#     which both a live host and the host-free fakes answer. The registered
+#     scope for `PartOfSpeech` is `census.objects_in_class`, which needs a live
+#     `SIL.LCModel` repository interface and raises `CensusError` without one;
+#     through the branch below that becomes "no candidates", so routing it with
+#     the default scope would turn every host-free POS key match into a miss.
+#     It is also the only site that reports `parent_divergence`, and its
+#     `_resolve_target_pos` entry point is a pre-038 API with ten call sites
+#     whose 038 parameters are keyword-only opt-ins, so threading a context in
+#     is a sweep, not a re-point.
+#
+# THE LIVE-BEHAVIOUR CHANGE T092 ANTICIPATED IS REAL, AND IT LIVES IN THOSE
+# TWO. T092 forecast that routing would change behaviour across every category
+# planning a roster-admitted class and would need its own census. Measured
+# against the code, the two ROUTED sites needed none -- they already reproduced
+# this function's wiring exactly. The census T092 was reaching for is what the
+# other two would have required, which is a second, independent reason they
+# were not routed blind.
+#
+# `tests/unit/test_038_plan_match_decision.py` pins all of the above
+# structurally: the caller set, the surviving bypass set with these reasons,
+# and the fact that neither unrouted site has acquired a context.
+
+
 #: The plan-time match decision is available only for classes that have BOTH
 #: halves of the natural-key basis. For every other class this module keeps its
 #: pre-038 GUID-only behaviour, which is a degradation and not an error.

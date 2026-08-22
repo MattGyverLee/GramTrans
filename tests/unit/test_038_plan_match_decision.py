@@ -30,6 +30,7 @@ import pathlib
 
 import pytest
 
+from gramtrans.Lib import categories as categories_mod
 from gramtrans.Lib import census as census_mod
 from gramtrans.Lib import matcher as matcher_mod
 from gramtrans.Lib import preview as preview_mod
@@ -473,24 +474,45 @@ def test_an_explicit_object_class_overrides_the_derivation():
 _SRC_DIR_T092 = REPO_ROOT / "src" / "gramtrans"
 
 #: Every production function that calls `matcher.resolve_match` directly.
-#: `plan_match_decision` is the seam itself; the four `categories.py` entries
-#: are the bypasses T092 measured. Adding a name here is a deliberate act that
-#: says "this site answers the match question on its own" -- which after T092
-#: needs a reason in the commit, not a green suite.
+#: `plan_match_decision` is the seam itself; the two `categories.py` entries are
+#: what is LEFT of T092's four bypasses after T105 routed the two that could
+#: reach the seam. Adding a name here is a deliberate act that says "this site
+#: answers the match question on its own" -- which after T092 needs a reason in
+#: the commit, not a green suite, and after T105 needs the reason IN WORDS in
+#: `preview.plan_match_decision`'s docblock, because an unexplained entry here
+#: is how T092's condition returns.
+#:
+#: The two survivors and their load-bearing deviations, in one line each:
+#:
+#:   * `_match_collection_child` -- six of the seven POS-owned collections hold
+#:     classes with no natural-key binding, and the seam returns None for those,
+#:     so routing it would stop matching existing children in six collections
+#:     out of seven and run 2 would re-add every child run 1 wrote (SC-008).
+#:   * `_resolve_target_pos_by_natural_key` -- enumerates with `_iter_pos`
+#:     (`POS.GetAll(recursive=True)`), which the host-free fakes answer, where
+#:     the registered scope is `census.objects_in_class` and needs a live
+#:     `SIL.LCModel` repository interface.
 _APPROVED_RESOLVE_MATCH_SITES = {
     ("preview.py", "plan_match_decision"),
     ("categories.py", "_match_collection_child"),
     ("categories.py", "_resolve_target_pos_by_natural_key"),
+}
+
+#: The production functions that call the SEAM, after T105's routing. Both hold
+#: a `RunContext`, which is what made them reachable without a signature change.
+_APPROVED_SEAM_CALLERS = {
+    ("categories.py", "_plan_match_decision"),
     ("categories.py", "_process_referent_by_natural_key"),
     ("categories.py", "_plan_natural_key_match"),
 }
 
-#: The two bypasses that DO hold a `RunContext`, and could therefore be routed
-#: through the seam without a signature change. This is the routing task's
-#: reachable scope; the other two need a handle-pair entry point first.
-_CONTEXT_BEARING_BYPASSES = {
-    ("categories.py", "_process_referent_by_natural_key"),
-    ("categories.py", "_plan_natural_key_match"),
+#: The two bypasses T105 did NOT route. Each takes its project handles already
+#: resolved, so reaching the seam would need a handle-pair entry point on it --
+#: the design decision T105 considered and rejected. If a `RunContext` arrives
+#: at either, that reason has expired and the routing question reopens.
+_UNROUTED_BYPASSES = {
+    ("categories.py", "_match_collection_child"),
+    ("categories.py", "_resolve_target_pos_by_natural_key"),
 }
 
 
@@ -534,10 +556,17 @@ def _resolve_match_call_sites():
 
 
 def _seam_call_sites():
-    """Production files containing a CALL to `plan_match_decision`.
+    """`{(file, enclosing function)}` for every production CALL of the seam.
 
-    The seam's own `def` is skipped; a call inside the seam would be
-    recursion, not a caller.
+    Both spellings count as calling it: `plan_match_decision`, the seam's own
+    name, and `_plan_match_decision`, the lazy import wrapper `categories.py`
+    must go through because `preview` imports `categories` and a module-level
+    import would close the cycle. The wrapper forwards its arguments unchanged,
+    so treating it as anything other than the seam would hide every caller
+    behind one indirection.
+
+    The seam's own `def` is not a call, so it does not appear here; a call
+    inside it would be recursion rather than a caller.
     """
     import ast
 
@@ -548,16 +577,19 @@ def _seam_call_sites():
             continue
         tree = ast.parse(text)
         for node in ast.walk(tree):
-            if not isinstance(node, ast.Call):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 continue
-            fn = node.func
-            name = (
-                fn.attr if isinstance(fn, ast.Attribute)
-                else fn.id if isinstance(fn, ast.Name)
-                else None
-            )
-            if name == "plan_match_decision":
-                callers.add(path.name)
+            for call in ast.walk(node):
+                if not isinstance(call, ast.Call):
+                    continue
+                fn = call.func
+                name = (
+                    fn.attr if isinstance(fn, ast.Attribute)
+                    else fn.id if isinstance(fn, ast.Name)
+                    else None
+                )
+                if name in ("plan_match_decision", "_plan_match_decision"):
+                    callers.add((path.name, node.name))
     return callers
 
 
@@ -575,8 +607,9 @@ def test_no_new_production_site_bypasses_the_seam():
     unapproved = sorted(found - _APPROVED_RESOLVE_MATCH_SITES)
     assert unapproved == [], (
         "these production sites answer the plan-time match question without "
-        "going through `preview.plan_match_decision`, and were not among the "
-        "four T092 measured: %r" % (unapproved,)
+        "going through `preview.plan_match_decision`, and are not among the "
+        "two T105 left unrouted for a reason recorded in the seam's docblock: "
+        "%r" % (unapproved,)
     )
     vanished = sorted(_APPROVED_RESOLVE_MATCH_SITES - found)
     assert vanished == [], (
@@ -592,49 +625,258 @@ def test_the_pin_can_see_every_site_t092_measured():
     An `ast` walk that stopped matching would make the exclusion test
     vacuously green -- the failure mode a source-reading test actually has,
     and the reason T094 paired its pin with a floor.
+
+    The floor is 3 after T105, down from T092's measured 5: two of the four
+    bypasses were routed through the seam and no longer call `resolve_match`
+    themselves. Lowering this number again means another site was routed or
+    deleted, and either way it must be argued for.
     """
     sites = _resolve_match_call_sites()
-    assert len(sites) == 5, sites
+    assert len(sites) == 3, sites
     assert {f for f, _ in sites} == {"preview.py", "categories.py"}, sites
 
 
-def test_the_seam_still_has_no_production_caller():
-    """The other half of T092's measurement, and the reason its successor
-    stays open.
+def test_the_seam_has_exactly_the_callers_t105_routed():
+    """T092's measurement was "zero production callers"; this is its successor.
 
-    Kept as an assertion rather than a note so that the day a production path
-    DOES call the seam, this test fails and forces the routing census to be
-    recorded instead of arriving as a silent green.
+    T105 routed the two bypasses that could reach the seam, so the assertion
+    inverts: the seam now has callers, and WHICH ones is the fact worth
+    pinning. A new caller is a live-behaviour change across the category that
+    added it and needs the reasoning in its commit; a caller that DISAPPEARS
+    means a routing was undone, which is how T092's condition -- a seam that
+    reads as coverage while the question is answered beside it -- comes back.
     """
     callers = _seam_call_sites()
-    assert callers == set(), (
-        "a production path now calls the seam. That is a live-behaviour change "
-        "across every category that plans a roster-admitted class -- record "
-        "the census it required and close T092's successor: %r" % (callers,)
+    assert callers == _APPROVED_SEAM_CALLERS, (
+        "the set of production paths calling the seam has changed. A new one "
+        "needs its reasoning recorded; a lost one means a routing was undone: "
+        "%r" % (sorted(callers),)
     )
 
 
-def test_only_two_bypasses_can_reach_the_seam_today():
-    """The routing task's reachable scope, pinned so it cannot move quietly.
+def test_the_unrouted_bypasses_still_hold_no_context():
+    """The recorded reason the last two bypasses were not routed, as a test.
 
     `plan_match_decision` takes a `RunContext` and reads both project handles
     off it. `_match_collection_child` receives `ws_handles`/`source_ws_handles`
     already resolved and `_resolve_target_pos_by_natural_key` takes `target`
-    and `source_handle` -- neither holds a context, so routing them needs a
-    handle-pair entry point on the seam, which is a design decision and not a
-    re-point. The other two hold a context and could be routed today.
+    and `source_handle` -- neither holds a context, which is why routing them
+    would need a handle-pair entry point on the seam, the design decision T105
+    considered and rejected.
 
-    If a context arrives at one of the first two, the routing task just got
-    bigger, and this test is where that is noticed.
+    If a context arrives at either site, that reason has expired and the
+    routing question reopens. This is where that is noticed, rather than in a
+    docblock nobody re-reads.
     """
     sites = _resolve_match_call_sites()
-    context_bearing = {
-        where for where, params in sites.items()
+    bypasses = {
+        where: params for where, params in sites.items()
         if where != ("preview.py", "plan_match_decision")
-        and "context" in params
     }
-    assert context_bearing == _CONTEXT_BEARING_BYPASSES, (
-        "the set of bypasses holding a `RunContext` has changed, so the "
-        "routing task's reachable scope has changed with it: %r"
-        % (sorted(context_bearing),)
+    assert set(bypasses) == _UNROUTED_BYPASSES, (
+        "the surviving bypass set has changed: %r" % (sorted(bypasses),)
     )
+    context_bearing = sorted(
+        where for where, params in bypasses.items() if "context" in params
+    )
+    assert context_bearing == [], (
+        "these bypasses now hold a `RunContext`, so 'routing needs a "
+        "handle-pair entry point first' no longer explains them: %r"
+        % (context_bearing,)
+    )
+
+
+# ---------------------------------------------------------------------------
+# T105 -- the two routed sites, behaviourally
+# ---------------------------------------------------------------------------
+#
+# The pins above are structural: they say WHICH sites call the seam. These say
+# the routing did not change what those sites answer -- which is the whole
+# claim T105 rests on, since T092 forecast that routing would be a
+# live-behaviour change needing its own census. Measured against the code it is
+# not, because both routed sites already reproduced the seam's wiring: one line
+# for line, one by supplying candidates the seam accepts. The single behaviour
+# this change adds is the seam's warning on an unenumerable destination scope,
+# and it is asserted below rather than asserted away.
+#
+# The ambiguity contract is the interesting half. T105 required one reading to
+# be picked per site, and the two sites pick DIFFERENTLY on purpose:
+# `_process_referent_by_natural_key` absorbs (a rule skips with a reason),
+# `_plan_natural_key_match` propagates (a `PlannedOverwrite` proposing to reuse
+# one specific destination object has no defensible answer to propose). Both
+# are pinned, because a re-point that quietly adopted the seam's contract at
+# the first site would convert a skip-with-a-reason into a raised run.
+
+_PHONEME_SCOPE_ID = matcher_mod.NATURAL_KEY_BINDINGS["PhPhoneme"].scope_fn_id
+
+
+class _TargetHandle(_Handle):
+    """A target handle that can also resolve a GUID, as `_resolve_target_by_guid`
+    requires. Offline doubles answer through `get_object_by_guid`; the live
+    project goes through the LCM object repository instead."""
+
+    def __init__(self, vern, anal, objects=()):
+        super().__init__(vern, anal)
+        self._objects = {str(o.Guid).lower(): o for o in objects}
+
+    def get_object_by_guid(self, guid):
+        return self._objects.get(str(guid).lower())
+
+
+@pytest.fixture
+def phoneme_scope():
+    """Install a destination phoneme scope, restoring the registered one.
+
+    The real scope is `census.objects_in_class`, which needs a live
+    `SIL.LCModel` repository interface -- so a host-free test must supply the
+    candidates the way the live host would.
+    """
+    original = matcher_mod.NATURAL_KEY_SCOPE_FNS[_PHONEME_SCOPE_ID]
+    installed = {}
+
+    def _install(candidates):
+        installed["candidates"] = list(candidates)
+        matcher_mod.NATURAL_KEY_SCOPE_FNS[_PHONEME_SCOPE_ID] = (
+            lambda _target: list(installed["candidates"])
+        )
+
+    yield _install
+    matcher_mod.NATURAL_KEY_SCOPE_FNS[_PHONEME_SCOPE_ID] = original
+
+
+def test_the_referent_leg_resolves_a_key_match_through_the_seam(
+    admitted, phoneme_scope,
+):
+    """`_process_referent_by_natural_key` still answers with the destination
+    object, now via the seam rather than its own copy of the seam's body.
+
+    This is FR-024's "not to duplicates" for STARTER content: the destination's
+    example phonemes match no source GUID, so a GUID-only lookup reports every
+    rule referencing a phoneme as unreproducible even when Phase 1 correctly
+    reused the starter object.
+    """
+    src = _phoneme("guid-src", "a", SRC_VERN)
+    dst = _phoneme("guid-dst", "a", TGT_VERN)
+    phoneme_scope([dst])
+    ctx = _Context(
+        _Handle(SRC_VERN, SRC_ANAL),
+        _TargetHandle(TGT_VERN, TGT_ANAL, objects=[dst]),
+    )
+
+    matched = categories_mod._process_referent_by_natural_key(
+        ctx, src, "PhPhoneme",
+    )
+
+    assert matched is dst
+
+
+def test_the_referent_leg_absorbs_ambiguity_rather_than_propagating(
+    admitted, phoneme_scope,
+):
+    """The reading THIS site picks, pinned.
+
+    The seam raises `NaturalKeyAmbiguityError` and says so in its docstring;
+    this caller catches it and reports "unresolved" so the rule skips with a
+    reason. Ambiguity here is the normal condition on real pairs, not an
+    exceptional one -- T098 re-censused two live pairs and found 12
+    duplicate-name groups in `PhNCFeatures` on one and 1 on the other -- so
+    propagating would abort whole runs over the common case.
+
+    If this ever raises, a routing adopted the seam's contract by accident.
+    """
+    src = _phoneme("guid-src", "a", SRC_VERN)
+    dupes = [
+        _phoneme("guid-a", "a", TGT_VERN),
+        _phoneme("guid-b", "a", TGT_VERN),
+    ]
+    phoneme_scope(dupes)
+    ctx = _Context(
+        _Handle(SRC_VERN, SRC_ANAL),
+        _TargetHandle(TGT_VERN, TGT_ANAL, objects=dupes),
+    )
+
+    assert categories_mod._process_referent_by_natural_key(
+        ctx, src, "PhPhoneme",
+    ) is None
+
+
+def test_the_referent_leg_now_reports_an_unenumerable_scope(
+    admitted, phoneme_scope, caplog,
+):
+    """The ONE behaviour T105's routing adds, asserted rather than assumed.
+
+    Before the routing this site resolved its own candidates and returned None
+    on an enumeration failure with no report at all -- the drift T092 measured,
+    because the seam it duplicated does emit a warning there. The answer is
+    unchanged (None); what is new is that the operator can see why.
+    """
+    src = _phoneme("guid-src", "a", SRC_VERN)
+    ctx = _Context(
+        _Handle(SRC_VERN, SRC_ANAL), _TargetHandle(TGT_VERN, TGT_ANAL),
+    )
+
+    def _boom(_target):
+        raise RuntimeError("cannot enumerate PhPhoneme")
+
+    matcher_mod.NATURAL_KEY_SCOPE_FNS[_PHONEME_SCOPE_ID] = _boom
+    with caplog.at_level("WARNING", logger="gramtrans.Lib.preview"):
+        matched = categories_mod._process_referent_by_natural_key(
+            ctx, src, "PhPhoneme",
+        )
+
+    assert matched is None
+    assert any(
+        "could not be enumerated" in r.getMessage() for r in caplog.records
+    ), [r.getMessage() for r in caplog.records]
+
+
+def test_the_phonology_plan_leg_matches_through_the_seam(
+    admitted, phoneme_scope,
+):
+    """`_plan_natural_key_match` still returns the `PlannedOverwrite` that
+    makes the executor REUSE the matched destination instead of creating a
+    second object, and still says the match was by NAME (FR-006).
+
+    Its candidate scope stays the caller's: `_phonology_simple_plan` passes the
+    enumeration it already walked, and the seam accepts supplied candidates for
+    exactly this case, so routing changes nothing about which objects are
+    offered. The scope fixture is installed with NO candidates here -- if the
+    routing had started resolving its own scope, this would match nothing and
+    fail.
+    """
+    src = _phoneme("guid-src", "a", SRC_VERN)
+    dst = _phoneme("guid-dst", "a", TGT_VERN)
+    phoneme_scope([])
+    ctx = _Context(_Handle(SRC_VERN, SRC_ANAL), _Handle(TGT_VERN, TGT_ANAL))
+
+    planned = categories_mod._plan_natural_key_match(
+        src, GrammarCategory.PHONEMES, ctx, "PhPhoneme", [dst],
+    )
+
+    assert planned is not None
+    assert planned.match_via == "natural_key"
+    assert planned.write_mode == "merge"
+    assert planned.target_guid == "guid-dst"
+    assert planned.match_basis.basis is MatchBasis.NATURAL_KEY
+
+
+def test_the_phonology_plan_leg_propagates_ambiguity(admitted):
+    """The reading THIS site picks -- the opposite of the referent leg's, and
+    the same as the seam's.
+
+    A `PlannedOverwrite` proposes to reuse ONE specific destination object. An
+    ambiguous key has no defensible object to name, so there is nothing to
+    absorb it into: the operator has to see it. No `except` was added here, and
+    this is what says so.
+    """
+    src = _phoneme("guid-src", "a", SRC_VERN)
+    dupes = [
+        _phoneme("guid-a", "a", TGT_VERN),
+        _phoneme("guid-b", "a", TGT_VERN),
+    ]
+    ctx = _Context(_Handle(SRC_VERN, SRC_ANAL), _Handle(TGT_VERN, TGT_ANAL))
+
+    with pytest.raises(matcher_mod.NaturalKeyAmbiguityError):
+        categories_mod._plan_natural_key_match(
+            src, GrammarCategory.PHONEMES, ctx, "PhPhoneme", dupes,
+        )

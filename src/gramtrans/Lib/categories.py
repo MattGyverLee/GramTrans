@@ -817,6 +817,38 @@ def _match_basis_for_present_by_guid(object_class, source_guid, target_guid):
     )
 
 
+def _plan_match_decision(object_class, source_obj, context, *,
+                         candidates=None, identity_remap=None):
+    """`preview.plan_match_decision`, imported lazily (T105).
+
+    THE ONE PLACE THE PLAN-TIME MATCH QUESTION IS WIRED. T031 landed the seam
+    under the recorded decision that the plan decides and the report tells;
+    T092 then measured that no production path called it while four sites in
+    this module answered the same question with open-coded
+    `matcher.resolve_match` calls -- and that one of the four had already
+    drifted, losing the seam's enumeration-failure warning. T105 routes the two
+    sites that can reach it (`_process_referent_by_natural_key`,
+    `_plan_natural_key_match`) through here. The other two hold no
+    `RunContext`; `preview.plan_match_decision`'s docblock records, in words,
+    why they are not routed.
+
+    Lazy for the same cycle reason as `_lcm_class_for_category` above:
+    `preview` imports `categories`, so a module-level import would close it.
+
+    Raises nothing this module does not already raise. In particular
+    `NaturalKeyAmbiguityError` is passed straight through -- the seam
+    propagates it deliberately, and each call site decides what to do with it.
+    """
+    if __package__:
+        from .preview import plan_match_decision
+    else:  # pragma: no cover - script-mode import shim
+        from preview import plan_match_decision  # type: ignore
+    return plan_match_decision(
+        object_class, source_obj, context,
+        candidates=candidates, identity_remap=identity_remap,
+    )
+
+
 def _pos_enrichment_object_class(category):
     """The LCM class name `EnrichmentRecord.object_class` must carry.
 
@@ -7688,11 +7720,36 @@ def _process_referent_by_natural_key(context, src_obj, object_class):
     referencing a phoneme as unreproducible even after Phase 1 correctly reused
     the starter object.
 
-    Ambiguity is NOT a pick. `resolve_match` raises `NaturalKeyAmbiguityError`
-    when an eligible key hits more than one candidate, and it is caught here
-    and turned into "unresolved" so the rule skips with a reason -- guessing
-    between two same-named destination phonemes is how a rule silently comes to
-    match the wrong segment.
+    Ambiguity is NOT a pick. `preview.plan_match_decision` propagates
+    `NaturalKeyAmbiguityError` when an eligible key hits more than one
+    candidate, and it is caught HERE and turned into "unresolved" so the rule
+    skips with a reason -- guessing between two same-named destination phonemes
+    is how a rule silently comes to match the wrong segment.
+
+    ROUTED THROUGH THE SEAM (T105), AND WHICH AMBIGUITY READING WON.
+    This function used to resolve its own candidates through
+    `NATURAL_KEY_SCOPE_FNS[binding.scope_fn_id]` -- the seam's own candidate
+    branch, line for line, minus the `_log.warning` the seam emits when the
+    destination scope cannot be enumerated. T092 measured that drift; the
+    routing ends it, and the warning is the one behaviour this change adds.
+
+    The seam's contract says "an ambiguous key is a harness error the operator
+    must see"; this site's says "guessing between two same-named destination
+    phonemes is how a rule silently comes to match the wrong segment". T105
+    required one reading to be picked and named, per site. **Both survive,
+    because they were never the same question**: propagating is what the SEAM
+    does, absorbing-with-a-reason is what THIS CALLER does with the raise, and
+    the catch below now sits visibly at the call site instead of being implied
+    by a divergent copy of the seam's body.
+
+    The caller's reading wins here on measured grounds. Ambiguity in these
+    three classes is the NORMAL condition on real pairs, not an exceptional
+    one: T098 re-censused two live pairs and found 12 duplicate-name groups /
+    21 extra objects in `PhNCFeatures` on Ngoreme and 1 / 3 on Ejagham, and
+    T043's live run measured 21 duplicate phoneme names in a single
+    destination. A plan-time referent walk that propagated would abort whole
+    runs over the common case, where this leg exists precisely so one rule can
+    skip with a reason while the rest of the transfer proceeds.
     """
     if not object_class:
         return None
@@ -7705,28 +7762,20 @@ def _process_referent_by_natural_key(context, src_obj, object_class):
     target = getattr(context, "target_handle", None)
     if source is None or target is None:
         return None
-    scope = _matcher.NATURAL_KEY_SCOPE_FNS.get(binding.scope_fn_id)
-    if scope is None:
+    if _matcher.NATURAL_KEY_SCOPE_FNS.get(binding.scope_fn_id) is None:
+        # Kept ahead of the seam rather than delegated to it: the seam returns
+        # None for an unregistered scope too, but this guard is also what makes
+        # the roster-admission check above meaningful on its own terms.
         return None
     try:
-        candidates = [_unwrap_lcm(c) for c in (scope(target) or ())]
-    except Exception:  # noqa: BLE001 -- an unenumerable scope is "no candidates"
-        return None
-    if not candidates:
-        return None
-    try:
-        decision = _matcher.resolve_match(
-            object_class,
-            _unwrap_lcm(src_obj),
-            candidates,
-            ws_handles=_matcher.ws_handles_for(target),
-            source_ws_handles=_matcher.ws_handles_for(source),
+        decision = _plan_match_decision(
+            object_class, _unwrap_lcm(src_obj), context,
         )
     except _matcher.NaturalKeyAmbiguityError:
         return None
     except Exception:  # noqa: BLE001 -- an undecidable key is "no match"
         return None
-    if decision.record.basis is not _MatchBasis.NATURAL_KEY:
+    if decision is None or decision.record.basis is not _MatchBasis.NATURAL_KEY:
         return None
     return _resolve_target_by_guid(target, decision.record.target_guid)
 
@@ -10899,6 +10948,21 @@ def _plan_natural_key_match(piece, category, context, object_class,
 
     Returns None -- never raises -- for every reason a key cannot decide.
     `NaturalKeyAmbiguityError` propagates by design.
+
+    ROUTED THROUGH THE SEAM (T105). The candidate scope stays the CALLER'S:
+    `_phonology_simple_plan` passes the enumeration it already walked, and
+    `plan_match_decision` accepts supplied candidates for exactly this case, so
+    routing changes nothing about which objects are offered. What it removes is
+    the second copy of the handle-pair read -- the seam's docblock explains at
+    length why the two projects' writing-system handles must not be crossed,
+    and that explanation is worth more attached to the one implementation than
+    to two.
+
+    On ambiguity this site and the seam already AGREE: both propagate. Unlike
+    `_process_referent_by_natural_key` there is nothing to pick here, and no
+    `except` is added -- a `PlannedOverwrite` is a proposal to REUSE a specific
+    destination object, so an ambiguous key has no defensible answer to
+    propose and the operator has to see it.
     """
     if not object_class:
         return None
@@ -10919,14 +10983,10 @@ def _plan_natural_key_match(piece, category, context, object_class,
     except Exception:  # noqa: BLE001 -- an unenumerable scope is "no candidates"
         return None
 
-    decision = _matcher.resolve_match(
-        object_class,
-        _unwrap_lcm(piece),
-        candidates,
-        ws_handles=_matcher.ws_handles_for(target),
-        source_ws_handles=_matcher.ws_handles_for(source),
+    decision = _plan_match_decision(
+        object_class, _unwrap_lcm(piece), context, candidates=candidates,
     )
-    if decision.record.basis is not _MatchBasis.NATURAL_KEY:
+    if decision is None or decision.record.basis is not _MatchBasis.NATURAL_KEY:
         return None
 
     src_guid = _guid_str_from(piece)
