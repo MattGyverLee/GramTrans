@@ -420,3 +420,221 @@ def test_an_explicit_object_class_overrides_the_derivation():
     """A caller that knows which subclass it is holding says so."""
     overwrite = _emit("guid", "MoAffixAllomorph", GrammarCategory.ALLOMORPH)
     assert overwrite.match_basis.object_class == "MoAffixAllomorph"
+
+
+# ---------------------------------------------------------------------------
+# T092 -- the seam had zero production callers, and four production BYPASSES
+# ---------------------------------------------------------------------------
+#
+# T092 asked whether this seam earns its callers or should be deleted, on the
+# grounds that "a seam with no callers and no plan to acquire them is dead code
+# that reads as coverage". The measurement below is the answer, and it is not
+# the one the filing's framing invites.
+#
+# `plan_match_decision`'s only importer is this file -- that half of T092 is
+# confirmed. But the question it answers is being answered four more times, in
+# production, by open-coded calls straight to `matcher.resolve_match`:
+#
+#   * `_match_collection_child`            (T044) -- collection-scoped
+#     candidates by design, plus a GUID-only fallback for a child that cannot
+#     be keyed. Takes `ws_handles` / `source_ws_handles` ALREADY RESOLVED.
+#   * `_resolve_target_pos_by_natural_key` (T032) -- candidates from a
+#     recursive `_iter_pos` walk rather than the class's registered scope
+#     function, and the only site that reports `parent_divergence`.
+#   * `_process_referent_by_natural_key`   -- resolves candidates through
+#     `NATURAL_KEY_SCOPE_FNS[binding.scope_fn_id]`, i.e. it reproduces the
+#     seam's own candidate branch line for line, MINUS the `_log.warning` the
+#     seam emits when the scope cannot be enumerated. It also converts
+#     `NaturalKeyAmbiguityError` into "unresolved" where the seam propagates it
+#     deliberately, so an ambiguous key reaches the operator at one site and is
+#     swallowed at the other.
+#   * `_plan_natural_key_match`            -- caller-supplied `target_iter`,
+#     and the only site that builds a `PlannedOverwrite` from the decision.
+#
+# So the seam is BYPASSED, not unwanted. Its own docblock exists because
+# "three implementations of one question" is how the two opposite failure modes
+# 038 removes get reintroduced; the measured count is four, and one of the four
+# has already lost the seam's enumeration-failure report. Deleting the seam
+# would ratify the divergence rather than end it -- so the answer to "does the
+# seam earn its callers" is yes, on evidence, and T092 does not close by
+# deleting either the seam or this file's tests.
+#
+# WHY THE ROUTING IS NOT DONE HERE. T092 says it plainly: pointing the plan
+# paths through the seam is a live-behaviour change across every category that
+# plans a roster-admitted class, and needs its own census. Two of the four
+# sites cannot even reach the seam today -- it takes a `RunContext` and they
+# have no `context` parameter at all. That split is asserted below, because it
+# is the scope the routing task inherits, and it must go red if it moves.
+#
+# What T092 closes with instead: the count stops growing. A NEW open-coded
+# `resolve_match` call in production fails `test_no_new_production_site_
+# bypasses_the_seam`, in the idiom T094 used for `_resolve_target_pos`.
+
+_SRC_DIR_T092 = REPO_ROOT / "src" / "gramtrans"
+
+#: Every production function that calls `matcher.resolve_match` directly.
+#: `plan_match_decision` is the seam itself; the four `categories.py` entries
+#: are the bypasses T092 measured. Adding a name here is a deliberate act that
+#: says "this site answers the match question on its own" -- which after T092
+#: needs a reason in the commit, not a green suite.
+_APPROVED_RESOLVE_MATCH_SITES = {
+    ("preview.py", "plan_match_decision"),
+    ("categories.py", "_match_collection_child"),
+    ("categories.py", "_resolve_target_pos_by_natural_key"),
+    ("categories.py", "_process_referent_by_natural_key"),
+    ("categories.py", "_plan_natural_key_match"),
+}
+
+#: The two bypasses that DO hold a `RunContext`, and could therefore be routed
+#: through the seam without a signature change. This is the routing task's
+#: reachable scope; the other two need a handle-pair entry point first.
+_CONTEXT_BEARING_BYPASSES = {
+    ("categories.py", "_process_referent_by_natural_key"),
+    ("categories.py", "_plan_natural_key_match"),
+}
+
+
+def _resolve_match_call_sites():
+    """`{(file, enclosing function): [param names]}` for every production
+    call to `resolve_match`.
+
+    Read from the source with `ast`, not from the call graph: a site reachable
+    only with a live LCM host is still visible here, which is the whole reason
+    T094 pinned its sweep this way rather than per site. Keyed by enclosing
+    function name rather than line number, so the pin survives an edit above it.
+    """
+    import ast
+
+    out = {}
+    for path in sorted(_SRC_DIR_T092.rglob("*.py")):
+        if path.name == "matcher.py":
+            continue  # where `resolve_match` is DEFINED, not called
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            for call in ast.walk(node):
+                if not isinstance(call, ast.Call):
+                    continue
+                fn = call.func
+                name = (
+                    fn.attr if isinstance(fn, ast.Attribute)
+                    else fn.id if isinstance(fn, ast.Name)
+                    else None
+                )
+                if name != "resolve_match":
+                    continue
+                args = node.args
+                params = [
+                    a.arg for a in
+                    (args.posonlyargs + args.args + args.kwonlyargs)
+                ]
+                out[(path.name, node.name)] = params
+    return out
+
+
+def _seam_call_sites():
+    """Production files containing a CALL to `plan_match_decision`.
+
+    The seam's own `def` is skipped; a call inside the seam would be
+    recursion, not a caller.
+    """
+    import ast
+
+    callers = set()
+    for path in sorted(_SRC_DIR_T092.rglob("*.py")):
+        text = path.read_text(encoding="utf-8")
+        if "plan_match_decision" not in text:
+            continue
+        tree = ast.parse(text)
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            fn = node.func
+            name = (
+                fn.attr if isinstance(fn, ast.Attribute)
+                else fn.id if isinstance(fn, ast.Name)
+                else None
+            )
+            if name == "plan_match_decision":
+                callers.add(path.name)
+    return callers
+
+
+def test_no_new_production_site_bypasses_the_seam():
+    """T092's claim, as a fact about the tree rather than a commit message.
+
+    The seam exists so that Preview and Move answer "which destination object
+    is this?" once. Every additional open-coded `resolve_match` call is another
+    place that answer can drift -- and `_process_referent_by_natural_key`
+    already drifted, losing the seam's warning on an unenumerable scope and
+    swallowing the ambiguity error the seam propagates. A new one arrives
+    silently, so it is pinned structurally.
+    """
+    found = set(_resolve_match_call_sites())
+    unapproved = sorted(found - _APPROVED_RESOLVE_MATCH_SITES)
+    assert unapproved == [], (
+        "these production sites answer the plan-time match question without "
+        "going through `preview.plan_match_decision`, and were not among the "
+        "four T092 measured: %r" % (unapproved,)
+    )
+    vanished = sorted(_APPROVED_RESOLVE_MATCH_SITES - found)
+    assert vanished == [], (
+        "these sites no longer call `resolve_match`; if one was ROUTED through "
+        "the seam, drop it from `_APPROVED_RESOLVE_MATCH_SITES` in the same "
+        "commit so the list keeps meaning what it says: %r" % (vanished,)
+    )
+
+
+def test_the_pin_can_see_every_site_t092_measured():
+    """Guard against the pin above passing because it found nothing.
+
+    An `ast` walk that stopped matching would make the exclusion test
+    vacuously green -- the failure mode a source-reading test actually has,
+    and the reason T094 paired its pin with a floor.
+    """
+    sites = _resolve_match_call_sites()
+    assert len(sites) == 5, sites
+    assert {f for f, _ in sites} == {"preview.py", "categories.py"}, sites
+
+
+def test_the_seam_still_has_no_production_caller():
+    """The other half of T092's measurement, and the reason its successor
+    stays open.
+
+    Kept as an assertion rather than a note so that the day a production path
+    DOES call the seam, this test fails and forces the routing census to be
+    recorded instead of arriving as a silent green.
+    """
+    callers = _seam_call_sites()
+    assert callers == set(), (
+        "a production path now calls the seam. That is a live-behaviour change "
+        "across every category that plans a roster-admitted class -- record "
+        "the census it required and close T092's successor: %r" % (callers,)
+    )
+
+
+def test_only_two_bypasses_can_reach_the_seam_today():
+    """The routing task's reachable scope, pinned so it cannot move quietly.
+
+    `plan_match_decision` takes a `RunContext` and reads both project handles
+    off it. `_match_collection_child` receives `ws_handles`/`source_ws_handles`
+    already resolved and `_resolve_target_pos_by_natural_key` takes `target`
+    and `source_handle` -- neither holds a context, so routing them needs a
+    handle-pair entry point on the seam, which is a design decision and not a
+    re-point. The other two hold a context and could be routed today.
+
+    If a context arrives at one of the first two, the routing task just got
+    bigger, and this test is where that is noticed.
+    """
+    sites = _resolve_match_call_sites()
+    context_bearing = {
+        where for where, params in sites.items()
+        if where != ("preview.py", "plan_match_decision")
+        and "context" in params
+    }
+    assert context_bearing == _CONTEXT_BEARING_BYPASSES, (
+        "the set of bypasses holding a `RunContext` has changed, so the "
+        "routing task's reachable scope has changed with it: %r"
+        % (sorted(context_bearing),)
+    )
