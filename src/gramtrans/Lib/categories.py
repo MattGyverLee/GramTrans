@@ -56,6 +56,8 @@ from typing import Iterable, Tuple
 
 if __package__:
     from .models import (
+        AffixSlotLinkOutcome,
+        AffixSlotLinkRecord,
         CreateDefinitionAction,
         DependencyKind,
         DroppedItemRecord,
@@ -85,6 +87,8 @@ if __package__:
     from .models import MatchBasis as _MatchBasis
 else:
     from models import (  # type: ignore
+        AffixSlotLinkOutcome,
+        AffixSlotLinkRecord,
         CreateDefinitionAction,
         DependencyKind,
         DroppedItemRecord,
@@ -8798,9 +8802,21 @@ def _run_171_subpass(context, target, tag=None):
     each slot via `_resolve_target_by_guid` (offline fakes: `get_object_by_guid`;
     live: LCM object repository). Slots are GUID-preserved (E8).
 
-    Returns a list of Skip(DEPENDENCY_UNRESOLVED) — one per unresolved MSA or
-    per unresolved slot reference. Idempotent: an already-present slot on an
-    MSA's SlotsRC is not re-Added (membership guard)."""
+    Returns a list of Skip(DEPENDENCY_UNRESOLVED) — one per affix whose MSA is
+    missing from a destination that HAS the affix, and one per unresolved slot
+    reference. Idempotent: an already-present slot on an MSA's SlotsRC is not
+    re-Added (membership guard).
+
+    T074 (FR-019) changed WHICH bindings this pass will report on, and added
+    the record it reports THROUGH. `msa_slot_bindings` is a claim about the
+    SOURCE -- its producer walks the whole source lexicon regardless of the
+    selection, deliberately, so `transfer._ensure_171_subpass` can run this
+    pass on a selection with no AFFIX_TEMPLATES actions. Treating every source
+    binding as a promise THIS RUN made produced, measured on `Mbugwe LizzieHC
+    practice` under an AFFIX_TEMPLATES-only selection, 203 reported link
+    failures of which 0 were real -- the entire run report. A binding whose
+    affix is not in the destination at all is now `NOT_IN_RUN`: recorded, not
+    skipped. See `_affix_is_in_destination`."""
     skips = []
     plan = getattr(context, "_run_plan", None)
     if plan is not None:
@@ -8809,31 +8825,63 @@ def _run_171_subpass(context, target, tag=None):
     else:
         bindings = _binding_map(context, "msa_slot_bindings") or {}
         remap = getattr(context, "_identity_remap", None) or {}
+    owners = _msa_owner_map(context, plan)
 
     for src_msa_guid, src_slot_guids in bindings.items():
+        src_slots = tuple(src_slot_guids or ())
         target_msa_guid = remap.get(src_msa_guid, src_msa_guid)
         target_msa = _resolve_target_by_guid(target, target_msa_guid)
         if target_msa is None:
+            entry_guid = owners.get(src_msa_guid, "")
+            if not _affix_is_in_destination(target, entry_guid, remap):
+                # This run never undertook to put the affix here. Recorded so
+                # the count stays auditable, NOT skipped: reporting a failure
+                # to link an affix that was never transferred is the
+                # phantom-loss direction CLAUDE.md records as unshippable.
+                _record_affix_slot_link(context, AffixSlotLinkRecord(
+                    msa_guid=src_msa_guid,
+                    outcome=AffixSlotLinkOutcome.NOT_IN_RUN,
+                    entry_guid=entry_guid,
+                    source_slot_guids=src_slots,
+                ))
+                continue
+            # The entry IS here and its inflectional MSA is not -- the affix
+            # arrived in a shape that cannot carry a column. Real, unique to
+            # this pass, and reported against the ENTRY (FR-019 asks about the
+            # affix, not about the object that went missing).
+            _record_affix_slot_link(context, AffixSlotLinkRecord(
+                msa_guid=src_msa_guid,
+                outcome=AffixSlotLinkOutcome.MSA_MISSING,
+                entry_guid=entry_guid,
+                source_slot_guids=src_slots,
+            ))
             skips.append(Skip(
-                category=GrammarCategory.AFFIX_TEMPLATES,
-                source_guid=src_msa_guid,
+                category=GrammarCategory.AFFIXES,
+                source_guid=entry_guid or src_msa_guid,
                 reason=SkipReason.DEPENDENCY_UNRESOLVED,
-                detail=(f"msa_guid={src_msa_guid} not in target after "
-                        "affix transfer"),
+                detail=(f"affix entry_guid={entry_guid} is in the destination "
+                        f"but its inflectional msa_guid={src_msa_guid} is not, "
+                        "so it could not be linked to the template column(s) "
+                        f"{', '.join(src_slots)} it occupied in the source"),
             ))
             continue
         # Cast the live-resolved ICmObject so .SlotsRC is reachable (issue #28
         # layer 2); fakes pass through unchanged.
         target_msa = _cast_lcm(target_msa, "IMoInflAffMsa")
+        unresolved_slots = []
         for src_slot_guid in src_slot_guids:
             target_slot = _resolve_target_by_guid(target, src_slot_guid)
             if target_slot is None:
+                unresolved_slots.append(src_slot_guid)
                 skips.append(Skip(
                     category=GrammarCategory.AFFIX_TEMPLATES,
                     source_guid=src_slot_guid,
                     reason=SkipReason.DEPENDENCY_UNRESOLVED,
                     detail=(f"slot_guid={src_slot_guid} not in target after "
-                            "slot transfer"),
+                            "slot transfer, so affix "
+                            f"entry_guid={owners.get(src_msa_guid, '')} "
+                            f"(msa_guid={src_msa_guid}) could not be linked "
+                            "to the template column it occupied in the source"),
                 ))
                 continue
             # SlotsRC is a typed collection of IMoInflAffixSlot; add the cast
@@ -8847,9 +8895,77 @@ def _run_171_subpass(context, target, tag=None):
             if already:
                 continue
             target_msa.SlotsRC.Add(target_slot)
+        # One record per MSA, whichever way it went -- SC-003 needs the run to
+        # be able to state its own numerator and denominator, not only its
+        # failures. A partially-linked MSA counts as SLOT_MISSING: it did not
+        # occupy every column it occupied in the source.
+        _record_affix_slot_link(context, AffixSlotLinkRecord(
+            msa_guid=src_msa_guid,
+            outcome=(AffixSlotLinkOutcome.SLOT_MISSING if unresolved_slots
+                     else AffixSlotLinkOutcome.LINKED),
+            entry_guid=owners.get(src_msa_guid, ""),
+            source_slot_guids=src_slots,
+            unresolved_slot_guids=tuple(unresolved_slots),
+        ))
 
     skips.extend(_wire_msa_infl_feats(context, target, plan))
     return skips
+
+
+def _msa_owner_map(context, plan):
+    """`{src_msa_guid: owning src LexEntry guid}` for this run (T074).
+
+    Prefers the plan's `msa_owner_entry` and falls back to the context stash,
+    mirroring exactly how `msa_slot_bindings` itself is read above -- the
+    host-free unit tests drive this pass with a bare context and no plan.
+    Returns `{}` when neither carries one, which makes every unresolved MSA
+    read as `NOT_IN_RUN`: without an owner there is no evidence the affix is
+    in the destination, and inventing a failure on no evidence is the
+    direction this task exists to remove.
+    """
+    if plan is not None:
+        owners = getattr(plan, "msa_owner_entry", None)
+        if owners:
+            return owners
+    return _binding_map(context, "msa_owner_entry") or {}
+
+
+def _affix_is_in_destination(target, entry_guid, remap=None):
+    """Is the affix LexEntry `entry_guid` in the destination? (T074, FR-019.)
+
+    This is the whole scoping question, and it is deliberately asked of the
+    DESTINATION rather than of the plan. "Did this run plan the affix" would
+    miss the case FR-020 cares about -- an affix the destination already held,
+    which this run may legitimately enrich with a column it lacked. "Is it
+    here" covers both and needs no plan at all.
+
+    An empty `entry_guid` answers False: no owner recorded is no evidence of
+    presence.
+    """
+    if not entry_guid:
+        return False
+    if remap:
+        entry_guid = remap.get(entry_guid, entry_guid)
+    return _resolve_target_by_guid(target, entry_guid) is not None
+
+
+def _record_affix_slot_link(context, record):
+    """Accumulate one `AffixSlotLinkRecord` on the run context (T074).
+
+    Same idiom as `_record_process_rule` / `context._dropped`: the executor
+    collects and `Lib/transfer.py` hands the tuple to
+    `report.build(extra_affix_slot_links=)`. Kept off the return value on
+    purpose -- `_run_171_subpass` returns a skip list that a dozen unit tests
+    unpack positionally, and FR-019 is not worth breaking them for.
+    """
+    records = getattr(context, "_affix_slot_links", None)
+    if records is None:
+        records = []
+        try:
+            object.__setattr__(context, "_affix_slot_links", records)
+        except Exception:  # noqa: BLE001 -- immutable fake context
+            return
+    records.append(record)
 
 
 def _wire_msa_infl_feats(context, target, plan):
@@ -8891,13 +9007,26 @@ def _wire_msa_infl_feats(context, target, plan):
             detail=detail,
         )
 
+    owners = _msa_owner_map(context, plan)
+
     for src_msa_guid, binding in bindings.items():
         target_msa_guid = remap.get(src_msa_guid, src_msa_guid)
         target_msa = _resolve_target_by_guid(target, target_msa_guid)
         if target_msa is None:
+            # T074's scoping, applied here for the SAME reason and by the same
+            # sweep: this producer also walks the whole source lexicon, so an
+            # unresolved MSA is usually an affix the run never selected. On the
+            # AFFIX_TEMPLATES-only measurement 78 of the 203 phantom failures
+            # came from this line, and 0 were real. An affix that is not in the
+            # destination has no feature cell to defer.
+            entry_guid = owners.get(src_msa_guid, "")
+            if not _affix_is_in_destination(target, entry_guid, remap):
+                continue
             skips.append(_skip(
-                src_msa_guid,
-                f"msa_guid={src_msa_guid} not in target; InflFeats deferred"))
+                entry_guid or src_msa_guid,
+                f"affix entry_guid={entry_guid} is in the destination but its "
+                f"inflectional msa_guid={src_msa_guid} is not; InflFeats "
+                "deferred"))
             continue
         target_msa = _cast_lcm(target_msa, "IMoInflAffMsa")
 

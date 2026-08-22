@@ -494,6 +494,14 @@ def execute(plan: RunPlan, source, target, report_sink, tag: ImportResidueTag,
     # plan.
     _process_rules: list = []
     object.__setattr__(exec_ctx, '_process_rules', _process_rules)
+    # T074 (FR-019 / SC-003): what the 17.1 sub-pass did with each affix MSA
+    # that occupied a template column in the source -- linked, or not, with the
+    # reason. Same collector idiom as `_process_rules` above; handed to
+    # `build_from_plan(extra_affix_slot_links=)` below. Pre-T074 the run report
+    # carried no link tally at all, so SC-003 was answerable only from a
+    # bespoke driver.
+    _affix_slot_links: list = []
+    object.__setattr__(exec_ctx, '_affix_slot_links', _affix_slot_links)
     # Feature 038 T036: the CURRENT action's `PlannedDestination`, re-set on
     # every leaf-dispatch iteration below. Seeded here with the
     # "plan decided nothing" value so a consumer added later never has to
@@ -780,6 +788,11 @@ def execute(plan: RunPlan, source, target, report_sink, tag: ImportResidueTag,
         # naming the blocker (SC-010: a run that skipped a rule must not read
         # as clean).
         extra_process_rules=tuple(_process_rules),
+        # T074 (FR-019, US3): one record per source affix MSA that occupied a
+        # template column -- so the report can state SC-003's numerator AND
+        # denominator, and so a suppressed NOT_IN_RUN binding stays countable
+        # rather than merely absent.
+        extra_affix_slot_links=tuple(_affix_slot_links),
     )
 
 

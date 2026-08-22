@@ -2143,6 +2143,94 @@ class ProcessRuleTransferRecord:
             )
 
 
+class AffixSlotLinkOutcome(enum.Enum):
+    """Feature 038 (T074, FR-019) -- what became of ONE source affix MSA's
+    template-column membership on this run.
+
+    The vocabulary exists because "linked or reported" was previously
+    unanswerable from the report: the only trace of this sub-pass was a
+    `Skip(DEPENDENCY_UNRESOLVED)` keyed by the SLOT, so a reader could not tell
+    which AFFIX had lost its column, and could not tell a real loss from a
+    binding for an affix the run never touched.
+
+    `NOT_IN_RUN` is the member that makes the other three trustworthy. The
+    producer (`preview._populate_msa_slot_bindings`) walks the WHOLE SOURCE
+    LEXICON on purpose -- it must, or the selection-independent safety net in
+    `transfer._ensure_171_subpass` would have nothing to work from -- so the
+    binding set is a claim about the SOURCE, not about the run. Measured on
+    `Mbugwe LizzieHC practice` under an AFFIX_TEMPLATES-only selection, reading
+    it as a claim about the run produced 203 reported failures of which 0 were
+    real. A run that transfers no affixes has not failed to link any.
+    """
+    #: The affix is in the destination and now occupies the source's column.
+    LINKED = "linked"
+    #: The affix is in the destination; the slot it occupied is NOT, so the
+    #: column membership could not be made. The unique, real failure this
+    #: sub-pass is the only reporter of (FR-019's second half).
+    SLOT_MISSING = "slot_missing"
+    #: The owning entry IS in the destination but its inflectional MSA is not,
+    #: so there is nothing to hang the column on. Real and reported: the entry
+    #: arrived in a shape that cannot carry the link.
+    MSA_MISSING = "msa_missing"
+    #: Neither the MSA nor its owning entry is in the destination -- this run
+    #: never undertook to put the affix there. NOT a failure to link, and
+    #: deliberately NOT a Skip: nothing was promised, so nothing was lost. Kept
+    #: as a record rather than dropped so the count remains auditable and the
+    #: suppression can never be mistaken for silence.
+    NOT_IN_RUN = "not_in_run"
+
+
+@dataclass(frozen=True)
+class AffixSlotLinkRecord:
+    """Feature 038 (T074, FR-019 / SC-003) -- one affix MSA's link outcome.
+
+    One record per source `MoInflAffMsa` that occupied at least one template
+    column in the source, so `len(records)` is SC-003's denominator and the
+    outcome tally is its numerator, straight off the run report. Emitted at
+    execute time by `categories._run_171_subpass` and threaded onto
+    `RunReport.affix_slot_links` -- the same `extra_*` union idiom as
+    `process_rules`.
+
+    `entry_guid` is what FR-019 actually asks about. The pre-T074 report keyed
+    its only trace by the slot, which named the thing that was missing instead
+    of the thing that lost something.
+    """
+    msa_guid: str
+    outcome: AffixSlotLinkOutcome
+    entry_guid: str = ""
+    #: Source slot GUIDs this MSA occupied -- the column(s) being claimed.
+    source_slot_guids: tuple = ()
+    #: The subset of `source_slot_guids` that could not be resolved in the
+    #: destination. Non-empty exactly when `outcome is SLOT_MISSING`.
+    unresolved_slot_guids: tuple = ()
+
+    def __post_init__(self) -> None:
+        if not self.msa_guid:
+            raise ValueError(
+                "AffixSlotLinkRecord.msa_guid must be non-empty"
+            )
+        if not self.source_slot_guids:
+            raise ValueError(
+                "AffixSlotLinkRecord must name the source column(s) it is "
+                "about -- an MSA with no source slots is not an FR-019 case "
+                "and must not occupy a row in SC-003's denominator"
+            )
+        if self.outcome is AffixSlotLinkOutcome.SLOT_MISSING:
+            if not self.unresolved_slot_guids:
+                raise ValueError(
+                    "AffixSlotLinkRecord(SLOT_MISSING) MUST name the slot(s) "
+                    "it could not resolve -- an unexplained failure to link "
+                    "is the silent loss FR-019 exists to prevent"
+                )
+        elif self.unresolved_slot_guids:
+            raise ValueError(
+                "AffixSlotLinkRecord names unresolved slots but its outcome "
+                f"is {self.outcome.value!r}, not SLOT_MISSING -- a report "
+                "that carries a loss under a non-loss verdict is worse than "
+                "no report"
+            )
+
+
 @dataclass(frozen=True)
 class PlannedAction:
     """ADD — create a brand-new object in target with the source's GUID
@@ -2356,6 +2444,25 @@ class RunPlan:
     #                        "specs": [{"spec_guid","feature","value"}, ...]}}
     # Ephemeral per run; not serialised into the run snapshot.
     msa_infl_feat_bindings: dict = field(default_factory=dict)
+    # Feature 038 (T074, FR-019): {src_msa_guid: owning src LexEntry guid} for
+    # every MSA in the two binding dicts above.
+    #
+    # WHY THE OWNER HAS TO TRAVEL WITH THE BINDING. Both producers walk the
+    # WHOLE SOURCE LEXICON, independent of the selection -- deliberately, so
+    # the safety net in `transfer._ensure_171_subpass` can run the sub-pass on
+    # a selection that has no AFFIX_TEMPLATES actions at all. That makes the
+    # binding dicts a claim about the SOURCE. The consumer needs to turn each
+    # one into a claim about THIS RUN, and the only question that does so is
+    # "is this MSA's affix in the destination at all" -- which needs the
+    # owning entry, and the consumer has no source handle to recover it from.
+    # Measured cost of not having it (`Mbugwe LizzieHC practice`,
+    # AFFIX_TEMPLATES-only): 203 reported link failures, 0 real.
+    #
+    # Chosen over widening `msa_slot_bindings`' own value shape because that
+    # dict is read by name in a dozen tests and two other call sites; an
+    # additive sibling keyed the same way costs them nothing.
+    # Ephemeral per run; not serialised into the run snapshot.
+    msa_owner_entry: dict = field(default_factory=dict)  # Guid -> Guid
     # Phase 3c (FR-340): LexEntryRef component-lexeme bindings deferred
     # to post-pass A. Shape: {src_entry_guid: {"ComponentLexemesRS": [...],
     # "PrimaryLexemesRS": [...]}}.
@@ -3231,6 +3338,12 @@ class RunReport:
     incompleteness: tuple = ()     # tuple[IncompletenessRecord, ...]
     enrichments: tuple = ()        # tuple[EnrichmentRecord, ...]
     process_rules: tuple = ()      # tuple[ProcessRuleTransferRecord, ...]
+    # T074 (FR-019 / SC-003): one AffixSlotLinkRecord per source affix MSA that
+    # occupied a template column, so SC-003 is answerable from the run report
+    # instead of from a bespoke driver. `len(...)` is the denominator; the
+    # outcome tally is the numerator. Execute-time only (the sub-pass runs
+    # after the writes), so Preview carries an empty tuple by construction.
+    affix_slot_links: tuple = ()   # tuple[AffixSlotLinkRecord, ...]
     # FR-009..FR-013: the per-object-class fidelity census for this run.
     # The type is defined by T015 (Phase 3); the annotation is a forward
     # reference, which is safe because this module runs under

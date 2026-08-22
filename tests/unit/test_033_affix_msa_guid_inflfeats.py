@@ -83,11 +83,16 @@ class _FakeTarget:
         return self._registry.get(guid)
 
 
-def _plan(bindings, remap=None):
+def _plan(bindings, remap=None, owners=None):
     return types.SimpleNamespace(
         msa_infl_feat_bindings=bindings,
         msa_slot_bindings={},
         identity_remap=remap or {},
+        # T074 (FR-019): {msa_guid: owning entry guid}. `_wire_msa_infl_feats`
+        # reports an unresolved MSA only when its affix IS in the destination,
+        # for the same reason the SlotsRC half does -- this producer also walks
+        # the whole source lexicon.
+        msa_owner_entry=owners or {},
     )
 
 
@@ -195,16 +200,44 @@ def test_wire_defers_whole_structure_when_an_endpoint_is_missing(absent):
 
 
 def test_wire_reports_unresolved_msa_rather_than_silently_dropping():
-    target = _FakeTarget({"feat-1": _Obj("feat-1"), "val-1": _Obj("val-1")})
+    """An MSA that is missing while its AFFIX is present is still reported.
+
+    Re-pointed by T074 (FR-019): the report is now conditional on the owning
+    affix actually being in the destination, because this producer walks the
+    whole source lexicon and an affix the run never transferred has no feature
+    cell to defer. 78 of the 203 phantom failures measured on `Mbugwe LizzieHC
+    practice` (AFFIX_TEMPLATES-only) came from this line. The suppressed
+    direction is asserted by its own test below, so this is a narrowing of when
+    the skip fires, not a weakening of whether it fires.
+    """
+    target = _FakeTarget({"feat-1": _Obj("feat-1"), "val-1": _Obj("val-1"),
+                          "entry-here": _Obj("entry-here")})
     plan = _plan({"msa-gone": {
         "struc_guid": "s", "type_guid": "",
         "specs": [{"spec_guid": "spec-1", "feature": "feat-1", "value": "val-1"}],
-    }})
+    }}, owners={"msa-gone": "entry-here"})
 
     skips = categories._wire_msa_infl_feats(None, target, plan)
 
     assert [s.reason for s in skips] == [SkipReason.DEPENDENCY_UNRESOLVED]
     assert skips[0].category is GrammarCategory.AFFIXES
+    assert skips[0].source_guid == "entry-here"
+    assert "msa_guid=msa-gone" in skips[0].detail
+
+
+def test_wire_does_not_report_an_msa_whose_affix_is_not_in_the_destination():
+    """T074 (FR-019): no affix in the destination, no feature cell to defer.
+
+    The negative half of the test above. Without it, "report only when the
+    affix is present" is indistinguishable from "report less".
+    """
+    target = _FakeTarget({"feat-1": _Obj("feat-1"), "val-1": _Obj("val-1")})
+    plan = _plan({"msa-gone": {
+        "struc_guid": "s", "type_guid": "",
+        "specs": [{"spec_guid": "spec-1", "feature": "feat-1", "value": "val-1"}],
+    }}, owners={"msa-gone": "entry-gone"})
+
+    assert categories._wire_msa_infl_feats(None, target, plan) == []
 
 
 def test_wire_follows_identity_remap_for_fallback_created_msas():

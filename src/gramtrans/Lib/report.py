@@ -75,6 +75,7 @@ def _build_from_plan(cls, plan: RunPlan, mode: RunMode,
                      extra_incompleteness=(),
                      extra_enrichments=(),
                      extra_process_rules=(),
+                     extra_affix_slot_links=(),
                      census=None) -> RunReport:
     """Build a finalized RunReport from a RunPlan.
 
@@ -100,6 +101,12 @@ def _build_from_plan(cls, plan: RunPlan, mode: RunMode,
     ``RunReport.leaf_execution_failures``; `RunReport.leaf_failed` is a
     property computed from its length, not a separate field, so it cannot
     drift out of sync.
+
+    `extra_affix_slot_links` (feature 038, T074): the per-affix FR-019 link
+    outcomes collected by `categories._run_171_subpass` during execute. One
+    record per source affix MSA that occupied a template column, so SC-003's
+    numerator and denominator are both on the report. Empty in Preview mode by
+    construction -- the sub-pass runs after the writes.
 
     `extra_closure_edges` / `extra_incompleteness` / `extra_enrichments` /
     `extra_process_rules` / `census` (feature 038): the four fidelity buckets
@@ -377,6 +384,12 @@ def _build_from_plan(cls, plan: RunPlan, mode: RunMode,
         enrichments=enrichments_all,
         process_rules=_merge_process_rules(
             getattr(plan, "process_rules", ()), extra_process_rules),
+        # T074 (FR-019 / SC-003): execute-time only -- the 17.1 sub-pass runs
+        # after the writes, so a Preview plan has none and the union is just
+        # the run's own records. Kept a UNION anyway so this reads like its
+        # four siblings above rather than being the one that does not.
+        affix_slot_links=tuple(getattr(plan, "affix_slot_links", ()))
+        + tuple(extra_affix_slot_links),
         census=census,
         # T024d-a: the per-class matched tallies the census consumes as
         # `starter_matched_to_source`. Sorted so the snapshot diffs
@@ -814,6 +827,48 @@ def _incompleteness_json(r) -> dict:
         # FR-016 / SC-010: what the reader actually LOSES. Never omitted --
         # a record the user cannot act on is not a report.
         "consequence": r.consequence,
+    }
+
+
+def _affix_slot_link_block(links) -> dict:
+    """The FR-019 / SC-003 answer, as the artifact carries it (T074).
+
+    `linked_of_attempted` is SC-003 verbatim: of the affixes this run put in
+    the destination that occupied a template column in the source, how many
+    occupy it now. `not_in_run` is deliberately OUTSIDE that ratio and stated
+    beside it -- those are source affixes this run never transferred, so
+    counting them as failures is what made the pre-T074 report say 203 losses
+    on a run that lost nothing. Both numbers are present so a reader can see
+    the scoping rather than have to trust it.
+
+    Failures are listed individually and never truncated; successes are a
+    count. A `SLOT_MISSING` row names the affix ENTRY, which is the thing that
+    lost something -- the pre-T074 skip named only the absent slot.
+    """
+    by_outcome: dict = {}
+    for record in links:
+        name = _enum_name(record.outcome) or str(record.outcome)
+        by_outcome[name] = by_outcome.get(name, 0) + 1
+    attempted = sum(
+        count for name, count in by_outcome.items() if name != "NOT_IN_RUN")
+    failures = [
+        {
+            "outcome": _enum_name(r.outcome),
+            "entry_guid": r.entry_guid,
+            "msa_guid": r.msa_guid,
+            "source_slot_guids": list(r.source_slot_guids),
+            "unresolved_slot_guids": list(r.unresolved_slot_guids),
+        }
+        for r in links
+        if _enum_name(r.outcome) in ("SLOT_MISSING", "MSA_MISSING")
+    ]
+    return {
+        "source_msas_with_a_column": len(links),
+        "by_outcome": dict(sorted(by_outcome.items())),
+        "attempted": attempted,
+        "linked_of_attempted": by_outcome.get("LINKED", 0),
+        "not_in_run": by_outcome.get("NOT_IN_RUN", 0),
+        "failures": failures,
     }
 
 
@@ -1664,6 +1719,16 @@ def _to_snapshot_json(self) -> str:
     if not_reproducible is not None:
         payload["not_reproducible_counts"] = not_reproducible
 
+    # FR-019 / SC-003 (T074): did each transferred affix end up in the template
+    # column it occupied in the source? Emitted as a TALLY plus the failures
+    # themselves -- the successes are a count because there is one per affix
+    # MSA (125 on the measured corpus) and a per-success row would bury the
+    # failures, but the count is what makes SC-003 answerable from the artifact
+    # instead of from a bespoke driver.
+    links = getattr(self, "affix_slot_links", ())
+    if links:
+        payload["affix_slot_links"] = _affix_slot_link_block(links)
+
     # ---- T048c: the swallowed write failures reach the ARTIFACT ---------
     # Feature 037 built `LeafExecutionFailure`, carried it onto `RunReport`,
     # and rendered it in `render_text_summary` -- but never emitted it here.
@@ -2233,6 +2298,39 @@ def _render_038_lines(report: RunReport) -> Iterable[str]:
 
             for line in _rows(not_reproduced, _rule_row):
                 yield line
+
+    # ---- FR-019 / SC-003: affix -> template column links (T074) ----------
+    links = getattr(report, "affix_slot_links", ())
+    if links:
+        block = _affix_slot_link_block(links)
+        attempted = block["attempted"]
+        linked = block["linked_of_attempted"]
+        not_in_run = block["not_in_run"]
+        tail = (f" ({not_in_run} source affix(es) with a column were not "
+                "part of this run)") if not_in_run else ""
+        yield (
+            f"  Affix template columns (FR-019) -- {linked} of {attempted} "
+            f"transferred affix(es) occupy the column they had in the "
+            f"source{tail}:"
+        )
+
+        def _link_row(f) -> str:
+            who = _guid8(f["entry_guid"]) if f["entry_guid"] else "?"
+            if f["outcome"] == "MSA_MISSING":
+                return (
+                    f"    - [NOT LINKED] affix {who}: it is in the "
+                    "destination but its inflectional MSA "
+                    f"{_guid8(f['msa_guid'])} is not, so there is nothing "
+                    "to place in a column"
+                )
+            missing = ",".join(_guid8(g) for g in f["unresolved_slot_guids"])
+            return (
+                f"    - [NOT LINKED] affix {who}: template column(s) "
+                f"{missing} are not in the destination"
+            )
+
+        for line in _rows(block["failures"], _link_row):
+            yield line
 
     # ---- FR-009..FR-013: the fidelity census (T015 hook) -----------------
     for line in _render_census_lines(getattr(report, "census", None)):

@@ -979,6 +979,12 @@ def build_run_plan(
     # by the 17.1 sub-pass (`categories._run_171_subpass`).
     _msa_infl_feat_bindings: dict = {}
     object.__setattr__(context, '_msa_infl_feat_bindings', _msa_infl_feat_bindings)
+    # T074 (FR-019): {msa_guid: owning entry guid} for every MSA the two
+    # accumulators above can mention. Same threading convention; consumed by
+    # the 17.1 sub-pass to tell "this run lost the link" from "this run never
+    # promised the affix".
+    _msa_owner_entry: dict = {}
+    object.__setattr__(context, '_msa_owner_entry', _msa_owner_entry)
     # Feature 027 (Complex Forms & Variants, US1/US2/US3, contract C1): the
     # parallel, richer per-ref LexEntryRef CREATION binding accumulator --
     # SAME threading convention as `_lexentry_ref_bindings` above, gathered
@@ -1245,6 +1251,11 @@ def build_run_plan(
     # regardless of whether they were newly added or already present in target.
     _populate_msa_slot_bindings(source, _msa_slot_bindings)
 
+    # T074 (FR-019): the owner map for both binding dicts. Runs beside them,
+    # over the same walk, so a binding can never arrive without the fact that
+    # tells the consumer whether it is this run's business.
+    _populate_msa_owner_entry(source, _msa_owner_entry)
+
     # Feature 033: gather the inflection-feature STRUCTURES assigned to affix
     # MSAs (IMoInflAffMsa.InflFeatsOA). Same rationale as the slot pass above:
     # the base IMoMorphSynAnalysis interface hides InflFeatsOA under pythonnet,
@@ -1344,6 +1355,8 @@ def build_run_plan(
         msa_slot_bindings=_msa_slot_bindings,
         # Feature 033: gathered InflFeatsOA bindings for affix MSAs.
         msa_infl_feat_bindings=_msa_infl_feat_bindings,
+        # T074 (FR-019): which entry owns each of those MSAs.
+        msa_owner_entry=_msa_owner_entry,
         lexentry_ref_bindings=_lexentry_ref_bindings,
         # Feature 027 (US1/US2/US3, contract C1): gathered create bindings
         # (see the accumulator attachment above).
@@ -1892,6 +1905,56 @@ def _iter_source_entries(source):
         if coll is not None:
             return list(coll)
     return []
+
+
+def _populate_msa_owner_entry(source, msa_owner_entry: dict) -> None:
+    """Populate `{src_msa_guid: owning src LexEntry guid}` (T074, FR-019).
+
+    WHAT THIS IS FOR. `_populate_msa_slot_bindings` and
+    `_populate_msa_infl_feat_bindings` both walk the whole source lexicon
+    regardless of the selection, on purpose. That makes their output a claim
+    about the SOURCE; the 17.1 sub-pass in categories.py has to turn each
+    binding into a claim about THIS RUN, and the question that does so is "is
+    this MSA's affix in the destination at all". The sub-pass has a target
+    handle but no source handle, so the owner cannot be recovered there --
+    it has to be recorded here, where the walk already knows it.
+
+    Records EVERY MSA, not only the inflectional ones with slots or features.
+    Two reasons: the same map answers the same question for the InflFeats half
+    of the sub-pass (`_wire_msa_infl_feats`, which over-reported the same way),
+    and a map keyed by whatever the OTHER producer decided to keep would go
+    silently incomplete the moment either producer's filter changed.
+
+    No interface cast is needed or wanted: the owner of an MSA is the entry
+    the walk is standing on, so this works identically on live LCM and on the
+    duck-typed fakes without the cast/probe dance its siblings need.
+
+    Idempotent: re-running overwrites existing keys with the same values.
+    """
+    for entry in _iter_source_entries(source):
+        entry_guid = _guid_of(entry)
+        if not entry_guid:
+            continue
+        for msa in getattr(entry, "MorphoSyntaxAnalysesOC", None) or []:
+            msa_guid = _guid_of(msa)
+            if msa_guid:
+                msa_owner_entry[msa_guid] = entry_guid
+
+
+def _guid_of(obj):
+    """Lowercase GUID string for `obj`, or "" -- live LCM or duck-typed fake.
+
+    `.Guid` is what LCM exposes and `.guid` is what the host-free fakes carry;
+    both producers above already depend on that pair, so reading them in one
+    place keeps the owner map keyed identically to the bindings it explains.
+    """
+    for attr in ("Guid", "guid"):
+        value = getattr(obj, attr, None)
+        if value is not None:
+            text = str(value).strip().strip("{}").lower()
+            if text:
+                return text
+    return ""
 
 
 def _populate_msa_infl_feat_bindings(source, bindings: dict) -> None:
