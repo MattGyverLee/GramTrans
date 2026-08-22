@@ -13857,29 +13857,71 @@ CLOSURE_EDGES_VERIFIED: dict = {
         ),
     },
     # -----------------------------------------------------------------------
-    # DependencyKind.MSA_TO_INFL_FEATURE: CONFIRMED by the audit, and STILL
-    # NOT REGISTERED. Read both halves before changing either.
+    # T104 (2026-08-22) -- the row T089 unblocked and deliberately did not
+    # register.
     #
-    # It was REFUSED until 2026-08-22 -- not for a broken producer
-    # (`affixes_infl_feature_dependencies` is narrow and its edges are live)
-    # but for a far endpoint nothing could enumerate: its `ValueRA` edges
-    # named `IFsSymFeatVal` symbolic values, and 30 of 34 distinct far GUIDs
-    # on `Mbugwe LizzieHC practice` (8 of 10 on `Ejagham Mini`) were of that
-    # kind. T089 re-pointed them at the OWNING feature (`_value_defn_ref`),
-    # and the driver now measures CONFIRMED on both corpora with
-    # `resolved_as_owned_value == 0`, `unresolved == 0`, and a SMALLER edge
-    # set: 206 -> 99 over 4 far GUIDs, 34 -> 17 over 2.
+    # READ THE HISTORY BEFORE TRUSTING THE `verified_by`, because this row
+    # spent longer REFUSED than any other in this registry and the reason it
+    # was refused is not the reason a reader would guess. Its producer was
+    # never broken: `affixes_infl_feature_dependencies` is narrow and its
+    # edges were always live. What was wrong was the FAR ENDPOINT. The
+    # `FeatureSpecsOC` -> `ValueRA` arrow named an `IFsSymFeatVal` symbolic
+    # value, and `inflection_features_enumerate_source` yields feature
+    # DEFNS -- so 30 of 34 distinct far GUIDs on `Mbugwe LizzieHC practice`
+    # (8 of 10 on `Ejagham Mini`) named something no category could
+    # enumerate. An edge like that has no `PlannedAction`, hence no row to
+    # mark pulled in (FR-015) and no checkbox to clear (FR-016), and it
+    # would fail SILENTLY -- the one direction Principle I forbids.
     #
-    # The instruction that used to stand here -- "do NOT add this row without
-    # re-running the driver and seeing `resolved_as_owned_value == 0`" -- has
-    # been satisfied, and it was necessary rather than sufficient. What a
-    # registration still needs is its OWN census against a restored target
-    # (`debug/run038_closure_census.py`), proving the row changes no decision
-    # it should not under the one selection that can observe it. That is T104.
-    # T089's census (`debug/run038_t089_census.py`) is a different measurement
-    # answering a different question -- it holds the registry FIXED and varies
-    # the producer -- and it does not substitute for the registration one.
+    # T089 re-pointed the edge at the feature that OWNS the value
+    # (`_value_defn_ref`), which is the piece that IS planned and whose
+    # `execute_action` co-creates the value. Note the DIRECTION of the
+    # result: the edge set got SMALLER, because many values of one feature
+    # are one feature. 206 edges over 34 far GUIDs -> 99 over 4, and 34 over
+    # 10 -> 17 over 2, with `resolved_as_owned_value` and `unresolved` both
+    # 0 on both corpora.
+    #
+    # T089 then left this row UNREGISTERED on purpose, and T104 is the
+    # separate task that registers it, because the two need DIFFERENT
+    # measurements and neither driver can answer the other's question.
+    # T089's census (`debug/run038_t089_census.py`) holds the REGISTRY fixed
+    # and varies the producer -- "did the fix change a plan?" (measured: no).
+    # A registration needs the other axis: `debug/run038_closure_census.py`
+    # holds the PRODUCER fixed and varies the registry, under the one
+    # selection that can observe the row.
     # -----------------------------------------------------------------------
+    DependencyKind.MSA_TO_INFL_FEATURE: {
+        "category": GrammarCategory.AFFIXES,
+        "producer": affixes_infl_feature_dependencies,
+        # EXPLICIT, like its two AFFIXES siblings above: a `None` here
+        # re-opens the `(AFFIXES, None)` wildcard in
+        # `preview._closure_kind_lookup` that would swallow every other
+        # AFFIXES row's far category into this one's `verified_by`.
+        "dependency_category": GrammarCategory.INFLECTION_FEATURES,
+        "verified_by": (
+            "TWO measurements, and this row needs both -- the audit says the "
+            "edge is well-formed, the census says registering it changes no "
+            "decision it should not. (1) AUDIT: "
+            "debug/audit038_closure_edges.py (read-only, re-run 2026-08-22 "
+            "after T089's `_value_defn_ref` fix) over 'Mbugwe LizzieHC "
+            "practice' and 'Ejagham Mini': relationships.MSA_TO_INFL_FEATURE "
+            "= CONFIRMED on BOTH (99 edges over 4 distinct far GUIDs / 17 "
+            "over 2, foreign_edges 0, unresolved 0, resolved_as_owned_value "
+            "0 -- every far GUID now resolves against "
+            "inflection_features_enumerate_source, which is the clause that "
+            "was 4-of-34 and 2-of-10 before T089), in "
+            "tests/integration/_snapshots/closure-edge-audit-038-*.json. "
+            "(2) CENSUS: "
+            "tests/integration/_snapshots/closure-registration-038-t104.json "
+            "(debug/run038_closure_census.py T104, AFFIXES-only selection "
+            "against a target restored from 'Target 2026-07-06 "
+            "0218.fwbackup'), which is the axis T089's producer census "
+            "could not measure. Asserted by "
+            "tests/integration/test_038_closure_edge_audit.py::"
+            "test_only_the_confirmed_relationships_are_registered and "
+            "::test_an_affixes_only_plan_carries_the_infl_feature_edges"
+        ),
+    },
 }
 
 

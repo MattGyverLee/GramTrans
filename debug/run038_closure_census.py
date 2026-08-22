@@ -1,4 +1,9 @@
-"""Feature 038 Phase 7 (US3) census driver -- T068 / T069 registrations.
+"""Feature 038 Phase 7 (US3) census driver -- the registration censuses.
+
+One entry in `_TASKS` per registration that has been measured through it:
+T068, T069, T076 and T104. The list is append-only on purpose -- each entry
+is the committed record of what one registration was measured under, and the
+`verified_by` of the row it registered names the artifact it produced.
 
 `debug/run038_t067_census.py` is this file's ancestor and stays where it is:
 it is the committed record of T067's run, and rewriting it would destroy the
@@ -65,6 +70,8 @@ Usage (writes to a THROWAWAY target, restored first):
 
     python debug/run038_closure_census.py T068
     python debug/run038_closure_census.py T069
+    python debug/run038_closure_census.py T076
+    python debug/run038_closure_census.py T104
 
 `GT038_CENSUS_TARGET` overrides the target project name and
 `GT038_CENSUS_SOURCE` the source. The target is restored from
@@ -126,6 +133,42 @@ _TASKS = {
     "T076": {
         "select": "AFFIXES",
         "expect_kinds": ("AFFIX_TO_POS", "MSA_TO_FEAT_STRUC_TYPE",
+                         "PROCESS_RULE_TO_PHONEME",
+                         "PROCESS_RULE_TO_NATURAL_CLASS"),
+        "compare_census_to": None,
+    },
+    # T104 -- registering `MSA_TO_INFL_FEATURE`, the row T089 unblocked and
+    # deliberately did not register.
+    #
+    # SAME SELECTION AS T076, and `expect_kinds` therefore names ALL FIVE
+    # AFFIXES rows rather than only the new one. That is not padding: the
+    # same pieces carry every AFFIXES relationship, so an AFFIXES-only plan
+    # necessarily contains the four that were already correct, and a list
+    # naming only `MSA_TO_INFL_FEATURE` would fail the exact-set check below
+    # for four rows that are doing their job. Declaring the whole set is also
+    # what makes the check bite in the other direction: a registration that
+    # quietly switched on a sixth relationship nobody audited would fail here
+    # instead of passing as "well, it found more edges".
+    #
+    # WHY THIS ENTRY EXISTS AT ALL, given T089 already ran a census. They are
+    # different measurements on different axes and neither substitutes for
+    # the other. `debug/run038_t089_census.py` holds the REGISTRY fixed at 7
+    # rows and varies `_value_defn_ref` -- it answers "did the producer fix
+    # change a plan?" (measured: no, under both selections, reproducing
+    # `census-038-t076-registered.json` row for row). This driver holds the
+    # PRODUCER fixed and varies the registry -- it answers "does registering
+    # the row change a decision it should not?", which is the only question a
+    # registration raises and the one T089's driver cannot reach.
+    #
+    # `compare_census_to` is None for T076's reason, unchanged: the
+    # `-t067-`/`-t068-`/`-t069-` chain of pairwise census equalities is
+    # already behind the instrument (T102 measured 3 changed rows and 2
+    # changed totals, from T087 and T099), so a new link would fail for that
+    # pre-existing drift and say nothing about T104.
+    "T104": {
+        "select": "AFFIXES",
+        "expect_kinds": ("AFFIX_TO_POS", "MSA_TO_FEAT_STRUC_TYPE",
+                         "MSA_TO_INFL_FEATURE",
                          "PROCESS_RULE_TO_PHONEME",
                          "PROCESS_RULE_TO_NATURAL_CLASS"),
         "compare_census_to": None,

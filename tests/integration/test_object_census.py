@@ -5525,6 +5525,20 @@ class TestT101TheCommittedCorpusIsUnmovedByInvariant12:
         the same ROWS, and an artifact of that provenance nulling anything
         else would have failed that comparison before reaching this one.
 
+        T104 (2026-08-22) took it 12 -> 14, and the reading is the SAME
+        reading as T089's, for the same structural reason. T104 registers
+        `MSA_TO_INFL_FEATURE`, whose closure edges exist only under an
+        AFFIXES-only selection; the census is taken under a FULL COPY, where
+        that row contributes nothing at all. So
+        `census-038-t104-registered.json` is asserted ELSEWHERE to reproduce
+        `census-038-t076-registered.json` ROW FOR ROW
+        (`test_038_closure_edge_audit.py::
+        test_the_t104_census_reproduces_the_previous_one_row_for_row`, 74
+        classes, 0 differing rows, every total equal). Its two nulls are
+        therefore the same ROWS, not merely the same classes, and an artifact
+        of that provenance nulling anything else would have failed that
+        comparison before reaching this one.
+
         THE PIN IS NOW THREE CLAIMS RATHER THAN ONE MAGIC NUMBER, because a
         bare total that has to be edited for every new artifact degrades into
         a number nobody can interpret -- and a number nobody interprets gets
@@ -5554,11 +5568,11 @@ class TestT101TheCommittedCorpusIsUnmovedByInvariant12:
             assert classes == {"MoForm", "MoMorphSynAnalysis"}, (
                 name + " nulls something other than the two "
                 "excluded_not_measurable rows: " + repr(sorted(classes)))
-        assert len(by_artifact) == 6, (
+        assert len(by_artifact) == 7, (
             "a census artifact arrived or left; the corpus that nulls the two "
             "excluded_not_measurable rows is now "
             + repr(sorted(by_artifact)))
-        assert advisory_nulls == 2 * len(by_artifact) == 12
+        assert advisory_nulls == 2 * len(by_artifact) == 14
 
 
 class TestT100TheVocabularyStaysClosedAtSeventeen:

@@ -484,6 +484,15 @@ class TestClosureRegistryShipsEmpty:
         row must also carry evidence, which `_closure_registry_by_category`
         enforces -- calling it here is what makes that enforcement cover the
         SHIPPED registry and not only the hand-built ones below.
+
+        T104 added the eighth and is the only row so far whose CONFIRMING
+        audit was committed by an EARLIER task. That is worth naming here,
+        because "audited" and "registered" came apart for this one row:
+        T089's fix made `MSA_TO_INFL_FEATURE` measure CONFIRMED on both
+        corpora and deliberately left it out of the registry, since a
+        registration needs a census on the other axis (registry varied,
+        producer fixed) that T089's driver could not produce. The exact-set
+        assertion is what kept that gap honest for the day it lasted.
         """
         registry = categories_mod.CLOSURE_EDGES_VERIFIED
         assert set(registry) == {
@@ -497,6 +506,9 @@ class TestClosureRegistryShipsEmpty:
             # NO_DATA there rather than CONFIRMED.
             DependencyKind.PROCESS_RULE_TO_PHONEME,
             DependencyKind.PROCESS_RULE_TO_NATURAL_CLASS,
+            # T104. Two corpora, both CONFIRMED -- NOT one of the
+            # single-corpus rows above.
+            DependencyKind.MSA_TO_INFL_FEATURE,
         }
         categories_mod._closure_registry_by_category(registry)
         for kind, entry in registry.items():

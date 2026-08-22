@@ -89,17 +89,38 @@ set got SMALLER (206 -> 99, 34 -> 17) and the distinct far GUIDs collapsed onto
 the ones that already existed (34 -> 4, 10 -> 2), because many values of one
 feature are one feature. `resolved_as_owned_value` is 0 on both corpora.
 
-The row is still absent from `CLOSURE_EDGES_VERIFIED`, and that is not an
-oversight -- see `_CONFIRMED_NOT_REGISTERED` below, which is the vocabulary
-this file grew to say so. T089's own task text separates the two: "the fix is a
-live-behaviour change and must not be folded into a registration". The fix has
-its OWN census (`debug/run038_t089_census.py`,
+The row stayed absent from `CLOSURE_EDGES_VERIFIED` for one more task, and that
+was not an oversight -- see `_CONFIRMED_NOT_REGISTERED` below, which is the
+vocabulary this file grew to say so. T089's own task text separates the two:
+"the fix is a live-behaviour change and must not be folded into a
+registration". The fix has its OWN census (`debug/run038_t089_census.py`,
 `_snapshots/closure-producer-038-t089.json`), whose axis is the producer rather
 than the registry, and which measured what the structural argument predicted:
 with the registry held fixed at 7 rows, the full-copy plan and the AFFIXES-only
 plan are IDENTICAL before and after the fix (0 and 259 closure edges either
 way), and the resulting census reproduces `census-038-t076-registered.json` row
-for row. The registration is T104.
+for row.
+
+WHAT T104 REGISTERED, AND WHY IT IS A SEPARATE TASK RATHER THAN T089'S LAST
+PARAGRAPH.
+
+    MSA_TO_INFL_FEATURE      99 /  4 edges, foreign 0, unresolved 0  REGISTERED
+                             17 /  2 edges, owned 0
+
+The audit above was already done -- this is the only row in the registry whose
+confirming measurement was committed by a PREVIOUS task -- so T104 is not a new
+investigation. What it adds is the OTHER AXIS. A registration census varies the
+REGISTRY with the producer held fixed (`debug/run038_closure_census.py T104`),
+and answers "does registering this row change a decision it should not?".
+T089's census varies the PRODUCER with the registry held fixed, and answers
+"did the fix change a plan?". A driver that answers one cannot answer the
+other, and running the second one twice would look like diligence while
+measuring nothing new.
+
+Its `expect_kinds` names ALL FIVE AFFIXES rows, not just the new one, because
+the observing selection is AFFIXES-only and the same pieces carry every AFFIXES
+relationship -- a list naming only `MSA_TO_INFL_FEATURE` would fail for the
+four that were already correct.
 
 WHAT T068 REGISTERED, AND THE MEMBER IT HAD TO ADD.
 
@@ -248,38 +269,41 @@ def test_a_cast_is_still_mandatory_at_the_msa_sites(snap) -> None:
 #: `relationships` block, which is keyed the same way.
 _REGISTERED = ("AFFIX_TO_POS", "MSA_TO_FEAT_STRUC_TYPE", "SLOT_TO_POS",
                "TEMPLATE_TO_POS", "TEMPLATE_TO_SLOT",
-               "PROCESS_RULE_TO_PHONEME", "PROCESS_RULE_TO_NATURAL_CLASS")
+               "PROCESS_RULE_TO_PHONEME", "PROCESS_RULE_TO_NATURAL_CLASS",
+               "MSA_TO_INFL_FEATURE")
 #: Relationships the audit REFUSES. Empty since T089, and deliberately kept
 #: as a name rather than deleted: it is the list a future refusal goes on, and
 #: the tests below still enforce that everything on it stays out of the
 #: registry.
 _REFUSED: tuple = ()
 
-#: CONFIRMED by the audit and NOT registered, on purpose (T089).
+#: CONFIRMED by the audit and NOT registered, on purpose.
 #:
-#: This third state did not exist before T089 and is the one that most needs
-#: writing down, because it is indistinguishable from an oversight if it is
-#: not. `MSA_TO_INFL_FEATURE` measured
-#: `REFUSED_FAR_ENDPOINT_NOT_ENUMERABLE` until 2026-08-22: 30 of its 34
-#: distinct far GUIDs on `Mbugwe LizzieHC practice` (8 of 10 on `Ejagham
-#: Mini`) were `IFsSymFeatVal` symbolic values that
+#: EMPTY since T104, and deliberately kept as a name rather than deleted --
+#: for the same reason `_REFUSED` is kept. This third state is the one that
+#: most needs a place to live, because a row sitting in it is
+#: indistinguishable from an oversight if there is nowhere to write down that
+#: it is not one.
+#:
+#: `MSA_TO_INFL_FEATURE` is the row that put it here and the row that
+#: emptied it. It measured `REFUSED_FAR_ENDPOINT_NOT_ENUMERABLE` until
+#: 2026-08-22: 30 of its 34 distinct far GUIDs on `Mbugwe LizzieHC practice`
+#: (8 of 10 on `Ejagham Mini`) were `IFsSymFeatVal` symbolic values that
 #: `inflection_features_enumerate_source` never yields, so a pulled-in ref
 #: naming one could be neither planned (FR-015) nor deselected (FR-016).
+#: T089 re-pointed the `ValueRA` edge at the feature that OWNS the value and
+#: the relationship went CONFIRMED on both corpora with the edge set
+#: SMALLER (206 edges over 34 far GUIDs -> 99 over 4; 34 over 10 -> 17 over
+#: 2, `resolved_as_owned_value` 0 in both) -- and T089 still did not
+#: register it, because its own task text forbids folding a live-behaviour
+#: change into a registration. It sat here, CONFIRMED and unregistered, until
+#: **T104** ran the census that a registration actually requires
+#: (`debug/run038_closure_census.py T104`, the axis that holds the producer
+#: fixed and varies the REGISTRY, which T089's census could not measure).
 #:
-#: T089 re-pointed the `ValueRA` edge at the feature that OWNS the value --
-#: the piece that IS planned, and whose `execute_action` creates the value --
-#: and the relationship now measures CONFIRMED on both corpora with the edge
-#: set SMALLER: 206 edges over 34 far GUIDs -> 99 over 4, and 34 over 10 ->
-#: 17 over 2, `resolved_as_owned_value` 0 in both.
-#:
-#: It is still not registered, and that is T089's own task text: the fix "is
-#: a live-behaviour change and must not be folded into a registration". A
-#: registration needs its own census against a restored target proving the
-#: row changes no decision it should not, which is T104. Until then the
-#: audit says "registrable" and the registry says "not registered", and the
-#: tests below assert BOTH halves so neither can drift into the other by
-#: accident.
-_CONFIRMED_NOT_REGISTERED = ("MSA_TO_INFL_FEATURE",)
+#: A future row goes here the same way: measured registrable, not yet
+#: measured safe to register.
+_CONFIRMED_NOT_REGISTERED: tuple = ()
 
 #: How many of the audited corpora must return CONFIRMED for each registered
 #: relationship. T076 is the reason this is a table rather than "all of them".
@@ -306,6 +330,13 @@ _MIN_CONFIRMING_CORPORA = {
     "TEMPLATE_TO_SLOT": 2,
     "PROCESS_RULE_TO_PHONEME": 1,
     "PROCESS_RULE_TO_NATURAL_CLASS": 1,
+    # T104. TWO, not one: unlike the process-rule rows above, this
+    # relationship has data on BOTH corpora (99 edges over 4 distinct far
+    # GUIDs on `Mbugwe LizzieHC practice`, 17 over 2 on `Ejagham Mini`), so
+    # there is no corpus here whose silence has to be excused. A floor of 1
+    # would be a weaker claim than the evidence supports and would let a
+    # future regression on one corpus pass unnoticed.
+    "MSA_TO_INFL_FEATURE": 2,
 }
 
 
@@ -1676,7 +1707,21 @@ def test_t089_was_measured_with_the_row_still_unregistered() -> None:
     assert prod["task"] == "T089"
     assert prod["msa_to_infl_feature_registered"] is False
     assert "MSA_TO_INFL_FEATURE" not in prod["registered"]
-    assert set(prod["registered"]) == set(_REGISTERED)
+    # T104 (2026-08-22). This read `== set(_REGISTERED)` until the day
+    # `MSA_TO_INFL_FEATURE` joined that table, and the assertion was RIGHT to
+    # fail then -- it is the whole point of this test that T089's run happened
+    # with this one row out of the registry and every other row in it.
+    #
+    # The bug was that the claim was written against a MUTABLE table. What it
+    # means is "the registry as it stood on the day, which is today's registry
+    # minus the row T104 added", and stating that difference explicitly is
+    # what keeps the test honest through the next registration too: an eighth
+    # row appearing in `_REGISTERED` for some other relationship would make
+    # this fail again, correctly, because T089's artifact would then no longer
+    # describe the registry it was measured against.
+    assert set(prod["registered"]) == set(_REGISTERED) - {
+        "MSA_TO_INFL_FEATURE"}
+    assert len(prod["registered"]) == len(_REGISTERED) - 1
     assert prod["axis"].startswith("categories._value_defn_ref")
 
 
@@ -1764,3 +1809,247 @@ def test_t089_recorded_the_producer_change_it_did_not_measure_here() -> None:
         assert row["distinct_far_guids"] < before[corpus]["before"][
             "distinct_far_guids"]
         assert row["resolved_as_owned_value"] == 0
+
+
+# ===========================================================================
+# T104 (2026-08-22) -- the registration T089 unblocked and deliberately did
+# not perform
+# ===========================================================================
+#
+# Artifact: `_snapshots/closure-registration-038-t104.json`
+# (`python debug/run038_closure_census.py T104`, AFFIXES-only against a target
+# restored from `Target 2026-07-06 0218.fwbackup`).
+#
+# THIS IS THE ONLY ROW IN THE REGISTRY WHOSE CONFIRMING AUDIT WAS COMMITTED BY
+# AN EARLIER TASK, and the reason is the distinction the block above this one
+# exists to draw. T089 fixed the far endpoint and re-ran the audit; the row
+# measured CONFIRMED on both corpora that day and STILL was not registered,
+# because the two questions need different instruments:
+#
+#   * T089's census varies the PRODUCER with the registry held fixed --
+#     "did the fix change a plan?" (measured: no, under both selections).
+#   * A registration census varies the REGISTRY with the producer held fixed
+#     -- "does registering this row change a decision it should not?"
+#
+# Running the first one twice would look like diligence and measure nothing
+# new. So the audit assertions for this relationship live in
+# `test_only_the_confirmed_relationships_are_registered` and
+# `test_the_formerly_refused_relationship_now_names_only_enumerable_defns`
+# above, and what is asserted HERE is only what the registration itself
+# produced.
+
+_REG_T104 = _SNAPSHOT_DIR / "closure-registration-038-t104.json"
+
+
+def _reg_t104() -> dict:
+    if not _REG_T104.is_file():
+        pytest.skip(
+            "no committed registration measurement at " + str(_REG_T104)
+            + " -- produce it with `python debug/run038_closure_census.py "
+            "T104`")
+    return json.loads(_REG_T104.read_text(encoding="utf-8"))
+
+
+def test_an_affixes_only_plan_carries_the_infl_feature_edges() -> None:
+    """THE TEST T104'S ROW NAMES IN ITS `verified_by`.
+
+    The new row on its own first, then the whole set, because a single total
+    would be satisfied by the four AFFIXES rows that were already working
+    while the fifth stayed dead -- the asymmetry every audit in this file
+    exists to catch.
+
+    99 edges over 4 distinct pulled-in references is the shape that makes this
+    relationship worth registering AND the shape that got it refused for so
+    long. Before T089 it was 206 edges over 34 far GUIDs, 30 of which named an
+    `IFsSymFeatVal` no category could enumerate. The count of EDGES fell and
+    the count of distinct DEPENDENCIES fell further, because many values of
+    one feature are one feature.
+
+    The 4 is the cross-check worth having: `debug/audit038_closure_edges.py`
+    measured 4 distinct far GUIDs by resolving them against
+    `inflection_features_enumerate_source`, and the plan's closure walk
+    arrives at 4 pulled-in `inflection_features` references by a completely
+    different route. Two instruments, one number.
+    """
+    reg = _reg_t104()
+    assert reg["task"] == "T104"
+    assert reg["narrow_selection"] == "AFFIXES"
+
+    live = reg["narrow"]["registry_live"]["closure"]
+    assert live["by_kind"]["MSA_TO_INFL_FEATURE"] == {
+        "edges": 99,
+        "far_categories": {"inflection_features": 99},
+        "origins": {"pulled_in": 99},
+        "verified_by_nonempty": True,
+    }
+    # All five AFFIXES rows, which is what `expect_kinds` declares and why it
+    # cannot name only the new one: the same pieces carry every AFFIXES
+    # relationship, so a narrower list would fail for four rows doing their
+    # job -- while this exact-set form still fails on a sixth relationship
+    # nobody audited.
+    assert set(live["by_kind"]) == {
+        "AFFIX_TO_POS", "MSA_TO_FEAT_STRUC_TYPE", "MSA_TO_INFL_FEATURE",
+        "PROCESS_RULE_TO_PHONEME", "PROCESS_RULE_TO_NATURAL_CLASS",
+    }
+    assert set(reg["expected_kinds"]) == set(live["by_kind"])
+    assert live["total_edges"] == 358
+    assert live["pulled_in_by_category"] == {
+        "feature_struct_types": 2, "gram_categories": 6,
+        "inflection_features": 4, "natural_classes": 2, "phonemes": 16,
+    }
+    assert live["distinct_pulled_in_refs"] == 30
+
+
+def test_t104_added_its_own_row_and_nothing_else() -> None:
+    """The registration's delta against T076's run, which is the previous
+    measurement under the SAME selection.
+
+    Asserted as a difference rather than as two independent totals because
+    that is the actual claim: +99 edges and +4 pulled-in references, all of
+    them `MSA_TO_INFL_FEATURE` and `inflection_features`, with every other
+    kind and every other far category unmoved to the unit. A registration
+    that perturbed a sibling row would pass a totals check and fail here.
+    """
+    prior = json.loads(_REG_T076.read_text(encoding="utf-8"))
+    now = _reg_t104()
+    before = prior["narrow"]["registry_live"]["closure"]
+    after = now["narrow"]["registry_live"]["closure"]
+
+    assert before["total_edges"] == 259
+    assert after["total_edges"] - before["total_edges"] == 99
+    assert after["distinct_pulled_in_refs"] \
+        - before["distinct_pulled_in_refs"] == 4
+
+    # Every kind T076 measured is byte-identical; the only new key is the
+    # registered row.
+    assert set(after["by_kind"]) - set(before["by_kind"]) == {
+        "MSA_TO_INFL_FEATURE"}
+    for kind, row in before["by_kind"].items():
+        assert after["by_kind"][kind] == row, kind
+    for category, count in before["pulled_in_by_category"].items():
+        assert after["pulled_in_by_category"][category] == count, category
+    assert set(after["pulled_in_by_category"]) \
+        - set(before["pulled_in_by_category"]) == {"inflection_features"}
+
+
+def test_the_infl_feature_edges_come_from_the_registry_and_nowhere_else():
+    """Emptying the registry must take all 358 edges with it. Without this,
+    the test above is satisfied by any code path that produces closure edges,
+    including one that ignores `CLOSURE_EDGES_VERIFIED` -- the fall-through
+    FR-018 forbids."""
+    reg = _reg_t104()
+    assert reg["narrow"]["registry_empty"]["closure"]["total_edges"] == 0
+
+
+def test_a_full_copy_still_carries_no_closure_edges_after_t104() -> None:
+    """Seed semantics, re-measured with eight rows registered instead of
+    seven.
+
+    Pinned per registration rather than once, because each new row adds far
+    endpoints that might not have been seeds. Inflection features are -- a
+    full copy selects them in their own right -- so a full copy still records
+    nothing, and its composition is therefore still required to be identical
+    with the registry emptied.
+    """
+    reg = _reg_t104()
+    assert reg["full_copy"]["registry_live"]["closure"]["total_edges"] == 0
+    assert reg["full_copy"]["registry_empty"]["closure"]["total_edges"] == 0
+    assert reg["full_copy"]["composition_unchanged_by_registration"] is True
+    assert (reg["full_copy"]["registry_live"]["composition"]
+            == reg["full_copy"]["registry_empty"]["composition"])
+
+
+def test_t104_added_exactly_one_decision_per_pulled_in_reference() -> None:
+    """The one-for-one accounting T076 put in place of "the registration
+    changed no decision", closing on T104's numbers.
+
+    30 distinct pulled-in references and 30 added decisions, matching PER
+    CATEGORY -- the per-category match is what makes this more than an
+    arithmetic coincidence. Actions and overwrites both count, because a
+    pulled-in item the destination already holds arrives as an overwrite.
+
+    The four inflection features this registration adds are all ACTIONS with
+    no overwrite leg, which is worth pinning: the destination held none of
+    them, so the row is adding objects a narrow transfer used to leave out
+    rather than re-writing objects it already had.
+    """
+    reg = _reg_t104()
+    live = reg["narrow"]["registry_live"]["composition"]
+    empty = reg["narrow"]["registry_empty"]["composition"]
+    pulled = reg["narrow"]["registry_live"]["closure"][
+        "pulled_in_by_category"]
+
+    added: dict = {}
+    for bucket in ("actions", "overwrites"):
+        for category in set(live[bucket]) | set(empty[bucket]):
+            delta = (live[bucket].get(category, 0)
+                     - empty[bucket].get(category, 0))
+            if delta:
+                added[category] = added.get(category, 0) + delta
+    assert added == pulled
+    assert sum(added.values()) == 30
+
+    assert live["actions"]["inflection_features"] == 4
+    assert "inflection_features" not in live["overwrites"]
+
+    # AFFIXES itself is untouched: the selection decided those, not the walk.
+    assert live["actions"]["affixes"] == empty["actions"]["affixes"] == 118
+    # ...and nothing but `enrichments` moved among the un-categorised
+    # counters. A skip, a dropped item or a lost process rule may not move.
+    for key in ("excluded_lossy", "dropped_items", "process_rules",
+                "skips_total"):
+        assert live[key] == empty[key], key
+    assert live["enrichments"] - empty["enrichments"] == 2
+
+
+def test_the_t104_census_reproduces_the_previous_one_row_for_row() -> None:
+    """A stronger result than this registration was required to produce, and
+    the reason it is asserted rather than merely noted.
+
+    `compare_census_to` is None for T104 -- the `-t067-`/`-t068-`/`-t069-`
+    chain of pairwise census equalities is already behind the instrument (3
+    changed rows and 2 changed totals, from T087 and T099; T102's to repair),
+    so the driver was not asked to compare anything. The comparison holds
+    anyway, and holding anyway is the point: the census is taken under a FULL
+    COPY, where this row contributes no closure edge at all, so a full-copy
+    census that MOVED would mean the registration had reached a path the
+    seed semantics say it cannot.
+
+    74 classes, 0 differing rows, every total equal, same verdict. The gate
+    exit is 3 (`DUPLICATE_IDENTITY`) for a cause that predates Phase 7 and is
+    recorded under T064 -- `PhNCFeatures`' 23 duplicate natural-key groups
+    over 66 extra objects, the `Created automatically for rule "***"` classes
+    the SOURCE itself duplicates. Asserted as equality with the prior
+    artifact rather than as a literal, so this cannot quietly become a second
+    weaker copy of the census gate.
+    """
+    reg = _reg_t104()
+    assert reg["census"]["comparable_prior_artifact"] is None
+
+    prior = json.loads(
+        (_SNAPSHOT_DIR / "census-038-t076-registered.json").read_text(
+            encoding="utf-8"))
+    current = json.loads(
+        (_SNAPSHOT_DIR / "census-038-t104-registered.json").read_text(
+            encoding="utf-8"))
+
+    assert current["verdict"] == prior["verdict"] == "DUPLICATE_IDENTITY"
+    assert current["exit_code"] == prior["exit_code"]
+    assert reg["census"]["gate_exit_code"] == prior["exit_code"]
+    assert current["totals"] == prior["totals"]
+
+    rows_now = {row["class"]: row for row in current["classes"]}
+    rows_prior = {row["class"]: row for row in prior["classes"]}
+    assert set(rows_now) == set(rows_prior)
+    differing = [name for name, row in rows_now.items()
+                 if row != rows_prior[name]]
+    assert differing == [], (
+        "the full-copy census moved under a registration that contributes no "
+        "closure edge to a full copy: " + repr(differing))
+
+    # The exit-3 cause, named, so a later reader cannot re-read it as a
+    # Phase 7 regression.
+    nc_features = rows_now["PhNCFeatures"]["duplicates"]
+    assert nc_features["groups"] == 23
+    assert nc_features["extra_objects"] == 66
+    assert current["totals"]["duplicate_extra_objects"] == 66

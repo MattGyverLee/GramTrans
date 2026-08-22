@@ -171,21 +171,48 @@ def test_t034s_edge_is_registered_for_exactly_one_of_its_four_sources() -> None:
         assert dep_fn(category, TYPE_G) == ()
 
 
-def test_the_inflection_feature_half_is_still_not_registered() -> None:
+def test_both_halves_of_the_feat_struc_helper_are_now_registered() -> None:
     """`_entry_feat_struc_deps` emits TWO relationships -- the `TypeRA` arrow
-    and the `FeatureSpecsOC` -> `FeatureRA`/`ValueRA` arrows -- and only the
-    first is registered.
+    and the `FeatureSpecsOC` -> `FeatureRA`/`ValueRA` arrows -- and as of
+    T104 both are registered, under SEPARATE `DependencyKind`s.
 
-    That asymmetry is the whole reason T067 needed narrow producers. The
-    INFLECTION_FEATURES half is live and narrow but its far endpoints are
-    mostly `IFsSymFeatVal` symbolic values, which
-    `inflection_features_enumerate_source` never yields (it walks
-    `FeatureGetAll()`, the DEFNS). Registering it would put a pulled-in item
-    into a plan that no category can enumerate, plan or deselect. Filed as
-    T089.
+    THIS TEST ASSERTED THE OPPOSITE UNTIL 2026-08-22 and was inverted
+    deliberately, so read what changed. The asymmetry it pinned was real and
+    is the whole reason T067 needed narrow producers: the INFLECTION_FEATURES
+    half was live and narrow, but its far endpoints were mostly `IFsSymFeatVal`
+    symbolic values that `inflection_features_enumerate_source` never yields
+    (it walks `FeatureGetAll()`, the DEFNS), so a pulled-in ref naming one
+    could be neither planned (FR-015) nor deselected (FR-016).
+
+    T089 removed the cause rather than the check: each `ValueRA` edge now
+    names the feature that OWNS the value, which is the piece that IS
+    enumerated and whose `execute_action` co-creates the value. T104 then ran
+    the registration census and registered the row.
+
+    What replaces the old assertion is STRICTER than it, not weaker. "Not
+    registered" is satisfied by a row that is missing for any reason at all,
+    including a producer that was quietly deleted. This version pins that both
+    halves are present, that they are DISTINCT kinds, and that they point at
+    different far categories -- which is the property that actually keeps one
+    half's evidence from being read as the other's.
     """
-    assert DependencyKind.MSA_TO_INFL_FEATURE \
-        not in categories.CLOSURE_EDGES_VERIFIED
+    registry = categories.CLOSURE_EDGES_VERIFIED
+    assert DependencyKind.MSA_TO_FEAT_STRUC_TYPE in registry
+    assert DependencyKind.MSA_TO_INFL_FEATURE in registry
+
+    type_row = registry[DependencyKind.MSA_TO_FEAT_STRUC_TYPE]
+    infl_row = registry[DependencyKind.MSA_TO_INFL_FEATURE]
+    # Same source category, different far category, different producer. All
+    # three clauses matter: two rows on AFFIXES are legal only while their
+    # far categories differ, and a shared producer would mean one audit was
+    # being spent twice.
+    assert type_row["category"] == infl_row["category"] \
+        == GrammarCategory.AFFIXES
+    assert type_row["dependency_category"] \
+        == GrammarCategory.FEATURE_STRUCT_TYPES
+    assert infl_row["dependency_category"] \
+        == GrammarCategory.INFLECTION_FEATURES
+    assert type_row["producer"] is not infl_row["producer"]
 
 
 # ===========================================================================

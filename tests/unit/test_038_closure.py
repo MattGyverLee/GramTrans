@@ -390,6 +390,24 @@ def test_the_shipped_registry_holds_only_what_was_audited() -> None:
     reachable from `PhonRulesOS` -- which is precisely the endpoint T089
     refused. Those contexts are co-created instead, and what is registered is
     the referent one hop out, where the far endpoint is 6 of 6 enumerable.
+
+    T104 (2026-08-22) MOVED `MSA_TO_INFL_FEATURE` OUT OF THE REFUSAL SET AND
+    INTO THE REGISTRY, and this docstring's third bullet above -- which said
+    it was "STILL not registrable" -- is the sentence that stopped being
+    true. Read the direction of the fix before reading this as a relaxation.
+    The refusal was never about a broken producer; it was about the far
+    ENDPOINT, and T089 re-pointed each `ValueRA` edge at the feature that
+    OWNS the value. The 30-of-34 that could not be enumerated did not become
+    enumerable -- they CEASED TO BE SEPARATE ENDPOINTS, collapsing onto the 4
+    that already were, because many values of one feature are one feature.
+    The audit now reads 99 edges over 4 distinct far GUIDs on Mbugwe and 17
+    over 2 on Ejagham Mini, `resolved_as_owned_value` 0 on both, which is a
+    SMALLER edge set than the refused one. T104 is the separate task that
+    added the registration census T089's own task text required and forbade
+    folding in.
+
+    The refusal set is therefore SHORTER by one, and the two members left in
+    it are refused for a reason no measurement can lift: nothing emits them.
     """
     assert set(categories_mod.CLOSURE_EDGES_VERIFIED) == {
         DependencyKind.AFFIX_TO_POS,
@@ -399,6 +417,9 @@ def test_the_shipped_registry_holds_only_what_was_audited() -> None:
         DependencyKind.TEMPLATE_TO_SLOT,
         DependencyKind.PROCESS_RULE_TO_PHONEME,
         DependencyKind.PROCESS_RULE_TO_NATURAL_CLASS,
+        # T104. The only row here whose CONFIRMING audit was committed by an
+        # earlier task (T089); what T104 added is the registration census.
+        DependencyKind.MSA_TO_INFL_FEATURE,
     }
     # The single-corpus caveat is part of what these two rows CLAIM, so it is
     # asserted rather than left to prose that can drift away from the code.
@@ -408,8 +429,19 @@ def test_the_shipped_registry_holds_only_what_was_audited() -> None:
             single_corpus]["verified_by"]
         assert "NO_DATA on 'Ejagham Mini'" in evidence, single_corpus
         assert "SINGLE-CORPUS" in evidence, single_corpus
-    for refused in (DependencyKind.MSA_TO_INFL_FEATURE,
-                    DependencyKind.SLOT_TO_TEMPLATE,
+    # T104's row makes the OPPOSITE claim to those two -- two corpora, both
+    # CONFIRMED -- and must not be readable as if it shared their caveat.
+    infl = categories_mod.CLOSURE_EDGES_VERIFIED[
+        DependencyKind.MSA_TO_INFL_FEATURE]["verified_by"]
+    assert "SINGLE-CORPUS" not in infl
+    assert "CONFIRMED on BOTH" in infl
+    # ...and it must name BOTH measurements. The audit alone is what T089
+    # already had and deliberately did not register on.
+    assert "closure-registration-038-t104.json" in infl
+    assert "audit038_closure_edges.py" in infl
+    # What is left is refused because NOTHING EMITS IT, which is not a
+    # verdict a further audit can overturn.
+    for refused in (DependencyKind.SLOT_TO_TEMPLATE,
                     DependencyKind.AFFIX_TO_SLOT):
         assert refused not in categories_mod.CLOSURE_EDGES_VERIFIED, refused
 
@@ -498,6 +530,15 @@ def test_the_registered_rows_do_not_collide_in_the_kind_lookup() -> None:
     explicit `dependency_category` on every one of them load-bearing rather
     than tidy: drop it from any single row and that row becomes the
     `(AFFIXES, None)` wildcard, which would swallow the other three.
+
+    T104 makes it FIVE on `AFFIXES`, and its row is the one this check was
+    always most likely to catch. `affixes_infl_feature_dependencies` is the
+    third narrow producer carved out of the same composite
+    (`affixes_dependencies`) as `AFFIX_TO_POS` and `MSA_TO_FEAT_STRUC_TYPE`,
+    and two of the three read the SAME MSAs through the SAME helper
+    (`_entry_feat_struc_deps`). A `None` here would not merely mislabel this
+    row; it would make it the wildcard that absorbs its four siblings' far
+    categories into `MSA_TO_INFL_FEATURE`'s `verified_by`.
     """
     from gramtrans.Lib import preview as preview_module
 
@@ -511,5 +552,6 @@ def test_the_registered_rows_do_not_collide_in_the_kind_lookup() -> None:
         (GrammarCategory.AFFIX_TEMPLATES, GrammarCategory.SLOTS),
         (GrammarCategory.AFFIXES, GrammarCategory.PHONEMES),
         (GrammarCategory.AFFIXES, GrammarCategory.NATURAL_CLASSES),
+        (GrammarCategory.AFFIXES, GrammarCategory.INFLECTION_FEATURES),
     }
-    assert len(lookup) == len(categories_mod.CLOSURE_EDGES_VERIFIED) == 7
+    assert len(lookup) == len(categories_mod.CLOSURE_EDGES_VERIFIED) == 8
