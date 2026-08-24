@@ -56,7 +56,15 @@ Plus two accounting facts the records are only trustworthy with:
 
 Usage (no writes, but restores the throwaway target first):
 
-    python debug/run038_incompleteness_census.py
+    python debug/run038_incompleteness_census.py T093
+
+T093 (2026-08-24) RE-RUNS THIS DRIVER AGAINST THE SAME PAIR to measure the
+repair of the over-report the last bullet above filed, and writes its own
+artifact -- `incompleteness-038-t093.json` -- rather than overwriting T073's.
+Re-measuring a committed artifact in place is the drift T102 filed: the BEFORE
+stops existing and every comparison against it turns red for a reason
+unrelated to what it asserts. Passing `T073` therefore refuses to overwrite an
+existing artifact unless `GT038_OVERWRITE_T073` is set.
 
 `GT038_CENSUS_TARGET` / `GT038_CENSUS_SOURCE` override the projects.
 """
@@ -210,7 +218,21 @@ def _pulled_in_refs(plan) -> dict:
     }
 
 
+#: T093 re-runs this driver against the same pair to measure the repair, and
+#: writes its own artifact rather than overwriting T073's. T102 filed what
+#: happens when a committed artifact is re-measured in place: the artifacts
+#: that compare against it turn red for a reason unrelated to what they
+#: assert, and the BEFORE stops existing. `T073` stays the before.
+_TASKS = {"T073", "T093"}
+
+
 def main(argv) -> int:
+    task = (argv[0] if argv else "T073").upper()
+    if task not in _TASKS:
+        print("[FAIL] unknown task %r; expected one of %s"
+              % (task, ", ".join(sorted(_TASKS))))
+        return 2
+
     from harness import full_run
     from harness.restore import restore_target
 
@@ -227,7 +249,17 @@ def main(argv) -> int:
     print("[INFO] registry holds %d row(s): %s"
           % (len(registry), ", ".join(sorted(k.name for k in registry))))
 
-    snapshot = _SNAPS / "incompleteness-038-t073.json"
+    snapshot = _SNAPS / ("incompleteness-038-%s.json" % task.lower())
+    before_path = _SNAPS / "incompleteness-038-t073.json"
+    if task == "T073" and snapshot.exists() and not os.environ.get(
+            "GT038_OVERWRITE_T073"):
+        print("[FAIL] %s already exists and is T093's BEFORE. Re-measuring it "
+              "in place destroys the only record of the pre-repair behaviour "
+              "and turns every artifact-to-artifact comparison red for a "
+              "reason unrelated to what it asserts (T102). Run `T093`, or set "
+              "GT038_OVERWRITE_T073=1 if you really mean it."
+              % snapshot.name)
+        return 2
     target_path = str(PROJECTS_ROOT / TARGET / (TARGET + ".fwdata"))
 
     print("[INFO] restoring %r from %s (nothing below writes; the restore is "
@@ -330,9 +362,59 @@ def main(argv) -> int:
                 "resolves and it is not incomplete. T071 suppresses a "
                 "deselected ref before its planner runs, so no "
                 "ALREADY_PRESENT_BY_* skip exists for T073 to read."
+            ) if task == "T073" else (
+                "T093 asks the refused dependency's OWN plan_action whether "
+                "the destination already has it and keeps nothing but that "
+                "verdict -- no plan member, no skip, so T071's composition is "
+                "unchanged. A ref listed in refs_already_there must now name "
+                "0 records; the ones that remain are dependencies that really "
+                "are absent."
             ),
         },
     }
+
+    if task != "T073" and before_path.exists():
+        before = json.loads(before_path.read_text(encoding="utf-8"))
+        b_measured = before.get("measured", {})
+
+        def _rec(blob, key):
+            return blob.get(key, {}).get("incompleteness", {}).get("records")
+
+        b_over = b_measured.get(
+            "T093_dependencies_already_in_the_destination", {})
+        measured["T093_before_and_after"] = {
+            "before_artifact": before_path.name,
+            "before_task": before.get("task"),
+            "P1_records": {
+                "before": _rec(b_measured, "P1_everything_deselected"),
+                "after": _rec(measured, "P1_everything_deselected"),
+            },
+            "P1_records_naming_a_dependency_already_there": {
+                "before": b_over.get("P1_records_naming_one_of_them"),
+                "after": len(over_reported),
+            },
+            "P2_records": {
+                "before": _rec(b_measured,
+                               "P2_only_the_parts_of_speech_deselected"),
+                "after": _rec(measured,
+                              "P2_only_the_parts_of_speech_deselected"),
+            },
+            "refs_already_there": {
+                "before": b_over.get("refs_already_there"),
+                "after": sorted(already_there),
+            },
+            "deselection_skips_P1": {
+                "before": b_measured.get(
+                    "P1_everything_deselected", {}).get("skips"),
+                "after": measured["P1_everything_deselected"]["skips"],
+            },
+            "note": (
+                "the skip row is here because the repair had to leave it "
+                "alone: a refused dependency is still refused and still "
+                "carries DEPENDENCY_DESELECTED. Only the INCOMPLETENESS "
+                "records move."
+            ),
+        }
 
     claims = {
         "P0_a_satisfied_closure_reports_nothing":
@@ -353,6 +435,8 @@ def main(argv) -> int:
             and measured["P3_full_copy"]["incompleteness"]["records"] == 0,
         "P4_the_record_reaches_every_surface":
             all(bool(v) for v in surfaces.values()),
+        "T093_no_record_names_a_dependency_already_in_the_destination":
+            len(over_reported) == 0,
         "every_record_carries_a_consequence": all(
             measured[k]["incompleteness"]["every_record_has_a_consequence"]
             for k in ("P0_nothing_deselected", "P1_everything_deselected",
@@ -361,7 +445,7 @@ def main(argv) -> int:
     }
 
     out = {
-        "task": "T073",
+        "task": task,
         "source": SOURCE,
         "destination": TARGET,
         "backup": BACKUP.name,
@@ -394,6 +478,14 @@ def main(argv) -> int:
                  "labels_total"]))
     print("       T093 over-reports (dependency already in target): %d"
           % len(over_reported))
+    if "T093_before_and_after" in measured:
+        ba = measured["T093_before_and_after"]
+        print("       T093 before -> after: P1 records %s -> %s, "
+              "over-reports %s -> %s, P2 records %s -> %s"
+              % (ba["P1_records"]["before"], ba["P1_records"]["after"],
+                 ba["P1_records_naming_a_dependency_already_there"]["before"],
+                 ba["P1_records_naming_a_dependency_already_there"]["after"],
+                 ba["P2_records"]["before"], ba["P2_records"]["after"]))
     print()
     for name, ok in sorted(claims.items()):
         print("       [%s] %s" % ("OK" if ok else "FAIL", name))

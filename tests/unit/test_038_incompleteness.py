@@ -531,3 +531,90 @@ def test_a_run_with_no_closure_omits_the_key_entirely(monkeypatch):
     plan = _build(monkeypatch)
     rpt = report_mod.RunReport.build_from_plan(plan, RunMode.PREVIEW)
     assert "incompleteness" not in json.loads(rpt.to_snapshot_json())
+
+
+# ===========================================================================
+# T093 -- "already there" is not a cause, so it outranks every cause
+# ===========================================================================
+#
+# `_plan_pulled_in_items` refuses a deselected ref BEFORE its planner runs, so
+# no `ALREADY_PRESENT_BY_*` skip can exist for the reader above to consult.
+# `already_present_refs` is the channel that carries the fact it probed for
+# instead. The precedence question is separate and is the one this section
+# pins: cause precedence (`deselected` > `cycle` > `unsatisfiable`) orders
+# EXPLANATIONS for an incompleteness and cannot decide whether there is one.
+
+def test_a_deselected_dependency_already_in_the_destination_is_not_reported():
+    """The live defect, at the unit layer. 2 of the 5 pulled-in POSes on
+    `Mbugwe LizzieHC practice` were already in the target and 8 of T073's 35
+    records named one of them. The user refused to re-transfer an object the
+    destination already has; the reference still resolves."""
+    assert preview_mod._plan_incompleteness(
+        (_edge(AFFIX_REF, POS_REF, DependencyKind.AFFIX_TO_POS,
+               deselected=True),),
+        [_action(AFFIX_REF)], [], [],
+        None,
+        [POS_REF],
+    ) == ()
+
+
+def test_presence_outranks_the_cycle_cause_too():
+    """WHY THE TEST MOVED ABOVE THE CAUSE LADDER RATHER THAN INTO THE
+    `deselected` BRANCH. The cycle cause fires precisely when the dependency
+    IS in the plan -- "whichever is written first cannot resolve its
+    reference". An object already in the destination is not being written by
+    this run at all, so there is no ordering problem to report. No live
+    instance (the five registered relationships form a DAG); constructible,
+    therefore pinned."""
+    edges = (
+        _edge(AFFIX_REF, POS_REF, DependencyKind.AFFIX_TO_POS),
+        _edge(POS_REF, AFFIX_REF, DependencyKind.AFFIX_TO_POS),
+    )
+    assert [r.cause for r in preview_mod._plan_incompleteness(
+        edges, [_action(AFFIX_REF), _action(POS_REF)], [], [])] == [
+        "cycle", "cycle"]
+    assert preview_mod._plan_incompleteness(
+        edges, [_action(AFFIX_REF), _action(POS_REF)], [], [],
+        None, [POS_REF, AFFIX_REF],
+    ) == ()
+
+
+def test_the_channel_is_additive_to_the_skip_derived_set():
+    """The skip-derived set covers every path except the deselected one, and
+    both feed the same question. A ref present on either reading is present."""
+    skips = [Skip(category=GrammarCategory.GRAM_CATEGORIES,
+                  source_guid=POS_G,
+                  reason=SkipReason.ALREADY_PRESENT_BY_GUID, detail="present")]
+    edges = (_edge(AFFIX_REF, POS_REF, DependencyKind.AFFIX_TO_POS,
+                   deselected=True),)
+    assert preview_mod._plan_incompleteness(
+        edges, [_action(AFFIX_REF)], [], skips, None, [],
+    ) == ()
+    assert preview_mod._plan_incompleteness(
+        edges, [_action(AFFIX_REF)], [], [], None, [POS_REF],
+    ) == ()
+
+
+def test_an_empty_channel_changes_nothing():
+    """The default. Every pre-T093 caller passes nothing, and a deselected
+    dependency nobody vouched for is still reported -- 27 of the 35 live
+    records are exactly this."""
+    edges = (_edge(AFFIX_REF, POS_REF, DependencyKind.AFFIX_TO_POS,
+                   deselected=True),)
+    assert [r.cause for r in preview_mod._plan_incompleteness(
+        edges, [_action(AFFIX_REF)], [], [], None, ())] == ["deselected"]
+    assert [r.cause for r in preview_mod._plan_incompleteness(
+        edges, [_action(AFFIX_REF)], [], [])] == ["deselected"]
+
+
+def test_the_channel_normalises_guid_case():
+    """Every other ref in this module is lower-cased on the way in (the piece
+    cache's contract, pinned by test_038_closure.py). A probe result that
+    arrived upper-cased would silently fail to match and re-open the defect."""
+    assert preview_mod._plan_incompleteness(
+        (_edge(AFFIX_REF, POS_REF, DependencyKind.AFFIX_TO_POS,
+               deselected=True),),
+        [_action(AFFIX_REF)], [], [],
+        None,
+        [(GrammarCategory.GRAM_CATEGORIES, POS_G.upper())],
+    ) == ()

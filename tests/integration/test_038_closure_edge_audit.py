@@ -1387,16 +1387,36 @@ def test_the_narrow_transfer_used_to_lose_three_templates_and_all_its_slots():
 # DEPENDENCY_DESELECTED skips naming the refused DEPENDENCIES, and not one word
 # about the 11 templates that still transfer and now arrive unwired.
 
+# T093 (2026-08-24) RE-MEASURED THIS BLOCK. The repair changed what is
+# reported -- 35 records to 27, and P2's 29 to 7 -- so the artifact it changed
+# is NOT overwritten: `incompleteness-038-t073.json` stays as the BEFORE and
+# `incompleteness-038-t093.json` carries the behaviour the engine has now.
+# Re-measuring a committed link in place is the drift T102 filed; the driver
+# refuses to do it. Every test below that states what the code DOES reads the
+# T093 artifact; the ones that state what it USED TO do say so in their names
+# and read the T073 one.
+
 _INCOMPLETE = _SNAPSHOT_DIR / "incompleteness-038-t073.json"
+_INCOMPLETE_AFTER = _SNAPSHOT_DIR / "incompleteness-038-t093.json"
+
+
+def _load_incompleteness(path) -> dict:
+    if not path.is_file():
+        pytest.skip(
+            "no committed incompleteness measurement at " + str(path)
+            + " -- produce it with "
+            "`python debug/run038_incompleteness_census.py T093`")
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _incompleteness_before() -> dict:
+    """T073's measurement, kept because T093 changed the numbers in it."""
+    return _load_incompleteness(_INCOMPLETE)
 
 
 def _incompleteness() -> dict:
-    if not _INCOMPLETE.is_file():
-        pytest.skip(
-            "no committed incompleteness measurement at " + str(_INCOMPLETE)
-            + " -- produce it with "
-            "`python debug/run038_incompleteness_census.py`")
-    return json.loads(_INCOMPLETE.read_text(encoding="utf-8"))
+    """What the engine reports NOW (T073 as repaired by T093)."""
+    return _load_incompleteness(_INCOMPLETE_AFTER)
 
 
 def test_a_satisfied_closure_reports_no_incompleteness() -> None:
@@ -1412,25 +1432,29 @@ def test_a_satisfied_closure_reports_no_incompleteness() -> None:
 
 def test_a_full_deselection_reports_every_item_it_leaves_incomplete() -> None:
     """FR-017 live. With all 23 pulled-in GUIDs refused, 11 templates still
-    transfer and each loses its POS and its slots: 35 records over 11 distinct
-    arriving items, naming 23 distinct missing dependencies.
+    transfer and each loses its slots and -- for the 3 whose POS is not
+    already in the destination -- its POS: 27 records over 11 distinct
+    arriving items, naming 21 distinct missing dependencies.
 
-        TEMPLATE_TO_POS    11 edges  ->  11 records
+        TEMPLATE_TO_POS    11 edges  ->   3 records   (8 already in target)
         TEMPLATE_TO_SLOT   24 edges  ->  24 records
         SLOT_TO_POS        18 edges  ->   0 records
+
+    21 = the 23 pulled-in refs minus the 2 the destination already has, which
+    is the arithmetic T093's repair turns on.
     """
     p1 = _incompleteness()["measured"]["P1_everything_deselected"]
     assert p1["closure"]["edges_marked_deselected"] == 53
-    assert p1["incompleteness"]["records"] == 35
+    assert p1["incompleteness"]["records"] == 27
     assert p1["incompleteness"]["by_category_pair"] == {
-        "affix_templates": {"gram_categories": 11, "slots": 24}}
+        "affix_templates": {"gram_categories": 3, "slots": 24}}
     assert p1["incompleteness"]["distinct_incomplete_items"] == 11
-    assert p1["incompleteness"]["distinct_missing_dependencies"] == 23
-    assert p1["incompleteness"]["by_cause"] == {"deselected": 35}
+    assert p1["incompleteness"]["distinct_missing_dependencies"] == 21
+    assert p1["incompleteness"]["by_cause"] == {"deselected": 27}
 
 
 def test_an_item_that_does_not_arrive_is_not_reported_as_incomplete() -> None:
-    """WHY 35 AND NOT 53, stated as its own claim because it is a deliberate
+    """WHY NOT 53, stated as its own claim because it is a deliberate
     accounting decision and not a shortfall. The 18 `SLOT_TO_POS` edges name
     slots that were themselves deselected: they do not arrive at all, so they
     are dropped-with-reason (their own `DEPENDENCY_DESELECTED` skip, 18 of the
@@ -1446,17 +1470,23 @@ def test_an_item_that_does_not_arrive_is_not_reported_as_incomplete() -> None:
 def test_a_pulled_in_item_can_itself_arrive_incomplete() -> None:
     """THE TWO-HOP CASE T069's census warned Phase 7 to expect, and the one a
     full deselection cannot show. Deselect only the 5 POSes: the 18 slots are
-    still pulled in, so they arrive -- and they arrive missing their part of
-    speech. 29 records over 29 distinct items (11 templates + 18 slots) and 5
-    distinct missing dependencies."""
+    still pulled in, so they arrive -- and the ones whose part of speech is
+    not already in the destination arrive missing it. 7 records over 7
+    distinct items (3 templates + 4 slots) and 3 distinct missing
+    dependencies, which is the 5 refused POSes minus the 2 the destination
+    already has.
+
+    T093 moved this case hardest: 29 records to 7. The 2 already-present
+    POSes carried 22 of the 29, so three quarters of THIS reading was phantom
+    -- which is what "8 of 35" understated when the defect was filed."""
     p2 = _incompleteness()["measured"][
         "P2_only_the_parts_of_speech_deselected"]
-    assert p2["incompleteness"]["records"] == 29
+    assert p2["incompleteness"]["records"] == 7
     assert p2["incompleteness"]["by_category_pair"] == {
-        "affix_templates": {"gram_categories": 11},
-        "slots": {"gram_categories": 18}}
-    assert p2["incompleteness"]["distinct_incomplete_items"] == 29
-    assert p2["incompleteness"]["distinct_missing_dependencies"] == 5
+        "affix_templates": {"gram_categories": 3},
+        "slots": {"gram_categories": 4}}
+    assert p2["incompleteness"]["distinct_incomplete_items"] == 7
+    assert p2["incompleteness"]["distinct_missing_dependencies"] == 3
 
 
 def test_a_full_copy_reports_no_incompleteness() -> None:
@@ -1475,8 +1505,8 @@ def test_the_record_reaches_every_surface_a_user_reads() -> None:
     `incompleteness` list and the console's "Items arriving INCOMPLETE" block
     all predate this task and all rendered an empty tuple."""
     s = _incompleteness()["measured"]["P4_surfaces_for_P1"]
-    assert s["run_report_records"] == 35
-    assert s["snapshot_json_records"] == 35
+    assert s["run_report_records"] == 27
+    assert s["snapshot_json_records"] == 27
     assert s["has_incomplete_items"] is True
     assert s["console_block_present"] is True
     assert s["console_states_a_cause"] is True
@@ -1484,14 +1514,17 @@ def test_the_record_reaches_every_surface_a_user_reads() -> None:
 
 def test_every_record_names_its_items_or_says_it_cannot() -> None:
     """A record whose labels are blank tells the reader which GUIDs are
-    involved and nothing about which ITEMS. 63 of 70 labels in P1 are real
+    involved and nothing about which ITEMS. 47 of 54 labels in P1 are real
     source names ("basic noun" needs "Noun", "aug", "np"); the 7 fallbacks are
     3 AFFIX TEMPLATES whose source `Name` is genuinely empty -- a fact about
     the corpus, not a failure of the label reader, which is why the fallback
-    is the console form of the ref rather than an empty string."""
+    is the console form of the ref rather than an empty string.
+
+    54 rather than T073's 70 because T093 removed 8 records; the 7 unnamed
+    labels are the same 7, so the fallbacks did not move."""
     p1 = _incompleteness()["measured"][
         "P1_everything_deselected"]["incompleteness"]
-    assert p1["labels_total"] == 70
+    assert p1["labels_total"] == 54
     assert p1["labels_falling_back_to_the_ref"] == 7
     assert len(p1["distinct_refs_with_no_resolvable_name"]) == 3
     assert all(ref.startswith("affix_templates:")
@@ -1499,25 +1532,104 @@ def test_every_record_names_its_items_or_says_it_cannot() -> None:
     assert p1["every_record_has_a_consequence"] is True
 
 
-def test_the_over_report_this_task_deliberately_did_not_fix() -> None:
-    """T093, PINNED AS THE CURRENT DEFECTIVE BEHAVIOUR so closing it is a
-    deliberate edit and not silent drift.
+# ===========================================================================
+# T093 -- the over-report T073 pinned, and what closing it moved
+# ===========================================================================
+#
+# Artifact: `_snapshots/incompleteness-038-t093.json`
+# (`python debug/run038_incompleteness_census.py T093`, same source, same
+# backup, same AFFIX_TEMPLATES-only selection as T073, `preview_only=True`).
+#
+# THE DEFECT. A deselected dependency that is ALREADY IN THE DESTINATION was
+# reported as missing. T071 refuses a deselected ref BEFORE its planner runs
+# -- correct for the plan, and what `test_a_deselected_dependency_is_not_
+# planned` pins -- so no `ALREADY_PRESENT_BY_*` skip exists on that path and
+# `_plan_incompleteness` had nothing to consult.
+#
+# THE REPAIR asks the refused dependency's OWN `plan_action` whether the
+# destination already has it and keeps nothing but that verdict: no plan
+# member, no skip, so T071's composition is untouched. Not a GUID probe --
+# `guid in target` without a field-identity comparison is Defect G3's exact
+# shape, the premise this feature exists to remove. And the presence test sits
+# ABOVE the cause ladder rather than inside the `deselected` branch, because
+# cause precedence orders explanations for an incompleteness and cannot decide
+# whether there is one.
 
-    2 of the 5 pulled-in POSes ALREADY EXIST in the restored destination --
-    T070 measured them as OVERWRITEs, not ADDs. When the user deselects one,
-    the dependent's reference still resolves against the object that is
-    already there, so nothing is incomplete; T073 reports 8 of its 35 records
-    anyway. It cannot currently tell: T071 suppresses a deselected ref BEFORE
-    its planner runs, which is correct for the plan and leaves no
-    `ALREADY_PRESENT_BY_*` skip for this reader to consult.
 
-    The number is asserted so that a fix has to change it on purpose."""
-    t092 = _incompleteness()["measured"][
+def test_no_record_names_a_dependency_that_is_already_in_the_destination(
+) -> None:
+    """THE CLAIM, replacing T073's pin of the same number at 8. The 2 POSes
+    the destination already has are named by 0 records; T073 named them 8
+    times."""
+    now = _incompleteness()["measured"][
         "T093_dependencies_already_in_the_destination"]
-    assert len(t092["refs_already_there"]) == 2
+    assert len(now["refs_already_there"]) == 2
     assert all(ref.startswith("gram_categories:")
-               for ref in t092["refs_already_there"])
-    assert t092["P1_records_naming_one_of_them"] == 8
+               for ref in now["refs_already_there"])
+    assert now["P1_records_naming_one_of_them"] == 0
+
+
+def test_the_repair_removed_exactly_the_phantom_records_and_no_others(
+) -> None:
+    """THE ACCOUNTING, and the reason a delta is asserted rather than just an
+    after-value: 35 - 27 == 8 == the number of records that named an
+    already-present dependency. Every record that disappeared is one of the
+    over-reports; none of the real ones went with them."""
+    ba = _incompleteness()["measured"]["T093_before_and_after"]
+    assert ba["before_task"] == "T073"
+    before, after = ba["P1_records"]["before"], ba["P1_records"]["after"]
+    assert (before, after) == (35, 27)
+    assert ba["P1_records_naming_a_dependency_already_there"] == {
+        "before": 8, "after": 0}
+    assert before - after == 8
+
+
+def test_the_same_two_dependencies_are_present_before_and_after() -> None:
+    """THE CONTROL. Same source, same backup, same selection: if the set of
+    already-in-the-destination refs had moved, the delta above would be
+    measuring a different target rather than a repair."""
+    ba = _incompleteness()["measured"]["T093_before_and_after"]
+    assert ba["refs_already_there"]["before"] == ba[
+        "refs_already_there"]["after"]
+    assert len(ba["refs_already_there"]["after"]) == 2
+
+
+def test_the_refusal_is_still_a_refusal() -> None:
+    """WHY THIS IS NOT REPAIR (a) FROM THE TASK LINE, measured. Running the
+    refused ref's planner to learn the presence fact must not change what the
+    user is told about the REFUSAL: the deselection skips are the same 5
+    gram_categories and 18 slots T071 measured, not an `ALREADY_PRESENT_*`
+    skip standing where a `DEPENDENCY_DESELECTED` one stood."""
+    ba = _incompleteness()["measured"]["T093_before_and_after"]
+    assert ba["deselection_skips_P1"]["before"] == ba[
+        "deselection_skips_P1"]["after"] == {
+            "gram_categories": 5, "slots": 18}
+
+
+def test_the_two_hop_case_moved_furthest() -> None:
+    """P2 -- only the POSes deselected -- went from 29 records to 7, because
+    the 2 already-present POSes were between them the dependency of 22 of the
+    29 arriving items. The headline "8 of 35" understated the defect; on the
+    selection a user is most likely to make, three quarters of the report was
+    phantom."""
+    ba = _incompleteness()["measured"]["T093_before_and_after"]
+    assert ba["P2_records"] == {"before": 29, "after": 7}
+
+
+def test_the_before_artifact_still_records_the_defect() -> None:
+    """THE BEFORE IS NOT OVERWRITTEN. T102 filed what happens when a committed
+    artifact is re-measured in place -- the evidence for the old behaviour
+    stops existing and every comparison against it turns red for a reason
+    unrelated to what it asserts. `incompleteness-038-t073.json` therefore
+    still holds 35 records and 8 over-reports, and the driver refuses to
+    rewrite it without an explicit override."""
+    before = _incompleteness_before()
+    assert before["task"] == "T073"
+    assert before["measured"]["P1_everything_deselected"][
+        "incompleteness"]["records"] == 35
+    assert before["measured"][
+        "T093_dependencies_already_in_the_destination"][
+            "P1_records_naming_one_of_them"] == 8
 
 
 def test_the_pre_t073_artifact_reported_none_of_this() -> None:

@@ -50,9 +50,11 @@ from gramtrans.Lib.models import (
     DependencyKind,
     GrammarCategory,
     PlannedAction,
+    PlannedOverwrite,
     RunContext,
     RunMode,
     Selection,
+    Skip,
     SkipReason,
     WSMapping,
 )
@@ -85,23 +87,31 @@ def _ctx() -> RunContext:
     )
 
 
-def _fake_bundle(category, guid, *, pieces=None, producer=None):
+def _fake_bundle(category, guid, *, pieces=None, producer=None,
+                 plan_action=None):
     """A one-item LEAF_CATEGORIES bundle whose `plan_action` yields an ADD.
 
     `pieces=()` models a dependency whose category cannot enumerate the item
     the walk asked for -- the unsatisfiable case FR-017 has to report rather
     than drop.
+
+    `plan_action` overrides the ADD. T093 needs it: what the DEPENDENCY's
+    planner decides -- ADD, OVERWRITE, `ALREADY_PRESENT_*`, or a raise -- is
+    the whole of "is this thing already in the destination", and the default
+    ADD models only one of the four.
     """
     piece = SimpleNamespace(guid=guid)
     if pieces is None:
         pieces = [piece]
     bundle = dict(categories_mod.LEAF_CATEGORIES[category])
     bundle["enumerate_source"] = lambda context, selection: list(pieces)
-    bundle["plan_action"] = lambda pc, context, ws: PlannedAction(
-        category=category,
-        source_guid=str(getattr(pc, "guid", guid)),
-        intended_target_guid=str(getattr(pc, "guid", guid)),
-        summary="T070 fake " + category.value,
+    bundle["plan_action"] = plan_action or (
+        lambda pc, context, ws: PlannedAction(
+            category=category,
+            source_guid=str(getattr(pc, "guid", guid)),
+            intended_target_guid=str(getattr(pc, "guid", guid)),
+            summary="T070 fake " + category.value,
+        )
     )
     if producer is not None:
         bundle["dependencies"] = producer
@@ -119,7 +129,8 @@ def _registry(producer):
     }
 
 
-def _build(monkeypatch, selection=None, *, pos_pieces=None):
+def _build(monkeypatch, selection=None, *, pos_pieces=None,
+           pos_plan_action=None):
     """Plan an AFFIXES-only selection whose one affix needs one POS."""
     def _producer(piece):
         return (POS_REF,)
@@ -128,7 +139,8 @@ def _build(monkeypatch, selection=None, *, pos_pieces=None):
     patched[GrammarCategory.AFFIXES] = _fake_bundle(
         GrammarCategory.AFFIXES, AFFIX_G, producer=_producer)
     patched[GrammarCategory.GRAM_CATEGORIES] = _fake_bundle(
-        GrammarCategory.GRAM_CATEGORIES, POS_G, pieces=pos_pieces)
+        GrammarCategory.GRAM_CATEGORIES, POS_G, pieces=pos_pieces,
+        plan_action=pos_plan_action)
     monkeypatch.setattr(categories_mod, "LEAF_CATEGORIES", patched)
     monkeypatch.setattr(
         categories_mod, "CLOSURE_EDGES_VERIFIED", _registry(_producer))
@@ -370,3 +382,133 @@ def test_an_empty_registry_pulls_nothing_in(monkeypatch) -> None:
     )
     assert plan.closure_edges == ()
     assert _actions_for(plan, GrammarCategory.GRAM_CATEGORIES) == []
+
+
+# ===========================================================================
+# T093 -- a REFUSED dependency that is nevertheless ALREADY IN THE DESTINATION
+# ===========================================================================
+#
+# T071 suppresses a deselected ref BEFORE its planner runs. That is correct
+# for the PLAN -- a refused dependency must not be written -- and it is what
+# `test_a_deselected_dependency_is_not_planned` above pins. What it also did
+# was leave `_plan_incompleteness` with no way to tell a dependency that is
+# MISSING from one that is merely NOT BEING RE-TRANSFERRED: no
+# `ALREADY_PRESENT_BY_*` skip exists on that path, so every deselected
+# dependency looked absent. Measured on `Mbugwe LizzieHC practice`: 2 of the
+# 5 pulled-in POSes were already in the target and 8 of T073's 35 records
+# named one of them -- ~23% phantom loss, the failure shape CLAUDE.md records
+# for flexicon 4.5.1's natural-class features.
+#
+# The repair asks the DEPENDENCY'S OWN PLANNER and keeps nothing but its
+# verdict. Not a GUID probe: a bare `guid in target` check is Defect G3's
+# exact shape, the premise this feature exists to remove.
+
+def _deselect_pos():
+    return Selection(
+        categories={GrammarCategory.AFFIXES: True},
+        excluded_deps=frozenset({POS_G}),
+    )
+
+
+def _pos_overwrite(pc, context, ws):
+    """The live shape: T070 planned 2 of the 5 pulled-in POSes as OVERWRITEs,
+    which is the planner saying "this object is already there"."""
+    return PlannedOverwrite(
+        category=GrammarCategory.GRAM_CATEGORIES,
+        source_guid=POS_G,
+        target_guid=POS_G,
+        summary="T093 fake merge",
+        write_mode="merge",
+    )
+
+
+def _pos_already_present(pc, context, ws):
+    return Skip(
+        category=GrammarCategory.GRAM_CATEGORIES,
+        source_guid=POS_G,
+        reason=SkipReason.ALREADY_PRESENT_BY_IDENTITY,
+        detail="T093 fake identity match",
+    )
+
+
+def test_a_deselected_dependency_that_is_already_there_is_not_an_incompleteness(
+    monkeypatch,
+) -> None:
+    """THE DEFECT ITSELF. The user refused to re-transfer a POS that the
+    destination already has; the affix's reference resolves against the object
+    that is there, so nothing arrives incomplete and the report must say
+    nothing. Before this task it said the affix was unwired."""
+    plan = _build(monkeypatch, _deselect_pos(),
+                  pos_plan_action=_pos_overwrite)
+    assert plan.incompleteness == ()
+
+
+def test_an_already_present_skip_from_the_probe_counts_the_same(
+    monkeypatch,
+) -> None:
+    """The other verdict that means "already there". `PlannedOverwrite` is a
+    match that will be enriched; `ALREADY_PRESENT_BY_IDENTITY` is a match with
+    nothing to write. Both resolve the dependent's reference."""
+    plan = _build(monkeypatch, _deselect_pos(),
+                  pos_plan_action=_pos_already_present)
+    assert plan.incompleteness == ()
+
+
+def test_the_refusal_is_still_a_refusal(monkeypatch) -> None:
+    """WHY THIS IS NOT REPAIR (a) FROM THE TASK LINE. Running the refused
+    ref's planner to learn the presence fact must not turn the refusal into
+    something else: no POS is planned, and the skip the user sees is still
+    `DEPENDENCY_DESELECTED` -- not the `ALREADY_PRESENT_*` its planner
+    happened to return. T071's measured composition is unchanged."""
+    plan = _build(monkeypatch, _deselect_pos(),
+                  pos_plan_action=_pos_overwrite)
+    assert _actions_for(plan, GrammarCategory.GRAM_CATEGORIES) == []
+    assert [ow for ow in plan.overwrites
+            if ow.category == GrammarCategory.GRAM_CATEGORIES] == []
+    pos_skips = [s for s in plan.skips
+                 if s.category == GrammarCategory.GRAM_CATEGORIES]
+    assert [s.reason for s in pos_skips] == [SkipReason.DEPENDENCY_DESELECTED]
+
+
+def test_the_edge_is_still_marked_deselected(monkeypatch) -> None:
+    """The edge records what the USER did. Presence changes what is reported
+    as incomplete, not the history of the selection -- an edge that lost its
+    `deselected` stamp would make T071's own measurement unreadable."""
+    plan = _build(monkeypatch, _deselect_pos(),
+                  pos_plan_action=_pos_overwrite)
+    assert [e.deselected for e in plan.closure_edges] == [True]
+
+
+def test_a_deselected_dependency_that_is_NOT_there_is_still_reported(
+    monkeypatch,
+) -> None:
+    """THE REGRESSION GUARD, and the reason the fix is a probe rather than a
+    blanket exemption. The default fake planner returns an ADD -- the POS is
+    not in the destination -- so the affix really does arrive unwired and
+    FR-017 must still say so. This is 27 of the 35 live records."""
+    plan = _build(monkeypatch, _deselect_pos())
+    assert [r.cause for r in plan.incompleteness] == ["deselected"]
+
+
+def test_a_probe_that_raises_reports_the_dependency_missing(
+    monkeypatch,
+) -> None:
+    """UNKNOWN RESOLVES TO "REPORT IT". A planner that raises tells us
+    nothing about the destination, and Principle I's failure is the silent
+    one: over-reporting one item is recoverable, a quiet loss is not."""
+    def _boom(pc, context, ws):
+        raise RuntimeError("T093 fake planner failure")
+
+    plan = _build(monkeypatch, _deselect_pos(), pos_plan_action=_boom)
+    assert [r.cause for r in plan.incompleteness] == ["deselected"]
+
+
+def test_the_probe_does_not_fire_when_nothing_is_deselected(
+    monkeypatch,
+) -> None:
+    """The quiet case is untouched: with no deselection the POS is planned
+    normally (T070) and there is nothing to report either way."""
+    plan = _build(monkeypatch, pos_plan_action=_pos_overwrite)
+    assert plan.incompleteness == ()
+    assert len([ow for ow in plan.overwrites
+                if ow.category == GrammarCategory.GRAM_CATEGORIES]) == 1

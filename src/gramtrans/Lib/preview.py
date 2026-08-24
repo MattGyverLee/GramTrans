@@ -638,9 +638,79 @@ def _pull_in_label(piece_for, ref) -> str:
     return getattr(category, "value", str(category)) + " " + str(guid)[:8]
 
 
+def _deselected_dependency_is_in_the_destination(
+        context, ws_mapping, piece_for, category, guid) -> bool:
+    """Feature 038 T093 -- is a REFUSED dependency nevertheless already in the
+    destination, so the dependent's reference still resolves?
+
+    WHY THIS EXISTS. `_plan_pulled_in_items` suppresses a deselected ref
+    BEFORE its planner runs -- which is what makes "a deselected dependency is
+    not planned" true and is correct for the plan -- so no
+    `ALREADY_PRESENT_BY_*` skip is ever emitted on that path and
+    `_plan_incompleteness` had nothing to consult. It therefore called every
+    deselected dependency missing, including the ones sitting in the
+    destination already. Measured on `Mbugwe LizzieHC practice`: 2 of the 5
+    pulled-in POSes are already there (T070 planned them as OVERWRITEs), and 8
+    of T073's 35 records named one of them. A report that cries loss where
+    there was none teaches the reader to stop reading it -- the same
+    phantom-loss shape CLAUDE.md records for flexicon 4.5.1.
+
+    WHY IT IS THE PLANNER AND NOT A GUID PROBE. A bare
+    `guid in target` check is Defect G3's exact shape -- `ALREADY_PRESENT_BY_
+    GUID` taken without a field-identity comparison, the premise this feature
+    exists to remove. This asks the category's OWN `plan_action`, the same
+    matcher that decides ADD-vs-OVERWRITE for every non-deselected ref, and
+    keeps nothing but its verdict:
+
+      * `PlannedOverwrite`      -- matched an existing target object: present.
+      * `Skip(ALREADY_PRESENT_*)` -- matched, nothing to write: present.
+      * `PlannedAction`         -- an ADD: NOT present.
+      * anything else, or a raise -- unknown, therefore NOT present.
+
+    NOTHING IS PLANNED AND NOTHING IS SKIPPED as a result. The verdict is
+    read and the result discarded, so `_plan_pulled_in_items` still emits the
+    `DEPENDENCY_DESELECTED` skip it always emitted and T071's measured
+    composition is unchanged -- a deselected dependency is still refused, it
+    is just no longer reported as MISSING when it is not.
+
+    UNKNOWN RESOLVES TO "REPORT IT". A planner that raises leaves the record
+    standing: over-reporting one item is recoverable, and Principle I's
+    failure is the silent one.
+    """
+    if __package__:
+        from . import categories as _categories
+    else:  # pragma: no cover - flat sys.path (FLExTools) import shape
+        import categories as _categories  # type: ignore
+
+    try:
+        bundle = _categories.LEAF_CATEGORIES[category]
+    except KeyError:
+        return False
+    try:
+        piece = piece_for(category, guid)
+    except Exception:  # noqa: BLE001 - a probe never fails a plan
+        return False
+    if piece is None:
+        return False
+    try:
+        result = bundle["plan_action"](piece, context, ws_mapping)
+    except Exception as exc:  # noqa: BLE001 - a probe never fails a plan
+        _log.debug(
+            "T093 presence probe: %s plan_action raised for %s (%s); the "
+            "dependency is reported missing rather than assumed present",
+            getattr(category, "value", category), guid, exc,
+        )
+        return False
+    if isinstance(result, PlannedOverwrite):
+        return True
+    if isinstance(result, Skip):
+        return getattr(result, "reason", None) in _DEPENDENCY_PRESENT_SKIPS
+    return False
+
+
 def _plan_pulled_in_items(context, selection, ws_mapping, edges,
                           actions, overwrites, skips, dispatch_order,
-                          piece_for=None):
+                          piece_for=None, deselected_but_present=None):
     """Feature 038 T070/T071 (FR-014, FR-015, FR-016) -- give every pulled-in
     dependency a plan member, marked as pulled in rather than chosen.
 
@@ -672,6 +742,14 @@ def _plan_pulled_in_items(context, selection, ws_mapping, edges,
     whose dependency the user turned off. `_plan_incompleteness` (T073) reads
     that flag to say which items therefore ARRIVE INCOMPLETE -- this function
     reports the missing DEPENDENCY, that one reports the DEPENDENTS.
+
+    T093: `deselected_but_present`, when a set is passed, collects every
+    refused ref that is nevertheless ALREADY IN THE DESTINATION
+    (`_deselected_dependency_is_in_the_destination`). It is an OUT parameter
+    rather than a return value or a `Skip` on purpose -- the refusal is still
+    a refusal and still carries `DEPENDENCY_DESELECTED`, so this changes no
+    plan member and no skip; it only gives `_plan_incompleteness` the fact it
+    could not otherwise learn.
     """
     if not edges:
         return edges
@@ -720,6 +798,13 @@ def _plan_pulled_in_items(context, selection, ws_mapping, edges,
             continue
         if _pull_in_is_deselected(selection, category, guid):
             deselected_refs.add(ref)
+            # T093: refused, but is it already THERE? The refusal stands
+            # either way (the skip below is unchanged); the answer decides
+            # only whether the dependents are reported as arriving INCOMPLETE.
+            if deselected_but_present is not None and (
+                    _deselected_dependency_is_in_the_destination(
+                        context, ws_mapping, _piece_for, category, guid)):
+                deselected_but_present.add(ref)
             skips.append(Skip(
                 category=category,
                 source_guid=guid,
@@ -880,7 +965,8 @@ def _closure_cycle_groups(edges) -> dict:
     return groups
 
 
-def _plan_incompleteness(edges, actions, overwrites, skips, label_of=None):
+def _plan_incompleteness(edges, actions, overwrites, skips, label_of=None,
+                         already_present_refs=()):
     """Feature 038 T073 (FR-017, SC-010) -- one `IncompletenessRecord` per
     item that WILL ARRIVE in the destination missing something it needs.
 
@@ -916,6 +1002,18 @@ def _plan_incompleteness(edges, actions, overwrites, skips, label_of=None):
     CAUSE PRECEDENCE: `deselected` > `cycle` > `unsatisfiable`. The user's own
     action is the most actionable explanation there is, so it names itself
     even when the deselected item also happens to sit in a cycle.
+
+    T093 -- "ALREADY THERE" OUTRANKS EVERY CAUSE, because it is not a cause.
+    Precedence orders EXPLANATIONS for an incompleteness; it cannot decide
+    whether there is one. A dependency that sits in the destination already is
+    one the dependent's reference resolves against, whether the user refused
+    to re-transfer it, whether it sits in a cycle, or neither -- so presence is
+    tested first and ends the question. `already_present_refs` carries the
+    refs `_plan_pulled_in_items` probed on the DESELECTED path, where no
+    `ALREADY_PRESENT_BY_*` skip can exist to be read; the skip-derived set
+    covers every other path. Live effect on `Mbugwe LizzieHC practice`: 8 of
+    T073's 35 records named one of the 2 POSes that were already in the
+    target.
     """
     if not edges:
         return ()
@@ -937,6 +1035,11 @@ def _plan_incompleteness(edges, actions, overwrites, skips, label_of=None):
                 (skip.category,
                  str(getattr(skip, "source_guid", "") or "").lower())
             )
+    # T093: the deselected path emits no `ALREADY_PRESENT_BY_*` skip -- it
+    # refuses the ref before its planner ever runs -- so the presence fact for
+    # those refs arrives here from the probe instead of from the skip list.
+    for ref in already_present_refs or ():
+        already_present.add((ref[0], str(ref[1]).lower()))
 
     cycles = _closure_cycle_groups(edges)
     records = []
@@ -947,6 +1050,13 @@ def _plan_incompleteness(edges, actions, overwrites, skips, label_of=None):
         dependent = (edge.dependent[0], str(edge.dependent[1]).lower())
         dependency = (edge.dependency[0], str(edge.dependency[1]).lower())
         if dependent not in arriving:
+            continue
+        if dependency in already_present:
+            # T093. Not a cause and not an exception to one: the object the
+            # reference needs is in the destination, so there is nothing to be
+            # incomplete about. Tested ahead of `deselected` and `cycle`
+            # because both of those explain a loss, and this says there was
+            # none.
             continue
         cycle = cycles.get(dependent)
         kind = getattr(edge.kind, "value", str(edge.kind))
@@ -963,7 +1073,10 @@ def _plan_incompleteness(edges, actions, overwrites, skips, label_of=None):
                 "needs the other, so whichever is written first cannot "
                 "resolve its " + kind + " reference"
             )
-        elif dependency in arriving or dependency in already_present:
+        elif dependency in arriving:
+            # (T093 moved the `already_present` half of this test above the
+            # cause ladder, where it answers "is anything incomplete" for
+            # every cause rather than only for this one.)
             continue
         else:
             cause = "unsatisfiable"
@@ -1376,10 +1489,15 @@ def build_run_plan(
     # `actions`/`overwrites`/`skips` in place and hands back the edges with
     # `deselected` stamped, so the plan and the edge set cannot disagree.
     _pull_in_pieces = _pull_in_piece_resolver(context, selection)
+    # T093: refused refs that are nevertheless already in the destination. The
+    # pull-in is the only place that can learn this (it holds the pieces and
+    # the planners) and `_plan_incompleteness` is the only place that needs
+    # it, so it travels between them and reaches no plan member.
+    _deselected_but_present: set = set()
     _closure_edges = _plan_pulled_in_items(
         context, selection, ws_mapping, _closure_edges,
         actions, overwrites, skips, _LEAF_DISPATCH_CATEGORIES,
-        _pull_in_pieces,
+        _pull_in_pieces, _deselected_but_present,
     )
 
     # Feature 038 (T073, FR-017, SC-010): the edges now say what was refused
@@ -1391,6 +1509,7 @@ def build_run_plan(
     _incompleteness = _plan_incompleteness(
         _closure_edges, actions, overwrites, skips,
         lambda ref: _pull_in_label(_pull_in_pieces, ref),
+        _deselected_but_present,
     )
 
     # Feature 038 (FR-020..FR-022, plan.md:111): the enrich-vs-skip decision is
