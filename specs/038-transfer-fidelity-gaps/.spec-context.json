@@ -990,6 +990,22 @@
       "kind": "complete",
       "by": "extension",
       "at": "2026-08-24T20:09:29.960Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T083",
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-08-24T20:11:32.145Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T084",
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-08-24T20:11:32.145Z"
     }
   ],
   "decisions": [
