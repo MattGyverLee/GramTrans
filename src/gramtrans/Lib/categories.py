@@ -3239,6 +3239,7 @@ def stem_names_execute_action(action: PlannedAction, context: RunContext, ws_map
 
     # Find source stem name and its owner POS.
     src_obj = None
+    src_owner_pos = None
     src_owner_pos_guid = None
     for pos in source.POS.GetAll(recursive=True):
         concrete = pos.concrete if hasattr(pos, "concrete") else pos
@@ -3247,6 +3248,11 @@ def stem_names_execute_action(action: PlannedAction, context: RunContext, ws_map
             for sn in pos_obj.StemNamesOC:
                 if _guid_str_from(sn) == src_guid:
                     src_obj = sn
+                    # T095: KEEP THE OBJECT, not just its GUID. The owner is
+                    # in hand right here, and the natural key is its `Name` --
+                    # discarding it one line before the lookup is the shape
+                    # T094 found in `_create_msa_for_closure._pos_guid_of`.
+                    src_owner_pos = pos_obj
                     src_owner_pos_guid = str(ICmObject(concrete).Guid).lower()
                     break
         except Exception:
@@ -3256,14 +3262,9 @@ def stem_names_execute_action(action: PlannedAction, context: RunContext, ws_map
     if src_obj is None:
         return None
 
-    # Find target owner POS.
-    target_pos = None
-    if src_owner_pos_guid:
-        for pos in target.POS.GetAll(recursive=True):
-            concrete = pos.concrete if hasattr(pos, "concrete") else pos
-            if str(ICmObject(concrete).Guid).lower() == src_owner_pos_guid:
-                target_pos = IPartOfSpeech(concrete)
-                break
+    # Find target owner POS -- identity first, then the natural key (T095).
+    target_pos = _target_pos_for_source_guid(
+        context, target, src_owner_pos_guid, src_pos=src_owner_pos)
     if target_pos is None:
         return None  # Owner POS not in target; dependency unresolved.
 
@@ -3366,15 +3367,17 @@ def exception_features_plan_action(piece, context: RunContext, ws_mapping: WSMap
     compound_guid = f"{pos_guid}::{val_guid}"
 
     # Check whether target POS already has this value wired.
+    #
+    # T095: this and `exception_features_execute_action` are a G6 PREVIEW
+    # TWIN, so they resolve the owner the same way or the preview understates
+    # its own run. A GUID-only lookup here answers "no such POS" for a
+    # category T091 reused, the ALREADY_PRESENT check never runs, and the
+    # plan promises an ADD the executor then finds already wired.
     target = context.target_handle
     if hasattr(target, "POS"):
-        for pos in target.POS.GetAll(recursive=True):
-            concrete = pos.concrete if hasattr(pos, "concrete") else pos
-            if _guid_str_from(concrete) != pos_guid:
-                continue
+        pos_obj_tgt = _target_pos_for_source_guid(context, target, pos_guid)
+        if pos_obj_tgt is not None:
             try:
-                from SIL.LCModel import IPartOfSpeech
-                pos_obj_tgt = IPartOfSpeech(concrete)
                 for existing_val in pos_obj_tgt.ExceptionFeaturesOC:
                     if _guid_str_from(existing_val) == val_guid:
                         return Skip(
@@ -3415,13 +3418,9 @@ def exception_features_execute_action(action: PlannedAction, context: RunContext
         return None
     pos_guid, val_guid = src_compound.split("::", 1)
 
-    # Find target POS.
-    target_pos = None
-    for pos in target.POS.GetAll(recursive=True):
-        concrete = pos.concrete if hasattr(pos, "concrete") else pos
-        if _guid_str_from(concrete) == pos_guid:
-            target_pos = IPartOfSpeech(concrete)
-            break
+    # Find target POS -- identity first, then the natural key (T095), the
+    # same resolution its plan-time twin above makes.
+    target_pos = _target_pos_for_source_guid(context, target, pos_guid)
     if target_pos is None:
         return None  # POS not yet in target.
 
@@ -4922,11 +4921,19 @@ def _stash_feature_category_links(pos_piece, context):
     the run-plan's `feature_category_links` binding (031 US1, contract C1).
 
     Called from `gram_categories_plan_action` for every in-scope POS (created or
-    matched). Records `{target_pos_guid: [feature_guid, ...]}` -- GUIDs are
-    preserved on transfer so target_pos_guid == source pos guid. Consumed by the
+    matched). Records `{source_pos_guid: [feature_guid, ...]}`. Consumed by the
     Move wiring post-pass `_run_infl_feature_link_pass` (registered via
     `_run_tail_once`). Idempotent: a (pos, feature) pair already recorded is not
     duplicated.
+
+    T095 CORRECTED WHAT THIS KEY IS. It used to be documented as
+    `{target_pos_guid: ...}` on the premise that "GUIDs are preserved on
+    transfer so target_pos_guid == source pos guid" -- true until T091 taught
+    the planner to reuse a destination category by natural key, and the whole
+    of the defect T095 filed. The key has always been read off the SOURCE
+    object here; the resolution to a destination object belongs to the
+    consumer, which now does it identity-first and key-second rather than
+    assuming the two GUIDs are equal.
 
     In-scope endpoints only: gathers nothing unless INFLECTION_FEATURES is
     selected (no features transferred => no links to wire), and honors an
@@ -5099,6 +5106,46 @@ def _resolve_target_pos(target, src_pos_guid, *, src_pos=None,
         if _guid_str_from(pos_obj) == src_pos_guid:
             return pos_obj
     return _resolve_target_pos_by_natural_key(target, src_pos, source_handle)
+
+
+def _target_pos_for_source_guid(context, target, src_pos_guid, *, src_pos=None):
+    """The target category a SOURCE category GUID names -- identity first,
+    natural key second (T095).
+
+    THE INVARIANT THIS REPLACES. Four sites resolved the target category with
+    a bare GUID scan over `target.POS.GetAll(recursive=True)` and returned
+    None on a miss, and one of them said the premise out loud:
+    "GUIDs are preserved on transfer so target_pos_guid == source pos guid".
+    That was true until T091 taught the planner to REUSE a destination
+    category matched by natural key rather than duplicate it. Since then a
+    source category can be present in the destination under a different GUID,
+    and a GUID-only lookup reads that as absent -- measured on `Ngoreme FLEx`
+    as two `Skip(DEPENDENCY_UNRESOLVED)` on categories the run had
+    deliberately reused, each costing a category its `InflectableFeatsRC`
+    wiring at a `total_shortfall` of 0 (a reference collection is not a
+    counted object class, so no census row moves).
+
+    Every caller has the GUID; most have the source OBJECT too, and the ones
+    that do should pass it -- the natural key is the category's `Name`, which
+    a GUID string cannot supply. When it is not passed, the source project is
+    scanned for it, because "identity failed" is not an answer worth giving
+    without trying the key.
+
+    Returns the target `IPartOfSpeech` (cast by `_as_pos` inside the
+    resolver), or None when neither identity nor the key can decide -- which
+    leaves the caller exactly where it was, reporting rather than guessing.
+    """
+    if not src_pos_guid:
+        return None
+    source = getattr(context, "source_handle", None)
+    if src_pos is None and source is not None:
+        for candidate in _iter_pos(source):
+            typed = _as_pos(candidate)
+            if _guid_str_from(typed) == src_pos_guid:
+                src_pos = typed
+                break
+    return _resolve_target_pos(
+        target, src_pos_guid, src_pos=src_pos, source_handle=source)
 
 
 def _resolve_target_pos_by_natural_key(target, src_pos, source_handle):
@@ -9920,11 +9967,21 @@ def _run_infl_feature_link_pass(context, target, tag=None):
     after both POS (GRAM_CATEGORIES) and features (INFLECTION_FEATURES) are
     stable in the target.
 
-    Bindings shape: `{target_pos_guid: [feature_guid, ...]}` (gathered by
-    `_stash_feature_category_links`). Each endpoint resolves via
-    `_resolve_target_by_guid` (offline fakes: `get_object_by_guid`; live:
-    the LCM object repository) -- GUIDs are preserved on transfer, so no
-    fingerprint/name fallback is needed.
+    Bindings shape: `{source_pos_guid: [feature_guid, ...]}` (gathered by
+    `_stash_feature_category_links`). The FEATURE endpoint resolves via
+    `_resolve_target_by_guid` (offline fakes: `get_object_by_guid`; live: the
+    LCM object repository), because features are GUID-preserved.
+
+    THE CATEGORY ENDPOINT IS NOT (T095). This docstring used to say "GUIDs are
+    preserved on transfer, so no fingerprint/name fallback is needed", and
+    that sentence was the whole defect: T091 taught the planner to REUSE a
+    destination category matched by natural key, so the source GUID is no
+    longer the destination GUID for a reused category. Measured on
+    `Ngoreme FLEx`: two of the five reused categories produced
+    `Skip(DEPENDENCY_UNRESOLVED)` here and lost their `InflectableFeatsRC`
+    wiring -- reported, never silent, and costing 0 shortfall, because a
+    reference collection is not a counted object class. It resolves through
+    `_target_pos_for_source_guid` now: identity first, natural key second.
 
     Returns a list of Skip(DEPENDENCY_UNRESOLVED) -- one per unresolved POS and
     one per unresolved feature (VR-4: deferred, never a dangling write).
@@ -9938,7 +9995,15 @@ def _run_infl_feature_link_pass(context, target, tag=None):
         bindings = _binding_map(context, "feature_category_links") or {}
 
     for pos_guid, feature_guids in bindings.items():
+        # IDENTITY FIRST, and through the object repository, because that is
+        # both the cheap answer and the one the offline fakes implement
+        # (`get_object_by_guid`; the contract note above). Only when it finds
+        # nothing does T095's resolver run, which re-tries identity over the
+        # POS scope and then consults the natural key -- so a run where every
+        # GUID was preserved behaves exactly as it did before T095.
         target_pos = _resolve_target_by_guid(target, pos_guid)
+        if target_pos is None:
+            target_pos = _target_pos_for_source_guid(context, target, pos_guid)
         if target_pos is None:
             skips.append(Skip(
                 category=GrammarCategory.GRAM_CATEGORIES,

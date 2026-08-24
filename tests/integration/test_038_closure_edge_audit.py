@@ -2165,3 +2165,120 @@ def test_the_t104_census_reproduces_the_previous_one_row_for_row() -> None:
     assert nc_features["groups"] == 23
     assert nc_features["extra_objects"] == 66
     assert current["totals"]["duplicate_extra_objects"] == 66
+
+
+# ===========================================================================
+# T095 -- the two categories the link pass could not find, measured live
+# ===========================================================================
+#
+# Artifacts: `_snapshots/skips-038-t095-ngoreme.json` (the slice of both run
+# reports the claim rests on), `census-038-t095-ngoreme.json`,
+# `census-038-t095-ejagham.json`.
+# Driver: `python debug/run038_before_after_pairs.py ngoreme --tag t095`,
+# `Ngoreme FLEx` -> `GT038 Ngoreme After` restored from
+# `Target 2026-07-06 0218.fwbackup`.
+#
+# WHY THE EVIDENCE IS COMMITTED AS ITS OWN ARTIFACT. `_run_reports/` is
+# gitignored, and T095's own filing cited a run report in the `038-t091`
+# worktree, which has since been removed -- so the evidence for the defect
+# could not be re-read when the task was picked up. That is T102's shape one
+# more time (evidence that stops existing), and the fix is to commit the slice
+# rather than the path.
+#
+# WHY THE CENSUS CANNOT SHOW THIS. `InflectableFeatsRC` is a REFERENCE
+# COLLECTION, not a counted object class, so losing it moves no census row and
+# `total_shortfall` reads clean. The instrument is the run report's skip list.
+
+_T095 = _SNAPSHOT_DIR / "skips-038-t095-ngoreme.json"
+
+
+def _t095() -> dict:
+    if not _T095.is_file():
+        pytest.skip(
+            "no committed T095 measurement at " + str(_T095)
+            + " -- produce it with `python debug/run038_before_after_pairs.py "
+            "ngoreme --tag t095`")
+    return json.loads(_T095.read_text(encoding="utf-8"))
+
+
+def test_the_two_reused_categories_were_reported_unresolved() -> None:
+    """THE BEFORE, from a committed record rather than from memory. Both GUIDs
+    belong to categories the SAME run reused by natural key -- the report's
+    own `identity_substitution` counts 5 for GRAM_CATEGORIES -- and the link
+    pass called them absent."""
+    before = _t095()["before"]
+    assert before["identity_substitution_per_category"]["GRAM_CATEGORIES"] == 5
+    skips = before["gram_categories_skips"]
+    assert len(skips) == 2
+    assert {s["source_guid"][:8] for s in skips} == {"c46c8242", "ff5c5e07"}
+    assert all(s["reason"] == "DEPENDENCY_UNRESOLVED" for s in skips)
+    assert all("not in target after" in s["detail"] for s in skips)
+
+
+def test_after_the_sweep_no_category_is_reported_unresolved() -> None:
+    """THE AFTER. Same pair, same backup, same selection, same branch plus the
+    sweep: 0. The categories resolve by natural key and their inflectable
+    features are wired."""
+    after = _t095()["after"]
+    assert after["gram_categories_skips"] == []
+    assert "GRAM_CATEGORIES" not in after["skips_by_category"]
+
+
+def test_the_sweep_moved_nothing_else_in_the_report() -> None:
+    """THE CONTROL INSIDE THE SAME RUN. A resolver that started answering
+    where it used to return None could have changed any number of other
+    outcomes; the rest of the report is identical. `leaf_failed` matters most
+    -- 11 swallowed `natural_classes_execute_action` raises before and after,
+    so the sweep neither introduced a raise nor hid one."""
+    blob = _t095()
+    before, after = blob["before"], blob["after"]
+    assert before["skips_by_category"]["AFFIXES"] == 20
+    assert after["skips_by_category"]["AFFIXES"] == 20
+    assert before["leaf_failed"] == after["leaf_failed"] == 11
+    assert (before["identity_substitution_total"]
+            == after["identity_substitution_total"] == 26)
+    assert before["skips_total"] - after["skips_total"] == 2
+
+
+def test_the_census_delta_is_source_drift_and_not_this_task() -> None:
+    """THE HONESTY METRIC. `total_shortfall` moves 70638 -> 70646, and none of
+    the +8 is T095's: `Ngoreme FLEx` drifted again between the runs (+11
+    across short classes) and three rows improved (-3) from the process-rule
+    tasks that landed between them. Stating the arithmetic is what separates a
+    measurement from a number."""
+    c = _t095()["census_ngoreme"]
+    assert c["totals_before"]["total_shortfall"] == 70638
+    assert c["totals_after"]["total_shortfall"] == 70646
+    drift = sum(r["source_drift"] for r in c["rows_that_moved"])
+    shortfall = sum(r["shortfall_delta"] for r in c["rows_that_moved"])
+    assert shortfall == 8
+    assert drift == 25, "source drift across every moved row"
+    improved = [r["class"] for r in c["rows_that_moved"]
+                if r["shortfall_delta"] < 0]
+    assert sorted(improved) == [
+        "MoAffixProcess", "PhSequenceContext", "PhSimpleContextNC"]
+
+
+def test_the_part_of_speech_row_did_not_move() -> None:
+    """T091's clause, still closed. A sweep that bought its repair by putting
+    the duplicates back would show here first."""
+    c = _t095()["census_ngoreme"]
+    assert "PartOfSpeech" not in {r["class"] for r in c["rows_that_moved"]}
+    assert (c["totals_before"]["duplicate_extra_objects"]
+            == c["totals_after"]["duplicate_extra_objects"] == 21)
+
+
+def test_ejagham_is_byte_stable() -> None:
+    """THE REGRESSION CHECK. Ejagham's starters carry the GOLD catalog GUIDs
+    and match on identity, so it never enters the natural-key fallback -- it
+    could not see T091's defect and cannot see T095's. Every total identical;
+    the only two rows that moved are a NOT_EVALUATED reporting shape
+    (`source_count` 0 -> None) that contributes 0 to either total and is
+    present on the Ngoreme run too."""
+    c = _t095()["census_ejagham_control"]
+    assert c["totals_before"] == c["totals_after"]
+    assert c["totals_after"]["total_shortfall"] == 4781
+    assert c["totals_after"]["unexplained_shortfall"] == 3063
+    assert sorted(r["class"] for r in c["rows_that_moved"]) == [
+        "MoForm", "MoMorphSynAnalysis"]
+    assert all(r["shortfall_delta"] == 0 for r in c["rows_that_moved"])

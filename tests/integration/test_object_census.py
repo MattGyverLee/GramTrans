@@ -5568,11 +5568,16 @@ class TestT101TheCommittedCorpusIsUnmovedByInvariant12:
             assert classes == {"MoForm", "MoMorphSynAnalysis"}, (
                 name + " nulls something other than the two "
                 "excluded_not_measurable rows: " + repr(sorted(classes)))
-        assert len(by_artifact) == 7, (
+        # 7 -> 9 on 2026-08-24 (T095): `census-038-t095-ngoreme.json` and
+        # `census-038-t095-ejagham.json` arrived from T095's live pair. Each
+        # nulls exactly the two `excluded_not_measurable` rows, so clause 1
+        # above -- the one that fails on a genuinely NEW null -- passed
+        # untouched; only the deliberate-edit count moved.
+        assert len(by_artifact) == 9, (
             "a census artifact arrived or left; the corpus that nulls the two "
             "excluded_not_measurable rows is now "
             + repr(sorted(by_artifact)))
-        assert advisory_nulls == 2 * len(by_artifact) == 14
+        assert advisory_nulls == 2 * len(by_artifact) == 18
 
 
 class TestT100TheVocabularyStaysClosedAtSeventeen:
