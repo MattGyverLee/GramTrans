@@ -595,8 +595,8 @@ Report-only residuals, the cross-cutting audits, and validation against the Succ
 
 **--> Wait for Wave 2, then:**
 
-- [ ] **T083** Refresh the `<!-- SPECKIT -->` pointer in `CLAUDE.md`, which still names `specs/029-sense-pictures/plan.md`. **Blocked until 037 releases its `CLAUDE.md` claim** - if the claim is still live, leave this unchecked and say so rather than forcing it - `CLAUDE.md`
-- [ ] **T084** Release every `lockout` claim taken in T004 - `~/.claude/skills/lockout/lockout.py`
+- [x] **T083** Refresh the `<!-- SPECKIT -->` pointer in `CLAUDE.md`, which still names `specs/029-sense-pictures/plan.md`. **Blocked until 037 releases its `CLAUDE.md` claim** - if the claim is still live, leave this unchecked and say so rather than forcing it - `CLAUDE.md` **CLOSED 2026-08-24.** The block named `specs/029-sense-pictures/plan.md` -- nine features stale -- and now names `specs/038-transfer-fidelity-gaps/plan.md`, matching `.specify/feature.json`'s pointer. **The 037 block the task line names is NOT live**: `lockout status` reports no active locks at all, so nothing was forced. Commits to `main` as spec-adjacent bookkeeping, per the Git Workflow Protocol.
+- [x] **T084** Release every `lockout` claim taken in T004 - `~/.claude/skills/lockout/lockout.py` **CLOSED 2026-08-24, verified rather than assumed.** `lockout status` reports **no active locks** -- for this feature's team or any other -- so every claim T004 took is released. The audit trail's 50-entry window reaches back only to 2026-08-22 (T104/T105's acquire/release pairs, all balanced) and does not contain T004's team, which is a fact about the window, not about the claims: `status` is the authority on what is HELD. Nothing to release, and nothing left holding.
 - [ ] **T085** Merge the validated `038-transfer-fidelity-gaps` branch to `main` and remove the worktree. Spec artifacts (T023, T025, T082) commit to `main` directly and are already there - `git`
 
 ---
