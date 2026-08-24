@@ -850,6 +850,32 @@ def compare_objects(source_inventory: dict, target_inventory: dict) -> list[dict
     GUID is either present in the target's post-transfer inventory for its
     class, or it is not.
 
+    ALREADY DONE, ON THE BRANCH THAT OWNS THIS FILE (038 T097, 2026-08-24).
+    ------------------------------------------------------------------------
+    The premise above expired, and the replacement is NOT this branch's to
+    write. `035-fullsweep-fidelity` has already done it -- commits `66fe390`
+    ("T031-T034 -- the object plane can now fail honestly") and `58cc970`
+    ("T045a -- the measurements finally reach the guards") -- and its version
+    of this driver has no `compare_objects` at all. In its place:
+    `reconcile_project_objects`, `findings_from_accounting`,
+    `payload_never_compared` and `drop_records_from_artifact`, over a
+    `debug/fullsweep/` package (`compare.py`, `census.py`, `artifact.py`, ...)
+    **that does not exist in this worktree**. Its own comment names this stub
+    and this TODO by their behaviour:
+
+        "Its TODO said the verdict taxonomy was still in review; the ratified
+         spec settled it, and `fullsweep.compare.reconcile_objects`
+         implements it (T031)."
+
+    So this file, on THIS branch, is a stale skeleton with exactly one commit
+    (`8c72bdc`, the original). Re-implementing the comparator here would fork
+    another feature's instrument, duplicate finished work, and conflict with
+    the branch that is ahead. The correct resolution is that 035's version
+    lands with 035.
+
+    Do not delete the TODO: on this branch it is still TRUE of the code below
+    it. What has changed is only where the fix lives.
+
     ``run_one_project`` (below) takes this function as an injectable
     parameter (default: this stub) so a future comparator can be wired in
     without touching the driver's control flow.
