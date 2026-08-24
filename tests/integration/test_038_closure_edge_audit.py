@@ -166,7 +166,9 @@ key to match what it has always measured.
 """
 from __future__ import annotations
 
+import hashlib
 import json
+import pathlib
 from pathlib import Path
 
 import pytest
@@ -728,25 +730,57 @@ def test_the_verdicts_agree_across_corpora() -> None:
 # alone would call a working edge inert, and the narrow one alone could not
 # tell "adds edges" from "changes the plan".
 
+#: The per-class fields the chain below compares. T102 NARROWED THIS (2026-08-24)
+#: from six to four: `verdict_class` and `unexplained_shortfall` are
+#: INSTRUMENT-DERIVED -- they are the census's reading of the counts, not the
+#: counts -- and the claim every comparison here makes is "registering a closure
+#: edge moved no OBJECT COUNT". Including them made the chain fail whenever the
+#: instrument's reading changed with no object moving at all, which is exactly
+#: what T087 and T099 did to it. The totals equality asserted alongside each
+#: comparison still carries the instrument-level reading, so nothing is
+#: unwatched; it is simply watched where it belongs.
+_CENSUS_COUNT_FIELDS = (
+    "source_count",
+    "destination_count_total",
+    "destination_count_net",
+    "difference",
+)
+
+
 def _census_table(doc) -> dict:
-    """One census artifact reduced to the per-class row every comparison
-    below is made on.
+    """One census artifact reduced to the per-class OBJECT COUNTS every
+    comparison below is made on.
 
     Shared rather than nested inside one test, because each registration is
     compared against the PREVIOUS one and a second copy of this projection is
     how two comparisons quietly stop meaning the same thing.
     """
     return {
-        row["class"]: (
-            row["source_count"],
-            row["destination_count_total"],
-            row["destination_count_net"],
-            row["difference"],
-            row["verdict_class"],
-            row["unexplained_shortfall"],
-        )
+        row["class"]: tuple(row[f] for f in _CENSUS_COUNT_FIELDS)
         for row in doc["classes"]
     }
+
+
+def _fwdata_status(project_block) -> str:
+    """Is the project this census was taken from still the project on disk?
+
+    `absent` / `match` / `drifted`, from the artifact's own recorded
+    `fwdata_sha256_after` against the file. No FLEx host and no project open --
+    a digest is the whole question.
+    """
+    path = pathlib.Path(project_block["path"]) / (
+        project_block["name"] + ".fwdata")
+    if not path.is_file():
+        return "absent"
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    return "match" if digest == project_block["fwdata_sha256_after"] \
+        else "drifted"
+
+
+def _reproducibility(doc) -> tuple:
+    """`(source_status, destination_status)` for one census artifact."""
+    return (_fwdata_status(doc["projects"]["source"]),
+            _fwdata_status(doc["projects"]["destination"]))
 
 
 _REG_SNAPSHOT = _SNAPSHOT_DIR / "closure-registration-038-t067.json"
@@ -2282,3 +2316,132 @@ def test_ejagham_is_byte_stable() -> None:
     assert sorted(r["class"] for r in c["rows_that_moved"]) == [
         "MoForm", "MoMorphSynAnalysis"]
     assert all(r["shortfall_delta"] == 0 for r in c["rows_that_moved"])
+
+# ===========================================================================
+# T102 -- what the chain is a claim about, and which of its links a current
+# instrument could still produce
+# ===========================================================================
+#
+# THE CHAIN. `census-038-mbugwe-phase6` -> `-t067-` -> `-t068-` -> `-t069-`,
+# each compared with the one before it and the last also with the first, to
+# prove that registering a closure edge moved no object count. That claim is
+# sound and the chain is internally consistent. What T102 filed is what the
+# consistency is measured AGAINST: four artifacts asserted equal to EACH OTHER
+# and to no instrument, so nothing fails when they stop being reproducible.
+#
+# MEASURED 2026-08-24, from the artifacts' own recorded digests against the
+# files on disk -- no FLEx host, no project opened:
+#
+#   census-038-mbugwe-phase6      source match, destination DRIFTED
+#   census-038-t067-registered    source match, destination match
+#   census-038-t068-registered    source match, destination DRIFTED
+#   census-038-t069-registered    source match, destination DRIFTED
+#
+# TWO THINGS THAT ARE WORSE THAN THE FILING SAID.
+#
+# 1. `-t068-` and `-t069-` NAME THE SAME DESTINATION PROJECT
+#    (`GT038 Closure Target`). Two censuses of one mutable project cannot both
+#    be reproducible at any moment, whatever anyone does -- so the chain was
+#    never independently re-measurable, from the day the second of them was
+#    written. (This very session's T093 run restored that project again.)
+#
+# 2. RE-MEASURING IS IMPOSSIBLE IN PRINCIPLE, not merely inconvenient. Each
+#    link pins a REGISTRY STATE: `closure-registration-038-t067/-t068/-t069`
+#    record 2, 3 and 5 verified rows. The live registry holds 8 (T076 added
+#    two, T104 one), and T070-T072 then made a registered row PLAN members
+#    rather than merely emit edges. A re-run today would measure a different
+#    mechanism and call it the same name.
+#
+# So the decision T102 left open is forced, and it is the second option it
+# named: narrow the comparison to what the claim is about (`_CENSUS_COUNT_
+# FIELDS`, above) and add a test that fails when a committed artifact stops
+# being reproducible -- which is the pin below.
+
+_CENSUS_CHAIN = {
+    "census-038-mbugwe-phase6.json": ("match", "drifted"),
+    "census-038-t067-registered.json": ("match", "match"),
+    "census-038-t068-registered.json": ("match", "drifted"),
+    "census-038-t069-registered.json": ("match", "drifted"),
+}
+
+
+def test_the_chain_compares_object_counts_and_nothing_else() -> None:
+    """The narrowing, pinned so re-widening is deliberate.
+
+    `verdict_class` and `unexplained_shortfall` are the census's READING of
+    the counts. Asserting two artifacts agree on them is a claim about the
+    instrument, and the instrument is allowed to improve -- T087 and T099 both
+    did, and both would have turned three of these tests red without a single
+    object having moved.
+    """
+    assert _CENSUS_COUNT_FIELDS == (
+        "source_count", "destination_count_total",
+        "destination_count_net", "difference")
+    for field in ("verdict_class", "unexplained_shortfall", "accounted_for"):
+        assert field not in _CENSUS_COUNT_FIELDS
+
+
+def test_every_link_in_the_chain_declares_whether_it_is_reproducible() -> None:
+    """T102's second half: the artifacts are measured against the WORLD, not
+    only against each other.
+
+    This is meant to go red. When a project is restored, re-transferred or
+    deleted, the link that pinned it stops being reproducible and this test
+    says so -- which is the whole point, because until now a link could stop
+    being evidence and nothing anywhere would change colour. Updating the
+    expectation is then a deliberate edit that records the loss, exactly as
+    T093's pin required its number to be changed on purpose.
+
+    A `match` becoming `drifted` is a loss of evidence, never a passing
+    condition to be quietly re-baselined.
+    """
+    for name, expected in sorted(_CENSUS_CHAIN.items()):
+        path = _SNAPSHOT_DIR / name
+        if not path.is_file():
+            pytest.skip("missing census artifact " + str(path))
+        doc = json.loads(path.read_text(encoding="utf-8"))
+        assert _reproducibility(doc) == expected, name
+
+
+def test_the_two_links_that_share_a_destination_are_named_as_such() -> None:
+    """The structural reason the chain can never be fully reproducible.
+
+    `-t068-` and `-t069-` census the SAME project. Whatever state it is in, at
+    most one of them describes it. A reader comparing them row for row is
+    comparing two different moments of one mutable object, and that is worth
+    stating in a test rather than in a comment nobody reads twice.
+    """
+    def _dest(name):
+        return json.loads(
+            (_SNAPSHOT_DIR / name).read_text(encoding="utf-8")
+        )["projects"]["destination"]["name"]
+
+    for name in ("census-038-t068-registered.json",
+                 "census-038-t069-registered.json"):
+        if not (_SNAPSHOT_DIR / name).is_file():
+            pytest.skip("missing census artifact " + name)
+    assert _dest("census-038-t068-registered.json") == _dest(
+        "census-038-t069-registered.json") == "GT038 Closure Target"
+    assert _dest("census-038-t067-registered.json") == "GT038 T067 Target"
+
+
+def test_the_registry_the_chain_pins_no_longer_exists() -> None:
+    """Why re-measuring a link cannot repair it.
+
+    Each registration artifact records the rows that were live when it was
+    taken -- 2, 3 and 5. The registry now holds more, and T070-T072 changed
+    what a row DOES. A re-run would answer a different question under the same
+    filename, which is the drift the chain was built to prevent, arriving by
+    the other door.
+    """
+    from gramtrans.Lib import categories as _cats
+
+    counts = {}
+    for task in ("t067", "t068", "t069"):
+        path = _SNAPSHOT_DIR / ("closure-registration-038-%s.json" % task)
+        if not path.is_file():
+            pytest.skip("missing registration artifact " + str(path))
+        counts[task] = len(
+            json.loads(path.read_text(encoding="utf-8"))["registered"])
+    assert counts == {"t067": 2, "t068": 3, "t069": 5}
+    assert len(_cats.CLOSURE_EDGES_VERIFIED) > max(counts.values())
