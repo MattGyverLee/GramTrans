@@ -22,6 +22,10 @@ from typing import Iterable
 
 if __package__:
     from .models import (
+        CENSUS_PHASE_GATED_CLASSES,
+        CENSUS_REPORT_ONLY_RESIDUE,
+        CENSUS_REPORT_ONLY_STATE,
+        CENSUS_ROW_STATES,
         CLASS_CENSUS_ROW_ARTIFACT_FIELDS,
         FIDELITY_CENSUS_ARTIFACT_FIELDS,
         STARTER_BASELINE_ARTIFACT_FIELDS,
@@ -40,6 +44,10 @@ if __package__:
     )
 else:
     from models import (
+        CENSUS_PHASE_GATED_CLASSES,
+        CENSUS_REPORT_ONLY_RESIDUE,
+        CENSUS_REPORT_ONLY_STATE,
+        CENSUS_ROW_STATES,
         CLASS_CENSUS_ROW_ARTIFACT_FIELDS,
         FIDELITY_CENSUS_ARTIFACT_FIELDS,
         STARTER_BASELINE_ARTIFACT_FIELDS,
@@ -1827,6 +1835,28 @@ def _to_snapshot_json(self) -> str:
     if census is not None:
         payload["census"] = census
 
+    # T079 (R7) -- the report-only residue, as a RUN-REPORT key beside
+    # `census` and deliberately NOT inside it: every object in
+    # `census-artifact.schema.json` is `additionalProperties: false`, so a new
+    # key on the artifact would be a hard validation failure and would force a
+    # `schema_version` bump on a format that has not shipped. Emitted here so
+    # the console's truncation note ("the run-report JSON artifact lists all
+    # of them") is TRUE of this block too, and so a follow-up feature can
+    # count R7's residue from the report rather than by parsing console text.
+    # Omitted when empty, per the 038 snapshot-compatibility rule above.
+    residue = report_only_residue_lines(self.census)
+    if residue:
+        payload["census_report_only_residue"] = [
+            {
+                "class": label,
+                "difference": difference,
+                "state": state,
+                "owner": owner,
+                "reason": reason,
+            }
+            for label, difference, state, owner, reason in residue
+        ]
+
     return json.dumps(payload, indent=2, sort_keys=False)
 
 
@@ -2337,31 +2367,264 @@ def _render_038_lines(report: RunReport) -> Iterable[str]:
         yield line
 
 
-#: Row display order for the console census table, MOST URGENT FIRST. This is
-#: a presentation order over `verdict_class` values, NOT a verdict severity
-#: ordering -- the published severity ordering is over the nine run verdicts
-#: and lives in `census.VERDICT_SEVERITY_ORDER`, which this must not be
-#: mistaken for or derived from. Ordering matters here because the console may
-#: truncate: whatever is held back must be the least urgent rows, never a
-#: shortfall nobody accounted for.
-_CENSUS_ROW_TIERS: tuple = (
-    "unexplained",     # a gate failure, named first
-    "accounted",       # a real difference, but a reason names it
-    "not_evaluated",   # reported without being measured
-    "matched",         # source and destination agree
-)
+#: Row display order for the console census table, MOST URGENT FIRST. A
+#: RE-EXPORT of `models.CENSUS_ROW_STATES`, never a second declaration: T079
+#: moved the literal into `models.py` beside every other census vocabulary,
+#: per `Lib/census.py:20` ("THE VOCABULARIES ARE RE-EXPORTS, NEVER
+#: RE-DECLARATIONS"). The rationale for the ordering, and for T079's
+#: `report_only` member, is recorded at that declaration.
+_CENSUS_ROW_TIERS: tuple = CENSUS_ROW_STATES
+
+# T079, checked at import: a class a 038 phase predicate gates on can never be
+# report-only. Reclassifying an owned class as report-only is the one direction
+# that would let this feature dodge its own gate, and a roster is exactly the
+# kind of list that grows by accident, so the disjointness is ENFORCED rather
+# than documented. This costs one set intersection at import and needs no
+# `Lib/census.py` import; `report_only_roster_defects` is the fuller check that
+# also verifies `CENSUS_PHASE_GATED_CLASSES` still mirrors the predicates.
+_REPORT_ONLY_OVERREACH = sorted(
+    set(CENSUS_REPORT_ONLY_RESIDUE) & CENSUS_PHASE_GATED_CLASSES)
+if _REPORT_ONLY_OVERREACH:  # pragma: no cover - a source defect, not a state
+    raise ValueError(
+        "feature 038 T079: " + ", ".join(_REPORT_ONLY_OVERREACH) + " is both "
+        "on the report-only residue roster and named by a 038 phase "
+        "predicate. A class this feature has an executable gate on is OWNED; "
+        "calling it report-only would let the gate be dodged by reclassifying "
+        "its subject"
+    )
+
+
+def _census_bare_class_name(row) -> str:
+    """The plain LCM class name of a row, with any A1 owner qualifier removed.
+
+    `_census_row_label` renders `FsFeatStrucType (LangProject....)` for an
+    Amendment A1 split; the roster below is keyed by the class, so the label
+    form has to be reduced before it can be looked up. Splitting on " (" is
+    safe because an LCM class name contains no space.
+    """
+    return _census_class_name(row).split(" (")[0].strip()
+
+
+def report_only_residue_entry(row):
+    """`(owner, reason)` if this row's class is R7 report-only, else None.
+
+    THE ONE LOOKUP. Everything T079 renders goes through it, so there is no
+    second place a class could be treated as report-only.
+    """
+    return CENSUS_REPORT_ONLY_RESIDUE.get(_census_bare_class_name(row))
 
 
 def _census_row_tier(row: dict) -> str:
-    """Which `_CENSUS_ROW_TIERS` band one emitted census row belongs to."""
+    """Which `_CENSUS_ROW_TIERS` band one emitted census row belongs to.
+
+    T079. `report_only` sits BETWEEN the two failure bands and the two
+    agreement bands, and the order of the tests below is the whole point:
+
+    * `unexplained` still wins. A report-only class with an unaccounted loss
+      keeps its `[FAIL] UNEXPLAINED` line and its place at the top of the
+      table. The new state exists to stop a GREEN row reading as a promise,
+      never to soften a red one.
+    * `not_evaluated` still wins, because "nobody measured this" is a stronger
+      statement than "nobody owns it" and the artifact already says it with a
+      reason token.
+    * otherwise a rostered class is `report_only` and NOT `matched`. That is
+      R7's residual risk, and T078 measured it arriving inverted: on the
+      ejagham pair `FsComplexFeature`, `FsSymFeatVal`, `FsClosedFeature`,
+      `LexEntryInflType`, `PhFeatureConstraint`, `LexReference`, `CmFile`,
+      `Segment` and `CmTranslation` ALL read MATCHED -- five because the
+      transfer got them right, four because that corpus simply holds none of
+      them, and `Segment` loses 26,666 objects on the next pair. One word for
+      all nine would be a claim this feature never made.
+
+    Nothing here reads or writes a verdict, an exit code, a `gate_scope` or a
+    tally: the band decides display order and one column.
+    """
     if row.get("unexplained_shortfall") or row.get("unexplained_surplus"):
         return "unexplained"
     verdict_class = row.get("verdict_class")
     if verdict_class == "NOT_EVALUATED":
         return "not_evaluated"
+    if report_only_residue_entry(row) is not None:
+        return CENSUS_REPORT_ONLY_STATE
     if verdict_class == "MATCHED":
         return "matched"
     return "accounted"
+
+
+def report_only_roster_defects() -> tuple:
+    """T079 -- every way the report-only roster could be lying, as strings.
+
+    Empty means the roster is sound. Returned rather than raised so a test can
+    name the defect and a live run can never die inside a renderer.
+
+    Four checks:
+
+    1. `CENSUS_PHASE_GATED_CLASSES` still equals the union of the phase
+       predicates' declared scopes. `models.py` cannot import `census.py` (the
+       dependency direction is census -> models), so the set is spelled there
+       as names; this is what stops the copy drifting from the predicates it
+       mirrors. `PHASE_5_CLASSES` is deliberately excluded: it is `None`,
+       meaning "every required row", and folding that in would make every
+       class phase-gated and the roster empty.
+    2. No rostered class is phase-gated (also enforced at import).
+    3. Every roster entry names BOTH an owner and a reason. "Report-only" with
+       no successor named is a line the user cannot act on, which SC-010 does
+       not accept as a report.
+    4. No rostered class is one the artifact already excludes from the delta.
+       `CmAnthroItem` is NOT_EVALUATED with `OUT_OF_SCOPE_CLASS`, a state
+       already distinct from `matched`; rostering it would be a second name
+       for a state the artifact states correctly.
+    """
+    engine = _census_module()
+    defects: list = []
+
+    mirrored = (
+        frozenset(engine.PHASE_1_CLASSES)
+        | frozenset(engine.PHASE_2_MATCHED_CLASSES)
+        | frozenset(engine.PHASE_3_CLASSES)
+        | frozenset(engine.PHASE_4_CLASSES)
+    )
+    if mirrored != CENSUS_PHASE_GATED_CLASSES:
+        defects.append(
+            "models.CENSUS_PHASE_GATED_CLASSES no longer mirrors the phase "
+            "predicates: only-in-models "
+            f"{sorted(CENSUS_PHASE_GATED_CLASSES - mirrored)}, "
+            f"only-in-census {sorted(mirrored - CENSUS_PHASE_GATED_CLASSES)}"
+        )
+
+    overreach = sorted(set(CENSUS_REPORT_ONLY_RESIDUE) & mirrored)
+    if overreach:
+        defects.append(
+            f"{overreach} are report-only AND named by a phase predicate -- a "
+            "class this feature gates on is owned, not report-only"
+        )
+
+    for name, entry in sorted(CENSUS_REPORT_ONLY_RESIDUE.items()):
+        try:
+            owner, reason = entry
+        except (TypeError, ValueError):
+            defects.append(
+                f"{name}: roster entry is not an (owner, reason) pair: "
+                f"{entry!r}"
+            )
+            continue
+        if not str(owner).strip():
+            defects.append(
+                f"{name}: report-only with NO owner named -- a report line "
+                "the user cannot act on is not a report (SC-010)"
+            )
+        if not str(reason).strip():
+            defects.append(f"{name}: report-only with NO reason recorded")
+
+    excluded = getattr(engine, "NOT_EVALUATED_CLASS_REASONS", {})
+    for name in sorted(set(CENSUS_REPORT_ONLY_RESIDUE) & set(excluded)):
+        defects.append(
+            f"{name}: already excluded from the census delta as "
+            f"{excluded[name]}, so its row is NOT_EVALUATED and already "
+            "distinct from matched -- rostering it is a second name for a "
+            "state the artifact states correctly"
+        )
+
+    return tuple(defects)
+
+
+def report_only_residue_lines(census) -> tuple:
+    """T079 -- the report-only residue of one census, as structured rows.
+
+    `(label, difference, state, owner, reason)` per rostered class the census
+    actually carries. THE MACHINE-READABLE SURFACE: a follow-up feature counts
+    "what is still merely explained, not fixed" by calling this rather than by
+    parsing console text, and `_render_report_only_lines` renders precisely
+    what it returns, so the two cannot disagree.
+
+    ORDERED `report_only` FIRST, then by the table's own urgency key. This is
+    deliberately NOT the table's order, and the console budget is why: 23
+    classes are rostered and `_CONSOLE_MAX_ROWS` is 20, so under the table's
+    ordering the differing rows sort first and the truncation eats exactly the
+    rows this block exists for -- measured, on the ngoreme pair, where 19
+    differing rows left one of the four agreeing rows visible. The differing
+    rows are already at the TOP of the table above, marked `(report-only)`;
+    the ones that merely agree appear nowhere else, so they lead here.
+
+    Deliberately NOT emitted into the census artifact. Every object in
+    `census-artifact.schema.json` is `additionalProperties: false`, so a new
+    key would be a hard validation failure and would force a
+    `schema_version` bump on a format that has not shipped. R7 asked for a
+    RUN-REPORT line, and this is the run report.
+    """
+    block = _census_json(census)
+    rows = block.get("classes") if isinstance(block, dict) else None
+    if not isinstance(rows, list):
+        return ()
+    out: list = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        entry = report_only_residue_entry(row)
+        if entry is None:
+            continue
+        owner, reason = entry
+        out.append((
+            (
+                0 if _census_row_tier(row) == CENSUS_REPORT_ONLY_STATE else 1,
+                _census_row_sort_key(row),
+            ),
+            (
+                _census_row_label(row),
+                row.get("difference"),
+                _census_row_tier(row),
+                owner,
+                reason,
+            ),
+        ))
+    return tuple(entry for _, entry in sorted(out, key=lambda p: p[0]))
+
+
+def _render_report_only_lines(entries) -> Iterable[str]:
+    """T079 -- R7's report-only residue, one line per class, with its reason.
+
+    R7: "Phase 5 fixes nothing directly: every residual class is measured by
+    the R2 census and, where counts differ, gets a run-report line with a
+    reason." Before this block there was no such line: T078 measured every one
+    of these classes as a bare row with `accounted_for: []`, so a reader saw
+    the number and never learned that nothing in this feature undertakes it.
+
+    The two headline figures are printed in FULL and separately -- the classes
+    that DIFFER and the classes that AGREE -- because the second group is the
+    one R7's residual risk is about, and a single count would hide it. Nothing
+    here is netted: a class at 0 on this pair and -26,666 on the next is
+    reported as both, in the reason string.
+    """
+    if not entries:
+        return
+    differing = tuple(e for e in entries if e[1] not in (0, None))
+    agreeing = tuple(e for e in entries if e[1] == 0)
+    unmeasured = tuple(e for e in entries if e[1] is None)
+    loss = sum(-int(e[1]) for e in differing if int(e[1]) < 0)
+
+    yield (
+        f"    [INFO] Report-only residue (R7) -- {len(entries)} of these rows "
+        f"are classes this feature MEASURES and does not undertake to fix: "
+        f"{len(differing)} differing ({loss} objects short), "
+        f"{len(agreeing)} agreeing on this pair, {len(unmeasured)} unmeasured."
+    )
+    yield (
+        "      A class here is never reported as \"matched\": its state is "
+        "\"report_only\", so one that merely agrees on THIS pair cannot rot "
+        "behind a green gate (R7's residual risk). Not one of them can fail "
+        "or pass the gate on this account -- the verdict above is computed "
+        "from counts, bases and accounting lines alone."
+    )
+
+    def _line(entry) -> str:
+        label, difference, state, owner, reason = entry
+        return (
+            f"      - {label} {_census_signed(difference)} [{state}] "
+            f"owner: {owner} -- {reason}"
+        )
+
+    for line in _rows(entries, _line, indent="      "):
+        yield line
 
 
 def _census_row_sort_key(row: dict):
@@ -2503,6 +2766,14 @@ def _render_census_lines(census) -> Iterable[str]:
             # itself fail the gate. Saying so beats leaving a reader to guess
             # why a nonzero difference did not change the verdict.
             marks.append("(advisory)")
+        if report_only_residue_entry(row) is not None:
+            # T079/R7: this feature measures the class and does not undertake
+            # to fix it. Marked on EVERY rostered row, including the ones the
+            # tier system still calls `unexplained` -- the mark and the state
+            # answer two different questions, and the mark is the one that
+            # says who owns the class. `gate_scope` is untouched: a
+            # report-only row is still `required` and still counted.
+            marks.append("(report-only)")
         reasons = [
             str(line.get("reason")) for line in row.get("accounted_for") or ()
             if isinstance(line, dict) and line.get("reason")
@@ -2529,6 +2800,14 @@ def _render_census_lines(census) -> Iterable[str]:
 
     ordered = sorted(rows, key=_census_row_sort_key)
     for line in _rows(ordered, _census_table_row, indent="    "):
+        yield line
+
+    # ---- T079: R7's report-only residue, each class with its reason ------
+    # Placed after the table and BEFORE the verdict, in the same register as
+    # the notes block: what the numbers above do and do not commit this
+    # feature to. It changes no verdict; `report_only_residue_lines` reads the
+    # same emitted block the table did.
+    for line in _render_report_only_lines(report_only_residue_lines(census)):
         yield line
 
     # ---- the verdict: token, human label, exit code, pass/fail -----------

@@ -864,6 +864,281 @@ CENSUS_ROW_VERDICT_CLASSES: tuple = (
     "MATCHED", "SHORTFALL", "SURPLUS", "NOT_EVALUATED",
 )
 
+# ---------------------------------------------------------------------------
+# T079 (R7) -- the report-only residue, and the row STATE that keeps it
+# distinguishable from a class this feature undertook to keep correct.
+#
+# R7's residual risk, verbatim: "A report-only class can stay broken
+# indefinitely once it has a report line, because the gate goes green.
+# Mitigated by `status: 'unmeasurable'` being a distinct census value from
+# '"match"', so a follow-up feature can count what is still merely explained,
+# not fixed."
+#
+# T078 measured that risk arriving INVERTED, and bigger than R7's list. On the
+# three sanctioned pairs (ejagham, ngoreme, mbugwe) the report-only classes
+# below read MATCHED as follows:
+#
+#   FsComplexFeature   1/1,    2/2,    1/1     -- green on all three
+#   FsSymFeatVal      51/51,  90/90,  70/70    -- green on all three
+#   FsClosedFeature   20/20,  24/24,  21/21    -- green on all three
+#   LexEntryInflType   diff 0 on all three, 0 duplicate groups
+#   PhFeatureConstraint  MATCHED on ejagham (0 of them) -- and -47 / -32
+#   LexReference         MATCHED on ejagham and mbugwe (0) -- and -5 on ngoreme
+#   CmFile               MATCHED on ejagham (0) -- and -2 / -2173
+#   Segment              MATCHED on ejagham (198/198) -- and -26666 / -2
+#   CmTranslation        MATCHED on ejagham (68/68) and mbugwe (0) -- and -7923
+#
+# So a report-only class reads MATCHED whenever the corpus happens not to
+# exercise it, and `census._phase_5` passes such a row with a bare `continue`.
+# That is R7's rot, measured: nine of the classes below can present as a green
+# gate on one pair while losing thousands of objects on another.
+#
+# THE VOCABULARY DECISION, and what was rejected.
+#
+# * REJECTED: R7's literal spelling `unmeasurable`. That word is ALREADY TAKEN
+#   in this codebase, for a different and load-bearing meaning --
+#   `census.ClassCounts.unmeasurable` is the per-PROJECT set of classes whose
+#   repository accessor did not resolve, `census.unmeasurable_errors` turns
+#   each into a CENSUS_ERROR, and `ClassCensusRow._check_null_counts` reasons
+#   about it by name. Reusing it would make one word mean both "we could not
+#   count this" and "we counted it, it agrees, and nobody here owns it". It
+#   would also be FALSE: every class below was measured, to the object.
+#   `PhCode` -43 / -89 / -79 is a measurement, not the absence of one.
+# * REJECTED: three tokens for T078's three situations. Only ONE of them
+#   collapses into "match". Measured-and-differing already carries SHORTFALL
+#   (and, with no accounting line, an `unexplained` state); excluded-from-the-
+#   delta already carries NOT_EVALUATED plus `OUT_OF_SCOPE_CLASS` /
+#   `GOVERNED_BY_OTHER_FEATURE` (`CmAnthroItem` 859 -> 0, which is why it is
+#   deliberately NOT on the roster below). Minting a token for either would be
+#   a second name for a state the artifact already states correctly.
+# * REJECTED: an 18th `CENSUS_REASON_TOKENS` member, and reusing
+#   `GOVERNED_BY_OTHER_FEATURE` on these rows. Both are in
+#   `CENSUS_NOT_EVALUATED_REASONS`, so putting one in `ClassCensusRow.reasons`
+#   flips `verdict_class` to NOT_EVALUATED and deletes the measured shortfall
+#   from `total_shortfall` and from the gate. That is laundering a red run,
+#   not reporting it. Nothing here touches `reasons`, `explained`,
+#   `gate_scope`, `verdict_class` or any tally.
+# * CHOSEN: a new member of the row-STATE vocabulary, `report_only`, distinct
+#   from `matched`. The state vocabulary is CONSOLE-ONLY -- it is the "state"
+#   column and the "Rows by state:" tally in `report._render_census_lines`,
+#   and it is NOT a property of `census-artifact.schema.json`. So
+#   `schema_version` stays 1, no enum in the contract moves, and the artifact
+#   is byte-identical. The report is what changes, which is what R7 asked for:
+#   "Phase 5 fixes nothing directly ... gets a run-report line with a reason."
+# ---------------------------------------------------------------------------
+
+#: The CONSOLE row-state vocabulary, MOST URGENT FIRST -- a presentation order
+#: over one census row, NOT a verdict severity ordering (the published
+#: severity ordering is over the nine RUN verdicts and lives in
+#: `census.VERDICT_SEVERITY_ORDER`, which this must not be mistaken for or
+#: derived from). Ordering matters because the console may truncate: whatever
+#: is held back must be the least urgent rows, never a shortfall nobody
+#: accounted for.
+#:
+#: DECLARED HERE, and `report.py`'s `_CENSUS_ROW_TIERS` RE-EXPORTS it. This
+#: list used to be declared in `report.py`; T079 MOVED it (it did not fork it)
+#: so the one place a state value is written down is the same module every
+#: other census vocabulary is written down in -- `Lib/census.py:20`'s rule,
+#: "THE VOCABULARIES ARE RE-EXPORTS, NEVER RE-DECLARATIONS".
+#:
+#: `report_only` is T079's addition and is deliberately placed ABOVE
+#: `not_evaluated` and `matched`: a report-only row carries LIVE numbers a
+#: follow-up feature has to count, so it must not sort down among the rows
+#: that agree. It is placed BELOW `unexplained`, because a report-only class
+#: with an unaccounted loss keeps its `[FAIL] UNEXPLAINED` line -- the state
+#: exists to stop a green row reading as a promise, never to soften a red one.
+CENSUS_ROW_STATES: tuple = (
+    "unexplained",     # a gate failure, named first
+    "accounted",       # a real difference, but a reason names it
+    "report_only",     # T079: measured, reported, NOT undertaken here
+    "not_evaluated",   # reported without being measured
+    "matched",         # source and destination agree AND 038 owns that
+)
+
+#: The one state value T079 adds, spelled once. Named so no caller writes the
+#: string a second time and no typo can silently create a sixth state.
+CENSUS_REPORT_ONLY_STATE: str = "report_only"
+
+#: R7's report-only residue, as re-scoped by T078's post-037 census of all
+#: three sanctioned pairs: class -> (owner, reason). GATE-INERT BY
+#: CONSTRUCTION -- nothing reads this to decide a verdict, an exit code, a
+#: `gate_scope`, a `verdict_class` or a tally. It decides one word in the
+#: console state column and the contents of one report block.
+#:
+#: `owner` names who the class belongs to, or says plainly that nobody does.
+#: "a report line the user cannot act on is not a report" (SC-010), and
+#: "report-only" without a successor is exactly such a line.
+#:
+#: `MoInflClass` IS NOT HERE, and that absence is the finding. R7's prose lists
+#: it as report-only ("5 -> 0, expected to close as a side effect of Phases
+#: 1/3"), but `census.PHASE_3_OWNED_CHILD_CLASSES` names it and
+#: `census._phase_1..._phase_4` require it MATCHED, so this feature has an
+#: EXECUTABLE gate on it. Where the prose and the gate disagree, the gate wins:
+#: rostering a class a phase predicate gates on would be exactly the dodge
+#: T079's second test direction forbids, and `CENSUS_PHASE_GATED_CLASSES`
+#: below is what makes that unfalsifiable rather than a promise.
+#:
+#: `CmAnthroItem` is not here either: it is NOT_EVALUATED with
+#: `OUT_OF_SCOPE_CLASS` on all three pairs, a state already distinct from
+#: `matched`, and T078 ruled it excluded rather than report-only.
+CENSUS_REPORT_ONLY_RESIDUE: dict = {
+    # -- R7's explicit decision: a create path exists and nothing takes it. --
+    "FsComplexFeature": (
+        "nobody -- R7 named no successor",
+        "report-only by R7's explicit decision. The create path EXISTS "
+        "(contracts/feature-system-create-path.md: all 13 Fs* factories "
+        "expose Create(Guid)); 038 simply does not undertake it. Measured "
+        "1/1, 2/2, 1/1 -- green on all three pairs, and green with no code "
+        "behind it, which is the state this word exists to say out loud",
+    ),
+    # -- R7 expected these to close as a SIDE EFFECT of Phases 1/3 and to be
+    #    "verified by re-census rather than coded separately". T078 confirms
+    #    they did. A side effect is not a guarantee: no phase predicate names
+    #    them, so nothing in 038 fails if a fourth corpus diverges. --
+    "LexEntryInflType": (
+        "038 Phases 1/3, as a side effect only -- no phase predicate names it",
+        "R7 recorded a '+1 excess (R1 create-anyway)'. T078 measures "
+        "difference 0 on all three pairs (7->7, 3->4, 4->5) with 0 duplicate "
+        "groups: the +1 nets to zero against the starter baseline. Closed as "
+        "predicted, and unguarded",
+    ),
+    "FsSymFeatVal": (
+        "038 Phases 1/3, as a side effect only -- no phase predicate names it",
+        "part of R7's 'bulk of the Fs* cascade'. 51/51, 90/90, 70/70 -- "
+        "closed, and unguarded",
+    ),
+    "FsClosedFeature": (
+        "038 Phases 1/3, as a side effect only -- no phase predicate names it",
+        "part of R7's 'bulk of the Fs* cascade'. 20/20, 24/24, 21/21 -- "
+        "closed, and unguarded",
+    ),
+    # -- the phonological-context family. R7 deferred all six "to the post-037
+    #    re-census since 037's structural-rebuild path may already move
+    #    these". T078's post-037 answer: 037 moved NONE of them. --
+    "PhSequenceContext": (
+        "037's successor, or a later phonology feature -- not 038",
+        "measured -40, -2, -11. T076/T077 moved mbugwe -17 -> -11 and "
+        "ngoreme -3 -> -2: moved, not closed",
+    ),
+    "PhSimpleContextNC": (
+        "037's successor, or a later phonology feature -- not 038",
+        "measured -38, -7, -23. T076/T077 moved mbugwe -28 -> -23",
+    ),
+    "PhSimpleContextSeg": (
+        "037's successor, or a later phonology feature -- not 038",
+        "measured -27, -3, -21. T076/T077 moved mbugwe -23 -> -21",
+    ),
+    "PhSimpleContextBdry": (
+        "T107 -- filed, with acceptance spelled out",
+        "measured -9, -4, -15, and the ONLY class blocking 13 of the "
+        "corpus's 32 affix process rules (all 13 on Ejagham W Mini: 8 name "
+        "the boundary context directly, 5 reach it through a "
+        "PhSequenceContext). T076 held it behind _PROCESS_UNEXERCISED_CLASSES "
+        "on a one-corpus measurement",
+    ),
+    "PhCode": (
+        "037's successor, or a later phonology feature -- not 038",
+        "measured -43, -89, -79, and the destination reads 25 on ALL THREE "
+        "pairs -- exactly the starter baseline, so not one PhCode was ever "
+        "created. flexicon's phoneme GetSyncableProperties omits CodesOS, so "
+        "nothing carries it (contracts/fidelity-census.md CP-4)",
+    ),
+    "PhFeatureConstraint": (
+        "037's successor, or a later phonology feature -- not 038",
+        "measured 0, -47, -32. MATCHED on ejagham only because Ejagham W Mini "
+        "holds none of them -- a vacuous green, and precisely why this class "
+        "must not read as 'matched' on that pair",
+    ),
+    # -- named individually by R7, outside the phonology family. --
+    "LexReference": (
+        "the lexical-relations path -- not 038",
+        "measured 0, -5, 0. R7's '5 -> 0' reproduces exactly and unchanged; "
+        "MATCHED on the two pairs that hold none",
+    ),
+    "CmFile": (
+        "the media/pictures path -- not 038",
+        "measured 0, -2, -2173. R7 records 'CmFile 2 -> 0' as a property of "
+        "the transfer; it is a Ngoreme FLEx reading. On mbugwe it is "
+        "2173 -> 0, three orders of magnitude larger. The class stays "
+        "report-only; R7's NUMBER does not survive re-scoping",
+    ),
+    # -- the half of the Fs* cascade that did NOT close, carrying the volume. --
+    "FsFeatStruc": (
+        "a later feature -- the MSA feature-structure cascade, not 038",
+        "measured -138, -1691, -198. R7 expected 'the bulk of the Fs* "
+        "cascade' to close as a side effect; it held for FsSymFeatVal and "
+        "FsClosedFeature and failed for the two members carrying the volume",
+    ),
+    "FsClosedValue": (
+        "a later feature -- the MSA feature-structure cascade, not 038",
+        "measured -562, -2045, -630. The other half of the cascade R7 "
+        "expected to close",
+    ),
+    # -- texts and wordforms: "governed by its own feature" (R7), and the
+    #    magnitude is the point. Over 50,000 objects on ngoreme alone, which
+    #    is why `total_shortfall` (70,646 there) is unusable as a headline for
+    #    this feature's work. --
+    "WfiWordform": (
+        "the texts/wordforms feature -- not 038",
+        "measured -297, -8191, -1187",
+    ),
+    "WfiMorphBundle": (
+        "the texts/wordforms feature -- not 038",
+        "measured -380, -4977, -1915",
+    ),
+    "WfiAnalysis": (
+        "the texts/wordforms feature -- not 038",
+        "measured -184, -1628, -822",
+    ),
+    "WfiGloss": (
+        "the texts/wordforms feature -- not 038",
+        "measured -125, -752, -683",
+    ),
+    "Segment": (
+        "the texts/wordforms feature -- not 038",
+        "measured 0, -26666, -2. MATCHED on ejagham (198/198) while losing "
+        "26,666 objects on ngoreme -- the same class, one corpus green",
+    ),
+    "StText": (
+        "the texts/wordforms feature -- not 038",
+        "measured -17, -4903, -15",
+    ),
+    "StTxtPara": (
+        "the texts/wordforms feature -- not 038",
+        "measured -91, -5568, -89",
+    ),
+    "CmTranslation": (
+        "the texts/wordforms feature -- not 038",
+        "measured 0, -7923, 0. MATCHED on ejagham (68/68) and on mbugwe "
+        "(0/0); -7923 on ngoreme. Carried in the census only because CP-4's "
+        "additions ledger put it there",
+    ),
+    "PunctuationForm": (
+        "the texts/wordforms feature -- not 038",
+        "measured -775, -3994, -1126",
+    ),
+}
+
+#: Every class a 038 phase predicate NAMES, i.e. every class this feature has
+#: an executable gate on. A class here can NEVER be report-only, and
+#: `report.py` enforces the disjointness at import time rather than trusting
+#: the two lists to stay apart -- reclassifying an owned class as report-only
+#: is the one direction that would let this feature dodge its own gate.
+#:
+#: Spelled as NAMES rather than imported from `census.py` because the
+#: dependency direction is census -> models and never the reverse (see
+#: `CENSUS_REASON_TOKENS`'s block above). `report.py`, which imports both,
+#: asserts this set equals the union of `census.PHASE_1_CLASSES`,
+#: `PHASE_2_MATCHED_CLASSES`, `PHASE_3_CLASSES` and `PHASE_4_CLASSES`, so the
+#: copy cannot drift from the predicates it mirrors.
+CENSUS_PHASE_GATED_CLASSES: frozenset = frozenset({
+    "MoStemMsa", "MoInflAffMsa", "MoDerivAffMsa", "MoUnclassifiedAffixMsa",
+    "PartOfSpeech", "PhPhoneme",
+    "MoInflAffixTemplate", "MoInflAffixSlot",
+    "MoInflClass", "MoStemName", "MoStemAllomorph", "MoMorphType",
+    "MoAffixProcess", "MoAffixAllomorph",
+})
+
 #: Amendment A1's two owning feature systems -- `$defs.classRow`'s
 #: `owning_feature_system` enum, in schema order. These spellings are the
 #: CONTRACT ones (fidelity-census.md:650-673) and are emitted VERBATIM, so a
