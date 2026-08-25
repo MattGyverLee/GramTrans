@@ -685,6 +685,12 @@ def disposition_totals(report) -> dict:
         if getattr(s, "reason", None) in _NO_DELTA_SKIP_REASONS
     )
     dropped = len(getattr(report, "dropped_items", ()))
+    # T080: the fifth-outcome check, derived ONCE here so the console panel
+    # and the JSON artifact cannot disagree about it -- the same rule the
+    # docstring states for every other bucket. Read from the property, never
+    # re-derived: `RunReport.unreported_not_reproduced` is the single
+    # definition of "knew it did not rebuild this, named it nowhere".
+    unreported = tuple(getattr(report, "unreported_not_reproduced", ()))
     reconciles = enriched <= overwritten
     # T048c: read from the records, never from a counter -- `leaf_failed` is a
     # property over this same tuple for exactly that reason.
@@ -719,6 +725,15 @@ def disposition_totals(report) -> dict:
         "skip_no_delta_after_comparison": no_delta,
         "skip_other_reason": skipped - no_delta,
         "dropped_with_reason": dropped,
+        # T080: SC-010's claim, as a value rather than as prose. `True` means
+        # every item this run KNOWS it did not reproduce also reached one of
+        # the four buckets above. `False` names the ones that did not, and is
+        # deliberately NOT a build-time refusal -- see
+        # `RunReport.unreported_not_reproduced` for why a report that names
+        # its own gap beats no report.
+        "no_fifth_outcome": not unreported,
+        "unreported_not_reproduced": len(unreported),
+        "unreported_not_reproduced_guids": list(unreported),
         "enriched_partial": partial,
         "enriched_full": enriched - partial,
         "enriched_gained_nothing": sum(
@@ -1818,11 +1833,18 @@ def _to_snapshot_json(self) -> str:
                     "update_enriched",
                 "skip": "Skip (skips)",
                 "dropped_with_reason": "DroppedItemRecord (dropped_items)",
+                "no_fifth_outcome":
+                    "RunReport.unreported_not_reproduced -- every "
+                    "ProcessRuleTransferRecord with reproduced=False, minus "
+                    "those named by a Skip.source_guid or a "
+                    "DroppedItemRecord's item_guid/owner_guid",
             }
             disposition["note"] = (
                 "SC-010: every selected item reaches exactly one of ADD, "
-                "UPDATE (enriched), SKIP, or dropped-with-reason -- there is "
-                "no fifth, unreported outcome. The buckets are NOT summed: a "
+                "UPDATE (enriched), SKIP, or dropped-with-reason. Whether "
+                "THIS run met that is the `no_fifth_outcome` key above, not "
+                "this sentence -- T080 made the claim a measurement rather "
+                "than a promise. The buckets are NOT summed: a "
                 "dropped child is reported against its owner, not instead of "
                 "it, so a grand total would count two different granularities "
                 "as one"
@@ -2027,7 +2049,8 @@ def _render_disposition_lines(report) -> Iterable[str]:
 
     yield (
         "  Disposition -- every selected item reaches exactly ONE of these "
-        "(SC-010: no fifth, unreported outcome):"
+        "(SC-010). Whether THIS run managed it is the fifth-outcome check "
+        "below, not this heading:"
     )
     yield _row("ADD", "created in target (new object)", d["add_created"])
     if d["add_write_failed"]:
@@ -2101,6 +2124,26 @@ def _render_disposition_lines(report) -> Iterable[str]:
         "PlannedAction versus an EnrichmentRecord, whose was_created is False "
         "by construction -- so no enriched object is counted as created)"
     )
+    # T080: the panel's four rows say what landed in each bucket. This line
+    # says whether anything landed OUTSIDE them, which is the claim SC-010
+    # actually makes and the one the rows above cannot make for themselves.
+    # Emitted unconditionally, in both directions: a bare "no fifth outcome"
+    # with nothing to check against would be the reassuring half of a check
+    # that never ran.
+    if d["no_fifth_outcome"]:
+        yield (
+            "    Fifth-outcome check: PASS -- every item this run knew it "
+            "could not reproduce is named in one of the buckets above"
+        )
+    else:
+        yield (
+            f"    Fifth-outcome check: [FAIL] "
+            f"{d['unreported_not_reproduced']} item(s) recorded as NOT "
+            "reproduced reached none of the four buckets -- neither a Skip "
+            "nor a dropped-with-reason names them:"
+        )
+        for _guid in d["unreported_not_reproduced_guids"]:
+            yield f"      - {_guid}"
     yield f"    Certainty: {certainty_note(report)}"
 
 

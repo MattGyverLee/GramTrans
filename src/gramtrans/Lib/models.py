@@ -3591,6 +3591,37 @@ class CategoryReport:
     not_reproducible: int = 0
 
 
+#: T080 (SC-010) -- every counter `CategoryReport` carries, by name.
+#:
+#: This tuple exists so `RunReport.__post_init__` can range over the counters
+#: WITHOUT importing `dataclasses.fields` against a per-category value that
+#: may legitimately be a duck-typed stand-in (the RunReport docstring sanctions
+#: direct construction in tests, and several suites pass namespaces rather than
+#: real `CategoryReport`s). `getattr(r, name, 0)` works on both; reflection
+#: over the value's own type does not.
+#:
+#: It is checked against the dataclass by
+#: `tests/integration/test_038_no_silent_skips.py`, which asserts this tuple
+#: names EVERY int field of `CategoryReport`. Adding a counter without adding
+#: it here therefore fails -- which is the point: an unlisted counter is a
+#: bucket nothing range-checks.
+CATEGORY_REPORT_COUNTERS = (
+    "added",
+    "skipped",
+    "closure_pulled_in",
+    "overwritten",
+    "interactive_resolved",
+    "interactive_skipped",
+    "ws_mapped",
+    "ws_created",
+    "ws_skipped",
+    "excluded_lossy",
+    "identity_substitution",
+    "enriched",
+    "not_reproducible",
+)
+
+
 @dataclass(frozen=True)
 class RunReport:
     """E6 — output of a Preview or Move run.
@@ -3665,6 +3696,38 @@ class RunReport:
     matches_unattributed: dict = field(default_factory=dict)  # category -> count
 
     def __post_init__(self) -> None:
+        # ---- T080 (SC-010 audit): the ADD bucket's first invariant.
+        #
+        # The four buckets are NOT symmetrically checkable, and this is where
+        # the asymmetry bites. SKIP reconciles against `skips` and UPDATE
+        # against `enrichments` because each counter has a records tuple ON
+        # THE REPORT that is its single source of truth. ADD has none:
+        # `added` is one per `PlannedAction`, and the plan is not carried on
+        # the RunReport, so there is nothing to count against.
+        #
+        # What IS available is the range. A NEGATIVE counter is the one way to
+        # deflate a bucket that no equality check can catch -- and on the two
+        # buckets that DO have equality checks it is still reachable, because
+        # those checks constrain the SUM: `{A: skipped=-3, B: skipped=4}`
+        # against a single Skip sums to 1 and passes. Measured before this
+        # landed: `CategoryReport(added=-5)` constructed a RunReport that
+        # rendered a disposition panel reading "-5 created".
+        for _cat, _r in self.per_category.items():
+            for _name in CATEGORY_REPORT_COUNTERS:
+                _value = getattr(_r, _name, 0)
+                _bad = (not isinstance(_value, int)
+                        or isinstance(_value, bool)
+                        or _value < 0)
+                if _bad:
+                    raise ValueError(
+                        "SC-010 accounting violation: "
+                        f"per_category[{_cat!r}].{_name}={_value!r} -- every "
+                        "disposition counter must be a non-negative int. A "
+                        "negative counter silently deflates its bucket, and "
+                        "the ADD bucket has no records tuple to reconcile "
+                        "against, so this range check is the whole of its "
+                        "accounting"
+                    )
         # FR-018: sum of per_category[*].skipped must equal len(skips)
         cat_skipped_total = sum(r.skipped for r in self.per_category.values())
         if cat_skipped_total != len(self.skips):
@@ -3699,6 +3762,30 @@ class RunReport:
                 f"{cat_not_reproducible_total} != number of "
                 f"Skip(NOT_REPRODUCIBLE)={skips_not_reproducible}"
             )
+        # ---- T080 (SC-010 audit): the DROPPED bucket's first invariant.
+        #
+        # `dropped_with_reason` is the only bucket with no counter at all --
+        # it is `len(dropped_items)` and nothing else. `DroppedItemRecord.
+        # __post_init__` already refuses an empty `reason`, but THAT guards
+        # the record's construction, not the tuple's membership: this field is
+        # a plain tuple and accepts anything shaped like a record. Measured
+        # before this landed, a stand-in carrying `reason=""` went into
+        # `dropped_items`, was counted in `dropped_with_reason`, and rendered
+        # a report line ending in a bare "- ".
+        #
+        # The bucket is named "dropped-WITH-REASON". An entry without one is a
+        # silent drop wearing the record's clothes, which is the exact thing
+        # SC-010 forbids, so it is checked where the bucket is COUNTED rather
+        # than only where the record is built.
+        for _i, _d in enumerate(self.dropped_items):
+            if not getattr(_d, "reason", ""):
+                raise ValueError(
+                    "SC-010 accounting violation: "
+                    f"dropped_items[{_i}] carries no reason -- the bucket is "
+                    "dropped-WITH-REASON, and an entry without one is a "
+                    "silent drop that the disposition panel would count as a "
+                    "reported one"
+                )
         # T024d-a: the matched tallies have no records tuple of their own to
         # reconcile against (there is deliberately no per-matched-object record
         # -- that would be one record per object on a 200k-object run), so the
@@ -3814,6 +3901,62 @@ class RunReport:
         (FR-016, FR-017). SC-010's never-silent contract means this must be
         surfaced by any caller that reports success."""
         return bool(self.incompleteness)
+
+    @property
+    def unreported_not_reproduced(self) -> tuple:
+        """T080 (SC-010, FR-025) -- the fifth outcome, made checkable.
+
+        `ProcessRuleTransferRecord`'s own docstring states a HARD INVARIANT:
+        when `reproduced is False` the rule is reported "via a
+        `DroppedItemRecord` plus `Skip(NOT_REPRODUCIBLE)` -- and SKIPPED". Its
+        `__post_init__` enforces the half it can see (a non-reproduction must
+        carry a reason) and nothing enforced the other half, which is the half
+        SC-010 is about: a rule the engine KNOWS it did not rebuild, sitting in
+        `process_rules` and named in NO disposition channel, is an item that
+        reached none of the four buckets. That is the fifth, unreported
+        outcome in its exact literal form.
+
+        Returns the `source_guid` of every such rule, in report order. Empty
+        means this run has no fifth outcome from this channel.
+
+        A rule counts as REPORTED when its GUID appears as a
+        `Skip.source_guid` or as a `DroppedItemRecord`'s `item_guid` or
+        `owner_guid`. All three are accepted because both producers in
+        `Lib/categories.py` report a dropped rule against its OWNING ENTRY
+        (`owner_kind="LexEntry"`, `item_name="MoAffixProcess"`,
+        `item_guid=<rule>`) per the create-path contract section 5, while a
+        rule that OWNS the thing lost is reported with itself as `owner_guid`
+        -- so insisting on any one field would fail on real, correctly
+        reported runs.
+
+        WHY THIS IS A PROPERTY AND NOT A `__post_init__` RAISE, which is the
+        one design decision here worth stating. Every invariant in
+        `__post_init__` rejects a report that CONTRADICTS ITSELF -- a counter
+        disagreeing with the records that define it, where no reading of the
+        report is safe. This one describes a report that is merely INCOMPLETE.
+        Raising on it would destroy, at build time, the very report carrying
+        the evidence of the loss -- answering "what did this run silently
+        discard?" by discarding the answer. That is the SC-010 anti-pattern in
+        miniature, and T048c already set the precedent in the other direction:
+        when the create split had no valid basis it WITHHELD the number and
+        said so, rather than refusing to build. An incomplete report that
+        names its own gap beats no report.
+        """
+        reported = set()
+        for _s in self.skips:
+            _g = getattr(_s, "source_guid", "")
+            if _g:
+                reported.add(str(_g).lower())
+        for _d in self.dropped_items:
+            for _attr in ("item_guid", "owner_guid"):
+                _g = getattr(_d, _attr, "")
+                if _g:
+                    reported.add(str(_g).lower())
+        return tuple(
+            r.source_guid for r in self.process_rules
+            if not getattr(r, "reproduced", True)
+            and str(getattr(r, "source_guid", "")).lower() not in reported
+        )
 
 
 # ============================================================================
