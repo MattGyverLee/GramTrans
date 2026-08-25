@@ -1014,6 +1014,38 @@
       "kind": "complete",
       "by": "extension",
       "at": "2026-08-25T14:52:53.321Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T078",
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-25T17:46:19.980Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T107",
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-08-25T20:26:27.582Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T079",
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-08-25T20:26:27.582Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T108",
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-08-25T20:26:27.582Z"
     }
   ],
   "decisions": [
@@ -1449,7 +1481,7 @@
       "summary": "Phase 8 complete: all 18 affix process rules transfer with intact MembersRS via co-created shared contexts, two audited closure rows registered on stated single-corpus evidence, and T064 P4 satisfied in both halves"
     }
   },
-  "currentTask": "T078",
+  "currentTask": "T080",
   "task_summaries": {
     "T001": {
       "status": "DONE",
@@ -1658,6 +1690,22 @@
       "did": "Census gate predicate P4 satisfied in both halves (MoAffixProcess 18/18 MATCHED, MoAffixAllomorph 124/124); exit 3 stands on PhNCFeatures, proved outside phase 4's scope the way T086 amended T075",
       "files": [
         "tests/integration/test_038_process_rules.py"
+      ]
+    },
+    "T078": {
+      "status": "DONE",
+      "did": "Post-037 baseline re-census (3 pairs, read-only, exit 3 each, reproduces predecessors 75/75 rows) and R7 report-only set re-scoped class by class; filed T107 for PhSimpleContextBdry",
+      "files": [
+        "tests/integration/test_object_census.py",
+        "tests/integration/_snapshots/census-038-t078-ejagham.json",
+        "tests/integration/_snapshots/census-038-t078-ngoreme.json",
+        "tests/integration/_snapshots/census-038-t078-mbugwe.json",
+        "tests/integration/_snapshots/process-rules-038-t078-corpus.json",
+        "src/gramtrans/Lib/categories.py",
+        "tests/unit/test_038_process_rules.py",
+        "tests/integration/test_038_process_rules.py",
+        "specs/038-transfer-fidelity-gaps/tasks.md",
+        "specs/038-transfer-fidelity-gaps/journal/T078-the-baseline-that-was-already-on-disk.md"
       ]
     }
   },
