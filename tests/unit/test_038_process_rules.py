@@ -1044,27 +1044,24 @@ def test_a_shared_context_carrying_feature_constraints_skips(_stub_lcm, spy):
     assert "PlusConstrRS" in dropped[0].reason
 
 
-@pytest.mark.parametrize("unexercised_class", [
-    "PhSimpleContextBdry", "PhIterationContext",
-])
+@pytest.mark.parametrize("unexercised_class", ["PhIterationContext"])
 def test_an_unexercised_shared_context_class_is_not_co_created(
     _stub_lcm, spy, unexercised_class
 ):
-    """`Mbugwe LizzieHC practice` really does hold 22 `PhSimpleContextBdry`
-    and 11 `PhIterationContext` in `ContextsOS`, and NOT ONE is referenced by
-    any of its 18 affix process rules -- measured, not assumed. They stay
-    behind the FR-025 skip, and the destination's `ContextsOS` is left
-    untouched.
+    """`Mbugwe LizzieHC practice` really does hold 11 `PhIterationContext` in
+    `ContextsOS` and NOT ONE is referenced by any of its 18 affix process
+    rules -- measured, not assumed. It stays behind the FR-025 skip, and the
+    destination's `ContextsOS` is left untouched.
 
-    **T078 (2026-08-25) narrowed WHY, for `PhSimpleContextBdry` only.** The
-    original reason was "admitting them to the co-create would ship a create
-    path no corpus can check". `Ejagham W Mini` can check it: 13 of its 13
-    `MoAffixProcess` rules are skipped naming this class, 5 of them through a
-    shared `PhPhonData.ContextsOS` context. The ASSERTION below is unchanged
-    and still correct -- this engine does not co-create the class -- but the
-    justification is now "the path is unwritten, filed as T107", not "no data
-    exists". `PhIterationContext` keeps the original reason unaltered.
-    Evidence: `tests/integration/_snapshots/process-rules-038-t078-corpus.json`.
+    **T107 (2026-08-25) removed `PhSimpleContextBdry` from this parametrize,
+    and the parametrize is kept for one class on purpose**: it is the shape of
+    the claim that matters, and the next class proposed for the co-create path
+    should land here first. T076 excluded the boundary context on two grounds
+    -- "the path is unwritten" and "no corpus can check it" -- and `Ejagham W
+    Mini` falsified the second: 5 of its 13 rules reach a boundary context
+    through exactly this shared-`ContextsOS` route. `PhIterationContext` keeps
+    both grounds intact. Evidence:
+    `tests/integration/_snapshots/process-rules-038-t078-corpus.json`.
     """
     shared = _phon_data_owned(SHARED_CTX, unexercised_class,
                               _TargetObj(DEST_PHONEME, "PhPhoneme"))
@@ -1077,6 +1074,293 @@ def test_an_unexercised_shared_context_class_is_not_co_created(
 
     assert len(dropped) == 1
     assert list(contexts_os) == []
+
+
+# ===========================================================================
+# T107 -- PhSimpleContextBdry, on both routes `Ejagham W Mini` uses
+# ===========================================================================
+#
+# T076 held this class behind `_PROCESS_UNEXERCISED_CLASSES` on a measurement
+# taken on `Mbugwe LizzieHC practice` alone: 22 boundary contexts in
+# `ContextsOS`, not one referenced by any of its 18 rules. Correct, and it
+# still reproduces. T078 measured the same question on `Ejagham W Mini` and
+# got the opposite answer -- 13 of 13 rules blocked, on this class alone.
+#
+# TWO ROUTES, AND THE SPLIT IS EXACT. Verified read-only against the source's
+# own object graph: 8 of the 10 `PhSimpleContextBdry` in `Ejagham W Mini` are
+# owned directly by a `MoAffixProcess` (the direct `InputOS` route), 1 by a
+# `PhSegRuleRHS` (a PHONOLOGICAL rule -- not this feature's), and exactly 1 by
+# `PhPhonData`. Five distinct rules reach that single shared one through a
+# rule-owned `PhSequenceContext`. 8 + 5 = the 13 blocked rules, with no rule
+# counted twice. So both routes are load-bearing and each gets its own test.
+#
+# WHAT MAKES THE REFERENT RESOLVABLE, and why no closure edge is owed:
+# `PhBdryMarker` is fixed FLEx content. All three sanctioned sources AND both
+# live destinations hold the same two GUIDs -- 3bde17ce-...cb56 and
+# 7db635e0-...89aaa -- and every one of Ejagham's 10 boundary contexts points
+# at one of them. The census reads `PhBdryMarker` 2 -> 2 MATCHED on all three
+# pairs, so the identity leg resolves and nothing needs creating one hop out.
+
+#: A boundary marker as FLEx ships it: `kguidPhRuleWordBdry`, byte-identical
+#: in every sanctioned source and in both live destinations. Spelled out
+#: rather than invented because the whole reason this class needs no closure
+#: edge is that this GUID is the SAME on both sides.
+WORD_BDRY = "3bde17ce-e39a-4bae-8a5c-a8d96fd4cb56"
+
+
+def _bdry_input_rule(bdry, rule_guid="rule-bdry-0001",
+                     entry_guid="aaaaaaaa-0000-0000-0000-0000000000d1"):
+    """The 8-rule route: the boundary context is the rule's OWN input member.
+
+    Paired with a `MoCopyFromInput` pointing back at it, because an output
+    step that copies nothing is a different skip and would mask this one.
+    """
+    rule = _Rule(rule_guid, inputs=[bdry],
+                 outputs=[_Member("MoCopyFromInput", "out-d1",
+                                  ContentRA=bdry)])
+    return _Entry(entry_guid, lexeme_form=rule)
+
+
+def test_a_boundary_context_as_a_direct_input_member_is_created_and_wired(
+    _stub_lcm, spy
+):
+    """THE 8-RULE ROUTE, and the headline of T107: a rule that used to be
+    dropped with a reason now arrives.
+
+    The three assertions are inseparable. The rule arrives; the input member
+    is a `PhSimpleContextBdry` carrying its SOURCE guid (so a re-run finds it
+    rather than building a second); and its `FeatureStructureRA` is the
+    DESTINATION boundary marker. A context created with a null referent would
+    satisfy the first two and match nothing at all -- which is precisely the
+    silent failure the FR-025 skip existed to prevent, so admitting the class
+    without this third assertion would trade a reported loss for an
+    unreported one.
+    """
+    marker = _TargetObj(WORD_BDRY, "PhBdryMarker")
+    bdry = _Member("PhSimpleContextBdry", "ctx-bdry-d1",
+                   FeatureStructureRA=marker)
+
+    new_entry, dropped, ctx = _walk(
+        _bdry_input_rule(bdry), spy, destination=(marker,))
+
+    assert dropped == []
+    new_rule = new_entry.LexemeFormOA
+    assert new_rule.ClassName == "MoAffixProcess"
+    assert [m.ClassName for m in new_rule.InputOS] == ["PhSimpleContextBdry"]
+    assert new_rule.InputOS[0].guid == "ctx-bdry-d1"
+    assert new_rule.InputOS[0].FeatureStructureRA is marker
+    assert "IPhSimpleContextBdryFactory" in spy.factories_requested
+    records = _rule_records(ctx)
+    assert len(records) == 1 and records[0].reproduced is True
+
+
+def test_a_direct_boundary_context_with_an_unresolved_marker_still_skips(
+    _stub_lcm, spy
+):
+    """Admitting the class is not a licence to build one that matches nothing.
+
+    The resolvability test T076 landed for phonemes and natural classes is
+    UNCONDITIONAL -- it does not consult `_PROCESS_REFERENT_CATEGORY`, so the
+    argument "boundary markers always resolve" is not what makes this safe;
+    the check is. A destination that somehow lacks the marker keeps the
+    FR-025 skip, and the reason names the MARKER rather than the context,
+    because the marker is the thing this engine cannot manufacture.
+    """
+    marker = _TargetObj(WORD_BDRY, "PhBdryMarker")
+    bdry = _Member("PhSimpleContextBdry", "ctx-bdry-d2",
+                   FeatureStructureRA=marker)
+
+    new_entry, dropped, ctx = _walk(
+        _bdry_input_rule(bdry), spy, destination=())   # no marker there
+
+    assert new_entry.LexemeFormOA is None
+    assert len(dropped) == 1
+    reason = " ".join(dropped[0].reason.split())
+    assert "boundary marker" in reason
+    assert WORD_BDRY in reason
+    assert _rule_records(ctx)[0].reproduced is False
+
+
+def test_a_direct_boundary_context_naming_no_marker_at_all_skips(
+    _stub_lcm, spy
+):
+    """`FeatureStructureRA` None in the SOURCE. The derived
+    `_PROCESS_SIMPLE_CONTEXT_CLASSES` set is what makes this fire: before
+    T107 the referent check was an inline two-class tuple, so a third class
+    with a factory would have been created with a null referent and reported
+    as a success."""
+    bdry = _Member("PhSimpleContextBdry", "ctx-bdry-d3",
+                   FeatureStructureRA=None)
+
+    new_entry, dropped, _ctx = _walk(
+        _bdry_input_rule(bdry), spy, destination=())
+
+    assert new_entry.LexemeFormOA is None
+    assert len(dropped) == 1
+    assert "names no boundary marker at all" in " ".join(
+        dropped[0].reason.split())
+
+
+def test_a_shared_boundary_context_is_co_created_and_wired(_stub_lcm, spy):
+    """THE 5-RULE ROUTE -- the one T076 built and then excluded this class
+    from. `Ejagham W Mini` holds exactly ONE `PhPhonData`-owned boundary
+    context and five distinct rules reach it through a rule-owned
+    `PhSequenceContext`, so this is the route that carries the majority of the
+    contexts even though it is the minority of the rules.
+
+    The owner is the whole difference from the test above: the object lands in
+    the destination's project-level `ContextsOS`, not under the rule, because
+    that is where the source keeps it.
+    """
+    marker = _TargetObj(WORD_BDRY, "PhBdryMarker")
+    shared = _phon_data_owned(SHARED_CTX, "PhSimpleContextBdry", marker)
+    contexts_os = _Seq()
+
+    new_entry, dropped, ctx = _walk(
+        _shared_ctx_rule(shared), spy, destination=(marker,),
+        contexts_os=contexts_os)
+
+    assert dropped == []
+    assert [c.ClassName for c in contexts_os] == ["PhSimpleContextBdry"]
+    assert [c.guid for c in contexts_os] == [SHARED_CTX]
+    assert contexts_os[0].FeatureStructureRA is marker
+    assert new_entry.LexemeFormOA.InputOS[0].MembersRS[0] is contexts_os[0]
+    specs = _rule_records(ctx)[0].input_contexts
+    assert [s.co_created_shared for s in specs] == [(SHARED_CTX,)]
+
+
+def test_a_shared_boundary_context_with_an_unresolved_marker_still_skips(
+    _stub_lcm, spy
+):
+    """The same refusal on the shared route, asserted separately because the
+    two routes reach the resolvability test through different functions
+    (`_resolve_process_graph` vs `_resolve_shared_process_context`) and a fix
+    to one has twice in this feature's history left the other behind."""
+    marker = _TargetObj(WORD_BDRY, "PhBdryMarker")
+    shared = _phon_data_owned(SHARED_CTX, "PhSimpleContextBdry", marker)
+    contexts_os = _Seq()
+
+    new_entry, dropped, _ctx = _walk(
+        _shared_ctx_rule(shared), spy, destination=(),
+        contexts_os=contexts_os)
+
+    assert new_entry.LexemeFormOA is None
+    assert list(contexts_os) == []
+    assert len(dropped) == 1
+    reason = " ".join(dropped[0].reason.split())
+    assert "boundary marker" in reason
+    assert "co-creating the context would produce one that matches nothing" \
+        in reason
+
+
+def test_a_shared_boundary_context_already_present_is_not_co_created_twice(
+    _stub_lcm, spy
+):
+    """SC-008, on the class T107 admitted. Identity is tried first, so run 2
+    finds what run 1 built and `ContextsOS` does not grow once per run -- the
+    duplication this feature exists to remove, which its own fix must not
+    reintroduce through a new class."""
+    marker = _TargetObj(WORD_BDRY, "PhBdryMarker")
+    shared = _phon_data_owned(SHARED_CTX, "PhSimpleContextBdry", marker)
+    already_there = _TargetObj(SHARED_CTX, "PhSimpleContextBdry")
+    contexts_os = _Seq()
+
+    new_entry, dropped, _ctx = _walk(
+        _shared_ctx_rule(shared), spy,
+        destination=(marker, already_there), contexts_os=contexts_os)
+
+    assert dropped == []
+    assert list(contexts_os) == []
+    assert new_entry.LexemeFormOA.InputOS[0].MembersRS[0] is already_there
+
+
+def test_a_boundary_context_owned_by_a_phonological_rule_is_not_co_created(
+    _stub_lcm, spy
+):
+    """The one of Ejagham's ten this task does NOT claim.
+
+    Of the 10 `PhSimpleContextBdry` in that source, 8 are owned by a
+    `MoAffixProcess` and 1 by `PhPhonData` -- both routes above -- and 1 is
+    owned by a `PhSegRuleRHS`, i.e. by a PHONOLOGICAL rule. That is 037's
+    successor's territory, not US5's, and the narrowing in
+    `_process_shared_context_owner_is_phon_data` is what keeps it there.
+    Asserted so the census delta after this task can be accounted for
+    exactly rather than approximately.
+    """
+    marker = _TargetObj(WORD_BDRY, "PhBdryMarker")
+    elsewhere = _Member(
+        "PhSimpleContextBdry", SHARED_CTX,
+        Owner=_TargetObj("owner-rhs", "PhSegRuleRHS"),
+        FeatureStructureRA=marker)
+    contexts_os = _Seq()
+
+    new_entry, dropped, _ctx = _walk(
+        _shared_ctx_rule(elsewhere), spy, destination=(marker,),
+        contexts_os=contexts_os)
+
+    assert new_entry.LexemeFormOA is None
+    assert list(contexts_os) == []
+    assert len(dropped) == 1
+    assert "nor a PhPhonData.ContextsOS context this engine can co-create" \
+        in " ".join(dropped[0].reason.split())
+
+
+def test_the_co_created_context_reaches_the_run_report_json(_stub_lcm, spy):
+    """T107 -- THE SC-010 GAP T076 LEFT, and T107 found the hard way.
+
+    T076 put `co_created_shared` on `ProcessContextSpec` so that "a write into
+    a shared, project-level collection made as a side effect of transferring a
+    lexical entry" would not be a silent write, and asserted it on the
+    IN-MEMORY record only (`test_the_co_created_context_is_reported_on_the_
+    input_spec` above). `report._process_rule_json` never emitted the field,
+    so the claim was true of the object and false of the artifact anyone
+    reads.
+
+    It cost T107 its own evidence: the live Ejagham run cannot say whether the
+    shared boundary context was co-created there or brought across by the
+    phonological-rule path, because BOTH write `PhPhonData.ContextsOS` and the
+    only field that distinguishes them was dropped on the way out.
+
+    Asserted through the real serializer, both ways -- a co-creating rule
+    lists the GUID, a rule that co-creates nothing emits an empty list rather
+    than omitting the key, because "created nothing" is the reading that makes
+    a non-empty list mean anything.
+    """
+    from gramtrans.Lib.models import ProcessContextSpec, ProcessRuleTransferRecord
+    from gramtrans.Lib.report import _process_rule_json
+
+    payload = _process_rule_json(ProcessRuleTransferRecord(
+        source_guid="rule-1", reproduced=True, target_guid="rule-1",
+        input_contexts=(
+            ProcessContextSpec(
+                context_class="PhSequenceContext", index=0,
+                co_created_shared=(SHARED_CTX,)),
+            ProcessContextSpec(context_class="PhVariable", index=1),
+        ),
+    ))
+    assert [c["co_created_shared"] for c in payload["input_contexts"]] == [
+        [SHARED_CTX], []]
+
+
+def test_the_referent_check_is_derived_from_the_referent_kind_map(_stub_lcm):
+    """The structural guard T107 added, and the bug it forecloses.
+
+    `_PROCESS_SIMPLE_CONTEXT_CLASSES` is DERIVED from
+    `_PROCESS_CONTEXT_REFERENT_KIND` rather than spelled a second time, so a
+    class cannot be given a factory without also being given the
+    resolvability check. Before T107 the check was an inline
+    `("PhSimpleContextSeg", "PhSimpleContextNC")` tuple; admitting a third
+    class to `_PROCESS_INPUT_FACTORIES` and forgetting that tuple would have
+    created contexts with null referents and called it a successful transfer.
+    """
+    assert (categories._PROCESS_SIMPLE_CONTEXT_CLASSES
+            == frozenset(categories._PROCESS_CONTEXT_REFERENT_KIND))
+    # Every context class with a referent kind has a factory, and vice versa:
+    # a kind with no factory can never be built, and a factory with no kind
+    # would skip the check.
+    for name in categories._PROCESS_SIMPLE_CONTEXT_CLASSES:
+        assert name in categories._PROCESS_INPUT_FACTORIES, name
+        assert name not in categories._PROCESS_UNEXERCISED_CLASSES, name
 
 
 def test_a_destination_with_no_contexts_os_reports_rather_than_raises(
@@ -1163,27 +1447,28 @@ def test_the_process_rule_producers_are_silent_on_an_entry_with_no_rules(
 
 
 @pytest.mark.parametrize("unexercised", [
-    "MoModifyFromInput", "MoInsertNC", "PhSimpleContextBdry",
-    "PhIterationContext",
+    "MoModifyFromInput", "MoInsertNC", "PhIterationContext",
 ])
 def test_an_unexercised_class_skips_rather_than_guesses(
     _stub_lcm, spy, unexercised
 ):
-    """Zero live instances means no corpus can tell a correct implementation
-    from a plausible one, so these ship behind the skip -- and the reason says
-    WHICH class, not "unknown class".
+    """No corpus exercises these inside a rule, so none can tell a correct
+    implementation from a plausible one -- they ship behind the skip, and the
+    reason says WHICH class, not "unknown class".
 
-    **T078 (2026-08-25): the reason string's PREMISE is now false for
-    `PhSimpleContextBdry`, and this test still asserts the string.** The live
-    reason reads "a class with zero instances in any sanctioned corpus", and
-    `Ejagham W Mini` holds 10 of them in source with 13 of 13 `MoAffixProcess`
-    rules skipped on their account. Deliberately NOT corrected here: the string
-    is live run-report output for all four classes, and changing it is a
-    reporting change that belongs with the task that owns the class (**T107**)
-    or with T079's report lines -- not a side effect of a read-only re-census.
-    Recorded so it is a known debt rather than an unnoticed falsehood."""
+    **T107 (2026-08-25) FIXED THE REASON STRING and shrank this parametrize
+    from four classes to three.** `PhSimpleContextBdry` left
+    `_PROCESS_UNEXERCISED_CLASSES` for a create path, so it is asserted
+    elsewhere now. The string it left behind said "a class with zero instances
+    in any sanctioned corpus", which T078 pinned as false of the boundary
+    context (10 / 13 / 24 in source) and which is **also false of
+    `PhIterationContext`**: Mbugwe holds 11 in `ContextsOS` and a live run
+    created 9 more under transferred phonological rules. So the fix was not
+    "delete the one false case" -- it was correcting the CLAIM to the one every
+    remaining member satisfies, which is per-RULE, not per-project: no
+    `MoAffixProcess` in any sanctioned corpus uses any of these three."""
     member = _Member(unexercised, "member-unexercised-0001")
-    is_input = unexercised in ("PhSimpleContextBdry", "PhIterationContext")
+    is_input = unexercised == "PhIterationContext"
     rule = _Rule(
         "rule-unexercised-0001",
         inputs=[member] if is_input else [_Member("PhVariable", "v-1")],
@@ -1197,7 +1482,13 @@ def test_an_unexercised_class_skips_rather_than_guesses(
     assert not spy.reached_an_allomorph_factory
     assert len(dropped) == 1
     assert unexercised in dropped[0].reason
-    assert "zero" in dropped[0].reason
+    # The corrected claim, asserted as a string because it is what the user
+    # reads. "zero instances" was the old wording and is refused: it is false
+    # of PhIterationContext at the project level, and a reason that overstates
+    # its own evidence is the defect T078 pinned.
+    assert "no affix process rule in any sanctioned corpus uses" in \
+        dropped[0].reason
+    assert "zero instances" not in dropped[0].reason
 
 
 def test_a_feature_constraint_skips_the_rule(_stub_lcm, spy):

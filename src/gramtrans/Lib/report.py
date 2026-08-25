@@ -999,6 +999,22 @@ def _process_rule_json(r) -> dict:
                 "index": c.index,
                 "referent_guid": c.referent_guid,
                 "label": c.label,
+                # T107: PRESENT BECAUSE IT WAS MISSING. T076 added
+                # `co_created_shared` to `ProcessContextSpec` so that "a write
+                # into a shared, project-level collection made as a side
+                # effect of transferring a lexical entry" would not be a
+                # silent write (SC-010) -- and asserted it on the in-memory
+                # record only. This serializer never emitted it, so the claim
+                # was true of the object and FALSE of the artifact anyone
+                # actually reads. T107 found the gap the hard way: its live
+                # Ejagham run cannot say whether the shared boundary context
+                # was co-created here or brought across by the phonological-
+                # rule path, because both write `PhPhonData.ContextsOS` and
+                # the only field that distinguishes them was dropped on the
+                # way out. Emitted unconditionally, empty tuple included --
+                # "this rule created no shared context" is the reading that
+                # makes a non-empty list mean something.
+                "co_created_shared": list(c.co_created_shared),
             }
             for c in r.input_contexts
         ],

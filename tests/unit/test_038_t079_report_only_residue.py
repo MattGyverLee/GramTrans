@@ -518,34 +518,32 @@ class TestT079WhatWasDeliberatelyNotChanged:
         artifact = _artifact([_row("FsComplexFeature", 2, 2)])
         assert census.evaluate_phase(artifact, 5).satisfied is True
 
-    def test_the_false_process_skip_reason_is_left_to_t107(self):
-        """THE EXPLICIT CALL T079 owed, with the fact T107 needs.
+    def test_the_false_process_skip_reason_was_handed_to_t107_and_fixed(self):
+        """THE EXPLICIT CALL T079 owed, and the answer T107 gave.
 
-        The live skip reason reads "a class with zero instances in any
-        sanctioned corpus". T078 pinned that every sanctioned source holds
-        `PhSimpleContextBdry` (10 / 13 / 24), so the sentence is false. It is
-        NOT corrected here, on three grounds:
+        T079 declined to correct the skip reason "a class with zero instances
+        in any sanctioned corpus" on three grounds: it lives in
+        `Lib/categories.py` (outside T079's named file), it is false of exactly
+        one of the four classes the branch served, and T107's first act would
+        delete that branch anyway. Deferring turned out to matter for a fourth
+        reason nobody had written down: **the sentence is false of
+        `PhIterationContext` too.** Mbugwe holds 11 in `ContextsOS` and a live
+        run created 9 more under transferred phonological rules -- so the fix
+        was never "delete the one false case", it was correcting the CLAIM to
+        the per-RULE one every remaining member satisfies.
 
-        * it lives in `Lib/categories.py`, the create path -- outside T079's
-          named file (`Lib/report.py`) and inside T107's/US5's;
-        * it is false of exactly ONE of the four classes the branch serves.
-          `MoModifyFromInput`, `MoInsertNC` and `PhIterationContext` really
-          are unexercised by every sanctioned corpus, so a correct fix is a
-          PER-MEMBER reason table, not a reworded sentence;
-        * T107's first act is to REMOVE `PhSimpleContextBdry` from
-          `_PROCESS_UNEXERCISED_CLASSES`, which deletes the only branch a
-          per-member table would have needed. Writing it now is writing code
-          for T107 to throw away.
-
-        What this asserts is the discrimination T078's pin does not: the
-        sentence is false of one member and true of three."""
-        unexercised = cats._PROCESS_UNEXERCISED_CLASSES
-        assert unexercised == frozenset({
-            "MoModifyFromInput", "MoInsertNC", "PhSimpleContextBdry",
-            "PhIterationContext"})
-        # The one member every sanctioned source holds -- and the one member
-        # of the four that R7's residue roster names, because it has a
-        # measured consequence and an owner (T107).
+        What this test now pins is the outcome: `PhSimpleContextBdry` is out of
+        the set and has a create path, the three survivors are still in it, and
+        the reason string no longer overstates its evidence."""
+        assert cats._PROCESS_UNEXERCISED_CLASSES == frozenset({
+            "MoModifyFromInput", "MoInsertNC", "PhIterationContext"})
+        assert "PhSimpleContextBdry" in cats._PROCESS_INPUT_FACTORIES
+        assert "PhSimpleContextBdry" in cats._PROCESS_SHARED_CONTEXT_CLASSES
+        # Still rostered, and the owner still names T107 -- what changed is
+        # what T107 undertook. The affix-process route transfers; the
+        # phonological-rule route (`PhSegRuleRHS`-owned contexts) does not, and
+        # that half is 037's successor's, which is why the class keeps a
+        # report-only line rather than losing one.
         assert "PhSimpleContextBdry" in models.CENSUS_REPORT_ONLY_RESIDUE
         owner, _reason = models.CENSUS_REPORT_ONLY_RESIDUE[
             "PhSimpleContextBdry"]

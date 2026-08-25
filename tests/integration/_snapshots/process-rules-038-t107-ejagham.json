@@ -1,0 +1,67 @@
+{
+  "artifact": "process-rules-038-t107-ejagham",
+  "boundary_context_input_members": [
+    {
+      "index": 2,
+      "referent_guid": "3bde17ce-e39a-4bae-8a5c-a8d96fd4cb56",
+      "rule": "1a3f18a6-7ff7-4c43-ad4e-4e3866f5f3ae"
+    },
+    {
+      "index": 2,
+      "referent_guid": "3bde17ce-e39a-4bae-8a5c-a8d96fd4cb56",
+      "rule": "26589ff1-2d00-437b-80d6-504422c28c65"
+    },
+    {
+      "index": 2,
+      "referent_guid": "3bde17ce-e39a-4bae-8a5c-a8d96fd4cb56",
+      "rule": "2ab66874-1548-4fb7-a5e7-172582ae7469"
+    },
+    {
+      "index": 2,
+      "referent_guid": "3bde17ce-e39a-4bae-8a5c-a8d96fd4cb56",
+      "rule": "7676eacf-6a1a-43f5-8bac-bf9b55c73d80"
+    },
+    {
+      "index": 2,
+      "referent_guid": "3bde17ce-e39a-4bae-8a5c-a8d96fd4cb56",
+      "rule": "77d538e9-e812-4cb5-b687-c57d2a925fd3"
+    },
+    {
+      "index": 2,
+      "referent_guid": "3bde17ce-e39a-4bae-8a5c-a8d96fd4cb56",
+      "rule": "794faa38-203b-4730-9cd3-026a01508635"
+    },
+    {
+      "index": 2,
+      "referent_guid": "3bde17ce-e39a-4bae-8a5c-a8d96fd4cb56",
+      "rule": "8afa5252-b971-424a-9aaa-def1e56b2172"
+    },
+    {
+      "index": 2,
+      "referent_guid": "3bde17ce-e39a-4bae-8a5c-a8d96fd4cb56",
+      "rule": "dd620446-a08a-4f69-a377-22fc937de511"
+    }
+  ],
+  "census_artifact": "census-038-t107-ejagham.json",
+  "derived_read_only_from": "_run_reports/038-t107-ejagham-report.json",
+  "destination_project": "GT038 Ejagham After",
+  "input_context_class_totals": {
+    "PhSequenceContext": 34,
+    "PhSimpleContextBdry": 8,
+    "PhSimpleContextNC": 29,
+    "PhSimpleContextSeg": 21,
+    "PhVariable": 12
+  },
+  "purpose": "T107's live acceptance evidence for the PhSimpleContextBdry create path: per MoAffixProcess rule on the Ejagham pair, whether it reproduced, and for the one that did not, the reason the engine emitted. Derived read-only from the run report the T107 census judges -- _run_reports/ is gitignored, so this is the committed form, exactly as T078's process-rules-038-t078-corpus.json is.",
+  "rules_not_reproduced": [
+    {
+      "reason": "MoAffixProcess 24ed706a-7df2-4609-a37b-2bfa28853ccc output step 0 (MoCopyFromInput) copies (no ContentRA), which is not one of this rule's own input members -- the intra-rule back-reference cannot be rebuilt and the step would copy nothing (FR-023)",
+      "source_guid": "24ed706a-7df2-4609-a37b-2bfa28853ccc"
+    }
+  ],
+  "rules_reproduced": 12,
+  "rules_total": 13,
+  "run_id": "GT-20260825-143103",
+  "shared_context_attribution": "NOT DETERMINABLE FROM THIS RUN, and the reason is a defect T107 found and fixed rather than a gap in the measurement. ProcessContextSpec.co_created_shared -- the only field that distinguishes 'this run co-created the shared PhPhonData.ContextsOS context' from 'it was already there' -- was never emitted by report._process_rule_json, so this run report does not carry it. Both the affix process co-create leg (categories._create_shared_process_context) and the phonological-rule path (_copy_context_cell into tgt_phon_data.ContextsOS) write that collection, so the destination's one PhPhonData-owned PhSimpleContextBdry cannot be attributed to either from the artifacts. The serializer is fixed and the field is asserted through it (tests/unit/test_038_process_rules.py::test_the_co_created_context_reaches_the_run_report_json); attributing the shared route live needs one more run, which is T108.",
+  "source_project": "Ejagham W Mini"
+}

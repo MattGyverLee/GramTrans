@@ -5584,11 +5584,28 @@ class TestT101TheCommittedCorpusIsUnmovedByInvariant12:
         # test_each_baseline_reproduces_its_predecessor_row_for_row`) -- so as
         # with T089's and T104's links these are the same ROWS, not merely the
         # same classes. Not relaxed: the count is still a deliberate edit.
-        assert len(by_artifact) == 12, (
+        #
+        # 12 -> 14 on 2026-08-25 (T107): `census-038-t107-ejagham.json` and
+        # `census-038-t107-mbugwe-phase6.json` arrived from T107's live
+        # acceptance runs. THE FIRED-FIRST, EDITED-SECOND DISCIPLINE AGAIN,
+        # and this pair is the first where the reading is NOT "reproduces its
+        # predecessor row for row" -- the Ejagham one MOVES FIVE ROWS on
+        # purpose, which is the whole point of T107. Clause 1 is therefore
+        # carrying the weight alone here, and it passed untouched: each of the
+        # two nulls exactly `MoForm` and `MoMorphSynAnalysis`, the same
+        # `excluded_not_measurable` pair the post-T099 producer nulls in all
+        # twelve predecessors, and `uncorroborated_null_rows` is empty on
+        # both. The Mbugwe one IS asserted to reproduce its predecessor row
+        # for row (`TestT107...::test_the_mbugwe_pair_is_unmoved_to_the_row`),
+        # so only the Ejagham artifact rests on clause 1 by itself -- and its
+        # five moved rows are each pinned by number in
+        # `T107_EJAGHAM_MOVED`, which is a stronger check than a row-for-row
+        # equality could have been.
+        assert len(by_artifact) == 14, (
             "a census artifact arrived or left; the corpus that nulls the two "
             "excluded_not_measurable rows is now "
             + repr(sorted(by_artifact)))
-        assert advisory_nulls == 2 * len(by_artifact) == 24
+        assert advisory_nulls == 2 * len(by_artifact) == 28
 
 
 class TestT100TheVocabularyStaysClosedAtSeventeen:
@@ -5817,6 +5834,13 @@ T078_STILL_OPEN = {
     # The phonological-context family. R7 deferred all six to "the post-037
     # re-census since 037's structural-rebuild path may already move these".
     # It did not: 037 moved none of them. T076/T077 moved three (see below).
+    # T107 (2026-08-25) MOVED FOUR OF THESE ON THE EJAGHAM PAIR. The figures
+    # here are T078's and stay as they are -- they are asserted against T078's
+    # committed artifacts, which are a fixed measurement, not a live reading.
+    # The post-T107 numbers live in `TestT107TheBoundaryContextCreatePath`
+    # (`PhSimpleContextBdry` -9 -> 0 MATCHED, `PhSequenceContext` -40 -> -6,
+    # `PhSimpleContextNC` -38 -> -2, `PhSimpleContextSeg` -27 -> -1). Read
+    # this table as "as of T078", never as "as of now".
     "PhSequenceContext": (-40, -2, -11),
     "PhSimpleContextNC": (-38, -7, -23),
     "PhSimpleContextSeg": (-27, -3, -21),
@@ -5909,17 +5933,43 @@ class TestT078ThePost037Baseline:
             "DUPLICATE_IDENTITY", 3)
         assert artifact["totals"]["duplicate_extra_objects"] > 0
 
+    #: Per pair, what each side of T078's artifacts hashes to TODAY.
+    #:
+    #: **T107 (2026-08-25) DRIFTED TWO OF THESE, and that is the mechanism
+    #: working rather than failing.** T078's own version of this test asserted
+    #: `match` on all six readings, and its accompanying test recorded exactly
+    #: this happening to T098's and T099's artifacts when T095 re-transferred
+    #: their destinations. T107 re-transferred `GT038 Ejagham After` and
+    #: `GT038 Phase6 Target` to take its own acceptance, so T078's recorded
+    #: destination digests for those two pairs are now history. THE SOURCES
+    #: ARE UNMOVED on all three, which is the claim that actually matters:
+    #: every census this feature takes is read-only, so a source that drifted
+    #: would mean the corpus itself changed under the measurement.
+    #:
+    #: Ngoreme is untouched because T107's acceptance did not name it -- see
+    #: `TestT107...::test_the_ngoreme_pair_was_not_re_measured_and_says_so`.
+    T078_FWDATA_STATUS_TODAY = {
+        "ejagham": {"source": "match", "destination": "drifted"},
+        "mbugwe": {"source": "match", "destination": "drifted"},
+        "ngoreme": {"source": "match", "destination": "match"},
+    }
+
     @pytest.mark.parametrize("pair", sorted(T078_BASELINES))
     def test_each_baseline_is_reproducible_against_the_live_projects(
             self, pair):
-        """T102's test, applied to the artifacts that replace the drifted ones.
-        Both projects of all three pairs still hash to what the artifact
-        recorded, which is what makes these three the baseline and not merely
-        the newest files."""
+        """T102's test, applied to the artifacts that replaced the drifted
+        ones -- and now recording their own drift, per side, with the run that
+        caused it named.
+
+        Asserted as an exact table rather than as "match everywhere" so that a
+        `drifted` reverting to `match` is as loud as the other direction: a
+        destination that re-acquired T078's digest would mean somebody
+        restored over T107's evidence."""
         artifact = _t078(T078_BASELINES[pair])
+        expected = self.T078_FWDATA_STATUS_TODAY[pair]
         for side in ("source", "destination"):
-            assert _t078_fwdata_status(artifact["projects"][side]) == "match", (
-                pair + "." + side)
+            assert _t078_fwdata_status(artifact["projects"][side]) \
+                == expected[side], pair + "." + side
 
     def test_the_artifacts_t078_supersedes_are_named_and_measured(self):
         """WHY A RE-RUN WAS NEEDED AT ALL, given that 037 landed six days
@@ -6172,14 +6222,26 @@ class TestT078PhSimpleContextBdryIsExercisedAfterAll:
         assert ejagham["blocked_as_direct_input_member"] == {
             "PhSimpleContextBdry": 8}
 
-    def test_the_class_is_still_held_behind_the_unexercised_gate(self):
-        """T078 measured; it did not change behaviour. The gate is unchanged
-        and `PhSimpleContextBdry` is still in it -- so this test passing is the
-        statement that T107 is open, not that it is done."""
+    def test_the_class_left_the_unexercised_gate_at_t107(self):
+        """**T107 CLOSED THIS, and the assertions are inverted rather than
+        deleted.** T078's version read "still held behind the gate", and its
+        passing was the statement that T107 was open. Inverting it keeps the
+        same fact under measurement from the other side: the class now has a
+        create path on BOTH routes T078 found -- `_PROCESS_INPUT_FACTORIES`
+        for the 8 rules that own a boundary context directly, and
+        `_PROCESS_SHARED_CONTEXT_CLASSES` for the 5 that reach the single
+        `PhPhonData`-owned one through a `PhSequenceContext`.
+
+        `PhIterationContext` is asserted to have stayed put, because T107's
+        scope was one class and the gate is what keeps that true."""
         from gramtrans.Lib import categories as _cats
 
-        assert "PhSimpleContextBdry" in _cats._PROCESS_UNEXERCISED_CLASSES
         assert ("PhSimpleContextBdry"
+                not in _cats._PROCESS_UNEXERCISED_CLASSES)
+        assert "PhSimpleContextBdry" in _cats._PROCESS_INPUT_FACTORIES
+        assert "PhSimpleContextBdry" in _cats._PROCESS_SHARED_CONTEXT_CLASSES
+        assert "PhIterationContext" in _cats._PROCESS_UNEXERCISED_CLASSES
+        assert ("PhIterationContext"
                 not in _cats._PROCESS_SHARED_CONTEXT_CLASSES)
 
     def test_the_census_row_the_block_produces_is_reported_not_silent(self):
@@ -6218,10 +6280,337 @@ class TestT078PhSimpleContextBdryIsExercisedAfterAll:
         filing: it is live run-report output for four classes, and changing it
         is a reporting change with no census behind it. It belongs to **T107**
         (which owns the class) or to T079 (which owns report lines). What T078
-        owes is the number that makes the sentence false, asserted here."""
+        owes is the number that makes the sentence false, asserted here.
+
+        **T107 CORRECTED IT (2026-08-25), and not the way this docstring
+        anticipated.** Deferring paid: the sentence turned out to be false of
+        `PhIterationContext` too -- Mbugwe holds 11 in `ContextsOS` and a live
+        run created 9 more under transferred phonological rules -- so deleting
+        the one false case would have left a false sentence standing. The
+        claim is now the per-RULE one every remaining member satisfies: "a
+        class no affix process rule in any sanctioned corpus uses". THE
+        NUMBERS BELOW ARE UNCHANGED and still assert exactly what T078 owed,
+        because they are properties of the SOURCES, not of the string."""
         counts = {
             pair: _t078_rows(name)["PhSimpleContextBdry"]["source_count"]
             for pair, name in T078_BASELINES.items()
         }
         assert counts == {"ejagham": 10, "ngoreme": 13, "mbugwe": 24}
         assert min(counts.values()) > 0
+
+
+# ===========================================================================
+# T107 -- the boundary context's create path, and the blocker behind it
+# ===========================================================================
+#
+# T078 measured the block and filed this task with an acceptance spelled out:
+# a restored-target Ejagham run showing `MoAffixProcess` 13 -> 13 with the
+# context classes moving by an accounted delta, plus a Mbugwe re-run proving
+# 18/18 is unmoved.
+#
+# THE FIGURE IS 13 -> 12, AND THE THIRTEENTH IS NOT THIS CLASS. Rule
+# `24ed706a` is refused because its `OutputOS[0]` is a `MoCopyFromInput` whose
+# `Content` is EMPTY IN THE SOURCE -- a copy step with nothing to copy.
+# `_resolve_process_graph` checks input members before output steps, so the
+# boundary-context block fired first on all 13 rules and masked it. T078's
+# "the ONLY blocking class anywhere" was true of the reasons the ENGINE
+# EMITTED, which is all a skip reason can ever report: one blocker per rule,
+# the first one found. **A single-blocker census is a lower bound on the work,
+# never a count of it.** Asserted below rather than explained away.
+
+T107_EJAGHAM = "census-038-t107-ejagham.json"
+T107_MBUGWE = "census-038-t107-mbugwe-phase6.json"
+T107_MBUGWE_RULES = "process-rules-038-t107-mbugwe.json"
+
+#: The per-rule evidence, DERIVED read-only from the run report and COMMITTED,
+#: because `_run_reports/` is gitignored -- asserting against the raw report
+#: would make these tests pass only on the machine that produced it. Exactly
+#: T078's arrangement with `process-rules-038-t078-corpus.json`.
+T107_EJAGHAM_RULES = "process-rules-038-t107-ejagham.json"
+
+#: The rule the boundary-context fix does NOT reach, and why. Named here so a
+#: later run that reproduces 13 of 13 has to come here and say what changed
+#: about the SOURCE -- because nothing in this engine can rebuild a copy step
+#: whose `ContentRA` is absent.
+T107_SOURCE_DEFECT_RULE = "24ed706a-7df2-4609-a37b-2bfa28853ccc"
+
+#: The Ejagham rows T107 moved, `class -> (before_diff, after_diff)`, against
+#: T078's committed measurement of the same pair. EXACTLY these five and no
+#: others: the value of this table is as much in what is absent from it as in
+#: what is in it, since a create path that moved an unrelated row would be
+#: doing something nobody measured.
+T107_EJAGHAM_MOVED = {
+    "MoAffixProcess": (-13, -1),
+    "PhSequenceContext": (-40, -6),
+    "PhSimpleContextBdry": (-9, 0),
+    "PhSimpleContextNC": (-38, -2),
+    "PhSimpleContextSeg": (-27, -1),
+}
+
+#: Every source object still missing after T107, by class, with the owner that
+#: accounts for it. Established by a read-only GUID diff of the two `.fwdata`
+#: files rather than inferred from counts, because "the number went down" and
+#: "the right objects arrived" are different claims.
+T107_EJAGHAM_RESIDUAL_OWNERS = {
+    "MoAffixProcess": {"the source-defect rule": 1},
+    "PhSequenceContext": {"the source-defect rule": 5, "PhSegRuleRHS": 1},
+    "PhSimpleContextNC": {"PhPhonData": 2},
+    "PhSimpleContextSeg": {"PhPhonData": 1},
+}
+
+
+def _t107_rules() -> dict:
+    return _t078(T107_EJAGHAM_RULES)
+
+
+class TestT107TheBoundaryContextCreatePath:
+    """The live acceptance, from committed artifacts rather than a re-run."""
+
+    def test_the_boundary_context_class_now_arrives_whole(self):
+        """THE HEADLINE. `PhSimpleContextBdry` 10 -> 1 becomes 10 -> 10
+        MATCHED on the pair that exercises it. All ten, which includes the one
+        owned by a `PhSegRuleRHS` that 037's phonological-rule path brings
+        across -- so this row is not evidence for T107 alone, which is why the
+        rule count below is asserted too."""
+        row = _t078_rows(T107_EJAGHAM)["PhSimpleContextBdry"]
+        assert (row["source_count"], row["destination_count_total"]) == (10, 10)
+        assert row["difference"] == 0
+        assert row["verdict_class"] == "MATCHED"
+
+    def test_twelve_of_thirteen_rules_arrive(self):
+        """13 -> 12, not the 13 -> 13 the task asked for, and the difference
+        is a finding rather than a shortfall in the fix.
+
+        Asserted as an exact figure both ways: 12 arrived, and the row is
+        still a SHORTFALL of exactly 1. A test that only checked "more than
+        before" would pass on a partial fix."""
+        row = _t078_rows(T107_EJAGHAM)["MoAffixProcess"]
+        assert (row["source_count"], row["destination_count_total"]) == (13, 12)
+        assert row["difference"] == -1
+        assert row["verdict_class"] == "SHORTFALL"
+
+    def test_the_thirteenth_rule_is_blocked_by_an_empty_source_copy_step(self):
+        """The blocker behind the blocker, from the run report the census
+        judges. The reason must name `MoCopyFromInput` and must NOT name
+        `PhSimpleContextBdry` -- if it did, the create path would not be
+        working and this whole task would be reporting someone else's
+        success."""
+        rules = _t107_rules()
+        assert rules["rules_total"] == 13
+        assert rules["rules_reproduced"] == 12
+        blocked = rules["rules_not_reproduced"]
+        assert len(blocked) == 1
+        assert blocked[0]["source_guid"] == T107_SOURCE_DEFECT_RULE
+        reason = " ".join(blocked[0]["reason"].split())
+        assert "MoCopyFromInput" in reason
+        assert "no ContentRA" in reason
+        assert "PhSimpleContextBdry" not in reason
+
+    def test_no_surviving_skip_reason_names_the_boundary_context(self):
+        """The claim T107 actually owes, stated over EVERY unreproduced rule
+        rather than only over the one that failed: the class is gone from the
+        engine's vocabulary of blockers on this pair."""
+        for rule in _t107_rules()["rules_not_reproduced"]:
+            assert "PhSimpleContextBdry" not in (rule["reason"] or ""), \
+                rule["source_guid"]
+
+    def test_the_boundary_context_is_reported_on_the_rules_that_use_it(self):
+        """SC-010: a context this run created inside a rule is not a silent
+        write. **Eight** of Ejagham's boundary contexts are direct `InputOS`
+        members -- the count predicted from the source's object graph before a
+        line was written -- so `input_contexts` must name the class on exactly
+        eight rules. Otherwise the MATCHED row above could be satisfied by
+        contexts that arrived some other way.
+
+        And each must name the marker it was wired to: a context reported with
+        an empty `referent_guid` is one that matches nothing, the outcome the
+        resolvability test exists to refuse. All eight name the WORD boundary,
+        `3bde17ce-...cb56`, which is fixed FLEx content present on both sides
+        -- which is why no closure edge is owed one hop out."""
+        rules = _t107_rules()
+        direct = rules["boundary_context_input_members"]
+        assert len(direct) == 8
+        assert len({d["rule"] for d in direct}) == 8
+        assert all(d["referent_guid"] == "3bde17ce-e39a-4bae-8a5c-a8d96fd4cb56"
+                   for d in direct)
+        assert rules["input_context_class_totals"]["PhSimpleContextBdry"] == 8
+
+    def test_the_shared_route_attribution_is_recorded_as_undetermined(self):
+        """WHAT THIS RUN CANNOT SHOW, said out loud rather than left to be
+        inferred from a silence.
+
+        `ProcessContextSpec.co_created_shared` is the only field that
+        distinguishes "this run co-created the shared `PhPhonData.ContextsOS`
+        context" from "it was already there", and T076 asserted it on the
+        IN-MEMORY record only -- `report._process_rule_json` never emitted it.
+        So the run report behind these numbers does not carry it, and the
+        destination's one `PhPhonData`-owned `PhSimpleContextBdry` cannot be
+        attributed to the affix-process co-create rather than to the
+        phonological-rule path, because BOTH write that collection.
+
+        T107 fixed the serializer and pinned it through the real function
+        (`tests/unit/test_038_process_rules.py::
+        test_the_co_created_context_reaches_the_run_report_json`). Attributing
+        the shared route LIVE needs one more run, filed as T108. This test
+        exists so that the gap cannot be quietly forgotten, and so that the
+        run that closes it has to come here and delete this."""
+        note = _t107_rules()["shared_context_attribution"]
+        assert "NOT DETERMINABLE FROM THIS RUN" in note
+        assert "T108" in note
+        # The serializer is fixed NOW, whatever the committed run predates.
+        from gramtrans.Lib import models as _models
+        from gramtrans.Lib.report import _process_rule_json
+
+        payload = _process_rule_json(_models.ProcessRuleTransferRecord(
+            source_guid="r", reproduced=True, target_guid="r",
+            input_contexts=(_models.ProcessContextSpec(
+                context_class="PhSequenceContext", index=0,
+                co_created_shared=("shared-1",)),)))
+        assert payload["input_contexts"][0]["co_created_shared"] == \
+            ["shared-1"]
+
+    @pytest.mark.parametrize("cls", sorted(T107_EJAGHAM_MOVED))
+    def test_each_moved_row_moved_by_the_measured_amount(self, cls):
+        """Numbers, not directions. Each of the five is pinned to its before
+        and after difference, so a later change that moves one has to come
+        here and say so."""
+        before, after = T107_EJAGHAM_MOVED[cls]
+        assert _t078_rows(T078_BASELINES["ejagham"])[cls]["difference"] \
+            == before, cls
+        assert _t078_rows(T107_EJAGHAM)[cls]["difference"] == after, cls
+
+    def test_exactly_those_five_rows_moved_and_nothing_else(self):
+        """The other half of the same claim, and the stronger half. 74 rows
+        are compared field for field; five differ. A create path that moved an
+        unrelated row would be doing something nobody measured, and `PhCode`
+        -43 staying put is the specific case worth naming -- it is R7 residue
+        that a careless widening of the phonology create surface would have
+        disturbed."""
+        before = _t078_rows(T078_BASELINES["ejagham"])
+        after = _t078_rows(T107_EJAGHAM)
+        assert set(before) == set(after)
+        fields = ("source_count", "destination_count_total", "difference",
+                  "verdict_class")
+        moved = {c for c in before
+                 if tuple(before[c][f] for f in fields)
+                 != tuple(after[c][f] for f in fields)}
+        assert moved == set(T107_EJAGHAM_MOVED)
+        assert after["PhCode"]["difference"] == -43
+
+    def test_every_residual_object_has_an_owner_outside_this_task(self):
+        """The delta is ACCOUNTED, which is what the acceptance asked for and
+        is a different claim from "the number went down".
+
+        The counts here come from a read-only GUID diff of the two `.fwdata`
+        files: every source object still absent is owned either by the one
+        source-defect rule, by a `PhSegRuleRHS` (a phonological rule, 037's
+        successor's), or directly by `PhPhonData` (the shared pool no affix
+        process rule reaches). Asserted against the census difference so the
+        table cannot drift from the measurement it explains."""
+        after = _t078_rows(T107_EJAGHAM)
+        for cls, owners in sorted(T107_EJAGHAM_RESIDUAL_OWNERS.items()):
+            assert after[cls]["difference"] == -sum(owners.values()), cls
+        # And no OTHER class in the moved set has a residual to account for.
+        accounted = set(T107_EJAGHAM_RESIDUAL_OWNERS)
+        for cls in sorted(set(T107_EJAGHAM_MOVED) - accounted):
+            assert after[cls]["difference"] == 0, cls
+
+    def test_the_shortfall_moved_out_of_unexplained_not_into_an_excuse(self):
+        """`total_shortfall` 4781 -> 4664 and `unexplained_shortfall`
+        3063 -> 2946: the SAME -117. If the two figures had moved by different
+        amounts, objects would have been reclassified into an accounting line
+        rather than actually transferred, which is the laundering this
+        feature's whole census exists to make visible."""
+        b = _t078(T078_BASELINES["ejagham"])["totals"]
+        a = _t078(T107_EJAGHAM)["totals"]
+        assert b["total_shortfall"] - a["total_shortfall"] == 117
+        assert b["unexplained_shortfall"] - a["unexplained_shortfall"] == 117
+        assert a["accounted_shortfall"] == b["accounted_shortfall"] == 0
+
+    def test_the_duplicate_identity_verdict_is_unchanged_and_not_laundered(
+            self):
+        """Both censuses are DUPLICATE_IDENTITY / exit 3 on the same 3
+        `PhNCFeatures` duplicate extras. That is T082's remaining
+        `038-NK-P3`, untouched by T107 -- recorded rather than quietly
+        dropped, because a task that improved one row and silently inherited a
+        red verdict would be reporting a pass it did not earn."""
+        b = _t078(T078_BASELINES["ejagham"])
+        a = _t078(T107_EJAGHAM)
+        assert b["verdict"] == a["verdict"] == "DUPLICATE_IDENTITY"
+        assert b["totals"]["duplicate_extra_objects"] == 3
+        assert a["totals"]["duplicate_extra_objects"] == 3
+
+    def test_the_mbugwe_pair_is_unmoved_to_the_row(self):
+        """The other half of the acceptance, and the reason T076 was not
+        wrong. Not one of Mbugwe's 18 rules references a boundary context, so
+        admitting the class must move NOTHING there: 18/18 reproduced, and 74
+        census rows plus every total identical to T078's."""
+        rules = _t078(T107_MBUGWE_RULES)["report"]
+        assert rules["process_rules_total"] == 18
+        assert rules["process_rules_reproduced"] == 18
+        assert rules["process_rules_not_reproduced"] == []
+
+        before = _t078_rows(T078_BASELINES["mbugwe"])
+        after = _t078_rows(T107_MBUGWE)
+        assert set(before) == set(after)
+        fields = ("source_count", "destination_count_total", "difference",
+                  "verdict_class")
+        for cls in sorted(before):
+            assert tuple(before[cls][f] for f in fields) \
+                == tuple(after[cls][f] for f in fields), cls
+        assert (_t078(T078_BASELINES["mbugwe"])["totals"]
+                == _t078(T107_MBUGWE)["totals"])
+
+    def test_mbugwes_boundary_contexts_are_still_short_and_that_is_correct(
+            self):
+        """-15 on Mbugwe, unmoved, and it is the RIGHT answer rather than a
+        miss. Those contexts sit in `ContextsOS` and under phonological rules;
+        no affix process rule reaches them, so nothing in US5 co-creates them.
+        This is T076's measurement standing, which is the distinction T078's
+        re-scoping turned on."""
+        after = _t078_rows(T107_MBUGWE)
+        assert after["PhSimpleContextBdry"]["difference"] == -15
+        assert after["MoAffixProcess"]["difference"] == 0
+
+    def test_the_ngoreme_pair_was_not_re_measured_and_says_so(self):
+        """THE GAP, ASSERTED RATHER THAN LEFT IMPLICIT. T107's acceptance
+        named two runs and this is neither of them: Ngoreme's single affix
+        process rule already reproduced under T078, so nothing T107 changed
+        can reach that pair, and its `PhSimpleContextBdry` -4 is entirely
+        phonological-rule and shared-pool content. The number carried in R7's
+        residue roster is therefore T078's, and the roster's reason string
+        says which -- this test is what keeps that admission from being
+        quietly dropped later."""
+        from gramtrans.Lib import models as _models
+
+        _owner, reason = _models.CENSUS_REPORT_ONLY_RESIDUE[
+            "PhSimpleContextBdry"]
+        assert "ngoreme -4" in reason
+        assert "NOT re-measured" in reason
+        # The premise: that pair's one rule was already reproduced.
+        row = _t078_rows(T078_BASELINES["ngoreme"])["MoAffixProcess"]
+        assert (row["source_count"], row["difference"]) == (1, 0)
+
+    @pytest.mark.parametrize("name", [T107_EJAGHAM, T107_MBUGWE])
+    def test_these_artifacts_are_the_ones_that_now_reproduce(self, name):
+        """T102's chain, one link further on. T078's artifacts are `drifted`
+        on the destination side of these two pairs *because* these runs
+        happened; the counterpart claim -- that T107's own artifacts hash to
+        the projects as they stand -- is what makes them the current
+        measurement rather than merely the newest files. Without both halves
+        the drift above would be an unexplained regression instead of a
+        handover."""
+        artifact = _t078(name)
+        for side in ("source", "destination"):
+            assert _t078_fwdata_status(artifact["projects"][side]) \
+                == "match", name + "." + side
+
+    @pytest.mark.parametrize("name", [T107_EJAGHAM, T107_MBUGWE])
+    def test_both_censuses_opened_both_projects_read_only(self, name):
+        """Invariant 7, on the artifacts this task is judged by. A census that
+        wrote to either project is not evidence of anything, so this is
+        checked before any number above is trusted."""
+        for role, block in sorted(_t078(name)["projects"].items()):
+            assert block["opened_read_only"] is True, role
+            assert (block["fwdata_sha256_before"]
+                    == block["fwdata_sha256_after"]), role

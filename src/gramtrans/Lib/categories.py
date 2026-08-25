@@ -7689,10 +7689,19 @@ def _walk_lex_entry_closure(src_entry, context, tag, category, dropped=None):
 
 #: Input-member class -> its LCM factory interface. Absence is the skip, so
 #: adding a class here is the ONLY way to make the engine build one.
+#:
+#: `PhSimpleContextBdry` is T107's addition (2026-08-25) and it adds no new
+#: SHAPE: `IPhSimpleContextBdry` carries the same single `FeatureStructureRA`
+#: the Seg and NC contexts carry (verified against the LCM index), so it goes
+#: through the same create-then-wire legs, and `IPhSimpleContextBdryFactory`
+#: is obtainable by the same ladder. What it points AT is a `PhBdryMarker`
+#: rather than a phoneme or a natural class, which is why it needs no closure
+#: edge -- see `_PROCESS_REFERENT_CATEGORY`.
 _PROCESS_INPUT_FACTORIES = {
     "PhVariable": "IPhVariableFactory",
     "PhSimpleContextSeg": "IPhSimpleContextSegFactory",
     "PhSimpleContextNC": "IPhSimpleContextNCFactory",
+    "PhSimpleContextBdry": "IPhSimpleContextBdryFactory",
     "PhSequenceContext": "IPhSequenceContextFactory",
 }
 
@@ -7706,26 +7715,29 @@ _PROCESS_OUTPUT_FACTORIES = {
 #: section 4). Named individually so the skip reason can say WHICH unexercised
 #: class blocked the rule instead of "unknown class".
 #:
-#: **"absent from every sanctioned corpus" IS NO LONGER TRUE OF ALL FOUR, and
-#: T078 measured it (2026-08-25).** `PhSimpleContextBdry` is exercised by
-#: `Ejagham W Mini`: 13 of its 13 `MoAffixProcess` rules are
-#: reported-and-skipped naming this class -- 8 as a direct input member, 5
-#: through a `PhSequenceContext` in `PhPhonData.ContextsOS` that references
-#: one. Corpus-wide: 32 rules, 19 reproduced, 13 not, and this is the ONLY
-#: blocking class. T076's contrary measurement was correct and was taken on
-#: `Mbugwe LizzieHC practice` ALONE, where 22 of these sit in `ContextsOS` and
-#: no rule touches them. Evidence:
+#: **`PhSimpleContextBdry` LEFT THIS SET at T107 (2026-08-25)** and now has a
+#: create path in `_PROCESS_INPUT_FACTORIES` and
+#: `_PROCESS_SHARED_CONTEXT_CLASSES`. T076 held it here because `Mbugwe
+#: LizzieHC practice` holds 22 in `ContextsOS` with not one referenced by any
+#: of its 18 rules -- correct, still reproduces, and taken on ONE corpus.
+#: T078 measured `Ejagham W Mini`: 13 of 13 `MoAffixProcess` rules blocked on
+#: this class alone, 8 with it as a direct `InputOS` member and 5 through a
+#: rule-owned `PhSequenceContext` whose `MembersRS` reaches the single
+#: `PhPhonData.ContextsOS` boundary context -- 8 + 5 = the 13 distinct rules,
+#: verified read-only against the source's own object graph. Corpus-wide: 32
+#: rules, 19 reproduced, 13 not, one blocking class. Evidence:
 #: `tests/integration/_snapshots/process-rules-038-t078-corpus.json`.
 #:
-#: The membership below is UNCHANGED by that finding on purpose: admitting the
-#: class is a create-path change with its own live census, filed as **T107**.
-#: What changed is that the ground for the skip is now "no create path yet",
-#: not "no corpus can check it". `MoModifyFromInput`, `MoInsertNC` and
-#: `PhIterationContext` remain unexercised by any sanctioned corpus.
+#: **THE UNIT OF "UNEXERCISED" IS THE RULE, NOT THE PROJECT**, and the three
+#: survivors are the ones where both readings hold. `PhIterationContext` is
+#: NOT absent project-wide -- Mbugwe holds 11 in `ContextsOS` and a live run
+#: created 9 under transferred phonological rules -- it is absent from every
+#: `MoAffixProcess` in every sanctioned corpus, which is the claim this set
+#: makes and the claim the skip reason now states. `MoModifyFromInput` and
+#: `MoInsertNC` are absent on both readings.
 _PROCESS_UNEXERCISED_CLASSES = frozenset({
     "MoModifyFromInput",
     "MoInsertNC",
-    "PhSimpleContextBdry",
     "PhIterationContext",
 })
 
@@ -7736,6 +7748,17 @@ _PROCESS_CONTEXT_REFERENT_KIND = {
     "PhSimpleContextNC": "natural class",
     "PhSimpleContextBdry": "boundary marker",
 }
+
+#: The context classes whose single `FeatureStructureRA` must be resolved
+#: before the context can be built -- DERIVED from the map above rather than
+#: spelled a second time. T107's lesson: this set used to be an inline
+#: `("PhSimpleContextSeg", "PhSimpleContextNC")` tuple inside
+#: `_resolve_process_graph`, so admitting a third context class to
+#: `_PROCESS_INPUT_FACTORIES` would have created it with a NULL referent and
+#: reported success -- a context that matches nothing, which is the exact
+#: outcome the referent check exists to refuse. Deriving it means a class
+#: cannot be given a factory without also being given the check.
+_PROCESS_SIMPLE_CONTEXT_CLASSES = frozenset(_PROCESS_CONTEXT_REFERENT_KIND)
 
 
 def _get_lcm_factory(target, iface_name):
@@ -7868,6 +7891,19 @@ PLAN_TIME_PENDING = _PlanTimePending()
 #: brand-new project, so they resolve on the identity leg before this map is
 #: ever consulted. Measured on the Mbugwe run -- not one plan-time skip named
 #: a PhBdryMarker, while nine named a PhPhoneme or a natural class.
+#:
+#: **T107 turned that from an argument into a check**, because admitting
+#: `PhSimpleContextBdry` made this map's silence load-bearing: if a boundary
+#: marker did NOT resolve, the co-create would wire a null referent. All
+#: three sanctioned sources and both live destinations hold exactly the same
+#: two GUIDs -- `3bde17ce-...cb56` and `7db635e0-...89aaa` -- and every one of
+#: `Ejagham W Mini`'s 10 `PhSimpleContextBdry` points at one of them
+#: (verified read-only against the `.fwdata`); the census reads `PhBdryMarker`
+#: 2 -> 2 MATCHED on all three pairs. So the identity leg resolves, no closure
+#: edge is owed, and a boundary marker that somehow did not resolve still
+#: takes the FR-025 skip rather than producing a context that matches
+#: nothing -- the resolvability test is unconditional and does not consult
+#: this map.
 _PROCESS_REFERENT_CATEGORY = {
     "PhPhoneme": GrammarCategory.PHONEMES,
     "PhNCSegments": GrammarCategory.NATURAL_CLASSES,
@@ -7942,24 +7978,23 @@ def _resolve_process_referent(context, src_obj, identity_remap,
 #: it -- so this set adds no new create code, only permission to run the
 #: existing one against a different owner.
 #:
-#: `PhSimpleContextBdry` and `PhIterationContext` are deliberately ABSENT and
-#: that is not an oversight: they stay behind `_PROCESS_UNEXERCISED_CLASSES`.
-#: `Mbugwe LizzieHC practice` really does hold 22 and 11 of them in
-#: `ContextsOS`, and **not one is referenced by any of the 18 affix process
-#: rules** (measured), so admitting them here would be shipping a create path
-#: no corpus can check -- the posture create-path contract section 4 takes.
+#: **`PhSimpleContextBdry` JOINED AT T107 (2026-08-25).** T076 excluded it on
+#: two grounds and only the first survived. Ground one, "the co-create path is
+#: unwritten", is what T107 answers. Ground two, "admitting it would ship a
+#: create path no corpus can check", was measured on `Mbugwe LizzieHC
+#: practice` alone -- 22 in `ContextsOS`, none referenced by any of its 18
+#: rules, still true -- and `Ejagham W Mini` falsifies it: of that project's 13
+#: `MoAffixProcess` rules, **5 reach a boundary context through exactly the
+#: shared-`ContextsOS` route this set governs**, and they reach the SAME one
+#: (the project holds exactly one `PhPhonData`-owned `PhSimpleContextBdry`).
+#: So this set now has a corpus that exercises every class in it.
 #:
-#: **T078 (2026-08-25) FALSIFIED THE SECOND HALF OF THAT REASON FOR
-#: `PhSimpleContextBdry`.** A corpus CAN check it: `Ejagham W Mini`'s 13
-#: `MoAffixProcess` rules are 13 of 13 skipped naming this class, 5 of them
-#: through exactly the shared-`ContextsOS` route this set governs. So the
-#: exclusion now rests on "the co-create path for it is unwritten and needs its
-#: own live census" -- **T107** -- and not on the absence of data. The set is
-#: unchanged here because writing that path is T107's job, not T078's.
-#: `PhIterationContext` is still unexercised by any sanctioned corpus.
+#: `PhIterationContext` stays out and keeps T076's reason INTACT: no
+#: `MoAffixProcess` in any sanctioned corpus references one, on any route.
 _PROCESS_SHARED_CONTEXT_CLASSES = frozenset({
     "PhSimpleContextSeg",
     "PhSimpleContextNC",
+    "PhSimpleContextBdry",
 })
 
 #: `ClassName` of the object that owns `ContextsOS`. Checked by name rather
@@ -8100,9 +8135,9 @@ def _resolve_process_graph(src_rule, context, identity_remap, plan_time=False):
         member_guid = _guid_str_from(member)
         if member_class in _PROCESS_UNEXERCISED_CLASSES:
             return None, (
-                "MoAffixProcess %s input member %d is a %s, a class with zero "
-                "instances in any sanctioned corpus -- this engine ships it "
-                "behind the FR-025 skip rather than guessing an "
+                "MoAffixProcess %s input member %d is a %s, a class no affix "
+                "process rule in any sanctioned corpus uses -- this engine "
+                "ships it behind the FR-025 skip rather than guessing an "
                 "implementation no data can check (create-path contract "
                 "section 4)" % (rule_guid, index, member_class)
             )
@@ -8120,7 +8155,7 @@ def _resolve_process_graph(src_rule, context, identity_remap, plan_time=False):
             "referent_guid": "",
             "members": [],
         }
-        if member_class in ("PhSimpleContextSeg", "PhSimpleContextNC"):
+        if member_class in _PROCESS_SIMPLE_CONTEXT_CLASSES:
             iface = "I" + member_class
             src_referent = getattr(
                 _cast_lcm(member, iface), "FeatureStructureRA", None)
@@ -8222,9 +8257,9 @@ def _resolve_process_graph(src_rule, context, identity_remap, plan_time=False):
         step_class = _class_name_of(step) or ""
         if step_class in _PROCESS_UNEXERCISED_CLASSES:
             return None, (
-                "MoAffixProcess %s output step %d is a %s, a class with zero "
-                "instances in any sanctioned corpus -- this engine ships it "
-                "behind the FR-025 skip rather than guessing an "
+                "MoAffixProcess %s output step %d is a %s, a class no affix "
+                "process rule in any sanctioned corpus uses -- this engine "
+                "ships it behind the FR-025 skip rather than guessing an "
                 "implementation no data can check (create-path contract "
                 "section 4)" % (rule_guid, index, step_class)
             )
@@ -10303,8 +10338,18 @@ def _entry_process_rule_deps(entry):
             deps.append(edge)
 
     def _add_context(ctx):
+        # T107: the SECOND site that used to spell the context classes as an
+        # inline tuple. Derived now, for the same reason as the first -- but
+        # note the two sites are not symmetric, and admitting
+        # `PhSimpleContextBdry` here is deliberately a NO-OP. `_add` filters
+        # on `_PROCESS_REFERENT_CATEGORY`, which has no `PhBdryMarker` entry
+        # because boundary markers are fixed content nothing creates, so a
+        # boundary context is walked and contributes no edge. Deriving the set
+        # rather than extending the tuple is what makes the NEXT context class
+        # -- one whose referent IS creatable -- get its closure edge without a
+        # second edit nobody remembers to make.
         cls = _class_name_of(ctx) or ""
-        if cls not in ("PhSimpleContextSeg", "PhSimpleContextNC"):
+        if cls not in _PROCESS_SIMPLE_CONTEXT_CLASSES:
             return
         _add(getattr(_cast_lcm(ctx, "I" + cls), "FeatureStructureRA", None))
 

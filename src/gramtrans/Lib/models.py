@@ -1029,12 +1029,19 @@ CENSUS_REPORT_ONLY_RESIDUE: dict = {
         "measured -27, -3, -21. T076/T077 moved mbugwe -23 -> -21",
     ),
     "PhSimpleContextBdry": (
-        "T107 -- filed, with acceptance spelled out",
-        "measured -9, -4, -15, and the ONLY class blocking 13 of the "
-        "corpus's 32 affix process rules (all 13 on Ejagham W Mini: 8 name "
-        "the boundary context directly, 5 reach it through a "
-        "PhSequenceContext). T076 held it behind _PROCESS_UNEXERCISED_CLASSES "
-        "on a one-corpus measurement",
+        "T107 CLOSED the affix-process route; the phonological-rule and "
+        "shared-pool routes are 037's successor's, not 038's",
+        "T078 measured -9, -4, -15 and named this the ONLY class blocking 13 "
+        "of the corpus's 32 affix process rules. T107 gave it a create path "
+        "on both routes and RE-MEASURED two pairs: ejagham 10 -> 10 MATCHED "
+        "(was 10 -> 1), and mbugwe -15 UNMOVED, correctly -- not one of its "
+        "18 rules references a boundary context, which is the measurement "
+        "T076 was right about. ngoreme -4 is T078's figure and was NOT "
+        "re-measured -- its single affix process rule already reproduced, so "
+        "nothing T107 changed can reach that pair. The class stays rostered "
+        "because what remains on every pair is owned elsewhere -- contexts "
+        "under PhSegRuleRHS (phonological rules) and directly under "
+        "PhPhonData (the shared pool no affix process rule reaches)",
     ),
     "PhCode": (
         "037's successor, or a later phonology feature -- not 038",

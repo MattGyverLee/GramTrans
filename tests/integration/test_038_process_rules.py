@@ -81,8 +81,19 @@ SOURCE_MEMBER_TOTALS = {
 #: `MoAffixProcess` rules are skipped naming `PhSimpleContextBdry`, 8 as a
 #: direct input member. So the tuple below is a statement about Mbugwe, not
 #: about the LCM or about GramTrans's coverage; the corpus-wide reading is 32
-#: rules / 19 reproduced / 13 blocked, all 13 on that one class. Owner: T107.
+#: rules / 19 reproduced / 13 blocked, all 13 on that one class.
 #: Evidence: `_snapshots/process-rules-038-t078-corpus.json`.
+#:
+#: **T107 (2026-08-25) GAVE `PhSimpleContextBdry` A CREATE PATH and KEPT IT IN
+#: THIS TUPLE, which is not a contradiction.** The assertion below is "no
+#: reproduced rule CONTAINS one", and Mbugwe's rules contain none in the
+#: source, so they must contain none after -- before and after the class
+#: became creatable. Keeping it here is therefore the Mbugwe half of T107's
+#: acceptance ("18/18 unmoved"), not a claim that the class is unsupported:
+#: a run that started inventing boundary contexts inside Mbugwe's rules would
+#: fail here, which is exactly the regression T107 must not cause. The
+#: engine-side membership claim lives in
+#: `test_object_census.py::TestT078PhSimpleContextBdryIsExercisedAfterAll`.
 UNEXERCISED_IN_RULES = (
     "MoModifyFromInput", "MoInsertNC", "PhSimpleContextBdry",
     "PhIterationContext",
