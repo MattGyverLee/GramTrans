@@ -1,0 +1,67 @@
+{
+  "artifact": "process-rules-038-t078-corpus",
+  "purpose": "T078's re-scoping evidence for R7's phonological-context family: per corpus, how many MoAffixProcess rules reproduce and which _PROCESS_UNEXERCISED_CLASSES member blocks each one that does not.",
+  "generated_at": "2026-08-25T11:59:57",
+  "derived_read_only_from": "RunReport.process_rules of the runs the T078 censuses judge",
+  "unexercised_classes_declared": [
+    "MoModifyFromInput",
+    "MoInsertNC",
+    "PhSimpleContextBdry",
+    "PhIterationContext"
+  ],
+  "corpora": [
+    {
+      "label": "ejagham",
+      "source_project": "Ejagham W Mini",
+      "destination_project": "GT038 Ejagham After",
+      "run_report": "_run_reports/038-t095-ejagham-report.json",
+      "census_artifact": "census-038-t078-ejagham.json",
+      "rules_total": 13,
+      "rules_reproduced": 0,
+      "rules_not_reproduced": 13,
+      "blocked_by": [
+        {
+          "classes": [
+            "PhSimpleContextBdry"
+          ],
+          "rules": 13
+        }
+      ],
+      "blocked_as_direct_input_member": {
+        "PhSimpleContextBdry": 8
+      }
+    },
+    {
+      "label": "ngoreme",
+      "source_project": "Ngoreme FLEx",
+      "destination_project": "GT038 Ngoreme After",
+      "run_report": "_run_reports/038-t095-ngoreme-report.json",
+      "census_artifact": "census-038-t078-ngoreme.json",
+      "rules_total": 1,
+      "rules_reproduced": 1,
+      "rules_not_reproduced": 0,
+      "blocked_by": [],
+      "blocked_as_direct_input_member": {}
+    },
+    {
+      "label": "mbugwe",
+      "source_project": "Mbugwe LizzieHC practice",
+      "destination_project": "GT038 Phase6 Target",
+      "run_report": "_run_reports/038-phase6-t077-mbugwe-report.json",
+      "census_artifact": "census-038-t078-mbugwe.json",
+      "rules_total": 18,
+      "rules_reproduced": 18,
+      "rules_not_reproduced": 0,
+      "blocked_by": [],
+      "blocked_as_direct_input_member": {}
+    }
+  ],
+  "corpus_totals": {
+    "rules_total": 32,
+    "rules_reproduced": 19,
+    "rules_not_reproduced": 13,
+    "distinct_blocking_classes": [
+      "PhSimpleContextBdry"
+    ]
+  }
+}

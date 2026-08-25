@@ -5573,11 +5573,22 @@ class TestT101TheCommittedCorpusIsUnmovedByInvariant12:
         # nulls exactly the two `excluded_not_measurable` rows, so clause 1
         # above -- the one that fails on a genuinely NEW null -- passed
         # untouched; only the deliberate-edit count moved.
-        assert len(by_artifact) == 9, (
+        #
+        # 9 -> 12 on 2026-08-25 (T078): the three post-037 baseline censuses
+        # `census-038-t078-ejagham.json`, `-ngoreme.json` and `-mbugwe.json`
+        # arrived. THIS TRIPWIRE FIRED FIRST AND WAS EDITED SECOND, on the
+        # evidence: each of the three nulls exactly `MoForm` and
+        # `MoMorphSynAnalysis`, so clause 1 passed untouched, and each is
+        # asserted ELSEWHERE to reproduce its predecessor ROW FOR ROW
+        # (`TestT078ThePost037Baseline::
+        # test_each_baseline_reproduces_its_predecessor_row_for_row`) -- so as
+        # with T089's and T104's links these are the same ROWS, not merely the
+        # same classes. Not relaxed: the count is still a deliberate edit.
+        assert len(by_artifact) == 12, (
             "a census artifact arrived or left; the corpus that nulls the two "
             "excluded_not_measurable rows is now "
             + repr(sorted(by_artifact)))
-        assert advisory_nulls == 2 * len(by_artifact) == 18
+        assert advisory_nulls == 2 * len(by_artifact) == 24
 
 
 class TestT100TheVocabularyStaysClosedAtSeventeen:
@@ -5719,3 +5730,498 @@ class TestT098RosterAdmissionIsLive:
             for field in T099_NULLED_FIELDS:
                 assert rows[name][field] is None, name + "." + field
             assert rows[name]["verdict_class"] == "NOT_EVALUATED"
+
+
+# ---------------------------------------------------------------------------
+# T078: the post-037 baseline, and the re-scoped report-only residual set
+#
+# T078's task line reads "re-run the census after 037 lands to obtain the
+# post-037 baseline, then re-scope the report-only residual set". THE FIRST
+# HALF OF THAT PREMISE HAD ALREADY EXPIRED WHEN IT WAS WRITTEN DOWN: 037 was
+# merged into this branch at `a824b8d` on 2026-08-19 (it reached `main` in the
+# same commit), so EVERY census this feature has taken since -- T077's, T095's,
+# T098's, T099's -- was already post-037. The re-run below therefore adds no
+# number that was not already on disk. What it adds is the PROOF that the
+# numbers on disk are the current ones, taken from a clean `2482a53` with a
+# `Lib/census.py` that has not changed since `8169f6f`.
+#
+# THE THREE ARTIFACTS. Read-only `census_cli run` over the three sanctioned
+# pairs, 2026-08-25, all three DUPLICATE_IDENTITY / exit 3 (`PhNCFeatures`
+# duplicates -- T082's remaining item, not T078's):
+#
+#   census-038-t078-ejagham.json  Ejagham W Mini           -> GT038 Ejagham After
+#   census-038-t078-ngoreme.json  Ngoreme FLEx             -> GT038 Ngoreme After
+#   census-038-t078-mbugwe.json   Mbugwe LizzieHC practice -> GT038 Phase6 Target
+#
+# Each reproduces its predecessor ROW FOR ROW -- `census-038-t095-*.json` for
+# the first two, `census-038-t077-mbugwe-phase6.json` for the third -- with
+# every total equal. The only fields that differ at all are two path strings
+# (`starter_baseline.path`, `transfer_run.report_path`, absolute vs relative).
+#
+# WHICH ARTIFACTS ARE STILL THE BASELINE, measured the way T102 taught: from
+# each artifact's own recorded digests against the files on disk. T098's and
+# T099's are NOT -- their destinations have since been re-transferred, and
+# `Ngoreme FLEx` itself moved. That is why "T098/T099 already did the re-run"
+# is not the answer either: they were post-037, and they are now stale.
+# ---------------------------------------------------------------------------
+
+T078_BASELINES = {
+    "ejagham": "census-038-t078-ejagham.json",
+    "ngoreme": "census-038-t078-ngoreme.json",
+    "mbugwe": "census-038-t078-mbugwe.json",
+}
+
+#: Each T078 baseline and the artifact it must reproduce row for row.
+T078_PREDECESSORS = {
+    "census-038-t078-ejagham.json": "census-038-t095-ejagham.json",
+    "census-038-t078-ngoreme.json": "census-038-t095-ngoreme.json",
+    "census-038-t078-mbugwe.json": "census-038-t077-mbugwe-phase6.json",
+}
+
+#: The row fields the reproduction claim is about. Deliberately the same four
+#: T102 narrowed its chain to (`_CENSUS_COUNT_FIELDS` in
+#: `test_038_closure_edge_audit.py`) and for the same reason: `verdict_class`
+#: and `unexplained_shortfall` are the instrument's READING of the counts, and
+#: the instrument is allowed to improve. Here it has not -- `Lib/census.py` is
+#: untouched since `8169f6f` -- so the readings match too, and that is asserted
+#: separately rather than folded in.
+T078_COUNT_FIELDS = (
+    "source_count", "destination_count_total", "destination_count_net",
+    "difference",
+)
+
+#: R7's report-only classes that the post-037 measurement CLOSES: MATCHED on
+#: all three corpora, so nothing is hiding behind their report line.
+#:
+#: `MoInflClass` and the `LexEntryInflType` +1 excess are the two R7 named as
+#: "expected to close as a side effect of Phases 1/3 and verified by re-census
+#: rather than coded separately". They did. `FsSymFeatVal` and
+#: `FsClosedFeature` are two of the four `Fs*` cascade members R7 expected to
+#: close; the other two did not (see `T078_STILL_OPEN`). `FsComplexFeature`
+#: R7 kept report-only BY DECISION and it is green anyway -- which is exactly
+#: the "report-only class rots behind a green gate" risk R7 recorded, and is
+#: T079's `status: "unmeasurable"` to answer, not this test's.
+T078_CLOSED_BY_MEASUREMENT = (
+    "MoInflClass",
+    "LexEntryInflType",
+    "FsSymFeatVal",
+    "FsClosedFeature",
+    "FsComplexFeature",
+)
+
+#: R7's report-only classes that are STILL OPEN, with the difference measured
+#: on each corpus, in the order `(ejagham, ngoreme, mbugwe)`. Pinned as numbers
+#: rather than as "still failing" so a later change that closes one, or reopens
+#: one, has to come here and say which.
+T078_STILL_OPEN = {
+    # The phonological-context family. R7 deferred all six to "the post-037
+    # re-census since 037's structural-rebuild path may already move these".
+    # It did not: 037 moved none of them. T076/T077 moved three (see below).
+    "PhSequenceContext": (-40, -2, -11),
+    "PhSimpleContextNC": (-38, -7, -23),
+    "PhSimpleContextSeg": (-27, -3, -21),
+    "PhSimpleContextBdry": (-9, -4, -15),
+    "PhCode": (-43, -89, -79),
+    "PhFeatureConstraint": (0, -47, -32),
+    # Named individually by R7 outside the phonology family.
+    "LexReference": (0, -5, 0),
+    "CmFile": (0, -2, -2173),
+    # The half of the `Fs*` cascade that did NOT close.
+    "FsFeatStruc": (-138, -1691, -198),
+    "FsClosedValue": (-562, -2045, -630),
+}
+
+#: The three rows T076/T077 MOVED, with the previous figure beside the current
+#: one on the corpus that moved. Kept as a table because "T076 closed the
+#: phonological-context family" is the reading T078 has to refuse: it moved
+#: three rows on one corpus and closed none of them.
+T078_T077_MOVED_NOT_CLOSED = {
+    # class: (mbugwe before T076/T077, mbugwe now)
+    "PhSequenceContext": (-17, -11),
+    "PhSimpleContextNC": (-28, -23),
+    "PhSimpleContextSeg": (-23, -21),
+}
+
+T078_PROCESS_RULES = "process-rules-038-t078-corpus.json"
+
+
+def _t078(name: str) -> dict:
+    path = _repo_root() / "tests" / "integration" / "_snapshots" / name
+    assert path.is_file(), "missing T078 measurement artifact: " + str(path)
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _t078_rows(name: str) -> dict:
+    """Rows by class name. `FsFeatStrucType` is split by owning feature system
+    (the fidelity-census.md amendment R7's third finding forced), so it is
+    excluded here and asserted on its own."""
+    return {r["class"]: r for r in _t078(name)["classes"]
+            if r["class"] != "FsFeatStrucType"}
+
+
+def _t078_fwdata_status(project_block) -> str:
+    """`absent` / `match` / `drifted`, from the artifact's own recorded
+    `fwdata_sha256_after` against the file on disk. Mirrors
+    `test_038_closure_edge_audit._fwdata_status` deliberately rather than
+    importing it: a test module is not a library, and the duplication is four
+    lines against a cross-module import of a private helper."""
+    import hashlib
+
+    path = Path(project_block["path"]) / (project_block["name"] + ".fwdata")
+    if not path.is_file():
+        return "absent"
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    return ("match" if digest == project_block["fwdata_sha256_after"]
+            else "drifted")
+
+
+class TestT078ThePost037Baseline:
+    """Three read-only censuses, and the claim that they are the baseline."""
+
+    @pytest.mark.parametrize("pair", sorted(T078_BASELINES))
+    def test_the_artifact_validates_and_holds_its_invariants(
+            self, pair, census_schema):
+        artifact = _t078(T078_BASELINES[pair])
+        assert schema_errors(artifact, census_schema) == []
+        assert validate_artifact(artifact) == ()
+
+    @pytest.mark.parametrize("pair", sorted(T078_BASELINES))
+    def test_every_baseline_was_taken_read_only(self, pair):
+        """The safety claim, from the artifact rather than from the commit
+        message. A census that wrote to a project cannot be a baseline for a
+        feature whose corpus includes projects that must never be written."""
+        projects = _t078(T078_BASELINES[pair])["projects"]
+        for side in ("source", "destination"):
+            block = projects[side]
+            assert block["opened_read_only"] is True, side
+            assert (block["fwdata_sha256_before"]
+                    == block["fwdata_sha256_after"]), side
+
+    @pytest.mark.parametrize("pair", sorted(T078_BASELINES))
+    def test_the_recorded_exit_code_is_reported_and_not_laundered(self, pair):
+        """All three exit 3, and the number is written down here so nobody can
+        later read this section as "the post-037 baseline was clean". The
+        verdict is `DUPLICATE_IDENTITY`, driven by `PhNCFeatures` duplicates --
+        T082's remaining `038-NK-P3` item, which T098 already narrowed to that
+        one class. It is not T078's, and it is not hidden."""
+        artifact = _t078(T078_BASELINES[pair])
+        assert (artifact["verdict"], artifact["exit_code"]) == (
+            "DUPLICATE_IDENTITY", 3)
+        assert artifact["totals"]["duplicate_extra_objects"] > 0
+
+    @pytest.mark.parametrize("pair", sorted(T078_BASELINES))
+    def test_each_baseline_is_reproducible_against_the_live_projects(
+            self, pair):
+        """T102's test, applied to the artifacts that replace the drifted ones.
+        Both projects of all three pairs still hash to what the artifact
+        recorded, which is what makes these three the baseline and not merely
+        the newest files."""
+        artifact = _t078(T078_BASELINES[pair])
+        for side in ("source", "destination"):
+            assert _t078_fwdata_status(artifact["projects"][side]) == "match", (
+                pair + "." + side)
+
+    def test_the_artifacts_t078_supersedes_are_named_and_measured(self):
+        """WHY A RE-RUN WAS NEEDED AT ALL, given that 037 landed six days
+        earlier. T098's and T099's artifacts were post-037 and are now stale:
+        their destinations were re-transferred by T095's runs on 2026-08-24 and
+        `Ngoreme FLEx` itself moved. This is meant to go red the day either
+        drifts back or a project is deleted -- a `drifted` becoming `match` is
+        as much a change of evidence as the other direction."""
+        assert _t078_fwdata_status(
+            _t078("census-038-t098-ejagham.json")["projects"]["source"]
+        ) == "match"
+        assert _t078_fwdata_status(
+            _t078("census-038-t098-ejagham.json")["projects"]["destination"]
+        ) == "drifted"
+        for side in ("source", "destination"):
+            assert _t078_fwdata_status(
+                _t078("census-038-t099-ngoreme-after.json")["projects"][side]
+            ) == "drifted", side
+
+    def test_the_instrument_has_not_moved_since_the_predecessors_were_taken(
+            self):
+        """The other half of "these numbers are current". A row-for-row match
+        between two artifacts proves nothing about the instrument if the
+        instrument changed between them -- T102's finding exactly. So the claim
+        is made where it can be checked: `Lib/census.py` and `census_cli.py`
+        are byte-identical to what produced `census-038-t095-*` (`4ec8fff`) and
+        `census-038-t077-mbugwe-phase6` (`8169f6f`), which is why the
+        reproduction below extends to `verdict_class` and not only to counts.
+        Asserted as the observable consequence rather than by shelling out to
+        git: every reading matches, on every row, on all three pairs."""
+        for later, earlier in sorted(T078_PREDECESSORS.items()):
+            new_rows = _t078(later)["classes"]
+            old_rows = _t078(earlier)["classes"]
+            assert len(new_rows) == len(old_rows) == 75, later
+            for a, b in zip(old_rows, new_rows):
+                assert a["class"] == b["class"], later
+                assert a["verdict_class"] == b["verdict_class"], (
+                    later + ":" + str(a["class"]))
+                assert (a["unexplained_shortfall"]
+                        == b["unexplained_shortfall"]), (
+                    later + ":" + str(a["class"]))
+
+    @pytest.mark.parametrize("later", sorted(T078_PREDECESSORS))
+    def test_each_baseline_reproduces_its_predecessor_row_for_row(self, later):
+        """The measurement that makes T078 a confirmation rather than a
+        discovery: 75 rows, 0 differing, every total equal. Nothing about the
+        transfer or the instrument moved between the predecessor and this run,
+        so the post-037 baseline was already on disk and this proves it."""
+        earlier = T078_PREDECESSORS[later]
+        new_rows = _t078(later)["classes"]
+        old_rows = _t078(earlier)["classes"]
+        assert len(new_rows) == len(old_rows)
+        differing = []
+        for a, b in zip(old_rows, new_rows):
+            assert a["class"] == b["class"]
+            for field in T078_COUNT_FIELDS:
+                if a[field] != b[field]:
+                    differing.append((a["class"], field, a[field], b[field]))
+        assert differing == [], later
+        assert _t078(later)["totals"] == _t078(earlier)["totals"], later
+
+    @pytest.mark.parametrize("later", sorted(T078_PREDECESSORS))
+    def test_both_sides_of_each_reproduction_name_the_same_pair(self, later):
+        """A row-for-row match between censuses of DIFFERENT pairs would be
+        meaningless, and T102's chain shows that is not a hypothetical."""
+        earlier = T078_PREDECESSORS[later]
+        for side in ("source", "destination"):
+            assert (_t078(later)["projects"][side]["name"]
+                    == _t078(earlier)["projects"][side]["name"]), side
+
+
+class TestT078TheRescopedReportOnlyResidualSet:
+    """R7's report-only list, re-scoped class by class against the baseline.
+
+    This is the input T079 consumes. Every class R7 named appears in exactly
+    one of the two tables, and the tables are asserted DISJOINT and COMPLETE
+    against R7's list, so a class cannot fall out of scope by being forgotten
+    -- which is the failure mode a prose re-scoping has.
+    """
+
+    #: Every class R7 lists as report-only, plus the one it rules on
+    #: explicitly (`FsComplexFeature`). `CmAnthroItem` and the texts/wordforms
+    #: path are governed separately and are asserted on their own below;
+    #: `FsFeatStrucType` is NOT here because R7 promoted it out of report-only
+    #: to a Phase 1 prerequisite.
+    R7_NAMED = (
+        "PhSequenceContext", "PhSimpleContextNC", "PhSimpleContextBdry",
+        "PhSimpleContextSeg", "PhCode", "PhFeatureConstraint",
+        "LexReference", "CmFile", "MoInflClass", "LexEntryInflType",
+        "FsFeatStruc", "FsClosedValue", "FsSymFeatVal", "FsClosedFeature",
+        "FsComplexFeature",
+    )
+
+    def test_every_class_r7_named_is_scoped_exactly_once(self):
+        closed = set(T078_CLOSED_BY_MEASUREMENT)
+        still_open = set(T078_STILL_OPEN)
+        assert closed & still_open == set()
+        assert closed | still_open == set(self.R7_NAMED)
+
+    @pytest.mark.parametrize("cls", sorted(T078_CLOSED_BY_MEASUREMENT))
+    def test_a_closed_class_is_matched_on_all_three_corpora(self, cls):
+        for pair, name in sorted(T078_BASELINES.items()):
+            row = _t078_rows(name)[cls]
+            assert row["difference"] == 0, pair + ":" + cls
+            assert row["verdict_class"] == "MATCHED", pair + ":" + cls
+            assert row["unexplained_shortfall"] == 0, pair + ":" + cls
+
+    @pytest.mark.parametrize("cls", sorted(T078_STILL_OPEN))
+    def test_a_still_open_class_carries_the_difference_recorded_here(
+            self, cls):
+        """The numbers, not the adjective. A residual class that quietly gets
+        worse is the thing a report line cannot catch on its own."""
+        expected = T078_STILL_OPEN[cls]
+        measured = tuple(
+            _t078_rows(T078_BASELINES[pair])[cls]["difference"]
+            for pair in ("ejagham", "ngoreme", "mbugwe"))
+        assert measured == expected, cls
+
+    def test_the_two_r7_figures_that_were_a_single_corpus_all_along(self):
+        """R7 records `LexReference` 5 -> 0 and `CmFile` 2 -> 0 as if they were
+        properties of the transfer. Both are `Ngoreme FLEx` readings: on the
+        Mbugwe corpus `CmFile` is 2173 -> 0, three orders of magnitude larger.
+        The class stays report-only; the NUMBER behind it does not survive
+        re-scoping, and that is worth a test rather than a footnote."""
+        ngoreme = _t078_rows(T078_BASELINES["ngoreme"])
+        mbugwe = _t078_rows(T078_BASELINES["mbugwe"])
+        assert (ngoreme["LexReference"]["source_count"],
+                ngoreme["LexReference"]["destination_count_total"]) == (5, 0)
+        assert (ngoreme["CmFile"]["source_count"],
+                ngoreme["CmFile"]["destination_count_total"]) == (2, 0)
+        assert (mbugwe["CmFile"]["source_count"],
+                mbugwe["CmFile"]["destination_count_total"]) == (2173, 0)
+
+    def test_t076_and_t077_moved_three_phonology_rows_and_closed_none(self):
+        """The reading T078 has to refuse. T077's own note states the delta
+        (`PhSequenceContext` -17 -> -11, `PhSimpleContextNC` -28 -> -23,
+        `PhSimpleContextSeg` -23 -> -21 on Mbugwe) and it is real -- but a row
+        that moves is not a row that closes, and all three are still SHORTFALL
+        on all three corpora. So the phonological-context family stays
+        report-only, with a smaller number on one corpus."""
+        mbugwe = _t078_rows(T078_BASELINES["mbugwe"])
+        for cls, (before, now) in sorted(T078_T077_MOVED_NOT_CLOSED.items()):
+            assert now > before, cls          # less negative
+            assert mbugwe[cls]["difference"] == now, cls
+            assert mbugwe[cls]["verdict_class"] == "SHORTFALL", cls
+
+    def test_fsfeatstructype_is_split_by_feature_system_and_both_halves_match(
+            self):
+        """R7 PROMOTED this class out of report-only to a Phase 1 prerequisite,
+        on the ground that ~2,083 restored MSAs would otherwise carry an
+        unsatisfiable `TypeRA`. The post-037 baseline says the prerequisite is
+        met: R7's evidence recorded `FsFeatStrucType` 4 -> 0 in both projects,
+        and it is now 3 + 1 -> 3 + 1 on both, MATCHED on each half.
+
+        R7's third finding is visible in the same rows: there are TWO feature
+        systems, so the class is reported as two rows disambiguated by
+        `owning_feature_system` rather than as one ambiguous total."""
+        for pair, name in sorted(T078_BASELINES.items()):
+            halves = {r["owning_feature_system"]: r
+                      for r in _t078(name)["classes"]
+                      if r["class"] == "FsFeatStrucType"}
+            assert set(halves) == {"LangProject.MsFeatureSystemOA",
+                                   "LangProject.PhFeatureSystemOA"}, pair
+            for system, row in sorted(halves.items()):
+                assert row["verdict_class"] == "MATCHED", pair + ":" + system
+                assert row["difference"] == 0, pair + ":" + system
+        ejagham = {r["owning_feature_system"]: r["source_count"]
+                   for r in _t078(T078_BASELINES["ejagham"])["classes"]
+                   if r["class"] == "FsFeatStrucType"}
+        assert sorted(ejagham.values()) == [1, 3]
+
+    def test_cmanthroitem_is_still_excluded_from_the_delta(self):
+        """R7's decision, unchanged by the re-scoping: `CmAnthroItem` 859 -> 0
+        is EXCLUDED rather than reported as a shortfall. Pinned so the
+        exclusion cannot quietly become a shortfall or a match."""
+        for pair, name in sorted(T078_BASELINES.items()):
+            row = _t078_rows(name)["CmAnthroItem"]
+            assert row["verdict_class"] == "NOT_EVALUATED", pair
+            assert row["unexplained_shortfall"] == 0, pair
+
+    def test_the_texts_and_wordforms_path_is_still_report_only_and_lossy(self):
+        """Governed by its own feature, so nothing here fixes it -- but the
+        magnitude is what makes `total_shortfall` unusable as a headline, and
+        R7's "the whole texts/wordforms path" deserves the number. On Ngoreme
+        these seven classes alone account for over fifty thousand objects."""
+        rows = _t078_rows(T078_BASELINES["ngoreme"])
+        texts = ("WfiWordform", "WfiAnalysis", "WfiGloss", "WfiMorphBundle",
+                 "StTxtPara", "StText", "Segment")
+        for cls in texts:
+            assert rows[cls]["verdict_class"] == "SHORTFALL", cls
+        assert sum(-rows[cls]["difference"] for cls in texts) > 50000
+
+
+class TestT078PhSimpleContextBdryIsExercisedAfterAll:
+    """THE ONE FINDING THE RE-SCOPING PRODUCED, and it falsifies a premise this
+    repo has written down in four places.
+
+    T076 left `PhSimpleContextBdry` and `PhIterationContext` behind
+    `_PROCESS_UNEXERCISED_CLASSES` on an explicit, measured ground: `Mbugwe
+    LizzieHC practice` holds 22 and 11 of them in `ContextsOS` and **not one is
+    referenced by any of its 18 affix process rules**, so admitting them "would
+    ship a create path no corpus can check". That measurement is correct and
+    the conclusion drawn from it is not, because it was taken on one corpus.
+
+    `Ejagham W Mini` holds 13 `MoAffixProcess` rules and **13 of 13 are
+    reported-and-skipped naming `PhSimpleContextBdry`** -- 8 as a direct input
+    member, 5 through a `PhSequenceContext` in `PhPhonData.ContextsOS` that
+    references one. Across the whole sanctioned corpus: 32 rules, 19
+    reproduced, 13 not, and `PhSimpleContextBdry` is the ONLY blocking class.
+
+    WHAT T078 DID NOT DO. It did not admit the class. That is a create-path
+    change in `categories.py`, US5's territory and a live-behaviour change that
+    needs its own census -- filed as T107. What T078 owes is the measurement,
+    the re-scoping (`PhSimpleContextBdry` stops being "deferred to the post-037
+    re-census" and becomes report-only with a named owner and a number), and
+    the correction of the premise where it is written down.
+
+    SC-010 is NOT violated by any of this: all 13 rules are dropped WITH A
+    REASON that names the blocking class, which is why the census row for
+    `MoAffixProcess` (13 -> 0 on Ejagham) has an explanation to point at.
+    """
+
+    def test_the_evidence_artifact_is_committed_repo_data(self):
+        path = (_repo_root() / "tests" / "integration" / "_snapshots"
+                / T078_PROCESS_RULES)
+        assert path.is_file()
+
+    def test_the_corpus_wide_tally(self):
+        totals = _t078(T078_PROCESS_RULES)["corpus_totals"]
+        assert totals["rules_total"] == 32
+        assert totals["rules_reproduced"] == 19
+        assert totals["rules_not_reproduced"] == 13
+        assert totals["distinct_blocking_classes"] == ["PhSimpleContextBdry"]
+
+    def test_the_per_corpus_split(self):
+        by_label = {c["label"]: c
+                    for c in _t078(T078_PROCESS_RULES)["corpora"]}
+        assert (by_label["mbugwe"]["rules_total"],
+                by_label["mbugwe"]["rules_reproduced"]) == (18, 18)
+        assert (by_label["ngoreme"]["rules_total"],
+                by_label["ngoreme"]["rules_reproduced"]) == (1, 1)
+        assert (by_label["ejagham"]["rules_total"],
+                by_label["ejagham"]["rules_reproduced"]) == (13, 0)
+
+    def test_all_thirteen_ejagham_rules_are_blocked_by_the_same_class(self):
+        ejagham = next(c for c in _t078(T078_PROCESS_RULES)["corpora"]
+                       if c["label"] == "ejagham")
+        assert ejagham["blocked_by"] == [
+            {"classes": ["PhSimpleContextBdry"], "rules": 13}]
+        assert ejagham["blocked_as_direct_input_member"] == {
+            "PhSimpleContextBdry": 8}
+
+    def test_the_class_is_still_held_behind_the_unexercised_gate(self):
+        """T078 measured; it did not change behaviour. The gate is unchanged
+        and `PhSimpleContextBdry` is still in it -- so this test passing is the
+        statement that T107 is open, not that it is done."""
+        from gramtrans.Lib import categories as _cats
+
+        assert "PhSimpleContextBdry" in _cats._PROCESS_UNEXERCISED_CLASSES
+        assert ("PhSimpleContextBdry"
+                not in _cats._PROCESS_SHARED_CONTEXT_CLASSES)
+
+    def test_the_census_row_the_block_produces_is_reported_not_silent(self):
+        """`MoAffixProcess` 13 -> 0 on the Ejagham pair. The row is a
+        SHORTFALL and the loss is explained by the 13 skip reasons -- which is
+        the difference between this and the silent losses this feature exists
+        to end."""
+        row = _t078_rows(T078_BASELINES["ejagham"])["MoAffixProcess"]
+        assert (row["source_count"], row["destination_count_total"]) == (13, 0)
+        assert row["verdict_class"] == "SHORTFALL"
+        ejagham = next(c for c in _t078(T078_PROCESS_RULES)["corpora"]
+                       if c["label"] == "ejagham")
+        assert ejagham["rules_not_reproduced"] == row["source_count"]
+
+    def test_the_other_two_corpora_do_not_hide_the_finding(self):
+        """Mbugwe 18/18 and Ngoreme 1/1: on either of them alone
+        `MoAffixProcess` is MATCHED and there is nothing to see. The corpus
+        lesson of this feature, one more time -- a gate is only as good as the
+        pair it ran on."""
+        for pair in ("ngoreme", "mbugwe"):
+            row = _t078_rows(T078_BASELINES[pair])["MoAffixProcess"]
+            assert row["verdict_class"] == "MATCHED", pair
+            assert row["difference"] == 0, pair
+
+    def test_the_skip_reason_the_engine_emits_is_now_factually_wrong(self):
+        """A DEBT PINNED RATHER THAN FIXED, and named so nobody has to
+        rediscover it.
+
+        The live drop reason reads "a class with zero instances in any
+        sanctioned corpus". Every sanctioned source in this corpus holds
+        `PhSimpleContextBdry`: 10 on Ejagham, 13 on Ngoreme, 24 on Mbugwe. The
+        sentence is false about all three, and it is the sentence a user reads
+        to find out why 13 of their rules did not arrive.
+
+        NOT corrected in T078, on the same reasoning T106 used for its own
+        filing: it is live run-report output for four classes, and changing it
+        is a reporting change with no census behind it. It belongs to **T107**
+        (which owns the class) or to T079 (which owns report lines). What T078
+        owes is the number that makes the sentence false, asserted here."""
+        counts = {
+            pair: _t078_rows(name)["PhSimpleContextBdry"]["source_count"]
+            for pair, name in T078_BASELINES.items()
+        }
+        assert counts == {"ejagham": 10, "ngoreme": 13, "mbugwe": 24}
+        assert min(counts.values()) > 0

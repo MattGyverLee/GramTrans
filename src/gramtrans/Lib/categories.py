@@ -7702,9 +7702,26 @@ _PROCESS_OUTPUT_FACTORIES = {
     "MoInsertPhones": "IMoInsertPhonesFactory",
 }
 
-#: Present in the LCM index, absent from every sanctioned corpus (create-path
-#: contract section 4). Named individually so the skip reason can say WHICH
-#: unexercised class blocked the rule instead of "unknown class".
+#: Present in the LCM index, held behind the FR-025 skip (create-path contract
+#: section 4). Named individually so the skip reason can say WHICH unexercised
+#: class blocked the rule instead of "unknown class".
+#:
+#: **"absent from every sanctioned corpus" IS NO LONGER TRUE OF ALL FOUR, and
+#: T078 measured it (2026-08-25).** `PhSimpleContextBdry` is exercised by
+#: `Ejagham W Mini`: 13 of its 13 `MoAffixProcess` rules are
+#: reported-and-skipped naming this class -- 8 as a direct input member, 5
+#: through a `PhSequenceContext` in `PhPhonData.ContextsOS` that references
+#: one. Corpus-wide: 32 rules, 19 reproduced, 13 not, and this is the ONLY
+#: blocking class. T076's contrary measurement was correct and was taken on
+#: `Mbugwe LizzieHC practice` ALONE, where 22 of these sit in `ContextsOS` and
+#: no rule touches them. Evidence:
+#: `tests/integration/_snapshots/process-rules-038-t078-corpus.json`.
+#:
+#: The membership below is UNCHANGED by that finding on purpose: admitting the
+#: class is a create-path change with its own live census, filed as **T107**.
+#: What changed is that the ground for the skip is now "no create path yet",
+#: not "no corpus can check it". `MoModifyFromInput`, `MoInsertNC` and
+#: `PhIterationContext` remain unexercised by any sanctioned corpus.
 _PROCESS_UNEXERCISED_CLASSES = frozenset({
     "MoModifyFromInput",
     "MoInsertNC",
@@ -7931,6 +7948,15 @@ def _resolve_process_referent(context, src_obj, identity_remap,
 #: `ContextsOS`, and **not one is referenced by any of the 18 affix process
 #: rules** (measured), so admitting them here would be shipping a create path
 #: no corpus can check -- the posture create-path contract section 4 takes.
+#:
+#: **T078 (2026-08-25) FALSIFIED THE SECOND HALF OF THAT REASON FOR
+#: `PhSimpleContextBdry`.** A corpus CAN check it: `Ejagham W Mini`'s 13
+#: `MoAffixProcess` rules are 13 of 13 skipped naming this class, 5 of them
+#: through exactly the shared-`ContextsOS` route this set governs. So the
+#: exclusion now rests on "the co-create path for it is unwritten and needs its
+#: own live census" -- **T107** -- and not on the absence of data. The set is
+#: unchanged here because writing that path is T107's job, not T078's.
+#: `PhIterationContext` is still unexercised by any sanctioned corpus.
 _PROCESS_SHARED_CONTEXT_CLASSES = frozenset({
     "PhSimpleContextSeg",
     "PhSimpleContextNC",

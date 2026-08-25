@@ -1052,10 +1052,20 @@ def test_an_unexercised_shared_context_class_is_not_co_created(
 ):
     """`Mbugwe LizzieHC practice` really does hold 22 `PhSimpleContextBdry`
     and 11 `PhIterationContext` in `ContextsOS`, and NOT ONE is referenced by
-    any of its 18 affix process rules -- measured, not assumed. So admitting
-    them to the co-create would ship a create path no corpus can check. They
-    stay behind the FR-025 skip, and the destination's `ContextsOS` is left
-    untouched."""
+    any of its 18 affix process rules -- measured, not assumed. They stay
+    behind the FR-025 skip, and the destination's `ContextsOS` is left
+    untouched.
+
+    **T078 (2026-08-25) narrowed WHY, for `PhSimpleContextBdry` only.** The
+    original reason was "admitting them to the co-create would ship a create
+    path no corpus can check". `Ejagham W Mini` can check it: 13 of its 13
+    `MoAffixProcess` rules are skipped naming this class, 5 of them through a
+    shared `PhPhonData.ContextsOS` context. The ASSERTION below is unchanged
+    and still correct -- this engine does not co-create the class -- but the
+    justification is now "the path is unwritten, filed as T107", not "no data
+    exists". `PhIterationContext` keeps the original reason unaltered.
+    Evidence: `tests/integration/_snapshots/process-rules-038-t078-corpus.json`.
+    """
     shared = _phon_data_owned(SHARED_CTX, unexercised_class,
                               _TargetObj(DEST_PHONEME, "PhPhoneme"))
     contexts_os = _Seq()
@@ -1161,7 +1171,17 @@ def test_an_unexercised_class_skips_rather_than_guesses(
 ):
     """Zero live instances means no corpus can tell a correct implementation
     from a plausible one, so these ship behind the skip -- and the reason says
-    WHICH class, not "unknown class"."""
+    WHICH class, not "unknown class".
+
+    **T078 (2026-08-25): the reason string's PREMISE is now false for
+    `PhSimpleContextBdry`, and this test still asserts the string.** The live
+    reason reads "a class with zero instances in any sanctioned corpus", and
+    `Ejagham W Mini` holds 10 of them in source with 13 of 13 `MoAffixProcess`
+    rules skipped on their account. Deliberately NOT corrected here: the string
+    is live run-report output for all four classes, and changing it is a
+    reporting change that belongs with the task that owns the class (**T107**)
+    or with T079's report lines -- not a side effect of a read-only re-census.
+    Recorded so it is a known debt rather than an unnoticed falsehood."""
     member = _Member(unexercised, "member-unexercised-0001")
     is_input = unexercised in ("PhSimpleContextBdry", "PhIterationContext")
     rule = _Rule(

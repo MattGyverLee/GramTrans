@@ -75,6 +75,14 @@ SOURCE_MEMBER_TOTALS = {
 #: in the destination, all of them owned by transferred PHONOLOGICAL RULES and
 #: by `PhPhonData.ContextsOS`, which have nothing to do with US5. The claim
 #: that survives measurement is per-RULE, so that is where it is asserted.
+#:
+#: **And the per-RULE claim survives only on THIS corpus.** T078 (2026-08-25)
+#: measured the same question on `Ejagham W Mini`: 13 of its 13
+#: `MoAffixProcess` rules are skipped naming `PhSimpleContextBdry`, 8 as a
+#: direct input member. So the tuple below is a statement about Mbugwe, not
+#: about the LCM or about GramTrans's coverage; the corpus-wide reading is 32
+#: rules / 19 reproduced / 13 blocked, all 13 on that one class. Owner: T107.
+#: Evidence: `_snapshots/process-rules-038-t078-corpus.json`.
 UNEXERCISED_IN_RULES = (
     "MoModifyFromInput", "MoInsertNC", "PhSimpleContextBdry",
     "PhIterationContext",
