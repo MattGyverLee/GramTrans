@@ -1,0 +1,199 @@
+{
+  "artifact": "process-rules-038-t108-ejagham",
+  "boundary_context_input_members": [
+    {
+      "index": 2,
+      "referent_guid": "3bde17ce-e39a-4bae-8a5c-a8d96fd4cb56",
+      "rule": "1a3f18a6-7ff7-4c43-ad4e-4e3866f5f3ae"
+    },
+    {
+      "index": 2,
+      "referent_guid": "3bde17ce-e39a-4bae-8a5c-a8d96fd4cb56",
+      "rule": "26589ff1-2d00-437b-80d6-504422c28c65"
+    },
+    {
+      "index": 2,
+      "referent_guid": "3bde17ce-e39a-4bae-8a5c-a8d96fd4cb56",
+      "rule": "2ab66874-1548-4fb7-a5e7-172582ae7469"
+    },
+    {
+      "index": 2,
+      "referent_guid": "3bde17ce-e39a-4bae-8a5c-a8d96fd4cb56",
+      "rule": "7676eacf-6a1a-43f5-8bac-bf9b55c73d80"
+    },
+    {
+      "index": 2,
+      "referent_guid": "3bde17ce-e39a-4bae-8a5c-a8d96fd4cb56",
+      "rule": "77d538e9-e812-4cb5-b687-c57d2a925fd3"
+    },
+    {
+      "index": 2,
+      "referent_guid": "3bde17ce-e39a-4bae-8a5c-a8d96fd4cb56",
+      "rule": "794faa38-203b-4730-9cd3-026a01508635"
+    },
+    {
+      "index": 2,
+      "referent_guid": "3bde17ce-e39a-4bae-8a5c-a8d96fd4cb56",
+      "rule": "8afa5252-b971-424a-9aaa-def1e56b2172"
+    },
+    {
+      "index": 2,
+      "referent_guid": "3bde17ce-e39a-4bae-8a5c-a8d96fd4cb56",
+      "rule": "dd620446-a08a-4f69-a377-22fc937de511"
+    }
+  ],
+  "co_created_shared_boundary_contexts": [
+    {
+      "created_at_input_index": 2,
+      "created_by_rule": "de6df83e-3556-42f8-82fc-30d22d4a68b9",
+      "guid": "391e8cba-b951-4f1b-a64a-c5dc5fbe19c9",
+      "rules_reaching_it": [
+        "19bab2cf-6580-45db-b600-58857c4a6e65",
+        "24ed706a-7df2-4609-a37b-2bfa28853ccc",
+        "3dba60c1-42a0-4805-93aa-5774dd2f9492",
+        "9d57bc7c-de9c-4622-a080-e3d955111af6",
+        "de6df83e-3556-42f8-82fc-30d22d4a68b9"
+      ],
+      "source_owner_class": "PhPhonData"
+    }
+  ],
+  "co_created_shared_by_class": {
+    "PhSimpleContextBdry": 1,
+    "PhSimpleContextNC": 7,
+    "PhSimpleContextSeg": 5
+  },
+  "co_created_shared_members": [
+    {
+      "context_class": "PhSequenceContext",
+      "guid": "24569c42-6c8b-4c21-83d3-def03dd38be1",
+      "index": 0,
+      "rule": "26589ff1-2d00-437b-80d6-504422c28c65",
+      "source_class": "PhSimpleContextNC",
+      "source_owner_class": "PhPhonData"
+    },
+    {
+      "context_class": "PhSequenceContext",
+      "guid": "0bab7d5e-714a-4b8b-8e84-6fab732b1571",
+      "index": 1,
+      "rule": "26589ff1-2d00-437b-80d6-504422c28c65",
+      "source_class": "PhSimpleContextSeg",
+      "source_owner_class": "PhPhonData"
+    },
+    {
+      "context_class": "PhSequenceContext",
+      "guid": "0d9dd710-1f31-4e60-9df8-0f8681140055",
+      "index": 4,
+      "rule": "26589ff1-2d00-437b-80d6-504422c28c65",
+      "source_class": "PhSimpleContextNC",
+      "source_owner_class": "PhPhonData"
+    },
+    {
+      "context_class": "PhSequenceContext",
+      "guid": "2ef06944-d1eb-4bfc-916a-6e8cc923b3ca",
+      "index": 6,
+      "rule": "26589ff1-2d00-437b-80d6-504422c28c65",
+      "source_class": "PhSimpleContextNC",
+      "source_owner_class": "PhPhonData"
+    },
+    {
+      "context_class": "PhSequenceContext",
+      "guid": "eb63b3c0-aa74-43a3-ad12-430b83c8581e",
+      "index": 8,
+      "rule": "26589ff1-2d00-437b-80d6-504422c28c65",
+      "source_class": "PhSimpleContextSeg",
+      "source_owner_class": "PhPhonData"
+    },
+    {
+      "context_class": "PhSequenceContext",
+      "guid": "3327cb4b-e82b-4d34-ba29-f2498af476ed",
+      "index": 0,
+      "rule": "2ab66874-1548-4fb7-a5e7-172582ae7469",
+      "source_class": "PhSimpleContextNC",
+      "source_owner_class": "PhPhonData"
+    },
+    {
+      "context_class": "PhSequenceContext",
+      "guid": "ece24996-ed24-46ff-918b-e9f62860a04f",
+      "index": 1,
+      "rule": "dd620446-a08a-4f69-a377-22fc937de511",
+      "source_class": "PhSimpleContextSeg",
+      "source_owner_class": "PhPhonData"
+    },
+    {
+      "context_class": "PhSequenceContext",
+      "guid": "08c08fa7-75fc-4804-8769-da0cb63c139c",
+      "index": 0,
+      "rule": "de6df83e-3556-42f8-82fc-30d22d4a68b9",
+      "source_class": "PhSimpleContextNC",
+      "source_owner_class": "PhPhonData"
+    },
+    {
+      "context_class": "PhSequenceContext",
+      "guid": "b3634902-ec16-40c0-9878-c2cd22d21338",
+      "index": 1,
+      "rule": "de6df83e-3556-42f8-82fc-30d22d4a68b9",
+      "source_class": "PhSimpleContextSeg",
+      "source_owner_class": "PhPhonData"
+    },
+    {
+      "context_class": "PhSequenceContext",
+      "guid": "391e8cba-b951-4f1b-a64a-c5dc5fbe19c9",
+      "index": 2,
+      "rule": "de6df83e-3556-42f8-82fc-30d22d4a68b9",
+      "source_class": "PhSimpleContextBdry",
+      "source_owner_class": "PhPhonData"
+    },
+    {
+      "context_class": "PhSequenceContext",
+      "guid": "8d2a01b4-99c4-4288-b3f7-b70e6342488d",
+      "index": 3,
+      "rule": "de6df83e-3556-42f8-82fc-30d22d4a68b9",
+      "source_class": "PhSimpleContextNC",
+      "source_owner_class": "PhPhonData"
+    },
+    {
+      "context_class": "PhSequenceContext",
+      "guid": "9ec41338-1ab6-415e-bf7a-50b58c1fa2c6",
+      "index": 4,
+      "rule": "de6df83e-3556-42f8-82fc-30d22d4a68b9",
+      "source_class": "PhSimpleContextNC",
+      "source_owner_class": "PhPhonData"
+    },
+    {
+      "context_class": "PhSequenceContext",
+      "guid": "a0eb7a2a-da50-4be3-89f5-01c90b941ef0",
+      "index": 5,
+      "rule": "de6df83e-3556-42f8-82fc-30d22d4a68b9",
+      "source_class": "PhSimpleContextSeg",
+      "source_owner_class": "PhPhonData"
+    }
+  ],
+  "co_created_shared_owner_classes": {
+    "PhPhonData": 13
+  },
+  "co_created_shared_total": 13,
+  "derived_read_only_from": "_run_reports/038-t108-ejagham-t108-report.json",
+  "destination_project": "GT038 T108 Target",
+  "input_context_class_totals": {
+    "PhSequenceContext": 34,
+    "PhSimpleContextBdry": 8,
+    "PhSimpleContextNC": 29,
+    "PhSimpleContextSeg": 21,
+    "PhVariable": 12
+  },
+  "input_contexts_carrying_co_created_shared": 104,
+  "input_contexts_total": 104,
+  "purpose": "T108's live attribution of the shared PhPhonData.ContextsOS co-create route, which T107 could not make because the only field that distinguishes it -- ProcessContextSpec.co_created_shared -- was never serialized. Derived read-only from the run report of one restored-target Ejagham transfer on the FIXED serializer, into a target of its own so that T107's committed censuses keep hashing to the project they describe. Class and owner for each co-created member, and the rules that reach a co-created boundary context, come from a read-only walk of the source .fwdata. NO CENSUS WAS TAKEN and none was needed: the question lives entirely in the run report.",
+  "rules_not_reproduced": [
+    {
+      "reason": "MoAffixProcess 24ed706a-7df2-4609-a37b-2bfa28853ccc output step 0 (MoCopyFromInput) copies (no ContentRA), which is not one of this rule's own input members -- the intra-rule back-reference cannot be rebuilt and the step would copy nothing (FR-023)",
+      "source_guid": "24ed706a-7df2-4609-a37b-2bfa28853ccc"
+    }
+  ],
+  "rules_reproduced": 12,
+  "rules_total": 13,
+  "run_id": "GT-20260825-151533",
+  "shared_context_attribution": "MEASURED AND ATTRIBUTED. The affix-process co-create leg (categories._create_shared_process_context) created 13 shared members of PhPhonData.ContextsOS in this run -- 1 PhSimpleContextBdry, 7 PhSimpleContextNC, 5 PhSimpleContextSeg -- reported on 4 of the pair's 13 MoAffixProcess rules (26589ff1-2d00-437b-80d6-504422c28c65, 2ab66874-1548-4fb7-a5e7-172582ae7469, dd620446-a08a-4f69-a377-22fc937de511, de6df83e-3556-42f8-82fc-30d22d4a68b9). Every one is owned by PhPhonData in the source, which is the shared, project-level collection SC-010 is about. The count is the number of members CREATED, not the number of rules that use them: _resolve_process_graph consults member_targets first, so the second rule to reach a member finds what the first one made. THE BOUNDARY CONTEXT IS AMONG THEM, which is exactly what T107 could not say: 391e8cba-b951-4f1b-a64a-c5dc5fbe19c9, owned by PhPhonData in the source, was created by rule de6df83e-3556-42f8-82fc-30d22d4a68b9. So the destination's one PhPhonData-owned PhSimpleContextBdry came from the affix-process co-create leg and NOT from the phonological-rule path (Lib/categories._copy_context_cell), even though both write that collection -- the ambiguity T107 recorded is resolved by measurement rather than by argument. 5 rules reach that context through a rule-owned PhSequenceContext, reproducing T107's read-only count of five; the other 4 report no co-creation because they found it already present, and 1 of those never got that far (refused: 24ed706a-7df2-4609-a37b-2bfa28853ccc).",
+  "source_graph_read_from": "C:/ProgramData/SIL/FieldWorks/Projects/Ejagham W Mini/Ejagham W Mini.fwdata",
+  "source_project": "Ejagham W Mini"
+}

@@ -40,6 +40,13 @@ Usage:
 Add `--compare-only` to re-diff the already-committed censuses without
 restoring, transferring or re-censusing anything.
 
+Add `--no-census` to stop after the transfer, leaving every committed census
+untouched. Use it when the question is answered by the run report alone -- T108
+asks only whether `process_rules[*].input_contexts[*].co_created_shared` is
+populated, and a census would neither help nor be comparable to a `before`
+taken on a different destination. It is REFUSED on a target whose digest a
+committed census records (`_EVIDENCE_TARGETS`).
+
 Add `--tag NAME` to write the after-census and the diff under a task-tagged
 name (`census-038-NAME-<pair>.json`, `before-after-038-NAME-<pair>.json`)
 instead of the plain `-after` name. Without it, a re-run OVERWRITES the
@@ -81,10 +88,33 @@ _PAIRS = {
         "target": "GT038 Ngoreme After",
         "before": "census-038-ngoreme.json",
     },
+    # T108: the same Ejagham source into a DIFFERENT throwaway target, on
+    # purpose. T107's committed censuses are asserted to hash to `GT038
+    # Ejagham After` as it now stands (`TestT107TheBoundaryContextCreatePath::
+    # test_these_artifacts_are_the_ones_that_now_reproduce`), so a re-run into
+    # that project would drift T107's own evidence off its recorded digests --
+    # the T102 failure T107 already had to edit T078's table for, one link
+    # further on again. Added BESIDE `ejagham` rather than by editing its
+    # target in place, so the pair that produced the committed before/after
+    # diff stays runnable and reproducible.
+    "ejagham-t108": {
+        "source": "Ejagham W Mini",
+        "target": "GT038 T108 Target",
+        "before": "census-038-ejagham.json",
+    },
 }
 
 #: Never write to these, whatever else changes.
 _FORBIDDEN_TARGETS = {"Ngoreme Target", "Ejagham W Target", "Esperanto"}
+
+#: Targets that are LIVE EVIDENCE for a committed artifact: a census on disk
+#: records their `.fwdata` digest and a test asserts the file still hashes to
+#: it. Re-transferring one does not corrupt anything, but it silently turns a
+#: committed measurement into a description of a project that no longer
+#: exists. Runs that only need a run report (`--no-census`) must therefore not
+#: land in one -- refused rather than warned, because the damage is invisible
+#: until an unrelated test goes red.
+_EVIDENCE_TARGETS = {"GT038 Ejagham After", "GT038 Phase6 Target"}
 
 
 def _rows(artifact: dict) -> dict:
@@ -136,7 +166,26 @@ def main(argv) -> int:
     after_path = (_SNAPS / ("census-038-%s-%s.json" % (tag, pair)) if tag
                   else _SNAPS / ("census-038-%s-after.json" % pair))
 
+    # T108: a run whose whole question lives in the run report -- was the
+    # shared `PhPhonData.ContextsOS` context CO-CREATED here, or already
+    # there? -- needs the transfer and nothing after it. Censusing anyway
+    # would answer a question nobody asked and add a second artifact to keep
+    # current, and (worse) would have to be pointed at a `before` census of a
+    # different destination.
+    no_census = "--no-census" in argv
+
     compare_only = "--compare-only" in argv
+    if no_census and compare_only:
+        print("[FAIL] --no-census and --compare-only are mutually exclusive: "
+              "one skips the census, the other re-diffs two of them")
+        return 2
+    if no_census and target in _EVIDENCE_TARGETS:
+        print("[FAIL] refusing to re-transfer %r: a committed census records "
+              "its .fwdata digest and a test asserts the file still hashes "
+              "to it. Add a pair with its own throwaway target instead."
+              % target)
+        return 1
+
     if compare_only:
         # The diff is pure post-processing over two committed artifacts, so it
         # must be reproducible without a 50-second transfer and a restore.
@@ -166,6 +215,14 @@ def main(argv) -> int:
             exclude=frozenset(), ws_mapping_mode="full",
             report_path=report_path,
         )
+
+        if no_census:
+            print("[OK] --no-census: transfer only, nothing censused and no "
+                  "committed census touched.")
+            print("[OK] run report at %s" % report_path)
+            print("     derive with: python "
+                  "debug/derive038_t108_shared_context.py %s" % report_path)
+            return 0
 
         census_path = scratch / ("%s-%s-census.json" % (pair, tag or "after"))
         print("[INFO] census")

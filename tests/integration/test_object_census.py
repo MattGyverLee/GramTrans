@@ -6435,40 +6435,6 @@ class TestT107TheBoundaryContextCreatePath:
                    for d in direct)
         assert rules["input_context_class_totals"]["PhSimpleContextBdry"] == 8
 
-    def test_the_shared_route_attribution_is_recorded_as_undetermined(self):
-        """WHAT THIS RUN CANNOT SHOW, said out loud rather than left to be
-        inferred from a silence.
-
-        `ProcessContextSpec.co_created_shared` is the only field that
-        distinguishes "this run co-created the shared `PhPhonData.ContextsOS`
-        context" from "it was already there", and T076 asserted it on the
-        IN-MEMORY record only -- `report._process_rule_json` never emitted it.
-        So the run report behind these numbers does not carry it, and the
-        destination's one `PhPhonData`-owned `PhSimpleContextBdry` cannot be
-        attributed to the affix-process co-create rather than to the
-        phonological-rule path, because BOTH write that collection.
-
-        T107 fixed the serializer and pinned it through the real function
-        (`tests/unit/test_038_process_rules.py::
-        test_the_co_created_context_reaches_the_run_report_json`). Attributing
-        the shared route LIVE needs one more run, filed as T108. This test
-        exists so that the gap cannot be quietly forgotten, and so that the
-        run that closes it has to come here and delete this."""
-        note = _t107_rules()["shared_context_attribution"]
-        assert "NOT DETERMINABLE FROM THIS RUN" in note
-        assert "T108" in note
-        # The serializer is fixed NOW, whatever the committed run predates.
-        from gramtrans.Lib import models as _models
-        from gramtrans.Lib.report import _process_rule_json
-
-        payload = _process_rule_json(_models.ProcessRuleTransferRecord(
-            source_guid="r", reproduced=True, target_guid="r",
-            input_contexts=(_models.ProcessContextSpec(
-                context_class="PhSequenceContext", index=0,
-                co_created_shared=("shared-1",)),)))
-        assert payload["input_contexts"][0]["co_created_shared"] == \
-            ["shared-1"]
-
     @pytest.mark.parametrize("cls", sorted(T107_EJAGHAM_MOVED))
     def test_each_moved_row_moved_by_the_measured_amount(self, cls):
         """Numbers, not directions. Each of the five is pinned to its before
@@ -6614,3 +6580,202 @@ class TestT107TheBoundaryContextCreatePath:
             assert block["opened_read_only"] is True, role
             assert (block["fwdata_sha256_before"]
                     == block["fwdata_sha256_after"]), role
+
+
+# ===========================================================================
+# T108 -- the field that was fixed too late for the run that needed it
+# ===========================================================================
+#
+# T076 added `ProcessContextSpec.co_created_shared` so a write into the
+# shared, project-level `PhPhonData.ContextsOS` would not be a silent write
+# (SC-010) -- and asserted it on the IN-MEMORY record only.
+# `report._process_rule_json` dropped it, so the claim was true of the object
+# and FALSE of the artifact anybody reads, from T076 until T107 found it.
+#
+# T107 fixed the serializer and its own committed run PREDATES the fix, so its
+# evidence covers the direct boundary route (8 rules, 8 reported input
+# members) and the shared route's refusals and resolution -- but not the
+# shared route's live CO-CREATION. Both `_create_shared_process_context` and
+# the phonological-rule path (`_copy_context_cell`) write that collection, so
+# the destination's one `PhPhonData`-owned `PhSimpleContextBdry` could not be
+# attributed to either.
+#
+# T108 IS THAT ONE RUN, and it lands in a target of its own. Re-transferring
+# `GT038 Ejagham After` would have drifted T107's censuses off the digests
+# they are asserted to hash to -- T102's failure one link further on again --
+# so `debug/run038_before_after_pairs.py` gained an `ejagham-t108` pair and a
+# `--no-census` flag, and refuses outright to re-transfer an evidence target.
+#
+# THE ANSWER IS POSITIVE, which was not the only possible outcome: the field
+# could have come back empty on all 13 rules, meaning the phonological-rule
+# path got there first, and that would have been an answer too.
+
+T108_EJAGHAM_RULES = "process-rules-038-t108-ejagham.json"
+
+#: The one `PhPhonData`-owned boundary context on this pair -- the single
+#: object the whole task is about -- and the rule that created it.
+T108_SHARED_BOUNDARY = "391e8cba-b951-4f1b-a64a-c5dc5fbe19c9"
+T108_CREATING_RULE = "de6df83e-3556-42f8-82fc-30d22d4a68b9"
+
+#: Every shared `PhPhonData.ContextsOS` member this run co-created, by class.
+#: The boundary context is ONE of thirteen: the co-create leg is not a
+#: boundary-context special case, and a table that named only the boundary
+#: would hide that the same leg carries twelve other shared contexts.
+T108_CO_CREATED_BY_CLASS = {
+    "PhSimpleContextBdry": 1,
+    "PhSimpleContextNC": 7,
+    "PhSimpleContextSeg": 5,
+}
+
+
+def _t108_rules() -> dict:
+    return _t078(T108_EJAGHAM_RULES)
+
+
+class TestT108TheSharedRouteAttribution:
+    """The co-create leg, attributed live from a run report that carries the
+    field -- and taken without disturbing T107's evidence."""
+
+    def test_the_run_did_not_land_on_t107s_evidence(self):
+        """THE TRAP THIS TASK WAS FILED WITH, asserted rather than trusted to
+        the driver. Same source, DIFFERENT destination, different run: a T108
+        artifact naming `GT038 Ejagham After` would mean the re-run had
+        overwritten the project T107's committed censuses are asserted to
+        hash to, and every number in `TestT107...` would be describing a
+        project that no longer exists."""
+        t108, t107 = _t108_rules(), _t107_rules()
+        assert t108["source_project"] == t107["source_project"] \
+            == "Ejagham W Mini"
+        assert t108["destination_project"] == "GT038 T108 Target"
+        assert t108["destination_project"] != t107["destination_project"]
+        assert t108["run_id"] and t108["run_id"] != t107["run_id"]
+
+    def test_t107s_own_censuses_still_hash_to_their_projects(self):
+        """The other half of the same claim, and the half that could actually
+        go red. The guard above is about a string in an artifact; this is
+        about the files on disk. T107's two censuses must still reproduce
+        after T108's run -- which is exactly what a re-run into the wrong
+        target would break."""
+        for name in (T107_EJAGHAM, T107_MBUGWE):
+            for side in ("source", "destination"):
+                assert _t078_fwdata_status(_t078(name)["projects"][side]) \
+                    == "match", name + "." + side
+
+    def test_the_field_reached_every_reported_context(self):
+        """SC-010 landing in the artifact rather than in the object. 104
+        input contexts are reported on this run and every one carries
+        `co_created_shared` -- emitted unconditionally, so `[]` means "this
+        context created nothing shared" instead of meaning nothing at all.
+        The derivation refuses a report with a single entry missing the key,
+        so this asserts what that refusal guarantees.
+
+        Pinned through the real serializer too, because an artifact can only
+        show that the field was present on the day it was written."""
+        rules = _t108_rules()
+        assert rules["input_contexts_total"] == 104
+        assert (rules["input_contexts_carrying_co_created_shared"]
+                == rules["input_contexts_total"])
+
+        from gramtrans.Lib import models as _models
+        from gramtrans.Lib.report import _process_rule_json
+
+        payload = _process_rule_json(_models.ProcessRuleTransferRecord(
+            source_guid="r", reproduced=True, target_guid="r",
+            input_contexts=(_models.ProcessContextSpec(
+                context_class="PhSequenceContext", index=0,
+                co_created_shared=("shared-1",)),)))
+        assert payload["input_contexts"][0]["co_created_shared"] == \
+            ["shared-1"]
+
+    def test_the_boundary_context_came_from_the_affix_process_leg(self):
+        """THE HEADLINE, and the question T108 exists for. ONE
+        `PhSimpleContextBdry` was co-created into `PhPhonData.ContextsOS` by
+        this run, it is the one `PhPhonData`-owned boundary context on the
+        pair, and the rule that made it is named. So the destination's copy
+        came from `categories._create_shared_process_context` and NOT from the
+        phonological-rule path -- both write that collection, which is why
+        T107 could not tell them apart without this field."""
+        boundary = _t108_rules()["co_created_shared_boundary_contexts"]
+        assert len(boundary) == 1
+        found = boundary[0]
+        assert found["guid"] == T108_SHARED_BOUNDARY
+        assert found["source_owner_class"] == "PhPhonData"
+        assert found["created_by_rule"] == T108_CREATING_RULE
+
+    def test_five_rules_reach_it_and_exactly_one_reports_creating_it(self):
+        """T076's route, measured end to end. Five rules reach the shared
+        boundary context through a rule-owned `PhSequenceContext` -- which
+        reproduces T107's read-only count of five from the source graph -- and
+        exactly one reports co-creating it, because `_resolve_process_graph`
+        consults `member_targets` before the co-create leg. The other four
+        found what the first one made, and one of THOSE is the source-defect
+        rule that never gets as far as its input members.
+
+        This is the distinction the count would otherwise hide: 13 co-created
+        members is a count of OBJECTS CREATED, never of rules that use them."""
+        rules = _t108_rules()
+        found = rules["co_created_shared_boundary_contexts"][0]
+        reaching = found["rules_reaching_it"]
+        assert len(reaching) == 5
+        assert T108_CREATING_RULE in reaching
+        assert T107_SOURCE_DEFECT_RULE in reaching
+        creators = {c["rule"] for c in rules["co_created_shared_members"]
+                    if c["guid"] == T108_SHARED_BOUNDARY}
+        assert creators == {T108_CREATING_RULE}
+
+    def test_every_shared_write_went_into_phphondata_and_is_accounted(self):
+        """The scope of the leg, so "it created the boundary context" is not
+        read as "it created only that". Thirteen members across four rules,
+        every one owned by `PhPhonData` in the source -- which is what makes
+        them shared, project-level writes and therefore SC-010's subject
+        rather than ordinary rule-owned content."""
+        rules = _t108_rules()
+        assert rules["co_created_shared_total"] == 13
+        assert rules["co_created_shared_by_class"] == T108_CO_CREATED_BY_CLASS
+        assert rules["co_created_shared_owner_classes"] == {"PhPhonData": 13}
+        assert len({c["rule"]
+                    for c in rules["co_created_shared_members"]}) == 4
+        assert sum(T108_CO_CREATED_BY_CLASS.values()) \
+            == rules["co_created_shared_total"]
+
+    def test_this_run_reproduces_t107s_per_rule_figures_on_a_new_target(self):
+        """A SECOND TARGET IS A REAL CHECK, not bookkeeping. T107's numbers
+        were taken once, into one project; if any of them depended on that
+        project's starting state rather than on the source and the engine,
+        this run would say so. It does not: same 13 rules, same 12
+        reproduced, same single refusal for the same reason, same 8 direct
+        boundary input members, same input-context class totals."""
+        t108, t107 = _t108_rules(), _t107_rules()
+        assert (t108["rules_total"], t108["rules_reproduced"]) \
+            == (t107["rules_total"], t107["rules_reproduced"]) == (13, 12)
+        assert (t108["input_context_class_totals"]
+                == t107["input_context_class_totals"])
+        assert (t108["boundary_context_input_members"]
+                == t107["boundary_context_input_members"])
+        blocked = t108["rules_not_reproduced"]
+        assert len(blocked) == 1
+        assert blocked[0]["source_guid"] == T107_SOURCE_DEFECT_RULE
+        reason = " ".join(blocked[0]["reason"].split())
+        assert "MoCopyFromInput" in reason
+        assert "PhSimpleContextBdry" not in reason
+
+    def test_the_t107_artifact_no_longer_says_it_cannot_be_determined(self):
+        """The note T108 was filed to replace, replaced -- and replaced with
+        an attribution rather than with silence. A reader who reaches T107's
+        artifact must be sent to the measurement instead of being told the
+        question is open, and must be told which run made it, since it is not
+        the run that artifact describes."""
+        note = _t107_rules()["shared_context_attribution"]
+        assert "NOT DETERMINABLE" not in note.upper()
+        assert T108_EJAGHAM_RULES in note
+        assert T108_SHARED_BOUNDARY in note
+        assert "GT038 T108 Target" in note
+
+    def test_the_attribution_string_states_which_way_it_came_out(self):
+        """An empty field would have been an answer too -- the
+        phonological-rule path got there first -- so the artifact has to say
+        WHICH answer it is, in a form that cannot be satisfied by a hedge."""
+        note = _t108_rules()["shared_context_attribution"]
+        assert note.startswith("MEASURED AND ATTRIBUTED")
+        assert "THE BOUNDARY CONTEXT IS AMONG THEM" in note
+        assert T108_CREATING_RULE in note
