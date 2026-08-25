@@ -248,11 +248,21 @@ def test_the_pin_can_see_every_site_the_filing_named():
     A regex that stopped matching would make `test_no_production_call_site_
     is_two_positional` vacuously green, which is the failure mode a
     source-reading test actually has.
+
+    T106 WIDENED THE FILE SET, deliberately. `transfer.py` and `preview.py`
+    each gained a `_target_pos_for_source_guid` wrapper over
+    `categories._resolve_target_pos` -- the same shape `owned.py` already had,
+    and for the same reason: five callers in `transfer.py` and three in
+    `preview.py` held a SOURCE category GUID and could not follow a T091
+    natural-key reuse. Both wrappers pass `src_pos=` AND `source_handle=`, so
+    the load-bearing assertion above covers them unchanged; only this guard's
+    file set had to move, and it is recorded rather than relaxed.
     """
     sites = dict(_production_call_sites())
     assert len(sites) >= 13, sites
     files = {where.split(":")[0] for where in sites}
-    assert files == {"categories.py", "owned.py"}, files
+    assert files == {"categories.py", "owned.py",
+                     "preview.py", "transfer.py"}, files
 
 
 # ---------------------------------------------------------------------------

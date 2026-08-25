@@ -408,32 +408,52 @@ _ALLOWED_TARGET_POS_SCANS = {
     },
     "conflict.py": {
         "_find_target_pos_by_guid":
-            "callers pass a plan item's own `target_guid`, which is already "
-            "the destination's GUID -- see T106",
+            "T106 CLASSIFIED: its one caller passes `ow.target_guid`, already "
+            "a DESTINATION GUID -- the same value the function uses as a "
+            "destination identity key two lines down. Identity-only is the "
+            "right question; the natural key would re-derive a decision "
+            "Preview recorded and could override a T091 reuse",
     },
     "merge_preview.py": {
         "_find_target_pos_by_guid":
-            "merge-preview finder; owner GUIDs reach it from the plan -- T106",
+            "T106 CLASSIFIED: `_PROPS_TABLE[\"pos\"]` is called once per SIDE "
+            "-- source handle with `source_guid`, target handle with "
+            "`target_guid` -- so neither is a cross-project lookup. The one "
+            "source-side caller left (`_find_gap_object`) has no source handle "
+            "to give the key and its miss is absorbed by a fallback",
         "_find_target_gram_cat_by_guid":
-            "merge-preview finder over the same accessor -- T106",
+            "T106 CLASSIFIED: same per-side dispatch as `\"pos\"` above; "
+            "identity-only is correct",
     },
     "preview.py": {
         "_target_has_pos_guid":
-            "a presence probe on a GUID; T106 measures whether its callers "
-            "mean 'is this category present' instead",
+            "T106 ANSWERED: both callers mean 'is this CATEGORY present', not "
+            "'is this object present' -- one branches into creating a "
+            "duplicate, the other warns of a loss that will not happen. The "
+            "scan is now step 1 of two, with opt-in keywords carrying the key",
         "_find_pos_by_guid":
-            "owner lookup behind `_target_has_template_guid` / "
-            "`_target_has_slot_guid` -- T106",
+            "T106 CLASSIFIED: kept identity-PURE on purpose. Every caller "
+            "reaches it through a probe above, and those probes supply the "
+            "natural-key second step -- which is what keeps them additive",
     },
     "transfer.py": {
         "_find_target_pos_by_guid":
-            "six callers, some passing a destination GUID and some a source "
-            "one; separating them is T106",
+            "T106 SEPARATED: of six callers, one passes `overwrite."
+            "target_guid` (destination-side, correctly identity-only) and "
+            "five passed a SOURCE GUID and now route through "
+            "`_target_pos_for_source_guid`. The finder stays because the "
+            "destination-side caller still needs exactly this question",
         "_execute_overwrite":
             "the SLOTS fallback scans every category's affix slots for a SLOT "
             "guid; the category is walked, not resolved",
     },
 }
+
+#: T106 -- the scans above are the ones that SURVIVED classification. Nothing
+#: was closed by deleting an allowlist entry: every finder here is still the
+#: right question for at least one caller, so the count is unchanged at 10 and
+#: `test_the_pin_can_see_the_scans_that_remain`'s floor still holds. What
+#: changed is that no entry now defers to a future task.
 
 
 def _target_pos_scans():

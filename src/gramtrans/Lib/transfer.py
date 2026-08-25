@@ -859,7 +859,13 @@ def _execute_verb_vertical(
         # Find by any POS GUID present in either the actions OR the skips for POS
         guid = _first_pos_guid(plan)
         if guid:
-            target_verb = _find_target_pos_by_guid(target, guid)
+            # T106: `_first_pos_guid` reads `source_guid` off a POS action or
+            # skip, so this is a SOURCE GUID. The source object is not in hand
+            # here; the resolver scans for it via `source_handle`.
+            target_verb = _target_pos_for_source_guid(
+                target, guid,
+                src_pos=_find_source_pos_by_guid(source, guid),
+                source_handle=source)
 
     if target_verb is None:
         report_sink.Warning("No target Verb POS available; skipping template/slot layer")
@@ -1706,11 +1712,58 @@ def _find_source_first_template_for_pos(source, owner_pos_guid: str):
 
 
 def _find_target_pos_by_guid(target, guid_str: str):
+    """Identity only: the destination category whose GUID *is* `guid_str`.
+
+    T106: this is the right question ONLY when the caller already holds a
+    DESTINATION GUID -- a plan item's `target_guid`, or a GUID this run just
+    created in the destination. Six callers reach it and they do not agree:
+    one passes `overwrite.target_guid` (correct, and routing it through the
+    natural key would re-derive a decision Preview already recorded), five
+    pass a SOURCE GUID and want `_target_pos_for_source_guid` instead. The
+    split is deliberate and is pinned in
+    `tests/unit/test_038_t106_target_pos_finder_provenance.py`.
+    """
     for pos in target.POS.GetAll(recursive=True):
         concrete = _unwrap(pos)
         if _guid_str(concrete) == guid_str:
             return _cast_pos(concrete)
     return None
+
+
+def _target_pos_for_source_guid(target, src_pos_guid: str, *, src_pos=None,
+                                source_handle=None):
+    """The destination category a SOURCE category GUID names -- identity
+    first, roster-admitted natural key second (T106, T095's shape one module
+    out).
+
+    THE INVARIANT THIS REPLACES is the one T091 ended: "a category's
+    destination GUID is its source GUID". Once the planner REUSES a same-named
+    destination category instead of duplicating it, a source category can be
+    present in the destination under a different GUID, and
+    `_find_target_pos_by_guid` reads that as absent.
+
+    `src_pos` and `source_handle` are keyword-only and both default to None,
+    mirroring `_resolve_target_pos`'s own opt-in shape, so a caller (or a unit
+    fake) that passes neither gets exactly the pre-038 identity answer. The
+    natural key needs BOTH -- the key is the category's `Name`, which a GUID
+    string cannot supply, and `source_handle` supplies the source writing-system
+    handles the key is scoped to -- so a site that can reach only one of them
+    gains nothing and should say so rather than look fixed.
+
+    Lazy import for the same load-order reason every other `-> categories.py`
+    call in this package documents (`owned._resolve_target_pos_by_guid`).
+    """
+    if not src_pos_guid:
+        return None
+    try:
+        if __package__:
+            from . import categories as _categories
+        else:
+            import categories as _categories  # type: ignore
+    except ImportError:  # pragma: no cover -- categories.py is always present
+        return _find_target_pos_by_guid(target, src_pos_guid)
+    return _categories._resolve_target_pos(
+        target, src_pos_guid, src_pos=src_pos, source_handle=source_handle)
 
 
 def _find_target_template_by_guid(target, target_pos, guid_str: str):
@@ -1823,7 +1876,11 @@ def _execute_layer3(
         report_sink.Warning(f"[L3] Source POS {src_pos_guid[:8]}… not found; skipping Layer 3.")
         return
     src_verb_guid = src_pos_guid
-    target_verb = _find_target_pos_by_guid(target, src_verb_guid)
+    # T106: `src_verb` was just resolved OUT OF THE SOURCE one line above, so
+    # this GUID is unambiguously source-side. Carrying the object to the
+    # resolver rather than discarding it is T094's `_pos_guid_of` finding.
+    target_verb = _target_pos_for_source_guid(
+        target, src_verb_guid, src_pos=src_verb, source_handle=source)
     if target_verb is None:
         report_sink.Warning(f"[L3] Target POS {src_pos_guid[:8]}… not present; Layer 3 needs Layer 1 first.")
         return
@@ -3254,6 +3311,14 @@ def _execute_overwrite(overwrite, source, target, report_sink, tag: ImportResidu
     # Per-category lookup + apply
     if cat == GrammarCategory.POS:
         src_obj = _find_source_pos_by_guid(source, src_guid)
+        # T106: DELIBERATELY identity-only. `overwrite.target_guid` is already a
+        # DESTINATION GUID -- every producer either verified the GUID present in
+        # the target (`preview._emit_present_outcome`,
+        # `categories._plan_gold_reserved_edit`) or took it from the matched
+        # destination object itself (`categories._plan_natural_key_match`, which
+        # is exactly the post-T091 reuse case). Routing this through the natural
+        # key would re-derive a decision Preview already made and recorded, and
+        # could override a recorded reuse with a fresh name match. Principle III.
         tgt_obj = _find_target_pos_by_guid(target, tgt_guid)
         if tgt_obj is None and dest.resolved:
             tgt_obj = _cast_existing_to_pos(_unwrap(dest.obj))
@@ -3288,7 +3353,13 @@ def _execute_overwrite(overwrite, source, target, report_sink, tag: ImportResidu
         if not owner_pos_guid:
             report_sink.Warning(f"  [OW] Template {src_guid[:8]} has no owner POS reference")
             return
-        tgt_pos = _find_target_pos_by_guid(target, owner_pos_guid)
+        # T106: `owner_guid` / `pulled_in_by[0]` on a template overwrite is the
+        # OWNING CATEGORY'S SOURCE GUID (`preview._emit_template` fills it from
+        # `src_verb_guid`), so the natural key is the right second question.
+        tgt_pos = _target_pos_for_source_guid(
+            target, owner_pos_guid,
+            src_pos=_find_source_pos_by_guid(source, owner_pos_guid),
+            source_handle=source)
         tgt_tpl = None
         if tgt_pos is not None:
             tgt_tpl = _find_target_template_by_guid(target, tgt_pos, tgt_guid)
@@ -3315,7 +3386,14 @@ def _execute_overwrite(overwrite, source, target, report_sink, tag: ImportResidu
 
     if cat == GrammarCategory.SLOTS:
         owner_pos_guid = getattr(overwrite, "owner_guid", "")
-        tgt_pos = _find_target_pos_by_guid(target, owner_pos_guid) if owner_pos_guid else None
+        # T106: same source-side owner GUID as the template branch above. The
+        # un-owner-scoped fallback below still finds the slot when this misses,
+        # which is why this site cost nothing measurable -- but the fallback is
+        # a whole-hierarchy scan, not a correctness guarantee.
+        tgt_pos = _target_pos_for_source_guid(
+            target, owner_pos_guid,
+            src_pos=_find_source_pos_by_guid(source, owner_pos_guid),
+            source_handle=source) if owner_pos_guid else None
         tgt_slot = None
         if tgt_pos is not None:
             tgt_slot = _find_target_slot_by_guid(target, tgt_pos, tgt_guid)
@@ -3606,7 +3684,18 @@ def _execute_overwrite(overwrite, source, target, report_sink, tag: ImportResidu
             pos_obj = src_ia.PartOfSpeechRA
             if pos_obj is not None:
                 pos_guid = str(ICmObject(pos_obj).Guid).lower()
-                tgt_pos = _find_target_pos_by_guid(target, pos_guid)
+                # T106: `pos_obj` is read off the SOURCE MSA, so `pos_guid` is
+                # a source GUID and a GUID-only lookup answers "absent" for a
+                # category T091 reused under a different identity. That miss
+                # was SILENT: the `if tgt_pos is not None` below guards the
+                # whole re-sync, so `SlotsRC` was left holding whatever it had
+                # -- no Warning, no Skip, no DroppedItemRecord, and a
+                # reference collection moves no census row, so
+                # `total_shortfall` reads clean either way. Principle I's
+                # exact shape. The source object IS in hand here, so the key
+                # has everything it needs.
+                tgt_pos = _target_pos_for_source_guid(
+                    target, pos_guid, src_pos=pos_obj, source_handle=source)
                 if tgt_pos is not None:
                     target_slots_by_guid = {}
                     for sl in target.POS.GetAffixSlots(tgt_pos):
@@ -3618,6 +3707,21 @@ def _execute_overwrite(overwrite, source, target, report_sink, tag: ImportResidu
                         tgt_slot = target_slots_by_guid.get(src_slot_guid)
                         if tgt_slot is not None:
                             new_ia.SlotsRC.Add(tgt_slot)
+                elif len(list(src_ia.SlotsRC)) > 0:
+                    # T106: identity AND the natural key both failed, and the
+                    # source MSA HAS slot membership to re-sync -- so this is a
+                    # real, reportable miss rather than a no-op. Say so. The
+                    # pre-T106 code returned here silently and left `SlotsRC`
+                    # holding its old value, which is the one direction
+                    # Principle I forbids. Guarded on a non-empty source
+                    # `SlotsRC` so an MSA with nothing to sync does not
+                    # manufacture a warning about a loss that cannot happen --
+                    # the phantom-loss shape CLAUDE.md records for flexicon
+                    # 4.5.1.
+                    report_sink.Warning(
+                        f"  IMoInflAffMsa slot re-sync skipped: owning category "
+                        f"{pos_guid[:8]}… is not resolvable in the target by "
+                        f"GUID or by natural key; slot membership left unchanged")
         cache = getattr(target, "Cache")
         apply_residue(tgt_msa, cache.DefaultAnalWs, tag.with_snapshot(tgt_pre_props))
         report_sink.Info(f"  IMoInflAffMsa overwritten  src={src_guid[:8]}  tgt={tgt_guid[:8]}")

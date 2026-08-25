@@ -1138,6 +1138,13 @@ def _find_target_inflection_feature_by_guid(target: Any, guid: str) -> Any:
 
 
 def _find_target_template_by_guid(target: Any, guid: str, owner_pos_guid: str) -> Any:
+    # T106: UNREACHABLE TODAY. `_PROPS_TABLE["template"]` carries `is_gap=True`,
+    # and `props_for` returns from its gap branch before it ever dispatches to a
+    # `finder_fn` -- so this function, and the source-side owner lookup inside
+    # it, cannot run. It is left in place rather than swept because a sweep
+    # would be unverifiable: no test reaches it except through an injected
+    # fake. Recorded here so a later reader does not "fix" a path that never
+    # runs, or delete it without noticing the dispatch shape its fake pins.
     """T024 — two-level owner-required finder for affix templates (R4a).
 
     The ONLY finder requiring a mandatory owner argument.  Locates the
@@ -1236,6 +1243,11 @@ def _ws_defs(handle: Any) -> list[tuple[str, Any]]:
 
 _PROPS_TABLE: dict[str, tuple[Any, ...]] = {
     # (ops_attr, finder_fn, needs_owner, is_gap)
+    # T106: identity-only is CORRECT here. `props_for` is called once per side
+    # -- source handle with `source_guid`, target handle with `target_guid` --
+    # so neither is a cross-project lookup, and the target GUID is one Preview
+    # already resolved (including via a T091 natural-key reuse, where
+    # `_plan_natural_key_match` records the DESTINATION object's own GUID).
     "pos": ("POS", _find_target_pos_by_guid, False, False),
     "entry": ("LexEntry", _find_target_entry_by_guid, False, False),
     "sense": ("Senses", _find_target_sense_by_guid, True, False),
@@ -1246,6 +1258,7 @@ _PROPS_TABLE: dict[str, tuple[Any, ...]] = {
     "environment": ("Environments", _find_target_environment_by_guid, False, False),
     "phon_rule": ("PhonRules", _find_target_phon_rule_by_guid, False, False),
     "stratum": ("Strata", _find_target_stratum_by_guid, False, False),
+    # T106: identity-only is CORRECT here, same reasoning as "pos" above.
     "gram_cat": ("GramCat", _find_target_gram_cat_by_guid, False, False),
     "inflection_feature": (
         "InflectionFeatures",
@@ -1572,6 +1585,28 @@ def _find_gap_object(handle: Any, category: str, guid: str, owner_guid: str) -> 
     # Template: locate via owner POS then AffixTemplatesOS (T024 gap path)
     if category == "template":
         try:
+            # T106: `owner_guid` is the owning category's SOURCE GUID -- it
+            # reaches here from `SkeletonPosNode.pos_guid`, which
+            # `selection.py` enumerates from the SOURCE project (the same value
+            # is TESTED AGAINST the target's GUID set one line away, which is
+            # what proves it is not a target GUID). Post-T091 this lookup
+            # therefore misses whenever the destination reused the category
+            # under a different identity.
+            #
+            # IT IS NOT ROUTED THROUGH THE NATURAL KEY, deliberately. There is
+            # no source handle at this call site -- `props_for(handle, ...)`
+            # takes ONE side, and the natural key needs the source handle for
+            # its writing-system scope, so passing `src_pos` alone would buy
+            # nothing and merely LOOK fixed. Threading a second handle through
+            # the public `props_for` signature is not worth it here, because
+            # the miss is already harmless: the fallback below scans every
+            # category for the template BY ITS OWN GUID, and a template lives
+            # under exactly one category, so the object is still found. The
+            # cost is a wider scan, not a wrong answer.
+            #
+            # THE FALLBACK IS LOAD-BEARING, not belt-and-braces. Deleting it as
+            # "dead" would convert this into a real blank-pane defect. Pinned by
+            # `test_038_t106_target_pos_finder_provenance.py`.
             owner_pos = _find_target_pos_by_guid(handle, owner_guid) if owner_guid else None
             if owner_pos is None:
                 # Fallback: scan all POS

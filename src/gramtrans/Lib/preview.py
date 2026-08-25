@@ -2514,7 +2514,8 @@ def _plan_verb_vertical_inner(
     # OR closure is on and something downstream wants it, plan it.
     pos_wanted = pos_on or (closure_on and (tpl_on or slots_on))
     if pos_wanted:
-        if _target_has_pos_guid(target, src_verb_guid):
+        if _target_has_pos_guid(target, src_verb_guid,
+                                src_pos=src_verb, source_handle=source):
             _emit_present_outcome(
                 GrammarCategory.POS,
                 src_guid=src_verb_guid,
@@ -2572,11 +2573,13 @@ def _plan_verb_vertical_inner(
                     # Skip the slot layer for this template too — there's
                     # nothing to attach them to.
                     continue
-            _emit_template(target, src_verb_guid, tpl_guid, tpl_on, actions, skips, selection, overwrites)
+            _emit_template(target, src_verb_guid, tpl_guid, tpl_on, actions, skips, selection, overwrites,
+                           src_owner_pos=src_verb, source_handle=source)
         elif closure_on:
             # Pulled in via closure from POS or slots being on.
             if pos_on or slots_on:
-                _emit_template(target, src_verb_guid, tpl_guid, False, actions, skips, selection, overwrites)
+                _emit_template(target, src_verb_guid, tpl_guid, False, actions, skips, selection, overwrites,
+                               src_owner_pos=src_verb, source_handle=source)
             else:
                 continue
         else:
@@ -2600,7 +2603,8 @@ def _plan_verb_vertical_inner(
 
                 slot_guid = _guid_str(slot)
                 slot_name = _slot_name(slot)
-                if _target_has_slot_guid(target, src_verb_guid, slot_guid):
+                if _target_has_slot_guid(target, src_verb_guid, slot_guid,
+                                 src_owner_pos=src_verb, source_handle=source):
                     _emit_present_outcome(
                         GrammarCategory.SLOTS,
                         src_guid=slot_guid,
@@ -2942,7 +2946,8 @@ def _plan_layer3_verb_affixes_inner(
         if excluded_lossy is not None:
             for _msa, msa_guid, _sense_guid in msa_actions:
                 _check_msa_pos_excluded_lossy(
-                    _msa, entry_guid, entry_hw, target, selection, excluded_lossy
+                    _msa, entry_guid, entry_hw, target, selection, excluded_lossy,
+                    source_handle=source,
                 )
 
         # Allomorphs + environments. Allomorphs.GetAll may return wrapped
@@ -3007,6 +3012,8 @@ def _check_msa_pos_excluded_lossy(
     target,
     selection: Selection,
     excluded_lossy: List[ExcludedLossy],
+    *,
+    source_handle=None,
 ) -> None:
     """Emit an EXCLUDED-LOSSY warning if the entry's MSA references a POS that
     the user deliberately dropped (via NONE scope or per-item exclusion) and
@@ -3016,6 +3023,16 @@ def _check_msa_pos_excluded_lossy(
     1. dep exists in target by GUID -> silent (LINK).
     2. dep absent + entry doesn't reference it -> not reached here.
     3. dep absent + entry references it + user dropped it -> EXCLUDED-LOSSY.
+
+    T106: outcome 1 is called "LINK" for a reason -- the question is whether
+    the MSA will end up linked to a CATEGORY, not whether one exact object
+    survives. Post-T091 the destination may hold that category under a
+    different GUID, where the MSA links fine and outcome 3's message ("Entry X
+    will have no Part of Speech") is simply false. A warning that cries loss
+    where there was none teaches the reader to stop reading it -- the phantom
+    -loss shape CLAUDE.md records for flexicon 4.5.1. `source_handle` is
+    keyword-only and defaults to None, so a caller that cannot supply it keeps
+    the pre-T106 answer rather than silently changing behaviour.
     """
     try:
         from SIL.LCModel import IMoInflAffMsa, ICmObject
@@ -3034,8 +3051,11 @@ def _check_msa_pos_excluded_lossy(
     if not dep_excluded:
         return
 
-    # Outcome 1: target already has it (LINK) — silent.
-    if _target_has_pos_guid(target, pos_guid):
+    # Outcome 1: target already has it (LINK) — silent. T106: by GUID, or by
+    # the natural key when the caller supplied the source handle.
+    if _target_has_pos_guid(target, pos_guid,
+                            src_pos=ia.PartOfSpeechRA,
+                            source_handle=source_handle):
         return
 
     # Outcome 3: target lacks it and entry references it — EXCLUDED-LOSSY.
@@ -3336,9 +3356,20 @@ def _emit_template(target,
                    actions: List[PlannedAction],
                    skips: List[Skip],
                    selection: Selection,
-                   overwrites: Optional[List[PlannedOverwrite]]) -> None:
-    """Emit Add or Skip-by-GUID (Phase 0) / Overwrite (Phase 1) for a template."""
-    if _target_has_template_guid(target, owner_pos_guid, tpl_guid):
+                   overwrites: Optional[List[PlannedOverwrite]],
+                   *,
+                   src_owner_pos=None,
+                   source_handle=None) -> None:
+    """Emit Add or Skip-by-GUID (Phase 0) / Overwrite (Phase 1) for a template.
+
+    T106: `owner_pos_guid` is the owning category's SOURCE GUID. The two
+    keyword-only arguments carry what the natural key needs down to
+    `_target_has_template_guid`; both default to None so an existing caller or
+    fake keeps the identity-only answer.
+    """
+    if _target_has_template_guid(target, owner_pos_guid, tpl_guid,
+                                 src_owner_pos=src_owner_pos,
+                                 source_handle=source_handle):
         _emit_present_outcome(
             GrammarCategory.AFFIX_TEMPLATES,
             src_guid=tpl_guid,
@@ -3365,15 +3396,66 @@ def _emit_template(target,
 # Read-only target probes
 # ============================================================================
 
-def _target_has_pos_guid(target, guid_str: str) -> bool:
+def _target_pos_for_source_guid(target, src_pos_guid: str, *, src_pos=None,
+                                source_handle=None):
+    """The destination category a SOURCE category GUID names -- identity
+    first, roster-admitted natural key second (T106).
+
+    Both keywords default to None and BOTH are required for step 2: the key is
+    the category's `Name` (which a GUID string cannot supply) and it is scoped
+    to the source writing systems (which only the source handle can supply).
+    A caller that can reach only one of them gets exactly the pre-038 identity
+    answer, which keeps this additive for every existing fake.
+
+    Lazy import for the load-order reason `owned._resolve_target_pos_by_guid`
+    documents.
+    """
+    if not src_pos_guid:
+        return None
+    try:
+        if __package__:
+            from . import categories as _categories
+        else:
+            import categories as _categories  # type: ignore
+    except ImportError:  # pragma: no cover -- categories.py is always present
+        return _find_pos_by_guid(target, src_pos_guid)
+    return _categories._resolve_target_pos(
+        target, src_pos_guid, src_pos=src_pos, source_handle=source_handle)
+
+
+def _target_has_pos_guid(target, guid_str: str, *, src_pos=None,
+                         source_handle=None) -> bool:
+    """Is the category `guid_str` names present in the destination?
+
+    T106: BOTH callers mean *is this CATEGORY present*, not *is this exact
+    object present* -- one branches straight into "create a new category" and
+    the other tells the user "Entry X will have no Part of Speech". Post-T091
+    a category reused under a different GUID is present, and a GUID-only probe
+    calls it absent: the first caller then plans a DUPLICATE and the second
+    emits a warning about a loss that will not happen. The opt-in keywords are
+    what let the probe answer the question the callers are actually asking.
+    """
     for pos in target.POS.GetAll(recursive=True):
         if _guid_str(_unwrap(pos)) == guid_str:
             return True
-    return False
+    if src_pos is None or source_handle is None:
+        return False
+    return _target_pos_for_source_guid(
+        target, guid_str, src_pos=src_pos,
+        source_handle=source_handle) is not None
 
 
-def _target_has_template_guid(target, owner_pos_guid: str, tpl_guid: str) -> bool:
+def _target_has_template_guid(target, owner_pos_guid: str, tpl_guid: str, *,
+                              src_owner_pos=None, source_handle=None) -> bool:
     target_pos = _find_pos_by_guid(target, owner_pos_guid)
+    if target_pos is None:
+        # T106: `owner_pos_guid` is the owning category's SOURCE GUID. A miss
+        # here made the planner emit an ADD for a template the destination
+        # already holds -- a DUPLICATE rather than a lost item, the opposite
+        # direction from T095's defect and the same root cause.
+        target_pos = _target_pos_for_source_guid(
+            target, owner_pos_guid, src_pos=src_owner_pos,
+            source_handle=source_handle)
     if target_pos is None:
         return False
     for t in target.MorphRules.GetAllAffixTemplatesForPOS(target_pos):
@@ -3382,8 +3464,14 @@ def _target_has_template_guid(target, owner_pos_guid: str, tpl_guid: str) -> boo
     return False
 
 
-def _target_has_slot_guid(target, owner_pos_guid: str, slot_guid: str) -> bool:
+def _target_has_slot_guid(target, owner_pos_guid: str, slot_guid: str, *,
+                          src_owner_pos=None, source_handle=None) -> bool:
     target_pos = _find_pos_by_guid(target, owner_pos_guid)
+    if target_pos is None:
+        # T106: same source-side owner GUID, same duplicate-on-miss shape.
+        target_pos = _target_pos_for_source_guid(
+            target, owner_pos_guid, src_pos=src_owner_pos,
+            source_handle=source_handle)
     if target_pos is None:
         return False
     for s in target.POS.GetAffixSlots(target_pos):
@@ -3393,6 +3481,9 @@ def _target_has_slot_guid(target, owner_pos_guid: str, slot_guid: str) -> bool:
 
 
 def _find_pos_by_guid(target, guid_str: str):
+    """Identity only. T106: every caller reaches it through one of the probes
+    above, which supply the natural-key second step when they can; keeping
+    this one identity-pure is what lets those probes stay additive."""
     for pos in target.POS.GetAll(recursive=True):
         concrete = _unwrap(pos)
         if _guid_str(concrete) == guid_str:
