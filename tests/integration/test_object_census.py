@@ -1158,13 +1158,23 @@ class TestBaselineIsAFailingVerdict:
 # objects in 11 classes that carry no name to key on at all.
 # ===========================================================================
 
-def gross_basis_rows(rows=None, *, phoneme_baseline=23):
+def gross_basis_rows(rows=None, *, phoneme_baseline=23, baselines=None):
     """`rows` (default `phase_rows()`) rewritten as a no-run-report census: no
-    `starter_matched_to_source`, gross subtraction, no match_basis tallies."""
+    `starter_matched_to_source`, gross subtraction, no match_basis tallies.
+
+    `baselines` names the classes whose starter baseline is NONZERO, which
+    since T110 is what makes a gross-basis row actually capped: over a baseline
+    of 0 the gross and matched bases compute the same integer, so
+    `is_gross_basis_row` returns False and the row's shortfall is evidence.
+    Every class not named gets 0, which is a MEASURED zero here -- these rows
+    all carry `starter_baseline_source: "baseline_document"` -- so the default
+    output is a census of exact rows plus one capped `PhPhoneme`.
+    """
     rows = list(phase_rows() if rows is None else rows)
+    counts = {"PhPhoneme": phoneme_baseline}
+    counts.update(baselines or {})
     for row in rows:
-        row["starter_baseline_count"] = (
-            phoneme_baseline if row["class"] == "PhPhoneme" else 0)
+        row["starter_baseline_count"] = counts.get(row["class"], 0)
         row["starter_matched_to_source"] = None
         row["starter_subtraction_basis"] = GROSS_SUBTRACTION_BASIS
         row["starter_baseline_source"] = "baseline_document"
@@ -1439,16 +1449,224 @@ class TestGrossBasisVerdictCap:
         exactly as the shortfall does. Gross subtraction over-subtracts, so it
         manufactures shortfalls rather than surpluses -- but 5.2's table caps on
         the BASIS, not on the sign, and a one-sided cap would be a second rule
-        free to drift from the first."""
-        rows = gross_basis_rows(replace_row(
-            phase_rows(), "MoInflClass", source_count=3,
-            destination_count_total=9, destination_count_net=9,
-            verdict_class="SURPLUS", unexplained_surplus=6))
+        free to drift from the first.
+
+        The row carries a NONZERO baseline (T110): a gross basis over a
+        baseline of 0 subtracts nothing and is exact, so the sign question
+        would not even arise on a zero-baseline row. net = 13 - 4 = 9 against a
+        source of 3, so `difference` +6."""
+        rows = gross_basis_rows(
+            replace_row(
+                phase_rows(), "MoInflClass", source_count=3,
+                destination_count_total=13, destination_count_net=9,
+                verdict_class="SURPLUS", unexplained_surplus=6),
+            baselines={"MoInflClass": 4})
         artifact = gross_basis_artifact(rows)
         assert gross_basis_suppressions(artifact) == (
             ("MoInflClass", "surplus", 6),)
         assert recompute_verdict(artifact) == "CENSUS_ACCOUNTED"
         assert gate_artifact(artifact).exit_code == 0
+
+
+# ===========================================================================
+# 3a-bis. T110 -- a ZERO starter baseline is not a gross basis
+#
+# 5.2's cap exists for ONE arithmetic error: gross subtraction removes the
+# starter objects the transfer correctly MATCHED, once as starter objects and
+# once as the source objects they now stand in for, so it reports a shortfall on
+# a correct run (43 - 23 = 20 against a source of 41). Where the baseline is a
+# measured ZERO that error is impossible -- nothing is subtracted, so nothing
+# can be subtracted twice, and `total - 0` on the gross basis equals
+# `total - (0 - 0)` on the matched one. The row is exact and its shortfall is
+# evidence.
+#
+# THREE STATES, NOT TWO. What separates the exempt row from the still-capped one
+# is the corroboration, not the arithmetic: an `absent_from_baseline` row also
+# subtracts 0, but because nobody counted rather than because there was nothing
+# to count. Its true starter population is unknown, so its arithmetic is not
+# exact and the cap keeps applying. The tests below pin all three states, and
+# the ABSENT one is the regression that matters -- reading a missing count as a
+# measured zero is the "absent read as zero" error `census.unmatched_starter`
+# was written to refuse.
+# ===========================================================================
+
+class TestT110AZeroBaselineIsNotAGrossBasis:
+    """The predicate, one state per test, on forged rows."""
+
+    def test_a_measured_zero_is_exact_so_the_row_is_not_capped(self):
+        """State 1. `MoStemMsa` 5 -> 0 over a baseline document that says 0 for
+        it: `starter_excluded` 0, net == total, and the two bases agree to the
+        integer. The 5 is a loss, not arithmetic noise."""
+        rows = gross_basis_rows(replace_row(
+            phase_rows(), "MoStemMsa", source_count=5,
+            destination_count_total=0, destination_count_net=0,
+            verdict_class="SHORTFALL", unexplained_shortfall=5))
+        row = [r for r in rows if r["class"] == "MoStemMsa"][0]
+        assert row["starter_subtraction_basis"] == GROSS_SUBTRACTION_BASIS
+        assert row["starter_baseline_count"] == 0
+        assert row["starter_baseline_source"] == "baseline_document"
+        assert row["destination_count_net"] == row["destination_count_total"]
+        assert is_gross_basis_row(row) is False
+        # The identity the whole task turns on, spelled out rather than argued:
+        # gross and matched compute the same net.
+        gross = row["destination_count_total"] - row["starter_baseline_count"]
+        matched = row["destination_count_total"] - (
+            row["starter_baseline_count"] - 0)
+        assert gross == matched == row["destination_count_net"]
+
+    def test_an_absent_baseline_count_is_still_capped(self):
+        """State 2, and THE regression. No `starter_baseline_count` key at all
+        -- what `baseline.is_missing` and an Amendment A1 split row both
+        produce -- must NOT be read as a measured zero. Absent is not zero, so
+        the row stays capped and its shortfall stays advisory."""
+        rows = gross_basis_rows(replace_row(
+            phase_rows(), "MoStemMsa", source_count=5,
+            destination_count_total=0, destination_count_net=0,
+            verdict_class="SHORTFALL", unexplained_shortfall=5))
+        for row in rows:
+            if row["class"] == "MoStemMsa":
+                del row["starter_baseline_count"]
+                row["starter_baseline_source"] = "absent_from_baseline"
+        row = [r for r in rows if r["class"] == "MoStemMsa"][0]
+        assert "starter_baseline_count" not in row
+        assert is_gross_basis_row(row) is True
+        assert ("MoStemMsa", "shortfall", 5) in gross_basis_suppressions(
+            gross_basis_artifact(rows))
+
+    def test_a_present_but_null_count_is_still_capped(self):
+        """The same refusal one notch subtler. `$defs.classRow` types
+        `starter_baseline_count` as `["integer", "null"]`, so a null can be
+        PRESENT -- and a null is a missing measurement wearing a key. Key
+        presence alone would therefore have been the wrong test."""
+        rows = gross_basis_rows(replace_row(
+            phase_rows(), "MoStemMsa", source_count=5,
+            destination_count_total=0, destination_count_net=0,
+            verdict_class="SHORTFALL", unexplained_shortfall=5))
+        for row in rows:
+            if row["class"] == "MoStemMsa":
+                row["starter_baseline_count"] = None
+        row = [r for r in rows if r["class"] == "MoStemMsa"][0]
+        assert is_gross_basis_row(row) is True
+
+    def test_a_zero_without_the_document_corroboration_is_still_capped(self):
+        """And the third way to get a zero that is not a measurement: a 0 whose
+        `starter_baseline_source` does not say a baseline document produced it.
+        The exemption is a claim the artifact has to MAKE, exactly as the cap
+        is -- the predicate's own first rule, applied in the other
+        direction."""
+        rows = gross_basis_rows(replace_row(
+            phase_rows(), "MoStemMsa", source_count=5,
+            destination_count_total=0, destination_count_net=0,
+            verdict_class="SHORTFALL", unexplained_shortfall=5))
+        for row in rows:
+            if row["class"] == "MoStemMsa":
+                row["starter_baseline_source"] = "absent_from_baseline"
+        assert is_gross_basis_row(
+            [r for r in rows if r["class"] == "MoStemMsa"][0]) is True
+        for row in rows:
+            if row["class"] == "MoStemMsa":
+                del row["starter_baseline_source"]
+        assert is_gross_basis_row(
+            [r for r in rows if r["class"] == "MoStemMsa"][0]) is True
+
+    def test_a_nonzero_baseline_is_unchanged(self):
+        """State 3, untouched: 5.2's own worked example. A baseline of 23 CAN be
+        over-subtracted, so the phantom 21 stays suppressed and the run stays
+        `CENSUS_ACCOUNTED`. If this ever moved, T110 would have broken the cap
+        rather than bounded it."""
+        artifact = gross_basis_artifact()
+        row = [r for r in artifact["classes"] if r["class"] == "PhPhoneme"][0]
+        assert row["starter_baseline_count"] == 23
+        assert is_gross_basis_row(row) is True
+        assert gross_basis_suppressions(artifact) == (
+            ("PhPhoneme", "shortfall", 21),)
+        assert recompute_verdict(artifact) == "CENSUS_ACCOUNTED"
+        assert gate_artifact(artifact).exit_code == 0
+
+    def test_the_latent_consequence_a_duplicate_free_run_no_longer_passes(
+            self):
+        """THE LATENT DEFECT T110 NAMES, forged to size. An artifact with no
+        duplicates, no errors, no stale baseline and no accounting lines --
+        nothing at all that could outrank the cap -- whose ONLY failure is a
+        zero-baseline shortfall. Before T110 the cap suppressed it and the run
+        read `CENSUS_ACCOUNTED` / exit 0; now it reads `UNEXPLAINED_SHORTFALL` /
+        exit 1.
+
+        Measured on T078's three artifacts the same change moved 2602 / 57,955 /
+        8849 objects out of "advisory" and altered no verdict, because
+        `DUPLICATE_IDENTITY` outranks the cap on all three. That is why the
+        defect survived: the only artifacts that could show it are the
+        duplicate-free ones, and the two committed pre-fix censuses -- see
+        `TestCappedExitZeroCoexistsWithFailingRows` -- are exactly those.
+        """
+        rows = gross_basis_rows(replace_row(
+            phase_rows(), "MoStemMsa", source_count=90,
+            destination_count_total=0, destination_count_net=0,
+            verdict_class="SHORTFALL", unexplained_shortfall=90))
+        artifact = gross_basis_artifact(rows)
+        assert not any(census.duplicates_unaccounted(r) for r in artifact["classes"])
+        assert not artifact.get("errors")
+        assert not any(r["accounted_for"] for r in artifact["classes"])
+        assert recompute_verdict(artifact) == "UNEXPLAINED_SHORTFALL"
+        assert gate_artifact(artifact).exit_code == 1
+        assert gate_artifact(artifact).passed is False
+        # The 90 is no longer announced as advisory, and the note array says so.
+        assert not any(label == "MoStemMsa" for label, _, _
+                       in gross_basis_suppressions(artifact))
+
+    def test_the_same_run_over_a_real_baseline_still_reads_accounted(self):
+        """The falsifier for the test above, and the proof T110 did not simply
+        delete the cap: give that same 90-object shortfall a starter baseline of
+        90 -- a baseline big enough for gross subtraction to have manufactured
+        the whole thing -- and the run is capped back to `CENSUS_ACCOUNTED`."""
+        rows = gross_basis_rows(
+            replace_row(
+                phase_rows(), "MoStemMsa", source_count=90,
+                destination_count_total=90, destination_count_net=0,
+                verdict_class="SHORTFALL", unexplained_shortfall=90),
+            baselines={"MoStemMsa": 90})
+        artifact = gross_basis_artifact(rows)
+        assert recompute_verdict(artifact) == "CENSUS_ACCOUNTED"
+        assert gate_artifact(artifact).exit_code == 0
+        assert ("MoStemMsa", "shortfall", 90) in gross_basis_suppressions(
+            artifact)
+
+    def test_the_cap_notes_and_the_exit_code_move_together(self):
+        """T024b's rule, which is why T110 is one predicate and not three call
+        sites: the cap, the notes it renders and `census_cli`'s capped-pass exit
+        code must never disagree about which rows are capped. On the
+        zero-baseline artifact the de-capped row appears in NONE of the three."""
+        rows = gross_basis_rows(replace_row(
+            phase_rows(), "MoStemMsa", source_count=90,
+            destination_count_total=0, destination_count_net=0,
+            verdict_class="SHORTFALL", unexplained_shortfall=90))
+        artifact = gross_basis_artifact(rows)
+        assert not any("MoStemMsa" in note
+                       for note in gross_basis_cap_notes(artifact))
+        assert not any("MoStemMsa" in note
+                       for note in artifact["notes"])
+        # ...and it is still in the row evidence, where it belongs.
+        row = [r for r in artifact["classes"] if r["class"] == "MoStemMsa"][0]
+        assert row["unexplained_shortfall"] == 90
+        assert row_passes(row) is False
+
+    def test_the_declared_basis_string_is_never_rewritten(self):
+        """The one thing T110 must NOT touch. `starter_subtraction_basis` stays
+        `baseline_gross` on a de-capped row, because that is the subtraction the
+        census actually performed and the artifact's arithmetic has to stay
+        reproducible from what it published -- the validator's invariant 4 and
+        `SUBTRACTION_BASES` are both written against that vocabulary. The
+        predicate reads the string; it never edits it."""
+        rows = gross_basis_rows(replace_row(
+            phase_rows(), "MoStemMsa", source_count=90,
+            destination_count_total=0, destination_count_net=0,
+            verdict_class="SHORTFALL", unexplained_shortfall=90))
+        artifact = gross_basis_artifact(rows)
+        for row in artifact["classes"]:
+            assert row["starter_subtraction_basis"] == GROSS_SUBTRACTION_BASIS
+            assert row["starter_subtraction_basis"] in census.SUBTRACTION_BASES
+        assert validate_artifact(artifact) == ()
+        assert census.BASELINE_SOURCE_DOCUMENT in census.BASELINE_SOURCES
 
 
 # ===========================================================================
@@ -3090,6 +3308,27 @@ def with_current_roster_admission(artifact) -> dict:
     return out
 
 
+def with_recomputed_verdict(artifact) -> dict:
+    """A COPY of `artifact` with `verdict` / `exit_code` / `verdict_human_label`
+    re-stamped from the artifact's own evidence.
+
+    Same kind of refresh as `with_current_roster_admission` and for the same
+    reason: those three fields are DERIVATIONS, not measurements --
+    `census.stamp_verdict` is "the ONLY sanctioned way those three fields get
+    their values" -- so re-running the derivation over unchanged counts is not
+    forging anything. Every measured quantity is left exactly as measured.
+
+    It exists because T110 changed the derivation. These snapshots were written
+    while `is_gross_basis_row` said a row with a MEASURED-ZERO baseline was
+    gross-basis, so their stored `CENSUS_ACCOUNTED` is the pre-T110 answer.
+    Nothing about the observations changed; what changed is that the census no
+    longer excuses arithmetic that could not have been wrong.
+    """
+    from copy import deepcopy
+
+    return census.stamp_verdict(deepcopy(artifact))
+
+
 def measured_row(artifact, object_class: str) -> dict:
     for row in artifact["classes"]:
         if row["class"] == object_class:
@@ -3132,8 +3371,30 @@ class TestMeasuredCensusSnapshots:
     def test_the_snapshot_passes_the_section_11_invariants(self, pair):
         """A real loss must be reportable WITHOUT breaking an invariant. If
         `validate_artifact` complained here, the failing rows below would be a
-        malformed document rather than measured evidence."""
-        assert validate_artifact(load_measured_census(pair)) == ()
+        malformed document rather than measured evidence.
+
+        Checked against the artifact's own re-derived verdict, because T110
+        moved the derivation and these two files were written before it. Every
+        MEASURED field is validated as it sits on disk; only the three derived
+        verdict fields are refreshed. See `with_recomputed_verdict`."""
+        assert validate_artifact(
+            with_recomputed_verdict(load_measured_census(pair))) == ()
+
+    @pytest.mark.parametrize("pair", sorted(MEASURED_CENSUS_SNAPSHOTS))
+    def test_the_stored_verdict_is_the_pre_t110_answer_and_only_that(
+            self, pair):
+        """The one invariant the raw snapshot now breaks, named rather than
+        tolerated. Invariant 8 is exactly "the gate recomputes the verdict
+        rather than trusting it", so a stale stored token is what it is FOR --
+        and the single failure it reports is the whole delta T110 made. If a
+        later change adds a second failure here, this snapshot has a new problem
+        that is not T110's."""
+        raw = load_measured_census(pair)
+        failures = validate_artifact(raw)
+        assert len(failures) == 1, failures
+        assert failures[0].startswith("invariant 8:")
+        assert "stores verdict 'CENSUS_ACCOUNTED'" in failures[0]
+        assert "own evidence gives 'UNEXPLAINED_SHORTFALL'" in failures[0]
 
     def test_the_snapshots_name_the_pairs_the_journal_names(
             self, ngoreme_census, ejagham_census):
@@ -3218,14 +3479,52 @@ class TestMoStemMsaTotalLoss:
         assert row["unexplained_shortfall"] == -row["difference"]
 
     def test_the_gross_basis_does_not_soften_the_row(self, ngoreme_census):
-        """5.2's cap is the RUN verdict only. The row-level evidence the cap
-        leaves untouched is what these tests assert on."""
+        """5.2's cap is the RUN verdict only, and since T110 it does not reach
+        this row at all. The declared basis is still `baseline_gross` -- that is
+        the subtraction the census performed and the artifact has to stay
+        reproducible from what it published -- but the baseline it subtracted
+        was a MEASURED ZERO from the baseline document, so `total - 0` and
+        `total - (0 - 0)` are the same integer and there is no over-subtraction
+        for the cap to compensate for. `is_gross_basis_row` therefore says
+        False, and the 1949 is evidence rather than advice."""
         row = measured_row(ngoreme_census, "MoStemMsa")
         assert row["starter_subtraction_basis"] == GROSS_SUBTRACTION_BASIS
-        assert is_gross_basis_row(row) is True
+        assert row["starter_baseline_count"] == 0
+        assert row["starter_baseline_source"] == "baseline_document"
+        assert row["destination_count_net"] == row["destination_count_total"]
+        assert is_gross_basis_row(row) is False
         assert row["difference"] == -1949
         assert row["unexplained_shortfall"] == 1949
         assert row_passes(row) is False
+
+    def test_the_same_row_would_still_be_capped_over_a_real_baseline(
+            self, ngoreme_census):
+        """The falsifier for the test above: the de-capping is the ZERO, not
+        the class and not the size of the loss. Give the same row a starter
+        baseline of 3 -- which is what an over-subtractable row looks like --
+        and the cap applies again."""
+        row = json.loads(json.dumps(measured_row(ngoreme_census, "MoStemMsa")))
+        assert is_gross_basis_row(row) is False
+        row["starter_baseline_count"] = 3
+        assert is_gross_basis_row(row) is True
+
+    def test_an_absent_baseline_count_is_not_a_measured_zero(
+            self, ngoreme_census):
+        """And the other falsifier, the one that matters more: T110 exempts a
+        MEASURED zero, never a missing measurement. Drop the count key (or the
+        `baseline_document` corroboration) and the row goes straight back to
+        being capped -- absent is not zero, which is the same refusal
+        `census.unmatched_starter` makes."""
+        base = measured_row(ngoreme_census, "MoStemMsa")
+        no_key = json.loads(json.dumps(base))
+        no_key.pop("starter_baseline_count")
+        assert is_gross_basis_row(no_key) is True
+        nulled = json.loads(json.dumps(base))
+        nulled["starter_baseline_count"] = None
+        assert is_gross_basis_row(nulled) is True
+        unmentioned = json.loads(json.dumps(base))
+        unmentioned["starter_baseline_source"] = "absent_from_baseline"
+        assert is_gross_basis_row(unmentioned) is True
 
     def test_the_ejagham_pair_loses_its_stem_msas_too(self, ejagham_census):
         """Not a Ngoreme quirk: the same class is 153 -> 0 on the other pair."""
@@ -3492,31 +3791,55 @@ class TestConversionSignatureIsNotNetted:
 
 
 # ---------------------------------------------------------------------------
-# FINDING 2 -- the capped exit 0. Documented, not treated as a pass.
+# FINDING 2 -- the capped exit 0. Documented, then FIXED at the predicate.
+#
+# T024b recorded the surprise: both ruined pairs stamped `CENSUS_ACCOUNTED` /
+# exit 0 while 44-47 rows failed and 7,357-74,157 units were unexplained,
+# because the real baseline is count-only so EVERY row declared
+# `baseline_gross` and on that basis a tally was "advisory rather than
+# evidence". T110 found the half of that reasoning that was never true. The cap
+# compensates for gross subtraction removing the MATCHED starter objects twice;
+# on a row whose baseline document counted ZERO for its class there are none to
+# remove, `total - 0` and `total - (0 - 0)` are the same integer, and the tally
+# is exact. Those rows are the overwhelming majority here -- 31 of 44 on
+# ejagham, 33 of 46 on ngoreme -- so both artifacts now recompute to
+# `UNEXPLAINED_SHORTFALL` / exit 1.
+#
+# The class is kept, with its numbers moved, because the finding is still the
+# thing worth pinning: the two snapshots STILL STORE the passing token they
+# were stamped with, 13 rows apiece are still genuinely capped, and the gap
+# between "stored" and "recomputed" is now the test evidence instead of a
+# paragraph of prose. Nothing here may be read as "the transfer was fine".
 # ---------------------------------------------------------------------------
 
 class TestCappedExitZeroCoexistsWithFailingRows:
-    """Both ruined pairs report `CENSUS_ACCOUNTED` / exit 0.
-
-    That is 5.2's gross-basis cap behaving exactly as specified -- the real
-    baseline is count-only, so EVERY row is `baseline_gross`, and on that
-    basis a shortfall tally is advisory rather than evidence. It is pinned
-    here so the behaviour is DISCOVERED FROM A TEST rather than rediscovered
-    from a green release gate: the headline says success while 44-47 rows fail
-    and 7,357-74,157 units are unexplained. Recorded as T024b.
-
-    These are the tests that must NOT be read as "the transfer was fine"."""
+    """What the two snapshots stored, against what their evidence now gives."""
 
     @pytest.mark.parametrize("pair", sorted(MEASURED_CENSUS_SNAPSHOTS))
-    def test_the_run_verdict_is_capped_to_a_passing_token(self, pair):
+    def test_the_stored_verdict_still_says_the_run_passed(self, pair):
+        """The instrument's own output, unedited. This is what a reader of the
+        committed file sees, and it is why T110 is a correctness fix rather
+        than a tightening: the document on disk claims exit 0."""
         artifact = load_measured_census(pair)
         assert artifact["verdict"] == GROSS_BASIS_VERDICT_CAP
         assert artifact["verdict"] == "CENSUS_ACCOUNTED"
         assert artifact["exit_code"] == 0
-        assert recompute_verdict(artifact) == "CENSUS_ACCOUNTED"
-        assert is_passing_verdict(recompute_verdict(artifact)) is True
-        assert gate_artifact(artifact).passed is True
-        assert gate_artifact(artifact).exit_code == 0
+        assert is_passing_verdict(artifact["verdict"]) is True
+
+    @pytest.mark.parametrize("pair", sorted(MEASURED_CENSUS_SNAPSHOTS))
+    def test_the_recomputed_verdict_no_longer_passes(self, pair):
+        """T110. The cap still applies to the 13 rows with a real nonzero
+        baseline, so the token is not `CENSUS_CLEAN` and never could be -- but
+        it no longer applies to the zero-baseline rows, and one unsuppressed
+        required shortfall is all `UNEXPLAINED_SHORTFALL` needs."""
+        artifact = load_measured_census(pair)
+        assert recompute_verdict(artifact) == "UNEXPLAINED_SHORTFALL"
+        assert is_passing_verdict(recompute_verdict(artifact)) is False
+        assert gate_artifact(artifact).passed is False
+        assert gate_artifact(artifact).exit_code == 1
+        # Still a capped run, just not a capped PASS: the rows with a genuine
+        # baseline to over-subtract keep their suppression.
+        assert gross_basis_suppressions(artifact)
 
     @pytest.mark.parametrize(
         "pair,failing,shortfall_rows,unexplained",
@@ -3532,7 +3855,9 @@ class TestCappedExitZeroCoexistsWithFailingRows:
         Ngoreme's required SURPLUS row `MoAffixAllomorph` fails and is not a
         shortfall row at all."""
         artifact = load_measured_census(pair)
-        assert gate_artifact(artifact).exit_code == 0
+        # exit 1 since T110, and the rows are the reason rather than the
+        # counterpoint to it.
+        assert gate_artifact(artifact).exit_code == 1
         assert len(failing_rows(artifact)) == failing
         assert artifact["totals"]["classes_shortfall"] == shortfall_rows
         assert artifact["totals"]["unexplained_shortfall"] == unexplained
@@ -3558,14 +3883,56 @@ class TestCappedExitZeroCoexistsWithFailingRows:
         assert totals["unexplained_shortfall"] == unexplained
         assert totals["advisory_shortfall"] == advisory
 
-    @pytest.mark.parametrize("pair,suppressed", [("ngoreme", 46),
-                                                ("ejagham", 44)])
-    def test_every_row_is_on_the_gross_basis_which_is_why_the_cap_applies(
-            self, pair, suppressed):
+    @pytest.mark.parametrize("pair,declared,de_capped", [
+        ("ngoreme", 46, 33), ("ejagham", 44, 31)])
+    def test_the_declared_basis_is_uniform_but_the_cap_is_not(
+            self, pair, declared, de_capped):
+        """Every row DECLARES `baseline_gross` -- the baseline is count-only, so
+        no row could earn `baseline_matched` -- and that was once the whole
+        story. Since T110 the declaration is necessary and not sufficient, and
+        these artifacts hold all three states at once:
+
+        * 12 rows with a NONZERO count from the baseline document: an
+          over-subtraction really is possible, so the cap applies;
+        * 1 row (an Amendment A1 `FsFeatStrucType` half) with NO count at all,
+          `starter_baseline_source: "absent_from_baseline"`: still capped, and
+          for the opposite reason -- nobody counted, so nothing is known, and
+          reading that as a measured zero is the error the whole gate refuses;
+        * 31 / 33 rows with a MEASURED ZERO: exact, and no longer capped.
+
+        13 = 12 + 1, which is why the suppression count is not just the
+        nonzero-baseline count."""
         artifact = load_measured_census(pair)
         bases = {row["starter_subtraction_basis"] for row in artifact["classes"]}
         assert bases == {GROSS_SUBTRACTION_BASIS}
-        assert len(gross_basis_suppressions(artifact)) == suppressed
+        once_capped = [
+            row for row in artifact["classes"]
+            if row["gate_scope"] == "required"
+            and (row.get("unexplained_shortfall", 0)
+                 or row.get("unexplained_surplus", 0))
+        ]
+        assert len(once_capped) == declared
+        still = [row for row in once_capped if is_gross_basis_row(row)]
+        assert len(gross_basis_suppressions(artifact)) == len(still) == 13
+        assert len(once_capped) - len(still) == de_capped
+
+        nonzero = [row for row in still
+                   if row["starter_baseline_source"] == "baseline_document"]
+        unmeasured = [row for row in still
+                      if row["starter_baseline_source"] == "absent_from_baseline"]
+        assert len(nonzero) == 12
+        assert all(row["starter_baseline_count"] > 0 for row in nonzero)
+        assert [row["class"] for row in unmeasured] == ["FsFeatStrucType"]
+        assert all("starter_baseline_count" not in row for row in unmeasured)
+
+        # Every de-capped row is a MEASURED zero and nothing else -- no row
+        # loses its cap for want of a baseline read.
+        for row in once_capped:
+            if row in still:
+                continue
+            assert row["starter_baseline_source"] == "baseline_document"
+            assert row["starter_baseline_count"] == 0
+            assert row["destination_count_net"] == row["destination_count_total"]
 
     @pytest.mark.parametrize("pair", sorted(MEASURED_CENSUS_SNAPSHOTS))
     def test_the_cap_is_audible_rather_than_silent(self, pair):
@@ -3584,10 +3951,11 @@ class TestCappedExitZeroCoexistsWithFailingRows:
 
     @pytest.mark.parametrize("pair", sorted(MEASURED_CENSUS_SNAPSHOTS))
     def test_the_failing_evidence_is_reachable_through_phase(self, pair):
-        """The information exists; only the DEFAULT is wrong. `--phase` turns
-        the same artifact into a refusal."""
+        """`--phase` refused these runs even while the default passed them,
+        because the phase predicates were never relaxed by the cap. T110 makes
+        the default agree with them; this test is what it agreed WITH."""
         artifact = load_measured_census(pair)
-        assert gate_artifact(artifact).passed is True
+        assert gate_artifact(artifact).passed is False
         for phase in (1, 2, 5):
             outcome = gate_artifact(artifact, phase=phase)
             assert outcome.passed is False, phase
@@ -3607,11 +3975,14 @@ class TestCappedExitZeroCoexistsWithFailingRows:
 
     def test_the_cap_is_a_ceiling_on_tallies_not_on_severity(
             self, ngoreme_census):
-        """Proof the exit 0 is the cap and not a blind instrument: add a
-        single error to the SAME artifact and it becomes CENSUS_ERROR."""
+        """The cap only ever removed the two tokens below its ceiling. Add a
+        single error to the SAME artifact and it becomes CENSUS_ERROR -- which
+        held while this artifact recomputed to `CENSUS_ACCOUNTED` and still
+        holds now that it recomputes to `UNEXPLAINED_SHORTFALL`, because the
+        ceiling was never a floor."""
         from copy import deepcopy
 
-        assert recompute_verdict(ngoreme_census) == "CENSUS_ACCOUNTED"
+        assert recompute_verdict(ngoreme_census) == "UNEXPLAINED_SHORTFALL"
         forged = deepcopy(ngoreme_census)
         forged["errors"] = [{
             "class": "MoStemMsa",
@@ -4888,21 +5259,25 @@ T086_CENSUS_ID = "CENSUS-20260820-150540"
 #: Every row the 5.2 cap suppressed on that run. Pinned as data because "none
 #: of them is P1's" is the finding, and a finding that is not written down
 #: cannot be checked later.
+#: The rows 5.2's cap suppresses on the T086 snapshot, AFTER T110. Eight of the
+#: thirteen T086 originally recorded -- FsClosedValue 46, FsFeatStruc 23,
+#: PunctuationForm 586, ReversalIndexEntry 1, WfiAnalysis 136, WfiGloss 135,
+#: WfiMorphBundle 219, WfiWordform 49, together 1195 of the 1643 -- had a
+#: MEASURED-ZERO starter baseline, so gross subtraction removed nothing from
+#: them and both bases computed the same integer. They were never advisory and
+#: are no longer suppressed. The five that remain are the five with a real
+#: nonzero baseline to over-subtract.
 T086_CAPPED_ROWS = {
     "CmPossibility": 304,
-    "FsClosedValue": 46,
-    "FsFeatStruc": 23,
-    "PunctuationForm": 586,
     "ReversalIndex": 2,
-    "ReversalIndexEntry": 1,
     "StText": 17,
     "StTxtPara": 91,
-    "WfiAnalysis": 136,
-    "WfiGloss": 135,
-    "WfiMorphBundle": 219,
-    "WfiWordform": 49,
     "PhCode": 34,
 }
+
+#: What T086 measured before T110, kept so the delta is a fact in the test
+#: rather than a sentence in a journal.
+T086_CAPPED_ROWS_PRE_T110_TOTAL = 1643
 
 #: The phases whose third clause this closes, and the task that owns each.
 T086_GATED_PHASES = ((1, "T038"), (2, "T075"), (3, "T048"))
@@ -5019,32 +5394,49 @@ class TestT086TheAmendedThirdClause:
             task + " (P" + str(phase) + ") has capped rows inside its own "
             "scope, so its third clause is NOT satisfied: " + repr(in_scope))
 
-    def test_the_gate_still_exits_8_and_that_is_the_point(self):
-        """The clause was amended; the gate was not. `census_cli` still reports
-        a capped pass project-wide, so nothing here can be read as "the run is
-        clean" -- and SC-010's refusal to provide a "loss reported, exit
-        success" outcome is intact."""
+    def test_the_gate_does_not_exit_zero_and_that_is_the_point(self):
+        """The clause was amended; the gate was not. Nothing here may be read as
+        "the run is clean", and SC-010's refusal to provide a "loss reported,
+        exit success" outcome is intact.
+
+        The refusal used to be `CAPPED_PASS_EXIT_CODE` 8 -- a pass the cap
+        turned non-zero. Since T110 it is a plain exit 1: 8 of the 13 suppressed
+        rows had a measured-zero baseline, so the artifact's own evidence gives
+        `UNEXPLAINED_SHORTFALL` and there is no pass left to cap. The phase
+        predicate is satisfied either way, which is exactly the separation
+        T086's clause rests on -- the run verdict got stricter and P1's answer
+        did not move. Exit 8 itself is untouched and still reachable; its own
+        test is `test_a_capped_pass_does_not_exit_zero`, over a row with a
+        nonzero baseline."""
         artifact = load_t086_snapshot()
         outcome = gate_artifact(artifact, phase=1)
-        assert outcome.verdict == "CENSUS_ACCOUNTED"
+        assert outcome.verdict == "UNEXPLAINED_SHORTFALL"
+        assert outcome.exit_code == 1
         assert outcome.phase.satisfied
         assert gross_basis_suppressions(artifact), (
-            "this snapshot is supposed to BE the capped case")
+            "this snapshot is supposed to still BE partly capped")
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "census.json"
             path.write_text(json.dumps(artifact), encoding="utf-8")
             code = cli_exit(["gate", "--artifact", str(path), "--phase", "1"])
-        assert code == census_cli.CAPPED_PASS_EXIT_CODE == 8
+        assert code == 1
+        assert code != census_cli.CAPPED_PASS_EXIT_CODE == 8
 
     def test_the_capped_rows_are_the_ones_recorded(self):
         """If a later change moves these, the tasks' prose is stale and the
-        finding needs re-stating rather than the test relaxing."""
+        finding needs re-stating rather than the test relaxing. T110 moved
+        them, and this is the re-statement: 5 rows and 448 objects, down from
+        13 and 1643. Every row that left had a measured-zero baseline."""
         artifact = load_t086_snapshot()
         measured = {label: count
                     for label, _direction, count
                     in gross_basis_suppressions(artifact)}
         assert measured == T086_CAPPED_ROWS
-        assert sum(measured.values()) == 1643
+        assert sum(measured.values()) == 448
+        assert sum(measured.values()) < T086_CAPPED_ROWS_PRE_T110_TOTAL
+        for row in artifact["classes"]:
+            if row["class"] in measured:
+                assert row["starter_baseline_count"] > 0, row["class"]
 
     def test_no_capped_row_belongs_to_any_bounded_phase(self):
         """Stronger than the per-phase clause, and the reason it is safe to
@@ -5063,33 +5455,75 @@ class TestT086TheAmendedThirdClause:
                                         "census-038-ngoreme"])
     def test_the_amended_clause_refuses_the_pre_fix_runs(self, pre_fix):
         """Falsifiability, on real data. These are T024b's own measurements --
-        44 and 46 capped rows, `CENSUS_ACCOUNTED`, exit 0 at the time -- and on
-        both of them the capped rows land INSIDE every bounded phase's scope. An
-        amended clause that passed these would be worthless."""
+        44 and 46 capped rows, `CENSUS_ACCOUNTED`, exit 0 at the time -- and
+        every gated phase must still be REFUSED on them.
+
+        T110 changed how each refusal is reached, and the change is worth
+        pinning per phase rather than averaging away. P1 and P3 still hold an
+        in-scope capped row (`PartOfSpeech`, plus `MoMorphType` for P3 -- the
+        classes with a real nonzero starter baseline). P2's two classes,
+        `MoInflAffixSlot` and `MoInflAffixTemplate`, both had a MEASURED-ZERO
+        baseline, so their shortfalls were never advisory: P2's clause three is
+        now VACUOUSLY satisfied on these runs and the refusal comes from
+        clauses one and two instead. That is the right direction -- the loss
+        stopped being excused and started being counted -- but a clause-three
+        assertion alone would no longer refuse P2, which is exactly why the
+        first assertion in this loop is the predicate itself."""
         path = (Path(__file__).resolve().parent / "_snapshots"
                 / (pre_fix + ".json"))
         artifact = json.loads(path.read_text(encoding="utf-8"))
+        in_scope = {}
         for phase, _task in T086_GATED_PHASES:
             assert not evaluate_phase(artifact, phase).satisfied, phase
-            assert phase_scoped_suppressions(artifact, phase), (
-                "P" + str(phase) + " has no in-scope capped row on " + pre_fix
-                + ", so this snapshot no longer demonstrates the clause "
-                "refusing a bad run")
+            in_scope[phase] = {label for label, _, _
+                               in phase_scoped_suppressions(artifact, phase)}
+        assert in_scope[1] == {"PartOfSpeech"}
+        assert in_scope[2] == set()
+        assert in_scope[3] == {"MoMorphType", "PartOfSpeech"}
+        # And the run itself is no longer a pass at all, which is the answer
+        # T086 could not give while the cap covered 44-46 rows.
+        assert recompute_verdict(artifact) == "UNEXPLAINED_SHORTFALL"
 
     def test_a_suppression_inside_the_scope_would_fail_the_clause(self):
         """The synthetic complement of the two tests above: move one capped row
         INTO P1's scope and the clause must fail. Guards against a bound so
-        narrow that nothing could ever land in it."""
+        narrow that nothing could ever land in it.
+
+        The perturbation now has to give the row a NONZERO starter baseline as
+        well as the gross basis, because since T110 those are two different
+        claims: `baseline_gross` over a measured zero is exact arithmetic and is
+        not capped at all. Setting the basis alone would build a row that no
+        longer demonstrates anything -- which is how this test caught the change
+        rather than absorbing it."""
         artifact = json.loads(json.dumps(load_t086_snapshot()))
         for row in artifact["classes"]:
             if row["class"] == "MoStemMsa":
+                assert row["starter_baseline_count"] == 0
                 row["starter_subtraction_basis"] = GROSS_SUBTRACTION_BASIS
+                row["starter_baseline_count"] = 5
                 row["unexplained_shortfall"] = 7
                 break
         else:
             pytest.fail("the snapshot has no MoStemMsa row to perturb")
         assert phase_scoped_suppressions(artifact, 1) == (
             ("MoStemMsa", "shortfall", 7),)
+
+    def test_the_same_perturbation_without_a_baseline_is_not_a_suppression(
+            self):
+        """The other half of the pair, and the T110 regression that matters: a
+        row perturbed to `baseline_gross` while its baseline stays a measured
+        zero produces NO suppression, in scope or out. If this ever starts
+        returning a suppression again, the cap has gone back to excusing exact
+        arithmetic."""
+        artifact = json.loads(json.dumps(load_t086_snapshot()))
+        for row in artifact["classes"]:
+            if row["class"] == "MoStemMsa":
+                row["starter_subtraction_basis"] = GROSS_SUBTRACTION_BASIS
+                row["unexplained_shortfall"] = 7
+                break
+        assert phase_scoped_suppressions(artifact, 1) == ()
+        assert not any(label == "MoStemMsa"
+                       for label, _, _ in gross_basis_suppressions(artifact))
 
 
 # ---------------------------------------------------------------------------

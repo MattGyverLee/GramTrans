@@ -2386,9 +2386,17 @@ DIRECTIONS: tuple = ("shortfall", "surplus")
 #: `$defs.classRow.starter_subtraction_basis`.
 SUBTRACTION_BASES: tuple = ("baseline_matched", "baseline_gross", "no_baseline")
 
+#: The one `starter_baseline_source` on which a baseline count is a
+#: MEASUREMENT of the starter project rather than a statement about what the
+#: baseline failed to say. Named for the same reason as
+#: `GROSS_SUBTRACTION_BASIS`: T110 makes `is_gross_basis_row` turn on it, so a
+#: typo here would silently re-cap every exact-arithmetic row.
+BASELINE_SOURCE_DOCUMENT: str = "baseline_document"
+
 #: `$defs.classRow.starter_baseline_source`.
 BASELINE_SOURCES: tuple = (
-    "baseline_document", "absent_from_baseline", "assumed_zero_not_permitted",
+    BASELINE_SOURCE_DOCUMENT, "absent_from_baseline",
+    "assumed_zero_not_permitted",
 )
 
 
@@ -3100,6 +3108,37 @@ PASSING_VERDICTS: frozenset = frozenset({"CENSUS_CLEAN", "CENSUS_ACCOUNTED"})
 # therefore caps only its own contribution, never the whole artifact. In the
 # uniform case the contract describes, every row is gross and the two readings
 # coincide exactly.
+#
+# T110: A ZERO STARTER BASELINE IS NOT A GROSS BASIS AT ALL. Everything above
+# is an argument about ONE quantity -- the starter objects the transfer
+# correctly matched, which gross subtraction removes twice. Where that quantity
+# is provably zero the argument has no subject. A row whose baseline document
+# says 0 for its class subtracts nothing (`starter_excluded` 0,
+# `destination_count_net == destination_count_total`), and the two bases
+# compute the same integer: `total - 0` on the gross basis, `total - (0 - 0)`
+# on the matched one. 5.2's own worked example needs a baseline of 23 to
+# manufacture its phantom 21; over a baseline of 0 there is no phantom to
+# manufacture and the difference is the loss. Such a row is therefore EXACT,
+# and `is_gross_basis_row` returns False for it, so the cap, the notes and the
+# exit code all stop excusing it at once -- one predicate, per T024b, rather
+# than three call sites that could drift.
+#
+# WHAT THAT WAS COSTING. Measured on T078's three artifacts: 13 of 19 / 19 of
+# 27 / 15 of 23 required non-MATCHED rows had a zero baseline from a real
+# `baseline_document`, and 2602 / 57,955 / 8849 objects were being announced as
+# "ADVISORY, not evidence" on arithmetic that could not have been wrong in the
+# excusing direction. Worst single row: mbugwe `CmFile` 2173 -> 0. It changed
+# no verdict on those three (`DUPLICATE_IDENTITY` outranks the cap on all
+# three), which is precisely why it survived -- on a duplicate-free artifact a
+# run that lost 69,406 objects would have read `CENSUS_ACCOUNTED`.
+#
+# AND ABSENT IS STILL CAPPED. The exemption is granted only against a baseline
+# document that was READ and said zero (`starter_baseline_source` ==
+# `BASELINE_SOURCE_DOCUMENT`), never against a missing count. An
+# `absent_from_baseline` row also subtracts 0, but for the opposite reason: not
+# because the starter project held none of that class, but because nobody
+# counted. Its true baseline may be any number, so its arithmetic is not exact
+# and the cap keeps applying. See `is_gross_basis_row`.
 # ---------------------------------------------------------------------------
 
 #: The one basis on which a row's shortfall/surplus is arithmetic noise rather
@@ -3677,22 +3716,61 @@ def validate_artifact(artifact) -> tuple:
 
 
 def is_gross_basis_row(row) -> bool:
-    """True when this row's starter subtraction was GROSS (5.2's table).
+    """True when this row's starter subtraction was GROSS *and over something*.
 
     The single predicate the cap turns on, so `recompute_verdict` and the note
     that makes the cap visible cannot disagree about which rows are capped.
     A row that declares no basis at all is NOT capped: the cap is a claim the
     artifact has to make about itself, never a default.
+
+    T110 EXTENDS THAT PRINCIPLE ONE STEP, in the excusing direction. The cap
+    exists because gross subtraction "also subtracts the starter objects the
+    transfer correctly matched" (see the 5.2 block above). On a row whose
+    baseline count is a MEASURED ZERO there are no such objects to subtract
+    twice: `starter_excluded` is 0, `destination_count_net ==
+    destination_count_total`, and the gross and matched bases compute the
+    IDENTICAL number (`total - 0` against `total - (0 - 0)`). Nothing is
+    advisory about arithmetic that does not depend on which basis you name, so
+    such a row is NOT a gross-basis row for capping purposes -- its shortfall
+    is evidence and must fail the run. `census_cli`'s T048d comment already
+    reasons this way ("A class the baseline counts as ZERO cannot carry a
+    phantom shortfall: gross subtraction subtracts nothing from it, so the two
+    bases already agree") but spent it only on skipping the identity audit.
+
+    THE ROW'S DECLARED BASIS STRING IS NOT TOUCHED, here or upstream. The
+    artifact's own arithmetic has to stay reproducible from what it published,
+    the validator's invariant 4 and `SUBTRACTION_BASES` are written against
+    that vocabulary, and `baseline_gross` remains the literally true
+    description of the subtraction performed. What changes is only whether that
+    subtraction was capable of the over-subtraction the cap compensates for.
+
+    ABSENT IS NOT ZERO, and the corroboration is what keeps them apart. The
+    exemption requires BOTH a `starter_baseline_count` that is an integer 0 AND
+    `starter_baseline_source` == `BASELINE_SOURCE_DOCUMENT` -- i.e. a baseline
+    document that was read and that said zero for this class. A row with no
+    count key, or a null one, or one whose source is `absent_from_baseline`
+    (the A1 split halves, and any class the baseline never mentions) stays
+    CAPPED: its true starter population is unknown, and reading that absence as
+    a measured zero is exactly the error `unmatched_starter` refuses to make.
+    Requiring the positive corroboration rather than inferring it from key
+    presence keeps the docstring's first rule intact in both directions: the
+    cap is a claim the artifact makes about itself, and so is the exemption.
     """
-    return row.get("starter_subtraction_basis") == GROSS_SUBTRACTION_BASIS
+    if row.get("starter_subtraction_basis") != GROSS_SUBTRACTION_BASIS:
+        return False
+    if (row.get("starter_baseline_source") == BASELINE_SOURCE_DOCUMENT
+            and _int_or_none(row.get("starter_baseline_count")) == 0):
+        return False
+    return True
 
 
 def gross_basis_suppressions(artifact, classes=None) -> tuple:
     """Every shortfall/surplus 5.2's cap turns from a failure into accounting.
 
     Each entry is `(class_label, direction, count)`. Pure: derived from the
-    rows' own `starter_subtraction_basis` and unexplained tallies, and -- like
-    the rest of the gate -- never from `artifact["verdict"]`.
+    rows' own basis, baseline and unexplained tallies -- every input is a field
+    of the row `is_gross_basis_row` reads -- and, like the rest of the gate,
+    never from `artifact["verdict"]`.
 
     Empty means the cap changed nothing, which is the ordinary case on a
     `baseline_matched` run. Non-empty is what `gross_basis_cap_notes` renders,
@@ -3742,8 +3820,8 @@ def gross_basis_cap_notes(artifact) -> tuple:
     `verdict_capped` / `verdict_floor` property to add without a breaking
     schema change, and inventing one is forbidden. Notes are explicitly NOT
     load-bearing (invariant 9: no verdict may depend on a note), and this cap
-    does not depend on one: it reads `starter_subtraction_basis`. The note
-    reports the decision; it never makes it.
+    does not depend on one: it reads the counted fields `is_gross_basis_row`
+    reads. The note reports the decision; it never makes it.
     """
     suppressions = gross_basis_suppressions(artifact)
     if not suppressions:
@@ -3868,7 +3946,11 @@ def recompute_verdict(artifact) -> str:
     #
     # A `baseline_matched` row is NOT skipped: its shortfall is trustworthy
     # evidence and must still fail the run even in the same artifact as a
-    # gross-basis row.
+    # gross-basis row. Nor is a row whose baseline document counted ZERO for
+    # its class: gross subtraction over a baseline of 0 removes nothing, so it
+    # cannot have over-removed anything either, and both bases yield the same
+    # integer. T110; `is_gross_basis_row` is where that lives, so this branch
+    # needed no second condition.
     if any(_is_required(r) and not is_gross_basis_row(r)
            and int(r.get("unexplained_shortfall", 0) or 0) > 0
            for r in rows):
