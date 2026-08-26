@@ -1850,5 +1850,5 @@
       ]
     }
   },
-  "last_action": "T113 done -- unit 3743 pass (+12), integration 718 pass unmoved; 3 tasks left, all blocked on live reads / a scoping decision"
+  "last_action": "T113 closed; 038-NK-P2 settled live (REFUTED); Phase 10 authored for the P5 residue -- 90/105 tasks, 15 open"
 }
