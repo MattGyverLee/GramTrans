@@ -12756,38 +12756,48 @@ def phonological_rules_dependencies(piece):
     except (TypeError, AttributeError):
         rr = None
     if rr is not None:
+        # T120: the same whole-loop guard as the two write-side loops, and
+        # here it truncates the FR-304 dependency closure rather than a write
+        # -- an abort partway means every LATER right-hand side contributes no
+        # phoneme / natural-class / POS / rule-feature edge at all.
+        #
+        # This one is LATENT, not measured, and is fixed anyway: as this
+        # function's own RC-2 note records, nothing consumes the return value
+        # yet. Fixing it now means the closure is already correct on the day
+        # 038 Phase 2 wires it up, instead of arriving as a fresh loss then.
         try:
-            for rhs in rr.RightHandSidesOS:
+            dep_rhs = list(rr.RightHandSidesOS)
+        except (AttributeError, TypeError):
+            dep_rhs = []
+        for rhs in dep_rhs:
+            try:
+                for cell in rhs.StrucChangeOS:
+                    _collect_cell(cell)
+            except (AttributeError, TypeError):
+                pass
+            for oa_attr in ("LeftContextOA", "RightContextOA"):
                 try:
-                    for cell in rhs.StrucChangeOS:
-                        _collect_cell(cell)
+                    _collect_cell(getattr(rhs, oa_attr, None))
                 except (AttributeError, TypeError):
                     pass
-                for oa_attr in ("LeftContextOA", "RightContextOA"):
-                    try:
-                        _collect_cell(getattr(rhs, oa_attr, None))
-                    except (AttributeError, TypeError):
-                        pass
-                # InputPOSesRC / ReqRuleFeatsRC / ExclRuleFeatsRC (coordinator
-                # live-run defect B, feature 037): these reference
-                # IPartOfSpeech / IPhPhonRuleFeat objects that must already
-                # exist in target -- previously surfaced as no hard
-                # dependency at all, so a rule referencing an
-                # exception-feature the target lacked silently lost that
-                # conditioning (see _phon_rule_apply_body's matching rc_attr
-                # loop, which now reports a DroppedItemRecord for the same
-                # gap instead of a bare [WARN]).
-                for rc_attr in ("InputPOSesRC", "ReqRuleFeatsRC", "ExclRuleFeatsRC"):
-                    try:
-                        rc = getattr(rhs, rc_attr, None)
-                        if rc is None:
-                            continue
-                        for item in rc:
-                            _add(item)
-                    except (AttributeError, TypeError):
-                        pass
-        except (AttributeError, TypeError):
-            pass
+            # InputPOSesRC / ReqRuleFeatsRC / ExclRuleFeatsRC (coordinator
+            # live-run defect B, feature 037): these reference
+            # IPartOfSpeech / IPhPhonRuleFeat objects that must already
+            # exist in target -- previously surfaced as no hard
+            # dependency at all, so a rule referencing an
+            # exception-feature the target lacked silently lost that
+            # conditioning (see _phon_rule_apply_body's matching rc_attr
+            # loop, which now reports a DroppedItemRecord for the same
+            # gap instead of a bare [WARN]).
+            for rc_attr in ("InputPOSesRC", "ReqRuleFeatsRC", "ExclRuleFeatsRC"):
+                try:
+                    rc = getattr(rhs, rc_attr, None)
+                    if rc is None:
+                        continue
+                    for item in rc:
+                        _add(item)
+                except (AttributeError, TypeError):
+                    pass
 
     return tuple(refs)
 
@@ -13108,6 +13118,35 @@ def _short_guid(guid) -> str:
     return str(guid)[:8]
 
 
+def _report_dropped_rhs(dropped, rule_guid, rhs_guid, exc):
+    """DroppedItemRecord for a whole `IPhSegRuleRHS` that could not be built
+    (feature 038 T120).
+
+    The record this replaces did not exist: the RHS loop was wrapped in a
+    single `except (AttributeError, TypeError): pass`, so one bad right-hand
+    side aborted the loop and every REMAINING right-hand side of that rule
+    vanished with no trace. The rule then reported success. That is the
+    measured `PhSegRuleRHS` shortfall (21 -> 18, 39 -> 28) on rules whose own
+    count is MATCHED, and it is an SC-010 never-silent violation independently
+    of the count.
+    """
+    if dropped is None:
+        return
+    _append_dropped_once(dropped, DroppedItemRecord(
+        owner_kind="PhSegRuleRHS",
+        owner_guid=rhs_guid or "",
+        owner_label=f"rule={_short_guid(rule_guid)} rhs={_short_guid(rhs_guid)}",
+        field_name="RightHandSidesOS",
+        item_name=f"rhs={_short_guid(rhs_guid)}",
+        item_guid=rhs_guid or "",
+        reason=(
+            f"right-hand side could not be built ({type(exc).__name__}: {exc}); "
+            f"its StrucChange/LeftContext/RightContext children are lost with "
+            f"it. Remaining right-hand sides of this rule were still attempted."
+        ),
+    ))
+
+
 def _report_dropped_rule_ref(dropped, rule_guid, rhs_guid, field_name, item_guid, src_item):
     """DroppedItemRecord for an RHS reference-collection item
     (InputPOSesRC/ReqRuleFeatsRC/ExclRuleFeatsRC) absent from the target
@@ -13395,31 +13434,42 @@ def _phon_rule_apply_body(src_rule, new_rule, class_name, source, target,
         _pre_pass_constraints_from_seq(src_rr.StrucDescOS)
     except (AttributeError, TypeError):
         pass
+    # T120(a): SAME DEFECT SHAPE AS THE RHS CREATION LOOP BELOW, AND IT LANDS
+    # ON THE BIGGEST LOSS IN THE CONTEXT FAMILY. This `try` used to wrap the
+    # whole loop, so an error on one right-hand side aborted the constraint
+    # pre-pass and every REMAINING right-hand side's `PhFeatureConstraint`s
+    # were never created -- silently. `PhFeatureConstraint` is owned SOLELY by
+    # `PhPhonData.FeatConstraints` (a project-level shared pool, not a rule
+    # child) and measures -47 / -32, the single largest context-family loss.
+    # Guarding the acquisition and letting each right-hand side fail on its own
+    # is the whole fix; the pool itself is already created GUID-preserved by
+    # `_pre_pass_constraints_from_seq`.
     try:
-        for src_rhs in src_rr.RightHandSidesOS:
-            for attr in ("StrucChangeOS", "LeftContextOA", "RightContextOA"):
-                try:
-                    val = getattr(src_rhs, attr, None)
-                    if val is None:
-                        continue
-                    # OA returns a single object; OS is iterable
-                    if attr.endswith("OA"):
-                        # May itself be a sequence
-                        try:
-                            cn = ICmObject(val).ClassName
-                            if cn == "PhSequenceContext":
-                                seq_ctx = IPhSequenceContext(val)
-                                _pre_pass_constraints_from_seq(seq_ctx.MembersRS)
-                            else:
-                                _pre_pass_constraints_from_seq([val])
-                        except (AttributeError, TypeError):
-                            pass
-                    else:
-                        _pre_pass_constraints_from_seq(val)
-                except (AttributeError, TypeError):
-                    pass
+        pre_pass_rhs = list(src_rr.RightHandSidesOS)
     except (AttributeError, TypeError):
-        pass
+        pre_pass_rhs = []
+    for src_rhs in pre_pass_rhs:
+        for attr in ("StrucChangeOS", "LeftContextOA", "RightContextOA"):
+            try:
+                val = getattr(src_rhs, attr, None)
+                if val is None:
+                    continue
+                # OA returns a single object; OS is iterable
+                if attr.endswith("OA"):
+                    # May itself be a sequence
+                    try:
+                        cn = ICmObject(val).ClassName
+                        if cn == "PhSequenceContext":
+                            seq_ctx = IPhSequenceContext(val)
+                            _pre_pass_constraints_from_seq(seq_ctx.MembersRS)
+                        else:
+                            _pre_pass_constraints_from_seq([val])
+                    except (AttributeError, TypeError):
+                        pass
+                else:
+                    _pre_pass_constraints_from_seq(val)
+            except (AttributeError, TypeError):
+                pass
 
     # -----------------------------------------------------------------------
     # Helper: wire the scalar bounds + nested-context reference on a
@@ -13643,8 +13693,28 @@ def _phon_rule_apply_body(src_rule, new_rule, class_name, source, target,
             if new_cell is not None:
                 setattr(new_rhs, attr_name, new_cell)
 
+    # T120(b): THE ITERATOR ACQUISITION IS GUARDED; THE LOOP BODY IS NOT.
+    #
+    # This `try` used to wrap the WHOLE loop with `except (AttributeError,
+    # TypeError): pass`, so an error in ANY iteration aborted the loop and
+    # SILENTLY dropped every REMAINING right-hand side of that rule. That is
+    # the exact shape of the measured loss: `PhRegularRule` is count-MATCHED on
+    # all three pairs (6/6, 21/21, 39/39) while `RightHandSides` is short on
+    # two (21 -> 18, 39 -> 28) -- a PARTIAL loss on a parent that arrived
+    # whole, which no create-path-absent and no enrichment-gap story explains,
+    # but a mid-loop abort explains exactly. Each lost RHS took its
+    # `LeftContext` / `RightContext` / `StrucChange` children with it (on
+    # Mbugwe, 11 lost RHS account for 35 lost child contexts).
+    #
+    # It was also a never-silent violation (SC-010): `pass` left no trace in
+    # the run report, so the rule reported success having transferred some of
+    # its right-hand sides.
     try:
-        for src_rhs in src_rr.RightHandSidesOS:
+        rhs_list = list(src_rr.RightHandSidesOS)
+    except (AttributeError, TypeError):
+        rhs_list = []
+    for src_rhs in rhs_list:
+        try:
             rhs_guid = _guid_str_from(src_rhs)
             new_rhs, _ = _create_with_guid(
                 IPhSegRuleRHSFactory, new_rr.RightHandSidesOS, rhs_guid, target
@@ -13686,8 +13756,13 @@ def _phon_rule_apply_body(src_rule, new_rule, class_name, source, target,
                             )
                 except (AttributeError, TypeError):
                     pass
-    except (AttributeError, TypeError):
-        pass
+        except (AttributeError, TypeError) as exc:  # noqa: PERF203
+            # ONE right-hand side failed. Report it and CONTINUE, so the rest
+            # of the rule's right-hand sides still transfer -- the previous
+            # behaviour lost all of them and said nothing.
+            _report_dropped_rhs(_dropped_list, src_guid,
+                                _guid_str_from(src_rhs), exc)
+            continue
 
     # -----------------------------------------------------------------------
     # InitialStratumRA / FinalStratumRA.
