@@ -11795,7 +11795,178 @@ def phonemes_execute_action(action, context, ws_mapping, tag):
         apply_carrier_b(new_phon, cache.DefaultAnalWs, tag, strict=False)
     except Exception:
         pass
-    return new_phon
+    try:
+        return new_phon
+    finally:
+        # T121: codes are transferred by a TAIL pass, not here, because the
+        # loss covers phonemes this run CREATED *and* phonemes matched to the
+        # target's starter inventory -- and a matched phoneme never reaches
+        # this function at all (it plans as a natural-key PlannedOverwrite).
+        # A create-path-only fix would leave the enrichment half standing.
+        _run_tail_once(
+            context, target, tag, "_did_phoneme_codes",
+            GrammarCategory.PHONEMES, _wire_phoneme_codes,
+        )
+
+
+def _phoneme_code_targets(context, plan, target):
+    """`{src_phoneme_guid: target phoneme}` for every source phoneme that has a
+    counterpart in the destination -- CREATED or STARTER-MATCHED (T121).
+
+    Two resolution routes, because a phoneme reaches the destination two ways
+    and only one of them keeps the source GUID:
+
+      1. `identity_remap` then a straight GUID lookup -- the phoneme this run
+         created, GUID-preserved.
+      2. the run's `PlannedOverwrite`s -- the phoneme MATCHED to the target's
+         starter inventory by the roster natural key `(default vernacular WS,
+         exact Name)`. Its destination object carries the STARTER's GUID, not
+         the source's, so route 1 cannot find it. This is the route that makes
+         the enrichment half possible, and it is why the destination reads
+         exactly the starter baseline today: 23 phoneme codes on all three
+         pairs, unchanged since the project was created.
+    """
+    out = {}
+    remap = (getattr(plan, "identity_remap", None) or {}) if plan is not None \
+        else (getattr(context, "_identity_remap", None) or {})
+    for ov in (getattr(plan, "overwrites", None) or ()):
+        if getattr(ov, "category", None) is not GrammarCategory.PHONEMES:
+            continue
+        src_guid = getattr(ov, "source_guid", "")
+        tgt_guid = getattr(ov, "target_guid", "")
+        if not src_guid or not tgt_guid:
+            continue
+        obj = _resolve_target_by_guid(target, tgt_guid)
+        if obj is not None:
+            out[src_guid] = obj
+    return out, remap
+
+
+def _wire_phoneme_codes(context, target, tag):
+    """Transfer `PhPhoneme.CodesOS` (`PhTerminalUnit.Codes`, flid 5090003).
+
+    T121. Runs once, as a tail block after the PHONEMES category.
+
+    WHY THIS EXISTS AT ALL. flexicon 4.5.2's
+    `PhonemeOperations.GetSyncableProperties` returns exactly
+    `['BasicIPASymbol', 'Description', 'Features', 'FeaturesGuid', 'Name']` --
+    `CodesOS` is absent, and `ApplySyncableProperties` has no code handling. So
+    nothing carried codes and the destination read the starter baseline exactly
+    (25) on all three sanctioned pairs: not one `PhCode` was ever created.
+
+    THE ROUTE IS IN-TREE AND GUID-PRESERVING, WHICH IS ONE STEP BETTER THAN
+    T117 PROPOSED. T117 chose `PhonemeOperations.AddCode` to avoid an upstream
+    flexicon dependency, and that reasoning holds -- but `AddCode` mints a
+    fresh identity, and GUID loss is a defect in this codebase unless
+    justified (feature 033 exists because of it). Probed live on LCM 11.0.0
+    (`SIL.LCModel.DomainImpl.PhCodeFactory`): `IPhCodeFactory` exposes BOTH
+    `Create()` and `Create(Guid)`. So `_create_with_guid` works here exactly as
+    it does for every other create in this file, and the route stays in-tree
+    with no floor bump -- T117's conclusion, by a better road.
+
+    THE BOUNDARY-MARKER TRAP, AVOIDED BY CONSTRUCTION RATHER THAN BY A FILTER.
+    `PhCode` is owned via `PhTerminalUnit.Codes`, and `PhTerminalUnit` has TWO
+    concrete subclasses: measured live on `Ejagham W Mini`, 43 codes = 41 on
+    `PhPhoneme` + 2 on `PhBdryMarker`, same flid. The boundary-marker codes are
+    already MATCHED 2 -> 2 and must not be touched. This pass walks
+    `source.Phonemes.GetAll()` -- phonemes, never terminal units -- so a
+    boundary marker's codes are unreachable from here. A `PhCode`-repository
+    loop filtered by owner class would have been correct too and one edit away
+    from wrong; this cannot express the bug.
+    """
+    skips = []
+    plan = getattr(context, "_run_plan", None)
+    source = getattr(context, "source_handle", None)
+    if source is None or target is None:
+        return skips
+    try:
+        src_phonemes = list(source.Phonemes.GetAll())
+    except (AttributeError, TypeError):
+        return skips
+    if not src_phonemes:
+        return skips
+
+    matched, remap = _phoneme_code_targets(context, plan, target)
+    # WS-FIDELITY: a code's `Representation` is a multistring, and writing-system
+    # HANDLES are per-project and NOT portable (feature 038 T024g -- a source
+    # handle written into the target throws inside XMLBackendProvider.Commit and
+    # discards the ENTIRE unit of work). `_copy_multistrings_ws_mapped` maps by
+    # WS *Id* and skips a source WS with no target counterpart.
+    ws_map = _ws_map_dict(getattr(plan, "ws_mapping", None))
+
+    created = 0
+    for src_phon in src_phonemes:
+        src_guid = _guid_str_from(src_phon)
+        if not src_guid:
+            continue
+        tgt_phon = matched.get(src_guid)
+        if tgt_phon is None:
+            tgt_phon = _resolve_target_by_guid(
+                target, remap.get(src_guid, src_guid))
+        if tgt_phon is None:
+            # T074's scoping: a source phoneme with no destination counterpart
+            # is one this run never transferred, not a lost code.
+            continue
+        tgt_phon = _cast_lcm(tgt_phon, "IPhPhoneme")
+        try:
+            src_codes = list(getattr(
+                _cast_lcm(src_phon, "IPhPhoneme"), "CodesOS", None) or ())
+        except (AttributeError, TypeError):
+            continue
+        if not src_codes:
+            continue
+        try:
+            tgt_codes = getattr(tgt_phon, "CodesOS", None)
+            existing = {_guid_str_from(c) for c in (tgt_codes or ())}
+        except (AttributeError, TypeError):
+            continue
+        if tgt_codes is None:
+            continue
+        for src_code in src_codes:
+            code_guid = _guid_str_from(src_code)
+            if not code_guid or code_guid in existing:
+                continue          # idempotent: same GUID, already there
+            try:
+                new_code, _ = _create_with_guid(
+                    IPhCodeFactory_ref(), tgt_codes, code_guid, target)
+            except Exception as exc:  # noqa: BLE001
+                # `_create_with_guid` fails loud on a GUID it cannot preserve.
+                # A code is a LEAF: re-raising would abort the whole phoneme
+                # inventory over one representation, so this is REPORTED and
+                # the rest still transfers. Never silent -- the operator sees
+                # one Skip per code that did not land.
+                _log_guid_fallback("IPhCode", code_guid, exc)
+                skips.append(Skip(
+                    category=GrammarCategory.PHONEMES,
+                    source_guid=code_guid,
+                    reason=SkipReason.DEPENDENCY_UNRESOLVED,
+                    detail=f"PhCode {code_guid} on phoneme={src_guid} could "
+                           f"not be created: {type(exc).__name__}"))
+                continue
+            _copy_multistrings_ws_mapped(
+                _cast_lcm(src_code, "IPhCode"),
+                _cast_lcm(new_code, "IPhCode"),
+                ("Representation",),
+                source=source, target=target, ws_map=ws_map,
+            )
+            created += 1
+    if created:
+        _log_phoneme_codes(created)
+    return skips
+
+
+def IPhCodeFactory_ref():  # noqa: N802 -- named for the interface it returns
+    """`IPhCodeFactory`, imported lazily so this module stays importable
+    without pythonnet (host-free unit tests)."""
+    from SIL.LCModel import IPhCodeFactory
+    return IPhCodeFactory
+
+
+def _log_phoneme_codes(count):
+    import logging as _logging
+    _logging.getLogger("gramtrans.Lib.categories").info(
+        "T121: created %d PhCode object(s) on phonemes (GUID-preserved).",
+        count)
 
 
 # ----- natural_classes (memo step 4) ---------------------------------------
