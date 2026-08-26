@@ -119,11 +119,17 @@ def test_producer_captures_feature_assignments_from_source():
     out = {}
     preview._populate_msa_infl_feat_bindings(src, out)
 
+    # 038 T119 added the additive `"kind"` discriminator so an
+    # `IFsComplexValue` spec can be expressed as something other than an empty
+    # `"value"`. An absent `"kind"` still means `"closed"` on the consumer
+    # side, so this is a widening of the shape, not a change of contract --
+    # but this assertion is an exact-equality one, so it states the new shape.
     assert out == {
         "msa-1": {
             "struc_guid": "struc-1",
             "type_guid": "type-1",
-            "specs": [{"spec_guid": "spec-1", "feature": "feat-1", "value": "val-1"}],
+            "specs": [{"spec_guid": "spec-1", "kind": "closed",
+                       "feature": "feat-1", "value": "val-1"}],
         }
     }
 

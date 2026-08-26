@@ -2941,6 +2941,25 @@ class RunPlan:
     #                        "specs": [{"spec_guid","feature","value"}, ...]}}
     # Ephemeral per run; not serialised into the run snapshot.
     msa_infl_feat_bindings: dict = field(default_factory=dict)
+    # Feature 038 (T119): the OTHER feature-structure owners --
+    # MoStemMsa.MsFeaturesOA, MoDerivAffMsa.From/ToMsFeaturesOA and
+    # MoAffixAllomorph.MsEnvFeaturesOA. Consumed by the same 17.1 sub-pass,
+    # for the same sequencing reason as `msa_infl_feat_bindings`.
+    #
+    # KEYED BY `"<owner guid>|<attr>"`, NOT BY OWNER GUID. `IMoDerivAffMsa`
+    # carries TWO feature structures (`FromMsFeaturesOA` and `ToMsFeaturesOA`,
+    # measured 17 and 17 on Mbugwe), so an owner-keyed dict would have carried
+    # one of them and reported success -- a silent half-transfer of exactly
+    # the kind SC-010 forbids. See `preview.feat_struc_binding_key`.
+    #
+    # Shape: {"<guid>|<attr>": {"struc_guid": str, "type_guid": str,
+    #                           "owner_guid": str, "attr": str,
+    #                           "specs": [row, ...]}} where a row is
+    #   {"spec_guid","kind":"closed","feature","value"} or
+    #   {"spec_guid","kind":"complex","feature","value":"","nested":{...}}.
+    # A row with no "kind" means "closed" (the feature-033 shape, unchanged).
+    # Ephemeral per run; not serialised into the run snapshot.
+    msa_feat_struc_bindings: dict = field(default_factory=dict)
     # Feature 038 (T074, FR-019): {src_msa_guid: owning src LexEntry guid} for
     # every MSA in the two binding dicts above.
     #

@@ -9375,6 +9375,10 @@ def _run_171_subpass(context, target, tag=None):
         ))
 
     skips.extend(_wire_msa_infl_feats(context, target, plan))
+    # T119: the other feature-structure owners, immediately after and in the
+    # same pass, because they need exactly the same thing to be true first --
+    # the feature DEFINITIONS resolvable in target.
+    skips.extend(_wire_owner_feat_strucs(context, target, plan))
     return skips
 
 
@@ -9498,38 +9502,25 @@ def _wire_msa_infl_feats(context, target, plan):
 
         # Resolve every endpoint BEFORE creating anything, so a partially
         # resolvable structure defers whole rather than landing half-written.
-        resolved = []
-        unresolved = False
-        for row in binding.get("specs", ()):
-            feat_guid, val_guid = row.get("feature", ""), row.get("value", "")
-            if not feat_guid or not val_guid:
-                skips.append(_skip(
-                    src_msa_guid,
-                    f"spec {row.get('spec_guid', '')} on msa={src_msa_guid} is "
-                    "not a closed value (complex/negated); not transferred"))
-                unresolved = True
-                continue
-            tgt_feat = _resolve_target_by_guid(target, feat_guid)
-            tgt_val = _resolve_target_by_guid(target, val_guid)
-            if tgt_feat is None or tgt_val is None:
-                which = "feature" if tgt_feat is None else "value"
-                missing = feat_guid if tgt_feat is None else val_guid
-                skips.append(_skip(
-                    missing,
-                    f"{which}_guid={missing} not in target; InflFeats for "
-                    f"msa={src_msa_guid} deferred"))
-                unresolved = True
-                continue
-            resolved.append((row.get("spec_guid", ""),
-                             _cast_lcm(tgt_feat, "IFsClosedFeature"),
-                             _cast_lcm(tgt_val, "IFsSymFeatVal")))
-        if unresolved or not resolved:
+        # T119 moved this into `_resolve_feat_struc_binding`, shared with the
+        # eight other owners, and with one behavioural change: an
+        # `IFsComplexValue` spec is now FOLLOWED rather than counted as
+        # unresolvable. That single line is why this owner measured 86/86 on
+        # Ejagham and 78/78 on Mbugwe but 38 -> 18 on Ngoreme -- Ngoreme is
+        # the only sanctioned project holding complex values (825 of them), and
+        # every structure containing one deferred whole, taking its closed
+        # siblings with it.
+        def _on_unresolved(guid, detail, _skips=skips):
+            _skips.append(_skip(guid, detail))
+
+        resolved = _resolve_feat_struc_binding(
+            target, binding, _on_unresolved, f"msa={src_msa_guid}")
+        if resolved is None or not resolved:
             continue
 
         # Idempotency guard: already carrying exactly these pairs -> no-op.
         existing = _existing_infl_feat_pairs(target_msa)
-        wanted = {(_guid_str_from(f), _guid_str_from(v)) for _, f, v in resolved}
-        if existing == wanted:
+        if existing == _wanted_feat_struc_pairs(resolved):
             continue
 
         struc = _get_or_create_feat_struc(
@@ -9540,14 +9531,117 @@ def _wire_msa_infl_feats(context, target, plan):
                 src_msa_guid,
                 f"could not create InflFeats structure for msa={src_msa_guid}"))
             continue
-        for spec_guid, tgt_feat, tgt_val in resolved:
-            if (_guid_str_from(tgt_feat), _guid_str_from(tgt_val)) in existing:
-                continue
-            if not _add_closed_value(target, struc, spec_guid, tgt_feat, tgt_val):
-                skips.append(_skip(
-                    spec_guid,
-                    f"could not create IFsClosedValue {spec_guid} on "
-                    f"msa={src_msa_guid}"))
+        _apply_feat_struc_rows(target, struc, resolved, existing,
+                               _on_unresolved, f"msa={src_msa_guid}")
+    return skips
+
+
+#: The owner attributes `_wire_owner_feat_strucs` writes, and the GrammarCategory
+#: each one's Skip is filed under. `MsEnvFeaturesOA` sits on an allomorph rather
+#: than an MSA, which is why the table is keyed by attribute and not by class.
+_FEAT_STRUC_OWNER_CATEGORIES = {
+    "MsFeaturesOA": "STEMS",
+    "FromMsFeaturesOA": "AFFIXES",
+    "ToMsFeaturesOA": "AFFIXES",
+    "MsEnvFeaturesOA": "AFFIXES",
+}
+
+
+def _wire_owner_feat_strucs(context, target, plan):
+    """Wire the feature structures feature 033's pass does not cover (T119).
+
+    `MoStemMsa.MsFeaturesOA`, `MoDerivAffMsa.From/ToMsFeaturesOA` and
+    `MoAffixAllomorph.MsEnvFeaturesOA`, from
+    `plan.msa_feat_struc_bindings`. Runs in the same 17.1 sub-pass and for the
+    same sequencing reason as `_wire_msa_infl_feats`: the `IFsClosedFeature` /
+    `IFsSymFeatVal` endpoints must already be in target, and
+    INFLECTION_FEATURES transfers earlier in the same Move.
+
+    THE DEFECT THIS CLOSES IS HOLLOWNESS, NOT ABSENCE, which is why it lands
+    as a separate pass over MATCHED owners rather than as more code in
+    `_create_msa_for_closure`. `MoStemMsa` is count-MATCHED on the pairs that
+    have it (153/153 ejagham, 139/139 mbugwe) and its `MsFeaturesOA` is
+    `{(none): 153}`, `{(none): 1953}`, `{(none): 139}` -- every stem MSA in
+    every destination arrives carrying no feature structure at all. A
+    counts-only acceptance passes today and would still pass if this function
+    did nothing, so its acceptance is stated per owning FIELD, per pair.
+
+    Shares `_resolve_feat_struc_binding` / `_apply_feat_struc_rows` with the
+    inflectional pass, so GUID preservation, all-or-nothing deferral,
+    idempotency and never-silent reporting are the same code, not a parallel
+    implementation that can drift.
+
+    Returns a list of Skip.
+    """
+    skips = []
+    if plan is not None:
+        bindings = getattr(plan, "msa_feat_struc_bindings", None) or {}
+        remap = getattr(plan, "identity_remap", None) or {}
+    else:
+        bindings = _binding_map(context, "msa_feat_struc_bindings") or {}
+        remap = getattr(context, "_identity_remap", None) or {}
+    if not bindings:
+        return skips
+
+    for key, binding in bindings.items():
+        attr = binding.get("attr") or ""
+        owner_guid = binding.get("owner_guid") or ""
+        if not attr or not owner_guid:
+            # A binding we cannot attribute is a defect in the producer, not a
+            # transfer decision. Report it rather than skipping it quietly.
+            skips.append(Skip(
+                category=GrammarCategory.STEMS,
+                source_guid=str(key),
+                reason=SkipReason.DEPENDENCY_UNRESOLVED,
+                detail=f"feature-structure binding {key!r} carries no "
+                       "owner_guid/attr; not transferred"))
+            continue
+        category = getattr(GrammarCategory,
+                           _FEAT_STRUC_OWNER_CATEGORIES.get(attr, "STEMS"),
+                           GrammarCategory.STEMS)
+        label = f"{attr} on owner={owner_guid}"
+
+        def _skip(guid, detail, _cat=category):
+            return Skip(category=_cat, source_guid=guid,
+                        reason=SkipReason.DEPENDENCY_UNRESOLVED, detail=detail)
+
+        def _on_unresolved(guid, detail, _skips=skips, _mk=_skip):
+            _skips.append(_mk(guid, detail))
+
+        target_owner_guid = remap.get(owner_guid, owner_guid)
+        target_owner = _resolve_target_by_guid(target, target_owner_guid)
+        if target_owner is None:
+            # T074's scoping, for the same reason it applies to the
+            # inflectional pass: this producer also walks the WHOLE source
+            # lexicon regardless of the selection, so an owner absent from the
+            # destination is overwhelmingly an entry this run never selected,
+            # not a loss. An object that is not in the destination has no
+            # feature cell to fill.
+            continue
+        # T088 again: `MsFeaturesOA` is declared on the concrete `IMoStemMsa`,
+        # not on the `IMoMorphSynAnalysis` the repository hands back, so this
+        # cast is what makes the assignment land at all.
+        target_owner = _cast_to_concrete(target_owner)
+
+        resolved = _resolve_feat_struc_binding(
+            target, binding, _on_unresolved, label)
+        if resolved is None or not resolved:
+            continue
+
+        existing = _existing_infl_feat_pairs(target_owner, attr)
+        if existing == _wanted_feat_struc_pairs(resolved):
+            continue
+
+        struc = _get_or_create_feat_struc(
+            target, target_owner, binding.get("struc_guid", ""),
+            binding.get("type_guid", ""), attr)
+        if struc is None:
+            skips.append(_skip(
+                owner_guid,
+                f"could not create {attr} structure for owner={owner_guid}"))
+            continue
+        _apply_feat_struc_rows(target, struc, resolved, existing,
+                               _on_unresolved, label)
     return skips
 
 
@@ -9598,28 +9692,65 @@ class _DuckClosedValue:
         self.ValueRA = None
 
 
-def _existing_infl_feat_pairs(target_msa):
-    """{(feature_guid, value_guid)} already on an MSA's InflFeatsOA."""
+class _DuckComplexValue:
+    """Offline stand-in for IFsComplexValue (host-free tests only). T119.
+
+    `ValueOA` starts None and is assigned the nested `_DuckFeatStruc` by
+    `_add_complex_value`, mirroring the live owning-atomic assignment."""
+
+    def __init__(self, guid=""):
+        self.guid = guid
+        self.FeatureRA = None
+        self.ValueOA = None
+
+
+def _existing_infl_feat_pairs(target_msa, attr="InflFeatsOA"):
+    """{(feature_guid, value_guid)} already on an owner's feature structure.
+
+    T119 gave this an `attr`: the identical question is asked of
+    `MsFeaturesOA`, `FromMsFeaturesOA`, `ToMsFeaturesOA` and
+    `MsEnvFeaturesOA`. The default keeps every feature-033 call site reading
+    exactly as it did.
+
+    A COMPLEX spec contributes `(feature_guid, "complex:<nested struc guid>")`
+    rather than being skipped. It has no `ValueRA` to report, and omitting it
+    would make a structure that already holds a complex value compare EQUAL to
+    one that does not -- the idempotency guard would then treat a half-written
+    structure as finished and never complete it.
+    """
     out = set()
-    struc = getattr(target_msa, "InflFeatsOA", None)
+    struc = getattr(target_msa, attr, None)
     if struc is None:
         return out
     for spec in getattr(_cast_lcm(struc, "IFsFeatStruc"), "FeatureSpecsOC", None) or []:
+        nested = getattr(_cast_lcm(spec, "IFsComplexValue"), "ValueOA", None)
+        if nested is not None:
+            out.add((_guid_str_from(getattr(
+                _cast_lcm(spec, "IFsComplexValue"), "FeatureRA", None)),
+                f"complex:{_guid_str_from(nested)}"))
+            continue
         cv = _cast_lcm(spec, "IFsClosedValue")
         out.add((_guid_str_from(getattr(cv, "FeatureRA", None)),
                  _guid_str_from(getattr(cv, "ValueRA", None))))
     return out
 
 
-def _get_or_create_feat_struc(target, target_msa, struc_guid, type_guid):
-    """Return the MSA's InflFeatsOA, creating it GUID-preserved if absent.
+def _get_or_create_feat_struc(target, target_msa, struc_guid, type_guid,
+                              attr="InflFeatsOA"):
+    """Return the owner's feature structure, creating it GUID-preserved if absent.
 
     Uses `IFsFeatStrucFactory.Create(Guid)` -- probed live on LCM 11.0.0 -- then
-    assigns it to InflFeatsOA (an owning-atomic property, so assignment IS the
+    assigns it to `attr` (an owning-atomic property, so assignment IS the
     ownership transfer). Falls back to `Create()` only if the GUID overload is
     unavailable or the GUID is already taken, so a collision degrades to a new
-    identity rather than aborting the whole affix."""
-    existing = getattr(target_msa, "InflFeatsOA", None)
+    identity rather than aborting the whole affix.
+
+    T119 gave this an `attr` so the stem, derivational and allomorph owners
+    create through the same GUID-preserving path as the inflectional one.
+    `MoStemMsa.MsFeaturesOA` is the reason: it is 1,003 objects across three
+    pairs and ZERO of them arrive today, because nothing anywhere in `Lib/`
+    ever assigns that property."""
+    existing = getattr(target_msa, attr, None)
     if existing is not None:
         return _cast_lcm(existing, "IFsFeatStruc")
     factory = _lcm_factory(target, "IFsFeatStrucFactory")
@@ -9642,7 +9773,7 @@ def _get_or_create_feat_struc(target, target_msa, struc_guid, type_guid):
                 struc = factory.Create()
             except Exception:  # noqa: BLE001
                 return None
-    target_msa.InflFeatsOA = struc
+    setattr(target_msa, attr, struc)
     if type_guid:
         tgt_type = _resolve_target_by_guid(target, type_guid)
         if tgt_type is not None:
@@ -9680,6 +9811,179 @@ def _add_closed_value(target, struc, spec_guid, tgt_feat, tgt_val):
     except Exception:  # noqa: BLE001
         return False
     return True
+
+
+def _add_complex_value(target, struc, spec_guid, tgt_feat, nested_guid,
+                       nested_type_guid):
+    """Create one GUID-preserved `IFsComplexValue` on `struc` and return the
+    nested `IFsFeatStruc` it owns (or None on failure).
+
+    T119. The twin of `_add_closed_value` for the spec kind feature 033 could
+    only report as undeliverable. `IFsComplexValue.ValueOA` is owning-atomic,
+    so assigning the nested structure IS the ownership transfer -- the same
+    shape `_get_or_create_feat_struc` uses for the owner's own slot.
+
+    This is what makes `FsComplexValue` transferable at all: 825 objects on
+    Ngoreme, measured `arrived: 0 / missing: 825` in
+    `tests/integration/_snapshots/two-mode-038-ngoreme.json` while
+    `FsComplexFeature` arrives 2 of 2. The DEFINITIONS transfer; the VALUES
+    did not, and this is the missing half.
+    """
+    factory = _lcm_factory(target, "IFsComplexValueFactory")
+    struc_factory = _lcm_factory(target, "IFsFeatStrucFactory")
+    if factory is None or struc_factory is None:
+        # Offline duck path (host-free tests): same SHAPE as the live branch.
+        cv = _DuckComplexValue(spec_guid)
+        nested = _DuckFeatStruc(nested_guid)
+    else:
+        cv = None
+        parsed = _parse_guid(spec_guid) if spec_guid else None
+        if parsed is not None:
+            try:
+                cv = factory.Create(parsed)
+            except Exception as exc:  # noqa: BLE001
+                _log_guid_fallback("IFsComplexValue", spec_guid, exc)
+                cv = None
+        if cv is None:
+            try:
+                cv = factory.Create()
+            except Exception:  # noqa: BLE001
+                return None
+        nested = None
+        nested_parsed = _parse_guid(nested_guid) if nested_guid else None
+        if nested_parsed is not None:
+            try:
+                nested = struc_factory.Create(nested_parsed)
+            except Exception as exc:  # noqa: BLE001
+                _log_guid_fallback("IFsFeatStruc", nested_guid, exc)
+                nested = None
+        if nested is None:
+            try:
+                nested = struc_factory.Create()
+            except Exception:  # noqa: BLE001
+                return None
+    try:
+        struc.FeatureSpecsOC.Add(cv)
+        cv = _cast_lcm(cv, "IFsComplexValue")
+        cv.FeatureRA = tgt_feat
+        cv.ValueOA = nested
+    except Exception:  # noqa: BLE001
+        return None
+    if nested_type_guid:
+        tgt_type = _resolve_target_by_guid(target, nested_type_guid)
+        if tgt_type is not None:
+            try:
+                _cast_lcm(nested, "IFsFeatStruc").TypeRA = _cast_lcm(
+                    tgt_type, "IFsFeatStrucType")
+            except Exception:  # noqa: BLE001 -- type is optional
+                pass
+    return _cast_lcm(nested, "IFsFeatStruc")
+
+
+def _resolve_feat_struc_binding(target, binding, on_unresolved, label,
+                                depth=0):
+    """Resolve every endpoint of one binding tree BEFORE anything is created.
+
+    T119. Returns a list of resolved rows, or None when any endpoint is
+    missing from target.
+
+    THE ALL-OR-NOTHING RULE IS DELIBERATE AND IS FEATURE 033'S, KEPT. A
+    partially resolvable structure defers WHOLE rather than landing
+    half-written, so a later run completes it once the missing endpoint exists
+    (FR-007's deferral rule). What T119 changes is not the rule but its
+    TRIGGER: a complex value used to trip it, because the reader had no way to
+    express one. It no longer does, so a structure now defers only when an
+    endpoint genuinely is not in the target yet.
+
+    Resolved row shapes:
+        ("closed",  spec_guid, tgt_feature, tgt_value)
+        ("complex", spec_guid, tgt_feature, nested_guid, nested_type, rows)
+    """
+    if depth > _FEAT_STRUC_MAX_DEPTH:
+        on_unresolved(label, f"feature structure nests deeper than "
+                             f"{_FEAT_STRUC_MAX_DEPTH}; not transferred")
+        return None
+    rows = []
+    for row in binding.get("specs", ()) or ():
+        kind = row.get("kind", "closed")
+        spec_guid = row.get("spec_guid", "")
+        feat_guid = row.get("feature", "")
+        if kind == "complex":
+            nested = row.get("nested") or {}
+            tgt_feat = (_resolve_target_by_guid(target, feat_guid)
+                        if feat_guid else None)
+            if tgt_feat is None:
+                on_unresolved(feat_guid or spec_guid,
+                              f"complex-value feature_guid={feat_guid} not in "
+                              f"target; {label} deferred")
+                return None
+            nested_rows = _resolve_feat_struc_binding(
+                target, nested, on_unresolved, label, depth + 1)
+            if nested_rows is None:
+                return None
+            rows.append(("complex", spec_guid,
+                         _cast_lcm(tgt_feat, "IFsComplexFeature"),
+                         nested.get("struc_guid", ""),
+                         nested.get("type_guid", ""), nested_rows))
+            continue
+        val_guid = row.get("value", "")
+        if not feat_guid or not val_guid:
+            on_unresolved(label,
+                          f"spec {spec_guid} on {label} is not a closed value "
+                          "(negated/disjunctive, or a complex value whose "
+                          "nested structure is empty); not transferred")
+            return None
+        tgt_feat = _resolve_target_by_guid(target, feat_guid)
+        tgt_val = _resolve_target_by_guid(target, val_guid)
+        if tgt_feat is None or tgt_val is None:
+            which = "feature" if tgt_feat is None else "value"
+            missing = feat_guid if tgt_feat is None else val_guid
+            on_unresolved(missing,
+                          f"{which}_guid={missing} not in target; {label} "
+                          "deferred")
+            return None
+        rows.append(("closed", spec_guid,
+                     _cast_lcm(tgt_feat, "IFsClosedFeature"),
+                     _cast_lcm(tgt_val, "IFsSymFeatVal")))
+    return rows
+
+
+def _wanted_feat_struc_pairs(rows):
+    """The `(feature_guid, value_guid)` set `rows` would produce, in the same
+    vocabulary `_existing_infl_feat_pairs` reports -- so the two compare."""
+    wanted = set()
+    for row in rows:
+        if row[0] == "complex":
+            wanted.add((_guid_str_from(row[2]), f"complex:{row[3]}"))
+        else:
+            wanted.add((_guid_str_from(row[2]), _guid_str_from(row[3])))
+    return wanted
+
+
+def _apply_feat_struc_rows(target, struc, rows, existing, on_failure, label):
+    """Create the resolved `rows` onto `struc`. Recurses into complex values."""
+    for row in rows:
+        if row[0] == "complex":
+            _, spec_guid, tgt_feat, nested_guid, nested_type, nested_rows = row
+            if (_guid_str_from(tgt_feat), f"complex:{nested_guid}") in existing:
+                continue
+            nested_struc = _add_complex_value(
+                target, struc, spec_guid, tgt_feat, nested_guid, nested_type)
+            if nested_struc is None:
+                on_failure(spec_guid,
+                           f"could not create IFsComplexValue {spec_guid} on "
+                           f"{label}")
+                continue
+            _apply_feat_struc_rows(target, nested_struc, nested_rows, set(),
+                                   on_failure, label)
+            continue
+        _, spec_guid, tgt_feat, tgt_val = row
+        if (_guid_str_from(tgt_feat), _guid_str_from(tgt_val)) in existing:
+            continue
+        if not _add_closed_value(target, struc, spec_guid, tgt_feat, tgt_val):
+            on_failure(spec_guid,
+                       f"could not create IFsClosedValue {spec_guid} on "
+                       f"{label}")
 
 
 def _log_guid_fallback(kind, guid, exc):

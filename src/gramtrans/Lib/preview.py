@@ -1164,6 +1164,14 @@ def build_run_plan(
     # by the 17.1 sub-pass (`categories._run_171_subpass`).
     _msa_infl_feat_bindings: dict = {}
     object.__setattr__(context, '_msa_infl_feat_bindings', _msa_infl_feat_bindings)
+    # T119: the SAME convention for the other feature-structure owners --
+    # MoStemMsa.MsFeatures, MoDerivAffMsa.From/ToMsFeatures and
+    # MoAffixAllomorph.MsEnvFeatures. A separate accumulator rather than more
+    # keys in the one above, because the key SHAPE differs: this one is keyed
+    # by (owner guid, attr) since MoDerivAffMsa carries two structures.
+    _msa_feat_struc_bindings: dict = {}
+    object.__setattr__(context, '_msa_feat_struc_bindings',
+                       _msa_feat_struc_bindings)
     # T074 (FR-019): {msa_guid: owning entry guid} for every MSA the two
     # accumulators above can mention. Same threading convention; consumed by
     # the 17.1 sub-pass to tell "this run lost the link" from "this run never
@@ -1448,6 +1456,10 @@ def build_run_plan(
     # Runs unconditionally after the leaf dispatch so every enumerated affix is
     # covered whether it was newly added or already present.
     _populate_msa_infl_feat_bindings(source, _msa_infl_feat_bindings)
+    # T119: same sweep, same moment, the other eight owners. Runs beside the
+    # line above rather than inside it so a failure in the new owners cannot
+    # take down the one owner measured working (86/86, 78/78).
+    _populate_msa_feat_struc_bindings(source, _msa_feat_struc_bindings)
 
     # T023: rules missing-reference detection (018-rules-page US4/FR-014/FR-015).
     # Runs AFTER the leaf dispatch so 'in-flight' actions are fully enumerated.
@@ -1546,6 +1558,8 @@ def build_run_plan(
         msa_slot_bindings=_msa_slot_bindings,
         # Feature 033: gathered InflFeatsOA bindings for affix MSAs.
         msa_infl_feat_bindings=_msa_infl_feat_bindings,
+        # T119: the stem / derivational / allomorph feature structures.
+        msa_feat_struc_bindings=_msa_feat_struc_bindings,
         # T074 (FR-019): which entry owns each of those MSAs.
         msa_owner_entry=_msa_owner_entry,
         lexentry_ref_bindings=_lexentry_ref_bindings,
@@ -2148,6 +2162,143 @@ def _guid_of(obj):
     return ""
 
 
+#: Depth cap for the `IFsComplexValue.ValueOA -> IFsFeatStruc` recursion on the
+#: TRANSFER side. Deliberately mirrors `categories._FEAT_STRUC_MAX_DEPTH`
+#: rather than importing it: `preview` reaches `categories` only through lazy
+#: function-local imports (see `_walk_verified_closure`), and a module-level
+#: import for one integer would buy a cycle. The two must stay equal -- a
+#: producer that reads deeper than the dependency walk emits edges for would
+#: write feature structures whose endpoints no closure pass ever required.
+_FEAT_STRUC_MAX_DEPTH = 8
+
+#: Every owning-atomic `IFsFeatStruc` slot an MSA subclass can carry, mirroring
+#: `categories._MSA_FEAT_STRUC_ATTRS`. `InflFeatsOA` is EXCLUDED here and kept
+#: on its own producer (`_populate_msa_infl_feat_bindings`): that path is the
+#: one owner measured working (86/86 ejagham, 78/78 mbugwe, T114) and feature
+#: 038 T119's instruction is to copy it rather than absorb it, so a regression
+#: in the new owners cannot take the working one down with it.
+_MSA_EXTRA_FEAT_STRUC_ATTRS = (
+    "MsFeaturesOA", "FromMsFeaturesOA", "ToMsFeaturesOA",
+)
+
+#: `IMoAffixAllomorph.MsEnvFeaturesOA` is reached off the entry's forms rather
+#: than its MSAs, so it carries its own attribute name and its own walk.
+_ALLOMORPH_FEAT_STRUC_ATTR = "MsEnvFeaturesOA"
+
+
+def _read_feat_struc_live(struc, casts, guid_of, depth: int = 0):
+    """Read ONE live `IFsFeatStruc` into the plain-dict binding shape.
+
+    Feature 038 T119. Factored out of `_populate_msa_infl_feat_bindings` so the
+    stem/derivational/allomorph owners read through exactly the same code as
+    the inflectional one -- nine owning fields, one reader.
+
+    Shape returned (or None when the structure holds no specs):
+        {"struc_guid": str,      # IFsFeatStruc GUID (GUID-preserved)
+         "type_guid": str,       # IFsFeatStrucType GUID ("" when unset)
+         "specs": [row, ...]}
+
+    where a row is either
+
+        {"spec_guid": str, "kind": "closed", "feature": g, "value": g}
+
+    or, for an `IFsComplexValue`, the row that feature 033 could only record as
+    undeliverable:
+
+        {"spec_guid": str, "kind": "complex", "feature": g, "value": "",
+         "nested": {...the same shape, recursively...}}
+
+    THE `"kind"` KEY IS ADDITIVE AND ITS ABSENCE MEANS `"closed"`. Older
+    producers (and the duck fallback's fakes) emit rows without it, and the
+    consumer defaults accordingly, so this does not restate the on-disk
+    contract of a binding map that other passes already read.
+
+    WHY COMPLEX VALUES ARE READ AT ALL, WHICH IS THE WHOLE POINT OF T119'S
+    OPEN QUESTION. `_wire_msa_infl_feats` defers a structure WHOLE when any of
+    its specs is not a closed value. That is correct never-silent behaviour and
+    it is also why `MoInflAffMsa.InflFeats` measures 86/86 on Ejagham and 78/78
+    on Mbugwe but 38 -> 18 on Ngoreme: Ngoreme is the ONLY sanctioned project
+    holding `FsComplexValue` at all (825 of them; the other two hold none --
+    `probes/owner-probe-*.json`, and independently
+    `tests/integration/_snapshots/two-mode-038-ngoreme.json` records
+    `FsComplexValue` source 825 / arrived 0 / missing 825 beside
+    `FsComplexFeature` 2 / 2 arrived). The complex DEFINITIONS transfer and the
+    complex VALUES do not, so every structure containing one was deferred whole
+    and took its closed siblings with it.
+
+    The recursion is capped at `_FEAT_STRUC_MAX_DEPTH` for the reason the
+    dependency-side twin (`categories._feat_struc_deps`) caps its own: LCM does
+    not structurally forbid a cycle, and under-reporting beats hanging.
+    """
+    if struc is None or depth > _FEAT_STRUC_MAX_DEPTH:
+        return None
+    _IFsFeatStruc, _IFsClosedValue, _IFsComplexValue = casts
+    try:
+        specs = list(_IFsFeatStruc(struc).FeatureSpecsOC)
+    except Exception:  # noqa: BLE001
+        return None
+    if not specs:
+        return None
+
+    rows = []
+    for spec in specs:
+        spec_guid = guid_of(spec)
+        # Try the closed reading first: it is the overwhelmingly common case
+        # and the only one feature 033 ever produced.
+        feat_guid = value_guid = ""
+        closed_ok = False
+        try:
+            cv = _IFsClosedValue(spec)
+            feat_guid = guid_of(cv.FeatureRA) if cv.FeatureRA is not None else ""
+            value_guid = guid_of(cv.ValueRA) if cv.ValueRA is not None else ""
+            closed_ok = bool(feat_guid and value_guid)
+        except Exception:  # noqa: BLE001 -- complex / negated / disjunctive
+            closed_ok = False
+        if closed_ok:
+            rows.append({"spec_guid": spec_guid, "kind": "closed",
+                         "feature": feat_guid, "value": value_guid})
+            continue
+
+        nested_struc = None
+        try:
+            nested_struc = _IFsComplexValue(spec).ValueOA
+        except Exception:  # noqa: BLE001 -- not a complex value either
+            nested_struc = None
+        if nested_struc is not None:
+            nested = _read_feat_struc_live(
+                nested_struc, casts, guid_of, depth + 1)
+            if nested is not None:
+                if not feat_guid:
+                    try:
+                        feat_guid = guid_of(_IFsComplexValue(spec).FeatureRA)
+                    except Exception:  # noqa: BLE001
+                        feat_guid = ""
+                rows.append({"spec_guid": spec_guid, "kind": "complex",
+                             "feature": feat_guid, "value": "",
+                             "nested": nested})
+                continue
+
+        # Neither closed nor a complex value we can follow (negated,
+        # disjunctive, or a complex value whose ValueOA is empty). Recorded
+        # with an empty "value" exactly as feature 033 recorded it, so the
+        # consumer still reports it rather than dropping it silently (FR-023).
+        if not feat_guid:
+            feat_guid = guid_of(getattr(spec, "FeatureRA", None) or spec)
+        rows.append({"spec_guid": spec_guid, "kind": "closed",
+                     "feature": feat_guid, "value": value_guid})
+
+    struc_type = None
+    try:
+        struc_type = _IFsFeatStruc(struc).TypeRA
+    except Exception:  # noqa: BLE001
+        struc_type = None
+    return {
+        "struc_guid": guid_of(struc),
+        "type_guid": guid_of(struc_type) if struc_type is not None else "",
+        "specs": rows,
+    }
+
+
 def _populate_msa_infl_feat_bindings(source, bindings: dict) -> None:
     """Populate `bindings` from every affix MSA in source carrying a non-empty
     `InflFeatsOA` feature structure (feature 033).
@@ -2173,15 +2324,17 @@ def _populate_msa_infl_feat_bindings(source, bindings: dict) -> None:
         return
 
     _ILexEntry = _IMoInflAffMsa = _ICmObject = None
-    _IFsFeatStruc = _IFsClosedValue = None
+    _IFsFeatStruc = _IFsClosedValue = _IFsComplexValue = None
     try:
         from SIL.LCModel import (  # noqa: N813
             ILexEntry as _ILE, IMoInflAffMsa as _IMIA, ICmObject as _ICO,
             IFsFeatStruc as _IFS, IFsClosedValue as _IFCV,
+            IFsComplexValue as _IFXV,
         )
-        if all(callable(x) for x in (_ILE, _IMIA, _ICO, _IFS, _IFCV)):
+        if all(callable(x) for x in (_ILE, _IMIA, _ICO, _IFS, _IFCV, _IFXV)):
             _ILexEntry, _IMoInflAffMsa, _ICmObject = _ILE, _IMIA, _ICO
             _IFsFeatStruc, _IFsClosedValue = _IFS, _IFCV
+            _IFsComplexValue = _IFXV
     except (ImportError, Exception):  # noqa: BLE001
         pass
 
@@ -2217,33 +2370,18 @@ def _populate_msa_infl_feat_bindings(source, bindings: dict) -> None:
                 continue
             if struc is None:
                 continue
-            try:
-                specs = list(_IFsFeatStruc(struc).FeatureSpecsOC)
-            except Exception:  # noqa: BLE001
+            # T119: the per-spec walk moved to `_read_feat_struc_live` so the
+            # eight owners this producer does NOT cover read identically, and
+            # so `IFsComplexValue` specs arrive as a followable `"nested"`
+            # binding instead of an empty `"value"` that defers the structure
+            # whole. That deferral is why this owner measures 38 -> 18 on
+            # Ngoreme while measuring 86/86 and 78/78 where no complex value
+            # exists; see the reader's docstring for the evidence.
+            binding = _read_feat_struc_live(
+                struc, (_IFsFeatStruc, _IFsClosedValue, _IFsComplexValue), _g)
+            if binding is None:
                 continue
-            if not specs:
-                continue
-            rows = []
-            for spec in specs:
-                feat_guid = value_guid = ""
-                try:
-                    cv = _IFsClosedValue(spec)
-                    feat_guid = _g(cv.FeatureRA) if cv.FeatureRA is not None else ""
-                    value_guid = _g(cv.ValueRA) if cv.ValueRA is not None else ""
-                except Exception:  # noqa: BLE001 -- complex / negated value
-                    feat_guid = _g(getattr(spec, "FeatureRA", None) or spec)
-                rows.append({"spec_guid": _g(spec), "feature": feat_guid,
-                             "value": value_guid})
-            struc_type = None
-            try:
-                struc_type = _IFsFeatStruc(struc).TypeRA
-            except Exception:  # noqa: BLE001
-                struc_type = None
-            bindings[_g(raw_msa)] = {
-                "struc_guid": _g(struc),
-                "type_guid": _g(struc_type) if struc_type is not None else "",
-                "specs": rows,
-            }
+            bindings[_g(raw_msa)] = binding
 
 
 def _populate_msa_infl_feat_bindings_duck(entries, bindings: dict) -> None:
@@ -2256,26 +2394,251 @@ def _populate_msa_infl_feat_bindings_duck(entries, bindings: dict) -> None:
             struc = getattr(msa, "InflFeatsOA", None)
             if struc is None:
                 continue
-            specs = list(getattr(struc, "FeatureSpecsOC", None) or [])
-            if not specs:
-                continue
             msa_guid = getattr(msa, "guid", None)
             if msa_guid is None:
                 continue
-            rows = []
-            for spec in specs:
-                feat = getattr(spec, "FeatureRA", None)
-                val = getattr(spec, "ValueRA", None)
-                rows.append({
-                    "spec_guid": getattr(spec, "guid", "") or "",
-                    "feature": (getattr(feat, "guid", "") or "") if feat is not None else "",
-                    "value": (getattr(val, "guid", "") or "") if val is not None else "",
-                })
-            bindings[msa_guid] = {
-                "struc_guid": getattr(struc, "guid", "") or "",
-                "type_guid": (getattr(getattr(struc, "TypeRA", None), "guid", "") or ""),
-                "specs": rows,
-            }
+            # T119: reads through the shared duck reader so this fallback and
+            # the live path agree about complex values. They did NOT before,
+            # and a host-free test could therefore go green over a producer
+            # that still dropped every `IFsComplexValue` on the live path.
+            binding = _read_feat_struc_duck(struc)
+            if binding is None:
+                continue
+            bindings[msa_guid] = binding
+
+
+def _read_feat_struc_duck(struc, depth: int = 0):
+    """Duck-typed twin of `_read_feat_struc_live` (host-free unit tests).
+
+    Reads `.FeatureSpecsOC`, `.FeatureRA`, `.ValueRA`, `.ValueOA`, `.TypeRA`
+    and `.guid` via `getattr`. A fake whose spec exposes `ValueOA` is read as a
+    complex value; one exposing `ValueRA` is read as closed. Same shape, same
+    depth cap, same `"kind"` defaulting as the live reader.
+    """
+    if struc is None or depth > _FEAT_STRUC_MAX_DEPTH:
+        return None
+    specs = list(getattr(struc, "FeatureSpecsOC", None) or [])
+    if not specs:
+        return None
+    rows = []
+    for spec in specs:
+        feat = getattr(spec, "FeatureRA", None)
+        feat_guid = (getattr(feat, "guid", "") or "") if feat is not None else ""
+        nested_struc = getattr(spec, "ValueOA", None)
+        if nested_struc is not None:
+            nested = _read_feat_struc_duck(nested_struc, depth + 1)
+            if nested is not None:
+                rows.append({"spec_guid": getattr(spec, "guid", "") or "",
+                             "kind": "complex", "feature": feat_guid,
+                             "value": "", "nested": nested})
+                continue
+        val = getattr(spec, "ValueRA", None)
+        rows.append({
+            "spec_guid": getattr(spec, "guid", "") or "",
+            "kind": "closed",
+            "feature": feat_guid,
+            "value": (getattr(val, "guid", "") or "") if val is not None else "",
+        })
+    return {
+        "struc_guid": getattr(struc, "guid", "") or "",
+        "type_guid": (getattr(getattr(struc, "TypeRA", None), "guid", "") or ""),
+        "specs": rows,
+    }
+
+
+def feat_struc_binding_key(owner_guid: str, attr: str) -> str:
+    """The key `msa_feat_struc_bindings` is keyed by: `"<owner guid>|<attr>"`.
+
+    An owner can carry MORE THAN ONE feature structure -- `IMoDerivAffMsa`
+    carries both `FromMsFeaturesOA` and `ToMsFeaturesOA`, measured 17 and 17 on
+    Mbugwe (T114) -- so the owner GUID alone is not a key. Keying by owner
+    alone would have silently transferred one of the two and reported success.
+    """
+    return f"{owner_guid}|{attr}"
+
+
+def _iter_entry_feat_struc_owners_duck(entry):
+    """`(owner, attr)` pairs for one duck-typed entry: every MSA against
+    `_MSA_EXTRA_FEAT_STRUC_ATTRS`, then every allomorph against
+    `_ALLOMORPH_FEAT_STRUC_ATTR`."""
+    for msa in getattr(entry, "MorphoSyntaxAnalysesOC", None) or []:
+        for attr in _MSA_EXTRA_FEAT_STRUC_ATTRS:
+            yield msa, attr
+    forms = list(getattr(entry, "AlternateFormsOS", None) or [])
+    lexeme = getattr(entry, "LexemeFormOA", None)
+    if lexeme is not None:
+        forms.append(lexeme)
+    for form in forms:
+        yield form, _ALLOMORPH_FEAT_STRUC_ATTR
+
+
+def _populate_msa_feat_struc_bindings(source, bindings: dict) -> None:
+    """Populate `bindings` for the feature-structure owners feature 033's
+    producer does NOT cover (feature 038 T119).
+
+    Covers, per T114's live owner attribution over three sanctioned pairs:
+
+      * `MoStemMsa.MsFeatures` (flid 5001001) -- 117 / 782 / 104 in source and
+        **ZERO in every destination**, the single largest block in the P5
+        residue at 1,003 objects. The MSAs themselves are count-MATCHED
+        (153/153, 139/139): they arrive, and they arrive HOLLOW, which no
+        counts-only gate can see. `_create_msa_for_closure`'s `MoStemMsa`
+        branch writes exactly `{GUID, PartOfSpeechRA, StratumRA}` and
+        `MsFeaturesOA` is never on the left of an assignment anywhere in
+        `Lib/` -- that absence IS the defect, located rather than inferred.
+      * `MoDerivAffMsa.FromMsFeatures` / `.ToMsFeatures` (5031001 / 5031002) --
+        17 and 17 on Mbugwe, both zero in the destination.
+      * `MoAffixAllomorph.MsEnvFeatures` (5027001) -- 1 on Mbugwe, zero.
+
+    NOT covered here, each for a stated reason rather than by omission:
+
+      * `MoInflAffMsa.InflFeats` -- has its own working producer; see
+        `_MSA_EXTRA_FEAT_STRUC_ATTRS`.
+      * `FsComplexValue.Value` (825 on Ngoreme) -- not a separate owner walk
+        at all but the `"nested"` recursion inside `_read_feat_struc_live`,
+        because an `FsComplexValue` IS a spec of some other structure. It is
+        delivered by the reader, on every owner, including the inflectional
+        one.
+      * `PhPhoneme.Features` / `PhNCFeatures.Features` -- carried by flexicon's
+        `ApplySyncableProperties`, not by this pass. `PhNCFeatures` is MATCHED
+        on all three pairs (feature 037); `PhPhoneme` transfers for CREATED
+        phonemes and not for those matched to the starter inventory, which is
+        an enrichment gap owned by T121, not a missing create path.
+      * `PartOfSpeech.ReferenceForms` (5049010) and `CmAnnotation.Features`
+        (34008) -- `ReferenceFormsOC` already has a create path in
+        `transfer.py` that is documented to produce an empty shell (T045's
+        acknowledged depth limit), and annotations are outside this feature's
+        Assumptions. Both are left to be ruled on explicitly rather than
+        half-transferred here.
+
+    Keyed by `feat_struc_binding_key(owner_guid, attr)`; see that function for
+    why the owner GUID alone would have been a silent bug.
+    """
+    entry_list = _iter_source_entries(source)
+    if not entry_list:
+        return
+
+    _ILexEntry = _ICmObject = None
+    _IFsFeatStruc = _IFsClosedValue = _IFsComplexValue = None
+    try:
+        from SIL.LCModel import (  # noqa: N813
+            ILexEntry as _ILE, ICmObject as _ICO,
+            IFsFeatStruc as _IFS, IFsClosedValue as _IFCV,
+            IFsComplexValue as _IFXV,
+        )
+        if all(callable(x) for x in (_ILE, _ICO, _IFS, _IFCV, _IFXV)):
+            _ILexEntry, _ICmObject = _ILE, _ICO
+            _IFsFeatStruc, _IFsClosedValue = _IFS, _IFCV
+            _IFsComplexValue = _IFXV
+    except (ImportError, Exception):  # noqa: BLE001
+        pass
+
+    if _ILexEntry is None:
+        _populate_msa_feat_struc_bindings_duck(entry_list, bindings)
+        return
+    try:
+        _ILexEntry(entry_list[0])
+    except TypeError:
+        _populate_msa_feat_struc_bindings_duck(entry_list, bindings)
+        return
+    except Exception:  # noqa: BLE001
+        pass
+
+    casts = (_IFsFeatStruc, _IFsClosedValue, _IFsComplexValue)
+
+    def _g(obj):
+        try:
+            return str(_ICmObject(obj).Guid).lower()
+        except Exception:  # noqa: BLE001
+            return ""
+
+    # T088's lesson, applied rather than re-learned: every attribute below is
+    # declared on a CONCRETE MSA/allomorph subclass, not on the
+    # `IMoMorphSynAnalysis` / `IMoForm` the owning collections are statically
+    # typed as. pythonnet resolves attributes against the STATIC type, so a
+    # plain `getattr` here returns None for every object and the whole pass
+    # would measure as "no source data" while the data sits right there. That
+    # is exactly how `_entry_feat_struc_deps` was dead for 279 / 247 MSAs.
+    for raw_entry in entry_list:
+        try:
+            entry = _ILexEntry(raw_entry)
+        except Exception:  # noqa: BLE001
+            continue
+        owners = []
+        try:
+            for raw_msa in entry.MorphoSyntaxAnalysesOC:
+                owners.extend(
+                    (raw_msa, attr) for attr in _MSA_EXTRA_FEAT_STRUC_ATTRS)
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            forms = list(entry.AlternateFormsOS)
+        except Exception:  # noqa: BLE001
+            forms = []
+        try:
+            if entry.LexemeFormOA is not None:
+                forms.append(entry.LexemeFormOA)
+        except Exception:  # noqa: BLE001
+            pass
+        owners.extend((form, _ALLOMORPH_FEAT_STRUC_ATTR) for form in forms)
+
+        for raw_owner, attr in owners:
+            owner = _cast_to_concrete_preview(raw_owner)
+            struc = getattr(owner, attr, None)
+            if struc is None:
+                continue
+            binding = _read_feat_struc_live(struc, casts, _g)
+            if binding is None:
+                continue
+            owner_guid = _g(raw_owner)
+            if not owner_guid:
+                continue
+            binding["attr"] = attr
+            binding["owner_guid"] = owner_guid
+            bindings[feat_struc_binding_key(owner_guid, attr)] = binding
+
+
+def _populate_msa_feat_struc_bindings_duck(entries, bindings: dict) -> None:
+    """Duck-typed fallback for `_populate_msa_feat_struc_bindings`."""
+    for entry in entries:
+        for owner, attr in _iter_entry_feat_struc_owners_duck(entry):
+            struc = getattr(owner, attr, None)
+            if struc is None:
+                continue
+            binding = _read_feat_struc_duck(struc)
+            if binding is None:
+                continue
+            owner_guid = getattr(owner, "guid", None)
+            if not owner_guid:
+                continue
+            binding["attr"] = attr
+            binding["owner_guid"] = owner_guid
+            bindings[feat_struc_binding_key(owner_guid, attr)] = binding
+
+
+def _cast_to_concrete_preview(obj):
+    """Cast an LCM proxy to its concrete runtime type, or return it unchanged.
+
+    The preview-side twin of `categories._cast_to_concrete`, kept local for the
+    same reason `_FEAT_STRUC_MAX_DEPTH` is: `preview` reaches `categories` only
+    through lazy function-local imports. Duck fakes pass through untouched.
+    """
+    try:
+        import SIL.LCModel as _lcm
+    except Exception:  # noqa: BLE001 -- host-free fakes
+        return obj
+    try:
+        from SIL.LCModel import ICmObject as _ICO
+        class_name = _ICO(obj).ClassName
+    except Exception:  # noqa: BLE001
+        return obj
+    iface = getattr(_lcm, f"I{class_name}", None)
+    if iface is None or not callable(iface):
+        return obj
+    try:
+        return iface(obj)
+    except Exception:  # noqa: BLE001
+        return obj
 
 
 def _populate_msa_slot_bindings_duck(entries, msa_slot_bindings: dict) -> None:
