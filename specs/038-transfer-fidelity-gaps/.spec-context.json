@@ -1086,6 +1086,14 @@
       "kind": "complete",
       "by": "extension",
       "at": "2026-08-26T16:14:21.366Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T113",
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-26T19:11:02.597Z"
     }
   ],
   "decisions": [
@@ -1148,6 +1156,16 @@
       "decision": "Close T064 via T086s amended third clause rather than by bending the gate",
       "why": "gate --phase 4 still exits 3 on PhNCFeatures. T086 met this exact case on T075 and amended the clause to predicate-satisfied plus every deciding row provably outside the phase, proved in a test off the shipped predicate.",
       "rejected": "Bounding the exit code to the gated phase -- T086 rejected it because it would exit 0 on a run that lost 1643 objects"
+    },
+    {
+      "decision": "report_only_roster_defects check 5 requires governed SUBSET residue, never equality",
+      "why": "residue - governed is 14 classes report-only under an owner naming no feature that exists (phonology family, Fs* cascade, CmFile); equality would either launder them onto the gate-bearing governed roster or force them off the display roster where they belong",
+      "rejected": "set equality between the two rosters"
+    },
+    {
+      "decision": "check 5s exemption for a class the artifact already excludes from the delta is itself reported as a defect",
+      "why": "check 4 forbids rostering such a class so check 5 must exempt one; an exemption nothing watches would reproduce exactly the blind spot T113 was filed about",
+      "rejected": "a silent carve-out"
     }
   ],
   "verified": [
@@ -1233,6 +1251,20 @@
       "warnings": [
         "M2 initially SURVIVED -- the owner half of the narrowing was untested because the only fake reaching it had no Owner at all; closed with test_a_context_owned_by_anything_but_phon_data_is_not_co_created"
       ]
+    },
+    {
+      "what": "T113 unit + integration suites on the 038 worktree",
+      "command": "python3 -m pytest tests/unit -q; python3 -m pytest tests/integration -q",
+      "result": "unit 3743 passed / 79 skipped / 14 xfailed (3731 before, +12 new T113 tests); integration 718 passed / 75 skipped, unmoved",
+      "warnings": [
+        "FLExInitialize access violation traceback printed by the integration run -- pre-existing, survivable, documented in CLAUDE.md"
+      ]
+    },
+    {
+      "what": "T113 gate-inertness and tier consequence on the three committed T078 censuses",
+      "command": "scratchpad t113_measure.py -- T109 accounting line applied in memory, nothing re-emitted",
+      "result": "verdict DUPLICATE_IDENTITY / passed False before and after on all three pairs; all five added classes move to report_only, ngoreme Text is the predicted accounted -> report_only, StText control unmoved; report-only block 23->28 on each pair",
+      "warnings": []
     }
   ],
   "concerns": [
@@ -1287,6 +1319,14 @@
     },
     {
       "note": "ruff on categories.py rose 176 -> 184. All 8 are UP031 printf-style formatting, matching the modules dominant idiom (27 already present), so no new finding class -- but the repos usual claim of ruff UNCHANGED does not hold for this file this pass.",
+      "step": "implement"
+    },
+    {
+      "note": "T081 (P5 gate) is blocked on a re-census that is not reproducible as measured -- the source projects have moved off their pinned digests and Ngoreme Target must never be restored -- and on a scoping decision no task in this feature owns (the FsClosedValue / FsFeatStruc / CmPossibility / phonological-context / PhCode / MoAffixProcess residue). Not unfinished code.",
+      "step": "implement"
+    },
+    {
+      "note": "T082 needs live-project work a resume cannot self-authorise: 038-NK-P2 needs a duplicate-name creation attempt in the throwaway Target project, and 038-NK-P3 needs the same non-reproducible re-census as T081. T085 (merge) is gated behind both.",
       "step": "implement"
     }
   ],
@@ -1518,10 +1558,10 @@
       "summary": "85 tasks in 9 phases (Setup, Foundational, then 6 story phases ordered by verifiability -- US2 census first as the acceptance instrument, then US1, US4 || US5a, US3, US5b -- plus Polish); waves serialized on categories.py and models.py; 2 hard external gates (035 roster append, 037 landing)"
     },
     "implement": {
-      "summary": "Phase 8 complete: all 18 affix process rules transfer with intact MembersRS via co-created shared contexts, two audited closure rows registered on stated single-corpus evidence, and T064 P4 satisfied in both halves"
+      "summary": "T113 closed -- the report-only roster gains a completeness check and the five governed classes it was silently short of; T081/T082/T085 remain blocked on live-project work and a scoping decision"
     }
   },
-  "currentTask": "T081",
+  "currentTask": "T113",
   "task_summaries": {
     "T001": {
       "status": "DONE",
@@ -1747,7 +1787,18 @@
         "specs/038-transfer-fidelity-gaps/tasks.md",
         "specs/038-transfer-fidelity-gaps/journal/T078-the-baseline-that-was-already-on-disk.md"
       ]
+    },
+    "T113": {
+      "status": "DONE",
+      "did": "Closed the report-only roster's completeness blind spot: report_only_roster_defects gains check 5 (governed roster is a subset of the residue roster, with its carve-out itself guarded), and the five missing classes Text/TextTag/ReversalIndex/ReversalIndexEntry/CmPicture were added",
+      "files": [
+        "src/gramtrans/Lib/models.py",
+        "src/gramtrans/Lib/report.py",
+        "tests/unit/test_038_t079_report_only_residue.py",
+        "tests/integration/test_object_census.py",
+        "specs/038-transfer-fidelity-gaps/journal/T113-a-guard-that-only-looks-one-way.md"
+      ]
     }
   },
-  "last_action": "T076/T077/T064 closed -- 110/124 tasks; unit 3624 pass, integration 503 pass, 0 failed"
+  "last_action": "T113 done -- unit 3743 pass (+12), integration 718 pass unmoved; 3 tasks left, all blocked on live reads / a scoping decision"
 }
