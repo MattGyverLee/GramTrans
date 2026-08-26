@@ -84,6 +84,62 @@ it is recorded as such rather than being ruled out to make the list shorter. It
 needs a `LexRefType.MembersRS` transfer path, which is a reference-collection
 wiring pass of the same shape as the ones this feature has already built.
 
+### AMENDED 2026-08-26 (T123 landing). The ruling above is wrong on both counts, and the row is far bigger than it says.
+
+The prescription named the wrong field and the wrong kind of work:
+
+* **`ILexRefType.Members` is `MembersOC`, an OWNING collection** (MCP-confirmed
+  against liblcm). There is no `MembersRS`. The reference sequence in this
+  graph is on the other end — `ILexReference.TargetsRS`.
+* **No transfer path was owed.** `reproduce_lexical_relation` /
+  `_reproduce_one_lex_reference` already existed, were correct, and had simply
+  never been *reachable*. The owed work was one cast.
+
+**The actual defect, measured live on `Ngoreme FLEx` 2026-08-26.**
+`_iter_relations_touching_copy_set` — the SOLE lexical-relation discovery path
+in the codebase — walked `LexDbOA.ReferencesOA.PossibilitiesOS` and read
+`getattr(item, "MembersOC", None) or []`. `PossibilitiesOS` yields members
+typed as the static base `ICmPossibility`, and `MembersOC` is declared on
+`ILexRefType` only. All 7 members report `ClassName == "LexRefType"` while
+arriving as `ICmPossibility`; the uncast read is **None on 7 of 7** (total
+reachable 0), while `ILexRefType(p).MembersOC` reads 3 + 1 + 1 = the project's
+**5** relations, matching `ILexReferenceRepository` object for object.
+
+So the pass enumerated **zero relations on every project ever transferred** —
+and emitted **no `DroppedItemRecord` either**, because the loop body never ran.
+The loss was invisible to the run report as well as to the transfer. This is
+the eleventh appearance of this feature's recurring shape (something that
+exists, read at a level where it cannot do its job) and the same defect class
+as T088 and as item 1 above.
+
+**Why the corpus hid it, and why that is the sharpest lesson here.** Ejagham
+and mbugwe both carry **`LexReference` source_count 0** — their rows read
+`MATCHED` 0 → 0 because there was nothing to lose, not because the transfer
+worked. Ngoreme is the only pair in the sanctioned corpus holding a single
+lexical relation, so it is the only pair that could expose a pass that never
+ran at all. That is T091's lesson again: *a phase gate is only as good as the
+pair it ran on*. It is also R7's inverted-risk finding restated — a green row
+covering a claim the feature never made.
+
+**Why every test agreed with the bug.** All existing lexrel unit tests drive
+the pass through `_FakeLexRefType`, which sets `self.MembersOC` directly — a
+double shaped like the CONCRETE type, which cannot express the defect. 3,700+
+green tests therefore said nothing about it. This is precisely the trap
+CLAUDE.md records for flexicon 4.5.0, where a feature was 100% dead behind
+`hasattr(nc, "FeaturesOA")` while all 1467 tests passed.
+
+**Landed** 2026-08-26 (worktree `16ade93`): the cast goes at the PRODUCER
+(`_iter_lex_ref_types`), per T094's lesson, so future consumers inherit it; a
+failed cast falls back to the raw member so the walk can never yield less than
+before; and an absent `MembersOC` is now REPORTED rather than swallowed, while
+a genuinely empty one still reads `[]` and is correctly not reported. A
+proxy-shaped test double — the one that was missing — pins it.
+
+**Still owed, and it is a measurement, not code:** whether all 5 relations
+survive the per-`MappingType` structural rulings (3 are TREE, 1 COLLECTION,
+1 SEQUENCE) once reproduced into a destination. That is a live transfer
+reading and belongs to **T124**.
+
 ---
 
 ## 5. `MoAffixProcess` — one rule, and its cause is in the SOURCE
@@ -129,10 +185,13 @@ populations are on different *pairs*.
 | 1 | `LexEntryInflType` nesting | in scope, defect found | **landed** (3 sites) |
 | 2 | `MoStemMsa` | premise refuted; 1 object residual | none (T119 owns the hollowness) |
 | 3 | `LexEntryType` | in scope, −1/−1 not −12/−12 | none |
-| 4 | `LexReference` | **in scope, NOT DONE** | **owed** |
+| 4 | `LexReference` | **in scope**; ruling AMENDED — not a missing pass but a base-typed-proxy read that made the sole lexrel path enumerate 0 on every project | **landed** (`16ade93`); acceptance is T124’s live reading |
 | 5 | `MoAffixProcess` | correctly refused, source-side cause | none possible |
 | 6 | `CmFile`/`CmFolder` | out of scope, two separate rulings | none |
 
-Item 4 is the honest remainder. It is named here rather than folded into a
-summary sentence, because a ruling list whose every row says "no action" is the
-shape a swept bucket takes.
+Item 4 was the honest remainder, and naming it rather than folding it into a
+summary sentence is what paid: a ruling list whose every row says "no action"
+is the shape a swept bucket takes, and this row turned out to hold the largest
+defect in the list — not ngoreme's 5 objects but a discovery pass that had
+never run on any project. The row was written from counts; the probe that
+preceded the fix is what corrected both its field name and its diagnosis.
