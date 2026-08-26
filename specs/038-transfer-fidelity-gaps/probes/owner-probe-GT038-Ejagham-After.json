@@ -1,0 +1,238 @@
+{
+ "project": "GT038 Ejagham After",
+ "classes": {
+  "FsFeatStruc": {
+   "subtree_total": 131,
+   "exact_class": 131,
+   "owners": {
+    "MoInflAffMsa.InflFeats (flid=5038001)": 86,
+    "PhPhoneme.Features (flid=5092002)": 20,
+    "PhNCFeatures.Features (flid=5094001)": 15,
+    "PartOfSpeech.ReferenceForms (flid=5049010)": 10
+   }
+  },
+  "FsClosedValue": {
+   "subtree_total": 432,
+   "exact_class": 432,
+   "owners": {
+    "FsFeatStruc.FeatureSpecs (flid=57002)": 432
+   }
+  },
+  "FsSymFeatVal": {
+   "subtree_total": 51,
+   "exact_class": 51,
+   "owners": {
+    "FsClosedFeature.Values (flid=50001)": 51
+   }
+  },
+  "FsClosedFeature": {
+   "subtree_total": 20,
+   "exact_class": 20,
+   "owners": {
+    "FsFeatureSystem.Features (flid=49003)": 20
+   }
+  },
+  "FsFeatStrucType": {
+   "subtree_total": 4,
+   "exact_class": 4,
+   "owners": {
+    "FsFeatureSystem.Types (flid=49002)": 4
+   }
+  },
+  "CmPossibility": {
+   "subtree_total": 2174,
+   "exact_class": 302,
+   "owners": {
+    "CmPossibility.SubPossibilities (flid=7004)": 202,
+    "CmPossibilityList.Possibilities (flid=8008)": 100
+   },
+   "possibility_lists": {
+    "DsDiscourseData.ChartMarkers (flid=5124003) | name=None": 67,
+    "LexDb.DomainTypes (flid=5005007) | name=None": 55,
+    "LangProject.TextMarkupTags (flid=6001055) | name=None": 52,
+    "LangProject.GenreList (flid=6001052) | name=None": 29,
+    "LexDb.UsageTypes (flid=5005006) | name=None": 26,
+    "RnResearchNbk.RecTypes (flid=4001003) | name=None": 11,
+    "LangProject.TimeOfDay (flid=6001033) | name=None": 11,
+    "DsDiscourseData.ConstChartTempl (flid=5124001) | name=None": 11,
+    "LangProject.Roles (flid=6001028) | name=None": 10,
+    "LangProject.Education (flid=6001032) | name=None": 7,
+    "LexDb.ExtendedNoteTypes (flid=5005025) | name=None": 5,
+    "LangProject.Restrictions (flid=6001026) | name=None": 4,
+    "LangProject.Status (flid=6001029) | name=None": 4,
+    "LangProject.ConfidenceLevels (flid=6001025) | name=None": 4,
+    "LangProject.TranslationTags (flid=6001007) | name=None": 3,
+    "LexDb.SenseTypes (flid=5005005) | name=None": 2,
+    "LexDb.PublicationTypes (flid=5005024) | name=None": 1
+   }
+  },
+  "PhSequenceContext": {
+   "subtree_total": 35,
+   "exact_class": 35,
+   "owners": {
+    "MoAffixProcess.Input (flid=5029002)": 34,
+    "PhSegRuleRHS.RightContext (flid=5131002)": 1
+   }
+  },
+  "PhSimpleContextNC": {
+   "subtree_total": 40,
+   "exact_class": 40,
+   "owners": {
+    "MoAffixProcess.Input (flid=5029002)": 29,
+    "PhPhonData.Contexts (flid=5099004)": 9,
+    "PhSegRuleRHS.StrucChange (flid=5131003)": 1,
+    "PhSegmentRule.StrucDesc (flid=5128006) [runtime=PhRegularRule]": 1
+   }
+  },
+  "PhSimpleContextSeg": {
+   "subtree_total": 35,
+   "exact_class": 35,
+   "owners": {
+    "MoAffixProcess.Input (flid=5029002)": 21,
+    "PhPhonData.Contexts (flid=5099004)": 6,
+    "PhSegmentRule.StrucDesc (flid=5128006) [runtime=PhRegularRule]": 5,
+    "PhSegRuleRHS.StrucChange (flid=5131003)": 3
+   }
+  },
+  "PhSimpleContextBdry": {
+   "subtree_total": 10,
+   "exact_class": 10,
+   "owners": {
+    "MoAffixProcess.Input (flid=5029002)": 8,
+    "PhSegRuleRHS.LeftContext (flid=5131001)": 1,
+    "PhPhonData.Contexts (flid=5099004)": 1
+   }
+  },
+  "PhSegRuleRHS": {
+   "subtree_total": 6,
+   "exact_class": 6,
+   "owners": {
+    "PhRegularRule.RightHandSides (flid=5129001)": 6
+   }
+  },
+  "PhFeatureConstraint": {
+   "subtree_total": 0,
+   "exact_class": 0,
+   "owners": {}
+  },
+  "PhCode": {
+   "subtree_total": 25,
+   "exact_class": 25,
+   "owners": {
+    "PhTerminalUnit.Codes (flid=5090003) [runtime=PhPhoneme]": 23,
+    "PhTerminalUnit.Codes (flid=5090003) [runtime=PhBdryMarker]": 2
+   }
+  },
+  "PhPhoneme": {
+   "subtree_total": 43,
+   "exact_class": 43,
+   "owners": {
+    "PhPhonemeSet.Phonemes (flid=5089002)": 43
+   },
+   "feature_structure": {
+    "(none)": 23,
+    "FeaturesOA": 20
+   }
+  },
+  "PhNCFeatures": {
+   "subtree_total": 15,
+   "exact_class": 15,
+   "owners": {
+    "PhPhonData.NaturalClasses (flid=5099003)": 15
+   },
+   "feature_structure": {
+    "FeaturesOA": 15
+   }
+  },
+  "PhRegularRule": {
+   "subtree_total": 6,
+   "exact_class": 6,
+   "owners": {
+    "PhPhonData.PhonRules (flid=5099007)": 6
+   }
+  },
+  "PhMetathesisRule": {
+   "subtree_total": 0,
+   "exact_class": 0,
+   "owners": {}
+  },
+  "MoStemMsa": {
+   "subtree_total": 153,
+   "exact_class": 153,
+   "owners": {
+    "LexEntry.MorphoSyntaxAnalyses (flid=5002009)": 153
+   },
+   "feature_structure": {
+    "(none)": 153
+   }
+  },
+  "MoInflAffMsa": {
+   "subtree_total": 111,
+   "exact_class": 111,
+   "owners": {
+    "LexEntry.MorphoSyntaxAnalyses (flid=5002009)": 111
+   },
+   "feature_structure": {
+    "InflFeatsOA": 86,
+    "(none)": 25
+   }
+  },
+  "LexEntryType": {
+   "subtree_total": 18,
+   "exact_class": 11,
+   "owners": {
+    "CmPossibilityList.Possibilities (flid=8008)": 11
+   },
+   "possibility_lists": {
+    "LexDb.ComplexEntryTypes (flid=5005023) | name=None": 7,
+    "LexDb.VariantEntryTypes (flid=5005022) | name=None": 4
+   }
+  },
+  "LexEntryInflType": {
+   "subtree_total": 7,
+   "exact_class": 7,
+   "owners": {
+    "CmPossibilityList.Possibilities (flid=8008)": 5,
+    "CmPossibility.SubPossibilities (flid=7004) [runtime=LexEntryInflType]": 2
+   },
+   "possibility_lists": {
+    "LexDb.VariantEntryTypes (flid=5005022) | name=None": 7
+   }
+  },
+  "LexReference": {
+   "subtree_total": 0,
+   "exact_class": 0,
+   "owners": {}
+  },
+  "MoAffixProcess": {
+   "subtree_total": 12,
+   "exact_class": 12,
+   "owners": {
+    "LexEntry.AlternateForms (flid=5002030)": 12
+   }
+  },
+  "CmFile": {
+   "subtree_total": 0,
+   "exact_class": 0,
+   "owners": {}
+  },
+  "CmFolder": {
+   "subtree_total": 1,
+   "exact_class": 1,
+   "owners": {
+    "LangProject.FilePathsInTsStrings (flid=6001056)": 1
+   }
+  },
+  "PartOfSpeech": {
+   "subtree_total": 20,
+   "exact_class": 20,
+   "owners": {
+    "CmPossibilityList.Possibilities (flid=8008)": 16,
+    "CmPossibility.SubPossibilities (flid=7004) [runtime=PartOfSpeech]": 4
+   },
+   "feature_structure": {
+    "(none)": 20
+   }
+  }
+ }
+}
