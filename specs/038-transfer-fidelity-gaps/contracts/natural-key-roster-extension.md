@@ -331,13 +331,45 @@ Two residual risks are recorded as **pending measurements** in the JSON rather
 than mitigated, because pretending to have measured them would be worse than
 naming them:
 
-- `038-NK-P2` -- no enforcement of name uniqueness was located for `PhPhoneme`,
-  `PartOfSpeech`, `MoMorphType` or `LexEntryInflType` in FLEx or the LCM. Only
-  the observable consequence was measured (zero collisions). Every entry
-  therefore behaves as if no enforcement existed; a later confirmation could only
-  relax an entry from `false` to `true`, never tighten one. The confirming test
-  must be run in a throwaway project, never in a sanctioned read-only project and
-  never in `Target`.
+- `038-NK-P2` -- **SETTLED 2026-08-26, AND THE ANSWER IS THAT THERE IS NO
+  ENFORCEMENT.** As filed, no enforcement of name uniqueness had been *located*
+  for `PhPhoneme`, `PartOfSpeech`, `MoMorphType` or `LexEntryInflType` in FLEx
+  or the LCM; only the observable consequence was measured (zero collisions in
+  three projects), which is absence of evidence and not evidence of absence.
+  The confirming test has now been run, in the throwaway project
+  `GT038 NKP2 Throwaway` -- never a sanctioned read-only project and never
+  `Target`, as this item requires.
+
+  **Two layers, because the claim names FLEx/the LCM and GramTrans reaches them
+  only through flexicon.** *Layer 1, the flexicon Operations surface:*
+  `PhonemeOperations.Create("a")` and `POSOperations.Create("Noun", "Nx")` both
+  **refused** (`FP_ParameterError: Phoneme 'a' already exists` /
+  `Part of Speech 'Noun' already exists`), and flexicon exposes **no create
+  surface at all** for `MoMorphType` or `LexEntryInflType`, so on those two
+  there is nothing to refuse. *Layer 2, the raw LCM factories -- what the claim
+  is actually about:* `IPhPhonemeFactory`, `IPartOfSpeechFactory`,
+  `IMoMorphTypeFactory` and `ILexEntryInflTypeFactory` each created a
+  duplicate-named sibling and **every one was silently accepted**. Re-read in a
+  fresh read-only session, so the duplicates are on disk: `PhPhoneme` 23 -> 25
+  (`'a'` x3), `PartOfSpeech` 5 -> 7 (`'Noun'` x3), `MoMorphType` 19 -> 21
+  (`'stem'` x3), Variant Entry Types 7 -> 9 (`'Plural'` x3).
+
+  **No entry moves.** Every one already sets `key_unique_by_construction=false`
+  and relies on `on_ambiguous_key=harness_error`; the measurement *confirms*
+  that setting. What changes is that the escape hatch this item left open --
+  "a later confirmation could only relax an entry from `false` to `true`" --
+  is now **closed by measurement**, which is strictly better than leaving it
+  open.
+
+  **A layer-1 guard is not an enforcement claim.** flexicon refusing a
+  duplicate on the two classes where it has a create surface means GramTrans's
+  own writes cannot mint one *through those calls*; it says nothing about what
+  a project already contains. census-evidence.md's 21 duplicate phoneme names
+  and the 66-of-113 `PhNCFeatures` collisions are the standing proof that
+  duplicates arrive by other paths -- and the obvious candidate was tested and
+  **did not reproduce**: `Create("a", default analysis ws)` also refused,
+  because the starter phoneme carries `'a'` in both writing systems. How those
+  21 arose is still unexplained, and is not claimed here.
 - `038-NK-P1` -- the blank-project starter baseline (038 FR-010, plan Phase 0) was
   **not** measured. `Esperanto`'s inventory coincides with it exactly, which is
   corroboration, not a measurement of a new project.

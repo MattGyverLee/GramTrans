@@ -1166,6 +1166,26 @@
       "decision": "check 5s exemption for a class the artifact already excludes from the delta is itself reported as a defect",
       "why": "check 4 forbids rostering such a class so check 5 must exempt one; an exemption nothing watches would reproduce exactly the blind spot T113 was filed about",
       "rejected": "a silent carve-out"
+    },
+    {
+      "decision": "Settle T082s 038-NK-P2 live in the throwaway Target project",
+      "why": "user decision 2026-08-26 at the resume gate: it is the one half of the remaining work reachable without new project data; the confirming test must run in a throwaway project only",
+      "rejected": "sanctioning a new read-only project pair; stopping at 131/134; merging with T081/T082 deferred"
+    },
+    {
+      "decision": "T081s P5 residue (FsClosedValue, FsFeatStruc, CmPossibility, the phonological-context family, PhCode, MoAffixProcess) is taken INTO feature 038 rather than filed out to a successor",
+      "why": "user decision 2026-08-26 at the resume gate; it is what would let P5 actually go green in this feature instead of leaving the gate permanently unturnable",
+      "rejected": "filing the residue out to a successor feature; deciding later"
+    },
+    {
+      "decision": "Ran 038-NK-P2 in a purpose-made throwaway (GT038 NKP2 Throwaway) rather than in Target",
+      "why": "the roster contracts own clause is stricter than the option chosen at the gate -- it reads never in a sanctioned read-only project and never in Target -- so a separate throwaway honours both the decision and the contract",
+      "rejected": "using the throwaway Target project as the option label proposed"
+    },
+    {
+      "decision": "Probed both the flexicon layer and the raw LCM factory layer, and recorded them as separate facts",
+      "why": "the claim names FLEx/the LCM but GramTrans reaches them only through flexicon; one layer alone would answer a different question than the one asked. A wrapper guard is not an enforcement claim and must not be recorded as one",
+      "rejected": "probing only the flexicon surface GramTrans uses"
     }
   ],
   "verified": [
@@ -1265,6 +1285,15 @@
       "command": "scratchpad t113_measure.py -- T109 accounting line applied in memory, nothing re-emitted",
       "result": "verdict DUPLICATE_IDENTITY / passed False before and after on all three pairs; all five added classes move to report_only, ngoreme Text is the predicted accounted -> report_only, StText control unmoved; report-only block 23->28 on each pair",
       "warnings": []
+    },
+    {
+      "what": "038-NK-P2 live uniqueness-enforcement probe, two layers, in the throwaway GT038 NKP2 Throwaway (never Target, never a sanctioned read-only project)",
+      "command": "FLExToolsMCP flextools_run_module ops op-144922929-004 / op-145059498-007 / op-145120606-008 / op-145158674-009",
+      "result": "REFUTED -- no FLEx/LCM enforcement. Layer 1 (flexicon) refused PhPhoneme and PartOfSpeech and has no create surface for MoMorphType or LexEntryInflType; Layer 2 (raw LCM factories) silently accepted a duplicate-named sibling of all four and every one persisted, re-read in a fresh read-only session: PhPhoneme 23->25, PartOfSpeech 5->7, MoMorphType 19->21, VariantEntryTypes 7->9, each with one x3 duplicate group",
+      "warnings": [
+        "liblcm undoable=False legacy-mode notice on the write runs -- expected, the project is a throwaway",
+        "the runner executed Main twice, so each duplicate group is x3 rather than x2; left as measured"
+      ]
     }
   ],
   "concerns": [
@@ -1327,6 +1356,10 @@
     },
     {
       "note": "T082 needs live-project work a resume cannot self-authorise: 038-NK-P2 needs a duplicate-name creation attempt in the throwaway Target project, and 038-NK-P3 needs the same non-reproducible re-census as T081. T085 (merge) is gated behind both.",
+      "step": "implement"
+    },
+    {
+      "note": "How census-evidence.mds 21 duplicate phoneme names arose is still unexplained. The obvious candidate -- flexicons ws-scoped Create guard being bypassed by naming another writing system -- was tested and did NOT reproduce; the guard held. Open.",
       "step": "implement"
     }
   ],
