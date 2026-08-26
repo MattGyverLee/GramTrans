@@ -7213,3 +7213,770 @@ class TestT108TheSharedRouteAttribution:
         assert note.startswith("MEASURED AND ATTRIBUTED")
         assert "THE BOUNDARY CONTEXT IS AMONG THEM" in note
         assert T108_CREATING_RULE in note
+
+
+# ===========================================================================
+# T109 -- the admissible accounting line P5 was built around, and the three
+#         locks that make it safe to be load-bearing
+# ===========================================================================
+#
+# T081 measured that P5's own admissible route had never been wired: 66 of its
+# 69 failures across the three sanctioned pairs were "is SHORTFALL and carries
+# NO accounting line", and `contracts/fidelity-census.md:373` asks for the
+# `GOVERNED_BY_OTHER_FEATURE` line by name while validator invariant 5 exempts
+# it from `report_ref` precisely so it can be emitted.
+#
+# T079 REFUSED THE TOKEN AND WAS RIGHT ABOUT A DIFFERENT FIELD. The token is a
+# member of three vocabularies. As a `not_evaluated_reason` it flips
+# `verdict_class` to NOT_EVALUATED and DELETES the measured shortfall from the
+# totals and from the gate -- laundering, and T079's refusal stands. As an
+# `accounted_for` LINE reason (`REASON_TOKENS` +
+# `REASONS_NOT_REQUIRING_REPORT_REF`) it does neither: `_phase_5` reads
+# `accounted_for`, `unexplained_counts` subtracts the line, `verdict_class`
+# never moves, and `build_totals`' `total_shortfall` is a function of
+# `difference` alone.
+#
+# WHICH MAKES THIS LINE LOAD-BEARING WHERE T079'S `report_only` STATE IS INERT,
+# and by construction a way to turn a red row green. Hence three locks, all
+# pinned below:
+#
+#   1. IMPORT-TIME DISJOINTNESS from the phase predicates' own class sets
+#      (`Lib/census.py`, beside `PHASE_5_CLASSES`). A class 038 gates on must
+#      be UNABLE to appear on the roster -- not merely asserted absent by a
+#      test a `-k` selection can skip.
+#   2. THE CAP at `max(0, -difference)` less whatever the row's existing lines
+#      already claim (`census_cli.accounted_for_governed_class`). R-2, and also
+#      the exact figure that makes a stamped row PASS: `_phase_5` fails a row
+#      whose `unexplained_shortfall` is nonzero after accounting, so a claim
+#      that under-shoots leaves the row red and one that over-shoots is
+#      CENSUS_ERROR.
+#   3. GATE-INERTNESS OF THE ROSTER ITSELF: emptying it restores the emitted
+#      artifact byte for byte.
+#
+# THE MEASUREMENT CORRECTS T081 ON TWO OF THREE CORPORA, and the difference is
+# exactly `CmFile` + `CmFolder` -- see `T109_T081_EXCLUDED` and the ruling in
+# `models.CENSUS_GOVERNED_BY_OTHER_FEATURE_CLASSES`.
+
+#: P5 failure count on T078's artifacts, BEFORE -> AFTER the governed line.
+T109_P5_FAILURES = {
+    "ejagham": (19, 10),
+    "ngoreme": (27, 16),
+    "mbugwe": (23, 14),
+}
+
+#: `(rows stamped, objects claimed)` per corpus. Every object is one this
+#: feature's own census measured as missing; the line names an owner for it and
+#: does not reduce it.
+T109_STAMPED = {
+    "ejagham": (9, 1885),
+    "ngoreme": (11, 64618),
+    "mbugwe": (9, 5841),
+}
+
+#: `(total_shortfall, unexplained_shortfall before, unexplained_shortfall
+#: after)`. `total_shortfall` is the number that must NOT move: it is
+#: `sum(max(0, -difference))` over the required rows and no accounting line is
+#: in that arithmetic. What moves is which bucket the objects sit in.
+T109_TOTALS = {
+    "ejagham": (4781, 3063, 1178),
+    "ngoreme": (70646, 68928, 4310),
+    "mbugwe": (10243, 9384, 3543),
+}
+
+#: THE TWO CLASSES T081's PROBE ROSTERED AND THIS ONE DOES NOT, with their
+#: measured difference on (ejagham, ngoreme, mbugwe). T081 reported 9 / 13 / 11
+#: stampable rows carrying 1885 / 64,621 / 8017 objects; this roster measures
+#: 9 / 11 / 9 carrying 1885 / 64,618 / 5841, and the whole delta is these two
+#: rows -- 0 objects on ejagham (both MATCHED there), 3 on ngoreme, 2176 on
+#: mbugwe. The ruling is in the roster's own declaration: the Assumptions hand
+#: over SENSE PICTURES, `CmPicture` is 0 -> 0 on all three pairs, and objects
+#: in `CmFile` / `CmFolder` with no `CmPicture` anywhere to refer to them are
+#: the project's media folder, which nothing names an owner for.
+T109_T081_EXCLUDED = {
+    "CmFile": (0, -2, -2173),
+    "CmFolder": (0, -1, -3),
+}
+
+#: T081's own figures, kept so the correction is a fact in the test file and
+#: not only in a journal.
+T109_T081_PREDICTED = {
+    "ejagham": (9, 1885),
+    "ngoreme": (13, 64621),
+    "mbugwe": (11, 8017),
+}
+
+#: Explicitly NOT rostered, with the reason each is out. Asserted so a later
+#: hand cannot quietly widen the roster into the residue that T079 and T081
+#: both refused to attribute.
+T109_DELIBERATELY_OUT = (
+    "PhSequenceContext", "PhSimpleContextBdry", "PhSimpleContextNC",
+    "PhSimpleContextSeg", "PhCode", "PhFeatureConstraint",
+    "FsFeatStruc", "FsClosedValue", "CmPossibility", "MoAffixProcess",
+    "PhNCFeatures", "CmFile", "CmFolder",
+)
+
+
+def _t109_line_stand_ins(lines):
+    """The `(count, direction)` view `census.accounted_in_direction` needs.
+
+    A committed artifact holds accounting lines as DICTS; the room arithmetic
+    reads `.count` / `.direction` off `census.AccountedLine`. Rebuilding the
+    real dataclass is not possible for every stored line -- one carrying a
+    non-exempt reason needs the `report_ref` its constructor demands, and R-1
+    is checked there -- so this is the minimum shape the arithmetic touches,
+    and it is deliberately the only test-local glue in the stamp below.
+    """
+    return [
+        type("_Line", (), {"count": line["count"],
+                           "direction": line["direction"]})()
+        for line in lines
+    ]
+
+
+def _t109_stamped(name: str) -> dict:
+    """A COPY of one T078 artifact with the T109 line applied to every row.
+
+    EVERY DERIVATION IS THE REAL ONE. The line comes from
+    `census_cli.accounted_for_governed_class` (the emitter's own function, cap
+    included), the residues from `census.unexplained_counts`, the totals from
+    `census.build_totals`, the verdict from `census.stamp_verdict`. Nothing
+    here re-implements the emitter; what is test-local is only the glue that
+    re-runs it over rows a live census already measured -- the same move
+    `with_current_roster_admission` and `with_recomputed_verdict` make, and for
+    the same reason: re-running a derivation over unchanged observations is not
+    forging a measurement.
+    """
+    from copy import deepcopy
+
+    out = deepcopy(_t078(name))
+    for row in out["classes"]:
+        existing = list(row.get("accounted_for", ()))
+        new = census_cli.accounted_for_governed_class(
+            row["class"], row.get("difference"),
+            _t109_line_stand_ins(existing))
+        if not new:
+            continue
+        row["accounted_for"] = existing + [line.artifact() for line in new]
+        shortfall, surplus = census.unexplained_counts(
+            row.get("difference"),
+            _t109_line_stand_ins(row["accounted_for"]))
+        if row.get("verdict_class") == "NOT_EVALUATED":
+            shortfall, surplus = 0, 0
+        row["unexplained_shortfall"] = shortfall
+        row["unexplained_surplus"] = surplus
+    out["totals"] = census.build_totals(out["classes"])
+    return census.stamp_verdict(out)
+
+
+def _t109_governed_rows(artifact) -> list:
+    return [
+        row for row in artifact["classes"]
+        if any(line["reason"] == "GOVERNED_BY_OTHER_FEATURE"
+               for line in row.get("accounted_for", ()))
+    ]
+
+
+class TestT109TheRosterIsDerivedNotInvented:
+    """The roster's contents, and the derivation that decides them."""
+
+    def test_every_rostered_class_lies_on_one_of_the_spec_three_paths(self):
+        """`spec.md`'s Assumptions name THREE paths -- sense pictures, reversal
+        indexes, the texts/wordforms path -- and the owner string of every
+        entry has to name one of them. The check is on the OWNER rather than on
+        a second list of classes, because the owner is the half of the entry
+        that makes the line actionable (SC-010) and a class whose owner does
+        not resolve to a named path is the unowned claim T081 refused."""
+        from gramtrans.Lib import models as _models
+
+        paths = ("the texts/wordforms feature", "the reversal-index feature",
+                 "the sense-pictures feature")
+        roster = _models.CENSUS_GOVERNED_BY_OTHER_FEATURE_CLASSES
+        assert roster, "the roster must not be empty in the shipped source"
+        for cls, (owner, reason) in sorted(roster.items()):
+            assert any(owner.startswith(p) for p in paths), (cls, owner)
+            assert "spec.md Assumptions" in owner, cls
+            assert reason.strip(), cls
+
+    def test_every_entry_carries_its_measured_evidence_or_admits_it_has_none(
+            self):
+        """An entry is a measurement or an admitted promise, never a belief.
+        `TextTag` and `CmPicture` have `source_count` 0 on all three pairs, so
+        no committed census can stamp them; their reason strings say so in
+        those words, and this test is what stops a third such entry arriving
+        without saying it."""
+        from gramtrans.Lib import models as _models
+
+        promises = set()
+        for cls, (_owner, reason) in sorted(
+                _models.CENSUS_GOVERNED_BY_OTHER_FEATURE_CLASSES.items()):
+            if "A PROMISE, NOT AN ACCOUNTING LINE" in reason:
+                promises.add(cls)
+                continue
+            assert reason.startswith("measured "), cls
+        assert promises == {"TextTag", "CmPicture"}
+        # And the admission is true: 0 source objects on all three pairs.
+        for cls in sorted(promises):
+            for pair in sorted(T078_BASELINES):
+                assert _t078_rows(T078_BASELINES[pair])[cls]["source_count"] \
+                    == 0, (cls, pair)
+
+    def test_the_measured_figures_in_the_reason_strings_are_the_real_ones(
+            self):
+        """A roster whose evidence string can drift from the artifacts is a
+        roster that will. Each `measured a, b, c` is parsed back out and
+        checked against T078's three censuses, in the declaration's own stated
+        order (ejagham, ngoreme, mbugwe)."""
+        from gramtrans.Lib import models as _models
+
+        order = ("ejagham", "ngoreme", "mbugwe")
+        rows = {p: _t078_rows(T078_BASELINES[p]) for p in order}
+        checked = 0
+        for cls, (_owner, reason) in sorted(
+                _models.CENSUS_GOVERNED_BY_OTHER_FEATURE_CLASSES.items()):
+            match = re.match(r"measured (-?\d+), (-?\d+), (-?\d+)", reason)
+            if match is None:
+                continue
+            declared = tuple(int(g) for g in match.groups())
+            actual = tuple(rows[p][cls]["difference"] for p in order)
+            assert declared == actual, cls
+            checked += 1
+        assert checked == 12
+
+    @pytest.mark.parametrize("object_class", T109_DELIBERATELY_OUT)
+    def test_the_unowned_residue_stays_out(self, object_class):
+        """The phonology family, the Fs* cascade, `CmPossibility`,
+        `MoAffixProcess`, `PhNCFeatures`, `CmFile` and `CmFolder`. Every one of
+        them is a REQUIRED row with a real loss on at least one pair, which is
+        exactly what makes rostering them tempting; none has a named owner, and
+        `MoAffixProcess` / `PhNCFeatures` are 038's own defects. This is the
+        dodge the locks exist to prevent, pinned class by class."""
+        from gramtrans.Lib import models as _models
+
+        assert object_class not in \
+            _models.CENSUS_GOVERNED_BY_OTHER_FEATURE_CLASSES
+        assert census.governed_by_other_feature(object_class) is None
+        assert census_cli.accounted_for_governed_class(
+            object_class, -500) == ()
+
+    def test_the_roster_is_not_the_report_only_residue_and_says_so(self):
+        """The two rosters are deliberately different sets, and the difference
+        is the whole argument: the residue roster carries the phonology family
+        under an owner that names no existing feature, and this one carries
+        `Text`, `TextTag`, `ReversalIndex`, `ReversalIndexEntry` and
+        `CmPicture`, which the residue roster does not. Neither is derivable
+        from the other, so a later hand that tries to collapse them into one
+        list fails here."""
+        from gramtrans.Lib import models as _models
+
+        governed = set(_models.CENSUS_GOVERNED_BY_OTHER_FEATURE_CLASSES)
+        residue = set(_models.CENSUS_REPORT_ONLY_RESIDUE)
+        assert governed - residue == {
+            "Text", "TextTag", "ReversalIndex", "ReversalIndexEntry",
+            "CmPicture"}
+        assert "PhCode" in residue - governed
+        assert "CmFile" in residue - governed
+
+    def test_the_lookup_is_the_only_one(self):
+        """`census.governed_by_other_feature` reads the module global at call
+        time, which is both how the emitter reaches the roster and how Lock 3
+        can empty it. A second, direct read of the dict anywhere in the emitter
+        would make the roster un-emptiable, so the emitter's own source is
+        checked for one."""
+        source = Path(census_cli.__file__).read_text(encoding="utf-8")
+        assert "GOVERNED_BY_OTHER_FEATURE_CLASSES" not in source
+        assert "census.governed_by_other_feature(" in source
+
+
+class TestT109Lock1ImportTimeDisjointness:
+    """A class 038 has an executable gate on must be UNABLE to be rostered."""
+
+    def test_the_roster_is_disjoint_from_every_phase_predicate_scope(self):
+        """Checked against the predicates' OWN class sets, not against
+        `models.CENSUS_PHASE_GATED_CLASSES`. T079's equivalent has to check the
+        mirror as well, because `models.py` cannot import `census.py`; this one
+        is inside `census.py` and reads the real thing, so there is no mirror
+        to drift. `PHASE_5_CLASSES` is excluded because it is `None` -- "every
+        required row" -- and folding it in would make the roster necessarily
+        empty."""
+        from gramtrans.Lib import models as _models
+
+        owned = (
+            frozenset(census.PHASE_1_CLASSES)
+            | frozenset(census.PHASE_2_MATCHED_CLASSES)
+            | frozenset(census.PHASE_3_CLASSES)
+            | frozenset(census.PHASE_4_CLASSES)
+        )
+        assert census.PHASE_5_CLASSES is None
+        assert not (set(census.GOVERNED_BY_OTHER_FEATURE_CLASSES) & owned)
+        # And the same answer against T079's mirror, so the two locks agree.
+        assert not (set(_models.CENSUS_GOVERNED_BY_OTHER_FEATURE_CLASSES)
+                    & _models.CENSUS_PHASE_GATED_CLASSES)
+
+    def test_a_phase_owned_class_makes_the_module_refuse_to_import(self):
+        """THE LOCK, EXERCISED. Poisoning the roster with `MoStemMsa` -- a
+        class P1 requires MATCHED -- in a fresh interpreter must make
+        `import gramtrans.Lib.census` FAIL. An assertion in a test would not
+        do: a test can be deselected and the artifact would still be written.
+        Run in a subprocess because the lock is import-time by design and this
+        session already holds the module."""
+        import subprocess
+
+        code = (
+            "import gramtrans.Lib.models as m\n"
+            "m.CENSUS_GOVERNED_BY_OTHER_FEATURE_CLASSES['MoStemMsa'] = "
+            "('somebody else', 'measured -1, -1, -1')\n"
+            "import gramtrans.Lib.census\n"
+            "print('IMPORTED')\n"
+        )
+        done = subprocess.run(
+            [sys.executable, "-c", code], capture_output=True, text=True,
+            env=_t109_subprocess_env())
+        assert done.returncode != 0, done.stdout
+        assert "IMPORTED" not in done.stdout
+        assert "T109" in done.stderr
+        assert "MoStemMsa" in done.stderr
+        assert "turn its own red row green" in done.stderr
+
+    def test_an_entry_with_no_owner_makes_the_module_refuse_to_import(self):
+        """The second half of Lock 1. "A report line the user cannot act on is
+        not a report" (SC-010) is twice as true of a line that also retires a
+        measured shortfall, so a blank or malformed entry is a source defect
+        and not a lenient default."""
+        import subprocess
+
+        code = (
+            "import gramtrans.Lib.models as m\n"
+            "m.CENSUS_GOVERNED_BY_OTHER_FEATURE_CLASSES['LexAppendix'] = "
+            "('', 'measured 0, 0, 0')\n"
+            "import gramtrans.Lib.census\n"
+            "print('IMPORTED')\n"
+        )
+        done = subprocess.run(
+            [sys.executable, "-c", code], capture_output=True, text=True,
+            env=_t109_subprocess_env())
+        assert done.returncode != 0, done.stdout
+        assert "LexAppendix" in done.stderr
+        assert "names no owner" in done.stderr
+
+    def test_the_unpoisoned_module_imports_cleanly(self):
+        """The falsifier for the two above: they must fail because of the
+        poison and not because the subprocess could not import the package at
+        all."""
+        import subprocess
+
+        done = subprocess.run(
+            [sys.executable, "-c",
+             "import gramtrans.Lib.census\nprint('IMPORTED')\n"],
+            capture_output=True, text=True, env=_t109_subprocess_env())
+        assert done.returncode == 0, done.stderr
+        assert "IMPORTED" in done.stdout
+
+
+class TestT109Lock2TheCapIsTheRoom:
+    """A line can never outrun the loss (R-2) -- and never undershoot it,
+    because an undershoot leaves the row red and hides that fact behind an
+    accounting line that looks like progress."""
+
+    def test_the_claim_is_exactly_the_shortfall(self):
+        lines = census_cli.accounted_for_governed_class("Segment", -26666)
+        assert len(lines) == 1
+        line = lines[0]
+        assert (line.reason, line.count, line.direction) == (
+            "GOVERNED_BY_OTHER_FEATURE", 26666, "shortfall")
+        assert line.report_ref is None
+        assert census.unexplained_counts(-26666, lines) == (0, 0)
+        assert census.over_accounted_directions(-26666, lines) == ()
+
+    def test_the_line_needs_no_report_ref_and_that_is_invariant_5s_doing(self):
+        """R-1 is enforced in `AccountedLine.__post_init__`, so a token that
+        needed a `report_ref` could not be constructed here at all. This line
+        exists because the contract's table and invariant 5 both exempt the
+        token -- there IS no run-report content to resolve against, since the
+        objects were never this run's to create."""
+        assert "GOVERNED_BY_OTHER_FEATURE" in \
+            census.REASONS_NOT_REQUIRING_REPORT_REF
+        assert census.reason_requires_report_ref(
+            "GOVERNED_BY_OTHER_FEATURE") is False
+
+    def test_a_null_difference_gets_no_line(self):
+        """T099: a null difference is not a zero. Such a row is NOT_EVALUATED,
+        `_phase_5` skips it and `class_row_artifact` zeroes both residues for
+        it, so a line would claim objects nobody counted against a row the gate
+        does not read."""
+        assert census_cli.accounted_for_governed_class("Segment", None) == ()
+
+    @pytest.mark.parametrize("difference", [0, 1, 7923])
+    def test_a_matched_or_surplus_row_gets_no_line(self, difference):
+        """The token's contract direction is "either", so this is a judgment
+        and not a limitation: a destination holding MORE objects of a governed
+        class is not something another feature failed to do. Every governed
+        non-MATCHED row on all three pairs is SHORTFALL, so the refusal was
+        made before it was needed."""
+        assert census_cli.accounted_for_governed_class(
+            "Segment", difference) == ()
+
+    def test_an_earlier_line_takes_the_room_first_and_the_cap_bites(self):
+        """A reported drop is the MORE SPECIFIC claim -- it names run-report
+        content invariant 5 can resolve -- so it gets the room first and the
+        governance line takes what is left. The note says the claim was capped:
+        a capped number is never silent (T023c)."""
+        ref = census.ReportRef(
+            kind="dropped_items", count_in_report=100, run_id="GT-20260826-000000")
+        drop = census.AccountedLine(
+            reason="DEPENDENCY_UNRESOLVED", count=100, direction="shortfall",
+            report_ref=ref)
+        notes = []
+        lines = census_cli.accounted_for_governed_class(
+            "WfiAnalysis", -822, (drop,), notes)
+        assert len(lines) == 1
+        assert lines[0].count == 722
+        assert "CLAIM CAPPED" in lines[0].detail
+        assert any("claims only 722" in note for note in notes)
+        both = (drop,) + lines
+        assert census.unexplained_counts(-822, both) == (0, 0)
+        assert census.over_accounted_directions(-822, both) == ()
+
+    def test_a_fully_claimed_row_gets_no_line_and_says_why(self):
+        """R-2 from the other side. When earlier lines already claim the whole
+        shortfall there is no room, and the refusal is recorded rather than
+        being an absence a reader has to notice."""
+        ref = census.ReportRef(
+            kind="dropped_items", count_in_report=17, run_id="GT-20260826-000000")
+        drop = census.AccountedLine(
+            reason="NO_CREATE_PATH", count=17, direction="shortfall",
+            report_ref=ref)
+        notes = []
+        assert census_cli.accounted_for_governed_class(
+            "StText", -17, (drop,), notes) == ()
+        assert any("NO GOVERNED_BY_OTHER_FEATURE line was emitted" in note
+                   for note in notes)
+
+    def test_the_cap_is_what_makes_a_stamped_row_pass_not_merely_safe(self):
+        """The point the task line makes, and the reason the number matters. A
+        row whose line under-claims is still red: `_phase_5` fails a row with a
+        nonzero `unexplained_shortfall` AFTER accounting. Forged one short, to
+        show the failure the exact cap avoids."""
+        short = census.AccountedLine(
+            reason="GOVERNED_BY_OTHER_FEATURE", count=16,
+            direction="shortfall")
+        assert census.unexplained_counts(-17, (short,)) == (1, 0)
+        exact = census_cli.accounted_for_governed_class("StText", -17)
+        assert census.unexplained_counts(-17, exact) == (0, 0)
+
+
+# --- Lock 3: the roster is gate-inert, proved by emptying it ----------------
+#
+# The forge below emits a FULL artifact through the real path
+# (`census_cli._row_for_entry` -> `census.class_row_artifact` ->
+# `census.build_artifact` -> `census.stamp_verdict`) and serialises it with the
+# exact `json.dumps(..., indent=2, ensure_ascii=False) + "\n"` that
+# `census_cli.run` writes to disk, so "byte for byte" means the bytes of the
+# artifact file and not a dict comparison.
+
+T109_FORGE_CLASSES = (
+    # (class, source, destination, baseline) -- one rostered class with a real
+    # loss, one rostered class that agrees, one UNROSTERED class with the
+    # IDENTICAL loss (the leak detector), one class P1 gates on.
+    ("Segment", 200, 60, 0),
+    ("ReversalIndexEntry", 5, 5, 0),
+    ("PhCode", 200, 60, 0),
+    ("MoStemMsa", 40, 40, 0),
+)
+
+
+def _t109_subprocess_env() -> dict:
+    env = dict(os.environ)
+    env["PYTHONPATH"] = os.pathsep.join(p for p in sys.path if p)
+    return env
+
+
+def _t109_forged_artifact() -> str:
+    """The serialised artifact bytes, from the real emitter, as text."""
+    from gramtrans.Lib import models as _models
+
+    entries = tuple(
+        census.ClassListEntry(
+            object_class=name, in_class_list_via="coverage_floor",
+            gate_scope="required", engine_can_create=True)
+        for name, _s, _d, _b in T109_FORGE_CLASSES
+    )
+    class_list = census.ClassList(
+        entries=entries,
+        derivation_check={"performed": True, "method": "T109 forge",
+                          "matches": True},
+        provenance={"coverage_floor_source": "T109 forge"},
+    )
+    baseline = _models.StarterBaseline(
+        kind=_models.StarterBaselineKind.PRE_TRANSFER_CENSUS,
+        flex_version="9.2.7", captured_at="2026-08-26T00:00:00",
+        captured_from="T109 forge",
+        entries=tuple(
+            _models.StarterBaselineEntry(object_class=name, count=base)
+            for name, _s, _d, base in T109_FORGE_CLASSES),
+    )
+    source_counts = {n: s for n, s, _d, _b in T109_FORGE_CLASSES}
+    destination_counts = {n: d for n, _s, d, _b in T109_FORGE_CLASSES}
+    rows = []
+    for entry in entries:
+        row, kwargs = census_cli._row_for_entry(
+            entry, source_counts, destination_counts, baseline,
+            source_name="T109 source", destination_name="T109 destination")
+        rows.append(census.class_row_artifact(row, entry, **kwargs))
+    identity = census_cli._CensusIdentity(
+        run_id="CENSUS-20260826-000000", taken_at="2026-08-26T00:00:00",
+        baseline=baseline)
+    artifact = census.build_artifact(
+        identity, class_list, rows,
+        projects={
+            role: {
+                "name": "T109 " + role, "opened_read_only": True,
+                "fwdata_sha256_before": "0" * 64,
+                "fwdata_sha256_after": "0" * 64,
+            }
+            for role in ("source", "destination")
+        },
+        instrument={"name": census_cli.INSTRUMENT_NAME,
+                    "version": "T109", "invocation": "T109 forge"},
+    )
+    census.stamp_verdict(artifact)
+    return json.dumps(artifact, indent=2, ensure_ascii=False) + "\n"
+
+
+class TestT109Lock3TheRosterIsGateInert:
+    """Emptying the roster restores the artifact byte for byte -- so putting a
+    class ON it cannot buy anything the roster is not visibly responsible
+    for."""
+
+    def test_emptying_the_roster_restores_the_artifact_byte_for_byte(
+            self, monkeypatch):
+        with_roster = _t109_forged_artifact()
+        monkeypatch.setattr(census, "GOVERNED_BY_OTHER_FEATURE_CLASSES", {})
+        without_roster = _t109_forged_artifact()
+        assert "GOVERNED_BY_OTHER_FEATURE" not in without_roster
+        assert "GOVERNED_BY_OTHER_FEATURE" in with_roster
+        # THE FALSIFIER FOR THE FALSIFIER: the emptied artifact is not merely
+        # missing the token, it is the artifact the pre-T109 emitter wrote.
+        # Every row's `accounted_for` is empty and every residue is the full
+        # difference, which is precisely T081's "carries NO accounting line".
+        empty = json.loads(without_roster)
+        for row in empty["classes"]:
+            assert row["accounted_for"] == [], row["class"]
+            assert row["unexplained_shortfall"] == max(
+                0, -row["difference"]), row["class"]
+        assert empty["totals"]["accounted_shortfall"] == 0
+        assert with_roster != without_roster
+
+    def test_a_roster_of_classes_this_artifact_does_not_hold_changes_nothing(
+            self, monkeypatch):
+        """THE LEAK DETECTOR. If the emitter could produce a governed line from
+        anywhere other than the roster lookup -- a hardcoded class list, a
+        `reasons` fallback, an owner string matched by prefix -- this artifact
+        would differ from the emptied one even though no class in it is
+        rostered. `PhCode` is in the forge at the SAME -140 as `Segment`
+        precisely so a leak keyed on the difference rather than on the class
+        would show up."""
+        monkeypatch.setattr(census, "GOVERNED_BY_OTHER_FEATURE_CLASSES", {})
+        emptied = _t109_forged_artifact()
+        monkeypatch.setattr(
+            census, "GOVERNED_BY_OTHER_FEATURE_CLASSES",
+            {"CmAgent": ("somebody", "measured 0, 0, 0")})
+        irrelevant = _t109_forged_artifact()
+        assert irrelevant == emptied
+
+    def test_only_the_rostered_row_moves(self):
+        """`Segment` and `PhCode` are the same -140 in the same artifact; only
+        the rostered one gets a line, and the rostered class that agrees at 0
+        gets nothing either. One rostered row moving and one not is what
+        distinguishes a roster from a blanket."""
+        with_roster = json.loads(_t109_forged_artifact())
+        rows = {row["class"]: row for row in with_roster["classes"]}
+        assert rows["Segment"]["difference"] == rows["PhCode"]["difference"]
+        assert [line["reason"] for line in rows["Segment"]["accounted_for"]] \
+            == ["GOVERNED_BY_OTHER_FEATURE"]
+        assert rows["PhCode"]["accounted_for"] == []
+        assert rows["ReversalIndexEntry"]["accounted_for"] == []
+        assert rows["MoStemMsa"]["accounted_for"] == []
+        assert rows["Segment"]["verdict_class"] == "SHORTFALL"
+        assert rows["Segment"]["unexplained_shortfall"] == 0
+        assert rows["PhCode"]["unexplained_shortfall"] == 140
+
+    def test_the_forged_artifact_is_valid_and_p5_reads_it_as_intended(self):
+        """The forge is only evidence if the artifact it writes is one the
+        validator and the gate accept. P5 must fail on `PhCode` -- the
+        unrostered loss -- and say nothing about `Segment`."""
+        artifact = json.loads(_t109_forged_artifact())
+        assert census.validate_artifact(artifact) == ()
+        failures = census.evaluate_phase(artifact, 5).failures
+        assert len(failures) == 1
+        assert "PhCode" in failures[0]
+        assert not any("Segment" in f for f in failures)
+
+
+class TestT109TheMeasuredEffectOnTheThreeCorpora:
+    """MEASURED, not argued -- on T078's three committed artifacts."""
+
+    @pytest.mark.parametrize("pair", sorted(T109_P5_FAILURES))
+    def test_p5_failures_before_and_after(self, pair):
+        before, after = T109_P5_FAILURES[pair]
+        assert len(census.evaluate_phase(
+            _t078(T078_BASELINES[pair]), 5).failures) == before
+        assert len(census.evaluate_phase(
+            _t109_stamped(T078_BASELINES[pair]), 5).failures) == after
+
+    @pytest.mark.parametrize("pair", sorted(T109_STAMPED))
+    def test_the_rows_and_objects_the_line_accounts_for(self, pair):
+        rows_expected, objects_expected = T109_STAMPED[pair]
+        stamped = _t109_governed_rows(_t109_stamped(T078_BASELINES[pair]))
+        assert len(stamped) == rows_expected
+        assert sum(
+            line["count"] for row in stamped
+            for line in row["accounted_for"]
+            if line["reason"] == "GOVERNED_BY_OTHER_FEATURE"
+        ) == objects_expected
+
+    @pytest.mark.parametrize("pair", sorted(T109_STAMPED))
+    def test_no_stamped_row_stops_being_a_shortfall(self, pair):
+        """THE WHOLE DIFFERENCE FROM T079'S REFUSAL. As a
+        `not_evaluated_reason` this token flips `verdict_class` to
+        NOT_EVALUATED and deletes the row from the totals; as an accounting
+        line it does neither. Every stamped row stays SHORTFALL and stays
+        counted."""
+        stamped = _t109_stamped(T078_BASELINES[pair])
+        rows = _t109_governed_rows(stamped)
+        assert rows
+        for row in rows:
+            assert row["verdict_class"] == "SHORTFALL", row["class"]
+            assert "not_evaluated_reason" not in row, row["class"]
+            assert row["difference"] < 0, row["class"]
+
+    @pytest.mark.parametrize("pair", sorted(T109_TOTALS))
+    def test_the_shortfall_is_reclassified_and_never_reduced(self, pair):
+        """`total_shortfall` pinned, to the object, on all three pairs: it is
+        `sum(max(0, -difference))` over the required rows and no accounting
+        line appears in that arithmetic. What moves is
+        `unexplained_shortfall` -> `accounted_shortfall`, and the two must move
+        by the SAME amount -- if they did not, objects would have gone
+        somewhere neither bucket names."""
+        total, unexplained_before, unexplained_after = T109_TOTALS[pair]
+        before = _t078(T078_BASELINES[pair])["totals"]
+        after = _t109_stamped(T078_BASELINES[pair])["totals"]
+        assert before["total_shortfall"] == after["total_shortfall"] == total
+        assert before["unexplained_shortfall"] == unexplained_before
+        assert after["unexplained_shortfall"] == unexplained_after
+        assert before["accounted_shortfall"] == 0
+        assert after["accounted_shortfall"] == \
+            unexplained_before - unexplained_after
+        assert after["accounted_shortfall"] == T109_STAMPED[pair][1]
+        assert before["total_surplus"] == after["total_surplus"] == 0
+
+    @pytest.mark.parametrize("pair", sorted(T109_STAMPED))
+    def test_the_run_verdict_is_unmoved(self, pair):
+        """`DUPLICATE_IDENTITY` / exit 3 before and after, on all three. That
+        is T082's remaining `038-NK-P3` and it outranks everything the line
+        could reach -- recorded rather than inherited, because a task that
+        improved nine rows and silently kept a red verdict would be reporting a
+        pass it did not earn. Re-derived here rather than copied from T081,
+        because T110 changed what the recompute returns."""
+        before = with_recomputed_verdict(_t078(T078_BASELINES[pair]))
+        after = _t109_stamped(T078_BASELINES[pair])
+        assert before["verdict"] == after["verdict"] == "DUPLICATE_IDENTITY"
+        assert before["exit_code"] == after["exit_code"] == 3
+
+    @pytest.mark.parametrize("pair", sorted(T109_STAMPED))
+    def test_the_stamped_artifact_still_satisfies_every_invariant(self, pair):
+        """Invariant 5 (no `report_ref` needed for this token), R-2 (no
+        over-accounting), R-5 (the residues equal the difference less the
+        lines) and invariant 8 (the stored verdict matches the recomputed
+        one) -- all checked by the real validator over the stamped
+        document."""
+        assert census.validate_artifact(
+            _t109_stamped(T078_BASELINES[pair])) == ()
+
+    @pytest.mark.parametrize("pair", sorted(T109_STAMPED))
+    def test_the_committed_artifacts_are_untouched_on_disk(self, pair):
+        """T109 changes the EMITTER, not any committed file. Every T078
+        artifact still carries `accounted_for: []` on every row and
+        `accounted_shortfall: 0` -- so nothing above can be an artifact that
+        was quietly edited into agreement."""
+        artifact = _t078(T078_BASELINES[pair])
+        assert artifact["totals"]["accounted_shortfall"] == 0
+        assert all(row.get("accounted_for") == []
+                   for row in artifact["classes"])
+
+
+class TestT109WhereT081WasWrongAndByExactlyHowMuch:
+    """T081 predicted 9 / 13 / 11 stampable rows carrying 1885 / 64,621 / 8017
+    objects. Ejagham reproduces exactly; the other two do not, and the delta is
+    `CmFile` plus `CmFolder` to the object."""
+
+    def test_ejagham_reproduces_t081_exactly(self):
+        assert T109_STAMPED["ejagham"] == T109_T081_PREDICTED["ejagham"]
+
+    @pytest.mark.parametrize("pair", ["ngoreme", "mbugwe"])
+    def test_the_correction_is_cmfile_plus_cmfolder_and_nothing_else(
+            self, pair):
+        """Adding the two excluded rows back reproduces T081's figure exactly,
+        which is what makes this a scope ruling rather than a measurement
+        disagreement. Their own numbers are asserted from the artifacts, so the
+        arithmetic cannot be satisfied by two other rows summing the same."""
+        index = ("ejagham", "ngoreme", "mbugwe").index(pair)
+        rows = _t078_rows(T078_BASELINES[pair])
+        extra_rows, extra_objects = 0, 0
+        for cls, measured in sorted(T109_T081_EXCLUDED.items()):
+            assert rows[cls]["difference"] == measured[index], cls
+            if measured[index] < 0:
+                extra_rows += 1
+                extra_objects += -measured[index]
+        mine_rows, mine_objects = T109_STAMPED[pair]
+        assert (mine_rows + extra_rows, mine_objects + extra_objects) \
+            == T109_T081_PREDICTED[pair]
+
+    def test_the_ruling_is_measured_no_sense_picture_exists_to_own_them(self):
+        """THE RULING, as data. The Assumptions hand over SENSE PICTURES;
+        `CmPicture` is the class that is sense pictures and it is 0 -> 0 on all
+        three pairs. So the 2176 objects `CmFile` and `CmFolder` lose between
+        them cannot be sense-picture content -- there is no picture anywhere to
+        refer to them -- and they are the project's media folder, which the
+        Assumptions name nowhere. An accounting line for them would be the
+        unowned claim T081 refused for the phonological contexts."""
+        for pair in sorted(T078_BASELINES):
+            rows = _t078_rows(T078_BASELINES[pair])
+            assert rows["CmPicture"]["source_count"] == 0, pair
+            assert rows["CmPicture"]["difference"] == 0, pair
+        mbugwe = _t078_rows(T078_BASELINES["mbugwe"])
+        assert mbugwe["CmFile"]["source_count"] == 2173
+        assert mbugwe["CmFile"]["difference"] == -2173
+        # And the class the ruling turns on is rostered, as an admitted
+        # promise, so the derivation covers all three named paths.
+        assert census.governed_by_other_feature("CmPicture") is not None
+        assert census.governed_by_other_feature("CmFile") is None
+        assert census.governed_by_other_feature("CmFolder") is None
+
+    def test_the_task_lines_own_scope_clause_is_narrower_than_its_authority(
+            self):
+        """A FINDING, PINNED. T109's task line scopes itself to
+        "texts/wordforms/reversals only -- the classes the spec Assumptions
+        already hand to another feature", and the spec Assumptions hand over
+        THREE paths, not two: "Sense pictures, reversal indexes, and the
+        texts/wordforms path". The contract row the task line cites as its
+        authority says the same ("Texts/wordforms, reversals, and sense
+        pictures"). The scope clause is therefore narrower than both its cited
+        authority and its own stated justification. This test asserts the
+        contract text, so the discrepancy cannot be resolved later by quietly
+        editing the table."""
+        root = Path(__file__).resolve().parents[2]
+        contract = (
+            root / "specs" / "038-transfer-fidelity-gaps" / "contracts"
+            / "fidelity-census.md").read_text(encoding="utf-8")
+        row = [
+            line for line in contract.splitlines()
+            if line.startswith("| `GOVERNED_BY_OTHER_FEATURE`")
+        ]
+        assert len(row) == 1
+        assert "Texts/wordforms, reversals, and sense pictures" in row[0]
+        assert "Needs no `report_ref`" in row[0]
+        spec = (
+            root / "specs" / "038-transfer-fidelity-gaps" / "spec.md"
+        ).read_text(encoding="utf-8")
+        assert ("**Sense pictures, reversal indexes, and the texts/wordforms "
+                "path** are governed" in spec)

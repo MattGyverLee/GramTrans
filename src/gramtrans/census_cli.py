@@ -1816,6 +1816,98 @@ def accounted_for_drops(difference, drops, notes=None) -> tuple:
     return tuple(lines)
 
 
+#: T109 -- the token, spelled once. Not re-declared as a literal at the emit
+#: site, for the same reason `SOURCE_REFERENT_ABSENT_TOKEN` is not.
+GOVERNED_BY_OTHER_FEATURE_TOKEN = "GOVERNED_BY_OTHER_FEATURE"
+
+
+def accounted_for_governed_class(
+        object_class, difference, existing=(), notes=None) -> tuple:
+    """-> `(census.AccountedLine,)` when this class is another feature's, else ().
+
+    T109. `census.governed_by_other_feature` is the roster lookup and the ONLY
+    one; this function is the arithmetic, and the arithmetic is the lock.
+
+    T109 LOCK 2 -- THE CAP, at `max(0, -difference)` less whatever the row's
+    existing lines already claim in the same direction. This is not merely an
+    R-2 safety rail ("the census must not explain away more than actually
+    happened"): `census.unexplained_counts` computes
+    `max(0, -difference) - sum(shortfall lines)`, and `census._phase_5` fails a
+    row whose `unexplained_shortfall` is still nonzero AFTER accounting, so the
+    cap is also the exact figure that makes a stamped row PASS. A claim that
+    under-shoots leaves the row red anyway; one that over-shoots is
+    `CENSUS_ERROR` at `census.over_accounted_directions`. There is one right
+    number and it is the room.
+
+    Unlike `accounted_for_drops`, the count here is derived from the row's OWN
+    difference rather than from a run-report tally, and that is what makes the
+    cap airtight rather than best-effort: there is no external number to
+    outrun, and no shared tally that two rows could both spend. (It is also why
+    an Amendment A1 split row would be safe -- each half's difference is its
+    own measurement -- where a report drop count is not. No rostered class is
+    an A1 split class, so the case does not arise.)
+
+    THE TWO NON-SHORTFALL DIRECTIONS, ruled on explicitly rather than falling
+    out of an inequality:
+
+    * `difference is None` -> NOTHING. T099: a null difference is not a zero.
+      `census.row_verdict_class` makes such a row NOT_EVALUATED, `_phase_5`
+      skips it, and `class_row_artifact` zeroes both unexplained counts for it,
+      so a line here would claim objects nobody counted against a row the gate
+      does not read. The schema's `count` has `minimum: 1`, so there is not
+      even a zero-count line available to express it with.
+    * `difference >= 0` -> NOTHING. The contract's table gives this token
+      direction "either", so the token itself would permit a surplus line, and
+      the refusal is a judgment rather than a limitation: a destination holding
+      MORE objects of a governed class than the source is not something another
+      feature failed to do, it is something that DID happen, and naming an
+      owner for it would excuse an over-creation nobody has attributed. Every
+      governed non-MATCHED row on all three sanctioned pairs is SHORTFALL, so
+      this is a refusal made before it was needed rather than after.
+    """
+    entry = census.governed_by_other_feature(object_class)
+    if entry is None:
+        return ()
+    if difference is None or difference >= 0:
+        return ()
+    room = -difference - census.accounted_in_direction(existing, "shortfall")
+    if room <= 0:
+        if notes is not None and existing:
+            notes.append(
+                object_class + " is governed by " + entry[0] + " but its "
+                "shortfall of " + str(-difference) + " is already fully "
+                "claimed by " + str(len(tuple(existing))) + " earlier "
+                "accounting line(s), so NO GOVERNED_BY_OTHER_FEATURE line was "
+                "emitted (R-2: the census must not explain away more than "
+                "actually happened)"
+            )
+        return ()
+    owner, _reason = entry
+    detail = (
+        "governed by " + owner + ": this feature reports the figure and does "
+        "not fix it (spec.md Assumptions; fidelity-census.md's reason table "
+        "for GOVERNED_BY_OTHER_FEATURE). Needs no report_ref -- invariant 5 "
+        "exempts the token, because there is no run-report line to resolve "
+        "against: the objects were never this run's to create"
+    )
+    if room != -difference:
+        capped = (
+            object_class + " is governed by " + owner + " and its shortfall is "
+            + str(-difference) + ", of which "
+            + str(census.accounted_in_direction(existing, "shortfall"))
+            + " is already claimed by earlier accounting line(s), so the "
+            "GOVERNED_BY_OTHER_FEATURE line claims only " + str(room)
+            + " (R-2: the census must not explain away more than actually "
+            "happened)"
+        )
+        if notes is not None:
+            notes.append(capped)
+        detail = detail + " -- CLAIM CAPPED, see notes"
+    return (census.AccountedLine(
+        reason=GOVERNED_BY_OTHER_FEATURE_TOKEN, count=room,
+        direction="shortfall", detail=detail),)
+
+
 # ---------------------------------------------------------------------------
 # T048d: THE IDENTITY AUDIT, WIRED
 #
@@ -2172,6 +2264,27 @@ def _row_for_entry(
         if entry.owning_feature_system is None else ()
     )
     lines = accounted_for_drops(row.difference, drops, notes)
+
+    # ---- T109: a class another feature GOVERNS is accounting -------------
+    # AFTER the reported drops, and reading them, because the cap is the ROOM
+    # LEFT and not the whole difference. A reported drop is the more specific
+    # claim -- it names run-report content invariant 5 can resolve -- so it
+    # gets the room first and the governance line takes what is left. Ordering
+    # it the other way would let the residual claim swallow the difference and
+    # leave the specific, evidenced line with nothing to pay down.
+    #
+    # Note this can produce a row with a governed line AND a non-admissible
+    # one, which `census._phase_5` still fails ("real accounting but not
+    # phase-5 done"). That is correct and deliberate: the governance line says
+    # who owns the class, not that the row is finished.
+    #
+    # NO out-of-scope guard, matching `accounted_for_drops`. A row carrying a
+    # `not_evaluated_reason` is NOT_EVALUATED, `_phase_5` skips it outright, and
+    # `class_row_artifact` zeroes both residues for it -- so a line on such a
+    # row cannot buy a pass and R-5 still balances. (No rostered class carries
+    # one today: `CmAnthroItem` is the artifact's only out-of-scope class.)
+    lines = lines + accounted_for_governed_class(
+        entry.object_class, row.difference, lines, notes)
     if lines:
         kwargs["accounted_for"] = lines
 

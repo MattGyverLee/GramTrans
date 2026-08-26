@@ -1146,6 +1146,150 @@ CENSUS_PHASE_GATED_CLASSES: frozenset = frozenset({
     "MoAffixProcess", "MoAffixAllomorph",
 })
 
+# ---------------------------------------------------------------------------
+# T109 -- the classes another feature GOVERNS, and the accounting line that
+# says so.
+#
+# THIS IS NOT `CENSUS_REPORT_ONLY_RESIDUE` AND IS DELIBERATELY NOT DERIVED FROM
+# IT. The two rosters answer different questions and are different sets:
+#
+#   * the residue roster decides ONE WORD in a console column, for a class
+#     NOBODY owns ("nobody -- R7 named no successor"; "037's successor, or a
+#     later phonology feature"). It is gate-inert by construction, so an entry
+#     naming a successor that does not exist costs nothing.
+#   * this roster emits an `accounted_for` LINE, which is LOAD-BEARING on P5:
+#     `census.PHASE_5_ADMISSIBLE_REASONS` admits `GOVERNED_BY_OTHER_FEATURE`
+#     and `census.unexplained_counts` subtracts the line's count, so a row here
+#     goes from red to green. An entry is admissible only when an OWNER IS
+#     NAMED BY THE SPEC, never merely guessed at.
+#
+# THE DERIVATION, and it has exactly one source. `spec.md`'s Assumptions:
+# "Sense pictures, reversal indexes, and the texts/wordforms path are governed
+# by their own features. Where the census shows differences in those classes,
+# this feature reports them; it does not fix them." The contract says the same
+# in the token's own row (`contracts/fidelity-census.md:373` -- "Texts/
+# wordforms, reversals, and sense pictures ... Needs no `report_ref`") and
+# validator invariant 5 exempts the token from `report_ref` precisely so the
+# line can be emitted. Three named paths; this roster is the classes on them,
+# and nothing else.
+#
+# THAT DERIVATION IS WHAT KEEPS THE PHONOLOGY FAMILY OUT. `PhSequenceContext`,
+# `PhSimpleContext{Bdry,NC,Seg}`, `PhCode` and `PhFeatureConstraint` sit in the
+# residue roster under "037's successor, or a later phonology feature -- not
+# 038", which names no feature that exists. T079 called that "a claim someone
+# must own before it can be an accounting line" and nobody has; the Fs*
+# cascade ("a later feature"), `CmPossibility`, `MoAffixProcess` (Phase 4's own
+# defect) and `PhNCFeatures` (T082) are out for the same reason or because 038
+# owns them outright.
+#
+# `CmFile` AND `CmFolder` ARE OUT, AND THE REASON IS MEASURED RATHER THAN
+# ARGUED. The contract clause hands over "sense pictures"; the class that IS
+# sense pictures is `CmPicture`, and on all three sanctioned pairs `CmPicture`
+# is 0 -> 0. The objects that actually go missing are `CmFile` (0, -2, -2173)
+# and `CmFolder` (0, -1, -3), and on those same pairs they cannot be
+# sense-picture referents because there is no sense picture anywhere to refer
+# to them. They are the project's media folder -- a path the Assumptions name
+# nowhere, with no successor feature -- so an entry for them would be exactly
+# the unowned claim the paragraph above refuses. `CENSUS_REPORT_ONLY_RESIDUE`
+# already carries `CmFile` under "the media/pictures path -- not 038", which is
+# the right home for a display word and the wrong one for a gate-bearing line.
+#
+# `(owner, reason)`, the same shape as `CENSUS_REPORT_ONLY_RESIDUE` and the
+# same rule: BOTH halves required, because "report-only without a successor is
+# a line the user cannot act on" (SC-010) is twice as true of a line that turns
+# a red row green. Every `reason` carries the measured difference on the three
+# sanctioned pairs in the order (ejagham, ngoreme, mbugwe), read off T078's
+# censuses, so an entry cannot be a class somebody merely believed was lossy.
+#
+# TWO ENTRIES ARE PROMISES RATHER THAN ACCOUNTING LINES and say so in their own
+# text: `TextTag` and `CmPicture` have `source_count` 0 on all three pairs, so
+# no committed census can stamp either. They stay because the derivation is the
+# spec's three paths, and a roster that silently dropped the only class the
+# "sense pictures" clause actually names would make that derivation
+# unfalsifiable.
+CENSUS_GOVERNED_BY_OTHER_FEATURE_CLASSES: dict = {
+    # -- the texts/wordforms path. The magnitude is why this roster exists:
+    #    64,616 of ngoreme's 70,646 `total_shortfall` is on these eleven rows.
+    "Text": (
+        "the texts/wordforms feature (spec.md Assumptions) -- not 038",
+        "measured 0, -14, 0. The text object itself, owner of `StText` below "
+        "via ContentsOA. NOT in CENSUS_REPORT_ONLY_RESIDUE -- a gap in that "
+        "roster rather than a reason to leave it out here, since a roster that "
+        "governed `StText` and not the `Text` owning it would describe half a "
+        "path",
+    ),
+    "TextTag": (
+        "the texts/wordforms feature (spec.md Assumptions) -- not 038",
+        "A PROMISE, NOT AN ACCOUNTING LINE: source_count 0 on all three "
+        "pairs, so no committed census can stamp it. Rostered because it is "
+        "`Text.TagsOC`, text annotation, the same feature's work",
+    ),
+    "StText": (
+        "the texts/wordforms feature (spec.md Assumptions) -- not 038",
+        "measured -17, -4903, -15",
+    ),
+    "StTxtPara": (
+        "the texts/wordforms feature (spec.md Assumptions) -- not 038",
+        "measured -91, -5568, -89",
+    ),
+    "Segment": (
+        "the texts/wordforms feature (spec.md Assumptions) -- not 038",
+        "measured 0, -26666, -2. The largest single row on the whole corpus, "
+        "and MATCHED on ejagham (198/198) -- one class, one corpus green, "
+        "which is why the ROSTER is per class and the LINE is per row",
+    ),
+    "CmTranslation": (
+        "the texts/wordforms feature (spec.md Assumptions) -- not 038",
+        "measured 0, -7923, 0. Carried in the census only because CP-4's "
+        "additions ledger put it there",
+    ),
+    "PunctuationForm": (
+        "the texts/wordforms feature (spec.md Assumptions) -- not 038",
+        "measured -775, -3994, -1126",
+    ),
+    "WfiWordform": (
+        "the texts/wordforms feature (spec.md Assumptions) -- not 038",
+        "measured -297, -8191, -1187",
+    ),
+    "WfiAnalysis": (
+        "the texts/wordforms feature (spec.md Assumptions) -- not 038",
+        "measured -184, -1628, -822",
+    ),
+    "WfiGloss": (
+        "the texts/wordforms feature (spec.md Assumptions) -- not 038",
+        "measured -125, -752, -683",
+    ),
+    "WfiMorphBundle": (
+        "the texts/wordforms feature (spec.md Assumptions) -- not 038",
+        "measured -380, -4977, -1915",
+    ),
+    # -- reversal indexes. NEITHER class is in CENSUS_REPORT_ONLY_RESIDUE even
+    #    though the Assumptions name the path -- the second gap in that
+    #    roster, and the reason this one is declared rather than derived.
+    "ReversalIndex": (
+        "the reversal-index feature (spec.md Assumptions) -- not 038",
+        "measured -2, -2, -2: SHORTFALL on ALL THREE pairs, the only governed "
+        "class of which that is true. `Lib/categories.py`'s reversal path "
+        "builds `ReversalDecision`s for the PREVIEW only, and no census phase "
+        "predicate names either reversal class",
+    ),
+    "ReversalIndexEntry": (
+        "the reversal-index feature (spec.md Assumptions) -- not 038",
+        "measured -14, 0, 0. MATCHED on the two pairs holding none "
+        "(source_count 0); the -14 is ejagham's 144 -> 130",
+    ),
+    # -- sense pictures. ONE class, and it is the one the clause names.
+    "CmPicture": (
+        "the sense-pictures feature (spec.md Assumptions) -- not 038",
+        "A PROMISE, NOT AN ACCOUNTING LINE: 0 -> 0 on all three pairs, so no "
+        "committed census can stamp it. It is here because it is the class the "
+        "Assumptions' 'sense pictures' clause names, and its emptiness is the "
+        "measurement that keeps `CmFile` and `CmFolder` OUT: those two lose "
+        "2176 objects between them with no CmPicture anywhere to refer to "
+        "them, so they are the media folder and not sense pictures",
+    ),
+}
+
 #: Amendment A1's two owning feature systems -- `$defs.classRow`'s
 #: `owning_feature_system` enum, in schema order. These spellings are the
 #: CONTRACT ones (fidelity-census.md:650-673) and are emitted VERBATIM, so a

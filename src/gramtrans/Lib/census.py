@@ -52,6 +52,7 @@ from typing import Optional
 if __package__:
     from .models import (
         CENSUS_FEATURE_SYSTEM_OWNERS,
+        CENSUS_GOVERNED_BY_OTHER_FEATURE_CLASSES,
         CENSUS_NOT_EVALUATED_REASONS,
         CENSUS_REASON_TOKENS,
         CENSUS_REASONS_NOT_REQUIRING_REPORT_REF,
@@ -61,6 +62,7 @@ if __package__:
 else:  # loaded via site.addsitedir("Lib")
     from models import (  # type: ignore[no-redef]
         CENSUS_FEATURE_SYSTEM_OWNERS,
+        CENSUS_GOVERNED_BY_OTHER_FEATURE_CLASSES,
         CENSUS_NOT_EVALUATED_REASONS,
         CENSUS_REASON_TOKENS,
         CENSUS_REASONS_NOT_REQUIRING_REPORT_REF,
@@ -91,6 +93,26 @@ NOT_EVALUATED_REASONS: frozenset = CENSUS_NOT_EVALUATED_REASONS
 
 #: `$defs.classRow.verdict_class.enum`.
 ROW_VERDICT_CLASSES: tuple = CENSUS_ROW_VERDICT_CLASSES
+
+#: T109 -- `class -> (owner, reason)` for every class the spec Assumptions hand
+#: to another feature. Read through `governed_by_other_feature` below, which is
+#: THE ONE LOOKUP; the disjointness lock that makes the roster safe lives at
+#: module scope beside the phase class sets, because it needs them.
+GOVERNED_BY_OTHER_FEATURE_CLASSES: dict = (
+    CENSUS_GOVERNED_BY_OTHER_FEATURE_CLASSES
+)
+
+
+def governed_by_other_feature(object_class: str):
+    """`(owner, reason)` if this class is another feature's, else None.
+
+    THE ONE LOOKUP (T079's `report_only_residue_entry` precedent), so there is
+    no second place a class could acquire a `GOVERNED_BY_OTHER_FEATURE` line.
+    Reads the module global at call time on purpose: that is what lets
+    `tests/.../test_038_t109_governed_by_other_feature.py` empty the roster and
+    prove the emitter is inert without it.
+    """
+    return GOVERNED_BY_OTHER_FEATURE_CLASSES.get(object_class)
 
 
 # ---------------------------------------------------------------------------
@@ -4079,6 +4101,57 @@ PHASE_3_CLASSES: tuple = ("PartOfSpeech",) + PHASE_3_OWNED_CHILD_CLASSES
 #: an unbounded phase, which is what denies P5 the out-of-scope reading that
 #: P1..P4 may legitimately claim. T081 gets no escape hatch here.
 PHASE_5_CLASSES = None
+
+
+# ---------------------------------------------------------------------------
+# T109 LOCK 1 -- IMPORT-TIME DISJOINTNESS. A phase-owned class must be UNABLE
+# to appear on the governed-by-another-feature roster.
+#
+# Enforced HERE, at module scope, and not in a test, for the reason T079 states
+# at `report.py`'s equivalent: reclassifying an owned class as somebody else's
+# is the one direction that lets this feature dodge its own gate, and a rule
+# that only a test enforces is a rule a `-k` selection can skip past. A module
+# that cannot be imported cannot emit a laundered artifact.
+#
+# STRONGER THAN T079'S, in one specific way. `report.py` checks the roster
+# against `models.CENSUS_PHASE_GATED_CLASSES`, a hand-spelled MIRROR of the
+# predicate scopes (models cannot import this module -- the dependency
+# direction is census -> models), and needs a second check to prove the mirror
+# still matches. This check is against `PHASE_1_CLASSES`, `PHASE_2_
+# MATCHED_CLASSES`, `PHASE_3_CLASSES` and `PHASE_4_CLASSES` THEMSELVES, three
+# lines above, so there is no mirror to drift. `PHASE_5_CLASSES` is excluded
+# for the reason its own comment gives: it is `None`, meaning "every required
+# row", and folding that in would make every class phase-gated and the roster
+# necessarily empty.
+_T109_PHASE_OWNED = (
+    frozenset(PHASE_1_CLASSES)
+    | frozenset(PHASE_2_MATCHED_CLASSES)
+    | frozenset(PHASE_3_CLASSES)
+    | frozenset(PHASE_4_CLASSES)
+)
+_T109_OVERREACH = sorted(
+    set(GOVERNED_BY_OTHER_FEATURE_CLASSES) & _T109_PHASE_OWNED)
+if _T109_OVERREACH:  # pragma: no cover - a source defect, not a state
+    raise CensusError(
+        "feature 038 T109: " + ", ".join(_T109_OVERREACH) + " is both on the "
+        "GOVERNED_BY_OTHER_FEATURE roster and named by a 038 phase predicate. "
+        "That line is admissible accounting under PHASE_5_ADMISSIBLE_REASONS "
+        "and subtracts from unexplained_shortfall, so rostering a class this "
+        "feature has an executable gate on would turn its own red row green"
+    )
+_T109_UNOWNED = sorted(
+    cls for cls, entry in GOVERNED_BY_OTHER_FEATURE_CLASSES.items()
+    if not (isinstance(entry, tuple) and len(entry) == 2
+            and all(isinstance(half, str) and half.strip() for half in entry))
+)
+if _T109_UNOWNED:  # pragma: no cover - a source defect, not a state
+    raise CensusError(
+        "feature 038 T109: " + ", ".join(_T109_UNOWNED) + " carries no "
+        "(owner, reason) pair. An accounting line that names no owner is the "
+        "unowned claim the roster's own derivation refuses -- SC-010's 'a "
+        "report line the user cannot act on is not a report', applied to a "
+        "line that also retires a measured shortfall"
+    )
 
 
 @dataclass(frozen=True)
