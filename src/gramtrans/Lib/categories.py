@@ -9379,7 +9379,119 @@ def _run_171_subpass(context, target, tag=None):
     # same pass, because they need exactly the same thing to be true first --
     # the feature DEFINITIONS resolvable in target.
     skips.extend(_wire_owner_feat_strucs(context, target, plan))
+    # T122: MoMorphData.ProdRestrict. Runs here for the HOOK, not for the
+    # ordering -- it is a project-level list with no dependency on affixes.
+    # This sub-pass is the one place guaranteed to run exactly once per
+    # transfer regardless of the user's selection, because
+    # `transfer._ensure_171_subpass` is its safety net.
+    skips.extend(_wire_prod_restrictions(context, target))
     return skips
+
+
+def _wire_prod_restrictions(context, target):
+    """Transfer `MoMorphData.ProdRestrictOA.PossibilitiesOS` (T122).
+
+    THE ONE `CmPossibility` LIST THIS FEATURE OWNS, AND THE REASON THE OTHER
+    EIGHTEEN ARE NOT HERE. T115 measured the `CmPossibility` row list by list
+    and found the census's -308 / -398 / -335 is a GROSS starter basis: the
+    real loss is -6 / -96 / -33 (`difference_raw`), because 302 objects per
+    pair are canonical FLEx starter lists present identically on both sides.
+    Of the ~19 lists spanned, exactly one is unambiguously grammatical and
+    inside this feature's Assumptions -- productivity restrictions, 1 object
+    on Ngoreme and 3 on Mbugwe. The rest are `Scripture.NoteCategories` (115),
+    `LexDb.Languages` (15), `GenreList`, `ChartMarkers`, `CheckLists`,
+    `DialectLabels`, `Status` and `ConstChartTempl`: Scripture notes, dialect
+    labels, genres and discourse-chart furniture, which this feature's
+    Assumptions do not claim. Sweeping them in here would be the T023b defect
+    in a new place -- closing a polymorphic bucket by its class name.
+
+    NOT to be confused with `IPartOfSpeech.ExceptionFeaturesOC` (the
+    EXCEPTION_FEATURES category), which is a REFERENCE collection of
+    `IFsSymFeatVal`. This is a `CmPossibilityList` of `CmPossibility`, and
+    `categories.py` already documents that flexicon's
+    `InflectionClassGetAll()` / `InflectionClassCreate()` read and write this
+    list by mistake -- which is exactly why GramTrans must reach it directly
+    rather than through that wrapper.
+
+    GUID-preserving and idempotent. Returns a list of Skip.
+    """
+    skips = []
+    source = getattr(context, "source_handle", None)
+    if source is None or target is None:
+        return skips
+
+    def _list_of(handle):
+        """`ICmPossibilityList` at `LangProject.MorphologicalDataOA
+        .ProdRestrictOA`, or None."""
+        try:
+            cache = getattr(handle, "Cache", None)
+            if cache is None:
+                return None
+            return cache.LangProject.MorphologicalDataOA.ProdRestrictOA
+        except (AttributeError, TypeError):
+            return None
+
+    src_list = _list_of(source)
+    tgt_list = _list_of(target)
+    if src_list is None:
+        return skips
+    try:
+        src_items = list(src_list.PossibilitiesOS)
+    except (AttributeError, TypeError):
+        return skips
+    if not src_items:
+        return skips
+    if tgt_list is None:
+        # The destination has no productivity-restrictions list to write into.
+        # Reported rather than skipped: the source HAS restrictions, so this is
+        # a real loss and the run must not go quiet about it.
+        skips.append(Skip(
+            category=GrammarCategory.INFLECTION_FEATURES,
+            source_guid=_guid_str_from(src_list) or "",
+            reason=SkipReason.DEPENDENCY_UNRESOLVED,
+            detail=(f"target has no MorphologicalDataOA.ProdRestrictOA list; "
+                    f"{len(src_items)} productivity restriction(s) not "
+                    f"transferred"),
+        ))
+        return skips
+
+    try:
+        tgt_items = tgt_list.PossibilitiesOS
+        existing = {_guid_str_from(p) for p in tgt_items}
+    except (AttributeError, TypeError):
+        return skips
+
+    for src_item in src_items:
+        item_guid = _guid_str_from(src_item)
+        if not item_guid or item_guid in existing:
+            continue          # idempotent by GUID
+        try:
+            new_item, _ = _create_with_guid(
+                ICmPossibilityFactory_ref(), tgt_items, item_guid, target)
+        except Exception as exc:  # noqa: BLE001
+            _log_guid_fallback("ICmPossibility", item_guid, exc)
+            skips.append(Skip(
+                category=GrammarCategory.INFLECTION_FEATURES,
+                source_guid=item_guid,
+                reason=SkipReason.DEPENDENCY_UNRESOLVED,
+                detail=(f"productivity restriction {item_guid} could not be "
+                        f"created: {type(exc).__name__}"),
+            ))
+            continue
+        _copy_multistrings_ws_mapped(
+            src_item, new_item, ("Name", "Abbreviation", "Description"),
+            source=source, target=target,
+            ws_map=_ws_map_dict(getattr(
+                getattr(context, "_run_plan", None), "ws_mapping", None)),
+        )
+    return skips
+
+
+def ICmPossibilityFactory_ref():  # noqa: N802 -- named for what it returns
+    """`ICmPossibilityFactory`, imported lazily so this module stays importable
+    without pythonnet (host-free unit tests)."""
+    from SIL.LCModel import ICmPossibilityFactory
+    return ICmPossibilityFactory
 
 
 def _msa_owner_map(context, plan):
