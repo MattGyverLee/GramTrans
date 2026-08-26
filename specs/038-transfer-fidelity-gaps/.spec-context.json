@@ -1561,7 +1561,7 @@
       "summary": "T113 closed -- the report-only roster gains a completeness check and the five governed classes it was silently short of; T081/T082/T085 remain blocked on live-project work and a scoping decision"
     }
   },
-  "currentTask": "T113",
+  "currentTask": "T081",
   "task_summaries": {
     "T001": {
       "status": "DONE",
