@@ -3655,7 +3655,21 @@ def variant_types_execute_action(action, context, ws_mapping, tag):
     # source object returns ICmObjectOrId where ClassName may not surface).
     src_owner_guid = None
     try:
+        # T123: the OWNER needs the cast too, and this is the line that lost
+        # the nesting. `.Owner` yields an `ICmObjectOrId` proxy on which
+        # `ClassName` does NOT surface -- the comment two lines up already
+        # says so about `src_obj`, and the cast was applied to `src_obj` and
+        # not to what it returns. `getattr(..., "ClassName", "")` therefore
+        # read `""` for EVERY object, `src_owner_guid` stayed None, and every
+        # nested possibility took the top-level branch below.
+        #
+        # The census is structurally blind to this: the COUNT is right
+        # (7 -> 7 on ejagham) and only the shape is wrong -- 6 nested /
+        # 1 top-level arrives as 2 nested / 5 top-level. T088's defect in a
+        # third place, and the same one the Wave 1 probe hit on its first run.
         owner = ICmObject(src_obj).Owner
+        if owner is not None:
+            owner = ICmObject(owner)
         owner_class = getattr(owner, "ClassName", "")
         if owner_class and "EntryType" in owner_class:
             src_owner_guid = _guid_str_from(owner)
@@ -3685,7 +3699,24 @@ def variant_types_execute_action(action, context, ws_mapping, tag):
                 target_parent_raw = vt
                 break
         if target_parent_raw is None:
-            return None
+            # T123: `new_vt` is ALREADY CREATED here, so the bare `return None`
+            # this replaces abandoned it UNOWNED -- exactly the orphan risk
+            # `_safe_add_to_owner` exists to prevent, reached by the one path
+            # that never called it. It became reachable in practice only once
+            # the owner cast above started working, so it is fixed in the same
+            # change that exposed it.
+            #
+            # Demoted to top level rather than dropped: losing the OBJECT is
+            # worse than losing its NESTING, and the record keeps the demotion
+            # from being silent. A later run with the parent present re-nests
+            # it, because the GUID is preserved either way.
+            _log_possibility_demoted("ILexEntryInflTypeFactory", src_guid, src_owner_guid)
+            _safe_add_to_owner(
+                new_vt, ICmPossibilityList(target_list).PossibilitiesOS,
+                "ILexEntryInflTypeFactory", src_guid,
+            )
+            apply_carrier_b(new_vt, ws, tag)
+            return new_vt
         _safe_add_to_owner(
             new_vt, ICmPossibility(target_parent_raw).SubPossibilitiesOS,
             "ILexEntryInflTypeFactory", src_guid,
@@ -3786,7 +3817,21 @@ def complex_form_types_execute_action(action, context, ws_mapping, tag):
     # Owner-type discrimination (see variant_types for rationale).
     src_owner_guid = None
     try:
+        # T123: the OWNER needs the cast too, and this is the line that lost
+        # the nesting. `.Owner` yields an `ICmObjectOrId` proxy on which
+        # `ClassName` does NOT surface -- the comment two lines up already
+        # says so about `src_obj`, and the cast was applied to `src_obj` and
+        # not to what it returns. `getattr(..., "ClassName", "")` therefore
+        # read `""` for EVERY object, `src_owner_guid` stayed None, and every
+        # nested possibility took the top-level branch below.
+        #
+        # The census is structurally blind to this: the COUNT is right
+        # (7 -> 7 on ejagham) and only the shape is wrong -- 6 nested /
+        # 1 top-level arrives as 2 nested / 5 top-level. T088's defect in a
+        # third place, and the same one the Wave 1 probe hit on its first run.
         owner = ICmObject(src_obj).Owner
+        if owner is not None:
+            owner = ICmObject(owner)
         owner_class = getattr(owner, "ClassName", "")
         if owner_class and "EntryType" in owner_class:
             src_owner_guid = _guid_str_from(owner)
@@ -3811,7 +3856,24 @@ def complex_form_types_execute_action(action, context, ws_mapping, tag):
                 target_parent_raw = cft
                 break
         if target_parent_raw is None:
-            return None
+            # T123: `new_cft` is ALREADY CREATED here, so the bare `return None`
+            # this replaces abandoned it UNOWNED -- exactly the orphan risk
+            # `_safe_add_to_owner` exists to prevent, reached by the one path
+            # that never called it. It became reachable in practice only once
+            # the owner cast above started working, so it is fixed in the same
+            # change that exposed it.
+            #
+            # Demoted to top level rather than dropped: losing the OBJECT is
+            # worse than losing its NESTING, and the record keeps the demotion
+            # from being silent. A later run with the parent present re-nests
+            # it, because the GUID is preserved either way.
+            _log_possibility_demoted("ILexEntryTypeFactory", src_guid, src_owner_guid)
+            _safe_add_to_owner(
+                new_cft, ICmPossibilityList(target_list).PossibilitiesOS,
+                "ILexEntryTypeFactory", src_guid,
+            )
+            apply_carrier_b(new_cft, ws, tag)
+            return new_cft
         _safe_add_to_owner(
             new_cft, ICmPossibility(target_parent_raw).SubPossibilitiesOS,
             "ILexEntryTypeFactory", src_guid,
@@ -3897,7 +3959,21 @@ def semantic_domains_execute_action(action, context, ws_mapping, tag):
     # Owner-type discrimination (see variant_types for rationale).
     src_owner_guid = None
     try:
+        # T123: the OWNER needs the cast too, and this is the line that lost
+        # the nesting. `.Owner` yields an `ICmObjectOrId` proxy on which
+        # `ClassName` does NOT surface -- the comment two lines up already
+        # says so about `src_obj`, and the cast was applied to `src_obj` and
+        # not to what it returns. `getattr(..., "ClassName", "")` therefore
+        # read `""` for EVERY object, `src_owner_guid` stayed None, and every
+        # nested possibility took the top-level branch below.
+        #
+        # The census is structurally blind to this: the COUNT is right
+        # (7 -> 7 on ejagham) and only the shape is wrong -- 6 nested /
+        # 1 top-level arrives as 2 nested / 5 top-level. T088's defect in a
+        # third place, and the same one the Wave 1 probe hit on its first run.
         owner = ICmObject(src_obj).Owner
+        if owner is not None:
+            owner = ICmObject(owner)
         owner_class = getattr(owner, "ClassName", "")
         if owner_class == "CmSemanticDomain":
             src_owner_guid = _guid_str_from(owner)
@@ -3922,7 +3998,24 @@ def semantic_domains_execute_action(action, context, ws_mapping, tag):
                 target_parent_raw = sd
                 break
         if target_parent_raw is None:
-            return None
+            # T123: `new_sd` is ALREADY CREATED here, so the bare `return None`
+            # this replaces abandoned it UNOWNED -- exactly the orphan risk
+            # `_safe_add_to_owner` exists to prevent, reached by the one path
+            # that never called it. It became reachable in practice only once
+            # the owner cast above started working, so it is fixed in the same
+            # change that exposed it.
+            #
+            # Demoted to top level rather than dropped: losing the OBJECT is
+            # worse than losing its NESTING, and the record keeps the demotion
+            # from being silent. A later run with the parent present re-nests
+            # it, because the GUID is preserved either way.
+            _log_possibility_demoted("ICmSemanticDomainFactory", src_guid, src_owner_guid)
+            _safe_add_to_owner(
+                new_sd, ICmPossibilityList(target_list).PossibilitiesOS,
+                "ICmSemanticDomainFactory", src_guid,
+            )
+            apply_carrier_b(new_sd, ws, tag)
+            return new_sd
         _safe_add_to_owner(
             new_sd, ICmPossibility(target_parent_raw).SubPossibilitiesOS,
             "ICmSemanticDomainFactory", src_guid,
@@ -11706,6 +11799,23 @@ def _phonology_simple_plan(piece, context, category, ops_attr, label):
         intended_target_guid=src_guid,
         summary=f"{label} guid={src_guid[:8]}...",
     )
+
+
+def _log_possibility_demoted(factory_label, src_guid, parent_guid):
+    """Record that a nested possibility was placed at TOP LEVEL because its
+    parent is not in the destination yet (feature 038 T123).
+
+    This is a SHAPE loss the census cannot see: the object count is unchanged,
+    so a counts-only gate reads green while the list's structure is wrong.
+    On ejagham, `LexEntryInflType` measures 7 -> 7 with 6 nested / 1 top-level
+    arriving as 2 nested / 5 top-level -- right number, wrong tree.
+    """
+    import logging as _logging
+    _logging.getLogger("gramtrans.Lib.categories").warning(
+        "%s: %s should nest under parent %s, which is not in the destination; "
+        "placed at TOP LEVEL instead. Object preserved, nesting lost -- the "
+        "count is unchanged so no census row will show this.",
+        factory_label, src_guid, parent_guid)
 
 
 def _safe_add_to_owner(new_obj, owner_collection, factory_label, src_guid):
