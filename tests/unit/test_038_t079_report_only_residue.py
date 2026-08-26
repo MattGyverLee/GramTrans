@@ -299,8 +299,9 @@ class TestT079AReportOnlyClassIsNeverMatched:
 
     def test_the_residue_block_is_emitted_into_the_run_report_json(self):
         """The console truncation note says "the run-report JSON artifact
-        lists all of them", and 23 rostered classes against a 20-row console
-        budget means that note gets printed. It has to be TRUE, so the block
+        lists all of them", and 28 rostered classes against a 20-row console
+        budget means that note gets printed (23 when T079 measured it; T113's
+        five additions only widen the gap). It has to be TRUE, so the block
         is a run-report key -- `census_report_only_residue`, beside `census`
         and deliberately not inside it, because every object in
         `census-artifact.schema.json` is `additionalProperties: false`."""
@@ -322,11 +323,14 @@ class TestT079AReportOnlyClassIsNeverMatched:
 
     def test_the_agreeing_rows_lead_the_block_because_the_console_truncates(
             self):
-        """Measured, on ngoreme: 23 rostered classes, `_CONSOLE_MAX_ROWS` 20,
-        and 19 of them differing. Under the table's own urgency order the
+        """Measured, on ngoreme: 28 rostered classes, `_CONSOLE_MAX_ROWS` 20,
+        and 21 of them differing. Under the table's own urgency order the
         truncation ate three of the four AGREEING rows -- exactly the rows
         this block exists for, since the differing ones are already at the top
-        of the table above."""
+        of the table above. T079 measured 23 / 19 / 4 here; T113's five
+        additions make it 28 / 21 / 7, and `TextTag` and `CmPicture` land in
+        the AGREEING group they are vacuously green in, which is the group
+        this ordering exists to protect."""
         rows = [_row("FsComplexFeature", 2, 2)] + [
             _row(name, 100, 1)
             for name in models.CENSUS_REPORT_ONLY_RESIDUE
@@ -452,6 +456,230 @@ class TestT079TheRosterCannotDodgeAGate:
         # The loss is what fails it, and nothing else: a roster that could not
         # move a verdict but silently added a gate failure would still be a
         # way in.
+        assert with_roster[0]["failures"] == ()
+
+
+# ---------------------------------------------------------------------------
+# T113 -- direction 3: the roster cannot be silently SHORT of a governed path
+# ---------------------------------------------------------------------------
+
+_T078_SNAPSHOTS = (
+    Path(__file__).resolve().parents[1] / "integration" / "_snapshots")
+
+
+def _t078_rows(pair: str) -> dict:
+    """T078's committed post-037 census for one sanctioned pair, by class."""
+    artifact = json.loads(
+        (_T078_SNAPSHOTS / f"census-038-t078-{pair}.json").read_text(
+            encoding="utf-8"))
+    return {row["class"]: row for row in artifact["classes"]}
+
+
+class TestT113TheRosterCannotBeSilentlyShort:
+    """T079 wrote four checks and every one looks for a class that should not
+    be ON the roster. None of them could see a class MISSING from it, so the
+    roster went short of two of the three paths the spec's Assumptions name
+    and `report_only_roster_defects` still returned `()`.
+
+    That is T079's own lock inverted -- a guard that covers the direction it
+    was written for and is structurally blind to the other -- and the fix is
+    the CHECK, not the five names: adding the names without check 5 would
+    leave the next path just as free to go missing.
+    """
+
+    def test_every_governed_class_is_on_the_residue_roster(self):
+        """THE RULE, stated as a set relation. T109 derived
+        `CENSUS_GOVERNED_BY_OTHER_FEATURE_CLASSES` from the spec's three named
+        paths; a class another feature governs is measured here, reported here
+        and undertaken elsewhere, which is exactly what `report_only` says."""
+        governed = set(models.CENSUS_GOVERNED_BY_OTHER_FEATURE_CLASSES)
+        residue = set(models.CENSUS_REPORT_ONLY_RESIDUE)
+        assert governed - residue == set()
+
+    def test_the_converse_is_deliberately_not_required(self):
+        """Superset, NOT equality. The phonology family, the Fs* cascade and
+        `CmFile` are report-only under an owner that names no feature that
+        exists -- T079 called that "a claim someone must own before it can be
+        an accounting line", and T109 kept them out for that reason. Requiring
+        equality would either launder those rows onto a gate-bearing roster or
+        force them off a display roster where they belong."""
+        governed = set(models.CENSUS_GOVERNED_BY_OTHER_FEATURE_CLASSES)
+        residue = set(models.CENSUS_REPORT_ONLY_RESIDUE)
+        assert {"PhCode", "CmFile", "FsClosedValue"} <= residue - governed
+
+    def test_the_five_classes_t113_added_are_the_gap_it_measured(self):
+        assert set(models.CENSUS_REPORT_ONLY_RESIDUE) >= {
+            "Text", "TextTag", "ReversalIndex", "ReversalIndexEntry",
+            "CmPicture"}
+
+    def test_a_governed_class_missing_from_the_roster_is_a_defect(
+            self, monkeypatch):
+        """THE CHECK HAS TO FIRE. Removing `ReversalIndex` -- a SHORTFALL on
+        all three pairs -- reproduces the state T113 found, and the audit must
+        now name it."""
+        poisoned = dict(models.CENSUS_REPORT_ONLY_RESIDUE)
+        del poisoned["ReversalIndex"]
+        monkeypatch.setattr(
+            report_mod, "CENSUS_REPORT_ONLY_RESIDUE", poisoned)
+        defects = report_mod.report_only_roster_defects()
+        assert any("ReversalIndex" in d for d in defects)
+        assert any("NOT on the report-only residue roster" in d
+                   for d in defects)
+
+    def test_emptying_the_roster_names_every_governed_class(self, monkeypatch):
+        """The strongest form of the same direction: an EMPTY roster reports
+        all fourteen governed classes, so the check cannot be satisfied by a
+        roster that merely happens to be non-empty."""
+        monkeypatch.setattr(report_mod, "CENSUS_REPORT_ONLY_RESIDUE", {})
+        defects = report_mod.report_only_roster_defects()
+        named = [d for d in defects
+                 if "NOT on the report-only residue roster" in d]
+        assert len(named) == 1
+        for cls in models.CENSUS_GOVERNED_BY_OTHER_FEATURE_CLASSES:
+            assert cls in named[0], cls
+
+    def test_the_pre_t113_roster_is_exactly_what_the_check_would_have_caught(
+            self, monkeypatch):
+        """The regression, reconstructed. With the five entries removed the
+        audit is no longer clean -- which is the whole claim T113 makes about
+        the four earlier checks, since that roster passed every one of them."""
+        pre_t113 = {
+            name: entry
+            for name, entry in models.CENSUS_REPORT_ONLY_RESIDUE.items()
+            if name not in ("Text", "TextTag", "ReversalIndex",
+                            "ReversalIndexEntry", "CmPicture")
+        }
+        assert len(pre_t113) == 23
+        monkeypatch.setattr(
+            report_mod, "CENSUS_REPORT_ONLY_RESIDUE", pre_t113)
+        defects = report_mod.report_only_roster_defects()
+        assert len(defects) == 1
+        for cls in ("Text", "TextTag", "ReversalIndex", "ReversalIndexEntry",
+                    "CmPicture"):
+            assert cls in defects[0], cls
+
+    def test_the_carve_out_for_an_excluded_class_is_itself_guarded(
+            self, monkeypatch):
+        """AN UNGUARDED CARVE-OUT WOULD BE THE SAME DEFECT AGAIN. Check 4
+        forbids rostering a class the artifact already excludes from the
+        delta, so check 5 has to exempt one -- and an exemption nothing
+        watches is a way for a governed class to vanish from both checks. The
+        combination is therefore reported in its own right: a class cannot be
+        both governed-and-reported and excluded-before-it-is-measured."""
+        engine = report_mod._census_module()
+        monkeypatch.setattr(
+            engine, "NOT_EVALUATED_CLASS_REASONS",
+            dict(engine.NOT_EVALUATED_CLASS_REASONS,
+                 ReversalIndex="OUT_OF_SCOPE_CLASS"))
+        poisoned = dict(models.CENSUS_REPORT_ONLY_RESIDUE)
+        del poisoned["ReversalIndex"]
+        monkeypatch.setattr(
+            report_mod, "CENSUS_REPORT_ONLY_RESIDUE", poisoned)
+        defects = report_mod.report_only_roster_defects()
+        # Exempt from check 5's missing list...
+        assert not any("NOT on the report-only residue roster" in d
+                       for d in defects)
+        # ...and reported as the contradiction it is, rather than silently.
+        assert any("cannot be both governed" in d and "ReversalIndex" in d
+                   for d in defects)
+
+    def test_the_four_original_checks_still_fire(self, monkeypatch):
+        """Check 5 is an ADDITION. A change that satisfied the new direction
+        by relaxing an old one would be a worse roster, not a better one."""
+        poisoned = dict(models.CENSUS_REPORT_ONLY_RESIDUE)
+        poisoned["MoAffixProcess"] = ("nobody", "let us not gate on this")
+        poisoned["PhCode"] = ("", "measured -43, -89, -79")
+        poisoned["CmAnthroItem"] = ("nobody", "already excluded")
+        monkeypatch.setattr(
+            report_mod, "CENSUS_REPORT_ONLY_RESIDUE", poisoned)
+        defects = report_mod.report_only_roster_defects()
+        assert any("owned, not report-only" in d for d in defects)
+        assert any("NO owner named" in d for d in defects)
+        assert any("already excluded from the census delta" in d
+                   for d in defects)
+
+    def test_a_path_now_reads_one_state_end_to_end(self):
+        """THE CONSEQUENCE T113 MEASURED, both halves. Post-T109 a governed
+        row carries a `GOVERNED_BY_OTHER_FEATURE` accounting line, so its
+        `unexplained_shortfall` is 0 and the `unexplained` band no longer
+        claims it -- which left `Text` falling through to `accounted` while
+        `StText`, the child it owns via `ContentsOA`, read `report_only`. One
+        feature's classes, two words."""
+        accounted = {
+            "unexplained_shortfall": 0,
+            "accounted_for": [{"reason": "GOVERNED_BY_OTHER_FEATURE",
+                               "count": 14}],
+        }
+        assert _tier("StText", 4954, 63, **accounted) == "report_only"
+        assert _tier("Text", 65, 51, **accounted) == "report_only"
+        assert _tier("ReversalIndex", 2, 0, **accounted) == "report_only"
+        # And the band order is untouched: a governed class whose loss is NOT
+        # accounted still fails, which is the half T079 built the ordering for.
+        assert _tier("Text", 65, 51) == "unexplained"
+
+    def test_the_five_additions_carry_their_measured_figures(self):
+        """"Measured, not argued" -- the rule T109's roster is held to,
+        applied to T113's five. Each claim is read back off T078's committed
+        post-037 censuses in (ejagham, ngoreme, mbugwe) order, so an entry
+        cannot be a class somebody merely believed belonged to a path."""
+        rows = {pair: _t078_rows(pair)
+                for pair in ("ejagham", "ngoreme", "mbugwe")}
+        expected_difference = {
+            "Text": (0, -14, 0),
+            "ReversalIndex": (-2, -2, -2),
+            "ReversalIndexEntry": (-14, 0, 0),
+        }
+        for cls, diffs in expected_difference.items():
+            measured = tuple(rows[p][cls]["difference"]
+                             for p in ("ejagham", "ngoreme", "mbugwe"))
+            assert measured == diffs, cls
+            _owner, reason = models.CENSUS_REPORT_ONLY_RESIDUE[cls]
+            assert "measured " + ", ".join(str(d) for d in diffs) in reason
+        # The two vacuous ones say so instead of quoting a difference: nothing
+        # committed can measure a class no sanctioned pair holds.
+        for cls in ("TextTag", "CmPicture"):
+            for pair in rows:
+                assert rows[pair][cls]["source_count"] == 0, (cls, pair)
+            _owner, reason = models.CENSUS_REPORT_ONLY_RESIDUE[cls]
+            assert "source_count 0 on all three pairs" in reason
+
+    def test_every_addition_names_an_owner_and_a_reason(self):
+        """SC-010, on the five new lines specifically. The residue roster's
+        one substantive rule is that "report-only" without a successor is a
+        line the user cannot act on -- and unlike the phonology family, all
+        five of these DO have a named successor feature."""
+        for cls in ("Text", "TextTag", "ReversalIndex", "ReversalIndexEntry",
+                    "CmPicture"):
+            owner, reason = models.CENSUS_REPORT_ONLY_RESIDUE[cls]
+            assert owner.strip() and reason.strip(), cls
+            assert "not 038" in owner, cls
+            assert "nobody" not in owner, cls
+
+    def test_the_widened_roster_is_still_gate_inert(self, monkeypatch):
+        """T079's strongest lock, re-run over T113's additions. Five more
+        classes on a roster that could turn a red row green would be five ways
+        in; this roster still cannot move a verdict, an exit code, a
+        `gate_scope`, a `verdict_class` or a tally."""
+        artifact = _artifact(
+            [
+                _row("ReversalIndex", 2, 0),      # newly rostered, real loss
+                _row("CmPicture", 0, 0),          # newly rostered, vacuous
+                _row("MoInflClass", 5, 5),        # owned, agrees
+            ],
+            verdict="UNEXPLAINED_SHORTFALL",
+            exit_code=1,
+            verdict_human_label="Unexplained shortfall",
+        )
+        with_roster = (
+            report_mod._census_gate(artifact),
+            report_mod._census_json(artifact),
+        )
+        monkeypatch.setattr(report_mod, "CENSUS_REPORT_ONLY_RESIDUE", {})
+        assert with_roster == (
+            report_mod._census_gate(artifact),
+            report_mod._census_json(artifact),
+        )
+        assert with_roster[0]["verdict"] == "UNEXPLAINED_SHORTFALL"
         assert with_roster[0]["failures"] == ()
 
 

@@ -981,6 +981,24 @@ CENSUS_REPORT_ONLY_STATE: str = "report_only"
 #: `CmAnthroItem` is not here either: it is NOT_EVALUATED with
 #: `OUT_OF_SCOPE_CLASS` on all three pairs, a state already distinct from
 #: `matched`, and T078 ruled it excluded rather than report-only.
+#:
+#: T113 -- THIS ROSTER IS A SUPERSET OF
+#: `CENSUS_GOVERNED_BY_OTHER_FEATURE_CLASSES`, AND THAT IS NOW CHECKED. A
+#: class another feature governs is by definition measured here, reported
+#: here and undertaken elsewhere, which is exactly what `report_only` says;
+#: so every governed class belongs on this roster, while the converse stays
+#: false (the phonology family, the Fs* cascade and `CmFile` are report-only
+#: with NO successor feature, which is precisely why they are not governed).
+#: T109 derived its roster from `spec.md`'s three named paths and landed 14
+#: classes where this one held 9 of them: `Text`, `TextTag`, `ReversalIndex`,
+#: `ReversalIndexEntry` and `CmPicture` were absent while `StText`,
+#: `StTxtPara` and the four `Wfi*` were present -- one feature's classes split
+#: across two states, so `_census_row_tier` printed `report_only` for `StText`
+#: and plain `accounted` for the `Text` that OWNS it via `ContentsOA`. The five
+#: are added below; `report.report_only_roster_defects` check 5 is what stops
+#: the gap reopening, since its other four checks look only for a class that
+#: should not be ON the roster and were structurally blind to one missing
+#: from it.
 CENSUS_REPORT_ONLY_RESIDUE: dict = {
     # -- R7's explicit decision: a create path exists and nothing takes it. --
     "FsComplexFeature": (
@@ -1085,6 +1103,20 @@ CENSUS_REPORT_ONLY_RESIDUE: dict = {
     #    magnitude is the point. Over 50,000 objects on ngoreme alone, which
     #    is why `total_shortfall` (70,646 there) is unusable as a headline for
     #    this feature's work. --
+    "Text": (
+        "the texts/wordforms feature -- not 038",
+        "measured 0, -14, 0. T113: the text object itself, OWNER of `StText` "
+        "below via ContentsOA. Absent until T113 while its own child was "
+        "rostered, so the console printed two different states for two halves "
+        "of one path",
+    ),
+    "TextTag": (
+        "the texts/wordforms feature -- not 038",
+        "source_count 0 on all three pairs, so every reading is a vacuous "
+        "0 -> 0. T113: rostered for the same reason `PhFeatureConstraint` is "
+        "-- a green with no code behind it must not read as `matched` -- and "
+        "it is `Text.TagsOC`, the same feature's work",
+    ),
     "WfiWordform": (
         "the texts/wordforms feature -- not 038",
         "measured -297, -8191, -1187",
@@ -1123,6 +1155,34 @@ CENSUS_REPORT_ONLY_RESIDUE: dict = {
     "PunctuationForm": (
         "the texts/wordforms feature -- not 038",
         "measured -775, -3994, -1126",
+    ),
+    # -- T113: reversal indexes. The spec's Assumptions name the path and
+    #    neither class was rostered, so `ReversalIndex` -- a SHORTFALL on all
+    #    three pairs -- read as merely `accounted` once T109 gave it a
+    #    governed accounting line. --
+    "ReversalIndex": (
+        "the reversal-index feature -- not 038",
+        "measured -2, -2, -2: the only class on any governed path that is a "
+        "SHORTFALL on ALL THREE pairs. `Lib/categories.py`'s reversal path "
+        "builds `ReversalDecision`s for the PREVIEW only",
+    ),
+    "ReversalIndexEntry": (
+        "the reversal-index feature -- not 038",
+        "measured -14, 0, 0. The -14 is ejagham's 144 -> 130; the two zeros "
+        "are pairs holding none (source_count 0), which is a vacuous green "
+        "and not a transfer this feature got right",
+    ),
+    # -- T113: sense pictures. ONE class, and it is the one the Assumptions'
+    #    clause names. `CmFile` is rostered separately under "the
+    #    media/pictures path" and is NOT this: with no CmPicture anywhere on
+    #    any pair, the 2176 objects it and `CmFolder` lose cannot be sense
+    #    pictures (T109's measured ruling). --
+    "CmPicture": (
+        "the sense-pictures feature -- not 038",
+        "source_count 0 on all three pairs, so every reading is a vacuous "
+        "0 -> 0. Rostered because it is the class the Assumptions' 'sense "
+        "pictures' clause names, and its emptiness is what keeps `CmFile` and "
+        "`CmFolder` off the governed roster",
     ),
 }
 

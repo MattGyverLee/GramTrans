@@ -7472,20 +7472,37 @@ class TestT109TheRosterIsDerivedNotInvented:
     def test_the_roster_is_not_the_report_only_residue_and_says_so(self):
         """The two rosters are deliberately different sets, and the difference
         is the whole argument: the residue roster carries the phonology family
-        under an owner that names no existing feature, and this one carries
-        `Text`, `TextTag`, `ReversalIndex`, `ReversalIndexEntry` and
-        `CmPicture`, which the residue roster does not. Neither is derivable
-        from the other, so a later hand that tries to collapse them into one
-        list fails here."""
+        and the Fs* cascade under an owner that names no existing feature,
+        which this one refuses. Neither is derivable from the other, so a
+        later hand that tries to collapse them into one list fails here.
+
+        **AMENDED BY T113.** As written, this test recorded `Text`, `TextTag`,
+        `ReversalIndex`, `ReversalIndexEntry` and `CmPicture` as being on the
+        governed roster and NOT the residue -- and read that as evidence the
+        two are different sets. T113 measured it as a GAP instead: those five
+        are two of the spec's three named paths, and leaving them off the
+        residue made `report._census_row_tier` print `report_only` for
+        `StText` and plain `accounted` for the `Text` that owns it. The five
+        were added to the residue and `report.report_only_roster_defects`
+        gained a completeness check, so the containment below is now enforced
+        rather than incidental.
+
+        THE ARGUMENT IS UNCHANGED AND IS STILL PINNED HERE: the residue is a
+        strict SUPERSET, never the same set, and it is the `residue -
+        governed` direction that carries it -- a class can be report-only with
+        no successor feature (`PhCode`, `CmFile`) and that is exactly what
+        must never become a gate-bearing accounting line."""
         from gramtrans.Lib import models as _models
 
         governed = set(_models.CENSUS_GOVERNED_BY_OTHER_FEATURE_CLASSES)
         residue = set(_models.CENSUS_REPORT_ONLY_RESIDUE)
-        assert governed - residue == {
-            "Text", "TextTag", "ReversalIndex", "ReversalIndexEntry",
-            "CmPicture"}
-        assert "PhCode" in residue - governed
-        assert "CmFile" in residue - governed
+        # T113: the containment holds, and `report_only_roster_defects`
+        # check 5 is what keeps it holding.
+        assert governed - residue == set()
+        assert governed != residue
+        for unowned in ("PhCode", "CmFile", "FsClosedValue",
+                        "PhSimpleContextNC"):
+            assert unowned in residue - governed, unowned
 
     def test_the_lookup_is_the_only_one(self):
         """`census.governed_by_other_feature` reads the module global at call

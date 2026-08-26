@@ -22,6 +22,7 @@ from typing import Iterable
 
 if __package__:
     from .models import (
+        CENSUS_GOVERNED_BY_OTHER_FEATURE_CLASSES,
         CENSUS_PHASE_GATED_CLASSES,
         CENSUS_REPORT_ONLY_RESIDUE,
         CENSUS_REPORT_ONLY_STATE,
@@ -44,6 +45,7 @@ if __package__:
     )
 else:
     from models import (
+        CENSUS_GOVERNED_BY_OTHER_FEATURE_CLASSES,
         CENSUS_PHASE_GATED_CLASSES,
         CENSUS_REPORT_ONLY_RESIDUE,
         CENSUS_REPORT_ONLY_STATE,
@@ -2516,7 +2518,11 @@ def report_only_roster_defects() -> tuple:
     Empty means the roster is sound. Returned rather than raised so a test can
     name the defect and a live run can never die inside a renderer.
 
-    Four checks:
+    Five checks. The first four all ask whether a class is wrongly ON the
+    roster; **check 5 is the only one that asks whether one is missing from
+    it**, and T113 is what it was filed for -- with four one-directional
+    checks the roster could be silently short of a path the spec's Assumptions
+    name and this function still reported clean.
 
     1. `CENSUS_PHASE_GATED_CLASSES` still equals the union of the phase
        predicates' declared scopes. `models.py` cannot import `census.py` (the
@@ -2533,6 +2539,22 @@ def report_only_roster_defects() -> tuple:
        `CmAnthroItem` is NOT_EVALUATED with `OUT_OF_SCOPE_CLASS`, a state
        already distinct from `matched`; rostering it would be a second name
        for a state the artifact states correctly.
+    5. T113 -- COMPLETENESS, the other direction. Every class T109's
+       `CENSUS_GOVERNED_BY_OTHER_FEATURE_CLASSES` names is on this roster. A
+       class another feature governs is measured here, reported here and
+       undertaken elsewhere, which is what `report_only` says; the two rosters
+       therefore cannot disagree about who governs a class. The converse is
+       deliberately NOT checked -- the phonology family, the Fs* cascade and
+       `CmFile` are report-only with no successor feature, which is exactly
+       why they are not governed.
+
+       Its carve-out is itself checked, because an unguarded carve-out is the
+       blind spot T113 was filed about: a governed class that the artifact
+       already excludes from the delta cannot be rostered (check 4 forbids it)
+       and so is exempt from check 5 -- and that combination is reported as
+       its own defect rather than passing quietly, since a class cannot be
+       both "governed by another feature and reported" and "excluded from the
+       delta before it is measured".
     """
     engine = _census_module()
     defects: list = []
@@ -2582,6 +2604,31 @@ def report_only_roster_defects() -> tuple:
             f"{excluded[name]}, so its row is NOT_EVALUATED and already "
             "distinct from matched -- rostering it is a second name for a "
             "state the artifact states correctly"
+        )
+
+    # Check 5 (T113). Read as module globals so a test can poison either
+    # roster, the same handle the four checks above are exercised through.
+    governed = set(CENSUS_GOVERNED_BY_OTHER_FEATURE_CLASSES)
+    contradictory = sorted(governed & set(excluded))
+    for name in contradictory:
+        defects.append(
+            f"{name}: named by CENSUS_GOVERNED_BY_OTHER_FEATURE_CLASSES AND "
+            f"already excluded from the census delta as {excluded[name]}. A "
+            "class cannot be both governed-by-another-feature-and-reported "
+            "and excluded-before-it-is-measured; check 4 forbids rostering "
+            "it, so check 5 cannot require it either"
+        )
+    missing = sorted(governed - set(CENSUS_REPORT_ONLY_RESIDUE)
+                     - set(contradictory))
+    if missing:
+        defects.append(
+            f"{missing} are governed by another feature "
+            "(CENSUS_GOVERNED_BY_OTHER_FEATURE_CLASSES, derived from the "
+            "spec's three named paths) but are NOT on the report-only "
+            "residue roster -- so the console calls them `accounted` while "
+            "the rest of their own path reads `report_only`. A class another "
+            "feature governs is measured here and undertaken elsewhere, "
+            "which is what report-only means"
         )
 
     return tuple(defects)
