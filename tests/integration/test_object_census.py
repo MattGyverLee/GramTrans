@@ -1156,6 +1156,17 @@ class TestBaselineIsAFailingVerdict:
 # count-only baseline forces starter_subtraction_basis 'baseline_gross'", which
 # every whole-project baseline is, because a blank FieldWorks project holds
 # objects in 11 classes that carry no name to key on at all.
+#
+# T110 CARVED ONE CASE OUT OF THE RULE QUOTED ABOVE, and the two citations are
+# left verbatim because they are citations -- the contract now states the
+# carve-out at the same lines. A row whose `starter_baseline_count` is an
+# integer 0 from a real `baseline_document` is NOT capped: there is no starter
+# object to double-subtract, so the paragraph below does not describe it and
+# gross computes the EXACT difference rather than an upper bound. Absent or
+# `null`, or any other `starter_baseline_source`, stays capped -- absent is not
+# zero. `census.is_gross_basis_row` is the one predicate all of it turns on,
+# which is why the helpers below have to name a nonzero baseline to build a
+# genuinely capped row.
 # ===========================================================================
 
 def gross_basis_rows(rows=None, *, phoneme_baseline=23, baselines=None):
