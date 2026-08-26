@@ -1186,6 +1186,11 @@
       "decision": "Probed both the flexicon layer and the raw LCM factory layer, and recorded them as separate facts",
       "why": "the claim names FLEx/the LCM but GramTrans reaches them only through flexicon; one layer alone would answer a different question than the one asked. A wrapper guard is not an enforcement claim and must not be recorded as one",
       "rejected": "probing only the flexicon surface GramTrans uses"
+    },
+    {
+      "decision": "Phase 10 separates read-only attribution probes (W1) from create paths (W2), and its scope was authored over a re-measurement rather than over T081s residue sentence",
+      "why": "T107 is the measured precedent -- it built a correct create path on the wrong route and the class stayed red on two pairs; and T081s own list was short by seven classes, one of which (MoStemMsa) is a Phase 1 class whose two readings disagree",
+      "rejected": "authoring the phase directly from T081s prose; building create paths before attribution"
     }
   ],
   "verified": [
@@ -1294,6 +1299,14 @@
         "liblcm undoable=False legacy-mode notice on the write runs -- expected, the project is a throwaway",
         "the runner executed Main twice, so each duplicate group is x3 rather than x2; left as measured"
       ]
+    },
+    {
+      "what": "Re-measured the P5 residue rather than authoring Phase 10 over T081s prose",
+      "command": "scratchpad p5_residue.py -- T109 emitter line applied in memory to the three T078 censuses, then census.evaluate_phase(artifact, 5)",
+      "result": "10 / 16 / 14 failures, exactly T109s predicted figures; union is 16 lossy classes, not the nine T081 named. The seven T081 missed are CmFile, CmFolder, LexEntryType, LexReference, MoStemMsa, PhFeatureConstraint, PhSegRuleRHS",
+      "warnings": [
+        "PhNCFeatures appears in every pairs failure list at difference 0 MATCHED -- that is the duplicate-identity half (T082 038-NK-P3), deliberately excluded from Phase 10"
+      ]
     }
   ],
   "concerns": [
@@ -1360,6 +1373,10 @@
     },
     {
       "note": "How census-evidence.mds 21 duplicate phoneme names arose is still unexplained. The obvious candidate -- flexicons ws-scoped Create guard being bypassed by naming another writing system -- was tested and did NOT reproduce; the guard held. Open.",
+      "step": "implement"
+    },
+    {
+      "note": "MoStemMsa reads -1 on T078s ngoreme pair but P1 is recorded satisfied on CENSUS-20260820-114752. One of the two readings is stale and it is a Phase 1 class. T118 settles it first; until then P1s standing is not certain on the T078 corpus.",
       "step": "implement"
     }
   ],

@@ -202,6 +202,57 @@ confirm each arrives with its input and output content intact.
 
 ---
 
+### User Story 6 - Nothing is left merely explained (Priority: P6)
+
+*Added 2026-08-26 by user decision. Feature 038's census was built to make loss
+visible; this story is the decision not to stop at visible.*
+
+A linguist transfers a project and reads the run report. Every class the census
+measures either **agrees**, or carries a reason that names **a feature that
+exists** and will do the work. What they must not find is a row that is red,
+counted, honestly reported — and owned by nobody.
+
+**Why this priority**: Ranked last because it is the residue by construction —
+what is left once US1–US5 have each taken their own classes. It is the largest
+remaining block by object count (4,264 objects in the `Fs*` cascade alone across
+the three sanctioned pairs) and the smallest by linguistic novelty: every class
+here is one the census already measures exactly, so the work is transfer paths,
+not new measurement.
+
+**Why it exists at all**: T081 measured predicate P5 as blocked "on a scoping
+decision this feature has not taken, not on unfinished code" — a residue of 16
+classes that no task in the feature owned. T079 had already refused those
+classes an accounting line on the grounds that their stated owner ("037's
+successor, or a later phonology feature") names no feature that exists, and
+called that "a claim someone must own before it can be an accounting line."
+This story is that claim being owned rather than deferred.
+
+**Independent Test**: Run the census gate for predicate P5 against a sanctioned
+pair and confirm every remaining `required` row is MATCHED or carries a valid
+accounting line, with no unexplained difference.
+
+**Acceptance Scenarios**:
+
+1. **Given** a source project whose MSAs carry feature structures, **When** the
+   transfer runs, **Then** the destination receives them — not only the feature
+   *definitions* that already transfer, but the *structures* that reference them.
+2. **Given** a phonological rule with contexts owned by `PhSegRuleRHS`, **When**
+   the rule is transferred, **Then** its contexts arrive and resolve, on the
+   phonological-rule route and not only on the affix-process route T107 closed.
+3. **Given** a class whose loss this feature does not undertake, **When** the run
+   report is read, **Then** the reason names a feature that exists — and a class
+   with no such owner does not get a report line instead of a fix.
+4. **Given** a residue class is closed, **When** the census is re-run, **Then**
+   the acceptance is per class and per pair, never an aggregate: a class that is
+   vacuously green on one corpus because that corpus holds none of it has not
+   been demonstrated.
+
+**Explicitly out of scope**: `PhNCFeatures`. It fails P5 at difference 0,
+MATCHED — on the duplicate-identity half, which is the roster's `038-NK-P3`, and
+which no create path can fix.
+
+---
+
 ### Edge Cases
 
 - **A natural key matches more than one destination item.** The transfer must not
