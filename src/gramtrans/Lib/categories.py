@@ -4255,8 +4255,19 @@ def _rules_enumerate_all(source):
         for raw in items:
             obj = _unwrap(raw)
             yield obj
-            # If this is a grouping node, recurse into its MembersOC
-            members = getattr(obj, "MembersOC", None)
+            # If this is a grouping node, recurse into its MembersOC.
+            # T123: read `MembersOC` off the CONCRETE cast, not off the raw
+            # member. `AdhocCoProhibitionsOC` yields base-typed
+            # `IMoAdhocProhib` elements and `MembersOC` is declared on
+            # `IMoAdhocProhibGr` only -- `_cast_rule_concrete`'s own docstring
+            # names this exact collection. Uncast, a grouping node's children
+            # are silently never yielded, the same defect measured live on
+            # `LexRefType.MembersOC` (see `_as_lex_ref_type`). LATENT on the
+            # sanctioned corpus: `MoAdhocProhibGr` source_count is 0 on all
+            # three T078 pairs, so this is fixed to be correct the day a
+            # project with a grouping node arrives, and is NOT claimed as a
+            # measured recovery.
+            members = getattr(_cast_rule_concrete(obj), "MembersOC", None)
             if members is not None:
                 for child in _recurse_adhoc(members):
                     yield child
@@ -4280,7 +4291,8 @@ def _rules_enumerate_all(source):
                 if obj_guid not in _seen_guids:
                     _seen_guids.add(obj_guid)
                     yield obj
-                members = getattr(obj, "MembersOC", None)
+                # T123: same concrete-cast read as the OS leg above.
+                members = getattr(_cast_rule_concrete(obj), "MembersOC", None)
                 if members is not None:
                     for child in _recurse_adhoc(members):
                         child_guid = _guid_str_from(child)
@@ -6835,20 +6847,72 @@ def plan_lexical_relation_decision(src_relation, ctx, resolver_cache, dropped):
     return record
 
 
+def _as_lex_ref_type(obj):
+    """Cast a possibility-list member to `ILexRefType`, or return `None` when
+    that is not possible (no LCM available -- unit-test fakes -- or the object
+    genuinely is not a relation type).
+
+    T123 (feature 038), MEASURED not inferred, and the ELEVENTH appearance of
+    this feature's recurring shape: something that exists, read at a level
+    where it cannot do its job. `LexDbOA.ReferencesOA.PossibilitiesOS` yields
+    members typed as the STATIC base `ICmPossibility`, and `MembersOC` is
+    declared on `ILexRefType` ONLY. pythonnet resolves attributes against that
+    static type, so `getattr(item, "MembersOC", None)` returns **None on every
+    relation type**, the caller's `or []` swallows it, and
+    `_iter_relations_touching_copy_set` -- the SOLE lexical-relation discovery
+    path in this codebase (see the T031 section banner) -- silently enumerated
+    ZERO relations on every project ever transferred.
+
+    Measured live on `Ngoreme FLEx` 2026-08-26: all 7 members of
+    `ReferencesOA.PossibilitiesOS` report `ICmObject(p).ClassName ==
+    "LexRefType"` while arriving as `ICmPossibility` proxies;
+    `getattr(p, "MembersOC", None)` is None on 7 of 7 (total reachable 0),
+    while `ILexRefType(p).MembersOC` reads 3 (Specific) + 1 (Synonyms) +
+    1 (Calendar) = the project's 5 `ILexReference` objects, matching
+    `ILexReferenceRepository` to the object. That is the census's
+    `LexReference` 5 -> 0 on this pair, in full.
+
+    Why the cast goes HERE, at the producer, rather than at the one read that
+    happened to be caught: T094's lesson from this same defect class -- put
+    the cast where the property is read, so a future site inherits the fix
+    instead of re-acquiring the bug. Every consumer of `_iter_lex_ref_types`
+    now receives a concrete-typed relation type.
+
+    Returns `None` rather than raising, so duck-typed test fakes (which expose
+    `MembersOC` directly, and are precisely why 3,700+ unit tests passed while
+    this returned nothing on live data) keep working through the fallback in
+    `_iter_lex_ref_types`."""
+    try:
+        from SIL.LCModel import ILexRefType  # lazy -- absent in unit tests
+    except Exception:
+        return None
+    try:
+        return ILexRefType(obj)
+    except Exception:
+        return None
+
+
 def _iter_lex_ref_types(ref_list):
     """Every `ILexRefType` in `ref_list` (an `ICmPossibilityList`-shaped
     container), recursing `SubPossibilitiesOS` -- mirrors
-    `references._find_in_possibility_list`'s own recursive walk."""
+    `references._find_in_possibility_list`'s own recursive walk.
+
+    Each member is yielded CAST to `ILexRefType` (`_as_lex_ref_type`); when the
+    cast is unavailable or fails the RAW member is yielded instead, so the
+    walk can never yield less than it did before. `SubPossibilitiesOS` is read
+    off the raw member on purpose -- it is declared on `ICmPossibility` and so
+    surfaces on the base type, unlike `MembersOC`."""
     def _walk(items):
         for item in items:
-            yield item
+            cast = _as_lex_ref_type(item)
+            yield item if cast is None else cast
             subs = getattr(item, "SubPossibilitiesOS", None)
             if subs:
                 yield from _walk(subs)
     return list(_walk(getattr(ref_list, "PossibilitiesOS", None) or []))
 
 
-def _iter_relations_touching_copy_set(source, copy_set):
+def _iter_relations_touching_copy_set(source, copy_set, dropped=None):
     """Every source `ILexReference` at least one of whose `TargetsRS`
     members has a GUID present in `copy_set`, each yielded EXACTLY ONCE
     (deduped by the relation's own GUID) regardless of how many of its
@@ -6874,7 +6938,28 @@ def _iter_relations_touching_copy_set(source, copy_set):
         return
     seen_rel_guids = set()
     for lex_ref_type in _iter_lex_ref_types(ref_list):
-        for rel in getattr(lex_ref_type, "MembersOC", None) or []:
+        members = getattr(lex_ref_type, "MembersOC", None)
+        if members is None:
+            # T123: NEVER silent again. An absent `MembersOC` is not an empty
+            # one -- it is the base-typed-proxy read that made this whole pass
+            # a no-op (see `_as_lex_ref_type`). An EMPTY collection still
+            # arrives as `[]` and is correctly not reported here.
+            _append_dropped_once(dropped if dropped is not None else [],
+                                 DroppedItemRecord(
+                                     owner_kind="LexRefType",
+                                     owner_guid=_guid_str_from(lex_ref_type),
+                                     owner_label="",
+                                     field_name="MembersOC",
+                                     item_name="",
+                                     item_guid="",
+                                     reason=("MembersOC unreadable on this "
+                                             "relation type -- the member "
+                                             "could not be cast to "
+                                             "ILexRefType, so its relations "
+                                             "cannot be enumerated"),
+                                 ))
+            continue
+        for rel in members:
             rel_guid = _guid_str_from(rel)
             if rel_guid and rel_guid in seen_rel_guids:
                 continue
@@ -6908,7 +6993,8 @@ def reproduce_all_lexical_relations(context, tag, resolver_cache, dropped):
     UNCHANGED."""
     source = context.source_handle
     copy_set = getattr(context, "_copy_set", None) or {}
-    for src_relation in _iter_relations_touching_copy_set(source, copy_set):
+    for src_relation in _iter_relations_touching_copy_set(
+            source, copy_set, dropped):
         reproduce_lexical_relation(src_relation, context, tag, resolver_cache, dropped)
 
 
@@ -6931,7 +7017,8 @@ def plan_all_lexical_relations(context, resolver_cache, dropped) -> list:
     source = context.source_handle
     copy_set = getattr(context, "_copy_set", None) or {}
     records = []
-    for src_relation in _iter_relations_touching_copy_set(source, copy_set):
+    for src_relation in _iter_relations_touching_copy_set(
+            source, copy_set, dropped):
         record = plan_lexical_relation_decision(
             src_relation, context, resolver_cache, dropped)
         if record is not None:
