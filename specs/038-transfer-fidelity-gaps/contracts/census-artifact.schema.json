@@ -405,7 +405,7 @@
         "starter_subtraction_basis": {
           "type": "string",
           "enum": ["baseline_matched", "baseline_gross", "no_baseline"],
-          "$comment": "baseline_matched: net = total - (baseline - matched); fully trustworthy. baseline_gross: net = total - baseline, used when no run report is available; caps the run verdict at CENSUS_ACCOUNTED. no_baseline: net = total; the run cannot pass."
+          "$comment": "baseline_matched: net = total - (baseline - matched); fully trustworthy. baseline_gross: net = total - baseline, used when no run report is available; caps the run verdict at CENSUS_ACCOUNTED -- EXCEPT on a row whose starter_baseline_count is an integer 0 from starter_baseline_source 'baseline_document', where gross and matched compute the identical number and the difference is exact rather than an upper bound, so the cap does not apply (fidelity-census.md 5.2, T110). An absent or null starter_baseline_count, or any other starter_baseline_source, stays capped: absent is not zero. no_baseline: net = total; the run cannot pass."
         },
         "starter_baseline_source": {
           "type": "string",
