@@ -6046,11 +6046,36 @@ class TestT101TheCommittedCorpusIsUnmovedByInvariant12:
         # five moved rows are each pinned by number in
         # `T107_EJAGHAM_MOVED`, which is a stronger check than a row-for-row
         # equality could have been.
-        assert len(by_artifact) == 14, (
+        #
+        # 14 -> 17 on 2026-08-27 (T124): `census-038-t124-ejagham.json`,
+        # `-ngoreme.json` and `-mbugwe.json` arrived from T124's re-census of
+        # the three sanctioned pairs into FRESH throwaway destinations
+        # (`GT038 T124 Ejagham` / `Ngoreme` / `Mbugwe`). THE FIRED-FIRST,
+        # EDITED-SECOND DISCIPLINE AGAIN: this tripwire failed on the count
+        # alone, clause 1 passed untouched for all three, and the
+        # `gate_scope == "advisory"` assertion above passed for all six nulls.
+        # Each of the three nulls exactly `MoForm` and `MoMorphSynAnalysis`.
+        #
+        # Like T107's pair and unlike T078's, these are NOT asserted to
+        # reproduce a predecessor row for row -- they are a deliberately NEW
+        # comparand, measured against the Wave 2 code, and they move rows on
+        # purpose (`PhCode` net 0 -> 41 / 87 / 79, `CmPossibility` 0 -> 1 / 3,
+        # ngoreme `FsFeatStruc` 80 -> 120, mbugwe 231 -> 266). Clause 1 is
+        # therefore carrying the weight alone for all three, and the rows they
+        # move are each pinned by number in the `TestT124*` classes at the end
+        # of this file rather than by a row-for-row equality that would have
+        # been false by construction.
+        #
+        # The T078 trio is deliberately still here and still counted: T124
+        # re-pinned the DESTINATION half into new projects precisely so those
+        # three artifacts stay valid historical evidence rather than being
+        # overwritten, and all three were verified to still hash to their
+        # recorded `.fwdata` digests after T124's three live transfers.
+        assert len(by_artifact) == 17, (
             "a census artifact arrived or left; the corpus that nulls the two "
             "excluded_not_measurable rows is now "
             + repr(sorted(by_artifact)))
-        assert advisory_nulls == 2 * len(by_artifact) == 28
+        assert advisory_nulls == 2 * len(by_artifact) == 34
 
 
 class TestT100TheVocabularyStaysClosedAtSeventeen:
@@ -8008,3 +8033,373 @@ class TestT109WhereT081WasWrongAndByExactlyHowMuch:
         ).read_text(encoding="utf-8")
         assert ("**Sense pictures, reversal indexes, and the texts/wordforms "
                 "path** are governed" in spec)
+
+
+# ---------------------------------------------------------------------------
+# T124: the re-census, pinned
+# ---------------------------------------------------------------------------
+#
+# Feature 038 T124. Every reading below was taken live on 2026-08-27 against
+# three FRESH throwaway destinations produced by the Wave 2 code
+# (`GT038 T124 Ejagham` / `Ngoreme` / `Mbugwe`, each restored from
+# `backups/Target 2026-07-06 0218.fwbackup`), by
+# `debug/run038_t124_recensus.py`.
+#
+# WHY THESE TESTS EXIST AT ALL. T119-T123 all landed with host-free unit tests
+# only, and their acceptance lines are stated per OWNING FIELD, per OWNING
+# LIST, per MAPPING TYPE and per NESTING SHAPE -- four dimensions the census
+# does not have and no test in this repo read. So the measurements that decide
+# five tasks lived in one console transcript. These tests read the committed
+# summary artifacts instead, so a later run that quietly contradicts them goes
+# RED rather than unnoticed. They are hermetic: no FLEx host, no live project.
+#
+# They pin the MEASUREMENT, not the desired outcome. Four of them assert a
+# LOSS. When the underlying defect is fixed, these tests are supposed to fail
+# and be re-stated against the new artifact -- that is the point of pinning a
+# number rather than describing it in prose.
+
+
+def _t124_summary(pair: str) -> dict:
+    path = (Path(__file__).resolve().parent / "_snapshots"
+            / ("recensus-038-t124-%s.json" % pair))
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+class TestT124TheRecensusComparand:
+    """Obligation 1: what was compared against what, and why."""
+
+    def test_all_three_sources_were_on_their_t078_pins(self):
+        """T081 said the sources had drifted. They had not.
+
+        The digests are asserted by `TestT078ThePost037Baseline` against live
+        disk; what is recorded HERE is the consequence -- that T124 re-ran the
+        sanctioned pairs as they stand rather than naming fresh ones, which is
+        only legitimate if the source halves were unchanged.
+        """
+        for pair in ("ejagham", "ngoreme", "mbugwe"):
+            summary = _t124_summary(pair)
+            assert summary["t078_status"] == (
+                "historical; destination not touched by this run")
+
+    def test_no_t078_destination_was_used_as_a_t124_destination(self):
+        """The comparand cannot be the thing being measured.
+
+        Re-transferring into a T078 destination would move its digest, and
+        `T078_FWDATA_STATUS_TODAY` asserts that table in both directions with
+        no backup of any of the three as they now stand.
+        """
+        protected = {"GT038 Ejagham After", "GT038 Ngoreme After",
+                     "GT038 Phase6 Target"}
+        used = {_t124_summary(p)["destination"]
+                for p in ("ejagham", "ngoreme", "mbugwe")}
+        assert used == {"GT038 T124 Ejagham", "GT038 T124 Ngoreme",
+                        "GT038 T124 Mbugwe"}
+        assert not (used & protected)
+
+    def test_mbugwe_is_the_one_pair_whose_net_column_is_not_comparable(self):
+        """T078's mbugwe baseline document was re-captured over in place.
+
+        `phase6-starter.json` read `captured_at 2026-08-22T08:38:06` when the
+        mbugwe comparand was taken and now reads `2026-08-25T14:35:56`; the
+        08-22 capture is committed nowhere. Saying so is the difference
+        between a diff that is comparable and one that merely looks it.
+        """
+        assert _t124_summary("ejagham")["baseline_comparable_to_t078"] is True
+        assert _t124_summary("ngoreme")["baseline_comparable_to_t078"] is True
+        assert _t124_summary("mbugwe")["baseline_comparable_to_t078"] is False
+
+
+class TestT124PhaseFiveIsStillUnsatisfied:
+    """Obligation 2. T081 stays open for a third time."""
+
+    #: pair -> (P5 failure count) measured 2026-08-27.
+    T124_P5_FAILURES = {"ejagham": 9, "ngoreme": 16, "mbugwe": 13}
+
+    def test_p5_is_unsatisfied_on_every_pair(self):
+        for pair, expected in self.T124_P5_FAILURES.items():
+            phase = _t124_summary(pair)["phase_5"]
+            assert phase["satisfied"] is False
+            assert len(phase["failures"]) == expected
+
+    def test_every_p5_failure_is_the_same_shape_or_a_duplicate(self):
+        """66-of-69 was one shape at T081 and it still is.
+
+        Either "SHORTFALL carrying NO accounting line" or the `PhNCFeatures`
+        duplicate row, which is T082's `038-NK-P3` and excluded from P5 by
+        construction. A NEW shape appearing here means the residue changed
+        character, not just size.
+        """
+        for pair in self.T124_P5_FAILURES:
+            for line in _t124_summary(pair)["phase_5"]["failures"]:
+                assert ("carries NO accounting line" in line
+                        or "unaccounted duplicate objects" in line), line
+
+    def test_the_verdict_outranks_the_phase_so_the_exit_code_cannot_be_read(self):
+        """`DUPLICATE_IDENTITY` forces exit 3 whether or not P5 holds.
+
+        This is why T124 read `evaluate_phase` in-process. A future reader who
+        "checks the gate" by looking at the exit code would learn nothing about
+        P5 at all.
+        """
+        for pair in self.T124_P5_FAILURES:
+            summary = _t124_summary(pair)
+            assert summary["verdict"] == "DUPLICATE_IDENTITY"
+            assert summary["exit_code"] == 3
+
+
+class TestT124T119PerOwningField:
+    """T119's acceptance, per pair AND per owning field."""
+
+    def test_the_headline_owner_is_a_total_loss_on_every_pair(self):
+        """`MoStemMsa.MsFeatures` 117 / 782 / 104 -> 0 / 0 / 0.
+
+        1,003 objects, the largest single block in the P5 residue, while
+        `MoStemMsa` itself is count-MATCHED -- so no counts-only gate can see
+        it. This is the reading that keeps T119 unchecked.
+        """
+        expected_source = {"ejagham": 117, "ngoreme": 782, "mbugwe": 104}
+        field = "MoStemMsa.MsFeatures (flid=5001001)"
+        for pair, src in expected_source.items():
+            row = _t124_summary(pair)["t119_per_owning_field"][field]
+            assert row["source"] == src
+            assert row["dest"] == 0
+            assert row["verdict"] == "TOTAL_LOSS"
+
+    def test_three_of_the_eight_new_owners_do_work_and_only_mbugwe_holds_them(self):
+        """Wave 1 measured all three as 0 in the destination.
+
+        Recording the PASSES matters as much as the failures: without them
+        T119 reads as wholly ineffective, which the measurement does not
+        support.
+        """
+        rows = _t124_summary("mbugwe")["t119_per_owning_field"]
+        for field, count in (
+            ("MoDerivAffMsa.FromMsFeatures (flid=5031001)", 17),
+            ("MoDerivAffMsa.ToMsFeatures (flid=5031002)", 17),
+            ("MoAffixAllomorph.MsEnvFeatures (flid=5027001)", 1),
+        ):
+            assert rows[field]["source"] == count
+            assert rows[field]["dest"] == count
+            assert rows[field]["verdict"] == "OK"
+        # ...and the other two pairs hold none of them, so they cannot
+        # corroborate and must not be read as if they could.
+        for pair in ("ejagham", "ngoreme"):
+            other = _t124_summary(pair)["t119_per_owning_field"]
+            for field in ("MoDerivAffMsa.FromMsFeatures (flid=5031001)",
+                          "MoAffixAllomorph.MsEnvFeatures (flid=5027001)"):
+                assert other[field]["verdict"] == "NO_DATA"
+
+    def test_the_t119_open_question_is_answered_on_ngoreme(self):
+        """`MoInflAffMsa.InflFeats` was 38 -> 18 and is now 38 -> 38.
+
+        T119 asked why the owner measured working on two pairs differed on the
+        third, and named `FsComplexValue` as the suspect. The complex-value
+        reader closed it, and `FsComplexValue.Value` itself moves 0 -> 20.
+        """
+        rows = _t124_summary("ngoreme")["t119_per_owning_field"]
+        infl = rows["MoInflAffMsa.InflFeats (flid=5038001)"]
+        assert (infl["source"], infl["dest"]) == (38, 38)
+        complex_value = rows["FsComplexValue.Value (flid=53001)"]
+        assert complex_value["source"] == 825
+        assert complex_value["dest"] == 20
+
+    def test_reference_forms_is_inconsistent_across_pairs(self):
+        """10 -> 10 on ejagham but 44 -> 0 on ngoreme.
+
+        T119 scoped `PartOfSpeech.ReferenceForms` out by citing T045's
+        documented depth limit, which predicts an EMPTY SHELL uniformly. A
+        total loss on one pair and a clean pass on another is not that, so the
+        scoping reason does not cover what was measured.
+        """
+        field = "PartOfSpeech.ReferenceForms (flid=5049010)"
+        assert _t124_summary("ejagham")["t119_per_owning_field"][field][
+            "verdict"] == "OK"
+        ngoreme = _t124_summary("ngoreme")["t119_per_owning_field"][field]
+        assert (ngoreme["source"], ngoreme["dest"]) == (44, 0)
+        assert ngoreme["verdict"] == "TOTAL_LOSS"
+
+
+class TestT124T122PerOwningList:
+    """T122's acceptance: the in-scope list, and only it, has to be matched."""
+
+    def test_the_one_in_scope_list_is_matched_on_both_pairs_that_hold_it(self):
+        """`MoMorphData.ProdRestrict` -- ruled IN SCOPE, 1/1 and 3/3.
+
+        `cmpossibility-list-rulings.md` measured -1 on ngoreme and -3 on
+        mbugwe. Both are now zero.
+        """
+        key = "MoMorphData.ProdRestrict (flid=5040009) | name=None"
+        for pair, count in (("ngoreme", 1), ("mbugwe", 3)):
+            row = _t124_summary(pair)["t122_per_owning_list"][key]
+            assert row["source"] == count
+            assert row["dest"] == count
+
+    def test_ejagham_holds_no_in_scope_list_so_it_cannot_corroborate(self):
+        """The ruling records "--" for ejagham, and the probe agrees."""
+        lists = _t124_summary("ejagham")["t122_per_owning_list"]
+        assert not [k for k in lists if "ProdRestrict" in k]
+
+    def test_every_remaining_deficit_is_in_a_list_the_ruling_excludes(self):
+        """The -308 / -397 / -332 class row is out-of-scope content.
+
+        Asserted as a SUBSET rather than an equality: the ruling excludes more
+        lists than any one pair happens to hold.
+        """
+        excluded = (
+            "Scripture.NoteCategories", "LexDb.Languages",
+            "LangProject.GenreList", "DsDiscourseData.ChartMarkers",
+            "LangProject.CheckLists", "LexDb.DialectLabels",
+            "LangProject.Status", "DsDiscourseData.ConstChartTempl",
+            "LexDb.ExtendedNoteTypes",
+        )
+        for pair in ("ejagham", "ngoreme", "mbugwe"):
+            for key, row in _t124_summary(pair)["t122_per_owning_list"].items():
+                if row["dest"] >= row["source"]:
+                    continue
+                assert any(name in key for name in excluded), (pair, key, row)
+
+    def test_the_ruling_predicted_a_surplus_and_a_shortfall_in_one_list(self):
+        """`ChartMarkers` +30 on ngoreme, -10 on mbugwe.
+
+        The ruling called this out as the thing a class-level verdict could
+        not express and a net figure would have cancelled. It reproduces.
+        """
+        key = "DsDiscourseData.ChartMarkers (flid=5124003) | name=None"
+        ngoreme = _t124_summary("ngoreme")["t122_per_owning_list"][key]
+        mbugwe = _t124_summary("mbugwe")["t122_per_owning_list"][key]
+        assert ngoreme["dest"] - ngoreme["source"] == 30
+        assert mbugwe["dest"] - mbugwe["source"] == -10
+
+
+class TestT124T123LexReferenceAndNesting:
+    """Obligations 3 and 4."""
+
+    def test_no_lex_reference_survives_and_ngoreme_is_the_only_witness(self):
+        source = _t124_summary("ngoreme")["t123_lex_references"]["source"]
+        dest = _t124_summary("ngoreme")["t123_lex_references"]["destination"]
+        assert source["lex_references_total"] == 5
+        assert dest["lex_references_total"] == 0
+        for pair in ("ejagham", "mbugwe"):
+            both = _t124_summary(pair)["t123_lex_references"]
+            assert both["source"]["lex_references_total"] == 0
+            assert both["destination"]["lex_references_total"] == 0
+
+    def test_the_five_distribute_as_three_tree_one_collection_one_sequence(self):
+        """The distribution T123 and T124 both predicted, measured.
+
+        `MappingType` 3 is TREE, 0 is COLLECTION, 4 is SEQUENCE.
+        """
+        by_type = _t124_summary("ngoreme")["t123_lex_references"]["source"][
+            "by_owning_type"]
+        assert by_type["Specific | MappingType=3"]["references"] == 3
+        assert by_type["Synonyms | MappingType=0"]["references"] == 1
+        assert by_type["Calendar | MappingType=4"]["references"] == 1
+        assert (by_type["Calendar | MappingType=4"]["targets_per_reference"]
+                == [13])
+
+    def test_the_nesting_demotions_are_named_and_counted_per_guid(self):
+        """4 on ejagham, 0 on ngoreme, 1 on mbugwe.
+
+        Per GUID, because the restored backup carries `LexEntryInflType` of
+        its own and the count buckets alone mix starter items with
+        transferred ones. `absent=0` / `dest_only=0` on ejagham is what makes
+        its 6/1 -> 2/5 arithmetic closed rather than suggestive.
+        """
+        ejagham = _t124_summary("ejagham")["t123_nesting_verdict_by_guid"][
+            "LexEntryInflType"]
+        changed = ejagham["matched_guid_nesting_CHANGED"]
+        assert len(changed) == 4
+        assert {row["name"] for row in changed} == {
+            "Perfective", "Hortative", "Conditional", "Retrospective"}
+        for row in changed:
+            assert row["source_nesting"] == "nested"
+            assert row["destination_nesting"] == "top_level"
+        assert not ejagham["source_guid_absent_from_destination"]
+        assert not ejagham["destination_only_guids"]
+
+        ngoreme = _t124_summary("ngoreme")["t123_nesting_verdict_by_guid"][
+            "LexEntryInflType"]
+        assert not ngoreme["matched_guid_nesting_CHANGED"]
+
+        mbugwe = _t124_summary("mbugwe")["t123_nesting_verdict_by_guid"][
+            "LexEntryInflType"]
+        assert len(mbugwe["matched_guid_nesting_CHANGED"]) == 1
+        assert mbugwe["matched_guid_nesting_CHANGED"][0]["name"] == "Class 10"
+
+    def test_the_lex_entry_type_loss_is_one_named_object_not_twelve(self):
+        """`straggler-rulings.md` section 3: the target is -1/-1, not -12/-12.
+
+        Confirmed by identity, and both objects named -- which the census
+        cannot do, because gross-basis subtraction reports -12.
+        """
+        ngoreme = _t124_summary("ngoreme")["t123_nesting_verdict_by_guid"][
+            "LexEntryType"]["source_guid_absent_from_destination"]
+        assert len(ngoreme) == 1
+        assert ngoreme[0]["name"] == "Perfective"
+        assert ngoreme[0]["source_nesting"] == "nested"
+
+        mbugwe = _t124_summary("mbugwe")["t123_nesting_verdict_by_guid"][
+            "LexEntryType"]["source_guid_absent_from_destination"]
+        assert len(mbugwe) == 1
+        assert mbugwe[0]["name"] == "Periphrastic Form"
+        assert mbugwe[0]["source_nesting"] == "top_level"
+
+
+class TestT124T121PhCodeBothHalves:
+    """T121's acceptance, stated separately for the two halves."""
+
+    _PHONEME = "PhTerminalUnit.Codes (flid=5090003) [runtime=PhPhoneme]"
+    _BOUNDARY = "PhTerminalUnit.Codes (flid=5090003) [runtime=PhBdryMarker]"
+
+    def test_the_phoneme_half_moved_off_the_baseline_on_every_pair(self):
+        """starter 23 + source = destination, exactly, three times over."""
+        expected = {"ejagham": (41, 64), "ngoreme": (87, 110),
+                    "mbugwe": (77, 100)}
+        for pair, (src, dest) in expected.items():
+            row = _t124_summary(pair)["t121_starter_baseline_readings"]["PhCode"]
+            assert row["source_owners_raw"][self._PHONEME] == src
+            assert row["destination_owners_raw"][self._PHONEME] == dest
+            assert dest == 23 + src
+            assert row["moved_off_baseline"] is True
+
+    def test_the_boundary_half_clause_is_unsatisfiable_by_construction(self):
+        """2 = 2 = 2 on every sanctioned pair.
+
+        Source holds 2 boundary-marker codes, the starter holds 2, the
+        destination holds 2. "The destination stops reading exactly the
+        starter baseline" therefore CANNOT become true for this half however
+        correct the transfer is -- a count cannot distinguish an
+        identity-match from an untouched starter object. This test pins the
+        clause as mis-stated (T086-style) rather than the code as defective;
+        closing it needs an identity check or a different corpus.
+        """
+        for pair in ("ejagham", "ngoreme", "mbugwe"):
+            row = _t124_summary(pair)["t121_starter_baseline_readings"]["PhCode"]
+            assert row["source_owners_raw"][self._BOUNDARY] == 2
+            assert row["destination_owners_raw"][self._BOUNDARY] == 2
+            assert row["starter_baseline_total"] == 25
+
+
+class TestT124T120TheRulesArriveAndTheirContentsDoNot:
+    """T120's acceptance: which right-hand sides raise, on which pairs."""
+
+    def test_every_phonological_rule_is_matched_while_its_contents_are_lost(self):
+        """`PhRegularRule` MATCHED 3/3; 14 `PhSegRuleRHS` gone.
+
+        Read off the census artifacts rather than the summary, because this is
+        a per-class row and the point is that the CLASS-level reading is where
+        the loss is visible while the rule row stays green.
+        """
+        expected = {"ejagham": (6, 6, 6, 6), "ngoreme": (21, 21, 21, 18),
+                    "mbugwe": (39, 39, 39, 28)}
+        for pair, (rule_src, rule_net, rhs_src, rhs_net) in expected.items():
+            path = (Path(__file__).resolve().parent / "_snapshots"
+                    / ("census-038-t124-%s.json" % pair))
+            rows = {r["class"]: r
+                    for r in json.loads(path.read_text(encoding="utf-8"))[
+                        "classes"]}
+            assert rows["PhRegularRule"]["source_count"] == rule_src
+            assert rows["PhRegularRule"]["destination_count_net"] == rule_net
+            assert rows["PhRegularRule"]["verdict_class"] == "MATCHED"
+            assert rows["PhSegRuleRHS"]["source_count"] == rhs_src
+            assert rows["PhSegRuleRHS"]["destination_count_net"] == rhs_net
