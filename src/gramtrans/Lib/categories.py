@@ -9621,10 +9621,35 @@ def _run_171_subpass(context, target, tag=None):
         ))
 
     skips.extend(_wire_msa_infl_feats(context, target, plan))
-    # T119: the other feature-structure owners, immediately after and in the
-    # same pass, because they need exactly the same thing to be true first --
-    # the feature DEFINITIONS resolvable in target.
-    skips.extend(_wire_owner_feat_strucs(context, target, plan))
+    # -----------------------------------------------------------------------
+    # T119's `_wire_owner_feat_strucs` USED TO BE CALLED HERE AND MUST NOT BE.
+    # Moved to `transfer._ensure_owner_feat_strucs` 2026-08-28.
+    #
+    # The reasoning that put it here was "they need exactly the same thing to
+    # be true first -- the feature DEFINITIONS resolvable in target". True, and
+    # insufficient: they also need their OWNERS to exist. This sub-pass is
+    # anchored by `_run_tail_once` to the last AFFIX_TEMPLATES action, and the
+    # execute order is `... AFFIXES -> ADHOC_COMPOUND_RULES -> SLOTS ->
+    # AFFIX_TEMPLATES -> STEMS`. `MoInflAffMsa`, `MoDerivAffMsa` and
+    # `MoAffixAllomorph` hang off AFFIX entries and already exist by then --
+    # which is exactly why those owners were measured working. `MoStemMsa`
+    # hangs off STEM entries, created one category LATER, so every one of its
+    # 1,003 feature structures was asked for before its owner existed.
+    #
+    # MEASURED (T124, three pairs): `MoStemMsa.MsFeatures` 117 / 782 / 104 ->
+    # 0 / 0 / 0, the single largest block in the P5 residue, with `MoStemMsa`
+    # itself count-MATCHED so no counts-only gate could see it. The producer
+    # was never at fault -- it yields all 1,003 bindings, correctly keyed --
+    # and neither was the cast. It was the schedule.
+    #
+    # `_ensure_171_subpass`'s own docstring already describes the SELECTION
+    # version of this bug ("quietly makes it conditional on the USER'S
+    # SELECTION"). This was the ORDERING version of the same thing, and the
+    # safety net that would have caught it was disarmed by the shared
+    # `_did_171_subpass` latch: the tail had already set the flag, so the
+    # post-loop call returned immediately. The new pass gets its OWN latch for
+    # that reason.
+    # -----------------------------------------------------------------------
     # T122: MoMorphData.ProdRestrict. Runs here for the HOOK, not for the
     # ordering -- it is a project-level list with no dependency on affixes.
     # This sub-pass is the one place guaranteed to run exactly once per
@@ -9938,6 +9963,9 @@ def _wire_owner_feat_strucs(context, target, plan):
     else:
         bindings = _binding_map(context, "msa_feat_struc_bindings") or {}
         remap = getattr(context, "_identity_remap", None) or {}
+    # T074's owner->entry map, so an unresolved owner can be SCOPED rather than
+    # discarded unconditionally. Same source the inflectional pass reads.
+    owner_entries = _msa_owner_map(context, plan)
     if not bindings:
         return skips
 
@@ -9975,6 +10003,38 @@ def _wire_owner_feat_strucs(context, target, plan):
             # destination is overwhelmingly an entry this run never selected,
             # not a loss. An object that is not in the destination has no
             # feature cell to fill.
+            #
+            # **BUT THE SCOPING ARGUMENT NEEDS A SCOPING PREDICATE, AND FOR A
+            # YEAR IT HAD NONE (038 T119, 2026-08-28).** An unconditional
+            # `continue` here converts every ORDERING or reachability bug in
+            # this pass into silence, and that is exactly what happened: the
+            # pass was anchored to AFFIX_TEMPLATES, ran one category before
+            # STEMS, and discarded all 1,003 `MoStemMsa.MsFeatures` bindings --
+            # no write, and no failure record either, so three census runs and
+            # a green suite said nothing. The comment above was TRUE and
+            # INSUFFICIENT; the missing half is the question the inflectional
+            # pass already asks (`_affix_is_in_destination`, T074/FR-019):
+            #
+            #     is the owner's ENTRY in the destination?
+            #
+            # If the entry is here and the owner is not, this run selected that
+            # entry and the owner should exist -- that is a real dependency
+            # failure and is now REPORTED. If the entry is absent too, the
+            # original scoping argument holds and the silence is correct.
+            #
+            # `msa_owner_entry` records EVERY MSA (its docstring is explicit),
+            # so stem MSAs are covered. `MoAffixAllomorph` owners are NOT in
+            # that map, so `MsEnvFeaturesOA` degrades to the old silent skip --
+            # stated here rather than hidden, because an un-scopable owner must
+            # not be reported as a failure on no evidence.
+            entry_guid = owner_entries.get(owner_guid, "")
+            if entry_guid and _affix_is_in_destination(
+                    target, entry_guid, remap):
+                _on_unresolved(
+                    owner_guid,
+                    f"{label}: owner absent from the destination although its "
+                    f"entry {entry_guid} is present -- the feature structure "
+                    f"could not be attached")
             continue
         # T088 again: `MsFeaturesOA` is declared on the concrete `IMoStemMsa`,
         # not on the `IMoMorphSynAnalysis` the repository hands back, so this

@@ -135,13 +135,16 @@ class _FakeTarget:
         return self._registry.get(guid)
 
 
-def _plan(bindings, remap=None):
+def _plan(bindings, remap=None, owner_entries=None):
     return types.SimpleNamespace(
         msa_feat_struc_bindings=bindings,
         msa_infl_feat_bindings={},
         msa_slot_bindings={},
         identity_remap=remap or {},
-        msa_owner_entry={},
+        # T074's owner->entry map. Empty by default, which is the
+        # "cannot be scoped" case: an unresolved owner stays silent because
+        # there is no evidence either way.
+        msa_owner_entry=owner_entries or {},
     )
 
 
@@ -311,10 +314,10 @@ def test_reader_caps_the_nesting_recursion():
 # Consumer -- writing them
 # --------------------------------------------------------------------------
 
-def _wire(bindings, registry, remap=None):
+def _wire(bindings, registry, remap=None, owner_entries=None):
     target = _FakeTarget(registry)
     return categories._wire_owner_feat_strucs(
-        None, target, _plan(bindings, remap)), target
+        None, target, _plan(bindings, remap, owner_entries)), target
 
 
 def test_wire_fills_a_hollow_stem_msa():
@@ -453,6 +456,56 @@ def test_wire_skips_an_owner_absent_from_the_destination_silently():
     assert skips == []
 
 
+def test_wire_reports_an_absent_owner_whose_ENTRY_is_present():
+    """THE OTHER HALF OF T074'S SCOPING, MISSING UNTIL 2026-08-28.
+
+    The test above is right that an owner absent along with its entry is an
+    unselected entry, not a loss. But the code had ONLY that branch: an
+    unconditional `continue`, with no predicate to decide which case it was
+    looking at. That converts every ORDERING or reachability bug in this pass
+    into silence -- and it did. The pass ran at AFFIX_TEMPLATES, one category
+    before STEMS created the `MoStemMsa` owners, so all 1,003 bindings hit
+    this `continue`: no write, and no failure record either. Three census runs
+    and a green suite said nothing.
+
+    If the ENTRY is in the destination, this run selected it and its MSA
+    should exist. That is a real dependency failure and must be reported.
+    """
+    src = _SrcHandle([_SrcEntry(msas=[_SrcMSA("msa1", MsFeaturesOA=_Struc(
+        "s1", [_Closed("cv1", "feat1", "val1")]))])])
+    bindings: dict = {}
+    preview._populate_msa_feat_struc_bindings(src, bindings)
+
+    # The entry IS in the destination; its MSA is NOT.
+    skips, _ = _wire(
+        bindings,
+        {"entry1": _Obj("entry1"), "feat1": _Obj("feat1"),
+         "val1": _Obj("val1")},
+        owner_entries={"msa1": "entry1"},
+    )
+
+    assert len(skips) == 1, (
+        "an owner absent while its entry is present is a dependency failure "
+        "and must not be silent -- this silence hid 1,003 lost structures")
+    assert skips[0].reason is SkipReason.DEPENDENCY_UNRESOLVED
+    assert "entry1" in skips[0].detail
+
+
+def test_wire_stays_silent_when_the_owner_cannot_be_scoped():
+    """`msa_owner_entry` records MSAs, not allomorphs, so `MsEnvFeaturesOA`
+    owners cannot be scoped. Degrade to silence rather than invent a failure
+    on no evidence -- reporting on absence of evidence is the direction T074
+    exists to remove."""
+    src = _SrcHandle([_SrcEntry(msas=[_SrcMSA("msa1", MsFeaturesOA=_Struc(
+        "s1", [_Closed("cv1", "feat1", "val1")]))])])
+    bindings: dict = {}
+    preview._populate_msa_feat_struc_bindings(src, bindings)
+
+    skips, _ = _wire(bindings, {"feat1": _Obj("feat1"), "val1": _Obj("val1")},
+                     owner_entries={})
+    assert skips == []
+
+
 def test_wire_reports_a_binding_it_cannot_attribute():
     """An unattributable binding is a producer defect, not a transfer
     decision. It must be reported rather than dropped (never-silent)."""
@@ -482,13 +535,122 @@ def test_wire_honours_the_identity_remap():
 # Wiring: the pass has to actually be called
 # --------------------------------------------------------------------------
 
-def test_the_171_subpass_runs_the_new_pass():
-    """A pass nothing calls is the failure mode `phonological_rules_dependencies`
-    already demonstrates in this codebase -- written, correct, and dead."""
+def test_the_171_subpass_no_longer_runs_the_new_pass():
+    """RETARGETED 2026-08-28, AND THE OLD VERSION OF THIS TEST IS THE BEST
+    EVIDENCE FOR WHY SOURCE-TEXT ASSERTIONS ARE NOT ENOUGH.
+
+    It read:
+
+        body = inspect.getsource(categories._run_171_subpass)
+        assert "_wire_owner_feat_strucs" in body
+
+    and its docstring warned against "a pass nothing calls ... written,
+    correct, and dead". It could not tell the difference between a pass that
+    is CALLED and a pass that is merely MENTIONED -- so it stayed green while
+    the pass ran one category too early and lost all 1,003
+    `MoStemMsa.MsFeatures` structures, and it stayed green again after the
+    call was removed, because the comment explaining the removal still
+    contains the identifier.
+
+    The 17.1 sub-pass is anchored to AFFIX_TEMPLATES, which executes BEFORE
+    STEMS. `_wire_owner_feat_strucs` must therefore NOT be called from it.
+    """
     import inspect
     body = inspect.getsource(categories._run_171_subpass)
-    assert "_wire_owner_feat_strucs" in body
+    called = [ln for ln in body.splitlines()
+              if "_wire_owner_feat_strucs" in ln
+              and not ln.lstrip().startswith("#")]
+    assert called == [], (
+        "the feature-structure owner pass is called from the 17.1 sub-pass "
+        "again; that sub-pass runs at AFFIX_TEMPLATES, one category before "
+        "STEMS creates the MoStemMsa owners it needs: %r" % (called,))
     assert "_wire_msa_infl_feats" in body
+
+
+def test_the_owner_pass_runs_after_the_whole_leaf_loop():
+    """Where it moved TO, asserted on the caller rather than on a string.
+
+    `transfer.execute` must invoke `_ensure_owner_feat_strucs` after the
+    leaf-dispatch loop, so every owner class exists whatever the user selected
+    and whatever order the categories ran in.
+    """
+    import inspect
+    from gramtrans.Lib import transfer
+
+    assert hasattr(transfer, "_ensure_owner_feat_strucs")
+    body = inspect.getsource(transfer.execute)
+    assert "_ensure_owner_feat_strucs(exec_ctx" in body
+
+
+def test_the_owner_pass_has_its_own_latch_not_the_171_one():
+    """THE SAFETY NET MUST NOT BE DISARMED BY THE THING IT GUARDS.
+
+    While this pass lived inside `_run_171_subpass`, the post-loop
+    `_ensure_171_subpass` that would have re-run it after STEMS was already a
+    no-op: the AFFIX_TEMPLATES tail had set `_did_171_subpass`. A shared latch
+    made the bug unreachable by its own remedy. Separate flags, permanently.
+
+    Asserted BEHAVIOURALLY. The first draft of this test grepped the function
+    source for `_did_171_subpass` and failed on the docstring that explains
+    all of the above -- the same source-text trap this file's
+    `test_the_171_subpass_no_longer_runs_the_new_pass` exists to document.
+    Prose about a flag is not use of a flag.
+    """
+    from gramtrans.Lib import transfer
+
+    ran = []
+
+    class _Ctx:
+        pass
+
+    ctx = _Ctx()
+    # Exactly the state the AFFIX_TEMPLATES tail leaves behind.
+    object.__setattr__(ctx, "_did_171_subpass", True)
+    object.__setattr__(ctx, "_run_plan", types.SimpleNamespace(
+        msa_feat_struc_bindings={}, identity_remap={}, msa_owner_entry={}))
+
+    original = categories._wire_owner_feat_strucs
+    try:
+        categories._wire_owner_feat_strucs = (
+            lambda c, t, p: ran.append(True) or [])
+        transfer._ensure_owner_feat_strucs(ctx, object(), None, [])
+    finally:
+        categories._wire_owner_feat_strucs = original
+
+    assert ran == [True], (
+        "the owner pass was skipped because the 17.1 latch was already set -- "
+        "a shared latch is what made the original defect unreachable by its "
+        "own safety net")
+    assert getattr(ctx, "_did_owner_feat_strucs", False) is True
+
+
+def test_the_owner_pass_is_a_noop_when_already_run():
+    """Idempotent: the latch makes a second call cost nothing, so adding the
+    post-loop call cannot double-write."""
+    from gramtrans.Lib import transfer
+
+    class _Ctx:
+        pass
+
+    ctx = _Ctx()
+    object.__setattr__(ctx, "_did_owner_feat_strucs", True)
+    object.__setattr__(ctx, "_run_plan", object())
+    skips: list = []
+    transfer._ensure_owner_feat_strucs(ctx, object(), None, skips)
+    assert skips == []
+
+
+def test_the_owner_pass_never_raises_without_a_plan():
+    """No plan is not an error: a failure here must not lose the writes the
+    run already made."""
+    from gramtrans.Lib import transfer
+
+    class _Ctx:
+        pass
+
+    skips: list = []
+    transfer._ensure_owner_feat_strucs(_Ctx(), object(), None, skips)
+    assert skips == []
 
 
 def test_runplan_carries_the_new_bindings():

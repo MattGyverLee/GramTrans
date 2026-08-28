@@ -203,6 +203,66 @@ def _ensure_171_subpass(exec_ctx, target, tag, exec_skips):
             pass
 
 
+def _ensure_owner_feat_strucs(exec_ctx, target, tag, exec_skips):
+    """Run T119's feature-structure owner pass AFTER every category (038,
+    2026-08-28).
+
+    WHY IT IS HERE AND NOT IN THE 17.1 SUB-PASS, WHERE IT SHIPPED.
+    `categories._wire_owner_feat_strucs` fills `MsFeaturesOA`,
+    `From/ToMsFeaturesOA` and `MsEnvFeaturesOA` on owners that already exist --
+    it is an enrichment post-pass, not a create path. It was called from
+    `_run_171_subpass`, which `_run_tail_once` anchors to the last
+    AFFIX_TEMPLATES action; the execute order is
+    `... AFFIXES -> SLOTS -> AFFIX_TEMPLATES -> STEMS`. So it ran one category
+    BEFORE `MoStemMsa` objects were created, and every `MoStemMsa` owner it
+    asked about resolved to `None`.
+
+    Measured (T124, three sanctioned pairs): `MoStemMsa.MsFeatures`
+    117 / 782 / 104 -> **0 / 0 / 0**, 1,003 objects, the largest single block
+    in the residue -- while `MoDerivAffMsa.From/ToMsFeatures` (17/17) and
+    `MoAffixAllomorph.MsEnvFeatures` (1/1) worked, because those owners hang
+    off AFFIX entries and existed already. The STEMS/AFFIXES split in the
+    measurement IS the schedule and nothing else.
+
+    ITS OWN LATCH, DELIBERATELY. `_ensure_171_subpass` guards on
+    `_did_171_subpass`, which the AFFIX_TEMPLATES tail sets -- so while this
+    pass lived inside that sub-pass, the post-loop safety net that would have
+    re-run it was already disarmed by the time it could have helped. A shared
+    latch made the bug unreachable by its own remedy. This flag is separate so
+    that cannot recur.
+
+    Called after the leaf-dispatch loop, so every owner class exists whatever
+    the user selected -- the same argument `_ensure_171_subpass` makes for
+    itself, applied to ordering rather than to selection.
+
+    Never raises: a failure here must not lose the writes the run already made.
+    """
+    if getattr(exec_ctx, "_did_owner_feat_strucs", False):
+        return
+    if __package__:
+        from .categories import _wire_owner_feat_strucs
+    else:
+        from categories import _wire_owner_feat_strucs  # type: ignore
+    plan = getattr(exec_ctx, "_run_plan", None)
+    if plan is None:
+        return
+    try:
+        object.__setattr__(exec_ctx, "_did_owner_feat_strucs", True)
+    except (AttributeError, TypeError):
+        pass
+    try:
+        late_skips = _wire_owner_feat_strucs(exec_ctx, target, plan)
+    except Exception:
+        _log.exception(
+            "execute: feature-structure owner pass FAILED (swallowed)")
+        return
+    if late_skips and exec_skips is not None:
+        try:
+            exec_skips.extend(late_skips)
+        except (AttributeError, TypeError):
+            pass
+
+
 def execute(plan: RunPlan, source, target, report_sink, tag: ImportResidueTag,
             interactive_session=None) -> RunReport:
     """Apply `plan.actions` to `target` and return a finalized RunReport.
@@ -640,6 +700,14 @@ def execute(plan: RunPlan, source, target, report_sink, tag: ImportResidueTag,
     # endpoints exist, and `_did_171_subpass` makes this a no-op when the
     # template tail already ran it.
     _ensure_171_subpass(exec_ctx, target, tag, _exec_skips)
+
+    # T119's feature-structure owner pass, AFTER the 17.1 sub-pass and after
+    # every category. It used to run INSIDE that sub-pass, i.e. anchored to
+    # AFFIX_TEMPLATES -- one category before STEMS creates the `MoStemMsa`
+    # objects that own 1,003 of the feature structures it is meant to fill.
+    # Every one of them resolved to a non-existent owner and was discarded
+    # silently. See `_ensure_owner_feat_strucs` for the measurement.
+    _ensure_owner_feat_strucs(exec_ctx, target, tag, _exec_skips)
 
     # Feature 024 (T031, US3, FR-008 -- single-final-pass redesign):
     # `reproduce_all_lexical_relations` is the SOLE lexical-relation
