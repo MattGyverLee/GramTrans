@@ -104,6 +104,13 @@ _SNAPS = _REPO / "tests" / "integration" / "_snapshots"
 _MAIN = _REPO.parent / "GramTrans" / "specs" / "038-transfer-fidelity-gaps"
 _BASELINE = _MAIN / "contracts" / "starter-baseline.json"
 _PROBE_OUT = _MAIN / "probes" / "t124"
+
+#: Artifact tag for THIS run. T124's artifacts are the comparand every open
+#: task is measured against, so a re-run must not overwrite them -- the same
+#: rule feature 038 already recorded for T077 ("write to new snapshot
+#: artifacts rather than overwriting T063's"). Set with `--tag <name>`;
+#: defaults to `t124` so the original invocation is unchanged.
+RUN_TAG = "t124"
 _WAVE1_PROBES = _MAIN / "probes"
 
 _PAIRS = {
@@ -432,8 +439,9 @@ def _run_pair(pair: str, argv) -> int:
     from harness.restore import restore_target
 
     probe_only = "--probe-only" in argv
-    census_path = _SNAPS / ("census-038-t124-%s.json" % pair)
-    report_path = str(_REPO / "_run_reports" / ("038-t124-%s-report.json" % pair))
+    census_path = _SNAPS / ("census-038-%s-%s.json" % (RUN_TAG, pair))
+    report_path = str(_REPO / "_run_reports"
+                      / ("038-%s-%s-report.json" % (RUN_TAG, pair)))
     target_path = str(PROJECTS_ROOT / target / (target + ".fwdata"))
 
     print()
@@ -719,6 +727,15 @@ def _run_pair(pair: str, argv) -> int:
 
 
 def main(argv) -> int:
+    global RUN_TAG
+    for i, a in enumerate(argv):
+        if a == "--tag" and i + 1 < len(argv):
+            RUN_TAG = argv[i + 1]
+        elif a.startswith("--tag="):
+            RUN_TAG = a.split("=", 1)[1]
+    if RUN_TAG != "t124":
+        print("[INFO] run tag %r -- T124's artifacts are NOT overwritten"
+              % RUN_TAG)
     which = (argv[1] if len(argv) > 1 else "").lower()
     if which == "all":
         pairs = ["ejagham", "ngoreme", "mbugwe"]
