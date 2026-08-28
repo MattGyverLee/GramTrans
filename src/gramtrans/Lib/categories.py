@@ -3667,12 +3667,12 @@ def variant_types_execute_action(action, context, ws_mapping, tag):
         # (7 -> 7 on ejagham) and only the shape is wrong -- 6 nested /
         # 1 top-level arrives as 2 nested / 5 top-level. T088's defect in a
         # third place, and the same one the Wave 1 probe hit on its first run.
-        owner = ICmObject(src_obj).Owner
-        if owner is not None:
-            owner = ICmObject(owner)
-        owner_class = getattr(owner, "ClassName", "")
-        if owner_class and "EntryType" in owner_class:
-            src_owner_guid = _guid_str_from(owner)
+        # CLASS-AGNOSTIC, keyed on the owning FLID rather than on a class
+        # name -- see `_CMPOSSIBILITY_SUBPOSSIBILITIES_FLID` for the measured
+        # reason. The predicate this replaces (`"EntryType" in owner_class`)
+        # was False for every `LexEntryInflType` because the substring is not
+        # contiguous, so every nested item was demoted to top level.
+        src_owner_guid = _source_possibility_parent_guid(src_obj)
     except Exception:
         pass
 
@@ -3829,12 +3829,12 @@ def complex_form_types_execute_action(action, context, ws_mapping, tag):
         # (7 -> 7 on ejagham) and only the shape is wrong -- 6 nested /
         # 1 top-level arrives as 2 nested / 5 top-level. T088's defect in a
         # third place, and the same one the Wave 1 probe hit on its first run.
-        owner = ICmObject(src_obj).Owner
-        if owner is not None:
-            owner = ICmObject(owner)
-        owner_class = getattr(owner, "ClassName", "")
-        if owner_class and "EntryType" in owner_class:
-            src_owner_guid = _guid_str_from(owner)
+        # CLASS-AGNOSTIC, keyed on the owning FLID rather than on a class
+        # name -- see `_CMPOSSIBILITY_SUBPOSSIBILITIES_FLID` for the measured
+        # reason. The predicate this replaces (`"EntryType" in owner_class`)
+        # was False for every `LexEntryInflType` because the substring is not
+        # contiguous, so every nested item was demoted to top level.
+        src_owner_guid = _source_possibility_parent_guid(src_obj)
     except Exception:
         pass
 
@@ -3971,12 +3971,16 @@ def semantic_domains_execute_action(action, context, ws_mapping, tag):
         # (7 -> 7 on ejagham) and only the shape is wrong -- 6 nested /
         # 1 top-level arrives as 2 nested / 5 top-level. T088's defect in a
         # third place, and the same one the Wave 1 probe hit on its first run.
-        owner = ICmObject(src_obj).Owner
-        if owner is not None:
-            owner = ICmObject(owner)
-        owner_class = getattr(owner, "ClassName", "")
-        if owner_class == "CmSemanticDomain":
-            src_owner_guid = _guid_str_from(owner)
+        # CONSOLIDATED 2026-08-28 onto the shared flid-keyed helper. This site
+        # was the ONLY one of the three that was correct -- it compared class
+        # names with `==` rather than `in`, so it never had the
+        # `"EntryType" in "LexEntryInflType"` defect. It is converted anyway,
+        # because three near-identical hand-rolled predicates is precisely how
+        # this codebase keeps acquiring one bug in parallel functions: the
+        # cast defect landed in all three, and the substring defect in the two
+        # that used `in`. One implementation, three call sites, one place to
+        # get it wrong.
+        src_owner_guid = _source_possibility_parent_guid(src_obj)
     except Exception:
         pass
 
@@ -6503,6 +6507,33 @@ _LEXREL_REPRODUCED_KEY = "__categories_lexrel_reproduced__"
 _LEXREL_PLANNED_KEY = "__categories_lexrel_planned__"
 
 
+def _lex_ref_type_label(lex_ref_type) -> str:
+    """A human-readable name for a `LexRefType` (`Specific`, `Synonyms`,
+    `Calendar`, ...), or `""`.
+
+    Exists so a drop record can NAME the missing relation type. Without it the
+    report carried `owner_label=""` / `item_name=""` and a reader could not
+    tell which type was absent -- the exact question the investigation into
+    "0 of 5 LexReference survive" had to answer, and had to answer by opening
+    the projects live because the report would not say. Never raises: a label
+    helper that throws would be swallowed by the caller and cost the record.
+    """
+    if lex_ref_type is None:
+        return ""
+    for reader in (
+        lambda o: o.Name.BestAnalysisAlternative.Text,
+        lambda o: o.Name.AnalysisDefaultWritingSystem.Text,
+        lambda o: o.ShortName,
+    ):
+        try:
+            text = reader(lex_ref_type)
+        except Exception:  # noqa: BLE001 -- try the next reader
+            continue
+        if text:
+            return str(text)
+    return ""
+
+
 def _resolve_target_lex_ref_type(target, type_guid: str):
     """Resolve the target `ILexRefType` whose GUID is `type_guid` off
     `target.Cache.LangProject.LexDbOA.ReferencesOA` (an `ICmPossibilityList`
@@ -6510,7 +6541,32 @@ def _resolve_target_lex_ref_type(target, type_guid: str):
     `references._find_in_possibility_list`'s recursive `PossibilitiesOS`/
     `SubPossibilitiesOS` walk exactly like every other possibility-list
     lookup in this codebase). Returns `None` when absent or the list itself
-    is unreachable (never raises)."""
+    is unreachable (never raises).
+
+    **CAST AT THE PRODUCER (038 T123 second entry, 2026-08-28), AND THAT
+    PLACEMENT IS T094'S LESSON, NOT A PREFERENCE.**
+    `references._find_in_possibility_list` walks `PossibilitiesOS` and returns
+    the RAW member -- a base-typed `ICmPossibility` proxy. `MappingType` is
+    declared on `ILexRefType` only, so `_evaluate_lexical_relation`'s
+    `getattr(target_type, "MappingType", None)` read **None on every live
+    resolution**, and both structural guards below it were permanently dead:
+
+        if mapping_type in _LEXICAL_RELATION_PAIR_TYPES   # None in {...} -> False
+        if mapping_type in _LEXICAL_RELATION_TREE_TYPES   # same
+
+    T124 reported that "the per-MappingType structural rulings were never
+    reached", treating it as a deferred measurement. It was not deferred: it
+    was unreachable by construction. Had the type-resolution defect been fixed
+    alone, all 5 ngoreme relations would have reproduced as open collections
+    with no pair-minimum and no tree-root check -- and the acceptance would
+    have read GREEN for the wrong reason. That is the worse outcome, which is
+    why this cast lands in the same change.
+
+    `_as_lex_ref_type` falls back to the raw member when no cast is possible
+    (duck-typed unit fakes), so this can never resolve LESS than before.
+    Thirteenth appearance of this codebase's recurring shape, in the same file
+    and the same feature as the eleventh.
+    """
     if __package__:
         from . import references as _references
     else:
@@ -6519,7 +6575,10 @@ def _resolve_target_lex_ref_type(target, type_guid: str):
         ref_list = target.Cache.LangProject.LexDbOA.ReferencesOA
     except AttributeError:
         return None
-    return _references._find_in_possibility_list(ref_list, type_guid)
+    found = _references._find_in_possibility_list(ref_list, type_guid)
+    if found is None:
+        return None
+    return _as_lex_ref_type(found) or found
 
 
 def _evaluate_lexical_relation(src_relation, ctx, dropped):
@@ -6569,14 +6628,28 @@ def _evaluate_lexical_relation(src_relation, ctx, dropped):
     type_guid = _guid_str_from(source_type) if source_type is not None else ""
     target_type = _resolve_target_lex_ref_type(target, type_guid)
     if target_type is None:
+        # THE RECORD USED TO NAME THE WRONG OBJECT (038 T123, 2026-08-28).
+        # `owner_kind` says `LexRefType` while `owner_guid` carried
+        # `rel_guid` -- the RELATION's guid, not the TYPE's -- so the one
+        # field that names the missing type was discarded, and the record
+        # said "a LexRefType whose guid is actually a LexReference".
+        # `owner_label` and `item_name` were both empty, so the report could
+        # not tell a reader WHICH relation type is absent (`Specific`,
+        # `Synonyms`, `Calendar`) -- which is precisely the question the next
+        # investigation had to ask, and had to re-derive live because the
+        # report would not say.
         _append_dropped_once(dropped, DroppedItemRecord(
             owner_kind="LexRefType",
-            owner_guid=rel_guid,
-            owner_label="",
+            owner_guid=type_guid,
+            owner_label=_lex_ref_type_label(source_type),
             field_name="MembersOC",
-            item_name="",
+            item_name=_lex_ref_type_label(source_type),
             item_guid=rel_guid,
-            reason="lexical relation type not found in target",
+            reason=(
+                "lexical relation type not found in target -- the whole "
+                "Lexical Relations type list is absent, so no relation of "
+                "this type can be reproduced"
+            ),
         ))
         return None
 
@@ -12014,6 +12087,76 @@ def _phonology_simple_plan(piece, context, category, ops_attr, label):
     )
 
 
+#: `CmPossibility.SubPossibilities` (class 7, field 4). An object owned through
+#: this field is NESTED under another possibility; anything else (notably
+#: `CmPossibilityList.Possibilities`, 8008) is TOP-LEVEL.
+#:
+#: **WHY A FLID AND NOT A CLASS NAME (038 T123 second entry, 2026-08-28).**
+#: The nesting test used to read `if owner_class and "EntryType" in
+#: owner_class:`. `"EntryType"` is NOT a substring of `"LexEntryInflType"` --
+#: the characters are there but not contiguous ("Entry" + "Infl" + "Type") --
+#: so the test was False for EVERY nested variant type, `src_owner_guid`
+#: stayed None, and every one of them took the top-level branch and was
+#: demoted. T123's earlier fix to the missing `ICmObject` cast was correct and
+#: made `owner_class` read `"LexEntryInflType"` properly; the very next line
+#: then threw the answer away.
+#:
+#: Measured live on `Ejagham W Mini` 2026-08-28 (read-only, `op-144649829-015`):
+#: 6 of its 7 `LexEntryInflType` objects are `OwningFlid=7004` with
+#: `owner_class="LexEntryInflType"` (`Perfective`, `Past`, `Hortative`, ...),
+#: 1 is `OwningFlid=8008` under the `CmPossibilityList`. T124's per-GUID
+#: destination reading found ejagham arriving 2 nested / 5 top-level with 4
+#: NAMED demotions -- `Perfective`, `Hortative`, `Conditional`,
+#: `Retrospective`.
+#:
+#: A flid is the thing LCM actually keyed on, and it is class-agnostic: the
+#: same constant answers the question for every `CmPossibility` subclass, so a
+#: sibling list cannot acquire this bug by being named differently. The
+#: semantic-domain site three functions down already compared classes with
+#: `==` rather than `in` and was never affected -- which is why this defect
+#: hid in two of three otherwise-parallel functions.
+_CMPOSSIBILITY_SUBPOSSIBILITIES_FLID = 7004
+
+
+def _source_possibility_parent_guid(src_obj):
+    """The GUID of `src_obj`'s owning POSSIBILITY, or None when it is
+    top-level.
+
+    Class-agnostic on purpose -- see
+    `_CMPOSSIBILITY_SUBPOSSIBILITIES_FLID`. Never raises: a nesting question
+    that throws would be swallowed by the caller's `except` and read as
+    "top-level", which is the failure this replaces.
+
+    DUAL-MODE, like `_guid_str_from` and every other primitive here. The cast
+    is tried first because on live LCM `.Owner` hands back an `ICmObjectOrId`
+    proxy whose members do not surface uncast (T123's original defect); when
+    no LCM is present -- the host-free unit tests -- the plain attribute reads
+    answer the same question on duck-typed fakes. Without the fallback this
+    predicate would be untestable except against a live project, which is
+    exactly how the substring bug it replaces survived a green suite.
+    """
+    if src_obj is None:
+        return None
+    flid = None
+    owner = None
+    try:
+        cm = ICmObject(src_obj)
+        flid = cm.OwningFlid
+        owner = cm.Owner
+    except Exception:  # noqa: BLE001 -- no LCM, or not castable: read raw
+        flid = getattr(src_obj, "OwningFlid", None)
+        owner = getattr(src_obj, "Owner", None)
+    if flid != _CMPOSSIBILITY_SUBPOSSIBILITIES_FLID:
+        return None
+    if owner is None:
+        return None
+    try:
+        owner = ICmObject(owner)
+    except Exception:  # noqa: BLE001 -- duck fake, already the right thing
+        pass
+    return _guid_str_from(owner) or None
+
+
 def _log_possibility_demoted(factory_label, src_guid, parent_guid):
     """Record that a nested possibility was placed at TOP LEVEL because its
     parent is not in the destination yet (feature 038 T123).
@@ -12022,6 +12165,29 @@ def _log_possibility_demoted(factory_label, src_guid, parent_guid):
     so a counts-only gate reads green while the list's structure is wrong.
     On ejagham, `LexEntryInflType` measures 7 -> 7 with 6 nested / 1 top-level
     arriving as 2 nested / 5 top-level -- right number, wrong tree.
+
+    **IT WAS NEVER REACHED, AND NOT FOR THE REASON THE INVESTIGATION FIRST
+    LOOKED FOR (038 T123 second entry, 2026-08-28).** T124 re-ran ejagham with
+    full stderr captured (3,206 lines) and found ZERO occurrences of
+    `TOP LEVEL` while the same run demoted the same 4 objects. The stream was
+    fine -- the log carried 9 other WARNINGs -- and this function was simply
+    never called: its three call sites all sit inside `if src_owner_guid:`,
+    and `src_owner_guid` was ALWAYS None because the nesting test read
+    `"EntryType" in "LexEntryInflType"`, which is False. So every nested item
+    took the `else:` (top-level) branch, where no demotion is recorded because
+    on that branch none has occurred. Fixing the nesting predicate
+    (`_source_possibility_parent_guid`) is what makes this reachable; no call
+    site moved.
+
+    **WHERE IT GOES, STATED SO THE NEXT READER DOES NOT REPEAT THE SEARCH:
+    a LOGGER, not the run report.** A demotion produces no `DroppedItemRecord`
+    and no row in the report JSON -- the object arrived, so it is not a
+    dropped item -- which is why T124 looked in the report first and found
+    nothing there even for runs that did demote. Anyone auditing nesting must
+    read stderr, or measure the destination per GUID. Promoting this to a
+    reported event needs a record type for "arrived, but reshaped", which the
+    report schema does not currently have; that is a successor's work and is
+    named here rather than left to be rediscovered.
     """
     import logging as _logging
     _logging.getLogger("gramtrans.Lib.categories").warning(
