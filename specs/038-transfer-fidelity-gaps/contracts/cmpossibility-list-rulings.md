@@ -6,6 +6,9 @@
 pairs, read-only.
 **Status of the code half:** landed (`_wire_prod_restrictions`).
 **Status of the census half:** NOT landed, and section 4 says exactly why.
+**Amended:** 2026-08-28 — `LexDb.References` ruled IN SCOPE by user
+decision; see [section 2a](#2a-lexdbreferences--ruled-in-scope-2026-08-28). Its
+basis is NOT T115's probe, and section 2a says why it cannot be.
 
 ## 1. The row was never the unit of work
 
@@ -35,6 +38,7 @@ in a new place". This file is that ruling.
 | `LangProject.Status` | — | -1 | — | **OUT OF SCOPE.** Editorial workflow status. |
 | `DiscourseData.ConstChartTempl` | — | — | -1 | **OUT OF SCOPE.** Constituent-chart templates. |
 | `LexDb.ExtendedNoteTypes` | — | **+1** | **+1** | **OUT OF SCOPE**, and a surplus on both pairs that hold it. |
+| `LexDb.References` | n/a | n/a | n/a | **IN SCOPE, transferred.** The owning list for the `LexRefType` objects that own T123's `LexReference` relations. Not visible in this row at all — its members are exact class `LexRefType` — so the cells read `n/a`, not a dash. Ruled 2026-08-28; see [section 2a](#2a-lexdbreferences--ruled-in-scope-2026-08-28). |
 
 "OUT OF SCOPE" here means the census token `OUT_OF_SCOPE_CLASS` — content this
 feature's spec Assumptions do not claim — **not** `GOVERNED_BY_OTHER_FEATURE`,
@@ -50,6 +54,74 @@ easy to conflate — `categories.py` already records that flexicon's
 `InflectionClassGetAll()` / `InflectionClassCreate()` read and write *this*
 list when they mean inflection classes — which is why the new pass reaches the
 list directly rather than through that wrapper.
+
+## 2a. `LexDb.References` — ruled IN SCOPE, 2026-08-28
+
+**Ruling: IN SCOPE, transferred.** `LexDb.References` — `LexDbOA.ReferencesOA`,
+the `CmPossibilityList` whose members are `LexRefType` objects — is this
+feature's content, on the same terms as `MoMorphData.ProdRestrict` in section 2.
+Ruled by user decision, 2026-08-28.
+
+**Why it has to be.** It is the OWNING collection for the `LexReference` objects
+T123 addresses: every relation lives in `LexRefType.Members` (flid 5119003) and
+every `LexRefType` lives in this list. Ruling the list OUT of scope would
+contradict T123's disposition — the feature would be transferring the members
+while declaring their owner somebody else's content, which is not a coherent
+position from either end. Section 5's argument cuts this way too: the class name
+is not the unit of work, but an owner cannot be out of scope while the thing it
+owns is in.
+
+**This ruling is not evidenced the way section 2's are, and is not dressed up as
+if it were.** Section 2's rulings reconcile to `CmPossibility`'s
+`difference_raw` per pair, to the object. This one cannot. The list's members
+are exact class `LexRefType`, not `CmPossibility`, so they appear nowhere in
+T115's `possibility_lists` enrichment — the ngoreme source probe breaks 398
+exact-class `CmPossibility` objects across 21 owning lists and `LexDb.References`
+is not one of them, on any probed project, source or destination. That is why
+section 2's table reads `n/a` for it on all three pairs rather than a dash: a
+dash in that table means "measured, no delta", and this is "not in this row at
+all". The rows that do carry these objects are `LexRefType` and `LexReference`,
+plus T124's `lex_references` probe supplement.
+
+**What was standing before this ruling, and what it was not.** Two records
+mention the members and neither is a ruling. 035's `object-inventory.md:158`
+gives `LexRefType` (`LexDbOA.ReferencesOA`) the disposition "by GUID only --
+NEVER created", with the relation "reported and skipped"
+(`_evaluate_lexical_relation` returns `None`); and the census marks `LexRefType`
+`gate_scope: advisory` under CP-3, beside `LexAppendix` and `PhBdryMarker`, as a
+class the inventory records as never created by any path. Those are an engine
+restriction and an instrument setting. Neither says whether the content is this
+feature's, which is exactly how a list this feature needs ended up neither in
+scope nor ruled out — the first of the two adjacent gaps the T119/T123
+write-up recorded.
+
+**Why the ruling matters rather than being bookkeeping.** The user has also
+ruled that T123 gets **both** an `ILexRefTypeFactory` create leg **and** a
+`(Name, MappingType)` natural-key fallback, with **the fallback taking
+precedence** so default types are not doubled. A create leg writing into a list
+ruled out of scope would be a write this feature's Assumptions do not claim,
+so the scope question has to be answered before that work and not after it. The
+precedence half is measured rather than stylistic: ngoreme's 7 source relation
+types carry project-local GUIDs while the destination's 7 carry FLEx canonical
+ones — identical by `Name` and `MappingType`, **zero GUID overlap** — so
+GUID-only resolution cannot succeed on any real pair, and a create-only fix
+would mint a second copy of all 7.
+
+**Nothing here is a claim about work already done.** `LexRefType` has **no
+create path anywhere in the codebase**: `grep ILexRefTypeFactory` over `src/`
+and `tests/` returns zero hits, `_resolve_target_lex_ref_type` is a GUID-only
+lookup with no create leg, and the class has no row in
+`references.REFERENCE_FIELD_MAP` or `factory_by_item_clsid`. The latest
+committed destination probes (`probes/t126/owner-probe-GT038-T126-*.json`) still
+read `LexReference` 0 and `lex_references_total` 0. This section rules on
+**scope**; it measures no recovery and asserts none.
+
+**Section 4 is unaffected.** This ruling needs no per-list accounting line: the
+`CmPossibility` row does not carry these objects, so nothing here waits on the
+per-owning-list dimension T124 owes that row. The rows that do carry them are
+`LexRefType` (`gate_scope: advisory`) and `LexReference`, so no gate moves in
+either direction on this ruling alone — which is the point of recording it as a
+ruling rather than as a green row.
 
 ## 3. What the code half does
 
