@@ -27,6 +27,7 @@ if __package__:
         CENSUS_REPORT_ONLY_RESIDUE,
         CENSUS_REPORT_ONLY_STATE,
         CENSUS_ROW_STATES,
+        CENSUS_RULED_RESIDUE_CLASSES,
         CLASS_CENSUS_ROW_ARTIFACT_FIELDS,
         FIDELITY_CENSUS_ARTIFACT_FIELDS,
         STARTER_BASELINE_ARTIFACT_FIELDS,
@@ -50,6 +51,7 @@ else:
         CENSUS_REPORT_ONLY_RESIDUE,
         CENSUS_REPORT_ONLY_STATE,
         CENSUS_ROW_STATES,
+        CENSUS_RULED_RESIDUE_CLASSES,
         CLASS_CENSUS_ROW_ARTIFACT_FIELDS,
         FIDELITY_CENSUS_ARTIFACT_FIELDS,
         STARTER_BASELINE_ARTIFACT_FIELDS,
@@ -2518,11 +2520,11 @@ def report_only_roster_defects() -> tuple:
     Empty means the roster is sound. Returned rather than raised so a test can
     name the defect and a live run can never die inside a renderer.
 
-    Five checks. The first four all ask whether a class is wrongly ON the
-    roster; **check 5 is the only one that asks whether one is missing from
-    it**, and T113 is what it was filed for -- with four one-directional
-    checks the roster could be silently short of a path the spec's Assumptions
-    name and this function still reported clean.
+    Six checks. The first four all ask whether a class is wrongly ON the
+    roster; **checks 5 and 6 are the ones that ask whether one is missing from
+    it**, and T113 is what the first of them was filed for -- with four
+    one-directional checks the roster could be silently short of a path the
+    spec's Assumptions name and this function still reported clean.
 
     1. `CENSUS_PHASE_GATED_CLASSES` still equals the union of the phase
        predicates' declared scopes. `models.py` cannot import `census.py` (the
@@ -2555,6 +2557,21 @@ def report_only_roster_defects() -> tuple:
        its own defect rather than passing quietly, since a class cannot be
        both "governed by another feature and reported" and "excluded from the
        delta before it is measured".
+    6. T081 (4th re-gate) -- THE SAME COMPLETENESS RULE OVER THE SECOND
+       GATE-BEARING ROSTER. Every class `models.CENSUS_RULED_RESIDUE_CLASSES`
+       names is on this roster too. A class a committed ruling took off 038's
+       hook is measured here, reported here and undertaken NOWHERE, which is
+       what `report_only` says even more plainly than governance does -- so the
+       two rosters cannot disagree about whether 038 undertook the class. It is
+       a separate check rather than a widening of check 5 because the two
+       rosters are enforced DISJOINT (`census.py`'s T081 lock) and unioning
+       them would hide that: a class arriving on both would satisfy one merged
+       check while the import-time lock rejected the module.
+
+       `CmFolder` is why the check earns its place. Before T081 this roster
+       carried `CmFile` and not the `CmFolder` that OWNS it via `CmFolder.Files`
+       -- one path split across two console states, which is precisely the
+       defect check 5 was filed about, reopened in the same roster.
     """
     engine = _census_module()
     defects: list = []
@@ -2629,6 +2646,41 @@ def report_only_roster_defects() -> tuple:
             "the rest of their own path reads `report_only`. A class another "
             "feature governs is measured here and undertaken elsewhere, "
             "which is what report-only means"
+        )
+
+    # Check 6 (T081, 4th re-gate). Read as a module global for the same reason
+    # check 5's two rosters are: a test poisons the handle rather than
+    # re-importing the module.
+    ruled = set(CENSUS_RULED_RESIDUE_CLASSES)
+    ruled_overreach = sorted(ruled & mirrored)
+    if ruled_overreach:
+        defects.append(
+            f"{ruled_overreach} are on CENSUS_RULED_RESIDUE_CLASSES AND named "
+            "by a phase predicate -- a class this feature gates on is owned, "
+            "not ruled off its own hook (the import-time T081 lock in "
+            "census.py refuses this outright; reported here so the auditable "
+            "surface says the same thing)"
+        )
+    ruled_contradictory = sorted(ruled & set(excluded))
+    for name in ruled_contradictory:
+        defects.append(
+            f"{name}: named by CENSUS_RULED_RESIDUE_CLASSES AND already "
+            f"excluded from the census delta as {excluded[name]}. A row that "
+            "is NOT_EVALUATED has no measured shortfall for an accounting "
+            "line to retire, so a ruled-residue line on it would claim "
+            "objects nobody counted"
+        )
+    ruled_missing = sorted(
+        ruled - set(CENSUS_REPORT_ONLY_RESIDUE) - set(ruled_contradictory))
+    if ruled_missing:
+        defects.append(
+            f"{ruled_missing} are accounted for by a committed ruling "
+            "(CENSUS_RULED_RESIDUE_CLASSES) but are NOT on the report-only "
+            "residue roster -- so the console calls them `accounted` while "
+            "saying nothing about the fact that nobody undertook them. A "
+            "class a ruling takes off this feature's hook is measured here, "
+            "reported here and undertaken nowhere, which is what report-only "
+            "means"
         )
 
     return tuple(defects)

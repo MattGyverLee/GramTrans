@@ -7802,6 +7802,14 @@ class TestT109Lock3TheRosterIsGateInert:
 
     def test_emptying_the_roster_restores_the_artifact_byte_for_byte(
             self, monkeypatch):
+        # T081 (4th re-gate) emptied HERE TOO, and the reason is the forge's
+        # own design: `PhCode` is in it at -140 as the deliberately UNROSTERED
+        # control, and T081's ruled-residue roster now claims 2 of that row
+        # (T121's two boundary-marker codes, capped there). This lock is a
+        # claim about the T109 roster, so the second roster is held at zero
+        # while it is made -- `TestT081TheRosterIsTheRulingsAndNothingElse`
+        # makes the identical claim about the second one.
+        monkeypatch.setattr(census, "RULED_RESIDUE_CLASSES", {})
         with_roster = _t109_forged_artifact()
         monkeypatch.setattr(census, "GOVERNED_BY_OTHER_FEATURE_CLASSES", {})
         without_roster = _t109_forged_artifact()
@@ -7836,11 +7844,18 @@ class TestT109Lock3TheRosterIsGateInert:
         irrelevant = _t109_forged_artifact()
         assert irrelevant == emptied
 
-    def test_only_the_rostered_row_moves(self):
+    def test_only_the_rostered_row_moves(self, monkeypatch):
         """`Segment` and `PhCode` are the same -140 in the same artifact; only
         the rostered one gets a line, and the rostered class that agrees at 0
         gets nothing either. One rostered row moving and one not is what
-        distinguishes a roster from a blanket."""
+        distinguishes a roster from a blanket.
+
+        T081's ruled-residue roster is held at zero for the reason given in
+        `test_emptying_the_roster_restores_the_artifact_byte_for_byte`: it
+        claims 2 of `PhCode`'s 140 on its own, unrelated authority, and the
+        control row has to stay a control.
+        """
+        monkeypatch.setattr(census, "RULED_RESIDUE_CLASSES", {})
         with_roster = json.loads(_t109_forged_artifact())
         rows = {row["class"]: row for row in with_roster["classes"]}
         assert rows["Segment"]["difference"] == rows["PhCode"]["difference"]
@@ -8403,3 +8418,421 @@ class TestT124T120TheRulesArriveAndTheirContentsDoNot:
             assert rows["PhRegularRule"]["verdict_class"] == "MATCHED"
             assert rows["PhSegRuleRHS"]["source_count"] == rhs_src
             assert rows["PhSegRuleRHS"]["destination_count_net"] == rhs_net
+
+
+# ===========================================================================
+# T081 (4th re-gate) -- the RULED-RESIDUE line, and the half of the residue it
+#                       is allowed to touch
+# ===========================================================================
+#
+# The 4th re-gate reads 6 / 10 / 7 P5 failures on the committed
+# `census-038-t126-*` artifacts, verdict UNEXPLAINED_SHORTFALL, and those
+# failures split two ways:
+#
+#   (i)  a real, unattributed loss -- `LexReference`, `PhFeatureConstraint`,
+#        the `FsFeatStruc` / `FsClosedValue` cascade, `CmPossibility`,
+#        `PhSequenceContext`, ngoreme's one `MoStemMsa`. Blocked on human
+#        rulings. NOTHING below may move one of these, and
+#        `test_no_kind_one_residue_row_is_touched` is what enforces it.
+#   (ii) a class that ALREADY HAS A COMMITTED, WRITTEN RULING while nothing in
+#        the instrument wrote that ruling into `accounted_for`. That is an
+#        INSTRUMENT gap, not a fidelity gap: the gate reported an unexplained
+#        shortfall for a shortfall that is, on the record, explained.
+#
+# Every reading below is derived from the COMMITTED artifacts by the emitter's
+# own functions -- `census_cli.accounted_for_ruled_residue`,
+# `census_cli.process_rules_by_class_from_report`,
+# `census.unexplained_counts`, `census.build_totals`. No project is opened and
+# no fresh census is emitted: re-running a derivation over unchanged
+# observations is not forging a measurement, and it is the same move
+# `_t109_stamped` makes.
+
+T126_ARTIFACTS = {
+    "ejagham": "census-038-t126-ejagham.json",
+    "ngoreme": "census-038-t126-ngoreme.json",
+    "mbugwe": "census-038-t126-mbugwe.json",
+}
+
+#: pair -> (P5 failures BEFORE the T081 lines, AFTER).
+T081_P5_FAILURES = {
+    "ejagham": (6, 5),
+    "ngoreme": (10, 7),
+    "mbugwe": (7, 5),
+}
+
+#: pair -> the classes whose P5 failure the lines CLOSE. `MoAffixProcess` is
+#: deliberately absent from ejagham's set: its line IS emitted and its
+#: `unexplained_shortfall` DOES go to zero, but `SOURCE_REFERENT_ABSENT` is
+#: kept out of `PHASE_5_ADMISSIBLE_REASONS` because PHASE 4 names the class, so
+#: the row stays a P5 failure with a different, more accurate message.
+T081_CLOSED = {
+    "ejagham": {"PhCode"},
+    "ngoreme": {"CmFile", "CmFolder", "PhCode"},
+    "mbugwe": {"CmFile", "CmFolder"},
+}
+
+#: pair -> `total_unexplained_shortfall` BEFORE -> AFTER. `total_shortfall`
+#: must NOT move: it is `sum(max(0, -difference))` over the required rows and
+#: no accounting line is in that arithmetic. What moves is which bucket the
+#: objects sit in.
+T081_UNEXPLAINED = {
+    "ejagham": (692, 689),
+    "ngoreme": (1024, 1019),
+    "mbugwe": (3005, 829),
+}
+
+#: The classes T081's brief named and this roster does NOT carry, with the
+#: reason each is out. Asserted so a later hand cannot quietly widen the
+#: roster past the rulings that justify it.
+T081_DELIBERATELY_OUT = {
+    "LexEntryType": "in scope; a magnitude correction, not an exemption",
+    "MoAffixProcess": "phase-4 owned; accounted through the report surface",
+    "CmPossibility": "no per-owning-list dimension in the census (T122)",
+    "LexReference": "kind-(i) real loss, blocked on a human ruling",
+    "PhFeatureConstraint": "kind-(i) real loss",
+    "FsFeatStruc": "kind-(i) real loss",
+    "FsClosedValue": "kind-(i) real loss",
+    "MoStemMsa": "kind-(i): one object on one pair, no attributed cause",
+    "PhSequenceContext": "kind-(i): phonology residue, no successor named",
+}
+
+
+def _t126(pair: str) -> dict:
+    path = (Path(__file__).resolve().parent / "_snapshots"
+            / T126_ARTIFACTS[pair])
+    assert path.is_file(), (
+        "the T126 re-gate artifact is missing: " + str(path)
+        + " -- it is committed repo data, not a regenerable temp file"
+    )
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _t126_report(pair: str) -> Path:
+    return _repo_root() / "_run_reports" / ("038-t126-%s-report.json" % pair)
+
+
+def _t081_stand_ins(lines):
+    """The `(count, direction)` view `census.accounted_in_direction` needs.
+
+    Same glue, and the same reason, as `_t109_line_stand_ins`: a stored line
+    carrying a non-exempt reason cannot be rebuilt as a real `AccountedLine`
+    without the `report_ref` its constructor demands.
+    """
+    return [
+        type("_Line", (), {"count": line["count"],
+                           "direction": line["direction"]})()
+        for line in lines
+    ]
+
+
+def _t081_stamped(pair: str) -> dict:
+    """A COPY of one committed T126 artifact with the T081 lines applied.
+
+    Two emit paths, in the order the CLI runs them: the REPORTED, corroborated
+    process-rule drop first (it names run-report content invariant 5 can
+    resolve), then the ruled-residue line, which takes the room that is left.
+    """
+    from copy import deepcopy
+
+    out = deepcopy(_t126(pair))
+    measured = tuple(row["class"] for row in out["classes"])
+    rules = census_cli.process_rules_by_class_from_report(
+        _t126_report(pair), measured)
+    for row in out["classes"]:
+        existing = list(row.get("accounted_for", ()))
+        fresh = list(census_cli.accounted_for_drops(
+            row.get("difference"), rules.get(row["class"], ())))
+        fresh += list(census_cli.accounted_for_ruled_residue(
+            row["class"], row.get("difference"),
+            _t081_stand_ins(existing + [line.artifact() for line in fresh])))
+        if not fresh:
+            continue
+        row["accounted_for"] = existing + [line.artifact() for line in fresh]
+        shortfall, surplus = census.unexplained_counts(
+            row.get("difference"), _t081_stand_ins(row["accounted_for"]))
+        if row.get("verdict_class") == "NOT_EVALUATED":
+            shortfall, surplus = 0, 0
+        row["unexplained_shortfall"] = shortfall
+        row["unexplained_surplus"] = surplus
+    out["totals"] = census.build_totals(out["classes"])
+    return census.stamp_verdict(out)
+
+
+def _t081_rows(artifact) -> dict:
+    return {row["class"]: row for row in artifact["classes"]}
+
+
+def _t081_failing_classes(result) -> set:
+    """The class named by each P5 failure string. Both shapes start
+    `"P5: <class> ..."`, which is what makes the set comparable across the
+    before/after pair."""
+    return {line.split(":", 1)[1].split()[0] for line in result.failures}
+
+
+class TestT081TheRosterIsTheRulingsAndNothingElse:
+    """The roster's contents, and the committed document behind each entry."""
+
+    def test_every_rostered_class_names_a_ruling_and_a_measurement(self):
+        """The `ruling` half is a document PATH plus the task that wrote it, and
+        the `reason` half opens with the measured differences. An accounting
+        line whose ruling the reader cannot go and read is not a report
+        (SC-010).
+
+        EXISTENCE ON DISK IS CHECKED ONLY WHEN THE DOCUMENT IS PRESENT, and
+        that is a statement about this repo's git workflow rather than a
+        softened assertion: spec artifacts commit to `main` and implementation
+        commits on a feature worktree, so a code worktree branched before a
+        ruling landed legitimately does not carry it. Asserting the file into
+        existence here would make the test pass or fail on which checkout it
+        ran in, which is worse than checking the shape everywhere and the
+        content wherever it is available.
+        """
+        from gramtrans.Lib import models as _models
+
+        roster = _models.CENSUS_RULED_RESIDUE_CLASSES
+        assert roster, "the roster must not be empty in the shipped source"
+        contracts = (_repo_root() / "specs" / "038-transfer-fidelity-gaps"
+                     / "contracts")
+        checked = 0
+        for cls, (_token, ruling, _cap, reason) in sorted(roster.items()):
+            document = ruling.split(" ")[0].split("#")[0].strip()
+            assert document.startswith("contracts/"), (cls, ruling)
+            assert document.endswith(".md"), (cls, ruling)
+            assert re.search(r"\(T\d{2,3}[,)]", ruling), (cls, ruling)
+            assert reason.startswith("measured "), cls
+            path = contracts / document[len("contracts/"):]
+            if path.is_file():
+                checked += 1
+                assert path.read_text(encoding="utf-8").strip(), (cls, path)
+        assert checked or not (contracts / "straggler-rulings.md").is_file()
+
+    def test_every_token_is_report_ref_exempt_and_phase_five_admissible(self):
+        """The two properties the import-time lock enforces, exercised through
+        the auditable surface. Exempt, because the roster has no run-report
+        content and R-1 is checked in `AccountedLine.__post_init__`;
+        admissible, because a line that cannot satisfy P5 would change the
+        wording of a failure and nothing else."""
+        from gramtrans.Lib import models as _models
+
+        for cls, entry in sorted(
+                _models.CENSUS_RULED_RESIDUE_CLASSES.items()):
+            token = entry[0]
+            assert token in census.REASON_TOKENS, cls
+            assert token in census.REASONS_NOT_REQUIRING_REPORT_REF, cls
+            assert token in census.PHASE_5_ADMISSIBLE_REASONS, cls
+
+    def test_the_two_rosters_are_disjoint(self):
+        """A class is handed to a successor FEATURE or ruled by a committed
+        DOCUMENT. Both would claim the same objects twice, and the governed
+        roster's own comment refuses `CmFile` / `CmFolder` by name."""
+        from gramtrans.Lib import models as _models
+
+        assert not (set(_models.CENSUS_RULED_RESIDUE_CLASSES)
+                    & set(_models.CENSUS_GOVERNED_BY_OTHER_FEATURE_CLASSES))
+
+    def test_no_rostered_class_is_gated_by_a_phase_predicate(self):
+        """T109 LOCK 1 over the second roster. This is what keeps
+        `MoAffixProcess` off the roster by construction rather than by the
+        author's restraint."""
+        from gramtrans.Lib import models as _models
+
+        assert not (set(_models.CENSUS_RULED_RESIDUE_CLASSES)
+                    & _models.CENSUS_PHASE_GATED_CLASSES)
+        assert "MoAffixProcess" in _models.CENSUS_PHASE_GATED_CLASSES
+
+    def test_the_deliberate_exclusions_stay_excluded(self):
+        """Nine classes, each with its reason. `LexEntryType`'s is the one
+        worth reading: its ruling corrects the MAGNITUDE (-1/-1, against
+        `difference_raw`) and ends "one object per pair with no attributed
+        cause", which is an unexplained shortfall -- and there is deliberately
+        no UNEXPLAINED token to launder it into."""
+        from gramtrans.Lib import models as _models
+
+        for cls in sorted(T081_DELIBERATELY_OUT):
+            assert cls not in _models.CENSUS_RULED_RESIDUE_CLASSES, cls
+
+    def test_emptying_the_roster_makes_the_emitter_inert(self, monkeypatch):
+        """T109 LOCK 3 over the second roster: the roster is the whole of the
+        mechanism, so removing it restores the artifact."""
+        monkeypatch.setattr(census, "RULED_RESIDUE_CLASSES", {})
+        for cls, difference in (("CmFile", -2173), ("PhCode", -2),
+                                ("CmFolder", -3)):
+            assert census_cli.accounted_for_ruled_residue(
+                cls, difference) == ()
+
+
+class TestT081EachRosteredClassEmitsItsLine:
+    """(a) of the acceptance: the line actually appears, with the reason the
+    ruling dictates and the count the measurement supports."""
+
+    @pytest.mark.parametrize("pair", sorted(T126_ARTIFACTS))
+    def test_the_expected_reason_token_lands_on_every_shortfall_row(self, pair):
+        from gramtrans.Lib import models as _models
+
+        rows = _t081_rows(_t081_stamped(pair))
+        for cls, entry in sorted(
+                _models.CENSUS_RULED_RESIDUE_CLASSES.items()):
+            token, _ruling, max_claim, _why = entry
+            row = rows[cls]
+            lines = [line for line in row.get("accounted_for", ())
+                     if line["reason"] == token]
+            if row["difference"] >= 0:
+                # MATCHED here: nothing to claim, and a line would claim
+                # objects that never went missing.
+                assert lines == [], (pair, cls)
+                continue
+            (line,) = lines
+            assert line["direction"] == "shortfall", (pair, cls)
+            expected = -row["difference"]
+            if max_claim is not None:
+                expected = min(expected, max_claim)
+            assert line["count"] == expected, (pair, cls)
+            assert "ruled by contracts/" in line["detail"], (pair, cls)
+
+    def test_cmfile_and_cmfolder_carry_out_of_scope_class(self):
+        """T123 straggler 6, and the ruling is per POPULATION: mbugwe's are the
+        media folder (`CmPicture` 0 -> 0 on all three pairs, so the
+        Assumptions' only picture clause cannot reach them) and ngoreme's are
+        `ScrImportSFFiles.Files`, Scripture content. Both are ruled out, so the
+        whole difference is claimable."""
+        expected = {"ngoreme": {"CmFile": 2, "CmFolder": 1},
+                    "mbugwe": {"CmFile": 2173, "CmFolder": 3}}
+        for pair, wanted in expected.items():
+            rows = _t081_rows(_t081_stamped(pair))
+            for cls, count in wanted.items():
+                (line,) = rows[cls]["accounted_for"]
+                assert line["reason"] == "OUT_OF_SCOPE_CLASS", (pair, cls)
+                assert line["count"] == count, (pair, cls)
+        # ejagham holds none of either, so neither row is stamped there.
+        ejagham = _t081_rows(_t081_stamped("ejagham"))
+        for cls in ("CmFile", "CmFolder"):
+            assert ejagham[cls]["verdict_class"] == "MATCHED"
+            assert ejagham[cls]["accounted_for"] == []
+
+    def test_phcode_carries_starter_content_capped_at_the_two_ruled_codes(self):
+        """T121's boundary-marker half, route (b). The token is
+        `STARTER_CONTENT` and NOT `OUT_OF_SCOPE_CLASS` because the class is IN
+        scope -- the phoneme half passes 3 of 3 -- and the ruling's own section
+        3d refuses a `PhCode`-level finding for exactly that reason. What the
+        line says is where the destination's two codes came from: the starter
+        inventory, with `Representation` byte-equal to the source's.
+
+        mbugwe is MATCHED because its source's codes ARE the canonical pair, so
+        the identity check passes there non-vacuously and no line is emitted.
+        """
+        for pair in ("ejagham", "ngoreme"):
+            row = _t081_rows(_t081_stamped(pair))["PhCode"]
+            (line,) = row["accounted_for"]
+            assert line["reason"] == "STARTER_CONTENT"
+            assert line["count"] == 2
+            assert row["difference"] == -2
+        mbugwe = _t081_rows(_t081_stamped("mbugwe"))["PhCode"]
+        assert mbugwe["verdict_class"] == "MATCHED"
+        assert mbugwe["accounted_for"] == []
+
+    def test_the_phcode_cap_binds_when_the_phoneme_half_regresses(self):
+        """The cap is not decoration. T121's ruling covers exactly 2 objects;
+        if the phoneme half of the same class ever loses more, the extra must
+        stay UNEXPLAINED rather than inheriting the boundary ruling."""
+        notes = []
+        (line,) = census_cli.accounted_for_ruled_residue(
+            "PhCode", -40, (), notes)
+        assert line.count == 2
+        assert "CLAIM CAPPED AT THE RULED POPULATION" in line.detail
+        assert any("must not grow into a class-wide excuse" in n
+                   for n in notes)
+        assert census.unexplained_counts(-40, (line,)) == (38, 0)
+
+    def test_moaffixprocess_is_accounted_through_the_report_not_the_roster(
+            self):
+        """T123 straggler 5. The honest token is `SOURCE_REFERENT_ABSENT` --
+        the `MoCopyFromInput` content is empty IN THE SOURCE -- which is NOT
+        report_ref-exempt, so the roster could not carry it even if the class
+        were not phase-4 owned. The evidence exists on two report surfaces, so
+        the line comes from there and carries a resolvable `report_ref`."""
+        row = _t081_rows(_t081_stamped("ejagham"))["MoAffixProcess"]
+        (line,) = row["accounted_for"]
+        assert line["reason"] == "SOURCE_REFERENT_ABSENT"
+        assert line["count"] == 1
+        assert line["report_ref"]["count_in_report"] == 1
+        assert line["report_ref"]["record_ids"] == [
+            "24ed706a-7df2-4609-a37b-2bfa28853ccc"]
+        assert row["unexplained_shortfall"] == 0
+        # The two pairs whose MoAffixProcess row is MATCHED gain nothing.
+        for pair in ("ngoreme", "mbugwe"):
+            other = _t081_rows(_t081_stamped(pair))["MoAffixProcess"]
+            assert other["verdict_class"] == "MATCHED"
+            assert other["accounted_for"] == []
+
+
+class TestT081TheGateStopsCountingTheseAsUnexplained:
+    """(b) of the acceptance, read through `census.evaluate_phase` itself."""
+
+    @pytest.mark.parametrize("pair", sorted(T081_P5_FAILURES))
+    def test_the_p5_failure_count_drops_by_exactly_the_ruled_rows(self, pair):
+        before_count, after_count = T081_P5_FAILURES[pair]
+        before = census.evaluate_phase(_t126(pair), 5)
+        after = census.evaluate_phase(_t081_stamped(pair), 5)
+        assert len(before.failures) == before_count, list(before.failures)
+        assert len(after.failures) == after_count, list(after.failures)
+        closed = (_t081_failing_classes(before)
+                  - _t081_failing_classes(after))
+        assert closed == T081_CLOSED[pair]
+
+    @pytest.mark.parametrize("pair", sorted(T081_P5_FAILURES))
+    def test_no_closed_row_still_reads_unexplained(self, pair):
+        rows = _t081_rows(_t081_stamped(pair))
+        for cls in sorted(T081_CLOSED[pair]):
+            assert rows[cls]["unexplained_shortfall"] == 0, (pair, cls)
+            assert rows[cls]["unexplained_surplus"] == 0, (pair, cls)
+            assert census.row_passes(rows[cls]), (pair, cls)
+
+    @pytest.mark.parametrize("pair", sorted(T081_P5_FAILURES))
+    def test_no_kind_one_residue_row_is_touched(self, pair):
+        """The half of the residue that is a REAL loss must be byte-identical.
+        This is the test that makes "instrument gap only" falsifiable: if a
+        later widening of the roster reached one of these rows, the number it
+        retired would be a loss nobody ruled on."""
+        before = _t081_rows(_t126(pair))
+        after = _t081_rows(_t081_stamped(pair))
+        kind_one = [cls for cls, why in sorted(T081_DELIBERATELY_OUT.items())
+                    if "kind-(i)" in why or cls in ("CmPossibility",
+                                                    "LexEntryType")]
+        assert kind_one, "the guarded set must not be empty"
+        for cls in kind_one:
+            assert (after[cls]["accounted_for"]
+                    == before[cls]["accounted_for"]), (pair, cls)
+            assert (after[cls]["unexplained_shortfall"]
+                    == before[cls]["unexplained_shortfall"]), (pair, cls)
+
+    @pytest.mark.parametrize("pair", sorted(T081_UNEXPLAINED))
+    def test_total_shortfall_does_not_move_and_unexplained_does(self, pair):
+        """The T109 invariant, restated. `total_shortfall` is a function of
+        `difference` alone and no accounting line is in that arithmetic: an
+        accounting line changes WHICH BUCKET the objects sit in and never how
+        many went missing."""
+        before = _t126(pair)
+        after = _t081_stamped(pair)
+        assert (after["totals"]["total_shortfall"]
+                == before["totals"]["total_shortfall"])
+        assert (after["totals"]["total_surplus"]
+                == before["totals"]["total_surplus"])
+        was, now = T081_UNEXPLAINED[pair]
+        assert before["totals"]["unexplained_shortfall"] == was
+        assert after["totals"]["unexplained_shortfall"] == now
+
+    @pytest.mark.parametrize("pair", sorted(T081_P5_FAILURES))
+    def test_p5_is_still_unsatisfied_because_the_real_losses_remain(self, pair):
+        """T081 stays OPEN. Closing the instrument gap is not closing the
+        feature's residue, and a test that let this read `satisfied` would be
+        the laundering the whole lock structure exists to prevent."""
+        after = _t081_stamped(pair)
+        assert census.evaluate_phase(after, 5).satisfied is False
+        assert after["verdict"] == "UNEXPLAINED_SHORTFALL"
+
+    @pytest.mark.parametrize("pair", sorted(T081_P5_FAILURES))
+    def test_the_stamped_artifact_still_validates_against_the_schema(self, pair):
+        """`additionalProperties: false` everywhere, and `accountedLine` is
+        `$ref`-shared with `not_evaluated_reason`. A line the schema refuses is
+        not accounting."""
+        assert census.validate_artifact(_t081_stamped(pair)) == ()

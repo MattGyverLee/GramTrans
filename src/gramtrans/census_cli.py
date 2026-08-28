@@ -1484,8 +1484,35 @@ def drop_reason_token(reason):
 # SAME shape: a reference the rule cannot own resolving to nothing in the
 # target. `DEPENDENCY_UNRESOLVED` (FR-017, destination-side absence) is the
 # exact existing token for that shape -- not a new, 18th one (FR-013).
+#
+# T081 (4th re-gate) ADDS THE SECOND NEEDLE, and it is the source-side sibling
+# of the first. `straggler-rulings.md` #5 rules ejagham's one refused rule
+# (`24ed706a`) "correctly refused; no fix is available in this repo": its
+# `OutputOS[0]` is an `MoCopyFromInput` whose content is EMPTY IN THE SOURCE, so
+# there is nothing to copy and closing it "would mean either inventing content
+# or reporting a transfer that did not happen". `Lib/categories.py` says exactly
+# that, with `content_guid or "(no ContentRA)"` interpolated into the reason, so
+# `"(no ContentRA)"` is the discriminating substring -- and it discriminates
+# correctly: the SAME sentence with a content GUID in it means the referent
+# EXISTS but is not one of this rule's own input members, which is a different
+# and unruled situation that must stay unclassified.
+#
+# `SOURCE_REFERENT_ABSENT` is the token (7.1: "a referent the engine required is
+# absent on the SOURCE"). `DEPENDENCY_UNRESOLVED` would be the collision
+# b2cb356 ended, and `NO_CREATE_PATH` is wrong for the reason the block above
+# gives for `MoStemMsa`: there IS a create path for `MoAffixProcess` and the
+# motivating run exercised it 12 times.
+#
+# THIS DOES NOT AND MUST NOT MAKE P5 GREEN ON `MoAffixProcess`. The token is
+# deliberately absent from `census.PHASE_5_ADMISSIBLE_REASONS` because PHASE 4's
+# own predicate names the class -- see that constant's comment. What the line
+# does is put the committed ruling INTO the artifact with resolvable evidence
+# and zero the row's `unexplained_shortfall`, so the failure that remains says
+# "real accounting but not phase-5 done" instead of "carries NO accounting
+# line".
 PROCESS_RULE_REASON_TOKENS: tuple = (
     ("is absent from the destination", "DEPENDENCY_UNRESOLVED"),
+    ("(no ContentRA)", SOURCE_REFERENT_ABSENT_TOKEN),
 )
 
 
@@ -1908,6 +1935,93 @@ def accounted_for_governed_class(
         direction="shortfall", detail=detail),)
 
 
+def accounted_for_ruled_residue(
+        object_class, difference, existing=(), notes=None) -> tuple:
+    """-> `(census.AccountedLine,)` when a COMMITTED RULING accounts for this
+    class's residue, else ().
+
+    T081, 4th re-gate. `census.ruled_residue` is the roster lookup and the ONLY
+    one; this function is the arithmetic. Deliberately a SIBLING of
+    `accounted_for_governed_class` rather than a generalisation of it: the two
+    read different rosters, carry different tokens, and answer different
+    questions ("which feature owns this class" vs. "which committed ruling took
+    this population off 038's hook"), and folding them together would make the
+    one function that emits a gate-flipping line have to decide which of two
+    unrelated derivations it was performing.
+
+    THE CAP IS THE LESSER OF TWO NUMBERS, which is the one real difference from
+    the governed sibling:
+
+    * THE ROOM, `max(0, -difference)` less whatever the row's existing lines
+      already claim in the same direction. R-2 ("the census must not explain
+      away more than actually happened"), and also the exact figure that makes
+      a stamped row PASS, since `census._phase_5` fails a row whose
+      `unexplained_shortfall` is nonzero AFTER accounting.
+    * THE ROSTER'S `max_claim`, when the entry names one. This is what keeps a
+      SUB-POPULATION ruling from growing into a class-wide excuse. `PhCode` is
+      the case: T121's ruling covers exactly the 2 `PhBdryMarker`-owned codes
+      and the phoneme half of the same class passes 3 of 3, so the day the
+      phoneme half regresses the room grows and the cap must not. Emitting the
+      room there would explain away a loss the ruling never looked at -- the
+      inverted-risk shape R7 named and T091 measured.
+
+    THE TWO NON-SHORTFALL DIRECTIONS are refused exactly as the governed
+    sibling refuses them, and for the same reasons: a null `difference` is not a
+    zero (such a row is NOT_EVALUATED, `_phase_5` skips it and
+    `class_row_artifact` zeroes both residues, so a line would claim objects
+    nobody counted), and a SURPLUS is something that DID happen, which no
+    ruling in `contracts/` has looked at.
+    """
+    entry = census.ruled_residue(object_class)
+    if entry is None:
+        return ()
+    if difference is None or difference >= 0:
+        return ()
+    token, ruling, max_claim, _why = entry
+    claimed = census.accounted_in_direction(existing, "shortfall")
+    room = -difference - claimed
+    if room <= 0:
+        if notes is not None and existing:
+            notes.append(
+                object_class + " is ruled by " + ruling + " but its shortfall "
+                "of " + str(-difference) + " is already fully claimed by "
+                + str(len(tuple(existing))) + " earlier accounting line(s), so "
+                "NO " + token + " line was emitted (R-2: the census must not "
+                "explain away more than actually happened)"
+            )
+        return ()
+    count = room if max_claim is None else min(room, max_claim)
+    detail = (
+        "ruled by " + ruling + ": this feature reports the figure and is not "
+        "owed a transfer for it. Needs no report_ref -- invariant 5 exempts "
+        + token + ", because there is no run-report line to resolve against: "
+        "the ruling is a committed document, not a run"
+    )
+    if count < room:
+        capped = (
+            object_class + " is ruled by " + ruling + ", which covers "
+            + str(max_claim) + " object(s); the row's remaining shortfall is "
+            + str(room) + ", so the " + token + " line claims only "
+            + str(count) + " and the rest stays UNEXPLAINED. A sub-population "
+            "ruling must not grow into a class-wide excuse"
+        )
+        if notes is not None:
+            notes.append(capped)
+        detail = detail + " -- CLAIM CAPPED AT THE RULED POPULATION, see notes"
+    elif claimed:
+        capped = (
+            object_class + " is ruled by " + ruling + " and its shortfall is "
+            + str(-difference) + ", of which " + str(claimed) + " is already "
+            "claimed by earlier accounting line(s), so the " + token + " line "
+            "claims only " + str(count) + " (R-2)"
+        )
+        if notes is not None:
+            notes.append(capped)
+        detail = detail + " -- CLAIM CAPPED, see notes"
+    return (census.AccountedLine(
+        reason=token, count=count, direction="shortfall", detail=detail),)
+
+
 # ---------------------------------------------------------------------------
 # T048d: THE IDENTITY AUDIT, WIRED
 #
@@ -2284,6 +2398,17 @@ def _row_for_entry(
     # row cannot buy a pass and R-5 still balances. (No rostered class carries
     # one today: `CmAnthroItem` is the artifact's only out-of-scope class.)
     lines = lines + accounted_for_governed_class(
+        entry.object_class, row.difference, lines, notes)
+
+    # ---- T081 (4th re-gate): a class a COMMITTED RULING covers -------------
+    # LAST, and reading everything above it, for the same reason the governance
+    # line comes after the reported drops: the more specific, evidenced claim
+    # gets the room first. The two rosters are enforced DISJOINT at import
+    # (`census.py`'s T081 lock), so this can never stack a second residual
+    # claim on a row the governance line already paid down -- but it still
+    # reads `lines`, because a REPORTED drop on a ruled class is possible and
+    # must get the room first.
+    lines = lines + accounted_for_ruled_residue(
         entry.object_class, row.difference, lines, notes)
     if lines:
         kwargs["accounted_for"] = lines

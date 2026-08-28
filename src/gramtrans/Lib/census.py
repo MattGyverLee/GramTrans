@@ -57,6 +57,7 @@ if __package__:
         CENSUS_REASON_TOKENS,
         CENSUS_REASONS_NOT_REQUIRING_REPORT_REF,
         CENSUS_ROW_VERDICT_CLASSES,
+        CENSUS_RULED_RESIDUE_CLASSES,
         CENSUS_SCHEMA_VERSION as _MODELS_CENSUS_SCHEMA_VERSION,
     )
 else:  # loaded via site.addsitedir("Lib")
@@ -67,6 +68,7 @@ else:  # loaded via site.addsitedir("Lib")
         CENSUS_REASON_TOKENS,
         CENSUS_REASONS_NOT_REQUIRING_REPORT_REF,
         CENSUS_ROW_VERDICT_CLASSES,
+        CENSUS_RULED_RESIDUE_CLASSES,
         CENSUS_SCHEMA_VERSION as _MODELS_CENSUS_SCHEMA_VERSION,
     )
 
@@ -113,6 +115,27 @@ def governed_by_other_feature(object_class: str):
     prove the emitter is inert without it.
     """
     return GOVERNED_BY_OTHER_FEATURE_CLASSES.get(object_class)
+
+
+#: T081 (4th re-gate) -- `class -> (reason_token, ruling, max_claim, reason)`
+#: for every class a COMMITTED RULING has taken off this feature's hook. Read
+#: through `ruled_residue` below, which is THE ONE LOOKUP, for the same reason
+#: `governed_by_other_feature` is: a line that retires a measured shortfall
+#: must have exactly one place it can be acquired from. The locks that make the
+#: roster safe to be load-bearing live at module scope beside the phase class
+#: sets, because they need them.
+RULED_RESIDUE_CLASSES: dict = CENSUS_RULED_RESIDUE_CLASSES
+
+
+def ruled_residue(object_class: str):
+    """`(reason_token, ruling, max_claim, reason)` if a committed ruling
+    accounts for this class's residue, else None.
+
+    Reads the module global at call time on purpose -- that is what lets a test
+    empty the roster and prove the emitter is inert without it, the third of
+    T109's three locks applied to the second roster.
+    """
+    return RULED_RESIDUE_CLASSES.get(object_class)
 
 
 # ---------------------------------------------------------------------------
@@ -3267,11 +3290,47 @@ STALENESS_VERDICTS: tuple = ("current", "stale", "unknown", "not_applicable")
 #: a defect; it is admissible as accounting only while a report line names it.
 DUPLICATE_ACCOUNTING_REASON = "DUPLICATE_CREATED"
 
-#: P5's two admissible reasons (9.1). `DUPLICATE_CREATED` is real accounting but
-#: is deliberately NOT phase-5 done: it is exactly the reason a phase's exit
+#: P5's admissible reasons (9.1). `DUPLICATE_CREATED` is real accounting but is
+#: deliberately NOT phase-5 done: it is exactly the reason a phase's exit
 #: criteria should drive to zero.
+#:
+#: T081 (4th re-gate) ADDS TWO, and both come from `RULED_RESIDUE_CLASSES` --
+#: no other emit site in this repo produces either token. 9.1 was written when
+#: `GOVERNED_BY_OTHER_FEATURE` was the only route a ruled class had; P5's
+#: question is "is every remaining required row either MATCHED or accounted for
+#: by something this feature is not obliged to fix", and an owner named by the
+#: spec is one answer to it rather than the definition of the question.
+#:
+#: * `OUT_OF_SCOPE_CLASS` -- already report_ref-exempt (invariant 5) and
+#:   already the artifact's word for a population outside the feature's scope
+#:   (`CmAnthroItem`). A committed ruling putting a population out of scope is
+#:   the archetype of a row P5 is not owed.
+#: * `STARTER_CONTENT` -- the strongest "nothing was lost" claim in the
+#:   vocabulary: the destination HOLDS the content, shipped by the starter.
+#:   Strictly stronger than `NO_CREATE_PATH`, which is already admitted while
+#:   admitting a reported defect.
+#:
+#: THREE TOKENS CONSIDERED AND REFUSED, so the widening is a decision and not a
+#: drift:
+#:
+#: * `DUPLICATE_CREATED` -- unchanged, for the reason above.
+#: * `ABSENT_BY_CONSTRUCTION` -- report_ref-exempt and would fit the shape, but
+#:   nothing emits it as a LINE (it is a `not_evaluated_reason` for the two
+#:   abstract LCM bases), so admitting it would widen the gate for no measured
+#:   row. An unexercised admission is an unfalsifiable one.
+#: * `SOURCE_REFERENT_ABSENT` -- this is the closest call and it stays OUT.
+#:   `MoAffixProcess`'s ruling ("correctly refused, source-side cause, no fix
+#:   available in this repo") argues for it, but `MoAffixProcess` is named by
+#:   PHASE 4's own predicate, so admitting the token would let a class this
+#:   feature has an executable gate on go green at P5 -- exactly what T109
+#:   LOCK 1 exists to make impossible one roster over. The token IS emitted
+#:   now (`census_cli.PROCESS_RULE_REASON_TOKENS`), which zeroes the row's
+#:   `unexplained_shortfall` and puts the ruling in the artifact with
+#:   resolvable evidence; whether P5 should also admit it is a ruling on 9.1
+#:   and belongs to a human, not to this constant.
 PHASE_5_ADMISSIBLE_REASONS: frozenset = frozenset({
     "GOVERNED_BY_OTHER_FEATURE", "NO_CREATE_PATH",
+    "OUT_OF_SCOPE_CLASS", "STARTER_CONTENT",
 })
 
 _CENSUS_ID_PATTERN = re.compile(r"^CENSUS-[0-9]{8}-[0-9]{6}$")
@@ -4236,6 +4295,95 @@ if _T109_UNOWNED:  # pragma: no cover - a source defect, not a state
     )
 
 
+# ---------------------------------------------------------------------------
+# T081 (4th re-gate) LOCKS -- the same three ideas, over the SECOND roster.
+#
+# `RULED_RESIDUE_CLASSES` emits a line that is admissible under
+# `PHASE_5_ADMISSIBLE_REASONS` and subtracts from `unexplained_shortfall`, so it
+# is load-bearing in exactly the way T109's is, and it gets the same treatment:
+# enforced HERE, at module scope, because "a rule that only a test enforces is a
+# rule a `-k` selection can skip past". A module that cannot be imported cannot
+# emit a laundered artifact.
+#
+# FOUR CHECKS, and each one refuses a different way of cheating:
+#
+#   1. DISJOINT FROM THE PHASE PREDICATES. T109 LOCK 1, verbatim, and this is
+#      what keeps `MoAffixProcess` off the roster by construction rather than by
+#      the author's restraint -- it is named by PHASE 4.
+#   2. DISJOINT FROM THE GOVERNED ROSTER. A class is governed by a successor
+#      FEATURE or ruled by a committed DOCUMENT; being both means one of the two
+#      accounts is wrong, and stamping both would claim the same objects twice
+#      (R-2) unless the room arithmetic happened to save it.
+#   3. THE TOKEN MUST BE REPORT_REF-EXEMPT **AND** P5-ADMISSIBLE. Exempt,
+#      because this roster has no run-report content to resolve against and
+#      `AccountedLine` enforces R-1 at construction -- a non-exempt token here
+#      would raise at emit time, i.e. the roster would be a latent crash rather
+#      than a refusal. P5-admissible, because a line that cannot satisfy P5 is
+#      not what this roster is for, and one arriving here silently would read as
+#      progress while changing only the wording of a failure.
+#   4. THE ENTRY MUST BE COMPLETE. Four positions, a real token, a named ruling,
+#      a `max_claim` that is None or a positive integer, and a reason. Same rule
+#      as T109's `(owner, reason)`: a line the user cannot act on is not a
+#      report (SC-010), and that is twice as true of one that turns a red row
+#      green.
+_T081_OVERREACH = sorted(set(RULED_RESIDUE_CLASSES) & _T109_PHASE_OWNED)
+if _T081_OVERREACH:  # pragma: no cover - a source defect, not a state
+    raise CensusError(
+        "feature 038 T081: " + ", ".join(_T081_OVERREACH) + " is both on the "
+        "RULED_RESIDUE roster and named by a 038 phase predicate. That line is "
+        "admissible accounting under PHASE_5_ADMISSIBLE_REASONS and subtracts "
+        "from unexplained_shortfall, so rostering a class this feature has an "
+        "executable gate on would turn its own red row green (T109 LOCK 1, "
+        "over the second roster)"
+    )
+_T081_DOUBLE_ACCOUNTED = sorted(
+    set(RULED_RESIDUE_CLASSES) & set(GOVERNED_BY_OTHER_FEATURE_CLASSES))
+if _T081_DOUBLE_ACCOUNTED:  # pragma: no cover - a source defect, not a state
+    raise CensusError(
+        "feature 038 T081: " + ", ".join(_T081_DOUBLE_ACCOUNTED) + " is on "
+        "BOTH the GOVERNED_BY_OTHER_FEATURE roster and the RULED_RESIDUE "
+        "roster. A class is handed to a successor feature or ruled by a "
+        "committed document; claiming both would explain the same objects "
+        "twice and one of the two accounts is wrong"
+    )
+_T081_MALFORMED: list = []
+for _cls, _entry in sorted(RULED_RESIDUE_CLASSES.items()):
+    if not (isinstance(_entry, tuple) and len(_entry) == 4):
+        _T081_MALFORMED.append(
+            _cls + ": entry is not a (reason_token, ruling, max_claim, reason) "
+            "4-tuple")
+        continue
+    _token, _ruling, _cap, _why = _entry
+    if _token not in REASONS_NOT_REQUIRING_REPORT_REF:
+        _T081_MALFORMED.append(
+            _cls + ": reason token " + repr(_token) + " is not report_ref-"
+            "exempt, and this roster has no run-report content to resolve "
+            "against -- AccountedLine would refuse the line at construction "
+            "(R-1), so the roster would be a latent crash rather than a "
+            "refusal")
+    if _token not in PHASE_5_ADMISSIBLE_REASONS:
+        _T081_MALFORMED.append(
+            _cls + ": reason token " + repr(_token) + " is not in "
+            "PHASE_5_ADMISSIBLE_REASONS, so the line it emits cannot satisfy "
+            "the predicate this roster exists to satisfy -- it would change "
+            "the wording of a P5 failure and nothing else")
+    if not (isinstance(_ruling, str) and _ruling.strip()):
+        _T081_MALFORMED.append(
+            _cls + ": names no RULING. An accounting line whose ruling the "
+            "reader cannot go and disagree with is not a report (SC-010)")
+    if not (isinstance(_why, str) and _why.strip()):
+        _T081_MALFORMED.append(_cls + ": carries no measured reason")
+    if _cap is not None and not (
+            isinstance(_cap, int) and not isinstance(_cap, bool) and _cap >= 1):
+        _T081_MALFORMED.append(
+            _cls + ": max_claim " + repr(_cap) + " must be None (the whole "
+            "difference is ruled) or a positive integer (only that many "
+            "objects are)")
+if _T081_MALFORMED:  # pragma: no cover - a source defect, not a state
+    raise CensusError(
+        "feature 038 T081: " + "; ".join(_T081_MALFORMED))
+
+
 @dataclass(frozen=True)
 class PhaseResult:
     """The answer for one phase: satisfied, and if not, exactly why."""
@@ -4405,7 +4553,7 @@ def _phase_5(artifact) -> tuple:
             failures.append(
                 "P5: " + _row_label(row) + " accounts with " + ", ".join(wrong)
                 + ", which is real accounting but not phase-5 done -- P5 admits "
-                "GOVERNED_BY_OTHER_FEATURE and NO_CREATE_PATH only"
+                + ", ".join(sorted(PHASE_5_ADMISSIBLE_REASONS)) + " only"
             )
         if (int(row.get("unexplained_shortfall", 0) or 0)
                 or int(row.get("unexplained_surplus", 0) or 0)):
@@ -4480,7 +4628,7 @@ PHASE_PREDICATES: dict = {
     5: PhasePredicate(
         5, "residual",
         "every remaining required row is either MATCHED or carries a valid "
-        "GOVERNED_BY_OTHER_FEATURE / NO_CREATE_PATH line (SC-005)",
+        + " / ".join(sorted(PHASE_5_ADMISSIBLE_REASONS)) + " line (SC-005)",
         _phase_5, PHASE_5_CLASSES,
     ),
 }

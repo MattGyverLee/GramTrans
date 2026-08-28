@@ -835,3 +835,109 @@ class TestTheProcessRuleShortfallBecomesAccounted:
                    evidence=self._evidence(tmp_path, 6))
         assert row["accounted_for"] == []
         assert row["unexplained_surplus"] == 6
+
+
+# ---------------------------------------------------------------------------
+# T081 (4th re-gate) -- the source-side process-rule needle
+# ---------------------------------------------------------------------------
+#
+# `straggler-rulings.md` #5 rules ejagham's one refused `MoAffixProcess`
+# ("correctly refused; no fix is available in this repo") because its
+# `OutputOS[0]` is an `MoCopyFromInput` whose content is EMPTY IN THE SOURCE.
+# The ruling was committed and nothing in the instrument wrote it into
+# `accounted_for`, so the row read UNEXPLAINED for a shortfall that is, on the
+# record, explained. The needle closes that; `SOURCE_REFERENT_ABSENT` is the
+# token, because 7.1 defines it as "a referent the engine required is absent on
+# the SOURCE".
+#
+# THE REASON TEXT IS THE LIVE ONE, copied from
+# `_run_reports/038-t126-ejagham-report.json` (rule `24ed706a`), which is the
+# same string `Lib/categories.py` emits with `content_guid or "(no ContentRA)"`
+# interpolated. That interpolation is what makes the needle discriminate: the
+# same sentence carrying a GUID means the referent EXISTS but is not one of this
+# rule's own input members, which is a different and unruled situation.
+
+T081_EMPTY_CONTENT_REASON = (
+    "MoAffixProcess 24ed706a-7df2-4609-a37b-2bfa28853ccc output step 0 "
+    "(MoCopyFromInput) copies (no ContentRA), which is not one of this rule's "
+    "own input members -- the intra-rule back-reference cannot be rebuilt and "
+    "the step would copy nothing (FR-023)"
+)
+
+#: The SAME sentence with a resolved content GUID in it. Not ruled on by any
+#: committed document, so it must stay unclassified.
+T081_WRONG_MEMBER_REASON = T081_EMPTY_CONTENT_REASON.replace(
+    "(no ContentRA)", "5c0e9d5e-1111-2222-3333-444455556666")
+
+
+class TestT081TheSourceSideProcessRuleNeedle:
+
+    def test_the_live_empty_content_reason_is_classified_source_side(self):
+        needle, token = census_cli.process_rule_reason_match(
+            T081_EMPTY_CONTENT_REASON)
+        assert needle == "(no ContentRA)"
+        assert token == census_cli.SOURCE_REFERENT_ABSENT_TOKEN
+        assert token in census.REASON_TOKENS
+
+    def test_the_same_sentence_with_a_real_guid_stays_unclassified(self):
+        """FR-013: unclassified is an ABSENT line, never a guess. A rule whose
+        copy step points at a real object that is merely not one of its own
+        input members is a different situation and no ruling covers it."""
+        assert census_cli.process_rule_reason_match(
+            T081_WRONG_MEMBER_REASON) is None
+
+    def test_the_general_drop_table_still_does_not_match_it(self):
+        """The no-double-credit argument, extended to the new needle. If a
+        general needle matched, `dropped_by_class_from_report` would classify
+        the same drop on its own uncorroborated path and the merge would credit
+        one lost rule as two accounted objects (R-2)."""
+        assert census_cli.drop_reason_token(T081_EMPTY_CONTENT_REASON) is None
+
+    def test_corroboration_is_still_required(self, tmp_path):
+        """A `ProcessRuleTransferRecord` with no paired `DroppedItemRecord`
+        earns nothing, needle or no needle."""
+        assert census_cli.process_rules_by_class_from_report(
+            rule_report(
+                tmp_path,
+                [process_rule(LIVE_RULE_GUID,
+                              reason=T081_EMPTY_CONTENT_REASON)],
+                []),
+            ("MoAffixProcess",)) == {}
+
+    def test_a_corroborated_pair_becomes_one_accounted_object(self, tmp_path):
+        grouped = census_cli.process_rules_by_class_from_report(
+            rule_report(
+                tmp_path,
+                [process_rule(LIVE_RULE_GUID,
+                              reason=T081_EMPTY_CONTENT_REASON)],
+                [rule_drop(LIVE_RULE_GUID,
+                           reason=T081_EMPTY_CONTENT_REASON)]),
+            ("MoAffixProcess",))
+        (token, ref, detail), = grouped["MoAffixProcess"]
+        assert token == "SOURCE_REFERENT_ABSENT"
+        assert ref.count_in_report == 1
+        assert ref.record_ids == (LIVE_RULE_GUID,)
+        assert "(no ContentRA)" in detail
+        (line,) = census_cli.accounted_for_drops(
+            -1, ((token, ref, detail),))
+        assert line.reason == "SOURCE_REFERENT_ABSENT"
+        assert line.count == 1
+        assert line.report_ref is ref
+
+    def test_the_token_is_deliberately_not_phase_five_admissible(self):
+        """`MoAffixProcess` is named by PHASE 4's own predicate, so admitting
+        the token would let a class this feature has an executable gate on go
+        green at P5 -- what T109 LOCK 1 exists to make impossible. The line
+        still zeroes the row's `unexplained_shortfall`; whether 9.1 should
+        admit the token is a ruling for a human."""
+        assert census_cli.SOURCE_REFERENT_ABSENT_TOKEN not in \
+            census.PHASE_5_ADMISSIBLE_REASONS
+        assert "MoAffixProcess" in census.PHASE_4_CLASSES
+
+    def test_no_needle_shadows_another_after_the_addition(self):
+        needles = [n for n, _ in census_cli.PROCESS_RULE_REASON_TOKENS]
+        assert len(needles) == len(set(needles))
+        for i, outer in enumerate(needles):
+            for j, inner in enumerate(needles):
+                if i != j:
+                    assert inner not in outer, (inner, outer)

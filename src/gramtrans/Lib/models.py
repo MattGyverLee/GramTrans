@@ -1087,6 +1087,20 @@ CENSUS_REPORT_ONLY_RESIDUE: dict = {
         "2173 -> 0, three orders of magnitude larger. The class stays "
         "report-only; R7's NUMBER does not survive re-scoping",
     ),
+    #: T081 (4th re-gate) ADDS `CmFolder`, and its absence was the T113 gap
+    #: reopening in the same roster T113 was filed against: `CmFile` was
+    #: rostered while the `CmFolder` that OWNS it via `CmFolder.Files` was not,
+    #: so `_census_row_tier` printed `report_only` for the files and plain
+    #: `accounted` for the folder holding them -- one path split across two
+    #: states. `CENSUS_RULED_RESIDUE_CLASSES` names both, and `report.py`'s
+    #: check 6 is what stops either half being rostered without the other.
+    "CmFolder": (
+        "the media/pictures path and the Scripture-import path -- not 038",
+        "measured 0, -1, -3. Two populations under one class name, ruled "
+        "separately in `contracts/straggler-rulings.md` #6: the media folders "
+        "under `LangProject.Pictures` / `LangProject.Media` (mbugwe) and the "
+        "`ScrImportSFFiles` folder (ngoreme). Owner of `CmFile` above",
+    ),
     # -- the half of the Fs* cascade that did NOT close, carrying the volume. --
     "FsFeatStruc": (
         "a later feature -- the MSA feature-structure cascade, not 038",
@@ -1347,6 +1361,136 @@ CENSUS_GOVERNED_BY_OTHER_FEATURE_CLASSES: dict = {
         "measurement that keeps `CmFile` and `CmFolder` OUT: those two lose "
         "2176 objects between them with no CmPicture anywhere to refer to "
         "them, so they are the media folder and not sense pictures",
+    ),
+}
+
+# ---------------------------------------------------------------------------
+# T081 (4th re-gate) -- the classes a COMMITTED RULING has taken off this
+# feature's hook, and the accounting line that finally says so IN THE ARTIFACT.
+#
+# WHAT THIS ROSTER IS FOR, and it is one half of T081's residue rather than the
+# whole of it. The 4th re-gate reads 6 / 10 / 7 P5 failures on
+# `census-038-t126-{ejagham,ngoreme,mbugwe}.json`, and they split two ways:
+#
+#   (i)  a real, unattributed loss (`LexReference`, `PhFeatureConstraint`, the
+#        `FsFeatStruc`/`FsClosedValue` cascade, ngoreme's one `MoStemMsa`).
+#        Those are blocked on human rulings and NOTHING here may touch them.
+#   (ii) a class that ALREADY HAS A WRITTEN, COMMITTED RULING while nothing in
+#        the instrument writes that ruling into `accounted_for` -- so the gate
+#        reports an UNEXPLAINED shortfall for a shortfall that is, on the
+#        record, explained. That is an instrument gap, not a fidelity gap, and
+#        this roster closes it.
+#
+# THIS IS NOT `CENSUS_GOVERNED_BY_OTHER_FEATURE_CLASSES` AND MUST NOT BE MERGED
+# INTO IT. That roster answers "which feature OWNS this class"; its derivation
+# is `spec.md`'s three named paths and its own comment refuses `CmFile` /
+# `CmFolder` by name, because naming an owner for them would be an unowned
+# claim. This roster answers a different question -- "which committed RULING
+# takes this population off 038's hook" -- and the answer is a document in
+# `specs/038-transfer-fidelity-gaps/contracts/`, not a successor feature. The
+# two rosters are enforced DISJOINT at import (`Lib/census.py`'s T081 lock), so
+# a class can be governed or ruled, never both.
+#
+# `(reason_token, ruling, max_claim, reason)`. Four positions, all four
+# load-bearing:
+#
+# * `reason_token` -- the FR-013 token the emitted line carries, PER CLASS.
+#   Deliberately not one constant for the whole roster: the five classes T081
+#   named do not share a ruling and must not be made to share a word (T115's
+#   lesson, and `straggler-rulings.md` is six rulings for six items precisely
+#   because a single class-level ruling would have been wrong in one direction
+#   or the other). The token must be one of `CENSUS_REASONS_NOT_REQUIRING_
+#   REPORT_REF` -- this roster has no run-report content to resolve against, so
+#   any other token would be refused by `AccountedLine`'s R-1 check AT
+#   CONSTRUCTION and the line could never be emitted. That is not a limitation
+#   worked around; it is the invariant deciding which rulings this mechanism
+#   may express (see `MoAffixProcess` below, which it excludes).
+# * `ruling` -- the committed document, by path, that did the ruling. The
+#   analogue of the governed roster's `owner`, and required for the same
+#   reason: SC-010's "a report line the user cannot act on is not a report" is
+#   twice as true of a line that turns a red row green, and a reader must be
+#   able to go and disagree with the ruling rather than only with the line.
+# * `max_claim` -- `None` when the WHOLE difference is ruled, or an integer
+#   when only a named SUB-POPULATION is. `PhCode` is why the position exists:
+#   T121's ruling covers exactly the 2 `PhBdryMarker`-owned codes and the
+#   phoneme half of the same class passes 3 of 3, so a line claiming the row's
+#   whole room would, the first time the phoneme half regressed, explain away
+#   a loss the ruling never looked at.
+# * `reason` -- the measured difference on the three sanctioned pairs in the
+#   order (ejagham, ngoreme, mbugwe), plus the ruling's own words. Same rule as
+#   the governed roster: an entry cannot be a class somebody merely believed
+#   was ruled.
+#
+# TWO OF T081's FIVE ARE DELIBERATELY ABSENT, and saying why is part of the
+# deliverable:
+#
+# * `LexEntryType`. Its ruling (`straggler-rulings.md` #3) is a MAGNITUDE
+#   correction -- "in scope, magnitude corrected to -1 / -1", against
+#   `difference_raw` -- not an exemption. IN SCOPE cannot be
+#   `OUT_OF_SCOPE_CLASS`; no successor is named, so it cannot be governed; 12
+#   of 13 objects arrived, so it is not `NO_CREATE_PATH`; and the ruling closes
+#   with "one object per pair with NO ATTRIBUTED CAUSE". One unattributed
+#   object is an unexplained shortfall, and there is deliberately no
+#   `UNEXPLAINED` token to launder it into. The census already records the
+#   -12/-1 correction the only honest way it can: the row's basis is
+#   `baseline_gross`, so 5.2's cap marks its unexplained tally ADVISORY and
+#   says so in a note on every run.
+# * `MoAffixProcess`. Its ruling (`straggler-rulings.md` #5) DOES support a
+#   line -- "correctly refused; no fix is available in this repo", the cause
+#   being an `MoCopyFromInput` whose content is empty IN THE SOURCE -- but not
+#   one this roster may emit, on two independent grounds. First, the honest
+#   token is `SOURCE_REFERENT_ABSENT`, which is NOT report_ref-exempt, and the
+#   evidence it needs exists (a `ProcessRuleTransferRecord` corroborated by a
+#   `DroppedItemRecord`, same GUID, same reason verbatim), so the line belongs
+#   on `census_cli.PROCESS_RULE_REASON_TOKENS` where that evidence is read --
+#   which is where it now is. Second, `MoAffixProcess` is named by PHASE 4's
+#   own predicate, and T109 LOCK 1's argument applies verbatim: a class this
+#   feature has an executable gate on must not be able to buy a P5 pass off a
+#   roster.
+CENSUS_RULED_RESIDUE_CLASSES: dict = {
+    # -- T123 straggler 6. TWO POPULATIONS, TWO RULINGS, one class name; the
+    #    ruling is per population and both populations are out, so the whole
+    #    difference is claimable and `max_claim` is None.
+    "CmFile": (
+        "OUT_OF_SCOPE_CLASS",
+        "contracts/straggler-rulings.md #6 (T123, 2026-08-26)",
+        None,
+        "measured 0, -2, -2173. mbugwe's 2173 are owned by `CmFolder.Files` "
+        "under `LangProject.Pictures` / `LangProject.Media`: 'OUT OF SCOPE -- "
+        "media assets are not grammar', and `CmPicture` is 0 -> 0 on all "
+        "three pairs, so the Assumptions' only picture-adjacent clause cannot "
+        "reach them. ngoreme's 2 are owned by `ScrImportSFFiles.Files`: 'OUT "
+        "OF SCOPE -- Scripture content, same ruling as "
+        "`Scripture.NoteCategories`'. MATCHED on ejagham (0 -> 0), so the "
+        "line is emitted on two pairs of three",
+    ),
+    "CmFolder": (
+        "OUT_OF_SCOPE_CLASS",
+        "contracts/straggler-rulings.md #6 (T123, 2026-08-26)",
+        None,
+        "measured 0, -1, -3. The OWNER of `CmFile` above, via `CmFolder.Files` "
+        "-- the same two populations under the same two rulings, and rostering "
+        "the owned class without the owning one would describe half a path "
+        "(T113's lesson, in the roster T113 was filed against)",
+    ),
+    # -- T121's boundary-marker half, as amended 2026-08-28. CAPPED, and the
+    #    cap is the whole reason `max_claim` exists.
+    "PhCode": (
+        "STARTER_CONTENT",
+        "contracts/boundary-marker-code-ruling.md (T121, amended 2026-08-28)",
+        2,
+        "measured -2, -2, 0, and on the two failing pairs the -2 IS the two "
+        "`PhBdryMarker`-owned codes to the object: source 43 = 41 phoneme + 2 "
+        "boundary, destination 66 = 64 phoneme + 2 boundary, and 64 - 23 "
+        "starter = the 41 phoneme codes transferred exactly (ngoreme reads "
+        "89 = 87 + 2 -> 112 = 110 + 2 the same way). The ruling is route (b): "
+        "the destination's two boundary codes are the STARTER's canonical "
+        "pair, their `Representation` is byte-equal to the source's ('#', "
+        "'+') on every pair measured, and 'no transfer is owed, and "
+        "transferring would be worse' -- writing the source's code onto a "
+        "marker that already has one either duplicates or destructively "
+        "deletes. mbugwe is MATCHED because its source's codes ARE the "
+        "canonical pair, so the identity check passes there NON-VACUOUSLY",
     ),
 }
 

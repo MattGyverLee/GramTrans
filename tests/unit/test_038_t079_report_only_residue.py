@@ -529,14 +529,27 @@ class TestT113TheRosterCannotBeSilentlyShort:
     def test_emptying_the_roster_names_every_governed_class(self, monkeypatch):
         """The strongest form of the same direction: an EMPTY roster reports
         all fourteen governed classes, so the check cannot be satisfied by a
-        roster that merely happens to be non-empty."""
+        roster that merely happens to be non-empty.
+
+        T081 (4th re-gate): there are now TWO completeness checks over two
+        gate-bearing rosters, so an empty roster reports both -- check 5 for
+        the classes another FEATURE governs and check 6 for the classes a
+        committed RULING covers. Asserted as two rather than filtered down to
+        one, because a single defect line here would mean one of the two
+        rosters had stopped being checked.
+        """
         monkeypatch.setattr(report_mod, "CENSUS_REPORT_ONLY_RESIDUE", {})
         defects = report_mod.report_only_roster_defects()
         named = [d for d in defects
                  if "NOT on the report-only residue roster" in d]
-        assert len(named) == 1
+        assert len(named) == 2, named
+        governed = [d for d in named if "spec's three named paths" in d]
+        ruled = [d for d in named if "committed ruling" in d]
+        assert len(governed) == 1 and len(ruled) == 1, named
         for cls in models.CENSUS_GOVERNED_BY_OTHER_FEATURE_CLASSES:
-            assert cls in named[0], cls
+            assert cls in governed[0], cls
+        for cls in models.CENSUS_RULED_RESIDUE_CLASSES:
+            assert cls in ruled[0], cls
 
     def test_the_pre_t113_roster_is_exactly_what_the_check_would_have_caught(
             self, monkeypatch):
@@ -549,7 +562,12 @@ class TestT113TheRosterCannotBeSilentlyShort:
             if name not in ("Text", "TextTag", "ReversalIndex",
                             "ReversalIndexEntry", "CmPicture")
         }
-        assert len(pre_t113) == 23
+        # 24, not T113's own 23: T081's 4th re-gate added `CmFolder` to the
+        # roster AFTER T113, so the pre-T113 reconstruction is one entry longer
+        # than it was on the day it was written. `CmFolder` is deliberately
+        # KEPT here -- dropping it would also break check 6 and this test would
+        # then be reconstructing two regressions at once.
+        assert len(pre_t113) == 24
         monkeypatch.setattr(
             report_mod, "CENSUS_REPORT_ONLY_RESIDUE", pre_t113)
         defects = report_mod.report_only_roster_defects()
@@ -778,3 +796,101 @@ class TestT079WhatWasDeliberatelyNotChanged:
         assert "T107" in owner
         for other in ("MoModifyFromInput", "MoInsertNC", "PhIterationContext"):
             assert other not in models.CENSUS_REPORT_ONLY_RESIDUE, other
+
+
+# ---------------------------------------------------------------------------
+# T081 (4th re-gate), check 6 -- the SECOND gate-bearing roster cannot disagree
+# with this one about whether 038 undertook a class
+# ---------------------------------------------------------------------------
+#
+# `models.CENSUS_RULED_RESIDUE_CLASSES` emits an accounting line admissible
+# under `census.PHASE_5_ADMISSIBLE_REASONS`, so it is load-bearing in exactly
+# the way T109's governed roster is, and check 6 is T113's completeness rule
+# applied to it: a class a committed RULING took off this feature's hook is
+# measured here, reported here and undertaken NOWHERE, which is what
+# `report_only` says even more plainly than governance does.
+#
+# `CmFolder` is why the check earns its place rather than merely mirroring one.
+# Before T081 the report-only roster carried `CmFile` and not the `CmFolder`
+# that OWNS it via `CmFolder.Files`, so `_census_row_tier` printed
+# `report_only` for the files and plain `accounted` for the folder holding
+# them -- one path split across two console states, which is the defect check 5
+# was filed about, reopened in the same roster.
+
+class TestT081Check6TheRuledResidueRosterIsAlsoReportOnly:
+
+    def test_the_roster_is_sound(self):
+        """One call covers all six checks; if check 6 were unsatisfied by the
+        shipped source this would be the failure."""
+        assert report_mod.report_only_roster_defects() == ()
+
+    def test_every_ruled_class_is_on_the_report_only_roster(self):
+        assert set(models.CENSUS_RULED_RESIDUE_CLASSES).issubset(
+            set(models.CENSUS_REPORT_ONLY_RESIDUE))
+
+    def test_cmfolder_is_now_rostered_beside_the_cmfile_it_owns(self):
+        """The T113 gap, closed. Both halves of one path, one state."""
+        for name in ("CmFile", "CmFolder"):
+            assert name in models.CENSUS_REPORT_ONLY_RESIDUE
+            owner, reason = models.CENSUS_REPORT_ONLY_RESIDUE[name]
+            assert owner.strip() and reason.strip()
+        assert _tier("CmFolder", 3, 1, difference=-3,
+                     verdict_class="SHORTFALL",
+                     unexplained_shortfall=0) == \
+            models.CENSUS_REPORT_ONLY_STATE
+
+    def test_a_ruled_class_missing_from_the_roster_is_a_defect(
+            self, monkeypatch):
+        """The guard has to FIRE. Poison the ruled roster with a class that is
+        not report-only and check 6 must name it."""
+        poisoned = dict(models.CENSUS_RULED_RESIDUE_CLASSES)
+        poisoned["LexEntry"] = (
+            "OUT_OF_SCOPE_CLASS", "contracts/nowhere.md (T999)", None,
+            "measured 0, 0, 0")
+        monkeypatch.setattr(
+            report_mod, "CENSUS_RULED_RESIDUE_CLASSES", poisoned)
+        defects = report_mod.report_only_roster_defects()
+        assert any("LexEntry" in d and "committed ruling" in d
+                   for d in defects), defects
+
+    def test_a_phase_gated_ruled_class_is_a_defect(self, monkeypatch):
+        """The import-time T081 lock in `census.py` refuses this outright; the
+        auditable surface has to say the same thing, because a rule enforced in
+        only one place is a rule with one way around it."""
+        poisoned = dict(models.CENSUS_RULED_RESIDUE_CLASSES)
+        poisoned["MoAffixProcess"] = (
+            "OUT_OF_SCOPE_CLASS", "contracts/nowhere.md (T999)", None,
+            "measured -1, 0, 0")
+        monkeypatch.setattr(
+            report_mod, "CENSUS_RULED_RESIDUE_CLASSES", poisoned)
+        defects = report_mod.report_only_roster_defects()
+        assert any("MoAffixProcess" in d and "not ruled off its own hook" in d
+                   for d in defects), defects
+
+    def test_a_class_already_excluded_from_the_delta_cannot_be_ruled(
+            self, monkeypatch):
+        """`CmAnthroItem` is NOT_EVALUATED, so it has no measured shortfall for
+        an accounting line to retire -- a ruled-residue line on it would claim
+        objects nobody counted."""
+        poisoned = dict(models.CENSUS_RULED_RESIDUE_CLASSES)
+        poisoned["CmAnthroItem"] = (
+            "OUT_OF_SCOPE_CLASS", "contracts/nowhere.md (T999)", None,
+            "measured -859, -859, -859")
+        monkeypatch.setattr(
+            report_mod, "CENSUS_RULED_RESIDUE_CLASSES", poisoned)
+        defects = report_mod.report_only_roster_defects()
+        assert any("CmAnthroItem" in d and "nobody counted" in d
+                   for d in defects), defects
+
+    def test_the_import_time_lock_refuses_a_phase_gated_class(self):
+        """The real lock, not the audit: `census.py` raises at module scope, so
+        a module that would emit a laundered artifact cannot be imported. Only
+        the RULE is re-checked here (a test cannot re-import the module under a
+        patched constant without also patching what the import reads)."""
+        assert not (set(census.RULED_RESIDUE_CLASSES)
+                    & (frozenset(census.PHASE_1_CLASSES)
+                       | frozenset(census.PHASE_2_MATCHED_CLASSES)
+                       | frozenset(census.PHASE_3_CLASSES)
+                       | frozenset(census.PHASE_4_CLASSES)))
+        assert not (set(census.RULED_RESIDUE_CLASSES)
+                    & set(census.GOVERNED_BY_OTHER_FEATURE_CLASSES))
