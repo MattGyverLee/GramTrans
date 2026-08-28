@@ -8152,6 +8152,72 @@ def _resolve_process_referent(context, src_obj, identity_remap,
     return None
 
 
+def _resolve_scoped_referent(context, src_ref, by_guid, expect_class):
+    """The destination object `src_ref` denotes within a CLASS-SCOPED lookup,
+    plus HOW it was found: `(obj, basis)`, basis one of `"guid"`,
+    `"identity_remap"`, `"natural_key"`, or `""` when unresolved.
+
+    **ONE HELPER, TWO CALLERS, ON PURPOSE (feature 038, T120 second entry,
+    2026-08-28).** The defect this closes was measured in two places at once --
+    `_phon_rule_apply_body`'s context-cell wiring and
+    `natural_classes_execute_action`'s `SegmentsRC` wiring -- and both were
+    the identical mistake: a dict keyed by DESTINATION GUID consulted with a
+    SOURCE GUID, whose miss was read as "absent from target" and raised. The
+    recurring lesson in this codebase is not that the fix is unknown but that
+    each discovery gets fixed point-locally while its twins are never swept
+    (T123's own "sibling swept" claim is an instance). So this lives at module
+    scope and both sites call it, rather than each growing its own copy that
+    can drift the way `_process_referent_by_natural_key` drifted from the seam
+    before T105 routed it.
+
+    ORDERING IS FR-001/FR-002's: identity is authoritative; the roster-admitted
+    name is consulted ONLY when identity finds nothing. The `by_guid` hit
+    returns before either fallback, so a GUID that already identified an object
+    is never second-guessed by a name collision.
+
+    AMBIGUITY IS NOT A PICK: `_process_referent_by_natural_key` absorbs
+    `NaturalKeyAmbiguityError` and returns None, so an ambiguous key leaves the
+    referent unresolved and the caller refuses with a reason. Guessing between
+    two same-named destination phonemes is how a rule silently comes to match
+    the wrong segment -- worse than the loss it would paper over.
+
+    DEGRADES TO TODAY'S BEHAVIOUR when `context` is None (the UPDATE path has
+    no live context and no plan): both fallbacks are skipped and this is a
+    plain GUID lookup.
+    """
+    if src_ref is None:
+        return None, ""
+    rg = _guid_str_from(src_ref)
+    if not rg:
+        return None, ""
+    found = by_guid.get(rg)
+    if found is not None:
+        return found, "guid"
+    if context is None:
+        return None, ""
+    plan = getattr(context, "_run_plan", None)
+    identity_remap = getattr(plan, "identity_remap", None)
+    if identity_remap is None:
+        identity_remap = getattr(context, "_identity_remap", None) or {}
+    remapped = identity_remap.get(rg)
+    if remapped:
+        found = by_guid.get(remapped)
+        if found is not None:
+            return found, "identity_remap"
+    matched = _process_referent_by_natural_key(context, src_ref, expect_class)
+    if matched is not None:
+        mg = _guid_str_from(matched)
+        if mg and mg in by_guid:
+            return by_guid[mg], "natural_key"
+        if _class_name_of(matched) == expect_class:
+            # Right class, outside the scope this dict enumerated. Accepted:
+            # the roster's scope function and this dict's construction are two
+            # readings of the same set, and disagreeing with the roster here
+            # would silently re-open the very miss this function closes.
+            return matched, "natural_key"
+    return None, ""
+
+
 #: The `ContextsOS` member classes T076 co-creates. Both are already in
 #: `_PROCESS_INPUT_FACTORIES` -- a shared context is structurally the SAME
 #: object as one of the rule's own input members and differs only in who owns
@@ -12700,12 +12766,27 @@ def natural_classes_execute_action(action, context, ws_mapping, tag):
                 nc_label = _guid_str_from(src_nc)
                 for src_phon in src_segs:
                     phon_guid = _guid_str_from(src_phon)
-                    tgt_phon = tgt_phoneme_by_guid.get(phon_guid)
+                    # Identity, then this run's own natural-key substitutions.
+                    # A GUID-only read here was a MEASURED defect, not a
+                    # theoretical one: T124's run reports carry
+                    # `identity_substitution` basis=NATURAL_KEY on 21 / 20 / 19
+                    # `PhPhoneme`, and those phonemes ARE in the destination
+                    # under the destination's own GUIDs. The source GUID missed,
+                    # this raised "no counterpart on the target", and because
+                    # the NC shell had already been added (see the "Orphan risk"
+                    # branch below, which says so), 7 natural classes across two
+                    # pairs arrived with an EMPTY `SegmentsRC` while the census
+                    # read the class MATCHED. Same defect as the phonological-
+                    # rule context route, which is why both call one helper.
+                    tgt_phon, _basis = _resolve_scoped_referent(
+                        context, src_phon, tgt_phoneme_by_guid, "PhPhoneme")
                     if tgt_phon is None:
                         raise RuntimeError(
                             f"natural_classes_execute_action: NC {nc_label} "
                             f"references source phoneme {phon_guid} which has no "
-                            f"counterpart on the target.  Transfer the phoneme "
+                            f"counterpart on the target (not found by GUID, by "
+                            f"this run's identity remap, or by roster-admitted "
+                            f"name).  Transfer the phoneme "
                             f"before transferring natural classes."
                         )
                     try:
@@ -13434,10 +13515,23 @@ def _report_dropped_rhs(dropped, rule_guid, rhs_guid, exc):
     The record this replaces did not exist: the RHS loop was wrapped in a
     single `except (AttributeError, TypeError): pass`, so one bad right-hand
     side aborted the loop and every REMAINING right-hand side of that rule
-    vanished with no trace. The rule then reported success. That is the
-    measured `PhSegRuleRHS` shortfall (21 -> 18, 39 -> 28) on rules whose own
-    count is MATCHED, and it is an SC-010 never-silent violation independently
-    of the count.
+    vanished with no trace. The rule then reported success. That is a real
+    SC-010 never-silent violation independently of any count.
+
+    **THE SECOND HALF OF THAT CLAIM WAS WRONG AND IS CORRECTED HERE (2026-08-28).**
+    This docstring used to finish "That is the measured `PhSegRuleRHS`
+    shortfall (21 -> 18, 39 -> 28)". It is not. T124 measured **zero**
+    `RightHandSidesOS` drop records on all three pairs while 14 right-hand
+    sides went missing, and the reason is now located: every one of the 31
+    measured phonological-rule failures is a `RuntimeError`, which this
+    handler's `except (AttributeError, TypeError)` cannot catch, and 14 of
+    them fire in the **StrucDescOS loop upstream of this loop** -- before any
+    `PhSegRuleRHS` is created at all. So this reporter was added to the wrong
+    path AND behind the wrong exception class, and it could not have fired
+    for the shortfall it named. The shortfall's own reporter is
+    `_report_dropped_struc_desc_cell` below; this one now also catches
+    `Exception`, so a raise from `_copy_context_cell` inside the RHS loop
+    costs one right-hand side instead of the rest of the rule.
     """
     if dropped is None:
         return
@@ -13452,6 +13546,57 @@ def _report_dropped_rhs(dropped, rule_guid, rhs_guid, exc):
             f"right-hand side could not be built ({type(exc).__name__}: {exc}); "
             f"its StrucChange/LeftContext/RightContext children are lost with "
             f"it. Remaining right-hand sides of this rule were still attempted."
+        ),
+    ))
+
+
+def _report_dropped_struc_desc_cell(dropped, rule_guid, cell_guid, exc):
+    """DroppedItemRecord for ONE `StrucDescOS` context cell of a
+    `PhRegularRule` that could not be built (feature 038, T120 second entry).
+
+    **THIS IS THE REPORTER THE MEASURED SHORTFALL ACTUALLY NEEDED**, and it is
+    a different one from `_report_dropped_rhs` for a structural reason, not a
+    stylistic one. `StrucDescOS` cells are the rule's OWN context cells and
+    are copied in a loop that runs BEFORE `RightHandSidesOS` is touched. Its
+    guard was `except (AttributeError, TypeError): pass` wrapping the WHOLE
+    loop, so a `RuntimeError` from `_copy_context_cell` escaped
+    `_phon_rule_apply_body` entirely, propagated out of
+    `phonological_rules_execute_action`, and was swallowed by
+    `transfer.py`'s `except Exception` -- after the rule shell had already
+    been created GUID-preserving. The result is a `PhRegularRule` that the
+    census reads as MATCHED carrying **no right-hand sides at all**, because
+    the loop that would have created them was never reached.
+
+    Measured by T124 across the three sanctioned pairs: 31 rule failures, all
+    `RuntimeError`, of which **14 fire here** -- 11 on mbugwe, 3 on ngoreme --
+    and every source holds exactly one `PhSegRuleRHS` per `PhRegularRule`
+    (6/6, 21/21, 39/39). So these 14 aborts ARE the measured `PhSegRuleRHS`
+    shortfall (-3 ngoreme, -11 mbugwe), to the object, with no residue. The
+    remaining 17 fire inside the RHS loop, where the RHS object survives and
+    only its contexts are lost -- which is why ejagham reads 6/6 MATCHED and
+    still loses content.
+
+    Reporting is not the fix, and this docstring must not be read as though it
+    were: `_resolve_ctx_referent` is what stops the 14 from happening. This
+    record exists for the residue that resolution genuinely cannot save, so
+    that a rule which loses a context cell says so instead of arriving as a
+    silent MATCHED shell.
+    """
+    if dropped is None:
+        return
+    _append_dropped_once(dropped, DroppedItemRecord(
+        owner_kind="PhRegularRule",
+        owner_guid=rule_guid or "",
+        owner_label=f"rule={_short_guid(rule_guid)}",
+        field_name="StrucDescOS",
+        item_name=f"cell={_short_guid(cell_guid)}",
+        item_guid=cell_guid or "",
+        reason=(
+            f"StrucDescOS context cell could not be built "
+            f"({type(exc).__name__}: {exc}). The rule shell was already "
+            f"created, so the census reads this rule MATCHED; without this "
+            f"record the loss is invisible. Remaining StrucDescOS cells and "
+            f"the rule's right-hand sides were still attempted."
         ),
     ))
 
@@ -13690,6 +13835,48 @@ def _phon_rule_apply_body(src_rule, new_rule, class_name, source, target,
     except (AttributeError, TypeError):
         pass
 
+    # -----------------------------------------------------------------------
+    # REFERENT RESOLUTION: identity first, then the plan's OWN natural-key
+    # match. Feature 038, T120 second entry (2026-08-28).
+    #
+    # WHY THIS EXISTS, MEASURED RATHER THAN ARGUED. The lookup dicts above are
+    # keyed by DESTINATION GUID and were being consulted with a SOURCE GUID.
+    # For a phoneme the source and destination genuinely share a GUID that is
+    # correct; for a phoneme this run matched to the destination's STARTER
+    # inventory by roster-admitted NAME it is not, and the miss was read as
+    # "absent from target" and raised. T124 measured `identity_substitution`
+    # basis=NATURAL_KEY on 21 / 20 / 19 `PhPhoneme` plus 1 `PhNCSegments` on
+    # two pairs: those objects ARE in the destination, under the destination's
+    # own GUIDs, and Preview had already emitted a `PlannedOverwrite` carrying
+    # both GUIDs and promising to reuse them. The rule route never consulted
+    # it. That is a PREVIEW/MOVE DIVERGENCE, and it is the single cause of all
+    # 31 measured phonological-rule aborts on the three sanctioned pairs.
+    #
+    # ORDERING IS FR-001/FR-002's, NOT A NEW ONE: identity is authoritative and
+    # the name is consulted ONLY when identity finds nothing. A GUID that
+    # already identified an object must never be second-guessed by a name
+    # collision, so the `by_guid` hit returns before either fallback is tried.
+    #
+    # AMBIGUITY IS NOT A PICK. `_process_referent_by_natural_key` absorbs
+    # `NaturalKeyAmbiguityError` and returns None, so a rule referencing one of
+    # two same-named destination phonemes still refuses -- and now refuses with
+    # a report instead of taking the whole rule down. Guessing here is how a
+    # rule comes to match the wrong segment silently, which is worse than the
+    # loss it would paper over.
+    #
+    # DEGRADATION: the UPDATE path (`_execute_phon_rule_structural_update`)
+    # passes `context=None` and has no plan. Both fallbacks are skipped there
+    # and behaviour is exactly what it was -- GUID-only.
+    # -----------------------------------------------------------------------
+    def _resolve_ctx_referent(src_ref, by_guid, expect_class):
+        """Bind this rule's `context` to the shared module-level resolver.
+
+        Deliberately a one-line delegation and NOT a local copy:
+        `natural_classes_execute_action` has the identical defect and calls
+        the same `_resolve_scoped_referent`, so the two sites cannot drift.
+        """
+        return _resolve_scoped_referent(context, src_ref, by_guid, expect_class)
+
     def _collect_nc_constraints(context_seq):
         """Yield (constraint_obj, constraint_guid) from NC contexts in seq."""
         for cell in context_seq:
@@ -13827,11 +14014,14 @@ def _phon_rule_apply_body(src_rule, new_rule, class_name, source, target,
                 src_feat_struct = IPhSimpleContextSeg(src_cell).FeatureStructureRA
                 if src_feat_struct is not None:
                     fg = _guid_str_from(src_feat_struct)
-                    tgt_phon = tgt_phoneme_by_guid.get(fg)
+                    tgt_phon, _basis = _resolve_ctx_referent(
+                        src_feat_struct, tgt_phoneme_by_guid, "PhPhoneme")
                     if tgt_phon is None:
                         raise RuntimeError(
                             f"PhSimpleContextSeg guid={cell_guid} references "
-                            f"phoneme guid={fg} absent from target"
+                            f"phoneme guid={fg} absent from target "
+                            f"(not found by GUID, by this run's identity "
+                            f"remap, or by roster-admitted name)"
                         )
                     IPhSimpleContextSeg(new_cell).FeatureStructureRA = tgt_phon
             except RuntimeError:
@@ -13850,11 +14040,15 @@ def _phon_rule_apply_body(src_rule, new_rule, class_name, source, target,
                 src_nc_ref = nc_src.FeatureStructureRA
                 if src_nc_ref is not None:
                     ng = _guid_str_from(src_nc_ref)
-                    tgt_nc = tgt_nc_by_guid.get(ng)
+                    tgt_nc, _basis = _resolve_ctx_referent(
+                        src_nc_ref, tgt_nc_by_guid,
+                        _class_name_of(src_nc_ref))
                     if tgt_nc is None:
                         raise RuntimeError(
                             f"PhSimpleContextNC guid={cell_guid} references "
-                            f"NC guid={ng} absent from target"
+                            f"NC guid={ng} absent from target "
+                            f"(not found by GUID, by this run's identity "
+                            f"remap, or by roster-admitted name)"
                         )
                     nc_new.FeatureStructureRA = tgt_nc
             except RuntimeError:
@@ -13950,11 +14144,29 @@ def _phon_rule_apply_body(src_rule, new_rule, class_name, source, target,
     # -----------------------------------------------------------------------
     # StrucDescOS (rule-owned context cells)
     # -----------------------------------------------------------------------
+    # PER CELL, not per loop. The guard here used to wrap the WHOLE loop and
+    # catch only `(AttributeError, TypeError)`, so a `RuntimeError` from
+    # `_copy_context_cell` escaped this function entirely, propagated out of
+    # `phonological_rules_execute_action`, and was swallowed by transfer.py's
+    # `except Exception` -- AFTER the rule shell had been created. The rule
+    # then census-read as MATCHED with no right-hand sides at all, because the
+    # RHS loop below was never reached. T124 measured 14 of the 31 rule aborts
+    # firing exactly here, and they ARE the whole `PhSegRuleRHS` shortfall
+    # (-3 ngoreme, -11 mbugwe) to the object. Report and continue: one bad
+    # cell costs that cell, not the rule's entire right-hand side tree.
     try:
-        for src_cell in src_rr.StrucDescOS:
-            _copy_context_cell(src_cell, new_rr.StrucDescOS)
+        _struc_desc_cells = list(src_rr.StrucDescOS)
     except (AttributeError, TypeError):
-        pass
+        _struc_desc_cells = []
+    for src_cell in _struc_desc_cells:
+        try:
+            _copy_context_cell(src_cell, new_rr.StrucDescOS)
+        except (AttributeError, TypeError):
+            pass
+        except Exception as exc:  # noqa: BLE001 -- reported, never hidden
+            _report_dropped_struc_desc_cell(
+                _dropped_list, src_guid, _guid_str_from(src_cell), exc)
+            continue
 
     # -----------------------------------------------------------------------
     # RightHandSidesOS
@@ -14065,10 +14277,19 @@ def _phon_rule_apply_body(src_rule, new_rule, class_name, source, target,
                             )
                 except (AttributeError, TypeError):
                     pass
-        except (AttributeError, TypeError) as exc:  # noqa: PERF203
+        except Exception as exc:  # noqa: BLE001,PERF203
             # ONE right-hand side failed. Report it and CONTINUE, so the rest
             # of the rule's right-hand sides still transfer -- the previous
             # behaviour lost all of them and said nothing.
+            #
+            # BROADENED FROM `(AttributeError, TypeError)` 2026-08-28. Every
+            # one of the 31 phonological-rule failures T124 measured is a
+            # `RuntimeError` raised by `_copy_context_cell`, so the narrower
+            # tuple could not catch a single real failure and this reporter
+            # had never fired on any pair. 17 of those 31 fire inside THIS
+            # loop, where the `PhSegRuleRHS` object already exists and only
+            # its contexts are lost -- which is why ejagham reads 6/6 MATCHED
+            # and still loses content a counts-only gate cannot see.
             _report_dropped_rhs(_dropped_list, src_guid,
                                 _guid_str_from(src_rhs), exc)
             continue
