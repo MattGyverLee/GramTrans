@@ -719,7 +719,13 @@ def _run_pair(pair: str, argv) -> int:
                     "regressed": regressed},
         "totals": artifact.get("totals"),
     }
-    out = _SNAPS / ("recensus-038-t124-%s.json" % pair)
+    # TAGGED TOO. The first `--tag` pass re-tagged the census artifact and the
+    # run report and MISSED this one, so a tagged re-run still overwrote
+    # T124's three recensus summaries -- the exact comparand the tag exists to
+    # protect. Caught by `git status` immediately after the run and restored
+    # from git; recorded here because "I added a tag" is not the same claim as
+    # "every output path honours it".
+    out = _SNAPS / ("recensus-038-%s-%s.json" % (RUN_TAG, pair))
     out.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n",
                    encoding="utf-8")
     print("[OK] wrote %s" % out)
