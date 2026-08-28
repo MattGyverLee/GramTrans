@@ -5,7 +5,24 @@
 **Target file (owned by feature 035):**
 `specs/035-fullsweep-fidelity/contracts/natural-key-identity-roster.json`
 **Written:** 2026-08-19
-**Status:** PROPOSAL. Nothing here is in force until the 035 session lands it.
+**Status:** ~~PROPOSAL. Nothing here is in force until the 035 session lands
+it.~~ **LANDED 2026-08-19; corrected 2026-08-28 per T098.** The status line is
+kept struck as the recorded BEFORE rather than edited away, because it was
+stale for nine days while this file went on describing itself as not-in-force.
+035 landed all six proposed entries on **2026-08-19**:
+[`specs/035-fullsweep-fidelity/contracts/natural-key-identity-roster.json`](../../035-fullsweep-fidelity/contracts/natural-key-identity-roster.json)
+now holds **9** entries -- `PhPhoneme`, `PhNCSegments`, `PhNCFeatures`,
+`PartOfSpeech`, `MoMorphType`, `LexEntryInflType` appended as entries 4-9, in
+the order this proposal asked for -- with the admission evidence recorded as the
+top-level sibling key `live_confirmation_038` (`proposed_by: "feature
+038-transfer-fidelity-gaps, task T028"`, `landed_at: "2026-08-19"`), exactly
+where [section 5](#5-coordination-protocol)'s `coordination.step_4` said to put
+it. This file stays the ARGUMENT and the PROPOSAL RECORD and is correctly not
+emptied on landing -- but "nothing here is in force" is no longer true of the
+entries it proposes, and `roster_admitted_classes` has been reading them from
+035's roster at run time ever since. See the `T098` line in
+[`tasks.md`](../tasks.md) and
+[`journal/T098-the-tripwire-that-was-not-the-tripwire.md`](../journal/T098-the-tripwire-that-was-not-the-tripwire.md).
 **Amended:** 2026-08-28 -- `038-NK-P3`'s acceptance clause is narrowed to the
 rows it names; see [section 3.1](#31-038-nk-p3-as-amended-2026-08-28). The census
 gate is unchanged.
