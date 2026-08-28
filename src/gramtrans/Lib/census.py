@@ -1654,7 +1654,11 @@ NATURAL_KEY_DEFINITIONS: dict = {
     "PhNCFeatures": NaturalKeyDefinition(
         "PhNCFeatures", "Name", WS_SCOPE_ANALYSIS,
         "Name (default analysis alt), exact and case-sensitive, within the "
-        "PhPhonData natural-class list and restricted to PhNCFeatures",
+        "PhPhonData natural-class list and restricted to PhNCFeatures, "
+        "AND ONLY WHERE THAT NAME IS NOT A FLEx AUTO-GENERATED RULE LABEL "
+        "(`Created automatically for rule \"<rule>\"`) -- such a label names "
+        "the RULE that owns the class, not the class, so two objects sharing "
+        "one are not the same linguistic object and are not a duplicate pair",
         roster_source=ROSTER_SOURCE_035,
     ),
     "PartOfSpeech": NaturalKeyDefinition(
@@ -1822,6 +1826,20 @@ def natural_key_of(obj, definition: NaturalKeyDefinition, ws_handle) -> Optional
     `unicodedata.normalize`. None (no such property, no alt, empty alt) means
     the object has no key and must not be grouped -- an empty key never matches
     another empty key.
+
+    **THIS FUNCTION STAYS A PURE NAME READER, AND THAT IS LOAD-BEARING.**
+    `matcher` builds its key functions on this one *precisely* so the two can
+    never hold different keys for a class (see `matcher.py`'s import comment),
+    and then layers its OWN eligibility verdicts on top --
+    `KEY_INELIGIBLE_AUTO_GENERATED` vs `KEY_INELIGIBLE_NO_NAME_IN_SCOPED_WS`
+    are distinct reasons it must be able to tell apart. Filtering ineligible
+    keys to `None` HERE collapses "has an ineligible name" into "has no name",
+    which is a different and wrong statement about the object. Eligibility
+    therefore belongs to the duplicate-detection path only, in
+    `group_by_natural_key`. Measured the hard way on 2026-08-28: the filter was
+    first put here and immediately turned
+    `test_auto_generated_natural_class_names_are_ineligible` red by reporting
+    the wrong reason.
     """
     if ws_handle is None:
         return None
@@ -1837,6 +1855,60 @@ def natural_key_of(obj, definition: NaturalKeyDefinition, ws_handle) -> Optional
         return None
     text = str(text)
     return text if text else None
+
+
+def _key_is_eligible(object_class: str, text: str) -> bool:
+    """False when the roster declares this key string an ineligible KEY for
+    this class, so duplicate detection must not group on it.
+
+    **WHY THIS EXISTS (feature 038, T082 / `038-NK-P3`, 2026-08-28), AND WHY IT
+    IS A CORRECTION RATHER THAN AN EXEMPTION.** The census shares its key
+    DEFINITIONS with the matcher but never shared the matcher's ELIGIBILITY
+    predicate, so for `PhNCFeatures` the census grouped on a key strictly WIDER
+    than the roster ratifies. The roster entry
+    (`contracts/natural-key-roster-extension.json`) admits that class by
+    predicate -- "*and only where that name is not a FLEx auto-generated rule
+    label*" -- with a `key_scoping_note` stating that such a name "identifies
+    the RULE that owns the class, not the class" and is "never matched, and not
+    treated as an ambiguity either".
+
+    What the drift cost, measured across three live pairs (T124): **36 of 36**
+    duplicate groups on `PhNCFeatures` are the auto-generated label (ejagham 1,
+    ngoreme 12, mbugwe 23). They contribute ALL of `duplicate_extra_objects`
+    (3 / 21 / 66) and force `DUPLICATE_IDENTITY` / exit 3 on every pair --
+    while the row itself is MATCHED (15->15, 41->41, 113->113) against a
+    starter baseline of ZERO. FLEx names every natural class it auto-creates
+    after the rule that owns it, so one rule owning several context classes
+    yields several identically-named objects **in the source**; mbugwe's source
+    is independently measured at the same 113 objects / 66 collisions. The
+    duplication is REPRODUCED, not manufactured, and the roster's own
+    `collision_forensics` already calls it "correct data, not a defect".
+
+    So the gate was failing on a FALSE READING produced by the wrong key. The
+    fix is the right key, NOT an exemption: an exemption suppresses a true
+    reading, whereas correcting the key keeps the detector live for a real
+    `PhNCFeatures` duplicate on a linguist-chosen name -- the case actually
+    worth catching.
+
+    Reads `matcher`'s constants rather than restating the rule, so the two
+    cannot drift again. The import is lazy and matches `matcher`'s own
+    convention (it imports `census`, so a module-level import here would close
+    a cycle). Fails OPEN: a census that cannot read the rule must not silently
+    start ignoring objects, because a suppressed duplicate looks exactly like a
+    clean transfer.
+    """
+    try:
+        if __package__:
+            from . import matcher as _matcher
+        else:
+            import matcher as _matcher  # type: ignore[no-redef]
+    except Exception:  # noqa: BLE001 -- census must stay importable alone
+        return True
+    classes = getattr(_matcher, "_AUTO_GENERATED_LABEL_CLASSES", frozenset())
+    prefix = getattr(_matcher, "_AUTO_GENERATED_NAME_PREFIX", None)
+    if prefix and object_class in classes and text.startswith(prefix):
+        return False
+    return True
 
 
 @dataclass(frozen=True)
@@ -1888,11 +1960,21 @@ def group_by_natural_key(objects, definition: NaturalKeyDefinition, ws_handle) -
     Objects with no key are omitted rather than collected under a shared
     sentinel, which is the whole point: two unnamed phonemes are two unnamed
     phonemes, not a duplicate pair.
+
+    **Objects whose key the roster declares INELIGIBLE are omitted for exactly
+    the same reason** (feature 038, T082, 2026-08-28): two natural classes both
+    named `Created automatically for rule "X"` are two classes FLEx named after
+    one rule, not a duplicate pair. See `_key_is_eligible`. This is the only
+    place the predicate is applied -- `natural_key_of` stays a pure name reader
+    because `matcher` builds on it and must keep "ineligible name" and "no
+    name" as distinct verdicts.
     """
     grouped: dict = {}
     for obj in objects:
         key = natural_key_of(obj, definition, ws_handle)
         if key is None:
+            continue
+        if not _key_is_eligible(definition.object_class, key):
             continue
         grouped.setdefault(key, []).append(obj)
     return grouped
