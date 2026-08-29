@@ -44,6 +44,40 @@ did not reach; T119 itself flagged them as still open. No live FLEx write was
 performed this spurt; nothing under `src/` or `tests/` was committed to
 `main`.
 
+**Carried forward (recorded so the next session need not rediscover).**
+
+- *Cosmetic, `debug/run038_t124_recensus.py`.* The tag leak is closed — the
+  probe output DIRECTORY is now derived from `RUN_TAG` at call time — but the
+  T124-supplements file's BASENAME is still the literal
+  `t124-supplements-<source>.json` under any tag. Nothing writes into the wrong
+  directory; only the basename text fails to encode the tag. Cosmetic, no
+  functional leak.
+- *QC P1 from this spurt's cycle 1, unaddressed.* `categories.py:6566`
+  `_LEX_REF_TYPE_KEY_FIELDS = ("Name", "MappingType")` is documented as "the one
+  place its shape is written down" and is referenced NOWHERE —
+  `_lex_ref_type_natural_key` hardcodes the two reads instead of iterating it.
+  Editing the constant changes no behaviour. Either wire the key functions
+  through it or drop it. Two P2s ride along: (a) the `dropped if dropped is not
+  None else []` throwaway-list pattern in `_resolve_target_lex_ref_type`'s
+  ambiguity branch and `_create_target_lex_ref_type`'s failure branch — harmless
+  today (the sole production caller always passes a real list) but a silent-drop
+  trap for a future direct call; (b) the undocumented asymmetry whereby the
+  "ambiguous key" record dedups per TYPE while "type not found" is per RELATION.
+  The QC verdict was SAFE TO COMMIT AS-IS; these are polish. (Its third P2, the
+  untracked snapshot JSONs, is resolved — both landed inside `db41744`.)
+- *T081 needs a RE-EMIT, not a fix.* The kind-(ii) accounting lines are proven
+  correct in memory (probed against a COPY of the ejagham artifact: P5 failures
+  19 -> 10, every stamped row stays `SHORTFALL`, `total_shortfall` unchanged at
+  4781, nothing laundered) but that proof is baked into NO committed t126
+  artifact. The gate therefore needs the artifacts re-emitted with the lines
+  present — do not go looking for a bug in the accounting logic.
+
+**Crew state.** `specs/038-transfer-fidelity-gaps/.crew-handoff.json` carries the
+machine-readable pickup. Next code task **T119**; then **T120(a)** (emit the
+orphan-constraint ruling already committed in `19a1bd8`), then **T081**'s
+re-gate, then **T085**'s merge. **T082** is a T086-style clause amendment — pure
+docs, no `categories.py` — and is genuinely parallel, startable any time.
+
 ## Session log — 2026-08-19e (038: transfer fidelity gaps — Phase 3 census gate, 27/90)
 
 Phase 3 (US2, "the run report tells the truth about what moved") is essentially built.

@@ -1,0 +1,60 @@
+{
+  "feature": "038-transfer-fidelity-gaps",
+  "status": "in_progress",
+  "last_cycle": 2,
+  "spurts_completed": 1,
+  "tasks_done": [],
+  "next_checkpoint": "T119 Fs* cascade residuals closed or explicitly blocked",
+  "next_entry": "T119 (US6): close ngoreme's last two Fs* cascade residuals -- MoStemMsa.MsFeatures short -1 of 782, FsComplexValue.Value short -27 of 825 (0 -> 798); both named in T124's per-owning-field measurement as residue transfer._ensure_owner_feat_strucs did not reach. Work on worktree ../GramTrans-038-transfer-fidelity-gaps (branch 038-transfer-fidelity-gaps, HEAD 1edb442).",
+  "updated": "2026-08-28",
+  "spurt_log": [
+    {
+      "spurt": 1,
+      "name": "stabilise-the-crash-residue",
+      "cycles": 2,
+      "checkpoint": "crash residue resolved, T123 landed or explicitly blocked",
+      "reached": true,
+      "commits_main": ["7fbb9f9", "4bdd683", "882e590"],
+      "commits_worktree": ["db41744", "1edb442"],
+      "ruling": "T123 STAYS UNCHECKED -- LexReference closed (5 -> 5 MATCHED, accounted_for: []) but MoStemMsa (-1) and LexEntryType (-1/-1) acceptance lines on the same row remain open"
+    }
+  ],
+  "task_queue": [
+    {"id": "T119", "kind": "code", "state": "next"},
+    {"id": "T120(a)", "kind": "code", "state": "queued", "note": "emit the orphan-constraint ruling already committed in 19a1bd8"},
+    {"id": "T081", "kind": "gate", "state": "queued", "note": "RE-EMIT the t126 artifacts, do not fix -- kind-(ii) accounting lines proven correct in-memory but baked into no committed artifact"},
+    {"id": "T085", "kind": "merge", "state": "queued", "note": "merge 038 branch to main, remove worktree; gated on Phase 10"},
+    {"id": "T082", "kind": "docs", "state": "available_parallel", "note": "T086-style clause amendment, pure docs, no categories.py -- startable any time"}
+  ],
+  "carried_forward": [
+    {
+      "kind": "cosmetic",
+      "where": "debug/run038_t124_recensus.py",
+      "detail": "tag leak closed (probe output DIRECTORY now derived from RUN_TAG at call time) but the T124-supplements file's BASENAME is still the literal t124-supplements-<source>.json under any tag. No functional leak."
+    },
+    {
+      "kind": "qc_p1",
+      "where": "src/gramtrans/Lib/categories.py:6566",
+      "detail": "_LEX_REF_TYPE_KEY_FIELDS = (\"Name\", \"MappingType\") is documented as the single source of the key's shape but is referenced nowhere; _lex_ref_type_natural_key hardcodes both reads. Wire the key functions through it or drop it.",
+      "state": "unaddressed"
+    },
+    {
+      "kind": "qc_p2",
+      "where": "src/gramtrans/Lib/categories.py (_resolve_target_lex_ref_type ambiguity branch, _create_target_lex_ref_type failure branch)",
+      "detail": "`dropped if dropped is not None else []` builds a throwaway list; harmless today (sole production caller always passes a real list) but a silent-drop trap for a future direct call.",
+      "state": "unaddressed"
+    },
+    {
+      "kind": "qc_p2",
+      "where": "src/gramtrans/Lib/categories.py reporting granularity",
+      "detail": "Undocumented by-design asymmetry: the 'ambiguous key' DroppedItemRecord dedups per TYPE (item_guid=\"\"), 'type not found' is per RELATION. Wants a one-line comment so nobody 'fixes' it into a regression.",
+      "state": "unaddressed"
+    }
+  ],
+  "process_notes": [
+    "lex-doc has NO Bash/git -- pair any commit-bearing doc task with lex-archivist.",
+    "lex-qc is unavailable as a subagent_type; QC was performed by lex-programmer under a read-only constraint.",
+    "Resolved false alarm, do not re-investigate: an editor reported _PROBE_OUT undefined at run038_t124_recensus.py:388-389 from a mid-edit capture. The file compiles; the only surviving match is the string literal \"GT038_PROBE_OUT\".",
+    ".specify/extensions/companion/commands/speckit.companion.resume.md is intentionally left dirty on main."
+  ]
+}
