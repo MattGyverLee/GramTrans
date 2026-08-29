@@ -6534,7 +6534,227 @@ def _lex_ref_type_label(lex_ref_type) -> str:
     return ""
 
 
-def _resolve_target_lex_ref_type(target, type_guid: str):
+#: `LexRefType`'s NATURAL KEY, and the one place its shape is written down.
+#: `(Name, MappingType)` -- the exact analysis-writing-system `Name` string
+#: paired with the integer `MappingType`.
+#:
+#: **WHY A KEY AT ALL (feature 038, T123 closing clause, user ruling
+#: 2026-08-28).** GUID-only resolution cannot succeed on any real pair. The
+#: ngoreme pair, measured read-only this session (op-164508379-003 for the
+#: destination, op-164535425-004 for the source): both sides hold exactly 7
+#: relation types, the SAME 7 by `Name` and by `MappingType` -- Part(3),
+#: Specific(3), Synonyms(0), Antonym(1), Calendar(4), Compare(5), Classified
+#: Noun(3) -- with **zero GUID overlap**: the source's are project-local
+#: (`487b4300-...`, `9044b4d6-...`) and the destination's are FLEx-canonical
+#: (`b764ce50-ea5e-11de-...`, `b770ba08-ea5e-11de-...`). So `LexRefType` reads
+#: 7 -> 7 count-MATCHED with none of them the source's, and every relation
+#: died one hop later at "type not found in target". That is the census's
+#: `LexReference` 5 -> 0, in full.
+#:
+#: **WHY `MappingType` IS PART OF THE KEY AND NOT A TIE-BREAK.** The mapping
+#: type IS the relation type's structure -- a `Synonyms` collection and a
+#: `Synonyms` pair are not the same type, and resolving one onto the other
+#: would silently re-file every relation under a different cardinality
+#: contract, which `_evaluate_lexical_relation`'s pair-minimum and tree-root
+#: guards would then enforce against the WRONG shape. Name alone is a display
+#: label; name plus mapping type is the type.
+#:
+#: The name half follows `census.natural_key_of`'s reading exactly: the EXACT
+#: string, no `.strip()`, no `.casefold()`, no Unicode normalisation, and an
+#: empty/absent name means the object HAS no key (never matched, and never
+#: matched to another keyless object).
+_LEX_REF_TYPE_KEY_FIELDS = ("Name", "MappingType")
+
+
+def _lex_ref_type_mapping_type(lex_ref_type):
+    """`MappingType` off a relation type, CAST first, or None.
+
+    The cast is not optional and is this feature's recurring shape for the
+    fourteenth time: `MappingType` is declared on `ILexRefType` only, so a
+    base-typed `ICmPossibility` proxy answers None to a bare `getattr` and
+    every structural guard downstream silently reads False."""
+    if lex_ref_type is None:
+        return None
+    typed = _as_lex_ref_type(lex_ref_type) or lex_ref_type
+    value = getattr(typed, "MappingType", None)
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _lex_ref_type_key_name(lex_ref_type) -> str:
+    """The `Name` half of the natural key: the exact analysis-alternative
+    string, or `""` when the type has none.
+
+    Deliberately NOT `_lex_ref_type_label`, which is a REPORT label and falls
+    back to `ShortName` -- a derived display string FLEx can synthesise from an
+    abbreviation. A key satisfiable by a derived string would match two
+    objects that do not share a name."""
+    if lex_ref_type is None:
+        return ""
+    typed = _as_lex_ref_type(lex_ref_type) or lex_ref_type
+    for reader in (
+        lambda o: o.Name.BestAnalysisAlternative.Text,
+        lambda o: o.Name.AnalysisDefaultWritingSystem.Text,
+    ):
+        try:
+            text = reader(typed)
+        except Exception:  # noqa: BLE001 -- try the next reader
+            continue
+        if text:
+            return str(text)
+    return ""
+
+
+def _lex_ref_type_natural_key(lex_ref_type):
+    """`(name, mapping_type)` for `lex_ref_type`, or None when it has no key.
+
+    None when EITHER half is missing. A half-key is not a key: matching on the
+    name of a type whose mapping type could not be read is exactly the
+    "resolve onto a different cardinality contract" mistake the key's second
+    half exists to prevent."""
+    name = _lex_ref_type_key_name(lex_ref_type)
+    if not name:
+        return None
+    mapping_type = _lex_ref_type_mapping_type(lex_ref_type)
+    if mapping_type is None:
+        return None
+    return (name, mapping_type)
+
+
+def ILexRefTypeFactory_ref():  # noqa: N802 -- named for what it returns
+    """`ILexRefTypeFactory`, imported lazily so this module stays importable
+    without pythonnet (host-free unit tests).
+
+    `LexRefTypeFactory` exposes `Create()`, `Create(Guid)` and
+    `Create(Guid, ILexRefType owner)` -- confirmed by read-only .NET reflection
+    against `GT038 T124 Ngoreme`, 2026-08-28 (op-164508379-003). The
+    `Create(Guid)` overload is the one `_create_with_guid` needs, so a created
+    relation type keeps the SOURCE's GUID and the next run resolves it by
+    identity rather than by key."""
+    from SIL.LCModel import ILexRefTypeFactory
+    return ILexRefTypeFactory
+
+
+def _target_lex_ref_list(target):
+    """`target.Cache.LangProject.LexDbOA.ReferencesOA`, or None. Never
+    raises."""
+    try:
+        return target.Cache.LangProject.LexDbOA.ReferencesOA
+    except (AttributeError, TypeError):
+        return None
+
+
+def _target_lex_ref_types(target):
+    """`([types], {guid: type})` for the destination's relation-type list --
+    every member cast to `ILexRefType` (`_iter_lex_ref_types`),
+    `SubPossibilitiesOS` included."""
+    ref_list = _target_lex_ref_list(target)
+    if ref_list is None:
+        return [], {}
+    try:
+        types = _iter_lex_ref_types(ref_list)
+    except (AttributeError, TypeError):
+        return [], {}
+    by_guid = {}
+    for item in types:
+        guid = _guid_str_from(item)
+        if guid:
+            by_guid[guid] = item
+    return types, by_guid
+
+
+def _create_target_lex_ref_type(source_type, ctx, dropped):
+    """Create the destination counterpart of `source_type` -- the second half
+    of T123's closing ruling, and the leg REACHED ONLY when the natural key
+    found nothing.
+
+    **THE ORDER IS THE WHOLE POINT.** A create-first implementation would mint
+    a second `Synonyms`, a second `Antonym`, a second `Calendar` beside the
+    seven FLEx ships in every new project -- the same duplication the natural
+    key exists to stop for starter phonemes. So this runs after
+    `_resolve_target_lex_ref_type`'s key leg, never before it, and on the
+    measured ngoreme corpus it is expected NEVER TO FIRE: all 7 source types
+    match a destination type by `(Name, MappingType)`. Its coverage is unit
+    tests, not corpus evidence, and this docstring says so rather than letting
+    a green run imply otherwise.
+
+    GUID-PRESERVING (`_create_with_guid` -> `Create(Guid)`): the new type keeps
+    the source's GUID, so a LATER run resolves it by IDENTITY and this leg is a
+    one-time cost rather than a per-run key lookup.
+
+    `MappingType` is written BEFORE the strings because it is the structural
+    half of the object's identity, and `MembersOC` is populated by the caller
+    straight afterwards -- a type that exists with the wrong cardinality
+    contract, however briefly, is a type whose members are being filed against
+    the wrong guards.
+
+    Never raises: a create failure is reported as a `DroppedItemRecord` and
+    returns None, which leaves the relation on the "type not found" path it was
+    already on."""
+    target = getattr(ctx, "target_handle", None)
+    source = getattr(ctx, "source_handle", None)
+    type_guid = _guid_str_from(source_type)
+    if target is None or not type_guid:
+        return None
+    ref_list = _target_lex_ref_list(target)
+    if ref_list is None:
+        return None
+    try:
+        tgt_items = ref_list.PossibilitiesOS
+    except (AttributeError, TypeError):
+        return None
+    if tgt_items is None:
+        return None
+    try:
+        new_type, _ = _create_with_guid(
+            ILexRefTypeFactory_ref(), tgt_items, type_guid, target)
+    except Exception as exc:  # noqa: BLE001 -- reported, never raised
+        import logging as _logging
+        _logging.getLogger("gramtrans.Lib.categories").warning(
+            "_create_target_lex_ref_type: create failed for %s: %s",
+            type_guid, exc, exc_info=True,
+        )
+        _append_dropped_once(dropped, DroppedItemRecord(
+            owner_kind="LexRefType",
+            owner_guid=type_guid,
+            owner_label=_lex_ref_type_label(source_type),
+            field_name="MembersOC",
+            item_name=_lex_ref_type_label(source_type),
+            item_guid=type_guid,
+            reason=(f"lexical relation type absent from target and could not "
+                    f"be created: {type(exc).__name__}"),
+        ))
+        return None
+
+    typed = _as_lex_ref_type(new_type) or new_type
+    mapping_type = _lex_ref_type_mapping_type(source_type)
+    if mapping_type is not None:
+        try:
+            typed.MappingType = mapping_type
+        except (AttributeError, TypeError):
+            pass
+    if source is not None:
+        try:
+            _copy_multistrings_ws_mapped(
+                _as_lex_ref_type(source_type) or source_type, typed,
+                ("Name", "Abbreviation", "Description",
+                 "ReverseName", "ReverseAbbreviation"),
+                source=source, target=target,
+                ws_map=_ws_map_dict(getattr(
+                    getattr(ctx, "_run_plan", None), "ws_mapping", None)),
+            )
+        except (AttributeError, TypeError):
+            pass
+    return typed
+
+
+def _resolve_target_lex_ref_type(target, type_guid: str, *, source_type=None,
+                                 ctx=None, plan_time=False,
+                                 allow_create=False, dropped=None):
     """Resolve the target `ILexRefType` whose GUID is `type_guid` off
     `target.Cache.LangProject.LexDbOA.ReferencesOA` (an `ICmPossibilityList`
     of relation TYPES -- possibility-list-shaped, so this reuses
@@ -6566,33 +6786,145 @@ def _resolve_target_lex_ref_type(target, type_guid: str):
     (duck-typed unit fakes), so this can never resolve LESS than before.
     Thirteenth appearance of this codebase's recurring shape, in the same file
     and the same feature as the eleventh.
+
+    **THE RESOLUTION ORDER (038 T123 closing clause, user ruling 2026-08-28),
+    AND WHY EACH LEG SITS WHERE IT DOES.** Four legs, tried in this order and
+    no other:
+
+      1. **IDENTITY.** `type_guid` against the destination list. Authoritative:
+         a GUID that already identified an object is never second-guessed by a
+         name collision. This is FR-001/FR-002's ordering and it is the same
+         ordering `_resolve_scoped_referent` and `_resolve_process_referent`
+         use, for the same reason.
+      2. **THE PLAN'S `identity_remap`,** via the module-scope
+         `_resolve_scoped_referent` -- REUSED rather than reimplemented. T119/
+         T123's defect was Move re-deriving an answer Preview had already put
+         in the plan; a second private copy of the remap lookup here would be
+         that defect's next home. The roster leg inside that helper is a no-op
+         for `LexRefType` (no roster binding, see `_lex_ref_type_natural_key`'s
+         banner and the roster PROPOSAL this change ships alongside), so it
+         costs nothing and cannot mis-resolve.
+      3. **THE `(Name, MappingType)` NATURAL KEY.** The leg that actually
+         recovers the five ngoreme relations, because leg 1 CANNOT succeed on
+         that pair: identical names, identical mapping types, zero GUID
+         overlap. AMBIGUITY IS NOT A PICK -- two destination types sharing one
+         key leaves the relation unresolved with a reason, never a guess,
+         exactly as `_resolve_scoped_referent` treats an ambiguous roster key.
+      4. **CREATE** (`_create_target_lex_ref_type`), and ONLY when leg 3 found
+         nothing -- i.e. a source type genuinely absent from the destination.
+         Reachable in Move only (`allow_create`); at plan time it is predicted
+         as `PLAN_TIME_PENDING` instead, so Preview neither writes nor
+         over-reports a loss Move will not take.
+
+    **WHY 3 BEFORE 4 IS THE LOAD-BEARING HALF.** Create-first would mint a
+    second copy of all 7 FLEx default relation types on every pair, every run.
+    The key leg is what makes the create leg safe to have at all.
+
+    Backwards compatible: called with two positional arguments this is exactly
+    the GUID-only lookup it was, because every fallback leg is gated on a
+    keyword the old call sites do not pass.
     """
     if __package__:
         from . import references as _references
     else:
         import references as _references  # type: ignore
-    try:
-        ref_list = target.Cache.LangProject.LexDbOA.ReferencesOA
-    except AttributeError:
+
+    # LEG 1 -- identity. Left on `_find_in_possibility_list` rather than on the
+    # dict built below, so a destination shape that walk handles and
+    # `_iter_lex_ref_types` does not can never resolve LESS than before.
+    ref_list = _target_lex_ref_list(target)
+    if ref_list is None:
         return None
     found = _references._find_in_possibility_list(ref_list, type_guid)
-    if found is None:
+    if found is not None:
+        return _as_lex_ref_type(found) or found
+
+    if source_type is None:
         return None
-    return _as_lex_ref_type(found) or found
+
+    candidates, by_guid = _target_lex_ref_types(target)
+
+    # LEG 2 -- the plan's `identity_remap`, through the shared helper.
+    if ctx is not None:
+        remapped, _basis = _resolve_scoped_referent(
+            ctx, source_type, by_guid, "LexRefType")
+        if remapped is not None:
+            return remapped
+
+    # LEG 3 -- the `(Name, MappingType)` natural key.
+    key = _lex_ref_type_natural_key(source_type)
+    if key is not None:
+        matches = [c for c in candidates
+                   if _lex_ref_type_natural_key(c) == key]
+        if len(matches) == 1:
+            return matches[0]
+        if len(matches) > 1:
+            # Ambiguity is reported, never resolved. Picking one of two
+            # destination types that share a name AND a mapping type would
+            # silently re-file every relation of this type under whichever
+            # happened to be first in the list.
+            _append_dropped_once(dropped if dropped is not None else [],
+                                 DroppedItemRecord(
+                                     owner_kind="LexRefType",
+                                     owner_guid=type_guid,
+                                     owner_label=_lex_ref_type_label(
+                                         source_type),
+                                     field_name="MembersOC",
+                                     item_name=_lex_ref_type_label(
+                                         source_type),
+                                     item_guid="",
+                                     reason=(
+                                         f"lexical relation type natural key "
+                                         f"{key!r} matches {len(matches)} "
+                                         f"types in the target; ambiguous, "
+                                         f"not resolved"),
+                                 ))
+            return None
+
+    # LEG 4 -- create, reachable only now.
+    if plan_time:
+        # Predicted only when Move could really take the leg: a source type
+        # with no GUID cannot be created GUID-preservingly, and predicting a
+        # create Move will refuse is how a Preview comes to under-report a
+        # loss -- the one direction `_process_referent_will_be_created`'s
+        # docstring names as the failure that must not happen.
+        return PLAN_TIME_PENDING if type_guid else None
+    if not allow_create or ctx is None:
+        return None
+    return _create_target_lex_ref_type(source_type, ctx,
+                                       dropped if dropped is not None else [])
 
 
-def _evaluate_lexical_relation(src_relation, ctx, dropped):
+def _evaluate_lexical_relation(src_relation, ctx, dropped, *, plan_time=False):
     """Shared decision core for both `reproduce_lexical_relation` (Move) and
     `plan_lexical_relation_decision` (Preview): resolves the target
-    `ILexRefType` by GUID, classifies every `TargetsRS` member against
-    `ctx._copy_set`, and applies the FR-008 partial-member policy. Never
-    creates or writes anything -- every branch that decides NOT to
-    reproduce the relation has already appended its own `DroppedItemRecord`
-    before returning `None`.
+    `ILexRefType`, classifies every `TargetsRS` member against
+    `ctx._copy_set`, and applies the FR-008 partial-member policy. Every branch
+    that decides NOT to reproduce the relation has already appended its own
+    `DroppedItemRecord` before returning `None`.
 
     Returns `(rel_guid, target_type, copied_members)` -- a coherent,
     reproducible relation (structural minimum satisfied, >=1 member
     actually copied) -- or `None` when the relation must not be reproduced.
+
+    **ONE CORE, TWO MODES, AND THAT IS THE PREVIEW/MOVE SPLIT HONOURED RATHER
+    THAN WORKED AROUND (038 T123 closing clause).** Preview and Move ask the
+    identical question through this same function, so they cannot diverge on
+    the ANSWER -- the T119/T123 defect was a second, private re-derivation in
+    Move. The only thing `plan_time` changes is what happens on the ONE leg
+    Preview must not take: creating the relation type. At plan time that leg
+    returns `PLAN_TIME_PENDING` (the same device `_resolve_process_referent`
+    already uses for a referent this run will create), so Preview predicts the
+    create instead of performing it, and instead of over-reporting a loss that
+    Move will not take.
+
+    `MappingType` is read off the TARGET type when it is readable and off the
+    SOURCE type otherwise. They are equal by construction on every leg that can
+    resolve -- identity matches the same object, the natural key includes the
+    mapping type, and the create leg copies it -- and the fallback is what
+    keeps the pair-minimum and tree-root guards LIVE at plan time, where the
+    target type may be `PLAN_TIME_PENDING`. Guards that read `None` are the
+    dead code T123's second entry has already fixed once.
     """
     if __package__:
         from . import references as _references
@@ -6625,8 +6957,19 @@ def _evaluate_lexical_relation(src_relation, ctx, dropped):
 
     target = ctx.target_handle
     source_type = getattr(src_relation, "Owner", None)
+    if source_type is not None:
+        # CAST AT THE READ. `Owner` hands back a base-typed `ICmObject`, and
+        # every question this function asks of the source type -- its name, its
+        # mapping type, whether it can be created -- is declared on
+        # `ILexRefType`. Uncast, the natural key is unreadable and leg 3 could
+        # never fire on live data, which is the exact way T123's first entry
+        # shipped two dead structural guards.
+        source_type = _as_lex_ref_type(source_type) or source_type
     type_guid = _guid_str_from(source_type) if source_type is not None else ""
-    target_type = _resolve_target_lex_ref_type(target, type_guid)
+    target_type = _resolve_target_lex_ref_type(
+        target, type_guid, source_type=source_type, ctx=ctx,
+        plan_time=plan_time, allow_create=not plan_time, dropped=dropped,
+    )
     if target_type is None:
         # THE RECORD USED TO NAME THE WRONG OBJECT (038 T123, 2026-08-28).
         # `owner_kind` says `LexRefType` while `owner_guid` carried
@@ -6646,14 +6989,16 @@ def _evaluate_lexical_relation(src_relation, ctx, dropped):
             item_name=_lex_ref_type_label(source_type),
             item_guid=rel_guid,
             reason=(
-                "lexical relation type not found in target -- the whole "
-                "Lexical Relations type list is absent, so no relation of "
-                "this type can be reproduced"
+                "lexical relation type not found in target by identity, by "
+                "identity_remap or by (Name, MappingType), and could not be "
+                "created; no relation of this type can be reproduced"
             ),
         ))
         return None
 
-    mapping_type = getattr(target_type, "MappingType", None)
+    mapping_type = _lex_ref_type_mapping_type(target_type)
+    if mapping_type is None:
+        mapping_type = _lex_ref_type_mapping_type(source_type)
     copy_set = getattr(ctx, "_copy_set", None) or {}
     src_targets = list(getattr(src_relation, "TargetsRS", None) or [])
 
@@ -6899,7 +7244,8 @@ def plan_lexical_relation_decision(src_relation, ctx, resolver_cache, dropped):
     planned = resolver_cache.setdefault(_LEXREL_PLANNED_KEY, {})
     rel_guid = _guid_str_from(src_relation)
 
-    evaluated = _evaluate_lexical_relation(src_relation, ctx, dropped)
+    evaluated = _evaluate_lexical_relation(src_relation, ctx, dropped,
+                                           plan_time=True)
     if evaluated is None:
         return None
     rel_guid, _target_type, _copied_members = evaluated
