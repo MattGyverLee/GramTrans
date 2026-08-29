@@ -601,7 +601,8 @@ def _run_pair(pair: str, argv) -> int:
     print("       ---- T123 obligations 3 and 4 (SOURCE vs DESTINATION) ----")
     print("[INFO] probing the source read-only for the T124 supplements only")
     src_extra = _probe_project(source, supplements=True, run_wave1=False)
-    src_supp_path = _probe_out_dir() / ("t124-supplements-%s.json" % (
+    src_supp_path = _probe_out_dir() / ("%s-supplements-%s.json" % (
+        RUN_TAG,
         "".join(c if (c.isalnum() or c in "-_") else "-" for c in source)))
     src_supp_path.write_text(json.dumps(src_extra, indent=1) + "\n",
                              encoding="utf-8")

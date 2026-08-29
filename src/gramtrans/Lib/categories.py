@@ -6609,20 +6609,41 @@ def _lex_ref_type_key_name(lex_ref_type) -> str:
     return ""
 
 
+#: One (reader, is_invalid) pair per `_LEX_REF_TYPE_KEY_FIELDS` entry. Keeps
+#: the constant LOAD-BEARING: `_lex_ref_type_natural_key` below iterates
+#: `_LEX_REF_TYPE_KEY_FIELDS` and looks its readers up here rather than
+#: hardcoding `(name, mapping_type)`, so editing the constant's field list or
+#: order actually changes the key that gets built. The per-field
+#: `is_invalid` differs deliberately: an empty `Name` string is invalid, but
+#: `MappingType == 0` (`Synonyms`) is a valid value -- only `None` (unreadable)
+#: invalidates it. A single shared "falsy is invalid" rule would have been
+#: wrong for `MappingType`.
+_LEX_REF_TYPE_KEY_READERS = {
+    "Name": (_lex_ref_type_key_name, lambda v: not v),
+    "MappingType": (_lex_ref_type_mapping_type, lambda v: v is None),
+}
+
+
 def _lex_ref_type_natural_key(lex_ref_type):
     """`(name, mapping_type)` for `lex_ref_type`, or None when it has no key.
 
     None when EITHER half is missing. A half-key is not a key: matching on the
     name of a type whose mapping type could not be read is exactly the
     "resolve onto a different cardinality contract" mistake the key's second
-    half exists to prevent."""
-    name = _lex_ref_type_key_name(lex_ref_type)
-    if not name:
-        return None
-    mapping_type = _lex_ref_type_mapping_type(lex_ref_type)
-    if mapping_type is None:
-        return None
-    return (name, mapping_type)
+    half exists to prevent.
+
+    Built by iterating `_LEX_REF_TYPE_KEY_FIELDS` through
+    `_LEX_REF_TYPE_KEY_READERS` rather than reading `Name`/`MappingType`
+    inline, so the constant's declared shape is what actually gets built
+    (same value and order as before this wiring for every input)."""
+    key_parts = []
+    for field in _LEX_REF_TYPE_KEY_FIELDS:
+        reader, is_invalid = _LEX_REF_TYPE_KEY_READERS[field]
+        value = reader(lex_ref_type)
+        if is_invalid(value):
+            return None
+        key_parts.append(value)
+    return tuple(key_parts)
 
 
 def ILexRefTypeFactory_ref():  # noqa: N802 -- named for what it returns
@@ -6863,22 +6884,34 @@ def _resolve_target_lex_ref_type(target, type_guid: str, *, source_type=None,
             # destination types that share a name AND a mapping type would
             # silently re-file every relation of this type under whichever
             # happened to be first in the list.
-            _append_dropped_once(dropped if dropped is not None else [],
-                                 DroppedItemRecord(
-                                     owner_kind="LexRefType",
-                                     owner_guid=type_guid,
-                                     owner_label=_lex_ref_type_label(
-                                         source_type),
-                                     field_name="MembersOC",
-                                     item_name=_lex_ref_type_label(
-                                         source_type),
-                                     item_guid="",
-                                     reason=(
-                                         f"lexical relation type natural key "
-                                         f"{key!r} matches {len(matches)} "
-                                         f"types in the target; ambiguous, "
-                                         f"not resolved"),
-                                 ))
+            #
+            # DEDUP GRANULARITY IS PER-TYPE, BY DESIGN (038 QC carry-forward,
+            # cycle 3): `item_guid=""` is constant across every relation that
+            # shares this ambiguous type, so `_append_dropped_once`'s
+            # `(owner_guid, field_name, item_guid)` key collapses them all to
+            # ONE record -- unlike the "type not found" record below, which
+            # keys on the per-relation `rel_guid` and so reports once per
+            # RELATION. Do not "fix" this into per-relation reporting: an
+            # ambiguous TYPE is one fact about the type, not N facts about
+            # its relations.
+            if dropped is None:
+                raise ValueError(
+                    "_resolve_target_lex_ref_type: an ambiguous natural-key "
+                    "match must be reported, not silently discarded -- pass "
+                    "a real `dropped` list")
+            _append_dropped_once(dropped, DroppedItemRecord(
+                owner_kind="LexRefType",
+                owner_guid=type_guid,
+                owner_label=_lex_ref_type_label(source_type),
+                field_name="MembersOC",
+                item_name=_lex_ref_type_label(source_type),
+                item_guid="",
+                reason=(
+                    f"lexical relation type natural key "
+                    f"{key!r} matches {len(matches)} "
+                    f"types in the target; ambiguous, "
+                    f"not resolved"),
+            ))
             return None
 
     # LEG 4 -- create, reachable only now.
@@ -6891,8 +6924,12 @@ def _resolve_target_lex_ref_type(target, type_guid: str, *, source_type=None,
         return PLAN_TIME_PENDING if type_guid else None
     if not allow_create or ctx is None:
         return None
-    return _create_target_lex_ref_type(source_type, ctx,
-                                       dropped if dropped is not None else [])
+    if dropped is None:
+        raise ValueError(
+            "_resolve_target_lex_ref_type: allow_create requires a real "
+            "`dropped` list -- a create failure must be reported, not "
+            "silently discarded")
+    return _create_target_lex_ref_type(source_type, ctx, dropped)
 
 
 def _evaluate_lexical_relation(src_relation, ctx, dropped, *, plan_time=False):
@@ -6981,6 +7018,14 @@ def _evaluate_lexical_relation(src_relation, ctx, dropped, *, plan_time=False):
         # `Synonyms`, `Calendar`) -- which is precisely the question the next
         # investigation had to ask, and had to re-derive live because the
         # report would not say.
+        #
+        # DEDUP GRANULARITY IS PER-RELATION, BY DESIGN (038 QC carry-forward,
+        # cycle 3): `item_guid=rel_guid` varies per relation, so this reports
+        # once per RELATION of the absent type -- the mirror-image choice
+        # from the ambiguous-key record above (`item_guid=""`, per-TYPE).
+        # Both are intentional: a type genuinely absent from the target loses
+        # every relation of that type individually and each is worth its own
+        # record, whereas an ambiguous type is one unresolved fact, not N.
         _append_dropped_once(dropped, DroppedItemRecord(
             owner_kind="LexRefType",
             owner_guid=type_guid,
