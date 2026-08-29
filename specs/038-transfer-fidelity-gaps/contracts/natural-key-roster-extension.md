@@ -510,6 +510,30 @@ figures are now zero on every pair by measurement.
    says the four hold on a pair not yet transferred, and nothing here accounts
    for a row this item does not name.
 
+**Closure, 2026-08-28 (T126 artifacts).** The `duplicate_extra_objects` figure
+measured above ("precisely as predicted", per `tasks.md`'s T082 line) is now
+read directly rather than inferred, from
+`tests/integration/_snapshots/census-038-t126-{ejagham,ngoreme,mbugwe}.json`
+(fresh `census_cli run` invocations against `GT038 T124 {Ejagham,Ngoreme,Mbugwe}`)
+and their `recensus-038-t126-*.json` twins: `PhNCFeatures` reads
+`verdict_class: "MATCHED"` on all three (15/15, 41/41, 113/113),
+`totals.duplicate_extra_objects` is **0** on all three (was 3/21/66 at T124),
+and `verdict` is `"UNEXPLAINED_SHORTFALL"` with `exit_code: 1` on all three --
+not `DUPLICATE_IDENTITY` / exit 3. The recensus twins' `phase_5.failures` count
+6 / 10 / 7 across the three pairs, none of them `PhNCFeatures`.
+
+Combined with the four-row recovery this section already established against
+the T124 artifacts (the table above), `038-NK-P3` is now met on **both**
+readings that have been in play: the amended per-row clause stated above (the
+four named losses recover, independently of `PhNCFeatures`, which this
+amendment already excluded from the item's scope), and the plainer reading
+`038-NK-P3` was narrowed to at T098 -- 2026-08-22 -- (the `PhNCFeatures`
+duplicate figure that was driving every run-level verdict to
+`DUPLICATE_IDENTITY` is now genuinely zero, by the census-key fix measured
+above, not by narrowing around it). `038-NK-P2` was already settled
+2026-08-26 (REFUTED -- no enforcement located; no roster entry moves). With
+both roster pending items settled, `tasks.md`'s **T082 is checked.**
+
 ---
 
 ## 4. How the ordering is preserved
