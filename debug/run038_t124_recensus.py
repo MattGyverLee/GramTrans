@@ -103,7 +103,6 @@ PROJECTS_ROOT = Path("C:/ProgramData/SIL/FieldWorks/Projects")
 _SNAPS = _REPO / "tests" / "integration" / "_snapshots"
 _MAIN = _REPO.parent / "GramTrans" / "specs" / "038-transfer-fidelity-gaps"
 _BASELINE = _MAIN / "contracts" / "starter-baseline.json"
-_PROBE_OUT = _MAIN / "probes" / "t124"
 
 #: Artifact tag for THIS run. T124's artifacts are the comparand every open
 #: task is measured against, so a re-run must not overwrite them -- the same
@@ -112,6 +111,24 @@ _PROBE_OUT = _MAIN / "probes" / "t124"
 #: defaults to `t124` so the original invocation is unchanged.
 RUN_TAG = "t124"
 _WAVE1_PROBES = _MAIN / "probes"
+
+
+def _probe_out_dir() -> Path:
+    """Tagged probe output directory: `probes/<RUN_TAG>/`.
+
+    MUST be a function, not a module-level constant, because `RUN_TAG` is
+    mutated by `--tag`/`--tag=` parsing in `main()` AFTER this module is
+    imported (`global RUN_TAG`). A constant snapshotted at import time would
+    always read the pre-parse default and every probe artifact -- the owner
+    probe AND the source-side supplements file -- would keep landing in
+    `probes/t124/` regardless of `--tag`, silently overwriting T124's pinned
+    comparand from a non-default run. See the `# TAGGED TOO` note below on
+    `recensus-038-<tag>-<pair>.json`: that artifact was fixed once already;
+    this directory was the sibling the fix missed. When `RUN_TAG == "t124"`
+    (the default) this resolves to the original hardcoded path unchanged.
+    """
+    return _MAIN / "probes" / RUN_TAG
+
 
 _PAIRS = {
     "ejagham": {
@@ -370,8 +387,9 @@ def _probe_project(name: str, *, supplements: bool, run_wave1: bool = True) -> d
     """
     from harness import full_run
 
-    _PROBE_OUT.mkdir(parents=True, exist_ok=True)
-    os.environ["GT038_PROBE_OUT"] = str(_PROBE_OUT)
+    probe_out = _probe_out_dir()
+    probe_out.mkdir(parents=True, exist_ok=True)
+    os.environ["GT038_PROBE_OUT"] = str(probe_out)
     proj = full_run._open_source_readonly(name)
     try:
         if run_wave1:
@@ -400,7 +418,7 @@ def _probe_project(name: str, *, supplements: bool, run_wave1: bool = True) -> d
 def _probe_path(project_name: str) -> Path:
     safe = "".join(c if (c.isalnum() or c in "-_") else "-"
                    for c in project_name)
-    return _PROBE_OUT / ("owner-probe-%s.json" % safe)
+    return _probe_out_dir() / ("owner-probe-%s.json" % safe)
 
 
 def _starter_counts() -> dict:
@@ -583,7 +601,7 @@ def _run_pair(pair: str, argv) -> int:
     print("       ---- T123 obligations 3 and 4 (SOURCE vs DESTINATION) ----")
     print("[INFO] probing the source read-only for the T124 supplements only")
     src_extra = _probe_project(source, supplements=True, run_wave1=False)
-    src_supp_path = _PROBE_OUT / ("t124-supplements-%s.json" % (
+    src_supp_path = _probe_out_dir() / ("t124-supplements-%s.json" % (
         "".join(c if (c.isalnum() or c in "-_") else "-" for c in source)))
     src_supp_path.write_text(json.dumps(src_extra, indent=1) + "\n",
                              encoding="utf-8")
