@@ -1,5 +1,49 @@
 # GramTrans — Session Handoff
 
+## Session log — 2026-08-28 (038: crash-residue spurt — T123 landed)
+
+A 2026-08-28 16:58 crash killed a session right after its validating run
+succeeded (`run038_t124_recensus.py --tag t123b ngoreme`, every artifact
+valid); this spurt did the housekeeping the crash prevented — commit, journal
+entry, tasks.md write-up — without redoing or second-guessing the run.
+
+**What landed.** `LexReference` (T123) has its `(Name, MappingType)` fallback
+plus `ILexRefTypeFactory` create leg, worktree commit `db41744`. Live
+re-census (`tests/integration/_snapshots/census-038-t123b-ngoreme.json`)
+reads `LexReference` **5 -> 5, MATCHED, `accounted_for: []`** on ngoreme —
+recovered by the transfer itself, the one sanctioned pair holding any
+relation at all (ejagham/mbugwe carry 0 on both sides). Same worktree,
+`1edb442` fixed a tag leak in `debug/run038_t124_recensus.py`: the owner-probe
+output path was frozen at import time rather than read from `RUN_TAG`, so a
+`--tag t123b` run still wrote into `probes/t124/` and overwrote the pinned
+T124 ngoreme comparand — the exact residue the crash left behind. A prior
+cycle this spurt (`7fbb9f9`, on `main`) refiled that residue: restored
+`probes/t124/owner-probe-GT038-T124-Ngoreme.json` to HEAD and moved the run's
+actual output to the new `probes/t123b/`, with a README recording the mix-up.
+See `specs/038-transfer-fidelity-gaps/journal/T123-the-type-list-that-canonical-guids-could-never-match.md`
+for the full account, including the governance finding that the tag guard
+covered two of the driver's three outputs, not three.
+
+**T123 ruling: STAYS UNCHECKED.** `LexReference` and the `LexEntryInflType`
+nesting clause (fixed in an earlier session, worktree `6fa753a`) are both
+closed now, but two of T123's own acceptance lines are still open and
+untouched by this spurt: ngoreme's single missing `MoStemMsa` under
+`LexEntry.MorphoSyntaxAnalyses` (-1), and `LexEntryType`'s target of -1/-1
+(T124 named both absent objects — ngoreme's `Perfective`, mbugwe's
+`Periphrastic Form` — but did not fix either). `contracts/cmpossibility-list-rulings.md`
+was also amended this session to rule `LexDb.References` IN SCOPE and
+transferred, closing an adjacent gap T123's own text had flagged as ruled by
+nothing.
+
+**Next pickup: T119.** Ngoreme carries the last two named residuals of the
+`Fs*` cascade fix: `MoStemMsa.MsFeatures` short **-1** of 782 (0/0/0 -> COMPLETE
+on ejagham and mbugwe, one object short on ngoreme), and `FsComplexValue.Value`
+short **-27** of 825 (0 -> 798). Both are named in T124's per-owning-field
+measurement as residue the schedule fix (`transfer._ensure_owner_feat_strucs`)
+did not reach; T119 itself flagged them as still open. No live FLEx write was
+performed this spurt; nothing under `src/` or `tests/` was committed to
+`main`.
+
 ## Session log — 2026-08-19e (038: transfer fidelity gaps — Phase 3 census gate, 27/90)
 
 Phase 3 (US2, "the run report tells the truth about what moved") is essentially built.
