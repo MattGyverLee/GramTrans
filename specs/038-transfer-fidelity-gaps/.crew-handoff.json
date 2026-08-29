@@ -1,11 +1,11 @@
 {
   "feature": "038-transfer-fidelity-gaps",
   "status": "in_progress",
-  "last_cycle": 2,
-  "spurts_completed": 1,
-  "tasks_done": [],
-  "next_checkpoint": "T119 Fs* cascade residuals closed or explicitly blocked",
-  "next_entry": "T119 (US6): close ngoreme's last two Fs* cascade residuals -- MoStemMsa.MsFeatures short -1 of 782, FsComplexValue.Value short -27 of 825 (0 -> 798); both named in T124's per-owning-field measurement as residue transfer._ensure_owner_feat_strucs did not reach. Work on worktree ../GramTrans-038-transfer-fidelity-gaps (branch 038-transfer-fidelity-gaps, HEAD 1edb442).",
+  "last_cycle": 4,
+  "spurts_completed": 2,
+  "tasks_done": ["T119", "T120", "T082"],
+  "next_checkpoint": "Phase 10 closed -- T123's two remaining acceptance lines fixed or explicitly ruled",
+  "next_entry": "T123 (US6) is the LAST unchecked row in Phase 10; closing it unblocks T085. Two acceptance lines remain, neither touched by spurt 2: (a) ngoreme's single missing MoStemMsa under LexEntry.MorphoSyntaxAnalyses, difference -1 in census-038-t126-ngoreme.json with accounted_for [] -- T119's R1 ruling re-homed here and already proves the object is ABSENT, not hollow (owner bucket narrowed to LexEntry.MorphoSyntaxAnalyses 1951->1950; the other three MoStemMsa-owning fields flat at 1/1/1; LexEntry itself MATCHED 2017=2017; and the (none):1172 == 1172 identity rules out any hollowing), so the open question is why the entry's MSA is never CREATED; (b) LexEntryType -1/-1, whose two absent objects T124 already named -- ngoreme's Perfective and mbugwe's Periphrastic Form -- without fixing either. Code work on worktree ../GramTrans-038-transfer-fidelity-gaps (branch 038-transfer-fidelity-gaps, HEAD 5cf155c); rulings and tasks.md commit to main (HEAD 1e1a3c7).",
   "updated": "2026-08-28",
   "spurt_log": [
     {
@@ -17,44 +17,33 @@
       "commits_main": ["7fbb9f9", "4bdd683", "882e590"],
       "commits_worktree": ["db41744", "1edb442"],
       "ruling": "T123 STAYS UNCHECKED -- LexReference closed (5 -> 5 MATCHED, accounted_for: []) but MoStemMsa (-1) and LexEntryType (-1/-1) acceptance lines on the same row remain open"
+    },
+    {
+      "spurt": 2,
+      "name": "close-or-block-the-Fs-residue",
+      "cycles": 2,
+      "checkpoint": "T119's two residuals closed by a landed fix or blocked by a committed ruling with named evidence; carried-forward polish off the books",
+      "reached": true,
+      "commits_main": ["6bad425", "1e1a3c7"],
+      "commits_worktree": ["5cf155c"],
+      "ruling": "T119 and T120 BOTH FLIPPED TO [X] by ruling, not by code. T119 R1 (MoStemMsa.MsFeatures -1): NOT a T119 defect -- cascade enriched 781/781 owners that exist; the (none) bucket identity 1172 == 1172 source-to-destination proves zero hollowing, so the -1 is an object never CREATED. Re-homed to T123's existing open line, no new row, so the -1 is not rounded away. T119 R2 (FsComplexValue.Value -27 of 825): fully partitioned with zero slack -- 20 + 778 = 798 exact, 825 - 798 = 27 confined to R1's object plus T045's ReferenceForms shells. T120: (b) rule route by measurement (PhSegRuleRHS 18->21, 28->39 MATCHED); (a) shared pool by contracts/unreferenced-feature-constraint-ruling.md, which rules source-orphaned PhFeatureConstraints OUT OF SCOPE and WITHDRAWS the Phase-4b co-create decision (partition exact both directions: ngoreme 47/0/23, mbugwe 32/0/57). Verification: 13/13 quantitative claims PASS, plus append-only proof on rows 707/708 and byte-identity on T123's line 711. T082/038-NK-P3 also closed in cycle 3 (PhNCFeatures MATCHED 15/15, 41/41, 113/113; duplicate_extra_objects 0/0/0; verdict off DUPLICATE_IDENTITY to UNEXPLAINED_SHORTFALL, exit 1)."
     }
   ],
   "task_queue": [
-    {"id": "T119", "kind": "code", "state": "next"},
-    {"id": "T120(a)", "kind": "code", "state": "queued", "note": "emit the orphan-constraint ruling already committed in 19a1bd8"},
-    {"id": "T081", "kind": "gate", "state": "queued", "note": "RE-EMIT the t126 artifacts, do not fix -- kind-(ii) accounting lines proven correct in-memory but baked into no committed artifact"},
-    {"id": "T085", "kind": "merge", "state": "queued", "note": "merge 038 branch to main, remove worktree; gated on Phase 10"},
-    {"id": "T082", "kind": "docs", "state": "available_parallel", "note": "T086-style clause amendment, pure docs, no categories.py -- startable any time"}
+    {"id": "T123", "kind": "code", "state": "next", "note": "LAST unchecked Phase 10 row. (a) MoStemMsa -1 -- T119 R1 re-homed here, proven ABSENT not hollow, so chase the create path under LexEntry.MorphoSyntaxAnalyses; (b) LexEntryType -1/-1 -- ngoreme's Perfective, mbugwe's Periphrastic Form, both named by T124, neither fixed. Closing this closes Phase 10 and ungates T085."},
+    {"id": "T081", "kind": "gate", "state": "queued", "note": "RE-EMIT the t126 artifacts, do not re-fix -- kind-(ii) accounting lines proven correct in-memory but baked into no committed artifact, so the gate reads accounted_for: [] and cannot see them. NOW ALSO OWES the UNREFERENCED_IN_SOURCE reason token from T120's ruling (report_ref-exempt, NOT in CENSUS_NOT_EVALUATED_REASONS, max_claim capped 47/32): designed but appended to nothing -- grep confirms zero hits in src/, so it needs adding to contracts/fidelity-census.md 7.1, census-artifact.schema.json, and models.CENSUS_REASON_TOKENS. Blockers T125 named are otherwise resolved: T119, T120, T082/038-NK-P3 all closed; T123's residue is the remainder."},
+    {"id": "T085", "kind": "merge", "state": "queued", "note": "merge 038 branch to main, remove worktree; GATED ON PHASE 10, i.e. on T123 -- the only Phase 10 row still unchecked"}
   ],
-  "carried_forward": [
-    {
-      "kind": "cosmetic",
-      "where": "debug/run038_t124_recensus.py",
-      "detail": "tag leak closed (probe output DIRECTORY now derived from RUN_TAG at call time) but the T124-supplements file's BASENAME is still the literal t124-supplements-<source>.json under any tag. No functional leak."
-    },
-    {
-      "kind": "qc_p1",
-      "where": "src/gramtrans/Lib/categories.py:6566",
-      "detail": "_LEX_REF_TYPE_KEY_FIELDS = (\"Name\", \"MappingType\") is documented as the single source of the key's shape but is referenced nowhere; _lex_ref_type_natural_key hardcodes both reads. Wire the key functions through it or drop it.",
-      "state": "unaddressed"
-    },
-    {
-      "kind": "qc_p2",
-      "where": "src/gramtrans/Lib/categories.py (_resolve_target_lex_ref_type ambiguity branch, _create_target_lex_ref_type failure branch)",
-      "detail": "`dropped if dropped is not None else []` builds a throwaway list; harmless today (sole production caller always passes a real list) but a silent-drop trap for a future direct call.",
-      "state": "unaddressed"
-    },
-    {
-      "kind": "qc_p2",
-      "where": "src/gramtrans/Lib/categories.py reporting granularity",
-      "detail": "Undocumented by-design asymmetry: the 'ambiguous key' DroppedItemRecord dedups per TYPE (item_guid=\"\"), 'type not found' is per RELATION. Wants a one-line comment so nobody 'fixes' it into a regression.",
-      "state": "unaddressed"
-    }
+  "carried_forward": [],
+  "carried_forward_closed": [
+    {"spurt": 2, "commit": "5cf155c", "items": "All four spurt-1 items cleared: (1) P1 categories.py:6566 _LEX_REF_TYPE_KEY_FIELDS WIRED not deleted -- new _LEX_REF_TYPE_KEY_READERS (reader, is_invalid) map, key built by iterating the constant, per-field invalidity preserved exactly because MappingType == 0 (Synonyms) is a valid key half a falsy test would eat; (2) P2 silent-discard trap closed; (3) P2 dedup-asymmetry documented; (4) run038_t124_recensus.py supplements BASENAME now carries the tag. Tests flat: 521 passed, 2 pre-existing failures."}
   ],
   "process_notes": [
     "lex-doc has NO Bash/git -- pair any commit-bearing doc task with lex-archivist.",
     "lex-qc is unavailable as a subagent_type; QC was performed by lex-programmer under a read-only constraint.",
+    "ARTIFACT LOCATION TRAP (found cycle 4): census-038-t126-*.json and probes/t126/*.json do NOT exist on main -- they are committed only on the 038-transfer-fidelity-gaps worktree branch (efa57b5). That is the repo's spec-on-main / work-on-worktree split behaving correctly, but a verifier checking main alone will wrongly report them MISSING. Read with: git show 038-transfer-fidelity-gaps:<path>.",
     "Resolved false alarm, do not re-investigate: an editor reported _PROBE_OUT undefined at run038_t124_recensus.py:388-389 from a mid-edit capture. The file compiles; the only surviving match is the string literal \"GT038_PROBE_OUT\".",
-    ".specify/extensions/companion/commands/speckit.companion.resume.md is intentionally left dirty on main."
+    ".specify/extensions/companion/commands/speckit.companion.resume.md is intentionally left dirty on main.",
+    "T120's ruling is NOT a clearance on two points, deliberately recorded rather than closed: four flagged-not-reconciled contradictions in process-morphology-create-path.md, and a latent _collect_nc_constraints / PhIterationContext.MemberRA gap whose measured cost is 0 on this corpus TODAY."
   ]
 }

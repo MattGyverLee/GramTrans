@@ -1,5 +1,94 @@
 # GramTrans — Session Handoff
 
+## Session log — 2026-08-28b (038: Fs* residue spurt — T119 + T120 RULED, Phase 10 down to T123)
+
+Spurt 2 of the 038 crew loop. Checkpoint was "T119's two residuals are either
+closed by a landed fix, or explicitly blocked by a committed ruling with named
+evidence — and the spurt's carried-forward polish is off the books." **Reached,
+by ruling on both counts rather than by code.**
+
+**T119 — FLIPPED TO [X]** (main `1e1a3c7`). Its two named residuals were
+diagnosed and ruled, not patched:
+
+- *R1, `MoStemMsa.MsFeatures` −1 of 782.* **Not a T119 defect — a defect
+  relocated one layer upstream.** The cascade pass enriched 781 of 781 owners
+  that exist; the missing structure belongs to an `MoStemMsa` that was never
+  created. `census-038-t126-ngoreme.json` narrows the −1 to exactly one owner
+  bucket, `LexEntry.MorphoSyntaxAnalyses` (1951 → 1950), with the other three
+  `MoStemMsa`-owning fields flat at 1/1/1 and `LexEntry` itself MATCHED
+  2017 = 2017. The load-bearing fact is an identity, not a count: source
+  `MoStemMsa.feature_structure` reads `{"(none)": 1172, "MsFeaturesOA": 782}`
+  and the T126 destination reads `{"(none)": 1172, "MsFeaturesOA": 781}` — the
+  `(none)` bucket is **identical 1172 = 1172**, which is impossible if the
+  all-or-nothing deferral had hollowed even one present owner (a hollowed owner
+  moves INTO `(none)`, it does not vanish from the class count). R1 was
+  **re-homed to T123's existing open acceptance line**, not given a new row, so
+  the −1 is still owed by somebody and is not rounded away.
+- *R2, `FsComplexValue.Value` −27 of 825.* **Fully partitioned, zero slack**, by
+  an exact arithmetic identity across the T124 and T126 probes: 20 + 778 = 798
+  arrived, 825 − 798 = 27 missing, and all 27 are confined to R1's single
+  uncreated object plus T045's `ReferenceForms` shells. No unexplained residue.
+
+**T120 — FLIPPED TO [X]** (both branches closed). (b) the rule route by
+measurement already on the row (`PhSegRuleRHS` 18→21, 28→39, MATCHED); (a) the
+shared pool by `contracts/unreferenced-feature-constraint-ruling.md`, which
+rules source-orphaned `PhFeatureConstraint`s **OUT OF SCOPE and WITHDRAWS the
+Phase-4b co-create decision** — stronger than deferral, since creating target
+objects nothing in the source references is forbidden by standing rule. The
+partition is exact both directions: ngoreme 47 missing / 0 referenced / 23
+transferred-all-referenced; mbugwe 32 / 0 / 57. Not force-closed — the ruling's
+own two caveats are recorded on the row: four flagged-not-reconciled
+contradictions in `process-morphology-create-path.md`, and a latent
+`_collect_nc_constraints` / `PhIterationContext.MemberRA` gap whose measured
+cost is 0 today and which is explicitly **not** a clearance.
+
+**Verification gate: all-PASS.** Every quantitative claim in both rulings was
+re-read against the committed JSON (13 claims, all PASS), plus two structural
+checks: T123's line 711 is byte-identical before/after (`old[710]==new[710]`),
+and rows 707/708 are provably append-only (old row text is an exact string
+prefix of the new; +3288 and +3219 chars appended, zero altered or removed).
+
+**Carried-forward polish: OFF THE BOOKS** (worktree `5cf155c`, tests flat at
+521 passed / 2 pre-existing failures). The `categories.py:6566` P1 was **wired,
+not deleted** — a new `_LEX_REF_TYPE_KEY_READERS` (reader, is_invalid) map lets
+`_lex_ref_type_natural_key` iterate `_LEX_REF_TYPE_KEY_FIELDS` while preserving
+the per-field invalidity rule exactly, which matters because `MappingType == 0`
+(`Synonyms`) is a valid key half that a falsy test would have eaten. Both P2s
+and the `run038_t124_recensus.py` supplements basename also fixed.
+
+**T082 also closed this spurt (cycle 3, main `6bad425`).** `038-NK-P3` verified
+against the t126 snapshots: `PhNCFeatures` MATCHED 15/15, 41/41, 113/113;
+`duplicate_extra_objects` 0/0/0 on all three; verdict moves off
+`DUPLICATE_IDENTITY` to `UNEXPLAINED_SHORTFALL` / exit 1. That removes the
+duplicate-identity blocker T125 named against T081.
+
+**Next pickup: T123 — the last unchecked row in Phase 10.** Two acceptance lines
+remain, and closing them closes Phase 10 and unblocks T085's merge:
+(a) ngoreme's single missing `MoStemMsa` under `LexEntry.MorphoSyntaxAnalyses`
+(−1), now carrying R1's full upstream diagnosis — the question is why the entry's
+MSA is never created, not why it arrives hollow; (b) `LexEntryType` −1/−1, whose
+two absent objects T124 already named (ngoreme's `Perfective`, mbugwe's
+`Periphrastic Form`) without fixing either.
+
+**Then T081, which is now a RE-EMIT plus one append, not a re-fix.** Its
+kind-(ii) accounting lines are proven correct in memory but are baked into no
+committed artifact, so the gate — which reads the artifact and never recomputes
+a line — still sees `accounted_for: []`. T120's ruling adds one piece of owed
+infrastructure to that same job: the new `UNREFERENCED_IN_SOURCE` reason token
+(`report_ref`-exempt, NOT in `CENSUS_NOT_EVALUATED_REASONS`, `max_claim` capped
+at 47/32) is designed but appended to nothing — grep confirms zero hits in
+`src/`. It belongs to whoever next closes T081, not to T120.
+
+**Process finding worth keeping.** The `census-038-t126-*.json` and
+`probes/t126/*.json` artifacts do **not** exist on `main` — they live only on
+the `038-transfer-fidelity-gaps` worktree branch (`efa57b5`). That is the repo's
+spec-on-main / work-on-worktree split behaving correctly, but a verifier
+checking `main` alone will wrongly conclude they are missing. Read them with
+`git show 038-transfer-fidelity-gaps:<path>`.
+
+No live FLEx write was performed this spurt; nothing under `src/` or `tests/`
+was committed to `main`.
+
 ## Session log — 2026-08-28 (038: crash-residue spurt — T123 landed)
 
 A 2026-08-28 16:58 crash killed a session right after its validating run
