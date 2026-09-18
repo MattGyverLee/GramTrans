@@ -116,8 +116,8 @@
     "why_it_cannot_be_avoided": "Both T123 acceptance lines are count/identity assertions about a DESTINATION project. No source-side read can evaluate them -- four tried this spurt and none settled the -1, while one destination-side read named the object immediately.",
     "commands": [
       "cd D:\\Github\\_Projects\\_LEX\\GramTrans-038-transfer-fidelity-gaps",
-      "python debug/run038_t124_recensus.py --tag t123c ngoreme",
-      "python debug/run038_t124_recensus.py --tag t123c mbugwe"
+      "python debug/run038_t124_recensus.py ngoreme --tag t123d",
+      "python debug/run038_t124_recensus.py mbugwe --tag t123d"
     ],
     "what_the_commands_do": "run038_t124_recensus.py restores its pair's target from backups/'Target 2026-07-06 0218.fwbackup' via harness.restore.restore_target BEFORE each transfer (headless zip extraction, no FieldWorks GUI), then runs a full transfer and a census. Targets are per-pair and separate -- 'GT038 T124 Ngoreme' and 'GT038 T124 Mbugwe' -- so 'no reused Target between runs' holds by construction, twice over. Sources are read-only: 'Ngoreme FLEx' and 'Mbugwe LizzieHC practice'. The script refuses to write to anything in its _FORBIDDEN_TARGETS set.",
     "use_a_fresh_tag": "--tag t123c is deliberately NEW. Do NOT reuse t123b/t124/t126: the tag names the output artifact (tests/integration/_snapshots/census-038-<tag>-<pair>.json) and reusing one overwrites a pinned comparand. Do NOT pass --probe-only: it skips the restore and the transfer, which is the whole point.",
@@ -135,6 +135,7 @@
       ],
       "also_watch": "T119's identity must still balance: MoStemMsa feature_structure (none):1172 == 1172, and MsFeaturesOA 782 = 782 once the missing MSA (which carries a feature structure) arrives."
     },
-    "three_way_ambiguity_this_resolves_by_construction": "mbugwe's 'Periphrastic Form' arrived named '***' in the last run. Three live explanations: (1) residue from an earlier partial run against an unrestored Target, (2) destination writing-system provisioning (the '*???' finding's cause -- see the 038-WS-PROVISIONING row), (3) a genuine name-transfer loss. Restore-bounding EXCLUDES (1) by construction rather than by argument, which is why the restore is not optional ceremony. If '***' persists after a clean restore, (1) is dead and the WS read decides between (2) and (3)."
+    "three_way_ambiguity_this_resolves_by_construction": "mbugwe's 'Periphrastic Form' arrived named '***' in the last run. Three live explanations: (1) residue from an earlier partial run against an unrestored Target, (2) destination writing-system provisioning (the '*???' finding's cause -- see the 038-WS-PROVISIONING row), (3) a genuine name-transfer loss. Restore-bounding EXCLUDES (1) by construction rather than by argument, which is why the restore is not optional ceremony. If '***' persists after a clean restore, (1) is dead and the WS read decides between (2) and (3).",
+    "command_form_matters": "PAIR FIRST, THEN --tag. main() reads the pair from argv[1], so `--tag t123d ngoreme` puts the flag in the pair slot and the run exits 2 at the usage branch. Verified the hard way on the t123c run."
   }
 }
