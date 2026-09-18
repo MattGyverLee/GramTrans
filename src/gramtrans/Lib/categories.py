@@ -8287,10 +8287,26 @@ def _walk_lex_entry_closure(src_entry, context, tag, category, dropped=None):
                 if new_msa is not None and m_guid:
                     msa_by_src_guid[m_guid] = new_msa
             if new_msa is not None:
+                # cycle 11 (T123(a) half 2): this assignment is a no-op on
+                # the paths that already wire the sense internally
+                # (`_create_msa_with_guid`, `_create_via_wrapper_or_reuse`)
+                # but it is the ONLY wiring step for a cache hit -- a second
+                # sense on this entry referencing the SAME source MSA guid
+                # as an earlier sense, which skips `_create_msa_for_closure`
+                # entirely via `msa_by_src_guid`. It used to swallow
+                # `(AttributeError, TypeError)` silently; that is exactly
+                # the never-silent invariant this task exists to restore, so
+                # a failure here is now a reported drop, not a pass.
                 try:
                     new_sense.MorphoSyntaxAnalysisRA = new_msa
-                except (AttributeError, TypeError):
-                    pass
+                except Exception as exc:  # noqa: BLE001 -- never swallow
+                    kind = _dispatch_msa_subclass(_class_name_of(src_msa))
+                    _report_dropped_msa(
+                        dropped, src_entry, src_msa,
+                        kind or _class_name_of(src_msa),
+                        f"MSA was created/reused but the referring sense "
+                        f"could not be wired to it ({type(exc).__name__}: "
+                        f"{exc}) -- MSA not transferred")
         apply_residue(new_sense, ws, tag)
 
     # T123 HARDENING -- NOT T123(a)'s fix (T123(a) is a DIFFERENT, already
@@ -9852,7 +9868,7 @@ def _find_reusable_target_msa(new_entry, subclass, pos_fields):
 
 
 def _create_via_wrapper_or_reuse(create_fn, new_entry, subclass, pos_fields,
-                                 src_msa, dropped, src_entry):
+                                 src_msa, dropped, src_entry, new_sense=None):
     """Call a flexicon MSA-wrapper create function; turn a raised exception
     into REUSE-or-REPORT instead of an uncaught crash (T123(a)).
 
@@ -9878,27 +9894,55 @@ def _create_via_wrapper_or_reuse(create_fn, new_entry, subclass, pos_fields,
          entry that matches by subclass + POS fields is exactly what the
          wrapper's own refusal implies exists;
       2. only when nothing matches, report the drop and return None.
-    Either way this function itself never raises."""
+    Either way this function itself never raises.
+
+    T123(a) HALF 2 (cycle 11): the first attempt at this function returned
+    the create-fn's result, or the reused MSA, and left WIRING the referring
+    sense to `new_sense` entirely to the caller (`_create_msa_for_closure` /
+    `_walk_lex_entry_closure`'s own post-call `new_sense.MorphoSyntaxAnalysisRA
+    = new_msa`, itself wrapped in a swallowing `except (AttributeError,
+    TypeError): pass`). Measured live (`Ngoreme FLEx` -> `GT038 T124
+    Ngoreme`, restore-bounded re-census tag t123c): entry `omoona`'s SECOND
+    MSA (8617b725-...) arrived in the destination, matched by count, carried
+    its feature structure -- but the referring sense ('small child') still
+    read `MorphoSyntaxAnalysisRA = None`. Delta +1 project-wide, exactly that
+    sense. Wiring the sense HERE, unconditionally, on every surviving return
+    (the create_fn() success leg too, not only the reuse leg) removes the
+    dependency on that caller-side reassignment ever running or ever
+    succeeding, and reports -- rather than silently drops -- an MSA that
+    exists but could not be wired to its sense, which is no better to the
+    user than an MSA that was never created at all."""
+    src_g = _guid_str_from(src_msa)
     try:
-        return create_fn()
+        new_msa = create_fn()
     except Exception as exc:  # noqa: BLE001 -- wrapper internals, not ours
         import logging as _logging
-        src_g = _guid_str_from(src_msa)
         _logging.getLogger("gramtrans.Lib.categories").warning(
             "MSA %s (%s): the flexicon create wrapper raised (%s: %s); "
             "looking for an existing MSA on the entry to reuse before "
             "reporting this MSA as dropped.",
             src_g[:8], subclass, type(exc).__name__, exc,
         )
-        reused = _find_reusable_target_msa(new_entry, subclass, pos_fields)
-        if reused is not None:
-            return reused
-        _report_dropped_msa(
-            dropped, src_entry, src_msa, subclass,
-            f"{subclass} create wrapper raised {type(exc).__name__}: {exc} "
-            "-- the GUID-preserving path was also unavailable and no "
-            "matching MSA exists on the entry to reuse; MSA not transferred")
-        return None
+        new_msa = _find_reusable_target_msa(new_entry, subclass, pos_fields)
+        if new_msa is None:
+            _report_dropped_msa(
+                dropped, src_entry, src_msa, subclass,
+                f"{subclass} create wrapper raised {type(exc).__name__}: {exc} "
+                "-- the GUID-preserving path was also unavailable and no "
+                "matching MSA exists on the entry to reuse; MSA not transferred")
+            return None
+
+    if new_sense is not None:
+        try:
+            new_sense.MorphoSyntaxAnalysisRA = new_msa
+        except Exception as wire_exc:  # noqa: BLE001 -- never let this be silent
+            _report_dropped_msa(
+                dropped, src_entry, src_msa, subclass,
+                f"{subclass} MSA was created/reused but the referring sense "
+                f"could not be wired to it ({type(wire_exc).__name__}: "
+                f"{wire_exc}) -- MSA not transferred")
+            return None
+    return new_msa
 
 
 def _create_msa_for_closure(src_msa, new_sense, new_entry, context, tag,
@@ -10063,7 +10107,7 @@ def _create_msa_for_closure(src_msa, new_sense, new_entry, context, tag,
         if new_msa is None:
             new_msa = _create_via_wrapper_or_reuse(
                 lambda: target.MSA.CreateInflAff(new_sense, tgt_pos, slots=None),
-                new_entry, subclass, pos_fields, src_msa, dropped, src_entry)
+                new_entry, subclass, pos_fields, src_msa, dropped, src_entry, new_sense=new_sense)
     elif subclass == "MoStemMsa":
         # A stem MSA may legally carry NO part of speech (Category =
         # <Not Sure>), so an empty source POS is reproduced, not dropped.
@@ -10081,7 +10125,7 @@ def _create_msa_for_closure(src_msa, new_sense, new_entry, context, tag,
                 return None
             new_msa = _create_via_wrapper_or_reuse(
                 lambda: target.MSA.CreateStem(new_sense, tgt_pos),
-                new_entry, subclass, pos_fields, src_msa, dropped, src_entry)
+                new_entry, subclass, pos_fields, src_msa, dropped, src_entry, new_sense=new_sense)
         _wire_stratum(src_msa, new_msa, target)
     elif subclass == "MoDerivAffMsa":
         from_pos = _resolve_or_none("FromPartOfSpeechRA", "FromPartOfSpeechRA")
@@ -10094,7 +10138,7 @@ def _create_msa_for_closure(src_msa, new_sense, new_entry, context, tag,
         if new_msa is None:
             new_msa = _create_via_wrapper_or_reuse(
                 lambda: target.MSA.CreateDerivAff(new_sense, from_pos, to_pos),
-                new_entry, subclass, pos_fields, src_msa, dropped, src_entry)
+                new_entry, subclass, pos_fields, src_msa, dropped, src_entry, new_sense=new_sense)
     elif subclass == "MoUnclassifiedAffixMsa":
         # "Unclassified" affix: an unspecified category is the whole point of
         # the subclass, so a null POS is legal here for the same reason it is
@@ -10115,7 +10159,7 @@ def _create_msa_for_closure(src_msa, new_sense, new_entry, context, tag,
                 return None
             new_msa = _create_via_wrapper_or_reuse(
                 lambda: target.MSA.CreateUnclassifiedAffix(new_sense, tgt_pos),
-                new_entry, subclass, pos_fields, src_msa, dropped, src_entry)
+                new_entry, subclass, pos_fields, src_msa, dropped, src_entry, new_sense=new_sense)
 
     if new_msa is None:
         return None

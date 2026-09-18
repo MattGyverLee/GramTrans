@@ -213,7 +213,23 @@ def test_wrapper_raise_reuses_an_existing_match_instead_of_going_null(
     flexicon wrapper refusing a duplicate-content create). An MSA that
     already matches by subclass + POS already sits on the entry -- as if an
     earlier sense's create had already landed it. The fix must REUSE it
-    rather than report a drop or, worse, let the sense end up null."""
+    rather than report a drop or, worse, let the sense end up null.
+
+    cycle 11: this test used to assert `dropped == []` and `out is existing`
+    -- both true even before the sense-wiring fix, because the ORIGINAL bug
+    is that nothing wires `sense.MorphoSyntaxAnalysisRA` at all on the reuse
+    leg -- and then set `sense.MorphoSyntaxAnalysisRA = out` ITSELF, in the
+    test body, before asserting it was set. That line performs the very
+    wiring it claims to verify: it cannot fail regardless of what
+    `_create_msa_for_closure` actually did to `sense`, which is exactly how
+    a restore-bounded live re-census (tag t123c) found `omoona`'s 'small
+    child' sense still null under code this test called "passing" -- a fake
+    fidelity gate, not a duck-typed fake taking a different path (the
+    production call IS exercised here; only the assertion was inert). The
+    repaired version reads `sense.MorphoSyntaxAnalysisRA` WITHOUT touching
+    it first, so it fails against a `_create_via_wrapper_or_reuse` that
+    finds/returns the reused MSA but never wires the sense (commit
+    73552e4), and passes only once the helper does that wiring itself."""
     tgt_pos = SimpleNamespace(guid="c46c8242-8b3a-4021-9aed-2da8517438b5")
     monkeypatch.setattr(_cat_mod, "_resolve_target_pos",
                         lambda *a, **k: tgt_pos)
@@ -240,12 +256,59 @@ def test_wrapper_raise_reuses_an_existing_match_instead_of_going_null(
         "the create leg failed; the fix must REUSE the matching MSA already "
         "on the entry rather than report a drop or return None")
     assert dropped == [], "a successful reuse is not a loss"
-    # Mirrors `_walk_lex_entry_closure`'s own unconditional post-call wiring
-    # (`new_sense.MorphoSyntaxAnalysisRA = new_msa` whenever `new_msa` is not
-    # None) -- the caller-side half of the never-null guarantee.
-    sense.MorphoSyntaxAnalysisRA = out
-    assert sense.MorphoSyntaxAnalysisRA is not None
+    # NOT `sense.MorphoSyntaxAnalysisRA = out` -- read what production
+    # actually did to `sense`, do not perform the wiring in the test.
+    assert sense.MorphoSyntaxAnalysisRA is not None, (
+        "the referring sense must never be left null after a successful "
+        "reuse -- this is the invariant T123(a) half 2 exists to restore")
     assert sense.MorphoSyntaxAnalysisRA is existing
+
+
+def test_reuse_wiring_failure_is_reported_not_silently_dropped(monkeypatch):
+    """The new wiring step itself can fail (e.g. an LCM property setter
+    rejects the reused object); when it does, that must be a reported drop,
+    never a silent null sense with no accounting -- the same never-silent
+    invariant, exercised against the failure mode of the fix itself rather
+    than of the create leg."""
+    tgt_pos = SimpleNamespace(guid="c46c8242-8b3a-4021-9aed-2da8517438b5")
+    monkeypatch.setattr(_cat_mod, "_resolve_target_pos",
+                        lambda *a, **k: tgt_pos)
+
+    ctx, _t = _ctx_and_target(boobytrap_wrapper=True)
+    entry = _Entry("e2cd79ef-2ee5-4d56-ae54-9210060bcdae")
+    existing = SimpleNamespace(
+        guid="13b8f64f-0000-0000-0000-000000000001",
+        ClassName="MoStemMsa", PartOfSpeechRA=tgt_pos, StratumRA=None)
+    entry.MorphoSyntaxAnalysesOC.append(existing)
+
+    class _UnwirableSense:
+        """A sense whose MorphoSyntaxAnalysisRA setter always raises --
+        models an LCM-side wiring rejection."""
+
+        @property
+        def MorphoSyntaxAnalysisRA(self):
+            return None
+
+        @MorphoSyntaxAnalysisRA.setter
+        def MorphoSyntaxAnalysisRA(self, value):
+            raise ValueError("simulated LCM wiring rejection")
+
+    sense = _UnwirableSense()
+    src = SimpleNamespace(
+        guid="8617b725-efc1-4f6d-935c-c6c87081c7cb",
+        ClassName="MoStemMsa",
+        PartOfSpeechRA=SimpleNamespace(
+            guid="c46c8242-8b3a-4021-9aed-2da8517438b5"),
+        StratumRA=None)
+    dropped: list = []
+
+    out = _create(src, sense, entry, ctx, dropped)
+
+    assert out is None, (
+        "a wiring failure must not be reported as a success -- an MSA the "
+        "sense cannot reach is no better than one never created")
+    assert len(dropped) == 1, "the wiring failure must be reported, not swallowed"
+    assert "could not be wired" in dropped[0].reason
 
 
 def test_wrapper_raise_with_no_match_anywhere_reports_rather_than_crashes(
