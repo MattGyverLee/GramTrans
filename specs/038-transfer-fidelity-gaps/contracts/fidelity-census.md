@@ -335,10 +335,10 @@ unexplained_surplus   = max(0,  difference) - sum(accounted_for where direction 
 Rules:
 
 - **R-1.** A line is valid only if it resolves to real report content. Every reason
-  except `STARTER_CONTENT`, `ABSENT_BY_CONSTRUCTION`, `OUT_OF_SCOPE_CLASS`, and
-  `GOVERNED_BY_OTHER_FEATURE` MUST carry a `report_ref` whose `count_in_report >=
-  count`. A line claiming 13 against a report that names 2 is `CENSUS_ERROR`, not a
-  pass.
+  except `STARTER_CONTENT`, `ABSENT_BY_CONSTRUCTION`, `OUT_OF_SCOPE_CLASS`,
+  `GOVERNED_BY_OTHER_FEATURE`, and `UNREFERENCED_IN_SOURCE` MUST carry a
+  `report_ref` whose `count_in_report >= count`. A line claiming 13 against a
+  report that names 2 is `CENSUS_ERROR`, not a pass.
 - **R-2.** Over-accounting fails. `sum(accounted_for)` exceeding the difference in
   its direction is `CENSUS_ERROR`. The census must not be able to explain away more
   than actually happened.
@@ -374,6 +374,7 @@ human-readable table prints the label.
 | `OUT_OF_SCOPE_CLASS` | either | `CmAnthroItem`. Needs no `report_ref`. |
 | `ABSENT_BY_CONSTRUCTION` | either | Abstract LCM base with no factory (`MoForm`, `MoMorphSynAnalysis`). Needs no `report_ref`. |
 | `SOURCE_REFERENT_ABSENT` | shortfall | A referent the engine required is absent on the **source**, so the dependent object was not transferred. The source-side sibling of `DEPENDENCY_UNRESOLVED` (FR-017), which is destination-side; the two are not interchangeable. |
+| `UNREFERENCED_IN_SOURCE` | shortfall | A pooled object (e.g. `PhFeatureConstraint`) that exists intact on the source but that nothing on the source references. The standing rule forbids creating target objects nothing in the source references, so no transfer is owed and the shortfall is fully explained. Needs no `report_ref`: nothing was dropped, so there is correctly no `DroppedItemRecord` to point at. NOT a `not_evaluated_reason` -- the row stays `SHORTFALL` and the objects stay counted; only the explanation is added. `max_claim` is capped at the measured orphan population per pair (47 ngoreme / 32 mbugwe), never an open-ended claim. See `contracts/unreferenced-feature-constraint-ruling.md` (T120(a), 2026-08-28). |
 
 There is deliberately **no `UNEXPLAINED` token and no `OTHER` token.** Unexplained
 is the *absence* of an accounting line, so it cannot be laundered into one.
@@ -615,8 +616,9 @@ remaining 15 still fail the gate.
    starter_matched_to_source)` whenever `starter_subtraction_basis ==
    "baseline_matched"`.
 5. Every `accounted_for` line whose reason is not `STARTER_CONTENT`,
-   `ABSENT_BY_CONSTRUCTION`, `OUT_OF_SCOPE_CLASS`, or `GOVERNED_BY_OTHER_FEATURE`
-   carries a `report_ref` with `count_in_report >= count` (R-1).
+   `ABSENT_BY_CONSTRUCTION`, `OUT_OF_SCOPE_CLASS`, `GOVERNED_BY_OTHER_FEATURE`, or
+   `UNREFERENCED_IN_SOURCE` carries a `report_ref` with `count_in_report >= count`
+   (R-1).
 6. `sum(accounted_for)` per direction never exceeds the difference in that direction
    (R-2).
 7. `opened_read_only` is `true` for both projects, and each project's

@@ -553,7 +553,7 @@
         },
         "report_ref": {
           "$ref": "#/$defs/reportRef",
-          "$comment": "REQUIRED for every reason except STARTER_CONTENT, ABSENT_BY_CONSTRUCTION, OUT_OF_SCOPE_CLASS, and GOVERNED_BY_OTHER_FEATURE. SC-005 says 'accounted for by a LINE IN THE RUN REPORT', so a line with no resolvable report content is not accounting (R-1)."
+          "$comment": "REQUIRED for every reason except STARTER_CONTENT, ABSENT_BY_CONSTRUCTION, OUT_OF_SCOPE_CLASS, GOVERNED_BY_OTHER_FEATURE, and UNREFERENCED_IN_SOURCE. SC-005 says 'accounted for by a LINE IN THE RUN REPORT', so a line with no resolvable report content is not accounting (R-1)."
         },
         "detail": { "type": "string" }
       }
@@ -603,7 +603,8 @@
         "GOVERNED_BY_OTHER_FEATURE",
         "OUT_OF_SCOPE_CLASS",
         "ABSENT_BY_CONSTRUCTION",
-        "SOURCE_REFERENT_ABSENT"
+        "SOURCE_REFERENT_ABSENT",
+        "UNREFERENCED_IN_SOURCE"
       ],
       "$comment": "FR-013's closed vocabulary; each token's meaning is tabulated in fidelity-census.md 7.1. There is deliberately NO 'UNEXPLAINED' and NO 'OTHER' member: unexplained is the ABSENCE of an accounting line, so it cannot be laundered into one. A reason the census cannot classify is CENSUS_ERROR. Later schema versions may APPEND members; they may never remove or rename one."
     },
