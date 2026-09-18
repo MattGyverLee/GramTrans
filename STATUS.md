@@ -1,5 +1,73 @@
 # GramTrans — Session Handoff
 
+## Session log — 2026-09-18c (038: T129 closed; three read-only measurements; one of my own instruments was wrong)
+
+Spurt 5, cycle 12, resumed through `/speckit-companion-resume`. **T129 is closed on
+both halves.** Everything else in feature 038 is now blocked on one live
+restore-bounded re-census — see `specs/038-transfer-fidelity-gaps/.crew-handoff.json`.
+
+**T129(1) — the harness enforces its own pin.** `run038_t124_recensus.py` recorded
+`$.projects.source.fwdata_sha256_*` in every artifact it ever emitted and never read
+one back. It now reads the pin out of the **comparand artifact** and compares;
+on a mismatch the `vs T078` section is **refused**, with the counts *withheld* rather
+than printed beside a warning — a number printed next to a caveat still gets quoted
+without it, which is exactly how a `LexEntryType SHORTFALL -> MATCHED` reading escaped
+and had to be retracted. The docstring's "Every SOURCE is on its pin" is **struck**,
+T086 style. Deliberately no hand-kept digest table for the code to read: the artifact
+*is* the pin. 13 new tests assert against the **committed artifacts**, not fixtures
+they built — the deliberate opposite of last spurt's "test that SET the value it then
+asserted". Unit suite 3894 -> 3911.
+
+**T129(2) — and the check changed the answer.** T129 said of ngoreme "CHECK IT, do not
+assume it". Checked: **ngoreme is not unaffected.** `Ngoreme FLEx` moved
+`838b7635..` -> `d0ab2c66..` between t124 and t126 — *three weeks before* the mbugwe
+drift T128 spotted. **Seven** committed `vs T078` sections are void (five ngoreme, two
+mbugwe), including all 41 of their `fixed` entries. Ejagham is on its pin throughout
+and **keeps** its comparand — the control, without which a check that fired on all
+three could not be told from one that always fires. Ruling:
+`contracts/t078-comparand-retirement.md`.
+
+**T127 — CONFIRMED, and narrowed to a create-path multistring gap.** Two-sided:
+16 of 16 entry types carry a `Name` in the source, **15 of 16** in the destination.
+`Periphrastic Form` has `Name`/`Abbreviation` in the source and **neither field
+present** in the destination, while carrying this run's own `[GT-Tag]` stamp — so the
+transfer *created* it and never copied its multistrings. The other 15 are
+`IsProtected=True` canonical starter content already present by GUID, so their names
+were never this transfer's job. That predicts the defect is invisible on any project
+whose entry types are all canonical, which is why no earlier pair caught it. Census
+row is 16 -> 16 **MATCHED**.
+
+**T128 / new row T130 — every ad-hoc prohibition group arrives empty.** Of 37
+group-owned `MoMorphAdhocProhib` in the source, **zero** are group-owned in the
+destination: 33 were re-homed to `MoMorphData` and all four `MoAdhocProhibGr`
+transferred GUID-identically as **empty shells**. The census reads
+`MoAdhocProhibGr` 4 -> 4 MATCHED and calls the whole thing `-4`. Suspected mechanism
+(`categories.py:4696`): `Remove` on an LCM **owning** collection is a disposal, not a
+detach — and this is the only one of the codebase's three `Remove` sites that uses it
+as a *move*; the other two dispose deliberately, one with an explicit `.Delete()`.
+That predicts −4, 0 re-parented and 4 empty groups exactly, and the lost child is the
+**first** entry in each group's source `<Members>`. **Hypothesis, not measurement** —
+and the fix touches a write path suspected of destroying owned objects, so it waits
+for a human.
+
+**FOURTH instrument failure, and it was mine.** My first probe called `elem.clear()`
+on every `iterparse` end event, which empties children before their parent is read.
+It produced two confident, published, *false* conclusions — that `.fwdata` records
+ownership only on the child, and that T127's name was missing in the source too. Both
+are **struck in place** in `reviews/cycle12-t128-adhoc-group-reparenting.md` rather
+than edited away. What caught it was not the code: "all 16 entry types are nameless in
+both projects" is not a plausible state for a real FLEx project, and checking that
+implausibility against the raw XML exposed it. Values read from `rt` *attributes* were
+never affected, which is why the T128/T130 ownership finding survived intact.
+
+**Next session:** run the three commands in `.crew-handoff.json`'s `blocker` (tag
+`t131`). Expect the driver to **refuse** the vs-T078 section on ngoreme and mbugwe —
+that is T129 working, not a failure. T081's P5 needs those fresh artifacts before the
+already-landed `RULED_RESIDUE` emitter can show up in the gate at all; `CmPossibility`
+and `PhFeatureConstraint` still have no accounting route and the handoff's
+`next_work_not_yet_started` says precisely what each needs.
+
+
 ## Session log — 2026-09-18b (038: first authorized live re-census — one line passes, three instrument failures)
 
 Spurt 4, cycles 10-11. The user authorized the restore-bounded re-census (tag

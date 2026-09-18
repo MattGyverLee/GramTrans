@@ -1,15 +1,17 @@
 {
   "feature": "038-transfer-fidelity-gaps",
   "status": "needs_human",
-  "last_cycle": 11,
-  "spurts_completed": 4,
+  "last_cycle": 12,
+  "spurts_completed": 5,
   "tasks_done": [
+    "T082",
     "T119",
     "T120",
-    "T082"
+    "T123",
+    "T129"
   ],
-  "next_checkpoint": "T123 measured closed by the t123d re-census (referent half of (a), re-check of (b)), which also carries T128's destination-side MembersOC diff; then Phase 10 closes",
-  "next_entry": "BLOCKED ON A HUMAN DECISION -- see 'blocker'. T123(b) has PASSED two-sided on both pairs (within-run). T123(a)'s count half passed and its referent half failed and is now fixed on all four exit paths (worktree f60b361). One more restore-bounded re-census settles the row. Run blocker.commands PAIR FIRST, then check blocker.acceptance. If (a) passes, T123 flips to [x], Phase 10 closes, and the queue is T081 -> T085, with T127/T128/T129 as independent rows that do NOT gate the merge.",
+  "next_checkpoint": "A live restore-bounded re-census on all three pairs, which is the single gate on every remaining row: T130 (confirm the disposal mechanism), T127 (create-path multistring fix + verify), T081 (re-gate P5 on artifacts emitted by the current emitter), T128 (closes with T130). T085 follows.",
+  "next_entry": "BLOCKED ON A HUMAN -- see 'blocker'. Spurt 5 closed T129 on both halves and delivered three read-only measurements. NOTHING ELSE IN THIS FEATURE CAN PROGRESS WITHOUT A LIVE WRITE: T127's fix and T130's confirmation are both write-path work, and T081's P5 cannot move because the gate reads stored artifacts and the freshest ones predate the current emitter. Do NOT attempt T130's fix unattended: the suspected mechanism is an owning collection Remove that DISPOSES the object.",
   "updated": "2026-09-18",
   "spurt_log": [
     {
@@ -147,30 +149,33 @@
     "Resolved false alarm, do not re-investigate: an editor reported _PROBE_OUT undefined at run038_t124_recensus.py:388-389 from a mid-edit capture. The file compiles."
   ],
   "blocker": {
-    "what": "A restore-bounded live transfer into two THROWAWAY destinations. This is the only destructive step left in feature 038, and it is the user's call, not the crew's.",
-    "why_it_cannot_be_avoided": "Both T123 acceptance lines are count/identity assertions about a DESTINATION project. No source-side read can evaluate them -- four tried this spurt and none settled the -1, while one destination-side read named the object immediately.",
+    "what": "A live restore-bounded transfer + re-census on the three sanctioned pairs, into fresh throwaway destinations. It is the only destructive step left and it is the user's call.",
+    "why_it_cannot_be_avoided": "Three independent reasons, none of which a source-side read can settle. (1) T130's mechanism is a hypothesis about what an LCM owning-collection Remove does at runtime; only a run can confirm or refute it. (2) T127's fix is a create-path change whose acceptance is a destination reading Name present on all 16 entry types. (3) T081's P5 gate READS THE STORED ARTIFACT and never recomputes an accounting line, so the RULED_RESIDUE emitter that already landed (CmFile, CmFolder, PhCode) cannot show up until artifacts are re-emitted -- the same wall T109 hit.",
     "commands": [
       "cd D:\\Github\\_Projects\\_LEX\\GramTrans-038-transfer-fidelity-gaps",
-      "python debug/run038_t124_recensus.py ngoreme --tag t123d",
-      "python debug/run038_t124_recensus.py mbugwe --tag t123d"
+      "python debug/run038_t124_recensus.py ejagham --tag t131",
+      "python debug/run038_t124_recensus.py ngoreme --tag t131",
+      "python debug/run038_t124_recensus.py mbugwe --tag t131"
     ],
-    "what_the_commands_do": "run038_t124_recensus.py restores its pair's target from backups/'Target 2026-07-06 0218.fwbackup' via harness.restore.restore_target BEFORE each transfer (headless zip extraction, no FieldWorks GUI), then runs a full transfer and a census. Targets are per-pair and separate -- 'GT038 T124 Ngoreme' and 'GT038 T124 Mbugwe' -- so 'no reused Target between runs' holds by construction, twice over. Sources are read-only: 'Ngoreme FLEx' and 'Mbugwe LizzieHC practice'. The script refuses to write to anything in its _FORBIDDEN_TARGETS set.",
-    "use_a_fresh_tag": "--tag t123c is deliberately NEW. Do NOT reuse t123b/t124/t126: the tag names the output artifact (tests/integration/_snapshots/census-038-<tag>-<pair>.json) and reusing one overwrites a pinned comparand. Do NOT pass --probe-only: it skips the restore and the transfer, which is the whole point.",
-    "what_gets_destroyed": "The current contents of 'GT038 T124 Ngoreme' and 'GT038 T124 Mbugwe'. NOTE: the ngoreme destination is the forensic artifact behind cycle 8's diagnosis -- its .fwdata SHA-256 byte-matches the hash recorded in census-038-t123b-ngoreme.json. The evidence itself is committed (GUIDs, hashes, op ids in reviews/cycle8-mainsession-dest-guid-diff.md), but if the forensic copy should be preserved, copy the two .fwdata files aside BEFORE authorizing. No real language data is at risk -- both are throwaway destinations and no source project is opened for writing.",
+    "what_the_commands_do": "restore_target() restores each pair's throwaway from backups/'Target 2026-07-06 0218.fwbackup' BEFORE each transfer (headless, no FieldWorks GUI), then runs a full transfer and a census. Targets are per-pair ('GT038 T124 {Ejagham,Ngoreme,Mbugwe}') and the script refuses to write to anything in _FORBIDDEN_TARGETS. Sources are opened read-only.",
+    "use_a_fresh_tag": "--tag t131 is deliberately NEW. Do NOT reuse t123c/d/e, t124 or t126: the tag names the output artifact and reusing one overwrites a pinned comparand. Do NOT pass --probe-only: it skips the restore and the transfer.",
+    "new_this_spurt": "The driver now enforces its source pin (T129). Ngoreme and mbugwe are OFF their T078 pins, so it will REFUSE the vs-T078 section on both and print both hashes. That is correct and expected, not a failure of the run -- ejagham's section still prints. Within-run source -> destination results are unaffected on all three.",
+    "what_gets_destroyed": "The current contents of the three GT038 T124 throwaways. 'GT038 T124 Mbugwe' (0f46c9f5..25660360) is the forensic artifact behind this spurt's T127/T128/T130 measurements; the evidence itself is committed (GUIDs, hashes, probe + raw output under probes/t128/), but copy the .fwdata aside first if the live copy should be kept. No real language data is at risk.",
     "acceptance": {
-      "T123a_referent_half_THE_ONE_THAT_FAILED": [
-        "destination senses with a null MorphoSyntaxAnalysisRA == 13, equal to the source's 13 (it read 14 on t123c; the delta was entry 'omoona' sense 'small child')",
-        "MoStemMsa stays 1954 = 1954 with unexpected +0/-0 and MsFeatures 782 = 782 -- the count half must not regress while the referent half is fixed"
+      "T130_the_one_to_run_first": [
+        "It is READ-ONLY to decide: after the run, child-side ownerguid over MoMorphAdhocProhib must read 37 group-owned, not 0, and the four MoAdhocProhibGr <Members> must be non-empty",
+        "If the mechanism is confirmed, the fix is at categories.py:4696 and must NOT use Remove-then-Add on an owning collection"
       ],
-      "T123b_recheck": [
-        "LexEntryType 13/13 (ngoreme) and 12/12 (mbugwe) AND LexEntryInflType 3/3 and 4/4, CHANGED=0, absent=0, dest_only=0 -- read WITHIN-RUN source->destination, never off the mbugwe vs-T078 section"
+      "T127": [
+        "LexEntryType 'Periphrastic Form' (99e0cab9-f284-45fb-84a5-4cb2516d0bf4) arrives with Name en='Periphrastic Form' and Abbreviation en='per.'; 16 of 16 entry types carry a Name"
       ],
-      "ride_along_at_no_extra_risk": [
-        "T128: destination-side MembersOC GUID diff for mbugwe MoMorphAdhocProhib (query in reviews/cycle11-verification-adhoc-regression.md) -- the residual -4 is genuine, 39 -> 35",
-        "T129: record BOTH source fwdata hashes and compare them to the comparand's pins; ALSO confirm ngoreme's source is still on pin rather than assuming it"
+      "T081_P5": [
+        "Re-gate evaluate_phase(artifact, 5) on the FRESH artifacts. Expect CmFile/CmFolder/PhCode to drop off via the landed RULED_RESIDUE emitter; CmPossibility and PhFeatureConstraint will STILL fail -- neither has an accounting route yet (see next_work_not_yet_started)"
       ]
     },
-    "three_way_ambiguity_this_resolves_by_construction": "mbugwe's 'Periphrastic Form' arrived named '***' in the last run. Three live explanations: (1) residue from an earlier partial run against an unrestored Target, (2) destination writing-system provisioning (the '*???' finding's cause -- see the 038-WS-PROVISIONING row), (3) a genuine name-transfer loss. Restore-bounding EXCLUDES (1) by construction rather than by argument, which is why the restore is not optional ceremony. If '***' persists after a clean restore, (1) is dead and the WS read decides between (2) and (3).",
-    "command_form_matters": "PAIR FIRST, THEN --tag. main() reads the pair from argv[1], so `--tag t123d ngoreme` puts the flag in the pair slot and the run exits 2 at the usage branch. Verified the hard way on the t123c run."
+    "next_work_not_yet_started": {
+      "CmPossibility": "contracts/cmpossibility-list-rulings.md section 4 specifies it: port the owner probe's possibility_lists enrichment into Lib/census.py so the row gains a per-owning-list dimension, then emit section 2's per-list OUT_OF_SCOPE_CLASS lines. The driver ALREADY measures this (recensus summaries' t122_per_owning_list); the gap is that it never reaches the census artifact, which the gate is what reads. Needs a schema change (additionalProperties: false).",
+      "PhFeatureConstraint": "contracts/unreferenced-feature-constraint-ruling.md rules it out of scope and fidelity-census.md:377 already specifies the token UNREFERENCED_IN_SOURCE for it. That token is report_ref-exempt but is NOT in PHASE_5_ADMISSIBLE_REASONS, so it cannot go on the RULED_RESIDUE roster today -- the import-time lock refuses it. Admitting a token to P5 is gate-consequential and needs a ruling."
+    }
   }
 }
