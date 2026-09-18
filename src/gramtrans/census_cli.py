@@ -2022,6 +2022,120 @@ def accounted_for_ruled_residue(
         reason=token, count=count, direction="shortfall", detail=detail),)
 
 
+def _merge_owning_lists(object_class, source_lists, destination_lists) -> list:
+    """-> `[{list, source_count, destination_count}, ...]` for one class.
+
+    T081. The two readings are taken in separate opens (one per project), so
+    joining them is this function's whole job. The UNION of the labels is used,
+    not the source's keys: a list present only in the DESTINATION is a surplus
+    and must stay visible -- `LexDb.ExtendedNoteTypes` is +1 on two of three
+    pairs, and keying off the source alone would silently drop exactly the rows
+    that prove the dimension is not just a shortfall detector.
+    """
+    source_lists = (source_lists or {}).get(object_class) or {}
+    destination_lists = (destination_lists or {}).get(object_class) or {}
+    if not source_lists and not destination_lists:
+        return []
+    return [
+        {"list": label,
+         "source_count": int(source_lists.get(label, 0)),
+         "destination_count": int(destination_lists.get(label, 0))}
+        for label in sorted(set(source_lists) | set(destination_lists))
+    ]
+
+
+def accounted_for_owning_lists(
+        object_class, difference, owning_lists, existing=(),
+        notes=None) -> tuple:
+    """-> one `census.AccountedLine` per RULED owning list that lost objects.
+
+    T081, the per-list dimension. `census.owning_list_ruling` is the roster
+    lookup and the ONLY one; this is the arithmetic. A third sibling of
+    `accounted_for_governed_class` / `accounted_for_ruled_residue` rather than
+    a generalisation, for the reason the second gave: these read different
+    rosters, answer different questions, and folding them together would make
+    one function decide which of three unrelated derivations it was doing.
+
+    THE ONE STRUCTURAL DIFFERENCE from both siblings: this emits SEVERAL lines
+    against one row, one per ruled list, each carrying its own count. That is
+    the point. `AccountedLine` already supports it (a row may hold several
+    lines, each with its own `count`, `direction` and `detail`), and it is what
+    lets `CmPossibility` be accounted list by list instead of as a bucket --
+    which `cmpossibility-list-rulings.md` 5 requires, because a single line
+    would cover `MoMorphData.ProdRestrict` with the sentence written for
+    Scripture notes.
+
+    EACH LINE IS CAPPED TWICE, and both caps are R-2 ("the census must not
+    explain away more than actually happened"):
+
+    * By its OWN list's measured shortfall. A ruling about `LangProject.Status`
+      may claim the objects `LangProject.Status` lost and not one more, so a
+      regression in an unruled list can never be absorbed by a ruled one.
+    * By the ROW's remaining room, shared across the lines emitted here and
+      whatever the row already carries. Per-list shortfalls sum to at most the
+      row's gross shortfall, but the row's room is computed against `difference`
+      (starter-net), which can be SMALLER -- so the row cap can bind even when
+      every list is individually honest, and the remainder stays unexplained.
+
+    SURPLUS LISTS ARE NOT NETTED AGAINST SHORTFALL ONES. `ChartMarkers` is +30
+    on ngoreme and -10 on mbugwe; adding a surplus into this arithmetic would
+    let a list that GAINED objects pay for a list that lost them, which is the
+    same cancellation `build_totals` refuses to do at the artifact level.
+    """
+    if difference is None or difference >= 0:
+        return ()
+    if not owning_lists:
+        return ()
+    claimed = census.accounted_in_direction(existing, "shortfall")
+    room = -difference - claimed
+    if room <= 0:
+        return ()
+
+    rows = []
+    for item in owning_lists:
+        label = item.get("list")
+        short = int(item.get("source_count") or 0) - int(
+            item.get("destination_count") or 0)
+        if short <= 0:      # matched, or a surplus -- never netted
+            continue
+        entry = census.owning_list_ruling(object_class, label)
+        if entry is None:   # UNRULED: stays unexplained, deliberately
+            continue
+        rows.append((label, short, entry))
+
+    lines = []
+    for label, short, (token, ruling, why) in sorted(rows):
+        if room <= 0:
+            if notes is not None:
+                notes.append(
+                    object_class + " owning list " + label + " is ruled by "
+                    + ruling + " and lost " + str(short) + " object(s), but "
+                    "the row's shortfall is already fully claimed, so NO "
+                    + token + " line was emitted for it (R-2)"
+                )
+            continue
+        count = min(short, room)
+        detail = (
+            "owning list " + label + ", ruled by " + ruling + ": " + why
+            + ". Needs no report_ref -- invariant 5 exempts " + token
+            + ", because the ruling is a committed document, not a run"
+        )
+        if count < short:
+            if notes is not None:
+                notes.append(
+                    object_class + " owning list " + label + " lost "
+                    + str(short) + " object(s) and is ruled by " + ruling
+                    + ", but only " + str(count) + " of the row's shortfall "
+                    "remained unclaimed, so the " + token + " line claims "
+                    + str(count) + " and the rest stays UNEXPLAINED (R-2)"
+                )
+            detail = detail + " -- CLAIM CAPPED BY THE ROW'S ROOM, see notes"
+        lines.append(census.AccountedLine(
+            reason=token, count=count, direction="shortfall", detail=detail))
+        room -= count
+    return tuple(lines)
+
+
 # ---------------------------------------------------------------------------
 # T048d: THE IDENTITY AUDIT, WIRED
 #
@@ -2072,6 +2186,7 @@ def _row_for_entry(
     source_guids=None, destination_guids=None,
     source_unmeasurable=frozenset(), destination_unmeasurable=frozenset(),
     source_name: str = "", destination_name: str = "",
+    source_owning_lists=None, destination_owning_lists=None,
 ):
     """One `(ClassCensusRow, emitter kwargs)` pair for one class-list entry.
 
@@ -2410,6 +2525,22 @@ def _row_for_entry(
     # must get the room first.
     lines = lines + accounted_for_ruled_residue(
         entry.object_class, row.difference, lines, notes)
+
+    # ---- T081: the PER-OWNING-LIST dimension -------------------------------
+    # LAST of the four, because it is the finest-grained claim and must take
+    # the room only after every class-level one has had it. A ruled LIST and a
+    # ruled CLASS cannot both cover the same object -- `CmPossibility` is
+    # deliberately absent from `CENSUS_RULED_RESIDUE_CLASSES`
+    # (`cmpossibility-list-rulings.md` 5 refuses the entry by name) -- but this
+    # still reads `lines`, because a REPORTED drop on one of these classes is
+    # possible and evidenced claims get the room first.
+    per_list = _merge_owning_lists(
+        entry.object_class, source_owning_lists, destination_owning_lists)
+    if per_list:
+        kwargs["owning_lists"] = per_list
+        lines = lines + accounted_for_owning_lists(
+            entry.object_class, row.difference, per_list, lines, notes)
+
     if lines:
         kwargs["accounted_for"] = lines
 
@@ -2642,7 +2773,16 @@ def census_run(
                 source_unmeasurable=source_unmeasurable,
                 destination_unmeasurable=destination_unmeasurable,
                 source_name=source_reading.name,
-                destination_name=destination_reading.name)
+                destination_name=destination_reading.name,
+                # T081. Only on the unsplit path: the per-list dimension is
+                # keyed by LCM class, and the split rows are A1's two
+                # feature-system halves of `FsFeatStrucType`, which owns no
+                # possibility list. Handing a split row the whole class's
+                # lists would attach one measurement to two rows -- the same
+                # ambiguity A1 exists to forbid.
+                source_owning_lists=source_reading.owning_list_counts,
+                destination_owning_lists=(
+                    destination_reading.owning_list_counts))
             duplicate_report = duplicates.get(entry.object_class)
         else:
             row, kwargs = _row_for_entry(

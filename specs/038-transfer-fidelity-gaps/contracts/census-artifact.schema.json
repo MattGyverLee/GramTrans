@@ -405,7 +405,7 @@
         "starter_subtraction_basis": {
           "type": "string",
           "enum": ["baseline_matched", "baseline_gross", "no_baseline"],
-          "$comment": "baseline_matched: net = total - (baseline - matched); fully trustworthy. baseline_gross: net = total - baseline, used when no run report is available; caps the run verdict at CENSUS_ACCOUNTED. no_baseline: net = total; the run cannot pass."
+          "$comment": "baseline_matched: net = total - (baseline - matched); fully trustworthy. baseline_gross: net = total - baseline, used when no run report is available; caps the run verdict at CENSUS_ACCOUNTED -- EXCEPT on a row whose starter_baseline_count is an integer 0 from starter_baseline_source 'baseline_document', where gross and matched compute the identical number and the difference is exact rather than an upper bound, so the cap does not apply (fidelity-census.md 5.2, T110). An absent or null starter_baseline_count, or any other starter_baseline_source, stays capped: absent is not zero. no_baseline: net = total; the run cannot pass."
         },
         "starter_baseline_source": {
           "type": "string",
@@ -450,6 +450,20 @@
         },
         "match_basis": { "$ref": "#/$defs/matchBasis" },
         "duplicates": { "$ref": "#/$defs/duplicates" },
+        "owning_lists": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["list", "source_count", "destination_count"],
+            "properties": {
+              "list": { "type": "string", "minLength": 1 },
+              "source_count": { "type": "integer", "minimum": 0 },
+              "destination_count": { "type": "integer", "minimum": 0 }
+            }
+          },
+          "$comment": "T081. The PER-OWNING-LIST breakdown for the classes whose owning LIST, not whose class name, is the unit of work (CmPossibility, LexEntryType, LexEntryInflType). It is the EVIDENCE a per-list accounted_for line stands on: invariant R-1 rejects a line that outruns its evidence, so a per-list claim with no per-list measurement cannot be constructed at all. Keyed as OwningClass.Field with NO flid -- a flid in the key would break silently the day LCM renumbered a field, turning a ruled list into an unruled one, which fails in the EXCUSING direction. The counts are exact-class filtered and therefore sum to the row's own source_count / destination_count_total. The literal '(no owning list)' files an object whose owning list could not be resolved; it is still counted and can never acquire a per-list line. Omitted entirely on a row with no such dimension."
+        },
         "notes": { "type": "array", "items": { "type": "string" } }
       }
     },
@@ -553,7 +567,7 @@
         },
         "report_ref": {
           "$ref": "#/$defs/reportRef",
-          "$comment": "REQUIRED for every reason except STARTER_CONTENT, ABSENT_BY_CONSTRUCTION, OUT_OF_SCOPE_CLASS, and GOVERNED_BY_OTHER_FEATURE. SC-005 says 'accounted for by a LINE IN THE RUN REPORT', so a line with no resolvable report content is not accounting (R-1)."
+          "$comment": "REQUIRED for every reason except STARTER_CONTENT, ABSENT_BY_CONSTRUCTION, OUT_OF_SCOPE_CLASS, GOVERNED_BY_OTHER_FEATURE, and UNREFERENCED_IN_SOURCE. SC-005 says 'accounted for by a LINE IN THE RUN REPORT', so a line with no resolvable report content is not accounting (R-1)."
         },
         "detail": { "type": "string" }
       }
@@ -603,7 +617,8 @@
         "GOVERNED_BY_OTHER_FEATURE",
         "OUT_OF_SCOPE_CLASS",
         "ABSENT_BY_CONSTRUCTION",
-        "SOURCE_REFERENT_ABSENT"
+        "SOURCE_REFERENT_ABSENT",
+        "UNREFERENCED_IN_SOURCE"
       ],
       "$comment": "FR-013's closed vocabulary; each token's meaning is tabulated in fidelity-census.md 7.1. There is deliberately NO 'UNEXPLAINED' and NO 'OTHER' member: unexplained is the ABSENCE of an accounting line, so it cannot be laundered into one. A reason the census cannot classify is CENSUS_ERROR. Later schema versions may APPEND members; they may never remove or rename one."
     },

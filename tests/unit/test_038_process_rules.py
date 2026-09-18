@@ -1940,3 +1940,132 @@ def test_merging_preserves_order_and_does_not_lose_unkeyed_records():
     merged = _merge_process_rules((a, b), (c,))
 
     assert [r.source_guid for r in merged] == ["a", "b", "c"]
+
+
+# ============================================================================
+# T081 -- a NULL ContentRA and a DANGLING one are different facts
+#
+# `_resolve_process_graph` used to refuse an `MoCopyFromInput` step on
+# `not content_guid or content_guid not in input_by_guid`, collapsing two
+# unrelated situations into one skip:
+#
+#   * ContentRA is NULL in the source. LCM documents the property's empty
+#     state as "Null when reference is not set" and the property is writable,
+#     so this is a well-formed step that copies nothing. Reproducing it as a
+#     step that copies nothing is exact fidelity.
+#   * ContentRA is SET but names an object outside this rule's own input
+#     members. The new rule will not own that object, so the back-reference
+#     cannot be rebuilt. Still refused.
+#
+# The first refusal cost real content. A dropped rule takes everything it OWNS
+# with it: on `Ejagham W Mini` one such rule carried 5 `PhSequenceContext`
+# objects under `MoAffixProcess.Input` (39 -> 34) out of the destination, so
+# refusing to write a step that copies nothing lost 6 objects to save 0.
+# ============================================================================
+
+
+def _null_content_rule(rule_guid="24ed706a-7df2-4609-a37b-2bfa28853ccc"):
+    """The live `Ejagham W Mini` shape: one input member, one output step whose
+    `ContentRA` is absent. `_Member` sets only what it is passed, so omitting
+    `ContentRA` is how "the property is not set" is spelled here -- the same
+    thing `getattr(step, 'ContentRA', None)` sees on the real object."""
+    ctx_nc = _Member("PhSimpleContextNC", "ctx-nc-null-0001",
+                     FeatureStructureRA=_TargetObj(DEST_NC, "PhNCSegments"),
+                     PlusConstrRS=[], MinusConstrRS=[])
+    rule = _Rule(rule_guid,
+                 inputs=[ctx_nc],
+                 outputs=[_Member("MoCopyFromInput", "out-cpy-null-0002")])
+    return rule, (_TargetObj(DEST_NC, "PhNCSegments"),)
+
+
+def test_a_copy_step_with_no_content_is_reproduced_not_refused(
+    _stub_lcm, spy
+):
+    """The rule transfers, and its ContentRA stays unset on the far side."""
+    rule, destination = _null_content_rule()
+    entry = _Entry("aaaaaaaa-0000-0000-0000-0000000f0001", lexeme_form=rule)
+
+    new_entry, dropped, _ctx = _walk(entry, spy, destination)
+
+    assert dropped == []
+    new_rule = new_entry.LexemeFormOA
+    assert new_rule is not None
+    assert new_rule.ClassName == "MoAffixProcess"
+    assert [m.ClassName for m in new_rule.OutputOS] == ["MoCopyFromInput"]
+    # Reproduced as null, NOT wired to some arbitrary stand-in.
+    assert getattr(new_rule.OutputOS[0], "ContentRA", None) is None
+
+
+def test_the_members_a_null_content_rule_owns_arrive_with_it(_stub_lcm, spy):
+    """The reason the old refusal was expensive. The input member is owned by
+    the rule, so refusing the rule is what took it out of the destination."""
+    rule, destination = _null_content_rule()
+    entry = _Entry("aaaaaaaa-0000-0000-0000-0000000f0002", lexeme_form=rule)
+
+    new_entry, _dropped, _ctx = _walk(entry, spy, destination)
+
+    new_rule = new_entry.LexemeFormOA
+    assert [m.guid for m in new_rule.InputOS] == ["ctx-nc-null-0001"]
+    assert new_rule.InputOS[0].FeatureStructureRA.guid == DEST_NC
+
+
+def test_a_null_content_rule_is_recorded_as_reproduced(_stub_lcm, spy):
+    """It must read as a TRANSFER in the run report, not as an accounted drop
+    -- that is what takes the census row from SHORTFALL to MATCHED."""
+    rule, destination = _null_content_rule()
+    entry = _Entry("aaaaaaaa-0000-0000-0000-0000000f0003", lexeme_form=rule)
+
+    _new_entry, _dropped, ctx = _walk(entry, spy, destination)
+
+    records = _rule_records(ctx)
+    assert len(records) == 1
+    assert records[0].reproduced is True
+    assert records[0].not_reproducible_reason == ""
+    (step,) = records[0].output_steps
+    assert step.step_class == "MoCopyFromInput"
+    assert step.content == ""   # null round-trips as the empty content label
+
+
+def test_a_copy_step_naming_a_non_member_is_still_refused(_stub_lcm, spy):
+    """The other half of the old condition, deliberately unchanged. The step
+    points at a REAL object that this rule does not own, so the new rule has
+    nothing to point at and the back-reference cannot be rebuilt."""
+    outsider = _Member("PhSimpleContextNC", "ctx-not-mine-9999")
+    ctx_nc = _Member("PhSimpleContextNC", "ctx-nc-0001",
+                     FeatureStructureRA=_TargetObj(DEST_NC, "PhNCSegments"),
+                     PlusConstrRS=[], MinusConstrRS=[])
+    rule = _Rule("19bab2cf-0000-0000-0000-00000000dead",
+                 inputs=[ctx_nc],
+                 outputs=[_Member("MoCopyFromInput", "out-cpy-0004",
+                                  ContentRA=outsider)])
+    entry = _Entry("aaaaaaaa-0000-0000-0000-0000000f0004", lexeme_form=rule)
+
+    new_entry, dropped, ctx = _walk(
+        entry, spy, (_TargetObj(DEST_NC, "PhNCSegments"),))
+
+    assert new_entry.LexemeFormOA is None
+    assert len(dropped) == 1
+    assert "not one of this rule's own input members" in dropped[0].reason
+    assert "ctx-not-mine-9999" in dropped[0].reason
+    records = _rule_records(ctx)
+    assert records and records[0].reproduced is False
+
+
+def test_the_refusal_message_no_longer_says_no_ContentRA(_stub_lcm, spy):
+    """`(no ContentRA)` was the interpolation for the NULL case, and the null
+    case no longer reaches this message at all. The needle that reads it
+    (`census_cli.process_rule_reason_match`) is retained on purpose for the
+    committed historical reports that still carry the string, but nothing
+    emits it going forward -- so a NEW run that produced it would mean this
+    change had regressed."""
+    outsider = _Member("PhSimpleContextNC", "ctx-not-mine-9999")
+    rule = _Rule("19bab2cf-0000-0000-0000-00000000beef",
+                 inputs=[_Member("PhVariable", "ctx-var-0002")],
+                 outputs=[_Member("MoCopyFromInput", "out-cpy-0004",
+                                  ContentRA=outsider)])
+    entry = _Entry("aaaaaaaa-0000-0000-0000-0000000f0005", lexeme_form=rule)
+
+    _new_entry, dropped, _ctx = _walk(entry, spy)
+
+    assert len(dropped) == 1
+    assert "(no ContentRA)" not in dropped[0].reason

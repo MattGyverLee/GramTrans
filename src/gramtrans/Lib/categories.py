@@ -9269,14 +9269,37 @@ def _resolve_process_graph(src_rule, context, identity_remap, plan_time=False):
             content = getattr(
                 _cast_lcm(step, "IMoCopyFromInput"), "ContentRA", None)
             content_guid = _guid_str_from(content) if content is not None else ""
-            if not content_guid or content_guid not in input_by_guid:
+            # T081: A NULL `ContentRA` AND A DANGLING ONE ARE DIFFERENT FACTS,
+            # and this condition used to conflate them (`not content_guid or
+            # content_guid not in input_by_guid`), refusing the WHOLE rule for
+            # either.
+            #
+            # `IMoCopyFromInput.ContentRA` is an optional atomic reference --
+            # LCM documents its empty state as "Null when reference is not
+            # set" and the property is writable -- so a source step with no
+            # ContentRA is a well-formed step that copies nothing, not a
+            # broken one. Reproducing it as a step that copies nothing is
+            # EXACTLY faithful; refusing it made the destination differ from
+            # the source in order to keep the destination tidy, which is the
+            # opposite of what FR-023 asks for. Dropping the rule also loses
+            # every object the rule OWNS: on `Ejagham W Mini` one such rule
+            # took 5 `PhSequenceContext` objects owned by `MoAffixProcess.Input`
+            # down with it (39 -> 34), so the tidiness cost 6 objects to save 0.
+            #
+            # A ContentRA that IS set but points outside this rule's own input
+            # members is still refused, unchanged: that back-reference names an
+            # object the new rule will not own, so it cannot be rebuilt and a
+            # step pointing at another rule's member is not reproducible.
+            if content_guid and content_guid not in input_by_guid:
                 return None, (
                     "MoAffixProcess %s output step %d (MoCopyFromInput) "
                     "copies %s, which is not one of this rule's own input "
                     "members -- the intra-rule back-reference cannot be "
                     "rebuilt and the step would copy nothing (FR-023)"
-                    % (rule_guid, index, content_guid or "(no ContentRA)")
+                    % (rule_guid, index, content_guid)
                 )
+            # "" means the SOURCE's ContentRA is null; the build path leaves
+            # the destination's null to match.
             row["content_guid"] = content_guid
         else:  # MoInsertPhones
             terminals = _process_ref_seq(
@@ -9501,21 +9524,32 @@ def _create_process_graph(new_rule, script, target):
             )
         rule_ie.OutputOS.Add(obj)
         if row["class"] == "MoCopyFromInput":
-            content = new_by_src_guid.get(row["content_guid"])
-            if content is None:
-                return None, None, (
-                    "output step %d (MoCopyFromInput) lost its intra-rule "
-                    "back-reference between resolution and creation"
-                    % row["index"]
-                )
-            try:
-                _cast_lcm(obj, "IMoCopyFromInput").ContentRA = content
-            except Exception as exc:  # noqa: BLE001
-                return None, None, (
-                    "wiring output step %d (MoCopyFromInput) ContentRA "
-                    "failed: %s" % (row["index"], exc)
-                )
-            content_label = row["content_guid"]
+            # T081: an EMPTY `content_guid` means the source step's ContentRA
+            # was null, which the plan step now reproduces rather than refuses.
+            # Leaving the new step's ContentRA null is the faithful outcome, so
+            # there is nothing to look up and nothing to wire. Routing it
+            # through `new_by_src_guid.get("")` would miss, and the "lost its
+            # intra-rule back-reference" guard below would reject a rule that
+            # never had one -- reinstating the drop this change removes, one
+            # layer further down.
+            if not row["content_guid"]:
+                content_label = ""
+            else:
+                content = new_by_src_guid.get(row["content_guid"])
+                if content is None:
+                    return None, None, (
+                        "output step %d (MoCopyFromInput) lost its intra-rule "
+                        "back-reference between resolution and creation"
+                        % row["index"]
+                    )
+                try:
+                    _cast_lcm(obj, "IMoCopyFromInput").ContentRA = content
+                except Exception as exc:  # noqa: BLE001
+                    return None, None, (
+                        "wiring output step %d (MoCopyFromInput) ContentRA "
+                        "failed: %s" % (row["index"], exc)
+                    )
+                content_label = row["content_guid"]
         else:
             try:
                 seq = _cast_lcm(obj, "IMoInsertPhones").ContentRS

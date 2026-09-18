@@ -54,6 +54,7 @@ if __package__:
         CENSUS_FEATURE_SYSTEM_OWNERS,
         CENSUS_GOVERNED_BY_OTHER_FEATURE_CLASSES,
         CENSUS_NOT_EVALUATED_REASONS,
+        CENSUS_OWNING_LIST_RULINGS,
         CENSUS_REASON_TOKENS,
         CENSUS_REASONS_NOT_REQUIRING_REPORT_REF,
         CENSUS_ROW_VERDICT_CLASSES,
@@ -65,6 +66,7 @@ else:  # loaded via site.addsitedir("Lib")
         CENSUS_FEATURE_SYSTEM_OWNERS,
         CENSUS_GOVERNED_BY_OTHER_FEATURE_CLASSES,
         CENSUS_NOT_EVALUATED_REASONS,
+        CENSUS_OWNING_LIST_RULINGS,
         CENSUS_REASON_TOKENS,
         CENSUS_REASONS_NOT_REQUIRING_REPORT_REF,
         CENSUS_ROW_VERDICT_CLASSES,
@@ -136,6 +138,27 @@ def ruled_residue(object_class: str):
     T109's three locks applied to the second roster.
     """
     return RULED_RESIDUE_CLASSES.get(object_class)
+
+
+#: T081 -- `(class, owning_list) -> (reason_token, ruling, detail)`. The THIRD
+#: roster, and the first keyed by something finer than a class name. Read
+#: through `owning_list_ruling` below, for the same reason the other two have
+#: exactly one lookup each.
+OWNING_LIST_RULINGS: dict = CENSUS_OWNING_LIST_RULINGS
+
+
+def owning_list_ruling(object_class: str, owning_list: str):
+    """`(reason_token, ruling, detail)` if a committed ruling takes THIS LIST's
+    residue off the feature's hook, else None.
+
+    Reads the module global at call time, so a test can empty the roster and
+    prove the emitter is inert without it -- T109 lock 3, applied to the third
+    roster. A list with no entry is UNRULED and its shortfall stays
+    unexplained, which is the correct default: `MoMorphData.ProdRestrict` is
+    absent from the roster precisely so that losing a productivity restriction
+    keeps failing the gate.
+    """
+    return OWNING_LIST_RULINGS.get((object_class, owning_list))
 
 
 # ---------------------------------------------------------------------------
@@ -1394,6 +1417,11 @@ class ProjectCensusReading:
     #: `{row_key: count}` for the A1-split rows -- see `split_counts`. Empty
     #: unless `read_project` was given the class list.
     split_counts: Optional[dict] = None
+    #: T081. `{object_class: {owning_list_label: count}}` for the classes whose
+    #: OWNING LIST is the unit of work -- see `owning_list_counts`. None when
+    #: the dimension was not collected, which is distinct from an empty dict
+    #: (collected, and the project owns no such objects).
+    owning_list_counts: Optional[dict] = None
 
     @property
     def digest_unchanged(self) -> bool:
@@ -1480,6 +1508,10 @@ def read_project(
         per_owner = (
             split_counts(handle, class_list) if class_list is not None else None
         )
+        # T081: collected IN THIS SAME OPEN, for the same reason `split_counts`
+        # is -- one open means one digest window, and a second open to finish
+        # counting would widen the very window this function exists to close.
+        per_list = owning_list_counts(handle, class_names)
     except CensusFailure:
         raise
     except Exception as exc:  # noqa: BLE001 -- LCM raises many types
@@ -1514,6 +1546,7 @@ def read_project(
         data_model_version=model_version,
         declared_freshly_created=declared_freshly_created,
         split_counts=per_owner,
+        owning_list_counts=per_list,
     )
 
 
@@ -2453,6 +2486,138 @@ def count_by_feature_system(handle, object_class: str) -> dict:
     return counts
 
 
+# ---------------------------------------------------------------------------
+# T081 -- the PER-OWNING-LIST dimension
+#
+# WHY THE CLASS ROW IS NOT THE UNIT OF WORK FOR THESE THREE CLASSES.
+# `CmPossibility` is a bucket: one census row covers Scripture note categories,
+# discourse-chart furniture, text genres AND `MoMorphData.ProdRestrict`, which
+# is this feature's own grammatical content. `contracts/cmpossibility-list-
+# rulings.md` 5 refuses a class-keyed roster entry by name for exactly that
+# reason -- a single sentence retiring the row would cover the productivity
+# restrictions with the same words that cover Scripture notes, and the row
+# would go green while real grammar stayed missing. That is the T023b defect
+# ("the class name is not the unit of work") in a new place.
+#
+# So the ruling is per OWNING LIST, and a per-list accounting line needs a
+# per-list MEASUREMENT or R-1 rejects it at construction ("a line that outruns
+# its evidence is CENSUS_ERROR, not a pass"). This is that measurement.
+#
+# It reproduces `debug/run038_phase10_owner_probe.py`'s `possibility_lists`
+# enrichment, whose per-list deltas reconcile to `difference_raw` EXACTLY on
+# all three sanctioned pairs (-6 / -96 / -33). Two independent derivations
+# agreeing to the object is what makes this an attribution rather than a story.
+# ---------------------------------------------------------------------------
+
+#: Classes whose OWNING LIST, not whose class name, is the identifying fact.
+#: Mirrors the owner probe's `_LIST_MEMBERS`.
+OWNING_LIST_CLASSES: tuple = ("CmPossibility", "LexEntryType",
+                              "LexEntryInflType")
+
+#: How far up an ownership chain to walk before giving up. Items nest via
+#: `SubPossibilities`, so the owning list is not necessarily the direct owner.
+#: Bounded so an unexpected chain cannot hang a census.
+_OWNING_LIST_MAX_HOPS: int = 40
+
+#: What an object whose owning list cannot be resolved is filed under. It is a
+#: MEASUREMENT, not an error: such an object is still counted, still in the
+#: row's total, and simply cannot be attributed to a list -- so it can never
+#: acquire a per-list accounting line, which is the safe direction.
+OWNING_LIST_UNRESOLVED: str = "(no owning list)"
+
+
+def _owning_field_label(obj, mdc) -> Optional[str]:
+    """`OwningClass.Field` for one object, or None when it will not say.
+
+    The flid and the `[runtime=...]` suffix the owner probe carries are
+    deliberately DROPPED here. The probe is a diagnostic read by a person; this
+    label is a ROSTER KEY, and a key carrying a flid would break the moment LCM
+    renumbered a field, silently turning a ruled list into an unruled one --
+    which fails OPEN, in the excusing direction. `OwningClass.Field` is the
+    granularity `cmpossibility-list-rulings.md` 2 states its rulings at.
+    """
+    try:
+        import SIL.LCModel as lcm  # noqa: PLC0415
+
+        as_cmobject = lcm.ICmObject(obj)
+    except Exception:  # noqa: BLE001 -- not castable; caller files it unresolved
+        return None
+    flid = getattr(as_cmobject, "OwningFlid", None)
+    if not flid:
+        return None
+    try:
+        own_class = mdc.GetOwnClsName(flid)
+        field_name = mdc.GetFieldName(flid)
+    except Exception:  # noqa: BLE001 -- metadata will not resolve this flid
+        return None
+    if not own_class or not field_name:
+        return None
+    return str(own_class) + "." + str(field_name)
+
+
+def owning_list_label(obj, mdc) -> str:
+    """The `OwningClass.Field` of the `CmPossibilityList` `obj` lives in.
+
+    Walks owners upward because possibility items nest: a `CmPossibility` under
+    `SubPossibilities` is owned by another `CmPossibility`, not by the list, so
+    stopping at the direct owner would file whole sub-trees under the wrong key
+    (or under none).
+    """
+    current = obj
+    for _ in range(_OWNING_LIST_MAX_HOPS):
+        if current is None:
+            return OWNING_LIST_UNRESOLVED
+        if getattr(current, "ClassName", None) == "CmPossibilityList":
+            return _owning_field_label(current, mdc) or OWNING_LIST_UNRESOLVED
+        try:
+            import SIL.LCModel as lcm  # noqa: PLC0415
+
+            current = lcm.ICmObject(current).Owner
+        except Exception:  # noqa: BLE001 -- chain broken; still a measurement
+            return OWNING_LIST_UNRESOLVED
+    return OWNING_LIST_UNRESOLVED
+
+
+def count_by_owning_list(handle, object_class: str) -> dict:
+    """`{owning_list_label: count}` for one class, exact-class filtered.
+
+    Uses `objects_in_class`, so the exact-class discipline that keeps
+    `ICmPossibilityRepository`'s 3014-object subtree out of a 302-object row
+    applies here unchanged -- counting the subtree per list would attribute
+    every `PartOfSpeech` and `CmSemanticDomain` to a possibility list.
+
+    The per-list counts therefore SUM to the class row's own count, which is
+    what lets the emitter cap a per-list claim against the row's shortfall.
+    """
+    mdc = metadata_cache(handle)
+    if mdc is None or not all(hasattr(mdc, name) for name in
+                              ("GetOwnClsName", "GetFieldName")):
+        raise CensusError(
+            "cannot resolve owning lists for " + repr(object_class)
+            + ": LCM's metadata cache is unreachable or does not answer "
+            "GetOwnClsName/GetFieldName -- a per-list accounting line needs a "
+            "per-list measurement, and guessing the list would let a ruling "
+            "about one list retire another list's loss",
+            (object_class,),
+        )
+    counts: dict = {}
+    for obj in objects_in_class(handle, object_class):
+        label = owning_list_label(obj, mdc)
+        counts[label] = counts.get(label, 0) + 1
+    return counts
+
+
+def owning_list_counts(handle, class_names) -> dict:
+    """`{object_class: {owning_list_label: count}}` for the list-keyed classes.
+
+    Only the classes in `OWNING_LIST_CLASSES` that the caller actually asked
+    for are measured: the walk is one pass per object, so charging every census
+    for a dimension three classes use would be a real cost for no reading.
+    """
+    wanted = [name for name in OWNING_LIST_CLASSES if name in set(class_names)]
+    return {name: count_by_owning_list(handle, name) for name in wanted}
+
+
 # ===========================================================================
 # T019 -- the accounting arithmetic, and the artifact emitter
 #
@@ -2855,6 +3020,7 @@ def class_row_artifact(
     starter_baseline_source: Optional[str] = None,
     match_basis: Optional[MatchBasis] = None,
     duplicates: Optional[DuplicateReport] = None,
+    owning_lists=None,
     notes=(),
 ) -> dict:
     """-> one `$defs.classRow`, from a `models.ClassCensusRow` plus its entry.
@@ -2965,6 +3131,20 @@ def class_row_artifact(
         block["match_basis"] = match_basis.artifact()
     if duplicates is not None:
         block["duplicates"] = duplicates.artifact()
+    if owning_lists:
+        # T081: the EVIDENCE a per-list accounting line stands on. Emitted
+        # only when non-empty, because `$defs.classRow` is
+        # `additionalProperties: false` and an empty dimension is better
+        # absent than present-and-meaningless. Sorted by list name so two
+        # censuses of the same project produce byte-identical artifacts --
+        # the drift checks compare digests, and iteration order is not a
+        # measurement.
+        block["owning_lists"] = [
+            {"list": str(item["list"]),
+             "source_count": int(item.get("source_count") or 0),
+             "destination_count": int(item.get("destination_count") or 0)}
+            for item in sorted(owning_lists, key=lambda i: str(i["list"]))
+        ]
     if notes:
         block["notes"] = list(notes)
 

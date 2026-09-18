@@ -1554,6 +1554,101 @@ CENSUS_RULED_RESIDUE_CLASSES: dict = {
     ),
 }
 
+# ---------------------------------------------------------------------------
+# T081 -- the PER-OWNING-LIST roster.
+#
+# `(object_class, owning_list) -> (reason_token, ruling, detail)`.
+#
+# WHY THIS ROSTER IS NOT KEYED BY CLASS, and why that is the whole point.
+# `contracts/cmpossibility-list-rulings.md` 5 refuses a `CmPossibility` entry
+# in `CENSUS_RULED_RESIDUE_CLASSES` BY NAME: that roster is keyed by class, so
+# the entry would cover `MoMorphData.ProdRestrict` -- this feature's own
+# grammatical content -- with the same sentence that covers Scripture note
+# categories. The row would go green and the productivity restrictions would
+# still be missing, permanently accounted for as somebody else's work. "The
+# class name is not the unit of work" (T023b) is the rule; this key is what
+# obeying it looks like.
+#
+# THE TWO IN-SCOPE LISTS ARE DELIBERATELY ABSENT, and their absence is
+# load-bearing rather than an omission:
+#
+#   * `MoMorphData.ProdRestrict` (-1 ngoreme, -3 mbugwe) -- productivity
+#     restrictions are morphology and inside this feature's Assumptions,
+#     transferred by `categories._wire_prod_restrictions`. A shortfall here is
+#     a REAL defect and must read as one.
+#   * `LexDb.References` -- ruled IN SCOPE 2026-08-28 (section 2a); its members
+#     are exact class `LexRefType`, so it never appears in this row at all.
+#
+# "OUT OF SCOPE" is the census token `OUT_OF_SCOPE_CLASS` -- content this
+# feature's spec Assumptions do not claim -- and NOT `GOVERNED_BY_OTHER_FEATURE`,
+# which asserts a NAMED other feature owns the path. No feature in this repo's
+# queue claims Scripture note categories or chart markers, and inventing an
+# owner to make a gate go green is the failure the closed vocabulary exists to
+# prevent.
+#
+# EVERY KEY IS `OwningClass.Field` WITH NO FLID. A flid in the key would break
+# silently the day LCM renumbered a field, turning a ruled list into an unruled
+# one -- a failure in the EXCUSING direction, which is the one that must not be
+# possible. Note `DsDiscourseData`, which is the runtime class name; the
+# contract's prose says "DiscourseData" and means the same list.
+CENSUS_OWNING_LIST_RULINGS: dict = {
+    ("CmPossibility", "Scripture.NoteCategories"): (
+        "OUT_OF_SCOPE_CLASS",
+        "contracts/cmpossibility-list-rulings.md 2 (T122, 2026-08-28)",
+        "Scripture annotation categories. This feature's Assumptions do not "
+        "claim Scripture content. Measured -115 on ngoreme, the largest single "
+        "item in the row and the clearest non-grammatical one",
+    ),
+    ("CmPossibility", "LexDb.Languages"): (
+        "OUT_OF_SCOPE_CLASS",
+        "contracts/cmpossibility-list-rulings.md 2 (T122, 2026-08-28)",
+        "the lexicon's language list is bibliographic metadata about source "
+        "languages, not grammar. Measured -15 on mbugwe",
+    ),
+    ("CmPossibility", "LangProject.GenreList"): (
+        "OUT_OF_SCOPE_CLASS",
+        "contracts/cmpossibility-list-rulings.md 2 (T122, 2026-08-28)",
+        "text genres, which belong to the texts path the Assumptions already "
+        "exclude. Measured -6 / -3 / -5 -- the only list short on all three "
+        "pairs, which is why it is called out rather than lumped in",
+    ),
+    ("CmPossibility", "DsDiscourseData.ChartMarkers"): (
+        "OUT_OF_SCOPE_CLASS",
+        "contracts/cmpossibility-list-rulings.md 2 (T122, 2026-08-28)",
+        "discourse-chart furniture. Measured +30 on ngoreme and -10 on mbugwe "
+        "-- a SURPLUS on one pair and a shortfall on the other, which a "
+        "class-level ruling could not have expressed and a net figure would "
+        "have cancelled into silence. Only the shortfall half is ever claimed",
+    ),
+    ("CmPossibility", "LangProject.CheckLists"): (
+        "OUT_OF_SCOPE_CLASS",
+        "contracts/cmpossibility-list-rulings.md 2 (T122, 2026-08-28)",
+        "editorial checklists. Measured -5 on ngoreme",
+    ),
+    ("CmPossibility", "LexDb.DialectLabels"): (
+        "OUT_OF_SCOPE_CLASS",
+        "contracts/cmpossibility-list-rulings.md 2 (T122, 2026-08-28)",
+        "dialect labels are lexicographic metadata. Measured -2 on ngoreme",
+    ),
+    ("CmPossibility", "LangProject.Status"): (
+        "OUT_OF_SCOPE_CLASS",
+        "contracts/cmpossibility-list-rulings.md 2 (T122, 2026-08-28)",
+        "editorial workflow status. Measured -1 on ngoreme",
+    ),
+    ("CmPossibility", "DsDiscourseData.ConstChartTempl"): (
+        "OUT_OF_SCOPE_CLASS",
+        "contracts/cmpossibility-list-rulings.md 2 (T122, 2026-08-28)",
+        "constituent-chart templates. Measured -1 on mbugwe",
+    ),
+    ("CmPossibility", "LexDb.ExtendedNoteTypes"): (
+        "OUT_OF_SCOPE_CLASS",
+        "contracts/cmpossibility-list-rulings.md 2 (T122, 2026-08-28)",
+        "extended note types. Measured +1 on ngoreme and +1 on mbugwe -- a "
+        "surplus on both pairs that hold it, so this entry claims nothing "
+        "today and exists so the list is RULED rather than merely unobserved",
+    ),
+}
+
 #: Amendment A1's two owning feature systems -- `$defs.classRow`'s
 #: `owning_feature_system` enum, in schema order. These spellings are the
 #: CONTRACT ones (fidelity-census.md:650-673) and are emitted VERBATIM, so a
