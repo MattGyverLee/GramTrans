@@ -1,17 +1,20 @@
 {
   "feature": "038-transfer-fidelity-gaps",
   "status": "needs_human",
-  "last_cycle": 12,
+  "last_cycle": 13,
   "spurts_completed": 5,
   "tasks_done": [
     "T082",
     "T119",
     "T120",
     "T123",
-    "T129"
+    "T127",
+    "T128",
+    "T129",
+    "T130"
   ],
-  "next_checkpoint": "A live restore-bounded re-census on all three pairs, which is the single gate on every remaining row: T130 (confirm the disposal mechanism), T127 (create-path multistring fix + verify), T081 (re-gate P5 on artifacts emitted by the current emitter), T128 (closes with T130). T085 follows.",
-  "next_entry": "BLOCKED ON A HUMAN -- see 'blocker'. Spurt 5 closed T129 on both halves and delivered three read-only measurements. NOTHING ELSE IN THIS FEATURE CAN PROGRESS WITHOUT A LIVE WRITE: T127's fix and T130's confirmation are both write-path work, and T081's P5 cannot move because the gate reads stored artifacts and the freshest ones predate the current emitter. Do NOT attempt T130's fix unattended: the suspected mechanism is an owning collection Remove that DISPOSES the object.",
+  "next_checkpoint": "T081 only, and every remaining failure is an ACCOUNTING gap rather than a transfer defect. Then T085.",
+  "next_entry": "Spurt 5 ran the authorized re-census (t131 all three pairs) and closed FOUR rows: T127, T128, T129, T130. Two of the four were defects the census could not see at all, and one was DESTRUCTIVE. Unchecked: T081, T085. P5 now fails 5/4/5 (ejagham t131, ngoreme t131, mbugwe t133) and NOT ONE failure is a transfer bug -- every one is a row whose ruling exists but has no accounting line, or a token deliberately withheld from P5. See blocker.rulings_needed: three of the five need a HUMAN RULING, not code.",
   "updated": "2026-09-18",
   "spurt_log": [
     {
@@ -149,33 +152,36 @@
     "Resolved false alarm, do not re-investigate: an editor reported _PROBE_OUT undefined at run038_t124_recensus.py:388-389 from a mid-edit capture. The file compiles."
   ],
   "blocker": {
-    "what": "A live restore-bounded transfer + re-census on the three sanctioned pairs, into fresh throwaway destinations. It is the only destructive step left and it is the user's call.",
-    "why_it_cannot_be_avoided": "Three independent reasons, none of which a source-side read can settle. (1) T130's mechanism is a hypothesis about what an LCM owning-collection Remove does at runtime; only a run can confirm or refute it. (2) T127's fix is a create-path change whose acceptance is a destination reading Name present on all 16 entry types. (3) T081's P5 gate READS THE STORED ARTIFACT and never recomputes an accounting line, so the RULED_RESIDUE emitter that already landed (CmFile, CmFolder, PhCode) cannot show up until artifacts are re-emitted -- the same wall T109 hit.",
-    "commands": [
-      "cd D:\\Github\\_Projects\\_LEX\\GramTrans-038-transfer-fidelity-gaps",
-      "python debug/run038_t124_recensus.py ejagham --tag t131",
-      "python debug/run038_t124_recensus.py ngoreme --tag t131",
-      "python debug/run038_t124_recensus.py mbugwe --tag t131"
-    ],
-    "what_the_commands_do": "restore_target() restores each pair's throwaway from backups/'Target 2026-07-06 0218.fwbackup' BEFORE each transfer (headless, no FieldWorks GUI), then runs a full transfer and a census. Targets are per-pair ('GT038 T124 {Ejagham,Ngoreme,Mbugwe}') and the script refuses to write to anything in _FORBIDDEN_TARGETS. Sources are opened read-only.",
-    "use_a_fresh_tag": "--tag t131 is deliberately NEW. Do NOT reuse t123c/d/e, t124 or t126: the tag names the output artifact and reusing one overwrites a pinned comparand. Do NOT pass --probe-only: it skips the restore and the transfer.",
-    "new_this_spurt": "The driver now enforces its source pin (T129). Ngoreme and mbugwe are OFF their T078 pins, so it will REFUSE the vs-T078 section on both and print both hashes. That is correct and expected, not a failure of the run -- ejagham's section still prints. Within-run source -> destination results are unaffected on all three.",
-    "what_gets_destroyed": "The current contents of the three GT038 T124 throwaways. 'GT038 T124 Mbugwe' (0f46c9f5..25660360) is the forensic artifact behind this spurt's T127/T128/T130 measurements; the evidence itself is committed (GUIDs, hashes, probe + raw output under probes/t128/), but copy the .fwdata aside first if the live copy should be kept. No real language data is at risk.",
-    "acceptance": {
-      "T130_the_one_to_run_first": [
-        "It is READ-ONLY to decide: after the run, child-side ownerguid over MoMorphAdhocProhib must read 37 group-owned, not 0, and the four MoAdhocProhibGr <Members> must be non-empty",
-        "If the mechanism is confirmed, the fix is at categories.py:4696 and must NOT use Remove-then-Add on an owning collection"
+    "what": "T081's P5 cannot go green without rulings this crew may not take alone. The transfer work is done; what is left is accounting.",
+    "p5_failures_now": {
+      "ejagham (t131)": [
+        "CmPossibility -308",
+        "FsClosedValue -355",
+        "FsFeatStruc -21",
+        "PhSequenceContext -5",
+        "MoAffixProcess (token not P5-admissible)"
       ],
-      "T127": [
-        "LexEntryType 'Periphrastic Form' (99e0cab9-f284-45fb-84a5-4cb2516d0bf4) arrives with Name en='Periphrastic Form' and Abbreviation en='per.'; 16 of 16 entry types carry a Name"
+      "ngoreme (t131)": [
+        "CmPossibility -397",
+        "FsClosedValue -463",
+        "FsFeatStruc -90",
+        "PhFeatureConstraint -47"
       ],
-      "T081_P5": [
-        "Re-gate evaluate_phase(artifact, 5) on the FRESH artifacts. Expect CmFile/CmFolder/PhCode to drop off via the landed RULED_RESIDUE emitter; CmPossibility and PhFeatureConstraint will STILL fail -- neither has an accounting route yet (see next_work_not_yet_started)"
+      "mbugwe (t133)": [
+        "CmPossibility -335",
+        "FsClosedValue -1002",
+        "FsFeatStruc -415",
+        "PhFeatureConstraint -34",
+        "PhSimpleContextNC -1"
       ]
     },
-    "next_work_not_yet_started": {
-      "CmPossibility": "contracts/cmpossibility-list-rulings.md section 4 specifies it: port the owner probe's possibility_lists enrichment into Lib/census.py so the row gains a per-owning-list dimension, then emit section 2's per-list OUT_OF_SCOPE_CLASS lines. The driver ALREADY measures this (recensus summaries' t122_per_owning_list); the gap is that it never reaches the census artifact, which the gate is what reads. Needs a schema change (additionalProperties: false).",
-      "PhFeatureConstraint": "contracts/unreferenced-feature-constraint-ruling.md rules it out of scope and fidelity-census.md:377 already specifies the token UNREFERENCED_IN_SOURCE for it. That token is report_ref-exempt but is NOT in PHASE_5_ADMISSIBLE_REASONS, so it cannot go on the RULED_RESIDUE roster today -- the import-time lock refuses it. Admitting a token to P5 is gate-consequential and needs a ruling."
-    }
+    "rulings_needed": {
+      "PhFeatureConstraint": "HUMAN RULING. contracts/unreferenced-feature-constraint-ruling.md already rules it out of scope, and fidelity-census.md:377 already names UNREFERENCED_IN_SOURCE as its token. That token is report_ref-exempt but is NOT in PHASE_5_ADMISSIBLE_REASONS, so the import-time lock refuses the roster entry. Admitting a token to P5 widens the gate and is a ruling on contract 9.1.",
+      "MoAffixProcess": "HUMAN RULING, and census.py:3327 already says so in as many words: SOURCE_REFERENT_ABSENT 'belongs to a human, not to this constant'. The row now CARRIES its accounting line; the only question is whether P5 admits the token.",
+      "CmPossibility": "CODE, and fully specified: cmpossibility-list-rulings.md section 4. Port the owner probe's possibility_lists enrichment into Lib/census.py so the row gains a per-owning-list dimension, then emit section 2's per-list OUT_OF_SCOPE_CLASS lines. The driver ALREADY measures this (recensus summaries, t122_per_owning_list); the gap is that it never reaches the census artifact, which is what the gate reads. Needs a schema change (additionalProperties: false). Largest single remaining step.",
+      "FsClosedValue / FsFeatStruc": "T119 was closed BY RULING with an exact partition, but nothing writes that partition into the artifact as an accounting line. Same instrument gap as CmPossibility, different dimension (per owning field -- the driver measures it as t119_per_owning_field).",
+      "PhSequenceContext / PhSimpleContextNC": "-5 on ejagham and -1 on mbugwe. T120's cascade closed these on ngoreme and mbugwe at t126; the small residue was never attributed. Measure before ruling."
+    },
+    "note_on_the_gate": "RULED_RESIDUE now works end to end -- PhCode, CmFile and CmFolder dropped off P5 on the fresh artifacts, which is the first time that emitter has been visible to the gate. The remaining rows are the ones with no roster entry, for the reasons above."
   }
 }

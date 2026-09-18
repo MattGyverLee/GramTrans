@@ -60,12 +60,48 @@ both projects" is not a plausible state for a real FLEx project, and checking th
 implausibility against the raw XML exposed it. Values read from `rt` *attributes* were
 never affected, which is why the T128/T130 ownership finding survived intact.
 
-**Next session:** run the three commands in `.crew-handoff.json`'s `blocker` (tag
-`t131`). Expect the driver to **refuse** the vs-T078 section on ngoreme and mbugwe —
-that is T129 working, not a failure. T081's P5 needs those fresh artifacts before the
-already-landed `RULED_RESIDUE` emitter can show up in the gate at all; `CmPossibility`
-and `PhFeatureConstraint` still have no accounting route and the handoff's
-`next_work_not_yet_started` says precisely what each needs.
+**The re-census was authorized and run (t131, all three pairs), and it closed four
+rows.** T129 behaved exactly as designed on its first live outing: ejagham printed its
+vs-T078 section (`source pin: MATCH`), ngoreme and mbugwe were **refused** with both
+hashes named.
+
+**T130 — a DESTRUCTIVE bug, named by a stack trace rather than argued.** The t131 run
+report carried four `leaf_execution_failures`, one per `MoAdhocProhibGr`:
+`LcmObjectDeletedException: "Object has been deleted."` at
+`LcmOwningCollection.Add → BasicValidityCheck`. **`Remove` on an LCM owning collection
+destroys the object** — `categories.py:4696` was the only site in the repo using it as
+a *move*, and `LcmObjectDeletedException` is neither `AttributeError` nor `TypeError`,
+so it escaped both handlers and aborted each group after killing its first child.
+Fixed (`Add` moves by itself; per-child isolation; a `DroppedItemRecord` when one
+fails). Measured 0 → **37** group-owned, `<Members>` 0,0,0,0 → **7,9,10,11**,
+`MoMorphAdhocProhib` 39→35 → **39→39**, `leaf_execution_failures` 4 → **0**. T128
+closed with it — the `-4` *was* the destroyed children.
+
+**T127 — blunter than either explanation the row considered.**
+`variant_types_execute_action` never copied a single property: create, own,
+`apply_carrier_b` (the `[GT-Tag]` line), return — while its own comment claimed
+"ApplySyncableProperties". Only *project-authored* types take that path; the other 15
+are `IsProtected=True` canonical content matched by GUID, which is why exactly one of
+sixteen was affected and why no earlier pair caught it. Swept into
+`complex_form_types_execute_action`, which had the identical shape. Measured 15/16 →
+**16/16** named.
+
+**Two of those four defects were invisible to a class count** (`MoAdhocProhibGr` read
+4→4 MATCHED with every group emptied; `LexEntryType` read 16→16 MATCHED with a
+nameless object). That is now four such defects on this feature's rows, and it is the
+concrete case for the census-contract gap T127 asked to raise with T081:
+**non-count assertions**.
+
+**Next session — T081 and T085 only, and no transfer work left in T081.** P5 fails
+5/4/5 and **not one failure is a transfer defect**: every one is a row whose ruling
+exists but has no accounting line, or a token deliberately withheld from P5.
+`RULED_RESIDUE` is now proven end-to-end (`PhCode`/`CmFile`/`CmFolder` dropped off the
+gate for the first time). Three of the five need a **human ruling**, not code —
+`PhFeatureConstraint` and `MoAffixProcess` both hinge on admitting a token to
+`PHASE_5_ADMISSIBLE_REASONS`, which `census.py:3327` already says "belongs to a human".
+`CmPossibility` is the largest *code* step and is fully specified in
+`contracts/cmpossibility-list-rulings.md` section 4. See the handoff's
+`blocker.rulings_needed`.
 
 
 ## Session log — 2026-09-18b (038: first authorized live re-census — one line passes, three instrument failures)
