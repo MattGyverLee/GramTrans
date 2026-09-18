@@ -1,0 +1,114 @@
+{
+ "method": "child-side ownerguid read; the owner-side MembersOC read that T128 specified is a false negative on .fwdata",
+ "source": {
+  "project": "Mbugwe LizzieHC practice",
+  "sha256": "3fb29a294434f85301e2f2f75d704489cdf4495325252cfb0f8797137cd5436d"
+ },
+ "destination": {
+  "project": "GT038 T124 Mbugwe",
+  "sha256": "0f46c9f56a58ca168d6d33e5f7830d40e165b4b15dbb047c6c33d60e25660360"
+ },
+ "counts": {
+  "source_children": 39,
+  "destination_children": 35,
+  "difference": -4,
+  "guid_identical_overlap": 35,
+  "destination_only": []
+ },
+ "owner_class_histogram": {
+  "source": {
+   "MoAdhocProhibGr": 37,
+   "MoMorphData": 2
+  },
+  "destination": {
+   "MoMorphData": 35
+  }
+ },
+ "group_membership_child_side": {
+  "source": {
+   "195fb089-cfab-4575-bdad-dbba690658a3": [
+    "322ca437-46eb-4802-bbb4-66edad12856f",
+    "3e23f217-f073-496d-960c-7abfa5448513",
+    "572afcd7-8193-4a2c-9d95-6c8823308e32",
+    "5c1cc6cc-fbfd-4562-98a4-e961eaf566b2",
+    "5f7b76d1-7c6f-460c-be11-6f5d39062468",
+    "783448dc-462c-4101-b808-33b51088757f",
+    "804feb69-5eef-4ec8-80f6-b3d657d39f9e",
+    "88dbd854-b4df-4631-b347-dc486916f755",
+    "8f714e3c-7e10-4ea4-b01e-c065798716a3",
+    "c6a50123-2f37-450e-86dd-7fb30d7cb6aa",
+    "fa79f2ac-87e3-4cca-81bb-9281584c9b3f"
+   ],
+   "253631c3-9789-4405-a638-83e039138068": [
+    "440b7774-7f1a-4f55-bbe9-88b7d700ed7d",
+    "5cac9067-b63b-4c04-bdfc-d658e1511a2e",
+    "63de72bf-e481-4087-8ee2-f1255486d3f0",
+    "7f6bbe0c-2d2d-43da-955c-492fffca22d0",
+    "964741d7-4bfd-462f-9240-fc37e624712b",
+    "f5b5a292-104c-442e-b453-5dafd01a358a",
+    "fa22f2c8-0090-45a5-acbd-a28c942dd5e1"
+   ],
+   "74c09f36-e9e6-4bd9-9e2d-a3819da25f3d": [
+    "068da9c3-992b-49ab-aeb2-5549dd292633",
+    "094cd443-02fa-41ca-bb81-276043d6bb19",
+    "3a6af1b7-2357-4400-bcae-22aca2df11fb",
+    "3bc53449-8241-4451-aeca-8c35610f638d",
+    "3c65c1b1-847e-4d04-9395-7cb92ee01924",
+    "8942c46c-9a86-4284-8fc3-27c573f51c07",
+    "8f341ba4-ac33-4b76-818f-4e0c44e32e5a",
+    "a14d4a22-bc68-4c5f-b463-4d988b8da05d",
+    "cb1582b6-45a3-464d-8953-67028d944f71",
+    "e599ca1b-65b4-4fbd-bb31-bcc2922765ab"
+   ],
+   "c2be0b70-c590-4ef2-81c1-c8298183e78f": [
+    "056d9746-06aa-4dfd-9558-c2ff666ecbd5",
+    "38dc959a-d1e7-4581-a0d6-fba327213832",
+    "722a4813-ac55-4c6b-a638-9d8638da8371",
+    "734e02e2-9175-4e94-b5a7-d4c08157b9df",
+    "7d02f8d3-e7ed-4b11-a396-970a508fafbe",
+    "9d612039-4e80-430b-894b-9112ceca79d8",
+    "ace45bc8-7bd3-451d-b2a4-41c251e94ac9",
+    "c41f45a8-0db5-4df9-85c1-28dd22f6a20d",
+    "e7ea321c-36d6-40eb-8b3d-44e92904acd1"
+   ]
+  },
+  "destination": {
+   "195fb089-cfab-4575-bdad-dbba690658a3": [],
+   "253631c3-9789-4405-a638-83e039138068": [],
+   "74c09f36-e9e6-4bd9-9e2d-a3819da25f3d": [],
+   "c2be0b70-c590-4ef2-81c1-c8298183e78f": []
+  }
+ },
+ "groups_present": {
+  "source": [
+   "195fb089-cfab-4575-bdad-dbba690658a3",
+   "253631c3-9789-4405-a638-83e039138068",
+   "74c09f36-e9e6-4bd9-9e2d-a3819da25f3d",
+   "c2be0b70-c590-4ef2-81c1-c8298183e78f"
+  ],
+  "destination": [
+   "195fb089-cfab-4575-bdad-dbba690658a3",
+   "253631c3-9789-4405-a638-83e039138068",
+   "74c09f36-e9e6-4bd9-9e2d-a3819da25f3d",
+   "c2be0b70-c590-4ef2-81c1-c8298183e78f"
+  ]
+ },
+ "missing_children": [
+  "056d9746-06aa-4dfd-9558-c2ff666ecbd5",
+  "068da9c3-992b-49ab-aeb2-5549dd292633",
+  "322ca437-46eb-4802-bbb4-66edad12856f",
+  "440b7774-7f1a-4f55-bbe9-88b7d700ed7d"
+ ],
+ "missing_are_group_owned": [
+  "056d9746-06aa-4dfd-9558-c2ff666ecbd5",
+  "068da9c3-992b-49ab-aeb2-5549dd292633",
+  "322ca437-46eb-4802-bbb4-66edad12856f",
+  "440b7774-7f1a-4f55-bbe9-88b7d700ed7d"
+ ],
+ "missing_rule_is_empty_in_source": {
+  "056d9746-06aa-4dfd-9558-c2ff666ecbd5": true,
+  "068da9c3-992b-49ab-aeb2-5549dd292633": true,
+  "322ca437-46eb-4802-bbb4-66edad12856f": true,
+  "440b7774-7f1a-4f55-bbe9-88b7d700ed7d": true
+ }
+}
