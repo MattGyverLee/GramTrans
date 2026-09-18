@@ -4683,6 +4683,40 @@ def adhoc_compound_rules_execute_action(action, context, ws_mapping, tag):
         # Child objects are NOT created here; they were enumerated as separate
         # items and will get their own execute_action calls — here we re-parent
         # children that already exist in the target by GUID into MembersOC.
+        # T130: DO NOT `Remove` FIRST. `Remove` on an LCM *owning* collection
+        # DESTROYS the object -- removing it from its owner IS deletion, not a
+        # detach -- and this was the only site in the repo using it as a move.
+        # The repo's two other `.Remove(` call sites dispose deliberately:
+        # `categories.py:9225` follows it with an explicit `ICmObject.Delete()`,
+        # and the phon-rule cleanup loop drops orphans on purpose.
+        #
+        # MEASURED, NOT REASONED. The t131 mbugwe run report records FOUR
+        # `leaf_execution_failures`, one per `MoAdhocProhibGr`, each:
+        #
+        #     LcmObjectDeletedException: "Object has been deleted."
+        #       at LcmSet`1.BasicValidityCheck(T obj)
+        #       at LcmOwningCollection`1.BasicValidityCheck(T obj)
+        #       at LcmSet`1.Add(T obj)
+        #       at LcmOwningCollection`1.Add(T obj)
+        #
+        # -- `Remove` destroyed the child, then `MembersOC.Add` was handed a dead
+        # object. An owning-collection `Add` performs the move by itself, so the
+        # `Remove` was never needed for correctness.
+        #
+        # THE EXCEPT CLAUSE IS WIDENED DELIBERATELY, and that is half the bug.
+        # `LcmObjectDeletedException` is neither `AttributeError` nor
+        # `TypeError`, so it escaped the inner handler AND the outer one (same
+        # narrow tuple) and aborted the whole group: the FIRST child of each
+        # group was destroyed and the REST were never reached. Measured
+        # consequence on mbugwe -- `MoMorphAdhocProhib` 39 -> 35, all 37
+        # group-owned children arriving 0 group-owned, all four groups empty
+        # shells, and a census reading `MoAdhocProhibGr` 4 -> 4 MATCHED. This is
+        # exactly the shape `_report_dropped_rhs` already records for the
+        # phonological-rule loop: the wrong exception class turns a per-item
+        # failure into a per-owner abort, and no record is written. A re-parent
+        # that fails must now cost its own child and no other, and must SAY SO
+        # (FR-010 / SC-010 never-silent).
+        dropped = getattr(context, "_dropped", None)
         try:
             src_members = list(getattr(src_rule, "MembersOC", None) or [])
             for src_child in src_members:
@@ -4692,11 +4726,26 @@ def adhoc_compound_rules_execute_action(action, context, ws_mapping, tag):
                     list(morph_data.AdhocCoProhibitionsOC), child_guid)
                 if tgt_child is not None:
                     try:
-                        # Remove from top-level OS, add to group's MembersOC
-                        morph_data.AdhocCoProhibitionsOC.Remove(tgt_child)
+                        # Owning-collection Add MOVES; never Remove() first.
                         new_rule.MembersOC.Add(tgt_child)
-                    except (AttributeError, TypeError):
-                        pass
+                    except Exception as exc:  # noqa: BLE001 -- see above
+                        if dropped is not None:
+                            _append_dropped_once(dropped, DroppedItemRecord(
+                                owner_kind="MoAdhocProhibGr",
+                                owner_guid=src_guid or "",
+                                owner_label="",
+                                field_name="MembersOC",
+                                item_name="",
+                                item_guid=child_guid or "",
+                                reason=(
+                                    "ad-hoc prohibition could not be "
+                                    "re-parented into its group ("
+                                    + type(exc).__name__ + ") -- the rule "
+                                    "exists in the target but hangs off "
+                                    "MoMorphData instead of its group, which "
+                                    "no class count can show"
+                                ),
+                            ))
         except (AttributeError, TypeError):
             pass
 
