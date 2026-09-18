@@ -3617,6 +3617,45 @@ def variant_types_plan_action(piece, context, ws_mapping):
     )
 
 
+#: The multistrings an entry-type / complex-form-type possibility carries.
+#:
+#: T127. `variant_types_execute_action` and `complex_form_types_execute_action`
+#: both created their object, owned it, and then called `apply_carrier_b` --
+#: which writes the `[GT-Tag]` residue line into `Description` and NOTHING
+#: ELSE. Neither ever copied a single property, while
+#: `variant_types_execute_action`'s own comment said "ApplySyncableProperties
+#: via flexicon's BaseOperations if available". No such call existed. The
+#: object arrived with the right GUID, the right owner, the right class, and no
+#: name.
+#:
+#: MEASURED on mbugwe (`GT038 T124 Mbugwe`, read-only .fwdata parse): 16 of 16
+#: entry types carry a `Name` in the source and 15 of 16 in the destination.
+#: The one that does not is `Periphrastic Form`
+#: (`99e0cab9-f284-45fb-84a5-4cb2516d0bf4`) -- source `Name` en="Periphrastic
+#: Form", `Abbreviation` en="per.", destination NEITHER FIELD PRESENT, just the
+#: `[GT-Tag]` Description this run stamped on it.
+#:
+#: WHY EXACTLY ONE OF SIXTEEN, and why no earlier pair caught it: the other 15
+#: are `IsProtected=True` canonical FLEx starter content, already in the
+#: destination by GUID, so they are MATCHED and never travel this create path.
+#: Only a project-authored type gets created -- so the defect is invisible on
+#: any project whose entry types are all canonical, and a class-count census
+#: can never see it at all (the row is 16 -> 16 MATCHED).
+#:
+#: `ReverseName` / `ReverseAbbr` are `ILexEntryType`-only and simply absent on a
+#: plain `ICmPossibility`; `_copy_multistrings_ws_mapped` skips a property the
+#: source object does not carry, so listing them here is safe for both classes.
+#:
+#: ORDER MATTERS AND IS DELIBERATE: copy first, THEN `apply_carrier_b`.
+#: Carrier B APPENDS to whatever `Description` already holds, so copying after
+#: the tag would put the source description below the residue line; copying
+#: before keeps the source text first and the audit line last, which is the
+#: shape every other carrier-B site produces.
+_ENTRY_TYPE_MULTISTRINGS = (
+    "Name", "Abbreviation", "Description", "ReverseName", "ReverseAbbr",
+)
+
+
 def variant_types_execute_action(action, context, ws_mapping, tag):
     """Create variant type with GUID preserved.
 
@@ -3722,6 +3761,10 @@ def variant_types_execute_action(action, context, ws_mapping, tag):
                 new_vt, ICmPossibilityList(target_list).PossibilitiesOS,
                 factory_label, src_guid,
             )
+            _copy_multistrings_ws_mapped(  # T127
+                src_obj, new_vt, _ENTRY_TYPE_MULTISTRINGS,
+                source=source, target=target, ws_map=ws_mapping,
+            )
             apply_carrier_b(new_vt, ws, tag)
             return new_vt
         _safe_add_to_owner(
@@ -3734,7 +3777,11 @@ def variant_types_execute_action(action, context, ws_mapping, tag):
             factory_label, src_guid,
         )
 
-    # ApplySyncableProperties via flexicon's BaseOperations if available.
+    # T127: the property copy this function's docstring always claimed.
+    _copy_multistrings_ws_mapped(
+        src_obj, new_vt, _ENTRY_TYPE_MULTISTRINGS,
+        source=source, target=target, ws_map=ws_mapping,
+    )
     apply_carrier_b(new_vt, ws, tag)
     return new_vt
 
@@ -3888,6 +3935,10 @@ def complex_form_types_execute_action(action, context, ws_mapping, tag):
                 new_cft, ICmPossibilityList(target_list).PossibilitiesOS,
                 factory_label, src_guid,
             )
+            _copy_multistrings_ws_mapped(  # T127 sweep
+                src_obj, new_cft, _ENTRY_TYPE_MULTISTRINGS,
+                source=source, target=target, ws_map=ws_mapping,
+            )
             apply_carrier_b(new_cft, ws, tag)
             return new_cft
         _safe_add_to_owner(
@@ -3900,6 +3951,14 @@ def complex_form_types_execute_action(action, context, ws_mapping, tag):
             factory_label, src_guid,
         )
 
+    # T127 sweep: complex form types had the identical gap -- same create,
+    # same carrier-B call, same absent property copy. Fixed together, because a
+    # fix scoped to the row that happened to be measured is the point-local
+    # answer to a shaped bug.
+    _copy_multistrings_ws_mapped(
+        src_obj, new_cft, _ENTRY_TYPE_MULTISTRINGS,
+        source=source, target=target, ws_map=ws_mapping,
+    )
     apply_carrier_b(new_cft, ws, tag)
     return new_cft
 
