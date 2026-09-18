@@ -774,7 +774,7 @@ class NaturalKeyRosterEntry:
 # the single, machine-readable statement of that mapping; T019's emitter must
 # be driven by them rather than by a third, hand-written set of names.
 #
-# WHERE THE VOCABULARIES LIVE. The closed 17-token reason vocabulary, the
+# WHERE THE VOCABULARIES LIVE. The closed 18-token reason vocabulary, the
 # census schema version, and the 4-member row verdict-class vocabulary are
 # declared HERE, in `models.py`, and `Lib/census.py` (T020) MUST RE-EXPORT
 # them (`REASON_TOKENS = CENSUS_REASON_TOKENS`, etc.) rather than re-declare
@@ -802,6 +802,14 @@ CENSUS_SCHEMA_VERSION: int = 1
 #: `census-artifact.schema.json` `$defs.reasonToken.enum`. `schema_version`
 #: was deliberately NOT bumped: the EVOLUTION RULE's bump clause governs a
 #: SHIPPED version and this format has not shipped.
+#:
+#: `UNREFERENCED_IN_SOURCE` was appended the same way (never reordered, never
+#: reworded) per `contracts/unreferenced-feature-constraint-ruling.md` (T120(a),
+#: 2026-08-28), section 3b. It names a `PhFeatureConstraint` (or a similarly
+#: pooled object) the SOURCE itself never references from any context: the
+#: standing rule forbids creating target objects nothing in the source
+#: references, so the shortfall is fully explained and no transfer is owed.
+#: `schema_version` stays 1 for the same EVOLUTION RULE reason as above.
 CENSUS_REASON_TOKENS: tuple = (
     "MATCHED_EXISTING_IDENTITY",
     "MATCHED_EXISTING_NATURAL_KEY",
@@ -820,15 +828,20 @@ CENSUS_REASON_TOKENS: tuple = (
     "OUT_OF_SCOPE_CLASS",
     "ABSENT_BY_CONSTRUCTION",
     "SOURCE_REFERENT_ABSENT",
+    "UNREFERENCED_IN_SOURCE",
 )
 
-#: The four tokens exempt from `accountedLine.report_ref` (fidelity-census.md
+#: The five tokens exempt from `accountedLine.report_ref` (fidelity-census.md
 #: R-1). Every other token names run-report content that must be resolvable.
+#: `UNREFERENCED_IN_SOURCE` joins this set per the ruling cited above: nothing
+#: is dropped, so there is correctly no `DroppedItemRecord` to point at, and
+#: R-1 would otherwise demand run-report content that must not exist.
 CENSUS_REASONS_NOT_REQUIRING_REPORT_REF: frozenset = frozenset({
     "STARTER_CONTENT",
     "ABSENT_BY_CONSTRUCTION",
     "OUT_OF_SCOPE_CLASS",
     "GOVERNED_BY_OTHER_FEATURE",
+    "UNREFERENCED_IN_SOURCE",
 })
 
 #: Reasons that make a row NOT_EVALUATED rather than measured (the schema's
@@ -918,6 +931,24 @@ CENSUS_ROW_VERDICT_CLASSES: tuple = (
 #   from `total_shortfall` and from the gate. That is laundering a red run,
 #   not reporting it. Nothing here touches `reasons`, `explained`,
 #   `gate_scope`, `verdict_class` or any tally.
+#
+#   RECONCILIATION (T120(a), 2026-08-28): `CENSUS_REASON_TOKENS` DID later
+#   grow an 18th member, `UNREFERENCED_IN_SOURCE`
+#   (`contracts/unreferenced-feature-constraint-ruling.md`). This does not
+#   contradict the rejection above, because the rejection's grounds turn on
+#   NOT_EVALUATED-set membership, not on the raw count. The token this
+#   paragraph rejected would have joined `CENSUS_NOT_EVALUATED_REASONS` --
+#   that is what made it launder a red run. `UNREFERENCED_IN_SOURCE` is
+#   DELIBERATELY NOT a member of `CENSUS_NOT_EVALUATED_REASONS` (see that
+#   frozenset's own definition below, which does not list it): a row it
+#   accounts for stays `SHORTFALL`, stays in `total_shortfall`, and stays in
+#   the gate's arithmetic. Only the *explanation* is added, via
+#   `accounted_for`, exactly as `report_only` (chosen below) added an
+#   explanation without moving `verdict_class`. The two decisions are the same
+#   shape: widen the vocabulary that explains a row, never the vocabulary that
+#   excuses one from being counted. Checked and does NOT bite; the token is
+#   safe to add. (This paragraph documents the reconciliation asked for at the
+#   time of the append; it is not itself a new rejection.)
 # * CHOSEN: a new member of the row-STATE vocabulary, `report_only`, distinct
 #   from `matched`. The state vocabulary is CONSOLE-ONLY -- it is the "state"
 #   column and the "Rows by state:" tally in `report._render_census_lines`,
@@ -1881,7 +1912,7 @@ class ClassCensusRow:
                 raise ValueError(
                     "ClassCensusRow reason " + repr(token) + " on class "
                     + repr(self.object_class) + " is outside the closed "
-                    "17-token vocabulary (CENSUS_REASON_TOKENS). There is no "
+                    "18-token vocabulary (CENSUS_REASON_TOKENS). There is no "
                     "UNEXPLAINED and no OTHER token: an unclassifiable "
                     "reason is a CENSUS_ERROR, not a new token"
                 )

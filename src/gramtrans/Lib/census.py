@@ -82,10 +82,10 @@ else:  # loaded via site.addsitedir("Lib")
 #: `census-artifact.schema.json` top-level `schema_version`.
 CENSUS_SCHEMA_VERSION: int = _MODELS_CENSUS_SCHEMA_VERSION
 
-#: FR-013's closed 17-token reason vocabulary, in schema enum order.
+#: FR-013's closed 18-token reason vocabulary, in schema enum order.
 REASON_TOKENS: tuple = CENSUS_REASON_TOKENS
 
-#: The four tokens exempt from `accountedLine.report_ref` (R-1).
+#: The five tokens exempt from `accountedLine.report_ref` (R-1).
 REASONS_NOT_REQUIRING_REPORT_REF: frozenset = (
     CENSUS_REASONS_NOT_REQUIRING_REPORT_REF
 )
@@ -2587,7 +2587,7 @@ class AccountedLine:
         if self.reason not in REASON_TOKENS:
             raise CensusError(
                 "accounting reason " + repr(self.reason) + " is outside the "
-                "closed 17-token vocabulary -- there is no UNEXPLAINED and no "
+                "closed 18-token vocabulary -- there is no UNEXPLAINED and no "
                 "OTHER token: unexplained is the ABSENCE of a line and cannot "
                 "be laundered into one"
             )
@@ -3346,7 +3346,7 @@ def reason_requires_report_ref(reason: str) -> bool:
     """
     if reason not in REASON_TOKENS:
         raise CensusError(
-            "reason " + repr(reason) + " is outside the closed 17-token "
+            "reason " + repr(reason) + " is outside the closed 18-token "
             "vocabulary -- there is no UNEXPLAINED and no OTHER token, and an "
             "unclassifiable reason is CENSUS_ERROR rather than an 18th token"
         )
@@ -3677,7 +3677,7 @@ def validate_artifact(artifact) -> tuple:
             if reason not in REASON_TOKENS:
                 failures.append(
                     "UNCLASSIFIABLE_REASON: " + label + " carries reason "
-                    + repr(reason) + ", outside the closed 17-token vocabulary "
+                    + repr(reason) + ", outside the closed 18-token vocabulary "
                     "-- unexplained is the ABSENCE of a line and cannot be "
                     "laundered into one"
                 )

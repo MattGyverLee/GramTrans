@@ -711,9 +711,15 @@ class TestT079WhatWasDeliberatelyNotChanged:
         """The EVOLUTION RULE's bump clause governs a SHIPPED version and this
         format has not shipped (the T096 precedent). Nothing T079 emits is a
         census-artifact property, so there was nothing to bump and no
-        vocabulary in the contract to extend."""
+        vocabulary in the contract to extend BY T079.
+
+        The vocabulary count pinned below is 18, not T079's own
+        contribution of 17: `unreferenced-feature-constraint-ruling.md`
+        (T120(a), 2026-08-28) later appended `UNREFERENCED_IN_SOURCE` via the
+        normal, unrelated append-only path this test does not concern
+        itself with. T079 still bumped nothing and extended no vocabulary."""
         assert models.CENSUS_SCHEMA_VERSION == 1
-        assert len(models.CENSUS_REASON_TOKENS) == 17
+        assert len(models.CENSUS_REASON_TOKENS) == 18
         assert models.CENSUS_ROW_VERDICT_CLASSES == (
             "MATCHED", "SHORTFALL", "SURPLUS", "NOT_EVALUATED")
 
@@ -730,7 +736,8 @@ class TestT079WhatWasDeliberatelyNotChanged:
         defs = schema["$defs"]
         assert defs["classRow"]["properties"]["verdict_class"]["enum"] == [
             "MATCHED", "SHORTFALL", "SURPLUS", "NOT_EVALUATED"]
-        assert len(defs["reasonToken"]["enum"]) == 17
+        # 18, not T079's own 17 -- see the docstring above.
+        assert len(defs["reasonToken"]["enum"]) == 18
         assert "report_only" not in json.dumps(schema)
 
     def test_no_row_reason_is_added_because_that_would_launder_the_loss(self):

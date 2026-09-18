@@ -164,7 +164,7 @@ class TestNullIsNotASmallerZero:
         direction it can actually be enforced. A caller that supplies a null
         count with `out_of_scope=False` and no reasons -- which is what an
         unresolved repository accessor looks like, since no member of the closed
-        17-token vocabulary means "the accessor did not resolve" -- still gets a
+        18-token vocabulary means "the accessor did not resolve" -- still gets a
         NOT_EVALUATED row. The clause is a CONSEQUENCE of the null difference,
         not a demand on the caller, and `_check_null_counts` re-asserts it so
         the two rules cannot drift apart."""

@@ -32,16 +32,16 @@ WHAT THIS PINS
 5. PASS iff the verdict is `CENSUS_CLEAN` or `CENSUS_ACCOUNTED`. There is
    deliberately no verdict meaning "loss reported, review advisable, exit
    success" (SC-010).
-6. The closed 17-token reason vocabulary: no `UNEXPLAINED`, no `OTHER`, and
-   exactly four tokens exempt from `report_ref`.
+6. The closed 18-token reason vocabulary: no `UNEXPLAINED`, no `OTHER`, and
+   exactly five tokens exempt from `report_ref`.
 
 THE SURFACE T015-T021 MUST CREATE (this file is the specification of it)
 -----------------------------------------------------------------------
 `gramtrans.Lib.census`:
 
 - `CENSUS_SCHEMA_VERSION: int`                          -- 1
-- `REASON_TOKENS: tuple[str, ...] | frozenset[str]`     -- the closed 17
-- `REASONS_NOT_REQUIRING_REPORT_REF: frozenset[str]`    -- the 4 exempt tokens
+- `REASON_TOKENS: tuple[str, ...] | frozenset[str]`     -- the closed 18
+- `REASONS_NOT_REQUIRING_REPORT_REF: frozenset[str]`    -- the 5 exempt tokens
 - `VERDICT_EXIT_CODES: Mapping[str, int]`               -- the 9 verdicts -> 0..7
 - `VERDICT_HUMAN_LABELS: Mapping[str, str]`             -- console labels
 - `VERDICT_SEVERITY_ORDER: tuple[str, ...]`             -- most severe FIRST
@@ -144,6 +144,10 @@ EXPECTED_REASON_TOKENS = (
     # `test_tokens_match_the_schema_enum_exactly` compares the two as LISTS,
     # so a reorder here is a failure even when the sets agree.
     "SOURCE_REFERENT_ABSENT",
+    # Appended per contracts/unreferenced-feature-constraint-ruling.md
+    # (T120(a), 2026-08-28). Same append-only discipline: schema order,
+    # never reordered, never reworded.
+    "UNREFERENCED_IN_SOURCE",
 )
 
 # contracts/fidelity-census.md R-1 / invariant 5, and the schema's accountedLine
@@ -153,6 +157,7 @@ EXPECTED_REASONS_WITHOUT_REPORT_REF = frozenset({
     "ABSENT_BY_CONSTRUCTION",
     "OUT_OF_SCOPE_CLASS",
     "GOVERNED_BY_OTHER_FEATURE",
+    "UNREFERENCED_IN_SOURCE",
 })
 
 # contracts/fidelity-census.md section 9, verdict / label / exit-code table.
@@ -1932,17 +1937,19 @@ class TestVerdictModel:
 
 
 # ===========================================================================
-# 5. The closed 17-token reason vocabulary
+# 5. The closed 18-token reason vocabulary
 # ===========================================================================
 
 class TestReasonVocabulary:
-    def test_exactly_seventeen_tokens(self):
-        """16 until contract commit b2cb356 appended `SOURCE_REFERENT_ABSENT`.
-        The count moves ONLY alongside the schema; it is pinned so an
-        accidental token cannot arrive without this line being touched."""
-        assert len(EXPECTED_REASON_TOKENS) == 17
+    def test_exactly_eighteen_tokens(self):
+        """16 until contract commit b2cb356 appended `SOURCE_REFERENT_ABSENT`
+        (17); 18 since `unreferenced-feature-constraint-ruling.md` (T120(a),
+        2026-08-28) appended `UNREFERENCED_IN_SOURCE`. The count moves ONLY
+        alongside the schema; it is pinned so an accidental token cannot
+        arrive without this line being touched."""
+        assert len(EXPECTED_REASON_TOKENS) == 18
         assert set(REASON_TOKENS) == set(EXPECTED_REASON_TOKENS)
-        assert len(set(REASON_TOKENS)) == 17
+        assert len(set(REASON_TOKENS)) == 18
 
     def test_tokens_match_the_schema_enum_exactly(self, census_schema):
         enum = census_schema["$defs"]["reasonToken"]["enum"]
@@ -1990,11 +1997,71 @@ class TestReasonVocabulary:
         for forbidden in ("UNEXPLAINED", "OTHER", "UNKNOWN", "UNCLASSIFIED", "MISC"):
             assert forbidden not in set(REASON_TOKENS)
 
-    def test_only_four_tokens_are_exempt_from_report_ref(self):
+    def test_only_five_tokens_are_exempt_from_report_ref(self):
         assert set(REASONS_NOT_REQUIRING_REPORT_REF) == EXPECTED_REASONS_WITHOUT_REPORT_REF
         for token in EXPECTED_REASON_TOKENS:
             expected = token not in EXPECTED_REASONS_WITHOUT_REPORT_REF
             assert reason_requires_report_ref(token) is expected, token
+
+
+class TestUnreferencedInSourceToken:
+    """T120(a)'s new token, pinned the way `SOURCE_REFERENT_ABSENT` was
+    (`TestReasonVocabulary` above), plus its class-specific properties from
+    `contracts/unreferenced-feature-constraint-ruling.md` section 3b: it is
+    report_ref-exempt, it is NOT a `CENSUS_NOT_EVALUATED_REASONS` member (the
+    reconciliation `Lib/models.py` records beside the rejected-18th-token
+    paragraph), and the ruling's measured per-pair caps are the pinned data a
+    future roster entry must reproduce.
+    """
+
+    def test_the_token_is_present_and_schema_valid(self, census_schema):
+        assert "UNREFERENCED_IN_SOURCE" in REASON_TOKENS
+        enum = census_schema["$defs"]["reasonToken"]["enum"]
+        assert "UNREFERENCED_IN_SOURCE" in enum
+        assert list(enum).index("UNREFERENCED_IN_SOURCE") == len(enum) - 1, (
+            "appended last, in schema order -- never reordered"
+        )
+
+    def test_the_token_is_report_ref_exempt(self):
+        """Section 3b: 'nothing is dropped, so there is correctly no
+        DroppedItemRecord to point at, and R-1 would otherwise demand
+        run-report content that must not exist.'"""
+        assert "UNREFERENCED_IN_SOURCE" in REASONS_NOT_REQUIRING_REPORT_REF
+        assert reason_requires_report_ref("UNREFERENCED_IN_SOURCE") is False
+
+    def test_the_token_does_not_flip_verdict_to_not_evaluated(self):
+        """Section 3b: 'NOT a member of CENSUS_NOT_EVALUATED_REASONS ...
+        Membership flips verdict_class to NOT_EVALUATED and deletes the
+        measured shortfall from total_shortfall and from the gate --
+        laundering, which T079 already rejected. The objects stay counted;
+        only the explanation is added.' Imported directly from `models`
+        (rather than through a `census` re-export named in this file's own
+        header) because that is the exact frozenset the ruling names."""
+        from gramtrans.Lib.census import NOT_EVALUATED_REASONS
+        from gramtrans.Lib.models import CENSUS_NOT_EVALUATED_REASONS
+
+        assert "UNREFERENCED_IN_SOURCE" not in CENSUS_NOT_EVALUATED_REASONS
+        assert "UNREFERENCED_IN_SOURCE" not in NOT_EVALUATED_REASONS
+
+    def test_the_ruling_max_claim_is_the_measured_orphan_population(self):
+        """The ruling's own numbers (section 2a): ngoreme 47 missing / 0
+        referenced / 23 transferred-all-referenced; mbugwe 32 / 0 / 57. Pinned
+        here as DATA -- not wired into `CENSUS_RULED_RESIDUE_CLASSES` this
+        cycle, since `PhFeatureConstraint` is still deliberately excluded from
+        that roster (`test_the_deliberate_exclusions_stay_excluded` below) --
+        so a later cycle's roster entry has a value to be checked against."""
+        ruling_partition = {
+            "ngoreme": {"missing": 47, "referenced": 0, "transferred": 23},
+            "mbugwe": {"missing": 32, "referenced": 0, "transferred": 57},
+        }
+        assert ruling_partition["ngoreme"]["missing"] == 47
+        assert ruling_partition["mbugwe"]["missing"] == 32
+        max_claim = max(v["missing"] for v in ruling_partition.values())
+        assert max_claim == 47, (
+            "the ruling's roster-entry sample uses 47 (the larger of the two "
+            "pairs) as max_claim, relying on the emitter's min(room, "
+            "max_claim) to cap mbugwe at its own smaller room of 32"
+        )
 
     def test_an_unknown_reason_token_is_refused_not_absorbed(self):
         """'A reason the census cannot classify is CENSUS_ERROR, never a
@@ -6078,14 +6145,21 @@ class TestT101TheCommittedCorpusIsUnmovedByInvariant12:
         assert advisory_nulls == 2 * len(by_artifact) == 34
 
 
-class TestT100TheVocabularyStaysClosedAtSeventeen:
+class TestT100TheVocabularyStaysClosedForThisCase:
     """T100: the `$comment` overreached, and the enum was right all along.
 
     `$defs.classRow.not_evaluated_reason` said "Required when verdict_class is
     NOT_EVALUATED" while being absent from `$defs.classRow.required` and
     unenforced by `validate_artifact`. The resolution was to narrow the prose,
-    NOT to mint an 18th token -- and the tests below are the evidence for that
-    choice rather than a restatement of it.
+    NOT to mint an 18th token for the unresolved-accessor case -- and the
+    tests below are the evidence for that choice rather than a restatement of
+    it. T100's OWN contribution to the vocabulary's size was exactly zero;
+    that a LATER and unrelated ruling (T120(a), `UNREFERENCED_IN_SOURCE`, via
+    the normal append-only path) took the count from 17 to 18 does not revisit
+    T100's decision, which is why `test_no_token_was_minted_for_this_case`
+    below still asserts `not_evaluated_reason` and `accountedLine.reason`
+    share one `$ref` -- the deciding fact -- rather than asserting a count
+    that this class does not own.
     """
 
     def test_an_eighteenth_token_would_be_admissible_as_an_accounting_line(
@@ -6100,12 +6174,17 @@ class TestT100TheVocabularyStaysClosedAtSeventeen:
         assert classrow["not_evaluated_reason"]["$ref"] == "#/$defs/reasonToken"
         assert line["reason"]["$ref"] == "#/$defs/reasonToken"
 
-    def test_the_vocabulary_did_not_grow(self, census_schema):
-        """No token was appended, so `schema_version` stays 1 and the
-        exact-match tripwire (`test_tokens_match_the_schema_enum_exactly`) is
-        untouched."""
-        assert len(census_schema["$defs"]["reasonToken"]["enum"]) == 17
-        assert len(REASON_TOKENS) == 17
+    def test_no_token_was_minted_for_this_case(self, census_schema):
+        """T100 itself appended nothing, so at the time of T100's own change
+        `schema_version` stayed 1 and the exact-match tripwire
+        (`test_tokens_match_the_schema_enum_exactly`) was untouched. The
+        vocabulary has since grown to 18 via two SEPARATE, later, normal
+        append-only decisions (`SOURCE_REFERENT_ABSENT`, then
+        `UNREFERENCED_IN_SOURCE`) -- neither one is the 18th-token-for-an-
+        unresolved-accessor this class's docstring refuses, which is why this
+        test now pins the CURRENT total rather than a stale 17."""
+        assert len(census_schema["$defs"]["reasonToken"]["enum"]) == 18
+        assert len(REASON_TOKENS) == 18
 
     def test_no_member_of_the_vocabulary_is_true_of_an_unresolved_accessor(
             self):

@@ -3620,12 +3620,16 @@ def variant_types_plan_action(piece, context, ws_mapping):
 def variant_types_execute_action(action, context, ws_mapping, tag):
     """Create variant type with GUID preserved.
 
-    Uses ILexEntryInflTypeFactory.Create(Guid, owner) -- the 2-arg
-    overload that ICmPossibilityFactory inherits. Top-level owner is the
-    LexDb's VariantEntryTypesOA possibility list; nested owners are
-    parent ILexEntryType objects.
+    FACTORY CHOICE IS PER-OBJECT, NOT PER-LIST (feature 038 T123 acceptance
+    line (b)): `VariantEntryTypesOA` legitimately mixes plain `LexEntryType`
+    items with `LexEntryInflType` items, so the factory is chosen by
+    `src_obj`'s own `ClassName` via `_entry_type_factory_for_source`, not
+    unconditionally. See that helper's docstring for the create-time
+    misclassification this replaces. Top-level owner is the LexDb's
+    VariantEntryTypesOA possibility list; nested owners are parent
+    ILexEntryType/ILexEntryInflType objects.
     """
-    from SIL.LCModel import ILexEntryInflTypeFactory, ICmObject, ICmPossibility, ICmPossibilityList
+    from SIL.LCModel import ICmObject, ICmPossibility, ICmPossibilityList
     from System import Guid as DotNetGuid
 
     if __package__:
@@ -3677,18 +3681,21 @@ def variant_types_execute_action(action, context, ws_mapping, tag):
         pass
 
     parsed_guid = DotNetGuid.Parse(src_guid)
-    # Interface-cast wrapper required for pythonnet overload resolution.
-    factory = ILexEntryInflTypeFactory(target.GetFactory(ILexEntryInflTypeFactory))
+    # T123 acceptance line (b): factory keyed to src_obj's OWN class, not to
+    # which possibility list it lives under. See
+    # `_entry_type_factory_for_source` for the misclassification this fixes.
+    factory, factory_label = _entry_type_factory_for_source(src_obj, target)
 
-    # ILexEntryInflTypeFactory inherits only the 1-arg Create(Guid) overload
-    # from the generic ILcmFactory<T> base (the 2-arg ICmPossibilityFactory
-    # overloads don't surface through pythonnet for this subclass). Use
-    # Create(Guid) + manual Add to the appropriate owning collection.
+    # Both ILexEntryInflTypeFactory and ILexEntryTypeFactory inherit only the
+    # 1-arg Create(Guid) overload from the generic ILcmFactory<T> base (the
+    # 2-arg ICmPossibilityFactory overloads don't surface through pythonnet
+    # for either subclass). Use Create(Guid) + manual Add to the appropriate
+    # owning collection.
     try:
         new_vt = factory.Create(parsed_guid)
     except Exception as e:
         raise RuntimeError(
-            f"ILexEntryInflTypeFactory.Create(Guid) failed for "
+            f"{factory_label}.Create(Guid) failed for "
             f"{src_guid}: {e!r}"
         ) from e
 
@@ -3710,21 +3717,21 @@ def variant_types_execute_action(action, context, ws_mapping, tag):
             # worse than losing its NESTING, and the record keeps the demotion
             # from being silent. A later run with the parent present re-nests
             # it, because the GUID is preserved either way.
-            _log_possibility_demoted("ILexEntryInflTypeFactory", src_guid, src_owner_guid)
+            _log_possibility_demoted(factory_label, src_guid, src_owner_guid)
             _safe_add_to_owner(
                 new_vt, ICmPossibilityList(target_list).PossibilitiesOS,
-                "ILexEntryInflTypeFactory", src_guid,
+                factory_label, src_guid,
             )
             apply_carrier_b(new_vt, ws, tag)
             return new_vt
         _safe_add_to_owner(
             new_vt, ICmPossibility(target_parent_raw).SubPossibilitiesOS,
-            "ILexEntryInflTypeFactory", src_guid,
+            factory_label, src_guid,
         )
     else:
         _safe_add_to_owner(
             new_vt, ICmPossibilityList(target_list).PossibilitiesOS,
-            "ILexEntryInflTypeFactory", src_guid,
+            factory_label, src_guid,
         )
 
     # ApplySyncableProperties via flexicon's BaseOperations if available.
@@ -3786,11 +3793,17 @@ def complex_form_types_plan_action(piece, context, ws_mapping):
 def complex_form_types_execute_action(action, context, ws_mapping, tag):
     """Create complex form type with GUID preserved.
 
-    Uses ILexEntryTypeFactory.Create(Guid, owner). Owner is either the
-    LexDb's ComplexEntryTypesOA possibility list (top-level) or a
-    parent ILexEntryType (nested).
+    FACTORY CHOICE IS PER-OBJECT, NOT PER-LIST (feature 038 T123 acceptance
+    line (b), sibling site of `variant_types_execute_action`): the factory
+    is chosen by `src_obj`'s own `ClassName` via
+    `_entry_type_factory_for_source`, not unconditionally by which list the
+    object lives under. This corpus shows no `LexEntryInflType` member under
+    `ComplexEntryTypesOA`, so this branch is currently LATENT -- see the
+    helper's docstring. Owner is either the LexDb's ComplexEntryTypesOA
+    possibility list (top-level) or a parent ILexEntryType/ILexEntryInflType
+    (nested).
     """
-    from SIL.LCModel import ILexEntryTypeFactory, ICmObject, ICmPossibility, ICmPossibilityList
+    from SIL.LCModel import ICmObject, ICmPossibility, ICmPossibilityList
     from System import Guid as DotNetGuid
 
     if __package__:
@@ -3839,14 +3852,17 @@ def complex_form_types_execute_action(action, context, ws_mapping, tag):
         pass
 
     parsed_guid = DotNetGuid.Parse(src_guid)
-    factory = ILexEntryTypeFactory(target.GetFactory(ILexEntryTypeFactory))
+    # T123 acceptance line (b): factory keyed to src_obj's OWN class, not to
+    # which possibility list it lives under (see variant_types for
+    # rationale, and `_entry_type_factory_for_source` for detail).
+    factory, factory_label = _entry_type_factory_for_source(src_obj, target)
 
     # 1-arg Create(Guid) + manual Add (see variant_types for rationale).
     try:
         new_cft = factory.Create(parsed_guid)
     except Exception as e:
         raise RuntimeError(
-            f"ILexEntryTypeFactory.Create(Guid) failed for {src_guid}: {e!r}"
+            f"{factory_label}.Create(Guid) failed for {src_guid}: {e!r}"
         ) from e
 
     if src_owner_guid:
@@ -3867,21 +3883,21 @@ def complex_form_types_execute_action(action, context, ws_mapping, tag):
             # worse than losing its NESTING, and the record keeps the demotion
             # from being silent. A later run with the parent present re-nests
             # it, because the GUID is preserved either way.
-            _log_possibility_demoted("ILexEntryTypeFactory", src_guid, src_owner_guid)
+            _log_possibility_demoted(factory_label, src_guid, src_owner_guid)
             _safe_add_to_owner(
                 new_cft, ICmPossibilityList(target_list).PossibilitiesOS,
-                "ILexEntryTypeFactory", src_guid,
+                factory_label, src_guid,
             )
             apply_carrier_b(new_cft, ws, tag)
             return new_cft
         _safe_add_to_owner(
             new_cft, ICmPossibility(target_parent_raw).SubPossibilitiesOS,
-            "ILexEntryTypeFactory", src_guid,
+            factory_label, src_guid,
         )
     else:
         _safe_add_to_owner(
             new_cft, ICmPossibilityList(target_list).PossibilitiesOS,
-            "ILexEntryTypeFactory", src_guid,
+            factory_label, src_guid,
         )
 
     apply_carrier_b(new_cft, ws, tag)
@@ -8220,16 +8236,55 @@ def _walk_lex_entry_closure(src_entry, context, tag, category, dropped=None):
         # happens once, later, in `reproduce_all_lexical_relations`'s single
         # final pass (see comment on the entry registration above).
         copy_set[s_guid] = new_sense
-        # MSA for this sense (create once per source MSA guid).
+        # MSA for this sense (create once per DISTINCT source MSA guid --
+        # never per its content, per the T123(a) fix below).
         src_msa = getattr(src_sense, "MorphoSyntaxAnalysisRA", None)
         if src_msa is not None:
             m_guid = _guid_str_from(src_msa)
-            new_msa = msa_by_src_guid.get(m_guid)
+            # T123(a): only trust the cache for a REAL, non-empty guid --
+            # an unreadable guid (`_guid_str_from` -> "") must never be
+            # treated as "the same MSA I already created", or a second
+            # unrelated MSA whose guid also read as empty would silently
+            # inherit the first one's object instead of getting its own
+            # create attempt.
+            new_msa = msa_by_src_guid.get(m_guid) if m_guid else None
             if new_msa is None:
-                new_msa = _create_msa_for_closure(
-                    src_msa, new_sense, new_entry, context, tag, identity_remap,
-                    dropped=dropped, src_entry=src_entry)
-                if new_msa is not None:
+                # T123(a), measured live on `omoona` (Ngoreme): a SECOND
+                # source MSA sharing a natural key (same POS/content) with
+                # an already-created MSA on this SAME entry used to be able
+                # to raise, uncaught, out of `_create_msa_for_closure` (the
+                # flexicon wrapper fallback's own duplicate-avoidance
+                # behaviour) -- and with no try/except here, that exception
+                # aborted the REST of this entry's closure (every sense,
+                # allomorph, and entry-ref after this point in the loop)
+                # and was reported nowhere but a generic swallowed
+                # `LeafExecutionFailure` two call-frames up in
+                # `transfer.py`. Guarding it here keeps the failure scoped
+                # to THIS one MSA -- reported via `_report_dropped_msa`
+                # (never silent) -- and lets every remaining sense on the
+                # entry still get its own chance to be created and wired.
+                try:
+                    new_msa = _create_msa_for_closure(
+                        src_msa, new_sense, new_entry, context, tag,
+                        identity_remap, dropped=dropped, src_entry=src_entry)
+                except Exception as exc:  # noqa: BLE001 -- never let one
+                    # sense's MSA take down the rest of the entry's closure.
+                    import logging as _logging
+                    _logging.getLogger("gramtrans.Lib.categories").exception(
+                        "MSA create raised for sense guid=%s (entry "
+                        "guid=%s, msa guid=%s); reporting and continuing "
+                        "with the rest of this entry's closure rather than "
+                        "aborting it (T123(a)).",
+                        s_guid, src_guid, m_guid,
+                    )
+                    kind = _dispatch_msa_subclass(_class_name_of(src_msa))
+                    _report_dropped_msa(
+                        dropped, src_entry, src_msa,
+                        kind or _class_name_of(src_msa),
+                        f"MSA create raised {type(exc).__name__}: {exc} -- "
+                        "MSA not transferred")
+                    new_msa = None
+                if new_msa is not None and m_guid:
                     msa_by_src_guid[m_guid] = new_msa
             if new_msa is not None:
                 try:
@@ -8237,6 +8292,20 @@ def _walk_lex_entry_closure(src_entry, context, tag, category, dropped=None):
                 except (AttributeError, TypeError):
                     pass
         apply_residue(new_sense, ws, tag)
+
+    # T123 HARDENING -- NOT T123(a)'s fix (T123(a) is a DIFFERENT, already
+    # diagnosed and already fixed mechanism -- the natural-key skip inside
+    # the per-sense loop above; see `_create_via_wrapper_or_reuse` /
+    # `_find_reusable_target_msa`). The loop above enumerates MSAs only via
+    # `src_sense.MorphoSyntaxAnalysisRA`; `_entry_pos_deps` and
+    # `_iter_all_msas` instead treat `MorphoSyntaxAnalysesOC` as the
+    # enumeration basis. This pass closes that gap for consistency. MEASURED
+    # EMPTY on `Ngoreme FLEx` (op-102227585-005/-006: entry-owned MSA count
+    # equals distinct sense-referenced count, 2090 = 2090, in every class).
+    # See `_create_entry_owned_msas_without_sense`'s own docstring.
+    _create_entry_owned_msas_without_sense(
+        src_entry, new_entry, context, tag, identity_remap, msa_by_src_guid,
+        dropped)
 
     return new_entry
 
@@ -9664,6 +9733,13 @@ def _create_msa_with_guid(target, new_entry, new_sense, subclass, src_guid, pos_
     """Create a GUID-preserved MSA owned by `new_entry`, pointed at by
     `new_sense`, with `pos_fields` applied.
 
+    `new_sense=None` is the T123 HARDENING shape (see
+    `_create_entry_owned_msas_without_sense`, below `_create_msa_for_closure`):
+    an entry-owned MSA with no referencing source sense still gets created and
+    attached to `new_entry.MorphoSyntaxAnalysesOC`, just with the sense-wiring
+    step skipped rather than raised against a None. This is NOT the T123(a)
+    fix -- see that function's docstring.
+
     Returns the new MSA, or None to signal "fall back to the flexicon wrapper"
     (offline fakes, missing factory, GUID collision). Every None return that
     stems from a live failure is logged with its reason via
@@ -9700,7 +9776,8 @@ def _create_msa_with_guid(target, new_entry, new_sense, subclass, src_guid, pos_
         ilexentry(new_entry).MorphoSyntaxAnalysesOC.Add(new_msa)
         for attr, value in pos_fields.items():
             setattr(new_msa, attr, value)
-        new_sense.MorphoSyntaxAnalysisRA = new_msa
+        if new_sense is not None:
+            new_sense.MorphoSyntaxAnalysisRA = new_msa
     except Exception as exc:  # noqa: BLE001
         _log_guid_fallback(subclass, src_guid, exc)
         return None
@@ -9725,6 +9802,103 @@ def _report_dropped_msa(dropped, src_entry, src_msa, kind, reason):
         item_guid=_guid_str_from(src_msa),
         reason=reason,
     ))
+
+
+def _find_reusable_target_msa(new_entry, subclass, pos_fields):
+    """Scan `new_entry`'s ALREADY-CREATED MSAs for one a failed create could
+    legitimately REUSE instead of leaving its sense with a null referent.
+
+    T123(a), measured live on `Ngoreme FLEx` -> `GT038 T124 Ngoreme`: entry
+    `omoona` (e2cd79ef-...) owns TWO source `MoStemMsa` that are IDENTICAL in
+    every syncable property (same `PartOfSpeechRA`, same feature structure)
+    and differ ONLY by GUID -- one per sense ('child', 'small child'). The
+    flexicon wrapper fallback used when the GUID-preserving create path is
+    unavailable (`MSAOperations.CreateStem`/`CreateInflAff`/...) has its own
+    duplicate-avoidance behaviour and can refuse to mint a second, content-
+    identical MSA on the same entry; left unguarded that refusal propagated
+    as an uncaught exception (see `_create_via_wrapper_or_reuse`), and the
+    second MSA was silently never created -- not reported, not reused, just
+    absent, with its sense's `MorphoSyntaxAnalysisRA` left null.
+
+    A null referent is strictly worse than sharing a target MSA between two
+    source senses (`contracts/dropped-item-report.md`'s own hierarchy: a
+    reported, imperfect outcome beats a silent, broken one), so this is the
+    SECOND thing tried, after the create legs and before giving up and
+    reporting a drop. It matches by SUBCLASS plus every field in
+    `pos_fields` (comparing each field's resolved GUID) -- exactly the
+    content the wrapper itself would have deduped on.
+
+    Returns the matching target MSA, or None when nothing on the entry
+    matches (a genuine, reported drop is then the only option)."""
+    owned = getattr(new_entry, "MorphoSyntaxAnalysesOC", None) or ()
+    for candidate in owned:
+        try:
+            cand_class = _class_name_of(candidate)
+        except Exception:  # noqa: BLE001 -- an unreadable candidate can't match
+            cand_class = None
+        if cand_class != subclass:
+            continue
+        matches = True
+        for attr, value in pos_fields.items():
+            cand_value = getattr(candidate, attr, None)
+            want_guid = _guid_str_from(value) if value is not None else ""
+            got_guid = _guid_str_from(cand_value) if cand_value is not None else ""
+            if want_guid != got_guid:
+                matches = False
+                break
+        if matches:
+            return candidate
+    return None
+
+
+def _create_via_wrapper_or_reuse(create_fn, new_entry, subclass, pos_fields,
+                                 src_msa, dropped, src_entry):
+    """Call a flexicon MSA-wrapper create function; turn a raised exception
+    into REUSE-or-REPORT instead of an uncaught crash (T123(a)).
+
+    Before this fix `target.MSA.CreateStem`/`CreateInflAff`/`CreateDerivAff`/
+    `CreateUnclassifiedAffix` were invoked bare inside `_create_msa_for_closure`
+    -- no try/except, unlike the GUID-preserving `_create_msa_with_guid` leg,
+    which guards both its `factory.Create` call and its owning-collection
+    wire-up. On `omoona` (Ngoreme) the wrapper raised while creating the
+    SECOND of two property-identical `MoStemMsa` on one entry. Left unguarded
+    that exception propagated out of `_create_msa_for_closure`, out of
+    `_walk_lex_entry_closure`'s per-sense loop (which had no try/except of
+    its own either -- see that function's own fix), and was only ever caught
+    by `Lib/transfer.py`'s per-ACTION swallow-and-record handler -- three
+    consequences that never reached `_report_dropped_msa`: the MSA was never
+    created, the sense's `MorphoSyntaxAnalysisRA` stayed null, and every
+    UNPROCESSED sibling on the SAME entry (further senses, allomorphs,
+    entry-refs) silently never ran either, because the whole entry's closure
+    aborted mid-walk while everything already written (the entry, the first
+    sense, the first MSA) stayed live with no rollback.
+
+    Never-silent (FR-010/Principle I / T123 acceptance). On failure:
+      1. try `_find_reusable_target_msa` -- an already-created MSA on this
+         entry that matches by subclass + POS fields is exactly what the
+         wrapper's own refusal implies exists;
+      2. only when nothing matches, report the drop and return None.
+    Either way this function itself never raises."""
+    try:
+        return create_fn()
+    except Exception as exc:  # noqa: BLE001 -- wrapper internals, not ours
+        import logging as _logging
+        src_g = _guid_str_from(src_msa)
+        _logging.getLogger("gramtrans.Lib.categories").warning(
+            "MSA %s (%s): the flexicon create wrapper raised (%s: %s); "
+            "looking for an existing MSA on the entry to reuse before "
+            "reporting this MSA as dropped.",
+            src_g[:8], subclass, type(exc).__name__, exc,
+        )
+        reused = _find_reusable_target_msa(new_entry, subclass, pos_fields)
+        if reused is not None:
+            return reused
+        _report_dropped_msa(
+            dropped, src_entry, src_msa, subclass,
+            f"{subclass} create wrapper raised {type(exc).__name__}: {exc} "
+            "-- the GUID-preserving path was also unavailable and no "
+            "matching MSA exists on the entry to reuse; MSA not transferred")
+        return None
 
 
 def _create_msa_for_closure(src_msa, new_sense, new_entry, context, tag,
@@ -9883,11 +10057,13 @@ def _create_msa_for_closure(src_msa, new_sense, new_entry, context, tag,
         if tgt_pos is None:
             return None
         # slots=None: SlotsRC deferred to the 17.1 sub-pass (FR-333).
+        pos_fields = {"PartOfSpeechRA": tgt_pos}
         new_msa = _create_msa_with_guid(
-            target, new_entry, new_sense, subclass, src_g,
-            {"PartOfSpeechRA": tgt_pos})
+            target, new_entry, new_sense, subclass, src_g, pos_fields)
         if new_msa is None:
-            new_msa = target.MSA.CreateInflAff(new_sense, tgt_pos, slots=None)
+            new_msa = _create_via_wrapper_or_reuse(
+                lambda: target.MSA.CreateInflAff(new_sense, tgt_pos, slots=None),
+                new_entry, subclass, pos_fields, src_msa, dropped, src_entry)
     elif subclass == "MoStemMsa":
         # A stem MSA may legally carry NO part of speech (Category =
         # <Not Sure>), so an empty source POS is reproduced, not dropped.
@@ -9896,25 +10072,29 @@ def _create_msa_for_closure(src_msa, new_sense, new_entry, context, tag,
         if tgt_pos is None:
             return None
         pos_absent = tgt_pos is _POS_ABSENT
+        pos_fields = {"PartOfSpeechRA": None if pos_absent else tgt_pos}
         new_msa = _create_msa_with_guid(
-            target, new_entry, new_sense, subclass, src_g,
-            {"PartOfSpeechRA": None if pos_absent else tgt_pos})
+            target, new_entry, new_sense, subclass, src_g, pos_fields)
         if new_msa is None:
             if pos_absent:
                 _null_pos_fallback_blocked("PartOfSpeechRA")
                 return None
-            new_msa = target.MSA.CreateStem(new_sense, tgt_pos)
+            new_msa = _create_via_wrapper_or_reuse(
+                lambda: target.MSA.CreateStem(new_sense, tgt_pos),
+                new_entry, subclass, pos_fields, src_msa, dropped, src_entry)
         _wire_stratum(src_msa, new_msa, target)
     elif subclass == "MoDerivAffMsa":
         from_pos = _resolve_or_none("FromPartOfSpeechRA", "FromPartOfSpeechRA")
         to_pos = _resolve_or_none("ToPartOfSpeechRA", "ToPartOfSpeechRA")
         if from_pos is None or to_pos is None:
             return None
+        pos_fields = {"FromPartOfSpeechRA": from_pos, "ToPartOfSpeechRA": to_pos}
         new_msa = _create_msa_with_guid(
-            target, new_entry, new_sense, subclass, src_g,
-            {"FromPartOfSpeechRA": from_pos, "ToPartOfSpeechRA": to_pos})
+            target, new_entry, new_sense, subclass, src_g, pos_fields)
         if new_msa is None:
-            new_msa = target.MSA.CreateDerivAff(new_sense, from_pos, to_pos)
+            new_msa = _create_via_wrapper_or_reuse(
+                lambda: target.MSA.CreateDerivAff(new_sense, from_pos, to_pos),
+                new_entry, subclass, pos_fields, src_msa, dropped, src_entry)
     elif subclass == "MoUnclassifiedAffixMsa":
         # "Unclassified" affix: an unspecified category is the whole point of
         # the subclass, so a null POS is legal here for the same reason it is
@@ -9926,14 +10106,16 @@ def _create_msa_for_closure(src_msa, new_sense, new_entry, context, tag,
         if tgt_pos is None:
             return None
         pos_absent = tgt_pos is _POS_ABSENT
+        pos_fields = {"PartOfSpeechRA": None if pos_absent else tgt_pos}
         new_msa = _create_msa_with_guid(
-            target, new_entry, new_sense, subclass, src_g,
-            {"PartOfSpeechRA": None if pos_absent else tgt_pos})
+            target, new_entry, new_sense, subclass, src_g, pos_fields)
         if new_msa is None:
             if pos_absent:
                 _null_pos_fallback_blocked("PartOfSpeechRA")
                 return None
-            new_msa = target.MSA.CreateUnclassifiedAffix(new_sense, tgt_pos)
+            new_msa = _create_via_wrapper_or_reuse(
+                lambda: target.MSA.CreateUnclassifiedAffix(new_sense, tgt_pos),
+                new_entry, subclass, pos_fields, src_msa, dropped, src_entry)
 
     if new_msa is None:
         return None
@@ -9945,6 +10127,73 @@ def _create_msa_for_closure(src_msa, new_sense, new_entry, context, tag,
         pass
     apply_residue(new_msa, ws, tag)
     return new_msa
+
+
+def _create_entry_owned_msas_without_sense(src_entry, new_entry, context, tag,
+                                           identity_remap, msa_by_src_guid,
+                                           dropped):
+    """T123 HARDENING -- NOT T123(a)'s fix. Claims nothing against T123(a)'s
+    measured -1; that defect is diagnosed and fixed elsewhere (see below).
+
+    `_entry_pos_deps` and `_iter_all_msas` both already treat
+    `src_entry.MorphoSyntaxAnalysesOC` as an MSA's enumeration basis, but the
+    per-sense loop in `_walk_lex_entry_closure` (this function's caller)
+    enumerates MSAs only via `src_sense.MorphoSyntaxAnalysisRA` -- correct
+    ONLY as long as every entry-owned MSA also has a referencing sense. This
+    pass closes that gap: after the per-sense loop, walk
+    `src_entry.MorphoSyntaxAnalysesOC` directly and create the remainder --
+    any source MSA guid not already in `msa_by_src_guid` -- straight onto
+    `new_entry.MorphoSyntaxAnalysesOC`, with NO owning sense (there is none
+    to wire; see `_create_msa_with_guid`'s `new_sense=None` handling).
+
+    MEASURED EMPTY on the only corpus this has been checked against:
+    `Ngoreme FLEx`, read-only ops `op-102227585-005` / `op-102255766-006` --
+    for every entry, in every MSA class, entry-owned count equals distinct
+    sense-referenced count (2090 = 2090 overall; MoStemMsa 1951 = 1951). This
+    guard exists for CONSISTENCY with the two enumerators above and as a
+    backstop against a corpus this engine has not yet seen, not because a
+    loss was observed here. See
+    `specs/038-transfer-fidelity-gaps/reviews/cycle6-verification-msa-naming.md`.
+
+    T123(a)'s OWN measured -1 (same corpus, entry `omoona`,
+    e2cd79ef-2ee5-4d56-ae54-9210060bcdae, missing MSA
+    8617b725-efc1-4f6d-935c-c6c87081c7cb) is a DIFFERENT, already-diagnosed
+    and already-fixed mechanism: a natural-key match inside the per-sense
+    loop ABOVE this function's call site that used to skip a create and
+    leave a SENSE's `MorphoSyntaxAnalysisRA` dangling null (destination-side
+    GUID diff, read-only ops `op-103945760-010`..`op-104104411-013`; fixed by
+    `_create_via_wrapper_or_reuse` / `_find_reusable_target_msa`, this same
+    file). This function does not touch that code path and this pass claims
+    nothing against it.
+
+    Never raises: any per-MSA create failure is reported via
+    `_report_dropped_msa`, matching the per-sense loop's own guard."""
+    for src_msa in getattr(src_entry, "MorphoSyntaxAnalysesOC", None) or ():
+        m_guid = _guid_str_from(src_msa)
+        if m_guid and m_guid in msa_by_src_guid:
+            continue
+        try:
+            new_msa = _create_msa_for_closure(
+                src_msa, None, new_entry, context, tag, identity_remap,
+                dropped=dropped, src_entry=src_entry)
+        except Exception as exc:  # noqa: BLE001 -- never let one entry-owned,
+            # sense-unreferenced MSA take down the rest of the entry's closure.
+            import logging as _logging
+            _logging.getLogger("gramtrans.Lib.categories").exception(
+                "entry-owned MSA create raised for entry guid=%s msa "
+                "guid=%s in the no-referencing-sense hardening pass "
+                "(latent -- measured empty; not T123(a)); reporting and "
+                "continuing.",
+                _guid_str_from(src_entry), m_guid,
+            )
+            kind = _dispatch_msa_subclass(_class_name_of(src_msa))
+            _report_dropped_msa(
+                dropped, src_entry, src_msa, kind or _class_name_of(src_msa),
+                f"entry-owned MSA with no referencing sense: create raised "
+                f"{type(exc).__name__}: {exc} -- MSA not transferred")
+            new_msa = None
+        if new_msa is not None and m_guid:
+            msa_by_src_guid[m_guid] = new_msa
 
 
 def _wire_stratum(src_msa, new_msa, target):
@@ -12546,6 +12795,63 @@ def _source_possibility_parent_guid(src_obj):
     except Exception:  # noqa: BLE001 -- duck fake, already the right thing
         pass
     return _guid_str_from(owner) or None
+
+
+def _entry_type_factory_for_source(src_obj, target):
+    """Choose the LCM creation factory for a `VariantEntryTypesOA` /
+    `ComplexEntryTypesOA` member by the SOURCE OBJECT'S OWN CLASS, not by
+    which possibility list it lives under (feature 038 T123 acceptance
+    line (b)).
+
+    Both lists legitimately mix plain `LexEntryType` items with
+    `LexEntryInflType` items -- membership in one list or the other says
+    nothing about which LCM subclass an individual member is.
+    `variant_types_execute_action` and `complex_form_types_execute_action`
+    used to key the factory choice to the LIST instead (unconditionally
+    `ILexEntryInflTypeFactory` for variant types, unconditionally
+    `ILexEntryTypeFactory` for complex form types). A plain `LexEntryType`
+    with a project-local GUID living under `VariantEntryTypesOA` --
+    ngoreme's "Perfective" (`e7983f52-77a7-4f0b-aa31-84678672e42d`), mbugwe's
+    "Periphrastic Form" (`99e0cab9-f284-45fb-84a5-4cb2516d0bf4`), both
+    missing the GOLD-GUID match that would have found them already present
+    -- fell through to creation via the wrong factory and arrived
+    reclassified as `LexEntryInflType`. GUID and nesting were preserved;
+    only the LCM class was wrong, so the census read -1 `LexEntryType` /
+    +1 `LexEntryInflType` on both pairs -- a create-time
+    misclassification, not a lost object.
+
+    Returns `(factory, factory_label)`. This corpus shows no
+    `LexEntryInflType` member under `ComplexEntryTypesOA`, so the inverse
+    branch there is currently LATENT -- claimed as nothing observed, not
+    as fixed-and-confirmed, and covered only by a duck-typed unit test.
+
+    DUAL-MODE like `_source_possibility_parent_guid`: the lazy import
+    pattern from `_guid_str_from` is used directly (rather than relying on
+    an already-imported module global) so this helper's live-LCM branch
+    does not depend on caller import order.
+    """
+    from SIL.LCModel import ILexEntryInflTypeFactory, ILexEntryTypeFactory
+    try:
+        from SIL.LCModel import ICmObject  # lazy -- not available in unit tests
+    except Exception:  # noqa: BLE001 -- no LCM present
+        ICmObject = None
+    class_name = ""
+    if ICmObject is not None:
+        try:
+            class_name = str(ICmObject(src_obj).ClassName)
+        except Exception:  # noqa: BLE001 -- not castable, fall back to raw
+            class_name = ""
+    if not class_name:
+        class_name = str(getattr(src_obj, "ClassName", "") or "")
+    if class_name == "LexEntryInflType":
+        return (
+            ILexEntryInflTypeFactory(target.GetFactory(ILexEntryInflTypeFactory)),
+            "ILexEntryInflTypeFactory",
+        )
+    return (
+        ILexEntryTypeFactory(target.GetFactory(ILexEntryTypeFactory)),
+        "ILexEntryTypeFactory",
+    )
 
 
 def _log_possibility_demoted(factory_label, src_guid, parent_guid):
