@@ -1166,6 +1166,46 @@
       "kind": "complete",
       "by": "ai",
       "at": "2026-09-18T18:38:52.436Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T082",
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-09-18T19:17:46.717Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T119",
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-09-18T19:17:46.717Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T120",
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-09-18T19:17:46.717Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T121",
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-09-18T19:17:46.717Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T129",
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-09-18T19:17:46.717Z"
     }
   ],
   "decisions": [
@@ -1683,7 +1723,7 @@
       "summary": "T113 closed -- the report-only roster gains a completeness check and the five governed classes it was silently short of; T081/T082/T085 remain blocked on live-project work and a scoping decision"
     }
   },
-  "currentTask": "T123",
+  "currentTask": "T081",
   "task_summaries": {
     "T001": {
       "status": "DONE",
