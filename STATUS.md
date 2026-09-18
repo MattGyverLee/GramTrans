@@ -1,5 +1,59 @@
 # GramTrans — Session Handoff
 
+## Session log — 2026-09-18b (038: first authorized live re-census — one line passes, three instrument failures)
+
+Spurt 4, cycles 10-11. The user authorized the restore-bounded re-census (tag
+`t123c`). It measured T123's two acceptance lines for the first time. **T123 still
+cannot be checked**, and the spurt's most useful output is not a fix — it is three
+demonstrations that our *instruments* were lying.
+
+**T123(b) — PASSES, two-sided, both pairs.** `LexEntryType` 13 -> 13 and 12 -> 12
+AND `LexEntryInflType` 3 -> 3 and 4 -> 4, CHANGED=0 / absent=0 / dest_only=0 by GUID
+on both classes on both pairs; mbugwe's `Periphrastic Form` now resolves
+`ClassName=LexEntryType`. Stated on the **within-run** source->destination comparison,
+not the `vs T078` delta — see T129.
+
+**T123(a) — count half passed, referent half FAILED, now fixed.** `MoStemMsa`
+1954 = 1954, `MsFeatures` 782 = 782, the missing object present, `'omoona'` owning two
+MSAs again — but sense `'small child'` still carried a null `MorphoSyntaxAnalysisRA`
+(destination 14 null vs source 13, delta +1). **A count-only gate would have closed
+the row.** The referent is now rewired on all four exit paths (worktree `f60b361`).
+Acceptance needs one more re-census (`t123d`).
+
+**THREE INSTRUMENT FAILURES, all caught by measurement, none by argument.**
+1. *Wrong-tree citations.* `categories.py` is 10,165 lines on main and 16,022 on the
+   branch; a whole re-diagnosis was performed against main's superseded copy.
+2. *A test that could not fail.* The cycle-8 pinning test **set**
+   `sense.MorphoSyntaxAnalysisRA = out` itself and then asserted it — tautological,
+   green against a half-done fix. Same species as the `_FakeLexRefType` that hid this
+   row's `LexReference` defect through eleven gates. The repaired test is **proven to
+   fail against `73552e4`**, and verification reproduced that independently by
+   swapping the file rather than trusting the programmer's report.
+3. *A pin nothing checked.* `run038_t124_recensus.py` asserts in its own docstring
+   that every SOURCE is on its pin and drift is destination-side only. `Mbugwe
+   LizzieHC practice` moved on disk between runs (`fb6aadab...` -> `3fb29a29...`,
+   ~23,760 -> ~48,622 objects) and nothing noticed, so a violated premise produced
+   confident output. Every mbugwe `vs T078` verdict in `t123c` crosses that change —
+   **including its six "FIXED" entries** — and one relayed reading was retracted.
+
+**New rows filed:** T127 (a `LexEntryType` arriving with `Name` = None in all six
+writing systems — a genuine loss, with residue excluded *by construction* and WS
+rendering excluded *by measurement*, so NOT the same defect as ngoreme's `'*???'`),
+T128 (the mbugwe source drift plus a genuine, newly-exposed `-4` in
+`MoMorphAdhocProhib`), T129 (make the harness fail loud on a moved source pin, and
+re-establish or retire the mbugwe comparand).
+
+**Standing rules now cover the tools, not just the code.** A test that cannot fail, an
+instrument that cannot report its own violated premise, and a citation that does not
+say which tree it read are the same failure class: something that looks like evidence
+and is not.
+
+**Next session's blocking item is a decision:** authorize the `t123d` re-census in
+`specs/038-transfer-fidelity-gaps/.crew-handoff.json` (`blocker`). **PAIR FIRST** —
+`python debug/run038_t124_recensus.py ngoreme --tag t123d`; a leading `--tag` lands in
+the pair slot and exits 2.
+
+
 ## Session log — 2026-09-18 (038: T123 spurt — BOTH acceptance lines fixed in code, NEITHER measured; awaiting authorization)
 
 Spurt 3 of the 038 crew loop, cycles 5-9. Checkpoint was "Phase 10 closed — T123's

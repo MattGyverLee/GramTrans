@@ -1,15 +1,15 @@
 {
   "feature": "038-transfer-fidelity-gaps",
   "status": "needs_human",
-  "last_cycle": 9,
-  "spurts_completed": 3,
+  "last_cycle": 11,
+  "spurts_completed": 4,
   "tasks_done": [
     "T119",
     "T120",
     "T082"
   ],
-  "next_checkpoint": "T123 measured closed by ONE restore-bounded live re-census covering both acceptance lines; then Phase 10 closes and T085 ungates",
-  "next_entry": "BLOCKED ON A HUMAN DECISION -- see 'blocker'. Both T123 acceptance lines are FIXED IN CODE and committed (worktree 73552e4) but NEITHER IS MEASURED, and neither can be measured without writing to a live FLEx destination. Do not start anything else in 038 first: T123 is the last unchecked Phase 10 row and everything downstream (T081 re-emit, T085 merge) is gated on it. Once authorized, run the two commands in blocker.commands from the worktree, then check the two-sided acceptance in blocker.acceptance. If BOTH pass, T123 flips to [x], Phase 10 closes, and the next row is T081.",
+  "next_checkpoint": "T123 measured closed by the t123d re-census (referent half of (a), re-check of (b)), which also carries T128's destination-side MembersOC diff; then Phase 10 closes",
+  "next_entry": "BLOCKED ON A HUMAN DECISION -- see 'blocker'. T123(b) has PASSED two-sided on both pairs (within-run). T123(a)'s count half passed and its referent half failed and is now fixed on all four exit paths (worktree f60b361). One more restore-bounded re-census settles the row. Run blocker.commands PAIR FIRST, then check blocker.acceptance. If (a) passes, T123 flips to [x], Phase 10 closes, and the queue is T081 -> T085, with T127/T128/T129 as independent rows that do NOT gate the merge.",
   "updated": "2026-09-18",
   "spurt_log": [
     {
@@ -58,6 +58,22 @@
         "73552e4"
       ],
       "ruling": "T123 STAYS UNCHECKED -- both lines FIXED IN CODE, NEITHER MEASURED. (b) LexEntryType: variant_types_execute_action chose ILexEntryInflTypeFactory for every VariantEntryTypesOA member, routing by owning list not by source ClassName. It is a MISCLASSIFICATION, NOT an absence -- objects arrive with GUID and nesting preserved and the census -1 is exactly offset by +1 on LexEntryInflType by GUID identity on both pairs. Never describe it as absent. (a) MoStemMsa -1: DIAGNOSED after THREE live refutations -- never-enumerated (ops 005/006: A-B empty in all four MSA classes, 2090 owned = 2090 sense-referenced), cross-owner closure collision (op 007: B-A = 0 over 2233 senses), POS-guard skip (op 009: predicted population 1, measured 11, and the 11 disjoint from the target by MsFeaturesOA). A destination-side GUID diff (ops 010-013, destination .fwdata SHA-256 byte-matching the census artifact's recorded hash) then NAMED it in one read: MSA 8617b725-efc1-4f6d-935c-c6c87081c7cb on entry 'omoona' e2cd79ef-2ee5-4d56-ae54-9210060bcdae, with zero extra. Mechanism: the entry owns two MSAs identical in every syncable property differing only by GUID; the second was matched by natural key, its create skipped, and its sense left with a NULL MorphoSyntaxAnalysisRA. NOT dedup-and-reuse -- reuse leaves the graph intact and only the count short; this broke both, which is why the count moved. The fix has two halves. Also landed: an entry-owned-MSA backstop as HARDENING with a measured-EMPTY population, claimed as nothing. Unit suite 3881 -> 3894."
+    },
+    {
+      "spurt": 4,
+      "name": "first-authorized-live-recensus",
+      "cycles": 2,
+      "checkpoint": "T123 measured closed by the authorized t123c re-census",
+      "reached": false,
+      "commits_main": [
+        "7f418f6",
+        "9f4558a"
+      ],
+      "commits_worktree": [
+        "f60b361",
+        "3ef3c5b"
+      ],
+      "ruling": "T123 STAYS UNCHECKED. (b) PASSES two-sided on both pairs within-run (LexEntryType 13/13, 12/12 AND LexEntryInflType 3/3, 4/4; CHANGED=0 absent=0 dest_only=0 by GUID; mbugwe's Periphrastic Form now resolves ClassName=LexEntryType). (a) count half PASSED (MoStemMsa 1954=1954, MsFeatures 782=782, object 8617b725 present, 'omoona' owning 2 MSAs) and the REFERENT HALF FAILED -- sense 'small child' still null, destination 14 null MsaRA vs source 13, delta +1. The two-sided acceptance is what caught it; a count-only gate reads 1954=1954 and closes the row. THE GATE THAT PASSED THE HALF-DONE FIX WAS TAUTOLOGICAL: the cycle-8 pinning test SET sense.MorphoSyntaxAnalysisRA = out itself and then asserted it, so it could not fail whatever production code did -- same species as the _FakeLexRefType that hid this row's LexReference defect through eleven gates. Referent now rewired on all four exit paths (f60b361) with the test repaired and PROVEN to fail against 73552e4, reproduced independently by verification swapping the file rather than trusting the report. THIRD instrument failure of the spurt: the mbugwe SOURCE drifted on disk (fb6aadab -> 3fb29a29, ~23,760 -> ~48,622 objects) and the harness did not notice, invalidating every mbugwe vs-T078 verdict in t123c INCLUDING its six FIXED entries; one relayed reading was retracted. New rows T127 (empty Name -- genuine loss), T128 (source drift + genuine residual -4), T129 (repair the pin check; re-establish or retire the mbugwe comparand)."
     }
   ],
   "task_queue": [
@@ -65,7 +81,7 @@
       "id": "T123",
       "kind": "gate",
       "state": "awaiting_authorization",
-      "note": "Code landed (73552e4) for BOTH acceptance lines. Nothing further to build. What remains is the restore-bounded live re-census in 'blocker' -- run it, check the two-sided acceptance, then flip the row. Do NOT check it off on green unit tests alone: every fix this spurt is pinned by duck-typed fakes, and duck-typed fakes are exactly what let the LexReference defect survive eleven gates on this same row."
+      "note": "(b) PASSES two-sided both pairs (within-run, t123c). (a)'s referent half FAILED and is now fixed on all four exit paths (f60b361) with a test proven to fail against 73552e4. Only the t123d re-census remains. Do NOT check the row off on green unit tests: this row has now been wrong twice that way -- once via _FakeLexRefType, once via a tautological pin that set the value it asserted."
     },
     {
       "id": "T081",
@@ -84,6 +100,24 @@
       "kind": "investigate",
       "state": "candidate",
       "note": "NEW candidate row from spurt 3. NOT a T123 line and NOT a fidelity loss. The destination headword renders '*???' for 'omoona' while LexemeForm[ngq]='Xna' and CitationForm[ngq]='omoona' round-trip EXACTLY (ops 016/017) -- 'Xna' is the source's own lexeme form, not corruption. The destination carries 4 writing systems to the source's 3 (extra 'etu' Ejagham) and names ngq 'Ngurimi' vs source 'Ngoreme'; HeadWord resolves against the default vernacular. Leading hypothesis, UNCONFIRMED: the destination's default vernacular is 'etu', inherited from the starter project. One confirming read: LangProject.CurrentVernacularWritingSystems / DefaultVernacularWritingSystem on both. Frame as DESTINATION WRITING-SYSTEM PROVISIONING, not name transfer. Mbugwe's 'Periphrastic Form' arriving '***' is an INDEPENDENT observation needing its own per-WS read -- same shape is not same cause, and assuming otherwise is the error that cost this spurt three cycles."
+    },
+    {
+      "id": "T127",
+      "kind": "code",
+      "state": "filed",
+      "note": "LexEntryType arrives with Name = None in ALL SIX writing systems (Abbreviation too; BestAnalysisAlternative '***'). Genuine loss: residue excluded BY CONSTRUCTION (restore-bounded run) and WS rendering excluded BY MEASUREMENT (empty in all six, not just the default vernacular), so NOT the same defect as ngoreme's '*???'. Invisible to a class-count census -- the THIRD such defect on T123's row after the nesting demotion and the subclass misclassification. Raise with T081 as a census-contract gap (non-count assertions)."
+    },
+    {
+      "id": "T128",
+      "kind": "investigate",
+      "state": "filed",
+      "note": "NOT a regression: mbugwe source drifted on disk. Residual -4 IS genuine (MoMorphAdhocProhib 39 -> 35) against a MoAdhocProhibGr population non-empty for the first time (4/4 MATCHED) -- a newly-exposed group-child creation gap, not caused by T123. Acceptance: destination-side MembersOC GUID diff, rides along with t123d."
+    },
+    {
+      "id": "T129",
+      "kind": "instrument",
+      "state": "filed",
+      "note": "Make run038_t124_recensus.py FAIL LOUD when a source hash leaves its pin -- the script's own docstring assumes every source is pinned, and nothing enforced it. Also re-establish or RETIRE the mbugwe T078 comparand, and CHECK (do not assume) that ngoreme is still on pin. Third instrument failure of spurt 4; the standing rules now cover tools as well as code."
     }
   ],
   "carried_forward": [
@@ -103,6 +137,7 @@
     "RULE 1 (paid for in cycles): a static mechanism is NOT a diagnosis until its predicted population has been COUNTED. Three T123(a) branches died exactly here -- each accurate about the code, and empty in fact.",
     "RULE 2: no branch may be closed by an UNEXAMINED INFERENCE. Cycle 5 discarded the natural-key family -- the RIGHT family -- on 'a natural-key match would leave the count matched'. False: a key match that skips the create WITHOUT REWIRING THE REFERENT leaves the count short AND the reference null.",
     "RULE 3: on any count shortfall, the DESTINATION-SIDE GUID DIFF is the FIRST read, not the fifth. Four source-side queries inferred and failed; one destination diff named the object, and its zero-extra column simultaneously proved nothing had been regenerated under a new GUID.",
+    "RULE 5 (INSTRUMENTS ARE CODE): a pinning test must be PROVEN to fail against the commit it pins -- run it against the old code and report both outcomes. The cycle-8 test SET sense.MorphoSyntaxAnalysisRA = out and then asserted it, passing a half-done fix through a two-halves gate. Related: a recorded value that nothing COMPARES is not a pin (T129), and a file:line with no tree+HEAD is not a citation (RULE 4). All three are the same failure class -- something that looks like evidence and is not.",
     "RULE 4 (TREE-QUALIFICATION -- bit three times this spurt): every file:line citation MUST state its tree and `git rev-parse HEAD`. src/gramtrans/Lib/categories.py is 10,165 lines on main and 16,022 on the branch. Cost: an entire re-diagnosis performed against main's superseded copy (which predates the _POS_ABSENT rewrite), a hardcoded insertion point that had moved twice, and a Pyright signature scare reproducible only under a stale editable install resolving against main's 6-arg signature. ANCHOR EDITS BY FUNCTION NAME, never by an inherited line number.",
     "lex-verification has NO FLExToolsMCP (Read/Grep/Glob/Bash only). Route live reads to the MAIN SESSION, which has it. A subagent asked for a live read will correctly BLOCK rather than hand-roll a pythonnet open -- that is the desired behaviour, not a failure.",
     "lex-doc has NO Bash/git -- pair any commit-bearing doc task with lex-archivist. lex-qc is unavailable as a subagent_type; QC was performed by lex-programmer under a read-only constraint.",
@@ -123,17 +158,17 @@
     "use_a_fresh_tag": "--tag t123c is deliberately NEW. Do NOT reuse t123b/t124/t126: the tag names the output artifact (tests/integration/_snapshots/census-038-<tag>-<pair>.json) and reusing one overwrites a pinned comparand. Do NOT pass --probe-only: it skips the restore and the transfer, which is the whole point.",
     "what_gets_destroyed": "The current contents of 'GT038 T124 Ngoreme' and 'GT038 T124 Mbugwe'. NOTE: the ngoreme destination is the forensic artifact behind cycle 8's diagnosis -- its .fwdata SHA-256 byte-matches the hash recorded in census-038-t123b-ngoreme.json. The evidence itself is committed (GUIDs, hashes, op ids in reviews/cycle8-mainsession-dest-guid-diff.md), but if the forensic copy should be preserved, copy the two .fwdata files aside BEFORE authorizing. No real language data is at risk -- both are throwaway destinations and no source project is opened for writing.",
     "acceptance": {
-      "T123a_two_sided": [
-        "MoStemMsa under LexEntry.MorphoSyntaxAnalyses reads 1951 = 1951 on ngoreme",
-        "destination EXTRA count is 0 (nothing regenerated under a fresh GUID)",
-        "ZERO senses carry a null MorphoSyntaxAnalysisRA whose source counterpart had one -- counting only MSAs would accept a fix that restores the object and leaves the sense dangling"
+      "T123a_referent_half_THE_ONE_THAT_FAILED": [
+        "destination senses with a null MorphoSyntaxAnalysisRA == 13, equal to the source's 13 (it read 14 on t123c; the delta was entry 'omoona' sense 'small child')",
+        "MoStemMsa stays 1954 = 1954 with unexpected +0/-0 and MsFeatures 782 = 782 -- the count half must not regress while the referent half is fixed"
       ],
-      "T123b_two_sided": [
-        "LexEntryType exact-class MATCHED 13/13 (ngoreme) and 12/12 (mbugwe)",
-        "LexEntryInflType exact-class MATCHED 3/3 (ngoreme) and 4/4 (mbugwe)",
-        "net -1/+1 cancellation is NOT acceptance -- both classes must read exact"
+      "T123b_recheck": [
+        "LexEntryType 13/13 (ngoreme) and 12/12 (mbugwe) AND LexEntryInflType 3/3 and 4/4, CHANGED=0, absent=0, dest_only=0 -- read WITHIN-RUN source->destination, never off the mbugwe vs-T078 section"
       ],
-      "also_watch": "T119's identity must still balance: MoStemMsa feature_structure (none):1172 == 1172, and MsFeaturesOA 782 = 782 once the missing MSA (which carries a feature structure) arrives."
+      "ride_along_at_no_extra_risk": [
+        "T128: destination-side MembersOC GUID diff for mbugwe MoMorphAdhocProhib (query in reviews/cycle11-verification-adhoc-regression.md) -- the residual -4 is genuine, 39 -> 35",
+        "T129: record BOTH source fwdata hashes and compare them to the comparand's pins; ALSO confirm ngoreme's source is still on pin rather than assuming it"
+      ]
     },
     "three_way_ambiguity_this_resolves_by_construction": "mbugwe's 'Periphrastic Form' arrived named '***' in the last run. Three live explanations: (1) residue from an earlier partial run against an unrestored Target, (2) destination writing-system provisioning (the '*???' finding's cause -- see the 038-WS-PROVISIONING row), (3) a genuine name-transfer loss. Restore-bounding EXCLUDES (1) by construction rather than by argument, which is why the restore is not optional ceremony. If '***' persists after a clean restore, (1) is dead and the WS read decides between (2) and (3).",
     "command_form_matters": "PAIR FIRST, THEN --tag. main() reads the pair from argv[1], so `--tag t123d ngoreme` puts the flag in the pair slot and the run exits 2 at the usage branch. Verified the hard way on the t123c run."
