@@ -40,6 +40,38 @@ three, and `T078_FWDATA_STATUS_TODAY` already records and asserts precisely
 that (20 passed). So no source needs re-pinning and no fresh source pair needs
 naming: the sanctioned pairs are intact and are re-run here as they stand.
 
+    ^^^ THAT PARAGRAPH IS STRUCK, 2026-09-18 (T129). It was true on 2026-08-27
+    and is FALSE NOW, and it is struck rather than annotated because leaving a
+    refuted premise standing with a rebuttal attached is how the same claim
+    propagated into a second task once already (T081's clause -> T082's).
+
+    TWO of the three sources have moved since, measured off
+    `$.projects.source.fwdata_sha256_after` in this driver's own artifacts:
+
+        Ejagham W Mini            5ad15c10...c2c5c3ea   ON PIN (all tags)
+        Ngoreme FLEx              838b7635...b23b607f
+                               -> d0ab2c66...c149db     MOVED, t124 -> t126
+        Mbugwe LizzieHC practice  fb6aadab...226c3161
+                               -> 3fb29a29...7cd5436d   MOVED, t126 -> t123c
+
+    So the `vs T078` section is valid ONLY for ejagham. Ngoreme's has been
+    invalid since t126 (2026-08-28) -- three weeks before T128 noticed the
+    mbugwe half -- and every ngoreme `vs T078` reading from t126, t123b, t123c,
+    t123d and t123e crosses that change. T129 asked whether ngoreme was
+    unaffected and said to CHECK IT rather than assume it; checked, it is not.
+
+    WHAT THIS DRIVER DOES ABOUT IT is `_source_pin_status` below: the pin is
+    read back out of the comparand artifact and compared, and the section is
+    REFUSED rather than printed when they differ. The premise is now enforced
+    instead of merely asserted, which is the whole of T129 (1). The digests
+    above are a dated observation, not the check -- deliberately, because a
+    hand-kept table in a docstring is the same kind of unenforced claim as the
+    sentence it replaces.
+
+    WHAT IT DOES NOT CHANGE: within-run source -> destination results, whose
+    two sides are measured inside a single run. T128 establishes this for the
+    mbugwe case and it holds generally.
+
 THE BASELINE, AND THE ONE PLACE COMPARABILITY IS LOST.
 
 All three throwaways are restored from the same
@@ -437,6 +469,75 @@ def _starter_counts() -> dict:
     return counts
 
 
+# ---------------------------------------------------------------------------
+# T129 (1) -- FAIL LOUD ON A MOVED SOURCE.
+#
+# This module's docstring used to assert, under "WHAT THE COMPARAND IS, SETTLED
+# BY MEASUREMENT (2026-08-27)", that "Every SOURCE is on its pin". That was true
+# when it was written, is FALSE NOW, and -- the part that matters -- was never
+# ENFORCED anywhere. The script already recorded
+# `$.projects.source.fwdata_sha256_{before,after}` in every artifact it emitted,
+# so the fact needed to refuse the comparison was sitting in its own output the
+# whole time and nothing ever read it back. A violated premise therefore
+# produced confident output instead of an error, twice:
+#
+#   * `Ngoreme FLEx`   838b7635..b23b607f -> d0ab2c66..c149db, between t124
+#     (2026-08-27) and t126 (2026-08-28). Every `vs T078` section on ngoreme
+#     from t126 onward crosses that change, INCLUDING t123c / t123d / t123e.
+#   * `Mbugwe LizzieHC practice`  fb6aadab..226c3161 -> 3fb29a29..7cd5436d,
+#     between t126 (2026-08-28) and t123c (2026-09-18). T128 recorded this one.
+#
+# `Ejagham W Mini` is on its pin (5ad15c10..c2c5c3ea) across every artifact from
+# 2026-08-21 to 2026-08-28, so its comparand is the only one of the three that
+# was still valid at the point it was last cited.
+#
+# A RECORDED VALUE THAT NOTHING CHECKS IS NOT A PIN. The pin is read from the
+# COMPARAND ARTIFACT itself rather than from a table in this file, because a
+# hand-kept table is a second thing that can drift from the artifact it claims
+# to describe -- and the drift it would hide is exactly this one.
+#
+# THE REFUSAL IS SCOPED TO THE SECTION, NOT THE RUN. The within-run
+# source -> destination results are measured on both sides inside the same run
+# and are unaffected by what the source did between runs (T128 establishes this
+# for the mbugwe case); killing the whole run would discard good measurement to
+# punish a bad comparison. So the `vs T078` section is REFUSED and says so,
+# naming both hashes, and everything else proceeds.
+def _source_digest(artifact) -> str:
+    """The source `.fwdata` SHA-256 this artifact was measured against.
+
+    `_after` in preference to `_before`: a census never writes to its source, so
+    the two are equal on every well-formed artifact, and preferring `_after`
+    means a run that somehow moved its own source is compared on the digest it
+    actually finished with rather than the one it started from.
+    """
+    src = ((artifact.get("projects") or {}).get("source") or {})
+    return src.get("fwdata_sha256_after") or src.get("fwdata_sha256_before")
+
+
+def _source_pin_status(artifact, comparand) -> dict:
+    """Is this run's source the same bytes the comparand was measured on?
+
+    `status` is one of:
+
+      * `"match"`   -- same digest; the `vs T078` diff is meaningful.
+      * `"moved"`   -- different digest; the diff would measure source drift as
+                       well as this feature's work, so it is REFUSED.
+      * `"unknown"` -- one side records no digest. Refused too, and deliberately
+                       NOT treated as a match: "no evidence of drift" is not
+                       "evidence of no drift", and an unverifiable pin is
+                       precisely the state this check exists to stop trusting.
+    """
+    now, then = _source_digest(artifact), _source_digest(comparand)
+    if not now or not then:
+        status = "unknown"
+    elif now == then:
+        status = "match"
+    else:
+        status = "moved"
+    return {"status": status, "run_source_sha256": now,
+            "comparand_source_sha256": then, "comparand": None}
+
+
 def _run_pair(pair: str, argv) -> int:
     spec = _PAIRS[pair]
     source, target = spec["source"], spec["target"]
@@ -680,6 +781,8 @@ def _run_pair(pair: str, argv) -> int:
 
     # ---- the T078 row diff, kept because T078 stays the comparand ----------
     t078 = json.loads(t078_path.read_text(encoding="utf-8"))
+    pin = _source_pin_status(artifact, t078)
+    pin["comparand"] = spec["t078"]
     t_rows = {r["class"]: r for r in (t078.get("classes") or [])}
     n_rows = {r["class"]: r for r in (artifact.get("classes") or [])}
     fixed, still, regressed = [], [], []
@@ -701,15 +804,39 @@ def _run_pair(pair: str, argv) -> int:
             still.append(row)
     print()
     print("       ---- vs T078 (historical) ----")
-    print("       fixed=%d  still_short=%d  regressed=%d"
-          % (len(fixed), len(still), len(regressed)))
-    for label, rows in (("FIXED", fixed), ("REGRESSED", regressed)):
-        if rows:
-            print("       %s:" % label)
-            for r in rows:
-                print("         %-26s %s -> %s (net %s -> %s)"
-                      % (r["class"], r["verdict_t078"], r["verdict_t124"],
-                         r["net_t078"], r["net_t124"]))
+    print("       source pin: %s" % pin["status"].upper())
+    print("         this run  %s"
+          % (pin["run_source_sha256"] or "(not recorded)"))
+    print("         comparand %s  (%s)"
+          % (pin["comparand_source_sha256"] or "(not recorded)", spec["t078"]))
+    if pin["status"] != "match":
+        # REFUSED, and the counts are WITHHELD rather than printed with a
+        # caveat attached. A number printed beside a warning still gets quoted
+        # without it: a `LexEntryType SHORTFALL -> MATCHED (net 0 -> 12)`
+        # reading was relayed off exactly this section and then retracted,
+        # which is the event T129 exists to prevent recurring.
+        fixed, still, regressed = [], [], []
+        print("       [FAIL] vs-T078 diff REFUSED: the SOURCE PROJECT %r is "
+              "not on the pin" % source)
+        print("              recorded in %s, so this diff would measure "
+              "SOURCE DRIFT as well as" % spec["t078"])
+        print("              this feature's work. Re-pin against a freshly "
+              "measured baseline on the")
+        print("              current source, or mark this comparand RETIRED "
+              "in the artifacts (T129).")
+        print("              Within-run source -> destination results above "
+              "are UNAFFECTED: both")
+        print("              sides of those were measured inside this run.")
+    else:
+        print("       fixed=%d  still_short=%d  regressed=%d"
+              % (len(fixed), len(still), len(regressed)))
+        for label, rows in (("FIXED", fixed), ("REGRESSED", regressed)):
+            if rows:
+                print("       %s:" % label)
+                for r in rows:
+                    print("         %-26s %s -> %s (net %s -> %s)"
+                          % (r["class"], r["verdict_t078"], r["verdict_t124"],
+                             r["net_t078"], r["net_t124"]))
 
     summary = {
         "pair": pair,
@@ -734,8 +861,16 @@ def _run_pair(pair: str, argv) -> int:
         "t123_possibility_nesting": {"source": src_nesting,
                                      "destination": nesting},
         "t123_nesting_verdict_by_guid": nesting_verdict,
+        "t078_source_pin": pin,
         "vs_t078": {"fixed": fixed, "still_short": still,
-                    "regressed": regressed},
+                    "regressed": regressed,
+                    "refused": pin["status"] != "match",
+                    "refused_reason": (
+                        None if pin["status"] == "match" else
+                        "source %r is not on the pin recorded in %s (run %s vs "
+                        "comparand %s)" % (source, spec["t078"],
+                                           pin["run_source_sha256"],
+                                           pin["comparand_source_sha256"]))},
         "totals": artifact.get("totals"),
     }
     # TAGGED TOO. The first `--tag` pass re-tagged the census artifact and the
