@@ -54,6 +54,7 @@ if __package__:
         CENSUS_FEATURE_SYSTEM_OWNERS,
         CENSUS_GOVERNED_BY_OTHER_FEATURE_CLASSES,
         CENSUS_NOT_EVALUATED_REASONS,
+        CENSUS_OWNING_FIELD_RULINGS,
         CENSUS_OWNING_LIST_RULINGS,
         CENSUS_REASON_TOKENS,
         CENSUS_REASONS_NOT_REQUIRING_REPORT_REF,
@@ -66,6 +67,7 @@ else:  # loaded via site.addsitedir("Lib")
         CENSUS_FEATURE_SYSTEM_OWNERS,
         CENSUS_GOVERNED_BY_OTHER_FEATURE_CLASSES,
         CENSUS_NOT_EVALUATED_REASONS,
+        CENSUS_OWNING_FIELD_RULINGS,
         CENSUS_OWNING_LIST_RULINGS,
         CENSUS_REASON_TOKENS,
         CENSUS_REASONS_NOT_REQUIRING_REPORT_REF,
@@ -159,6 +161,30 @@ def owning_list_ruling(object_class: str, owning_list: str):
     keeps failing the gate.
     """
     return OWNING_LIST_RULINGS.get((object_class, owning_list))
+
+
+#: T119's follow-on -- `(class, owning_field) -> (reason_token, ruling,
+#: detail)`. The FOURTH roster, mirroring `OWNING_LIST_RULINGS` exactly for
+#: `FsFeatStruc` / `FsClosedValue`, whose class rows are buckets over nine and
+#: more owning fields the same way `CmPossibility` is a bucket over lists. Read
+#: through `owning_field_ruling` below, the one lookup, for the same reason the
+#: other three have exactly one each.
+OWNING_FIELD_RULINGS: dict = CENSUS_OWNING_FIELD_RULINGS
+
+
+def owning_field_ruling(object_class: str, owning_field: str):
+    """`(reason_token, ruling, detail)` if a committed ruling takes THIS
+    FIELD's residue off the feature's hook, else None.
+
+    Reads the module global at call time, so a test can empty the roster and
+    prove the emitter is inert without it -- T109 lock 3, applied to the
+    fourth roster. A field with no entry is UNRULED and its shortfall stays
+    unexplained, which is the correct default: `models.py`'s header comment
+    records that `MoStemMsa.MsFeatures` is absent from this roster precisely
+    so that losing 1,003 objects of MSA feature content keeps failing the
+    gate.
+    """
+    return OWNING_FIELD_RULINGS.get((object_class, owning_field))
 
 
 # ---------------------------------------------------------------------------
@@ -1422,6 +1448,12 @@ class ProjectCensusReading:
     #: the dimension was not collected, which is distinct from an empty dict
     #: (collected, and the project owns no such objects).
     owning_list_counts: Optional[dict] = None
+    #: T119's follow-on. `{object_class: {owning_field_label: count}}` for the
+    #: classes whose OWNING FIELD is the unit of work -- see
+    #: `owning_field_counts`. None when the dimension was not collected,
+    #: distinct from an empty dict (collected, and the project owns no such
+    #: objects).
+    owning_field_counts: Optional[dict] = None
 
     @property
     def digest_unchanged(self) -> bool:
@@ -1512,6 +1544,8 @@ def read_project(
         # is -- one open means one digest window, and a second open to finish
         # counting would widen the very window this function exists to close.
         per_list = owning_list_counts(handle, class_names)
+        # T119's follow-on: same open, same reason.
+        per_field = owning_field_counts(handle, class_names)
     except CensusFailure:
         raise
     except Exception as exc:  # noqa: BLE001 -- LCM raises many types
@@ -1547,6 +1581,7 @@ def read_project(
         declared_freshly_created=declared_freshly_created,
         split_counts=per_owner,
         owning_list_counts=per_list,
+        owning_field_counts=per_field,
     )
 
 
@@ -2618,6 +2653,72 @@ def owning_list_counts(handle, class_names) -> dict:
     return {name: count_by_owning_list(handle, name) for name in wanted}
 
 
+# ---------------------------------------------------------------------------
+# T119's follow-on -- the PER-OWNING-FIELD dimension (FsFeatStruc /
+# FsClosedValue)
+#
+# WHY THE CLASS ROW IS NOT THE UNIT OF WORK HERE EITHER. T119's live
+# owner-attribution probe found the `FsFeatStruc` / `FsClosedValue` residue is
+# not one loss but a bucket over nine-plus owning fields -- see
+# `models.CENSUS_OWNING_FIELD_RULINGS`'s header for the measured table. The
+# same T023b lesson `OWNING_LIST_CLASSES` above exists for: a per-field ruling
+# needs a per-field MEASUREMENT or R-1 rejects it at construction.
+#
+# NO UPWARD WALK IS NEEDED, unlike `owning_list_label`. Possibility items nest
+# via `SubPossibilities` and the owning LIST is not the direct owner; the Fs*
+# cascade nests too (`FsComplexValue.Value` owns a nested `FsFeatStruc`), but
+# `FsComplexValue.Value` is itself one of T119's ten owning-field labels, not
+# something to resolve past -- so the DIRECT owner (`_owning_field_label`) is
+# already the unit of work.
+# ---------------------------------------------------------------------------
+
+#: Classes whose OWNING FIELD, not whose class name, is the identifying fact.
+OWNING_FIELD_CLASSES: tuple = ("FsFeatStruc", "FsClosedValue")
+
+#: What an object whose owning field cannot be resolved is filed under. Kept
+#: distinct from `OWNING_LIST_UNRESOLVED` even though the two read the same in
+#: English, so the two dimensions can never be confused for one label space.
+OWNING_FIELD_UNRESOLVED: str = "(no owning field)"
+
+
+def count_by_owning_field(handle, object_class: str) -> dict:
+    """`{owning_field_label: count}` for one class, exact-class filtered.
+
+    Uses `objects_in_class`, so the per-list dimension's exact-class discipline
+    applies here unchanged: the per-field counts SUM to the class row's own
+    count, which is what lets the emitter cap a per-field claim against the
+    row's shortfall.
+    """
+    mdc = metadata_cache(handle)
+    if mdc is None or not all(hasattr(mdc, name) for name in
+                              ("GetOwnClsName", "GetFieldName")):
+        raise CensusError(
+            "cannot resolve owning fields for " + repr(object_class)
+            + ": LCM's metadata cache is unreachable or does not answer "
+            "GetOwnClsName/GetFieldName -- a per-field accounting line needs "
+            "a per-field measurement, and guessing the field would let a "
+            "ruling about one field retire another field's loss",
+            (object_class,),
+        )
+    counts: dict = {}
+    for obj in objects_in_class(handle, object_class):
+        label = _owning_field_label(obj, mdc) or OWNING_FIELD_UNRESOLVED
+        counts[label] = counts.get(label, 0) + 1
+    return counts
+
+
+def owning_field_counts(handle, class_names) -> dict:
+    """`{object_class: {owning_field_label: count}}` for the field-keyed
+    classes.
+
+    Only the classes in `OWNING_FIELD_CLASSES` that the caller actually asked
+    for are measured, for the same cost reason `owning_list_counts` limits
+    itself to `OWNING_LIST_CLASSES`.
+    """
+    wanted = [name for name in OWNING_FIELD_CLASSES if name in set(class_names)]
+    return {name: count_by_owning_field(handle, name) for name in wanted}
+
+
 # ===========================================================================
 # T019 -- the accounting arithmetic, and the artifact emitter
 #
@@ -3021,6 +3122,7 @@ def class_row_artifact(
     match_basis: Optional[MatchBasis] = None,
     duplicates: Optional[DuplicateReport] = None,
     owning_lists=None,
+    owning_fields=None,
     notes=(),
 ) -> dict:
     """-> one `$defs.classRow`, from a `models.ClassCensusRow` plus its entry.
@@ -3144,6 +3246,16 @@ def class_row_artifact(
              "source_count": int(item.get("source_count") or 0),
              "destination_count": int(item.get("destination_count") or 0)}
             for item in sorted(owning_lists, key=lambda i: str(i["list"]))
+        ]
+    if owning_fields:
+        # T119's follow-on: the EVIDENCE a per-field accounting line stands
+        # on, the same reasoning and the same sort discipline as
+        # `owning_lists` above.
+        block["owning_fields"] = [
+            {"field": str(item["field"]),
+             "source_count": int(item.get("source_count") or 0),
+             "destination_count": int(item.get("destination_count") or 0)}
+            for item in sorted(owning_fields, key=lambda i: str(i["field"]))
         ]
     if notes:
         block["notes"] = list(notes)

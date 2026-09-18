@@ -464,6 +464,20 @@
           },
           "$comment": "T081. The PER-OWNING-LIST breakdown for the classes whose owning LIST, not whose class name, is the unit of work (CmPossibility, LexEntryType, LexEntryInflType). It is the EVIDENCE a per-list accounted_for line stands on: invariant R-1 rejects a line that outruns its evidence, so a per-list claim with no per-list measurement cannot be constructed at all. Keyed as OwningClass.Field with NO flid -- a flid in the key would break silently the day LCM renumbered a field, turning a ruled list into an unruled one, which fails in the EXCUSING direction. The counts are exact-class filtered and therefore sum to the row's own source_count / destination_count_total. The literal '(no owning list)' files an object whose owning list could not be resolved; it is still counted and can never acquire a per-list line. Omitted entirely on a row with no such dimension."
         },
+        "owning_fields": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["field", "source_count", "destination_count"],
+            "properties": {
+              "field": { "type": "string", "minLength": 1 },
+              "source_count": { "type": "integer", "minimum": 0 },
+              "destination_count": { "type": "integer", "minimum": 0 }
+            }
+          },
+          "$comment": "T119's follow-on to owning_lists, same shape and same reasoning, one dimension finer: the PER-OWNING-FIELD breakdown for the classes whose owning FIELD, not whose class name, is the unit of work (FsFeatStruc, FsClosedValue). It is the EVIDENCE a per-field accounted_for line stands on: invariant R-1 rejects a line that outruns its evidence, so a per-field claim with no per-field measurement cannot be constructed at all. Keyed as OwningClass.Field with NO flid, for the same excusing-direction reason owning_lists gives. The counts are exact-class filtered and therefore sum to the row's own source_count / destination_count_total. The literal '(no owning field)' files an object whose owning field could not be resolved; it is still counted and can never acquire a per-field line. Omitted entirely on a row with no such dimension."
+        },
         "notes": { "type": "array", "items": { "type": "string" } }
       }
     },

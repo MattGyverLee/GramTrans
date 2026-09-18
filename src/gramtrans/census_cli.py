@@ -2044,6 +2044,92 @@ def _merge_owning_lists(object_class, source_lists, destination_lists) -> list:
     ]
 
 
+def _merge_owning_fields(object_class, source_fields, destination_fields) -> list:
+    """-> `[{field, source_count, destination_count}, ...]` for one class.
+
+    T119's follow-on. The exact twin of `_merge_owning_lists`: the two
+    readings are taken in separate opens, so joining them on the UNION of
+    labels (not the source's keys alone) is this function's whole job -- a
+    field present only in the DESTINATION is a surplus and must stay visible.
+    """
+    source_fields = (source_fields or {}).get(object_class) or {}
+    destination_fields = (destination_fields or {}).get(object_class) or {}
+    if not source_fields and not destination_fields:
+        return []
+    return [
+        {"field": label,
+         "source_count": int(source_fields.get(label, 0)),
+         "destination_count": int(destination_fields.get(label, 0))}
+        for label in sorted(set(source_fields) | set(destination_fields))
+    ]
+
+
+def accounted_for_owning_fields(
+        object_class, difference, owning_fields, existing=(),
+        notes=None) -> tuple:
+    """-> one `census.AccountedLine` per RULED owning field that lost objects.
+
+    T119's follow-on to `accounted_for_owning_lists` -- same arithmetic, same
+    two caps (R-2), same refusal to net a surplus field against a shortfall
+    one, keyed by `census.owning_field_ruling` instead of
+    `census.owning_list_ruling`. See that function's docstring for the caps'
+    rationale; it is not repeated here because it would be a second copy of
+    the same argument rather than a different one.
+    """
+    if difference is None or difference >= 0:
+        return ()
+    if not owning_fields:
+        return ()
+    claimed = census.accounted_in_direction(existing, "shortfall")
+    room = -difference - claimed
+    if room <= 0:
+        return ()
+
+    rows = []
+    for item in owning_fields:
+        label = item.get("field")
+        short = int(item.get("source_count") or 0) - int(
+            item.get("destination_count") or 0)
+        if short <= 0:      # matched, or a surplus -- never netted
+            continue
+        entry = census.owning_field_ruling(object_class, label)
+        if entry is None:   # UNRULED: stays unexplained, deliberately
+            continue
+        rows.append((label, short, entry))
+
+    lines = []
+    for label, short, (token, ruling, why) in sorted(rows):
+        if room <= 0:
+            if notes is not None:
+                notes.append(
+                    object_class + " owning field " + label + " is ruled by "
+                    + ruling + " and lost " + str(short) + " object(s), but "
+                    "the row's shortfall is already fully claimed, so NO "
+                    + token + " line was emitted for it (R-2)"
+                )
+            continue
+        count = min(short, room)
+        detail = (
+            "owning field " + label + ", ruled by " + ruling + ": " + why
+            + ". Needs no report_ref -- invariant 5 exempts " + token
+            + ", because the ruling is a committed document, not a run"
+        )
+        if count < short:
+            if notes is not None:
+                notes.append(
+                    object_class + " owning field " + label + " lost "
+                    + str(short) + " object(s) and is ruled by " + ruling
+                    + ", but only " + str(count) + " of the row's shortfall "
+                    "remained unclaimed, so the " + token + " line claims "
+                    + str(count) + " and the rest stays UNEXPLAINED (R-2)"
+                )
+            detail = detail + " -- CLAIM CAPPED BY THE ROW'S ROOM, see notes"
+        lines.append(census.AccountedLine(
+            reason=token, count=count, direction="shortfall", detail=detail))
+        room -= count
+    return tuple(lines)
+
+
 def accounted_for_owning_lists(
         object_class, difference, owning_lists, existing=(),
         notes=None) -> tuple:
@@ -2187,6 +2273,7 @@ def _row_for_entry(
     source_unmeasurable=frozenset(), destination_unmeasurable=frozenset(),
     source_name: str = "", destination_name: str = "",
     source_owning_lists=None, destination_owning_lists=None,
+    source_owning_fields=None, destination_owning_fields=None,
 ):
     """One `(ClassCensusRow, emitter kwargs)` pair for one class-list entry.
 
@@ -2541,6 +2628,21 @@ def _row_for_entry(
         lines = lines + accounted_for_owning_lists(
             entry.object_class, row.difference, per_list, lines, notes)
 
+    # ---- T119's follow-on: the PER-OWNING-FIELD dimension ------------------
+    # LAST of the five, after the per-list dimension, for the same reason it
+    # is last of the four: the finest-grained claims take the room only after
+    # every coarser one has had it. `FsFeatStruc` / `FsClosedValue` never
+    # intersect `OWNING_LIST_CLASSES`, so the two per-sub-key dimensions can
+    # never compete for the same row's room, but this still reads `lines` for
+    # the same reason the per-list block does -- a reported drop on one of
+    # these classes is possible and evidenced claims get the room first.
+    per_field = _merge_owning_fields(
+        entry.object_class, source_owning_fields, destination_owning_fields)
+    if per_field:
+        kwargs["owning_fields"] = per_field
+        lines = lines + accounted_for_owning_fields(
+            entry.object_class, row.difference, per_field, lines, notes)
+
     if lines:
         kwargs["accounted_for"] = lines
 
@@ -2782,7 +2884,15 @@ def census_run(
                 # ambiguity A1 exists to forbid.
                 source_owning_lists=source_reading.owning_list_counts,
                 destination_owning_lists=(
-                    destination_reading.owning_list_counts))
+                    destination_reading.owning_list_counts),
+                # T119's follow-on. Same "unsplit path only" reasoning:
+                # `FsFeatStruc` / `FsClosedValue` are not
+                # `FEATURE_SYSTEM_SPLIT_CLASSES`, but handing a split row a
+                # class-wide dimension would still be the same A1 ambiguity
+                # were that ever to change.
+                source_owning_fields=source_reading.owning_field_counts,
+                destination_owning_fields=(
+                    destination_reading.owning_field_counts))
             duplicate_report = duplicates.get(entry.object_class)
         else:
             row, kwargs = _row_for_entry(

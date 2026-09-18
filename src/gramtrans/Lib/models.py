@@ -1649,6 +1649,88 @@ CENSUS_OWNING_LIST_RULINGS: dict = {
     ),
 }
 
+# ---------------------------------------------------------------------------
+# T119's follow-on -- the PER-OWNING-FIELD roster (FsFeatStruc / FsClosedValue).
+#
+# `(object_class, owning_field) -> (reason_token, ruling, detail)`, the exact
+# shape of `CENSUS_OWNING_LIST_RULINGS` above, for the same reason: T119's live
+# owner-attribution probe (`probes/owner-probe-*.json`) took the `FsFeatStruc`
+# / `FsClosedValue` class rows apart and found each one is a BUCKET over nine
+# and more distinct OWNING FIELDS -- `MoStemMsa.MsFeatures` alone carries
+# 1,003 objects of pure total loss (117 / 782 / 104 -> 0 / 0 / 0) while
+# `MoStemMsa` itself counts MATCHED on every pair, invisible to any
+# counts-only gate. A class-keyed ruling here would have exactly
+# `cmpossibility-list-rulings.md` 5's failure: one sentence could retire the
+# row while real grammar (the MSAs' own feature structures) stayed hollow.
+# "The class name is not the unit of work" (T023b) again.
+#
+# THERE IS NO COMMITTED RULING DOCUMENT TO TRANSCRIBE, AND THAT IS RECORDED
+# HERE RATHER THAN PAPERED OVER. Unlike `CENSUS_OWNING_LIST_RULINGS`, whose
+# entries cite `contracts/cmpossibility-list-rulings.md`, no such contract
+# exists for this dimension: `contracts/fidelity-census.md` and
+# `specs/038-transfer-fidelity-gaps/tasks.md` were both checked (2026-09-18)
+# for a "T119" entry and neither has one -- `tasks.md` tops out at T095's
+# out-of-band notes. The only committed sources for T119's partition are
+# `tests/unit/test_038_t119_feat_struc_owners.py` (the fix, and the docstring
+# table reproduced below), `debug/run038_t124_recensus.py`'s
+# `_T119_OWNER_FIELDS` / `t119_rows`, and
+# `tests/integration/test_object_census.py::TestT124T119PerOwningField` (the
+# pinned per-pair, per-field measurements). If a future session commits a
+# `fs-feat-struc-owner-rulings.md` (or amends `fidelity-census.md` directly),
+# this roster is where its entries belong -- transcribed the same way
+# `CENSUS_OWNING_LIST_RULINGS` transcribes its contract.
+#
+# THE ROSTER IS EMPTY, AND THAT IS THE FINDING, NOT A PLACEHOLDER. Measured
+# per pair (ejagham / ngoreme / mbugwe), against `_T119_OWNER_FIELDS`:
+#
+#   MoStemMsa.MsFeatures (5001001)          117->0   782->0   104->0  OPEN
+#   FsComplexValue.Value (53001)               --    825->20     --   OPEN
+#   PartOfSpeech.ReferenceForms (5049010)    10->10   44->0      --   OPEN
+#   MoInflAffMsa.InflFeats (5038001)         86->86   38->38   78->78 matched
+#   MoDerivAffMsa.FromMsFeatures (5031001)     --       --     17->17 matched
+#   MoDerivAffMsa.ToMsFeatures (5031002)       --       --     17->17 matched
+#   MoAffixAllomorph.MsEnvFeatures (5027001)   --       --      1->1  matched
+#   PhPhoneme.Features (5092002) / PhNCFeatures.Features (5094001) / CmAnnotation.Features
+#     (34008) -- no shortfall measured on any sanctioned pair to date.
+#
+# A MATCHED field never reaches this roster at all: `count_by_owning_field`
+# still measures it, but a field with `source_count <= destination_count`
+# produces no shortfall for `accounted_for_owning_fields` to explain, ruled
+# or not -- exactly like a matched `owning_lists` entry. The three OPEN rows
+# are DELIBERATELY ABSENT, mirroring `MoMorphData.ProdRestrict`'s absence from
+# `CENSUS_OWNING_LIST_RULINGS` above, and for the same reason: each is this
+# feature's own grammatical content, not another feature's.
+#
+#   * `MoStemMsa.MsFeatures` -- TOTAL LOSS on every pair, unconditionally, the
+#     single largest owning-field shortfall this census can see. T119's own
+#     docstring names the cause as `_create_msa_for_closure`'s `MoStemMsa`
+#     branch, which still does not write `MsFeaturesOA`. A live defect this
+#     feature has not fixed, not a scope question.
+#   * `FsComplexValue.Value` -- T119 closed `MoInflAffMsa.InflFeats` on
+#     ngoreme (38->18 became 38->38) but the complex VALUES underneath it did
+#     not follow: 825 source objects arrive as 20. Still short by 805 on the
+#     one pair that holds any.
+#   * `PartOfSpeech.ReferenceForms` -- INCONSISTENT across pairs (10->10 on
+#     ejagham, 44->0 on ngoreme), which is itself the finding
+#     (`test_reference_forms_is_inconsistent_across_pairs`): a prior scoping
+#     argument citing T045's documented depth limit predicts a uniform empty
+#     shell, and a clean pass on one pair while another is a total loss is not
+#     that shape. The excuse does not cover what was measured, so it earns no
+#     ruling and the shortfall keeps failing the gate.
+#
+# NONE OF THE TEN OWNING FIELDS `_T119_OWNER_FIELDS` NAMES BELONGS TO ANOTHER
+# FEATURE. Every one of them is MSA / phoneme / natural-class / inflection
+# content squarely inside this feature's own Assumptions (`MoStemMsa`,
+# `MoInflAffMsa`, `MoDerivAffMsa`, `MoAffixAllomorph`, `PartOfSpeech`,
+# `PhPhoneme` are exactly the classes phase 1's own predicate gates on) --
+# unlike `CmPossibility`'s Scripture-note-categories / discourse-chart-
+# furniture lists, which are non-grammatical content another feature owns or
+# nobody claims. So, unlike `CENSUS_OWNING_LIST_RULINGS`, this roster has no
+# `OUT_OF_SCOPE_CLASS` candidate to offer at all today; it exists so the
+# per-field EVIDENCE (`owning_fields` in the artifact) is visible the moment
+# one does.
+CENSUS_OWNING_FIELD_RULINGS: dict = {}
+
 #: Amendment A1's two owning feature systems -- `$defs.classRow`'s
 #: `owning_feature_system` enum, in schema order. These spellings are the
 #: CONTRACT ones (fidelity-census.md:650-673) and are emitted VERBATIM, so a
