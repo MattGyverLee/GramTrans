@@ -483,7 +483,32 @@ predicate names classes and counts:
   `difference == 0` -- both, because either alone can be satisfied by the defect
   itself. (SC-006)
 - **Phase 5 (residual).** Every remaining `required` row is either MATCHED or
-  carries a valid `GOVERNED_BY_OTHER_FEATURE` / `NO_CREATE_PATH` line. (SC-005)
+  carries a valid `GOVERNED_BY_OTHER_FEATURE` / `NO_CREATE_PATH` /
+  `OUT_OF_SCOPE_CLASS` / `STARTER_CONTENT` / `UNREFERENCED_IN_SOURCE` line.
+  (SC-005)
+
+  > **This list has been widened twice, and the wording above was stale for
+  > the first of them.** It read "`GOVERNED_BY_OTHER_FEATURE` /
+  > `NO_CREATE_PATH`" from the beginning, when an owner named by the spec was
+  > the only route a ruled class had. T081's 4th re-gate added
+  > `OUT_OF_SCOPE_CLASS` and `STARTER_CONTENT` in
+  > `census.PHASE_5_ADMISSIBLE_REASONS` **without amending this line**, so the
+  > contract named two tokens while the gate admitted four; T120(a)'s
+  > `UNREFERENCED_IN_SOURCE` is the fifth and the occasion for reconciling
+  > them. The gate has not moved here -- the code was and remains the
+  > executable definition -- but a predicate whose contract understates what
+  > it admits is one an auditor cannot check, so the drift is recorded rather
+  > than quietly closed.
+  >
+  > P5's question is "is every remaining required row either MATCHED or
+  > accounted for by something this feature is not obliged to fix". An owner
+  > named by the spec is **one answer** to that question rather than the
+  > definition of it; a committed ruling putting a population out of scope, a
+  > destination that already HOLDS the content, and an object the standing
+  > no-unreferenced-create rule forbids transferring are three others.
+  > `DUPLICATE_CREATED` and `SOURCE_REFERENT_ABSENT` remain deliberately
+  > **inadmissible** -- see `census.PHASE_5_ADMISSIBLE_REASONS` for why each
+  > was refused.
 
 A phase is not done when its unit tests pass; it is done when the census run for its
 predicate exits 0 with the predicate satisfied.

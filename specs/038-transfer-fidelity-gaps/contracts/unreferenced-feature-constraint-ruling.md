@@ -216,6 +216,54 @@ would red the worktree suite. The three appends want to land together, and
 is the shape to follow. Append-only, in schema order; `schema_version` stays 1
 under that file's own evolution rule, since the format has not shipped.
 
+### 3c. LANDED 2026-09-18 -- and the scalar cap does not survive a drifted source
+
+Section 3b's two appends are in. `UNREFERENCED_IN_SOURCE` joined
+`census.PHASE_5_ADMISSIBLE_REASONS` and `PhFeatureConstraint` joined
+`models.CENSUS_RULED_RESIDUE_CLASSES` at `max_claim = 47`. The other four
+halves this section asked for -- `CENSUS_REASON_TOKENS`, the `report_ref`
+exemption, exclusion from `CENSUS_NOT_EVALUATED_REASONS`, and the schema enum
+plus the 7.1 row -- had already landed on `main` in `8972d9a`, so the ordering
+hazard this section flagged never fired.
+
+**Measured on the T126 pins, which are the pins section 2 was measured
+against.** P5 failures `6 / 10 / 7` -> `5 / 6 / 4`. `total_shortfall` does not
+move on any pair; `unexplained_shortfall` drops `1024 -> 972` (ngoreme) and
+`3005 -> 797` (mbugwe), of which this ruling's share is 47 and 32 exactly.
+Ejagham claims nothing, correctly: its row is `0 -> 0` and the emitter declines
+a MATCHED row.
+
+**THE CAP IS EXACT HERE AND CANNOT STAY EXACT ELSEWHERE, and section 3b's
+arithmetic is where the assumption hides.** "`min(room, max_claim)`, so ngoreme
+claims 47, mbugwe claims 32" is true only because mbugwe's ROOM was 32 --
+`max_claim` never binds on that pair at all; the room does. A single scalar
+therefore expresses two different per-pair populations only while both rooms
+happen to equal them.
+
+They no longer do. **The mbugwe source has drifted off this ruling's pin**:
+`fb6aadab..226c3161` (section 2d, and `census-038-t126-mbugwe.json`) ->
+`3fb29a29..` in `census-038-t131-mbugwe.json`, with `PhFeatureConstraint`
+source count `89 -> 91`. The 2 added objects are classified by no measurement
+in this document -- section 2a's two-way partition counted 89. On T131 the room
+is 34, the class-global 47 does not bind, and the emitter claims **34**, which
+explains away 2 objects of unknown referencedness. That is the "a sub-population
+ruling must not grow into a class-wide excuse" hazard this ruling invoked to
+justify `max_claim`, arriving through the one door a scalar cannot close.
+
+**Not fixed here.** The fix is a roster SHAPE change -- a per-pair or
+per-source-digest cap -- which is gate-consequential and belongs to a human.
+It is pinned meanwhile by
+`TestT120aTheScalarCapDoesNotBindADriftedSource`, which asserts the T126 rooms
+are still 47 and 32, asserts the T131 over-claim is exactly 2, and says in
+terms that the wrong response is to raise the cap.
+
+**Compounding section 2d's digest note.** That note recorded ngoreme's source
+moving between T078 and T126. Mbugwe's has now moved between T126 and T131. Two
+of the three sanctioned sources are off the pins some committed ruling was
+measured against, and `Mbugwe LizzieHC practice` is nominally a READ-ONLY test
+project, so its digest changing is itself a fact that wants an explanation
+rather than an accommodation.
+
 ## 4. What this ruling does NOT do
 
 * **It does not weaken the P5 gate for any other class.** It adds one token, one
