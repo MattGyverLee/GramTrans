@@ -8535,8 +8535,8 @@ T126_ARTIFACTS = {
 #: pair -> (P5 failures BEFORE the T081 lines, AFTER).
 T081_P5_FAILURES = {
     "ejagham": (6, 5),
-    "ngoreme": (10, 7),
-    "mbugwe": (7, 5),
+    "ngoreme": (10, 6),
+    "mbugwe": (7, 4),
 }
 
 #: pair -> the classes whose P5 failure the lines CLOSE. `MoAffixProcess` is
@@ -8544,10 +8544,15 @@ T081_P5_FAILURES = {
 #: `unexplained_shortfall` DOES go to zero, but `SOURCE_REFERENT_ABSENT` is
 #: kept out of `PHASE_5_ADMISSIBLE_REASONS` because PHASE 4 names the class, so
 #: the row stays a P5 failure with a different, more accurate message.
+#:
+#: `PhFeatureConstraint` joins ngoreme and mbugwe with T120(a)'s ruling and is
+#: absent from ejagham for the honest reason: that pair holds 0 -> 0, so its
+#: `difference` is 0 and the emitter correctly declines to claim anything. A
+#: ruling that fires on a MATCHED row would be explaining away nothing.
 T081_CLOSED = {
     "ejagham": {"PhCode"},
-    "ngoreme": {"CmFile", "CmFolder", "PhCode"},
-    "mbugwe": {"CmFile", "CmFolder"},
+    "ngoreme": {"CmFile", "CmFolder", "PhCode", "PhFeatureConstraint"},
+    "mbugwe": {"CmFile", "CmFolder", "PhFeatureConstraint"},
 }
 
 #: pair -> `total_unexplained_shortfall` BEFORE -> AFTER. `total_shortfall`
@@ -8556,8 +8561,8 @@ T081_CLOSED = {
 #: objects sit in.
 T081_UNEXPLAINED = {
     "ejagham": (692, 689),
-    "ngoreme": (1024, 1019),
-    "mbugwe": (3005, 829),
+    "ngoreme": (1024, 972),
+    "mbugwe": (3005, 797),
 }
 
 #: The classes T081's brief named and this roster does NOT carry, with the
@@ -8568,7 +8573,14 @@ T081_DELIBERATELY_OUT = {
     "MoAffixProcess": "phase-4 owned; accounted through the report surface",
     "CmPossibility": "no per-owning-list dimension in the census (T122)",
     "LexReference": "kind-(i) real loss, blocked on a human ruling",
-    "PhFeatureConstraint": "kind-(i) real loss",
+    # `PhFeatureConstraint` WAS here, classified "kind-(i) real loss", and
+    # T120(a)'s two-way measurement refuted that classification: of the 47 / 32
+    # missing, 0 are referenced, and of the 23 / 57 transferred, all are. The
+    # transferred set IS the referenced set, so nothing was lost -- the
+    # shortfall is the standing "never create what the source does not
+    # reference" rule being obeyed. It is now ROSTERED under
+    # `UNREFERENCED_IN_SOURCE`, which is why it moved out of this table
+    # instead of being deleted from it silently.
     "FsFeatStruc": "kind-(i) real loss",
     "FsClosedValue": "kind-(i) real loss",
     "MoStemMsa": "kind-(i): one object on one pair, no attributed cause",
@@ -8677,7 +8689,14 @@ class TestT081TheRosterIsTheRulingsAndNothingElse:
             document = ruling.split(" ")[0].split("#")[0].strip()
             assert document.startswith("contracts/"), (cls, ruling)
             assert document.endswith(".md"), (cls, ruling)
-            assert re.search(r"\(T\d{2,3}[,)]", ruling), (cls, ruling)
+            # The optional `(a)` / `(b)` admits a HALF-task tag, which
+            # `T120(a)` is: T120 split into the phonological-rule route (b)
+            # and the shared project-level pool (a), and only (a) produced a
+            # ruling. Widened rather than renaming the tag to `T120a`, because
+            # the tag has to match what `tasks.md` and the ruling document
+            # both call it or the reader cannot find it.
+            assert re.search(r"\(T\d{2,3}(\([ab]\))?[,)]", ruling), (
+                cls, ruling)
             assert reason.startswith("measured "), cls
             path = contracts / document[len("contracts/"):]
             if path.is_file():
@@ -8915,3 +8934,67 @@ class TestT081TheGateStopsCountingTheseAsUnexplained:
         `$ref`-shared with `not_evaluated_reason`. A line the schema refuses is
         not accounting."""
         assert census.validate_artifact(_t081_stamped(pair)) == ()
+
+
+class TestT120aTheScalarCapDoesNotBindADriftedSource:
+    """The `PhFeatureConstraint` cap is CLASS-GLOBAL, and on mbugwe that is
+    one object short of expressing the ruling.
+
+    T120(a) measured the orphan population per pair -- 47 ngoreme, 32 mbugwe --
+    and set `max_claim = 47` reasoning that `min(room, 47)` yields 47 / 32 / 0
+    because those WERE the three rooms. It is correct on the pins the ruling
+    was measured against, and `test_the_p5_failure_count_drops_by_exactly_the
+    _ruled_rows` asserts exactly that against the T126 artifacts.
+
+    IT STOPS BEING CORRECT THE MOMENT A SOURCE DRIFTS. Between T126 and T131
+    the mbugwe SOURCE moved -- `fb6aadab..226c3161` -> `3fb29a29..` -- and its
+    `PhFeatureConstraint` source count went 89 -> 91, so the row's room went
+    -32 -> -34. A class-global cap of 47 does not bind at 34, so the emitter
+    claims all 34 and two objects NOBODY HAS CLASSIFIED as referenced or
+    unreferenced are explained away by a ruling that never looked at them.
+    That is precisely the "a sub-population ruling must not grow into a
+    class-wide excuse" hazard `max_claim` exists to prevent, arriving through
+    the one door a scalar cap cannot close.
+
+    RECORDED AS A TEST RATHER THAN A FIX because the fix is a roster SHAPE
+    change -- a per-pair or per-source-digest cap -- and that is a
+    gate-consequential decision this feature has consistently routed to a
+    human. The test pins the hazard so the next hand meets it as a measured
+    fact instead of rediscovering it, and so nobody "fixes" the 34 by raising
+    the cap, which would be the wrong direction entirely.
+    """
+
+    def test_the_ruling_is_exact_on_the_pins_it_was_measured_against(self):
+        """T126: room IS the ruled population on both pairs, to the object."""
+        assert _t126_rows_room("ngoreme") == 47
+        assert _t126_rows_room("mbugwe") == 32
+
+    def test_the_drifted_source_lets_the_claim_outrun_the_ruling(self):
+        """T131 mbugwe: 2 objects claimed that the ruling never measured."""
+        path = (Path(__file__).resolve().parent / "_snapshots"
+                / "census-038-t131-mbugwe.json")
+        if not path.is_file():
+            pytest.skip("missing " + str(path))
+        doc = json.loads(path.read_text(encoding="utf-8"))
+        row = next(r for r in doc["classes"]
+                   if r["class"] == "PhFeatureConstraint")
+        assert row["source_count"] == 91, (
+            "if this is 89 again the mbugwe source was restored to its T126 "
+            "pin and this whole hazard is moot -- delete the class, do not "
+            "loosen the assertion")
+        room = -row["difference"]
+        assert room == 34
+        line = census_cli.accounted_for_ruled_residue(
+            "PhFeatureConstraint", row["difference"], (), None)[0]
+        ruled_on_this_pair = 32
+        assert line.count == room == 34
+        assert line.count - ruled_on_this_pair == 2, (
+            "the over-claim is exactly the 2 objects the drifted source "
+            "added; if it is not 2 the source moved again and the ruling "
+            "needs re-measuring, not this test adjusting")
+
+
+def _t126_rows_room(pair: str) -> int:
+    row = next(r for r in _t126(pair)["classes"]
+               if r["class"] == "PhFeatureConstraint")
+    return -row["difference"]

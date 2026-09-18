@@ -1523,6 +1523,35 @@ CENSUS_RULED_RESIDUE_CLASSES: dict = {
         "deletes. mbugwe is MATCHED because its source's codes ARE the "
         "canonical pair, so the identity check passes there NON-VACUOUSLY",
     ),
+    # -- T120(a). THE SHORTFALL IS THE STANDING RULE BEING OBEYED, not a loss.
+    #    `max_claim` is 47 and the cap is the point: the emitter takes
+    #    `min(room, max_claim)`, so ngoreme claims 47, mbugwe 32 and ejagham
+    #    nothing. A `None` here would make an open-ended claim about a fourth
+    #    corpus nobody has measured.
+    "PhFeatureConstraint": (
+        "UNREFERENCED_IN_SOURCE",
+        "contracts/unreferenced-feature-constraint-ruling.md "
+        "(T120(a), 2026-08-28)",
+        47,
+        "measured 0, -47, -32 by direct read-only parse of the six `.fwdata` "
+        "files, every digest matching the `census-038-t126-*` pin. The "
+        "partition is exact in BOTH directions, which is what makes it "
+        "conclusive rather than suggestive: of the 47 / 32 missing, "
+        "**0 are referenced**; of the 23 / 57 transferred, **all** are -- so "
+        "the transferred set IS the referenced set, to the object, and the "
+        "GUID intersection confirms identity was preserved for every object "
+        "that moved. A `PhFeatureConstraint` has one property, `FeatureRA`; "
+        "its +/- polarity lives on the REFERRING context "
+        "(`PhSimpleContextNC.PlusConstr` / `MinusConstr`), so an instance no "
+        "context references has no polarity and no effect on any rule -- "
+        "vestigial pool entries left by edited or deleted rules. "
+        "`PhPhonData.FeatConstraints` (5099005) is the sole owner on both "
+        "pairs, so unlike `CmFile` / `CmFolder` a single class-level ruling "
+        "is the correct granularity. Materialising them would create target "
+        "objects nothing in the source references, which the user's standing "
+        "rule forbids -- the Phase-4b co-create is WITHDRAWN for this class "
+        "on that ground. No transfer code and no create path is owed",
+    ),
 }
 
 #: Amendment A1's two owning feature systems -- `$defs.classRow`'s

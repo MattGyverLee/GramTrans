@@ -3310,6 +3310,25 @@ DUPLICATE_ACCOUNTING_REASON = "DUPLICATE_CREATED"
 #:   Strictly stronger than `NO_CREATE_PATH`, which is already admitted while
 #:   admitting a reported defect.
 #:
+#: T120(a) ADDS A THIRD, `UNREFERENCED_IN_SOURCE`
+#: (`contracts/unreferenced-feature-constraint-ruling.md`, 2026-08-28). It is
+#: the ONLY token in the vocabulary that says the source object exists intact
+#: and nothing in the source REFERS to it, so the standing rule "never create
+#: objects in the target that nothing in the source references" forbids
+#: transferring it. Measured two-way on both pairs that hold any: the
+#: transferred set IS the referenced set, to the object (ngoreme 23/23,
+#: mbugwe 57/57), and no referenced constraint is missing. The shortfall is
+#: therefore the rule being OBEYED, and P5 reading it as an unexplained loss
+#: is the instrument disagreeing with the ruling rather than a defect.
+#:
+#: It clears T109 LOCK 1 on the same ground `SOURCE_REFERENT_ABSENT` fails it,
+#: and the contrast is the whole reason this admission is narrow:
+#: `PhFeatureConstraint` is named by NO phase predicate
+#: (`PHASE_1_CLASSES` / `PHASE_2_MATCHED_CLASSES` / `PHASE_3_CLASSES` /
+#: `PHASE_4_CLASSES` all exclude it), where `MoAffixProcess` is named by
+#: PHASE 4's. Admitting this token therefore lets no class this feature has an
+#: executable gate on buy a P5 pass, which is exactly what LOCK 1 protects.
+#:
 #: THREE TOKENS CONSIDERED AND REFUSED, so the widening is a decision and not a
 #: drift:
 #:
@@ -3327,10 +3346,15 @@ DUPLICATE_ACCOUNTING_REASON = "DUPLICATE_CREATED"
 #:   now (`census_cli.PROCESS_RULE_REASON_TOKENS`), which zeroes the row's
 #:   `unexplained_shortfall` and puts the ruling in the artifact with
 #:   resolvable evidence; whether P5 should also admit it is a ruling on 9.1
-#:   and belongs to a human, not to this constant.
+#:   and belongs to a human, not to this constant. **`UNREFERENCED_IN_SOURCE`
+#:   is NOT precedent for admitting it**, and its own ruling says so in terms:
+#:   referent-missing and referrer-missing are different facts, the two tokens
+#:   differ on LOCK 1, and `SOURCE_REFERENT_ABSENT` is still awaiting a human
+#:   ruling.
 PHASE_5_ADMISSIBLE_REASONS: frozenset = frozenset({
     "GOVERNED_BY_OTHER_FEATURE", "NO_CREATE_PATH",
     "OUT_OF_SCOPE_CLASS", "STARTER_CONTENT",
+    "UNREFERENCED_IN_SOURCE",
 })
 
 _CENSUS_ID_PATTERN = re.compile(r"^CENSUS-[0-9]{8}-[0-9]{6}$")
