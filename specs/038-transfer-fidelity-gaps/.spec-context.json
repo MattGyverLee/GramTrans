@@ -1158,6 +1158,14 @@
       "kind": "complete",
       "by": "extension",
       "at": "2026-08-27T13:59:25.239Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T123",
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-09-18T18:38:52.436Z"
     }
   ],
   "decisions": [
@@ -1675,7 +1683,7 @@
       "summary": "T113 closed -- the report-only roster gains a completeness check and the five governed classes it was silently short of; T081/T082/T085 remain blocked on live-project work and a scoping decision"
     }
   },
-  "currentTask": "T081",
+  "currentTask": "T123",
   "task_summaries": {
     "T001": {
       "status": "DONE",
@@ -1911,6 +1919,15 @@
         "tests/unit/test_038_t079_report_only_residue.py",
         "tests/integration/test_object_census.py",
         "specs/038-transfer-fidelity-gaps/journal/T113-a-guard-that-only-looks-one-way.md"
+      ]
+    },
+    "T123": {
+      "status": "DONE",
+      "did": "T123 measured closed two-sided on live restore-bounded re-censuses: (a) subsense MSA wiring -- destination null MsaRA 13 == source 13, MoStemMsa 1954=1954, no duplicate (t123e); (b) LexEntryType misclassification -- 13/13 and 12/12 with LexEntryInflType 3/3 and 4/4, GUIDs unchanged (t123d)",
+      "files": [
+        "src/gramtrans/Lib/categories.py",
+        "tests/unit/test_038_t123a_subsense_msa_wiring.py",
+        "tests/unit/test_038_t123_entry_type_factory_choice.py"
       ]
     }
   },
