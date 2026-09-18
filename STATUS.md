@@ -1,5 +1,92 @@
 # GramTrans — Session Handoff
 
+## Session log — 2026-09-18 (038: T123 spurt — BOTH acceptance lines fixed in code, NEITHER measured; awaiting authorization)
+
+Spurt 3 of the 038 crew loop, cycles 5-9. Checkpoint was "Phase 10 closed — T123's
+two remaining acceptance lines fixed or explicitly ruled." **NOT reached, and
+deliberately so.** Both lines now have landed, tested fixes; neither has been
+*measured*, because measuring them needs a restore-bounded live transfer that only
+the user can authorize. **T123 stays unchecked. Phase 10 stays open. T085 stays
+gated.**
+
+**Committed this spurt.** Worktree `73552e4` (single parent, not a merge; 9 files,
++1371/-80) — the LexEntryType factory fix, the natural-key MSA fix, the entry-owned
+MSA hardening, and the `UNREFERENCED_IN_SOURCE` token constants. Main `8972d9a`
+(token schema/prose + all cycle 5-8 crew reports) and `4818480` (T085 merge hazard).
+Unit suite 3881 -> 3894 across the spurt, every added test reconciled to a named fix.
+
+**T123(b) — LexEntryType, FIXED IN CODE.** `variant_types_execute_action` created
+every `VariantEntryTypesOA` member via `ILexEntryInflTypeFactory`, routing by which
+possibility list the item lives in rather than by the object's own class. **This is a
+MISCLASSIFICATION, not an absence** — the objects arrive, GUID and nesting preserved,
+as `LexEntryInflType`; the census -1 is exactly offset by +1, proven by GUID identity
+on both pairs. Acceptance is therefore two-sided (`LexEntryType` 13/13, 12/12 AND
+`LexEntryInflType` 3/3, 4/4); net cancellation is not acceptance.
+
+**T123(a) — MoStemMsa -1, DIAGNOSED AND FIXED IN CODE, after three refutations.**
+Three candidate mechanisms died by live read-only measurement, none by argument:
+never-enumerated (ops 005/006 — `A - B` empty in all four MSA classes, 2090 owned =
+2090 sense-referenced), cross-owner closure collision (op 007 — `B - A` = 0 across
+2233 senses), and POS-guard silent skip (op 009 — predicted population 1, measured 11,
+and the 11 are DISJOINT from the target by `MsFeaturesOA`). The fourth read settled it
+in one shot: a **destination-side GUID diff** (ops 010-013, against a destination whose
+`.fwdata` SHA-256 byte-matches the census artifact's recorded hash) named the object
+outright — MSA `8617b725-efc1-4f6d-935c-c6c87081c7cb` on entry `'omoona'`
+(`e2cd79ef-...`), with **zero extra** objects, so nothing was regenerated under a new
+GUID. Mechanism: entry `'omoona'` owns two MSAs identical in every syncable property
+and differing only by GUID; the second was matched by natural key, its create skipped,
+**and its sense left with a null `MorphoSyntaxAnalysisRA`**. Not dedup-and-reuse —
+reuse would have left the graph intact and only the count short; this broke both. The
+fix has two halves (create not skipped for a GUID-distinct MSA; referring sense
+non-null on every path including legitimate reuse) and acceptance is correspondingly
+two-sided: `MoStemMsa` 1951 = 1951 AND zero senses with a null `MsaRA` whose source
+counterpart had one AND destination extra = 0.
+
+**Three standing rules, each paid for in cycles.**
+1. *A static mechanism is not a diagnosis until its predicted population is counted.*
+   Cycle 5 reasoned statically and never asked whether its predicted population was
+   non-empty. It was empty.
+2. *No branch may be closed by an unexamined inference.* Cycle 5 discarded the
+   natural-key family — the RIGHT family — because "a natural-key match would leave the
+   count matched." False: a key match that skips the create without rewiring the
+   referent leaves the count short and the reference null, which is what was on disk.
+3. *On any count shortfall, the destination-side GUID diff is the FIRST read, not the
+   fifth.* Four source-side queries inferred; one destination diff named the object.
+
+**Tree-qualification rule (bit three times this spurt).** Every `file:line` citation
+must state its tree and `git rev-parse HEAD`. `src/gramtrans/Lib/categories.py` is
+10,165 lines on main and 16,022 on the branch. It cost a whole re-diagnosis (cycle 7
+analysed main's superseded copy, which predates the `_POS_ABSENT` rewrite), a
+hardcoded insertion point that had moved twice, and a Pyright signature scare
+reproduced only under a stale editable install resolving against main's 6-arg
+signature.
+
+**STALE-MIRROR TRAP — do not "clean up".** Two contract files
+(`specs/038-transfer-fidelity-gaps/contracts/census-artifact.schema.json` and
+`fidelity-census.md`) are **deliberately left dirty and uncommitted** in the worktree
+so `test_object_census.py`'s `_repo_root()` reads current contracts instead of the
+branch's stale snapshot. `git checkout --` on them turns the measured 635/5/29 into
+artifact-drift failures. The proper fix is the `git merge main` recorded on T085 —
+which currently conflicts in `tests/integration/harness/full_run.py` and
+`debug/run_fullcopy_sweep.py` (feature-035 divergence). **Do not force it with
+`-X ours`:** that records a merge asserting main's version was incorporated, and the
+eventual 038 -> main merge would then silently discard feature-035's work.
+
+**Not a defect (retired):** the destination headword rendering `'*???'` for `'omoona'`
+is NOT a fidelity loss — `LexemeForm[ngq]='Xna'` and `CitationForm[ngq]='omoona'`
+round-tripped exactly (ops 016/017). The destination carries 4 writing systems to the
+source's 3 and `HeadWord` resolves against the default vernacular. Spurt-4 row is
+**destination writing-system provisioning** (one confirming read:
+`LangProject.DefaultVernacularWritingSystem` on both). Mbugwe's `Periphrastic Form`
+arriving `'***'` is kept as an **independent** observation needing its own per-WS read
+— same shape is not same cause.
+
+**Next session's blocking item is a decision, not a task:** authorize the
+restore-bounded re-census in `specs/038-transfer-fidelity-gaps/.crew-handoff.json`
+(`blocker`). No live WRITE occurred anywhere this spurt; all 17 FLExToolsMCP
+operations were certified read-only.
+
+
 ## Session log — 2026-08-28b (038: Fs* residue spurt — T119 + T120 RULED, Phase 10 down to T123)
 
 Spurt 2 of the 038 crew loop. Checkpoint was "T119's two residuals are either
