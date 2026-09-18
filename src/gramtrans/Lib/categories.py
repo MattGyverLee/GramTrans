@@ -8035,6 +8035,141 @@ def _resolve_sense_thesaurus_items(src_sense, new_sense, target, resolver_cache,
             pass
 
 
+def _create_and_wire_sense_msa(src_sense, new_sense, src_entry, new_entry, context,
+                                tag, identity_remap, msa_by_src_guid, dropped,
+                                s_guid=None):
+    """T123(a) subsense fix: the MSA create-and-wire step for ONE sense --
+    factored out of `_walk_lex_entry_closure`'s per-top-level-sense loop so
+    the identical logic can also run for a SUBSENSE (`_wire_subsense_msas`,
+    below), not only `src_entry.SensesOS`'s direct members. Behaviour is
+    byte-for-byte what the loop used to do inline; nothing about the
+    create-once-per-guid/never-swallow-a-wiring-failure contract changed,
+    only its reach.
+
+    `msa_by_src_guid` is the SAME per-entry dict shared across every sense
+    at every depth (passed in, mutated in place) so one source MSA guid is
+    created exactly once and shared by every referring sense, top-level or
+    subsense, per the T123(a) root-cause fix's authoritative-cache
+    constraint. No-op when the sense has no `MorphoSyntaxAnalysisRA`."""
+    if s_guid is None:
+        s_guid = _guid_str_from(src_sense)
+    src_msa = getattr(src_sense, "MorphoSyntaxAnalysisRA", None)
+    if src_msa is None:
+        return
+    m_guid = _guid_str_from(src_msa)
+    # T123(a): only trust the cache for a REAL, non-empty guid -- an
+    # unreadable guid (`_guid_str_from` -> "") must never be treated as
+    # "the same MSA I already created", or a second unrelated MSA whose
+    # guid also read as empty would silently inherit the first one's
+    # object instead of getting its own create attempt.
+    new_msa = msa_by_src_guid.get(m_guid) if m_guid else None
+    if new_msa is None:
+        # T123(a), measured live on `omoona` (Ngoreme): a SECOND source
+        # MSA sharing a natural key (same POS/content) with an already-
+        # created MSA on this SAME entry used to be able to raise,
+        # uncaught, out of `_create_msa_for_closure` (the flexicon wrapper
+        # fallback's own duplicate-avoidance behaviour) -- and with no
+        # try/except here, that exception aborted the REST of this
+        # entry's closure. Guarding it here keeps the failure scoped to
+        # THIS one MSA -- reported via `_report_dropped_msa` (never
+        # silent) -- and lets every remaining sense on the entry still
+        # get its own chance to be created and wired.
+        try:
+            new_msa = _create_msa_for_closure(
+                src_msa, new_sense, new_entry, context, tag,
+                identity_remap, dropped=dropped, src_entry=src_entry)
+        except Exception as exc:  # noqa: BLE001 -- never let one sense's
+            # MSA take down the rest of the entry's closure.
+            import logging as _logging
+            _logging.getLogger("gramtrans.Lib.categories").exception(
+                "MSA create raised for sense guid=%s (entry guid=%s, msa "
+                "guid=%s); reporting and continuing with the rest of "
+                "this entry's closure rather than aborting it (T123(a)).",
+                s_guid, _guid_str_from(src_entry), m_guid,
+            )
+            kind = _dispatch_msa_subclass(_class_name_of(src_msa))
+            _report_dropped_msa(
+                dropped, src_entry, src_msa,
+                kind or _class_name_of(src_msa),
+                f"MSA create raised {type(exc).__name__}: {exc} -- "
+                "MSA not transferred")
+            new_msa = None
+        if new_msa is not None and m_guid:
+            msa_by_src_guid[m_guid] = new_msa
+    if new_msa is not None:
+        # cycle 11 (T123(a) half 2): this assignment is a no-op on the
+        # paths that already wire the sense internally
+        # (`_create_msa_with_guid`, `_create_via_wrapper_or_reuse`) but it
+        # is the ONLY wiring step for a cache hit -- a second sense
+        # (top-level OR subsense) on this entry referencing the SAME
+        # source MSA guid as an earlier sense, which skips
+        # `_create_msa_for_closure` entirely via `msa_by_src_guid`. It
+        # used to swallow `(AttributeError, TypeError)` silently; that is
+        # exactly the never-silent invariant this task exists to restore,
+        # so a failure here is now a reported drop, not a pass.
+        try:
+            new_sense.MorphoSyntaxAnalysisRA = new_msa
+        except Exception as exc:  # noqa: BLE001 -- never swallow
+            kind = _dispatch_msa_subclass(_class_name_of(src_msa))
+            _report_dropped_msa(
+                dropped, src_entry, src_msa,
+                kind or _class_name_of(src_msa),
+                f"MSA was created/reused but the referring sense "
+                f"could not be wired to it ({type(exc).__name__}: "
+                f"{exc}) -- MSA not transferred")
+
+
+def _wire_subsense_msas(src_parent_sense, src_entry, new_entry, context, tag,
+                         identity_remap, msa_by_src_guid, dropped, copy_set):
+    """T123(a) ROOT CAUSE fix. `_walk_lex_entry_closure`'s per-sense MSA
+    create-and-wire block used to run ONLY for `src_entry.SensesOS` --
+    top-level senses -- because it lived inside that loop and nowhere else
+    walked into `LexSense.SensesOS` (subsenses). A subsense's own MSA was
+    therefore never created/wired HERE; it fell through to
+    `_create_entry_owned_msas_without_sense` (the cycle-8 hardening
+    backstop), which finds it unclaimed and creates it with `new_sense=None`
+    BY DESIGN -- entry-owned MSA counts still balance, nothing is reported
+    dropped, and the referring sense's `MorphoSyntaxAnalysisRA` is left
+    silently null. Measured live on `omoona` (Ngoreme), entry
+    e2cd79ef-2ee5-4d56-ae54-9210060bcdae, sense 'small child'
+    (3081d6f8-...) under 'child' (885182d0-...); see
+    specs/038-transfer-fidelity-gaps/reviews/cycle12-mainsession-t123a-root-cause.md.
+
+    This walk recurses into `src_parent_sense.SensesOS` at ANY depth --
+    mirroring `owned.walk_owned_children`'s own unconditional recursion for
+    the `recurse=True` `LexSense.SensesOS` row (`owned.OWNED_OBJECT_MAP`) --
+    so a sub-subsense (or deeper) is covered too, not just one level.
+
+    It does NOT create subsense objects: those are already created (and
+    registered into `context._copy_set` by `owned._copy_one_owned_child`'s
+    `spec.recurse` leg) by the `_owned.walk_owned_children(src_sense,
+    new_sense, ...)` call the caller makes immediately before this runs, for
+    exactly this sense's subtree -- so by the time this function is
+    entered, every subsense reachable from `src_parent_sense` is already a
+    key in `copy_set`. This walk only LOOKS UP each subsense via `copy_set`
+    (never falls back to creating one) and hands it to
+    `_create_and_wire_sense_msa`, the SAME per-sense MSA logic the
+    top-level loop uses, so one source MSA guid is still created exactly
+    once and shared by every referring sense regardless of depth
+    (`msa_by_src_guid`, mutated in place, is the single shared cache for
+    the whole entry).
+
+    A subsense guid absent from `copy_set` (its own create failed and was
+    already reported by `owned.py`) is skipped here without re-reporting --
+    not a reason to skip ITS OWN children's MSAs, so the recursion continues
+    regardless."""
+    for src_sub in getattr(src_parent_sense, "SensesOS", None) or []:
+        sub_guid = _guid_str_from(src_sub)
+        new_sub = copy_set.get(sub_guid) if sub_guid else None
+        if new_sub is not None:
+            _create_and_wire_sense_msa(
+                src_sub, new_sub, src_entry, new_entry, context, tag,
+                identity_remap, msa_by_src_guid, dropped, s_guid=sub_guid)
+        _wire_subsense_msas(
+            src_sub, src_entry, new_entry, context, tag, identity_remap,
+            msa_by_src_guid, dropped, copy_set)
+
+
 def _walk_lex_entry_closure(src_entry, context, tag, category, dropped=None):
     """Atomic owned-child closure write for one LexEntry (E2), shared by
     AFFIXES + STEMS execute_action.
@@ -8195,6 +8330,18 @@ def _walk_lex_entry_closure(src_entry, context, tag, category, dropped=None):
         # collection from `src_entry.SensesOS` above.
         _owned.walk_owned_children(
             src_sense, new_sense, context, tag, resolver_cache, dropped)
+        # T123(a) ROOT CAUSE fix: `walk_owned_children` just created (and
+        # registered into `copy_set`) every subsense reachable from
+        # `src_sense`, at any depth -- but it carries no MSA logic. Wire
+        # each of THOSE subsenses' own MSAs now, via the SAME per-sense
+        # MSA logic (`_create_and_wire_sense_msa`) this loop uses for
+        # `src_sense` itself below, sharing the SAME `msa_by_src_guid`
+        # cache so one source MSA guid is created once and shared by
+        # every referring sense regardless of depth. See
+        # `_wire_subsense_msas`'s own docstring for the full mechanism.
+        _wire_subsense_msas(
+            src_sense, src_entry, new_entry, context, tag, identity_remap,
+            msa_by_src_guid, dropped, copy_set)
 
         # Feature 024 (T016): every sense-level reference field registered in
         # `references.REFERENCE_FIELD_MAP` -- SenseTypeRA, UsageTypesRC,
@@ -8237,76 +8384,14 @@ def _walk_lex_entry_closure(src_entry, context, tag, category, dropped=None):
         # final pass (see comment on the entry registration above).
         copy_set[s_guid] = new_sense
         # MSA for this sense (create once per DISTINCT source MSA guid --
-        # never per its content, per the T123(a) fix below).
-        src_msa = getattr(src_sense, "MorphoSyntaxAnalysisRA", None)
-        if src_msa is not None:
-            m_guid = _guid_str_from(src_msa)
-            # T123(a): only trust the cache for a REAL, non-empty guid --
-            # an unreadable guid (`_guid_str_from` -> "") must never be
-            # treated as "the same MSA I already created", or a second
-            # unrelated MSA whose guid also read as empty would silently
-            # inherit the first one's object instead of getting its own
-            # create attempt.
-            new_msa = msa_by_src_guid.get(m_guid) if m_guid else None
-            if new_msa is None:
-                # T123(a), measured live on `omoona` (Ngoreme): a SECOND
-                # source MSA sharing a natural key (same POS/content) with
-                # an already-created MSA on this SAME entry used to be able
-                # to raise, uncaught, out of `_create_msa_for_closure` (the
-                # flexicon wrapper fallback's own duplicate-avoidance
-                # behaviour) -- and with no try/except here, that exception
-                # aborted the REST of this entry's closure (every sense,
-                # allomorph, and entry-ref after this point in the loop)
-                # and was reported nowhere but a generic swallowed
-                # `LeafExecutionFailure` two call-frames up in
-                # `transfer.py`. Guarding it here keeps the failure scoped
-                # to THIS one MSA -- reported via `_report_dropped_msa`
-                # (never silent) -- and lets every remaining sense on the
-                # entry still get its own chance to be created and wired.
-                try:
-                    new_msa = _create_msa_for_closure(
-                        src_msa, new_sense, new_entry, context, tag,
-                        identity_remap, dropped=dropped, src_entry=src_entry)
-                except Exception as exc:  # noqa: BLE001 -- never let one
-                    # sense's MSA take down the rest of the entry's closure.
-                    import logging as _logging
-                    _logging.getLogger("gramtrans.Lib.categories").exception(
-                        "MSA create raised for sense guid=%s (entry "
-                        "guid=%s, msa guid=%s); reporting and continuing "
-                        "with the rest of this entry's closure rather than "
-                        "aborting it (T123(a)).",
-                        s_guid, src_guid, m_guid,
-                    )
-                    kind = _dispatch_msa_subclass(_class_name_of(src_msa))
-                    _report_dropped_msa(
-                        dropped, src_entry, src_msa,
-                        kind or _class_name_of(src_msa),
-                        f"MSA create raised {type(exc).__name__}: {exc} -- "
-                        "MSA not transferred")
-                    new_msa = None
-                if new_msa is not None and m_guid:
-                    msa_by_src_guid[m_guid] = new_msa
-            if new_msa is not None:
-                # cycle 11 (T123(a) half 2): this assignment is a no-op on
-                # the paths that already wire the sense internally
-                # (`_create_msa_with_guid`, `_create_via_wrapper_or_reuse`)
-                # but it is the ONLY wiring step for a cache hit -- a second
-                # sense on this entry referencing the SAME source MSA guid
-                # as an earlier sense, which skips `_create_msa_for_closure`
-                # entirely via `msa_by_src_guid`. It used to swallow
-                # `(AttributeError, TypeError)` silently; that is exactly
-                # the never-silent invariant this task exists to restore, so
-                # a failure here is now a reported drop, not a pass.
-                try:
-                    new_sense.MorphoSyntaxAnalysisRA = new_msa
-                except Exception as exc:  # noqa: BLE001 -- never swallow
-                    kind = _dispatch_msa_subclass(_class_name_of(src_msa))
-                    _report_dropped_msa(
-                        dropped, src_entry, src_msa,
-                        kind or _class_name_of(src_msa),
-                        f"MSA was created/reused but the referring sense "
-                        f"could not be wired to it ({type(exc).__name__}: "
-                        f"{exc}) -- MSA not transferred")
+        # never per its content, per the T123(a) fix). T123(a) ROOT CAUSE
+        # fix: this is now `_create_and_wire_sense_msa`, the SAME function
+        # `_wire_subsense_msas` (above) calls for every subsense at any
+        # depth, sharing this entry's one `msa_by_src_guid` cache -- the
+        # create-and-wire logic itself is unchanged, only its reach.
+        _create_and_wire_sense_msa(
+            src_sense, new_sense, src_entry, new_entry, context, tag,
+            identity_remap, msa_by_src_guid, dropped, s_guid=s_guid)
         apply_residue(new_sense, ws, tag)
 
     # T123 HARDENING -- NOT T123(a)'s fix (T123(a) is a DIFFERENT, already
@@ -10173,49 +10258,128 @@ def _create_msa_for_closure(src_msa, new_sense, new_entry, context, tag,
     return new_msa
 
 
+def _entry_sense_reachable_msa_guids(src_entry):
+    """T123(a) ROOT CAUSE fix, defense-in-depth: the set of source MSA guids
+    referenced by `MorphoSyntaxAnalysisRA` on ANY sense reachable from
+    `src_entry` -- top-level `SensesOS` AND subsenses at any depth (mirrors
+    `_wire_subsense_msas`'s own recursion into `LexSense.SensesOS`, kept
+    deliberately independent of `msa_by_src_guid` rather than reusing it, so
+    this really is a second, structurally-different measurement of "is this
+    MSA sense-reachable", not a re-read of the same cache the walk above
+    already populates). Used only by
+    `_create_entry_owned_msas_without_sense` to recognize -- and loudly flag,
+    never silently absorb -- an MSA that IS sense-reachable but somehow
+    didn't make it into `msa_by_src_guid` by the time the hardening pass
+    runs, the exact shape of the T123(a) defect. Never raises; best-effort
+    over duck-typed/live objects alike."""
+    seen: set = set()
+
+    def _walk(senses):
+        for src_sense in senses or []:
+            m = getattr(src_sense, "MorphoSyntaxAnalysisRA", None)
+            if m is not None:
+                g = _guid_str_from(m)
+                if g:
+                    seen.add(g)
+            _walk(getattr(src_sense, "SensesOS", None))
+
+    _walk(getattr(src_entry, "SensesOS", None))
+    return seen
+
+
 def _create_entry_owned_msas_without_sense(src_entry, new_entry, context, tag,
                                            identity_remap, msa_by_src_guid,
                                            dropped):
-    """T123 HARDENING -- NOT T123(a)'s fix. Claims nothing against T123(a)'s
-    measured -1; that defect is diagnosed and fixed elsewhere (see below).
+    """T123 HARDENING -- NOT T123(a)'s original fix, but T123(a)'s root
+    cause WAS this function, indirectly: it is the mechanism that converted
+    a visible failure (a subsense's MSA never created, entry-owned count
+    short) into an invisible one (MSA present with `new_sense=None`,
+    referring subsense's `MorphoSyntaxAnalysisRA` silently null, counts
+    balance). See
+    specs/038-transfer-fidelity-gaps/reviews/cycle12-mainsession-t123a-root-cause.md.
 
     `_entry_pos_deps` and `_iter_all_msas` both already treat
     `src_entry.MorphoSyntaxAnalysesOC` as an MSA's enumeration basis, but the
     per-sense loop in `_walk_lex_entry_closure` (this function's caller)
     enumerates MSAs only via `src_sense.MorphoSyntaxAnalysisRA` -- correct
     ONLY as long as every entry-owned MSA also has a referencing sense. This
-    pass closes that gap: after the per-sense loop, walk
-    `src_entry.MorphoSyntaxAnalysesOC` directly and create the remainder --
-    any source MSA guid not already in `msa_by_src_guid` -- straight onto
-    `new_entry.MorphoSyntaxAnalysesOC`, with NO owning sense (there is none
-    to wire; see `_create_msa_with_guid`'s `new_sense=None` handling).
+    pass closes that gap: after the per-sense loop (which, as of the
+    T123(a) root-cause fix, now also wires every subsense's MSA via
+    `_wire_subsense_msas`, not only `src_entry.SensesOS`'s direct members),
+    walk `src_entry.MorphoSyntaxAnalysesOC` directly and create the
+    remainder -- any source MSA guid not already in `msa_by_src_guid` --
+    straight onto `new_entry.MorphoSyntaxAnalysesOC`, with NO owning sense
+    (there is none to wire; see `_create_msa_with_guid`'s `new_sense=None`
+    handling).
 
-    MEASURED EMPTY on the only corpus this has been checked against:
-    `Ngoreme FLEx`, read-only ops `op-102227585-005` / `op-102255766-006` --
-    for every entry, in every MSA class, entry-owned count equals distinct
-    sense-referenced count (2090 = 2090 overall; MoStemMsa 1951 = 1951). This
-    guard exists for CONSISTENCY with the two enumerators above and as a
-    backstop against a corpus this engine has not yet seen, not because a
-    loss was observed here. See
-    `specs/038-transfer-fidelity-gaps/reviews/cycle6-verification-msa-naming.md`.
+    NOT "MEASURED EMPTY" -- CORRECTED. The prior version of this docstring
+    claimed this pass was measured empty on `Ngoreme FLEx`
+    (`op-102227585-005`/`-006`, entry-owned MSA count equalling
+    sense-referenced count in every class). That claim was FALSE for this
+    pass's true test -- "did this create an MSA an existing sense actually
+    referenced" -- because it was evaluated against a `msa_by_src_guid` that
+    only top-level senses had populated: the single subsense in the corpus
+    (`omoona`'s 'small child', MSA 8617b725-...) landed here and created a
+    parentless MSA while the overall COUNT still matched, which is exactly
+    what let the claim read "empty". With `_wire_subsense_msas` now wiring
+    every subsense too, this pass is EXPECTED to return to true emptiness on
+    that corpus, but that is a claim for the pending t123e live re-census to
+    confirm, not one this commit re-asserts from a stale measurement.
 
-    T123(a)'s OWN measured -1 (same corpus, entry `omoona`,
-    e2cd79ef-2ee5-4d56-ae54-9210060bcdae, missing MSA
-    8617b725-efc1-4f6d-935c-c6c87081c7cb) is a DIFFERENT, already-diagnosed
-    and already-fixed mechanism: a natural-key match inside the per-sense
-    loop ABOVE this function's call site that used to skip a create and
-    leave a SENSE's `MorphoSyntaxAnalysisRA` dangling null (destination-side
-    GUID diff, read-only ops `op-103945760-010`..`op-104104411-013`; fixed by
+    Defense in depth (this fix): even though `msa_by_src_guid` should now be
+    complete for every sense-reachable MSA by the time this runs, a future
+    regression that reintroduces a not-fully-recursive sense walk elsewhere
+    must not be able to reproduce T123(a) silently again. Before creating an
+    unclaimed MSA, this pass cross-checks its guid against
+    `_entry_sense_reachable_msa_guids(src_entry)` -- an INDEPENDENT
+    recursive scan of the source's own sense tree, not a re-read of
+    `msa_by_src_guid`. A guid that IS sense-reachable but reached this pass
+    unclaimed is logged as an error and reported via `_report_dropped_msa`
+    (never silent) BEFORE the entry-owned create proceeds (still created,
+    parentless, so the entry-owned count keeps balancing) -- so this class
+    of defect can no longer present as a clean count with nothing reported.
+
+    T123(a)'s original half -- same corpus, entry `omoona`,
+    e2cd79ef-2ee5-4d56-ae54-9210060bcdae -- was a DIFFERENT, already-fixed
+    mechanism: a natural-key match inside the per-sense loop that used to
+    skip a create and leave a sense's `MorphoSyntaxAnalysisRA` dangling null
+    (destination-side GUID diff, read-only ops
+    `op-103945760-010`..`op-104104411-013`; fixed by
     `_create_via_wrapper_or_reuse` / `_find_reusable_target_msa`, this same
     file). This function does not touch that code path and this pass claims
     nothing against it.
 
     Never raises: any per-MSA create failure is reported via
     `_report_dropped_msa`, matching the per-sense loop's own guard."""
+    sense_reachable = _entry_sense_reachable_msa_guids(src_entry)
     for src_msa in getattr(src_entry, "MorphoSyntaxAnalysesOC", None) or ():
         m_guid = _guid_str_from(src_msa)
         if m_guid and m_guid in msa_by_src_guid:
             continue
+        if m_guid and m_guid in sense_reachable:
+            # This MSA IS referenced by a sense somewhere in the entry's
+            # closure, yet it reached this backstop unclaimed -- exactly
+            # the T123(a) defect shape (see docstring). Flag it loudly;
+            # still create it (parentless) so the entry-owned count keeps
+            # balancing, rather than dropping the object outright.
+            import logging as _logging
+            _logging.getLogger("gramtrans.Lib.categories").error(
+                "entry-owned MSA guid=%s (entry guid=%s) is referenced by "
+                "a sense in the source closure but was NOT wired by the "
+                "per-sense MSA passes before reaching the no-referencing- "
+                "sense hardening backstop -- this is the T123(a) defect "
+                "shape recurring; creating it parentless so the count "
+                "balances, but the referring sense's MorphoSyntaxAnalysisRA "
+                "will be left null.",
+                m_guid, _guid_str_from(src_entry),
+            )
+            _kind = _dispatch_msa_subclass(_class_name_of(src_msa))
+            _report_dropped_msa(
+                dropped, src_entry, src_msa, _kind or _class_name_of(src_msa),
+                "MSA is sense-reachable but reached the no-referencing-"
+                "sense hardening backstop unclaimed (T123(a) defect shape "
+                "recurring) -- created parentless; referring sense's "
+                "MorphoSyntaxAnalysisRA left null")
         try:
             new_msa = _create_msa_for_closure(
                 src_msa, None, new_entry, context, tag, identity_remap,
@@ -10225,9 +10389,8 @@ def _create_entry_owned_msas_without_sense(src_entry, new_entry, context, tag,
             import logging as _logging
             _logging.getLogger("gramtrans.Lib.categories").exception(
                 "entry-owned MSA create raised for entry guid=%s msa "
-                "guid=%s in the no-referencing-sense hardening pass "
-                "(latent -- measured empty; not T123(a)); reporting and "
-                "continuing.",
+                "guid=%s in the no-referencing-sense hardening pass; "
+                "reporting and continuing.",
                 _guid_str_from(src_entry), m_guid,
             )
             kind = _dispatch_msa_subclass(_class_name_of(src_msa))
