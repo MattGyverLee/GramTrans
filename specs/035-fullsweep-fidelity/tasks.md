@@ -61,7 +61,7 @@ below:
 | bucket | tasks | ruling |
 | --- | --- | --- |
 | **KEEP** -- uniquely valuable, no 038 equivalent | T045d, T047, T050, T056, T063 | Build as written |
-| **KEEP** -- cheap, closes an honesty gap | T064, T065, **T069 (new)** | Build as written |
+| **KEEP** -- cheap, closes an honesty gap | T064, T065, **T069 (new)**, **T070 (new)** | Build as written |
 | **RETARGET** -- consume 038's census instead of re-deriving plane 1 | T045a(c), T045b, T045e, T045f, T045, T048, T051, T052, T053, T057, **T068 (new)** | Scope narrowed in place; see each task's note |
 | **CUT** -- superseded by 038's closed vocabulary | T058, T059, T060, T061 | Struck. Not deferred -- struck |
 | **GATED** -- only meaningful once a full corpus run is authorized | T035, T046, T049, T054, T055, T062, T066, T067 | Text unchanged; blocked on an explicit go/no-go |
@@ -689,7 +689,7 @@ points, then the corrections to claims already written in this file.
   > modules to depend on. 105 tests; `GUARD_FAILURE_VERDICT` verified total over all
   > fifteen guard names, so the lookup has no `KeyError` path.
 
-- [ ] **T045d** [US2] **The prerequisite T045a(c) cannot be built without.** Write the
+- [x] **T045d** [US2] **The prerequisite T045a(c) cannot be built without.** Write the
       generic field reader `field_source(cls, guid) -> (model_fields, syncable_props)` that
       `census.census_fields` (`debug/fullsweep/census.py:274-326`) requires. **No such
       reader exists anywhere in the repo.** `GetSyncableProperties` is *not* dispatchable by
@@ -704,6 +704,39 @@ points, then the corrections to claims already written in this file.
       reinvent, but note it carries a `^Target([0-9]+)?$` refusal that the sweep's
       target-side read must NOT inherit, since reading `Target<N>` is the sweep's whole job.
       · `debug/fullsweep/census.py`, new dispatch module, `debug/probe_field_census_api.py`
+
+  > **DONE 2026-09-19** (`00627d6`, branch `035-fullsweep-fidelity`).
+  > `debug/fullsweep/field_dispatch.py` (526 lines) implements the real
+  > `field_source(cls, guid) -> (model_fields, syncable_props)` that
+  > `census.census_fields` has taken as an injected callable since it was written --
+  > every previous caller was a unit-test lambda. Live-verified against `Ejagham Mini`
+  > (read-only, pyflexicon 4.8.0): **49 of the 66** present in-scope classes dispatch.
+  > 28 new tests; the 31 full-suite failures were proven PRE-EXISTING by re-running the
+  > parent commit `7011b5b` in a temp worktree (31 failed / 3601 passed there vs
+  > 31 failed / 3629 passed here -- delta exactly +28, all passes).
+  >
+  > **The two halves are sourced differently on purpose; do not collapse them.**
+  > `model_fields` comes from the generic metadata-cache route (`GetFieldID` /
+  > `mdc.GetFields`), `syncable_props` from the per-class Operations-accessor dispatch
+  > table -- because `BaseOperations.GetSyncableProperties` raises `NotImplementedError`
+  > unless overridden and so cannot be dispatched by class name. The omitted-property
+  > set this feature publishes is the DIFFERENCE between the two; collapsing them
+  > destroys the measurement.
+  >
+  > **The coverage hole was honored, and extended.** The three mandated
+  > adhoc-prohibition classes raise a dedicated `UnreachableClassError` rather than
+  > being skipped or handed an empty dict (an empty syncable surface is a measurement
+  > claim, and a false one). The open naming sub-question is **resolved**:
+  > `MoAdhocProhibMorph`/`MoAdhocProhibAllomorph` at `MorphRuleOperations.py:469` are
+  > historical flexicon misspellings of names that never existed in LCM; the real
+  > classes are `MoMorphAdhocProhib` (102) and `MoAlloAdhocProhib` (101), matching
+  > `coverage-floor.json`. Those branches can never fire.
+  >
+  > **Three NEW holes found live** and recorded in `DISCOVERED_UNREACHABLE_CLASSES`
+  > with reasons: `ReversalIndex` and `ReversalIndexEntry` (their Operations classes do
+  > not override `GetSyncableProperties`, so the call hits `BaseOperations`' stub) and
+  > `TextTag` (no reference to `ITextTag` exists anywhere in installed flexicon -- there
+  > is no accessor to even attempt). The residue in NEITHER table is **T070**.
 
   > **KEEP, unblocked 2026-08-22 (the 038 cut).** The highest-leverage item left in
   > this feature, and the one thing 038 cannot substitute for: 038's census is
@@ -1009,12 +1042,43 @@ passes from stale ones.
   > reconnaissance 038 never had. Blocked on 038 T085 only because it opens live
   > projects, not because its scope changed.
 
-  > **NARROWED (2026-09-19).** The read-only measurement is already done --
-  > `scratchpad/prescan_results/*.json`, 85 projects -- but `scratchpad/` is
-  > gitignored (`.gitignore:117`) so nothing was committed. What REMAINS is only:
-  > wire the `survey` subcommand in `debug/run_fullcopy_sweep.py`, and commit the
-  > measured three-axis maxima to a TRACKED file under
-  > `specs/035-fullsweep-fidelity/`.
+  > **NARROWED (2026-09-19) -- then CORRECTED the same day. Read the correction, not
+  > the narrowing.** The narrowing claimed "the read-only measurement is already done
+  > -- `scratchpad/prescan_results/*.json`, 85 projects -- what REMAINS is only the
+  > subcommand plus committing the maxima." That was **wrong**, and wrong in this
+  > feature's own signature way: it took a COUNT of 85 result files as evidence that a
+  > MEASUREMENT existed, without opening one to see whether the fields were populated.
+  >
+  > **Measured 2026-09-19 (lex-verification, live):** the on-disk prescan cache
+  > PREDATES the commit that added the writing-system and structural-depth fields to
+  > `debug/prescan_type_coverage.py`. Every cached file carries both axes as **null**.
+  > Only the **class-presence** axis has a real maximum: **120 classes**, a three-way
+  > tie among the Tlachichilco Tepehua variants. The writing-system-breadth and
+  > structural-depth maxima **DO NOT EXIST** and cannot be committed to a tracked file
+  > until the corpus is re-swept with the CURRENT script.
+  >
+  > This is precisely the defect FR-051/FR-066 exist to catch -- a correct count over
+  > blank fields -- and `.crew-handoff.json` had already recorded it under
+  > `new_findings` ("the prescan data itself is still inadmissible. Fix before
+  > T049/T050 claim a measured maximum"). The narrowing was written without reading it.
+  >
+  > **What actually remains, in order:** (1) RE-SWEEP the corpus read-only with the
+  > current `debug/prescan_type_coverage.py` so all three axes are populated;
+  > (2) commit the three measured maxima to a TRACKED file under
+  > `specs/035-fullsweep-fidelity/` (FR-149: gitignored evidence is inadmissible);
+  > (3) wire the `survey` subcommand in `debug/run_fullcopy_sweep.py`.
+  >
+  > **The re-sweep is NOT gated by the corpus go/no-go, and must not be treated as
+  > though it were.** The go/no-go gates a full-corpus DOUBLE-MOVE, which writes to
+  > `Target<N>`. The prescan opens every project READ-ONLY and writes to none. Gating
+  > it behind the go/no-go would be circular: the three-axis maxima are inputs to the
+  > corpus SELECTION that the go/no-go decision is made on, so withholding the evidence
+  > until the decision is taken makes the decision unmakeable.
+  >
+  > **T047 stays `[x]` and is unaffected.** T047 asked for the CODE, and
+  > `prescan_type_coverage.py:226-322` genuinely implements both axes. The code is
+  > built; the data is stale. Both are true at once -- do not "fix" T047 on the
+  > strength of this note.
 
 - [ ] **T051** [P] [US3] Mechanical re-run scope derivation from changed files' transitive
       importers, failing closed to the full corpus whenever narrowness cannot be proven; no
@@ -1232,6 +1296,32 @@ reachable, bounded, disclosed, and self-retiring.
       about the roster. This raises the roster above 69, and T044's note above must be
       updated with it · `specs/035-fullsweep-fidelity/contracts/coverage-floor.json`,
       `src/gramtrans/Lib/census.py`
+
+- [ ] **T070** [P] **NEW 2026-09-19 (cycle-6, T045d follow-on).** Account for the
+      dispatch table's unmapped residue -- every in-scope class that is in NEITHER
+      table. T045d landed (`debug/fullsweep/field_dispatch.py`, commit `00627d6`) and
+      reaches **49** of the 66 present in-scope classes. Six of the remaining 17 carry
+      a recorded reason: three in `MANDATORY_UNREACHABLE_CLASSES` (`MoAdhocProhibGr`,
+      `MoAlloAdhocProhib`, `MoMorphAdhocProhib`) and three in
+      `DISCOVERED_UNREACHABLE_CLASSES` (`ReversalIndex`, `ReversalIndexEntry`,
+      `TextTag`). That leaves roughly **11 classes in neither table** -- reachable by
+      no dispatch entry and carrying no stated reason. `field_dispatch` already
+      distinguishes this third state ("in neither table at all, genuinely unmapped"),
+      which is the honest shape; what it does not yet have is a resolution.
+      **Measure the exact residue first -- do not trust the arithmetic above** -- then
+      resolve every member into exactly one of: a dispatch entry (it was reachable and
+      we missed it), or a `DISCOVERED_UNREACHABLE_CLASSES` entry WITH its reason (it is
+      a real hole). An in-scope class in neither table is FR-136's precise failure
+      mode: a silent gap a reader cannot see.
+      **Flagged consequence, to be assessed as part of this task, not after it:** the
+      `ReversalIndex` / `ReversalIndexEntry` hole collides with corpus selection. The
+      structural-depth axis's leading carrier is reversal-heavy (Yi Sichuan, confirmed
+      live 2026-09-19 at 7 `ReversalIndex` / 25,116 `ReversalIndexEntry`), and no
+      reversal field can currently be READ at all. Selecting a corpus maximum whose
+      distinguishing content is unreadable would produce a confidently VACUOUS result
+      on exactly the axis it was chosen to exercise ·
+      `debug/fullsweep/field_dispatch.py`,
+      `specs/035-fullsweep-fidelity/contracts/coverage-floor.json`
 
 - [ ] **T064** [P] Crash-resume evidence: a simulated mid-project kill leaves a partial artifact
       naming the last completed phase, in place of no evidence at all (FR-150, SC-009) ·

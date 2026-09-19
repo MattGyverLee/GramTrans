@@ -1,5 +1,76 @@
 # GramTrans — Session Handoff
 
+## Session log — 2026-09-19 (035 RESUMED — ordering settled, T045d landed, T050 claim corrected)
+
+Feature **035-fullsweep-fidelity** was resumed via `/speckit-companion-resume` and ran two
+crew cycles. Two things were settled, one thing was built, and one thing we had just
+committed turned out to be wrong.
+
+**The resolver's next-task was wrong, and positionally so.** It reported `nextTask=T045a`;
+`tasks.md:484-487` records the original order as SUPERSEDED, and the first unchecked link in
+the superseding chain is **T045d**. Verified against worktree code, not prose: T045a parts
+(a)+(b) are landed (`build_run_context` at `run_fullcopy_sweep.py:415-418`, `:731`;
+`reconcile_project_objects` at `:464`; the MEASURABLE/UNMEASURED sets partition all 23
+`RunContext` fields), T045c is landed, 5/15 guards answer. T045a's only open part is (c),
+and (c) is a hard dependency on T045d. `T045a` merely sorts before `T045d`.
+
+**The 038 cut's premises were re-measured rather than re-asserted, and they hold.** A
+`GetSyncableProperties` hit in `src/gramtrans/Lib/census.py` looked at first like 038 had
+grown a field reader; it is a **docstring sentence at line 313**, not a call. The
+owning-field machinery reads `OwningFlid`/`GetFieldName` for loss *attribution* and never
+reads a field's value. 038's census is still count-only at `d7fb798`, so the RETARGET
+instructions still describe reality. One genuinely new obligation did surface: three
+`owed_to_035: True` debts in `census.py:298-327` (`MoAffixProcess`, `PhCode`,
+`CmTranslation`), none of them in `coverage-floor.json`'s 69 `in_scope_classes` — filed as
+**T069**.
+
+**T045d landed** (`00627d6` on `035-fullsweep-fidelity`): `debug/fullsweep/field_dispatch.py`,
+the real `field_source(cls, guid)` that `census_fields` has taken as an injected callable
+since it was written — every prior caller was a unit-test lambda. Live-verified against
+`Ejagham Mini` read-only: **49 of 66** present in-scope classes dispatch. The three mandated
+adhoc-prohibition classes raise a dedicated `UnreachableClassError` rather than being skipped
+or handed an empty dict, and **three further holes were found live** (`ReversalIndex`,
+`ReversalIndexEntry`, `TextTag`). The residue in neither table is **T070**.
+
+**The correction, recorded because the crew made the error itself.** Cycle 2 narrowed T050 on
+the claim that the corpus measurement was "already done — 85 prescan JSONs". It is not: the
+cache **predates** the commit that added the writing-system and depth fields, so every file
+carries both as **null**. Only class presence has a real maximum (120 classes, three-way tie
+among Tlachichilco Tepehua variants). The narrowing took a *count* of files as proof a
+*measurement* existed without opening one — which is precisely this feature's own thesis, a
+correct count over blank fields, reproduced in its own task file. `.crew-handoff.json` had
+already warned of it. Corrected in `tasks.md`. **T047 stays `[x]`**: the code is genuinely
+built, the data is stale, and both are true at once.
+
+**Ruled:** the corpus re-sweep is READ-ONLY and is **not** gated by the full-corpus go/no-go.
+Gating it would be circular — the three-axis maxima are inputs to the corpus *selection* that
+the go/no-go is decided on.
+
+**All three cycle-5 identity points are now closed.** Reversal-index one-container-per-WS and
+`WfiWordform` (WS, form) closed **by ruling** on repository-API evidence
+(`FindOrCreateIndexForWs`, `FindOrCreateReversalEntry`, `GetMatchingWordform(ws, form)` are
+the repository's declared contract — for an identity claim that is stronger than instance
+data, which could only ever show what one project happens to contain). `CmAgent` closed
+**live**: default agent GUIDs, names and Human flags are identical across three unrelated
+projects, so they are stock template furniture and must not be counted as transferred
+objects. Yi Sichuan confirmed live at 7 `ReversalIndex` / 25,116 `ReversalIndexEntry`.
+
+**Two process findings worth carrying forward.** (1) Three crew agents were assigned work
+their own tool declarations make impossible — `lex-domain` has no Bash/MCP/Write, `lex-doc`
+has no Bash and cannot commit. The full tool matrix is now recorded in
+`.crew-handoff.json:agent_tooling_constraint`; route live verification to `lex-verification`,
+never `lex-domain`, and expect the main session to commit for `lex-doc`. (2) The full-suite
+failure count is **31**, proven pre-existing by re-running parent commit `7011b5b` in a temp
+worktree (31 failed / 3601 passed there, delta exactly +28 passes here) — but it was **28 on
+2026-08-18 and is 31 now**. It grew while no feature owned it. Deliberately not filed as a
+035 task; it belongs to 026/028/031 and should be a GitHub issue.
+
+**Next pickup: T045e** — `contracts/class-category-map.json`, written once as the mapping
+*both* this driver and 038's census read. Do not fork a second copy into `debug/fullsweep/`;
+two instruments disagreeing about class-to-category is a silent divergence neither can
+detect. Then T045f, which together unblock T045a(c). T070 is parallel and independent.
+
+
 ## Session log — 2026-09-18h (038 IS COMPLETE — 150/150, merged to main at `562cb53`, worktree removed)
 
 **Feature 038 (transfer fidelity gaps) is closed.** T085 merged the branch to `main` as
