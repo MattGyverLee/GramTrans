@@ -2222,6 +2222,115 @@ def accounted_for_owning_lists(
     return tuple(lines)
 
 
+def accounted_for_gross_subtraction(
+        object_class, difference, difference_raw, starter_excluded, basis,
+        reconciling_kind, reconciling_items, existing=(), notes=None) -> tuple:
+    """-> a `STARTER_CONTENT` line for the objects GROSS SUBTRACTION removed
+    twice, and ONLY when the row itself proves that is what happened.
+
+    T081, 6th re-gate. The SIXTH and last lane, after the per-list and
+    per-field ones, because it is the COARSEST claim on the row and must take
+    only the room every finer, evidenced claim has already declined.
+
+    THE ARITHMETIC IT UNDOES. On `baseline_gross`, `difference` is
+    `destination - starter_excluded - source`, so it subtracts the starter
+    population from a destination that -- on a correct run -- is where the
+    source's own objects LANDED, by natural-key match onto starter content.
+    5.2 says this in as many words ("gross subtraction also subtracts the
+    starter objects the transfer correctly matched, so it reports a shortfall
+    on a correct run") and `gross_basis_cap_notes` already caps the VERDICT
+    for it -- but the cap never reached `_phase_5`, so the gate kept reading a
+    phantom as an unexplained loss. `difference_raw - difference` is exactly
+    `starter_excluded`, and that is the whole of what this lane may claim.
+
+    WHY THIS IS NOT "BASELINE_GROSS EXCUSES EVERYTHING". It would be, if the
+    basis alone licensed the line -- which is precisely why the basis alone
+    does NOT. The line requires an INDEPENDENT, ARTIFACT-INTERNAL WITNESS that
+    the destination population is accounted for object by object at a finer
+    granularity than the class: a per-owning-list or per-owning-field table
+    whose summed `source - destination` RECONCILES TO `difference_raw`
+    EXACTLY. That table is measured per sub-key from both projects and knows
+    nothing of the baseline document, so agreeing with the raw difference to
+    the object is a fact about the transfer and not about the subtraction.
+    When it reconciles, every source object is located in the destination or
+    named as missing by its own sub-key, and the gap between `difference` and
+    `difference_raw` is provably the double subtraction and nothing else.
+
+    FALSIFIABLE, AND MEANT TO BE. Off by ONE object and the identity fails and
+    no line is emitted -- the row stays red and a note says why. A row with no
+    such table gets nothing: absence of the witness is not the witness. This
+    is the same standard `is_gross_basis_row`'s exemption already holds itself
+    to ("the cap is a claim the artifact makes about itself, and so is the
+    exemption"), applied one lane further along.
+
+    MEASURED (census-038-t134-*, `CmPossibility`): per-list sums are
+    308 -> 302, 398 -> 303 and 338 -> 305, reconciling to `difference_raw`
+    -6 / -95 / -33 to the object on all three pairs, against a
+    `starter_excluded` of 302 on each. That is the entire 302 / 271 / 301 this
+    gate has been reading as unexplained since the 4th re-gate.
+
+    CAPPED BY THE ROW'S ROOM like every sibling lane (R-2), so it can never
+    explain away more than the row actually reports, and never outbid a ruled
+    list or field that has already claimed its objects.
+    """
+    if basis != census.GROSS_SUBTRACTION_BASIS:
+        return ()
+    if difference is None or difference >= 0 or difference_raw is None:
+        return ()
+    over = int(starter_excluded or 0)
+    if over <= 0:
+        return ()
+    if not reconciling_items:
+        return ()
+    measured = sum(
+        int(i.get("source_count") or 0) - int(i.get("destination_count") or 0)
+        for i in reconciling_items)
+    if measured != -int(difference_raw):
+        # THE WITNESS DISAGREED. Deliberately loud rather than silent: a
+        # sub-key table that does not reconcile is the one situation where the
+        # phantom and a real loss are indistinguishable, so the row keeps its
+        # unexplained shortfall.
+        if notes is not None:
+            notes.append(
+                object_class + " is on the " + census.GROSS_SUBTRACTION_BASIS
+                + " basis and over-subtracts " + str(over) + " starter "
+                "object(s), but its per-" + reconciling_kind + " table sums to "
+                + str(measured) + " against a difference_raw of "
+                + str(-int(difference_raw)) + ". The table does NOT reconcile, "
+                "so NO STARTER_CONTENT line was emitted and the shortfall "
+                "stays UNEXPLAINED -- an unreconciled witness is not a witness"
+            )
+        return ()
+    claimed = census.accounted_in_direction(existing, "shortfall")
+    room = -difference - claimed
+    if room <= 0:
+        return ()
+    count = min(over, room)
+    detail = (
+        "gross starter subtraction: this row is on the "
+        + census.GROSS_SUBTRACTION_BASIS + " basis, which subtracts the "
+        + str(over) + " starter object(s) the transfer correctly MATCHED the "
+        "source onto (fidelity-census.md 5.2). The per-" + reconciling_kind
+        + " table reconciles to difference_raw " + str(int(difference_raw))
+        + " exactly, locating every source object at sub-key granularity, so "
+        "the gap between difference and difference_raw is the double "
+        "subtraction and not a loss. Needs no report_ref -- invariant 5 "
+        "exempts STARTER_CONTENT"
+    )
+    if count < over:
+        if notes is not None:
+            notes.append(
+                object_class + " over-subtracts " + str(over) + " starter "
+                "object(s) but only " + str(count) + " of the row's shortfall "
+                "remained unclaimed, so the STARTER_CONTENT line claims "
+                + str(count) + " and the rest stays UNEXPLAINED (R-2)"
+            )
+        detail = detail + " -- CLAIM CAPPED BY THE ROW'S ROOM, see notes"
+    return (census.AccountedLine(
+        reason="STARTER_CONTENT", count=count, direction="shortfall",
+        detail=detail),)
+
+
 # ---------------------------------------------------------------------------
 # T048d: THE IDENTITY AUDIT, WIRED
 #
@@ -2642,6 +2751,21 @@ def _row_for_entry(
         kwargs["owning_fields"] = per_field
         lines = lines + accounted_for_owning_fields(
             entry.object_class, row.difference, per_field, lines, notes)
+
+    # ---- T081 (6th re-gate): the GROSS SUBTRACTION the row performed twice --
+    # LAST of the six, and the ONLY coarse lane that runs after the fine ones.
+    # Every lane above names WHICH objects it explains; this one explains an
+    # arithmetic artifact of the row's own basis, so it must take only what
+    # every evidenced claim has already declined. It is gated on a per-sub-key
+    # table reconciling to `difference_raw` EXACTLY -- the witness, not the
+    # basis, is what licenses the line. See the function's docstring.
+    _raw = (
+        None if (source_count is None or destination_count is None)
+        else destination_count - source_count
+    )
+    lines = lines + accounted_for_gross_subtraction(
+        entry.object_class, row.difference, _raw, starter_excluded, basis,
+        "list" if per_list else "field", per_list or per_field, lines, notes)
 
     if lines:
         kwargs["accounted_for"] = lines

@@ -13454,6 +13454,16 @@ def phonemes_execute_action(action, context, ws_mapping, tag):
             context, target, tag, "_did_phoneme_codes",
             GrammarCategory.PHONEMES, _wire_phoneme_codes,
         )
+        # T081: FeaturesOA has the SAME two-population shape as codes, for the
+        # same reason, so it rides the same anchor rather than inventing a
+        # second one. Ordering is irrelevant between the two (codes touch
+        # CodesOS, features touch FeaturesOA), but sharing the "last PHONEMES
+        # action" anchor keeps both passes on one guarantee: every phoneme of
+        # the category is in target before either runs.
+        _run_tail_once(
+            context, target, tag, "_did_phoneme_features",
+            GrammarCategory.PHONEMES, _wire_phoneme_features,
+        )
 
 
 def _phoneme_code_targets(context, plan, target):
@@ -13614,6 +13624,150 @@ def _log_phoneme_codes(count):
     _logging.getLogger("gramtrans.Lib.categories").info(
         "T121: created %d PhCode object(s) on phonemes (GUID-preserved).",
         count)
+
+
+def _wire_phoneme_features(context, target, tag):
+    """Transfer `PhPhoneme.FeaturesOA` onto phonemes this run MATCHED to the
+    destination's starter inventory (feature 038, T081 sixth re-gate).
+
+    THE HALF T121 LEFT STANDING, IN THE SHAPE ITS OWN DOCSTRING PREDICTED.
+    `phonemes_execute_action` calls `ApplySyncableProperties` -- which carries
+    `Features` -- on the CREATE path only, and `_wire_phoneme_codes` above
+    already records why that is not the whole population: "a matched phoneme
+    never reaches this function at all (it plans as a natural-key
+    `PlannedOverwrite`)". PHONEMES is MULTI_INSTANCE, not GOLD_RESERVED, so it
+    has no edit-copy route either (`_GOLD_RESERVED_PHONOLOGY_CATEGORIES` holds
+    PHONOLOGICAL_FEATURES alone). A matched phoneme therefore arrives with the
+    correct Name and the starter's GUID and `FeaturesOA` NULL, on every pair.
+
+    MEASURED, NOT INFERRED (`census-038-t134-*`, `t119_per_owning_field`):
+    `PhPhoneme.Features` reads 41 -> 20, 41 -> 21 and 46 -> 27 on ejagham,
+    ngoreme and mbugwe. Each destination figure equals the number of phonemes
+    that pair CREATED (41-21, 41-20, 46-19), so the loss is exactly the
+    matched half and nothing else. It is the whole of ejagham's `FsFeatStruc`
+    -21, and part of the other two alongside the T045 `ReferenceForms` shells
+    and `FsComplexValue.Value`.
+
+    WHY THIS IS A REAL DEFECT AND NOT COSMETIC METADATA. A phoneme with a
+    correct name but null `FeaturesOA` cannot satisfy any feature-based
+    natural-class membership test, silently disabling phonological-rule
+    matching for exactly those phonemes -- the same failure mode feature 037
+    exists to prevent for `IPhNCFeatures`, arriving one level down.
+
+    ADD-ONLY BY CONSTRUCTION, NOT BY A FLAG. The props dict is NARROWED to
+    `Features` before it is handed over, so this pass cannot reach a matched
+    starter phoneme's `Name`, `Description` or `BasicIPASymbol` even if
+    `fill_gaps` were ignored entirely. That is T121's own stated preference
+    ("a `PhCode`-repository loop filtered by owner class would have been
+    correct too and one edit away from wrong; this cannot express the bug").
+    `fill_gaps=True` is passed as well. BOTH are available at the declared
+    `pyflexicon>=4.5.2` floor -- verified against flexicon commit `3abf6b54`,
+    the 4.5.2 release, where `ApplySyncableProperties(item, props,
+    ws_map=None, fill_gaps=False)` already threads the flag into
+    `__ApplyFeatures`. NO FLOOR BUMP.
+
+    IDEMPOTENT. flexicon's `_ApplyFeatureStruc` matches existing specs by
+    `(FeatureGuid, ValueGuid)` and creates `FeaturesOA` only when missing, so
+    re-running is a no-op and a created phoneme that already carries its
+    features is left alone. The pass walks every source phoneme rather than
+    only the matched set for that reason: one code path, no second population
+    to keep in step.
+
+    KNOWN RESIDUE, RECORDED RATHER THAN HIDDEN: the `IFsFeatStruc` this
+    creates does NOT preserve the source structure's GUID. flexicon passes
+    `struct_guid=None` (`PhonemeOperations.__ApplyFeatures`), its own open
+    "Phoneme struct-GUID not preserved" gap (spec D2, fixed upstream in T9).
+    The census counts `FsFeatStruc` by class so the gate closes, and the
+    feature/value GUIDs carrying the linguistic function ARE resolved against
+    the target's feature system so rule matching is restored -- but the
+    structure identity is not, and that is upstream work, not in-tree.
+    """
+    skips = []
+    plan = getattr(context, "_run_plan", None)
+    source = getattr(context, "source_handle", None)
+    if source is None or target is None:
+        return skips
+    try:
+        src_phonemes = list(source.Phonemes.GetAll())
+    except (AttributeError, TypeError):
+        return skips
+    if not src_phonemes:
+        return skips
+
+    matched, remap = _phoneme_code_targets(context, plan, target)
+    # WS-FIDELITY: narrowed props carry no multistring today, but `ws_map` is
+    # threaded anyway so a future `GetSyncableProperties` addition cannot
+    # reach LCM with an unmapped source WS handle (T024g).
+    ws_map = _ws_map_dict(getattr(plan, "ws_mapping", None))
+
+    filled = 0
+    already = 0
+    for src_phon in src_phonemes:
+        src_guid = _guid_str_from(src_phon)
+        if not src_guid:
+            continue
+        tgt_phon = matched.get(src_guid)
+        if tgt_phon is None:
+            tgt_phon = _resolve_target_by_guid(
+                target, remap.get(src_guid, src_guid))
+        if tgt_phon is None:
+            # T074's scoping, as in T121: a source phoneme with no destination
+            # counterpart is one this run never transferred, not a lost
+            # feature structure.
+            continue
+        tgt_phon = _cast_lcm(tgt_phon, "IPhPhoneme")
+        try:
+            props = source.Phonemes.GetSyncableProperties(src_phon)
+        except Exception as exc:  # noqa: BLE001
+            # Mirrors the create path's Ruling Y guard -- flexicon raised
+            # ITsString.get_String for phonemes until the shape-tolerant
+            # reader shipped. Degrade per phoneme; never abort the pass. Never
+            # silent: the operator sees one Skip per phoneme that did not land.
+            skips.append(Skip(
+                category=GrammarCategory.PHONEMES,
+                source_guid=src_guid,
+                reason=SkipReason.DEPENDENCY_UNRESOLVED,
+                detail=f"phoneme {src_guid} syncable properties unreadable: "
+                       f"{type(exc).__name__}"))
+            continue
+        specs = (props or {}).get("Features")
+        if not specs:
+            # A source phoneme with no feature structure is not a loss.
+            continue
+        try:
+            had = getattr(tgt_phon, "FeaturesOA", None)
+        except (AttributeError, TypeError):
+            had = None
+        try:
+            target.Phonemes.ApplySyncableProperties(
+                tgt_phon, {"Features": specs}, ws_map=ws_map, fill_gaps=True,
+            )
+        except Exception as exc:  # noqa: BLE001
+            skips.append(Skip(
+                category=GrammarCategory.PHONEMES,
+                source_guid=src_guid,
+                reason=SkipReason.DEPENDENCY_UNRESOLVED,
+                detail=f"phoneme {src_guid} FeaturesOA could not be applied: "
+                       f"{type(exc).__name__}"))
+            continue
+        if had is None:
+            filled += 1
+        else:
+            already += 1
+    if filled or already:
+        _log_phoneme_features(filled, already)
+    return skips
+
+
+def _log_phoneme_features(filled, already):
+    """`filled` counts phonemes whose `FeaturesOA` was NULL before this pass --
+    the defect's actual population. `already` counts the create-path phonemes
+    the idempotent re-application left alone, reported separately so the log
+    can never be read as claiming more than was repaired."""
+    import logging as _logging
+    _logging.getLogger("gramtrans.Lib.categories").info(
+        "T081: filled FeaturesOA on %d matched phoneme(s); %d already carried "
+        "one (no-op).", filled, already)
 
 
 # ----- natural_classes (memo step 4) ---------------------------------------
