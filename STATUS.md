@@ -1,5 +1,33 @@
 # GramTrans — Session Handoff
 
+## Session log — 2026-09-18e (038: T081's SIXTH AMENDMENT AND CLOSE — attributed, still UNCHECKED; 040 filed; T085 the only row left)
+
+Cycle 17 of the crew loop. Three read-only artifacts (`reviews/cycle17-programmer-attribution-probe.md`,
+`reviews/cycle17-verification-phsimplecontextnc.md`, `reviews/cycle17-doc-successor-filing.md`) closed
+out T081's clause but **not the checkbox**. `specs/038-transfer-fidelity-gaps/tasks.md` T081 carries a
+sixth dated amendment (append-only, in the same style as the five before it): the acceptance clause
+moves from "no unexplained difference remaining" to "no UNATTRIBUTED loss remaining," and under that
+new clause `FsClosedValue` (-19 / -83 / -660) and `FsFeatStruc` (-70 / -396, 334 unexplained) are
+**DEFERRED, NOT RESOLVED**, to the newly-filed `specs/040-feature-structure-residue/spec.md` — stamped
+in memory over the committed t135 artifacts, `total_shortfall` provably unchanged (3932 / 66938 /
+32861 before and after) so nothing is laundered, P5 failures 1 / 2 / 3 -> 0 / 0 / 1.
+
+**T081 STAYS UNCHECKED**, on one remaining ground: mbugwe's `PhSimpleContextNC` -1. Cycle-17
+verification named it exactly — object `e6a93fd6-ecfc-45a5-81df-497fba40766e`, owned by the
+(present, GUID-matched) `PhPhonData` singleton, referencing a (present, unchanged) `PhNCFeatures`
+natural class — **NAMED-AND-ISOLATED**, and deliberately judged **NOT ATTRIBUTED**: the only ruling
+touching `PhPhonData.Contexts` (T120(a)) explicitly disclaims it, crediting that pool instead to the
+`PhSegRuleRHS` closure route T120(b) already closed, which resolved the rest of the context family but
+not, on this evidence, this one member. It is a genuine one-object create-path loss under a present
+owner with no covering feature or ruling — not de minimis, not roundable, and the amendment says so
+rather than checking the box on "only 1 left." What would close it: a source-side referencedness read
+(is `e6a93fd6-...` referenced by anything at all in `Mbugwe LizzieHC practice`?) — if yes, a fix in the
+context-family create path; if no, a human ruling extending `UNREFERENCED_IN_SOURCE` to
+`PhSimpleContextNC` the way T120(a) extended it to `PhFeatureConstraint`. Neither was decided here.
+
+**T085 is now the only unchecked row in Phase 9/10** — still carrying the feature-035 merge hazard in
+`full_run.py` / `run_fullcopy_sweep.py`, to be resolved file-by-file with that feature's owner.
+
 ## Session log — 2026-09-18d (038: T081 moved by a TRANSFER FIX for the first time; P5 3/3/4 → 1/2/3)
 
 Resumed through `/speckit-companion-resume`. Two changes landed on the worktree

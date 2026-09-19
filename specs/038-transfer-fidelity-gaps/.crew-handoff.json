@@ -1,8 +1,8 @@
 {
   "feature": "038-transfer-fidelity-gaps",
   "status": "needs_human",
-  "last_cycle": 16,
-  "spurts_completed": 5,
+  "last_cycle": 17,
+  "spurts_completed": 7,
   "tasks_done": [
     "T082",
     "T119",
@@ -92,6 +92,18 @@
         "bbd4c3b"
       ],
       "ruling": "T081 STAYS UNCHECKED at P5 1/2/3. Two changes, both measured live on t135 with predictions written down BEFORE the run and all three landing exactly. (1) PhPhoneme.FeaturesOA: the matched half was never transferred -- ApplySyncableProperties runs on the CREATE path only and PHONEMES is MULTI_INSTANCE so there is no edit-copy route. T134 named the population before any code was written (dest count == created count on all three) and the run confirmed it to the object (21/20, 20/21, 19/27). FsFeatStruc -21 -> 0 MATCHED on ejagham. Add-only BY CONSTRUCTION (props narrowed to Features), no flexicon floor bump. (2) The sixth accounting lane retired CmPossibility on all three by stamping the baseline_gross double subtraction STARTER_CONTENT, gated on a witness rather than on the basis. 23 new tests; the 11 phoneme ones PROVEN to fail against the parent commit per RULE 5. Unit suite 3911 -> 3996, 0 failures; test_object_census.py holds at its 5 pre-existing drift failures, 0 new. Also measured, closing a cycle-15 open question: the FsClosedValue cascade density, 16.0 / 19.0 / 18.0."
+    },
+    {
+      "spurt": 7,
+      "name": "close-by-attribution",
+      "cycles": 1,
+      "checkpoint": "T081 closed by attribution; 040 filed",
+      "reached": false,
+      "commits_main": [
+        "f45f44a"
+      ],
+      "commits_worktree": [],
+      "ruling": "T081 STAYS UNCHECKED (not checked this spurt). FsFeatStruc and FsClosedValue RULED 2026-09-18 -- deferred to specs/040-feature-structure-residue/spec.md (040 filed), not solved in 038. PhSimpleContextNC MEASURED 2026-09-18, not ruled -- verdict NAMED-AND-ISOLATED, object e6a93fd6-ecfc-45a5-81df-497fba40766e owned by the present PhPhonData singleton, referencing an intact, unchanged PhNCFeatures natural class. The attribution probe (cycle17-programmer-attribution-probe.md) confirmed the two deferral stamps move P5 1/2/3 -> 0/0/1 with totals.total_shortfall BIT-IDENTICAL before and after on all three pairs (3932 / 66938 / 32861) -- nothing laundered, only unexplained_shortfall moves (19->0, 153->0, 995->1). One object blocks the row: mbugwe's PhSimpleContextNC -1, whose source-side referencedness has not yet been read. See blocker.routes_out for the three ways out and which to try first."
     }
   ],
   "task_queue": [
@@ -104,8 +116,8 @@
     {
       "id": "T081",
       "kind": "gate",
-      "state": "queued",
-      "note": "RE-EMIT the t126 artifacts, do not re-fix. The UNREFERENCED_IN_SOURCE token LANDED this spurt (main 8972d9a schema+prose; worktree 73552e4 constants; deliberately NOT in CENSUS_NOT_EVALUATED_REASONS, so rows stay SHORTFALL and the objects stay in the gate). Still owed and deliberately deferred: the CENSUS_RULED_RESIDUE_CLASSES roster entry for PhFeatureConstraint (blocked by the currently-passing pinned test T081_DELIBERATELY_OUT, which must change in the same commit) and the PHASE_5_ADMISSIBLE_REASONS addition (held back per the in-file ABSENT_BY_CONSTRUCTION precedent: an unexercised admission is an unfalsifiable one). Both belong together, in one cycle."
+      "state": "blocked",
+      "note": "SIXTH AMENDMENT LANDED this spurt (tasks.md, checkbox stays [ ] -- do not check it). Acceptance clause moved from 'no unexplained difference remaining' to 'no UNATTRIBUTED loss remaining'. FsFeatStruc and FsClosedValue RULED and deferred to specs/040-feature-structure-residue/spec.md; PhSimpleContextNC MEASURED as NAMED-AND-ISOLATED. P5 moved 1/2/3 -> 0/0/1. BLOCKED on exactly one object: mbugwe PhSimpleContextNC -1 (e6a93fd6-ecfc-45a5-81df-497fba40766e), a named, isolated create-path loss under a present owner, attributed to nothing yet. See top-level blocker.routes_out -- try the source-side referencedness measurement FIRST, before reaching for a new ruling."
     },
     {
       "id": "T085",
@@ -165,25 +177,23 @@
     "Resolved false alarm, do not re-investigate: an editor reported _PROBE_OUT undefined at run038_t124_recensus.py:388-389 from a mid-edit capture. The file compiles."
   ],
   "blocker": {
-    "what": "T081 P5 is 1/2/3. The transfer work this crew can do alone is done; what is left is two rulings, one design decision, and one measurement.",
+    "what": "Cycle 16's three rulings_needed are ALL DISCHARGED as of 2026-09-18. FsFeatStruc and FsClosedValue were RULED (deferred to specs/040-feature-structure-residue/spec.md, not solved here) and PhSimpleContextNC was MEASURED (NAMED-AND-ISOLATED, cycle17-verification-phsimplecontextnc.md). T081 P5 moved 1/2/3 -> 0/0/1. The ONLY thing left between T081 and green is the single mbugwe PhSimpleContextNC object.",
     "p5_failures_now": {
-      "ejagham (t135)": [
-        "FsClosedValue -19"
-      ],
-      "ngoreme (t135)": [
-        "FsClosedValue -83",
-        "FsFeatStruc -70"
-      ],
+      "ejagham (t135)": [],
+      "ngoreme (t135)": [],
       "mbugwe (t135)": [
-        "FsClosedValue -660",
-        "FsFeatStruc -396 (334 unexplained)",
-        "PhSimpleContextNC -1"
+        "PhSimpleContextNC -1 (object e6a93fd6-ecfc-45a5-81df-497fba40766e, owned by PhPhonData be765e3e-..., referencing PhNCFeatures 3ab6ae6a-... 'Short vowels' which IS present unchanged in the destination -- NAMED-AND-ISOLATED, not yet attributed to any ruling or fix)"
       ]
     },
-    "rulings_needed": {
-      "FsFeatStruc": "HUMAN RULING, and the row is a ruling away rather than a fix away. Its whole residue is PartOfSpeech.ReferenceForms (-44 ngoreme, -47 mbugwe -- the T045 empty-shell creates) and FsComplexValue.Value (-26, -287). Both are the owning-field candidates 0664ae7 left UNROSTERED ON PURPOSE, so rostering either is a deliberate reversal of a recorded decision, not an oversight to correct.",
-      "FsClosedValue": "DESIGN DECISION, and the payoff is small. No admissible token honestly covers a cascade; cycle15-domain-fsclosedvalue.md (b) specifies a structural derived_from pointer on the accounting line as a fidelity-census.md 7.1 amendment. By its own rule it can only fire where the PARENT row is closed -- after t135 that is EJAGHAM ALONE, so building it today closes 1 row on 1 pair. The cascade itself is no longer in doubt: measured at 16.0 / 19.0 / 18.0 closed values per phoneme structure against corpus averages 3.70 / 1.43 / 1.71, confirming on all three pairs what cycle 15 could only infer on two.",
-      "PhSimpleContextNC": "MEASURE FIRST, do not rule. -1 on mbugwe only. Every sibling in the family is MATCHED, including both referent classes (PhNCFeatures 119->119, PhNCSegments 0->0) and the owning PhRegularRule 37->37, so it is one isolated object. RULE 3: the destination-side GUID diff is the FIRST read, not the fifth."
+    "discharged_rulings": {
+      "FsFeatStruc": "RULED 2026-09-18 -- deferred to specs/040-feature-structure-residue/spec.md (PartOfSpeech.ReferenceForms and FsComplexValue.Value residue carried over, not solved in 038).",
+      "FsClosedValue": "RULED 2026-09-18 -- deferred to specs/040-feature-structure-residue/spec.md (the derived_from cascade-accounting design, carried over, not solved in 038).",
+      "PhSimpleContextNC": "MEASURED 2026-09-18 (not ruled) -- verdict NAMED-AND-ISOLATED. Every sibling in the family MATCHED (PhNCFeatures 119->119, PhNCSegments 0->0, owning PhRegularRule 37->37); the missing object's owner and referenced natural class both transferred intact. This is a create-path omission report, not a closure -- see the new blocker below for what still has to happen."
+    },
+    "routes_out": {
+      "route_i_measure_first": "TRY THIS FIRST, per crew RULE 3 (measure before ruling): read whether e6a93fd6-ecfc-45a5-81df-497fba40766e is referenced by ANYTHING at all in the SOURCE ('Mbugwe LizzieHC practice'), the same source-side referencedness read T120(a) used for PhFeatureConstraint. If it is source-orphaned, this falls under the existing contracts/unreferenced-feature-constraint-ruling.md precedent for source-orphaned shared-pool objects and needs NO new ruling -- T081 can close on the strength of a precedent already on the books.",
+      "route_ii_human_ruling": "If route (i) shows the object IS referenced in the source, a human ruling is needed to extend UNREFERENCED_IN_SOURCE (or an equivalent token) to PhSimpleContextNC -- this would be a new extension, not a reuse of the existing precedent, and should not be assumed without the measurement.",
+      "route_iii_create_path_fix": "If referenced in the source, the alternative to a ruling is a create-path fix for the one-object PhPhonData.Contexts omission (the shared, flat, project-level collection every PhPhonContext subtype writes into) -- a TRANSFER FIX, not an accounting move."
     },
     "note_on_the_gate": "The gross-subtraction lane is the first mechanism that lets 5.2s long-standing observation reach _phase_5 rather than only the verdict cap. It is deliberately witness-gated rather than basis-gated: off by ONE object in the per-sub-key table and it emits nothing. Applied to the whole t134 corpus it fired on CmPossibility and no other row, which is the evidence that it is not a blanket amnesty."
   }
