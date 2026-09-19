@@ -1,0 +1,581 @@
+{
+  "backup": "Target 2026-07-06 0218.fwbackup",
+  "baseline_comparable_to_t078": false,
+  "census_artifact": "census-038-t134-mbugwe.json",
+  "destination": "GT038 T124 Mbugwe",
+  "destination_probe": "D:\\Github\\_Projects\\_LEX\\GramTrans\\specs\\038-transfer-fidelity-gaps\\probes\\t134\\owner-probe-GT038-T124-Mbugwe.json",
+  "exit_code": 1,
+  "pair": "mbugwe",
+  "phase_5": {
+    "failures": [
+      "P5: CmPossibility still has unexplained 301 shortfall / 0 surplus after its accounting lines",
+      "P5: FsClosedValue is SHORTFALL (difference -1002) and carries NO accounting line -- absence of an accounted_for list is not an excuse (R-5)",
+      "P5: FsFeatStruc still has unexplained 353 shortfall / 0 surplus after its accounting lines",
+      "P5: PhSimpleContextNC is SHORTFALL (difference -1) and carries NO accounting line -- absence of an accounted_for list is not an excuse (R-5)"
+    ],
+    "satisfied": false
+  },
+  "source": "Mbugwe LizzieHC practice",
+  "source_probe": "D:\\Github\\_Projects\\_LEX\\GramTrans\\specs\\038-transfer-fidelity-gaps\\probes\\owner-probe-Mbugwe-LizzieHC-practice.json",
+  "starter_baseline": "D:\\Github\\_Projects\\_LEX\\GramTrans\\specs\\038-transfer-fidelity-gaps\\contracts\\starter-baseline.json",
+  "t078_comparand": "census-038-t078-mbugwe.json",
+  "t078_source_pin": {
+    "comparand": "census-038-t078-mbugwe.json",
+    "comparand_source_sha256": "fb6aadabb28a3606192852a99d64bc58d835d591538520126f1b7982226c3161",
+    "run_source_sha256": "3fb29a294434f85301e2f2f75d704489cdf4495325252cfb0f8797137cd5436d",
+    "status": "moved"
+  },
+  "t078_status": "historical; destination not touched by this run",
+  "t119_per_owning_field": {
+    "CmAnnotation.Features (flid=34008)": {
+      "dest": 0,
+      "source": 39,
+      "verdict": "TOTAL_LOSS"
+    },
+    "FsComplexValue.Value (flid=53001)": {
+      "dest": 146,
+      "source": 0,
+      "verdict": "OK"
+    },
+    "MoAffixAllomorph.MsEnvFeatures (flid=5027001)": {
+      "dest": 5,
+      "source": 1,
+      "verdict": "OK"
+    },
+    "MoDerivAffMsa.FromMsFeatures (flid=5031001)": {
+      "dest": 17,
+      "source": 17,
+      "verdict": "OK"
+    },
+    "MoDerivAffMsa.ToMsFeatures (flid=5031002)": {
+      "dest": 17,
+      "source": 17,
+      "verdict": "OK"
+    },
+    "MoInflAffMsa.InflFeats (flid=5038001)": {
+      "dest": 55,
+      "source": 78,
+      "verdict": "SHORTFALL"
+    },
+    "MoStemMsa.MsFeatures (flid=5001001)": {
+      "dest": 108,
+      "source": 104,
+      "verdict": "OK"
+    },
+    "PartOfSpeech.ReferenceForms (flid=5049010)": {
+      "dest": 288,
+      "source": 19,
+      "verdict": "OK"
+    },
+    "PhNCFeatures.Features (flid=5094001)": {
+      "dest": 119,
+      "source": 112,
+      "verdict": "OK"
+    },
+    "PhPhoneme.Features (flid=5092002)": {
+      "dest": 27,
+      "source": 42,
+      "verdict": "SHORTFALL"
+    }
+  },
+  "t119_unlisted_destination_fields": {},
+  "t121_starter_baseline_readings": {
+    "PhCode": {
+      "destination_exact": 106,
+      "destination_owners_raw": {
+        "PhTerminalUnit.Codes (flid=5090003) [runtime=PhBdryMarker]": 2,
+        "PhTerminalUnit.Codes (flid=5090003) [runtime=PhPhoneme]": 104
+      },
+      "moved_off_baseline": true,
+      "source_owners_raw": {
+        "PhTerminalUnit.Codes (flid=5090003) [runtime=PhBdryMarker]": 2,
+        "PhTerminalUnit.Codes (flid=5090003) [runtime=PhPhoneme]": 77
+      },
+      "starter_baseline_total": 25
+    },
+    "PhPhoneme": {
+      "destination_exact": 50,
+      "destination_owners_raw": {
+        "PhPhonemeSet.Phonemes (flid=5089002)": 50
+      },
+      "moved_off_baseline": true,
+      "source_owners_raw": {
+        "PhPhonemeSet.Phonemes (flid=5089002)": 42
+      },
+      "starter_baseline_total": 23
+    }
+  },
+  "t122_per_owning_list": {
+    "DsDiscourseData.ChartMarkers (flid=5124003) | name=None": {
+      "dest": 67,
+      "source": 77
+    },
+    "DsDiscourseData.ConstChartTempl (flid=5124001) | name=None": {
+      "dest": 11,
+      "source": 12
+    },
+    "LangProject.ConfidenceLevels (flid=6001025) | name=None": {
+      "dest": 4,
+      "source": 4
+    },
+    "LangProject.Education (flid=6001032) | name=None": {
+      "dest": 7,
+      "source": 7
+    },
+    "LangProject.GenreList (flid=6001052) | name=None": {
+      "dest": 29,
+      "source": 34
+    },
+    "LangProject.Restrictions (flid=6001026) | name=None": {
+      "dest": 4,
+      "source": 4
+    },
+    "LangProject.Roles (flid=6001028) | name=None": {
+      "dest": 10,
+      "source": 10
+    },
+    "LangProject.Status (flid=6001029) | name=None": {
+      "dest": 4,
+      "source": 4
+    },
+    "LangProject.TextMarkupTags (flid=6001055) | name=None": {
+      "dest": 52,
+      "source": 52
+    },
+    "LangProject.TimeOfDay (flid=6001033) | name=None": {
+      "dest": 11,
+      "source": 11
+    },
+    "LangProject.TranslationTags (flid=6001007) | name=None": {
+      "dest": 3,
+      "source": 3
+    },
+    "LexDb.DomainTypes (flid=5005007) | name=None": {
+      "dest": 55,
+      "source": 55
+    },
+    "LexDb.ExtendedNoteTypes (flid=5005025) | name=None": {
+      "dest": 5,
+      "source": 4
+    },
+    "LexDb.Languages (flid=5005026) | name=None": {
+      "dest": 0,
+      "source": 15
+    },
+    "LexDb.PublicationTypes (flid=5005024) | name=None": {
+      "dest": 1,
+      "source": 1
+    },
+    "LexDb.SenseTypes (flid=5005005) | name=None": {
+      "dest": 2,
+      "source": 2
+    },
+    "LexDb.UsageTypes (flid=5005006) | name=None": {
+      "dest": 26,
+      "source": 26
+    },
+    "MoMorphData.ProdRestrict (flid=5040009) | name=None": {
+      "dest": 3,
+      "source": 3
+    },
+    "RnResearchNbk.RecTypes (flid=4001003) | name=None": {
+      "dest": 11,
+      "source": 11
+    }
+  },
+  "t123_lex_references": {
+    "destination": {
+      "by_owning_type": {},
+      "lex_references_total": 0,
+      "owning_types_uncastable": 0
+    },
+    "source": {
+      "by_owning_type": {},
+      "lex_references_total": 0,
+      "owning_types_uncastable": 0
+    }
+  },
+  "t123_nesting_verdict_by_guid": {
+    "LexEntryInflType": {
+      "destination_only_guids": [],
+      "matched_guid_nesting_CHANGED": [],
+      "matched_guid_same_nesting": [
+        {
+          "guid": "01d4fbc1-3b0c-4f52-9163-7ab0d4f4711c",
+          "name": "Irregularly Inflected Form",
+          "nesting": "top_level"
+        },
+        {
+          "guid": "837ebe72-8c1d-4864-95d9-fa313c499d78",
+          "name": "Past",
+          "nesting": "nested"
+        },
+        {
+          "guid": "a32f1d1c-4832-46a2-9732-c2276d6547e8",
+          "name": "Plural",
+          "nesting": "nested"
+        },
+        {
+          "guid": "f84f013b-455f-4433-b378-3a2bfa7f574b",
+          "name": "Class 10",
+          "nesting": "nested"
+        }
+      ],
+      "source_guid_absent_from_destination": []
+    },
+    "LexEntryType": {
+      "destination_only_guids": [],
+      "matched_guid_nesting_CHANGED": [],
+      "matched_guid_same_nesting": [
+        {
+          "guid": "024b62c9-93b3-41a0-ab19-587a0030219a",
+          "name": "Dialectal Variant",
+          "nesting": "top_level"
+        },
+        {
+          "guid": "0c4663b3-4d9a-47af-b9a1-c8565d8112ed",
+          "name": "Spelling Variant",
+          "nesting": "top_level"
+        },
+        {
+          "guid": "1f6ae209-141a-40db-983c-bee93af0ca3c",
+          "name": "Compound",
+          "nesting": "top_level"
+        },
+        {
+          "guid": "35cee792-74c8-444e-a9b7-ed0461d4d3b7",
+          "name": "Phrasal Verb",
+          "nesting": "top_level"
+        },
+        {
+          "guid": "3942addb-99fd-43e9-ab7d-99025ceb0d4e",
+          "name": "Unspecified Variant",
+          "nesting": "top_level"
+        },
+        {
+          "guid": "4343b1ef-b54f-4fa4-9998-271319a6d74c",
+          "name": "Free Variant",
+          "nesting": "top_level"
+        },
+        {
+          "guid": "73266a3a-48e8-4bd7-8c84-91c730340b7d",
+          "name": "Contraction",
+          "nesting": "top_level"
+        },
+        {
+          "guid": "9466d126-246e-400b-8bba-0703e09bc567",
+          "name": "Saying",
+          "nesting": "top_level"
+        },
+        {
+          "guid": "98c273c4-f723-4fb0-80df-eede2204dfca",
+          "name": "Derivative",
+          "nesting": "top_level"
+        },
+        {
+          "guid": "99e0cab9-f284-45fb-84a5-4cb2516d0bf4",
+          "name": "Periphrastic Form",
+          "nesting": "top_level"
+        },
+        {
+          "guid": "b2276dec-b1a6-4d82-b121-fd114c009c59",
+          "name": "Idiom",
+          "nesting": "top_level"
+        },
+        {
+          "guid": "fec038ed-6a8c-4fa5-bc96-a4f515a98c50",
+          "name": "Unspecified Complex Form",
+          "nesting": "top_level"
+        }
+      ],
+      "source_guid_absent_from_destination": []
+    }
+  },
+  "t123_possibility_nesting": {
+    "destination": {
+      "CmPossibility": {
+        "by_owning_field": {
+          "CmPossibility.SubPossibilities (flid=7004)": 202,
+          "CmPossibilityList.Possibilities (flid=8008)": 103
+        },
+        "exact_class": 305,
+        "nested": 202,
+        "other": 0,
+        "top_level": 103
+      },
+      "LexEntryInflType": {
+        "by_guid": {
+          "01d4fbc1-3b0c-4f52-9163-7ab0d4f4711c": {
+            "name": "Irregularly Inflected Form",
+            "nesting": "top_level",
+            "owner_guid": "bb372467-5230-43ef-9cc7-4d40b053fb94",
+            "owning_field": "CmPossibilityList.Possibilities (flid=8008)"
+          },
+          "837ebe72-8c1d-4864-95d9-fa313c499d78": {
+            "name": "Past",
+            "nesting": "nested",
+            "owner_guid": "01d4fbc1-3b0c-4f52-9163-7ab0d4f4711c",
+            "owning_field": "CmPossibility.SubPossibilities (flid=7004)"
+          },
+          "a32f1d1c-4832-46a2-9732-c2276d6547e8": {
+            "name": "Plural",
+            "nesting": "nested",
+            "owner_guid": "01d4fbc1-3b0c-4f52-9163-7ab0d4f4711c",
+            "owning_field": "CmPossibility.SubPossibilities (flid=7004)"
+          },
+          "f84f013b-455f-4433-b378-3a2bfa7f574b": {
+            "name": "Class 10",
+            "nesting": "nested",
+            "owner_guid": "01d4fbc1-3b0c-4f52-9163-7ab0d4f4711c",
+            "owning_field": "CmPossibility.SubPossibilities (flid=7004)"
+          }
+        },
+        "by_owning_field": {
+          "CmPossibility.SubPossibilities (flid=7004)": 3,
+          "CmPossibilityList.Possibilities (flid=8008)": 1
+        },
+        "exact_class": 4,
+        "nested": 3,
+        "other": 0,
+        "top_level": 1
+      },
+      "LexEntryType": {
+        "by_guid": {
+          "024b62c9-93b3-41a0-ab19-587a0030219a": {
+            "name": "Dialectal Variant",
+            "nesting": "top_level",
+            "owner_guid": "bb372467-5230-43ef-9cc7-4d40b053fb94",
+            "owning_field": "CmPossibilityList.Possibilities (flid=8008)"
+          },
+          "0c4663b3-4d9a-47af-b9a1-c8565d8112ed": {
+            "name": "Spelling Variant",
+            "nesting": "top_level",
+            "owner_guid": "bb372467-5230-43ef-9cc7-4d40b053fb94",
+            "owning_field": "CmPossibilityList.Possibilities (flid=8008)"
+          },
+          "1f6ae209-141a-40db-983c-bee93af0ca3c": {
+            "name": "Compound",
+            "nesting": "top_level",
+            "owner_guid": "1ee09905-63dd-4c7a-a9bd-1d496743ccd6",
+            "owning_field": "CmPossibilityList.Possibilities (flid=8008)"
+          },
+          "35cee792-74c8-444e-a9b7-ed0461d4d3b7": {
+            "name": "Phrasal Verb",
+            "nesting": "top_level",
+            "owner_guid": "1ee09905-63dd-4c7a-a9bd-1d496743ccd6",
+            "owning_field": "CmPossibilityList.Possibilities (flid=8008)"
+          },
+          "3942addb-99fd-43e9-ab7d-99025ceb0d4e": {
+            "name": "Unspecified Variant",
+            "nesting": "top_level",
+            "owner_guid": "bb372467-5230-43ef-9cc7-4d40b053fb94",
+            "owning_field": "CmPossibilityList.Possibilities (flid=8008)"
+          },
+          "4343b1ef-b54f-4fa4-9998-271319a6d74c": {
+            "name": "Free Variant",
+            "nesting": "top_level",
+            "owner_guid": "bb372467-5230-43ef-9cc7-4d40b053fb94",
+            "owning_field": "CmPossibilityList.Possibilities (flid=8008)"
+          },
+          "73266a3a-48e8-4bd7-8c84-91c730340b7d": {
+            "name": "Contraction",
+            "nesting": "top_level",
+            "owner_guid": "1ee09905-63dd-4c7a-a9bd-1d496743ccd6",
+            "owning_field": "CmPossibilityList.Possibilities (flid=8008)"
+          },
+          "9466d126-246e-400b-8bba-0703e09bc567": {
+            "name": "Saying",
+            "nesting": "top_level",
+            "owner_guid": "1ee09905-63dd-4c7a-a9bd-1d496743ccd6",
+            "owning_field": "CmPossibilityList.Possibilities (flid=8008)"
+          },
+          "98c273c4-f723-4fb0-80df-eede2204dfca": {
+            "name": "Derivative",
+            "nesting": "top_level",
+            "owner_guid": "1ee09905-63dd-4c7a-a9bd-1d496743ccd6",
+            "owning_field": "CmPossibilityList.Possibilities (flid=8008)"
+          },
+          "99e0cab9-f284-45fb-84a5-4cb2516d0bf4": {
+            "name": "Periphrastic Form",
+            "nesting": "top_level",
+            "owner_guid": "bb372467-5230-43ef-9cc7-4d40b053fb94",
+            "owning_field": "CmPossibilityList.Possibilities (flid=8008)"
+          },
+          "b2276dec-b1a6-4d82-b121-fd114c009c59": {
+            "name": "Idiom",
+            "nesting": "top_level",
+            "owner_guid": "1ee09905-63dd-4c7a-a9bd-1d496743ccd6",
+            "owning_field": "CmPossibilityList.Possibilities (flid=8008)"
+          },
+          "fec038ed-6a8c-4fa5-bc96-a4f515a98c50": {
+            "name": "Unspecified Complex Form",
+            "nesting": "top_level",
+            "owner_guid": "1ee09905-63dd-4c7a-a9bd-1d496743ccd6",
+            "owning_field": "CmPossibilityList.Possibilities (flid=8008)"
+          }
+        },
+        "by_owning_field": {
+          "CmPossibilityList.Possibilities (flid=8008)": 12
+        },
+        "exact_class": 12,
+        "nested": 0,
+        "other": 0,
+        "top_level": 12
+      }
+    },
+    "source": {
+      "CmPossibility": {
+        "by_owning_field": {
+          "CmPossibility.SubPossibilities (flid=7004)": 220,
+          "CmPossibilityList.Possibilities (flid=8008)": 118
+        },
+        "exact_class": 338,
+        "nested": 220,
+        "other": 0,
+        "top_level": 118
+      },
+      "LexEntryInflType": {
+        "by_guid": {
+          "01d4fbc1-3b0c-4f52-9163-7ab0d4f4711c": {
+            "name": "Irregularly Inflected Form",
+            "nesting": "top_level",
+            "owner_guid": "bb372467-5230-43ef-9cc7-4d40b053fb94",
+            "owning_field": "CmPossibilityList.Possibilities (flid=8008)"
+          },
+          "837ebe72-8c1d-4864-95d9-fa313c499d78": {
+            "name": "Past",
+            "nesting": "nested",
+            "owner_guid": "01d4fbc1-3b0c-4f52-9163-7ab0d4f4711c",
+            "owning_field": "CmPossibility.SubPossibilities (flid=7004)"
+          },
+          "a32f1d1c-4832-46a2-9732-c2276d6547e8": {
+            "name": "Plural",
+            "nesting": "nested",
+            "owner_guid": "01d4fbc1-3b0c-4f52-9163-7ab0d4f4711c",
+            "owning_field": "CmPossibility.SubPossibilities (flid=7004)"
+          },
+          "f84f013b-455f-4433-b378-3a2bfa7f574b": {
+            "name": "Class 10",
+            "nesting": "nested",
+            "owner_guid": "01d4fbc1-3b0c-4f52-9163-7ab0d4f4711c",
+            "owning_field": "CmPossibility.SubPossibilities (flid=7004)"
+          }
+        },
+        "by_owning_field": {
+          "CmPossibility.SubPossibilities (flid=7004)": 3,
+          "CmPossibilityList.Possibilities (flid=8008)": 1
+        },
+        "exact_class": 4,
+        "nested": 3,
+        "other": 0,
+        "top_level": 1
+      },
+      "LexEntryType": {
+        "by_guid": {
+          "024b62c9-93b3-41a0-ab19-587a0030219a": {
+            "name": "Dialectal Variant",
+            "nesting": "top_level",
+            "owner_guid": "bb372467-5230-43ef-9cc7-4d40b053fb94",
+            "owning_field": "CmPossibilityList.Possibilities (flid=8008)"
+          },
+          "0c4663b3-4d9a-47af-b9a1-c8565d8112ed": {
+            "name": "Spelling Variant",
+            "nesting": "top_level",
+            "owner_guid": "bb372467-5230-43ef-9cc7-4d40b053fb94",
+            "owning_field": "CmPossibilityList.Possibilities (flid=8008)"
+          },
+          "1f6ae209-141a-40db-983c-bee93af0ca3c": {
+            "name": "Compound",
+            "nesting": "top_level",
+            "owner_guid": "1ee09905-63dd-4c7a-a9bd-1d496743ccd6",
+            "owning_field": "CmPossibilityList.Possibilities (flid=8008)"
+          },
+          "35cee792-74c8-444e-a9b7-ed0461d4d3b7": {
+            "name": "Phrasal Verb",
+            "nesting": "top_level",
+            "owner_guid": "1ee09905-63dd-4c7a-a9bd-1d496743ccd6",
+            "owning_field": "CmPossibilityList.Possibilities (flid=8008)"
+          },
+          "3942addb-99fd-43e9-ab7d-99025ceb0d4e": {
+            "name": "Unspecified Variant",
+            "nesting": "top_level",
+            "owner_guid": "bb372467-5230-43ef-9cc7-4d40b053fb94",
+            "owning_field": "CmPossibilityList.Possibilities (flid=8008)"
+          },
+          "4343b1ef-b54f-4fa4-9998-271319a6d74c": {
+            "name": "Free Variant",
+            "nesting": "top_level",
+            "owner_guid": "bb372467-5230-43ef-9cc7-4d40b053fb94",
+            "owning_field": "CmPossibilityList.Possibilities (flid=8008)"
+          },
+          "73266a3a-48e8-4bd7-8c84-91c730340b7d": {
+            "name": "Contraction",
+            "nesting": "top_level",
+            "owner_guid": "1ee09905-63dd-4c7a-a9bd-1d496743ccd6",
+            "owning_field": "CmPossibilityList.Possibilities (flid=8008)"
+          },
+          "9466d126-246e-400b-8bba-0703e09bc567": {
+            "name": "Saying",
+            "nesting": "top_level",
+            "owner_guid": "1ee09905-63dd-4c7a-a9bd-1d496743ccd6",
+            "owning_field": "CmPossibilityList.Possibilities (flid=8008)"
+          },
+          "98c273c4-f723-4fb0-80df-eede2204dfca": {
+            "name": "Derivative",
+            "nesting": "top_level",
+            "owner_guid": "1ee09905-63dd-4c7a-a9bd-1d496743ccd6",
+            "owning_field": "CmPossibilityList.Possibilities (flid=8008)"
+          },
+          "99e0cab9-f284-45fb-84a5-4cb2516d0bf4": {
+            "name": "Periphrastic Form",
+            "nesting": "top_level",
+            "owner_guid": "bb372467-5230-43ef-9cc7-4d40b053fb94",
+            "owning_field": "CmPossibilityList.Possibilities (flid=8008)"
+          },
+          "b2276dec-b1a6-4d82-b121-fd114c009c59": {
+            "name": "Idiom",
+            "nesting": "top_level",
+            "owner_guid": "1ee09905-63dd-4c7a-a9bd-1d496743ccd6",
+            "owning_field": "CmPossibilityList.Possibilities (flid=8008)"
+          },
+          "fec038ed-6a8c-4fa5-bc96-a4f515a98c50": {
+            "name": "Unspecified Complex Form",
+            "nesting": "top_level",
+            "owner_guid": "1ee09905-63dd-4c7a-a9bd-1d496743ccd6",
+            "owning_field": "CmPossibilityList.Possibilities (flid=8008)"
+          }
+        },
+        "by_owning_field": {
+          "CmPossibilityList.Possibilities (flid=8008)": 12
+        },
+        "exact_class": 12,
+        "nested": 0,
+        "other": 0,
+        "top_level": 12
+      }
+    }
+  },
+  "totals": {
+    "accounted_shortfall": 29847,
+    "accounted_surplus": 0,
+    "advisory_shortfall": 0,
+    "classes_matched": 56,
+    "classes_not_evaluated": 3,
+    "classes_reported": 75,
+    "classes_shortfall": 16,
+    "classes_surplus": 0,
+    "duplicate_extra_objects": 0,
+    "total_shortfall": 33222,
+    "total_surplus": 0,
+    "unexplained_shortfall": 1657,
+    "unexplained_surplus": 0
+  },
+  "verdict": "UNEXPLAINED_SHORTFALL",
+  "vs_t078": {
+    "fixed": [],
+    "refused": true,
+    "refused_reason": "source 'Mbugwe LizzieHC practice' is not on the pin recorded in census-038-t078-mbugwe.json (run 3fb29a294434f85301e2f2f75d704489cdf4495325252cfb0f8797137cd5436d vs comparand fb6aadabb28a3606192852a99d64bc58d835d591538520126f1b7982226c3161)",
+    "regressed": [],
+    "still_short": []
+  }
+}
