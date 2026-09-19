@@ -31,6 +31,10 @@ specs/035-fullsweep-fidelity/tasks.md) added on top of it:
                    class roster with the MEASURED corpus survey so a class with
                    zero instances corpus-wide reports NOT-EVALUATED instead of a
                    silent zero (FR-133..FR-137, research D-07 -- T044)
+  * ``field_dispatch``-- Group E plane 2: the LIVE field_source(cls, guid)
+                   reader ``census.census_fields`` requires, plus the
+                   class -> Operations-accessor dispatch table and the
+                   explicit unreachable-class holes (T045d)
 
 ``debug/run_fullcopy_sweep.py`` is now a thin CLI entry point over this
 package. The field-level comparator's REAL logic (Groups E/H/P, still in
@@ -72,10 +76,12 @@ from .allowlist import *  # noqa: F401,F403,E402 -- loss-reason allowlist, FR-11
 from .compare import *  # noqa: F401,F403,E402 -- object-level accounting plane, FR-097 (T031)
 from .census import *  # noqa: F401,F403,E402 -- field-level census plane, FR-051/FR-052/FR-066 (T037)
 from .coverage import *  # noqa: F401,F403,E402 -- Group J: the coverage floor, FR-133..FR-137 (T044)
+from .field_dispatch import *  # noqa: F401,F403,E402 -- the live field_source(cls, guid)
+                                # reader + class->accessor dispatch table (T045d)
 
 from . import (corpus, safety, pool, moves, artifact, batch, errors, verdict,  # noqa: F401,E402
                guards, baseline, preflight, identity, allowlist, compare, census,
-               coverage)
+               coverage, field_dispatch)
 
 # NOTE for tests and callers: ``import *`` above BINDS A COPY of each module
 # global onto this package namespace. Patching ``fullsweep.NAME`` therefore
