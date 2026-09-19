@@ -288,11 +288,23 @@ class TestClassFieldCoverage:
         with pytest.raises(census.CensusContractError, match="no model fields"):
             census.class_field_coverage("C", [], [], roster)
 
-    def test_syncable_field_absent_from_model_raises(self, roster):
-        """If the two surfaces disagree, neither the omitted set nor the compared
-        set is trustworthy, so no verdict may rest on them."""
-        with pytest.raises(census.CensusContractError, match="disagree"):
-            census.class_field_coverage("C", ["Form"], ["Form", "Ghost"], roster)
+    def test_syncable_field_absent_from_model_is_recorded_not_refused(self, roster):
+        """CORRECTED in T045a(c) from live measurement. The old rule raised
+        here, on the premise that the two surfaces name the same fields.
+        Measured against ``Ejagham Mini`` (read-only, pyflexicon 4.8.0) the
+        premise is false twice over -- ``PhNCSegments``'s syncable surface
+        SYNTHESIZES the name ``PhonemeGuids`` for the model's ``SegmentsRC``,
+        and ``LexSense.DoNotShowMainEntryInRC`` is a PHANTOM key no MDC field
+        backs -- and refusing cost each class its whole measurement to report
+        a naming difference.
+
+        The key is published instead, and still compared: it carries a real
+        value, which is the thing this feature exists to check."""
+        cov = census.class_field_coverage("C", ["Form"], ["Form", "Ghost"], roster)
+        assert cov.unmapped_syncable_fields == ("Ghost",)
+        assert "Ghost" in cov.compared
+        assert cov.engine_omitted == ()          # model - syncable, still exact
+        assert cov.as_dict()["unmapped_syncable_fields"] == ["Ghost"]
 
     def test_omitted_set_is_enumerated_on_the_artifact_block(self, tmp_path):
         """FR-052: the omitted set must be ENUMERATED in every artifact, not
@@ -333,18 +345,31 @@ class TestCensusFields:
         c = census.census_fields({"Text": ["g1"]}, field_source=src, roster=r)
         assert c.values["Text"]["g1"]["Description"] == "prose"
 
-    def test_inconsistent_syncable_surface_within_a_class_raises(self, tmp_path):
-        """The syncable surface is a property of the CLASS. Two objects
-        disagreeing means the omitted set is not well defined, so it must raise
-        rather than average away the difference."""
+    def test_a_varying_syncable_surface_is_unioned_and_recorded(self, tmp_path):
+        """CORRECTED in T045a(c) from live measurement. The old rule raised on
+        any disagreement between two objects of one class, on the premise that
+        the surface is fixed per class. flexicon emits a key on PRESENCE, not
+        truthiness -- POSOperations' own contract says a NULL owning property
+        "omits both keys entirely" -- so a sparse object legitimately exposes
+        a smaller surface. Measured on ``Ejagham Mini``, the raise cost SEVEN
+        classes their entire measurement, ``PartOfSpeech`` among them.
+
+        The union is the honest surface; what varied is published."""
         r = _roster(tmp_path, _minimal())
         surfaces = {"g1": {"A": 1}, "g2": {"A": 1, "B": 2}}
 
         def src(cls, guid):
             return (["A", "B"], surfaces[guid])
 
-        with pytest.raises(census.CensusContractError, match="two different syncable"):
-            census.census_fields({"C": ["g1", "g2"]}, field_source=src, roster=r)
+        c = census.census_fields({"C": ["g1", "g2"]}, field_source=src, roster=r)
+        cov = c.coverage["C"]
+        assert cov.syncable_fields == ("A", "B")
+        assert cov.surface_variance == ("B",)
+        assert cov.engine_omitted == ()
+        # The object that did not carry B simply has no value for it -- which
+        # the comparison rules read as null on that side, never as agreement.
+        assert c.values["C"]["g1"] == {"A": 1}
+        assert c.values["C"]["g2"] == {"A": 1, "B": 2}
 
     def test_non_mapping_props_raises(self, tmp_path):
         r = _roster(tmp_path, _minimal())

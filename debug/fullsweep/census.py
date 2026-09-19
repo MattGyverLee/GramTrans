@@ -187,7 +187,13 @@ def strip_provenance_tag(value, roster: ExpectedDivergentRoster):
 
 @dataclass(frozen=True)
 class ClassFieldCoverage:
-    """One class's field accounting, as it appears on every artifact (FR-052)."""
+    """One class's field accounting, as it appears on every artifact (FR-052).
+
+    ``unmapped_syncable_fields`` and ``surface_variance`` are the two things
+    the live surface does that the designed one was not expected to. Both are
+    PUBLISHED rather than refused -- see ``class_field_coverage`` and
+    ``census_fields`` for the measurements behind each.
+    """
 
     cls: str
     model_fields: tuple
@@ -195,6 +201,16 @@ class ClassFieldCoverage:
     engine_omitted: tuple
     roster_excluded: tuple
     compared: tuple
+    #: Syncable keys with no field of that name in the class's model
+    #: enumeration. Live causes measured: a SYNTHESIZED name
+    #: (``PhNCSegments.PhonemeGuids`` is the model's ``SegmentsRC``) and a
+    #: PHANTOM key (``LexSense.DoNotShowMainEntryInRC``, which flexicon emits
+    #: unconditionally and no MDC field backs).
+    unmapped_syncable_fields: tuple = ()
+    #: Syncable keys that some objects of this class carried and others did
+    #: not. Presence, not truthiness: a NULL owning property omits its key
+    #: entirely.
+    surface_variance: tuple = ()
 
     def as_dict(self) -> dict:
         return {
@@ -203,6 +219,8 @@ class ClassFieldCoverage:
             "engine_omitted": list(self.engine_omitted),
             "roster_excluded": list(self.roster_excluded),
             "compared": list(self.compared),
+            "unmapped_syncable_fields": list(self.unmapped_syncable_fields),
+            "surface_variance": list(self.surface_variance),
         }
 
 
@@ -211,6 +229,8 @@ def class_field_coverage(
     model_fields: Iterable[str],
     syncable_fields: Iterable[str],
     roster: ExpectedDivergentRoster,
+    *,
+    surface_variance: Iterable[str] = (),
 ) -> ClassFieldCoverage:
     """FR-051/FR-052/FR-066. ``compared`` is ``syncable - roster_excluded``: the
     engine's own surface bounds what CAN be compared, and the roster removes
@@ -218,7 +238,28 @@ def class_field_coverage(
 
     An empty ``model_fields`` is a measurement defect, not an empty class: it
     means the field source could not enumerate the class, and proceeding would
-    report full coverage over nothing.
+    report full coverage over nothing. That refusal stands.
+
+    **A syncable key with no model field of that name does NOT refuse the
+    class any more (corrected in T045a(c), from live measurement).** The rule
+    was written on the premise that the two surfaces name the same fields, so
+    a disagreement meant neither could be trusted. Measured against
+    ``Ejagham Mini`` (read-only, pyflexicon 4.8.0), the premise is false for
+    two DIFFERENT and harmless reasons:
+
+    * a SYNTHESIZED name -- ``PhNCSegments``'s syncable surface calls the
+      model's ``SegmentsRC`` field ``PhonemeGuids``;
+    * a PHANTOM key -- ``LexSense.DoNotShowMainEntryInRC``, which flexicon
+      emits unconditionally and which ``field_dispatch``'s module docstring
+      already records as backed by no MDC field at all.
+
+    Refusing on either one cost the whole class its measurement -- including
+    ``LexSense``, the single most-transferred class in the corpus -- to report
+    a naming difference. The keys are now recorded in
+    ``unmapped_syncable_fields``, published on every artifact, and kept OUT of
+    ``engine_omitted`` (which stays ``model - syncable``, still well defined).
+    They remain in ``compared``: they carry real values, and a value the
+    engine claims to sync is exactly what this feature exists to check.
     """
     model = frozenset(model_fields)
     if not model:
@@ -227,14 +268,7 @@ def class_field_coverage(
             "census refuses to report coverage it did not measure" % (cls,)
         )
     syncable = frozenset(syncable_fields)
-    unknown = syncable - model
-    if unknown:
-        raise CensusContractError(
-            "[FR-051] the engine's syncable surface for class %r returned "
-            "field(s) absent from the class's own model enumeration: %s -- the "
-            "two surfaces disagree, so neither the omitted set nor the compared "
-            "set is trustworthy" % (cls, ", ".join(sorted(unknown)))
-        )
+    unmapped = syncable - model
     excluded = roster.excluded_for(cls)
     return ClassFieldCoverage(
         cls=cls,
@@ -243,6 +277,8 @@ def class_field_coverage(
         engine_omitted=tuple(sorted(model - syncable)),
         roster_excluded=tuple(sorted(excluded)),
         compared=tuple(sorted(syncable - excluded)),
+        unmapped_syncable_fields=tuple(sorted(unmapped)),
+        surface_variance=tuple(sorted(frozenset(surface_variance))),
     )
 
 
@@ -283,10 +319,24 @@ def census_fields(
     ``syncable_props`` is the ``GetSyncableProperties`` dict for that object.
     Its keys establish the class's syncable surface; its values are the payload.
 
-    Per-class coverage is computed from the FIRST object of that class and then
-    held fixed: the syncable surface is a property of the class, so an object
-    whose surface disagrees with its siblings is a defect worth raising rather
-    than averaging away.
+    Per-class coverage is the UNION of the surfaces its objects exposed, and
+    the fields that varied are recorded in ``surface_variance``.
+
+    **This replaces a first-object-wins rule that RAISED on any disagreement
+    (corrected in T045a(c), from live measurement).** That rule assumed the
+    syncable surface is a fixed property of the class. It is not: flexicon's
+    overrides emit a key on PRESENCE, not truthiness -- POSOperations' own
+    contract says a NULL owning property "omits both keys entirely" -- so an
+    object with no ``CatalogSourceId`` legitimately exposes a smaller surface
+    than its sibling. Measured on ``Ejagham Mini``, the raise cost SEVEN
+    classes their entire measurement, ``PartOfSpeech`` and ``MoStemMsa`` among
+    them, for data that is merely sparse.
+
+    The union is the honest surface: it is every field this class was ever
+    seen to carry, ``engine_omitted`` (``model - union``) is the smallest
+    defensible omitted set, and an object that did not carry one of them
+    simply has no value recorded for it -- which the comparison rules already
+    read as "null on this side" rather than as agreement.
 
     FR-063 tag-stripping is applied to Carrier-B fields as values are recorded,
     so downstream comparison never sees the tool's own tag.
@@ -295,7 +345,11 @@ def census_fields(
     coverage: dict = {}
     for cls in sorted(objects_by_class):
         guids = list(objects_by_class[cls] or ())
-        per_object: dict = {}
+        if not guids:
+            continue
+        raw: dict = {}
+        model_union: set = set()
+        surfaces: list = []
         for guid in guids:
             model_fields, props = field_source(cls, guid)
             if not isinstance(props, Mapping):
@@ -304,25 +358,23 @@ def census_fields(
                     "syncable-properties value (%r)"
                     % (cls, guid, type(props).__name__)
                 )
-            cov = class_field_coverage(cls, model_fields, props.keys(), roster)
-            if cls not in coverage:
-                coverage[cls] = cov
-            elif cov.syncable_fields != coverage[cls].syncable_fields:
-                raise CensusContractError(
-                    "[FR-051] class %r exposed two different syncable surfaces "
-                    "within one run (object %s): %s vs %s -- the omitted set is "
-                    "not well defined for this class"
-                    % (cls, guid, list(coverage[cls].syncable_fields),
-                       list(cov.syncable_fields))
-                )
-            compared = coverage[cls].compared
-            per_object[guid] = {
+            model_union.update(model_fields or ())
+            surfaces.append(frozenset(props.keys()))
+            raw[guid] = dict(props)
+        union = frozenset().union(*surfaces) if surfaces else frozenset()
+        intersection = frozenset.intersection(*surfaces) if surfaces else frozenset()
+        cov = class_field_coverage(cls, model_union, union, roster,
+                                   surface_variance=union - intersection)
+        coverage[cls] = cov
+        compared = cov.compared
+        values[cls] = {
+            guid: {
                 f: (strip_provenance_tag(props[f], roster)
                     if f in roster.carrier_b_fields else props[f])
                 for f in compared if f in props
             }
-        if guids:
-            values[cls] = per_object
+            for guid, props in raw.items()
+        }
     return FieldCensus(values=values, coverage=coverage)
 
 

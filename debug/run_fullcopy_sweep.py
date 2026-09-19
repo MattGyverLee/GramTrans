@@ -342,21 +342,23 @@ MEASURABLE_RUN_CONTEXT_FIELDS: tuple = (
     "plan_conservation",
     "accounting",
     "enabled_categories",
-    "measured_categories",   # awaits plane 2 -- see PENDING_PLANE_2_FIELDS
+    "measured_categories",   # plane 2, deposited since T045a(c)
     "excluded_categories",
-    "comparisons",           # awaits plane 2 -- see PENDING_PLANE_2_FIELDS
+    "comparisons",           # plane 2, deposited since T045a(c)
     "drop_reasons",
     "engine_bug_signatures",
 )
 
-#: Named measurable, but NOT yet deposited by ``run_one_project``: both need
-#: plane 2's live field read (``census.census_fields`` with a real
-#: ``field_source(cls, guid)`` over LCM objects), which T045a part (c) covers.
-#: They are listed as measurable because the shape is settled and the guard is
-#: built -- only the reader is missing. Until it lands they stay absent from
-#: ``measured`` and their guards report ``not-evaluated``, which is the honest
-#: answer and not a defect in this wiring.
-PENDING_PLANE_2_FIELDS: tuple = ("comparisons", "measured_categories")
+#: WAS "named measurable but not yet deposited". T045a(c) deposits both: the
+#: live field read (``fieldplane.gather_field_plane_side`` ->
+#: ``census.census_fields`` with ``field_dispatch.build_field_source``) now
+#: runs inside ``run_one_project``, and its per-class counters are projected
+#: onto categories through ``coverage.project_comparisons_to_categories``.
+#:
+#: The tuple is KEPT, and kept EMPTY, deliberately: it is the place a future
+#: "measurable in principle, not deposited yet" field goes, and deleting it
+#: would make the next such field's absence invisible again.
+PENDING_PLANE_2_FIELDS: tuple = ()
 
 #: The guard inputs ``run_one_project`` has NO measurement for, with the reason.
 #: Recorded here, in code, so "why is this run still VACUOUS?" has a written
@@ -445,6 +447,193 @@ def reconcile_project_objects(
 
 
 # ===========================================================================
+# PLANE 2, WIRED (T045a part c -- FR-051/FR-052/FR-066, FR-069..FR-090, FR-189)
+# ===========================================================================
+
+def build_field_plane(
+    artifact,
+    *,
+    source_name: str,
+    target_name: str,
+    contracts_dir: Path,
+    gather_side: Callable,
+    ws_mapping_mode: str,
+    max_objects_per_class: Optional[int],
+    natural_key_roster,
+    drops: Sequence = (),
+):
+    """Read both projects' field planes and return the payload comparator
+    ``reconcile_objects`` will call -- or ``None``, with the reason recorded.
+
+    A failure here is recorded and NOT re-raised. That is deliberate and it is
+    not the "no silent anything" rule bending: the failure lands in
+    ``artifact.errors`` with its traceback AND in ``artifact.field_plane`` with
+    ``measured: false``, and its consequence is that ``comparisons`` /
+    ``measured_categories`` stay absent from ``measured``, so their guards
+    report ``not-evaluated`` and FR-109 sinks the run to ``VACUOUS``. Aborting
+    instead would throw away the plane-1 reconciliation, the drop channel and
+    the idempotency measurement this run already paid for -- less evidence,
+    and the same verdict.
+    """
+    record: dict = {"measured": False, "mode": ws_mapping_mode,
+                    "max_objects_per_class": max_objects_per_class, "error": ""}
+    try:
+        divergent = load_expected_divergent(
+            Path(contracts_dir) / "expected-divergent.json")
+        cmap = load_class_category_map(
+            Path(contracts_dir) / CLASS_CATEGORY_MAP_NAME)
+        source_side = gather_side(source_name, roster=divergent,
+                                  max_objects_per_class=max_objects_per_class)
+        target_side = gather_side(target_name, roster=divergent,
+                                  max_objects_per_class=max_objects_per_class)
+        ws_mapping = build_ws_mapping_for_mode(
+            ws_mapping_mode,
+            source_tags=source_side.ws_tags,
+            target_tags=target_side.ws_tags,
+            source_default_vernacular=source_side.default_vernacular,
+            target_default_vernacular=target_side.default_vernacular,
+        )
+        # Both sides' holes, kept apart by side: "the source class could not be
+        # read" and "the target class could not be read" have different causes
+        # and different fixes, and a merged list hides which one happened.
+        unreadable = {c: "source: %s" % why
+                      for c, why in source_side.unreadable_classes.items()}
+        for cls, why in target_side.unreadable_classes.items():
+            if cls in unreadable:
+                unreadable[cls] = unreadable[cls] + " | target: %s" % why
+            else:
+                unreadable[cls] = "target: %s" % why
+        comparator = FieldPlaneComparator(
+            source_census=source_side.census,
+            target_census=target_side.census,
+            ws_mapping=ws_mapping,
+            source_ws_keys=source_side.ws_keys,
+            target_ws_keys=target_side.ws_keys,
+            source_handle_to_tag=source_side.handle_to_tag,
+            target_handle_to_tag=target_side.handle_to_tag,
+            target_ws_tags=target_side.ws_tags,
+            natural_key_roster=natural_key_roster,
+            # FR-085: no identity-remap record is produced on this path yet, so
+            # a link whose owning class is on the natural-key roster is REFUSED
+            # rather than resolved by identifier comparison, which that rule
+            # forbids outright. The refusal is counted and published.
+            remap_record=None,
+            drops=drops,
+            category_for=cmap.categories_for,
+            unreadable_classes=unreadable,
+            source_side=source_side,
+            target_side=target_side,
+            class_category_map=cmap,
+        )
+        record.update({
+            "measured": True,
+            "writing_system_mapping": ws_mapping.as_dict(),
+            "source": source_side.as_dict(),
+            "target": target_side.as_dict(),
+        })
+        artifact.writing_system_mapping = dict(
+            {"mode": ws_mapping_mode}, **ws_mapping.as_dict())
+        return comparator
+    except Exception as exc:  # noqa: BLE001 -- recorded loudly, never swallowed
+        record["error"] = "%s: %s" % (type(exc).__name__, exc)
+        artifact.errors.append({
+            "phase": "census_2", "error": record["error"],
+            "traceback": traceback.format_exc(),
+        })
+        return None
+    finally:
+        artifact.field_plane = record
+
+
+def record_plane_2_measurements(
+    artifact,
+    comparator,
+    *,
+    measured: dict,
+    source_inventory: dict,
+    contracts_dir: Path,
+    excluded_records: Sequence[dict] = (),
+    plane1_census_path: Optional[str] = None,
+) -> None:
+    """Put plane 2's output where the artifact and the guards read it.
+
+    The CLASS plane and the CATEGORY plane are both written, from one
+    measurement: ``artifact.comparisons`` keys on class (what was measured),
+    ``RunContext.comparisons`` keys on category (what FR-095's guard reads).
+    T045e's tracked join is the only bridge between them -- see the trap named
+    in its task text: ``coverage.classify_coverage``'s own ``comparisons``
+    parameter is a different object with the same name.
+    """
+    cmap = comparator.class_category_map
+    performed, objects_compared = comparator.class_counters()
+    known = set(cmap.class_names)
+    source_objects = {c: len(v) for c, v in (source_inventory or {}).items()}
+
+    # A class the run measured that the tracked join does not map cannot be
+    # attributed to a category -- and ``project_comparisons_to_categories``
+    # RAISES on one rather than dropping it. So the projection is fed the
+    # mapped subset and the remainder is published by name, at the class
+    # plane, where it does have a home.
+    outside = sorted(set(performed) - known)
+    projection = project_comparisons_to_categories(
+        cmap,
+        source_objects={c: n for c, n in source_objects.items() if c in known},
+        comparisons_performed={c: n for c, n in performed.items() if c in known},
+        objects_compared={c: n for c, n in objects_compared.items() if c in known},
+    )
+    measured["comparisons"] = projection["comparisons"]
+    # FR-096: a category is MEASURED when at least one comparison was
+    # performed in it -- not when it merely appears in the projection. A
+    # category with source objects and zero comparisons is exactly what
+    # COMPARISONS-PERFORMED exists to fail, and counting it as measured here
+    # would hide that from CATEGORY-COVERAGE as well.
+    measured["measured_categories"] = sorted(
+        cat for cat, rec in projection["comparisons"].items()
+        if rec.get("comparisons_performed", 0) >= 1
+    )
+
+    comparisons = comparator.comparisons_block()
+    comparisons["category_projection"] = {
+        k: v for k, v in projection.items() if k != "comparisons"
+    }
+    comparisons["per_category"] = projection["comparisons"]
+    comparisons["classes_outside_class_category_map"] = outside
+
+    floor = load_coverage_floor(Path(contracts_dir) / COVERAGE_FLOOR_NAME)
+    coverage_report = classify_coverage(
+        floor,
+        survey=source_objects,
+        comparisons=performed,
+        findings_by_class=comparator.findings_by_class(),
+        reachable_only_through_excluded=categories_reachable_only_through_excluded(
+            cmap, [r.get("category") for r in (excluded_records or ()) if r.get("category")]),
+        project=artifact.project,
+    )
+
+    census = census_block(
+        field_census=comparator.source_side.census,
+        cost={"source": comparator.source_side.cost,
+              "target": comparator.target_side.cost},
+        plane1_reference=(plane1_census_reference(plane1_census_path)
+                          if plane1_census_path else None),
+    )
+
+    record_field_plane(
+        artifact,
+        comparisons=comparisons,
+        link_findings=comparator.link_findings(),
+        depth=depth_block(depth_results(comparator.source_side,
+                                        comparator.target_side)),
+        coverage=coverage_report.as_dict(),
+        census=census,
+    )
+    # FR-145: the field plane's findings join the object plane's in the one
+    # findings list a reader looks at. They carry ``field`` and a rule token,
+    # which is what tells the two apart without a second list to remember.
+    artifact.findings = list(artifact.findings) + comparator.value_findings()
+
+
+# ===========================================================================
 # PER-PROJECT DOUBLE-MOVE LOOP (Groups B/D/K wired together)
 # ===========================================================================
 
@@ -466,6 +655,10 @@ def run_one_project(
     allowlist_matcher=None,
     natural_key_roster=None,
     tolerated_residue: Sequence[str] = (),
+    ws_mapping_mode: str = WS_MODE_FULL,
+    plane1_census_path: Optional[str] = None,
+    max_objects_per_class: Optional[int] = None,
+    gather_side: Callable = gather_field_plane_side,
 ) -> ProjectArtifact:
     """FR-043: restore -> census -> Move #1 -> census -> Move #2 -> census ->
     restore, for exactly one project, with the write-safety choke point
@@ -477,6 +670,25 @@ def run_one_project(
     ``harness.restore_target``, so there is no newest-archive glob fallback
     on this path and every restored item's containment is proven before a
     byte is written.
+
+    ``ws_mapping_mode`` (T045a(c)) is handed to BOTH transfers AND to the
+    plane-2 comparison, from this one parameter, for the same reason the
+    exclusion set is resolved once in T045a(a): a comparison made under a
+    different writing-system mapping than the transfer used would report
+    findings the run did not cause. It defaults to ``"full"`` -- every source
+    writing system declared -- because this sweep is a FULL-copy sweep and
+    FR-071 names the single-default-vernacular map as "the narrower default
+    this exists to refuse". The chosen mode is recorded on every artifact
+    (FR-135: never an invisible default argument).
+
+    ``plane1_census_path`` points at feature 038's census artifact for this
+    project. The artifact REFERENCES it by path and content hash (the 038
+    cut); ``None`` records an absent reference WITH its reason rather than a
+    silently missing block.
+
+    ``max_objects_per_class`` caps the field census per class. ``None`` (the
+    default) reads every object; any cap is an exclusion and is recorded as
+    one.
     """
     if run_intent not in VALID_RUN_INTENTS:
         raise ValueError("run_intent must be one of %r" % (VALID_RUN_INTENTS,))
@@ -505,6 +717,9 @@ def run_one_project(
     artifact.excluded_category_records = excluded_records
     artifact.diagnostic_level = diagnostic_level
     artifact.baseline = pinned_baseline.as_dict()
+    if ws_mapping_mode not in WS_MODES:
+        raise ValueError("ws_mapping_mode must be one of %r" % (WS_MODES,))
+    artifact.writing_system_mapping = {"mode": ws_mapping_mode}
 
     # FR-024: the per-project record that each assertion was IN FACT
     # evaluated, at which boundary, against which literal values.
@@ -598,7 +813,8 @@ def run_one_project(
             allowlist=allowlist, projects_root=projects_root, ledger=ledger,
         )
         plan1, report1 = full_run.run_full_transfer(
-            source_name, target_name, target_path, exclude=excluded_members)
+            source_name, target_name, target_path, exclude=excluded_members,
+            ws_mapping_mode=ws_mapping_mode)
         # FR-161/SC-005: the engine's drop channel is the ONLY place the two
         # historically dominant loss classes and the named residual list can be
         # read from. Recorded per transfer, before anything downstream can lose
@@ -625,7 +841,8 @@ def run_one_project(
             allowlist=allowlist, projects_root=projects_root, ledger=ledger,
         )
         plan2, report2 = full_run.run_full_transfer(
-            source_name, target_name, target_path, exclude=excluded_members)
+            source_name, target_name, target_path, exclude=excluded_members,
+            ws_mapping_mode=ws_mapping_mode)
         artifact.drops["second"] = summarize_drops(report2)
         measured["drop_reasons"] = observed_drop_reasons(artifact.drops)
         artifact.phases_completed.append("second_transfer")
@@ -643,14 +860,37 @@ def run_one_project(
         if idem.harness_error:
             raise HarnessError(idem.harness_error)
 
+        source_inventory = census_project(source_name)
+        drop_records = drop_records_from_artifact(artifact.drops)
+
+        # ---- plane 2: the FIELD plane (T045a part c) ---------------------
+        # Built BEFORE the reconciliation because it IS the reconciliation's
+        # payload comparator: ``reconcile_objects`` calls ``payload_equal``
+        # for every pair it matched under an identity, and until this landed
+        # the only comparator available was ``payload_never_compared``, which
+        # answered None for all of them -- so every matched object was
+        # reported "present-under-matching-identity-but-never-compared" and
+        # ``comparisons`` / ``measured_categories`` were never measured at all.
+        comparator = build_field_plane(
+            artifact, source_name=source_name, target_name=target_name,
+            contracts_dir=Path(contracts_dir), gather_side=gather_side,
+            ws_mapping_mode=ws_mapping_mode,
+            max_objects_per_class=max_objects_per_class,
+            natural_key_roster=natural_key_roster, drops=drop_records,
+        )
+
         # ---- plane 1: the object-level reconciliation (T045a part b) -----
         # FR-091: THIS walk detects loss. The drop channel recorded above is
         # consulted only to explain an absence the walk already found.
-        source_inventory = census_project(source_name)
+        if comparator is not None and payload_equal is payload_never_compared:
+            # An explicitly injected comparator (tests, a caller that wants
+            # plane 1 alone) still wins: substituting ours over the top would
+            # make the parameter a lie.
+            payload_equal = comparator.payload_equal
         accounting, findings = reconciler(
             source_inventory, census_before, census_after_2,
             project=source_name,
-            drops=drop_records_from_artifact(artifact.drops),
+            drops=drop_records,
             matcher=allowlist_matcher, roster=natural_key_roster,
             payload_equal=payload_equal,
         )
@@ -658,6 +898,16 @@ def run_one_project(
         artifact.accounting = accounting.as_dict()
         assert_object_plane_only(artifact.accounting)   # FR-093: planes stay apart
         artifact.findings = findings
+
+        # ---- plane 2's OUTPUT: onto the artifact, and into the guards -----
+        if comparator is not None:
+            record_plane_2_measurements(
+                artifact, comparator, measured=measured,
+                source_inventory=source_inventory,
+                contracts_dir=Path(contracts_dir),
+                excluded_records=excluded_records,
+                plane1_census_path=plane1_census_path,
+            )
 
         artifact.status = "passed" if (idem.passed and not artifact.findings) else "failed"
         artifact.reason = "" if artifact.status == "passed" else (
@@ -825,6 +1075,9 @@ def _cmd_project(args) -> int:
             projects_root=args.projects_root,
             artifacts_dir=Path(args.artifacts_dir),
             contracts_dir=Path(args.contracts_dir),
+            ws_mapping_mode=args.ws_mapping_mode,
+            plane1_census_path=args.plane1_census,
+            max_objects_per_class=args.max_objects_per_class,
         )
     except (WriteSafetyError, SourceTamperError, EvidenceProvenanceError) as exc:
         # These MUST abort the whole run -- re-raise after making that loud.
@@ -933,7 +1186,10 @@ def _cmd_batch(args) -> int:
                 "--contracts-dir", args.contracts_dir, "--ledger", args.ledger,
                 "project", "--source", source, "--target", target, "--intent", args.intent,
                 "--exclude-categories", ",".join(args.exclude_categories),
-                "--diagnostic-level", args.diagnostic_level]
+                "--diagnostic-level", args.diagnostic_level,
+                "--ws-mapping-mode", args.ws_mapping_mode]
+        if getattr(args, "max_objects_per_class", None) is not None:
+            cmd += ["--max-objects-per-class", str(args.max_objects_per_class)]
         if args.backup:
             cmd += ["--backup", args.backup, "--baseline-sha256", args.baseline_sha256]
         log_dir = Path(args.runtime_dir) / "logs"
@@ -1078,6 +1334,11 @@ def main(argv=None) -> int:
                             choices=DIAGNOSTIC_LEVELS,
                             help="set explicitly and recorded; never setdefault "
                                  "from the environment")
+    p_project.add_argument("--ws-mapping-mode", default=WS_MODE_FULL,
+                            choices=WS_MODES, help="the writing-system mapping BOTH transfers run under and plane 2 compares under. 'full' declares every source writing system (mapped where the target has the tag, created where it does not); 'default-vernacular' declares only the source default vernacular, which FR-071 names as the narrower default it exists to refuse and which makes every other source writing system with content report unmapped-writing-system-with-no-skip-record")
+    p_project.add_argument("--plane1-census", default=None, help="path to feature 038's census artifact for this project. The artifact REFERENCES it by path and sha256 content hash (the 038 cut); omitted records an absent reference with its reason, never a missing block")
+    p_project.add_argument("--max-objects-per-class", type=int, default=None,
+                            help='cap the field census at N objects per class. Omitted reads every object; any cap is an exclusion and is recorded as one on the artifact (FR-135)')
     p_project.set_defaults(func=_cmd_project)
 
     p_batch = sub.add_parser("batch", help="driver mode: admit and run one batch")
@@ -1097,6 +1358,10 @@ def main(argv=None) -> int:
                           type=_split_categories)
     p_batch.add_argument("--diagnostic-level", required=True,
                           choices=DIAGNOSTIC_LEVELS)
+    p_batch.add_argument("--ws-mapping-mode", default=WS_MODE_FULL,
+                          choices=WS_MODES, help="the writing-system mapping BOTH transfers run under and plane 2 compares under. 'full' declares every source writing system (mapped where the target has the tag, created where it does not); 'default-vernacular' declares only the source default vernacular, which FR-071 names as the narrower default it exists to refuse and which makes every other source writing system with content report unmapped-writing-system-with-no-skip-record")
+    p_batch.add_argument("--max-objects-per-class", type=int, default=None,
+                          help='cap the field census at N objects per class. Omitted reads every object; any cap is an exclusion and is recorded as one on the artifact (FR-135)')
     p_batch.set_defaults(func=_cmd_batch)
 
     p_controls = sub.add_parser(

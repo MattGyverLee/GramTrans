@@ -35,6 +35,10 @@ specs/035-fullsweep-fidelity/tasks.md) added on top of it:
                    reader ``census.census_fields`` requires, plus the
                    class -> Operations-accessor dispatch table and the
                    explicit unreachable-class holes (T045d)
+  * ``fieldplane``-- Group E/H plane 2 WIRED: the value-shape -> rule
+                   dispatcher, the payload comparator ``reconcile_objects``
+                   actually calls, and the read-only per-project gather that
+                   feeds it (T045a(c))
 
 ``debug/run_fullcopy_sweep.py`` is now a thin CLI entry point over this
 package. The field-level comparator's REAL logic (Groups E/H/P, still in
@@ -78,10 +82,13 @@ from .census import *  # noqa: F401,F403,E402 -- field-level census plane, FR-05
 from .coverage import *  # noqa: F401,F403,E402 -- Group J: the coverage floor, FR-133..FR-137 (T044)
 from .field_dispatch import *  # noqa: F401,F403,E402 -- the live field_source(cls, guid)
                                 # reader + class->accessor dispatch table (T045d)
+from .fieldplane import *  # noqa: F401,F403,E402 -- plane 2 WIRED: the value-shape
+                            # dispatcher, the payload comparator reconcile_objects
+                            # calls, and the live per-project gather (T045a(c))
 
 from . import (corpus, safety, pool, moves, artifact, batch, errors, verdict,  # noqa: F401,E402
                guards, baseline, preflight, identity, allowlist, compare, census,
-               coverage, field_dispatch)
+               coverage, field_dispatch, fieldplane)
 
 # NOTE for tests and callers: ``import *`` above BINDS A COPY of each module
 # global onto this package namespace. Patching ``fullsweep.NAME`` therefore

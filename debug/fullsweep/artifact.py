@@ -172,6 +172,25 @@ class ProjectArtifact:
     #: second copy of that artifact's rows. See ``census_block``.
     census: dict = field(default_factory=dict)
 
+    # ---- T045a(c) additions: what plane 2 was MEASURED UNDER -------------
+
+    #: FR-071/FR-135: the writing-system mapping this run's transfers used,
+    #: and that plane 2's comparison therefore mirrors -- its mode plus the
+    #: resolved ``mapped`` / ``to_create`` / ``skip_records`` sets. Recorded
+    #: because a comparison is only interpretable against the mapping it was
+    #: made under: the same target content is "lost" under one mapping and
+    #: "never declared" under another.
+    writing_system_mapping: dict = field(default_factory=dict)
+
+    #: What the plane-2 gather could and could not read, per project: the
+    #: classes it measured, the ones whose flexicon accessor RAISED, the ones
+    #: with no dispatch at all, and the cost (field reads, seconds). A
+    #: coverage hole nobody prints is indistinguishable from no hole, and this
+    #: is where the two are told apart. ``measured: false`` plus ``error``
+    #: means plane 2 did not run at all -- the guards then report
+    #: ``not-evaluated``, which is the honest consequence, not a silent zero.
+    field_plane: dict = field(default_factory=dict)
+
 
 def summarize_drops(report) -> dict:
     """T035/FR-161: the drop channel of one transfer, as recorded evidence.
