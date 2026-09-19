@@ -4,7 +4,7 @@ be registered at all.
 Asserted against COMMITTED MEASUREMENTS
 (`_snapshots/closure-edge-audit-038-*.json`, produced by
 `debug/audit038_closure_edges.py` over two live projects, read-only). Same
-discipline as `test_038_process_rules.py`: measure once against a real
+discipline as `test_038_process_rules_snapshot.py`: measure once against a real
 database, commit the numbers, assert against the record -- a suite invocation
 may not open FLEx projects by surprise.
 

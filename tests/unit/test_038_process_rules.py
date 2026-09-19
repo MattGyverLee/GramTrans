@@ -12,7 +12,7 @@ was then stamped with GT residue, so the run reported a clean transfer.
 These are the two host-free layers of the three-layer proof in
 `specs/038-transfer-fidelity-gaps/contracts/process-morphology-create-path.md`
 section 5. Layer (c), the census gate against `Mbugwe LizzieHC practice`, is
-`tests/integration/test_038_process_rules.py` (T063/T064).
+`tests/integration/test_038_process_rules_snapshot.py` (T063/T064).
 
 - **T049, layer (a) -- class-identity assertion.** Feed the walk a fake whose
   `ClassName == "MoAffixProcess"` while the create path is stubbed to fail, and
