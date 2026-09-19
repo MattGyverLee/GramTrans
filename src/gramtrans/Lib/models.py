@@ -1654,82 +1654,131 @@ CENSUS_OWNING_LIST_RULINGS: dict = {
 #
 # `(object_class, owning_field) -> (reason_token, ruling, detail)`, the exact
 # shape of `CENSUS_OWNING_LIST_RULINGS` above, for the same reason: T119's live
-# owner-attribution probe (`probes/owner-probe-*.json`) took the `FsFeatStruc`
-# / `FsClosedValue` class rows apart and found each one is a BUCKET over nine
-# and more distinct OWNING FIELDS -- `MoStemMsa.MsFeatures` alone carries
-# 1,003 objects of pure total loss (117 / 782 / 104 -> 0 / 0 / 0) while
-# `MoStemMsa` itself counts MATCHED on every pair, invisible to any
-# counts-only gate. A class-keyed ruling here would have exactly
+# owner-attribution probe took the `FsFeatStruc` / `FsClosedValue` class rows
+# apart and found each one is a BUCKET over nine and more distinct OWNING
+# FIELDS. A class-keyed ruling here would have exactly
 # `cmpossibility-list-rulings.md` 5's failure: one sentence could retire the
-# row while real grammar (the MSAs' own feature structures) stayed hollow.
-# "The class name is not the unit of work" (T023b) again.
+# row while real grammar stayed hollow. "The class name is not the unit of
+# work" (T023b) again.
 #
-# THERE IS NO COMMITTED RULING DOCUMENT TO TRANSCRIBE, AND THAT IS RECORDED
-# HERE RATHER THAN PAPERED OVER. Unlike `CENSUS_OWNING_LIST_RULINGS`, whose
-# entries cite `contracts/cmpossibility-list-rulings.md`, no such contract
-# exists for this dimension: `contracts/fidelity-census.md` and
-# `specs/038-transfer-fidelity-gaps/tasks.md` were both checked (2026-09-18)
-# for a "T119" entry and neither has one -- `tasks.md` tops out at T095's
-# out-of-band notes. The only committed sources for T119's partition are
-# `tests/unit/test_038_t119_feat_struc_owners.py` (the fix, and the docstring
-# table reproduced below), `debug/run038_t124_recensus.py`'s
-# `_T119_OWNER_FIELDS` / `t119_rows`, and
-# `tests/integration/test_object_census.py::TestT124T119PerOwningField` (the
-# pinned per-pair, per-field measurements). If a future session commits a
-# `fs-feat-struc-owner-rulings.md` (or amends `fidelity-census.md` directly),
-# this roster is where its entries belong -- transcribed the same way
-# `CENSUS_OWNING_LIST_RULINGS` transcribes its contract.
+# THE "1,003 OBJECTS OF PURE TOTAL LOSS" FIGURE THIS HEADER FORMERLY CARRIED
+# IS FALSE AT THE CURRENT VINTAGE, AND THAT IS RECORDED HERE RATHER THAN
+# SILENTLY CORRECTED. It read `MoStemMsa.MsFeatures` at 117 / 782 / 104 -> 0 /
+# 0 / 0 -- the RETIRED T124 measurement, taken before T126 fixed the schedule
+# bug (`_wire_owner_feat_strucs` running before `MoStemMsa` existed;
+# tasks.md T119, 2026-08-28). The pinned re-census artifacts checked 2026-09-18
+# (`tests/integration/_snapshots/recensus-038-t131-{ejagham,ngoreme}.json`,
+# `recensus-038-t133-mbugwe.json`, key `t119_per_owning_field`) read
+# `MoStemMsa.MsFeatures` **117/117 OK, 782/782 OK, 108/104 OK** -- COMPLETE on
+# all three pairs (mbugwe's 108 is a small surplus, not a loss). T126 landed
+# the fix; this roster's job is the residue T126 left, not the figure T126
+# already closed.
 #
-# THE ROSTER IS EMPTY, AND THAT IS THE FINDING, NOT A PLACEHOLDER. Measured
-# per pair (ejagham / ngoreme / mbugwe), against `_T119_OWNER_FIELDS`:
+# THERE IS NO COMMITTED RULING DOCUMENT TO TRANSCRIBE FOR THE DIMENSION AS A
+# WHOLE. `contracts/fidelity-census.md` and `tasks.md` carry T119's OWN prose
+# ruling (line 707, and T121 line 709 for the one circular exclusion below),
+# but neither publishes a standalone `(class, field) -> token` table -- this
+# roster and `tests/unit/test_038_t119_owning_fields.py` are the transcription.
 #
-#   MoStemMsa.MsFeatures (5001001)          117->0   782->0   104->0  OPEN
-#   FsComplexValue.Value (53001)               --    825->20     --   OPEN
-#   PartOfSpeech.ReferenceForms (5049010)    10->10   44->0      --   OPEN
-#   MoInflAffMsa.InflFeats (5038001)         86->86   38->38   78->78 matched
-#   MoDerivAffMsa.FromMsFeatures (5031001)     --       --     17->17 matched
-#   MoDerivAffMsa.ToMsFeatures (5031002)       --       --     17->17 matched
-#   MoAffixAllomorph.MsEnvFeatures (5027001)   --       --      1->1  matched
-#   PhPhoneme.Features (5092002) / PhNCFeatures.Features (5094001) / CmAnnotation.Features
-#     (34008) -- no shortfall measured on any sanctioned pair to date.
+# THE CURRENT TABLE, measured per pair (ejagham / ngoreme / mbugwe) against
+# the three pins above:
 #
-# A MATCHED field never reaches this roster at all: `count_by_owning_field`
-# still measures it, but a field with `source_count <= destination_count`
-# produces no shortfall for `accounted_for_owning_fields` to explain, ruled
-# or not -- exactly like a matched `owning_lists` entry. The three OPEN rows
-# are DELIBERATELY ABSENT, mirroring `MoMorphData.ProdRestrict`'s absence from
-# `CENSUS_OWNING_LIST_RULINGS` above, and for the same reason: each is this
-# feature's own grammatical content, not another feature's.
+#   MoStemMsa.MsFeatures (5001001)           117/117 OK   782/782 OK   108/104 OK
+#   FsComplexValue.Value (53001)                0/0 --    799/825 -26   146/0 --
+#   PartOfSpeech.ReferenceForms (5049010)    10/10 OK      0/44 -44    288/19 OK
+#   PhPhoneme.Features (5092002)             20/41 -21    21/41 -20    27/42 -15
+#   CmAnnotation.Features (34008)               0/0 --      0/0 --      0/39 -39
+#   MoInflAffMsa.InflFeats (5038001)         86/86 OK     38/38 OK     55/78 -23
+#   MoDerivAffMsa.From/ToMsFeatures (5031001/2)  --           --      17/17 OK (both)
+#   MoAffixAllomorph.MsEnvFeatures (5027001)     --           --       5/1 OK
+#   PhNCFeatures.Features (5094001)          15/15 OK     41/41 OK    119/112 OK
 #
-#   * `MoStemMsa.MsFeatures` -- TOTAL LOSS on every pair, unconditionally, the
-#     single largest owning-field shortfall this census can see. T119's own
-#     docstring names the cause as `_create_msa_for_closure`'s `MoStemMsa`
-#     branch, which still does not write `MsFeaturesOA`. A live defect this
-#     feature has not fixed, not a scope question.
-#   * `FsComplexValue.Value` -- T119 closed `MoInflAffMsa.InflFeats` on
-#     ngoreme (38->18 became 38->38) but the complex VALUES underneath it did
-#     not follow: 825 source objects arrive as 20. Still short by 805 on the
-#     one pair that holds any.
-#   * `PartOfSpeech.ReferenceForms` -- INCONSISTENT across pairs (10->10 on
-#     ejagham, 44->0 on ngoreme), which is itself the finding
-#     (`test_reference_forms_is_inconsistent_across_pairs`): a prior scoping
-#     argument citing T045's documented depth limit predicts a uniform empty
-#     shell, and a clean pass on one pair while another is a total loss is not
-#     that shape. The excuse does not cover what was measured, so it earns no
-#     ruling and the shortfall keeps failing the gate.
+# ("dest/source", a shortfall shown as "-N"; "--" is `NO_DATA`, no source
+# objects on that pair.) Note mbugwe `MoInflAffMsa.InflFeats` NOW reads
+# 55/78 (-23), a regression T119/T126 never measured -- new drift, not this
+# roster's business, and left UNROSTERED for the same reason `MoStemMsa.
+# MsFeatures` was before T126: a real, unattributed loss must keep failing.
 #
-# NONE OF THE TEN OWNING FIELDS `_T119_OWNER_FIELDS` NAMES BELONGS TO ANOTHER
-# FEATURE. Every one of them is MSA / phoneme / natural-class / inflection
-# content squarely inside this feature's own Assumptions (`MoStemMsa`,
+# ONLY ONE ROW IS ROSTERED, AND THE OTHER TWO CANDIDATES FAILED
+# RE-DERIVATION FOR A REASON STRONGER THAN ARITHMETIC:
+#
+#   * `CmAnnotation.Features` -- ROSTERED `OUT_OF_SCOPE_CLASS`. T119's own
+#     ruling calls annotation content "outside Assumptions" -- content this
+#     feature's spec never claims, exactly `OUT_OF_SCOPE_CLASS`'s definition
+#     above. `OUT_OF_SCOPE_CLASS` is report_ref-exempt
+#     (`CENSUS_REASONS_NOT_REQUIRING_REPORT_REF`), so a static committed
+#     ruling can carry it safely through `census.owning_field_ruling` /
+#     `census_cli.accounted_for_owning_fields` with no run evidence needed.
+#     Only mbugwe holds any (0/39, -39); ejagham and ngoreme are NO_DATA.
+#
+#   * `PartOfSpeech.ReferenceForms` and `FsComplexValue.Value` -- BOTH LEFT
+#     UNROSTERED, and NOT because the ruling is wrong. T119 correctly rules
+#     both to T045's (CHECKED) create-path, which produces an empty shell
+#     past its depth limit -- `NO_CREATE_PATH` is the semantically right
+#     token and IS in `census.PHASE_5_ADMISSIBLE_REASONS`. But `NO_CREATE_PATH`
+#     is **NOT** in `CENSUS_REASONS_NOT_REQUIRING_REPORT_REF` -- it is a
+#     RUN-EVIDENCED reason (it names a specific `DroppedItemRecord` a
+#     transfer run's OWN report carries), and this roster is a STATIC,
+#     committed-document mechanism with no run to point at.
+#     `census.AccountedLine.__post_init__` enforces this at construction:
+#     stamping either field here raises `CensusError` ("reason
+#     'NO_CREATE_PATH' requires a report_ref (R-1)") the moment
+#     `accounted_for_owning_fields` tries to build the line -- proven live,
+#     2026-09-18, against a synthetic roster carrying exactly this entry.
+#     Rostering either field here would not retire its shortfall, it would
+#     CRASH the census the next time the field actually loses an object
+#     (ngoreme's -44 and -26 respectively). The re-derivation this roster's
+#     header asks for therefore fails NOT on the arithmetic (which holds --
+#     see below) but on the MECHANISM: closing these two needs the transfer
+#     run itself to emit a `DroppedItemRecord` with a real `report_ref`, which
+#     is `categories.py`/the create-path's job, not this roster's. Left
+#     UNROSTERED, both keep failing P5, correctly.
+#     - Arithmetic checked anyway, for whoever does that future work:
+#       `PartOfSpeech.ReferenceForms` is short only on ngoreme (44->0); ejagham
+#       (10/10) and mbugwe (288/19, a surplus) are not short.
+#       `FsComplexValue.Value`'s ngoreme residue was 27 at T126, partitioned
+#       into (a) values nested under R1's then-single-missing `MoStemMsa` and
+#       (b) values nested under the 44 empty-shell `ReferenceForms` structures,
+#       split NOT attributed at the time. Since `MoStemMsa.MsFeatures` now
+#       reads 782/782 (bucket (a)'s owner no longer missing), the residue has
+#       dropped to exactly 26 (825-799) -- one less than 27, consistent with
+#       bucket (a) having held exactly the one object T126's fix recovered.
+#       The arithmetic holds: the whole -26 now falls to bucket (b), the same
+#       `ReferenceForms` cause as the row above it.
+#
+#   * `PhPhoneme.Features` -- DELIBERATELY EXCLUDED, not merely unrostered.
+#     Loses 21/20/19 on the three pairs (starter-matched phonemes are never
+#     enriched). T119's ruling (tasks.md line 707) assigns this to "T121's
+#     enrichment half"; T121 (tasks.md line 709, CHECKED) closes with the
+#     opposite assignment in as many words: "The `PhPhoneme.Features` losses
+#     (21 / 20 / 19) ... stay with T119's measurement." Each task points the
+#     loss at the OTHER, both are closed, and neither carries a fix -- a
+#     CIRCULAR ruling with nobody owning the residue. No token in
+#     `PHASE_5_ADMISSIBLE_REASONS` fits a ruling that contradicts itself, so
+#     this is not a "verify before rostering" case like the two above; it is
+#     recorded here so a future session does not re-open the same circle
+#     believing it is new. It must keep failing P5.
+#
+# NONE OF THE TEN OWNING FIELDS BELONGS TO ANOTHER FEATURE (`MoStemMsa`,
 # `MoInflAffMsa`, `MoDerivAffMsa`, `MoAffixAllomorph`, `PartOfSpeech`,
-# `PhPhoneme` are exactly the classes phase 1's own predicate gates on) --
-# unlike `CmPossibility`'s Scripture-note-categories / discourse-chart-
-# furniture lists, which are non-grammatical content another feature owns or
-# nobody claims. So, unlike `CENSUS_OWNING_LIST_RULINGS`, this roster has no
-# `OUT_OF_SCOPE_CLASS` candidate to offer at all today; it exists so the
-# per-field EVIDENCE (`owning_fields` in the artifact) is visible the moment
-# one does.
-CENSUS_OWNING_FIELD_RULINGS: dict = {}
+# `PhPhoneme` are exactly Phase 1's own gated classes) -- unlike
+# `CmPossibility`'s Scripture/discourse-chart lists, which are non-grammatical
+# content another feature owns or nobody claims. `CmAnnotation.Features`
+# above is the one exception T119 itself names ("outside Assumptions"), which
+# is why it is the one row this roster can safely carry today.
+CENSUS_OWNING_FIELD_RULINGS: dict = {
+    ("FsFeatStruc", "CmAnnotation.Features"): (
+        "OUT_OF_SCOPE_CLASS",
+        "specs/038-transfer-fidelity-gaps/tasks.md T119 (line 707, "
+        "2026-08-28 ruling)",
+        "annotation content, which T119's own ruling calls 'outside "
+        "Assumptions'. Measured 0/0 (NO_DATA) on ejagham and ngoreme "
+        "(mbugwe is the only sanctioned pair holding any) and 0/39 "
+        "(TOTAL_LOSS, -39) on mbugwe -- "
+        "recensus-038-t133-mbugwe.json t119_per_owning_field, checked "
+        "2026-09-18",
+    ),
+}
 
 #: Amendment A1's two owning feature systems -- `$defs.classRow`'s
 #: `owning_feature_system` enum, in schema order. These spellings are the

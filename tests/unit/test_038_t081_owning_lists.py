@@ -30,10 +30,30 @@ from gramtrans import census_cli
 from gramtrans.Lib import census
 
 
-# The live ngoreme shape, from `probes/owner-probe-Ngoreme-FLEx.json` joined to
-# `owner-probe-GT038-Ngoreme-After.json`. Per-list deltas sum to -96, which is
-# `difference_raw` on that pair to the object -- the reconciliation that makes
-# this an attribution rather than a story.
+# A HISTORICAL FIXTURE, NOT THE LIVE PIN -- read this before touching a number
+# below. This table was built from `probes/owner-probe-Ngoreme-FLEx.json`
+# joined to `owner-probe-GT038-Ngoreme-After.json` (neither file is committed;
+# both are gone) and its per-list deltas summed to -96, `difference_raw` on
+# that RETIRED destination. The corpus problem T081 records ("the T078 trio is
+# not reproducible as measured") is exactly why that destination cannot be
+# regenerated -- `Ngoreme Target` must never be restored (see tasks.md T081).
+#
+# THE LIVE GATING PIN HAS SINCE MOVED, AND DISAGREES ON THREE OF EIGHT ROWS.
+# `tests/integration/_snapshots/recensus-038-t131-ngoreme.json`'s
+# `t122_per_owning_list` (checked 2026-09-18) sums to -95, one less, and not
+# by a uniform shift:
+#   * `LangProject.Status`       here 1->0 (-1);  live pin 5->4  (-1, same
+#     magnitude, different absolute counts -- the source corpus moved)
+#   * `LexDb.ExtendedNoteTypes`  here 0->1 (+1);  live pin 4->5  (+1, same)
+#   * `MoMorphData.ProdRestrict` here 4->3 (-1), UNRULED and load-bearing for
+#     `test_an_unruled_list_gets_no_line_even_beside_ruled_ones`; live pin
+#     reads 1->1, MATCHED -- the one open defect this fixture exists to keep
+#     visible has since been fixed on the live corpus.
+# Re-pinning to the live artifact would delete the only UNRULED row the
+# dimension test depends on, so this fixture stays a SYNTHETIC, HISTORICAL
+# shape kept for its structure (one class, many owning lists, a mix of ruled
+# shortfall/surplus/unruled) rather than as a current measurement. Do not
+# read `NGOREME_LISTS` as "ngoreme reads this today" -- it does not.
 NGOREME_LISTS = [
     {"list": "Scripture.NoteCategories",
      "source_count": 115, "destination_count": 0},      # -115  ruled

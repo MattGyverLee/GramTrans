@@ -3956,14 +3956,22 @@ def validate_artifact(artifact) -> tuple:
         lines = _lines(row)
 
         # -- 3. both stored differences must follow from the counts ---------
-        if None not in (net, source) and difference is not None:
+        # NOTE: narrowed via `x is not None and y is not None`, not
+        # `None not in (x, y)` -- the two are equivalent at runtime, but a
+        # static checker (pyright) cannot narrow `int | None` through the
+        # containment idiom, so it still reads `net`/`source`/`total` etc as
+        # possibly-`None` on the line below and flags the subtraction. The
+        # guard's LOGIC was always correct; only its SHAPE was unreadable
+        # to the checker.
+        if net is not None and source is not None and difference is not None:
             if difference != net - source:
                 failures.append(
                     "invariant 3: " + label + " stores difference "
                     + str(difference) + " but destination_count_net - "
                     "source_count is " + str(net - source)
                 )
-        if None not in (total, source) and difference_raw is not None:
+        if (total is not None and source is not None
+                and difference_raw is not None):
             if difference_raw != total - source:
                 failures.append(
                     "invariant 3: " + label + " stores difference_raw "
@@ -3975,7 +3983,8 @@ def validate_artifact(artifact) -> tuple:
         if row.get("starter_subtraction_basis") == "baseline_matched":
             baseline_count = _int_or_none(row.get("starter_baseline_count"))
             matched = _int_or_none(row.get("starter_matched_to_source"))
-            if None not in (total, net, baseline_count, matched):
+            if (total is not None and net is not None
+                    and baseline_count is not None and matched is not None):
                 expected = total - (baseline_count - matched)
                 if net != expected:
                     failures.append(
