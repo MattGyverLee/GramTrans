@@ -767,7 +767,7 @@ points, then the corrections to claims already written in this file.
   > - `FLExProject.GetFieldID(className, fieldName)` (`FLExProject.py:4234`) is
   >   public and generic, via `MetaDataCacheAccessor.GetFieldId`.
 
-- [ ] **T045e** [US2] The class -> `GrammarCategory` mapping, as a tracked contract.
+- [x] **T045e** [US2] The class -> `GrammarCategory` mapping, as a tracked contract.
       `guard_comparisons_performed` keys its counters on **category**
       (`debug/fullsweep/guards.py:323`); every plane-2 surface keys on **class**
       (`census_fields`, `coverage.classify_coverage`, `coverage-floor.json`'s
@@ -790,6 +790,84 @@ points, then the corrections to claims already written in this file.
   > read. Do not fork a second copy inside `debug/fullsweep/`; a class-to-category
   > mapping that disagrees between the two instruments is a silent divergence neither
   > one can detect.
+
+  > **DONE 2026-09-19.** `contracts/class-category-map.json` (schema_version 1) ships
+  > the join: **71 entries over 69 classes**, set-equal to `coverage-floor.json`'s
+  > `in_scope_classes`, with **21 categories carrying at least one class and 9
+  > recorded as carrying none** -- together the whole 30-member `GrammarCategory`
+  > vocabulary, so no category is merely unmentioned. Reader + bridge in
+  > `debug/fullsweep/coverage.py`: `load_class_category_map`, `ClassCategoryMap`,
+  > `project_comparisons_to_categories`, `categories_reachable_only_through_excluded`.
+  > 42 tests in `tests/unit/test_035_class_category_map.py`.
+  >
+  > **The guard moved.** `COMPARISONS-PERFORMED` now returns `pass` / `fail` instead
+  > of `not-evaluated` when fed a projected measurement -- verified end-to-end against
+  > the real `guards.guard_comparisons_performed`, including that it still returns
+  > `not-evaluated` when the measurement is genuinely absent.
+  >
+  > **71 entries, not 69, and that is the point.** `FsFeatStrucType` and
+  > `FsClosedFeature` are each split on `owning_feature_system`, because a FieldWorks
+  > project has TWO feature systems that own them and the halves map to DIFFERENT
+  > categories (`feature_struct_types`/`phon_feat_types`,
+  > `inflection_features`/`phonological_features`). The discriminator is spelled
+  > exactly as 038's census `classRow.owning_feature_system` (Amendment A1) so the two
+  > instruments join single-valued on the same key rather than on a class name that is
+  > ambiguous in both.
+  >
+  > **Two adjudications the prose column could not express.**
+  > 1. **`LexEntryRef` is `stems` ONLY.** TABLE 1 reads "AFFIXES, STEMS (created only
+  >    in the STEMS tail)"; G3 measures that `_run_entryref_create_pass` is invoked
+  >    only from `stems_execute_action` (`categories.py:7714-7718`). Recording
+  >    `affixes` would let an affixes-only run claim coverage of a class it cannot
+  >    create -- FR-137's defect exactly. A test now pins the consequence: excluding
+  >    STEMS strands **exactly** `LexEntryRef` as reachable-only-through-excluded,
+  >    while `LexEntry` stays reachable because AFFIXES also creates it. G3's
+  >    "appears to be undocumented" consequence is now machine-checkable.
+  > 2. **`PunctuationForm` is never-created-referenced-only**, the fourth such class
+  >    beyond TABLE 2's named three. `_normalize_token_to_analysis` maps
+  >    `IPunctuationForm` to `None` (`wordforms.py:380`); any target-side instance is
+  >    an LCM side effect of assigning `StTxtPara.Contents`, not an engine create, so
+  >    no category may claim it.
+  >
+  > **Ten classes belong to no category** and each says why:
+  > `post-pass-no-category` (`LexReference`, `ReversalIndex`, `ReversalIndexEntry`),
+  > `reference-create-arm-only` (`CmPossibility`, `CmAnthroItem`, `MoMorphType`),
+  > `never-created-referenced-only` (`LexRefType`, `LexAppendix`, `PhBdryMarker`,
+  > `PunctuationForm`). The projector returns them as `unattributable` rather than
+  > dropping them, so the caller reports them not-evaluated at the class plane; the
+  > loader REFUSES a row that is empty without a reason, which is the invisible
+  > default FR-135 forbids.
+  >
+  > **Both named traps are pinned by a test, because neither raises on its own.**
+  > (a) feeding the category-keyed dict to `classify_coverage`'s class-keyed
+  > `comparisons` parameter does not error -- it silently demotes every class to
+  > `NOT-EVALUATED`; (b) the projection REPLICATES a multi-category class into each
+  > of its categories rather than partitioning, so per-category totals must not be
+  > summed (a 40-object `LexEntry` measurement sums to 80). The provenance names
+  > every replicated class so the two cannot be confused.
+  >
+  > **Test posture:** 42 new, all passing. Full unit suite 3671 passed / 31 failed,
+  > against 3629 / 31 at the parent -- **+42 passes, zero new failures**. The 31 are
+  > the pre-existing 026/028/031 debt this feature deliberately does not absorb.
+  >
+  > **TWO FINDINGS, neither T045e's to fix:**
+  > 1. **The T023 capability fingerprint no longer matches the live dependency.**
+  >    `test_035_sweep_safety.py` fails 4 tests (verified identical with this task's
+  >    edit stashed, so it predates T045e): `flexicon` at
+  >    `D:/Github/_Projects/_LEX/flexicon` is now rev `18a293b`, not the pinned
+  >    `5994acc`, and `GramCatOperations.ApplySyncableProperties.declared` reads
+  >    **False** where the fingerprint pins **True** -- one of the eight declared
+  >    overrides this repo's CLAUDE.md requires for MCP-indexer visibility. Preflight
+  >    exits 6. This is FR-125/FR-132 working as designed; closing it needs either the
+  >    flexicon override restored or a DELIBERATE re-pin, and it **blocks any run that
+  >    goes through preflight**, including the T035 batch-1 re-run.
+  > 2. **The recorded `build_full_selection` decision is still unimplemented.**
+  >    `tests/integration/harness/full_run.py:48-50` still reads
+  >    `exclude: frozenset = frozenset({GrammarCategory.STEMS})` -- the invisible
+  >    default argument FR-135 forbids and G3 calls out by name. The recorded decision
+  >    ("make `build_full_selection` exclude set an explicit required argument") has
+  >    not landed. It is not on T045e's path; file or fold it into the task that owns
+  >    `full_run.py`.
 
 - [ ] **T045f** [US2] Give plane-2 output a home in the artifact. `ProjectArtifact`
       (`debug/fullsweep/artifact.py:71-137`) has **no** `comparisons`, `census`, `coverage`,
