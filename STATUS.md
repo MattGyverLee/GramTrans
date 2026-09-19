@@ -1,5 +1,66 @@
 # GramTrans — Session Handoff
 
+## Session log — 2026-09-18d (038: T081 moved by a TRANSFER FIX for the first time; P5 3/3/4 → 1/2/3)
+
+Resumed through `/speckit-companion-resume`. Two changes landed on the worktree
+(`c9421cc`, artifacts `bbd4c3b`, pushed) and one live re-census ran, `t135`, all
+three pairs restored from `Target 2026-07-06 0218.fwbackup` into the `GT038 T124`
+throwaways. **T081 still STAYS UNCHECKED** — P5 is 1/2/3, not green — but every
+remaining failure is now either a ruling away or a designed-but-unbuilt
+mechanism, and none of them is an unattributed loss.
+
+**`PhPhoneme.FeaturesOA` never reached the matched half, and T121 predicted it.**
+T121's docstring says of codes: "a matched phoneme never reaches this function at
+all (it plans as a natural-key `PlannedOverwrite`). A create-path-only fix would
+leave the enrichment half standing." It fixed `CodesOS` on that reasoning and left
+`FeaturesOA` behind — `ApplySyncableProperties` runs on the CREATE path only, and
+PHONEMES is MULTI_INSTANCE so there is no edit-copy route either. The t134
+artifacts had already named the population before any code was written:
+`PhPhoneme.Features` 41→20, 41→21, 46→27, each destination figure exactly the
+count of phonemes that pair CREATED. The live run confirmed the split to the
+object — "filled FeaturesOA on 21 matched phoneme(s); 20 already carried one",
+then 20/21 and 19/27, summing to 41/41/46. Not cosmetic: a phoneme with a correct
+name and a null `FeaturesOA` cannot satisfy any feature-based natural-class
+membership test. `FsFeatStruc` −21→**0 MATCHED**, −90→−70, −415→−396.
+
+**Predictions were written down before the run and all three landed exactly.**
+That was deliberate, given how many readings this feature has had to retract.
+
+**The gross subtraction was being read as a loss, and 5.2 already said so.**
+`gross_basis_cap_notes` has capped the VERDICT for this since T024b, but the cap
+never reached `_phase_5`. A sixth accounting lane emits `STARTER_CONTENT` for
+`difference_raw − difference` — gated not on the basis but on an independent
+artifact-internal witness: a per-sub-key table that reconciles to `difference_raw`
+EXACTLY. Off by one object and nothing is emitted. Across the whole t134 corpus it
+fires on `CmPossibility` and **no other row**. `CmPossibility` unexplained
+302/271/301 → **0/0/0**, and that row needed no transfer work at all.
+
+**A crew inference became a measurement.** `cycle15-domain-fsclosedvalue.md` could
+only test the `FsClosedValue` cascade against corpus averages, needed a 3.6–4.6×
+density premium, called it "asserted, not measured by any committed pin", and said
+mbugwe "can't even be tested". Closing a population known to the object measures it:
+336 values under 21 structures = **16.0**, 380 under 20 = **19.0**, 342 under 19 =
+**18.0**, against corpus averages 3.70/1.43/1.71. Confirmed on all three, mbugwe
+included — and ejagham's 16.0 against the review's sole-driver 16.9 means the −19
+left over is a real independent residue, not an unknown.
+
+**What still blocks P5, and what kind of thing each one is.** ejagham
+`FsClosedValue` −19; ngoreme `FsClosedValue` −83 and `FsFeatStruc` −70; mbugwe
+`FsClosedValue` −660, `FsFeatStruc` −396 (334 unexplained) and `PhSimpleContextNC`
+−1. Both remaining `FsFeatStruc` owners (`PartOfSpeech.ReferenceForms`,
+`FsComplexValue.Value`) are the candidates `0664ae7` left unrostered ON PURPOSE —
+a ruling, not a fix. `FsClosedValue` is the one designed-but-unbuilt piece: no
+admissible token covers a cascade, and cycle15-domain's `derived_from` pointer is a
+7.1 amendment that can only fire where the PARENT row is closed — after t135 that
+is ejagham alone, so building it today closes 1 row on 1 pair. `PhSimpleContextNC`
+−1 is unattributed and needs a destination-side GUID diff (RULE 3), not a ruling.
+
+**Pick up at:** T081 needs three human rulings (rostering the two `FsFeatStruc`
+owners; whether to build `derived_from` for a one-row payoff; `PhSimpleContextNC`
+after measurement). T085 stays gated on T081 and still carries the feature-035
+merge hazard in `full_run.py` / `run_fullcopy_sweep.py` — resolve file-by-file with
+that feature's owner, never `-X ours`.
+
 ## Session log — 2026-09-18c (038: T129 closed; three read-only measurements; one of my own instruments was wrong)
 
 Spurt 5, cycle 12, resumed through `/speckit-companion-resume`. **T129 is closed on

@@ -1,7 +1,7 @@
 {
   "feature": "038-transfer-fidelity-gaps",
   "status": "needs_human",
-  "last_cycle": 13,
+  "last_cycle": 16,
   "spurts_completed": 5,
   "tasks_done": [
     "T082",
@@ -13,8 +13,8 @@
     "T129",
     "T130"
   ],
-  "next_checkpoint": "T081 only, and every remaining failure is an ACCOUNTING gap rather than a transfer defect. Then T085.",
-  "next_entry": "Spurt 5 ran the authorized re-census (t131 all three pairs) and closed FOUR rows: T127, T128, T129, T130. Two of the four were defects the census could not see at all, and one was DESTRUCTIVE. Unchecked: T081, T085. P5 now fails 5/4/5 (ejagham t131, ngoreme t131, mbugwe t133) and NOT ONE failure is a transfer bug -- every one is a row whose ruling exists but has no accounting line, or a token deliberately withheld from P5. See blocker.rulings_needed: three of the five need a HUMAN RULING, not code.",
+  "next_checkpoint": "T081 only, and P5 is now 1/2/3. Three human rulings stand between it and green; none of the remaining failures is an unattributed loss. Then T085.",
+  "next_entry": "Spurt 6 moved this gate with a TRANSFER FIX for the first time. PhPhoneme.FeaturesOA never reached the natural-key-matched half (T121 predicted exactly this shape for CodesOS and left FeaturesOA behind); the tail pass closed PhPhoneme.Features on all three pairs and took FsFeatStruc -21 -> 0 MATCHED on ejagham. A sixth accounting lane retired CmPossibility entirely (302/271/301 -> 0) by stamping the baseline_gross double subtraction as STARTER_CONTENT, gated on a per-sub-key table reconciling to difference_raw exactly -- it fires on that one row and no other. P5 3/3/4 -> 1/2/3 on census-038-t135-*. Unchecked: T081, T085. See blocker.rulings_needed.",
   "updated": "2026-09-18",
   "spurt_log": [
     {
@@ -79,6 +79,19 @@
         "3ef3c5b"
       ],
       "ruling": "T123 STAYS UNCHECKED. (b) PASSES two-sided on both pairs within-run (LexEntryType 13/13, 12/12 AND LexEntryInflType 3/3, 4/4; CHANGED=0 absent=0 dest_only=0 by GUID; mbugwe's Periphrastic Form now resolves ClassName=LexEntryType). (a) count half PASSED (MoStemMsa 1954=1954, MsFeatures 782=782, object 8617b725 present, 'omoona' owning 2 MSAs) and the REFERENT HALF FAILED -- sense 'small child' still null, destination 14 null MsaRA vs source 13, delta +1. The two-sided acceptance is what caught it; a count-only gate reads 1954=1954 and closes the row. THE GATE THAT PASSED THE HALF-DONE FIX WAS TAUTOLOGICAL: the cycle-8 pinning test SET sense.MorphoSyntaxAnalysisRA = out itself and then asserted it, so it could not fail whatever production code did -- same species as the _FakeLexRefType that hid this row's LexReference defect through eleven gates. Referent now rewired on all four exit paths (f60b361) with the test repaired and PROVEN to fail against 73552e4, reproduced independently by verification swapping the file rather than trusting the report. THIRD instrument failure of the spurt: the mbugwe SOURCE drifted on disk (fb6aadab -> 3fb29a29, ~23,760 -> ~48,622 objects) and the harness did not notice, invalidating every mbugwe vs-T078 verdict in t123c INCLUDING its six FIXED entries; one relayed reading was retracted. New rows T127 (empty Name -- genuine loss), T128 (source drift + genuine residual -4), T129 (repair the pin check; re-establish or retire the mbugwe comparand)."
+    },
+    {
+      "spurt": 6,
+      "name": "phoneme-features-and-the-gross-subtraction-lane",
+      "cycles": 1,
+      "checkpoint": "T081 closed or every remaining P5 failure reduced to a named ruling",
+      "reached": false,
+      "commits_main": [],
+      "commits_worktree": [
+        "c9421cc",
+        "bbd4c3b"
+      ],
+      "ruling": "T081 STAYS UNCHECKED at P5 1/2/3. Two changes, both measured live on t135 with predictions written down BEFORE the run and all three landing exactly. (1) PhPhoneme.FeaturesOA: the matched half was never transferred -- ApplySyncableProperties runs on the CREATE path only and PHONEMES is MULTI_INSTANCE so there is no edit-copy route. T134 named the population before any code was written (dest count == created count on all three) and the run confirmed it to the object (21/20, 20/21, 19/27). FsFeatStruc -21 -> 0 MATCHED on ejagham. Add-only BY CONSTRUCTION (props narrowed to Features), no flexicon floor bump. (2) The sixth accounting lane retired CmPossibility on all three by stamping the baseline_gross double subtraction STARTER_CONTENT, gated on a witness rather than on the basis. 23 new tests; the 11 phoneme ones PROVEN to fail against the parent commit per RULE 5. Unit suite 3911 -> 3996, 0 failures; test_object_census.py holds at its 5 pre-existing drift failures, 0 new. Also measured, closing a cycle-15 open question: the FsClosedValue cascade density, 16.0 / 19.0 / 18.0."
     }
   ],
   "task_queue": [
@@ -152,36 +165,26 @@
     "Resolved false alarm, do not re-investigate: an editor reported _PROBE_OUT undefined at run038_t124_recensus.py:388-389 from a mid-edit capture. The file compiles."
   ],
   "blocker": {
-    "what": "T081's P5 cannot go green without rulings this crew may not take alone. The transfer work is done; what is left is accounting.",
+    "what": "T081 P5 is 1/2/3. The transfer work this crew can do alone is done; what is left is two rulings, one design decision, and one measurement.",
     "p5_failures_now": {
-      "ejagham (t131)": [
-        "CmPossibility -308",
-        "FsClosedValue -355",
-        "FsFeatStruc -21",
-        "PhSequenceContext -5",
-        "MoAffixProcess (token not P5-admissible)"
+      "ejagham (t135)": [
+        "FsClosedValue -19"
       ],
-      "ngoreme (t131)": [
-        "CmPossibility -397",
-        "FsClosedValue -463",
-        "FsFeatStruc -90",
-        "PhFeatureConstraint -47"
+      "ngoreme (t135)": [
+        "FsClosedValue -83",
+        "FsFeatStruc -70"
       ],
-      "mbugwe (t133)": [
-        "CmPossibility -335",
-        "FsClosedValue -1002",
-        "FsFeatStruc -415",
-        "PhFeatureConstraint -34",
+      "mbugwe (t135)": [
+        "FsClosedValue -660",
+        "FsFeatStruc -396 (334 unexplained)",
         "PhSimpleContextNC -1"
       ]
     },
     "rulings_needed": {
-      "PhFeatureConstraint": "HUMAN RULING. contracts/unreferenced-feature-constraint-ruling.md already rules it out of scope, and fidelity-census.md:377 already names UNREFERENCED_IN_SOURCE as its token. That token is report_ref-exempt but is NOT in PHASE_5_ADMISSIBLE_REASONS, so the import-time lock refuses the roster entry. Admitting a token to P5 widens the gate and is a ruling on contract 9.1.",
-      "MoAffixProcess": "HUMAN RULING, and census.py:3327 already says so in as many words: SOURCE_REFERENT_ABSENT 'belongs to a human, not to this constant'. The row now CARRIES its accounting line; the only question is whether P5 admits the token.",
-      "CmPossibility": "CODE, and fully specified: cmpossibility-list-rulings.md section 4. Port the owner probe's possibility_lists enrichment into Lib/census.py so the row gains a per-owning-list dimension, then emit section 2's per-list OUT_OF_SCOPE_CLASS lines. The driver ALREADY measures this (recensus summaries, t122_per_owning_list); the gap is that it never reaches the census artifact, which is what the gate reads. Needs a schema change (additionalProperties: false). Largest single remaining step.",
-      "FsClosedValue / FsFeatStruc": "T119 was closed BY RULING with an exact partition, but nothing writes that partition into the artifact as an accounting line. Same instrument gap as CmPossibility, different dimension (per owning field -- the driver measures it as t119_per_owning_field).",
-      "PhSequenceContext / PhSimpleContextNC": "-5 on ejagham and -1 on mbugwe. T120's cascade closed these on ngoreme and mbugwe at t126; the small residue was never attributed. Measure before ruling."
+      "FsFeatStruc": "HUMAN RULING, and the row is a ruling away rather than a fix away. Its whole residue is PartOfSpeech.ReferenceForms (-44 ngoreme, -47 mbugwe -- the T045 empty-shell creates) and FsComplexValue.Value (-26, -287). Both are the owning-field candidates 0664ae7 left UNROSTERED ON PURPOSE, so rostering either is a deliberate reversal of a recorded decision, not an oversight to correct.",
+      "FsClosedValue": "DESIGN DECISION, and the payoff is small. No admissible token honestly covers a cascade; cycle15-domain-fsclosedvalue.md (b) specifies a structural derived_from pointer on the accounting line as a fidelity-census.md 7.1 amendment. By its own rule it can only fire where the PARENT row is closed -- after t135 that is EJAGHAM ALONE, so building it today closes 1 row on 1 pair. The cascade itself is no longer in doubt: measured at 16.0 / 19.0 / 18.0 closed values per phoneme structure against corpus averages 3.70 / 1.43 / 1.71, confirming on all three pairs what cycle 15 could only infer on two.",
+      "PhSimpleContextNC": "MEASURE FIRST, do not rule. -1 on mbugwe only. Every sibling in the family is MATCHED, including both referent classes (PhNCFeatures 119->119, PhNCSegments 0->0) and the owning PhRegularRule 37->37, so it is one isolated object. RULE 3: the destination-side GUID diff is the FIRST read, not the fifth."
     },
-    "note_on_the_gate": "RULED_RESIDUE now works end to end -- PhCode, CmFile and CmFolder dropped off P5 on the fresh artifacts, which is the first time that emitter has been visible to the gate. The remaining rows are the ones with no roster entry, for the reasons above."
+    "note_on_the_gate": "The gross-subtraction lane is the first mechanism that lets 5.2s long-standing observation reach _phase_5 rather than only the verdict cap. It is deliberately witness-gated rather than basis-gated: off by ONE object in the per-sub-key table and it emits nothing. Applied to the whole t134 corpus it fired on CmPossibility and no other row, which is the evidence that it is not a blanket amnesty."
   }
 }
