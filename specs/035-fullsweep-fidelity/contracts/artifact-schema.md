@@ -82,6 +82,20 @@ in one phase is never reported as an undifferentiated whole-project failure.
     "field_census": { "...": "..." },    // census.FieldCensus.as_dict()
     "field_census_measured": true,       // false => not measured, NOT "measured empty"
 
+    // Per class, inside `field_census.coverage`, two keys added in T045a(c)
+    // when the census was first run against live projects:
+    //   unmapped_syncable_fields -- syncable keys with no model field of that
+    //     name. MEASURED causes: a SYNTHESIZED name (PhNCSegments' syncable
+    //     surface calls the model's SegmentsRC "PhonemeGuids") and a PHANTOM
+    //     key (LexSense.DoNotShowMainEntryInRC, backed by no MDC field). They
+    //     stay in `compared` -- they carry real values -- and stay OUT of
+    //     `engine_omitted`, which remains exactly `model - syncable`.
+    //   surface_variance -- keys some objects of the class carried and others
+    //     did not. flexicon emits a key on PRESENCE, not truthiness, so a
+    //     NULL owning property omits its key entirely and a sparse object
+    //     legitimately exposes a smaller surface. The class's surface is the
+    //     UNION over its objects; what varied is published here.
+
     // The 038 cut: plane 1 (object counts) is 038's census, and this document
     // REFERENCES it rather than carrying a copy. Two censuses of one run that
     // can disagree is worse than one, and the copy is the one that goes stale
@@ -102,11 +116,77 @@ in one phase is never reported as an undifferentiated whole-project failure.
   },
 
   "comparisons": {                       // FR-069..FR-084: the FIELD plane's verdicts
-    // Per class (and per rule), how many comparisons each rule actually
+    // Per class and per rule, how many comparisons each rule actually
     // PERFORMED alongside what it found. The count is the load-bearing half:
     // "zero findings" and "never looked" are the same number of findings, and
     // FR-137 forbids reporting them the same way.
-    "ClassName": { "rule": "ws-mapped", "performed": 12, "findings": 0 }
+    //
+    // SHAPE SETTLED IN T045a(c), when the block first had a producer. Class
+    // names and meta keys live in SEPARATE sub-objects: a block that mixed
+    // them would make `block["totals"]` ambiguous the first time LCM gains a
+    // class called `totals`, and this feature does not rely on that not
+    // happening.
+    "schema": "035-field-plane-1",
+    "rule_vocabulary": ["ws-alternatives", "text", "link", "order", "scalar",
+                        "structure", "shape", "unclassified-shape"],
+    "per_class": {
+      "ClassName": {
+        "objects_compared": 12,            // >=1 field comparison PERFORMED
+        "objects_not_read": 0,             // neither side's fields were read
+        "objects_with_findings": 0,
+        "comparisons_performed": 48,
+        "comparisons_refused": 2,          // see refusal_reasons -- NOT passes
+        "findings": 0,
+        "target_only": 1,                  // target carries it, source never did
+        "rules":  { "text": { "performed": 12, "findings": 0, "refused": 0 } },
+        "fields": { "Name": { "performed": 12, "findings": 0, "refused": 0 } },
+        "refusal_reasons": { "[FR-078] ...": 2 }
+      }
+    },
+    "rules":  { "text": { "performed": 12, "findings": 0, "refused": 0 } },
+    "totals": { "pairs_seen": 270, "classes_touched": 28, "...": "..." },
+    "refusal_reasons": { "[FR-078] ...": 12 },
+
+    // A class whose GetSyncableProperties RAISED live (ten do -- see
+    // debug/fullsweep/field_dispatch.py's "OTHER LIVE DEFECTS"), per side,
+    // with the exception text. Its objects are reported never-compared, which
+    // FR-097 fails; they are NEVER reported clean.
+    "unreadable_classes": { "WfiWordform": "source: CensusContractError: ..." },
+
+    // The CATEGORY plane, projected from the class plane through the tracked
+    // contracts/class-category-map.json (T045e) -- the only sanctioned bridge
+    // between the two `comparisons` shapes. This is what
+    // RunContext.comparisons is built from, and what COMPARISONS-PERFORMED
+    // reads.
+    "per_category": { "pos": { "source_objects": 40, "comparisons_performed": 120,
+                               "objects_compared": 40, "classes": ["PartOfSpeech"] } },
+    "category_projection": { "unattributable": [], "categoryless_categories": [],
+                             "replicated_classes": [] },
+    // Measured classes the tracked join does not map. Published by name
+    // because the projection REFUSES them rather than dropping them silently.
+    "classes_outside_class_category_map": ["StStyle"]
+  },
+
+  "writing_system_mapping": {            // FR-071/FR-135, added T045a(c)
+    // The mapping BOTH transfers ran under, and that plane 2's comparison
+    // therefore mirrors. Recorded because a comparison is only interpretable
+    // against the mapping it was made under: the same target content is
+    // "lost" under one mapping and "never declared" under another, and
+    // FR-070 reports an undeclared writing system that carries content as a
+    // defect in the RUN's own mapping construction.
+    "mode": "full",                      // "full" | "default-vernacular"
+    "mapped": { "etu": "etu", "en": "en" },
+    "to_create": [], "skip_records": []
+  },
+
+  "field_plane": {                       // what plane 2 could and could not read
+    "measured": true,                    // false + error => plane 2 did not run;
+                                         // its guards then report not-evaluated
+    "mode": "full", "max_objects_per_class": null, "error": "",
+    "source": { "classes_enumerated": 65, "unreadable_classes": { "...": "..." },
+                "undispatchable_classes": { "...": "..." },
+                "cost": { "field_reads": 9148, "seconds": 3.6 } },
+    "target": { "...": "..." }
   },
 
   "plan_conservation": {                 // FR-101, both directions, per category and total

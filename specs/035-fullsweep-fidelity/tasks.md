@@ -524,8 +524,12 @@ the comparator's verdict for each -- no corpus-wide run needed.
 > blocks T045f just gave a home to. The resolver will keep reporting `nextTask=T045a`
 > because T045a's box is the first unchecked one positionally; from here that answer
 > happens to be right, for the wrong reason.
+>
+> **T045a(c) LANDED 2026-09-19** -- see the DONE note under T045a below. The chain's
+> first unchecked link is now **T045b** (the remaining eight guard inputs). T045c is
+> already done, so T045b is the last thing between the answering set and 15/15.
 
-- [ ] **T045a** [US2] Wire the driver's OWN measurements into `RunContext`, and the two
+- [X] **T045a** [US2] Wire the driver's OWN measurements into `RunContext`, and the two
       accounting planes into the guard inputs. `run_one_project` currently calls
       `run_all_guards(RunContext(project=source_name))` -- **positionally empty**. Every
       `RunContext` measurement field defaults to `None` and a `None` input makes its guard
@@ -582,6 +586,102 @@ the comparator's verdict for each -- no corpus-wide run needed.
   >    reader to mistake", in its strongest form, plus FR-135's invisible-default
   >    prohibition. `run_full_transfer` now takes an `exclude` parameter.
   >
+  > **(c) DONE 2026-09-19.** `debug/fullsweep/fieldplane.py` (new, ~1180 lines) is
+  > the missing middle: the value-shape -> rule dispatcher, the payload comparator
+  > `reconcile_objects` has been calling a no-op stand-in for, and the read-only
+  > per-project gather that feeds it. `run_one_project` now builds it (two new
+  > helpers, `build_field_plane` and `record_plane_2_measurements`), hands it to the
+  > reconciliation as `payload_equal`, and writes all five plane-2 blocks through
+  > T045f's `record_field_plane`. 61 new tests; full unit suite **5006 passed /
+  > 4 failed**, the 4 being the T023 fingerprint blocker below and nothing else
+  > (4945/4 before this task -- delta exactly +61, all passes).
+  >
+  > **The answering set moved 5/15 -> 7/15.** `COMPARISONS-PERFORMED` and
+  > `CATEGORY-COVERAGE` now return pass or fail against the real guards, verified
+  > both ways (a category with source objects and zero comparisons still fails; an
+  > absent measurement still reports `not-evaluated`).
+  >
+  > **LIVE VERIFICATION, read-only, 2026-09-19** (pyflexicon 4.8.0; no project
+  > written to and no transfer run -- the sweep's own write path is still blocked by
+  > the T023 fingerprint mismatch recorded under T045f):
+  > 1. `Ejagham Mini` -> `Ejagham Full GT-Test`: both sides gathered, 21 of 65
+  >    source classes measured, the two guards ANSWER (fail -- correctly: the pair
+  >    is not a transfer pair, 900 objects unmatched).
+  > 2. **Negative control -- `Ejagham Mini` compared with ITSELF**: 15,142 objects,
+  >    1,672 matched pairs, **9,148 comparisons performed across six rules
+  >    (ws-alternatives 5,353 / link 1,154 / order 1,004 / scalar 930 / text 591 /
+  >    structure 116) and ZERO findings.** A self-comparison has no loss by
+  >    construction, so any finding here would be a defect in the comparator. 17
+  >    refusals, each with its reason: 12 undeclared integers (FR-078) and 5
+  >    undetermined order significances (FR-079).
+  >
+  > **Five rulings, each taken from a live measurement rather than from the shape
+  > the surface ought to have:**
+  >
+  > 1. **A writing-system HANDLE is not a language tag, and handles are
+  >    per-project.** Measured: `PartOfSpeech.Name` is `{'en': ...}` but
+  >    `CmPossibility.Name`, `LexEntryType.Name`, `LexEntryInflType.Name`,
+  >    `LexRefType.Name` and `MoMorphType.Name` are `{'999000001': ...}` --
+  >    handle-keyed, via `PossibilityItemOperations`. `full_run.py` already records
+  >    that `999000002` is `en` in `Ngoreme FLEx` and `ngq` in `Ngoreme Target`.
+  >    Comparing two projects' handle-keyed dicts directly would compare unrelated
+  >    writing systems and call the result fidelity, so every multistring is
+  >    normalized to tags through the handle map OF ITS OWN PROJECT first (FR-068),
+  >    nested ones included.
+  > 2. **A dict is a multistring only when its keys name writing systems.**
+  >    Measured: `MoStemMsa.MsFeatures` is `{'TypeGuid': ..., 'specs': [...]}`.
+  >    The discriminator is the project's own writing-system key set, not a guess.
+  > 3. **The writing-system mapping plane 2 compares under MUST mirror the one the
+  >    transfer ran under**, so `ws_mapping_mode` is now ONE parameter feeding both
+  >    transfers and the comparison, recorded on every artifact (FR-135) -- the same
+  >    defect shape T045a(a) found in the category selection. Its default is
+  >    **`full`**, not `full_run`'s `default-vernacular`: this is a full-copy sweep,
+  >    and FR-071 names the single-default-vernacular map as "the narrower default
+  >    this exists to refuse". Under the narrow mode the SAME clean data reports
+  >    `unmapped-writing-system-with-no-skip-record` on every analysis alternative
+  >    -- a defect in the run's own mapping construction, which is exactly what it
+  >    would be. Both modes are on the CLI; neither is invisible.
+  > 4. **A rule that refuses to classify costs the FIELD, not the run.** FR-078
+  >    (a stored integer with no decoder), FR-079 (an order significance the tool's
+  >    own convention does not determine -- measured: flexicon renames `SegmentsRC`
+  >    to `PhonemeGuids`, which no suffix rule can read) and FR-085 (a natural-key
+  >    roster class with no remap record) each RAISE by design. Each is recorded as
+  >    a refused comparison with its reason and counted separately from both a pass
+  >    and a finding; an object whose every field was refused returns `None`, which
+  >    FR-097 reports as never-compared. Nothing is ever passed on zero comparisons.
+  > 5. **An unknown value shape is a finding, not a pass.** The comparator did not
+  >    establish equality, and "we could not tell" must never read as "they matched".
+  >
+  > **Two census contract rules were disproved by running the census live, and
+  > corrected here** (`debug/fullsweep/census.py` -- T037's deliverable; both rules
+  > predate any live run). Together they were refusing NINE of the eleven classes
+  > `Ejagham Mini` could otherwise measure:
+  > 1. *"Two objects of one class must expose the same syncable surface."* False:
+  >    flexicon emits a key on PRESENCE, not truthiness -- POSOperations' own
+  >    contract says a NULL owning property "omits both keys entirely" -- so a
+  >    sparse object legitimately exposes a smaller surface. The raise cost SEVEN
+  >    classes their whole measurement (`PartOfSpeech`, `MoStemMsa`, `MoInflAffMsa`,
+  >    `MoInflAffixTemplate`, `PhEnvironment`, `FsClosedFeature`, `WfiAnalysis`).
+  >    The class's surface is now the UNION over its objects, and what varied is
+  >    published as `surface_variance`.
+  > 2. *"Every syncable key names a model field."* False for two different and
+  >    harmless reasons: a SYNTHESIZED name (`PhNCSegments.PhonemeGuids` is the
+  >    model's `SegmentsRC`) and a PHANTOM key (`LexSense.DoNotShowMainEntryInRC`,
+  >    which `field_dispatch`'s docstring already records as backed by no MDC
+  >    field). Refusing cost `LexSense` -- the most-transferred class in the corpus
+  >    -- its entire measurement to report a naming difference. Such keys are now
+  >    published as `unmapped_syncable_fields`, stay in `compared` (they carry real
+  >    values), and stay OUT of `engine_omitted`, which remains exactly
+  >    `model - syncable`. Measured effect: source classes measured 11 -> 21,
+  >    unreadable 20 -> 10 (the ten being exactly the flexicon accessor defects
+  >    T045d already recorded).
+  >
+  > **Scope line held.** The eight guard inputs of T045b are untouched and still
+  > report `not-evaluated`; FR-109 therefore still yields `VACUOUS`, with 7 real
+  > guard results attached instead of 5. `contracts/artifact-schema.md` now carries
+  > the settled `comparisons` shape, the two new census keys, and the two new
+  > artifact blocks (`writing_system_mapping`, `field_plane`).
+
   > **(c) NOT done, and T045a's own premise was wrong.** The task says it "is the
   > ONLY thing standing between T036-T045 and a non-`VACUOUS` verdict". Measured:
   > it is **necessary but not sufficient**. Ten guards still report
@@ -1568,6 +1668,10 @@ cannot start before both planes measure; and US5 hardens the valve US1 opened.
   → T045c (the verdict assignment table) → T045 → T035. T045d/T045e/T045f are the
   only genuinely parallel trio in the tail: disjoint files, no shared state. Everything
   after them gates on all three. See "Wave 3b-bis" in the US2 phase for why.
+  **Amended 2026-09-19:** T045c, T045d, T045e, T045f and T045a(c) are all landed, so
+  the remaining tail is **T045b -> T045 -> T035**. T045b alone now separates the
+  answering set (7/15) from 15/15, which is what FR-109 needs before any verdict other
+  than `VACUOUS` is reachable.
 - **US3** — test T046 → three independent modules (T047-T049) → four independent CLI
   surfaces (T050-T053) → the scheduled live measurements in order (T054-T057), which
   are strictly sequential: the concurrency trial gates worker count, the census cost
