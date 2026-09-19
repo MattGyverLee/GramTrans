@@ -1,0 +1,503 @@
+{
+  "after_counts": {
+    "MoAffixAllomorph": 124,
+    "MoAffixProcess": 12,
+    "MoCopyFromInput": 25,
+    "MoInsertNC": 0,
+    "MoInsertPhones": 40,
+    "MoModifyFromInput": 0,
+    "MoStemAllomorph": 137,
+    "PhIterationContext": 9,
+    "PhNCFeatures": 113,
+    "PhNCSegments": 2,
+    "PhPhoneme": 46,
+    "PhSequenceContext": 20,
+    "PhSimpleContextBdry": 9,
+    "PhSimpleContextNC": 55,
+    "PhSimpleContextSeg": 56,
+    "PhVariable": 15
+  },
+  "after_rule_shapes": [
+    {
+      "guid": "05c24042-c57e-46ac-afd2-1f3eadd41d09",
+      "input_total": 2,
+      "inputs": {
+        "PhSimpleContextNC": 1,
+        "PhVariable": 1
+      },
+      "output_total": 5,
+      "outputs": {
+        "MoCopyFromInput": 2,
+        "MoInsertPhones": 3
+      }
+    },
+    {
+      "guid": "1f6b8c3c-6121-4ae8-b228-b96a8b2354f7",
+      "input_total": 2,
+      "inputs": {
+        "PhSimpleContextSeg": 1,
+        "PhVariable": 1
+      },
+      "output_total": 5,
+      "outputs": {
+        "MoCopyFromInput": 1,
+        "MoInsertPhones": 4
+      }
+    },
+    {
+      "guid": "2b20c001-3d37-466b-afeb-f5ef4d112c81",
+      "input_total": 6,
+      "inputs": {
+        "PhSimpleContextSeg": 3,
+        "PhVariable": 3
+      },
+      "output_total": 8,
+      "outputs": {
+        "MoCopyFromInput": 4,
+        "MoInsertPhones": 4
+      }
+    },
+    {
+      "guid": "311f04ea-eb20-4631-a8c4-bacdaacfa24d",
+      "input_total": 2,
+      "inputs": {
+        "PhSimpleContextNC": 1,
+        "PhVariable": 1
+      },
+      "output_total": 5,
+      "outputs": {
+        "MoCopyFromInput": 3,
+        "MoInsertPhones": 2
+      }
+    },
+    {
+      "guid": "6920af1f-6b11-4a9d-b7a3-c5607d604fcb",
+      "input_total": 2,
+      "inputs": {
+        "PhSimpleContextNC": 1,
+        "PhVariable": 1
+      },
+      "output_total": 5,
+      "outputs": {
+        "MoCopyFromInput": 2,
+        "MoInsertPhones": 3
+      }
+    },
+    {
+      "guid": "722f6825-fd73-4bb7-bf61-0d0536af6d0b",
+      "input_total": 2,
+      "inputs": {
+        "PhSimpleContextNC": 1,
+        "PhVariable": 1
+      },
+      "output_total": 5,
+      "outputs": {
+        "MoCopyFromInput": 2,
+        "MoInsertPhones": 3
+      }
+    },
+    {
+      "guid": "a1ff1673-1e08-49e7-9101-65a5c4f9aa62",
+      "input_total": 2,
+      "inputs": {
+        "PhSimpleContextSeg": 1,
+        "PhVariable": 1
+      },
+      "output_total": 4,
+      "outputs": {
+        "MoCopyFromInput": 1,
+        "MoInsertPhones": 3
+      }
+    },
+    {
+      "guid": "b160bb32-520c-4e76-88bb-a2583b043d6a",
+      "input_total": 3,
+      "inputs": {
+        "PhSimpleContextSeg": 2,
+        "PhVariable": 1
+      },
+      "output_total": 5,
+      "outputs": {
+        "MoCopyFromInput": 2,
+        "MoInsertPhones": 3
+      }
+    },
+    {
+      "guid": "be6bc953-78e5-4bf2-a72e-2977bd0ed683",
+      "input_total": 2,
+      "inputs": {
+        "PhSimpleContextNC": 1,
+        "PhVariable": 1
+      },
+      "output_total": 5,
+      "outputs": {
+        "MoCopyFromInput": 3,
+        "MoInsertPhones": 2
+      }
+    },
+    {
+      "guid": "ca9e6217-60d8-4d29-85d8-0c2c55199f23",
+      "input_total": 2,
+      "inputs": {
+        "PhSimpleContextSeg": 1,
+        "PhVariable": 1
+      },
+      "output_total": 5,
+      "outputs": {
+        "MoCopyFromInput": 2,
+        "MoInsertPhones": 3
+      }
+    },
+    {
+      "guid": "d702a830-5b29-4413-8672-8ada8f289f42",
+      "input_total": 4,
+      "inputs": {
+        "PhSimpleContextSeg": 2,
+        "PhVariable": 2
+      },
+      "output_total": 6,
+      "outputs": {
+        "MoCopyFromInput": 2,
+        "MoInsertPhones": 4
+      }
+    },
+    {
+      "guid": "f61db720-49f7-46a3-9d10-fcfaf0babcfe",
+      "input_total": 2,
+      "inputs": {
+        "PhSimpleContextSeg": 1,
+        "PhVariable": 1
+      },
+      "output_total": 7,
+      "outputs": {
+        "MoCopyFromInput": 1,
+        "MoInsertPhones": 6
+      }
+    }
+  ],
+  "backup": "Target 2026-07-06 0218.fwbackup",
+  "before_counts": {
+    "MoAffixAllomorph": 0,
+    "MoAffixProcess": 0,
+    "MoCopyFromInput": 0,
+    "MoInsertNC": 0,
+    "MoInsertPhones": 0,
+    "MoModifyFromInput": 0,
+    "MoStemAllomorph": 0,
+    "PhIterationContext": 0,
+    "PhNCFeatures": 0,
+    "PhNCSegments": 2,
+    "PhPhoneme": 23,
+    "PhSequenceContext": 0,
+    "PhSimpleContextBdry": 0,
+    "PhSimpleContextNC": 0,
+    "PhSimpleContextSeg": 0,
+    "PhVariable": 0
+  },
+  "delta": {
+    "MoAffixAllomorph": 124,
+    "MoAffixProcess": 12,
+    "MoCopyFromInput": 25,
+    "MoInsertNC": 0,
+    "MoInsertPhones": 40,
+    "MoModifyFromInput": 0,
+    "MoStemAllomorph": 137,
+    "PhIterationContext": 9,
+    "PhNCFeatures": 113,
+    "PhNCSegments": 0,
+    "PhPhoneme": 23,
+    "PhSequenceContext": 20,
+    "PhSimpleContextBdry": 9,
+    "PhSimpleContextNC": 55,
+    "PhSimpleContextSeg": 56,
+    "PhVariable": 15
+  },
+  "destination": "GT038 Phase6 Target",
+  "report": {
+    "process_rules_not_reproduced": [
+      {
+        "reason": "MoAffixProcess fda9c04e-e71b-43ed-b4a1-c977610fa3b9 input member 0 (PhSequenceContext) references PhSimpleContextNC 6464f7f4-1405-4427-a397-983ddb0b06fc at position 0, which this rule does NOT own -- it belongs to the shared project-level PhPhonData.ContextsOS and is absent from the destination. The rule is not transferred until that closure lands; a partly-filled MembersRS is not an acceptable outcome (FR-023/FR-024/FR-025, create-path contract condition 4)",
+        "source_guid": "fda9c04e-e71b-43ed-b4a1-c977610fa3b9"
+      },
+      {
+        "reason": "MoAffixProcess 78c5cf68-fadb-42d6-a831-4d330a90b728 input member 0 (PhSequenceContext) references PhSimpleContextNC afc4571e-1ae7-4d32-8b24-c0acc930588b at position 0, which this rule does NOT own -- it belongs to the shared project-level PhPhonData.ContextsOS and is absent from the destination. The rule is not transferred until that closure lands; a partly-filled MembersRS is not an acceptable outcome (FR-023/FR-024/FR-025, create-path contract condition 4)",
+        "source_guid": "78c5cf68-fadb-42d6-a831-4d330a90b728"
+      },
+      {
+        "reason": "MoAffixProcess f7967773-421a-482c-963c-6942c4cac4d7 input member 0 (PhSequenceContext) references PhSimpleContextSeg 3c4e8c34-e0ec-44e7-b97f-5ba02b151590 at position 0, which this rule does NOT own -- it belongs to the shared project-level PhPhonData.ContextsOS and is absent from the destination. The rule is not transferred until that closure lands; a partly-filled MembersRS is not an acceptable outcome (FR-023/FR-024/FR-025, create-path contract condition 4)",
+        "source_guid": "f7967773-421a-482c-963c-6942c4cac4d7"
+      },
+      {
+        "reason": "MoAffixProcess ac89feae-833e-4908-8657-a2f80a1ec260 input member 1 (PhSequenceContext) references PhSimpleContextNC 735be4f2-6cd8-4a1c-9c9e-13e8eaf012f1 at position 0, which this rule does NOT own -- it belongs to the shared project-level PhPhonData.ContextsOS and is absent from the destination. The rule is not transferred until that closure lands; a partly-filled MembersRS is not an acceptable outcome (FR-023/FR-024/FR-025, create-path contract condition 4)",
+        "source_guid": "ac89feae-833e-4908-8657-a2f80a1ec260"
+      },
+      {
+        "reason": "MoAffixProcess 081a21b1-2e2f-477d-b7a8-59658298880b input member 0 (PhSequenceContext) references PhSimpleContextNC e2a39650-41ed-4716-bed1-8b8064188c00 at position 0, which this rule does NOT own -- it belongs to the shared project-level PhPhonData.ContextsOS and is absent from the destination. The rule is not transferred until that closure lands; a partly-filled MembersRS is not an acceptable outcome (FR-023/FR-024/FR-025, create-path contract condition 4)",
+        "source_guid": "081a21b1-2e2f-477d-b7a8-59658298880b"
+      },
+      {
+        "reason": "MoAffixProcess f7c7c2bd-4e96-49aa-9432-ae5dae931094 input member 0 (PhSequenceContext) references PhSimpleContextNC bbab8d1d-9a96-42ee-8b0c-47517bd7d131 at position 0, which this rule does NOT own -- it belongs to the shared project-level PhPhonData.ContextsOS and is absent from the destination. The rule is not transferred until that closure lands; a partly-filled MembersRS is not an acceptable outcome (FR-023/FR-024/FR-025, create-path contract condition 4)",
+        "source_guid": "f7c7c2bd-4e96-49aa-9432-ae5dae931094"
+      }
+    ],
+    "process_rules_reproduced": 12,
+    "process_rules_total": 18,
+    "run_id": ""
+  },
+  "source": "Mbugwe LizzieHC practice",
+  "source_counts": {
+    "MoAffixAllomorph": 124,
+    "MoAffixProcess": 18,
+    "MoCopyFromInput": 38,
+    "MoInsertNC": 0,
+    "MoInsertPhones": 63,
+    "MoModifyFromInput": 0,
+    "MoStemAllomorph": 137,
+    "PhIterationContext": 11,
+    "PhNCFeatures": 113,
+    "PhNCSegments": 0,
+    "PhPhoneme": 42,
+    "PhSequenceContext": 37,
+    "PhSimpleContextBdry": 24,
+    "PhSimpleContextNC": 83,
+    "PhSimpleContextSeg": 79,
+    "PhVariable": 21
+  },
+  "source_rule_shapes": [
+    {
+      "guid": "05c24042-c57e-46ac-afd2-1f3eadd41d09",
+      "input_total": 2,
+      "inputs": {
+        "PhSimpleContextNC": 1,
+        "PhVariable": 1
+      },
+      "output_total": 5,
+      "outputs": {
+        "MoCopyFromInput": 2,
+        "MoInsertPhones": 3
+      }
+    },
+    {
+      "guid": "081a21b1-2e2f-477d-b7a8-59658298880b",
+      "input_total": 2,
+      "inputs": {
+        "PhSequenceContext": 1,
+        "PhVariable": 1
+      },
+      "output_total": 5,
+      "outputs": {
+        "MoCopyFromInput": 2,
+        "MoInsertPhones": 3
+      }
+    },
+    {
+      "guid": "1f6b8c3c-6121-4ae8-b228-b96a8b2354f7",
+      "input_total": 2,
+      "inputs": {
+        "PhSimpleContextSeg": 1,
+        "PhVariable": 1
+      },
+      "output_total": 5,
+      "outputs": {
+        "MoCopyFromInput": 1,
+        "MoInsertPhones": 4
+      }
+    },
+    {
+      "guid": "2b20c001-3d37-466b-afeb-f5ef4d112c81",
+      "input_total": 6,
+      "inputs": {
+        "PhSimpleContextSeg": 3,
+        "PhVariable": 3
+      },
+      "output_total": 8,
+      "outputs": {
+        "MoCopyFromInput": 4,
+        "MoInsertPhones": 4
+      }
+    },
+    {
+      "guid": "311f04ea-eb20-4631-a8c4-bacdaacfa24d",
+      "input_total": 2,
+      "inputs": {
+        "PhSimpleContextNC": 1,
+        "PhVariable": 1
+      },
+      "output_total": 5,
+      "outputs": {
+        "MoCopyFromInput": 3,
+        "MoInsertPhones": 2
+      }
+    },
+    {
+      "guid": "6920af1f-6b11-4a9d-b7a3-c5607d604fcb",
+      "input_total": 2,
+      "inputs": {
+        "PhSimpleContextNC": 1,
+        "PhVariable": 1
+      },
+      "output_total": 5,
+      "outputs": {
+        "MoCopyFromInput": 2,
+        "MoInsertPhones": 3
+      }
+    },
+    {
+      "guid": "722f6825-fd73-4bb7-bf61-0d0536af6d0b",
+      "input_total": 2,
+      "inputs": {
+        "PhSimpleContextNC": 1,
+        "PhVariable": 1
+      },
+      "output_total": 5,
+      "outputs": {
+        "MoCopyFromInput": 2,
+        "MoInsertPhones": 3
+      }
+    },
+    {
+      "guid": "78c5cf68-fadb-42d6-a831-4d330a90b728",
+      "input_total": 2,
+      "inputs": {
+        "PhSequenceContext": 1,
+        "PhVariable": 1
+      },
+      "output_total": 7,
+      "outputs": {
+        "MoCopyFromInput": 2,
+        "MoInsertPhones": 5
+      }
+    },
+    {
+      "guid": "a1ff1673-1e08-49e7-9101-65a5c4f9aa62",
+      "input_total": 2,
+      "inputs": {
+        "PhSimpleContextSeg": 1,
+        "PhVariable": 1
+      },
+      "output_total": 4,
+      "outputs": {
+        "MoCopyFromInput": 1,
+        "MoInsertPhones": 3
+      }
+    },
+    {
+      "guid": "ac89feae-833e-4908-8657-a2f80a1ec260",
+      "input_total": 3,
+      "inputs": {
+        "PhSequenceContext": 1,
+        "PhSimpleContextSeg": 1,
+        "PhVariable": 1
+      },
+      "output_total": 7,
+      "outputs": {
+        "MoCopyFromInput": 4,
+        "MoInsertPhones": 3
+      }
+    },
+    {
+      "guid": "b160bb32-520c-4e76-88bb-a2583b043d6a",
+      "input_total": 3,
+      "inputs": {
+        "PhSimpleContextSeg": 2,
+        "PhVariable": 1
+      },
+      "output_total": 5,
+      "outputs": {
+        "MoCopyFromInput": 2,
+        "MoInsertPhones": 3
+      }
+    },
+    {
+      "guid": "be6bc953-78e5-4bf2-a72e-2977bd0ed683",
+      "input_total": 2,
+      "inputs": {
+        "PhSimpleContextNC": 1,
+        "PhVariable": 1
+      },
+      "output_total": 5,
+      "outputs": {
+        "MoCopyFromInput": 3,
+        "MoInsertPhones": 2
+      }
+    },
+    {
+      "guid": "ca9e6217-60d8-4d29-85d8-0c2c55199f23",
+      "input_total": 2,
+      "inputs": {
+        "PhSimpleContextSeg": 1,
+        "PhVariable": 1
+      },
+      "output_total": 5,
+      "outputs": {
+        "MoCopyFromInput": 2,
+        "MoInsertPhones": 3
+      }
+    },
+    {
+      "guid": "d702a830-5b29-4413-8672-8ada8f289f42",
+      "input_total": 4,
+      "inputs": {
+        "PhSimpleContextSeg": 2,
+        "PhVariable": 2
+      },
+      "output_total": 6,
+      "outputs": {
+        "MoCopyFromInput": 2,
+        "MoInsertPhones": 4
+      }
+    },
+    {
+      "guid": "f61db720-49f7-46a3-9d10-fcfaf0babcfe",
+      "input_total": 2,
+      "inputs": {
+        "PhSimpleContextSeg": 1,
+        "PhVariable": 1
+      },
+      "output_total": 7,
+      "outputs": {
+        "MoCopyFromInput": 1,
+        "MoInsertPhones": 6
+      }
+    },
+    {
+      "guid": "f7967773-421a-482c-963c-6942c4cac4d7",
+      "input_total": 2,
+      "inputs": {
+        "PhSequenceContext": 1,
+        "PhVariable": 1
+      },
+      "output_total": 5,
+      "outputs": {
+        "MoCopyFromInput": 1,
+        "MoInsertPhones": 4
+      }
+    },
+    {
+      "guid": "f7c7c2bd-4e96-49aa-9432-ae5dae931094",
+      "input_total": 2,
+      "inputs": {
+        "PhSequenceContext": 1,
+        "PhVariable": 1
+      },
+      "output_total": 5,
+      "outputs": {
+        "MoCopyFromInput": 2,
+        "MoInsertPhones": 3
+      }
+    },
+    {
+      "guid": "fda9c04e-e71b-43ed-b4a1-c977610fa3b9",
+      "input_total": 2,
+      "inputs": {
+        "PhSequenceContext": 1,
+        "PhVariable": 1
+      },
+      "output_total": 7,
+      "outputs": {
+        "MoCopyFromInput": 2,
+        "MoInsertPhones": 5
+      }
+    }
+  ]
+}

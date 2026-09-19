@@ -307,10 +307,27 @@ def _run_gui(project, report, modifyAllowed, QtWidgets, *,
                     _safe_uow_is_dirty(target),
                 )
             except Exception as exc:  # noqa: BLE001
-                report.Warning(f"[GramTrans] Could not close target project: {exc}")
+                # 038 T024g: CloseProject() is the ONLY disk-write on this path,
+                # so a raise here means the LCM unit of work was DISCARDED and
+                # NOTHING PERSISTED -- however many additions the RunReport
+                # claims. Measured live: a full Ngoreme transfer reported 2,243
+                # adds across 19 categories over a byte-identical destination
+                # because one MoInflAffixSlot carried an unresolvable writing-
+                # system handle and `XMLBackendProvider.Commit` threw. This was
+                # a report.Warning, which is how a total loss read as a success.
+                # It is an ERROR, and it must say what it costs.
+                report.Error(
+                    "[GramTrans] TRANSFER NOT SAVED. Closing the target project "
+                    f"failed, so NOTHING was written to disk: {exc}"
+                )
+                report.Error(
+                    "[GramTrans] Every change this run reported was rolled back "
+                    "by FieldWorks. The target project is unchanged. Do not "
+                    "treat the summary above as a record of what transferred."
+                )
                 _log.exception(
-                    "_run_gui cleanup: CloseProject() raised on handle id=%s",
-                    id(target),
+                    "_run_gui cleanup: CloseProject() raised on handle id=%s -- "
+                    "TOTAL ROLLBACK, nothing persisted", id(target),
                 )
     report.Info("[GramTrans] Selection Wizard closed.")
 
@@ -333,6 +350,14 @@ def _headless_phase0(project, report, modifyAllowed):
         report.Info(f"  Mode:   {'MOVE' if modifyAllowed else 'PREVIEW (read-only)'}")
         report.Info(f"  Tag:    {tag.serialize()}")
         report.Blank()
+
+        # Defend the writing-system store before any open: the SLDR is
+        # process-global and any `FLExCleanup()` in this process takes it down, after
+        # which LCM renames every `WritingSystemStore/*.ldml` to `*.ldml.bad` on
+        # open (read-only included) and the project loses its writing systems
+        # ("Can't add EN writing system"). See `Lib/flexinit.py`.
+        from gramtrans.Lib.flexinit import ensure_sldr_initialized
+        ensure_sldr_initialized()
 
         source = FLExProject()
         source.OpenProject(projectName=source_name, writeEnabled=False)
@@ -437,6 +462,14 @@ def phase2_interactive_move(
     """
     import datetime, time
     report.Info(f"[GramTrans Phase 2] interactive move start")
+    # Defend the writing-system store before any open: the SLDR is
+    # process-global and any `FLExCleanup()` in this process takes it down, after
+    # which LCM renames every `WritingSystemStore/*.ldml` to `*.ldml.bad` on
+    # open (read-only included) and the project loses its writing systems
+    # ("Can't add EN writing system"). See `Lib/flexinit.py`.
+    from gramtrans.Lib.flexinit import ensure_sldr_initialized
+    ensure_sldr_initialized()
+
     source = FLExProject()
     source.OpenProject(projectName=source_project_name, writeEnabled=False)
     try:

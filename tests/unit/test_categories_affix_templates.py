@@ -19,23 +19,32 @@ import types
 
 import pytest
 
-# Phase 3c leaf-dispatch for templates + the 17.1 sub-pass (T034-T040) is still
-# stubbed in categories.py (`raise NotImplementedError("Phase 3c T051")`). These
-# are red-by-design TDD tests for that pending work (spec 007); mark xfail so the
-# trunk suite stays green and they auto-flip to passing once implemented.
-# The whole file exercises Phase 3c T051 template leaf-dispatch + the 17.1
-# sub-pass, none of which is implemented yet in categories.py (stubs raise
-# NotImplementedError, _run_171_subpass is undefined, and dependencies() returns
-# empty). These tests guard nothing until T051 lands, so the whole module is
-# xfail (strict=False) -- they auto-flip to xpass once implemented, at which
-# point this mark should be removed. Tracked under spec 007.
-pytestmark = pytest.mark.xfail(
-    reason="Phase 3c T051 template leaf-dispatch + 17.1 sub-pass not yet implemented (spec 007)",
-    strict=False,
-)
+# THE MODULE-LEVEL `xfail` MARK IS GONE (feature 038, T069).
+#
+# It was added when Phase 3c T051 template leaf-dispatch and the 17.1 sub-pass
+# were still `raise NotImplementedError` stubs, and it said so in its own
+# comment: "they auto-flip to xpass once implemented, at which point this mark
+# should be removed." T051 landed; the mark did not. Every one of the 10 tests
+# in this file was XPASSING, and a non-strict xfail that xpasses is a test that
+# CANNOT FAIL -- pytest reports XPASS, the run stays green, and no gate
+# notices.
+#
+# That was measured, not inferred. T069 registers a `CLOSURE_EDGES_VERIFIED`
+# row on `affix_templates_dependencies`, so its mutation verification broke the
+# producer on purpose: with the five `*SlotsRS` sequences unread,
+# `test_template_dependencies_cover_all_five_ref_seqs` and
+# `test_template_dependencies_yield_slot_refs_in_source_order` flipped from
+# XPASS to XFAIL -- and `tests/unit` still reported "3426 passed" with zero
+# failures. The only signal was two counters moving in a summary line.
+#
+# A registry row whose producer's entire unit coverage cannot fail is the
+# hollow-assertion pattern this feature keeps finding elsewhere, so the mark is
+# removed rather than re-pointed at a newer excuse. All 10 tests pass on their
+# own merits.
 
 from gramtrans.Lib import categories
 from gramtrans.Lib.models import (
+    AffixSlotLinkOutcome,
     GrammarCategory,
     PlannedAction,
     RunContext,
@@ -103,7 +112,8 @@ class _FakeTarget171:
         return self._objs.get(guid)
 
 
-def _ctx_with_plan(msa_slot_bindings, identity_remap=None) -> RunContext:
+def _ctx_with_plan(msa_slot_bindings, identity_remap=None,
+                   msa_owner_entry=None) -> RunContext:
     ctx = RunContext(
         source_handle=object(),
         source_project_name="Src",
@@ -117,6 +127,9 @@ def _ctx_with_plan(msa_slot_bindings, identity_remap=None) -> RunContext:
     plan = types.SimpleNamespace(
         msa_slot_bindings=dict(msa_slot_bindings),
         identity_remap=dict(identity_remap or {}),
+        # T074 (FR-019): owner map, absent by default -- see the docstring on
+        # `test_171_unresolved_msa_is_only_a_failure_when_the_affix_is_here`.
+        msa_owner_entry=dict(msa_owner_entry or {}),
     )
     object.__setattr__(ctx, "_run_plan", plan)
     return ctx
@@ -237,17 +250,42 @@ def test_171_unresolved_slot() -> None:
     assert "missing" in skips[0].detail
 
 
-def test_171_unresolved_msa() -> None:
-    """T038: 1 binding, MSA absent from target → 1 Skip with msa_guid detail."""
+def test_171_unresolved_msa_is_only_a_failure_when_the_affix_is_here() -> None:
+    """T038, re-pointed by T074 (FR-019): an absent MSA is a failure to link
+    only if its OWNING AFFIX is in the destination.
+
+    T038 asserted the skip unconditionally. That is what let the report claim
+    203 link failures on a run that transferred no affixes at all (measured,
+    `Mbugwe LizzieHC practice`, AFFIX_TEMPLATES-only) -- every one of them
+    about a source affix the run never touched. Both branches are asserted here
+    so the fix cannot decay into "emit fewer skips": the affix-absent case is
+    recorded as NOT_IN_RUN and reports nothing, the affix-present case still
+    reports, and now names the affix rather than the missing MSA.
+    """
     slot = _FakeSlotObj("slot-1")
-    target = _FakeTarget171({"slot-1": slot})  # msa absent
-    ctx = _ctx_with_plan({"msa-missing": ["slot-1"]})
 
-    skips = categories._run_171_subpass(ctx, target, tag=None)
+    # (a) the affix is NOT in the destination -- nothing was promised.
+    ctx_absent = _ctx_with_plan({"msa-missing": ["slot-1"]},
+                                msa_owner_entry={"msa-missing": "entry-gone"})
+    skips_absent = categories._run_171_subpass(
+        ctx_absent, _FakeTarget171({"slot-1": slot}), tag=None)
+    assert skips_absent == []
+    records = list(getattr(ctx_absent, "_affix_slot_links", []))
+    assert [r.outcome for r in records] == [AffixSlotLinkOutcome.NOT_IN_RUN]
 
-    assert len(skips) == 1
-    assert skips[0].reason == SkipReason.DEPENDENCY_UNRESOLVED
-    assert "msa_guid=msa-missing" in skips[0].detail
+    # (b) the affix IS in the destination -- a real, uniquely-reported loss.
+    entry = _FakeSlotObj("entry-here")
+    ctx_present = _ctx_with_plan({"msa-missing": ["slot-1"]},
+                                 msa_owner_entry={"msa-missing": "entry-here"})
+    skips_present = categories._run_171_subpass(
+        ctx_present,
+        _FakeTarget171({"slot-1": slot, "entry-here": entry}), tag=None)
+    assert len(skips_present) == 1
+    assert skips_present[0].reason == SkipReason.DEPENDENCY_UNRESOLVED
+    assert skips_present[0].source_guid == "entry-here"
+    assert "msa_guid=msa-missing" in skips_present[0].detail
+    records = list(getattr(ctx_present, "_affix_slot_links", []))
+    assert [r.outcome for r in records] == [AffixSlotLinkOutcome.MSA_MISSING]
 
 
 def test_171_resolves_msa_via_identity_remap() -> None:

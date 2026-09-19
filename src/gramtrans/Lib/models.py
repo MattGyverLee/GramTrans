@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import enum
 import logging as _logging
+import re
 from dataclasses import dataclass, field
 from typing import Any, Callable, Optional
 
@@ -212,6 +213,13 @@ class SkipReason(enum.Enum):
     GUID_CONFLICT_NO_OVERRIDE = "guid_conflict_no_override"  # Phase 1+ only
     UNSUPPORTED_LCM_TYPE = "unsupported_lcm_type"
     BARE_BONES_MISSING_CLOSURE = "bare_bones_missing_closure"
+    # Feature 038 (defect G3) NARROWING: this reason is legal ONLY after a
+    # field-identity comparison has actually run and found the destination
+    # object equivalent. It previously doubled as "a GUID lookup hit
+    # something", which let an object that merely EXISTS be reported as
+    # already-present while its fields silently diverged from source. A GUID
+    # hit whose fields differ is an enrichment/overwrite candidate (FR-020),
+    # never this skip.
     ALREADY_PRESENT_BY_GUID = "already_present_by_guid"  # FR-009 informational
     INTERACTIVE_SKIP = "interactive_skip"  # Phase 2 (FR-204): user picked SKIP
     UNMAPPED_WS_USER_CHOSE_SKIP = "unmapped_ws_user_chose_skip"  # Phase 2 (FR-211)
@@ -231,6 +239,41 @@ class SkipReason(enum.Enum):
     # hard-fails); EXCLUDED_LOSSY is a soft warn+allow disposition -- the
     # entry transfers with a null reference after explicit user confirmation.
     EXCLUDED_LOSSY = "excluded_lossy"
+    # Feature 038 (FR-017, FR-025, SC-010): the engine reached the object,
+    # understood it, and still cannot faithfully rebuild it in the target --
+    # e.g. a MoAffixProcess whose rule structure has no reproducible form.
+    # Distinct from UNSUPPORTED_LCM_TYPE (never attempted) and from
+    # DEPENDENCY_UNRESOLVED (a missing referent, not the object itself).
+    # This reason exists so such a loss is REPORTED rather than skipped
+    # silently; it increments CategoryReport.not_reproducible.
+    NOT_REPRODUCIBLE = "not_reproducible"
+    # Feature 038 (FR-020): an object the closure walk would have pulled in
+    # was deliberately DESELECTED by the user. Distinct from EXCLUDED_LOSSY
+    # (which is about a reference going null on a copied entry) -- here the
+    # dependency object itself is not transferred at all, by choice.
+    DEPENDENCY_DESELECTED = "dependency_deselected"
+
+
+class MatchBasis(enum.Enum):
+    """Feature 038 (FR-001, FR-006) -- HOW a source object was matched to a
+    destination object.
+
+    The ordering here is a contract, not a preference: IDENTITY is always
+    tried first and is authoritative; NATURAL_KEY is only ever consulted
+    when identity finds nothing, and never the reverse. Inverting them
+    would let a name collision overwrite an object that a GUID had already
+    correctly identified.
+
+    IDENTITY    : matched by GUID, or by an existing `identity_remap` entry.
+    NATURAL_KEY : matched by a roster-admitted key (e.g. a phoneme name)
+                  after identity found no counterpart. Only legal for a
+                  class listed in
+                  `specs/035-fullsweep-fidelity/contracts/natural-key-identity-roster.json`.
+    NONE        : no match -- the object is created, or reported.
+    """
+    IDENTITY = "identity"
+    NATURAL_KEY = "natural_key"
+    NONE = "none"
 
 
 class MergeResolution(enum.Enum):
@@ -606,6 +649,2516 @@ class ExcludedLossy:
 
 
 @dataclass(frozen=True)
+class MatchBasisRecord:
+    """Feature 038 (FR-001, FR-006) -- the per-item accounting unit recording
+    HOW one source object was matched, carried on `PlannedAction` /
+    `PlannedOverwrite` and aggregated into `CategoryReport`.
+
+    Why this exists: before 038 the report could not distinguish "this object
+    was found by GUID" from "this object was found by name because its GUID
+    was absent". Those are very different fidelity claims -- the second is an
+    identity SUBSTITUTION, and the roster (FR-187) requires it be counted as
+    such. A reader of the run report must never have to guess which happened.
+
+    Fields
+    ------
+    basis           : see `MatchBasis`.
+    object_class    : LCM class name, e.g. "PhPhoneme". MUST be a roster entry
+                      when `basis is NATURAL_KEY`.
+    key_expression  : the roster `natural_key` text that was evaluated.
+                      Empty for IDENTITY / NONE.
+    key_value       : the concrete key that matched, e.g. the phoneme name.
+                      Empty for IDENTITY / NONE.
+    source_guid     : source object GUID. Always present.
+    target_guid     : matched destination GUID. Empty IFF `basis is NONE`.
+    candidate_count : how many destination candidates the key hit. For
+                      IDENTITY this is 0 or 1; for NATURAL_KEY a value > 1 on a
+                      key declared unique is a harness error, never a pick.
+
+    Invariants enforced below mirror data-model.md section 2. They are
+    deliberately hard failures: a silently-wrong identity match is exactly the
+    class of defect this feature exists to remove, so an inconsistent record
+    must not be constructible.
+    """
+    basis: MatchBasis
+    object_class: str
+    source_guid: str
+    key_expression: str = ""
+    key_value: str = ""
+    target_guid: str = ""
+    candidate_count: int = 0
+
+    def __post_init__(self) -> None:
+        if not self.object_class:
+            raise ValueError("MatchBasisRecord.object_class must be non-empty")
+        if not self.source_guid:
+            raise ValueError("MatchBasisRecord.source_guid must be non-empty")
+        if self.candidate_count < 0:
+            raise ValueError(
+                "MatchBasisRecord.candidate_count must be >= 0, got "
+                f"{self.candidate_count!r}"
+            )
+        # target_guid is empty IFF basis is NONE -- both directions.
+        if self.basis is MatchBasis.NONE:
+            if self.target_guid:
+                raise ValueError(
+                    "MatchBasisRecord with basis=NONE must have an empty "
+                    f"target_guid, got {self.target_guid!r}"
+                )
+        elif not self.target_guid:
+            raise ValueError(
+                f"MatchBasisRecord with basis={self.basis.value} must carry a "
+                "non-empty target_guid"
+            )
+        # A natural-key match is meaningless without the key that produced it.
+        if self.basis is MatchBasis.NATURAL_KEY:
+            if not self.key_expression:
+                raise ValueError(
+                    "MatchBasisRecord with basis=NATURAL_KEY must carry the "
+                    "roster key_expression it was matched by"
+                )
+            if not self.key_value:
+                raise ValueError(
+                    "MatchBasisRecord with basis=NATURAL_KEY must carry the "
+                    "key_value that matched"
+                )
+
+
+@dataclass(frozen=True)
+class NaturalKeyRosterEntry:
+    """Feature 038 (FR-003) -- read-only projection of ONE `entries[]` object
+    from `specs/035-fullsweep-fidelity/contracts/natural-key-identity-roster.json`.
+
+    The roster file is owned by feature 035. This type exists so engine code
+    validates against that file rather than against a second, hand-written
+    list that would inevitably drift from it. Nothing here may be hard-coded:
+    a class absent from the file has NO natural-key basis and the engine must
+    degrade to GUID-only matching for it.
+
+    `key_fn_id` / `scope_fn_id` are 038's additions to the row. They make an
+    entry executable: `key_fn_id` names the pure key-extraction function, and
+    `scope_fn_id` names the destination candidate scope, so a key that is only
+    unique within one owning list is never matched project-wide.
+    """
+    object_class: str
+    natural_key: str
+    key_unique_by_construction: bool
+    on_ambiguous_key: str
+    reason: str
+    key_fn_id: str
+    key_scoping_note: Optional[str] = None
+    uniqueness_caveat: Optional[str] = None
+    live_confirmation: Optional[dict] = None
+    scope_fn_id: Optional[str] = None
+
+    def __post_init__(self) -> None:
+        for name in ("object_class", "natural_key", "on_ambiguous_key",
+                     "reason", "key_fn_id"):
+            if not getattr(self, name):
+                raise ValueError(
+                    f"NaturalKeyRosterEntry.{name} must be non-empty "
+                    f"(object_class={self.object_class!r})"
+                )
+
+
+# ============================================================================
+# Feature 038 -- the per-object-class fidelity census (data-model.md 4-5)
+# ============================================================================
+#
+# TWO NAMING LAYERS, ON PURPOSE. The types below are the IN-MEMORY model and
+# keep `data-model.md`'s field names. The JSON artifact uses the names in
+# `specs/038-transfer-fidelity-gaps/contracts/census-artifact.schema.json`,
+# which is `additionalProperties: false` and is the sole authority for
+# anything emitted. Several names differ, and `content_hash` has no schema
+# counterpart at all. The translation tables below (`*_ARTIFACT_FIELDS`) are
+# the single, machine-readable statement of that mapping; T019's emitter must
+# be driven by them rather than by a third, hand-written set of names.
+#
+# WHERE THE VOCABULARIES LIVE. The closed 18-token reason vocabulary, the
+# census schema version, and the 4-member row verdict-class vocabulary are
+# declared HERE, in `models.py`, and `Lib/census.py` (T020) MUST RE-EXPORT
+# them (`REASON_TOKENS = CENSUS_REASON_TOKENS`, etc.) rather than re-declare
+# them. Reason: the dependency direction is census -> models and never the
+# reverse, so `models.py` cannot import the vocabulary from `census.py`; and
+# `ClassCensusRow` has to reject an out-of-vocabulary token AT CONSTRUCTION
+# (the convention T013 established for this feature), which an injected, and
+# therefore optional, validator cannot guarantee. One literal list, two
+# names, no drift.
+
+#: Census artifact schema version -- `census-artifact.schema.json` top-level
+#: `schema_version`. Bumped only for ADDITIVE change (see that file's
+#: SCHEMA EVOLUTION RULE $comment). `Lib/census.py` re-exports this as
+#: `CENSUS_SCHEMA_VERSION`.
+CENSUS_SCHEMA_VERSION: int = 1
+
+#: FR-013's CLOSED reason vocabulary, in `$defs.reasonToken.enum` order.
+#: There is deliberately no `UNEXPLAINED` and no `OTHER` member: unexplained
+#: is the ABSENCE of an accounting line and must not be launderable into one.
+#: A reason the census cannot classify is a CENSUS_ERROR, not an 18th token.
+#:
+#: APPEND-ONLY, IN SCHEMA ORDER. `SOURCE_REFERENT_ABSENT` was appended (never
+#: reordered, never reworded) by the contract commit b2cb356, which added it
+#: to both places the closed vocabulary lives -- `fidelity-census.md` 7.1 and
+#: `census-artifact.schema.json` `$defs.reasonToken.enum`. `schema_version`
+#: was deliberately NOT bumped: the EVOLUTION RULE's bump clause governs a
+#: SHIPPED version and this format has not shipped.
+#:
+#: `UNREFERENCED_IN_SOURCE` was appended the same way (never reordered, never
+#: reworded) per `contracts/unreferenced-feature-constraint-ruling.md` (T120(a),
+#: 2026-08-28), section 3b. It names a `PhFeatureConstraint` (or a similarly
+#: pooled object) the SOURCE itself never references from any context: the
+#: standing rule forbids creating target objects nothing in the source
+#: references, so the shortfall is fully explained and no transfer is owed.
+#: `schema_version` stays 1 for the same EVOLUTION RULE reason as above.
+CENSUS_REASON_TOKENS: tuple = (
+    "MATCHED_EXISTING_IDENTITY",
+    "MATCHED_EXISTING_NATURAL_KEY",
+    "ENRICHED_EXISTING",
+    "STARTER_CONTENT",
+    "NO_CREATE_PATH",
+    "UNSUPPORTED_SUBTYPE",
+    "DEPENDENCY_UNRESOLVED",
+    "DEPENDENCY_DESELECTED",
+    "NOT_SELECTED",
+    "UNMAPPED_WS",
+    "IDENTITY_COLLISION",
+    "AMBIGUOUS_NATURAL_KEY",
+    "DUPLICATE_CREATED",
+    "GOVERNED_BY_OTHER_FEATURE",
+    "OUT_OF_SCOPE_CLASS",
+    "ABSENT_BY_CONSTRUCTION",
+    "SOURCE_REFERENT_ABSENT",
+    "UNREFERENCED_IN_SOURCE",
+)
+
+#: The five tokens exempt from `accountedLine.report_ref` (fidelity-census.md
+#: R-1). Every other token names run-report content that must be resolvable.
+#: `UNREFERENCED_IN_SOURCE` joins this set per the ruling cited above: nothing
+#: is dropped, so there is correctly no `DroppedItemRecord` to point at, and
+#: R-1 would otherwise demand run-report content that must not exist.
+CENSUS_REASONS_NOT_REQUIRING_REPORT_REF: frozenset = frozenset({
+    "STARTER_CONTENT",
+    "ABSENT_BY_CONSTRUCTION",
+    "OUT_OF_SCOPE_CLASS",
+    "GOVERNED_BY_OTHER_FEATURE",
+    "UNREFERENCED_IN_SOURCE",
+})
+
+#: Reasons that make a row NOT_EVALUATED rather than measured (the schema's
+#: `not_evaluated_reason` $comment). A row that DECLARES ITSELF out of scope
+#: carries one of these.
+#:
+#: T100: this is a subset of `CENSUS_REASON_TOKENS`, and it stays one. A
+#: NOT_EVALUATED row names its reason WHEN THERE IS ONE -- the field is not in
+#: `$defs.classRow.required` and a row is not obliged to carry it. The case
+#: that made the difference visible is an unresolved repository accessor
+#: (T099): none of these three is true of it, and `ABSENT_BY_CONSTRUCTION` is
+#: the abstract-LCM-base case, so stamping it on a class whose repository name
+#: merely DRIFTED would assert the class cannot exist -- a different and false
+#: claim. An 18th token was rejected on evidence: `not_evaluated_reason` is
+#: `$ref: reasonToken`, the SAME def as `accountedLine.reason`, so a token
+#: minted for an uncountable class would immediately be admissible as an
+#: ACCOUNTING line and could retire a shortfall nobody measured; and it would
+#: have to join `CENSUS_REASONS_NOT_REQUIRING_REPORT_REF`, since an unresolved
+#: accessor names no run-report content. The enum's own $comment already rules
+#: on it: "A reason the census cannot classify is CENSUS_ERROR." Such a row
+#: therefore carries NO reason and states its cause in `errors[]`, and
+#: `census.uncorroborated_null_rows` (invariant 12) is what stops that from
+#: being a way to go quiet.
+CENSUS_NOT_EVALUATED_REASONS: frozenset = frozenset({
+    "ABSENT_BY_CONSTRUCTION",
+    "OUT_OF_SCOPE_CLASS",
+    "GOVERNED_BY_OTHER_FEATURE",
+})
+
+#: `$defs.classRow.verdict_class.enum`. Carried explicitly in the artifact so
+#: no reader has to infer intent from the sign of an integer.
+CENSUS_ROW_VERDICT_CLASSES: tuple = (
+    "MATCHED", "SHORTFALL", "SURPLUS", "NOT_EVALUATED",
+)
+
+# ---------------------------------------------------------------------------
+# T079 (R7) -- the report-only residue, and the row STATE that keeps it
+# distinguishable from a class this feature undertook to keep correct.
+#
+# R7's residual risk, verbatim: "A report-only class can stay broken
+# indefinitely once it has a report line, because the gate goes green.
+# Mitigated by `status: 'unmeasurable'` being a distinct census value from
+# '"match"', so a follow-up feature can count what is still merely explained,
+# not fixed."
+#
+# T078 measured that risk arriving INVERTED, and bigger than R7's list. On the
+# three sanctioned pairs (ejagham, ngoreme, mbugwe) the report-only classes
+# below read MATCHED as follows:
+#
+#   FsComplexFeature   1/1,    2/2,    1/1     -- green on all three
+#   FsSymFeatVal      51/51,  90/90,  70/70    -- green on all three
+#   FsClosedFeature   20/20,  24/24,  21/21    -- green on all three
+#   LexEntryInflType   diff 0 on all three, 0 duplicate groups
+#   PhFeatureConstraint  MATCHED on ejagham (0 of them) -- and -47 / -32
+#   LexReference         MATCHED on ejagham and mbugwe (0) -- and -5 on ngoreme
+#   CmFile               MATCHED on ejagham (0) -- and -2 / -2173
+#   Segment              MATCHED on ejagham (198/198) -- and -26666 / -2
+#   CmTranslation        MATCHED on ejagham (68/68) and mbugwe (0) -- and -7923
+#
+# So a report-only class reads MATCHED whenever the corpus happens not to
+# exercise it, and `census._phase_5` passes such a row with a bare `continue`.
+# That is R7's rot, measured: nine of the classes below can present as a green
+# gate on one pair while losing thousands of objects on another.
+#
+# THE VOCABULARY DECISION, and what was rejected.
+#
+# * REJECTED: R7's literal spelling `unmeasurable`. That word is ALREADY TAKEN
+#   in this codebase, for a different and load-bearing meaning --
+#   `census.ClassCounts.unmeasurable` is the per-PROJECT set of classes whose
+#   repository accessor did not resolve, `census.unmeasurable_errors` turns
+#   each into a CENSUS_ERROR, and `ClassCensusRow._check_null_counts` reasons
+#   about it by name. Reusing it would make one word mean both "we could not
+#   count this" and "we counted it, it agrees, and nobody here owns it". It
+#   would also be FALSE: every class below was measured, to the object.
+#   `PhCode` -43 / -89 / -79 is a measurement, not the absence of one.
+# * REJECTED: three tokens for T078's three situations. Only ONE of them
+#   collapses into "match". Measured-and-differing already carries SHORTFALL
+#   (and, with no accounting line, an `unexplained` state); excluded-from-the-
+#   delta already carries NOT_EVALUATED plus `OUT_OF_SCOPE_CLASS` /
+#   `GOVERNED_BY_OTHER_FEATURE` (`CmAnthroItem` 859 -> 0, which is why it is
+#   deliberately NOT on the roster below). Minting a token for either would be
+#   a second name for a state the artifact already states correctly.
+# * REJECTED: an 18th `CENSUS_REASON_TOKENS` member, and reusing
+#   `GOVERNED_BY_OTHER_FEATURE` on these rows. Both are in
+#   `CENSUS_NOT_EVALUATED_REASONS`, so putting one in `ClassCensusRow.reasons`
+#   flips `verdict_class` to NOT_EVALUATED and deletes the measured shortfall
+#   from `total_shortfall` and from the gate. That is laundering a red run,
+#   not reporting it. Nothing here touches `reasons`, `explained`,
+#   `gate_scope`, `verdict_class` or any tally.
+#
+#   RECONCILIATION (T120(a), 2026-08-28): `CENSUS_REASON_TOKENS` DID later
+#   grow an 18th member, `UNREFERENCED_IN_SOURCE`
+#   (`contracts/unreferenced-feature-constraint-ruling.md`). This does not
+#   contradict the rejection above, because the rejection's grounds turn on
+#   NOT_EVALUATED-set membership, not on the raw count. The token this
+#   paragraph rejected would have joined `CENSUS_NOT_EVALUATED_REASONS` --
+#   that is what made it launder a red run. `UNREFERENCED_IN_SOURCE` is
+#   DELIBERATELY NOT a member of `CENSUS_NOT_EVALUATED_REASONS` (see that
+#   frozenset's own definition below, which does not list it): a row it
+#   accounts for stays `SHORTFALL`, stays in `total_shortfall`, and stays in
+#   the gate's arithmetic. Only the *explanation* is added, via
+#   `accounted_for`, exactly as `report_only` (chosen below) added an
+#   explanation without moving `verdict_class`. The two decisions are the same
+#   shape: widen the vocabulary that explains a row, never the vocabulary that
+#   excuses one from being counted. Checked and does NOT bite; the token is
+#   safe to add. (This paragraph documents the reconciliation asked for at the
+#   time of the append; it is not itself a new rejection.)
+# * CHOSEN: a new member of the row-STATE vocabulary, `report_only`, distinct
+#   from `matched`. The state vocabulary is CONSOLE-ONLY -- it is the "state"
+#   column and the "Rows by state:" tally in `report._render_census_lines`,
+#   and it is NOT a property of `census-artifact.schema.json`. So
+#   `schema_version` stays 1, no enum in the contract moves, and the artifact
+#   is byte-identical. The report is what changes, which is what R7 asked for:
+#   "Phase 5 fixes nothing directly ... gets a run-report line with a reason."
+# ---------------------------------------------------------------------------
+
+#: The CONSOLE row-state vocabulary, MOST URGENT FIRST -- a presentation order
+#: over one census row, NOT a verdict severity ordering (the published
+#: severity ordering is over the nine RUN verdicts and lives in
+#: `census.VERDICT_SEVERITY_ORDER`, which this must not be mistaken for or
+#: derived from). Ordering matters because the console may truncate: whatever
+#: is held back must be the least urgent rows, never a shortfall nobody
+#: accounted for.
+#:
+#: DECLARED HERE, and `report.py`'s `_CENSUS_ROW_TIERS` RE-EXPORTS it. This
+#: list used to be declared in `report.py`; T079 MOVED it (it did not fork it)
+#: so the one place a state value is written down is the same module every
+#: other census vocabulary is written down in -- `Lib/census.py:20`'s rule,
+#: "THE VOCABULARIES ARE RE-EXPORTS, NEVER RE-DECLARATIONS".
+#:
+#: `report_only` is T079's addition and is deliberately placed ABOVE
+#: `not_evaluated` and `matched`: a report-only row carries LIVE numbers a
+#: follow-up feature has to count, so it must not sort down among the rows
+#: that agree. It is placed BELOW `unexplained`, because a report-only class
+#: with an unaccounted loss keeps its `[FAIL] UNEXPLAINED` line -- the state
+#: exists to stop a green row reading as a promise, never to soften a red one.
+CENSUS_ROW_STATES: tuple = (
+    "unexplained",     # a gate failure, named first
+    "accounted",       # a real difference, but a reason names it
+    "report_only",     # T079: measured, reported, NOT undertaken here
+    "not_evaluated",   # reported without being measured
+    "matched",         # source and destination agree AND 038 owns that
+)
+
+#: The one state value T079 adds, spelled once. Named so no caller writes the
+#: string a second time and no typo can silently create a sixth state.
+CENSUS_REPORT_ONLY_STATE: str = "report_only"
+
+#: R7's report-only residue, as re-scoped by T078's post-037 census of all
+#: three sanctioned pairs: class -> (owner, reason). GATE-INERT BY
+#: CONSTRUCTION -- nothing reads this to decide a verdict, an exit code, a
+#: `gate_scope`, a `verdict_class` or a tally. It decides one word in the
+#: console state column and the contents of one report block.
+#:
+#: `owner` names who the class belongs to, or says plainly that nobody does.
+#: "a report line the user cannot act on is not a report" (SC-010), and
+#: "report-only" without a successor is exactly such a line.
+#:
+#: `MoInflClass` IS NOT HERE, and that absence is the finding. R7's prose lists
+#: it as report-only ("5 -> 0, expected to close as a side effect of Phases
+#: 1/3"), but `census.PHASE_3_OWNED_CHILD_CLASSES` names it and
+#: `census._phase_1..._phase_4` require it MATCHED, so this feature has an
+#: EXECUTABLE gate on it. Where the prose and the gate disagree, the gate wins:
+#: rostering a class a phase predicate gates on would be exactly the dodge
+#: T079's second test direction forbids, and `CENSUS_PHASE_GATED_CLASSES`
+#: below is what makes that unfalsifiable rather than a promise.
+#:
+#: `CmAnthroItem` is not here either: it is NOT_EVALUATED with
+#: `OUT_OF_SCOPE_CLASS` on all three pairs, a state already distinct from
+#: `matched`, and T078 ruled it excluded rather than report-only.
+#:
+#: T113 -- THIS ROSTER IS A SUPERSET OF
+#: `CENSUS_GOVERNED_BY_OTHER_FEATURE_CLASSES`, AND THAT IS NOW CHECKED. A
+#: class another feature governs is by definition measured here, reported
+#: here and undertaken elsewhere, which is exactly what `report_only` says;
+#: so every governed class belongs on this roster, while the converse stays
+#: false (the phonology family, the Fs* cascade and `CmFile` are report-only
+#: with NO successor feature, which is precisely why they are not governed).
+#: T109 derived its roster from `spec.md`'s three named paths and landed 14
+#: classes where this one held 9 of them: `Text`, `TextTag`, `ReversalIndex`,
+#: `ReversalIndexEntry` and `CmPicture` were absent while `StText`,
+#: `StTxtPara` and the four `Wfi*` were present -- one feature's classes split
+#: across two states, so `_census_row_tier` printed `report_only` for `StText`
+#: and plain `accounted` for the `Text` that OWNS it via `ContentsOA`. The five
+#: are added below; `report.report_only_roster_defects` check 5 is what stops
+#: the gap reopening, since its other four checks look only for a class that
+#: should not be ON the roster and were structurally blind to one missing
+#: from it.
+CENSUS_REPORT_ONLY_RESIDUE: dict = {
+    # -- R7's explicit decision: a create path exists and nothing takes it. --
+    "FsComplexFeature": (
+        "nobody -- R7 named no successor",
+        "report-only by R7's explicit decision. The create path EXISTS "
+        "(contracts/feature-system-create-path.md: all 13 Fs* factories "
+        "expose Create(Guid)); 038 simply does not undertake it. Measured "
+        "1/1, 2/2, 1/1 -- green on all three pairs, and green with no code "
+        "behind it, which is the state this word exists to say out loud",
+    ),
+    # -- R7 expected these to close as a SIDE EFFECT of Phases 1/3 and to be
+    #    "verified by re-census rather than coded separately". T078 confirms
+    #    they did. A side effect is not a guarantee: no phase predicate names
+    #    them, so nothing in 038 fails if a fourth corpus diverges. --
+    "LexEntryInflType": (
+        "038 Phases 1/3, as a side effect only -- no phase predicate names it",
+        "R7 recorded a '+1 excess (R1 create-anyway)'. T078 measures "
+        "difference 0 on all three pairs (7->7, 3->4, 4->5) with 0 duplicate "
+        "groups: the +1 nets to zero against the starter baseline. Closed as "
+        "predicted, and unguarded",
+    ),
+    "FsSymFeatVal": (
+        "038 Phases 1/3, as a side effect only -- no phase predicate names it",
+        "part of R7's 'bulk of the Fs* cascade'. 51/51, 90/90, 70/70 -- "
+        "closed, and unguarded",
+    ),
+    "FsClosedFeature": (
+        "038 Phases 1/3, as a side effect only -- no phase predicate names it",
+        "part of R7's 'bulk of the Fs* cascade'. 20/20, 24/24, 21/21 -- "
+        "closed, and unguarded",
+    ),
+    # -- the phonological-context family. R7 deferred all six "to the post-037
+    #    re-census since 037's structural-rebuild path may already move
+    #    these". T078's post-037 answer: 037 moved NONE of them. --
+    "PhSequenceContext": (
+        "037's successor, or a later phonology feature -- not 038",
+        "measured -40, -2, -11. T076/T077 moved mbugwe -17 -> -11 and "
+        "ngoreme -3 -> -2: moved, not closed",
+    ),
+    "PhSimpleContextNC": (
+        "037's successor, or a later phonology feature -- not 038",
+        "measured -38, -7, -23. T076/T077 moved mbugwe -28 -> -23",
+    ),
+    "PhSimpleContextSeg": (
+        "037's successor, or a later phonology feature -- not 038",
+        "measured -27, -3, -21. T076/T077 moved mbugwe -23 -> -21",
+    ),
+    "PhSimpleContextBdry": (
+        "T107 CLOSED the affix-process route; the phonological-rule and "
+        "shared-pool routes are 037's successor's, not 038's",
+        "T078 measured -9, -4, -15 and named this the ONLY class blocking 13 "
+        "of the corpus's 32 affix process rules. T107 gave it a create path "
+        "on both routes and RE-MEASURED two pairs: ejagham 10 -> 10 MATCHED "
+        "(was 10 -> 1), and mbugwe -15 UNMOVED, correctly -- not one of its "
+        "18 rules references a boundary context, which is the measurement "
+        "T076 was right about. ngoreme -4 is T078's figure and was NOT "
+        "re-measured -- its single affix process rule already reproduced, so "
+        "nothing T107 changed can reach that pair. The class stays rostered "
+        "because what remains on every pair is owned elsewhere -- contexts "
+        "under PhSegRuleRHS (phonological rules) and directly under "
+        "PhPhonData (the shared pool no affix process rule reaches)",
+    ),
+    "PhCode": (
+        "037's successor, or a later phonology feature -- not 038",
+        "measured -43, -89, -79, and the destination reads 25 on ALL THREE "
+        "pairs -- exactly the starter baseline, so not one PhCode was ever "
+        "created. flexicon's phoneme GetSyncableProperties omits CodesOS, so "
+        "nothing carries it (contracts/fidelity-census.md CP-4)",
+    ),
+    "PhFeatureConstraint": (
+        "037's successor, or a later phonology feature -- not 038",
+        "measured 0, -47, -32. MATCHED on ejagham only because Ejagham W Mini "
+        "holds none of them -- a vacuous green, and precisely why this class "
+        "must not read as 'matched' on that pair",
+    ),
+    # -- named individually by R7, outside the phonology family. --
+    "LexReference": (
+        "the lexical-relations path -- not 038",
+        "measured 0, -5, 0. R7's '5 -> 0' reproduces exactly and unchanged; "
+        "MATCHED on the two pairs that hold none",
+    ),
+    "CmFile": (
+        "the media/pictures path -- not 038",
+        "measured 0, -2, -2173. R7 records 'CmFile 2 -> 0' as a property of "
+        "the transfer; it is a Ngoreme FLEx reading. On mbugwe it is "
+        "2173 -> 0, three orders of magnitude larger. The class stays "
+        "report-only; R7's NUMBER does not survive re-scoping",
+    ),
+    #: T081 (4th re-gate) ADDS `CmFolder`, and its absence was the T113 gap
+    #: reopening in the same roster T113 was filed against: `CmFile` was
+    #: rostered while the `CmFolder` that OWNS it via `CmFolder.Files` was not,
+    #: so `_census_row_tier` printed `report_only` for the files and plain
+    #: `accounted` for the folder holding them -- one path split across two
+    #: states. `CENSUS_RULED_RESIDUE_CLASSES` names both, and `report.py`'s
+    #: check 6 is what stops either half being rostered without the other.
+    "CmFolder": (
+        "the media/pictures path and the Scripture-import path -- not 038",
+        "measured 0, -1, -3. Two populations under one class name, ruled "
+        "separately in `contracts/straggler-rulings.md` #6: the media folders "
+        "under `LangProject.Pictures` / `LangProject.Media` (mbugwe) and the "
+        "`ScrImportSFFiles` folder (ngoreme). Owner of `CmFile` above",
+    ),
+    # -- the half of the Fs* cascade that did NOT close, carrying the volume. --
+    "FsFeatStruc": (
+        "a later feature -- the MSA feature-structure cascade, not 038",
+        "measured -138, -1691, -198. R7 expected 'the bulk of the Fs* "
+        "cascade' to close as a side effect; it held for FsSymFeatVal and "
+        "FsClosedFeature and failed for the two members carrying the volume",
+    ),
+    "FsClosedValue": (
+        "a later feature -- the MSA feature-structure cascade, not 038",
+        "measured -562, -2045, -630. The other half of the cascade R7 "
+        "expected to close",
+    ),
+    # -- texts and wordforms: "governed by its own feature" (R7), and the
+    #    magnitude is the point. Over 50,000 objects on ngoreme alone, which
+    #    is why `total_shortfall` (70,646 there) is unusable as a headline for
+    #    this feature's work. --
+    "Text": (
+        "the texts/wordforms feature -- not 038",
+        "measured 0, -14, 0. T113: the text object itself, OWNER of `StText` "
+        "below via ContentsOA. Absent until T113 while its own child was "
+        "rostered, so the console printed two different states for two halves "
+        "of one path",
+    ),
+    "TextTag": (
+        "the texts/wordforms feature -- not 038",
+        "source_count 0 on all three pairs, so every reading is a vacuous "
+        "0 -> 0. T113: rostered for the same reason `PhFeatureConstraint` is "
+        "-- a green with no code behind it must not read as `matched` -- and "
+        "it is `Text.TagsOC`, the same feature's work",
+    ),
+    "WfiWordform": (
+        "the texts/wordforms feature -- not 038",
+        "measured -297, -8191, -1187",
+    ),
+    "WfiMorphBundle": (
+        "the texts/wordforms feature -- not 038",
+        "measured -380, -4977, -1915",
+    ),
+    "WfiAnalysis": (
+        "the texts/wordforms feature -- not 038",
+        "measured -184, -1628, -822",
+    ),
+    "WfiGloss": (
+        "the texts/wordforms feature -- not 038",
+        "measured -125, -752, -683",
+    ),
+    "Segment": (
+        "the texts/wordforms feature -- not 038",
+        "measured 0, -26666, -2. MATCHED on ejagham (198/198) while losing "
+        "26,666 objects on ngoreme -- the same class, one corpus green",
+    ),
+    "StText": (
+        "the texts/wordforms feature -- not 038",
+        "measured -17, -4903, -15",
+    ),
+    "StTxtPara": (
+        "the texts/wordforms feature -- not 038",
+        "measured -91, -5568, -89",
+    ),
+    "CmTranslation": (
+        "the texts/wordforms feature -- not 038",
+        "measured 0, -7923, 0. MATCHED on ejagham (68/68) and on mbugwe "
+        "(0/0); -7923 on ngoreme. Carried in the census only because CP-4's "
+        "additions ledger put it there",
+    ),
+    "PunctuationForm": (
+        "the texts/wordforms feature -- not 038",
+        "measured -775, -3994, -1126",
+    ),
+    # -- T113: reversal indexes. The spec's Assumptions name the path and
+    #    neither class was rostered, so `ReversalIndex` -- a SHORTFALL on all
+    #    three pairs -- read as merely `accounted` once T109 gave it a
+    #    governed accounting line. --
+    "ReversalIndex": (
+        "the reversal-index feature -- not 038",
+        "measured -2, -2, -2: the only class on any governed path that is a "
+        "SHORTFALL on ALL THREE pairs. `Lib/categories.py`'s reversal path "
+        "builds `ReversalDecision`s for the PREVIEW only",
+    ),
+    "ReversalIndexEntry": (
+        "the reversal-index feature -- not 038",
+        "measured -14, 0, 0. The -14 is ejagham's 144 -> 130; the two zeros "
+        "are pairs holding none (source_count 0), which is a vacuous green "
+        "and not a transfer this feature got right",
+    ),
+    # -- T113: sense pictures. ONE class, and it is the one the Assumptions'
+    #    clause names. `CmFile` is rostered separately under "the
+    #    media/pictures path" and is NOT this: with no CmPicture anywhere on
+    #    any pair, the 2176 objects it and `CmFolder` lose cannot be sense
+    #    pictures (T109's measured ruling). --
+    "CmPicture": (
+        "the sense-pictures feature -- not 038",
+        "source_count 0 on all three pairs, so every reading is a vacuous "
+        "0 -> 0. Rostered because it is the class the Assumptions' 'sense "
+        "pictures' clause names, and its emptiness is what keeps `CmFile` and "
+        "`CmFolder` off the governed roster",
+    ),
+}
+
+#: Every class a 038 phase predicate NAMES, i.e. every class this feature has
+#: an executable gate on. A class here can NEVER be report-only, and
+#: `report.py` enforces the disjointness at import time rather than trusting
+#: the two lists to stay apart -- reclassifying an owned class as report-only
+#: is the one direction that would let this feature dodge its own gate.
+#:
+#: Spelled as NAMES rather than imported from `census.py` because the
+#: dependency direction is census -> models and never the reverse (see
+#: `CENSUS_REASON_TOKENS`'s block above). `report.py`, which imports both,
+#: asserts this set equals the union of `census.PHASE_1_CLASSES`,
+#: `PHASE_2_MATCHED_CLASSES`, `PHASE_3_CLASSES` and `PHASE_4_CLASSES`, so the
+#: copy cannot drift from the predicates it mirrors.
+CENSUS_PHASE_GATED_CLASSES: frozenset = frozenset({
+    "MoStemMsa", "MoInflAffMsa", "MoDerivAffMsa", "MoUnclassifiedAffixMsa",
+    "PartOfSpeech", "PhPhoneme",
+    "MoInflAffixTemplate", "MoInflAffixSlot",
+    "MoInflClass", "MoStemName", "MoStemAllomorph", "MoMorphType",
+    "MoAffixProcess", "MoAffixAllomorph",
+})
+
+# ---------------------------------------------------------------------------
+# T109 -- the classes another feature GOVERNS, and the accounting line that
+# says so.
+#
+# THIS IS NOT `CENSUS_REPORT_ONLY_RESIDUE` AND IS DELIBERATELY NOT DERIVED FROM
+# IT. The two rosters answer different questions and are different sets:
+#
+#   * the residue roster decides ONE WORD in a console column, for a class
+#     NOBODY owns ("nobody -- R7 named no successor"; "037's successor, or a
+#     later phonology feature"). It is gate-inert by construction, so an entry
+#     naming a successor that does not exist costs nothing.
+#   * this roster emits an `accounted_for` LINE, which is LOAD-BEARING on P5:
+#     `census.PHASE_5_ADMISSIBLE_REASONS` admits `GOVERNED_BY_OTHER_FEATURE`
+#     and `census.unexplained_counts` subtracts the line's count, so a row here
+#     goes from red to green. An entry is admissible only when an OWNER IS
+#     NAMED BY THE SPEC, never merely guessed at.
+#
+# THE DERIVATION, and it has exactly one source. `spec.md`'s Assumptions:
+# "Sense pictures, reversal indexes, and the texts/wordforms path are governed
+# by their own features. Where the census shows differences in those classes,
+# this feature reports them; it does not fix them." The contract says the same
+# in the token's own row (`contracts/fidelity-census.md:373` -- "Texts/
+# wordforms, reversals, and sense pictures ... Needs no `report_ref`") and
+# validator invariant 5 exempts the token from `report_ref` precisely so the
+# line can be emitted. Three named paths; this roster is the classes on them,
+# and nothing else.
+#
+# THAT DERIVATION IS WHAT KEEPS THE PHONOLOGY FAMILY OUT. `PhSequenceContext`,
+# `PhSimpleContext{Bdry,NC,Seg}`, `PhCode` and `PhFeatureConstraint` sit in the
+# residue roster under "037's successor, or a later phonology feature -- not
+# 038", which names no feature that exists. T079 called that "a claim someone
+# must own before it can be an accounting line" and nobody has; the Fs*
+# cascade ("a later feature"), `CmPossibility`, `MoAffixProcess` (Phase 4's own
+# defect) and `PhNCFeatures` (T082) are out for the same reason or because 038
+# owns them outright.
+#
+# `CmFile` AND `CmFolder` ARE OUT, AND THE REASON IS MEASURED RATHER THAN
+# ARGUED. The contract clause hands over "sense pictures"; the class that IS
+# sense pictures is `CmPicture`, and on all three sanctioned pairs `CmPicture`
+# is 0 -> 0. The objects that actually go missing are `CmFile` (0, -2, -2173)
+# and `CmFolder` (0, -1, -3), and on those same pairs they cannot be
+# sense-picture referents because there is no sense picture anywhere to refer
+# to them. They are the project's media folder -- a path the Assumptions name
+# nowhere, with no successor feature -- so an entry for them would be exactly
+# the unowned claim the paragraph above refuses. `CENSUS_REPORT_ONLY_RESIDUE`
+# already carries `CmFile` under "the media/pictures path -- not 038", which is
+# the right home for a display word and the wrong one for a gate-bearing line.
+#
+# `(owner, reason)`, the same shape as `CENSUS_REPORT_ONLY_RESIDUE` and the
+# same rule: BOTH halves required, because "report-only without a successor is
+# a line the user cannot act on" (SC-010) is twice as true of a line that turns
+# a red row green. Every `reason` carries the measured difference on the three
+# sanctioned pairs in the order (ejagham, ngoreme, mbugwe), read off T078's
+# censuses, so an entry cannot be a class somebody merely believed was lossy.
+#
+# TWO ENTRIES ARE PROMISES RATHER THAN ACCOUNTING LINES and say so in their own
+# text: `TextTag` and `CmPicture` have `source_count` 0 on all three pairs, so
+# no committed census can stamp either. They stay because the derivation is the
+# spec's three paths, and a roster that silently dropped the only class the
+# "sense pictures" clause actually names would make that derivation
+# unfalsifiable.
+CENSUS_GOVERNED_BY_OTHER_FEATURE_CLASSES: dict = {
+    # -- the texts/wordforms path. The magnitude is why this roster exists:
+    #    64,616 of ngoreme's 70,646 `total_shortfall` is on these eleven rows.
+    "Text": (
+        "the texts/wordforms feature (spec.md Assumptions) -- not 038",
+        "measured 0, -14, 0. The text object itself, owner of `StText` below "
+        "via ContentsOA. NOT in CENSUS_REPORT_ONLY_RESIDUE -- a gap in that "
+        "roster rather than a reason to leave it out here, since a roster that "
+        "governed `StText` and not the `Text` owning it would describe half a "
+        "path",
+    ),
+    "TextTag": (
+        "the texts/wordforms feature (spec.md Assumptions) -- not 038",
+        "A PROMISE, NOT AN ACCOUNTING LINE: source_count 0 on all three "
+        "pairs, so no committed census can stamp it. Rostered because it is "
+        "`Text.TagsOC`, text annotation, the same feature's work",
+    ),
+    "StText": (
+        "the texts/wordforms feature (spec.md Assumptions) -- not 038",
+        "measured -17, -4903, -15",
+    ),
+    "StTxtPara": (
+        "the texts/wordforms feature (spec.md Assumptions) -- not 038",
+        "measured -91, -5568, -89",
+    ),
+    "Segment": (
+        "the texts/wordforms feature (spec.md Assumptions) -- not 038",
+        "measured 0, -26666, -2. The largest single row on the whole corpus, "
+        "and MATCHED on ejagham (198/198) -- one class, one corpus green, "
+        "which is why the ROSTER is per class and the LINE is per row",
+    ),
+    "CmTranslation": (
+        "the texts/wordforms feature (spec.md Assumptions) -- not 038",
+        "measured 0, -7923, 0. Carried in the census only because CP-4's "
+        "additions ledger put it there",
+    ),
+    "PunctuationForm": (
+        "the texts/wordforms feature (spec.md Assumptions) -- not 038",
+        "measured -775, -3994, -1126",
+    ),
+    "WfiWordform": (
+        "the texts/wordforms feature (spec.md Assumptions) -- not 038",
+        "measured -297, -8191, -1187",
+    ),
+    "WfiAnalysis": (
+        "the texts/wordforms feature (spec.md Assumptions) -- not 038",
+        "measured -184, -1628, -822",
+    ),
+    "WfiGloss": (
+        "the texts/wordforms feature (spec.md Assumptions) -- not 038",
+        "measured -125, -752, -683",
+    ),
+    "WfiMorphBundle": (
+        "the texts/wordforms feature (spec.md Assumptions) -- not 038",
+        "measured -380, -4977, -1915",
+    ),
+    # -- reversal indexes. NEITHER class is in CENSUS_REPORT_ONLY_RESIDUE even
+    #    though the Assumptions name the path -- the second gap in that
+    #    roster, and the reason this one is declared rather than derived.
+    "ReversalIndex": (
+        "the reversal-index feature (spec.md Assumptions) -- not 038",
+        "measured -2, -2, -2: SHORTFALL on ALL THREE pairs, the only governed "
+        "class of which that is true. `Lib/categories.py`'s reversal path "
+        "builds `ReversalDecision`s for the PREVIEW only, and no census phase "
+        "predicate names either reversal class",
+    ),
+    "ReversalIndexEntry": (
+        "the reversal-index feature (spec.md Assumptions) -- not 038",
+        "measured -14, 0, 0. MATCHED on the two pairs holding none "
+        "(source_count 0); the -14 is ejagham's 144 -> 130",
+    ),
+    # -- sense pictures. ONE class, and it is the one the clause names.
+    "CmPicture": (
+        "the sense-pictures feature (spec.md Assumptions) -- not 038",
+        "A PROMISE, NOT AN ACCOUNTING LINE: 0 -> 0 on all three pairs, so no "
+        "committed census can stamp it. It is here because it is the class the "
+        "Assumptions' 'sense pictures' clause names, and its emptiness is the "
+        "measurement that keeps `CmFile` and `CmFolder` OUT: those two lose "
+        "2176 objects between them with no CmPicture anywhere to refer to "
+        "them, so they are the media folder and not sense pictures",
+    ),
+}
+
+# ---------------------------------------------------------------------------
+# T081 (4th re-gate) -- the classes a COMMITTED RULING has taken off this
+# feature's hook, and the accounting line that finally says so IN THE ARTIFACT.
+#
+# WHAT THIS ROSTER IS FOR, and it is one half of T081's residue rather than the
+# whole of it. The 4th re-gate reads 6 / 10 / 7 P5 failures on
+# `census-038-t126-{ejagham,ngoreme,mbugwe}.json`, and they split two ways:
+#
+#   (i)  a real, unattributed loss (`LexReference`, `PhFeatureConstraint`, the
+#        `FsFeatStruc`/`FsClosedValue` cascade, ngoreme's one `MoStemMsa`).
+#        Those are blocked on human rulings and NOTHING here may touch them.
+#   (ii) a class that ALREADY HAS A WRITTEN, COMMITTED RULING while nothing in
+#        the instrument writes that ruling into `accounted_for` -- so the gate
+#        reports an UNEXPLAINED shortfall for a shortfall that is, on the
+#        record, explained. That is an instrument gap, not a fidelity gap, and
+#        this roster closes it.
+#
+# THIS IS NOT `CENSUS_GOVERNED_BY_OTHER_FEATURE_CLASSES` AND MUST NOT BE MERGED
+# INTO IT. That roster answers "which feature OWNS this class"; its derivation
+# is `spec.md`'s three named paths and its own comment refuses `CmFile` /
+# `CmFolder` by name, because naming an owner for them would be an unowned
+# claim. This roster answers a different question -- "which committed RULING
+# takes this population off 038's hook" -- and the answer is a document in
+# `specs/038-transfer-fidelity-gaps/contracts/`, not a successor feature. The
+# two rosters are enforced DISJOINT at import (`Lib/census.py`'s T081 lock), so
+# a class can be governed or ruled, never both.
+#
+# `(reason_token, ruling, max_claim, reason)`. Four positions, all four
+# load-bearing:
+#
+# * `reason_token` -- the FR-013 token the emitted line carries, PER CLASS.
+#   Deliberately not one constant for the whole roster: the five classes T081
+#   named do not share a ruling and must not be made to share a word (T115's
+#   lesson, and `straggler-rulings.md` is six rulings for six items precisely
+#   because a single class-level ruling would have been wrong in one direction
+#   or the other). The token must be one of `CENSUS_REASONS_NOT_REQUIRING_
+#   REPORT_REF` -- this roster has no run-report content to resolve against, so
+#   any other token would be refused by `AccountedLine`'s R-1 check AT
+#   CONSTRUCTION and the line could never be emitted. That is not a limitation
+#   worked around; it is the invariant deciding which rulings this mechanism
+#   may express (see `MoAffixProcess` below, which it excludes).
+# * `ruling` -- the committed document, by path, that did the ruling. The
+#   analogue of the governed roster's `owner`, and required for the same
+#   reason: SC-010's "a report line the user cannot act on is not a report" is
+#   twice as true of a line that turns a red row green, and a reader must be
+#   able to go and disagree with the ruling rather than only with the line.
+# * `max_claim` -- `None` when the WHOLE difference is ruled, or an integer
+#   when only a named SUB-POPULATION is. `PhCode` is why the position exists:
+#   T121's ruling covers exactly the 2 `PhBdryMarker`-owned codes and the
+#   phoneme half of the same class passes 3 of 3, so a line claiming the row's
+#   whole room would, the first time the phoneme half regressed, explain away
+#   a loss the ruling never looked at.
+# * `reason` -- the measured difference on the three sanctioned pairs in the
+#   order (ejagham, ngoreme, mbugwe), plus the ruling's own words. Same rule as
+#   the governed roster: an entry cannot be a class somebody merely believed
+#   was ruled.
+#
+# TWO OF T081's FIVE ARE DELIBERATELY ABSENT, and saying why is part of the
+# deliverable:
+#
+# * `LexEntryType`. Its ruling (`straggler-rulings.md` #3) is a MAGNITUDE
+#   correction -- "in scope, magnitude corrected to -1 / -1", against
+#   `difference_raw` -- not an exemption. IN SCOPE cannot be
+#   `OUT_OF_SCOPE_CLASS`; no successor is named, so it cannot be governed; 12
+#   of 13 objects arrived, so it is not `NO_CREATE_PATH`; and the ruling closes
+#   with "one object per pair with NO ATTRIBUTED CAUSE". One unattributed
+#   object is an unexplained shortfall, and there is deliberately no
+#   `UNEXPLAINED` token to launder it into. The census already records the
+#   -12/-1 correction the only honest way it can: the row's basis is
+#   `baseline_gross`, so 5.2's cap marks its unexplained tally ADVISORY and
+#   says so in a note on every run.
+# * `MoAffixProcess`. Its ruling (`straggler-rulings.md` #5) DOES support a
+#   line -- "correctly refused; no fix is available in this repo", the cause
+#   being an `MoCopyFromInput` whose content is empty IN THE SOURCE -- but not
+#   one this roster may emit, on two independent grounds. First, the honest
+#   token is `SOURCE_REFERENT_ABSENT`, which is NOT report_ref-exempt, and the
+#   evidence it needs exists (a `ProcessRuleTransferRecord` corroborated by a
+#   `DroppedItemRecord`, same GUID, same reason verbatim), so the line belongs
+#   on `census_cli.PROCESS_RULE_REASON_TOKENS` where that evidence is read --
+#   which is where it now is. Second, `MoAffixProcess` is named by PHASE 4's
+#   own predicate, and T109 LOCK 1's argument applies verbatim: a class this
+#   feature has an executable gate on must not be able to buy a P5 pass off a
+#   roster.
+CENSUS_RULED_RESIDUE_CLASSES: dict = {
+    # -- T123 straggler 6. TWO POPULATIONS, TWO RULINGS, one class name; the
+    #    ruling is per population and both populations are out, so the whole
+    #    difference is claimable and `max_claim` is None.
+    "CmFile": (
+        "OUT_OF_SCOPE_CLASS",
+        "contracts/straggler-rulings.md #6 (T123, 2026-08-26)",
+        None,
+        "measured 0, -2, -2173. mbugwe's 2173 are owned by `CmFolder.Files` "
+        "under `LangProject.Pictures` / `LangProject.Media`: 'OUT OF SCOPE -- "
+        "media assets are not grammar', and `CmPicture` is 0 -> 0 on all "
+        "three pairs, so the Assumptions' only picture-adjacent clause cannot "
+        "reach them. ngoreme's 2 are owned by `ScrImportSFFiles.Files`: 'OUT "
+        "OF SCOPE -- Scripture content, same ruling as "
+        "`Scripture.NoteCategories`'. MATCHED on ejagham (0 -> 0), so the "
+        "line is emitted on two pairs of three",
+    ),
+    "CmFolder": (
+        "OUT_OF_SCOPE_CLASS",
+        "contracts/straggler-rulings.md #6 (T123, 2026-08-26)",
+        None,
+        "measured 0, -1, -3. The OWNER of `CmFile` above, via `CmFolder.Files` "
+        "-- the same two populations under the same two rulings, and rostering "
+        "the owned class without the owning one would describe half a path "
+        "(T113's lesson, in the roster T113 was filed against)",
+    ),
+    # -- T121's boundary-marker half, as amended 2026-08-28. CAPPED, and the
+    #    cap is the whole reason `max_claim` exists.
+    "PhCode": (
+        "STARTER_CONTENT",
+        "contracts/boundary-marker-code-ruling.md (T121, amended 2026-08-28)",
+        2,
+        "measured -2, -2, 0, and on the two failing pairs the -2 IS the two "
+        "`PhBdryMarker`-owned codes to the object: source 43 = 41 phoneme + 2 "
+        "boundary, destination 66 = 64 phoneme + 2 boundary, and 64 - 23 "
+        "starter = the 41 phoneme codes transferred exactly (ngoreme reads "
+        "89 = 87 + 2 -> 112 = 110 + 2 the same way). The ruling is route (b): "
+        "the destination's two boundary codes are the STARTER's canonical "
+        "pair, their `Representation` is byte-equal to the source's ('#', "
+        "'+') on every pair measured, and 'no transfer is owed, and "
+        "transferring would be worse' -- writing the source's code onto a "
+        "marker that already has one either duplicates or destructively "
+        "deletes. mbugwe is MATCHED because its source's codes ARE the "
+        "canonical pair, so the identity check passes there NON-VACUOUSLY",
+    ),
+    # -- T120(a). THE SHORTFALL IS THE STANDING RULE BEING OBEYED, not a loss.
+    #    `max_claim` is 47 and the cap is the point: the emitter takes
+    #    `min(room, max_claim)`, so ngoreme claims 47, mbugwe 32 and ejagham
+    #    nothing. A `None` here would make an open-ended claim about a fourth
+    #    corpus nobody has measured.
+    "PhFeatureConstraint": (
+        "UNREFERENCED_IN_SOURCE",
+        "contracts/unreferenced-feature-constraint-ruling.md "
+        "(T120(a), 2026-08-28)",
+        47,
+        "measured 0, -47, -32 by direct read-only parse of the six `.fwdata` "
+        "files, every digest matching the `census-038-t126-*` pin. The "
+        "partition is exact in BOTH directions, which is what makes it "
+        "conclusive rather than suggestive: of the 47 / 32 missing, "
+        "**0 are referenced**; of the 23 / 57 transferred, **all** are -- so "
+        "the transferred set IS the referenced set, to the object, and the "
+        "GUID intersection confirms identity was preserved for every object "
+        "that moved. A `PhFeatureConstraint` has one property, `FeatureRA`; "
+        "its +/- polarity lives on the REFERRING context "
+        "(`PhSimpleContextNC.PlusConstr` / `MinusConstr`), so an instance no "
+        "context references has no polarity and no effect on any rule -- "
+        "vestigial pool entries left by edited or deleted rules. "
+        "`PhPhonData.FeatConstraints` (5099005) is the sole owner on both "
+        "pairs, so unlike `CmFile` / `CmFolder` a single class-level ruling "
+        "is the correct granularity. Materialising them would create target "
+        "objects nothing in the source references, which the user's standing "
+        "rule forbids -- the Phase-4b co-create is WITHDRAWN for this class "
+        "on that ground. No transfer code and no create path is owed",
+    ),
+}
+
+# ---------------------------------------------------------------------------
+# T081 -- the PER-OWNING-LIST roster.
+#
+# `(object_class, owning_list) -> (reason_token, ruling, detail)`.
+#
+# WHY THIS ROSTER IS NOT KEYED BY CLASS, and why that is the whole point.
+# `contracts/cmpossibility-list-rulings.md` 5 refuses a `CmPossibility` entry
+# in `CENSUS_RULED_RESIDUE_CLASSES` BY NAME: that roster is keyed by class, so
+# the entry would cover `MoMorphData.ProdRestrict` -- this feature's own
+# grammatical content -- with the same sentence that covers Scripture note
+# categories. The row would go green and the productivity restrictions would
+# still be missing, permanently accounted for as somebody else's work. "The
+# class name is not the unit of work" (T023b) is the rule; this key is what
+# obeying it looks like.
+#
+# THE TWO IN-SCOPE LISTS ARE DELIBERATELY ABSENT, and their absence is
+# load-bearing rather than an omission:
+#
+#   * `MoMorphData.ProdRestrict` (-1 ngoreme, -3 mbugwe) -- productivity
+#     restrictions are morphology and inside this feature's Assumptions,
+#     transferred by `categories._wire_prod_restrictions`. A shortfall here is
+#     a REAL defect and must read as one.
+#   * `LexDb.References` -- ruled IN SCOPE 2026-08-28 (section 2a); its members
+#     are exact class `LexRefType`, so it never appears in this row at all.
+#
+# "OUT OF SCOPE" is the census token `OUT_OF_SCOPE_CLASS` -- content this
+# feature's spec Assumptions do not claim -- and NOT `GOVERNED_BY_OTHER_FEATURE`,
+# which asserts a NAMED other feature owns the path. No feature in this repo's
+# queue claims Scripture note categories or chart markers, and inventing an
+# owner to make a gate go green is the failure the closed vocabulary exists to
+# prevent.
+#
+# EVERY KEY IS `OwningClass.Field` WITH NO FLID. A flid in the key would break
+# silently the day LCM renumbered a field, turning a ruled list into an unruled
+# one -- a failure in the EXCUSING direction, which is the one that must not be
+# possible. Note `DsDiscourseData`, which is the runtime class name; the
+# contract's prose says "DiscourseData" and means the same list.
+CENSUS_OWNING_LIST_RULINGS: dict = {
+    ("CmPossibility", "Scripture.NoteCategories"): (
+        "OUT_OF_SCOPE_CLASS",
+        "contracts/cmpossibility-list-rulings.md 2 (T122, 2026-08-28)",
+        "Scripture annotation categories. This feature's Assumptions do not "
+        "claim Scripture content. Measured -115 on ngoreme, the largest single "
+        "item in the row and the clearest non-grammatical one",
+    ),
+    ("CmPossibility", "LexDb.Languages"): (
+        "OUT_OF_SCOPE_CLASS",
+        "contracts/cmpossibility-list-rulings.md 2 (T122, 2026-08-28)",
+        "the lexicon's language list is bibliographic metadata about source "
+        "languages, not grammar. Measured -15 on mbugwe",
+    ),
+    ("CmPossibility", "LangProject.GenreList"): (
+        "OUT_OF_SCOPE_CLASS",
+        "contracts/cmpossibility-list-rulings.md 2 (T122, 2026-08-28)",
+        "text genres, which belong to the texts path the Assumptions already "
+        "exclude. Measured -6 / -3 / -5 -- the only list short on all three "
+        "pairs, which is why it is called out rather than lumped in",
+    ),
+    ("CmPossibility", "DsDiscourseData.ChartMarkers"): (
+        "OUT_OF_SCOPE_CLASS",
+        "contracts/cmpossibility-list-rulings.md 2 (T122, 2026-08-28)",
+        "discourse-chart furniture. Measured +30 on ngoreme and -10 on mbugwe "
+        "-- a SURPLUS on one pair and a shortfall on the other, which a "
+        "class-level ruling could not have expressed and a net figure would "
+        "have cancelled into silence. Only the shortfall half is ever claimed",
+    ),
+    ("CmPossibility", "LangProject.CheckLists"): (
+        "OUT_OF_SCOPE_CLASS",
+        "contracts/cmpossibility-list-rulings.md 2 (T122, 2026-08-28)",
+        "editorial checklists. Measured -5 on ngoreme",
+    ),
+    ("CmPossibility", "LexDb.DialectLabels"): (
+        "OUT_OF_SCOPE_CLASS",
+        "contracts/cmpossibility-list-rulings.md 2 (T122, 2026-08-28)",
+        "dialect labels are lexicographic metadata. Measured -2 on ngoreme",
+    ),
+    ("CmPossibility", "LangProject.Status"): (
+        "OUT_OF_SCOPE_CLASS",
+        "contracts/cmpossibility-list-rulings.md 2 (T122, 2026-08-28)",
+        "editorial workflow status. Measured -1 on ngoreme",
+    ),
+    ("CmPossibility", "DsDiscourseData.ConstChartTempl"): (
+        "OUT_OF_SCOPE_CLASS",
+        "contracts/cmpossibility-list-rulings.md 2 (T122, 2026-08-28)",
+        "constituent-chart templates. Measured -1 on mbugwe",
+    ),
+    ("CmPossibility", "LexDb.ExtendedNoteTypes"): (
+        "OUT_OF_SCOPE_CLASS",
+        "contracts/cmpossibility-list-rulings.md 2 (T122, 2026-08-28)",
+        "extended note types. Measured +1 on ngoreme and +1 on mbugwe -- a "
+        "surplus on both pairs that hold it, so this entry claims nothing "
+        "today and exists so the list is RULED rather than merely unobserved",
+    ),
+}
+
+# ---------------------------------------------------------------------------
+# T119's follow-on -- the PER-OWNING-FIELD roster (FsFeatStruc / FsClosedValue).
+#
+# `(object_class, owning_field) -> (reason_token, ruling, detail)`, the exact
+# shape of `CENSUS_OWNING_LIST_RULINGS` above, for the same reason: T119's live
+# owner-attribution probe took the `FsFeatStruc` / `FsClosedValue` class rows
+# apart and found each one is a BUCKET over nine and more distinct OWNING
+# FIELDS. A class-keyed ruling here would have exactly
+# `cmpossibility-list-rulings.md` 5's failure: one sentence could retire the
+# row while real grammar stayed hollow. "The class name is not the unit of
+# work" (T023b) again.
+#
+# THE "1,003 OBJECTS OF PURE TOTAL LOSS" FIGURE THIS HEADER FORMERLY CARRIED
+# IS FALSE AT THE CURRENT VINTAGE, AND THAT IS RECORDED HERE RATHER THAN
+# SILENTLY CORRECTED. It read `MoStemMsa.MsFeatures` at 117 / 782 / 104 -> 0 /
+# 0 / 0 -- the RETIRED T124 measurement, taken before T126 fixed the schedule
+# bug (`_wire_owner_feat_strucs` running before `MoStemMsa` existed;
+# tasks.md T119, 2026-08-28). The pinned re-census artifacts checked 2026-09-18
+# (`tests/integration/_snapshots/recensus-038-t131-{ejagham,ngoreme}.json`,
+# `recensus-038-t133-mbugwe.json`, key `t119_per_owning_field`) read
+# `MoStemMsa.MsFeatures` **117/117 OK, 782/782 OK, 108/104 OK** -- COMPLETE on
+# all three pairs (mbugwe's 108 is a small surplus, not a loss). T126 landed
+# the fix; this roster's job is the residue T126 left, not the figure T126
+# already closed.
+#
+# THERE IS NO COMMITTED RULING DOCUMENT TO TRANSCRIBE FOR THE DIMENSION AS A
+# WHOLE. `contracts/fidelity-census.md` and `tasks.md` carry T119's OWN prose
+# ruling (line 707, and T121 line 709 for the one circular exclusion below),
+# but neither publishes a standalone `(class, field) -> token` table -- this
+# roster and `tests/unit/test_038_t119_owning_fields.py` are the transcription.
+#
+# THE CURRENT TABLE, measured per pair (ejagham / ngoreme / mbugwe) against
+# the three pins above:
+#
+#   MoStemMsa.MsFeatures (5001001)           117/117 OK   782/782 OK   108/104 OK
+#   FsComplexValue.Value (53001)                0/0 --    799/825 -26   146/0 --
+#   PartOfSpeech.ReferenceForms (5049010)    10/10 OK      0/44 -44    288/19 OK
+#   PhPhoneme.Features (5092002)             20/41 -21    21/41 -20    27/42 -15
+#   CmAnnotation.Features (34008)               0/0 --      0/0 --      0/39 -39
+#   MoInflAffMsa.InflFeats (5038001)         86/86 OK     38/38 OK     55/78 -23
+#   MoDerivAffMsa.From/ToMsFeatures (5031001/2)  --           --      17/17 OK (both)
+#   MoAffixAllomorph.MsEnvFeatures (5027001)     --           --       5/1 OK
+#   PhNCFeatures.Features (5094001)          15/15 OK     41/41 OK    119/112 OK
+#
+# ("dest/source", a shortfall shown as "-N"; "--" is `NO_DATA`, no source
+# objects on that pair.) Note mbugwe `MoInflAffMsa.InflFeats` NOW reads
+# 55/78 (-23), a regression T119/T126 never measured -- new drift, not this
+# roster's business, and left UNROSTERED for the same reason `MoStemMsa.
+# MsFeatures` was before T126: a real, unattributed loss must keep failing.
+#
+# ONLY ONE ROW IS ROSTERED, AND THE OTHER TWO CANDIDATES FAILED
+# RE-DERIVATION FOR A REASON STRONGER THAN ARITHMETIC:
+#
+#   * `CmAnnotation.Features` -- ROSTERED `OUT_OF_SCOPE_CLASS`. T119's own
+#     ruling calls annotation content "outside Assumptions" -- content this
+#     feature's spec never claims, exactly `OUT_OF_SCOPE_CLASS`'s definition
+#     above. `OUT_OF_SCOPE_CLASS` is report_ref-exempt
+#     (`CENSUS_REASONS_NOT_REQUIRING_REPORT_REF`), so a static committed
+#     ruling can carry it safely through `census.owning_field_ruling` /
+#     `census_cli.accounted_for_owning_fields` with no run evidence needed.
+#     Only mbugwe holds any (0/39, -39); ejagham and ngoreme are NO_DATA.
+#
+#   * `PartOfSpeech.ReferenceForms` and `FsComplexValue.Value` -- BOTH LEFT
+#     UNROSTERED, and NOT because the ruling is wrong. T119 correctly rules
+#     both to T045's (CHECKED) create-path, which produces an empty shell
+#     past its depth limit -- `NO_CREATE_PATH` is the semantically right
+#     token and IS in `census.PHASE_5_ADMISSIBLE_REASONS`. But `NO_CREATE_PATH`
+#     is **NOT** in `CENSUS_REASONS_NOT_REQUIRING_REPORT_REF` -- it is a
+#     RUN-EVIDENCED reason (it names a specific `DroppedItemRecord` a
+#     transfer run's OWN report carries), and this roster is a STATIC,
+#     committed-document mechanism with no run to point at.
+#     `census.AccountedLine.__post_init__` enforces this at construction:
+#     stamping either field here raises `CensusError` ("reason
+#     'NO_CREATE_PATH' requires a report_ref (R-1)") the moment
+#     `accounted_for_owning_fields` tries to build the line -- proven live,
+#     2026-09-18, against a synthetic roster carrying exactly this entry.
+#     Rostering either field here would not retire its shortfall, it would
+#     CRASH the census the next time the field actually loses an object
+#     (ngoreme's -44 and -26 respectively). The re-derivation this roster's
+#     header asks for therefore fails NOT on the arithmetic (which holds --
+#     see below) but on the MECHANISM: closing these two needs the transfer
+#     run itself to emit a `DroppedItemRecord` with a real `report_ref`, which
+#     is `categories.py`/the create-path's job, not this roster's. Left
+#     UNROSTERED, both keep failing P5, correctly.
+#     - Arithmetic checked anyway, for whoever does that future work:
+#       `PartOfSpeech.ReferenceForms` is short only on ngoreme (44->0); ejagham
+#       (10/10) and mbugwe (288/19, a surplus) are not short.
+#       `FsComplexValue.Value`'s ngoreme residue was 27 at T126, partitioned
+#       into (a) values nested under R1's then-single-missing `MoStemMsa` and
+#       (b) values nested under the 44 empty-shell `ReferenceForms` structures,
+#       split NOT attributed at the time. Since `MoStemMsa.MsFeatures` now
+#       reads 782/782 (bucket (a)'s owner no longer missing), the residue has
+#       dropped to exactly 26 (825-799) -- one less than 27, consistent with
+#       bucket (a) having held exactly the one object T126's fix recovered.
+#       The arithmetic holds: the whole -26 now falls to bucket (b), the same
+#       `ReferenceForms` cause as the row above it.
+#
+#   * `PhPhoneme.Features` -- DELIBERATELY EXCLUDED, not merely unrostered.
+#     Loses 21/20/19 on the three pairs (starter-matched phonemes are never
+#     enriched). T119's ruling (tasks.md line 707) assigns this to "T121's
+#     enrichment half"; T121 (tasks.md line 709, CHECKED) closes with the
+#     opposite assignment in as many words: "The `PhPhoneme.Features` losses
+#     (21 / 20 / 19) ... stay with T119's measurement." Each task points the
+#     loss at the OTHER, both are closed, and neither carries a fix -- a
+#     CIRCULAR ruling with nobody owning the residue. No token in
+#     `PHASE_5_ADMISSIBLE_REASONS` fits a ruling that contradicts itself, so
+#     this is not a "verify before rostering" case like the two above; it is
+#     recorded here so a future session does not re-open the same circle
+#     believing it is new. It must keep failing P5.
+#
+# NONE OF THE TEN OWNING FIELDS BELONGS TO ANOTHER FEATURE (`MoStemMsa`,
+# `MoInflAffMsa`, `MoDerivAffMsa`, `MoAffixAllomorph`, `PartOfSpeech`,
+# `PhPhoneme` are exactly Phase 1's own gated classes) -- unlike
+# `CmPossibility`'s Scripture/discourse-chart lists, which are non-grammatical
+# content another feature owns or nobody claims. `CmAnnotation.Features`
+# above is the one exception T119 itself names ("outside Assumptions"), which
+# is why it is the one row this roster can safely carry today.
+CENSUS_OWNING_FIELD_RULINGS: dict = {
+    ("FsFeatStruc", "CmAnnotation.Features"): (
+        "OUT_OF_SCOPE_CLASS",
+        "specs/038-transfer-fidelity-gaps/tasks.md T119 (line 707, "
+        "2026-08-28 ruling)",
+        "annotation content, which T119's own ruling calls 'outside "
+        "Assumptions'. Measured 0/0 (NO_DATA) on ejagham and ngoreme "
+        "(mbugwe is the only sanctioned pair holding any) and 0/39 "
+        "(TOTAL_LOSS, -39) on mbugwe -- "
+        "recensus-038-t133-mbugwe.json t119_per_owning_field, checked "
+        "2026-09-18",
+    ),
+}
+
+#: Amendment A1's two owning feature systems -- `$defs.classRow`'s
+#: `owning_feature_system` enum, in schema order. These spellings are the
+#: CONTRACT ones (fidelity-census.md:650-673) and are emitted VERBATIM, so a
+#: shorter local shorthand (`MsFeatureSystem`) would fail validation.
+#:
+#: DECLARED HERE for the same reason `CENSUS_REASON_TOKENS` is: the dependency
+#: direction is census -> models and never the reverse, and `ClassCensusRow`
+#: must reject an out-of-vocabulary owner AT CONSTRUCTION. `Lib/census.py`
+#: RE-EXPORTS this as `FEATURE_SYSTEM_OWNERS` rather than re-declaring it.
+CENSUS_FEATURE_SYSTEM_OWNERS: tuple = (
+    "LangProject.MsFeatureSystemOA",
+    "LangProject.PhFeatureSystemOA",
+)
+
+#: `census_id` / `FidelityCensus.run_id` format, deliberately distinct in
+#: prefix from a transfer run id ("GT-...") so the two cannot be confused.
+_CENSUS_ID_RE = re.compile(r"^CENSUS-[0-9]{8}-[0-9]{6}$")
+
+
+class StarterBaselineKind(enum.Enum):
+    """`$defs.starterBaseline.kind` -- WHAT KIND of claim a baseline is.
+
+    This enum is why `StarterBaseline` exists as a value even when there is
+    no baseline at all. `data-model.md` section 4 has no expression for the
+    absent case; the schema does, and it is load-bearing: an absent baseline
+    is the verdict BASELINE_MISSING, *never* an assumed zero, because a zero
+    baseline is a positive claim that the destination shipped empty. So
+    absence is modelled as `StarterBaseline.missing()` -- a real object whose
+    `is_missing` is True -- and never as `None`. `FidelityCensus.baseline`
+    rejects `None` outright, so the gate cannot reach a NoneType crash on the
+    one path where a hard failure verdict is mandatory.
+    """
+    #: A census of the destination taken BEFORE the transfer. Exact by
+    #: construction, and the only kind valid for a destination that is not a
+    #: freshly created project.
+    PRE_TRANSFER_CENSUS = "pre_transfer_census"
+    #: A per-class census of a genuinely fresh, empty FLEx project.
+    STARTER_CAPTURE = "starter_capture"
+    #: Recordable, never passable.
+    NONE = "none"
+
+
+@dataclass(frozen=True)
+class StarterBaselineEntry:
+    """Feature 038 (FR-010) -- one class's worth of a starter baseline.
+
+    `names` is optional and only populated where the 035 roster admits a name
+    key for the class. When present it is what makes the *matched*
+    subtraction of fidelity-census.md 5.2 possible; a count-only baseline
+    forces the weaker `baseline_gross` subtraction basis. Duplicate names are
+    legitimate content (the measured PhPhoneme case carries 21 duplicates),
+    so they are preserved rather than deduplicated.
+    """
+    object_class: str
+    count: int
+    names: tuple = ()
+
+    def __post_init__(self) -> None:
+        if not self.object_class:
+            raise ValueError(
+                "StarterBaselineEntry.object_class must be non-empty"
+            )
+        if self.count < 0:
+            raise ValueError(
+                "StarterBaselineEntry.count must be >= 0, got "
+                + repr(self.count)
+            )
+        if not isinstance(self.names, tuple):
+            raise ValueError(
+                "StarterBaselineEntry.names must be a tuple, got "
+                + type(self.names).__name__
+                + " (a bare str would iterate as characters)"
+            )
+        if len(self.names) > self.count:
+            raise ValueError(
+                "StarterBaselineEntry names more objects than it counts for "
+                + repr(self.object_class) + ": "
+                + str(len(self.names)) + " names vs count "
+                + str(self.count)
+            )
+
+
+@dataclass(frozen=True)
+class StarterBaseline:
+    """Feature 038 (FR-010) -- the inventory the destination already held,
+    subtracted before any difference is called a surplus.
+
+    Two shapes are trustworthy (`StarterBaselineKind`), one is not: `NONE`.
+    An absent baseline is representable ON PURPOSE -- see
+    `StarterBaselineKind` -- so the gate can turn it into a BASELINE_MISSING
+    verdict instead of crashing or silently assuming zero.
+
+    Subtraction is by COUNT per class, never by deletion: starter content the
+    linguist has since edited is no longer identical and must not be treated
+    as disposable (spec Edge Cases).
+
+    INTERNAL-ONLY FIELD: `content_hash`. `data-model.md`:90 declares it the
+    staleness detector, but `$defs.starterBaseline` has no such property and
+    detects staleness from `flex_version` / `data_model_version` instead. It
+    is kept here because it is genuinely useful when capturing a baseline
+    (T023) and for cheap equality between two captures, and it is NOT emitted
+    into the artifact. See `STARTER_BASELINE_ARTIFACT_FIELDS`.
+
+    Staleness itself is deliberately NOT stored: the schema's `staleness`
+    object is a *judgement* about this baseline relative to the running FLEx
+    version, and that judgement belongs to the gate (T020), which must not
+    find a pre-baked answer sitting here to trust instead of computing it.
+    """
+    kind: StarterBaselineKind
+    schema_version: int = CENSUS_SCHEMA_VERSION
+    flex_version: str = ""       # -> artifact `flex_version`
+    captured_at: str = ""        # -> artifact `captured_at`
+    captured_from: str = ""      # -> artifact `project_name`
+    entries: tuple = ()          # tuple[StarterBaselineEntry, ...]; NOT emitted
+    content_hash: str = ""       # INTERNAL ONLY -- no schema counterpart
+    path: str = ""               # -> artifact `path`
+    source_census_id: str = ""   # -> artifact `source_census_id`
+    data_model_version: Optional[int] = None  # -> artifact `data_model_version`
+
+    @classmethod
+    def missing(cls) -> "StarterBaseline":
+        """The absent baseline, as a VALUE. Use this -- never `None` -- when
+        no baseline could be located, so the gate reaches BASELINE_MISSING by
+        reading `is_missing` rather than by raising `AttributeError` on
+        `None`."""
+        return cls(kind=StarterBaselineKind.NONE)
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.kind, StarterBaselineKind):
+            raise ValueError(
+                "StarterBaseline.kind must be a StarterBaselineKind, got "
+                + repr(self.kind) + " -- an absent baseline is "
+                "StarterBaseline.missing(), not None and not a bare string"
+            )
+        if self.schema_version < 1:
+            raise ValueError(
+                "StarterBaseline.schema_version must be >= 1, got "
+                + repr(self.schema_version)
+            )
+        if not isinstance(self.entries, tuple):
+            raise ValueError(
+                "StarterBaseline.entries must be a tuple, got "
+                + type(self.entries).__name__
+            )
+        seen = set()
+        for ent in self.entries:
+            if ent.object_class in seen:
+                raise ValueError(
+                    "StarterBaseline carries two entries for class "
+                    + repr(ent.object_class) + " -- one row per class, so a "
+                    "subtraction can never be applied twice"
+                )
+            seen.add(ent.object_class)
+        if self.source_census_id and not _CENSUS_ID_RE.match(
+                self.source_census_id):
+            raise ValueError(
+                "StarterBaseline.source_census_id must match "
+                "CENSUS-YYYYMMDD-HHMMSS, got "
+                + repr(self.source_census_id)
+            )
+        if self.data_model_version is not None and self.data_model_version < 0:
+            raise ValueError(
+                "StarterBaseline.data_model_version must be >= 0, got "
+                + repr(self.data_model_version)
+            )
+        if self.kind is StarterBaselineKind.NONE:
+            # A missing baseline claims NOTHING. Letting it carry counts or a
+            # content hash would make "no baseline" indistinguishable from
+            # "measured, and empty" -- exactly the conflation FR-010 exists
+            # to prevent.
+            if self.entries:
+                raise ValueError(
+                    "StarterBaseline(kind=NONE) must carry no entries -- an "
+                    "absent baseline is not a measured zero (schema "
+                    "starter_baseline_source 'assumed_zero_not_permitted')"
+                )
+            if self.content_hash:
+                raise ValueError(
+                    "StarterBaseline(kind=NONE) must carry no content_hash: "
+                    "there is no content to hash"
+                )
+        else:
+            if not self.entries:
+                raise ValueError(
+                    "StarterBaseline(kind=" + self.kind.value + ") must carry "
+                    "at least one entry -- a baseline with no entries is "
+                    "indistinguishable from StarterBaseline.missing() and "
+                    "must not be passed off as a measurement"
+                )
+            for name in ("flex_version", "captured_at"):
+                if not getattr(self, name):
+                    raise ValueError(
+                        "StarterBaseline." + name + " must be non-empty for "
+                        "kind=" + self.kind.value + " -- a baseline whose "
+                        "staleness cannot be judged cannot be trusted "
+                        "(fidelity-census.md 5.3)"
+                    )
+
+    # ---- derived views (properties, never stored counters) -------------
+
+    @property
+    def is_missing(self) -> bool:
+        """True for `kind is NONE`. The BASELINE_MISSING trigger: T020 maps
+        this to that verdict, whose exit code is 4. There is no path on which
+        this being True yields exit 0."""
+        return self.kind is StarterBaselineKind.NONE
+
+    @property
+    def class_count(self) -> int:
+        """-> artifact `class_count`. Derived, so it cannot drift from
+        `entries`. A class the baseline does not mention is
+        `absent_from_baseline` for THAT class only -- see `count_for`."""
+        return len(self.entries)
+
+    @property
+    def carries_natural_keys(self) -> bool:
+        """-> artifact `carries_natural_keys`. True only when every counted
+        object is actually named, i.e. every entry with `count > 0` carries
+        exactly `count` names. Anything weaker cannot support the matched
+        subtraction of fidelity-census.md 5.2, so claiming it would overstate
+        the baseline."""
+        if not self.entries:
+            return False
+        return all(
+            len(e.names) == e.count
+            for e in self.entries if e.count > 0
+        )
+
+    def entry_for(self, object_class: str) -> Optional[StarterBaselineEntry]:
+        """The entry for one class, or None when the baseline does not mention
+        it. None means `absent_from_baseline`, which is a DIFFERENT statement
+        from a measured zero."""
+        for ent in self.entries:
+            if ent.object_class == object_class:
+                return ent
+        return None
+
+    def count_for(self, object_class: str) -> Optional[int]:
+        """The baseline count for one class, or None when the baseline does
+        not mention it. Returning None rather than 0 is the point: the caller
+        must decide between `baseline_document` and `absent_from_baseline` and
+        must never silently assume zero."""
+        ent = self.entry_for(object_class)
+        return None if ent is None else ent.count
+
+
+@dataclass(frozen=True)
+class ClassCensusRow:
+    """Feature 038 (FR-009..FR-013, SC-005) -- one class's source/destination
+    comparison.
+
+    NAMES DIFFER FROM THE ARTIFACT. This is the in-memory row and keeps
+    `data-model.md`:104-114's names; the emitted JSON row uses
+    `$defs.classRow`'s. See `CLASS_CENSUS_ROW_ARTIFACT_FIELDS` and the
+    per-field comments below. The derived properties supply every remaining
+    REQUIRED artifact quantity that is a pure function of these fields
+    (`destination_count_net`, `difference_raw`, `verdict_class`), so the
+    emitter cannot compute them a second, different way.
+
+    `starter_excluded` is the UNMATCHED starter count, i.e. the schema's
+    `starter_baseline_count - starter_matched_to_source`, not the gross
+    baseline count. Subtracting the gross count is wrong once natural-key
+    matching works, because a matched starter object stands in for a source
+    object rather than being surplus (fidelity-census.md 5.2). The gross
+    count and the matched count are provenance for the emitter to add from
+    the `StarterBaseline`; only the net subtrahend is load-bearing here.
+
+    Sign convention on `difference` is fixed and shared with the schema:
+    negative = SHORTFALL (loss), zero = MATCHED, positive = SURPLUS.
+
+    AMENDMENT A1. `owning_feature_system` is the optional per-owner qualifier
+    for a class reachable from BOTH FieldWorks feature systems
+    (`FsFeatStrucType`). It is `None` on every ordinary class -- which is what
+    keeps it additive, both here (existing positional construction is
+    unaffected) and in the artifact, where `$defs.classRow` carries it as a new
+    OPTIONAL property under the schema's own EVOLUTION RULE. A row that DOES
+    name an owner asserts a PER-OWNER measurement: its counts are that feature
+    system's alone, never the class total, because a summed row would let a
+    shortfall under one system be masked by a surplus under the other -- the
+    exact masking A1 exists to forbid. The engine's `census.count_for_entry`
+    returns `None` rather than the class total for a split entry nobody counted
+    per owner, so the ambiguous figure cannot reach a row in the first place.
+    """
+    object_class: str          # -> artifact `class`
+    #: T099. `["integer", "null"]`, the schema's own type. `null` is NOT a
+    #: smaller zero: `$defs.classRow.source_count` says it in as many words --
+    #: "null only on a NOT_EVALUATED row where the class could not be counted
+    #: at all; a genuine zero is 0, never null". A class this census could not
+    #: count and a class the project genuinely holds none of are two different
+    #: findings, and an `int`-only field can only state one of them.
+    source_count: Optional[int]          # -> artifact `source_count`
+    destination_count: Optional[int]     # -> artifact `destination_count_total`
+    starter_excluded: int      # -> unmatched starter; feeds destination_count_net
+    #: `None` exactly when either count is None -- see `__post_init__`. There
+    #: is no "difference of an unknown", and a 0 here would be read as MATCHED.
+    difference: Optional[int]  # -> artifact `difference`
+    explained: bool            # -> artifact: `accounted_for` being non-empty
+    engine_can_create: bool    # -> artifact `engine_can_create`
+    out_of_scope: bool         # -> artifact `verdict_class` NOT_EVALUATED
+    reasons: tuple = ()        # -> artifact `accounted_for[*].reason` tokens
+    #: A1: owning feature system, or None for every ordinary class.
+    owning_feature_system: Optional[str] = None  # -> `owning_feature_system`
+
+    def __post_init__(self) -> None:
+        if not self.object_class:
+            raise ValueError("ClassCensusRow.object_class must be non-empty")
+        for name in ("source_count", "destination_count", "starter_excluded"):
+            val = getattr(self, name)
+            # T099: None is admissible on the two nullable counts and is
+            # checked by `_check_null_counts` below, which is stricter than a
+            # sign test -- it asks WHETHER the row is allowed to be unmeasured.
+            # `starter_excluded` is NOT nullable: it is the subtrahend, and an
+            # unknown subtrahend has no honest artifact representation (5.2's
+            # `no_baseline` basis expresses that as 0 plus a failing verdict).
+            if val is None:
+                if name == "starter_excluded":
+                    raise ValueError(
+                        "ClassCensusRow.starter_excluded must be an int, got "
+                        "None -- an unknown starter subtraction is expressed "
+                        "as 0 on the `no_baseline` basis, never as a null "
+                        "subtrahend (class " + repr(self.object_class) + ")"
+                    )
+                continue
+            if val < 0:
+                raise ValueError(
+                    "ClassCensusRow." + name + " must be >= 0, got "
+                    + repr(val) + " (class " + repr(self.object_class) + ")"
+                )
+        self._check_null_counts()
+        # `explained` / `engine_can_create` / `out_of_scope` are booleans with
+        # a defined meaning, not tri-state: None or an int would let a caller
+        # smuggle "unknown" past the gate as a falsy value.
+        for name in ("explained", "engine_can_create", "out_of_scope"):
+            if not isinstance(getattr(self, name), bool):
+                raise ValueError(
+                    "ClassCensusRow." + name + " must be a bool, got "
+                    + repr(getattr(self, name)) + " -- there is no "
+                    "'unknown' state (class " + repr(self.object_class) + ")"
+                )
+        if not isinstance(self.reasons, tuple):
+            raise ValueError(
+                "ClassCensusRow.reasons must be a tuple of reason tokens, got "
+                + type(self.reasons).__name__
+                + " (a bare str would iterate as characters)"
+            )
+        # `difference` is stored (data-model.md names it a field) but must
+        # agree with its inputs exactly. A row whose headline number does not
+        # follow from its own counts is the most dangerous shape this artifact
+        # can take.
+        # T099: with either count unknown there IS no difference, and the one
+        # value that must never appear here is 0 -- `verdict_class` reads 0 as
+        # MATCHED, so a placeholder zero would report a class nobody counted
+        # as agreeing.
+        if self.source_count is None or self.destination_count is None:
+            if self.difference is not None:
+                raise ValueError(
+                    "ClassCensusRow.difference for " + repr(self.object_class)
+                    + " is " + repr(self.difference) + " but one of its counts "
+                    "is None (source_count=" + repr(self.source_count)
+                    + ", destination_count=" + repr(self.destination_count)
+                    + ") -- an unmeasured row has no difference, and 0 here "
+                    "would be emitted as verdict_class MATCHED"
+                )
+        else:
+            if self.difference is None:
+                raise ValueError(
+                    "ClassCensusRow.difference for " + repr(self.object_class)
+                    + " is None but both counts are known ("
+                    + str(self.source_count) + ", "
+                    + str(self.destination_count) + ") -- a measured row owes "
+                    "its difference"
+                )
+            expected = (self.destination_count - self.starter_excluded
+                        - self.source_count)
+            if self.difference != expected:
+                raise ValueError(
+                    "ClassCensusRow.difference for " + repr(self.object_class)
+                    + " is " + repr(self.difference) + " but its inputs give "
+                    + str(self.destination_count) + " - "
+                    + str(self.starter_excluded) + " - "
+                    + str(self.source_count) + " = " + str(expected)
+                )
+        for token in self.reasons:
+            if token not in CENSUS_REASON_TOKENS:
+                raise ValueError(
+                    "ClassCensusRow reason " + repr(token) + " on class "
+                    + repr(self.object_class) + " is outside the closed "
+                    "18-token vocabulary (CENSUS_REASON_TOKENS). There is no "
+                    "UNEXPLAINED and no OTHER token: an unclassifiable "
+                    "reason is a CENSUS_ERROR, not a new token"
+                )
+        if self.explained and not self.reasons:
+            raise ValueError(
+                "ClassCensusRow for " + repr(self.object_class)
+                + " claims explained=True with no reasons -- SC-005 requires "
+                "the difference be accounted for by a line in the run "
+                "report, so an explanation with no content is not accounting"
+            )
+        if self.out_of_scope and not (
+                set(self.reasons) & CENSUS_NOT_EVALUATED_REASONS):
+            raise ValueError(
+                "ClassCensusRow for " + repr(self.object_class)
+                + " is out_of_scope but carries none of "
+                + repr(tuple(sorted(CENSUS_NOT_EVALUATED_REASONS)))
+                + " -- the artifact requires a NOT_EVALUATED row to name its "
+                "not_evaluated_reason"
+            )
+        # A1: the owner is a CLOSED two-member vocabulary and is emitted
+        # verbatim into an enumerated schema property, so an unrecognised
+        # spelling is rejected here rather than at validation time -- the same
+        # construction-time treatment the reason tokens get.
+        if (self.owning_feature_system is not None
+                and self.owning_feature_system
+                not in CENSUS_FEATURE_SYSTEM_OWNERS):
+            raise ValueError(
+                "ClassCensusRow.owning_feature_system for "
+                + repr(self.object_class) + " is "
+                + repr(self.owning_feature_system) + ", outside the two "
+                "spellings Amendment A1 and $defs.classRow enumerate "
+                + repr(CENSUS_FEATURE_SYSTEM_OWNERS)
+                + " -- a shorthand such as 'MsFeatureSystem' is emitted "
+                "verbatim and would fail schema validation"
+            )
+
+    # ---- T099: where a null count is and is not admissible -------------
+
+    def _check_null_counts(self) -> None:
+        """What a null count obliges the rest of the row to say.
+
+        `$defs.classRow.source_count` fixes the meaning: "null only on a
+        NOT_EVALUATED row where the class could not be counted at all; a
+        genuine zero is 0, never null". The NOT_EVALUATED half of that is
+        satisfied by construction -- `difference` is None whenever a count is
+        (checked above) and `verdict_class` reads a None difference as
+        NOT_EVALUATED -- and it is RE-ASSERTED here rather than assumed,
+        because it holds only as long as those two rules agree with each other.
+
+        The two clauses below are the ones that are not automatic, and both
+        close a laundering path that opened the moment the counts became
+        nullable.
+
+        `explained` is the first. An `accounted_for` line credits a named
+        quantity against a DIFFERENCE, and `unexplained_shortfall` is
+        `max(0, -difference)` less those lines. With no difference there is
+        nothing to credit, so a row claiming to be explained would be claiming
+        to have accounted for a loss it cannot demonstrate -- and R-2's
+        over-accounting check, which is what would normally catch that, is
+        skipped on a null difference (`census.unexplained_counts` returns
+        `(0, 0)` and stops).
+
+        `starter_excluded` is the second. It is the subtrahend, and
+        `destination_count_net` returns None without applying it, so a non-zero
+        value would be published in the row's provenance (and in
+        `starter_matched_to_source`) as a subtraction that never happened.
+
+        Nullability is per SIDE, deliberately. An unresolved accessor is a
+        property of one PROJECT (`census.ClassCounts.unmeasurable`), so a class
+        can be countable in the source and not in the destination; collapsing
+        the two would report a source count as unknown when it is known.
+
+        Deliberately NOT required here: a `not_evaluated_reason` token. The
+        vocabulary is CLOSED at 17 and none of its three NOT_EVALUATED members
+        means "the accessor did not resolve" -- `ABSENT_BY_CONSTRUCTION` is the
+        abstract-base case and would be a false statement about a class whose
+        repository merely drifted. An unresolved accessor states its cause in
+        the artifact's `errors[]` array instead, which is CENSUS_ERROR on its
+        own. Filed as T100 rather than settled by inventing an 18th token.
+        """
+        if self.source_count is not None and self.destination_count is not None:
+            return
+        if self.verdict_class != "NOT_EVALUATED":
+            raise ValueError(
+                "ClassCensusRow for " + repr(self.object_class) + " carries a "
+                "null count (source_count=" + repr(self.source_count)
+                + ", destination_count=" + repr(self.destination_count)
+                + ") but its verdict_class is " + repr(self.verdict_class)
+                + " -- the schema admits a null count only on a NOT_EVALUATED "
+                "row, and a genuine zero is 0"
+            )
+        if self.explained:
+            raise ValueError(
+                "ClassCensusRow for " + repr(self.object_class) + " carries a "
+                "null count and claims explained=True -- an accounted_for line "
+                "credits a quantity against a DIFFERENCE, and this row has "
+                "none, so there is nothing for an explanation to account for"
+            )
+        if self.destination_count is None and self.starter_excluded:
+            raise ValueError(
+                "ClassCensusRow for " + repr(self.object_class) + " has a null "
+                "destination_count but starter_excluded="
+                + repr(self.starter_excluded) + " -- the subtrahend is never "
+                "applied to an unknown total (destination_count_net is None), "
+                "so publishing a non-zero one would name a subtraction that "
+                "did not happen"
+            )
+
+    # ---- derived views -------------------------------------------------
+
+    @property
+    def destination_count_net(self) -> Optional[int]:
+        """-> artifact `destination_count_net`: the destination count less the
+        pre-existing objects that were NOT matched to a source object.
+
+        T099: None when the destination count is, because a subtraction from
+        an unknown is not a net -- it is the unknown with a number taken off
+        it, which reads as a measurement."""
+        if self.destination_count is None:
+            return None
+        return self.destination_count - self.starter_excluded
+
+    @property
+    def difference_raw(self) -> Optional[int]:
+        """-> artifact `difference_raw`: before any baseline subtraction.
+        Stored in the artifact so a reader sees both what happened and what it
+        means -- the measured PhPhoneme row is difference_raw +23,
+        difference 0. T099: None when either count is."""
+        if self.source_count is None or self.destination_count is None:
+            return None
+        return self.destination_count - self.source_count
+
+    @property
+    def verdict_class(self) -> str:
+        """-> artifact `verdict_class`. NOT_EVALUATED wins over the sign of
+        the difference, because a row that was never measured must not be
+        reported as MATCHED just because two numbers it does not trust happen
+        to be equal.
+
+        T099: an unknown difference is NOT_EVALUATED for exactly that reason,
+        and it is checked BEFORE the `== 0` test -- this property is the one
+        place where a placeholder zero would have become the word "MATCHED".
+        `census.row_verdict_class` makes the same call on the same input."""
+        if self.out_of_scope or (
+                set(self.reasons) & CENSUS_NOT_EVALUATED_REASONS):
+            return "NOT_EVALUATED"
+        if self.difference is None:
+            return "NOT_EVALUATED"
+        if self.difference == 0:
+            return "MATCHED"
+        return "SHORTFALL" if self.difference < 0 else "SURPLUS"
+
+    @property
+    def is_gate_relevant(self) -> bool:
+        """True for the rows SC-005 actually gates on: the engine can create
+        the class and the class is in scope. False means report-only --
+        counted and rendered in full, but unable to fail the gate by itself
+        (the schema's `gate_scope: advisory`)."""
+        return self.engine_can_create and not self.out_of_scope
+
+    @property
+    def counts_pass(self) -> bool:
+        """The COUNT half of the row's gate condition (data-model.md:120):
+        matched, or explained with non-empty reasons. Deliberately NOT named
+        `passes`: a row also has to be free of duplicate natural keys
+        (`duplicates.extra_objects == 0`, or each group accounted), and that
+        quantity lives in the artifact, not on this row -- T020 combines the
+        two. A row that is not gate-relevant cannot fail on counts."""
+        if not self.is_gate_relevant:
+            return True
+        # T099: an unknown difference cannot be compared to 0, and must not be
+        # allowed to pass by being "not equal to 0 but explained" either. A row
+        # nobody could count fails nothing and proves nothing; the reason it is
+        # unknown reaches the reader as an `errors[]` entry, which is
+        # CENSUS_ERROR on its own (`census.unmeasurable_errors`), so the run
+        # still fails -- just not by pretending this row's counts agreed.
+        if self.difference is None:
+            return True
+        return self.difference == 0 or self.explained
+
+
+@dataclass(frozen=True)
+class FidelityCensus:
+    """Feature 038 (FR-009..FR-013, SC-005) -- one census run: every class,
+    both projects, one gate answer.
+
+    `run_id` is THIS census's own identity and maps to the artifact's
+    `census_id` (`CENSUS-YYYYMMDD-HHMMSS`), not to the transfer run's
+    `GT-...` id -- the two prefixes are deliberately distinct so a log or a
+    filename can never confuse them. The transfer run being judged is
+    identified by the `RunReport` this census hangs off (`RunReport.census`)
+    and by the artifact's separate `transfer_run` block.
+
+    `gate_pass` is INTERNAL-ONLY and is NOT emitted. The artifact top level is
+    `additionalProperties: false` and carries `verdict` + `exit_code`
+    instead; a `gate_pass` key there cannot validate, and T014 pins exactly
+    that. The gate RECOMPUTES its verdict from the rows and the baseline
+    rather than trusting any stored boolean.
+
+    The `gate_pass` invariant below is deliberately ONE-DIRECTIONAL:
+    `gate_pass=True` is rejected whenever the model can already see that it is
+    false (a missing baseline, or a gate-relevant row failing on counts), but
+    `gate_pass=False` is always accepted, because duplicate identity, stale
+    baselines and incomplete coverage can each fail the gate for reasons no
+    single row knows about.
+    """
+    run_id: str                 # -> artifact `census_id`
+    source_project: str         # -> artifact `projects.source`
+    destination_project: str    # -> artifact `projects.destination`
+    baseline: StarterBaseline   # -> artifact `starter_baseline`
+    taken_at: str               # -> artifact `generated_at`
+    rows: tuple = ()            # -> artifact `classes`
+    gate_pass: bool = False     # INTERNAL ONLY -- artifact has verdict/exit_code
+    schema_version: int = CENSUS_SCHEMA_VERSION  # -> artifact `schema_version`
+
+    def __post_init__(self) -> None:
+        if not self.run_id:
+            raise ValueError("FidelityCensus.run_id must be non-empty")
+        if not _CENSUS_ID_RE.match(self.run_id):
+            hint = (
+                " -- that looks like a TRANSFER run id; FidelityCensus.run_id "
+                "is the census's own id and maps to the artifact's census_id"
+                if self.run_id.startswith("GT-") else ""
+            )
+            raise ValueError(
+                "FidelityCensus.run_id must match CENSUS-YYYYMMDD-HHMMSS, got "
+                + repr(self.run_id) + hint
+            )
+        for name in ("source_project", "destination_project", "taken_at"):
+            if not getattr(self, name):
+                raise ValueError(
+                    "FidelityCensus." + name + " must be non-empty"
+                )
+        if not isinstance(self.baseline, StarterBaseline):
+            raise ValueError(
+                "FidelityCensus.baseline must be a StarterBaseline, got "
+                + repr(self.baseline) + " -- an absent baseline is "
+                "StarterBaseline.missing() (kind=NONE), never None, so the "
+                "gate reports BASELINE_MISSING instead of crashing on it"
+            )
+        if self.schema_version < 1:
+            raise ValueError(
+                "FidelityCensus.schema_version must be >= 1, got "
+                + repr(self.schema_version)
+            )
+        if not isinstance(self.rows, tuple):
+            raise ValueError(
+                "FidelityCensus.rows must be a tuple, got "
+                + type(self.rows).__name__
+            )
+        if not self.rows:
+            raise ValueError(
+                "FidelityCensus.rows must carry at least one row -- the "
+                "artifact's `classes` array is minItems 1, and a class with "
+                "no instances anywhere is a NOT_EVALUATED row, never an "
+                "omitted one (FR-012)"
+            )
+        # Keyed on (class, owning_feature_system), not on class alone, exactly
+        # as the artifact validator's invariant 1 is: Amendment A1 splits one
+        # class into one row PER OWNING FEATURE SYSTEM, and both halves carry
+        # the same plain `object_class`. Two rows for one class-and-owner are
+        # the same row twice, which is what this rejects; two rows for one
+        # class under DIFFERENT owners are the A1 shape, and keying on class
+        # alone would report them as a phantom duplicate.
+        seen = set()
+        for row in self.rows:
+            key = (row.object_class, row.owning_feature_system)
+            if key in seen:
+                owner = key[1]
+                raise ValueError(
+                    "FidelityCensus carries two rows for class "
+                    + repr(row.object_class)
+                    + (" under " + repr(owner) if owner else "")
+                    + " -- exactly one row per class"
+                    + (" and owning feature system" if owner else "")
+                )
+            seen.add(key)
+        # A1 again: a class may be reported EITHER once for the class or once
+        # per owner, never both. The mixed shape is the one ambiguity A1 exists
+        # to forbid -- a class-total row sitting beside per-owner rows lets the
+        # same objects be counted twice, or a per-owner shortfall be masked by
+        # the total that contains it.
+        split_classes = {r.object_class for r in self.rows
+                         if r.owning_feature_system is not None}
+        summed = sorted({r.object_class for r in self.rows
+                         if r.owning_feature_system is None
+                         and r.object_class in split_classes})
+        if summed:
+            raise ValueError(
+                "FidelityCensus carries BOTH a per-owner row and an "
+                "owner-less row for " + ", ".join(summed)
+                + " -- a class split by Amendment A1 is reported once per "
+                "owning feature system, and the owner-less row would carry "
+                "the summed class total the split exists to forbid"
+            )
+        if not isinstance(self.gate_pass, bool):
+            raise ValueError(
+                "FidelityCensus.gate_pass must be a bool, got "
+                + repr(self.gate_pass)
+            )
+        if self.gate_pass:
+            if self.baseline.is_missing:
+                raise ValueError(
+                    "FidelityCensus.gate_pass cannot be True with an absent "
+                    "baseline: absence is a verdict (BASELINE_MISSING, exit "
+                    "4), not a warning, and there is no path on which a "
+                    "missing baseline yields exit 0 (fidelity-census.md 5.3)"
+                )
+            failing = tuple(
+                r.object_class + (
+                    " (" + r.owning_feature_system + ")"
+                    if r.owning_feature_system else ""
+                )
+                for r in self.failing_rows
+            )
+            if failing:
+                raise ValueError(
+                    "FidelityCensus.gate_pass is True but these gate-relevant "
+                    "classes have an unexplained difference: "
+                    + ", ".join(failing)
+                )
+
+    # ---- derived views -------------------------------------------------
+
+    @property
+    def gate_relevant_rows(self) -> tuple:
+        """The rows SC-005 gates on: `engine_can_create and not
+        out_of_scope`."""
+        return tuple(r for r in self.rows if r.is_gate_relevant)
+
+    @property
+    def failing_rows(self) -> tuple:
+        """Gate-relevant rows with an unexplained difference. Each is directly
+        renderable -- it names its class and carries its own counts."""
+        return tuple(r for r in self.gate_relevant_rows if not r.counts_pass)
+
+    @property
+    def counts_gate_pass(self) -> bool:
+        """The count half of the gate: no baseline problem and no failing
+        row. NOT the whole gate -- duplicate identity, baseline staleness and
+        coverage completeness are the other three ways to fail, and they are
+        T020's to judge from the artifact."""
+        return not self.baseline.is_missing and not self.failing_rows
+
+    def row_for(
+        self,
+        object_class: str,
+        owning_feature_system: Optional[str] = None,
+    ) -> Optional[ClassCensusRow]:
+        """The row for one class, or None when the census has none -- which is
+        itself a coverage defect (FR-012 requires a row per class), not a
+        normal outcome.
+
+        Pass `owning_feature_system` for an A1-split class: either half alone
+        is NOT the class, so an unqualified lookup over a split returns
+        whichever half comes first, which is a per-owner number and not the
+        class's. `rows_for` returns both."""
+        for row in self.rows:
+            if row.object_class != object_class:
+                continue
+            if (owning_feature_system is not None
+                    and row.owning_feature_system != owning_feature_system):
+                continue
+            return row
+        return None
+
+    def rows_for(self, object_class: str) -> tuple:
+        """Every row for one class. More than one only for an A1 split, where
+        the class is reported once per owning feature system."""
+        return tuple(r for r in self.rows if r.object_class == object_class)
+
+
+# ---------------------------------------------------------------------------
+# In-memory field name -> census artifact field name.
+#
+# The ONE place the two naming layers are reconciled. T019's emitter and
+# T020's validator must be driven by these tables; a `None` value means the
+# field is INTERNAL-ONLY and must not appear in the JSON at all (the artifact
+# objects are `additionalProperties: false`, so emitting one is a hard
+# validation failure, not a harmless extra).
+# ---------------------------------------------------------------------------
+
+#: `StarterBaseline` -> `$defs.starterBaseline`. `entries` is the working
+#: inventory the subtraction is computed FROM; the artifact carries only its
+#: shape (`class_count`, `carries_natural_keys`, both derived properties).
+STARTER_BASELINE_ARTIFACT_FIELDS: dict = {
+    "kind": "kind",
+    "flex_version": "flex_version",
+    "captured_at": "captured_at",
+    "captured_from": "project_name",
+    "path": "path",
+    "source_census_id": "source_census_id",
+    "data_model_version": "data_model_version",
+    "entries": None,         # inventory, not provenance
+    "schema_version": None,  # the artifact's schema_version is top-level
+    "content_hash": None,    # data-model.md:90 only; NO schema counterpart
+}
+
+#: `ClassCensusRow` -> `$defs.classRow`. The four remaining REQUIRED classRow
+#: keys are not functions of this row and must be supplied by the emitter:
+#: `gate_scope` and `in_class_list_via` (T016 class-list provenance),
+#: `accounted_for` (structured `accountedLine` objects -- this row carries
+#: only the reason TOKENS, not their counts, directions or report refs), and
+#: `unexplained_shortfall` / `unexplained_surplus` (per-direction arithmetic
+#: over those lines). `destination_count_net`, `difference_raw` and
+#: `verdict_class` are derived properties here -- read them, do not recompute.
+#:
+#: `owning_feature_system` IS emitted -- it is a real, enumerated (and optional)
+#: `$defs.classRow` property under Amendment A1, not an internal name. Because
+#: it is OPTIONAL, an emitter driven by this table must OMIT it when the value
+#: is `None` rather than emit a null: every artifact object is
+#: `additionalProperties: false` with an enumerated value here, so
+#: `"owning_feature_system": null` is a hard validation failure.
+CLASS_CENSUS_ROW_ARTIFACT_FIELDS: dict = {
+    "object_class": "class",
+    "source_count": "source_count",
+    "destination_count": "destination_count_total",
+    "difference": "difference",
+    "engine_can_create": "engine_can_create",
+    "owning_feature_system": "owning_feature_system",  # A1; omit when None
+    "starter_excluded": None,  # = starter_baseline_count - starter_matched_to_source
+    "explained": None,         # expressed as a non-empty `accounted_for`
+    "reasons": None,           # -> `accounted_for[*].reason`
+    "out_of_scope": None,      # -> `verdict_class` NOT_EVALUATED + reason
+}
+
+#: T099. The mapped fields above that `$defs.classRow` lists as REQUIRED and
+#: types `["integer", "null"]`. The emitter omits a mapped field whose value is
+#: None -- correct for `owning_feature_system`, which is an OPTIONAL property
+#: on an object that is `additionalProperties: false` -- but omitting one of
+#: these would drop a required key and fail validation outright. So the two
+#: cases have to be told apart by NAME rather than by the value being None,
+#: which is the distinction this set carries.
+#:
+#: `object_class` and `engine_can_create` are required and mapped too, and are
+#: deliberately absent: neither is nullable in the schema and neither can be
+#: None on a constructed row, so listing them would invite a null through a
+#: door the schema keeps shut.
+CLASS_ROW_REQUIRED_NULLABLE_FIELDS: frozenset = frozenset({
+    "source_count",
+    "destination_count",
+    "difference",
+})
+
+#: `FidelityCensus` -> the artifact top level.
+FIDELITY_CENSUS_ARTIFACT_FIELDS: dict = {
+    "run_id": "census_id",
+    "taken_at": "generated_at",
+    "schema_version": "schema_version",
+    "baseline": "starter_baseline",
+    "rows": "classes",
+    "source_project": "projects.source",
+    "destination_project": "projects.destination",
+    "gate_pass": None,  # top level is additionalProperties:false and carries
+                        # `verdict` + `exit_code`; the gate RECOMPUTES both
+}
+
+
+class DependencyKind(enum.Enum):
+    """Feature 038 (FR-014) -- the relationship one `ClosureEdge` represents.
+
+    These name the SPECIFIC dependency being walked, not a generic "depends
+    on", because FR-018 requires each relationship to be verified on its own
+    evidence before it may influence a plan. A single global "closure is on"
+    flag cannot express that, which is why `CLOSURE_EDGES_VERIFIED`
+    (Lib/categories.py) is a per-relationship allowlist keyed by this enum.
+    """
+    AFFIX_TO_POS = "affix_to_pos"
+    #: `IMoInflAffMsa.SlotsRC` -- an inflectional affix MSA naming the template
+    #: column it occupies. REAL in LCM and real in this repo, but GramTrans
+    #: carries it as `RunPlan.msa_slot_bindings` for the deferred 17.1 sub-pass
+    #: (FR-333/FR-019), NOT as a `*_dependencies` edge, so NO producer emits it
+    #: and no registry row can name it yet. Kept because FR-019/SC-003 is T074's
+    #: job and that is where it would be earned.
+    AFFIX_TO_SLOT = "affix_to_slot"
+    #: Named by the plan, emitted by NOTHING -- and T068 measured why. The
+    #: LCM arrow between a slot and a template runs the other way: an
+    #: `IMoInflAffixSlot` is OWNED by its `IPartOfSpeech.AffixSlotsOC` and knows
+    #: nothing about templates, while `IMoInflAffixTemplate` REFERENCES its
+    #: slots through five `*SlotsRS` sequences. So the dependent is the
+    #: TEMPLATE (see `TEMPLATE_TO_SLOT`, added by T069), and what a slot
+    #: actually depends on is its owning POS (see `SLOT_TO_POS`, added by
+    #: T068). Retained rather than deleted so the
+    #: record of the plan's assumption survives next to the measurement that
+    #: corrected it; deliberately unregistrable, because no producer emits it.
+    SLOT_TO_TEMPLATE = "slot_to_template"
+    #: Feature 038 (T068). `categories.slots_dependencies` emits exactly one
+    #: far endpoint -- `(GRAM_CATEGORIES, slot.Owner)`, the `IPartOfSpeech`
+    #: whose `AffixSlotsOC` owns the slot -- and there was no member for it.
+    #: The plan's list named `SLOT_TO_TEMPLATE` instead, which is a DIFFERENT
+    #: relationship in the opposite direction (see above). Registering the
+    #: measured slot->POS edge under that member would have put a live
+    #: relationship into every FR-015 surface under the wrong name, which is
+    #: the same substitution FR-018 forbids for `verified_by`. Added, not
+    #: borrowed. Audited by `debug/audit038_closure_edges.py`.
+    SLOT_TO_POS = "slot_to_pos"
+    TEMPLATE_TO_POS = "template_to_pos"
+    #: Feature 038 (T069). The arrow `SLOT_TO_TEMPLATE` was named for and got
+    #: backwards: `IMoInflAffixTemplate` REFERENCES its slots through five
+    #: sequences (`PrefixSlotsRS`, `SuffixSlotsRS`, `EncliticSlotsRS`,
+    #: `ProcliticSlotsRS`, `SlotsRS`), so the template is the dependent and the
+    #: slot is the dependency. `categories.affix_templates_dependencies` has
+    #: emitted exactly this edge since the T010 probe; until T069 there was no
+    #: member for it and the first audit reported it under `AFFIX_TO_SLOT`,
+    #: which is a DIFFERENT relationship (an affix MSA's own `SlotsRC`).
+    #: Registering it under that member would have put a live template->slot
+    #: edge into every FR-015 surface labelled as an affix->slot one.
+    TEMPLATE_TO_SLOT = "template_to_slot"
+    MSA_TO_INFL_FEATURE = "msa_to_infl_feature"
+    #: Feature 038 (T034). An MSA's `InflFeatsOA`/`MsFeaturesOA` is an
+    #: `IFsFeatStruc` whose `TypeRA` REFERENCES an `IFsFeatStrucType` owned by
+    #: `IFsFeatureSystem.TypesOC` -- i.e. by FEATURE_STRUCT_TYPES (analysis
+    #: side) or PHON_FEAT_TYPES (phonological side), never by the MSA. The 038
+    #: census measured ~2,083 MSAs restored by the affix path, every one of
+    #: them carrying a `TypeRA`; with the target's `MsFeatureSystemOA.TypesOC`
+    #: empty each of those references is unsatisfiable, which constitution
+    #: Principle I forbids. This names the relationship so
+    #: `CLOSURE_EDGES_VERIFIED` can switch it on ALONE, on its own evidence.
+    #:
+    #: The same arrow leaves three other kinds of owner -- `IPartOfSpeech`
+    #: (`DefaultFeaturesOA`), `IPhPhoneme` and `IPhNCFeatures` (`FeaturesOA`)
+    #: -- and `Lib/categories.py` emits it from all of them, across five
+    #: producers (AFFIXES and STEMS both enumerate MSA-bearing LexEntries).
+    #: Because
+    #: `CLOSURE_EDGES_VERIFIED` is keyed by this enum and a dict key is unique,
+    #: registering more than one of those four sources requires sibling members
+    #: (`POS_TO_FEAT_STRUC_TYPE`, `PHONEME_TO_FEAT_STRUC_TYPE`, ...). They are
+    #: deliberately NOT added ahead of the audit that would earn each one a
+    #: `verified_by`: an unused member invites a registration nobody verified.
+    MSA_TO_FEAT_STRUC_TYPE = "msa_to_feat_struc_type"
+    PROCESS_RULE_TO_PHONEME = "process_rule_to_phoneme"
+    PROCESS_RULE_TO_NATURAL_CLASS = "process_rule_to_natural_class"
+
+
+@dataclass(frozen=True)
+class ClosureEdge:
+    """Feature 038 (FR-014, FR-015) -- one materialised (dependency,
+    dependent) pair from `closure.walk`'s `pulled_in_by` map.
+
+    `dependent` needs `dependency`. Both are `(GrammarCategory, guid)` pairs.
+
+    `verified` is the FR-018 gate. `build_run_plan` MUST RAISE on an edge
+    whose `verified is False` rather than quietly planning from it: an
+    unverified dependency edge that silently changes what gets transferred is
+    precisely the failure mode FR-018 exists to prevent. `verified_by` names
+    the test or probe that earned the True.
+
+    `origin` preserves `closure.walk`'s seed semantics -- a directly selected
+    item is "chosen" and is never "pulled_in".
+    """
+    dependent: tuple
+    dependency: tuple
+    kind: DependencyKind
+    verified: bool
+    origin: str
+    verified_by: str = ""
+    deselected: bool = False
+
+    def __post_init__(self) -> None:
+        for name in ("dependent", "dependency"):
+            val = getattr(self, name)
+            if not (isinstance(val, tuple) and len(val) == 2):
+                raise ValueError(
+                    "ClosureEdge." + name + " must be a (GrammarCategory, "
+                    "guid) 2-tuple, got " + repr(val)
+                )
+            if not val[1]:
+                raise ValueError(
+                    "ClosureEdge." + name + " must carry a non-empty guid"
+                )
+        if self.origin not in ("chosen", "pulled_in"):
+            raise ValueError(
+                "ClosureEdge.origin must be 'chosen' or 'pulled_in', got "
+                + repr(self.origin)
+            )
+        if self.verified and not self.verified_by:
+            raise ValueError(
+                "ClosureEdge.verified is True but verified_by is empty -- "
+                "FR-018 requires naming the evidence that verified the edge"
+            )
+
+
+@dataclass(frozen=True)
+class IncompletenessRecord:
+    """Feature 038 (FR-016, FR-017, FR-019, SC-010) -- an item that will
+    arrive in the target KNOWINGLY incomplete.
+
+    Raised when a dependency was deselected by the user (cause="deselected"),
+    cannot be satisfied at all ("unsatisfiable"), or sits in a dependency
+    cycle ("cycle"). Every record reaches the post-run statistics panel: the
+    contract is that the item is REPORTED, never transferred silently broken.
+    Affix-to-column link failures emit one of these too (FR-019, SC-003).
+    """
+    incomplete_item: tuple
+    incomplete_label: str
+    missing_dependency: tuple
+    missing_label: str
+    cause: str
+    consequence: str
+
+    def __post_init__(self) -> None:
+        causes = ("deselected", "unsatisfiable", "cycle")
+        if self.cause not in causes:
+            raise ValueError(
+                "IncompletenessRecord.cause must be one of "
+                + repr(causes) + ", got " + repr(self.cause)
+            )
+        if not self.consequence:
+            raise ValueError(
+                "IncompletenessRecord.consequence must be non-empty -- a "
+                "record the user cannot act on is not a report (SC-010)"
+            )
+
+
+# ---------------------------------------------------------------------------
+# Feature 038 (T042, FR-020..FR-022, SC-007) -- the seven owned collections of
+# an `IPartOfSpeech` that enrichment covers. Declared here, ABOVE
+# `EnrichedCollection`, because that record validates against them; the
+# `OwnedObjectSpec` roster describing the same seven for the walk lives beside
+# `OwnedObjectSpec` itself (`POS_OWNED_COLLECTION_SPECS`, below) since the
+# descriptor is defined later in this module. One list, two views -- there is
+# deliberately no second name table.
+#
+# LIVE-VERIFIED SPELLING NOTE (2026-08-20, FLExToolsMCP `get_object_api`
+# `IPartOfSpeech` / `resolve_property ReferenceFormsOC`): the seventh field is
+# `ReferenceFormsOC` -- an owning COLLECTION -- not `ReferenceFormsOS`.
+# tasks.md T042, data-model.md section 7, research.md:186 and
+# census-evidence.md:252 all spell it `...OS`; no such property exists on
+# `IPartOfSpeech` (its owned collections are AffixSlotsOC, AffixTemplatesOS,
+# EmptyParadigmCellsOC, InflectionClassesOC, ReferenceFormsOC, RulesOfReferralOS,
+# StemNamesOC, plus inherited SubPossibilitiesOS). `ReferenceFormsOC` is
+# therefore the CANONICAL name here and the spec's `ReferenceFormsOS` is
+# accepted as an alias -- a record built straight from the spec text must be
+# reported, not crash a live run -- but it normalises to the canonical name for
+# the duplicate-collection check, so one collection can never be reported twice
+# under its two spellings.
+POS_OWNED_COLLECTION_FIELDS: tuple = (
+    "AffixSlotsOC",
+    "AffixTemplatesOS",
+    "InflectableFeatsRC",
+    "SubPossibilitiesOS",
+    "StemNamesOC",
+    "InflectionClassesOC",
+    "ReferenceFormsOC",
+)
+
+# spec spelling -> live LCM spelling.
+POS_OWNED_COLLECTION_ALIASES: dict = {"ReferenceFormsOS": "ReferenceFormsOC"}
+
+_POS_OWNED_COLLECTION_ACCEPTED: frozenset = frozenset(
+    POS_OWNED_COLLECTION_FIELDS) | frozenset(POS_OWNED_COLLECTION_ALIASES)
+
+
+def canonical_pos_collection_field(field_name: str) -> str:
+    """Canonical spelling of one of the seven POS owned collections.
+
+    Maps the spec's `ReferenceFormsOS` onto the live `ReferenceFormsOC` and
+    passes every other accepted name through unchanged. Raises `ValueError`
+    for anything outside the seven -- enrichment is defined over exactly that
+    set (T042), so an unknown field name is a caller bug, not a datum.
+    """
+    if field_name in POS_OWNED_COLLECTION_ALIASES:
+        return POS_OWNED_COLLECTION_ALIASES[field_name]
+    if field_name not in _POS_OWNED_COLLECTION_ACCEPTED:
+        raise ValueError(
+            "field_name must be one of the seven POS owned collections "
+            + repr(POS_OWNED_COLLECTION_FIELDS) + ", got "
+            + repr(field_name)
+        )
+    return field_name
+
+
+@dataclass(frozen=True)
+class EnrichedCollection:
+    """Feature 038 (FR-020..FR-022) -- what one owned collection gained during
+    an enrichment.
+
+    `field_name` is constrained to the seven POS owned collections
+    (`POS_OWNED_COLLECTION_FIELDS`): AffixSlotsOC, AffixTemplatesOS,
+    InflectableFeatsRC, SubPossibilitiesOS, StemNamesOC, InflectionClassesOC,
+    ReferenceFormsOC (the spec's `ReferenceFormsOS` spelling is accepted as an
+    alias -- see the note above the constant).
+
+    Every source child of the collection lands in exactly one of three
+    buckets, and there is no fourth: `added` (written now), `already_present`
+    (the destination had it), `dropped` (could not be added). SC-010 forbids
+    an unreported outcome, so `dropped` is not a bare number: each dropped
+    child MUST carry a `DroppedItemRecord` in `dropped_records` naming its
+    reason, exactly as every other drop in this module is reported. Those
+    records feed `categories.compute_fidelity_by_guid` unchanged.
+    """
+    field_name: str
+    added: int = 0
+    already_present: int = 0
+    dropped: int = 0
+    dropped_records: tuple = ()  # tuple[DroppedItemRecord, ...]
+
+    def __post_init__(self) -> None:
+        if not self.field_name:
+            raise ValueError("EnrichedCollection.field_name must be non-empty")
+        try:
+            canonical_pos_collection_field(self.field_name)
+        except ValueError as exc:
+            raise ValueError("EnrichedCollection." + str(exc)) from None
+        for name in ("added", "already_present", "dropped"):
+            if getattr(self, name) < 0:
+                raise ValueError(
+                    "EnrichedCollection." + name + " must be >= 0, got "
+                    + repr(getattr(self, name))
+                )
+        if self.dropped != len(self.dropped_records):
+            raise ValueError(
+                "EnrichedCollection.dropped (" + repr(self.dropped) + ") must "
+                "equal len(dropped_records) (" + repr(len(self.dropped_records))
+                + ") for " + repr(self.field_name) + " -- a child that could "
+                "not be added is reported with its reason, never counted "
+                "anonymously (SC-010)"
+            )
+
+    @property
+    def canonical_field_name(self) -> str:
+        """`field_name` in its live LCM spelling."""
+        return canonical_pos_collection_field(self.field_name)
+
+    @property
+    def source_child_count(self) -> int:
+        """How many source children this collection accounted for: added +
+        already_present + dropped. `dropped == 0` is what "every source child
+        arrived" means for this collection (see `EnrichmentRecord.fidelity`)."""
+        return self.added + self.already_present + self.dropped
+
+
+@dataclass(frozen=True)
+class EnrichmentRecord:
+    """Feature 038 (FR-020..FR-022, SC-007) -- what a MATCHED destination
+    object gained.
+
+    Enrichment never removes, blanks, or overwrites existing destination
+    content (FR-021): it is add-only, carried as
+    `PlannedOverwrite.write_mode == "merge"` -- Principle IV's "write source
+    where non-empty, keep target where source empty, never blank from empty".
+
+    `was_created` is always False here; it exists so the report can state the
+    created-vs-enriched distinction explicitly (FR-022) rather than leaving a
+    reader to infer it. It is ENFORCED, not merely defaulted -- an enrichment
+    is by definition not a creation, so `was_created=True` is unconstructible.
+
+    `collections` holds at most one `EnrichedCollection` per owned collection
+    (data-model.md section 7: "one per owned collection touched"), checked on
+    the canonical spelling so the same collection cannot appear twice under
+    `ReferenceFormsOC` and `ReferenceFormsOS`.
+    """
+    object_class: str
+    source_guid: str
+    target_guid: str
+    label: str
+    collections: tuple = ()
+    fields_updated: tuple = ()
+    was_created: bool = False
+
+    def __post_init__(self) -> None:
+        for name in ("object_class", "source_guid", "target_guid"):
+            if not getattr(self, name):
+                raise ValueError(
+                    "EnrichmentRecord." + name + " must be non-empty"
+                )
+        if self.was_created:
+            raise ValueError(
+                "EnrichmentRecord.was_created must be False -- an enrichment "
+                "acts on an object that already existed in the target "
+                "(FR-022). A creation is a PlannedAction, not an enrichment."
+            )
+        seen: set = set()
+        for coll in self.collections:
+            key = coll.canonical_field_name
+            if key in seen:
+                raise ValueError(
+                    "EnrichmentRecord.collections holds two rows for "
+                    + repr(key) + " -- one EnrichedCollection per owned "
+                    "collection touched (data-model.md section 7); two rows "
+                    "would double-count the same children in the report."
+                )
+            seen.add(key)
+
+    @property
+    def is_empty(self) -> bool:
+        """True when nothing was actually gained AND nothing was lost. Per
+        data-model.md section 7 this is the ONLY case that may degrade to a
+        `Skip`; a collection with drops must stay a reported UPDATE, since a
+        `Skip` would take the drop out of the statistics panel (SC-010)."""
+        return (not self.fields_updated
+                and all(c.added == 0 and c.dropped == 0
+                        for c in self.collections))
+
+    @property
+    def fidelity(self) -> "FidelityStatus":
+        """`FidelityStatus` for an enriched object (T042): FULL when every
+        source child arrived, PARTIAL otherwise.
+
+        Reuses the FR-013 enum and the SAME rule the existing helper applies
+        to a created object -- `categories.compute_fidelity_by_guid` marks an
+        owner PARTIAL exactly when it has >=1 `DroppedItemRecord` and leaves
+        FULL implicit -- rather than introducing a second, divergent
+        computation. `EnrichedCollection.dropped_records` carries those very
+        records, so an enrichment feeds that helper unchanged.
+        """
+        for coll in self.collections:
+            if coll.dropped:
+                return FidelityStatus.PARTIAL
+        return FidelityStatus.FULL
+
+
+@dataclass(frozen=True)
+class ProcessContextSpec:
+    """Feature 038 (FR-023) -- one input context row of a `MoAffixProcess`
+    (`PhSimpleContextSeg` / `PhSimpleContextNC` / `PhSimpleContextBdry`).
+
+    `co_created_shared` (T076) is additive and defaults empty. It names the
+    source GUIDs of the `PhPhonData.ContextsOS` contexts this member's
+    `MembersRS` needed and that the run BUILT, rather than found. It is
+    recorded because SC-010 admits no unreported outcome: an object written
+    into a shared, project-level collection as a side effect of transferring
+    a lexical entry is exactly the kind of write a reader would otherwise
+    have no way to see. An empty tuple is the normal answer -- 12 of the 18
+    live rules co-create nothing.
+    """
+    context_class: str
+    index: int
+    referent_guid: str = ""
+    label: str = ""
+    co_created_shared: tuple = ()
+
+    def __post_init__(self) -> None:
+        if not self.context_class:
+            raise ValueError(
+                "ProcessContextSpec.context_class must be non-empty"
+            )
+        if self.index < 0:
+            raise ValueError("ProcessContextSpec.index must be >= 0")
+
+
+@dataclass(frozen=True)
+class ProcessOutputSpec:
+    """Feature 038 (FR-023) -- one output step of a `MoAffixProcess`
+    (`MoCopyFromInput`, `MoInsertPhones`, `MoModifyFromInput`)."""
+    step_class: str
+    index: int
+    content: str = ""
+    referent_guids: tuple = ()
+
+    def __post_init__(self) -> None:
+        if not self.step_class:
+            raise ValueError("ProcessOutputSpec.step_class must be non-empty")
+        if self.index < 0:
+            raise ValueError("ProcessOutputSpec.index must be >= 0")
+
+
+@dataclass(frozen=True)
+class ProcessRuleTransferRecord:
+    """Feature 038 (FR-023..FR-025, SC-006) -- the outcome of transferring one
+    source `MoAffixProcess`.
+
+    HARD INVARIANT (FR-025, SC-010): when `reproduced is False` the rule is
+    reported -- via a `DroppedItemRecord` plus `Skip(NOT_REPRODUCIBLE)` -- and
+    SKIPPED. It must NEVER be written as a different, simpler class. The
+    historic `MoAffixProcess -> MoAffixAllomorph` downgrade is prohibited by
+    construction: no `PlannedAction` may name a target class differing from
+    its source class. A rule silently demoted to a shape that cannot express
+    the same alternation is worse than a rule the report says was not
+    transferred.
+    """
+    source_guid: str
+    input_contexts: tuple = ()       # tuple[ProcessContextSpec, ...]
+    output_steps: tuple = ()         # tuple[ProcessOutputSpec, ...]
+    reproduced: bool = False
+    target_guid: str = ""
+    not_reproducible_reason: str = ""
+    # tuple[ReferenceDecisionRecord, ...] -- REUSED, not re-declared (T052).
+    # FR-024: the phoneme / natural-class references inside the rule graph
+    # resolve to the destination items matched under FR-001/FR-002, so their
+    # Add/Link/Update/Report decisions are the same kind of decision every
+    # other referenced field records, and Preview shows them the same way.
+    reference_decisions: tuple = ()
+
+    def __post_init__(self) -> None:
+        if not self.source_guid:
+            raise ValueError(
+                "ProcessRuleTransferRecord.source_guid must be non-empty"
+            )
+        if not self.reproduced and not self.not_reproducible_reason:
+            raise ValueError(
+                "ProcessRuleTransferRecord with reproduced=False MUST carry a "
+                "non-empty not_reproducible_reason (FR-025, SC-010) -- an "
+                "unexplained non-reproduction is a silent loss"
+            )
+        if self.reproduced and not self.target_guid:
+            raise ValueError(
+                "ProcessRuleTransferRecord with reproduced=True must carry "
+                "the target_guid it was reproduced as"
+            )
+
+
+class AffixSlotLinkOutcome(enum.Enum):
+    """Feature 038 (T074, FR-019) -- what became of ONE source affix MSA's
+    template-column membership on this run.
+
+    The vocabulary exists because "linked or reported" was previously
+    unanswerable from the report: the only trace of this sub-pass was a
+    `Skip(DEPENDENCY_UNRESOLVED)` keyed by the SLOT, so a reader could not tell
+    which AFFIX had lost its column, and could not tell a real loss from a
+    binding for an affix the run never touched.
+
+    `NOT_IN_RUN` is the member that makes the other three trustworthy. The
+    producer (`preview._populate_msa_slot_bindings`) walks the WHOLE SOURCE
+    LEXICON on purpose -- it must, or the selection-independent safety net in
+    `transfer._ensure_171_subpass` would have nothing to work from -- so the
+    binding set is a claim about the SOURCE, not about the run. Measured on
+    `Mbugwe LizzieHC practice` under an AFFIX_TEMPLATES-only selection, reading
+    it as a claim about the run produced 203 reported failures of which 0 were
+    real. A run that transfers no affixes has not failed to link any.
+    """
+    #: The affix is in the destination and now occupies the source's column.
+    LINKED = "linked"
+    #: The affix is in the destination; the slot it occupied is NOT, so the
+    #: column membership could not be made. The unique, real failure this
+    #: sub-pass is the only reporter of (FR-019's second half).
+    SLOT_MISSING = "slot_missing"
+    #: The owning entry IS in the destination but its inflectional MSA is not,
+    #: so there is nothing to hang the column on. Real and reported: the entry
+    #: arrived in a shape that cannot carry the link.
+    MSA_MISSING = "msa_missing"
+    #: Neither the MSA nor its owning entry is in the destination -- this run
+    #: never undertook to put the affix there. NOT a failure to link, and
+    #: deliberately NOT a Skip: nothing was promised, so nothing was lost. Kept
+    #: as a record rather than dropped so the count remains auditable and the
+    #: suppression can never be mistaken for silence.
+    NOT_IN_RUN = "not_in_run"
+
+
+@dataclass(frozen=True)
+class AffixSlotLinkRecord:
+    """Feature 038 (T074, FR-019 / SC-003) -- one affix MSA's link outcome.
+
+    One record per source `MoInflAffMsa` that occupied at least one template
+    column in the source, so `len(records)` is SC-003's denominator and the
+    outcome tally is its numerator, straight off the run report. Emitted at
+    execute time by `categories._run_171_subpass` and threaded onto
+    `RunReport.affix_slot_links` -- the same `extra_*` union idiom as
+    `process_rules`.
+
+    `entry_guid` is what FR-019 actually asks about. The pre-T074 report keyed
+    its only trace by the slot, which named the thing that was missing instead
+    of the thing that lost something.
+    """
+    msa_guid: str
+    outcome: AffixSlotLinkOutcome
+    entry_guid: str = ""
+    #: Source slot GUIDs this MSA occupied -- the column(s) being claimed.
+    source_slot_guids: tuple = ()
+    #: The subset of `source_slot_guids` that could not be resolved in the
+    #: destination. Non-empty exactly when `outcome is SLOT_MISSING`.
+    unresolved_slot_guids: tuple = ()
+
+    def __post_init__(self) -> None:
+        if not self.msa_guid:
+            raise ValueError(
+                "AffixSlotLinkRecord.msa_guid must be non-empty"
+            )
+        if not self.source_slot_guids:
+            raise ValueError(
+                "AffixSlotLinkRecord must name the source column(s) it is "
+                "about -- an MSA with no source slots is not an FR-019 case "
+                "and must not occupy a row in SC-003's denominator"
+            )
+        if self.outcome is AffixSlotLinkOutcome.SLOT_MISSING:
+            if not self.unresolved_slot_guids:
+                raise ValueError(
+                    "AffixSlotLinkRecord(SLOT_MISSING) MUST name the slot(s) "
+                    "it could not resolve -- an unexplained failure to link "
+                    "is the silent loss FR-019 exists to prevent"
+                )
+        elif self.unresolved_slot_guids:
+            raise ValueError(
+                "AffixSlotLinkRecord names unresolved slots but its outcome "
+                f"is {self.outcome.value!r}, not SLOT_MISSING -- a report "
+                "that carries a loss under a non-loss verdict is worse than "
+                "no report"
+            )
+
+
+@dataclass(frozen=True)
 class PlannedAction:
     """ADD — create a brand-new object in target with the source's GUID
     preserved (where possible).  Phase 0's primary action verb."""
@@ -613,6 +3166,12 @@ class PlannedAction:
     source_guid: str
     intended_target_guid: str
     summary: str
+    # Feature 038 (FR-006): HOW this object was matched -- or None, which
+    # means no destination counterpart was found and this is a brand-new ADD.
+    # Carried so the run report can distinguish a GUID match from a
+    # natural-key (identity-substitution) match instead of leaving a reader
+    # to guess which one produced the plan.
+    match_basis: Optional["MatchBasisRecord"] = None
     pulled_in_by: tuple = ()  # tuple[str, ...] of source GUIDs
     # Feature 024 (T017, Principle III): per-item ReferenceDecision snapshots
     # for every referenced-possibility field on the entry/sense/allomorph
@@ -668,8 +3227,16 @@ class PlannedOverwrite:
     its syncable properties from source.  Phase 1 (FR-101 onward).
 
     `match_via` records which strategy yielded this overwrite
-    ("guid" | "identity_remap" | "fingerprint"). Phase 2 may inspect it to
-    apply different conflict-resolution policy per-match-type.
+    ("guid" | "identity_remap" | "fingerprint" | "natural_key"). Phase 2 may
+    inspect it to apply different conflict-resolution policy per-match-type.
+
+    Feature 038 adds "natural_key" (FR-001, FR-002): the source object had no
+    GUID counterpart in the destination, but a roster-admitted natural key
+    (e.g. a phoneme name) matched an existing destination object. Identity is
+    always tried first and is authoritative; the natural key is only ever the
+    fallback. The richer `match_basis` field below carries the full accounting
+    for the same fact -- `match_via` stays a plain string for the existing
+    Phase 2 policy code that switches on it.
 
     `owner_guid` is the parent reference the executor needs to scope its
     lookup (e.g. for a Slot overwrite, owner_guid is the template's GUID;
@@ -686,7 +3253,7 @@ class PlannedOverwrite:
     source_guid: str
     target_guid: str  # the existing target GUID (may differ from source for fingerprint matches)
     summary: str
-    match_via: str = "guid"  # "guid" | "identity_remap" | "fingerprint"
+    match_via: str = "guid"  # "guid"|"identity_remap"|"fingerprint"|"natural_key"
     pulled_in_by: tuple = ()
     owner_guid: str = ""  # parent reference for the executor's lookup
     write_mode: str = "overwrite"  # "overwrite" | "merge"
@@ -698,18 +3265,86 @@ class PlannedOverwrite:
     # Empty for overwrite categories that don't (yet) route through the
     # resolver.
     reference_decisions: tuple = ()  # tuple[ReferenceDecisionRecord, ...]
+    # Feature 038 (FR-006): full match accounting for this overwrite. The
+    # richer sibling of `match_via` above -- see MatchBasisRecord. None on
+    # overwrites planned before 038's matcher ran.
+    match_basis: Optional["MatchBasisRecord"] = None
+    # Feature 038 (FR-020..FR-022): set when this overwrite is an ENRICHMENT
+    # -- an add-only update that fills gaps on a destination object that
+    # already existed. Enrichment requires `write_mode == "merge"`; it never
+    # removes, blanks, or overwrites existing destination content (FR-021).
+    enrichment: Optional["EnrichmentRecord"] = None
+
+    def __post_init__(self) -> None:
+        # FR-021: an enrichment is add-only by construction. Catching this
+        # here means an enrichment can never be constructed with overwrite
+        # semantics that would blank destination content the user still has.
+        if self.enrichment is not None and self.write_mode != "merge":
+            raise ValueError(
+                "PlannedOverwrite carrying an enrichment must have "
+                "write_mode='merge' (FR-021: enrichment is add-only and must "
+                "never blank existing destination content), got write_mode="
+                + repr(self.write_mode)
+            )
 
 
 @dataclass(frozen=True)
 class Skip:
+    """An item the plan will not write, with the reason it need not be written.
+
+    `collections_compared` (feature 038 T048e) is the EVIDENCE that the
+    constitutional SKIP clause was satisfied, and is deliberately not a claim
+    that anything matched. data-model.md section 9 requires that "emitting SKIP
+    requires that every scalar field and all seven owned collections were
+    compared and needed no write"; T043 made `_plan_gold_reserved_edit` run
+    that comparison ahead of both its early skips, and the resulting
+    `EnrichedCollection` tuple -- which carries the per-collection
+    `already_present` counts -- was then DISCARDED. A correct no-op enrichment
+    therefore left no record that it had happened, which is what made T039's
+    SC-008 criterion 3b unevaluable: the objects a first run enriched produce
+    no enrichment surface on a second run to compare against.
+
+    THIS IS NOT THE REJECTED WIDENING. `journal/T039-idempotence.md` recorded
+    the neighbouring proposal -- giving `Skip` a `match_basis` -- as considered
+    and not recommended, because "a skip that carries a match is really a
+    link", and blurring LINK versus SKIP is the G3 boundary US4 exists to
+    sharpen. That objection is about asserting a MATCH. This field asserts only
+    that a comparison ran and found nothing to add, which is the precondition
+    the clause already demands of every SKIP; recording it narrows the
+    LINK/SKIP boundary rather than blurring it, because a skip that cannot show
+    its comparison is now distinguishable from one that can.
+
+    Every member must therefore be a no-op: `added == 0` and `dropped == 0`.
+    A collection that added or dropped a child is not evidence of a skip, it is
+    an enrichment, and it belongs on a `PlannedOverwrite` carrying an
+    `EnrichmentRecord`. The invariant is checked rather than documented so the
+    two dispositions cannot be conflated by a later caller.
+    """
     category: GrammarCategory
     source_guid: str
     reason: SkipReason
     detail: str
+    #: tuple[EnrichedCollection, ...] -- owned collections compared and found
+    #: complete. Empty means "no collection comparison applies or was made",
+    #: which is NOT the same as "compared and found complete"; only the
+    #: categories in `_POS_OWNED_COLLECTION_CATEGORIES` populate it.
+    collections_compared: tuple = ()
 
     def __post_init__(self) -> None:
         if not self.detail:
             raise ValueError("Skip.detail must be non-empty")
+        for coll in self.collections_compared:
+            if getattr(coll, "added", 0) or getattr(coll, "dropped", 0):
+                raise ValueError(
+                    "Skip.collections_compared may only hold no-op "
+                    "collections (added == 0 and dropped == 0): "
+                    + repr(getattr(coll, "field_name", coll))
+                    + " reports added=" + repr(getattr(coll, "added", 0))
+                    + " dropped=" + repr(getattr(coll, "dropped", 0))
+                    + ". A collection that gained or lost a child is an "
+                    "enrichment and belongs on a PlannedOverwrite carrying an "
+                    "EnrichmentRecord, not on a Skip."
+                )
 
 
 @dataclass(frozen=True)
@@ -736,6 +3371,44 @@ class RunPlan:
     #                        "specs": [{"spec_guid","feature","value"}, ...]}}
     # Ephemeral per run; not serialised into the run snapshot.
     msa_infl_feat_bindings: dict = field(default_factory=dict)
+    # Feature 038 (T119): the OTHER feature-structure owners --
+    # MoStemMsa.MsFeaturesOA, MoDerivAffMsa.From/ToMsFeaturesOA and
+    # MoAffixAllomorph.MsEnvFeaturesOA. Consumed by the same 17.1 sub-pass,
+    # for the same sequencing reason as `msa_infl_feat_bindings`.
+    #
+    # KEYED BY `"<owner guid>|<attr>"`, NOT BY OWNER GUID. `IMoDerivAffMsa`
+    # carries TWO feature structures (`FromMsFeaturesOA` and `ToMsFeaturesOA`,
+    # measured 17 and 17 on Mbugwe), so an owner-keyed dict would have carried
+    # one of them and reported success -- a silent half-transfer of exactly
+    # the kind SC-010 forbids. See `preview.feat_struc_binding_key`.
+    #
+    # Shape: {"<guid>|<attr>": {"struc_guid": str, "type_guid": str,
+    #                           "owner_guid": str, "attr": str,
+    #                           "specs": [row, ...]}} where a row is
+    #   {"spec_guid","kind":"closed","feature","value"} or
+    #   {"spec_guid","kind":"complex","feature","value":"","nested":{...}}.
+    # A row with no "kind" means "closed" (the feature-033 shape, unchanged).
+    # Ephemeral per run; not serialised into the run snapshot.
+    msa_feat_struc_bindings: dict = field(default_factory=dict)
+    # Feature 038 (T074, FR-019): {src_msa_guid: owning src LexEntry guid} for
+    # every MSA in the two binding dicts above.
+    #
+    # WHY THE OWNER HAS TO TRAVEL WITH THE BINDING. Both producers walk the
+    # WHOLE SOURCE LEXICON, independent of the selection -- deliberately, so
+    # the safety net in `transfer._ensure_171_subpass` can run the sub-pass on
+    # a selection that has no AFFIX_TEMPLATES actions at all. That makes the
+    # binding dicts a claim about the SOURCE. The consumer needs to turn each
+    # one into a claim about THIS RUN, and the only question that does so is
+    # "is this MSA's affix in the destination at all" -- which needs the
+    # owning entry, and the consumer has no source handle to recover it from.
+    # Measured cost of not having it (`Mbugwe LizzieHC practice`,
+    # AFFIX_TEMPLATES-only): 203 reported link failures, 0 real.
+    #
+    # Chosen over widening `msa_slot_bindings`' own value shape because that
+    # dict is read by name in a dozen tests and two other call sites; an
+    # additive sibling keyed the same way costs them nothing.
+    # Ephemeral per run; not serialised into the run snapshot.
+    msa_owner_entry: dict = field(default_factory=dict)  # Guid -> Guid
     # Phase 3c (FR-340): LexEntryRef component-lexeme bindings deferred
     # to post-pass A. Shape: {src_entry_guid: {"ComponentLexemesRS": [...],
     # "PrimaryLexemesRS": [...]}}.
@@ -794,6 +3467,28 @@ class RunPlan:
     # `extra_lines` param -- P0-2, feature-025 cycle-6 remediation) before
     # Move ever writes.
     reversal_decisions: tuple = ()  # tuple[ReversalDecision, ...]
+    # ---- Feature 038 (transfer fidelity gaps) -------------------------------
+    # All four are additive `tuple = ()` so every existing run snapshot stays
+    # valid without migration -- the same pattern `dropped_items` above
+    # established and feature 037 reused for `leaf_execution_failures`.
+    #
+    # FR-014/FR-015: the dependency-closure walk's materialised edges. With
+    # `CLOSURE_EDGES_VERIFIED` (Lib/categories.py) landing EMPTY this is a
+    # no-op by construction -- no edge is registered, so no edge is walked.
+    # `build_run_plan` MUST raise on any edge with `verified is False`
+    # (FR-018) rather than plan from it.
+    closure_edges: tuple = ()  # tuple[ClosureEdge, ...]
+    # FR-016/FR-017/FR-019: items that will arrive knowingly incomplete,
+    # because a dependency was deselected, is unsatisfiable, or sits in a
+    # cycle. Reported, never silently transferred broken (SC-010).
+    incompleteness: tuple = ()  # tuple[IncompletenessRecord, ...]
+    # FR-020..FR-022: add-only updates to destination objects that already
+    # existed and were matched by identity or natural key.
+    enrichments: tuple = ()  # tuple[EnrichmentRecord, ...]
+    # FR-023..FR-025: per-MoAffixProcess transfer outcomes. A rule that
+    # cannot be reproduced is reported and skipped -- NEVER downgraded to a
+    # simpler class (the historic MoAffixProcess -> MoAffixAllomorph bug).
+    process_rules: tuple = ()  # tuple[ProcessRuleTransferRecord, ...]
     # Feature 025 (full reversals, US3 T033): Part B `.fwdictconfig`
     # configuration-view copy plan (`Lib/config_views.py.plan_config_views`),
     # computed once in `Lib/preview.py.build_run_plan` (fail-soft -- a
@@ -1059,6 +3754,22 @@ class DroppedItemRecord:
         - "ConfigView"         — a `.fwdictconfig` file whose reference
           (WS / custom field / style) is absent in the target; `field_name`
           carries the reference kind, `item_name` the referenced label.
+
+    Feature 038 (T052, US5) adds three more owner_kind values, documented on
+    the same terms — there is still no whitelist to extend, and the FR-025
+    skip contract fixes the value at each emission site rather than validating
+    it here:
+        - "MoAffixProcess"      — a member of a process rule's own `InputOS` /
+          `OutputOS` that could not be reproduced, e.g. a `PhSequenceContext`
+          whose `MembersRS` name shared `PhPhonData.ContextsOS` contexts the
+          destination lacks. NOTE the asymmetry with the rule ITSELF: a rule
+          dropped whole is reported against its OWNING entry
+          (`owner_kind="LexEntry"`, `field_name="LexemeFormOA"` or
+          `"AlternateFormsOS"`, `item_name="MoAffixProcess"`) per the create-
+          path contract section 5, so this value names the rule only when the
+          rule is the OWNER of the thing lost.
+        - "MoInflAffixSlot"     — an affix slot's own contents.
+        - "MoInflAffixTemplate" — a template's slot sequence.
     """
     owner_kind: str
     owner_guid: str
@@ -1414,6 +4125,95 @@ class OwnedObjectSpec:
     type_ref_field: Optional[str] = None
 
 
+# Feature 038 (T042, FR-020..FR-022, SC-007) -- the seven `IPartOfSpeech`
+# owned collections enrichment covers, described with the EXISTING
+# `OwnedObjectSpec` descriptor rather than a second one, and ordered to match
+# `POS_OWNED_COLLECTION_FIELDS` (the single name list this roster is a view
+# of; `_check` below fails the import if the two ever drift apart).
+#
+# `factory` follows `Lib/owned.py`'s idiom: the LCM factory INTERFACE NAME as
+# a string, resolved against the target at runtime. `create_kind` is stated
+# per row rather than left at the default, because `OwnedCreateKind`'s own
+# docstring records that a uniformly-OWNER_TAKING table was a real defect.
+POS_OWNED_COLLECTION_SPECS: tuple = (
+    # IMoInflAffixSlotFactory exposes only the inherited `Create()` at the
+    # INTERFACE level (FLExToolsMCP, 2026-08-20); as tasks.md T053 notes for
+    # this same graph, the CONCRETE factory carries `Create(Guid)`. No
+    # owner-taking overload -> create unowned, then Add to the POS.
+    OwnedObjectSpec(
+        owner_class="PartOfSpeech",
+        owning_field="AffixSlotsOC",
+        factory="IMoInflAffixSlotFactory",
+        create_kind=OwnedCreateKind.UNOWNED_THEN_ADD,
+    ),
+    OwnedObjectSpec(
+        owner_class="PartOfSpeech",
+        owning_field="AffixTemplatesOS",
+        factory="IMoInflAffixTemplateFactory",
+        create_kind=OwnedCreateKind.UNOWNED_THEN_ADD,
+    ),
+    # InflectableFeatsRC is a REFERENCE collection (LcmReferenceCollection<
+    # IFsFeatDefn>, categories.py:2222) -- enriching it creates no object at
+    # all, it Adds an already-matched target IFsFeatDefn. `factory=None` is
+    # the accurate statement, not a gap: see
+    # `categories._wire_pos_inflectable_feat` (:2320), the existing writer.
+    OwnedObjectSpec(
+        owner_class="PartOfSpeech",
+        owning_field="InflectableFeatsRC",
+        factory=None,
+        create_kind=OwnedCreateKind.UNOWNED_THEN_ADD,
+    ),
+    # Sub-categories. `IPartOfSpeechFactory.Create(Guid, IPartOfSpeech)` /
+    # `Create(Guid, ICmPossibilityList)` -- owner-taking, already exercised
+    # live by `categories.py` (:693-719). `recurse=True`: a sub-category is
+    # itself a POS owning the same seven collections.
+    OwnedObjectSpec(
+        owner_class="PartOfSpeech",
+        owning_field="SubPossibilitiesOS",
+        factory="IPartOfSpeechFactory",
+        recurse=True,
+        create_kind=OwnedCreateKind.OWNER_TAKING,
+    ),
+    # `IMoStemNameFactory.Create(Guid)` + `pos.StemNamesOC.Add()` --
+    # categories.py:2451.
+    OwnedObjectSpec(
+        owner_class="PartOfSpeech",
+        owning_field="StemNamesOC",
+        factory="IMoStemNameFactory",
+        create_kind=OwnedCreateKind.UNOWNED_THEN_ADD,
+    ),
+    # `IMoInflClassFactory.Create(Guid)` + `pos.InflectionClassesOC.Add()` --
+    # categories.py:1668. `recurse=True`: an inflection class owns
+    # `SubclassesOC` (categories.py:1593).
+    OwnedObjectSpec(
+        owner_class="PartOfSpeech",
+        owning_field="InflectionClassesOC",
+        factory="IMoInflClassFactory",
+        recurse=True,
+        create_kind=OwnedCreateKind.UNOWNED_THEN_ADD,
+    ),
+    # Live name is `ReferenceFormsOC` (owning collection), NOT the spec's
+    # `ReferenceFormsOS` -- see the note above POS_OWNED_COLLECTION_FIELDS.
+    # `factory=None` here is a DELIBERATE unknown, not an assertion that none
+    # is needed: nothing in this repo writes ReferenceFormsOC today and its
+    # child class was not verified live. T043/T045 must resolve it before
+    # creating into this collection; until then a child that cannot be added
+    # is reported through `EnrichedCollection.dropped_records`.
+    OwnedObjectSpec(
+        owner_class="PartOfSpeech",
+        owning_field="ReferenceFormsOC",
+        factory=None,
+        create_kind=OwnedCreateKind.UNOWNED_THEN_ADD,
+    ),
+)
+
+if tuple(_s.owning_field for _s in POS_OWNED_COLLECTION_SPECS) !=         POS_OWNED_COLLECTION_FIELDS:  # pragma: no cover - import-time guard
+    raise RuntimeError(
+        "POS_OWNED_COLLECTION_SPECS and POS_OWNED_COLLECTION_FIELDS have "
+        "drifted apart; they are two views of ONE list of seven collections"
+    )
+
+
 # ============================================================================
 # Run report (E6)
 # ============================================================================
@@ -1430,6 +4230,49 @@ class CategoryReport:
     ws_created: int = 0
     ws_skipped: int = 0
     excluded_lossy: int = 0        # Phase 3c Selection UI: deliberate warn+allow omissions
+    # ---- Feature 038 ---------------------------------------------------
+    # FR-006: objects matched by a roster-admitted NATURAL KEY rather than by
+    # GUID. This is the roster's IDENTITY-SUBSTITUTION bucket (FR-187): the
+    # report must never let a name match pass as an identity match.
+    identity_substitution: int = 0
+    # FR-022: destination objects that already existed and gained content.
+    # Deliberately distinct from `overwritten` -- an enrichment is add-only.
+    enriched: int = 0
+    # FR-017/FR-025: objects the engine understood but could not faithfully
+    # rebuild, reported via Skip(NOT_REPRODUCIBLE) instead of being written
+    # in a degraded form.
+    not_reproducible: int = 0
+
+
+#: T080 (SC-010) -- every counter `CategoryReport` carries, by name.
+#:
+#: This tuple exists so `RunReport.__post_init__` can range over the counters
+#: WITHOUT importing `dataclasses.fields` against a per-category value that
+#: may legitimately be a duck-typed stand-in (the RunReport docstring sanctions
+#: direct construction in tests, and several suites pass namespaces rather than
+#: real `CategoryReport`s). `getattr(r, name, 0)` works on both; reflection
+#: over the value's own type does not.
+#:
+#: It is checked against the dataclass by
+#: `tests/integration/test_038_no_silent_skips.py`, which asserts this tuple
+#: names EVERY int field of `CategoryReport`. Adding a counter without adding
+#: it here therefore fails -- which is the point: an unlisted counter is a
+#: bucket nothing range-checks.
+CATEGORY_REPORT_COUNTERS = (
+    "added",
+    "skipped",
+    "closure_pulled_in",
+    "overwritten",
+    "interactive_resolved",
+    "interactive_skipped",
+    "ws_mapped",
+    "ws_created",
+    "ws_skipped",
+    "excluded_lossy",
+    "identity_substitution",
+    "enriched",
+    "not_reproducible",
+)
 
 
 @dataclass(frozen=True)
@@ -1465,14 +4308,180 @@ class RunReport:
     # field -- old callers that never pass this get the empty default
     # (snapshot compatibility), same pattern as dropped_items above.
     leaf_execution_failures: tuple = ()  # tuple[LeafExecutionFailure, ...]
+    # ---- Feature 038 (transfer fidelity gaps) ---------------------------
+    # The same four tuples RunPlan carries, plus the census. Additive with
+    # empty defaults, so pre-038 callers and snapshots are unaffected.
+    closure_edges: tuple = ()      # tuple[ClosureEdge, ...]
+    incompleteness: tuple = ()     # tuple[IncompletenessRecord, ...]
+    enrichments: tuple = ()        # tuple[EnrichmentRecord, ...]
+    process_rules: tuple = ()      # tuple[ProcessRuleTransferRecord, ...]
+    # T074 (FR-019 / SC-003): one AffixSlotLinkRecord per source affix MSA that
+    # occupied a template column, so SC-003 is answerable from the run report
+    # instead of from a bespoke driver. `len(...)` is the denominator; the
+    # outcome tally is the numerator. Execute-time only (the sub-pass runs
+    # after the writes), so Preview carries an empty tuple by construction.
+    affix_slot_links: tuple = ()   # tuple[AffixSlotLinkRecord, ...]
+    # FR-009..FR-013: the per-object-class fidelity census for this run.
+    # The type is defined by T015 (Phase 3); the annotation is a forward
+    # reference, which is safe because this module runs under
+    # `from __future__ import annotations`.
+    census: Optional["FidelityCensus"] = None
+    # T024d-a: per-LCM-object-class tally of destination objects that ALREADY
+    # EXISTED and were matched to a source object. This is the quantity
+    # `census.unmatched_starter` subtracts (`starter_matched_to_source`), and
+    # it is the reason `starter_subtraction_basis` can ever be
+    # `baseline_matched` instead of `baseline_gross`.
+    #
+    # Keyed by LCM class name ("PhPhoneme"), NOT by GrammarCategory: every
+    # census row is keyed by object class, and the category->class mapping is
+    # not 1:1 for the affix and MSA categories, so a per-category tally cannot
+    # be attributed to a row without guessing. Only two sources on a plan item
+    # name a class authoritatively -- `MatchBasisRecord.object_class` and
+    # `EnrichmentRecord.object_class` -- and only those are read.
+    matched_by_class: dict = field(default_factory=dict)  # class name -> count
+    # T024d-a: matches onto an existing destination object whose LCM class
+    # could NOT be determined (neither a match_basis nor an enrichment record),
+    # keyed by GrammarCategory. Kept SEPARATE and never folded into
+    # `matched_by_class` so a consumer can distinguish "this class matched
+    # nothing" from "this class's tally may be understated". A census row must
+    # not claim the `baseline_matched` basis while its category carries
+    # unattributed matches -- see `matched_class_is_complete`.
+    matches_unattributed: dict = field(default_factory=dict)  # category -> count
 
     def __post_init__(self) -> None:
+        # ---- T080 (SC-010 audit): the ADD bucket's first invariant.
+        #
+        # The four buckets are NOT symmetrically checkable, and this is where
+        # the asymmetry bites. SKIP reconciles against `skips` and UPDATE
+        # against `enrichments` because each counter has a records tuple ON
+        # THE REPORT that is its single source of truth. ADD has none:
+        # `added` is one per `PlannedAction`, and the plan is not carried on
+        # the RunReport, so there is nothing to count against.
+        #
+        # What IS available is the range. A NEGATIVE counter is the one way to
+        # deflate a bucket that no equality check can catch -- and on the two
+        # buckets that DO have equality checks it is still reachable, because
+        # those checks constrain the SUM: `{A: skipped=-3, B: skipped=4}`
+        # against a single Skip sums to 1 and passes. Measured before this
+        # landed: `CategoryReport(added=-5)` constructed a RunReport that
+        # rendered a disposition panel reading "-5 created".
+        for _cat, _r in self.per_category.items():
+            for _name in CATEGORY_REPORT_COUNTERS:
+                _value = getattr(_r, _name, 0)
+                _bad = (not isinstance(_value, int)
+                        or isinstance(_value, bool)
+                        or _value < 0)
+                if _bad:
+                    raise ValueError(
+                        "SC-010 accounting violation: "
+                        f"per_category[{_cat!r}].{_name}={_value!r} -- every "
+                        "disposition counter must be a non-negative int. A "
+                        "negative counter silently deflates its bucket, and "
+                        "the ADD bucket has no records tuple to reconcile "
+                        "against, so this range check is the whole of its "
+                        "accounting"
+                    )
         # FR-018: sum of per_category[*].skipped must equal len(skips)
         cat_skipped_total = sum(r.skipped for r in self.per_category.values())
         if cat_skipped_total != len(self.skips):
             raise ValueError(
                 f"FR-018 violation: sum(per_category[*].skipped)={cat_skipped_total} "
                 f"!= len(skips)={len(self.skips)}"
+            )
+        # ---- Feature 038: extend the accounting invariant to the new buckets.
+        # Each new per-category counter must reconcile against the tuple that
+        # is its single source of truth. A counter that can drift from its
+        # records is exactly how a fidelity report starts lying.
+        cat_enriched_total = sum(
+            r.enriched for r in self.per_category.values()
+        )
+        if cat_enriched_total != len(self.enrichments):
+            raise ValueError(
+                "Feature 038 accounting violation: "
+                f"sum(per_category[*].enriched)={cat_enriched_total} "
+                f"!= len(enrichments)={len(self.enrichments)}"
+            )
+        cat_not_reproducible_total = sum(
+            r.not_reproducible for r in self.per_category.values()
+        )
+        skips_not_reproducible = sum(
+            1 for sk in self.skips
+            if getattr(sk, "reason", None) is SkipReason.NOT_REPRODUCIBLE
+        )
+        if cat_not_reproducible_total != skips_not_reproducible:
+            raise ValueError(
+                "Feature 038 accounting violation: "
+                "sum(per_category[*].not_reproducible)="
+                f"{cat_not_reproducible_total} != number of "
+                f"Skip(NOT_REPRODUCIBLE)={skips_not_reproducible}"
+            )
+        # ---- T080 (SC-010 audit): the DROPPED bucket's first invariant.
+        #
+        # `dropped_with_reason` is the only bucket with no counter at all --
+        # it is `len(dropped_items)` and nothing else. `DroppedItemRecord.
+        # __post_init__` already refuses an empty `reason`, but THAT guards
+        # the record's construction, not the tuple's membership: this field is
+        # a plain tuple and accepts anything shaped like a record. Measured
+        # before this landed, a stand-in carrying `reason=""` went into
+        # `dropped_items`, was counted in `dropped_with_reason`, and rendered
+        # a report line ending in a bare "- ".
+        #
+        # The bucket is named "dropped-WITH-REASON". An entry without one is a
+        # silent drop wearing the record's clothes, which is the exact thing
+        # SC-010 forbids, so it is checked where the bucket is COUNTED rather
+        # than only where the record is built.
+        for _i, _d in enumerate(self.dropped_items):
+            if not getattr(_d, "reason", ""):
+                raise ValueError(
+                    "SC-010 accounting violation: "
+                    f"dropped_items[{_i}] carries no reason -- the bucket is "
+                    "dropped-WITH-REASON, and an entry without one is a "
+                    "silent drop that the disposition panel would count as a "
+                    "reported one"
+                )
+        # T024d-a: the matched tallies have no records tuple of their own to
+        # reconcile against (there is deliberately no per-matched-object record
+        # -- that would be one record per object on a 200k-object run), so the
+        # two checks that ARE available are enforced instead. Both are real:
+        # every natural-key match and every enrichment lands on a destination
+        # object that already existed, so neither can exceed the total matched.
+        for name, tally in (
+            ("matched_by_class", self.matched_by_class),
+            ("matches_unattributed", self.matches_unattributed),
+        ):
+            for key, count in tally.items():
+                if not isinstance(count, int) or count < 0:
+                    raise ValueError(
+                        "Feature 038 accounting violation: "
+                        f"{name}[{key!r}]={count!r} -- a matched tally must be "
+                        "a non-negative int"
+                    )
+        # An EMPTY pair of tallies means UNMEASURED, not zero -- the same rule
+        # `census.unmatched_starter` applies to an absent baseline. Only
+        # `report.build_from_plan` populates these, and a RunReport may legally
+        # be built without it (this dataclass's own docstring sanctions direct
+        # construction in tests, and every pre-038 caller predates the tallies).
+        # Cross-checking an unmeasured tally would reject those valid reports and
+        # prove nothing, so the checks below apply only once there is something
+        # to check against.
+        if not self.matched_by_class and not self.matches_unattributed:
+            return
+        matched_total = self.matched_to_source_total
+        if self.identity_substituted > matched_total:
+            raise ValueError(
+                "Feature 038 accounting violation: "
+                f"identity_substituted={self.identity_substituted} exceeds "
+                f"total matched-to-source={matched_total} -- every natural-key "
+                "match is a match onto a destination object that already "
+                "existed, so it cannot outnumber them"
+            )
+        if len(self.enrichments) > matched_total:
+            raise ValueError(
+                "Feature 038 accounting violation: "
+                f"len(enrichments)={len(self.enrichments)} exceeds total "
+                f"matched-to-source={matched_total} -- an enrichment is an "
+                "add-only update to an object that already existed, so it "
+                "cannot outnumber the matches"
             )
 
     @property
@@ -1484,6 +4493,123 @@ class RunReport:
         truthiness check a caller needs to tell a clean run from one that
         silently wrote fewer objects than it planned."""
         return len(self.leaf_execution_failures)
+
+    # ---- Feature 038 derived views ------------------------------------
+    # Properties, not fields, for the same reason `leaf_failed` is one:
+    # a stored count can drift from the records it summarises, and these
+    # are the numbers a fidelity claim rests on.
+
+    @property
+    def identity_substituted(self) -> int:
+        """Count of objects matched by natural key rather than by GUID
+        (FR-006). Non-zero means the run relied on identity SUBSTITUTION for
+        that many objects -- correct and intended, but a materially weaker
+        claim than a GUID match, so it is reported separately."""
+        return sum(
+            r.identity_substitution for r in self.per_category.values()
+        )
+
+    @property
+    def matched_to_source_total(self) -> int:
+        """Every destination object this run matched to a source object,
+        attributed or not (T024d-a). The denominator the accounting invariants
+        above are checked against."""
+        return (
+            sum(self.matched_by_class.values())
+            + sum(self.matches_unattributed.values())
+        )
+
+    def matched_class_is_complete(self, object_class: str) -> bool:
+        """True when `matched_by_class[object_class]` may be trusted as the
+        COMPLETE matched tally for that class -- the precondition for a census
+        row using the `baseline_matched` subtraction basis (T024d-b).
+
+        False when the class is absent from the tally (no evidence the matcher
+        ever evaluated it -- a missing key is NOT a zero, per
+        `census.unmatched_starter`) or when ANY match in this run went
+        unattributed. An unattributed match cannot be proven to belong to some
+        other class, so while one exists every class's tally is potentially
+        understated, and understating `starter_matched_to_source` overstates
+        `unmatched_starter` -- which subtracts too much and manufactures a
+        shortfall on a lossless run. Refusing the stronger basis leaves the row
+        on `baseline_gross`, which is capped and advisory: wrong in the safe
+        direction.
+        """
+        if self.matches_unattributed:
+            return False
+        return object_class in self.matched_by_class
+
+    @property
+    def rules_not_reproduced(self) -> tuple:
+        """The process rules this run could not faithfully rebuild
+        (FR-025). Each carries a non-empty `not_reproducible_reason` by
+        construction, so this is directly renderable."""
+        return tuple(
+            r for r in self.process_rules if not r.reproduced
+        )
+
+    @property
+    def has_incomplete_items(self) -> bool:
+        """True when at least one item is arriving knowingly incomplete
+        (FR-016, FR-017). SC-010's never-silent contract means this must be
+        surfaced by any caller that reports success."""
+        return bool(self.incompleteness)
+
+    @property
+    def unreported_not_reproduced(self) -> tuple:
+        """T080 (SC-010, FR-025) -- the fifth outcome, made checkable.
+
+        `ProcessRuleTransferRecord`'s own docstring states a HARD INVARIANT:
+        when `reproduced is False` the rule is reported "via a
+        `DroppedItemRecord` plus `Skip(NOT_REPRODUCIBLE)` -- and SKIPPED". Its
+        `__post_init__` enforces the half it can see (a non-reproduction must
+        carry a reason) and nothing enforced the other half, which is the half
+        SC-010 is about: a rule the engine KNOWS it did not rebuild, sitting in
+        `process_rules` and named in NO disposition channel, is an item that
+        reached none of the four buckets. That is the fifth, unreported
+        outcome in its exact literal form.
+
+        Returns the `source_guid` of every such rule, in report order. Empty
+        means this run has no fifth outcome from this channel.
+
+        A rule counts as REPORTED when its GUID appears as a
+        `Skip.source_guid` or as a `DroppedItemRecord`'s `item_guid` or
+        `owner_guid`. All three are accepted because both producers in
+        `Lib/categories.py` report a dropped rule against its OWNING ENTRY
+        (`owner_kind="LexEntry"`, `item_name="MoAffixProcess"`,
+        `item_guid=<rule>`) per the create-path contract section 5, while a
+        rule that OWNS the thing lost is reported with itself as `owner_guid`
+        -- so insisting on any one field would fail on real, correctly
+        reported runs.
+
+        WHY THIS IS A PROPERTY AND NOT A `__post_init__` RAISE, which is the
+        one design decision here worth stating. Every invariant in
+        `__post_init__` rejects a report that CONTRADICTS ITSELF -- a counter
+        disagreeing with the records that define it, where no reading of the
+        report is safe. This one describes a report that is merely INCOMPLETE.
+        Raising on it would destroy, at build time, the very report carrying
+        the evidence of the loss -- answering "what did this run silently
+        discard?" by discarding the answer. That is the SC-010 anti-pattern in
+        miniature, and T048c already set the precedent in the other direction:
+        when the create split had no valid basis it WITHHELD the number and
+        said so, rather than refusing to build. An incomplete report that
+        names its own gap beats no report.
+        """
+        reported = set()
+        for _s in self.skips:
+            _g = getattr(_s, "source_guid", "")
+            if _g:
+                reported.add(str(_g).lower())
+        for _d in self.dropped_items:
+            for _attr in ("item_guid", "owner_guid"):
+                _g = getattr(_d, _attr, "")
+                if _g:
+                    reported.add(str(_g).lower())
+        return tuple(
+            r.source_guid for r in self.process_rules
+            if not getattr(r, "reproduced", True)
+            and str(getattr(r, "source_guid", "")).lower() not in reported
+        )
 
 
 # ============================================================================

@@ -1167,12 +1167,23 @@ def _owner_of(obj):
         return getattr(obj, "Owner", None)
 
 
-def _resolve_target_pos_by_guid(target, pos_guid: str):
+def _resolve_target_pos_by_guid(target, pos_guid: str, *, src_pos=None,
+                                source_handle=None):
     """Resolve the target `IPartOfSpeech` whose GUID is `pos_guid`, by
     reusing `categories._resolve_target_pos` (the SAME owner-POS-lookup
     idiom `categories.stem_names_execute_action` already uses) -- lazy
     import for the same load-order reason every other `owned.py` ->
-    `categories.py` call already documents."""
+    `categories.py` call already documents.
+
+    T094: the function NAME still says "by guid" and the identity scan is
+    still authoritative, but a GUID is no longer sufficient. Once T091 lets
+    the planner reuse a same-named destination category, the reused
+    category's destination GUID is not its source GUID, so a GUID-only
+    lookup answers "absent" for a category that is present under another
+    identity. `src_pos` and `source_handle` are keyword-only and default to
+    None, mirroring `_resolve_target_pos`'s own opt-in shape, so this
+    module's own unit fakes keep the pre-038 answer unless they opt in.
+    """
     if not pos_guid:
         return None
     try:
@@ -1182,7 +1193,8 @@ def _resolve_target_pos_by_guid(target, pos_guid: str):
             import categories as _categories  # type: ignore
     except ImportError:  # pragma: no cover -- categories.py is always present
         return None
-    return _categories._resolve_target_pos(target, pos_guid)
+    return _categories._resolve_target_pos(
+        target, pos_guid, src_pos=src_pos, source_handle=source_handle)
 
 
 def _reproduce_stem_name_ra(src_allo, new_allo, ctx, dropped) -> None:
@@ -1197,7 +1209,12 @@ def _reproduce_stem_name_ra(src_allo, new_allo, ctx, dropped) -> None:
     sn_guid = _references._guid_str(src_sn)
     src_pos = _owner_of(src_sn)
     pos_guid = _references._guid_str(src_pos) if src_pos is not None else ""
-    target_pos = _resolve_target_pos_by_guid(ctx.target_handle, pos_guid)
+    # T094: `_owner_of` returns a base-typed `ICmObject.Owner`, so the owning
+    # category is passed on for the natural key and cast where the key is
+    # computed -- identity first, always.
+    target_pos = _resolve_target_pos_by_guid(
+        ctx.target_handle, pos_guid, src_pos=src_pos,
+        source_handle=getattr(ctx, "source_handle", None))
     target_sn = None
     if target_pos is not None:
         for sn in getattr(target_pos, "StemNamesOC", None) or []:
@@ -1564,7 +1581,13 @@ def _plan_msenv_pos_ra(src_allo, ctx, dropped) -> list:
     owner_guid = _references._guid_str(src_allo)
     pos_guid = _references._guid_str(src_pos)
     pos_name = _references._item_label(src_pos)
-    target_pos = _resolve_target_pos_by_guid(ctx.target_handle, pos_guid)
+    # T094: the preview twin must reach the same verdict as
+    # `_reproduce_msenv_pos_ra` -> `categories.resolve_or_create_target_pos`,
+    # which now resolves by identity THEN by the natural key. Without the
+    # keywords this plan says CREATE where the executor LINKs.
+    target_pos = _resolve_target_pos_by_guid(
+        ctx.target_handle, pos_guid, src_pos=src_pos,
+        source_handle=getattr(ctx, "source_handle", None))
     if target_pos is not None:
         return [ReferenceDecisionRecord(
             owner_kind="MoAffixAllomorph", owner_guid=owner_guid,
@@ -1668,7 +1691,9 @@ def _plan_inflection_classes_rc(src_allo, ctx, dropped) -> list:
                 field_name="InflectionClassesRC", action=ReferenceAction.LINK,
                 item_name=class_name, item_guid=class_guid))
             continue
-        if cats.can_create_inflection_class(target, src_class):
+        if cats.can_create_inflection_class(
+                target, src_class,
+                source_handle=getattr(ctx, "source_handle", None)):
             records.append(ReferenceDecisionRecord(
                 owner_kind="MoAffixAllomorph", owner_guid=owner_guid,
                 field_name="InflectionClassesRC", action=ReferenceAction.CREATE,
@@ -2154,7 +2179,12 @@ def _plan_stem_name_ra_decision(src_allo, ctx, dropped) -> list:
     sn_guid = _references._guid_str(src_sn)
     src_pos = _owner_of(src_sn)
     pos_guid = _references._guid_str(src_pos) if src_pos is not None else ""
-    target_pos = _resolve_target_pos_by_guid(ctx.target_handle, pos_guid)
+    # T094: `_owner_of` returns a base-typed `ICmObject.Owner`, so the owning
+    # category is passed on for the natural key and cast where the key is
+    # computed -- identity first, always.
+    target_pos = _resolve_target_pos_by_guid(
+        ctx.target_handle, pos_guid, src_pos=src_pos,
+        source_handle=getattr(ctx, "source_handle", None))
     target_sn = None
     if target_pos is not None:
         for sn in getattr(target_pos, "StemNamesOC", None) or []:

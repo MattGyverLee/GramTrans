@@ -115,3 +115,7 @@ backups/scratch/
 
 # Ephemeral working files. Durable drivers/probes live in debug/.
 scratchpad/
+
+# Live-run report JSON written by debug/ drivers (regenerable output, not
+# evidence -- the committed evidence lives in tests/integration/_snapshots/).
+_run_reports/

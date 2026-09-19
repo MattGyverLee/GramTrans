@@ -1,0 +1,457 @@
+{
+  "after": {
+    "gram_categories_skips": [],
+    "identity_substitution_per_category": {
+      "GRAM_CATEGORIES": 5,
+      "NATURAL_CLASSES": 1,
+      "PHONEMES": 20
+    },
+    "identity_substitution_total": 26,
+    "leaf_failed": 11,
+    "report_file": "038-t095-ngoreme-report.json",
+    "run_id": "GT-20260824-142608",
+    "skips_by_category": {
+      "AFFIXES": 20
+    },
+    "skips_total": 20,
+    "started_at": "2026-08-24T14:26:08"
+  },
+  "before": {
+    "gram_categories_skips": [
+      {
+        "category": "GRAM_CATEGORIES",
+        "detail": "pos_guid=c46c8242-8b3a-4021-9aed-2da8517438b5 not in target after categories+features transfer",
+        "reason": "DEPENDENCY_UNRESOLVED",
+        "source_guid": "c46c8242-8b3a-4021-9aed-2da8517438b5"
+      },
+      {
+        "category": "GRAM_CATEGORIES",
+        "detail": "pos_guid=ff5c5e07-a92b-4ca1-aba4-b15652b92624 not in target after categories+features transfer",
+        "reason": "DEPENDENCY_UNRESOLVED",
+        "source_guid": "ff5c5e07-a92b-4ca1-aba4-b15652b92624"
+      }
+    ],
+    "identity_substitution_per_category": {
+      "GRAM_CATEGORIES": 5,
+      "NATURAL_CLASSES": 1,
+      "PHONEMES": 20
+    },
+    "identity_substitution_total": 26,
+    "leaf_failed": 11,
+    "report_file": "038-t096-ngoreme-report.json",
+    "run_id": "GT-20260821-200656",
+    "skips_by_category": {
+      "AFFIXES": 20,
+      "GRAM_CATEGORIES": 2
+    },
+    "skips_total": 22,
+    "started_at": "2026-08-21T20:06:56"
+  },
+  "census_ejagham_control": {
+    "after_artifact": "census-038-t095-ejagham.json",
+    "before_artifact": "census-038-t094-ejagham.json",
+    "note": "Byte-identical totals. Ejagham's starters carry the GOLD catalog GUIDs and match on identity, so it never enters the natural-key fallback at all -- it could not see T091's defect and cannot see T095's. Holding it stable is the only thing it can usefully say.",
+    "rows_that_moved": [
+      {
+        "after": {
+          "destination_count_net": null,
+          "difference": null,
+          "source_count": null,
+          "unexplained_shortfall": 0,
+          "verdict_class": "NOT_EVALUATED"
+        },
+        "before": {
+          "destination_count_net": 0,
+          "difference": 0,
+          "source_count": 0,
+          "unexplained_shortfall": 0,
+          "verdict_class": "NOT_EVALUATED"
+        },
+        "class": "MoForm",
+        "shortfall_delta": 0,
+        "source_drift": 0
+      },
+      {
+        "after": {
+          "destination_count_net": null,
+          "difference": null,
+          "source_count": null,
+          "unexplained_shortfall": 0,
+          "verdict_class": "NOT_EVALUATED"
+        },
+        "before": {
+          "destination_count_net": 0,
+          "difference": 0,
+          "source_count": 0,
+          "unexplained_shortfall": 0,
+          "verdict_class": "NOT_EVALUATED"
+        },
+        "class": "MoMorphSynAnalysis",
+        "shortfall_delta": 0,
+        "source_drift": 0
+      }
+    ],
+    "totals_after": {
+      "accounted_shortfall": 0,
+      "accounted_surplus": 0,
+      "advisory_shortfall": 10,
+      "classes_matched": 53,
+      "classes_not_evaluated": 3,
+      "classes_reported": 75,
+      "classes_shortfall": 19,
+      "classes_surplus": 0,
+      "duplicate_extra_objects": 3,
+      "total_shortfall": 4781,
+      "total_surplus": 0,
+      "unexplained_shortfall": 3063,
+      "unexplained_surplus": 0
+    },
+    "totals_before": {
+      "accounted_shortfall": 0,
+      "accounted_surplus": 0,
+      "advisory_shortfall": 10,
+      "classes_matched": 53,
+      "classes_not_evaluated": 3,
+      "classes_reported": 75,
+      "classes_shortfall": 19,
+      "classes_surplus": 0,
+      "duplicate_extra_objects": 3,
+      "total_shortfall": 4781,
+      "total_surplus": 0,
+      "unexplained_shortfall": 3063,
+      "unexplained_surplus": 0
+    }
+  },
+  "census_ngoreme": {
+    "after_artifact": "census-038-t095-ngoreme.json",
+    "before_artifact": "census-038-t096-ngoreme.json",
+    "note": "The +8 in total_shortfall is NOT this task's. `Ngoreme FLEx` drifted again between the two runs (WfiWordform +10, PunctuationForm +1 among short classes = +11), and three rows improved by -3 (MoAffixProcess SHORTFALL -> MATCHED, PhSequenceContext -3 -> -2, PhSimpleContextNC -8 -> -7) from the process-rule tasks that landed between them -- T095 touches neither producer. +11 - 3 = +8, to the unit.",
+    "rows_that_moved": [
+      {
+        "after": {
+          "destination_count_net": 2017,
+          "difference": 0,
+          "source_count": 2017,
+          "unexplained_shortfall": 0,
+          "verdict_class": "MATCHED"
+        },
+        "before": {
+          "destination_count_net": 2015,
+          "difference": 0,
+          "source_count": 2015,
+          "unexplained_shortfall": 0,
+          "verdict_class": "MATCHED"
+        },
+        "class": "LexEntry",
+        "shortfall_delta": 0,
+        "source_drift": 2
+      },
+      {
+        "after": {
+          "destination_count_net": 2233,
+          "difference": 0,
+          "source_count": 2233,
+          "unexplained_shortfall": 0,
+          "verdict_class": "MATCHED"
+        },
+        "before": {
+          "destination_count_net": 2231,
+          "difference": 0,
+          "source_count": 2231,
+          "unexplained_shortfall": 0,
+          "verdict_class": "MATCHED"
+        },
+        "class": "LexSense",
+        "shortfall_delta": 0,
+        "source_drift": 2
+      },
+      {
+        "after": {
+          "destination_count_net": 1,
+          "difference": 0,
+          "source_count": 1,
+          "unexplained_shortfall": 0,
+          "verdict_class": "MATCHED"
+        },
+        "before": {
+          "destination_count_net": 0,
+          "difference": -1,
+          "source_count": 1,
+          "unexplained_shortfall": 1,
+          "verdict_class": "SHORTFALL"
+        },
+        "class": "MoAffixProcess",
+        "shortfall_delta": -1,
+        "source_drift": 0
+      },
+      {
+        "after": {
+          "destination_count_net": null,
+          "difference": null,
+          "source_count": null,
+          "unexplained_shortfall": 0,
+          "verdict_class": "NOT_EVALUATED"
+        },
+        "before": {
+          "destination_count_net": 0,
+          "difference": 0,
+          "source_count": 0,
+          "unexplained_shortfall": 0,
+          "verdict_class": "NOT_EVALUATED"
+        },
+        "class": "MoForm",
+        "shortfall_delta": 0,
+        "source_drift": 0
+      },
+      {
+        "after": {
+          "destination_count_net": null,
+          "difference": null,
+          "source_count": null,
+          "unexplained_shortfall": 0,
+          "verdict_class": "NOT_EVALUATED"
+        },
+        "before": {
+          "destination_count_net": 0,
+          "difference": 0,
+          "source_count": 0,
+          "unexplained_shortfall": 0,
+          "verdict_class": "NOT_EVALUATED"
+        },
+        "class": "MoMorphSynAnalysis",
+        "shortfall_delta": 0,
+        "source_drift": 0
+      },
+      {
+        "after": {
+          "destination_count_net": 2138,
+          "difference": 0,
+          "source_count": 2138,
+          "unexplained_shortfall": 0,
+          "verdict_class": "MATCHED"
+        },
+        "before": {
+          "destination_count_net": 2136,
+          "difference": 0,
+          "source_count": 2136,
+          "unexplained_shortfall": 0,
+          "verdict_class": "MATCHED"
+        },
+        "class": "MoStemAllomorph",
+        "shortfall_delta": 0,
+        "source_drift": 2
+      },
+      {
+        "after": {
+          "destination_count_net": 1953,
+          "difference": -1,
+          "source_count": 1954,
+          "unexplained_shortfall": 1,
+          "verdict_class": "SHORTFALL"
+        },
+        "before": {
+          "destination_count_net": 1951,
+          "difference": -1,
+          "source_count": 1952,
+          "unexplained_shortfall": 1,
+          "verdict_class": "SHORTFALL"
+        },
+        "class": "MoStemMsa",
+        "shortfall_delta": 0,
+        "source_drift": 2
+      },
+      {
+        "after": {
+          "destination_count_net": 11,
+          "difference": -2,
+          "source_count": 13,
+          "unexplained_shortfall": 2,
+          "verdict_class": "SHORTFALL"
+        },
+        "before": {
+          "destination_count_net": 10,
+          "difference": -3,
+          "source_count": 13,
+          "unexplained_shortfall": 3,
+          "verdict_class": "SHORTFALL"
+        },
+        "class": "PhSequenceContext",
+        "shortfall_delta": -1,
+        "source_drift": 0
+      },
+      {
+        "after": {
+          "destination_count_net": 40,
+          "difference": -7,
+          "source_count": 47,
+          "unexplained_shortfall": 7,
+          "verdict_class": "SHORTFALL"
+        },
+        "before": {
+          "destination_count_net": 39,
+          "difference": -8,
+          "source_count": 47,
+          "unexplained_shortfall": 8,
+          "verdict_class": "SHORTFALL"
+        },
+        "class": "PhSimpleContextNC",
+        "shortfall_delta": -1,
+        "source_drift": 0
+      },
+      {
+        "after": {
+          "destination_count_net": 0,
+          "difference": -3994,
+          "source_count": 3994,
+          "unexplained_shortfall": 3994,
+          "verdict_class": "SHORTFALL"
+        },
+        "before": {
+          "destination_count_net": 0,
+          "difference": -3993,
+          "source_count": 3993,
+          "unexplained_shortfall": 3993,
+          "verdict_class": "SHORTFALL"
+        },
+        "class": "PunctuationForm",
+        "shortfall_delta": 1,
+        "source_drift": 1
+      },
+      {
+        "after": {
+          "destination_count_net": 2262,
+          "difference": -26666,
+          "source_count": 28928,
+          "unexplained_shortfall": 26666,
+          "verdict_class": "SHORTFALL"
+        },
+        "before": {
+          "destination_count_net": 2260,
+          "difference": -26666,
+          "source_count": 28926,
+          "unexplained_shortfall": 26666,
+          "verdict_class": "SHORTFALL"
+        },
+        "class": "Segment",
+        "shortfall_delta": 0,
+        "source_drift": 2
+      },
+      {
+        "after": {
+          "destination_count_net": 51,
+          "difference": -4903,
+          "source_count": 4954,
+          "unexplained_shortfall": 4903,
+          "verdict_class": "SHORTFALL"
+        },
+        "before": {
+          "destination_count_net": 50,
+          "difference": -4903,
+          "source_count": 4953,
+          "unexplained_shortfall": 4903,
+          "verdict_class": "SHORTFALL"
+        },
+        "class": "StText",
+        "shortfall_delta": 0,
+        "source_drift": 1
+      },
+      {
+        "after": {
+          "destination_count_net": 1859,
+          "difference": -5568,
+          "source_count": 7427,
+          "unexplained_shortfall": 5568,
+          "verdict_class": "SHORTFALL"
+        },
+        "before": {
+          "destination_count_net": 1857,
+          "difference": -5568,
+          "source_count": 7425,
+          "unexplained_shortfall": 5568,
+          "verdict_class": "SHORTFALL"
+        },
+        "class": "StTxtPara",
+        "shortfall_delta": 0,
+        "source_drift": 2
+      },
+      {
+        "after": {
+          "destination_count_net": 51,
+          "difference": -14,
+          "source_count": 65,
+          "unexplained_shortfall": 14,
+          "verdict_class": "SHORTFALL"
+        },
+        "before": {
+          "destination_count_net": 50,
+          "difference": -14,
+          "source_count": 64,
+          "unexplained_shortfall": 14,
+          "verdict_class": "SHORTFALL"
+        },
+        "class": "Text",
+        "shortfall_delta": 0,
+        "source_drift": 1
+      },
+      {
+        "after": {
+          "destination_count_net": 0,
+          "difference": -8191,
+          "source_count": 8191,
+          "unexplained_shortfall": 8191,
+          "verdict_class": "SHORTFALL"
+        },
+        "before": {
+          "destination_count_net": 0,
+          "difference": -8181,
+          "source_count": 8181,
+          "unexplained_shortfall": 8181,
+          "verdict_class": "SHORTFALL"
+        },
+        "class": "WfiWordform",
+        "shortfall_delta": 10,
+        "source_drift": 10
+      }
+    ],
+    "totals_after": {
+      "accounted_shortfall": 0,
+      "accounted_surplus": 0,
+      "advisory_shortfall": 7,
+      "classes_matched": 45,
+      "classes_not_evaluated": 3,
+      "classes_reported": 75,
+      "classes_shortfall": 27,
+      "classes_surplus": 0,
+      "duplicate_extra_objects": 21,
+      "total_shortfall": 70646,
+      "total_surplus": 0,
+      "unexplained_shortfall": 68928,
+      "unexplained_surplus": 0
+    },
+    "totals_before": {
+      "accounted_shortfall": 0,
+      "accounted_surplus": 0,
+      "advisory_shortfall": 7,
+      "classes_matched": 44,
+      "classes_not_evaluated": 3,
+      "classes_reported": 75,
+      "classes_shortfall": 28,
+      "classes_surplus": 0,
+      "duplicate_extra_objects": 21,
+      "total_shortfall": 70638,
+      "total_surplus": 0,
+      "unexplained_shortfall": 68920,
+      "unexplained_surplus": 0
+    }
+  },
+  "date": "2026-08-24",
+  "pair": {
+    "backup": "Target 2026-07-06 0218.fwbackup",
+    "destination": "GT038 Ngoreme After",
+    "driver": "python debug/run038_before_after_pairs.py ngoreme --tag t095",
+    "source": "Ngoreme FLEx"
+  },
+  "task": "T095",
+  "the_claim": "Two `Skip(DEPENDENCY_UNRESOLVED)` on GRAM_CATEGORIES -- categories T091 REUSED, whose destination GUID is not their source GUID -- disappear, and their `InflectableFeatsRC` wiring lands. The census cannot show this: a reference collection is not a counted object class, so the repair costs 0 shortfall in both directions.",
+  "why_this_artifact_exists": "`_run_reports/` is gitignored, and T095's own filing cited `_run_reports/038-after-ngoreme-report.json` in a worktree that has since been removed -- so the evidence for the defect could not be re-read when the task was picked up. This commits the slice of both run reports the claim actually rests on."
+}

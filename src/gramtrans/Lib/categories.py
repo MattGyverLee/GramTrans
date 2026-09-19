@@ -30,10 +30,16 @@ LCM API notes (discovered during implementation):
   - `IFsFeatStrucTypeFactory.Create(Guid)` is available for gram_categories.
     Top-level cats live in MsFeatureSystemOA.TypesOC; sub-cats in
     parent.SubPossibilitiesOS and use ICmPossibilityFactory.Create(Guid).
-  - `IFsClosedFeatureFactory.Create(Guid, featureSystem)` (2-arg) is
-    attempted first for inflection_features; Path B falls back to
-    `Create(Guid)` + `FeaturesOC.Add()` per the pattern in
-    InflectionFeatureOperations._factory_create_attached.
+  - Every `Fs*` factory in this module is called as 1-arg
+    `Create(Guid)` FOLLOWED BY `Add()` to the owning collection, in that
+    order (feature 038, T035). The `Create(Guid, owner)` 2-arg overload is
+    declared on the LCM INTERFACE only; `ServiceLocator.GetService` hands back
+    the CONCRETE factory, whose `Create` pythonnet cannot bind to two
+    arguments. The old code tried the 2-arg call FIRST inside a bare
+    `except Exception:` and fell through to the 1-arg path, so the bind
+    failure was swallowed on every single create -- correct end state, but a
+    per-object exception nobody could see, and a comment tree asserting a
+    capability that does not exist.
   - `IMoInflClassFactory` and `IMoStemNameFactory` both support
     `Create(Guid)` — confirmed by transfer.py slot/template precedent.
   - `exception_features` in FLEx are `IFsSymFeatVal` items referenced by
@@ -50,12 +56,22 @@ from typing import Iterable, Tuple
 
 if __package__:
     from .models import (
+        AffixSlotLinkOutcome,
+        AffixSlotLinkRecord,
         CreateDefinitionAction,
+        DependencyKind,
         DroppedItemRecord,
+        EnrichedCollection,
+        EnrichmentRecord,
         FidelityStatus,
         GrammarCategory,
         PlannedAction,
         PlannedOverwrite,
+        POS_OWNED_COLLECTION_ALIASES,
+        POS_OWNED_COLLECTION_FIELDS,
+        ProcessContextSpec,
+        ProcessOutputSpec,
+        ProcessRuleTransferRecord,
         ReferenceAction,
         ReferenceCardinality,
         ReferenceDecisionRecord,
@@ -67,14 +83,26 @@ if __package__:
         WSMapping,
     )
     from .residue import ImportResidueTag
+    from . import matcher as _matcher
+    from .models import MatchBasis as _MatchBasis
 else:
     from models import (  # type: ignore
+        AffixSlotLinkOutcome,
+        AffixSlotLinkRecord,
         CreateDefinitionAction,
+        DependencyKind,
         DroppedItemRecord,
+        EnrichedCollection,
+        EnrichmentRecord,
         FidelityStatus,
         GrammarCategory,
         PlannedAction,
         PlannedOverwrite,
+        POS_OWNED_COLLECTION_ALIASES,
+        POS_OWNED_COLLECTION_FIELDS,
+        ProcessContextSpec,
+        ProcessOutputSpec,
+        ProcessRuleTransferRecord,
         ReferenceAction,
         ReferenceCardinality,
         ReferenceDecisionRecord,
@@ -86,6 +114,8 @@ else:
         WSMapping,
     )
     from residue import ImportResidueTag  # type: ignore
+    import matcher as _matcher  # type: ignore
+    from models import MatchBasis as _MatchBasis  # type: ignore
 
 
 # ============================================================================
@@ -157,6 +187,338 @@ def _find_target_obj_by_guid(target_iter, src_guid: str):
     return None
 
 
+# ---------------------------------------------------------------------------
+# FsFeatStruc / FsFeatStrucType closure edges (feature 038 -- T034)
+# ---------------------------------------------------------------------------
+#
+# WHY THIS EXISTS. An `IFsFeatStruc` -- an MSA's `InflFeatsOA`/`MsFeaturesOA`,
+# an `IPartOfSpeech`'s `DefaultFeaturesOA`, an `IPhPhoneme`'s or
+# `IPhNCFeatures`' `FeaturesOA` -- carries a `TypeRA` REFERENCE to an
+# `IFsFeatStrucType`, and each `FeatureSpecsOC` entry carries `FeatureRA` /
+# `ValueRA` REFERENCES to an `IFsClosedFeature` / `IFsSymFeatVal`. None of
+# those three targets is OWNED by the structure: they live in the
+# LangProject's feature systems, and separate categories transfer them. A
+# transfer that writes the structure before they exist therefore leaves a
+# dangling reference, which constitution Principle I forbids -- the write
+# looks successful and is not. Measured on the 038 census: the ~2,083 MSAs the
+# affix path restores each carry a `TypeRA`, and with the target's
+# `MsFeatureSystemOA.TypesOC` empty every one of those references is
+# unsatisfiable.
+#
+# WHICH SIDE THE `TypeRA` EDGE LIVES ON -- the OWNING side, not the type side.
+# `feature_struct_types_dependencies` / `phon_feat_types_dependencies` are
+# handed an `IFsFeatStrucType` taken straight out of `TypesOC` (see their
+# `*_enumerate_source`). The `TypeRA` arrow points AT such a piece, from an
+# `IFsFeatStruc` owned by an MSA / POS / phoneme / natural class. Emitting it
+# from the type's own producer would reverse it, and `closure.walk` walks
+# OUTWARD from what the user selected -- so an MSA selected for transfer would
+# never pull in the struct type it needs. The edge is emitted by
+# `affixes_dependencies`, `stems_dependencies`, `gram_categories_dependencies`,
+# `phonemes_dependencies` and `natural_classes_dependencies` instead.
+#
+# WHY BOTH FEATURE SYSTEMS ARE WALKED. `IFsFeatStrucType` is owned ONLY by
+# `IFsFeatureSystem.TypesOC`, and a LangProject holds exactly two feature
+# systems: `MsFeatureSystemOA` (whose `TypesOC` FEATURE_STRUCT_TYPES transfers,
+# whose `FeaturesOC` INFLECTION_FEATURES transfers) and `PhFeatureSystemOA`
+# (PHON_FEAT_TYPES / PHONOLOGICAL_FEATURES). A `TypeRA` GUID alone does not say
+# which system it came from, and guessing would file the edge under the wrong
+# far category -- precisely the failure the `CLOSURE_EDGES_VERIFIED` banner
+# warns about when it refuses to register a producer "whose far endpoint
+# category is a guess". `_feat_struc_type_categories` walks BOTH systems off
+# the piece's own cache and classifies the GUID by ownership; the caller's
+# structural expectation is only the fallback for a piece whose cache is
+# unreachable (the duck-typed unit fakes).
+#
+# SHAPE. These producers emit REF TUPLES `(GrammarCategory, guid)`, never bare
+# guid strings, because one structure's references straddle two categories at
+# once and a bare guid cannot say which.
+
+#: (LangProject attribute, category owning its `TypesOC`, category owning its
+#: `FeaturesOC`). Ms first, Ph second, for deterministic iteration only.
+_FEATURE_SYSTEMS = (
+    ("MsFeatureSystemOA", GrammarCategory.FEATURE_STRUCT_TYPES,
+     GrammarCategory.INFLECTION_FEATURES),
+    ("PhFeatureSystemOA", GrammarCategory.PHON_FEAT_TYPES,
+     GrammarCategory.PHONOLOGICAL_FEATURES),
+)
+
+#: Every owning-atomic `IFsFeatStruc` slot an MSA subclass can carry:
+#: `IMoStemMsa.MsFeaturesOA`, `IMoInflAffMsa.InflFeatsOA`,
+#: `IMoDerivAffMsa.FromMsFeaturesOA`/`ToMsFeaturesOA`, and
+#: `IMoDerivStepMsa.MsFeaturesOA` + `.InflFeatsOA`.
+#: `IMoUnclassifiedAffixMsa` has none. Probed BY NAME rather than by
+#: `ClassName` dispatch so a duck-typed test fake and a live cast MSA behave
+#: identically -- an absent slot is just `getattr(...) -> None`.
+_MSA_FEAT_STRUC_ATTRS = (
+    "InflFeatsOA", "MsFeaturesOA", "FromMsFeaturesOA", "ToMsFeaturesOA",
+)
+
+#: Depth cap for the `IFsComplexValue.ValueOA -> IFsFeatStruc` recursion. LCM
+#: does not structurally forbid a cycle, and a dependency producer that hangs
+#: the closure walk is strictly worse than one that under-reports; 8 is far
+#: past any nesting depth attested in a FLEx project.
+_FEAT_STRUC_MAX_DEPTH = 8
+
+
+def _unwrap_lcm(obj):
+    """The LCM object behind a flexicon wrapper (`._obj`), else `obj` itself.
+
+    `*_enumerate_source` yields raw LCM objects for some categories and
+    flexicon `RuleCollection`-style wrappers for others (see `_guid_str_from`'s
+    branch 2). A wrapper does not forward `Cache` or the typed `Fs*` members,
+    so unwrap before any structural `getattr`.
+    """
+    inner = getattr(obj, "_obj", None)
+    return obj if inner is None else inner
+
+
+def _cast_to_concrete(obj):
+    """`obj` cast to the LCM interface its own `ClassName` names (T088).
+
+    `_unwrap_lcm` is not enough on its own, and the difference is the whole of
+    defect T088. pythonnet resolves attribute lookup against an object's
+    STATIC type, and LCM's owning collections are POLYMORPHIC: the members of
+    `ILexEntry.MorphoSyntaxAnalysesOC` are typed `IMoMorphSynAnalysis`, on
+    which `PartOfSpeechRA`, `InflFeatsOA` and `MsFeaturesOA` are NOT declared
+    -- they live on the concrete MSA subclasses. So `getattr(msa,
+    "PartOfSpeechRA", None)` on a collection member returns None for every
+    object in a real project, while every duck-typed unit test passes because
+    the fake carries the attribute directly on the fake.
+
+    T067's live audit measured exactly that: 0 POS references found uncast
+    against 296 found after a cast on `Mbugwe LizzieHC practice`, and 0
+    against 245 on `Ejagham Mini`. This is the same shape as the flexicon
+    4.5.0 defect CLAUDE.md records, where a `hasattr(nc, "FeaturesOA")` gate
+    was unconditionally False and 100% of live natural classes lost their
+    feature structure while all 1467 flexicon tests passed -- because those
+    tests built factory-fresh CONCRETE-typed objects.
+
+    `ClassName` is the discriminator because it is the ONLY one available on a
+    base-typed proxy, and `"I" + ClassName` is LCM's interface-naming
+    convention (`MoStemMsa` -> `IMoStemMsa`, `PhNCSegments` ->
+    `IPhNCSegments`). Discriminating on `ClassName` WITHOUT then casting is
+    not sufficient and is its own bug -- `adhoc_compound_rules_dependencies`
+    branched on `ClassName` and still read the members off the uncast object,
+    measuring 0 against 4 live. That is precisely the flexicon 4.5.0 vs 4.5.1
+    distinction.
+
+    Fails soft, in the direction that keeps the offline fakes working: an
+    object with no readable `ClassName`, an interface absent from the loaded
+    `SIL.LCModel`, or a cast pythonnet refuses all return `obj` unchanged, via
+    `_cast_lcm`'s existing fake-passthrough. So this is a no-op under the unit
+    suite and a real cast on a live project.
+    """
+    if obj is None:
+        return None
+    target = _unwrap_lcm(obj)
+    class_name = getattr(target, "ClassName", None)
+    if class_name is None:
+        # A raw LCM object may only expose ClassName through ICmObject.
+        cast_base = _cast_lcm(target, "ICmObject")
+        class_name = getattr(cast_base, "ClassName", None)
+    if not class_name:
+        return target
+    return _cast_lcm(target, "I" + str(class_name))
+
+
+def _feat_struc_type_categories(piece) -> dict:
+    """`{struct_type_guid: GrammarCategory}` across BOTH feature systems,
+    read off `piece`'s own cache.
+
+    A `*_dependencies(piece)` producer is handed the piece and NOTHING else --
+    `closure_dependencies_for` calls `entry["producer"](piece)` with one
+    argument, no context and no project handle -- so the LangProject has to be
+    reached through `ICmObject.Cache` on the piece itself.
+
+    Returns `{}` for a duck-typed fake or any piece whose cache is
+    unreachable. Callers then fall back to the structural expectation for
+    their own side (Ms for MSA/POS, Ph for phoneme/natural class), which is
+    correct for every attested shape -- it is merely unverified, which is why
+    the walk is preferred whenever it is available.
+    """
+    index: dict = {}
+    cache = getattr(_unwrap_lcm(piece), "Cache", None)
+    if cache is None:
+        return index
+    lang_project = getattr(cache, "LangProject", None)
+    if lang_project is None:
+        return index
+    for attr, type_category, _defn_category in _FEATURE_SYSTEMS:
+        try:
+            system = getattr(lang_project, attr, None)
+            if system is None:
+                continue
+            for struct_type in getattr(system, "TypesOC", None) or ():
+                guid = _guid_str_from(struct_type)
+                if guid:
+                    index[guid] = type_category
+        except Exception:  # noqa: BLE001 -- an unreadable system contributes nothing
+            continue
+    return index
+
+
+def _value_defn_ref(value, declared_feature):
+    """The FEATURE DEFN a `FeatureSpecsOC` entry's `ValueRA` should be filed
+    under, or `None` when the spec names no plannable defn at all (T089).
+
+    A `ValueRA` names an `IFsSymFeatVal`, and NO category in this repo
+    enumerates one. `inflection_features_enumerate_source` walks
+    `FeatureGetAll()` -- the DEFNS -- and `inflection_features_dependencies`
+    records why in its own docstring: the values are "co-created in
+    execute_action, not separately planned". Its phonological twin behaves the
+    same way (`phonological_features_enumerate_source` walks `PhonFeatures`,
+    and `phonological_features_execute_action` creates the values with the
+    feature). So emitting the VALUE's guid produced a closure edge whose far
+    endpoint has no `PlannedAction`, no FR-015 row to mark and no FR-016
+    checkbox to clear -- the promise fails on it silently, which is the one
+    direction Principle I forbids.
+
+    Measured before the fix (`debug/audit038_closure_edges.py`,
+    `relationships.MSA_TO_INFL_FEATURE`, read-only over two corpora): 206
+    edges over 34 distinct far GUIDs on `Mbugwe LizzieHC practice`, of which
+    only 4 were enumerable pieces and 30 were owned symbolic values; 34 over
+    10 on `Ejagham Mini`, 2 and 8. ~88% / ~80% of the relationship's far
+    endpoints named something nothing could plan.
+
+    The OWNING feature is the piece that is actually planned, and its
+    `execute_action` is what creates the value -- so re-pointing the edge at
+    the owner makes every remaining endpoint plannable, and in the measured
+    data collapses the 30 (8) onto the 4 (2) that already existed via
+    `FeatureRA`. The edge set gets SMALLER, not larger.
+
+    `Owner` is read WITHOUT a cast on purpose, and that is checkable rather
+    than lucky: it is declared on `ICmObject`, so T088's polymorphic-member
+    defect cannot apply to it -- the same argument that made
+    `slots_dependencies` audit clean the first time it was measured.
+
+    `declared_feature` is the fallback, not the primary: LCM owns an
+    `IFsSymFeatVal` through `FsClosedFeature.ValuesOC`, so the owner IS the
+    spec's `FeatureRA` in well-formed data and the caller's de-duplication
+    makes the second `_add` a no-op. Reading `Owner` first is what covers the
+    one case the fallback cannot -- a spec with a `ValueRA` and a null
+    `FeatureRA`. When BOTH are unreadable there is no plannable defn to name
+    and `None` is returned; that is the absence of an endpoint, not the
+    dropping of one (measured 0 occurrences on both corpora).
+    """
+    if value is None:
+        return None
+    owner = getattr(_unwrap_lcm(value), "Owner", None)
+    if owner is not None and _guid_str_from(owner):
+        return owner
+    return declared_feature
+
+
+def _feat_struc_deps(struc, type_category, defn_category, type_index=None,
+                     deps=None, depth=0):
+    """Closure refs for ONE `IFsFeatStruc`, appended to `deps` and returned.
+
+    Emits, in source order and de-duplicated:
+      - `(FEATURE_STRUCT_TYPES | PHON_FEAT_TYPES, guid)` for `TypeRA`, with the
+        category taken from `type_index` when the piece's cache made the
+        ownership walk possible and from `type_category` otherwise; and
+      - `(INFLECTION_FEATURES | PHONOLOGICAL_FEATURES, guid)` for each
+        `FeatureSpecsOC` entry's `FeatureRA`, and for its `ValueRA` the guid
+        of the feature that OWNS that value rather than the value's own
+        (T089 -- no category enumerates an `IFsSymFeatVal`; see
+        `_value_defn_ref`), which in well-formed data is the same feature and
+        de-duplicates away,
+
+    recursing through `IFsComplexValue.ValueOA` (itself an `IFsFeatStruc`) up
+    to `_FEAT_STRUC_MAX_DEPTH`.
+
+    `_cast_lcm` is used on every hop because pythonnet exposes only the STATIC
+    type's members: `FeatureSpecsOC` is typed `IFsFeatureSpecification`, which
+    declares `FeatureRA` but NOT `ValueRA` -- that one is `IFsClosedValue`-only
+    (the same live-vs-fake divergence `_existing_infl_feat_pairs` already
+    handles). Offline fakes pass through `_cast_lcm` untouched.
+    """
+    if deps is None:
+        deps = []
+    if struc is None or depth > _FEAT_STRUC_MAX_DEPTH:
+        return deps
+    struc = _cast_lcm(_unwrap_lcm(struc), "IFsFeatStruc")
+
+    def _add(category, obj):
+        guid = _guid_str_from(obj) if obj is not None else ""
+        if not guid:
+            return
+        edge = (category, guid)
+        if edge not in deps:
+            deps.append(edge)
+
+    type_ra = getattr(struc, "TypeRA", None)
+    if type_ra is not None:
+        type_guid = _guid_str_from(type_ra)
+        if type_guid:
+            _add((type_index or {}).get(type_guid, type_category), type_ra)
+
+    for raw_spec in getattr(struc, "FeatureSpecsOC", None) or ():
+        spec = _unwrap_lcm(raw_spec)
+        closed = _cast_lcm(spec, "IFsClosedValue")
+        feature_ra = getattr(closed, "FeatureRA", None)
+        _add(defn_category, feature_ra)
+        # T089: the `ValueRA` edge is filed under its OWNING feature, which is
+        # the endpoint the far category can actually enumerate, plan, mark
+        # (FR-015) and deselect (FR-016). See `_value_defn_ref`.
+        _add(defn_category,
+             _value_defn_ref(getattr(closed, "ValueRA", None), feature_ra))
+        nested = getattr(_cast_lcm(spec, "IFsComplexValue"), "ValueOA", None)
+        if nested is not None:
+            _feat_struc_deps(nested, type_category, defn_category,
+                             type_index, deps, depth + 1)
+    return deps
+
+
+def _entry_feat_struc_deps(entry):
+    """MSA-side struct-type / inflection-feature refs for one `ILexEntry`.
+
+    The sibling of `_entry_pos_deps`, shared by AFFIXES and STEMS: both
+    categories enumerate LexEntries, and an entry's MSAs are the objects that
+    actually carry the feature structures. Returns a list of ref tuples.
+    """
+    index = _feat_struc_type_categories(entry)
+    deps: list = []
+    for msa in getattr(_unwrap_lcm(entry), "MorphoSyntaxAnalysesOC", None) or []:
+        # T088: `_unwrap_lcm` alone left this dead. Every attribute in
+        # `_MSA_FEAT_STRUC_ATTRS` is declared on a concrete MSA subclass, not
+        # on the `IMoMorphSynAnalysis` that `MorphoSyntaxAnalysesOC` members
+        # are statically typed as, so the reads below returned None for all
+        # 279 / 247 MSAs measured live and `_feat_struc_deps` -- which DOES
+        # cast correctly once it has a structure -- was never reached.
+        msa_obj = _cast_to_concrete(msa)
+        for attr in _MSA_FEAT_STRUC_ATTRS:
+            _feat_struc_deps(
+                getattr(msa_obj, attr, None),
+                GrammarCategory.FEATURE_STRUCT_TYPES,
+                GrammarCategory.INFLECTION_FEATURES,
+                index, deps,
+            )
+    return deps
+
+
+def _feat_struc_type_member_deps(piece, defn_category):
+    """`(defn_category, guid)` for each `IFsFeatStrucType.FeaturesRS` member.
+
+    `FeaturesRS` is a REFERENCE sequence into the owning feature system's
+    `FeaturesOC`, so a struct type transferred before its member defns exist
+    arrives partially wired -- `feature_struct_types_execute_action` already
+    logs exactly that ("no target counterpart in FeaturesOC -- skipping
+    member") and continues rather than failing. This is the type side's OWN
+    outward edge; it is unrelated to the inbound `TypeRA` arrow documented
+    above, which the owning side emits.
+    """
+    struct_type = _cast_lcm(_unwrap_lcm(piece), "IFsFeatStrucType")
+    deps: list = []
+    for defn in getattr(struct_type, "FeaturesRS", None) or ():
+        guid = _guid_str_from(defn)
+        if not guid:
+            continue
+        edge = (defn_category, guid)
+        if edge not in deps:
+            deps.append(edge)
+    return tuple(deps)
+
+
 
 def _compare_multistring_per_ws(src_ms, tgt_ms, ws_list):
     """Compare source vs target multistring per writing system.
@@ -191,6 +553,349 @@ def _compare_multistring_per_ws(src_ms, tgt_ms, ws_list):
     return gaps, conflicts
 
 
+# ---------------------------------------------------------------------------
+# Feature 038 T043/T044 (US4, FR-020..FR-022, SC-007) -- the owned-collection
+# pass of the gold/reserved edit-detection helper.
+# ---------------------------------------------------------------------------
+#
+# DEFECT G3. `_plan_gold_reserved_edit` compared exactly three multistring
+# fields and then took a whole-object `Skip(ALREADY_PRESENT_BY_GUID)` without
+# having looked at a single owned collection. A destination `Verb` carrying the
+# right name and NONE of its source counterpart's slots, templates, features,
+# sub-categories, stem names, inflection classes or reference forms was
+# therefore reported as already present, and the run claimed success while the
+# categories arrived hollow. Measured baseline (SC-007): 3 matched categories,
+# each missing between 3 and 4 WHOLE collections.
+#
+# data-model.md section 9, the clause this pass exists to satisfy:
+#
+#     SKIP is defined by field-identity comparison, not by mere GUID presence.
+#     A matched GUID alone is a LINK, not a SKIP. Emitting SKIP requires that
+#     every scalar field and all seven owned collections were compared and
+#     needed no write; otherwise it is UPDATE.
+#
+# KEYED OFF THE CATEGORY, DELIBERATELY. `_plan_gold_reserved_edit` is SHARED by
+# six categories -- gram_categories, inflection_features, variant_types,
+# complex_form_types, semantic_domains and phonological_features. The seven
+# collections are POS-only, so the pass runs only for the POS categories below
+# AND only where the object actually exposes the field; the other five pay
+# nothing for a comparison that can never apply to them.
+_POS_OWNED_COLLECTION_CATEGORIES = frozenset({
+    GrammarCategory.GRAM_CATEGORIES,  # POS is ALIASED to gram_categories
+    GrammarCategory.POS,
+})
+
+# LIVE-VERIFIED (FLExToolsMCP `flextools_get_object_api IPartOfSpeech` and
+# `flextools_resolve_property ReferenceFormsOC`, 2026-08-20): ALL SEVEN report
+# `requires_cast: true`. Six are declared on `IPartOfSpeech` (`StemNamesOC` and
+# `ReferenceFormsOC` additionally on `IMoInflClass`); `SubPossibilitiesOS` is
+# `inherited_from: ICmPossibility`. `IPartOfSpeech` extends `ICmPossibility`, so
+# one `IPartOfSpeech` cast exposes all seven -- the second interface is listed
+# where the property has one so a non-POS owner of the same field still
+# resolves.
+#
+# WHY THE CAST IS LOAD-BEARING. pythonnet resolves attributes against the
+# STATIC wrapper type, so on a base-interface proxy an uncast
+# `getattr(obj, "ReferenceFormsOC", None)` is None -- indistinguishable here
+# from "the collection is empty", which would produce a clean-looking SKIP over
+# real content: defect G3 all over again. It is the same trap that made
+# flexicon 4.5.0's `FeaturesOA` wiring 100% dead behind an unconditionally-False
+# `hasattr` (CLAUDE.md) while all 1467 of its tests passed.
+_POS_OWNED_COLLECTION_CASTS = {
+    "AffixSlotsOC": ("IPartOfSpeech",),
+    "AffixTemplatesOS": ("IPartOfSpeech",),
+    "InflectableFeatsRC": ("IPartOfSpeech",),
+    "SubPossibilitiesOS": ("IPartOfSpeech", "ICmPossibility"),
+    "StemNamesOC": ("IPartOfSpeech", "IMoInflClass"),
+    "InflectionClassesOC": ("IPartOfSpeech", "IMoInflClass"),
+    "ReferenceFormsOC": ("IPartOfSpeech", "IMoInflClass"),
+}
+
+# The child's LCM class per collection (`target_type`, same MCP lookup), used
+# as the T044 natural-key class for a child that does not declare its own
+# `ClassName`. Only `PartOfSpeech` is admitted by 035's roster today, so for the
+# other six this resolves to "identity only" -- which is the correct answer, not
+# a gap: an unadmitted class has no natural-key basis (FR-002).
+_POS_OWNED_COLLECTION_CHILD_CLASS = {
+    "AffixSlotsOC": "MoInflAffixSlot",
+    "AffixTemplatesOS": "MoInflAffixTemplate",
+    "InflectableFeatsRC": "FsFeatDefn",
+    "SubPossibilitiesOS": "PartOfSpeech",
+    "StemNamesOC": "MoStemName",
+    "InflectionClassesOC": "MoInflClass",
+    "ReferenceFormsOC": "FsFeatStruc",
+}
+
+
+def _pos_owned_collection(obj, field_name):
+    """`(spelling, [children])` for one of the seven, or `(None, None)`.
+
+    `(None, None)` means the object does not expose the field AT ALL -- it is
+    not POS-shaped -- and is the second half of the category key above. An
+    EMPTY collection returns `(spelling, [])`, which is a different fact and
+    must stay distinguishable from the first: "absent" was never compared,
+    "empty" was compared and had nothing to offer.
+
+    Both spellings are probed. `POS_OWNED_COLLECTION_FIELDS` is canonical
+    (`ReferenceFormsOC`, live-verified) and `POS_OWNED_COLLECTION_ALIASES`
+    records the spec's `ReferenceFormsOS`; whichever spelling the object
+    actually carries is returned and reported, since `EnrichedCollection`
+    accepts either and normalises them for its duplicate check.
+
+    The uncast receiver is tried first (offline fakes and already-cast live
+    objects answer immediately) and the declared interfaces after, because on a
+    base-interface proxy the uncast read is invisible -- see the note above
+    `_POS_OWNED_COLLECTION_CASTS`.
+    """
+    if obj is None:
+        return None, None
+    spellings = [field_name]
+    for alias, canonical in POS_OWNED_COLLECTION_ALIASES.items():
+        if canonical == field_name and alias not in spellings:
+            spellings.append(alias)
+
+    receivers = [obj]
+    for iface_name in _POS_OWNED_COLLECTION_CASTS.get(field_name, ()):
+        cast = _cast_lcm(obj, iface_name)
+        if cast is not None and cast is not obj:
+            receivers.append(cast)
+
+    for receiver in receivers:
+        for spelling in spellings:
+            try:
+                raw = getattr(receiver, spelling, None)
+            except Exception:  # noqa: BLE001 -- an unreadable member is "absent"
+                continue
+            if raw is None:
+                continue
+            try:
+                return spelling, list(raw)
+            except TypeError:
+                continue
+    return None, None
+
+
+def _collection_child_by_guid(child, candidates):
+    """The candidate whose GUID equals `child`'s, or None. Identity only."""
+    child_guid = _guid_str_from(child)
+    if not child_guid:
+        return None
+    for candidate in candidates:
+        if _guid_str_from(candidate) == child_guid:
+            return candidate
+    return None
+
+
+def _match_collection_child(child, candidates, child_class, ws_handles,
+                            source_ws_handles):
+    """The destination child `child` corresponds to, or None (T044).
+
+    GUID FIRST, THEN THE R1 ROSTER KEY. A collection child is MATCHED, not
+    blindly appended -- without this, run 2 would re-add every child run 1
+    wrote and SC-008's re-run check would never hold. The ordering is the same
+    contract `matcher.resolve_match` already enforces for top-level objects,
+    and this routes straight through it: the machinery T032/T033 wired into
+    `_resolve_target_pos`, not a second matcher.
+
+    The candidate scope is THIS collection, not the class's project-wide roster
+    scope. The question a collection child asks is "is this child already in
+    this collection?", and answering it from a wider scope would report a child
+    owned by some other category as already present here.
+
+    `NaturalKeyAmbiguityError` propagates by design, exactly as it does from
+    `_resolve_target_pos_by_natural_key`: the roster does not claim the key is
+    unique by construction, so two candidates is a condition the operator must
+    see rather than a coin the planner flips.
+    """
+    if not candidates:
+        return None
+    declared = getattr(_unwrap_lcm(child), "ClassName", None) or child_class
+    object_class = str(declared) if declared else ""
+    if not object_class or not _guid_str_from(child):
+        # `resolve_match` keys every `MatchBasisRecord` by the source GUID and
+        # raises rather than answer without one. A child that cannot be keyed
+        # still gets the identity half of the rule.
+        return _collection_child_by_guid(child, candidates)
+    decision = _matcher.resolve_match(
+        object_class,
+        _unwrap_lcm(child),
+        [_unwrap_lcm(c) for c in candidates],
+        ws_handles=ws_handles,
+        source_ws_handles=source_ws_handles,
+    )
+    if decision.record.basis is _MatchBasis.NONE:
+        return None
+    return decision.target_obj
+
+
+def _compare_pos_owned_collections(piece, tgt_obj, context):
+    """Compare all seven `IPartOfSpeech` owned collections (T043 + T044).
+
+    Returns `tuple[EnrichedCollection, ...]`, one row per collection that has
+    at least one SOURCE child. A collection empty on both sides contributes
+    nothing, and an EMPTY SOURCE collection can never propose a write against a
+    populated destination -- Principle IV's "never blank a target field from an
+    empty source", restated for collections (FR-021).
+
+    `dropped` is 0 on every row here and that is not an omission: this is PLAN
+    time and a plan proposes. A child that cannot actually be added is
+    discovered by the executor (T045) and reported there through
+    `EnrichedCollection.dropped_records`, which `EnrichedCollection` already
+    reconciles against the count.
+
+    Read-only throughout (Principle III): nothing on either side is mutated,
+    reordered or sorted -- an existing destination child keeps its index and the
+    new one arrives beside it.
+    """
+    rows = []
+    ws_handles = _matcher.ws_handles_for(getattr(context, "target_handle", None))
+    source_ws_handles = _matcher.ws_handles_for(
+        getattr(context, "source_handle", None))
+    src_obj = _unwrap_lcm(piece)
+    dst_obj = _unwrap_lcm(tgt_obj)
+
+    for field_name in POS_OWNED_COLLECTION_FIELDS:
+        spelling, src_children = _pos_owned_collection(src_obj, field_name)
+        if spelling is None or not src_children:
+            continue
+        _tgt_spelling, tgt_children = _pos_owned_collection(dst_obj, field_name)
+        candidates = list(tgt_children or ())
+        child_class = _POS_OWNED_COLLECTION_CHILD_CLASS.get(field_name, "")
+        added = 0
+        already_present = 0
+        for child in src_children:
+            matched = _match_collection_child(
+                child, candidates, child_class, ws_handles, source_ws_handles,
+            )
+            if matched is None:
+                added += 1
+            else:
+                already_present += 1
+        rows.append(EnrichedCollection(
+            field_name=spelling,
+            added=added,
+            already_present=already_present,
+            dropped=0,
+            dropped_records=(),
+        ))
+    return tuple(rows)
+
+
+def _lcm_class_for_category(category) -> str:
+    """`preview.lcm_class_for_category`, imported lazily.
+
+    ONE table answers "which LCM class does this category name", and it lives
+    in `preview.py` beside `_emit_present_outcome`, the caller that established
+    the rule. `preview` imports `categories`, so a module-level import here
+    would close the cycle; the lazy import is what lets both T043 and T043a
+    reuse the table instead of copying it.
+    """
+    try:
+        if __package__:
+            from .preview import lcm_class_for_category
+        else:  # pragma: no cover - script-mode import shim
+            from preview import lcm_class_for_category  # type: ignore
+        return lcm_class_for_category(category) or ""
+    except Exception:  # noqa: BLE001 -- an unavailable table names no class
+        return ""
+
+
+def _match_basis_for_present_by_guid(object_class, source_guid, target_guid):
+    """`preview.match_basis_for_present_by_guid`, imported lazily (T043a).
+
+    The SAME constructor `_emit_present_outcome` uses, for the same reason:
+    "a `PlannedOverwrite` with no `match_basis` is indistinguishable in the
+    report from one whose basis was never determined". Lazy for the cycle
+    reason above.
+    """
+    if __package__:
+        from .preview import match_basis_for_present_by_guid
+    else:  # pragma: no cover - script-mode import shim
+        from preview import match_basis_for_present_by_guid  # type: ignore
+    return match_basis_for_present_by_guid(
+        object_class, source_guid, target_guid,
+    )
+
+
+def _plan_match_decision(object_class, source_obj, context, *,
+                         candidates=None, identity_remap=None):
+    """`preview.plan_match_decision`, imported lazily (T105).
+
+    THE ONE PLACE THE PLAN-TIME MATCH QUESTION IS WIRED. T031 landed the seam
+    under the recorded decision that the plan decides and the report tells;
+    T092 then measured that no production path called it while four sites in
+    this module answered the same question with open-coded
+    `matcher.resolve_match` calls -- and that one of the four had already
+    drifted, losing the seam's enumeration-failure warning. T105 routes the two
+    sites that can reach it (`_process_referent_by_natural_key`,
+    `_plan_natural_key_match`) through here. The other two hold no
+    `RunContext`; `preview.plan_match_decision`'s docblock records, in words,
+    why they are not routed.
+
+    Lazy for the same cycle reason as `_lcm_class_for_category` above:
+    `preview` imports `categories`, so a module-level import would close it.
+
+    Raises nothing this module does not already raise. In particular
+    `NaturalKeyAmbiguityError` is passed straight through -- the seam
+    propagates it deliberately, and each call site decides what to do with it.
+    """
+    if __package__:
+        from .preview import plan_match_decision
+    else:  # pragma: no cover - script-mode import shim
+        from preview import plan_match_decision  # type: ignore
+    return plan_match_decision(
+        object_class, source_obj, context,
+        candidates=candidates, identity_remap=identity_remap,
+    )
+
+
+def _pos_enrichment_object_class(category):
+    """The LCM class name `EnrichmentRecord.object_class` must carry.
+
+    `EnrichmentRecord` rejects an empty `object_class`, and this path only ever
+    runs for the POS categories, so the table's answer falls back to
+    `PartOfSpeech` rather than to nothing.
+    """
+    return _lcm_class_for_category(category) or "PartOfSpeech"
+
+
+def _first_multistring_text(multistring, ws_list):
+    """The first non-empty alt of `multistring` across `ws_list`, or ""."""
+    if multistring is None:
+        return ""
+    for _ws_id, ws_handle in ws_list:
+        try:
+            ts = multistring.get_String(ws_handle)
+        except Exception:  # noqa: BLE001
+            continue
+        text = getattr(ts, "Text", None)
+        if text:
+            return str(text)
+    return ""
+
+
+def _collections_compared_detail(collections) -> str:
+    """The human half of T048e -- name what was compared, in the skip detail.
+
+    `Skip.collections_compared` carries the machine-readable evidence; this
+    puts the same fact where a person reading the run report will see it,
+    because "all WS slots equal" alone reads as if the owned collections were
+    never looked at. Returns "" for the categories that own no collections, so
+    the five non-POS categories sharing `_plan_gold_reserved_edit` keep their
+    detail text byte-identical.
+    """
+    if not collections:
+        return ""
+    return (
+        "; " + str(len(collections)) + " owned collection(s) compared, "
+        "nothing to add ("
+        + ", ".join(
+            c.field_name + "=" + str(c.already_present) for c in collections
+        )
+        + ")"
+    )
+
+
 def _plan_gold_reserved_edit(piece, category, context, target_iter_fn):
     """Shared plan_action helper for the ontology/reserved categories (spec 017).
 
@@ -208,17 +913,44 @@ def _plan_gold_reserved_edit(piece, category, context, target_iter_fn):
        (GUID-equality lookup is binding preservation, not a lock -- KEPT.)
     2. If absent -> return None (caller emits PlannedAction / create).
        Creation is unconditional, exactly like any ordinary item.
-    3. If present, compare Name/Abbreviation/Description per writing system:
-       - All slots equal -> Skip(ALREADY_PRESENT_BY_GUID).
-       - Any gap (empty in target) and/or any diverged field -> a
-         PlannedOverwrite(write_mode="merge"). The executor routes write_mode
-         "merge" through apply_update_semantic when the category's ConflictMode
-         is UPDATE (the v7.0.0 default for these categories), which fills empty
-         target fields AND updates diverged fields from a non-empty source,
-         while never blanking a populated target from an empty source.
+    3. If present, compare Name/Abbreviation/Description per writing system
+       AND, for the POS categories, all seven owned collections (T043):
+       - All scalar slots equal AND the collection pass finds nothing ->
+         Skip(ALREADY_PRESENT_BY_GUID).
+       - Any gap (empty in target), any diverged field, and/or any source
+         child the destination lacks -> a PlannedOverwrite(write_mode="merge").
+         The executor routes write_mode "merge" through apply_update_semantic
+         when the category's ConflictMode is UPDATE (the v7.0.0 default for
+         these categories), which fills empty target fields AND updates
+         diverged fields from a non-empty source, while never blanking a
+         populated target from an empty source.
+
+    THE OWNED-COLLECTION PASS (feature 038 T043/T044, FR-020..FR-022, SC-007).
+    Both early skips below owe the same comparison. data-model.md section 9:
+    "SKIP is defined by field-identity comparison, not by mere GUID presence.
+    A matched GUID alone is a LINK, not a SKIP. Emitting SKIP requires that
+    every scalar field and all seven owned collections were compared and needed
+    no write; otherwise it is UPDATE." So `_compare_pos_owned_collections` runs
+    BEFORE either skip can be taken, and a skip stands only when it also found
+    nothing to add. The collections are POS-only, so the pass is keyed off
+    `_POS_OWNED_COLLECTION_CATEGORIES` and off attribute presence -- the other
+    five categories sharing this helper are unaffected.
+
+    The pass runs even when the source project yields NO writing-system list.
+    An owned collection needs no writing system to be compared: the child is
+    either there by GUID (then by the R1 roster key, T044) or it is not. An
+    unavailable ws_list is a reason the SCALAR comparison could not run and
+    says nothing about the collections, so it may no longer stand alone as
+    proof that the object is already present. Where the collection pass IS
+    clean, the residual conservative skip keeps `ALREADY_PRESENT_BY_GUID`
+    rather than minting a new reason: the object really is present by GUID and
+    everything this helper was able to compare compared equal.
 
     Returns a Skip, PlannedOverwrite, or None.
     - None means "not present in target" -> caller emits PlannedAction.
+    - A PlannedOverwrite carrying an `EnrichmentRecord` is an ENRICHMENT: the
+      add-only, `write_mode="merge"` update of FR-021, never a removal, a
+      blanking or a destructive reorder.
     """
     src_guid = _guid_str_from(piece)
 
@@ -227,6 +959,14 @@ def _plan_gold_reserved_edit(piece, category, context, target_iter_fn):
 
     if tgt_obj is None:
         return None  # absent -> caller emits PlannedAction
+
+    # T043: the owned-collection pass, ahead of BOTH early skips. Needs no
+    # writing-system information, so it is computed before ws_list is even
+    # enumerated.
+    collections = ()
+    if category in _POS_OWNED_COLLECTION_CATEGORIES:
+        collections = _compare_pos_owned_collections(piece, tgt_obj, context)
+    collection_delta = any(c.added or c.dropped for c in collections)
 
     # Per-WS edit detection (FR-E04 to FR-E07).
     # Enumerate writing systems from source side.
@@ -238,42 +978,70 @@ def _plan_gold_reserved_edit(piece, category, context, target_iter_fn):
     except Exception:
         pass
 
-    if not ws_list:
-        # No WS info available -> conservative skip (cannot prove edit).
-        return Skip(
-            category=category,
-            source_guid=src_guid,
-            reason=SkipReason.ALREADY_PRESENT_BY_GUID,
-            detail=f"GUID {src_guid[:8]}... present in target (no WS info for comparison).",
-        )
-
     all_gaps = []    # (field_name, ws_handle, src_text)
     all_conflicts = []  # (field_name, ws_handle, src_text, tgt_text)
 
-    for field_name in ("Name", "Abbreviation", "Description"):
-        src_ms = getattr(piece, field_name, None)
-        tgt_ms = getattr(tgt_obj, field_name, None)
-        if src_ms is None or tgt_ms is None:
-            continue
-        gaps, conflicts = _compare_multistring_per_ws(src_ms, tgt_ms, ws_list)
-        for ws_handle, src_text in gaps:
-            all_gaps.append((field_name, ws_handle, src_text))
-        for ws_handle, src_text, tgt_text in conflicts:
-            all_conflicts.append((field_name, ws_handle, src_text, tgt_text))
+    if not ws_list:
+        if not collection_delta:
+            # No WS info available AND nothing to add to any owned collection
+            # -> conservative skip (cannot prove a scalar edit, and proved
+            # there is no collection edit).
+            return Skip(
+                category=category,
+                source_guid=src_guid,
+                reason=SkipReason.ALREADY_PRESENT_BY_GUID,
+                detail=(
+                    f"GUID {src_guid[:8]}... present in target (no WS info "
+                    "for comparison)"
+                    + _collections_compared_detail(collections)
+                    + "."
+                ),
+                # T048e: the collection pass ran even with no WS list -- an
+                # owned collection needs no writing system to be compared --
+                # so its result is evidence and is carried, not discarded.
+                collections_compared=collections,
+            )
+        # Otherwise fall through: the scalar comparison stays empty (it could
+        # not run) and the collection delta alone carries the merge.
+    else:
+        for field_name in ("Name", "Abbreviation", "Description"):
+            src_ms = getattr(piece, field_name, None)
+            tgt_ms = getattr(tgt_obj, field_name, None)
+            if src_ms is None or tgt_ms is None:
+                continue
+            gaps, conflicts = _compare_multistring_per_ws(src_ms, tgt_ms, ws_list)
+            for ws_handle, src_text in gaps:
+                all_gaps.append((field_name, ws_handle, src_text))
+            for ws_handle, src_text, tgt_text in conflicts:
+                all_conflicts.append((field_name, ws_handle, src_text, tgt_text))
 
-    if not all_gaps and not all_conflicts:
-        # Fully identical across every WS slot -> nothing to write.
-        return Skip(
-            category=category,
-            source_guid=src_guid,
-            reason=SkipReason.ALREADY_PRESENT_BY_GUID,
-            detail=f"GUID {src_guid[:8]}... present in target; all WS slots equal.",
-        )
+        if not all_gaps and not all_conflicts and not collection_delta:
+            # Fully identical across every WS slot AND every owned collection
+            # -> nothing to write. This is the one SKIP the clause still
+            # allows, and T043 must not make it unreachable.
+            return Skip(
+                category=category,
+                source_guid=src_guid,
+                reason=SkipReason.ALREADY_PRESENT_BY_GUID,
+                detail=(
+                    f"GUID {src_guid[:8]}... present in target; all WS slots "
+                    "equal"
+                    + _collections_compared_detail(collections)
+                    + "."
+                ),
+                # T048e: THE EVIDENCE THAT THIS SKIP IS LEGAL. The clause
+                # (data-model.md 9) permits a SKIP only where every scalar
+                # field AND all seven owned collections were compared and
+                # needed no write. The comparison above is what earns it;
+                # discarding its result left the report unable to say so, and
+                # left T039's criterion 3b with nothing to compare.
+                collections_compared=collections,
+            )
 
     # Any divergence -> non-destructive UPDATE merge (constitution v7.0.0).
     # Both empty-target gaps AND diverged (both-non-empty-differ) fields are
     # written by the executor's apply_update_semantic pass. An empty source
-    # never blanks a populated target field.
+    # never blanks a populated target field, and a collection is add-only.
     summary_parts = []
     if all_gaps:
         gap_summary = ", ".join(
@@ -286,10 +1054,36 @@ def _plan_gold_reserved_edit(piece, category, context, target_iter_fn):
             for f, wh, s, t in all_conflicts
         )
         summary_parts.append(f"update diverged {diverged_summary}")
+    if collection_delta:
+        summary_parts.append("enrich " + ", ".join(
+            f"{c.field_name}: +{c.added} (have {c.already_present})"
+            for c in collections if c.added or c.dropped
+        ))
     summary = (
         f"Merge GUID {src_guid[:8]}... [{category.value}]: "
         + " | ".join(summary_parts)
     )
+
+    # FR-020..FR-022: an ENRICHMENT record whenever the collection pass had
+    # anything to say. `was_created` is False by construction -- this path only
+    # ever runs on an object the GUID scan already found in the destination --
+    # which is how the report tells an enriched item from a created one.
+    enrichment = None
+    if collections:
+        enrichment = EnrichmentRecord(
+            object_class=_pos_enrichment_object_class(category),
+            source_guid=src_guid,
+            target_guid=src_guid,
+            label=(_first_multistring_text(getattr(piece, "Name", None), ws_list)
+                   or src_guid),
+            collections=collections,
+            # Scalar fields the merge fills where the destination was EMPTY.
+            # Diverged-but-populated fields are an update, not a gap fill, and
+            # are carried by the summary above rather than counted here.
+            fields_updated=tuple(dict.fromkeys(f for f, _wh, _s in all_gaps)),
+            was_created=False,
+        )
+
     return PlannedOverwrite(
         category=category,
         source_guid=src_guid,
@@ -297,6 +1091,7 @@ def _plan_gold_reserved_edit(piece, category, context, target_iter_fn):
         match_via="guid",
         write_mode="merge",
         summary=summary,
+        enrichment=enrichment,
     )
 
 
@@ -337,7 +1132,29 @@ def gram_categories_enumerate_source(context: RunContext, selection: Selection):
 
 
 def gram_categories_dependencies(piece):
-    return ()  # leaf -- POS owns inflection_classes / stem_names / exception_features
+    """POS is a leaf for OWNERSHIP -- it owns its inflection classes, stem
+    names and exception features outright, so none of those is a closure edge.
+
+    It is NOT a leaf for REFERENCE (feature 038, T034). `IPartOfSpeech`
+    carries `DefaultFeaturesOA`, an `IFsFeatStruc` whose `TypeRA` REFERENCES an
+    `IFsFeatStrucType` in `MsFeatureSystemOA.TypesOC` (FEATURE_STRUCT_TYPES)
+    and whose `FeatureSpecsOC` REFERENCE `IFsClosedFeature`/`IFsSymFeatVal` in
+    `MsFeatureSystemOA.FeaturesOC` (INFLECTION_FEATURES). A POS written before
+    those exist carries an unsatisfiable reference -- see the
+    "FsFeatStruc / FsFeatStrucType closure edges" banner above for why the
+    arrow is emitted from this side and not from the struct type's own
+    producer.
+
+    Returns `()` for the overwhelmingly common POS that has no default feature
+    structure at all, and for duck-typed fakes with no `DefaultFeaturesOA`.
+    """
+    pos = _cast_lcm(_unwrap_lcm(piece), "IPartOfSpeech")
+    return tuple(_feat_struc_deps(
+        getattr(pos, "DefaultFeaturesOA", None),
+        GrammarCategory.FEATURE_STRUCT_TYPES,
+        GrammarCategory.INFLECTION_FEATURES,
+        _feat_struc_type_categories(piece),
+    ))
 
 
 def gram_categories_required_writing_systems(piece) -> Iterable[Tuple[str, WSKind]]:
@@ -345,12 +1162,15 @@ def gram_categories_required_writing_systems(piece) -> Iterable[Tuple[str, WSKin
     return ()
 
 
-def gram_categories_plan_action(piece, context: RunContext, ws_mapping: WSMapping):
-    """GOLD-aware: skip GOLD; edit-copy merge for present custom; Add for absent.
+def _plan_pos_piece(piece, context: RunContext, category: GrammarCategory):
+    """Shared planner body for the two categories that plan an IPartOfSpeech.
 
-    Uses the shared _plan_gold_reserved_edit helper (spec 017 FR-E10).
-    POS is ALIASED to gram_categories (shares execute at gram_categories L193+,
-    Phase 0 routing) — this function handles both.
+    `GRAM_CATEGORIES` (the whole-inventory pass) and `POS` (the pick-driven
+    pass -- see `pos_enumerate_source`) differ ONLY in the category stamped on
+    the decision they emit; the target lookup, the GOLD-reserved merge/skip
+    decision and the owned-collection comparison are identical, and both
+    members are already listed in `_POS_OWNED_COLLECTION_CATEGORIES` so
+    `_plan_gold_reserved_edit` runs the seven-collection pass for either one.
     """
     def _target_iter(target):
         if hasattr(target, "POS"):
@@ -361,19 +1181,136 @@ def gram_categories_plan_action(piece, context: RunContext, ws_mapping: WSMappin
     # wiring post-pass, whether the POS is created (ADD) or matched (SKIP).
     _stash_feature_category_links(piece, context)
 
-    result = _plan_gold_reserved_edit(
-        piece, GrammarCategory.GRAM_CATEGORIES, context, _target_iter,
-    )
+    result = _plan_gold_reserved_edit(piece, category, context, _target_iter)
     if result is not None:
         return result
+
+    # Identity found nothing. Step 2: the roster-admitted natural key, BEFORE
+    # emitting a create -- otherwise a starter object the source also has is
+    # duplicated rather than reused. THIS IS RC-1 (feature 038, T091).
+    #
+    # `PartOfSpeech` has been on 035's natural-key roster from the start, and a
+    # correct `PartOfSpeech` fallback has existed since T032/T033 -- but it was
+    # given to `_resolve_target_pos`, the OWNER-resolution path. That path
+    # answers "which target POS does this slot belong to?"; it is never asked
+    # "should I create this POS at all?". So `_plan_gold_reserved_edit`
+    # returned None on a GUID miss and control fell straight through to the
+    # create below. Measured on a full copy of `Ngoreme FLEx`: five duplicate
+    # name groups over `Verb`/`Noun`/`Pronoun`/`Adverb`/`Pro-form` -- exactly
+    # the five names in the starter baseline -- while the census row read
+    # MATCHED 26 -> 26, because 31 destination minus 5 starter is 26 and the
+    # duplicate detector works on the gross basis. `Ejagham W Mini` CANNOT see
+    # this: its starters carry the GOLD catalog GUIDs and match on identity, so
+    # Ngoreme is the only pair in the corpus that reaches this line at all.
+    #
+    # Two details are load-bearing, both mirroring `_phonology_simple_plan`:
+    #
+    # * `object_class` is passed LITERALLY. `_natural_key_object_class` answers
+    #   only for the two phonology categories (it exists to keep `PhNCSegments`
+    #   and `PhNCFeatures` from matching each other) and would return "" here,
+    #   which `_plan_natural_key_match` reads as "not keyable".
+    # * the scope is MATERIALISED. `_target_iter` is re-invoked here, and
+    #   `POS.GetAll(recursive=True)` may be one-shot; an already-exhausted
+    #   iterator presents an EMPTY candidate list, which reads as "no match"
+    #   and creates the very duplicate this step exists to prevent.
+    try:
+        pos_scope = list(_target_iter(context.target_handle))
+    except (AttributeError, TypeError):
+        pos_scope = []
+    matched = _plan_natural_key_match(
+        piece, category, context, "PartOfSpeech", pos_scope,
+    )
+    if matched is not None:
+        return matched
+
     # Absent -> PlannedAction (add)
     src_guid = _guid_str_from(piece)
     return PlannedAction(
-        category=GrammarCategory.GRAM_CATEGORIES,
+        category=category,
         source_guid=src_guid,
         intended_target_guid=src_guid,
         summary=f"POS guid={src_guid[:8]}...",
     )
+
+
+def gram_categories_plan_action(piece, context: RunContext, ws_mapping: WSMapping):
+    """GOLD-aware: skip GOLD; edit-copy merge for present custom; Add for absent.
+
+    Uses the shared _plan_gold_reserved_edit helper (spec 017 FR-E10).
+    POS is ALIASED to gram_categories (shares execute at gram_categories L193+,
+    Phase 0 routing) — this function handles both.
+    """
+    return _plan_pos_piece(piece, context, GrammarCategory.GRAM_CATEGORIES)
+
+
+# ----- pos (pick-driven ALIAS of gram_categories) --------------------------
+#
+# WHY THIS EXISTS. `Selection.pos_picks` is the wizard's Skeleton-page output:
+# exactly the POSes the picked affixes' MSAs attach to
+# (`Lib/ui/selection_wizard.py` step 5e). That step deliberately does NOT flag
+# the whole-inventory `GRAM_CATEGORIES` pass -- flagging it would enumerate
+# EVERY source POS, which is precisely what the pick is there to avoid, and
+# `tests/unit/test_wizard_page_flow.py::test_pos_picks_do_not_flag_leaf_gram_categories`
+# locks that in. It flags `GrammarCategory.POS` + `pos_picks` instead.
+#
+# Until this bundle existed, that flag reached NOTHING. Its only consumer was
+# `preview._select_source_poses` -> the verb-vertical closure, and that whole
+# path has been gated off since 2026-07-06 (`_VERB_VERTICAL_ENABLED = False`
+# in BOTH `preview.build_run_plan` and `transfer.execute`, the double-dispatch
+# GUID-collision fix). `POS` was not in either module's
+# `_LEAF_DISPATCH_CATEGORIES` and not in `LEAF_CATEGORIES`, so a
+# `Selection{POS: True, pos_picks={...}}` produced an EMPTY plan: the picked
+# POS was never created in the target, and every execute-time consumer that
+# needs it -- `slots_execute_action`, `affix_templates_execute_action`,
+# `inflection_classes_execute_action`, `pos_inflectable_feats_execute_action`,
+# each via `_resolve_target_pos` -> `_report_owner_pos_unresolved` -- abandoned
+# its item, while affix/stem MSAs wired to None ("no grammatical info"). That
+# is the exact defect the wizard fix was written to close.
+#
+# Registering POS as an alias of the gram_categories bundle restores the flag's
+# meaning through the ACTIVE path: same enumeration source, same GOLD-reserved
+# merge decision, same GUID-preserving creator -- only the item set is narrowed
+# to the picks and the emitted decision is stamped `POS`.
+
+def pos_enumerate_source(context: RunContext, selection: Selection):
+    """Yield exactly the source POSes named by `selection.pos_picks`.
+
+    PICK-DRIVEN BY DESIGN, and deliberately EMPTY in two cases:
+
+    * `pos_picks` empty -- `categories[POS] = True` with no picks is the
+      legacy verb-vertical "walk every top-level POS" mode, which
+      `GRAM_CATEGORIES` now owns. Enumerating the whole inventory here would
+      silently reinstate the superseded behaviour behind an unrelated flag.
+    * `GRAM_CATEGORIES` also on -- that pass already enumerates every POS,
+      including the picked ones, so running both would plan each picked POS
+      TWICE under two different categories. Yielding nothing here keeps the
+      single-path invariant the 2026-07-06 supersede decision established.
+    """
+    picks = {str(g).lower() for g in (getattr(selection, "pos_picks", None) or ())}
+    if not picks:
+        return ()
+    try:
+        if selection.is_on(GrammarCategory.GRAM_CATEGORIES):
+            return ()
+    except (AttributeError, TypeError):
+        pass
+    source = context.source_handle
+    if not hasattr(source, "POS"):
+        return ()
+    return [p for p in source.POS.GetAll(recursive=True)
+            if _guid_str_from(p) in picks]
+
+
+def pos_plan_action(piece, context: RunContext, ws_mapping: WSMapping):
+    """Same decision as `gram_categories_plan_action`, stamped `POS`.
+
+    The category on the decision is load-bearing on the Move side: the
+    overwrite executor already routes `cat == GrammarCategory.POS` through
+    `POS.ApplySyncableProperties` (`transfer._execute_overwrite`), and
+    `_ENRICHMENT_CATEGORIES` already admits POS, so a POS-stamped decision is
+    handled end to end exactly like its gram_categories twin.
+    """
+    return _plan_pos_piece(piece, context, GrammarCategory.POS)
 
 
 def gram_categories_execute_action(action: PlannedAction, context: RunContext, ws_mapping: WSMapping, tag: ImportResidueTag):
@@ -429,7 +1366,21 @@ def gram_categories_execute_action(action: PlannedAction, context: RunContext, w
     if src_owner is not None:
         try:
             from SIL.LCModel import IPartOfSpeech
-            IPartOfSpeech(src_owner)  # cast probe: raises if owner isn't a POS
+            # KEEP THE CAST -- this line used to discard it (feature 038,
+            # T091, and T088's defect class exactly). `Owner` is declared
+            # `ICmObject`, and pythonnet resolves attributes against the STATIC
+            # wrapper type, so `Name` is INVISIBLE on the uncast proxy. The
+            # cast was already being computed here purely as a "raises if the
+            # owner isn't a POS" probe and then thrown away, which was harmless
+            # while the only thing read off the owner was its GUID (`ICmObject`
+            # has one). The moment `_resolve_target_pos` needs the owner's NAME
+            # -- which is what T091's natural key is -- the uncast object
+            # answers `None`, the key is not computable, and the resolver
+            # reports a miss it would otherwise have matched. MEASURED: with
+            # the cast discarded, all 12 remapped-parent descendants were
+            # reported unresolved (correctly reported, still lost); with it
+            # kept, they resolve.
+            src_owner = IPartOfSpeech(src_owner)
             is_sub_pos = True
             src_owner_guid = _guid_str_from(src_owner)
         except Exception:
@@ -442,14 +1393,48 @@ def gram_categories_execute_action(action: PlannedAction, context: RunContext, w
     factory = IPartOfSpeechFactory(target.GetFactory(IPartOfSpeechFactory))
 
     if is_sub_pos and src_owner_guid:
-        # Find the matching target parent POS.
-        target_parent = None
-        for p in target.POS.GetAll(recursive=True):
-            if _guid_str_from(p) == src_owner_guid:
-                target_parent = p
-                break
+        # THE PARENT IS RESOLVED, NOT SCANNED (feature 038, T091).
+        #
+        # This used to be a bare `for p in target.POS.GetAll(recursive=True)`
+        # GUID comparison with a silent `return None` on a miss -- and it was
+        # CORRECT for as long as the planner could only ever create a POS under
+        # its own source GUID, because then the parent's source GUID and its
+        # destination GUID were the same string by construction. T091's
+        # plan-time natural-key match is what ends that: a source POS whose
+        # name matches an existing destination object is now REUSED, so its
+        # destination GUID is the destination's, and every descendant's source
+        # owner GUID no longer names anything in the target.
+        #
+        # MEASURED, and this is why the diagnosis's "the executor needs
+        # nothing" was wrong. `Ngoreme FLEx` -> a freshly restored target, with
+        # the plan half of T091 in and this half out: the plan was exactly
+        # right (`GRAM_CATEGORIES {added: 21, overwritten: 5}`, the five
+        # starter duplicates gone) and the destination held **14** of 26
+        # categories. Ngoreme has 13 descendants of the five starter-named
+        # POSes -- `Augmentative Noun`, `Copulative verb`, `Interrogative
+        # pro-form`, the whole `Pro-form > Pronoun` subtree -- and 12 of them
+        # were abandoned here, silently, one per ancestor whose GUID had been
+        # remapped. The census read `PartOfSpeech 26 -> 14, difference -12,
+        # SHORTFALL`: five duplicate objects traded for twelve missing ones.
+        #
+        # `_resolve_target_pos` is the identity-then-natural-key resolver T032
+        # built and T033 swept four call sites onto. This was not a fifth
+        # missed site: until the plan could remap a POS, it had nothing to do
+        # here. And a miss is now REPORTED (FR-013) rather than returning None
+        # into `transfer.py`, which discards every `execute_action` return
+        # value and then increments `leaf_succeeded` unconditionally -- the
+        # exact "the item vanished AND the run counted it a success" shape
+        # `_report_owner_pos_unresolved` exists to end.
+        target_parent = _resolve_target_pos(
+            target, src_owner_guid,
+            src_pos=src_owner, source_handle=source,
+        )
         if target_parent is None:
-            return None  # parent not in target; skip (will retry next run)
+            _report_owner_pos_unresolved(
+                context, action.category, src_guid, src_owner_guid,
+                "part of speech",
+            )
+            return None
         try:
             new_pos = factory.Create(parsed_guid, target_parent)
         except Exception as e:
@@ -482,8 +1467,11 @@ def gram_categories_execute_action(action: PlannedAction, context: RunContext, w
 # Inflection features are IFsClosedFeature objects (or IFsComplexFeature).
 # They live under LangProject.MsFeatureSystemOA.FeaturesOC.
 # GOLD check: non-empty CatalogSourceId.
-# Creation: IFsClosedFeatureFactory.Create(Guid, featureSystem) (2-arg) or
-#            IFsClosedFeatureFactory.Create(Guid) + FeaturesOC.Add().
+# Creation (feature 038, T035): IFsClosedFeatureFactory.Create(Guid) --
+# 1-arg -- THEN FeaturesOC.Add(). Never the interface-declared 2-arg
+# Create(Guid, featureSystem): pythonnet cannot bind it on the concrete
+# factory GetService returns, so attempting it first only produced a
+# swallowed TypeError before the 1-arg path ran anyway.
 
 def inflection_features_enumerate_source(context: RunContext, selection: Selection):
     """Walk source.InflectionFeatures.FeatureGetAll()."""
@@ -554,14 +1542,41 @@ def _ws_map_dict(ws_mapping):
     return {}
 
 
+def _is_dotnet(obj) -> bool:
+    """True when `obj` is a genuine .NET (pythonnet) object, False for a
+    duck-typed Python fake and for plain Python builtins. Always False when
+    pythonnet is absent.
+
+    This is the correct liveness test for the ITsString helpers below. The
+    previous test -- "can `SIL.LCModel` be imported?" -- described the PROCESS,
+    not the OBJECT: once anything in the process imported flexicon (which loads
+    pythonnet and the SIL assemblies), every duck-typed caller flipped to the
+    live branch and `ITsString(fake)` raised `TypeError`, which callers swallow
+    as "nothing to copy". Keying off the object itself keeps the live path
+    unchanged while staying correct for host-free callers.
+
+    Delegates to the single definition in `Lib/texts.py` (imported lazily, the
+    idiom this module already uses for `residue`/`preview`, so no module-scope
+    edge is added to the import graph). One definition, so the two callers
+    cannot drift apart on so subtle a predicate.
+    """
+    if __package__:
+        from . import texts as _texts
+    else:
+        import texts as _texts  # type: ignore
+    return _texts._is_dotnet_object(obj)
+
+
 def _tss_read_text(tss):
     """Read `.Text` from an ITsString (via cast on the live runtime) or a
     duck-typed fake offline. SIL-optional."""
-    try:
-        from SIL.LCModel.Core.KernelInterfaces import ITsString
-    except Exception:  # noqa: BLE001 -- offline: no pythonnet
-        return getattr(tss, "Text", tss)
-    return ITsString(tss).Text
+    if _is_dotnet(tss):
+        try:
+            from SIL.LCModel.Core.KernelInterfaces import ITsString
+            return ITsString(tss).Text
+        except Exception:  # noqa: BLE001 -- not an ITsString; duck-type below
+            pass
+    return getattr(tss, "Text", tss)
 
 
 def _tss_make_string(text, handle):
@@ -572,6 +1587,13 @@ def _tss_make_string(text, handle):
     except Exception:  # noqa: BLE001 -- offline: no pythonnet
         return text
     return TsStringUtils.MakeString(text, handle)
+
+
+def _plain_make_string(text, handle):
+    """`make_string` for duck-typed destinations: a fake multistring stores the
+    plain text, so building a real `ITsString` would poison it with a .NET
+    object. Signature matches `_tss_make_string`."""
+    return text
 
 
 def _copy_multistrings_ws_mapped(src_typed, new_typed, prop_names, *,
@@ -593,8 +1615,6 @@ def _copy_multistrings_ws_mapped(src_typed, new_typed, prop_names, *,
     the real callables (or lets these SIL-optional defaults resolve them)."""
     if read_text is None:
         read_text = _tss_read_text
-    if make_string is None:
-        make_string = _tss_make_string
     ws_map = ws_map or {}
     try:
         src_id_by_handle = {ws.Handle: ws.Id for ws in source.WritingSystems.GetAll()}
@@ -609,6 +1629,14 @@ def _copy_multistrings_ws_mapped(src_typed, new_typed, prop_names, *,
         tgt_prop = getattr(new_typed, prop_name, None)
         if src_prop is None or tgt_prop is None:
             continue
+        # Resolve the string builder against the ACTUAL destination object: a
+        # live .NET IMultiString needs a real ITsString, a duck-typed fake
+        # stores the plain text. Choosing on "is pythonnet importable?" wrote
+        # .NET strings into fakes as soon as any other caller in the process
+        # had loaded flexicon. An explicitly supplied `make_string` still wins.
+        mk = make_string
+        if mk is None:
+            mk = _tss_make_string if _is_dotnet(tgt_prop) else _plain_make_string
         for src_handle, src_id in src_id_by_handle.items():
             text = read_text(src_prop.get_String(src_handle))
             if not text:
@@ -617,7 +1645,7 @@ def _copy_multistrings_ws_mapped(src_typed, new_typed, prop_names, *,
             tgt_handle = tgt_handle_by_id.get(tgt_id)
             if tgt_handle is None:
                 continue  # no counterpart target WS -> skip (never wrong handle)
-            tgt_prop.set_String(tgt_handle, make_string(text, tgt_handle))
+            tgt_prop.set_String(tgt_handle, mk(text, tgt_handle))
 
 
 def inflection_features_execute_action(action: PlannedAction, context: RunContext, ws_mapping: WSMapping, tag: ImportResidueTag):
@@ -626,10 +1654,11 @@ def inflection_features_execute_action(action: PlannedAction, context: RunContex
     Dispatches on `src_feat.ClassName` (coverage-content-fidelity-v2 Part B
     sub-part 1 -- complex/open inflection features):
     - "FsClosedFeature" (or unknown/absent ClassName): the existing GOLD
-      Path A/B create + IFsSymFeatVal ValuesOC co-create logic, unchanged.
+      1-arg Create(Guid) + Add() GOLD path plus the IFsSymFeatVal
+      ValuesOC co-create loop.
     - "FsComplexFeature": creates an IFsComplexFeature via
-      IFsComplexFeatureFactory (Path A 2-arg Create(Guid, featureSystem),
-      falling back to Path B Create(Guid) + guarded Add). Copies
+      IFsComplexFeatureFactory -- 1-arg Create(Guid) then guarded Add
+      (feature 038, T035). Copies
       Name/Abbreviation/Description via the WS-mapped Operations surface
       (falling back to `_copy_multistrings_ws_mapped`). Wires TypeRA by
       GUID lookup in `MsFeatureSystemOA.TypesOC` if the target struct-type
@@ -639,13 +1668,18 @@ def inflection_features_execute_action(action: PlannedAction, context: RunContex
     - "FsOpenFeature": documented clean skip (Skip(NEEDS_MANUAL)) -- open
       features have no closed value set to sync; no crash, no orphan.
 
-    Uses the 2-arg factory overload (Path A: Create(Guid, featureSystem))
-    per the InflectionFeatureOperations._factory_create_attached pattern.
-    Falls back to Create(Guid) + FeaturesOC.Add() if the 2-arg overload
-    is unavailable.
+    Feature 038 (T035) -- FACTORY CALL ORDER. All three Fs* creates below
+    (IFsComplexFeature, IFsClosedFeature, IFsSymFeatVal) call the CONCRETE
+    factory's 1-arg `Create(Guid)` and THEN `Add()` to the owning collection,
+    in that order. The 2-arg `Create(Guid, owner)` overload exists on the LCM
+    INTERFACE, not on the concrete factory `ServiceLocator.GetService` returns,
+    and pythonnet cannot bind it: the previous "Path A first, Path B on
+    exception" shape therefore raised and swallowed a TypeError on EVERY
+    create before doing the 1-arg call anyway. Removing Path A removes a
+    swallowed exception, not a capability.
 
-    Values (IFsSymFeatVal) are co-created via CreateValue so they land
-    in the same transaction.  Carrier B residue is applied.
+    Values (IFsSymFeatVal) are co-created so they land in the same
+    transaction.  Carrier B residue is applied.
 
     031 US2: `Name`/`Abbreviation`/`Description` are copied through
     writing-system mapping (contract C3) -- the feature via the flexicon
@@ -718,28 +1752,25 @@ def inflection_features_execute_action(action: PlannedAction, context: RunContex
 
             complex_factory = sl.GetService(IFsComplexFeatureFactory)
 
-            # Path A: 2-arg Create(Guid, featureSystem) -- auto-attaches; do
-            # NOT call FeaturesOC.Add() afterward (double-attach risk).
-            new_feat_raw = None
+            # Feature 038 (T035): 1-arg Create(Guid), THEN Add(), in that
+            # order. `IFsComplexFeatureFactory.Create(Guid, IFsFeatureSystem)`
+            # is declared on the INTERFACE; `GetService` returns the CONCRETE
+            # factory and pythonnet cannot bind the 2-arg form against it. The
+            # removed "Path A first" attempt therefore raised on every create
+            # and had its exception swallowed by a bare `except Exception:`
+            # before this same 1-arg path ran. Fail loud if even the 1-arg
+            # overload is unavailable rather than silently produce a
+            # fresh-GUID duplicate on re-run (C4/VR-1).
             try:
-                new_feat_raw = complex_factory.Create(parsed_guid, feature_system)
-            except Exception:
-                new_feat_raw = None
-
-            if new_feat_raw is None:
-                # Path B: Create(Guid) + guarded Add. Fail loud rather than
-                # silently produce a fresh-GUID duplicate on re-run (mirrors
-                # the closed-feature posture, C4/VR-1).
-                try:
-                    new_feat_raw = complex_factory.Create(parsed_guid)
-                except Exception as e:
-                    raise RuntimeError(
-                        f"IFsComplexFeatureFactory does not support "
-                        f"Create(Guid); cannot align complex feature GUID "
-                        f"{src_guid}"
-                    ) from e
-                _safe_add_to_owner(new_feat_raw, feature_system.FeaturesOC,
-                                   "IFsComplexFeatureFactory", src_guid)
+                new_feat_raw = complex_factory.Create(parsed_guid)
+            except Exception as e:
+                raise RuntimeError(
+                    f"IFsComplexFeatureFactory does not support "
+                    f"Create(Guid); cannot align complex feature GUID "
+                    f"{src_guid}"
+                ) from e
+            _safe_add_to_owner(new_feat_raw, feature_system.FeaturesOC,
+                               "IFsComplexFeatureFactory", src_guid)
 
             new_feat = IFsComplexFeature(new_feat_raw)
             src_feat_typed = IFsComplexFeature(src_feat)
@@ -838,28 +1869,23 @@ def inflection_features_execute_action(action: PlannedAction, context: RunContex
 
         factory = sl.GetService(IFsClosedFeatureFactory)
 
-        # Path A: 2-arg Create(Guid, featureSystem).
-        new_feat = None
+        # Feature 038 (T035): 1-arg Create(Guid), THEN Add() -- same reason as
+        # the complex-feature branch above (the 2-arg overload is
+        # interface-only and unbindable from pythonnet, so trying it first
+        # only manufactured a swallowed exception). No no-arg fallback: if
+        # Create(Guid) is unsupported we fail loud rather than silently produce
+        # a fresh-GUID duplicate feature on re-run (031 US2, C4/VR-1;
+        # research.md R3 dedup). Mirrors the value path's fail-loud posture.
         try:
-            new_feat = factory.Create(parsed_guid, feature_system)
-        except Exception:
-            new_feat = None
-
-        if new_feat is None:
-            # Path B: Create(Guid) + guarded Add. No no-arg fallback -- if
-            # Create(Guid) is unsupported we fail loud rather than silently
-            # produce a fresh-GUID duplicate feature on re-run (031 US2, C4/VR-1;
-            # research.md R3 dedup). Mirrors the value path's fail-loud posture.
-            try:
-                new_feat = factory.Create(parsed_guid)
-            except Exception as e:
-                raise RuntimeError(
-                    f"IFsClosedFeatureFactory does not support Create(Guid); "
-                    f"cannot align feature GUID {src_guid} (a no-GUID create "
-                    f"would produce a duplicate feature on re-run)"
-                ) from e
-            _safe_add_to_owner(new_feat, feature_system.FeaturesOC,
-                               "IFsClosedFeatureFactory", src_guid)
+            new_feat = factory.Create(parsed_guid)
+        except Exception as e:
+            raise RuntimeError(
+                f"IFsClosedFeatureFactory does not support Create(Guid); "
+                f"cannot align feature GUID {src_guid} (a no-GUID create "
+                f"would produce a duplicate feature on re-run)"
+            ) from e
+        _safe_add_to_owner(new_feat, feature_system.FeaturesOC,
+                           "IFsClosedFeatureFactory", src_guid)
 
         new_feat = IFsClosedFeature(new_feat)
 
@@ -879,30 +1905,27 @@ def inflection_features_execute_action(action: PlannedAction, context: RunContex
                 source=source, target=target, ws_map=ws_map)
 
         # Co-create values (IFsSymFeatVal) with their canonical GUIDs.
-        # P0-A hardening: the 2-arg Create attaches automatically; the 1-arg
-        # path guards Add with _safe_add_to_owner.  No no-arg fallback --
-        # if Create(Guid) is unsupported on this LCM build we fail loud
-        # rather than silently produce GUID-misaligned values.
+        # Feature 038 (T035): 1-arg Create(Guid) THEN ValuesOC.Add(), guarded
+        # by _safe_add_to_owner. The interface-declared 2-arg
+        # Create(Guid, IFsClosedFeature) is not bindable on the concrete
+        # factory, so the removed attempt raised once PER VALUE and was
+        # swallowed. No no-arg fallback -- if Create(Guid) is unsupported on
+        # this LCM build we fail loud rather than silently produce
+        # GUID-misaligned values.
         val_factory = sl.GetService(IFsSymFeatValFactory)
         if hasattr(src_feat_typed, "ValuesOC"):
             for src_val in src_feat_typed.ValuesOC:
                 val_guid = _guid_str_from(src_val)
                 parsed_val_guid = DotNetGuid.Parse(val_guid)
-                new_val = None
                 try:
-                    new_val = val_factory.Create(parsed_val_guid, new_feat)
-                except Exception:
-                    new_val = None
-                if new_val is None:
-                    try:
-                        new_val = val_factory.Create(parsed_val_guid)
-                    except Exception as e:
-                        raise RuntimeError(
-                            f"IFsSymFeatValFactory does not support Create(Guid); "
-                            f"cannot align value GUID {val_guid} on feature {src_guid}"
-                        ) from e
-                    _safe_add_to_owner(new_val, new_feat.ValuesOC,
-                                       "IFsSymFeatValFactory", val_guid)
+                    new_val = val_factory.Create(parsed_val_guid)
+                except Exception as e:
+                    raise RuntimeError(
+                        f"IFsSymFeatValFactory does not support Create(Guid); "
+                        f"cannot align value GUID {val_guid} on feature {src_guid}"
+                    ) from e
+                _safe_add_to_owner(new_val, new_feat.ValuesOC,
+                                   "IFsSymFeatValFactory", val_guid)
                 new_val = IFsSymFeatVal(new_val)
                 src_val_typed = IFsSymFeatVal(src_val)
                 # C3: values copy via the explicit ws-mapped handle translation
@@ -1435,12 +2458,14 @@ def inflection_classes_execute_action(action: PlannedAction, context: RunContext
 
     # Find the source inflection class and its owning POS's GUID.
     src_obj = None
+    src_owner_pos = None
     src_owner_pos_guid = None
     for pos in _iter_pos(source):
         pos_obj = _as_pos(pos)
         for ic in _inflection_classes_from_pos(pos_obj):
             if _guid_str_from(ic) == src_guid:
                 src_obj = ic
+                src_owner_pos = pos_obj
                 src_owner_pos_guid = _guid_str_from(pos_obj)
                 break
         if src_obj is not None:
@@ -1448,10 +2473,19 @@ def inflection_classes_execute_action(action: PlannedAction, context: RunContext
     if src_obj is None:
         return None
 
-    # Resolve the same POS (by source GUID) on the target side.
-    target_pos = _resolve_target_pos(target, src_owner_pos_guid)
+    # Resolve the same POS on the target side: identity first, then the
+    # roster-admitted natural key (T032). The source OBJECT is passed because
+    # the key is its Name and a GUID alone cannot supply one.
+    target_pos = _resolve_target_pos(
+        target, src_owner_pos_guid,
+        src_pos=src_owner_pos, source_handle=source,
+    )
     if target_pos is None:
-        return None  # Owner POS not in target; dependency unresolved.
+        _report_owner_pos_unresolved(
+            context, GrammarCategory.INFLECTION_CLASSES, src_guid,
+            src_owner_pos_guid, "inflection class",
+        )
+        return None
 
     cache = getattr(target, "Cache")
     ws = cache.DefaultAnalWs
@@ -1494,10 +2528,14 @@ def inflection_classes_execute_action(action: PlannedAction, context: RunContext
 # PHON_FEAT_TYPES category (PhFeatureSystemOA.TypesOC), which is a later,
 # separate coverage sub-part and IS GOLD_RESERVED.
 #
-# Factory: IFsFeatStrucTypeFactory.Create(Guid) -- 1-arg only (no 2-arg
-# attach-on-create overload confirmed for this factory, unlike
-# IFsComplexFeatureFactory). Must Add() to TypesOC BEFORE writing any
-# multistrings (LCM NPEs on free-floating objects) -- mirrors
+# Factory: IFsFeatStrucTypeFactory.Create(Guid) -- 1-arg, then Add(). This
+# was already the shape feature 038's T035 made universal: no Fs* factory in
+# this module uses a 2-arg attach-on-create call, because the 2-arg overload
+# is declared on the INTERFACE and pythonnet cannot bind it on the concrete
+# factory GetService returns (IFsComplexFeatureFactory included -- the old
+# claim that it was the exception was wrong, and its "Path A" call had been
+# failing and being swallowed all along). Must Add() to TypesOC BEFORE writing
+# any multistrings (LCM NPEs on free-floating objects) -- mirrors
 # inflection_classes_execute_action / _safe_add_to_owner usage above.
 # FeaturesRS.Add() is guarded per-member: a member whose GUID has no target
 # counterpart in FeaturesOC is logged and skipped, never crashing the whole
@@ -1520,9 +2558,23 @@ def feature_struct_types_enumerate_source(context: RunContext, selection: Select
 
 
 def feature_struct_types_dependencies(piece):
-    """No additional closure deps -- member defns are owned by FeaturesOC
-    (INFLECTION_FEATURES), not by this category."""
-    return ()
+    """Yield (INFLECTION_FEATURES, defn_guid) for every `FeaturesRS` member
+    (feature 038, T034).
+
+    The previous `()` and its "member defns are owned by FeaturesOC, not by
+    this category" rationale had the implication backwards: BECAUSE the defns
+    are owned elsewhere, `FeaturesRS` is a REFERENCE sequence, and a struct
+    type transferred before `MsFeatureSystemOA.FeaturesOC` is populated arrives
+    partially wired. `feature_struct_types_execute_action` already documents
+    that outcome -- it logs "no target counterpart in FeaturesOC -- skipping
+    member" per member and tolerates the partial result.
+
+    The `TypeRA` arrow is NOT emitted here. It points AT this piece from an
+    `IFsFeatStruc` owned by an MSA / POS, so the owning side's producer emits
+    it (`affixes_dependencies` / `stems_dependencies` /
+    `gram_categories_dependencies`); see the banner above `_unwrap_lcm`.
+    """
+    return _feat_struc_type_member_deps(piece, GrammarCategory.INFLECTION_FEATURES)
 
 
 def feature_struct_types_required_writing_systems(piece) -> Iterable[Tuple[str, WSKind]]:
@@ -1751,9 +2803,16 @@ def phon_feat_types_enumerate_source(context: RunContext, selection: Selection):
 
 
 def phon_feat_types_dependencies(piece):
-    """No additional closure deps -- member defns are owned by the
-    phonological FeaturesOC (PHONOLOGICAL_FEATURES), not by this category."""
-    return ()
+    """Yield (PHONOLOGICAL_FEATURES, defn_guid) for every `FeaturesRS` member
+    (feature 038, T034) -- the phonological twin of
+    `feature_struct_types_dependencies`, with `PhFeatureSystemOA.FeaturesOC`
+    as the owning collection instead of `MsFeatureSystemOA.FeaturesOC`.
+
+    As on the analysis side, the inbound `TypeRA` arrow is emitted by the
+    owning side (`phonemes_dependencies` / `natural_classes_dependencies`),
+    not here.
+    """
+    return _feat_struc_type_member_deps(piece, GrammarCategory.PHONOLOGICAL_FEATURES)
 
 
 def phon_feat_types_required_writing_systems(piece) -> Iterable[Tuple[str, WSKind]]:
@@ -2056,10 +3115,21 @@ def pos_inflectable_feats_execute_action(action: PlannedAction, context: RunCont
         return None
     pos_guid, feat_guid = src_compound.split("::", 1)
 
-    # Resolve the target POS by GUID.
-    target_pos = _resolve_target_pos(target, pos_guid)
+    # Resolve the target POS: identity first, then the natural key (T032).
+    # This site starts from a compound "pos_guid::feat_guid" key rather than
+    # from an object, so the source category is looked up to make the key
+    # computable at all.
+    source = context.source_handle
+    target_pos = _resolve_target_pos(
+        target, pos_guid,
+        src_pos=_source_pos_by_guid(source, pos_guid), source_handle=source,
+    )
     if target_pos is None:
-        return None  # POS not yet in target.
+        _report_owner_pos_unresolved(
+            context, GrammarCategory.POS_INFLECTABLE_FEATS, src_compound,
+            pos_guid, "inflectable-feature link",
+        )
+        return None
 
     # Resolve the target feature defn by GUID in MsFeatureSystemOA.FeaturesOC.
     cache = getattr(target, "Cache")
@@ -2169,6 +3239,7 @@ def stem_names_execute_action(action: PlannedAction, context: RunContext, ws_map
 
     # Find source stem name and its owner POS.
     src_obj = None
+    src_owner_pos = None
     src_owner_pos_guid = None
     for pos in source.POS.GetAll(recursive=True):
         concrete = pos.concrete if hasattr(pos, "concrete") else pos
@@ -2177,6 +3248,11 @@ def stem_names_execute_action(action: PlannedAction, context: RunContext, ws_map
             for sn in pos_obj.StemNamesOC:
                 if _guid_str_from(sn) == src_guid:
                     src_obj = sn
+                    # T095: KEEP THE OBJECT, not just its GUID. The owner is
+                    # in hand right here, and the natural key is its `Name` --
+                    # discarding it one line before the lookup is the shape
+                    # T094 found in `_create_msa_for_closure._pos_guid_of`.
+                    src_owner_pos = pos_obj
                     src_owner_pos_guid = str(ICmObject(concrete).Guid).lower()
                     break
         except Exception:
@@ -2186,14 +3262,9 @@ def stem_names_execute_action(action: PlannedAction, context: RunContext, ws_map
     if src_obj is None:
         return None
 
-    # Find target owner POS.
-    target_pos = None
-    if src_owner_pos_guid:
-        for pos in target.POS.GetAll(recursive=True):
-            concrete = pos.concrete if hasattr(pos, "concrete") else pos
-            if str(ICmObject(concrete).Guid).lower() == src_owner_pos_guid:
-                target_pos = IPartOfSpeech(concrete)
-                break
+    # Find target owner POS -- identity first, then the natural key (T095).
+    target_pos = _target_pos_for_source_guid(
+        context, target, src_owner_pos_guid, src_pos=src_owner_pos)
     if target_pos is None:
         return None  # Owner POS not in target; dependency unresolved.
 
@@ -2218,23 +3289,14 @@ def stem_names_execute_action(action: PlannedAction, context: RunContext, ws_map
 
     # Copy Name multistring directly (IMoStemName has Name but may not
     # be covered by a GetSyncableProperties wrapper in flexicon).
-    from SIL.LCModel.Core.KernelInterfaces import ITsString
-    from SIL.LCModel.Core.Text import TsStringUtils
-    all_ws = {ws_obj.Id: ws_obj.Handle for ws_obj in source.WritingSystems.GetAll()}
     from SIL.LCModel import IMoStemName as IMoStemNameType
     src_sn_typed = IMoStemNameType(src_obj)
-    for prop_name in ("Name", "Abbreviation", "Description"):
-        src_p = getattr(src_sn_typed, prop_name, None)
-        tgt_p = getattr(new_sn, prop_name, None)
-        if src_p is None or tgt_p is None:
-            continue
-        for ws_id, ws_handle in all_ws.items():
-            try:
-                text = ITsString(src_p.get_String(ws_handle)).Text
-                if text:
-                    tgt_p.set_String(ws_handle, TsStringUtils.MakeString(text, ws_handle))
-            except Exception:
-                pass
+    # WS-FIDELITY: translate source handle -> target handle by WS Id. See the
+    # note in `slots_execute_action`; the raw-source-handle write is what makes
+    # CloseProject throw and roll the whole transfer back (038 T024g).
+    _copy_multistrings_ws_mapped(
+        src_sn_typed, new_sn, ("Name", "Abbreviation", "Description"),
+        source=source, target=target, ws_map=_ws_map_dict(ws_mapping))
 
     apply_carrier_b(new_sn, ws, tag)
     return new_sn
@@ -2305,15 +3367,17 @@ def exception_features_plan_action(piece, context: RunContext, ws_mapping: WSMap
     compound_guid = f"{pos_guid}::{val_guid}"
 
     # Check whether target POS already has this value wired.
+    #
+    # T095: this and `exception_features_execute_action` are a G6 PREVIEW
+    # TWIN, so they resolve the owner the same way or the preview understates
+    # its own run. A GUID-only lookup here answers "no such POS" for a
+    # category T091 reused, the ALREADY_PRESENT check never runs, and the
+    # plan promises an ADD the executor then finds already wired.
     target = context.target_handle
     if hasattr(target, "POS"):
-        for pos in target.POS.GetAll(recursive=True):
-            concrete = pos.concrete if hasattr(pos, "concrete") else pos
-            if _guid_str_from(concrete) != pos_guid:
-                continue
+        pos_obj_tgt = _target_pos_for_source_guid(context, target, pos_guid)
+        if pos_obj_tgt is not None:
             try:
-                from SIL.LCModel import IPartOfSpeech
-                pos_obj_tgt = IPartOfSpeech(concrete)
                 for existing_val in pos_obj_tgt.ExceptionFeaturesOC:
                     if _guid_str_from(existing_val) == val_guid:
                         return Skip(
@@ -2354,13 +3418,9 @@ def exception_features_execute_action(action: PlannedAction, context: RunContext
         return None
     pos_guid, val_guid = src_compound.split("::", 1)
 
-    # Find target POS.
-    target_pos = None
-    for pos in target.POS.GetAll(recursive=True):
-        concrete = pos.concrete if hasattr(pos, "concrete") else pos
-        if _guid_str_from(concrete) == pos_guid:
-            target_pos = IPartOfSpeech(concrete)
-            break
+    # Find target POS -- identity first, then the natural key (T095), the
+    # same resolution its plan-time twin above makes.
+    target_pos = _target_pos_for_source_guid(context, target, pos_guid)
     if target_pos is None:
         return None  # POS not yet in target.
 
@@ -2451,11 +3511,24 @@ def variant_types_enumerate_source(context, selection):
 
 
 def variant_types_dependencies(piece):
-    """FR-327: yield (INFLECTION_FEATURES, val_guid) for each
-    IFsSymFeatVal referenced by the variant type's InflFeatsOA constraint.
+    """FR-327: yield (INFLECTION_FEATURES, guid) for each `IFsSymFeatVal`
+    referenced by the variant type's InflFeatsOA constraint -- naming, as of
+    T089, the feature that OWNS the value rather than the value itself.
 
     ILexEntryInflType only -- base ILexEntryType has no InflFeatsOA.
     Empty tuple when piece is a base variant type or InflFeatsOA is None.
+
+    T089 SIBLING, fixed here rather than reported. This producer had
+    `_feat_struc_deps`' defect independently: an `IFsSymFeatVal` guid is not
+    something `inflection_features_enumerate_source` yields, so the far
+    endpoint could be neither planned nor deselected. It is UNREGISTERED in
+    `CLOSURE_EDGES_VERIFIED` and therefore unconsumed today, so this changes
+    no plan -- what it changes is that registering VARIANT_TYPES ->
+    INFLECTION_FEATURES later will not hit the refusal T089 hit. The third
+    sibling, `natural_classes_dependencies`, is deliberately NOT changed here:
+    it returns BARE guids by contract and its registration is separately
+    blocked on splitting the producer per far category, which is where that
+    fix belongs.
     """
     struct = getattr(piece, "InflFeatsOA", None)
     if struct is None:
@@ -2468,11 +3541,22 @@ def variant_types_dependencies(piece):
         val = getattr(spec, "ValueRA", None)
         if val is None:
             continue
+        defn = _value_defn_ref(val, getattr(spec, "FeatureRA", None))
+        if defn is None:
+            continue
         try:
-            val_guid = _guid_str_from(val)
+            defn_guid = _guid_str_from(defn)
         except Exception:
             continue
-        deps.append((GrammarCategory.INFLECTION_FEATURES, val_guid))
+        if not defn_guid:
+            continue
+        # De-duplicated, which the pre-T089 shape did not need to be: two
+        # values of the SAME feature used to be two distinct value guids and
+        # are now one feature guid, so without this a constraint naming
+        # +sg/-pl would emit its feature twice and inflate `pulled_in_by`.
+        edge = (GrammarCategory.INFLECTION_FEATURES, defn_guid)
+        if edge not in deps:
+            deps.append(edge)
     return tuple(deps)
 
 
@@ -2493,6 +3577,37 @@ def variant_types_plan_action(piece, context, ws_mapping):
     )
     if result is not None:
         return result
+
+    # Step 2, the same insertion as `_plan_pos_piece` (feature 038, T091).
+    # `LexEntryInflType` is the second -- and only other -- site where the
+    # `_plan_gold_reserved_edit`-returns-None shape meets a roster-admitted,
+    # creates-on-miss class. It is LATENT rather than measured: on the pair
+    # that exposed the POS defect this row is 3 -> 4 with zero duplicate name
+    # groups, so the extra object's name differs and the key would not have
+    # fired. Closed here anyway rather than left for whichever corpus does trip
+    # it, since it is the same defect one class over.
+    #
+    # `"LexEntryInflType"` is passed literally and is safe even though this
+    # walk also yields base `ILexEntryType` possibilities: `matcher`'s
+    # `natural_key_eligibility` checks the object's own `ClassName` against the
+    # roster class on BOTH sides, so a base variant type is refused as
+    # KEY_INELIGIBLE_SUBCLASS_MISMATCH on the source side and is never offered
+    # as a candidate on the target side. `_walk_possibilities_via_lexdb`
+    # already returns a list, but it is re-wrapped for the same reason the POS
+    # site materialises: the invariant this step depends on is "the candidate
+    # scope can be read twice", and it should not rest on a helper's current
+    # return type.
+    try:
+        variant_scope = list(_target_iter(context.target_handle))
+    except (AttributeError, TypeError):
+        variant_scope = []
+    matched = _plan_natural_key_match(
+        piece, GrammarCategory.VARIANT_TYPES, context,
+        "LexEntryInflType", variant_scope,
+    )
+    if matched is not None:
+        return matched
+
     src_guid = _guid_str_from(piece)
     return PlannedAction(
         category=GrammarCategory.VARIANT_TYPES,
@@ -2502,15 +3617,58 @@ def variant_types_plan_action(piece, context, ws_mapping):
     )
 
 
+#: The multistrings an entry-type / complex-form-type possibility carries.
+#:
+#: T127. `variant_types_execute_action` and `complex_form_types_execute_action`
+#: both created their object, owned it, and then called `apply_carrier_b` --
+#: which writes the `[GT-Tag]` residue line into `Description` and NOTHING
+#: ELSE. Neither ever copied a single property, while
+#: `variant_types_execute_action`'s own comment said "ApplySyncableProperties
+#: via flexicon's BaseOperations if available". No such call existed. The
+#: object arrived with the right GUID, the right owner, the right class, and no
+#: name.
+#:
+#: MEASURED on mbugwe (`GT038 T124 Mbugwe`, read-only .fwdata parse): 16 of 16
+#: entry types carry a `Name` in the source and 15 of 16 in the destination.
+#: The one that does not is `Periphrastic Form`
+#: (`99e0cab9-f284-45fb-84a5-4cb2516d0bf4`) -- source `Name` en="Periphrastic
+#: Form", `Abbreviation` en="per.", destination NEITHER FIELD PRESENT, just the
+#: `[GT-Tag]` Description this run stamped on it.
+#:
+#: WHY EXACTLY ONE OF SIXTEEN, and why no earlier pair caught it: the other 15
+#: are `IsProtected=True` canonical FLEx starter content, already in the
+#: destination by GUID, so they are MATCHED and never travel this create path.
+#: Only a project-authored type gets created -- so the defect is invisible on
+#: any project whose entry types are all canonical, and a class-count census
+#: can never see it at all (the row is 16 -> 16 MATCHED).
+#:
+#: `ReverseName` / `ReverseAbbr` are `ILexEntryType`-only and simply absent on a
+#: plain `ICmPossibility`; `_copy_multistrings_ws_mapped` skips a property the
+#: source object does not carry, so listing them here is safe for both classes.
+#:
+#: ORDER MATTERS AND IS DELIBERATE: copy first, THEN `apply_carrier_b`.
+#: Carrier B APPENDS to whatever `Description` already holds, so copying after
+#: the tag would put the source description below the residue line; copying
+#: before keeps the source text first and the audit line last, which is the
+#: shape every other carrier-B site produces.
+_ENTRY_TYPE_MULTISTRINGS = (
+    "Name", "Abbreviation", "Description", "ReverseName", "ReverseAbbr",
+)
+
+
 def variant_types_execute_action(action, context, ws_mapping, tag):
     """Create variant type with GUID preserved.
 
-    Uses ILexEntryInflTypeFactory.Create(Guid, owner) -- the 2-arg
-    overload that ICmPossibilityFactory inherits. Top-level owner is the
-    LexDb's VariantEntryTypesOA possibility list; nested owners are
-    parent ILexEntryType objects.
+    FACTORY CHOICE IS PER-OBJECT, NOT PER-LIST (feature 038 T123 acceptance
+    line (b)): `VariantEntryTypesOA` legitimately mixes plain `LexEntryType`
+    items with `LexEntryInflType` items, so the factory is chosen by
+    `src_obj`'s own `ClassName` via `_entry_type_factory_for_source`, not
+    unconditionally. See that helper's docstring for the create-time
+    misclassification this replaces. Top-level owner is the LexDb's
+    VariantEntryTypesOA possibility list; nested owners are parent
+    ILexEntryType/ILexEntryInflType objects.
     """
-    from SIL.LCModel import ILexEntryInflTypeFactory, ICmObject, ICmPossibility, ICmPossibilityList
+    from SIL.LCModel import ICmObject, ICmPossibility, ICmPossibilityList
     from System import Guid as DotNetGuid
 
     if __package__:
@@ -2540,26 +3698,43 @@ def variant_types_execute_action(action, context, ws_mapping, tag):
     # source object returns ICmObjectOrId where ClassName may not surface).
     src_owner_guid = None
     try:
-        owner = ICmObject(src_obj).Owner
-        owner_class = getattr(owner, "ClassName", "")
-        if owner_class and "EntryType" in owner_class:
-            src_owner_guid = _guid_str_from(owner)
+        # T123: the OWNER needs the cast too, and this is the line that lost
+        # the nesting. `.Owner` yields an `ICmObjectOrId` proxy on which
+        # `ClassName` does NOT surface -- the comment two lines up already
+        # says so about `src_obj`, and the cast was applied to `src_obj` and
+        # not to what it returns. `getattr(..., "ClassName", "")` therefore
+        # read `""` for EVERY object, `src_owner_guid` stayed None, and every
+        # nested possibility took the top-level branch below.
+        #
+        # The census is structurally blind to this: the COUNT is right
+        # (7 -> 7 on ejagham) and only the shape is wrong -- 6 nested /
+        # 1 top-level arrives as 2 nested / 5 top-level. T088's defect in a
+        # third place, and the same one the Wave 1 probe hit on its first run.
+        # CLASS-AGNOSTIC, keyed on the owning FLID rather than on a class
+        # name -- see `_CMPOSSIBILITY_SUBPOSSIBILITIES_FLID` for the measured
+        # reason. The predicate this replaces (`"EntryType" in owner_class`)
+        # was False for every `LexEntryInflType` because the substring is not
+        # contiguous, so every nested item was demoted to top level.
+        src_owner_guid = _source_possibility_parent_guid(src_obj)
     except Exception:
         pass
 
     parsed_guid = DotNetGuid.Parse(src_guid)
-    # Interface-cast wrapper required for pythonnet overload resolution.
-    factory = ILexEntryInflTypeFactory(target.GetFactory(ILexEntryInflTypeFactory))
+    # T123 acceptance line (b): factory keyed to src_obj's OWN class, not to
+    # which possibility list it lives under. See
+    # `_entry_type_factory_for_source` for the misclassification this fixes.
+    factory, factory_label = _entry_type_factory_for_source(src_obj, target)
 
-    # ILexEntryInflTypeFactory inherits only the 1-arg Create(Guid) overload
-    # from the generic ILcmFactory<T> base (the 2-arg ICmPossibilityFactory
-    # overloads don't surface through pythonnet for this subclass). Use
-    # Create(Guid) + manual Add to the appropriate owning collection.
+    # Both ILexEntryInflTypeFactory and ILexEntryTypeFactory inherit only the
+    # 1-arg Create(Guid) overload from the generic ILcmFactory<T> base (the
+    # 2-arg ICmPossibilityFactory overloads don't surface through pythonnet
+    # for either subclass). Use Create(Guid) + manual Add to the appropriate
+    # owning collection.
     try:
         new_vt = factory.Create(parsed_guid)
     except Exception as e:
         raise RuntimeError(
-            f"ILexEntryInflTypeFactory.Create(Guid) failed for "
+            f"{factory_label}.Create(Guid) failed for "
             f"{src_guid}: {e!r}"
         ) from e
 
@@ -2570,18 +3745,43 @@ def variant_types_execute_action(action, context, ws_mapping, tag):
                 target_parent_raw = vt
                 break
         if target_parent_raw is None:
-            return None
+            # T123: `new_vt` is ALREADY CREATED here, so the bare `return None`
+            # this replaces abandoned it UNOWNED -- exactly the orphan risk
+            # `_safe_add_to_owner` exists to prevent, reached by the one path
+            # that never called it. It became reachable in practice only once
+            # the owner cast above started working, so it is fixed in the same
+            # change that exposed it.
+            #
+            # Demoted to top level rather than dropped: losing the OBJECT is
+            # worse than losing its NESTING, and the record keeps the demotion
+            # from being silent. A later run with the parent present re-nests
+            # it, because the GUID is preserved either way.
+            _log_possibility_demoted(factory_label, src_guid, src_owner_guid)
+            _safe_add_to_owner(
+                new_vt, ICmPossibilityList(target_list).PossibilitiesOS,
+                factory_label, src_guid,
+            )
+            _copy_multistrings_ws_mapped(  # T127
+                src_obj, new_vt, _ENTRY_TYPE_MULTISTRINGS,
+                source=source, target=target, ws_map=ws_mapping,
+            )
+            apply_carrier_b(new_vt, ws, tag)
+            return new_vt
         _safe_add_to_owner(
             new_vt, ICmPossibility(target_parent_raw).SubPossibilitiesOS,
-            "ILexEntryInflTypeFactory", src_guid,
+            factory_label, src_guid,
         )
     else:
         _safe_add_to_owner(
             new_vt, ICmPossibilityList(target_list).PossibilitiesOS,
-            "ILexEntryInflTypeFactory", src_guid,
+            factory_label, src_guid,
         )
 
-    # ApplySyncableProperties via flexicon's BaseOperations if available.
+    # T127: the property copy this function's docstring always claimed.
+    _copy_multistrings_ws_mapped(
+        src_obj, new_vt, _ENTRY_TYPE_MULTISTRINGS,
+        source=source, target=target, ws_map=ws_mapping,
+    )
     apply_carrier_b(new_vt, ws, tag)
     return new_vt
 
@@ -2640,11 +3840,17 @@ def complex_form_types_plan_action(piece, context, ws_mapping):
 def complex_form_types_execute_action(action, context, ws_mapping, tag):
     """Create complex form type with GUID preserved.
 
-    Uses ILexEntryTypeFactory.Create(Guid, owner). Owner is either the
-    LexDb's ComplexEntryTypesOA possibility list (top-level) or a
-    parent ILexEntryType (nested).
+    FACTORY CHOICE IS PER-OBJECT, NOT PER-LIST (feature 038 T123 acceptance
+    line (b), sibling site of `variant_types_execute_action`): the factory
+    is chosen by `src_obj`'s own `ClassName` via
+    `_entry_type_factory_for_source`, not unconditionally by which list the
+    object lives under. This corpus shows no `LexEntryInflType` member under
+    `ComplexEntryTypesOA`, so this branch is currently LATENT -- see the
+    helper's docstring. Owner is either the LexDb's ComplexEntryTypesOA
+    possibility list (top-level) or a parent ILexEntryType/ILexEntryInflType
+    (nested).
     """
-    from SIL.LCModel import ILexEntryTypeFactory, ICmObject, ICmPossibility, ICmPossibilityList
+    from SIL.LCModel import ICmObject, ICmPossibility, ICmPossibilityList
     from System import Guid as DotNetGuid
 
     if __package__:
@@ -2671,22 +3877,39 @@ def complex_form_types_execute_action(action, context, ws_mapping, tag):
     # Owner-type discrimination (see variant_types for rationale).
     src_owner_guid = None
     try:
-        owner = ICmObject(src_obj).Owner
-        owner_class = getattr(owner, "ClassName", "")
-        if owner_class and "EntryType" in owner_class:
-            src_owner_guid = _guid_str_from(owner)
+        # T123: the OWNER needs the cast too, and this is the line that lost
+        # the nesting. `.Owner` yields an `ICmObjectOrId` proxy on which
+        # `ClassName` does NOT surface -- the comment two lines up already
+        # says so about `src_obj`, and the cast was applied to `src_obj` and
+        # not to what it returns. `getattr(..., "ClassName", "")` therefore
+        # read `""` for EVERY object, `src_owner_guid` stayed None, and every
+        # nested possibility took the top-level branch below.
+        #
+        # The census is structurally blind to this: the COUNT is right
+        # (7 -> 7 on ejagham) and only the shape is wrong -- 6 nested /
+        # 1 top-level arrives as 2 nested / 5 top-level. T088's defect in a
+        # third place, and the same one the Wave 1 probe hit on its first run.
+        # CLASS-AGNOSTIC, keyed on the owning FLID rather than on a class
+        # name -- see `_CMPOSSIBILITY_SUBPOSSIBILITIES_FLID` for the measured
+        # reason. The predicate this replaces (`"EntryType" in owner_class`)
+        # was False for every `LexEntryInflType` because the substring is not
+        # contiguous, so every nested item was demoted to top level.
+        src_owner_guid = _source_possibility_parent_guid(src_obj)
     except Exception:
         pass
 
     parsed_guid = DotNetGuid.Parse(src_guid)
-    factory = ILexEntryTypeFactory(target.GetFactory(ILexEntryTypeFactory))
+    # T123 acceptance line (b): factory keyed to src_obj's OWN class, not to
+    # which possibility list it lives under (see variant_types for
+    # rationale, and `_entry_type_factory_for_source` for detail).
+    factory, factory_label = _entry_type_factory_for_source(src_obj, target)
 
     # 1-arg Create(Guid) + manual Add (see variant_types for rationale).
     try:
         new_cft = factory.Create(parsed_guid)
     except Exception as e:
         raise RuntimeError(
-            f"ILexEntryTypeFactory.Create(Guid) failed for {src_guid}: {e!r}"
+            f"{factory_label}.Create(Guid) failed for {src_guid}: {e!r}"
         ) from e
 
     if src_owner_guid:
@@ -2696,17 +3919,46 @@ def complex_form_types_execute_action(action, context, ws_mapping, tag):
                 target_parent_raw = cft
                 break
         if target_parent_raw is None:
-            return None
+            # T123: `new_cft` is ALREADY CREATED here, so the bare `return None`
+            # this replaces abandoned it UNOWNED -- exactly the orphan risk
+            # `_safe_add_to_owner` exists to prevent, reached by the one path
+            # that never called it. It became reachable in practice only once
+            # the owner cast above started working, so it is fixed in the same
+            # change that exposed it.
+            #
+            # Demoted to top level rather than dropped: losing the OBJECT is
+            # worse than losing its NESTING, and the record keeps the demotion
+            # from being silent. A later run with the parent present re-nests
+            # it, because the GUID is preserved either way.
+            _log_possibility_demoted(factory_label, src_guid, src_owner_guid)
+            _safe_add_to_owner(
+                new_cft, ICmPossibilityList(target_list).PossibilitiesOS,
+                factory_label, src_guid,
+            )
+            _copy_multistrings_ws_mapped(  # T127 sweep
+                src_obj, new_cft, _ENTRY_TYPE_MULTISTRINGS,
+                source=source, target=target, ws_map=ws_mapping,
+            )
+            apply_carrier_b(new_cft, ws, tag)
+            return new_cft
         _safe_add_to_owner(
             new_cft, ICmPossibility(target_parent_raw).SubPossibilitiesOS,
-            "ILexEntryTypeFactory", src_guid,
+            factory_label, src_guid,
         )
     else:
         _safe_add_to_owner(
             new_cft, ICmPossibilityList(target_list).PossibilitiesOS,
-            "ILexEntryTypeFactory", src_guid,
+            factory_label, src_guid,
         )
 
+    # T127 sweep: complex form types had the identical gap -- same create,
+    # same carrier-B call, same absent property copy. Fixed together, because a
+    # fix scoped to the row that happened to be measured is the point-local
+    # answer to a shaped bug.
+    _copy_multistrings_ws_mapped(
+        src_obj, new_cft, _ENTRY_TYPE_MULTISTRINGS,
+        source=source, target=target, ws_map=ws_mapping,
+    )
     apply_carrier_b(new_cft, ws, tag)
     return new_cft
 
@@ -2782,10 +4034,28 @@ def semantic_domains_execute_action(action, context, ws_mapping, tag):
     # Owner-type discrimination (see variant_types for rationale).
     src_owner_guid = None
     try:
-        owner = ICmObject(src_obj).Owner
-        owner_class = getattr(owner, "ClassName", "")
-        if owner_class == "CmSemanticDomain":
-            src_owner_guid = _guid_str_from(owner)
+        # T123: the OWNER needs the cast too, and this is the line that lost
+        # the nesting. `.Owner` yields an `ICmObjectOrId` proxy on which
+        # `ClassName` does NOT surface -- the comment two lines up already
+        # says so about `src_obj`, and the cast was applied to `src_obj` and
+        # not to what it returns. `getattr(..., "ClassName", "")` therefore
+        # read `""` for EVERY object, `src_owner_guid` stayed None, and every
+        # nested possibility took the top-level branch below.
+        #
+        # The census is structurally blind to this: the COUNT is right
+        # (7 -> 7 on ejagham) and only the shape is wrong -- 6 nested /
+        # 1 top-level arrives as 2 nested / 5 top-level. T088's defect in a
+        # third place, and the same one the Wave 1 probe hit on its first run.
+        # CONSOLIDATED 2026-08-28 onto the shared flid-keyed helper. This site
+        # was the ONLY one of the three that was correct -- it compared class
+        # names with `==` rather than `in`, so it never had the
+        # `"EntryType" in "LexEntryInflType"` defect. It is converted anyway,
+        # because three near-identical hand-rolled predicates is precisely how
+        # this codebase keeps acquiring one bug in parallel functions: the
+        # cast defect landed in all three, and the substring defect in the two
+        # that used `in`. One implementation, three call sites, one place to
+        # get it wrong.
+        src_owner_guid = _source_possibility_parent_guid(src_obj)
     except Exception:
         pass
 
@@ -2807,7 +4077,24 @@ def semantic_domains_execute_action(action, context, ws_mapping, tag):
                 target_parent_raw = sd
                 break
         if target_parent_raw is None:
-            return None
+            # T123: `new_sd` is ALREADY CREATED here, so the bare `return None`
+            # this replaces abandoned it UNOWNED -- exactly the orphan risk
+            # `_safe_add_to_owner` exists to prevent, reached by the one path
+            # that never called it. It became reachable in practice only once
+            # the owner cast above started working, so it is fixed in the same
+            # change that exposed it.
+            #
+            # Demoted to top level rather than dropped: losing the OBJECT is
+            # worse than losing its NESTING, and the record keeps the demotion
+            # from being silent. A later run with the parent present re-nests
+            # it, because the GUID is preserved either way.
+            _log_possibility_demoted("ICmSemanticDomainFactory", src_guid, src_owner_guid)
+            _safe_add_to_owner(
+                new_sd, ICmPossibilityList(target_list).PossibilitiesOS,
+                "ICmSemanticDomainFactory", src_guid,
+            )
+            apply_carrier_b(new_sd, ws, tag)
+            return new_sd
         _safe_add_to_owner(
             new_sd, ICmPossibility(target_parent_raw).SubPossibilitiesOS,
             "ICmSemanticDomainFactory", src_guid,
@@ -3047,8 +4334,19 @@ def _rules_enumerate_all(source):
         for raw in items:
             obj = _unwrap(raw)
             yield obj
-            # If this is a grouping node, recurse into its MembersOC
-            members = getattr(obj, "MembersOC", None)
+            # If this is a grouping node, recurse into its MembersOC.
+            # T123: read `MembersOC` off the CONCRETE cast, not off the raw
+            # member. `AdhocCoProhibitionsOC` yields base-typed
+            # `IMoAdhocProhib` elements and `MembersOC` is declared on
+            # `IMoAdhocProhibGr` only -- `_cast_rule_concrete`'s own docstring
+            # names this exact collection. Uncast, a grouping node's children
+            # are silently never yielded, the same defect measured live on
+            # `LexRefType.MembersOC` (see `_as_lex_ref_type`). LATENT on the
+            # sanctioned corpus: `MoAdhocProhibGr` source_count is 0 on all
+            # three T078 pairs, so this is fixed to be correct the day a
+            # project with a grouping node arrives, and is NOT claimed as a
+            # measured recovery.
+            members = getattr(_cast_rule_concrete(obj), "MembersOC", None)
             if members is not None:
                 for child in _recurse_adhoc(members):
                     yield child
@@ -3072,7 +4370,8 @@ def _rules_enumerate_all(source):
                 if obj_guid not in _seen_guids:
                     _seen_guids.add(obj_guid)
                     yield obj
-                members = getattr(obj, "MembersOC", None)
+                # T123: same concrete-cast read as the OS leg above.
+                members = getattr(_cast_rule_concrete(obj), "MembersOC", None)
                 if members is not None:
                     for child in _recurse_adhoc(members):
                         child_guid = _guid_str_from(child)
@@ -3137,12 +4436,25 @@ def adhoc_compound_rules_dependencies(piece):
 
     All GUIDs pass through _guid_str_from (GUID-normalization invariant).
     """
-    concrete = getattr(piece, "concrete", piece)
+    # T088: `.concrete` is a duck-typed fake convention -- a live LCM object
+    # has no such property, so this used to leave `concrete` as the base
+    # `IMoAdhocProhib` proxy on which AllomorphsRS / MorphemesRS / MembersOC
+    # are all invisible. Branching on `ClassName` below WITHOUT casting is not
+    # enough (it is exactly the flexicon 4.5.0 vs 4.5.1 distinction), and this
+    # producer measured 0 member refs against 4 found after a cast on the 2
+    # live `MoMorphAdhocProhib` rules in `Mbugwe LizzieHC practice`.
+    #
+    # This site is NOT closure-only: `preview.py`'s
+    # `_warn_stranded_adhoc_refs` calls this producer directly to emit
+    # ExcludedLossy warnings, so while it read nothing, a rule referencing a
+    # morpheme absent from the target transferred with NO warning -- a silent
+    # incompleteness Principle I forbids.
+    concrete = _cast_to_concrete(getattr(piece, "concrete", piece))
 
     def _pos_guid_from_msa(msa):
         """Return normalized POS GUID from an owned IMoStemMsa, or None."""
         try:
-            pos = getattr(msa, "PartOfSpeechRA", None)
+            pos = getattr(_cast_to_concrete(msa), "PartOfSpeechRA", None)
             if pos is None:
                 return None
             return _guid_str_from(pos)
@@ -3430,6 +4742,40 @@ def adhoc_compound_rules_execute_action(action, context, ws_mapping, tag):
         # Child objects are NOT created here; they were enumerated as separate
         # items and will get their own execute_action calls — here we re-parent
         # children that already exist in the target by GUID into MembersOC.
+        # T130: DO NOT `Remove` FIRST. `Remove` on an LCM *owning* collection
+        # DESTROYS the object -- removing it from its owner IS deletion, not a
+        # detach -- and this was the only site in the repo using it as a move.
+        # The repo's two other `.Remove(` call sites dispose deliberately:
+        # `categories.py:9225` follows it with an explicit `ICmObject.Delete()`,
+        # and the phon-rule cleanup loop drops orphans on purpose.
+        #
+        # MEASURED, NOT REASONED. The t131 mbugwe run report records FOUR
+        # `leaf_execution_failures`, one per `MoAdhocProhibGr`, each:
+        #
+        #     LcmObjectDeletedException: "Object has been deleted."
+        #       at LcmSet`1.BasicValidityCheck(T obj)
+        #       at LcmOwningCollection`1.BasicValidityCheck(T obj)
+        #       at LcmSet`1.Add(T obj)
+        #       at LcmOwningCollection`1.Add(T obj)
+        #
+        # -- `Remove` destroyed the child, then `MembersOC.Add` was handed a dead
+        # object. An owning-collection `Add` performs the move by itself, so the
+        # `Remove` was never needed for correctness.
+        #
+        # THE EXCEPT CLAUSE IS WIDENED DELIBERATELY, and that is half the bug.
+        # `LcmObjectDeletedException` is neither `AttributeError` nor
+        # `TypeError`, so it escaped the inner handler AND the outer one (same
+        # narrow tuple) and aborted the whole group: the FIRST child of each
+        # group was destroyed and the REST were never reached. Measured
+        # consequence on mbugwe -- `MoMorphAdhocProhib` 39 -> 35, all 37
+        # group-owned children arriving 0 group-owned, all four groups empty
+        # shells, and a census reading `MoAdhocProhibGr` 4 -> 4 MATCHED. This is
+        # exactly the shape `_report_dropped_rhs` already records for the
+        # phonological-rule loop: the wrong exception class turns a per-item
+        # failure into a per-owner abort, and no record is written. A re-parent
+        # that fails must now cost its own child and no other, and must SAY SO
+        # (FR-010 / SC-010 never-silent).
+        dropped = getattr(context, "_dropped", None)
         try:
             src_members = list(getattr(src_rule, "MembersOC", None) or [])
             for src_child in src_members:
@@ -3439,11 +4785,26 @@ def adhoc_compound_rules_execute_action(action, context, ws_mapping, tag):
                     list(morph_data.AdhocCoProhibitionsOC), child_guid)
                 if tgt_child is not None:
                     try:
-                        # Remove from top-level OS, add to group's MembersOC
-                        morph_data.AdhocCoProhibitionsOC.Remove(tgt_child)
+                        # Owning-collection Add MOVES; never Remove() first.
                         new_rule.MembersOC.Add(tgt_child)
-                    except (AttributeError, TypeError):
-                        pass
+                    except Exception as exc:  # noqa: BLE001 -- see above
+                        if dropped is not None:
+                            _append_dropped_once(dropped, DroppedItemRecord(
+                                owner_kind="MoAdhocProhibGr",
+                                owner_guid=src_guid or "",
+                                owner_label="",
+                                field_name="MembersOC",
+                                item_name="",
+                                item_guid=child_guid or "",
+                                reason=(
+                                    "ad-hoc prohibition could not be "
+                                    "re-parented into its group ("
+                                    + type(exc).__name__ + ") -- the rule "
+                                    "exists in the target but hangs off "
+                                    "MoMorphData instead of its group, which "
+                                    "no class count can show"
+                                ),
+                            ))
         except (AttributeError, TypeError):
             pass
 
@@ -3793,11 +5154,19 @@ def _stash_feature_category_links(pos_piece, context):
     the run-plan's `feature_category_links` binding (031 US1, contract C1).
 
     Called from `gram_categories_plan_action` for every in-scope POS (created or
-    matched). Records `{target_pos_guid: [feature_guid, ...]}` -- GUIDs are
-    preserved on transfer so target_pos_guid == source pos guid. Consumed by the
+    matched). Records `{source_pos_guid: [feature_guid, ...]}`. Consumed by the
     Move wiring post-pass `_run_infl_feature_link_pass` (registered via
     `_run_tail_once`). Idempotent: a (pos, feature) pair already recorded is not
     duplicated.
+
+    T095 CORRECTED WHAT THIS KEY IS. It used to be documented as
+    `{target_pos_guid: ...}` on the premise that "GUIDs are preserved on
+    transfer so target_pos_guid == source pos guid" -- true until T091 taught
+    the planner to reuse a destination category by natural key, and the whole
+    of the defect T095 filed. The key has always been read off the SOURCE
+    object here; the resolution to a destination object belongs to the
+    consumer, which now does it identity-first and key-second rather than
+    assuming the two GUIDs are equal.
 
     In-scope endpoints only: gathers nothing unless INFLECTION_FEATURES is
     selected (no features transferred => no links to wire), and honors an
@@ -3848,7 +5217,14 @@ def _entry_pos_deps(entry):
     """Yield (GRAM_CATEGORIES, pos_guid) for every POS owned-referenced by the
     entry's MSAs. Shared by AFFIXES + STEMS dependencies (E4)."""
     deps = []
-    for msa in getattr(entry, "MorphoSyntaxAnalysesOC", None) or []:
+    for raw_msa in getattr(entry, "MorphoSyntaxAnalysesOC", None) or []:
+        # T088: cast before reading. `PartOfSpeechRA` is declared on
+        # IMoStemMsa / IMoInflAffMsa / IMoDerivStepMsa /
+        # IMoUnclassifiedAffixMsa and the From-/To- pair on IMoDerivAffMsa --
+        # none of them on the `IMoMorphSynAnalysis` these members are
+        # statically typed as. Measured live before the cast: 0 POS refs
+        # found where a cast finds 296 (Mbugwe) and 245 (Ejagham Mini).
+        msa = _cast_to_concrete(raw_msa)
         for attr in ("PartOfSpeechRA", "FromPartOfSpeechRA", "ToPartOfSpeechRA"):
             pos = getattr(msa, attr, None)
             if pos is None:
@@ -3861,15 +5237,222 @@ def _entry_pos_deps(entry):
     return deps
 
 
-def _resolve_target_pos(target, src_pos_guid):
-    """Return the target IPartOfSpeech whose GUID matches `src_pos_guid`, or
-    None. POS is created by the GRAM_CATEGORIES dependency closure first."""
+def _source_pos_by_guid(source, pos_guid):
+    """The SOURCE category object with this GUID, or None (T033).
+
+    The natural-key fallback needs the source OBJECT, not its GUID: the key is
+    the category's Name, and a GUID string cannot supply one. Several call
+    sites already hold the object while scanning and keep only the GUID; this
+    exists for the ones that genuinely start from a GUID alone.
+    """
+    if not pos_guid:
+        return None
+    try:
+        for pos in _iter_pos(source):
+            pos_obj = _as_pos(pos)
+            if _guid_str_from(pos_obj) == pos_guid:
+                return pos_obj
+    except Exception:  # noqa: BLE001 -- an unenumerable source is "not found"
+        return None
+    return None
+
+
+def _report_owner_pos_unresolved(context, category, source_guid, pos_guid,
+                                 item_kind):
+    """Record that an item was not transferred because its owning category
+    could not be resolved (T033, FR-007 / FR-013).
+
+    THE POINT OF THIS FUNCTION IS THAT IT IS NOT A LOG LINE. Four call sites
+    used to `return None` here with no record at all, and `transfer.py`
+    discards every `execute_action` return value and then increments
+    `leaf_succeeded` unconditionally -- so the item vanished AND the run
+    counted it as a success. FR-013 forbids exactly that: an item is created or
+    reported, never dropped silently.
+
+    A skip appended to `context._exec_skips` reaches the run report through
+    `RunReport.extra_skips`. When the context carries no such list (older
+    callers, and unit tests that build a bare context), no report is made --
+    this must never be the thing that raises, because the condition it
+    describes is already a degraded run.
+    """
+    exec_skips = getattr(context, "_exec_skips", None)
+    if exec_skips is None:
+        return
+    exec_skips.append(Skip(
+        category=category,
+        source_guid=source_guid,
+        reason=SkipReason.DEPENDENCY_UNRESOLVED,
+        detail=(
+            item_kind + " " + str(source_guid)[:8] + "... was not transferred: "
+            "its owning category (guid=" + str(pos_guid or "empty")[:8]
+            + "...) is not present in the destination and could not be matched "
+            "by identity or by the roster-admitted natural key. The item is "
+            "reported rather than dropped (FR-013); its owning category is "
+            "resolved, never invented (Principle V)."
+        ),
+    ))
+
+
+def _resolve_target_pos(target, src_pos_guid, *, src_pos=None,
+                        source_handle=None):
+    """The target `IPartOfSpeech` corresponding to `src_pos_guid`, or None.
+
+    IDENTITY FIRST, ALWAYS (FR-001). The GUID scan below is authoritative and
+    short-circuits; the natural key is consulted only when it finds nothing.
+    Inverting the two would let a name collision overwrite a category a GUID
+    had already correctly identified.
+
+    THEN THE FR-002 NATURAL-KEY FALLBACK (T032). This function was the
+    `None`-returns-and-caller-abandons path that lost **all 2,088 MSAs** on the
+    measured pair. Whether identity succeeds for a category is not something a
+    linguist can see or control: catalog-sourced categories share GUIDs across
+    projects (`Noun` is `a8e41fd3-...` in both `Ejagham Mini` and `Mbugwe
+    LizzieHC practice`) while categories created by any other route do not
+    (Esperanto's `Noun` is `e09a4354-...`). census-evidence.md records the
+    consequence exactly: "Ejagham escaped total loss only by accident: its 5
+    target POSes happened to be GUID-identical to the source's", while Ngoreme
+    matched none. A GUID-only matcher is therefore not merely incomplete for
+    this class -- its success rate is unpredictable from anything visible.
+
+    The fallback is inert unless BOTH halves of the basis are present: 035's
+    roster must admit `PartOfSpeech` and `matcher.NATURAL_KEY_BINDINGS` must
+    bind it. `src_pos` and `source_handle` are keyword-only and default to
+    None, so every pre-038 two-positional call site keeps its exact previous
+    behaviour and opts in only by passing them.
+
+    Parameters:
+        target:        the destination project handle.
+        src_pos_guid:  the source category's GUID.
+        src_pos:       the source category OBJECT. Required for the fallback --
+                       the key is its Name, and a GUID string cannot supply it.
+        source_handle: the SOURCE project handle. Required for the fallback,
+                       because the key is read in the source project's own
+                       default analysis writing system and a handle from the
+                       other project silently reads as None.
+    """
     if not src_pos_guid:
+        # No GUID means no identity AND no natural key: the fallback needs the
+        # source object, and a caller with no GUID has not got one either.
         return None
     for pos in _iter_pos(target):
         pos_obj = _as_pos(pos)
         if _guid_str_from(pos_obj) == src_pos_guid:
             return pos_obj
+    return _resolve_target_pos_by_natural_key(target, src_pos, source_handle)
+
+
+def _target_pos_for_source_guid(context, target, src_pos_guid, *, src_pos=None):
+    """The target category a SOURCE category GUID names -- identity first,
+    natural key second (T095).
+
+    THE INVARIANT THIS REPLACES. Four sites resolved the target category with
+    a bare GUID scan over `target.POS.GetAll(recursive=True)` and returned
+    None on a miss, and one of them said the premise out loud:
+    "GUIDs are preserved on transfer so target_pos_guid == source pos guid".
+    That was true until T091 taught the planner to REUSE a destination
+    category matched by natural key rather than duplicate it. Since then a
+    source category can be present in the destination under a different GUID,
+    and a GUID-only lookup reads that as absent -- measured on `Ngoreme FLEx`
+    as two `Skip(DEPENDENCY_UNRESOLVED)` on categories the run had
+    deliberately reused, each costing a category its `InflectableFeatsRC`
+    wiring at a `total_shortfall` of 0 (a reference collection is not a
+    counted object class, so no census row moves).
+
+    Every caller has the GUID; most have the source OBJECT too, and the ones
+    that do should pass it -- the natural key is the category's `Name`, which
+    a GUID string cannot supply. When it is not passed, the source project is
+    scanned for it, because "identity failed" is not an answer worth giving
+    without trying the key.
+
+    Returns the target `IPartOfSpeech` (cast by `_as_pos` inside the
+    resolver), or None when neither identity nor the key can decide -- which
+    leaves the caller exactly where it was, reporting rather than guessing.
+    """
+    if not src_pos_guid:
+        return None
+    source = getattr(context, "source_handle", None)
+    if src_pos is None and source is not None:
+        for candidate in _iter_pos(source):
+            typed = _as_pos(candidate)
+            if _guid_str_from(typed) == src_pos_guid:
+                src_pos = typed
+                break
+    return _resolve_target_pos(
+        target, src_pos_guid, src_pos=src_pos, source_handle=source)
+
+
+def _resolve_target_pos_by_natural_key(target, src_pos, source_handle):
+    """Step 2 for `PartOfSpeech`: the roster-admitted natural key, or None.
+
+    Returns None -- never raises, never creates -- for every reason a key
+    cannot decide: the class is not admitted, the caller passed no source
+    object or source handle, the name is missing in the scoped writing system,
+    or the destination scope cannot be enumerated. Each of those is a
+    "identity found nothing and the key could not help either", which leaves
+    the caller exactly where it was before 038 and is what makes this change
+    safe to land ahead of its call-site sweep.
+
+    `NaturalKeyAmbiguityError` is the one thing allowed to propagate. The
+    roster sets `on_ambiguous_key: harness_error` for `PartOfSpeech` and does
+    not claim the key is unique by construction, so more than one candidate is
+    a condition the operator must see -- picking one would fabricate a
+    correspondence and then record it as an identity substitution.
+    """
+    if src_pos is None or source_handle is None:
+        return None
+    # T094: CAST BEFORE KEYING, ONCE, HERE. The key is the category's `Name`,
+    # and pythonnet resolves attributes against the STATIC wrapper type -- so a
+    # source category reached through a base-typed slot (`ICmObject.Owner`,
+    # `IMoStemMsa` before `_cast_msa_concrete`, a flexicon `.concrete` wrapper)
+    # has NO visible `Name` and is merely UNKEYABLE, which `natural_key_of`
+    # reports as "this object has no key" and the caller reads as "no such
+    # category in the target". That is T088's defect class, and it cost T091 a
+    # whole live run: the same discarded-cast shape lost all 12 descendants of
+    # the remapped POSes. Doing it in the resolver rather than at each of the
+    # ten call sites means a site swept later cannot re-introduce it.
+    src_pos = _as_pos(src_pos)
+    if not _guid_str_from(src_pos):
+        # `resolve_match` raises rather than silently dropping an object it
+        # cannot key its accounting record by. On this path that is the wrong
+        # trade: identity has already been tried and failed, so the caller is
+        # about to report the item anyway (T033), and turning a reportable
+        # miss into an exception would take down the whole run over one
+        # unreadable object.
+        return None
+    if _matcher.natural_key_binding_for("PartOfSpeech") is None:
+        return None
+    if _matcher.natural_key_roster_entry_for("PartOfSpeech") is None:
+        return None
+
+    try:
+        candidates = [_as_pos(p) for p in _iter_pos(target)]
+    except Exception as exc:  # noqa: BLE001
+        import logging as _logging
+        _logging.getLogger("gramtrans.Lib.categories").warning(
+            "038 T032: the destination category hierarchy could not be "
+            "enumerated (%s: %s) -- the natural-key fallback reports no match "
+            "rather than matching on a partial scan",
+            type(exc).__name__, exc,
+        )
+        return None
+
+    decision = _matcher.resolve_match(
+        "PartOfSpeech",
+        src_pos,
+        candidates,
+        ws_handles=_matcher.ws_handles_for(target),
+        source_ws_handles=_matcher.ws_handles_for(source_handle),
+    )
+    if decision.record.basis is _MatchBasis.NATURAL_KEY:
+        if decision.parent_divergence:
+            # Recorded, never corrected. The owning parent is not part of the
+            # key -- `093264d7-...` ("Demonstrative") is depth-1 in one project
+            # and depth-2 in another -- but a match is NOT evidence that the
+            # two hierarchies agree, and the destination keeps its own parent.
+            import logging as _logging
+            _logging.getLogger("gramtrans.Lib.categories").info(
+                "038 T032: %s", decision.parent_divergence)
+        return decision.target_obj
     return None
 
 
@@ -3991,7 +5574,17 @@ def resolve_or_create_target_pos(context, src_pos, ws_mapping, tag, _seen=None):
     pos_guid = _guid_str_from(src_pos)
     if not pos_guid:
         return None
-    existing = _resolve_target_pos(target, pos_guid)
+    # T094: identity first, then the roster-admitted natural key. Passing the
+    # keywords is what makes the create below a LAST resort rather than a
+    # duplicate-maker: once T091 lets the planner reuse a same-named
+    # destination category, its destination GUID is no longer its source GUID,
+    # and a GUID-only lookup here would create a SECOND copy of a category the
+    # planner had already decided to reuse.
+    existing = _resolve_target_pos(
+        target, pos_guid,
+        src_pos=src_pos,
+        source_handle=getattr(context, "source_handle", None),
+    )
     if existing is not None:
         return existing
     _seen = _seen if _seen is not None else set()
@@ -4131,14 +5724,26 @@ def _get_inflection_class_factory(target):
         return None
 
 
-def can_create_inflection_class(target, src_class) -> bool:
+def can_create_inflection_class(target, src_class, *,
+                                source_handle=None) -> bool:
     """Read-only predicate for the Preview twin's CREATE-vs-REPORT parity (G6):
     True iff the class could be created -- its owning POS is present in the
-    target (closure-scoped) AND a factory is obtainable."""
+    target (closure-scoped) AND a factory is obtainable.
+
+    T094: `source_handle` is keyword-only and optional because this is a G6
+    PARITY predicate, and parity is the whole point. Its twin,
+    `resolve_or_create_inflection_class`, resolves the owning POS with the
+    natural key as well as by identity; a predicate that asked identity only
+    would answer REPORT_DROPPED for exactly the classes the executor goes on to
+    CREATE -- a preview that understates the run, which G6 exists to forbid.
+    Omitting the handle keeps the pre-038 GUID-only answer, so a caller that
+    has no source project (there is none in the tree today) is not silently
+    given a different one."""
     pos = _owning_pos_of_class(src_class)
     if pos is None:
         return False
-    if _resolve_target_pos(target, _guid_str_from(pos)) is None:
+    if _resolve_target_pos(target, _guid_str_from(pos),
+                           src_pos=pos, source_handle=source_handle) is None:
         return False
     return _get_inflection_class_factory(target) is not None
 
@@ -4192,7 +5797,14 @@ def resolve_or_create_inflection_class(context, src_class, ws_mapping, tag,
 
     owner = getattr(src_class, "Owner", None)
     if _owner_is_pos(owner):
-        target_owner = _resolve_target_pos(target, _guid_str_from(owner))
+        # T094: identity, then the natural key. `owner` comes off `.Owner`, so
+        # it is base-typed and its `Name` is invisible until cast --
+        # `_resolve_target_pos_by_natural_key` does that cast centrally.
+        target_owner = _resolve_target_pos(
+            target, _guid_str_from(owner),
+            src_pos=owner,
+            source_handle=getattr(context, "source_handle", None),
+        )
         owner_coll_attr = "InflectionClassesOC"
     elif _owner_is_inflection_class(owner):
         target_owner = resolve_or_create_inflection_class(
@@ -4851,6 +6463,68 @@ def _plan_entry_reference_decisions(src_entry, context, target):
         allomorphs.extend(getattr(src_entry, "AlternateFormsOS", None) or [])
         for src_allo in allomorphs:
             a_guid = _guid_str_from(src_allo)
+            # Preview twin of the `_walk_entry_allomorphs._mk` NEEDS_MANUAL
+            # gate (Principle III: Preview must show what Move will do). An
+            # allomorph whose subclass this engine cannot reproduce is not
+            # transferred at all, so it contributes no reference decisions --
+            # report it here and move on, exactly as Move does.
+            _allo_class = _class_name_of(src_allo)
+            if _allo_class == "MoAffixProcess":
+                # Feature 038 (T058, Principle III): Preview must take the
+                # SAME decision Move takes, and for a process rule that
+                # decision is not "is the class known" -- it is "can this
+                # rule's graph be rebuilt". `_resolve_process_graph` is the
+                # read-only half of the executor and writes NOTHING, so
+                # Preview reaches its verdict by running the identical
+                # resolution rather than by a parallel guess that could
+                # disagree.
+                #
+                # Only the SKIP is recorded here. A plan-time
+                # `reproduced=True` record would have to invent a target GUID
+                # for an object nothing has created yet; Move records the
+                # reproductions, Preview records what it already knows will
+                # not be reproduced (`RunReport.rules_not_reproduced`).
+                _plan_script, _plan_blocker = _resolve_process_graph(
+                    src_allo, context,
+                    getattr(context, "identity_remap", None),
+                    plan_time=True)
+                if _plan_script is None:
+                    _append_dropped_once(dropped, DroppedItemRecord(
+                        owner_kind="LexEntry",
+                        owner_guid=_guid_str_from(src_entry),
+                        owner_label=_owner_label_for("LexEntry", src_entry),
+                        field_name=("LexemeFormOA" if src_allo is lf
+                                    else "AlternateFormsOS"),
+                        item_name="MoAffixProcess",
+                        item_guid=a_guid,
+                        reason=_plan_blocker,
+                    ))
+                    if a_guid:
+                        _record_process_rule(
+                            context, ProcessRuleTransferRecord(
+                                source_guid=a_guid,
+                                reproduced=False,
+                                not_reproducible_reason=_plan_blocker,
+                            ))
+                    continue
+            if _dispatch_allomorph_subclass(_allo_class) is None:
+                _append_dropped_once(dropped, DroppedItemRecord(
+                    owner_kind="LexEntry",
+                    owner_guid=_guid_str_from(src_entry),
+                    owner_label=_owner_label_for("LexEntry", src_entry),
+                    field_name=("LexemeFormOA" if src_allo is lf
+                                else "AlternateFormsOS"),
+                    item_name=_allo_class or "(unknown allomorph subclass)",
+                    item_guid=a_guid,
+                    reason=(
+                        "allomorph subclass "
+                        f"{_allo_class or 'unknown'} is not reproducible by "
+                        "this engine (NEEDS_MANUAL) -- will not be "
+                        "transferred (007-affixes-stems spec.md "
+                        "'Out of scope')"
+                    ),
+                ))
+                continue
             records.extend(_decide_reference_fields(
                 "MoForm", a_guid, src_allo, target, resolver_cache, dropped,
                 skip_fields=_MOFORM_DEFERRED_FIELDS, source=source))
@@ -4957,37 +6631,461 @@ _LEXREL_REPRODUCED_KEY = "__categories_lexrel_reproduced__"
 _LEXREL_PLANNED_KEY = "__categories_lexrel_planned__"
 
 
-def _resolve_target_lex_ref_type(target, type_guid: str):
+def _lex_ref_type_label(lex_ref_type) -> str:
+    """A human-readable name for a `LexRefType` (`Specific`, `Synonyms`,
+    `Calendar`, ...), or `""`.
+
+    Exists so a drop record can NAME the missing relation type. Without it the
+    report carried `owner_label=""` / `item_name=""` and a reader could not
+    tell which type was absent -- the exact question the investigation into
+    "0 of 5 LexReference survive" had to answer, and had to answer by opening
+    the projects live because the report would not say. Never raises: a label
+    helper that throws would be swallowed by the caller and cost the record.
+    """
+    if lex_ref_type is None:
+        return ""
+    for reader in (
+        lambda o: o.Name.BestAnalysisAlternative.Text,
+        lambda o: o.Name.AnalysisDefaultWritingSystem.Text,
+        lambda o: o.ShortName,
+    ):
+        try:
+            text = reader(lex_ref_type)
+        except Exception:  # noqa: BLE001 -- try the next reader
+            continue
+        if text:
+            return str(text)
+    return ""
+
+
+#: `LexRefType`'s NATURAL KEY, and the one place its shape is written down.
+#: `(Name, MappingType)` -- the exact analysis-writing-system `Name` string
+#: paired with the integer `MappingType`.
+#:
+#: **WHY A KEY AT ALL (feature 038, T123 closing clause, user ruling
+#: 2026-08-28).** GUID-only resolution cannot succeed on any real pair. The
+#: ngoreme pair, measured read-only this session (op-164508379-003 for the
+#: destination, op-164535425-004 for the source): both sides hold exactly 7
+#: relation types, the SAME 7 by `Name` and by `MappingType` -- Part(3),
+#: Specific(3), Synonyms(0), Antonym(1), Calendar(4), Compare(5), Classified
+#: Noun(3) -- with **zero GUID overlap**: the source's are project-local
+#: (`487b4300-...`, `9044b4d6-...`) and the destination's are FLEx-canonical
+#: (`b764ce50-ea5e-11de-...`, `b770ba08-ea5e-11de-...`). So `LexRefType` reads
+#: 7 -> 7 count-MATCHED with none of them the source's, and every relation
+#: died one hop later at "type not found in target". That is the census's
+#: `LexReference` 5 -> 0, in full.
+#:
+#: **WHY `MappingType` IS PART OF THE KEY AND NOT A TIE-BREAK.** The mapping
+#: type IS the relation type's structure -- a `Synonyms` collection and a
+#: `Synonyms` pair are not the same type, and resolving one onto the other
+#: would silently re-file every relation under a different cardinality
+#: contract, which `_evaluate_lexical_relation`'s pair-minimum and tree-root
+#: guards would then enforce against the WRONG shape. Name alone is a display
+#: label; name plus mapping type is the type.
+#:
+#: The name half follows `census.natural_key_of`'s reading exactly: the EXACT
+#: string, no `.strip()`, no `.casefold()`, no Unicode normalisation, and an
+#: empty/absent name means the object HAS no key (never matched, and never
+#: matched to another keyless object).
+_LEX_REF_TYPE_KEY_FIELDS = ("Name", "MappingType")
+
+
+def _lex_ref_type_mapping_type(lex_ref_type):
+    """`MappingType` off a relation type, CAST first, or None.
+
+    The cast is not optional and is this feature's recurring shape for the
+    fourteenth time: `MappingType` is declared on `ILexRefType` only, so a
+    base-typed `ICmPossibility` proxy answers None to a bare `getattr` and
+    every structural guard downstream silently reads False."""
+    if lex_ref_type is None:
+        return None
+    typed = _as_lex_ref_type(lex_ref_type) or lex_ref_type
+    value = getattr(typed, "MappingType", None)
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _lex_ref_type_key_name(lex_ref_type) -> str:
+    """The `Name` half of the natural key: the exact analysis-alternative
+    string, or `""` when the type has none.
+
+    Deliberately NOT `_lex_ref_type_label`, which is a REPORT label and falls
+    back to `ShortName` -- a derived display string FLEx can synthesise from an
+    abbreviation. A key satisfiable by a derived string would match two
+    objects that do not share a name."""
+    if lex_ref_type is None:
+        return ""
+    typed = _as_lex_ref_type(lex_ref_type) or lex_ref_type
+    for reader in (
+        lambda o: o.Name.BestAnalysisAlternative.Text,
+        lambda o: o.Name.AnalysisDefaultWritingSystem.Text,
+    ):
+        try:
+            text = reader(typed)
+        except Exception:  # noqa: BLE001 -- try the next reader
+            continue
+        if text:
+            return str(text)
+    return ""
+
+
+#: One (reader, is_invalid) pair per `_LEX_REF_TYPE_KEY_FIELDS` entry. Keeps
+#: the constant LOAD-BEARING: `_lex_ref_type_natural_key` below iterates
+#: `_LEX_REF_TYPE_KEY_FIELDS` and looks its readers up here rather than
+#: hardcoding `(name, mapping_type)`, so editing the constant's field list or
+#: order actually changes the key that gets built. The per-field
+#: `is_invalid` differs deliberately: an empty `Name` string is invalid, but
+#: `MappingType == 0` (`Synonyms`) is a valid value -- only `None` (unreadable)
+#: invalidates it. A single shared "falsy is invalid" rule would have been
+#: wrong for `MappingType`.
+_LEX_REF_TYPE_KEY_READERS = {
+    "Name": (_lex_ref_type_key_name, lambda v: not v),
+    "MappingType": (_lex_ref_type_mapping_type, lambda v: v is None),
+}
+
+
+def _lex_ref_type_natural_key(lex_ref_type):
+    """`(name, mapping_type)` for `lex_ref_type`, or None when it has no key.
+
+    None when EITHER half is missing. A half-key is not a key: matching on the
+    name of a type whose mapping type could not be read is exactly the
+    "resolve onto a different cardinality contract" mistake the key's second
+    half exists to prevent.
+
+    Built by iterating `_LEX_REF_TYPE_KEY_FIELDS` through
+    `_LEX_REF_TYPE_KEY_READERS` rather than reading `Name`/`MappingType`
+    inline, so the constant's declared shape is what actually gets built
+    (same value and order as before this wiring for every input)."""
+    key_parts = []
+    for field in _LEX_REF_TYPE_KEY_FIELDS:
+        reader, is_invalid = _LEX_REF_TYPE_KEY_READERS[field]
+        value = reader(lex_ref_type)
+        if is_invalid(value):
+            return None
+        key_parts.append(value)
+    return tuple(key_parts)
+
+
+def ILexRefTypeFactory_ref():  # noqa: N802 -- named for what it returns
+    """`ILexRefTypeFactory`, imported lazily so this module stays importable
+    without pythonnet (host-free unit tests).
+
+    `LexRefTypeFactory` exposes `Create()`, `Create(Guid)` and
+    `Create(Guid, ILexRefType owner)` -- confirmed by read-only .NET reflection
+    against `GT038 T124 Ngoreme`, 2026-08-28 (op-164508379-003). The
+    `Create(Guid)` overload is the one `_create_with_guid` needs, so a created
+    relation type keeps the SOURCE's GUID and the next run resolves it by
+    identity rather than by key."""
+    from SIL.LCModel import ILexRefTypeFactory
+    return ILexRefTypeFactory
+
+
+def _target_lex_ref_list(target):
+    """`target.Cache.LangProject.LexDbOA.ReferencesOA`, or None. Never
+    raises."""
+    try:
+        return target.Cache.LangProject.LexDbOA.ReferencesOA
+    except (AttributeError, TypeError):
+        return None
+
+
+def _target_lex_ref_types(target):
+    """`([types], {guid: type})` for the destination's relation-type list --
+    every member cast to `ILexRefType` (`_iter_lex_ref_types`),
+    `SubPossibilitiesOS` included."""
+    ref_list = _target_lex_ref_list(target)
+    if ref_list is None:
+        return [], {}
+    try:
+        types = _iter_lex_ref_types(ref_list)
+    except (AttributeError, TypeError):
+        return [], {}
+    by_guid = {}
+    for item in types:
+        guid = _guid_str_from(item)
+        if guid:
+            by_guid[guid] = item
+    return types, by_guid
+
+
+def _create_target_lex_ref_type(source_type, ctx, dropped):
+    """Create the destination counterpart of `source_type` -- the second half
+    of T123's closing ruling, and the leg REACHED ONLY when the natural key
+    found nothing.
+
+    **THE ORDER IS THE WHOLE POINT.** A create-first implementation would mint
+    a second `Synonyms`, a second `Antonym`, a second `Calendar` beside the
+    seven FLEx ships in every new project -- the same duplication the natural
+    key exists to stop for starter phonemes. So this runs after
+    `_resolve_target_lex_ref_type`'s key leg, never before it, and on the
+    measured ngoreme corpus it is expected NEVER TO FIRE: all 7 source types
+    match a destination type by `(Name, MappingType)`. Its coverage is unit
+    tests, not corpus evidence, and this docstring says so rather than letting
+    a green run imply otherwise.
+
+    GUID-PRESERVING (`_create_with_guid` -> `Create(Guid)`): the new type keeps
+    the source's GUID, so a LATER run resolves it by IDENTITY and this leg is a
+    one-time cost rather than a per-run key lookup.
+
+    `MappingType` is written BEFORE the strings because it is the structural
+    half of the object's identity, and `MembersOC` is populated by the caller
+    straight afterwards -- a type that exists with the wrong cardinality
+    contract, however briefly, is a type whose members are being filed against
+    the wrong guards.
+
+    Never raises: a create failure is reported as a `DroppedItemRecord` and
+    returns None, which leaves the relation on the "type not found" path it was
+    already on."""
+    target = getattr(ctx, "target_handle", None)
+    source = getattr(ctx, "source_handle", None)
+    type_guid = _guid_str_from(source_type)
+    if target is None or not type_guid:
+        return None
+    ref_list = _target_lex_ref_list(target)
+    if ref_list is None:
+        return None
+    try:
+        tgt_items = ref_list.PossibilitiesOS
+    except (AttributeError, TypeError):
+        return None
+    if tgt_items is None:
+        return None
+    try:
+        new_type, _ = _create_with_guid(
+            ILexRefTypeFactory_ref(), tgt_items, type_guid, target)
+    except Exception as exc:  # noqa: BLE001 -- reported, never raised
+        import logging as _logging
+        _logging.getLogger("gramtrans.Lib.categories").warning(
+            "_create_target_lex_ref_type: create failed for %s: %s",
+            type_guid, exc, exc_info=True,
+        )
+        _append_dropped_once(dropped, DroppedItemRecord(
+            owner_kind="LexRefType",
+            owner_guid=type_guid,
+            owner_label=_lex_ref_type_label(source_type),
+            field_name="MembersOC",
+            item_name=_lex_ref_type_label(source_type),
+            item_guid=type_guid,
+            reason=(f"lexical relation type absent from target and could not "
+                    f"be created: {type(exc).__name__}"),
+        ))
+        return None
+
+    typed = _as_lex_ref_type(new_type) or new_type
+    mapping_type = _lex_ref_type_mapping_type(source_type)
+    if mapping_type is not None:
+        try:
+            typed.MappingType = mapping_type
+        except (AttributeError, TypeError):
+            pass
+    if source is not None:
+        try:
+            _copy_multistrings_ws_mapped(
+                _as_lex_ref_type(source_type) or source_type, typed,
+                ("Name", "Abbreviation", "Description",
+                 "ReverseName", "ReverseAbbreviation"),
+                source=source, target=target,
+                ws_map=_ws_map_dict(getattr(
+                    getattr(ctx, "_run_plan", None), "ws_mapping", None)),
+            )
+        except (AttributeError, TypeError):
+            pass
+    return typed
+
+
+def _resolve_target_lex_ref_type(target, type_guid: str, *, source_type=None,
+                                 ctx=None, plan_time=False,
+                                 allow_create=False, dropped=None):
     """Resolve the target `ILexRefType` whose GUID is `type_guid` off
     `target.Cache.LangProject.LexDbOA.ReferencesOA` (an `ICmPossibilityList`
     of relation TYPES -- possibility-list-shaped, so this reuses
     `references._find_in_possibility_list`'s recursive `PossibilitiesOS`/
     `SubPossibilitiesOS` walk exactly like every other possibility-list
     lookup in this codebase). Returns `None` when absent or the list itself
-    is unreachable (never raises)."""
+    is unreachable (never raises).
+
+    **CAST AT THE PRODUCER (038 T123 second entry, 2026-08-28), AND THAT
+    PLACEMENT IS T094'S LESSON, NOT A PREFERENCE.**
+    `references._find_in_possibility_list` walks `PossibilitiesOS` and returns
+    the RAW member -- a base-typed `ICmPossibility` proxy. `MappingType` is
+    declared on `ILexRefType` only, so `_evaluate_lexical_relation`'s
+    `getattr(target_type, "MappingType", None)` read **None on every live
+    resolution**, and both structural guards below it were permanently dead:
+
+        if mapping_type in _LEXICAL_RELATION_PAIR_TYPES   # None in {...} -> False
+        if mapping_type in _LEXICAL_RELATION_TREE_TYPES   # same
+
+    T124 reported that "the per-MappingType structural rulings were never
+    reached", treating it as a deferred measurement. It was not deferred: it
+    was unreachable by construction. Had the type-resolution defect been fixed
+    alone, all 5 ngoreme relations would have reproduced as open collections
+    with no pair-minimum and no tree-root check -- and the acceptance would
+    have read GREEN for the wrong reason. That is the worse outcome, which is
+    why this cast lands in the same change.
+
+    `_as_lex_ref_type` falls back to the raw member when no cast is possible
+    (duck-typed unit fakes), so this can never resolve LESS than before.
+    Thirteenth appearance of this codebase's recurring shape, in the same file
+    and the same feature as the eleventh.
+
+    **THE RESOLUTION ORDER (038 T123 closing clause, user ruling 2026-08-28),
+    AND WHY EACH LEG SITS WHERE IT DOES.** Four legs, tried in this order and
+    no other:
+
+      1. **IDENTITY.** `type_guid` against the destination list. Authoritative:
+         a GUID that already identified an object is never second-guessed by a
+         name collision. This is FR-001/FR-002's ordering and it is the same
+         ordering `_resolve_scoped_referent` and `_resolve_process_referent`
+         use, for the same reason.
+      2. **THE PLAN'S `identity_remap`,** via the module-scope
+         `_resolve_scoped_referent` -- REUSED rather than reimplemented. T119/
+         T123's defect was Move re-deriving an answer Preview had already put
+         in the plan; a second private copy of the remap lookup here would be
+         that defect's next home. The roster leg inside that helper is a no-op
+         for `LexRefType` (no roster binding, see `_lex_ref_type_natural_key`'s
+         banner and the roster PROPOSAL this change ships alongside), so it
+         costs nothing and cannot mis-resolve.
+      3. **THE `(Name, MappingType)` NATURAL KEY.** The leg that actually
+         recovers the five ngoreme relations, because leg 1 CANNOT succeed on
+         that pair: identical names, identical mapping types, zero GUID
+         overlap. AMBIGUITY IS NOT A PICK -- two destination types sharing one
+         key leaves the relation unresolved with a reason, never a guess,
+         exactly as `_resolve_scoped_referent` treats an ambiguous roster key.
+      4. **CREATE** (`_create_target_lex_ref_type`), and ONLY when leg 3 found
+         nothing -- i.e. a source type genuinely absent from the destination.
+         Reachable in Move only (`allow_create`); at plan time it is predicted
+         as `PLAN_TIME_PENDING` instead, so Preview neither writes nor
+         over-reports a loss Move will not take.
+
+    **WHY 3 BEFORE 4 IS THE LOAD-BEARING HALF.** Create-first would mint a
+    second copy of all 7 FLEx default relation types on every pair, every run.
+    The key leg is what makes the create leg safe to have at all.
+
+    Backwards compatible: called with two positional arguments this is exactly
+    the GUID-only lookup it was, because every fallback leg is gated on a
+    keyword the old call sites do not pass.
+    """
     if __package__:
         from . import references as _references
     else:
         import references as _references  # type: ignore
-    try:
-        ref_list = target.Cache.LangProject.LexDbOA.ReferencesOA
-    except AttributeError:
+
+    # LEG 1 -- identity. Left on `_find_in_possibility_list` rather than on the
+    # dict built below, so a destination shape that walk handles and
+    # `_iter_lex_ref_types` does not can never resolve LESS than before.
+    ref_list = _target_lex_ref_list(target)
+    if ref_list is None:
         return None
-    return _references._find_in_possibility_list(ref_list, type_guid)
+    found = _references._find_in_possibility_list(ref_list, type_guid)
+    if found is not None:
+        return _as_lex_ref_type(found) or found
+
+    if source_type is None:
+        return None
+
+    candidates, by_guid = _target_lex_ref_types(target)
+
+    # LEG 2 -- the plan's `identity_remap`, through the shared helper.
+    if ctx is not None:
+        remapped, _basis = _resolve_scoped_referent(
+            ctx, source_type, by_guid, "LexRefType")
+        if remapped is not None:
+            return remapped
+
+    # LEG 3 -- the `(Name, MappingType)` natural key.
+    key = _lex_ref_type_natural_key(source_type)
+    if key is not None:
+        matches = [c for c in candidates
+                   if _lex_ref_type_natural_key(c) == key]
+        if len(matches) == 1:
+            return matches[0]
+        if len(matches) > 1:
+            # Ambiguity is reported, never resolved. Picking one of two
+            # destination types that share a name AND a mapping type would
+            # silently re-file every relation of this type under whichever
+            # happened to be first in the list.
+            #
+            # DEDUP GRANULARITY IS PER-TYPE, BY DESIGN (038 QC carry-forward,
+            # cycle 3): `item_guid=""` is constant across every relation that
+            # shares this ambiguous type, so `_append_dropped_once`'s
+            # `(owner_guid, field_name, item_guid)` key collapses them all to
+            # ONE record -- unlike the "type not found" record below, which
+            # keys on the per-relation `rel_guid` and so reports once per
+            # RELATION. Do not "fix" this into per-relation reporting: an
+            # ambiguous TYPE is one fact about the type, not N facts about
+            # its relations.
+            if dropped is None:
+                raise ValueError(
+                    "_resolve_target_lex_ref_type: an ambiguous natural-key "
+                    "match must be reported, not silently discarded -- pass "
+                    "a real `dropped` list")
+            _append_dropped_once(dropped, DroppedItemRecord(
+                owner_kind="LexRefType",
+                owner_guid=type_guid,
+                owner_label=_lex_ref_type_label(source_type),
+                field_name="MembersOC",
+                item_name=_lex_ref_type_label(source_type),
+                item_guid="",
+                reason=(
+                    f"lexical relation type natural key "
+                    f"{key!r} matches {len(matches)} "
+                    f"types in the target; ambiguous, "
+                    f"not resolved"),
+            ))
+            return None
+
+    # LEG 4 -- create, reachable only now.
+    if plan_time:
+        # Predicted only when Move could really take the leg: a source type
+        # with no GUID cannot be created GUID-preservingly, and predicting a
+        # create Move will refuse is how a Preview comes to under-report a
+        # loss -- the one direction `_process_referent_will_be_created`'s
+        # docstring names as the failure that must not happen.
+        return PLAN_TIME_PENDING if type_guid else None
+    if not allow_create or ctx is None:
+        return None
+    if dropped is None:
+        raise ValueError(
+            "_resolve_target_lex_ref_type: allow_create requires a real "
+            "`dropped` list -- a create failure must be reported, not "
+            "silently discarded")
+    return _create_target_lex_ref_type(source_type, ctx, dropped)
 
 
-def _evaluate_lexical_relation(src_relation, ctx, dropped):
+def _evaluate_lexical_relation(src_relation, ctx, dropped, *, plan_time=False):
     """Shared decision core for both `reproduce_lexical_relation` (Move) and
     `plan_lexical_relation_decision` (Preview): resolves the target
-    `ILexRefType` by GUID, classifies every `TargetsRS` member against
-    `ctx._copy_set`, and applies the FR-008 partial-member policy. Never
-    creates or writes anything -- every branch that decides NOT to
-    reproduce the relation has already appended its own `DroppedItemRecord`
-    before returning `None`.
+    `ILexRefType`, classifies every `TargetsRS` member against
+    `ctx._copy_set`, and applies the FR-008 partial-member policy. Every branch
+    that decides NOT to reproduce the relation has already appended its own
+    `DroppedItemRecord` before returning `None`.
 
     Returns `(rel_guid, target_type, copied_members)` -- a coherent,
     reproducible relation (structural minimum satisfied, >=1 member
     actually copied) -- or `None` when the relation must not be reproduced.
+
+    **ONE CORE, TWO MODES, AND THAT IS THE PREVIEW/MOVE SPLIT HONOURED RATHER
+    THAN WORKED AROUND (038 T123 closing clause).** Preview and Move ask the
+    identical question through this same function, so they cannot diverge on
+    the ANSWER -- the T119/T123 defect was a second, private re-derivation in
+    Move. The only thing `plan_time` changes is what happens on the ONE leg
+    Preview must not take: creating the relation type. At plan time that leg
+    returns `PLAN_TIME_PENDING` (the same device `_resolve_process_referent`
+    already uses for a referent this run will create), so Preview predicts the
+    create instead of performing it, and instead of over-reporting a loss that
+    Move will not take.
+
+    `MappingType` is read off the TARGET type when it is readable and off the
+    SOURCE type otherwise. They are equal by construction on every leg that can
+    resolve -- identity matches the same object, the natural key includes the
+    mapping type, and the create leg copies it -- and the fallback is what
+    keeps the pair-minimum and tree-root guards LIVE at plan time, where the
+    target type may be `PLAN_TIME_PENDING`. Guards that read `None` are the
+    dead code T123's second entry has already fixed once.
     """
     if __package__:
         from . import references as _references
@@ -5020,21 +7118,56 @@ def _evaluate_lexical_relation(src_relation, ctx, dropped):
 
     target = ctx.target_handle
     source_type = getattr(src_relation, "Owner", None)
+    if source_type is not None:
+        # CAST AT THE READ. `Owner` hands back a base-typed `ICmObject`, and
+        # every question this function asks of the source type -- its name, its
+        # mapping type, whether it can be created -- is declared on
+        # `ILexRefType`. Uncast, the natural key is unreadable and leg 3 could
+        # never fire on live data, which is the exact way T123's first entry
+        # shipped two dead structural guards.
+        source_type = _as_lex_ref_type(source_type) or source_type
     type_guid = _guid_str_from(source_type) if source_type is not None else ""
-    target_type = _resolve_target_lex_ref_type(target, type_guid)
+    target_type = _resolve_target_lex_ref_type(
+        target, type_guid, source_type=source_type, ctx=ctx,
+        plan_time=plan_time, allow_create=not plan_time, dropped=dropped,
+    )
     if target_type is None:
+        # THE RECORD USED TO NAME THE WRONG OBJECT (038 T123, 2026-08-28).
+        # `owner_kind` says `LexRefType` while `owner_guid` carried
+        # `rel_guid` -- the RELATION's guid, not the TYPE's -- so the one
+        # field that names the missing type was discarded, and the record
+        # said "a LexRefType whose guid is actually a LexReference".
+        # `owner_label` and `item_name` were both empty, so the report could
+        # not tell a reader WHICH relation type is absent (`Specific`,
+        # `Synonyms`, `Calendar`) -- which is precisely the question the next
+        # investigation had to ask, and had to re-derive live because the
+        # report would not say.
+        #
+        # DEDUP GRANULARITY IS PER-RELATION, BY DESIGN (038 QC carry-forward,
+        # cycle 3): `item_guid=rel_guid` varies per relation, so this reports
+        # once per RELATION of the absent type -- the mirror-image choice
+        # from the ambiguous-key record above (`item_guid=""`, per-TYPE).
+        # Both are intentional: a type genuinely absent from the target loses
+        # every relation of that type individually and each is worth its own
+        # record, whereas an ambiguous type is one unresolved fact, not N.
         _append_dropped_once(dropped, DroppedItemRecord(
             owner_kind="LexRefType",
-            owner_guid=rel_guid,
-            owner_label="",
+            owner_guid=type_guid,
+            owner_label=_lex_ref_type_label(source_type),
             field_name="MembersOC",
-            item_name="",
+            item_name=_lex_ref_type_label(source_type),
             item_guid=rel_guid,
-            reason="lexical relation type not found in target",
+            reason=(
+                "lexical relation type not found in target by identity, by "
+                "identity_remap or by (Name, MappingType), and could not be "
+                "created; no relation of this type can be reproduced"
+            ),
         ))
         return None
 
-    mapping_type = getattr(target_type, "MappingType", None)
+    mapping_type = _lex_ref_type_mapping_type(target_type)
+    if mapping_type is None:
+        mapping_type = _lex_ref_type_mapping_type(source_type)
     copy_set = getattr(ctx, "_copy_set", None) or {}
     src_targets = list(getattr(src_relation, "TargetsRS", None) or [])
 
@@ -5280,7 +7413,8 @@ def plan_lexical_relation_decision(src_relation, ctx, resolver_cache, dropped):
     planned = resolver_cache.setdefault(_LEXREL_PLANNED_KEY, {})
     rel_guid = _guid_str_from(src_relation)
 
-    evaluated = _evaluate_lexical_relation(src_relation, ctx, dropped)
+    evaluated = _evaluate_lexical_relation(src_relation, ctx, dropped,
+                                           plan_time=True)
     if evaluated is None:
         return None
     rel_guid, _target_type, _copied_members = evaluated
@@ -5301,20 +7435,72 @@ def plan_lexical_relation_decision(src_relation, ctx, resolver_cache, dropped):
     return record
 
 
+def _as_lex_ref_type(obj):
+    """Cast a possibility-list member to `ILexRefType`, or return `None` when
+    that is not possible (no LCM available -- unit-test fakes -- or the object
+    genuinely is not a relation type).
+
+    T123 (feature 038), MEASURED not inferred, and the ELEVENTH appearance of
+    this feature's recurring shape: something that exists, read at a level
+    where it cannot do its job. `LexDbOA.ReferencesOA.PossibilitiesOS` yields
+    members typed as the STATIC base `ICmPossibility`, and `MembersOC` is
+    declared on `ILexRefType` ONLY. pythonnet resolves attributes against that
+    static type, so `getattr(item, "MembersOC", None)` returns **None on every
+    relation type**, the caller's `or []` swallows it, and
+    `_iter_relations_touching_copy_set` -- the SOLE lexical-relation discovery
+    path in this codebase (see the T031 section banner) -- silently enumerated
+    ZERO relations on every project ever transferred.
+
+    Measured live on `Ngoreme FLEx` 2026-08-26: all 7 members of
+    `ReferencesOA.PossibilitiesOS` report `ICmObject(p).ClassName ==
+    "LexRefType"` while arriving as `ICmPossibility` proxies;
+    `getattr(p, "MembersOC", None)` is None on 7 of 7 (total reachable 0),
+    while `ILexRefType(p).MembersOC` reads 3 (Specific) + 1 (Synonyms) +
+    1 (Calendar) = the project's 5 `ILexReference` objects, matching
+    `ILexReferenceRepository` to the object. That is the census's
+    `LexReference` 5 -> 0 on this pair, in full.
+
+    Why the cast goes HERE, at the producer, rather than at the one read that
+    happened to be caught: T094's lesson from this same defect class -- put
+    the cast where the property is read, so a future site inherits the fix
+    instead of re-acquiring the bug. Every consumer of `_iter_lex_ref_types`
+    now receives a concrete-typed relation type.
+
+    Returns `None` rather than raising, so duck-typed test fakes (which expose
+    `MembersOC` directly, and are precisely why 3,700+ unit tests passed while
+    this returned nothing on live data) keep working through the fallback in
+    `_iter_lex_ref_types`."""
+    try:
+        from SIL.LCModel import ILexRefType  # lazy -- absent in unit tests
+    except Exception:
+        return None
+    try:
+        return ILexRefType(obj)
+    except Exception:
+        return None
+
+
 def _iter_lex_ref_types(ref_list):
     """Every `ILexRefType` in `ref_list` (an `ICmPossibilityList`-shaped
     container), recursing `SubPossibilitiesOS` -- mirrors
-    `references._find_in_possibility_list`'s own recursive walk."""
+    `references._find_in_possibility_list`'s own recursive walk.
+
+    Each member is yielded CAST to `ILexRefType` (`_as_lex_ref_type`); when the
+    cast is unavailable or fails the RAW member is yielded instead, so the
+    walk can never yield less than it did before. `SubPossibilitiesOS` is read
+    off the raw member on purpose -- it is declared on `ICmPossibility` and so
+    surfaces on the base type, unlike `MembersOC`."""
     def _walk(items):
         for item in items:
-            yield item
+            cast = _as_lex_ref_type(item)
+            yield item if cast is None else cast
             subs = getattr(item, "SubPossibilitiesOS", None)
             if subs:
                 yield from _walk(subs)
     return list(_walk(getattr(ref_list, "PossibilitiesOS", None) or []))
 
 
-def _iter_relations_touching_copy_set(source, copy_set):
+def _iter_relations_touching_copy_set(source, copy_set, dropped=None):
     """Every source `ILexReference` at least one of whose `TargetsRS`
     members has a GUID present in `copy_set`, each yielded EXACTLY ONCE
     (deduped by the relation's own GUID) regardless of how many of its
@@ -5340,7 +7526,28 @@ def _iter_relations_touching_copy_set(source, copy_set):
         return
     seen_rel_guids = set()
     for lex_ref_type in _iter_lex_ref_types(ref_list):
-        for rel in getattr(lex_ref_type, "MembersOC", None) or []:
+        members = getattr(lex_ref_type, "MembersOC", None)
+        if members is None:
+            # T123: NEVER silent again. An absent `MembersOC` is not an empty
+            # one -- it is the base-typed-proxy read that made this whole pass
+            # a no-op (see `_as_lex_ref_type`). An EMPTY collection still
+            # arrives as `[]` and is correctly not reported here.
+            _append_dropped_once(dropped if dropped is not None else [],
+                                 DroppedItemRecord(
+                                     owner_kind="LexRefType",
+                                     owner_guid=_guid_str_from(lex_ref_type),
+                                     owner_label="",
+                                     field_name="MembersOC",
+                                     item_name="",
+                                     item_guid="",
+                                     reason=("MembersOC unreadable on this "
+                                             "relation type -- the member "
+                                             "could not be cast to "
+                                             "ILexRefType, so its relations "
+                                             "cannot be enumerated"),
+                                 ))
+            continue
+        for rel in members:
             rel_guid = _guid_str_from(rel)
             if rel_guid and rel_guid in seen_rel_guids:
                 continue
@@ -5374,7 +7581,8 @@ def reproduce_all_lexical_relations(context, tag, resolver_cache, dropped):
     UNCHANGED."""
     source = context.source_handle
     copy_set = getattr(context, "_copy_set", None) or {}
-    for src_relation in _iter_relations_touching_copy_set(source, copy_set):
+    for src_relation in _iter_relations_touching_copy_set(
+            source, copy_set, dropped):
         reproduce_lexical_relation(src_relation, context, tag, resolver_cache, dropped)
 
 
@@ -5397,7 +7605,8 @@ def plan_all_lexical_relations(context, resolver_cache, dropped) -> list:
     source = context.source_handle
     copy_set = getattr(context, "_copy_set", None) or {}
     records = []
-    for src_relation in _iter_relations_touching_copy_set(source, copy_set):
+    for src_relation in _iter_relations_touching_copy_set(
+            source, copy_set, dropped):
         record = plan_lexical_relation_decision(
             src_relation, context, resolver_cache, dropped)
         if record is not None:
@@ -5483,9 +7692,25 @@ def _dispatch_msa_subclass(class_name):
 
 
 def _dispatch_allomorph_subclass(class_name):
-    """Return the allomorph subclass tag driving execute-time creation dispatch
-    (E3): 'MoAffixAllomorph' vs 'MoStemAllomorph'. Unknown -> None."""
-    known = {"MoAffixAllomorph", "MoStemAllomorph"}
+    """Return the `IMoForm` subclass tag driving execute-time creation dispatch
+    (E3). Unknown -> None.
+
+    THE ANSWER IS ALWAYS THE CLASS ITSELF OR NOTHING. This function may never
+    rename a class -- returning a different name is exactly the
+    `MoAffixProcess -> MoAffixAllomorph` downgrade FR-025 prohibits, and
+    `tests/unit/test_038_process_rules.py` asserts the property over the whole
+    corpus, not just over the classes listed here.
+
+    Feature 038 (T057) admits `MoAffixProcess`, and the timing was a contract
+    rather than a convenience: this entry landed in the SAME change as
+    `_reproduce_affix_process`, the real executor. Admitting it any earlier
+    would have sent every rule through the factory ternary's `else` to
+    `IMoAffixAllomorphFactory` -- the historic defect, restored by a one-word
+    edit. The whitelist and the executor are why that is now impossible in
+    either order: a rule the executor cannot rebuild is REPORTED and skipped,
+    never demoted.
+    """
+    known = {"MoAffixAllomorph", "MoStemAllomorph", "MoAffixProcess"}
     return class_name if class_name in known else None
 
 
@@ -5918,6 +8143,141 @@ def _resolve_sense_thesaurus_items(src_sense, new_sense, target, resolver_cache,
             pass
 
 
+def _create_and_wire_sense_msa(src_sense, new_sense, src_entry, new_entry, context,
+                                tag, identity_remap, msa_by_src_guid, dropped,
+                                s_guid=None):
+    """T123(a) subsense fix: the MSA create-and-wire step for ONE sense --
+    factored out of `_walk_lex_entry_closure`'s per-top-level-sense loop so
+    the identical logic can also run for a SUBSENSE (`_wire_subsense_msas`,
+    below), not only `src_entry.SensesOS`'s direct members. Behaviour is
+    byte-for-byte what the loop used to do inline; nothing about the
+    create-once-per-guid/never-swallow-a-wiring-failure contract changed,
+    only its reach.
+
+    `msa_by_src_guid` is the SAME per-entry dict shared across every sense
+    at every depth (passed in, mutated in place) so one source MSA guid is
+    created exactly once and shared by every referring sense, top-level or
+    subsense, per the T123(a) root-cause fix's authoritative-cache
+    constraint. No-op when the sense has no `MorphoSyntaxAnalysisRA`."""
+    if s_guid is None:
+        s_guid = _guid_str_from(src_sense)
+    src_msa = getattr(src_sense, "MorphoSyntaxAnalysisRA", None)
+    if src_msa is None:
+        return
+    m_guid = _guid_str_from(src_msa)
+    # T123(a): only trust the cache for a REAL, non-empty guid -- an
+    # unreadable guid (`_guid_str_from` -> "") must never be treated as
+    # "the same MSA I already created", or a second unrelated MSA whose
+    # guid also read as empty would silently inherit the first one's
+    # object instead of getting its own create attempt.
+    new_msa = msa_by_src_guid.get(m_guid) if m_guid else None
+    if new_msa is None:
+        # T123(a), measured live on `omoona` (Ngoreme): a SECOND source
+        # MSA sharing a natural key (same POS/content) with an already-
+        # created MSA on this SAME entry used to be able to raise,
+        # uncaught, out of `_create_msa_for_closure` (the flexicon wrapper
+        # fallback's own duplicate-avoidance behaviour) -- and with no
+        # try/except here, that exception aborted the REST of this
+        # entry's closure. Guarding it here keeps the failure scoped to
+        # THIS one MSA -- reported via `_report_dropped_msa` (never
+        # silent) -- and lets every remaining sense on the entry still
+        # get its own chance to be created and wired.
+        try:
+            new_msa = _create_msa_for_closure(
+                src_msa, new_sense, new_entry, context, tag,
+                identity_remap, dropped=dropped, src_entry=src_entry)
+        except Exception as exc:  # noqa: BLE001 -- never let one sense's
+            # MSA take down the rest of the entry's closure.
+            import logging as _logging
+            _logging.getLogger("gramtrans.Lib.categories").exception(
+                "MSA create raised for sense guid=%s (entry guid=%s, msa "
+                "guid=%s); reporting and continuing with the rest of "
+                "this entry's closure rather than aborting it (T123(a)).",
+                s_guid, _guid_str_from(src_entry), m_guid,
+            )
+            kind = _dispatch_msa_subclass(_class_name_of(src_msa))
+            _report_dropped_msa(
+                dropped, src_entry, src_msa,
+                kind or _class_name_of(src_msa),
+                f"MSA create raised {type(exc).__name__}: {exc} -- "
+                "MSA not transferred")
+            new_msa = None
+        if new_msa is not None and m_guid:
+            msa_by_src_guid[m_guid] = new_msa
+    if new_msa is not None:
+        # cycle 11 (T123(a) half 2): this assignment is a no-op on the
+        # paths that already wire the sense internally
+        # (`_create_msa_with_guid`, `_create_via_wrapper_or_reuse`) but it
+        # is the ONLY wiring step for a cache hit -- a second sense
+        # (top-level OR subsense) on this entry referencing the SAME
+        # source MSA guid as an earlier sense, which skips
+        # `_create_msa_for_closure` entirely via `msa_by_src_guid`. It
+        # used to swallow `(AttributeError, TypeError)` silently; that is
+        # exactly the never-silent invariant this task exists to restore,
+        # so a failure here is now a reported drop, not a pass.
+        try:
+            new_sense.MorphoSyntaxAnalysisRA = new_msa
+        except Exception as exc:  # noqa: BLE001 -- never swallow
+            kind = _dispatch_msa_subclass(_class_name_of(src_msa))
+            _report_dropped_msa(
+                dropped, src_entry, src_msa,
+                kind or _class_name_of(src_msa),
+                f"MSA was created/reused but the referring sense "
+                f"could not be wired to it ({type(exc).__name__}: "
+                f"{exc}) -- MSA not transferred")
+
+
+def _wire_subsense_msas(src_parent_sense, src_entry, new_entry, context, tag,
+                         identity_remap, msa_by_src_guid, dropped, copy_set):
+    """T123(a) ROOT CAUSE fix. `_walk_lex_entry_closure`'s per-sense MSA
+    create-and-wire block used to run ONLY for `src_entry.SensesOS` --
+    top-level senses -- because it lived inside that loop and nowhere else
+    walked into `LexSense.SensesOS` (subsenses). A subsense's own MSA was
+    therefore never created/wired HERE; it fell through to
+    `_create_entry_owned_msas_without_sense` (the cycle-8 hardening
+    backstop), which finds it unclaimed and creates it with `new_sense=None`
+    BY DESIGN -- entry-owned MSA counts still balance, nothing is reported
+    dropped, and the referring sense's `MorphoSyntaxAnalysisRA` is left
+    silently null. Measured live on `omoona` (Ngoreme), entry
+    e2cd79ef-2ee5-4d56-ae54-9210060bcdae, sense 'small child'
+    (3081d6f8-...) under 'child' (885182d0-...); see
+    specs/038-transfer-fidelity-gaps/reviews/cycle12-mainsession-t123a-root-cause.md.
+
+    This walk recurses into `src_parent_sense.SensesOS` at ANY depth --
+    mirroring `owned.walk_owned_children`'s own unconditional recursion for
+    the `recurse=True` `LexSense.SensesOS` row (`owned.OWNED_OBJECT_MAP`) --
+    so a sub-subsense (or deeper) is covered too, not just one level.
+
+    It does NOT create subsense objects: those are already created (and
+    registered into `context._copy_set` by `owned._copy_one_owned_child`'s
+    `spec.recurse` leg) by the `_owned.walk_owned_children(src_sense,
+    new_sense, ...)` call the caller makes immediately before this runs, for
+    exactly this sense's subtree -- so by the time this function is
+    entered, every subsense reachable from `src_parent_sense` is already a
+    key in `copy_set`. This walk only LOOKS UP each subsense via `copy_set`
+    (never falls back to creating one) and hands it to
+    `_create_and_wire_sense_msa`, the SAME per-sense MSA logic the
+    top-level loop uses, so one source MSA guid is still created exactly
+    once and shared by every referring sense regardless of depth
+    (`msa_by_src_guid`, mutated in place, is the single shared cache for
+    the whole entry).
+
+    A subsense guid absent from `copy_set` (its own create failed and was
+    already reported by `owned.py`) is skipped here without re-reporting --
+    not a reason to skip ITS OWN children's MSAs, so the recursion continues
+    regardless."""
+    for src_sub in getattr(src_parent_sense, "SensesOS", None) or []:
+        sub_guid = _guid_str_from(src_sub)
+        new_sub = copy_set.get(sub_guid) if sub_guid else None
+        if new_sub is not None:
+            _create_and_wire_sense_msa(
+                src_sub, new_sub, src_entry, new_entry, context, tag,
+                identity_remap, msa_by_src_guid, dropped, s_guid=sub_guid)
+        _wire_subsense_msas(
+            src_sub, src_entry, new_entry, context, tag, identity_remap,
+            msa_by_src_guid, dropped, copy_set)
+
+
 def _walk_lex_entry_closure(src_entry, context, tag, category, dropped=None):
     """Atomic owned-child closure write for one LexEntry (E2), shared by
     AFFIXES + STEMS execute_action.
@@ -6078,6 +8438,18 @@ def _walk_lex_entry_closure(src_entry, context, tag, category, dropped=None):
         # collection from `src_entry.SensesOS` above.
         _owned.walk_owned_children(
             src_sense, new_sense, context, tag, resolver_cache, dropped)
+        # T123(a) ROOT CAUSE fix: `walk_owned_children` just created (and
+        # registered into `copy_set`) every subsense reachable from
+        # `src_sense`, at any depth -- but it carries no MSA logic. Wire
+        # each of THOSE subsenses' own MSAs now, via the SAME per-sense
+        # MSA logic (`_create_and_wire_sense_msa`) this loop uses for
+        # `src_sense` itself below, sharing the SAME `msa_by_src_guid`
+        # cache so one source MSA guid is created once and shared by
+        # every referring sense regardless of depth. See
+        # `_wire_subsense_msas`'s own docstring for the full mechanism.
+        _wire_subsense_msas(
+            src_sense, src_entry, new_entry, context, tag, identity_remap,
+            msa_by_src_guid, dropped, copy_set)
 
         # Feature 024 (T016): every sense-level reference field registered in
         # `references.REFERENCE_FIELD_MAP` -- SenseTypeRA, UsageTypesRC,
@@ -6119,24 +8491,1251 @@ def _walk_lex_entry_closure(src_entry, context, tag, category, dropped=None):
         # happens once, later, in `reproduce_all_lexical_relations`'s single
         # final pass (see comment on the entry registration above).
         copy_set[s_guid] = new_sense
-        # MSA for this sense (create once per source MSA guid).
-        src_msa = getattr(src_sense, "MorphoSyntaxAnalysisRA", None)
-        if src_msa is not None:
-            m_guid = _guid_str_from(src_msa)
-            new_msa = msa_by_src_guid.get(m_guid)
-            if new_msa is None:
-                new_msa = _create_msa_for_closure(
-                    src_msa, new_sense, new_entry, context, tag, identity_remap)
-                if new_msa is not None:
-                    msa_by_src_guid[m_guid] = new_msa
-            if new_msa is not None:
-                try:
-                    new_sense.MorphoSyntaxAnalysisRA = new_msa
-                except (AttributeError, TypeError):
-                    pass
+        # MSA for this sense (create once per DISTINCT source MSA guid --
+        # never per its content, per the T123(a) fix). T123(a) ROOT CAUSE
+        # fix: this is now `_create_and_wire_sense_msa`, the SAME function
+        # `_wire_subsense_msas` (above) calls for every subsense at any
+        # depth, sharing this entry's one `msa_by_src_guid` cache -- the
+        # create-and-wire logic itself is unchanged, only its reach.
+        _create_and_wire_sense_msa(
+            src_sense, new_sense, src_entry, new_entry, context, tag,
+            identity_remap, msa_by_src_guid, dropped, s_guid=s_guid)
         apply_residue(new_sense, ws, tag)
 
+    # T123 HARDENING -- NOT T123(a)'s fix (T123(a) is a DIFFERENT, already
+    # diagnosed and already fixed mechanism -- the natural-key skip inside
+    # the per-sense loop above; see `_create_via_wrapper_or_reuse` /
+    # `_find_reusable_target_msa`). The loop above enumerates MSAs only via
+    # `src_sense.MorphoSyntaxAnalysisRA`; `_entry_pos_deps` and
+    # `_iter_all_msas` instead treat `MorphoSyntaxAnalysesOC` as the
+    # enumeration basis. This pass closes that gap for consistency. MEASURED
+    # EMPTY on `Ngoreme FLEx` (op-102227585-005/-006: entry-owned MSA count
+    # equals distinct sense-referenced count, 2090 = 2090, in every class).
+    # See `_create_entry_owned_msas_without_sense`'s own docstring.
+    _create_entry_owned_msas_without_sense(
+        src_entry, new_entry, context, tag, identity_remap, msa_by_src_guid,
+        dropped)
+
     return new_entry
+
+
+# ---------------------------------------------------------------------------
+# Feature 038 Phase 6 (US5) -- affix process rules (FR-023, FR-024, FR-025,
+# SC-006). Contract: contracts/process-morphology-create-path.md.
+# ---------------------------------------------------------------------------
+#
+# A `MoAffixProcess` is an `IMoForm` -- it hangs off `LexEntry.LexemeFormOA` or
+# `AlternateFormsOS` exactly as an allomorph does -- but it carries two owned
+# sequences no allomorph has: `InputOS` (the contexts the rule matches) and
+# `OutputOS` (the steps it performs). Copying one as a plain
+# `MoAffixAllomorph` keeps the GUID and the Form and destroys everything that
+# makes it a rule, which is what this engine did to 13/13 rules on the Ejagham
+# sweep while reporting a clean transfer.
+#
+# TWO PASSES, AND THE ORDER IS THE DESIGN.
+#
+# Pass 1 (`_resolve_process_graph`) RESOLVES and writes nothing: it walks the
+# whole graph, rejects any member class this engine does not implement, and
+# resolves every external reference against the destination. It returns either
+# a complete creation script or ONE reason naming the specific blocker.
+#
+# Pass 2 (`_create_process_graph`) creates, and only ever runs on a script that
+# pass 1 already proved complete.
+#
+# Splitting them is what makes FR-025's "create nothing in its place" true by
+# construction rather than by cleanup. The create-path contract lists rollback
+# granularity as an open question -- whether a half-built rule can be discarded
+# inside the executor's transaction scoping is UNVERIFIED -- and pre-validation
+# is the answer that does not depend on knowing. There is no repo-wide
+# precedent for deleting an LCM object; `Lib/*.py` contains no `.Delete()` call
+# at all. `_discard_partial_process_rule` exists for the residual case where a
+# factory fails after pass 1 said yes, and it detaches BEFORE it deletes,
+# because an unowned object is already out of the lexicon whether or not the
+# delete lands.
+#
+# WHAT IS NOT IMPLEMENTED, AND WHY IT IS A SKIP RATHER THAN A GUESS.
+#
+# `MoModifyFromInput`, `MoInsertNC`, `PhSimpleContextBdry` and
+# `PhIterationContext` have ZERO instances in any sanctioned project, so there
+# is no corpus that could tell a correct implementation from a plausible one.
+# They ship behind the skip, matching the "NEEDS_MANUAL until a corpus
+# exercises them" posture `_dispatch_msa_subclass` already takes. Same for a
+# non-empty `PlusConstrRS` / `MinusConstrRS` (live `totalFeatureConstraintRefs`
+# is 0), whose `PhFeatureConstraint` objects tie into the feature system.
+#
+# CONDITION 4, THE ONE THE PROBE ADDED. A `PhSequenceContext` in `InputOS` is
+# owned by the rule, but its `MembersRS` REFERENCE `PhSimpleContext*` objects
+# owned by the shared, project-level `PhPhonData.ContextsOS` -- true for 6 of
+# the 18 live rules. An empty or partly-filled `MembersRS` is precisely the
+# silent content loss FR-023 and SC-006 forbid: it would leave a rule that can
+# no longer match anything while the run reported success. So until something
+# could put those contexts in the destination, such a rule was reported and
+# skipped.
+#
+# T076 (2026-08-22) CLOSED IT, AND NOT THE WAY THE TASK PREDICTED. The task
+# said "extend closure to pull" those contexts. The read-only audit
+# (`debug/audit038_t076_process_contexts.py`, both corpora) says that premise
+# is wrong, and the measurement is the whole reason this comment changed:
+#
+#   * All 6 far endpoints ARE owned by `PhPhonData.ContextsOS` (owner
+#     `PhPhonData`, flid 5099004) -- 5 `PhSimpleContextNC`, 1
+#     `PhSimpleContextSeg`.
+#   * **0 of 6 are reachable from `PhPhonData.PhonRulesOS`.** The one path in
+#     this engine that already creates `PhSimpleContext*` into a destination's
+#     `ContextsOS` is the phonological-rule copy (`_copy_context_cell`), and it
+#     never touches these. Nothing else creates them either: no
+#     `GrammarCategory` enumerates a member of `ContextsOS`.
+#
+# An edge whose far endpoint NO category can enumerate is exactly what T089
+# refused to register, for the reason FR-015/FR-016 give: an item no
+# `enumerate_source` yields has no `PlannedAction`, so it cannot be shown as
+# pulled in (T070) or individually deselected (T072). Registering a
+# rule -> ContextsOS-context edge would have repeated T089's defect with a
+# `verified_by` on it.
+#
+# So the context object is **CO-CREATED**, the same contract
+# `inflection_features_execute_action` uses for its symbolic values and the
+# same one this rule's own `InputOS` members already ride: the executor builds
+# it into the destination's `PhPhonData.ContextsOS`, GUID-preserving, as part
+# of building the rule. What IS registered under `CLOSURE_EDGES_VERIFIED` is
+# the edge one hop further out -- the context's `FeatureStructureRA` referent,
+# a `PhNCFeatures`/`PhNCSegments` or a `PhPhoneme`, measured **6 of 6
+# enumerable** by `natural_classes_enumerate_source` /
+# `phonemes_enumerate_source`. That is the endpoint a user can see and
+# deselect, and it is the one that decides whether the rule can be rebuilt at
+# all.
+#
+# The detector is still written against RESOLVABILITY rather than a
+# hard-coded count: a shared context whose referent does not resolve, or whose
+# class has no factory here, still takes the FR-025 skip.
+
+#: Input-member class -> its LCM factory interface. Absence is the skip, so
+#: adding a class here is the ONLY way to make the engine build one.
+#:
+#: `PhSimpleContextBdry` is T107's addition (2026-08-25) and it adds no new
+#: SHAPE: `IPhSimpleContextBdry` carries the same single `FeatureStructureRA`
+#: the Seg and NC contexts carry (verified against the LCM index), so it goes
+#: through the same create-then-wire legs, and `IPhSimpleContextBdryFactory`
+#: is obtainable by the same ladder. What it points AT is a `PhBdryMarker`
+#: rather than a phoneme or a natural class, which is why it needs no closure
+#: edge -- see `_PROCESS_REFERENT_CATEGORY`.
+_PROCESS_INPUT_FACTORIES = {
+    "PhVariable": "IPhVariableFactory",
+    "PhSimpleContextSeg": "IPhSimpleContextSegFactory",
+    "PhSimpleContextNC": "IPhSimpleContextNCFactory",
+    "PhSimpleContextBdry": "IPhSimpleContextBdryFactory",
+    "PhSequenceContext": "IPhSequenceContextFactory",
+}
+
+#: Output-step class -> its LCM factory interface. Same contract.
+_PROCESS_OUTPUT_FACTORIES = {
+    "MoCopyFromInput": "IMoCopyFromInputFactory",
+    "MoInsertPhones": "IMoInsertPhonesFactory",
+}
+
+#: Present in the LCM index, held behind the FR-025 skip (create-path contract
+#: section 4). Named individually so the skip reason can say WHICH unexercised
+#: class blocked the rule instead of "unknown class".
+#:
+#: **`PhSimpleContextBdry` LEFT THIS SET at T107 (2026-08-25)** and now has a
+#: create path in `_PROCESS_INPUT_FACTORIES` and
+#: `_PROCESS_SHARED_CONTEXT_CLASSES`. T076 held it here because `Mbugwe
+#: LizzieHC practice` holds 22 in `ContextsOS` with not one referenced by any
+#: of its 18 rules -- correct, still reproduces, and taken on ONE corpus.
+#: T078 measured `Ejagham W Mini`: 13 of 13 `MoAffixProcess` rules blocked on
+#: this class alone, 8 with it as a direct `InputOS` member and 5 through a
+#: rule-owned `PhSequenceContext` whose `MembersRS` reaches the single
+#: `PhPhonData.ContextsOS` boundary context -- 8 + 5 = the 13 distinct rules,
+#: verified read-only against the source's own object graph. Corpus-wide: 32
+#: rules, 19 reproduced, 13 not, one blocking class. Evidence:
+#: `tests/integration/_snapshots/process-rules-038-t078-corpus.json`.
+#:
+#: **THE UNIT OF "UNEXERCISED" IS THE RULE, NOT THE PROJECT**, and the three
+#: survivors are the ones where both readings hold. `PhIterationContext` is
+#: NOT absent project-wide -- Mbugwe holds 11 in `ContextsOS` and a live run
+#: created 9 under transferred phonological rules -- it is absent from every
+#: `MoAffixProcess` in every sanctioned corpus, which is the claim this set
+#: makes and the claim the skip reason now states. `MoModifyFromInput` and
+#: `MoInsertNC` are absent on both readings.
+_PROCESS_UNEXERCISED_CLASSES = frozenset({
+    "MoModifyFromInput",
+    "MoInsertNC",
+    "PhIterationContext",
+})
+
+#: `PhSimpleContext*.FeatureStructureRA` target class per context class -- used
+#: only to name the referent in the skip reason and in `ProcessContextSpec`.
+_PROCESS_CONTEXT_REFERENT_KIND = {
+    "PhSimpleContextSeg": "phoneme",
+    "PhSimpleContextNC": "natural class",
+    "PhSimpleContextBdry": "boundary marker",
+}
+
+#: The context classes whose single `FeatureStructureRA` must be resolved
+#: before the context can be built -- DERIVED from the map above rather than
+#: spelled a second time. T107's lesson: this set used to be an inline
+#: `("PhSimpleContextSeg", "PhSimpleContextNC")` tuple inside
+#: `_resolve_process_graph`, so admitting a third context class to
+#: `_PROCESS_INPUT_FACTORIES` would have created it with a NULL referent and
+#: reported success -- a context that matches nothing, which is the exact
+#: outcome the referent check exists to refuse. Deriving it means a class
+#: cannot be given a factory without also being given the check.
+_PROCESS_SIMPLE_CONTEXT_CLASSES = frozenset(_PROCESS_CONTEXT_REFERENT_KIND)
+
+
+def _get_lcm_factory(target, iface_name):
+    """A factory by LCM interface NAME, fake-tolerant.
+
+    Generalises `_get_inflection_class_factory`'s ladder -- ServiceLocator
+    first (the create-path contract's `GetService(IMoAffixProcessFactory)`
+    leg, and the only one that works for a class no wrapper covers), then the
+    `GetFactory` interface-cast and string-key fallbacks the offline fakes
+    implement. `None` when no factory is obtainable, which every caller treats
+    as a blocker rather than as permission to use a different factory.
+    """
+    iface = None
+    try:
+        import sys as _sys
+        _lcm = _sys.modules.get("SIL.LCModel")
+        if _lcm is None:
+            import SIL.LCModel as _lcm  # noqa: F811
+        iface = getattr(_lcm, iface_name, None)
+    except Exception:  # noqa: BLE001 -- no pythonnet -> string-key fallback
+        iface = None
+    if iface is not None:
+        for getter in (
+            lambda: target.Cache.ServiceLocator.GetService(iface),
+            lambda: iface(target.GetFactory(iface)),
+        ):
+            try:
+                factory = getter()
+            except Exception:  # noqa: BLE001 -- try the next rung
+                continue
+            if factory is not None:
+                return factory
+    try:
+        return target.GetFactory(iface_name)
+    except Exception:  # noqa: BLE001 -- no factory obtainable
+        return None
+
+
+def _process_referent_by_natural_key(context, src_obj, object_class):
+    """FR-024 step 2: the destination object this source phoneme / natural
+    class matches by roster-admitted NAME, or None.
+
+    This is the leg that makes FR-024's "not to duplicates" true for STARTER
+    content: a newly created destination ships 23 example phonemes whose GUIDs
+    match nothing in any source, so a GUID-only lookup would report every rule
+    referencing a phoneme as unreproducible even after Phase 1 correctly reused
+    the starter object.
+
+    Ambiguity is NOT a pick. `preview.plan_match_decision` propagates
+    `NaturalKeyAmbiguityError` when an eligible key hits more than one
+    candidate, and it is caught HERE and turned into "unresolved" so the rule
+    skips with a reason -- guessing between two same-named destination phonemes
+    is how a rule silently comes to match the wrong segment.
+
+    ROUTED THROUGH THE SEAM (T105), AND WHICH AMBIGUITY READING WON.
+    This function used to resolve its own candidates through
+    `NATURAL_KEY_SCOPE_FNS[binding.scope_fn_id]` -- the seam's own candidate
+    branch, line for line, minus the `_log.warning` the seam emits when the
+    destination scope cannot be enumerated. T092 measured that drift; the
+    routing ends it, and the warning is the one behaviour this change adds.
+
+    The seam's contract says "an ambiguous key is a harness error the operator
+    must see"; this site's says "guessing between two same-named destination
+    phonemes is how a rule silently comes to match the wrong segment". T105
+    required one reading to be picked and named, per site. **Both survive,
+    because they were never the same question**: propagating is what the SEAM
+    does, absorbing-with-a-reason is what THIS CALLER does with the raise, and
+    the catch below now sits visibly at the call site instead of being implied
+    by a divergent copy of the seam's body.
+
+    The caller's reading wins here on measured grounds. Ambiguity in these
+    three classes is the NORMAL condition on real pairs, not an exceptional
+    one: T098 re-censused two live pairs and found 12 duplicate-name groups /
+    21 extra objects in `PhNCFeatures` on Ngoreme and 1 / 3 on Ejagham, and
+    T043's live run measured 21 duplicate phoneme names in a single
+    destination. A plan-time referent walk that propagated would abort whole
+    runs over the common case, where this leg exists precisely so one rule can
+    skip with a reason while the rest of the transfer proceeds.
+    """
+    if not object_class:
+        return None
+    binding = _matcher.natural_key_binding_for(object_class)
+    if binding is None:
+        return None
+    if _matcher.natural_key_roster_entry_for(object_class) is None:
+        return None
+    source = getattr(context, "source_handle", None)
+    target = getattr(context, "target_handle", None)
+    if source is None or target is None:
+        return None
+    if _matcher.NATURAL_KEY_SCOPE_FNS.get(binding.scope_fn_id) is None:
+        # Kept ahead of the seam rather than delegated to it: the seam returns
+        # None for an unregistered scope too, but this guard is also what makes
+        # the roster-admission check above meaningful on its own terms.
+        return None
+    try:
+        decision = _plan_match_decision(
+            object_class, _unwrap_lcm(src_obj), context,
+        )
+    except _matcher.NaturalKeyAmbiguityError:
+        return None
+    except Exception:  # noqa: BLE001 -- an undecidable key is "no match"
+        return None
+    if decision is None or decision.record.basis is not _MatchBasis.NATURAL_KEY:
+        return None
+    return _resolve_target_by_guid(target, decision.record.target_guid)
+
+
+class _PlanTimePending:
+    """Plan-time stand-in for a referent THIS RUN WILL CREATE.
+
+    Never returned in Move mode and never written to: pass 2 does not run at
+    plan time, so this only ever occupies a slot in the resolution script.
+    """
+
+    def __repr__(self) -> str:  # pragma: no cover -- diagnostics only
+        return "<referent this run will create>"
+
+
+PLAN_TIME_PENDING = _PlanTimePending()
+
+
+#: Referent class -> the category whose transfer creates it. A class ABSENT
+#: from this map is created by NO category, which is exactly the condition-4
+#: case: `PhSimpleContext*` objects owned by `PhPhonData.ContextsOS` have no
+#: category, so nothing this run does will bring them across.
+#:
+#: `PhBdryMarker` is deliberately absent and is NOT an omission: FLEx's
+#: boundary markers are fixed content with stable GUIDs, present in a
+#: brand-new project, so they resolve on the identity leg before this map is
+#: ever consulted. Measured on the Mbugwe run -- not one plan-time skip named
+#: a PhBdryMarker, while nine named a PhPhoneme or a natural class.
+#:
+#: **T107 turned that from an argument into a check**, because admitting
+#: `PhSimpleContextBdry` made this map's silence load-bearing: if a boundary
+#: marker did NOT resolve, the co-create would wire a null referent. All
+#: three sanctioned sources and both live destinations hold exactly the same
+#: two GUIDs -- `3bde17ce-...cb56` and `7db635e0-...89aaa` -- and every one of
+#: `Ejagham W Mini`'s 10 `PhSimpleContextBdry` points at one of them
+#: (verified read-only against the `.fwdata`); the census reads `PhBdryMarker`
+#: 2 -> 2 MATCHED on all three pairs. So the identity leg resolves, no closure
+#: edge is owed, and a boundary marker that somehow did not resolve still
+#: takes the FR-025 skip rather than producing a context that matches
+#: nothing -- the resolvability test is unconditional and does not consult
+#: this map.
+_PROCESS_REFERENT_CATEGORY = {
+    "PhPhoneme": GrammarCategory.PHONEMES,
+    "PhNCSegments": GrammarCategory.NATURAL_CLASSES,
+    "PhNCFeatures": GrammarCategory.NATURAL_CLASSES,
+}
+
+
+def _process_referent_will_be_created(context, src_obj):
+    """Plan-time only: will THIS run create a destination counterpart?
+
+    WHY THIS EXISTS, measured rather than anticipated. Preview runs before
+    anything is written, so a phoneme this transfer is about to create is
+    absent from the destination when Preview looks. Resolving against the
+    destination alone therefore answered "unreproducible" for every rule
+    referencing a not-yet-transferred phoneme or natural class: on the live
+    `Mbugwe LizzieHC practice` run Preview predicted 15 lost rules where Move
+    then lost 6 and rebuilt 9. A Preview that overstates the loss is not a
+    safe error -- it is the reason a person declines a transfer that would
+    have worked.
+
+    The predicate is the SELECTION, not mere presence in the source, because
+    a deselected category is not transferred and a rule depending on it really
+    would be lost. Under-reporting is the failure this must not commit.
+    """
+    category = _PROCESS_REFERENT_CATEGORY.get(_class_name_of(src_obj))
+    if category is None:
+        return False
+    selection = getattr(context, "_selection", None)
+    categories = getattr(selection, "categories", None) or {}
+    return bool(categories.get(category))
+
+
+def _resolve_process_referent(context, src_obj, identity_remap,
+                              plan_time=False):
+    """FR-024: the DESTINATION object matched under FR-001/FR-002 for one
+    external reference out of a process rule, or None.
+
+    Identity first, then the roster key -- `resolve_match`'s ordering, for its
+    reason: a GUID that already identified an object must not be second-guessed
+    by a name collision.
+
+    `plan_time` adds one final leg, and only that one: a referent absent today
+    whose class this run WILL create resolves to `PLAN_TIME_PENDING`. Move
+    never takes that leg, so Move's verdict is still decided entirely by what
+    is really there.
+    """
+    if src_obj is None:
+        return None
+    target = getattr(context, "target_handle", None)
+    if target is None:
+        return None
+    src_guid = _guid_str_from(src_obj)
+    if not src_guid:
+        return None
+    remapped = (identity_remap or {}).get(src_guid)
+    for guid in ([remapped] if remapped else []) + [src_guid]:
+        found = _resolve_target_by_guid(target, guid)
+        if found is not None:
+            return found
+    matched = _process_referent_by_natural_key(
+        context, src_obj, _class_name_of(src_obj))
+    if matched is not None:
+        return matched
+    if plan_time and _process_referent_will_be_created(context, src_obj):
+        return PLAN_TIME_PENDING
+    return None
+
+
+def _resolve_scoped_referent(context, src_ref, by_guid, expect_class):
+    """The destination object `src_ref` denotes within a CLASS-SCOPED lookup,
+    plus HOW it was found: `(obj, basis)`, basis one of `"guid"`,
+    `"identity_remap"`, `"natural_key"`, or `""` when unresolved.
+
+    **ONE HELPER, TWO CALLERS, ON PURPOSE (feature 038, T120 second entry,
+    2026-08-28).** The defect this closes was measured in two places at once --
+    `_phon_rule_apply_body`'s context-cell wiring and
+    `natural_classes_execute_action`'s `SegmentsRC` wiring -- and both were
+    the identical mistake: a dict keyed by DESTINATION GUID consulted with a
+    SOURCE GUID, whose miss was read as "absent from target" and raised. The
+    recurring lesson in this codebase is not that the fix is unknown but that
+    each discovery gets fixed point-locally while its twins are never swept
+    (T123's own "sibling swept" claim is an instance). So this lives at module
+    scope and both sites call it, rather than each growing its own copy that
+    can drift the way `_process_referent_by_natural_key` drifted from the seam
+    before T105 routed it.
+
+    ORDERING IS FR-001/FR-002's: identity is authoritative; the roster-admitted
+    name is consulted ONLY when identity finds nothing. The `by_guid` hit
+    returns before either fallback, so a GUID that already identified an object
+    is never second-guessed by a name collision.
+
+    AMBIGUITY IS NOT A PICK: `_process_referent_by_natural_key` absorbs
+    `NaturalKeyAmbiguityError` and returns None, so an ambiguous key leaves the
+    referent unresolved and the caller refuses with a reason. Guessing between
+    two same-named destination phonemes is how a rule silently comes to match
+    the wrong segment -- worse than the loss it would paper over.
+
+    DEGRADES TO TODAY'S BEHAVIOUR when `context` is None (the UPDATE path has
+    no live context and no plan): both fallbacks are skipped and this is a
+    plain GUID lookup.
+    """
+    if src_ref is None:
+        return None, ""
+    rg = _guid_str_from(src_ref)
+    if not rg:
+        return None, ""
+    found = by_guid.get(rg)
+    if found is not None:
+        return found, "guid"
+    if context is None:
+        return None, ""
+    plan = getattr(context, "_run_plan", None)
+    identity_remap = getattr(plan, "identity_remap", None)
+    if identity_remap is None:
+        identity_remap = getattr(context, "_identity_remap", None) or {}
+    remapped = identity_remap.get(rg)
+    if remapped:
+        found = by_guid.get(remapped)
+        if found is not None:
+            return found, "identity_remap"
+    matched = _process_referent_by_natural_key(context, src_ref, expect_class)
+    if matched is not None:
+        mg = _guid_str_from(matched)
+        if mg and mg in by_guid:
+            return by_guid[mg], "natural_key"
+        if _class_name_of(matched) == expect_class:
+            # Right class, outside the scope this dict enumerated. Accepted:
+            # the roster's scope function and this dict's construction are two
+            # readings of the same set, and disagreeing with the roster here
+            # would silently re-open the very miss this function closes.
+            return matched, "natural_key"
+    return None, ""
+
+
+#: The `ContextsOS` member classes T076 co-creates. Both are already in
+#: `_PROCESS_INPUT_FACTORIES` -- a shared context is structurally the SAME
+#: object as one of the rule's own input members and differs only in who owns
+#: it -- so this set adds no new create code, only permission to run the
+#: existing one against a different owner.
+#:
+#: **`PhSimpleContextBdry` JOINED AT T107 (2026-08-25).** T076 excluded it on
+#: two grounds and only the first survived. Ground one, "the co-create path is
+#: unwritten", is what T107 answers. Ground two, "admitting it would ship a
+#: create path no corpus can check", was measured on `Mbugwe LizzieHC
+#: practice` alone -- 22 in `ContextsOS`, none referenced by any of its 18
+#: rules, still true -- and `Ejagham W Mini` falsifies it: of that project's 13
+#: `MoAffixProcess` rules, **5 reach a boundary context through exactly the
+#: shared-`ContextsOS` route this set governs**, and they reach the SAME one
+#: (the project holds exactly one `PhPhonData`-owned `PhSimpleContextBdry`).
+#: So this set now has a corpus that exercises every class in it.
+#:
+#: `PhIterationContext` stays out and keeps T076's reason INTACT: no
+#: `MoAffixProcess` in any sanctioned corpus references one, on any route.
+_PROCESS_SHARED_CONTEXT_CLASSES = frozenset({
+    "PhSimpleContextSeg",
+    "PhSimpleContextNC",
+    "PhSimpleContextBdry",
+})
+
+#: `ClassName` of the object that owns `ContextsOS`. Checked by name rather
+#: than by flid so a duck-typed unit fake and a live LCM object answer the
+#: same way; the live flid is 5099004 and is recorded in the audit artifact.
+_PROCESS_SHARED_CONTEXT_OWNER = "PhPhonData"
+
+
+def _process_shared_context_owner_is_phon_data(member_ref):
+    """Is `member_ref` owned by `PhPhonData.ContextsOS`?
+
+    The narrowness is the point. A `PhSequenceContext.MembersRS` entry this
+    rule does not own could in principle be owned by anything; only the
+    project-level context pool is a thing T076 measured and knows how to
+    rebuild. Anything else keeps the FR-025 skip, so an unmeasured owner
+    cannot silently acquire a create path.
+    """
+    owner = getattr(_unwrap_lcm(member_ref), "Owner", None)
+    if owner is None:
+        return False
+    return (_class_name_of(owner) or "") == _PROCESS_SHARED_CONTEXT_OWNER
+
+
+def _resolve_shared_process_context(context, member_ref, identity_remap,
+                                    plan_time=False):
+    """T076: can this shared `ContextsOS` context be CO-CREATED here?
+
+    Returns `(spec, "")` when yes, `(None, reason)` when the rule must still
+    take the FR-025 skip. `spec` is what `_create_process_graph` needs and
+    nothing more: the class to build, the source GUID to preserve, and the
+    already-resolved destination referent to wire into
+    `FeatureStructureRA`.
+
+    WHY THE REFERENT AND NOT THE CONTEXT IS THE QUESTION. The context is a
+    two-field object -- a class and a pointer at a phoneme or a natural class
+    -- and this engine already creates that exact object for the rule's own
+    `InputOS` members. What it cannot invent is the thing pointed AT. So the
+    resolvability test is applied one hop out, where it decides something,
+    rather than on the context, where a `None` only ever meant "nobody has
+    copied this yet".
+    """
+    member_class = _class_name_of(member_ref) or ""
+    if member_class not in _PROCESS_SHARED_CONTEXT_CLASSES:
+        return None, ""
+    if not _process_shared_context_owner_is_phon_data(member_ref):
+        return None, ""
+    iface = "I" + member_class
+    if member_class == "PhSimpleContextNC":
+        for constr_field in ("PlusConstrRS", "MinusConstrRS"):
+            if _process_ref_seq(member_ref, iface, constr_field):
+                return None, (
+                    "the shared PhPhonData.ContextsOS context %s carries a "
+                    "non-empty %s -- PhFeatureConstraint has zero live "
+                    "instances and ties into the feature system, so it ships "
+                    "behind the FR-025 skip rather than a guess (create-path "
+                    "contract section 4)"
+                    % (_guid_str_from(member_ref) or "(no guid)", constr_field)
+                )
+    src_referent = getattr(_cast_lcm(member_ref, iface),
+                           "FeatureStructureRA", None)
+    kind = _PROCESS_CONTEXT_REFERENT_KIND.get(member_class, "referent")
+    if src_referent is None:
+        return None, (
+            "the shared PhPhonData.ContextsOS context %s names no %s at all "
+            "-- a context that matches nothing is not a faithful "
+            "reproduction (FR-023)"
+            % (_guid_str_from(member_ref) or "(no guid)", kind)
+        )
+    resolved = _resolve_process_referent(
+        context, src_referent, identity_remap, plan_time)
+    if resolved is None:
+        return None, (
+            "the shared PhPhonData.ContextsOS context %s references %s %s, "
+            "which is absent from the destination and matched nothing by "
+            "natural key -- co-creating the context would produce one that "
+            "matches nothing (FR-024/FR-025)"
+            % (_guid_str_from(member_ref) or "(no guid)", kind,
+               _guid_str_from(src_referent) or "(no guid)")
+        )
+    return {
+        "class": member_class,
+        "guid": _guid_str_from(member_ref),
+        "referent": resolved,
+        "referent_guid": _guid_str_from(src_referent),
+    }, ""
+
+
+def _process_referent_label(referent):
+    """Human label for a resolved phoneme / natural class, for the report.
+
+    A `PhVariable` resolves nothing and legitimately has no label, so "" is a
+    normal answer here rather than a missing one.
+    """
+    if referent is None:
+        return ""
+    if __package__:
+        from . import references as _references
+    else:
+        import references as _references  # type: ignore
+    try:
+        return _references._item_label(referent) or ""
+    except Exception:  # noqa: BLE001 -- an unlabelable fake still reports
+        return ""
+
+
+def _process_rule_members(src_rule, field):
+    """`InputOS` / `OutputOS` of a source rule, cast, order preserved.
+
+    The cast is not optional on a live host: `_walk_entry_allomorphs` receives
+    the rule as an `IMoForm`, and pythonnet resolves attributes against the
+    STATIC type, so uncast `.InputOS` is invisible (`None`) on an object that
+    really has one -- the same shape that made flexicon 4.5.0's natural-class
+    feature wiring 100% dead code while every test passed.
+    """
+    rule = _cast_lcm(_unwrap_lcm(src_rule), "IMoAffixProcess")
+    return list(getattr(rule, field, None) or ())
+
+
+def _process_ref_seq(obj, iface_name, field):
+    """One reference sequence off a cast member, as a list."""
+    return list(getattr(_cast_lcm(obj, iface_name), field, None) or ())
+
+
+def _resolve_process_graph(src_rule, context, identity_remap, plan_time=False):
+    """PASS 1 -- resolve the whole rule graph WITHOUT writing anything.
+
+    Returns `(script, "")` when the rule is fully reproducible, or
+    `(None, reason)` naming the single specific blocker. The reason is what
+    reaches the `DroppedItemRecord` and the `ProcessRuleTransferRecord`, so it
+    must say which member and which referent, not merely that something failed.
+    """
+    rule_guid = _guid_str_from(src_rule)
+    inputs = []
+    input_by_guid = {}
+
+    for index, member in enumerate(_process_rule_members(src_rule, "InputOS")):
+        member_class = _class_name_of(member) or ""
+        member_guid = _guid_str_from(member)
+        if member_class in _PROCESS_UNEXERCISED_CLASSES:
+            return None, (
+                "MoAffixProcess %s input member %d is a %s, a class no affix "
+                "process rule in any sanctioned corpus uses -- this engine "
+                "ships it behind the FR-025 skip rather than guessing an "
+                "implementation no data can check (create-path contract "
+                "section 4)" % (rule_guid, index, member_class)
+            )
+        if member_class not in _PROCESS_INPUT_FACTORIES:
+            return None, (
+                "MoAffixProcess %s input member %d is a %s, which this engine "
+                "cannot reproduce -- rule not transferred (FR-023/FR-025)"
+                % (rule_guid, index, member_class or "(unknown class)")
+            )
+        row = {
+            "class": member_class,
+            "guid": member_guid,
+            "index": index,
+            "referent": None,
+            "referent_guid": "",
+            "members": [],
+        }
+        if member_class in _PROCESS_SIMPLE_CONTEXT_CLASSES:
+            iface = "I" + member_class
+            src_referent = getattr(
+                _cast_lcm(member, iface), "FeatureStructureRA", None)
+            kind = _PROCESS_CONTEXT_REFERENT_KIND.get(member_class, "referent")
+            if src_referent is None:
+                return None, (
+                    "MoAffixProcess %s input member %d (%s) names no %s at "
+                    "all -- a context that matches nothing is not a faithful "
+                    "reproduction (FR-023)"
+                    % (rule_guid, index, member_class, kind)
+                )
+            resolved = _resolve_process_referent(
+                context, src_referent, identity_remap, plan_time)
+            if resolved is None:
+                return None, (
+                    "MoAffixProcess %s input member %d (%s) references %s %s, "
+                    "which is absent from the destination and matched nothing "
+                    "by natural key -- rule not transferred, because a "
+                    "context with an unresolved %s would silently stop "
+                    "matching (FR-024/FR-025)"
+                    % (rule_guid, index, member_class, kind,
+                       _guid_str_from(src_referent), kind)
+                )
+            row["referent"] = resolved
+            row["referent_guid"] = _guid_str_from(src_referent)
+        if member_class == "PhSimpleContextNC":
+            for constr_field in ("PlusConstrRS", "MinusConstrRS"):
+                if _process_ref_seq(member, "IPhSimpleContextNC", constr_field):
+                    return None, (
+                        "MoAffixProcess %s input member %d (PhSimpleContextNC) "
+                        "carries a non-empty %s -- PhFeatureConstraint has "
+                        "zero live instances and ties into the feature "
+                        "system, so it ships behind the FR-025 skip rather "
+                        "than a guess (create-path contract section 4)"
+                        % (rule_guid, index, constr_field)
+                    )
+        if member_class == "PhSequenceContext":
+            row["members"] = _process_ref_seq(
+                member, "IPhSequenceContext", "MembersRS")
+            if not row["members"]:
+                return None, (
+                    "MoAffixProcess %s input member %d (PhSequenceContext) "
+                    "has an empty MembersRS in the SOURCE -- reproducing it "
+                    "would be indistinguishable from the content loss this "
+                    "skip exists to prevent (FR-023)"
+                    % (rule_guid, index)
+                )
+        inputs.append(row)
+        if member_guid:
+            input_by_guid[member_guid] = row
+
+    # Condition 4, and it must run AFTER every input member is known: a
+    # PhSequenceContext member may point either at a sibling in this same
+    # InputOS or at a shared PhPhonData.ContextsOS context, and only the
+    # complete input set can tell those apart.
+    for row in inputs:
+        for position, member_ref in enumerate(row["members"]):
+            ref_guid = _guid_str_from(member_ref)
+            if ref_guid and ref_guid in input_by_guid:
+                continue  # owned by this rule -- created in the same pass
+            resolved = _resolve_process_referent(
+                context, member_ref, identity_remap, plan_time)
+            if resolved is not None:
+                # Already in the destination -- a re-run, or a context some
+                # other pass brought across. Identity first, as everywhere
+                # else, and this is what keeps T076 idempotent under SC-008:
+                # run 2 finds the context it created on run 1 and co-creates
+                # nothing.
+                row.setdefault("member_targets", {})[position] = resolved
+                continue
+            # T076: absent, so ask whether this engine can BUILD it rather
+            # than only whether someone else already has.
+            spec, blocked = _resolve_shared_process_context(
+                context, member_ref, identity_remap, plan_time)
+            if spec is not None:
+                row.setdefault("shared_contexts", {})[position] = spec
+                continue
+            if blocked:
+                return None, (
+                    "MoAffixProcess %s input member %d (PhSequenceContext) "
+                    "at position %d cannot be reproduced: %s"
+                    % (rule_guid, row["index"], position, blocked)
+                )
+            return None, (
+                "MoAffixProcess %s input member %d (PhSequenceContext) "
+                "references %s %s at position %d, which this rule does "
+                "NOT own and which is neither present in the destination "
+                "nor a PhPhonData.ContextsOS context this engine can "
+                "co-create -- a partly-filled MembersRS is not an "
+                "acceptable outcome (FR-023/FR-024/FR-025, create-path "
+                "contract condition 4)"
+                % (rule_guid, row["index"],
+                   _class_name_of(member_ref) or "context",
+                   ref_guid or "(no guid)", position)
+            )
+
+    outputs = []
+    for index, step in enumerate(_process_rule_members(src_rule, "OutputOS")):
+        step_class = _class_name_of(step) or ""
+        if step_class in _PROCESS_UNEXERCISED_CLASSES:
+            return None, (
+                "MoAffixProcess %s output step %d is a %s, a class no affix "
+                "process rule in any sanctioned corpus uses -- this engine "
+                "ships it behind the FR-025 skip rather than guessing an "
+                "implementation no data can check (create-path contract "
+                "section 4)" % (rule_guid, index, step_class)
+            )
+        if step_class not in _PROCESS_OUTPUT_FACTORIES:
+            return None, (
+                "MoAffixProcess %s output step %d is a %s, which this engine "
+                "cannot reproduce -- rule not transferred (FR-023/FR-025)"
+                % (rule_guid, index, step_class or "(unknown class)")
+            )
+        row = {
+            "class": step_class,
+            "guid": _guid_str_from(step),
+            "index": index,
+            "content_guid": "",
+            "referents": [],
+            "referent_guids": [],
+        }
+        if step_class == "MoCopyFromInput":
+            content = getattr(
+                _cast_lcm(step, "IMoCopyFromInput"), "ContentRA", None)
+            content_guid = _guid_str_from(content) if content is not None else ""
+            # T081: A NULL `ContentRA` AND A DANGLING ONE ARE DIFFERENT FACTS,
+            # and this condition used to conflate them (`not content_guid or
+            # content_guid not in input_by_guid`), refusing the WHOLE rule for
+            # either.
+            #
+            # `IMoCopyFromInput.ContentRA` is an optional atomic reference --
+            # LCM documents its empty state as "Null when reference is not
+            # set" and the property is writable -- so a source step with no
+            # ContentRA is a well-formed step that copies nothing, not a
+            # broken one. Reproducing it as a step that copies nothing is
+            # EXACTLY faithful; refusing it made the destination differ from
+            # the source in order to keep the destination tidy, which is the
+            # opposite of what FR-023 asks for. Dropping the rule also loses
+            # every object the rule OWNS: on `Ejagham W Mini` one such rule
+            # took 5 `PhSequenceContext` objects owned by `MoAffixProcess.Input`
+            # down with it (39 -> 34), so the tidiness cost 6 objects to save 0.
+            #
+            # A ContentRA that IS set but points outside this rule's own input
+            # members is still refused, unchanged: that back-reference names an
+            # object the new rule will not own, so it cannot be rebuilt and a
+            # step pointing at another rule's member is not reproducible.
+            if content_guid and content_guid not in input_by_guid:
+                return None, (
+                    "MoAffixProcess %s output step %d (MoCopyFromInput) "
+                    "copies %s, which is not one of this rule's own input "
+                    "members -- the intra-rule back-reference cannot be "
+                    "rebuilt and the step would copy nothing (FR-023)"
+                    % (rule_guid, index, content_guid)
+                )
+            # "" means the SOURCE's ContentRA is null; the build path leaves
+            # the destination's null to match.
+            row["content_guid"] = content_guid
+        else:  # MoInsertPhones
+            terminals = _process_ref_seq(
+                step, "IMoInsertPhones", "ContentRS")
+            if not terminals:
+                return None, (
+                    "MoAffixProcess %s output step %d (MoInsertPhones) has an "
+                    "empty ContentRS in the SOURCE -- a step that inserts "
+                    "nothing is not a faithful reproduction (FR-023)"
+                    % (rule_guid, index)
+                )
+            for position, terminal in enumerate(terminals):
+                resolved = _resolve_process_referent(
+                    context, terminal, identity_remap, plan_time)
+                if resolved is None:
+                    return None, (
+                        "MoAffixProcess %s output step %d (MoInsertPhones) "
+                        "inserts %s %s at position %d, which is absent from "
+                        "the destination and matched nothing by natural key "
+                        "-- rule not transferred (FR-024/FR-025)"
+                        % (rule_guid, index,
+                           _class_name_of(terminal) or "terminal unit",
+                           _guid_str_from(terminal) or "(no guid)", position)
+                    )
+                row["referents"].append(resolved)
+                row["referent_guids"].append(_guid_str_from(terminal))
+        outputs.append(row)
+
+    if not inputs and not outputs:
+        return None, (
+            "MoAffixProcess %s has an empty InputOS AND an empty OutputOS in "
+            "the SOURCE -- there is no rule content to reproduce, and "
+            "creating the shell would be indistinguishable from the "
+            "empty-OutputOS shell SC-006 forbids" % rule_guid
+        )
+    return {"inputs": inputs, "outputs": outputs}, ""
+
+
+def _discard_partial_process_rule(rule_obj, entry_ie, was_lexeme_form):
+    """Detach and, best effort, delete a rule shell whose graph failed to
+    build after pass 1 approved it.
+
+    Detach FIRST: an object no longer owned by the entry is already out of the
+    lexicon whether or not the delete lands, and `Lib/*.py` has no other
+    `.Delete()` call to copy a transaction posture from. Both steps are
+    fail-soft -- a discard that raised would replace a reported skip with a
+    crash, which is a worse answer to the same loss.
+    """
+    try:
+        if was_lexeme_form:
+            if entry_ie.LexemeFormOA is rule_obj:
+                entry_ie.LexemeFormOA = None
+        else:
+            entry_ie.AlternateFormsOS.Remove(rule_obj)
+    except Exception:  # noqa: BLE001 -- fake surfaces / already detached
+        pass
+    try:
+        _cast_lcm(rule_obj, "ICmObject").Delete()
+    except Exception:  # noqa: BLE001 -- undeletable / offline fake
+        pass
+
+
+def _target_contexts_os(target):
+    """The destination's `PhPhonData.ContextsOS`, or None on a fake/absent one.
+
+    Fail-soft on purpose: an offline fake that has no phonological data must
+    make the co-create return a REASON, which becomes an FR-025 skip, rather
+    than raise -- a crash would replace a reported loss with an unreported
+    one.
+    """
+    try:
+        return target.Cache.LangProject.PhonologicalDataOA.ContextsOS
+    except Exception:  # noqa: BLE001 -- fake surfaces / no phon data
+        return None
+
+
+def _create_shared_process_context(spec, target):
+    """T076 PASS 2 leg: build one shared context into `ContextsOS`.
+
+    Returns `(obj, "")` or `(None, reason)`. GUID-preserving through the same
+    `create_with_guid` every other create here uses, so a re-run recognises
+    the context as the same object and the identity leg in
+    `_resolve_process_graph` finds it instead of building a second one.
+
+    THE OWNER IS THE WHOLE DIFFERENCE from a rule-owned input member. The
+    object is added to the project-level `ContextsOS`, not to the rule's
+    `InputOS`, because that is where the source keeps it -- putting it under
+    the rule would change what the destination MEANS while making the counts
+    look right, the class of error SC-006 exists to catch.
+    """
+    contexts_os = _target_contexts_os(target)
+    if contexts_os is None:
+        return None, (
+            "the destination exposes no PhPhonData.ContextsOS to own it"
+        )
+    iface_name = _PROCESS_INPUT_FACTORIES.get(spec["class"])
+    factory = _get_lcm_factory(target, iface_name) if iface_name else None
+    if factory is None:
+        return None, (
+            "no %s is obtainable from the destination"
+            % (iface_name or spec["class"])
+        )
+    obj = create_with_guid(factory, spec["guid"], spec["class"])
+    if obj is None:
+        return None, "creating the %s returned nothing" % spec["class"]
+    try:
+        contexts_os.Add(obj)
+    except Exception as exc:  # noqa: BLE001
+        return None, "adding it to PhPhonData.ContextsOS failed: %s" % exc
+    try:
+        _cast_lcm(obj, "I" + spec["class"]).FeatureStructureRA = (
+            spec["referent"])
+    except Exception as exc:  # noqa: BLE001
+        return None, "wiring its FeatureStructureRA failed: %s" % exc
+    return obj, ""
+
+
+def _create_process_graph(new_rule, script, target):
+    """PASS 2 -- create `InputOS` then `OutputOS` from an approved script.
+
+    Input BEFORE output, and that ordering is a data dependency rather than a
+    style: `MoCopyFromInput.ContentRA` points back at an `InputOS` member of
+    the SAME rule, so the map from source GUID to new object must already
+    exist when the output pass runs. The map is many-to-one tolerant because
+    one input member is referenced by two output steps in the live corpus
+    (rule `re-2`), and `OutputOS` order is significant, so both sequences are
+    built by appending in source order.
+
+    Returns `(input_specs, output_specs, "")`, or `(None, None, reason)` on a
+    create that failed despite pass 1.
+    """
+    rule_ie = _cast_lcm(new_rule, "IMoAffixProcess")
+    new_by_src_guid = {}
+    input_specs = []
+
+    for row in script["inputs"]:
+        factory = _get_lcm_factory(
+            target, _PROCESS_INPUT_FACTORIES[row["class"]])
+        if factory is None:
+            return None, None, (
+                "no %s is obtainable from the destination, so this rule's "
+                "input member %d could not be created"
+                % (_PROCESS_INPUT_FACTORIES[row["class"]], row["index"])
+            )
+        obj = create_with_guid(factory, row["guid"], row["class"])
+        if obj is None:
+            return None, None, (
+                "creating input member %d (%s) returned nothing"
+                % (row["index"], row["class"])
+            )
+        rule_ie.InputOS.Add(obj)
+        if row["guid"]:
+            new_by_src_guid[row["guid"]] = obj
+        row["new"] = obj
+
+    # References second, so a PhSequenceContext can point at a sibling that
+    # this same pass created.
+    for row in script["inputs"]:
+        obj = row["new"]
+        co_created: list = []
+        if row["referent"] is not None:
+            try:
+                _cast_lcm(obj, "I" + row["class"]).FeatureStructureRA = (
+                    row["referent"])
+            except Exception as exc:  # noqa: BLE001
+                return None, None, (
+                    "wiring input member %d (%s) FeatureStructureRA failed: "
+                    "%s" % (row["index"], row["class"], exc)
+                )
+        if row["class"] == "PhSequenceContext":
+            members = _cast_lcm(obj, "IPhSequenceContext").MembersRS
+            member_targets = row.get("member_targets", {})
+            shared_specs = row.get("shared_contexts", {})
+            for position, member_ref in enumerate(row["members"]):
+                ref_guid = _guid_str_from(member_ref)
+                target_obj = new_by_src_guid.get(ref_guid)
+                if target_obj is None:
+                    target_obj = member_targets.get(position)
+                if target_obj is None and position in shared_specs:
+                    target_obj, why = _create_shared_process_context(
+                        shared_specs[position], target)
+                    if target_obj is None:
+                        return None, None, (
+                            "input member %d (PhSequenceContext) could not "
+                            "co-create its shared PhPhonData.ContextsOS "
+                            "member at position %d: %s"
+                            % (row["index"], position, why)
+                        )
+                    co_created.append(shared_specs[position]["guid"])
+                    if ref_guid:
+                        new_by_src_guid[ref_guid] = target_obj
+                if target_obj is None:
+                    return None, None, (
+                        "input member %d (PhSequenceContext) lost its member "
+                        "at position %d between resolution and creation"
+                        % (row["index"], position)
+                    )
+                members.Add(target_obj)
+        input_specs.append(ProcessContextSpec(
+            context_class=row["class"],
+            index=row["index"],
+            referent_guid=row["referent_guid"],
+            label=_process_referent_label(row["referent"]),
+            co_created_shared=tuple(co_created),
+        ))
+
+    output_specs = []
+    for row in script["outputs"]:
+        factory = _get_lcm_factory(
+            target, _PROCESS_OUTPUT_FACTORIES[row["class"]])
+        if factory is None:
+            return None, None, (
+                "no %s is obtainable from the destination, so this rule's "
+                "output step %d could not be created"
+                % (_PROCESS_OUTPUT_FACTORIES[row["class"]], row["index"])
+            )
+        obj = create_with_guid(factory, row["guid"], row["class"])
+        if obj is None:
+            return None, None, (
+                "creating output step %d (%s) returned nothing"
+                % (row["index"], row["class"])
+            )
+        rule_ie.OutputOS.Add(obj)
+        if row["class"] == "MoCopyFromInput":
+            # T081: an EMPTY `content_guid` means the source step's ContentRA
+            # was null, which the plan step now reproduces rather than refuses.
+            # Leaving the new step's ContentRA null is the faithful outcome, so
+            # there is nothing to look up and nothing to wire. Routing it
+            # through `new_by_src_guid.get("")` would miss, and the "lost its
+            # intra-rule back-reference" guard below would reject a rule that
+            # never had one -- reinstating the drop this change removes, one
+            # layer further down.
+            if not row["content_guid"]:
+                content_label = ""
+            else:
+                content = new_by_src_guid.get(row["content_guid"])
+                if content is None:
+                    return None, None, (
+                        "output step %d (MoCopyFromInput) lost its intra-rule "
+                        "back-reference between resolution and creation"
+                        % row["index"]
+                    )
+                try:
+                    _cast_lcm(obj, "IMoCopyFromInput").ContentRA = content
+                except Exception as exc:  # noqa: BLE001
+                    return None, None, (
+                        "wiring output step %d (MoCopyFromInput) ContentRA "
+                        "failed: %s" % (row["index"], exc)
+                    )
+                content_label = row["content_guid"]
+        else:
+            try:
+                seq = _cast_lcm(obj, "IMoInsertPhones").ContentRS
+                for referent in row["referents"]:
+                    seq.Add(referent)
+            except Exception as exc:  # noqa: BLE001
+                return None, None, (
+                    "wiring output step %d (MoInsertPhones) ContentRS "
+                    "failed: %s" % (row["index"], exc)
+                )
+            content_label = ""
+        output_specs.append(ProcessOutputSpec(
+            step_class=row["class"],
+            index=row["index"],
+            content=content_label,
+            referent_guids=tuple(row["referent_guids"]),
+        ))
+
+    return tuple(input_specs), tuple(output_specs), ""
+
+
+def _record_process_rule(context, record):
+    """Accumulate one `ProcessRuleTransferRecord` on the run context.
+
+    Same idiom as `context._dropped`: the executor collects, and
+    `Lib/transfer.py` hands the tuple to `report.build(extra_process_rules=)`.
+    A rule that transferred and a rule that skipped are BOTH recorded -- SC-010
+    needs the run to be able to say which rules it rebuilt, not only which it
+    could not.
+    """
+    records = getattr(context, "_process_rules", None)
+    if records is None:
+        records = []
+        try:
+            object.__setattr__(context, "_process_rules", records)
+        except Exception:  # noqa: BLE001 -- immutable fake context
+            return
+    records.append(record)
+
+
+def _reproduce_affix_process(src_rule, src_entry, entry_ie, is_lexeme_form,
+                             context, tag, identity_remap, dropped):
+    """Reproduce one `MoAffixProcess`, or report and skip it (FR-023..FR-025).
+
+    Returns the new rule object, or `None` when the rule was skipped -- and a
+    `None` return NEVER means "fall back to a simpler class". That fallback is
+    the historic downgrade; `_walk_entry_allomorphs._mk` returns on `None`.
+    """
+    target = context.target_handle
+    rule_guid = _guid_str_from(src_rule)
+    field_name = "LexemeFormOA" if is_lexeme_form else "AlternateFormsOS"
+
+    def _skip(reason):
+        _append_dropped_once(dropped, DroppedItemRecord(
+            owner_kind="LexEntry",
+            owner_guid=_guid_str_from(src_entry),
+            owner_label=_owner_label_for("LexEntry", src_entry),
+            field_name=field_name,
+            item_name="MoAffixProcess",
+            item_guid=rule_guid,
+            reason=reason,
+        ))
+        if rule_guid:
+            _record_process_rule(context, ProcessRuleTransferRecord(
+                source_guid=rule_guid,
+                reproduced=False,
+                not_reproducible_reason=reason,
+            ))
+        # FidelityStatus.PARTIAL for the owning entry is not set here and
+        # must not be: `compute_fidelity_by_guid` DERIVES it from exactly this
+        # record's `owner_guid`, so the entry is already PARTIAL the moment
+        # the record above exists. A second, hand-set marking would be a
+        # parallel source of truth that could disagree with the report.
+        return None
+
+    script, blocker = _resolve_process_graph(
+        src_rule, context, identity_remap)
+    if script is None:
+        return _skip(blocker)
+
+    factory = _get_lcm_factory(target, "IMoAffixProcessFactory")
+    if factory is None:
+        return _skip(
+            "MoAffixProcess %s could not be created: no "
+            "IMoAffixProcessFactory is obtainable from the destination. There "
+            "is no flexicon wrapper for this class, so the ServiceLocator leg "
+            "is the whole create surface (create-path contract section 1)"
+            % rule_guid
+        )
+    new_rule = create_with_guid(factory, rule_guid, "MoAffixProcess")
+    if new_rule is None:
+        return _skip(
+            "MoAffixProcess %s could not be created: IMoAffixProcessFactory "
+            "returned nothing" % rule_guid
+        )
+
+    if is_lexeme_form and entry_ie.LexemeFormOA is None:
+        entry_ie.LexemeFormOA = new_rule
+        attached_as_lexeme_form = True
+    else:
+        entry_ie.AlternateFormsOS.Add(new_rule)
+        attached_as_lexeme_form = False
+
+    input_specs, output_specs, failure = _create_process_graph(
+        new_rule, script, target)
+    if failure:
+        _discard_partial_process_rule(
+            new_rule, entry_ie, attached_as_lexeme_form)
+        return _skip(
+            "MoAffixProcess %s was rolled back after its graph failed to "
+            "build: %s. Nothing was left in its place -- a partially "
+            "populated rule is the silent alteration of kind FR-025 forbids"
+            % (rule_guid, failure)
+        )
+
+    # The inherited IMoForm half. `InputOS`/`OutputOS` are what make this a
+    # RULE, and they are done; these are the fields it shares with an
+    # allomorph, applied the same way the allomorph path applies them.
+    #
+    # T061 confirmation, recorded here rather than in a task note alone:
+    # residue needs NO new carrier. `MoAffixProcess` is already in
+    # `residue.CARRIER_A_CLASSES` (:43), consistent with its inherited
+    # `LiftResidue`, and `apply_residue` dispatches on `ClassName` -- so the
+    # only thing that was missing was this CALL. A reproduced rule that
+    # carried no GT tag would be invisible to every residue-based audit while
+    # the allomorph beside it was tagged.
+    if __package__:
+        from .residue import apply_residue as _apply_residue
+    else:
+        from residue import apply_residue as _apply_residue  # type: ignore
+    ws = getattr(getattr(target, "Cache", None), "DefaultAnalWs", None)
+    resolver_cache = _get_resolver_cache(context)
+    try:
+        aprops = context.source_handle.Allomorphs.GetSyncableProperties(
+            src_rule)
+        target.Allomorphs.ApplySyncableProperties(
+            new_rule, aprops, ws_map=getattr(context, "_ws_map", None))
+    except Exception as exc:  # noqa: BLE001 -- flexicon disclaims this class
+        # NOT swallowed. flexicon's `AllomorphOperations` explicitly manages
+        # only the two allomorph factories and raises `FP_ParameterError` on
+        # any other ClassName, so this leg may legitimately be unavailable for
+        # a process rule. The rule's own content (Input/Output, identity) has
+        # already transferred, so this is a FIELD-level loss and is reported
+        # as one rather than being escalated into a rule-level skip that would
+        # discard content that did arrive.
+        _append_dropped_once(dropped, DroppedItemRecord(
+            owner_kind="MoAffixProcess",
+            owner_guid=rule_guid,
+            owner_label="",
+            field_name="Form",
+            item_name="MoAffixProcess inherited IMoForm fields",
+            item_guid=rule_guid,
+            reason=(
+                "the rule's Input/Output content transferred, but its "
+                "inherited IMoForm fields (Form and the rest of the allomorph "
+                "property set) could not be copied: flexicon's "
+                "AllomorphOperations manages only MoStemAllomorph and "
+                "MoAffixAllomorph and disclaims MoAffixProcess (%s: %s)"
+                % (type(exc).__name__, exc)
+            ),
+        ))
+    _apply_reference_fields(
+        "MoForm", src_rule, new_rule, target, tag, resolver_cache, dropped,
+        skip_fields=_MOFORM_DEFERRED_FIELDS,
+        ws_map=getattr(context, "_ws_map", None),
+        source=context.source_handle, owner_guid=rule_guid)
+    _apply_residue(new_rule, ws, tag)
+
+    new_guid = rule_guid
+    try:
+        from SIL.LCModel import ICmObject as _ICmObject
+        new_guid = str(_ICmObject(new_rule).Guid).lower()
+    except Exception:  # noqa: BLE001 -- offline fake
+        new_guid = str(getattr(new_rule, "guid", rule_guid) or rule_guid).lower()
+    if new_guid != rule_guid and identity_remap is not None and rule_guid:
+        identity_remap[rule_guid] = new_guid
+
+    if rule_guid:
+        _record_process_rule(context, ProcessRuleTransferRecord(
+            source_guid=rule_guid,
+            target_guid=new_guid or rule_guid,
+            reproduced=True,
+            input_contexts=input_specs,
+            output_steps=output_specs,
+        ))
+    return new_rule
 
 
 def _walk_entry_allomorphs(src_entry, new_entry, context, tag, identity_remap, dropped=None):
@@ -6181,16 +9780,73 @@ def _walk_entry_allomorphs(src_entry, new_entry, context, tag, identity_remap, d
     ws_map = getattr(context, "_ws_map", None)
 
     def _mk(src_allo, is_lexeme_form):
-        subclass = _dispatch_allomorph_subclass(_class_name_of(src_allo))
-        factory_iface = (IMoStemAllomorphFactory if subclass == "MoStemAllomorph"
-                         else IMoAffixAllomorphFactory)
+        class_name = _class_name_of(src_allo)
+        subclass = _dispatch_allomorph_subclass(class_name)
+        if subclass is None:
+            # 007-affixes-stems spec.md "Out of scope" / FR-341 posture: an
+            # IMoForm subclass this engine cannot reproduce -- notably
+            # MoAffixProcess, whose Input/Output process-rule chain has no
+            # counterpart on a plain MoAffixAllomorph -- must NOT be degraded
+            # into one.
+            #
+            # This branch used to be absent: `_dispatch_allomorph_subclass`
+            # correctly returned None, and the `else` on the factory ternary
+            # below silently sent it to IMoAffixAllomorphFactory anyway. The
+            # result kept the source GUID and Form, destroyed Input/Output and
+            # any custom fields, and was then stamped with GT residue -- so the
+            # run reported a clean transfer over objects whose entire
+            # linguistic content had been discarded (13/13 MoAffixProcess on
+            # the Ejagham W Mini -> Ejagham W Target sweep).
+            #
+            # Report it and create nothing; the entry keeps its senses and its
+            # remaining allomorphs.
+            _append_dropped_once(dropped, DroppedItemRecord(
+                owner_kind="LexEntry",
+                owner_guid=_guid_str_from(src_entry),
+                owner_label=_owner_label_for("LexEntry", src_entry),
+                field_name=("LexemeFormOA" if is_lexeme_form
+                            else "AlternateFormsOS"),
+                item_name=class_name or "(unknown allomorph subclass)",
+                item_guid=_guid_str_from(src_allo),
+                reason=(
+                    "allomorph subclass "
+                    f"{class_name or 'unknown'} is not reproducible by this "
+                    "engine (NEEDS_MANUAL) -- not transferred, because copying "
+                    "it as a plain MoAffixAllomorph would silently discard the "
+                    "subclass's own data (007-affixes-stems spec.md "
+                    "'Out of scope')"
+                ),
+            ))
+            return
+        if subclass == "MoAffixProcess":
+            # Feature 038 (T058): the real create path REPLACES the downgrade
+            # that used to live in the ternary below. `038-affix-fidelity`'s
+            # skip (18c0ece) is not removed -- it is now the FALLBACK, reached
+            # from inside `_reproduce_affix_process` whenever the rule's graph
+            # cannot be faithfully rebuilt. A None return means REPORTED AND
+            # SKIPPED and never "try a simpler class": returning here is what
+            # keeps the historic defect unreachable.
+            _reproduce_affix_process(
+                src_allo, src_entry, entry_ie, is_lexeme_form, context, tag,
+                identity_remap, dropped)
+            return
+        # The remaining two subclasses. This mapping is EXHAUSTIVE over
+        # `_dispatch_allomorph_subclass`'s `known` set by construction: every
+        # tag it can return is handled above or here, so a class added to that
+        # set without a create path is a KeyError at its first instance rather
+        # than a silent demotion to IMoAffixAllomorphFactory, which is what the
+        # `else` on the old ternary did to 13/13 MoAffixProcess.
+        factory_iface = {
+            "MoStemAllomorph": IMoStemAllomorphFactory,
+            "MoAffixAllomorph": IMoAffixAllomorphFactory,
+        }[subclass]
         try:
             factory = factory_iface(target.GetFactory(factory_iface))
             # GUID-preserved (033): this used to be a bare Create(), which
             # regenerated the identity of EVERY transferred allomorph (106/106
             # on the Ejagham Mini sweep).
             new_allo = create_with_guid(
-                factory, _guid_str_from(src_allo), subclass or "allomorph")
+                factory, _guid_str_from(src_allo), subclass)
         except Exception:
             return
         if new_allo is None:
@@ -6295,9 +9951,37 @@ _MSA_FACTORY_BY_SUBCLASS = {
 }
 
 
+class _PosAbsent:
+    """Sentinel for "the source MSA names NO part of speech, and that is legal".
+
+    A null `PartOfSpeechRA` is a state FLEx itself produces -- it is what
+    Category = `<Not Sure>` looks like in the UI -- so an engine that refuses to
+    reproduce it is declining a state the source legitimately holds, which is a
+    content loss rather than a dependency failure (T043b / FR-002).
+
+    It exists so `_resolve_or_none` can separate its two failure modes IN
+    CONTROL FLOW instead of only in the message string: `None` still means
+    "drop and report", while `_POS_ABSENT` means "reproduce the null"."""
+
+    __slots__ = ()
+
+    def __repr__(self):  # pragma: no cover -- diagnostics only
+        return "<POS absent on source>"
+
+
+_POS_ABSENT = _PosAbsent()
+
+
 def _create_msa_with_guid(target, new_entry, new_sense, subclass, src_guid, pos_fields):
     """Create a GUID-preserved MSA owned by `new_entry`, pointed at by
     `new_sense`, with `pos_fields` applied.
+
+    `new_sense=None` is the T123 HARDENING shape (see
+    `_create_entry_owned_msas_without_sense`, below `_create_msa_for_closure`):
+    an entry-owned MSA with no referencing source sense still gets created and
+    attached to `new_entry.MorphoSyntaxAnalysesOC`, just with the sense-wiring
+    step skipped rather than raised against a None. This is NOT the T123(a)
+    fix -- see that function's docstring.
 
     Returns the new MSA, or None to signal "fall back to the flexicon wrapper"
     (offline fakes, missing factory, GUID collision). Every None return that
@@ -6335,14 +10019,161 @@ def _create_msa_with_guid(target, new_entry, new_sense, subclass, src_guid, pos_
         ilexentry(new_entry).MorphoSyntaxAnalysesOC.Add(new_msa)
         for attr, value in pos_fields.items():
             setattr(new_msa, attr, value)
-        new_sense.MorphoSyntaxAnalysisRA = new_msa
+        if new_sense is not None:
+            new_sense.MorphoSyntaxAnalysisRA = new_msa
     except Exception as exc:  # noqa: BLE001
         _log_guid_fallback(subclass, src_guid, exc)
         return None
     return new_msa
 
 
-def _create_msa_for_closure(src_msa, new_sense, new_entry, context, tag, identity_remap):
+def _report_dropped_msa(dropped, src_entry, src_msa, kind, reason):
+    """Emit the FR-010 report line for an MSA that will not be reproduced.
+
+    No-ops when the caller has no `dropped` collector (duck-typed unit fakes
+    that call `_create_msa_for_closure` directly); the report is a backstop,
+    never a precondition for the transfer itself."""
+    if dropped is None:
+        return
+    _append_dropped_once(dropped, DroppedItemRecord(
+        owner_kind="LexEntry",
+        owner_guid=_guid_str_from(src_entry) if src_entry is not None else "",
+        owner_label=(_owner_label_for("LexEntry", src_entry)
+                     if src_entry is not None else ""),
+        field_name="MorphoSyntaxAnalysesOC",
+        item_name=kind or "(unknown MSA subclass)",
+        item_guid=_guid_str_from(src_msa),
+        reason=reason,
+    ))
+
+
+def _find_reusable_target_msa(new_entry, subclass, pos_fields):
+    """Scan `new_entry`'s ALREADY-CREATED MSAs for one a failed create could
+    legitimately REUSE instead of leaving its sense with a null referent.
+
+    T123(a), measured live on `Ngoreme FLEx` -> `GT038 T124 Ngoreme`: entry
+    `omoona` (e2cd79ef-...) owns TWO source `MoStemMsa` that are IDENTICAL in
+    every syncable property (same `PartOfSpeechRA`, same feature structure)
+    and differ ONLY by GUID -- one per sense ('child', 'small child'). The
+    flexicon wrapper fallback used when the GUID-preserving create path is
+    unavailable (`MSAOperations.CreateStem`/`CreateInflAff`/...) has its own
+    duplicate-avoidance behaviour and can refuse to mint a second, content-
+    identical MSA on the same entry; left unguarded that refusal propagated
+    as an uncaught exception (see `_create_via_wrapper_or_reuse`), and the
+    second MSA was silently never created -- not reported, not reused, just
+    absent, with its sense's `MorphoSyntaxAnalysisRA` left null.
+
+    A null referent is strictly worse than sharing a target MSA between two
+    source senses (`contracts/dropped-item-report.md`'s own hierarchy: a
+    reported, imperfect outcome beats a silent, broken one), so this is the
+    SECOND thing tried, after the create legs and before giving up and
+    reporting a drop. It matches by SUBCLASS plus every field in
+    `pos_fields` (comparing each field's resolved GUID) -- exactly the
+    content the wrapper itself would have deduped on.
+
+    Returns the matching target MSA, or None when nothing on the entry
+    matches (a genuine, reported drop is then the only option)."""
+    owned = getattr(new_entry, "MorphoSyntaxAnalysesOC", None) or ()
+    for candidate in owned:
+        try:
+            cand_class = _class_name_of(candidate)
+        except Exception:  # noqa: BLE001 -- an unreadable candidate can't match
+            cand_class = None
+        if cand_class != subclass:
+            continue
+        matches = True
+        for attr, value in pos_fields.items():
+            cand_value = getattr(candidate, attr, None)
+            want_guid = _guid_str_from(value) if value is not None else ""
+            got_guid = _guid_str_from(cand_value) if cand_value is not None else ""
+            if want_guid != got_guid:
+                matches = False
+                break
+        if matches:
+            return candidate
+    return None
+
+
+def _create_via_wrapper_or_reuse(create_fn, new_entry, subclass, pos_fields,
+                                 src_msa, dropped, src_entry, new_sense=None):
+    """Call a flexicon MSA-wrapper create function; turn a raised exception
+    into REUSE-or-REPORT instead of an uncaught crash (T123(a)).
+
+    Before this fix `target.MSA.CreateStem`/`CreateInflAff`/`CreateDerivAff`/
+    `CreateUnclassifiedAffix` were invoked bare inside `_create_msa_for_closure`
+    -- no try/except, unlike the GUID-preserving `_create_msa_with_guid` leg,
+    which guards both its `factory.Create` call and its owning-collection
+    wire-up. On `omoona` (Ngoreme) the wrapper raised while creating the
+    SECOND of two property-identical `MoStemMsa` on one entry. Left unguarded
+    that exception propagated out of `_create_msa_for_closure`, out of
+    `_walk_lex_entry_closure`'s per-sense loop (which had no try/except of
+    its own either -- see that function's own fix), and was only ever caught
+    by `Lib/transfer.py`'s per-ACTION swallow-and-record handler -- three
+    consequences that never reached `_report_dropped_msa`: the MSA was never
+    created, the sense's `MorphoSyntaxAnalysisRA` stayed null, and every
+    UNPROCESSED sibling on the SAME entry (further senses, allomorphs,
+    entry-refs) silently never ran either, because the whole entry's closure
+    aborted mid-walk while everything already written (the entry, the first
+    sense, the first MSA) stayed live with no rollback.
+
+    Never-silent (FR-010/Principle I / T123 acceptance). On failure:
+      1. try `_find_reusable_target_msa` -- an already-created MSA on this
+         entry that matches by subclass + POS fields is exactly what the
+         wrapper's own refusal implies exists;
+      2. only when nothing matches, report the drop and return None.
+    Either way this function itself never raises.
+
+    T123(a) HALF 2 (cycle 11): the first attempt at this function returned
+    the create-fn's result, or the reused MSA, and left WIRING the referring
+    sense to `new_sense` entirely to the caller (`_create_msa_for_closure` /
+    `_walk_lex_entry_closure`'s own post-call `new_sense.MorphoSyntaxAnalysisRA
+    = new_msa`, itself wrapped in a swallowing `except (AttributeError,
+    TypeError): pass`). Measured live (`Ngoreme FLEx` -> `GT038 T124
+    Ngoreme`, restore-bounded re-census tag t123c): entry `omoona`'s SECOND
+    MSA (8617b725-...) arrived in the destination, matched by count, carried
+    its feature structure -- but the referring sense ('small child') still
+    read `MorphoSyntaxAnalysisRA = None`. Delta +1 project-wide, exactly that
+    sense. Wiring the sense HERE, unconditionally, on every surviving return
+    (the create_fn() success leg too, not only the reuse leg) removes the
+    dependency on that caller-side reassignment ever running or ever
+    succeeding, and reports -- rather than silently drops -- an MSA that
+    exists but could not be wired to its sense, which is no better to the
+    user than an MSA that was never created at all."""
+    src_g = _guid_str_from(src_msa)
+    try:
+        new_msa = create_fn()
+    except Exception as exc:  # noqa: BLE001 -- wrapper internals, not ours
+        import logging as _logging
+        _logging.getLogger("gramtrans.Lib.categories").warning(
+            "MSA %s (%s): the flexicon create wrapper raised (%s: %s); "
+            "looking for an existing MSA on the entry to reuse before "
+            "reporting this MSA as dropped.",
+            src_g[:8], subclass, type(exc).__name__, exc,
+        )
+        new_msa = _find_reusable_target_msa(new_entry, subclass, pos_fields)
+        if new_msa is None:
+            _report_dropped_msa(
+                dropped, src_entry, src_msa, subclass,
+                f"{subclass} create wrapper raised {type(exc).__name__}: {exc} "
+                "-- the GUID-preserving path was also unavailable and no "
+                "matching MSA exists on the entry to reuse; MSA not transferred")
+            return None
+
+    if new_sense is not None:
+        try:
+            new_sense.MorphoSyntaxAnalysisRA = new_msa
+        except Exception as wire_exc:  # noqa: BLE001 -- never let this be silent
+            _report_dropped_msa(
+                dropped, src_entry, src_msa, subclass,
+                f"{subclass} MSA was created/reused but the referring sense "
+                f"could not be wired to it ({type(wire_exc).__name__}: "
+                f"{wire_exc}) -- MSA not transferred")
+            return None
+    return new_msa
+
+
+def _create_msa_for_closure(src_msa, new_sense, new_entry, context, tag,
+                            identity_remap, dropped=None, src_entry=None):
     """Create the target MSA for a sense, PRESERVING the source GUID.
 
     Feature 033. This used to route through the flexicon MSAOperations wrappers
@@ -6361,7 +10192,16 @@ def _create_msa_for_closure(src_msa, new_sense, new_entry, context, tag, identit
     silent), still recording the new GUID in identity_remap.
 
     Returns the new MSA, or None when the subclass is unsupported
-    (NEEDS_MANUAL) or POS is unresolved."""
+    (NEEDS_MANUAL) or a REQUIRED POS is unresolved.
+
+    On POS, "unresolved" is narrower than it once was (T043b / FR-002). A null
+    `PartOfSpeechRA` is a legal FLEx state -- Category = `<Not Sure>` -- so for
+    `MoStemMsa` and `MoUnclassifiedAffixMsa` an empty source POS is REPRODUCED
+    as a null rather than dropped; only a POS that is set on the source and not
+    resolvable in the target is a dependency failure worth dropping for.
+    `MoInflAffMsa` and `MoDerivAffMsa` keep the stricter guard, since an
+    inflectional or derivational affix with no category cannot be interpreted.
+    Every drop is still reported (Principle I / FR-010)."""
     from SIL.LCModel import ICmObject
     if __package__:
         from .residue import apply_residue
@@ -6373,6 +10213,10 @@ def _create_msa_for_closure(src_msa, new_sense, new_entry, context, tag, identit
     class_name = _class_name_of(src_msa)
     subclass = _dispatch_msa_subclass(class_name)
     if subclass is None:
+        _report_dropped_msa(
+            dropped, src_entry, src_msa, class_name,
+            f"MSA subclass {class_name or 'unknown'} is not reproducible by "
+            "this engine (NEEDS_MANUAL) -- sense left without an MSA")
         return None
 
     # Cast to the concrete MSA subclass so PartOfSpeechRA / From/ToPartOfSpeechRA
@@ -6384,65 +10228,165 @@ def _create_msa_for_closure(src_msa, new_sense, new_entry, context, tag, identit
     import logging as _logging
     _mlog = _logging.getLogger("gramtrans.Lib.categories")
 
-    def _pos_guid_of(attr):
-        ref = getattr(src_msa, attr, None)
-        return _guid_str_from(ref) if ref is not None else ""
+    def _pos_ref_of(attr):
+        """The source POS OBJECT this MSA slot names, and its GUID.
 
-    def _resolve_or_none(attr, which):
-        """Resolve a required target POS; on failure log (empty vs unresolved)
-        and return None so the caller skips this MSA instead of passing a null
-        POS to MSAOperations (which raises FP_NullParameterError and aborts the
-        whole affix closure)."""
-        pg = _pos_guid_of(attr)
-        tp = _resolve_target_pos(target, pg) if pg else None
+        T094: this used to return the GUID alone and DISCARD the reference it
+        had just read. That was correct for exactly as long as a category's
+        destination GUID was always its source GUID. T091 ends that -- the
+        planner now reuses a same-named destination category -- and the
+        discarded object is precisely what the natural-key fallback needs,
+        because the key is the category's `Name` and a GUID string cannot
+        supply one. 1,848 MSAs on `Ngoreme FLEx` lost their entire
+        morphosyntactic analysis to this one thrown-away value.
+        """
+        ref = getattr(src_msa, attr, None)
+        return ref, (_guid_str_from(ref) if ref is not None else "")
+
+    def _resolve_or_none(attr, which, *, empty_is_legal=False):
+        """Resolve a target POS. THREE outcomes, distinguished in control flow.
+
+        * the resolved target POS -- the source names one and the target has it.
+        * `_POS_ABSENT` -- the source POS is genuinely empty AND this subclass
+          permits that (`empty_is_legal`). The caller reproduces the null; it
+          does not drop. See `_PosAbsent` for why this is not a failure.
+        * `None` -- drop this MSA and report why. Either the source POS is empty
+          on a subclass that requires one, or it is set but NOT RESOLVABLE in
+          the target, which is a real dependency failure.
+
+        The two `None` cases used to be distinguished only inside the `why`
+        string while sharing one code path, so the legal-empty case was dropped
+        alongside the genuinely-broken one (T043b: 2 of 164 `MoStemMsa` on the
+        T038 pair, 9 on the Ngoreme pair)."""
+        src_pos_ref, pg = _pos_ref_of(attr)
+        # `empty_is_legal` covers a slot that is genuinely NULL -- never one
+        # that is merely INVISIBLE. An uncast, base-interface-typed MSA hides
+        # its subclass-only slots (pythonnet resolves attributes against the
+        # static wrapper type), so a failed `_cast_msa_concrete` ALSO reads as
+        # empty. Reproducing that as a null POS would convert a loud, reported
+        # dependency failure into exactly the silent content loss FR-002
+        # forbids, so require the slot to be present before trusting its
+        # emptiness.
+        if not pg and empty_is_legal and hasattr(src_msa, attr):
+            _mlog.info(
+                "MSA %s (%s): %s.%s is empty on source; reproducing the null "
+                "POS rather than dropping the MSA (legal in FLEx -- this is "
+                "Category = <Not Sure>).",
+                src_g[:8], subclass, subclass, which,
+            )
+            return _POS_ABSENT
+        tp = _resolve_target_pos(
+            target, pg,
+            src_pos=src_pos_ref,
+            source_handle=getattr(context, "source_handle", None),
+        ) if pg else None
         if tp is None:
+            why = ("is empty on source" if not pg
+                   else "not resolvable in target")
             _mlog.warning(
                 "MSA %s (%s): %s.%s guid=%r %s; skipping this MSA "
                 "(affix keeps its entry/senses/allomorphs).",
-                src_g[:8], subclass, subclass, which, pg,
-                "is empty on source" if not pg else "not resolvable in target",
+                src_g[:8], subclass, subclass, which, pg, why,
             )
+            # Never-silent (FR-010 / Principle I): a warning in the debug log
+            # is not a report. Dropping an MSA strips the sense's entire
+            # morphosyntactic analysis -- part of speech, inflection class,
+            # slot membership -- and the run report used to show nothing at
+            # all (69 of 111 MoInflAffMsa vanished this way on the Ejagham W
+            # Mini -> Ejagham W Target sweep, because the referenced POSes
+            # were never brought into the target).
+            _report_dropped_msa(
+                dropped, src_entry, src_msa, subclass,
+                f"{subclass}.{which} (POS guid={pg or 'empty'}) {why} -- MSA "
+                "not transferred; the sense keeps its entry and allomorphs "
+                "but loses its part-of-speech analysis")
         return tp
+
+    def _null_pos_fallback_blocked(which):
+        """The GUID-preserving create failed AND the source POS is null.
+
+        The flexicon wrapper cannot stand in here: `MSAOperations.Create*`
+        raises `FP_NullParameterError` on a null POS and would abort the whole
+        affix closure -- which is the ONLY reason the over-broad guard existed.
+        So report the loss instead of inventing a part of speech the source does
+        not have. Never silent (Principle I / FR-010)."""
+        _mlog.warning(
+            "MSA %s (%s): %s.%s is null on source (legal) but the "
+            "GUID-preserving create path was unavailable, and the flexicon "
+            "wrapper fallback rejects a null POS; reporting this MSA instead.",
+            src_g[:8], subclass, subclass, which,
+        )
+        _report_dropped_msa(
+            dropped, src_entry, src_msa, subclass,
+            f"{subclass}.{which} is empty on source (legal in FLEx -- Category "
+            "= <Not Sure>) but the GUID-preserving create path was unavailable "
+            "and the flexicon wrapper fallback rejects a null part of speech "
+            "-- MSA not transferred")
 
     if subclass == "MoInflAffMsa":
         tgt_pos = _resolve_or_none("PartOfSpeechRA", "PartOfSpeechRA")
         if tgt_pos is None:
             return None
         # slots=None: SlotsRC deferred to the 17.1 sub-pass (FR-333).
+        pos_fields = {"PartOfSpeechRA": tgt_pos}
         new_msa = _create_msa_with_guid(
-            target, new_entry, new_sense, subclass, src_g,
-            {"PartOfSpeechRA": tgt_pos})
+            target, new_entry, new_sense, subclass, src_g, pos_fields)
         if new_msa is None:
-            new_msa = target.MSA.CreateInflAff(new_sense, tgt_pos, slots=None)
+            new_msa = _create_via_wrapper_or_reuse(
+                lambda: target.MSA.CreateInflAff(new_sense, tgt_pos, slots=None),
+                new_entry, subclass, pos_fields, src_msa, dropped, src_entry, new_sense=new_sense)
     elif subclass == "MoStemMsa":
-        tgt_pos = _resolve_or_none("PartOfSpeechRA", "PartOfSpeechRA")
+        # A stem MSA may legally carry NO part of speech (Category =
+        # <Not Sure>), so an empty source POS is reproduced, not dropped.
+        tgt_pos = _resolve_or_none("PartOfSpeechRA", "PartOfSpeechRA",
+                                   empty_is_legal=True)
         if tgt_pos is None:
             return None
+        pos_absent = tgt_pos is _POS_ABSENT
+        pos_fields = {"PartOfSpeechRA": None if pos_absent else tgt_pos}
         new_msa = _create_msa_with_guid(
-            target, new_entry, new_sense, subclass, src_g,
-            {"PartOfSpeechRA": tgt_pos})
+            target, new_entry, new_sense, subclass, src_g, pos_fields)
         if new_msa is None:
-            new_msa = target.MSA.CreateStem(new_sense, tgt_pos)
+            if pos_absent:
+                _null_pos_fallback_blocked("PartOfSpeechRA")
+                return None
+            new_msa = _create_via_wrapper_or_reuse(
+                lambda: target.MSA.CreateStem(new_sense, tgt_pos),
+                new_entry, subclass, pos_fields, src_msa, dropped, src_entry, new_sense=new_sense)
         _wire_stratum(src_msa, new_msa, target)
     elif subclass == "MoDerivAffMsa":
         from_pos = _resolve_or_none("FromPartOfSpeechRA", "FromPartOfSpeechRA")
         to_pos = _resolve_or_none("ToPartOfSpeechRA", "ToPartOfSpeechRA")
         if from_pos is None or to_pos is None:
             return None
+        pos_fields = {"FromPartOfSpeechRA": from_pos, "ToPartOfSpeechRA": to_pos}
         new_msa = _create_msa_with_guid(
-            target, new_entry, new_sense, subclass, src_g,
-            {"FromPartOfSpeechRA": from_pos, "ToPartOfSpeechRA": to_pos})
+            target, new_entry, new_sense, subclass, src_g, pos_fields)
         if new_msa is None:
-            new_msa = target.MSA.CreateDerivAff(new_sense, from_pos, to_pos)
+            new_msa = _create_via_wrapper_or_reuse(
+                lambda: target.MSA.CreateDerivAff(new_sense, from_pos, to_pos),
+                new_entry, subclass, pos_fields, src_msa, dropped, src_entry, new_sense=new_sense)
     elif subclass == "MoUnclassifiedAffixMsa":
-        tgt_pos = _resolve_or_none("PartOfSpeechRA", "PartOfSpeechRA")
+        # "Unclassified" affix: an unspecified category is the whole point of
+        # the subclass, so a null POS is legal here for the same reason it is
+        # legal on MoStemMsa. MoInflAffMsa / MoDerivAffMsa keep the guard --
+        # an inflectional or derivational affix without a category cannot be
+        # interpreted, so there a null is a dependency failure, not a state.
+        tgt_pos = _resolve_or_none("PartOfSpeechRA", "PartOfSpeechRA",
+                                   empty_is_legal=True)
         if tgt_pos is None:
             return None
+        pos_absent = tgt_pos is _POS_ABSENT
+        pos_fields = {"PartOfSpeechRA": None if pos_absent else tgt_pos}
         new_msa = _create_msa_with_guid(
-            target, new_entry, new_sense, subclass, src_g,
-            {"PartOfSpeechRA": tgt_pos})
+            target, new_entry, new_sense, subclass, src_g, pos_fields)
         if new_msa is None:
-            new_msa = target.MSA.CreateUnclassifiedAffix(new_sense, tgt_pos)
+            if pos_absent:
+                _null_pos_fallback_blocked("PartOfSpeechRA")
+                return None
+            new_msa = _create_via_wrapper_or_reuse(
+                lambda: target.MSA.CreateUnclassifiedAffix(new_sense, tgt_pos),
+                new_entry, subclass, pos_fields, src_msa, dropped, src_entry, new_sense=new_sense)
 
     if new_msa is None:
         return None
@@ -6454,6 +10398,151 @@ def _create_msa_for_closure(src_msa, new_sense, new_entry, context, tag, identit
         pass
     apply_residue(new_msa, ws, tag)
     return new_msa
+
+
+def _entry_sense_reachable_msa_guids(src_entry):
+    """T123(a) ROOT CAUSE fix, defense-in-depth: the set of source MSA guids
+    referenced by `MorphoSyntaxAnalysisRA` on ANY sense reachable from
+    `src_entry` -- top-level `SensesOS` AND subsenses at any depth (mirrors
+    `_wire_subsense_msas`'s own recursion into `LexSense.SensesOS`, kept
+    deliberately independent of `msa_by_src_guid` rather than reusing it, so
+    this really is a second, structurally-different measurement of "is this
+    MSA sense-reachable", not a re-read of the same cache the walk above
+    already populates). Used only by
+    `_create_entry_owned_msas_without_sense` to recognize -- and loudly flag,
+    never silently absorb -- an MSA that IS sense-reachable but somehow
+    didn't make it into `msa_by_src_guid` by the time the hardening pass
+    runs, the exact shape of the T123(a) defect. Never raises; best-effort
+    over duck-typed/live objects alike."""
+    seen: set = set()
+
+    def _walk(senses):
+        for src_sense in senses or []:
+            m = getattr(src_sense, "MorphoSyntaxAnalysisRA", None)
+            if m is not None:
+                g = _guid_str_from(m)
+                if g:
+                    seen.add(g)
+            _walk(getattr(src_sense, "SensesOS", None))
+
+    _walk(getattr(src_entry, "SensesOS", None))
+    return seen
+
+
+def _create_entry_owned_msas_without_sense(src_entry, new_entry, context, tag,
+                                           identity_remap, msa_by_src_guid,
+                                           dropped):
+    """T123 HARDENING -- NOT T123(a)'s original fix, but T123(a)'s root
+    cause WAS this function, indirectly: it is the mechanism that converted
+    a visible failure (a subsense's MSA never created, entry-owned count
+    short) into an invisible one (MSA present with `new_sense=None`,
+    referring subsense's `MorphoSyntaxAnalysisRA` silently null, counts
+    balance). See
+    specs/038-transfer-fidelity-gaps/reviews/cycle12-mainsession-t123a-root-cause.md.
+
+    `_entry_pos_deps` and `_iter_all_msas` both already treat
+    `src_entry.MorphoSyntaxAnalysesOC` as an MSA's enumeration basis, but the
+    per-sense loop in `_walk_lex_entry_closure` (this function's caller)
+    enumerates MSAs only via `src_sense.MorphoSyntaxAnalysisRA` -- correct
+    ONLY as long as every entry-owned MSA also has a referencing sense. This
+    pass closes that gap: after the per-sense loop (which, as of the
+    T123(a) root-cause fix, now also wires every subsense's MSA via
+    `_wire_subsense_msas`, not only `src_entry.SensesOS`'s direct members),
+    walk `src_entry.MorphoSyntaxAnalysesOC` directly and create the
+    remainder -- any source MSA guid not already in `msa_by_src_guid` --
+    straight onto `new_entry.MorphoSyntaxAnalysesOC`, with NO owning sense
+    (there is none to wire; see `_create_msa_with_guid`'s `new_sense=None`
+    handling).
+
+    NOT "MEASURED EMPTY" -- CORRECTED. The prior version of this docstring
+    claimed this pass was measured empty on `Ngoreme FLEx`
+    (`op-102227585-005`/`-006`, entry-owned MSA count equalling
+    sense-referenced count in every class). That claim was FALSE for this
+    pass's true test -- "did this create an MSA an existing sense actually
+    referenced" -- because it was evaluated against a `msa_by_src_guid` that
+    only top-level senses had populated: the single subsense in the corpus
+    (`omoona`'s 'small child', MSA 8617b725-...) landed here and created a
+    parentless MSA while the overall COUNT still matched, which is exactly
+    what let the claim read "empty". With `_wire_subsense_msas` now wiring
+    every subsense too, this pass is EXPECTED to return to true emptiness on
+    that corpus, but that is a claim for the pending t123e live re-census to
+    confirm, not one this commit re-asserts from a stale measurement.
+
+    Defense in depth (this fix): even though `msa_by_src_guid` should now be
+    complete for every sense-reachable MSA by the time this runs, a future
+    regression that reintroduces a not-fully-recursive sense walk elsewhere
+    must not be able to reproduce T123(a) silently again. Before creating an
+    unclaimed MSA, this pass cross-checks its guid against
+    `_entry_sense_reachable_msa_guids(src_entry)` -- an INDEPENDENT
+    recursive scan of the source's own sense tree, not a re-read of
+    `msa_by_src_guid`. A guid that IS sense-reachable but reached this pass
+    unclaimed is logged as an error and reported via `_report_dropped_msa`
+    (never silent) BEFORE the entry-owned create proceeds (still created,
+    parentless, so the entry-owned count keeps balancing) -- so this class
+    of defect can no longer present as a clean count with nothing reported.
+
+    T123(a)'s original half -- same corpus, entry `omoona`,
+    e2cd79ef-2ee5-4d56-ae54-9210060bcdae -- was a DIFFERENT, already-fixed
+    mechanism: a natural-key match inside the per-sense loop that used to
+    skip a create and leave a sense's `MorphoSyntaxAnalysisRA` dangling null
+    (destination-side GUID diff, read-only ops
+    `op-103945760-010`..`op-104104411-013`; fixed by
+    `_create_via_wrapper_or_reuse` / `_find_reusable_target_msa`, this same
+    file). This function does not touch that code path and this pass claims
+    nothing against it.
+
+    Never raises: any per-MSA create failure is reported via
+    `_report_dropped_msa`, matching the per-sense loop's own guard."""
+    sense_reachable = _entry_sense_reachable_msa_guids(src_entry)
+    for src_msa in getattr(src_entry, "MorphoSyntaxAnalysesOC", None) or ():
+        m_guid = _guid_str_from(src_msa)
+        if m_guid and m_guid in msa_by_src_guid:
+            continue
+        if m_guid and m_guid in sense_reachable:
+            # This MSA IS referenced by a sense somewhere in the entry's
+            # closure, yet it reached this backstop unclaimed -- exactly
+            # the T123(a) defect shape (see docstring). Flag it loudly;
+            # still create it (parentless) so the entry-owned count keeps
+            # balancing, rather than dropping the object outright.
+            import logging as _logging
+            _logging.getLogger("gramtrans.Lib.categories").error(
+                "entry-owned MSA guid=%s (entry guid=%s) is referenced by "
+                "a sense in the source closure but was NOT wired by the "
+                "per-sense MSA passes before reaching the no-referencing- "
+                "sense hardening backstop -- this is the T123(a) defect "
+                "shape recurring; creating it parentless so the count "
+                "balances, but the referring sense's MorphoSyntaxAnalysisRA "
+                "will be left null.",
+                m_guid, _guid_str_from(src_entry),
+            )
+            _kind = _dispatch_msa_subclass(_class_name_of(src_msa))
+            _report_dropped_msa(
+                dropped, src_entry, src_msa, _kind or _class_name_of(src_msa),
+                "MSA is sense-reachable but reached the no-referencing-"
+                "sense hardening backstop unclaimed (T123(a) defect shape "
+                "recurring) -- created parentless; referring sense's "
+                "MorphoSyntaxAnalysisRA left null")
+        try:
+            new_msa = _create_msa_for_closure(
+                src_msa, None, new_entry, context, tag, identity_remap,
+                dropped=dropped, src_entry=src_entry)
+        except Exception as exc:  # noqa: BLE001 -- never let one entry-owned,
+            # sense-unreferenced MSA take down the rest of the entry's closure.
+            import logging as _logging
+            _logging.getLogger("gramtrans.Lib.categories").exception(
+                "entry-owned MSA create raised for entry guid=%s msa "
+                "guid=%s in the no-referencing-sense hardening pass; "
+                "reporting and continuing.",
+                _guid_str_from(src_entry), m_guid,
+            )
+            kind = _dispatch_msa_subclass(_class_name_of(src_msa))
+            _report_dropped_msa(
+                dropped, src_entry, src_msa, kind or _class_name_of(src_msa),
+                f"entry-owned MSA with no referencing sense: create raised "
+                f"{type(exc).__name__}: {exc} -- MSA not transferred")
+            new_msa = None
+        if new_msa is not None and m_guid:
+            msa_by_src_guid[m_guid] = new_msa
 
 
 def _wire_stratum(src_msa, new_msa, target):
@@ -6487,9 +10576,21 @@ def _run_171_subpass(context, target, tag=None):
     each slot via `_resolve_target_by_guid` (offline fakes: `get_object_by_guid`;
     live: LCM object repository). Slots are GUID-preserved (E8).
 
-    Returns a list of Skip(DEPENDENCY_UNRESOLVED) — one per unresolved MSA or
-    per unresolved slot reference. Idempotent: an already-present slot on an
-    MSA's SlotsRC is not re-Added (membership guard)."""
+    Returns a list of Skip(DEPENDENCY_UNRESOLVED) — one per affix whose MSA is
+    missing from a destination that HAS the affix, and one per unresolved slot
+    reference. Idempotent: an already-present slot on an MSA's SlotsRC is not
+    re-Added (membership guard).
+
+    T074 (FR-019) changed WHICH bindings this pass will report on, and added
+    the record it reports THROUGH. `msa_slot_bindings` is a claim about the
+    SOURCE -- its producer walks the whole source lexicon regardless of the
+    selection, deliberately, so `transfer._ensure_171_subpass` can run this
+    pass on a selection with no AFFIX_TEMPLATES actions. Treating every source
+    binding as a promise THIS RUN made produced, measured on `Mbugwe LizzieHC
+    practice` under an AFFIX_TEMPLATES-only selection, 203 reported link
+    failures of which 0 were real -- the entire run report. A binding whose
+    affix is not in the destination at all is now `NOT_IN_RUN`: recorded, not
+    skipped. See `_affix_is_in_destination`."""
     skips = []
     plan = getattr(context, "_run_plan", None)
     if plan is not None:
@@ -6498,31 +10599,63 @@ def _run_171_subpass(context, target, tag=None):
     else:
         bindings = _binding_map(context, "msa_slot_bindings") or {}
         remap = getattr(context, "_identity_remap", None) or {}
+    owners = _msa_owner_map(context, plan)
 
     for src_msa_guid, src_slot_guids in bindings.items():
+        src_slots = tuple(src_slot_guids or ())
         target_msa_guid = remap.get(src_msa_guid, src_msa_guid)
         target_msa = _resolve_target_by_guid(target, target_msa_guid)
         if target_msa is None:
+            entry_guid = owners.get(src_msa_guid, "")
+            if not _affix_is_in_destination(target, entry_guid, remap):
+                # This run never undertook to put the affix here. Recorded so
+                # the count stays auditable, NOT skipped: reporting a failure
+                # to link an affix that was never transferred is the
+                # phantom-loss direction CLAUDE.md records as unshippable.
+                _record_affix_slot_link(context, AffixSlotLinkRecord(
+                    msa_guid=src_msa_guid,
+                    outcome=AffixSlotLinkOutcome.NOT_IN_RUN,
+                    entry_guid=entry_guid,
+                    source_slot_guids=src_slots,
+                ))
+                continue
+            # The entry IS here and its inflectional MSA is not -- the affix
+            # arrived in a shape that cannot carry a column. Real, unique to
+            # this pass, and reported against the ENTRY (FR-019 asks about the
+            # affix, not about the object that went missing).
+            _record_affix_slot_link(context, AffixSlotLinkRecord(
+                msa_guid=src_msa_guid,
+                outcome=AffixSlotLinkOutcome.MSA_MISSING,
+                entry_guid=entry_guid,
+                source_slot_guids=src_slots,
+            ))
             skips.append(Skip(
-                category=GrammarCategory.AFFIX_TEMPLATES,
-                source_guid=src_msa_guid,
+                category=GrammarCategory.AFFIXES,
+                source_guid=entry_guid or src_msa_guid,
                 reason=SkipReason.DEPENDENCY_UNRESOLVED,
-                detail=(f"msa_guid={src_msa_guid} not in target after "
-                        "affix transfer"),
+                detail=(f"affix entry_guid={entry_guid} is in the destination "
+                        f"but its inflectional msa_guid={src_msa_guid} is not, "
+                        "so it could not be linked to the template column(s) "
+                        f"{', '.join(src_slots)} it occupied in the source"),
             ))
             continue
         # Cast the live-resolved ICmObject so .SlotsRC is reachable (issue #28
         # layer 2); fakes pass through unchanged.
         target_msa = _cast_lcm(target_msa, "IMoInflAffMsa")
+        unresolved_slots = []
         for src_slot_guid in src_slot_guids:
             target_slot = _resolve_target_by_guid(target, src_slot_guid)
             if target_slot is None:
+                unresolved_slots.append(src_slot_guid)
                 skips.append(Skip(
                     category=GrammarCategory.AFFIX_TEMPLATES,
                     source_guid=src_slot_guid,
                     reason=SkipReason.DEPENDENCY_UNRESOLVED,
                     detail=(f"slot_guid={src_slot_guid} not in target after "
-                            "slot transfer"),
+                            "slot transfer, so affix "
+                            f"entry_guid={owners.get(src_msa_guid, '')} "
+                            f"(msa_guid={src_msa_guid}) could not be linked "
+                            "to the template column it occupied in the source"),
                 ))
                 continue
             # SlotsRC is a typed collection of IMoInflAffixSlot; add the cast
@@ -6536,9 +10669,218 @@ def _run_171_subpass(context, target, tag=None):
             if already:
                 continue
             target_msa.SlotsRC.Add(target_slot)
+        # One record per MSA, whichever way it went -- SC-003 needs the run to
+        # be able to state its own numerator and denominator, not only its
+        # failures. A partially-linked MSA counts as SLOT_MISSING: it did not
+        # occupy every column it occupied in the source.
+        _record_affix_slot_link(context, AffixSlotLinkRecord(
+            msa_guid=src_msa_guid,
+            outcome=(AffixSlotLinkOutcome.SLOT_MISSING if unresolved_slots
+                     else AffixSlotLinkOutcome.LINKED),
+            entry_guid=owners.get(src_msa_guid, ""),
+            source_slot_guids=src_slots,
+            unresolved_slot_guids=tuple(unresolved_slots),
+        ))
 
     skips.extend(_wire_msa_infl_feats(context, target, plan))
+    # -----------------------------------------------------------------------
+    # T119's `_wire_owner_feat_strucs` USED TO BE CALLED HERE AND MUST NOT BE.
+    # Moved to `transfer._ensure_owner_feat_strucs` 2026-08-28.
+    #
+    # The reasoning that put it here was "they need exactly the same thing to
+    # be true first -- the feature DEFINITIONS resolvable in target". True, and
+    # insufficient: they also need their OWNERS to exist. This sub-pass is
+    # anchored by `_run_tail_once` to the last AFFIX_TEMPLATES action, and the
+    # execute order is `... AFFIXES -> ADHOC_COMPOUND_RULES -> SLOTS ->
+    # AFFIX_TEMPLATES -> STEMS`. `MoInflAffMsa`, `MoDerivAffMsa` and
+    # `MoAffixAllomorph` hang off AFFIX entries and already exist by then --
+    # which is exactly why those owners were measured working. `MoStemMsa`
+    # hangs off STEM entries, created one category LATER, so every one of its
+    # 1,003 feature structures was asked for before its owner existed.
+    #
+    # MEASURED (T124, three pairs): `MoStemMsa.MsFeatures` 117 / 782 / 104 ->
+    # 0 / 0 / 0, the single largest block in the P5 residue, with `MoStemMsa`
+    # itself count-MATCHED so no counts-only gate could see it. The producer
+    # was never at fault -- it yields all 1,003 bindings, correctly keyed --
+    # and neither was the cast. It was the schedule.
+    #
+    # `_ensure_171_subpass`'s own docstring already describes the SELECTION
+    # version of this bug ("quietly makes it conditional on the USER'S
+    # SELECTION"). This was the ORDERING version of the same thing, and the
+    # safety net that would have caught it was disarmed by the shared
+    # `_did_171_subpass` latch: the tail had already set the flag, so the
+    # post-loop call returned immediately. The new pass gets its OWN latch for
+    # that reason.
+    # -----------------------------------------------------------------------
+    # T122: MoMorphData.ProdRestrict. Runs here for the HOOK, not for the
+    # ordering -- it is a project-level list with no dependency on affixes.
+    # This sub-pass is the one place guaranteed to run exactly once per
+    # transfer regardless of the user's selection, because
+    # `transfer._ensure_171_subpass` is its safety net.
+    skips.extend(_wire_prod_restrictions(context, target))
     return skips
+
+
+def _wire_prod_restrictions(context, target):
+    """Transfer `MoMorphData.ProdRestrictOA.PossibilitiesOS` (T122).
+
+    THE ONE `CmPossibility` LIST THIS FEATURE OWNS, AND THE REASON THE OTHER
+    EIGHTEEN ARE NOT HERE. T115 measured the `CmPossibility` row list by list
+    and found the census's -308 / -398 / -335 is a GROSS starter basis: the
+    real loss is -6 / -96 / -33 (`difference_raw`), because 302 objects per
+    pair are canonical FLEx starter lists present identically on both sides.
+    Of the ~19 lists spanned, exactly one is unambiguously grammatical and
+    inside this feature's Assumptions -- productivity restrictions, 1 object
+    on Ngoreme and 3 on Mbugwe. The rest are `Scripture.NoteCategories` (115),
+    `LexDb.Languages` (15), `GenreList`, `ChartMarkers`, `CheckLists`,
+    `DialectLabels`, `Status` and `ConstChartTempl`: Scripture notes, dialect
+    labels, genres and discourse-chart furniture, which this feature's
+    Assumptions do not claim. Sweeping them in here would be the T023b defect
+    in a new place -- closing a polymorphic bucket by its class name.
+
+    NOT to be confused with `IPartOfSpeech.ExceptionFeaturesOC` (the
+    EXCEPTION_FEATURES category), which is a REFERENCE collection of
+    `IFsSymFeatVal`. This is a `CmPossibilityList` of `CmPossibility`, and
+    `categories.py` already documents that flexicon's
+    `InflectionClassGetAll()` / `InflectionClassCreate()` read and write this
+    list by mistake -- which is exactly why GramTrans must reach it directly
+    rather than through that wrapper.
+
+    GUID-preserving and idempotent. Returns a list of Skip.
+    """
+    skips = []
+    source = getattr(context, "source_handle", None)
+    if source is None or target is None:
+        return skips
+
+    def _list_of(handle):
+        """`ICmPossibilityList` at `LangProject.MorphologicalDataOA
+        .ProdRestrictOA`, or None."""
+        try:
+            cache = getattr(handle, "Cache", None)
+            if cache is None:
+                return None
+            return cache.LangProject.MorphologicalDataOA.ProdRestrictOA
+        except (AttributeError, TypeError):
+            return None
+
+    src_list = _list_of(source)
+    tgt_list = _list_of(target)
+    if src_list is None:
+        return skips
+    try:
+        src_items = list(src_list.PossibilitiesOS)
+    except (AttributeError, TypeError):
+        return skips
+    if not src_items:
+        return skips
+    if tgt_list is None:
+        # The destination has no productivity-restrictions list to write into.
+        # Reported rather than skipped: the source HAS restrictions, so this is
+        # a real loss and the run must not go quiet about it.
+        skips.append(Skip(
+            category=GrammarCategory.INFLECTION_FEATURES,
+            source_guid=_guid_str_from(src_list) or "",
+            reason=SkipReason.DEPENDENCY_UNRESOLVED,
+            detail=(f"target has no MorphologicalDataOA.ProdRestrictOA list; "
+                    f"{len(src_items)} productivity restriction(s) not "
+                    f"transferred"),
+        ))
+        return skips
+
+    try:
+        tgt_items = tgt_list.PossibilitiesOS
+        existing = {_guid_str_from(p) for p in tgt_items}
+    except (AttributeError, TypeError):
+        return skips
+
+    for src_item in src_items:
+        item_guid = _guid_str_from(src_item)
+        if not item_guid or item_guid in existing:
+            continue          # idempotent by GUID
+        try:
+            new_item, _ = _create_with_guid(
+                ICmPossibilityFactory_ref(), tgt_items, item_guid, target)
+        except Exception as exc:  # noqa: BLE001
+            _log_guid_fallback("ICmPossibility", item_guid, exc)
+            skips.append(Skip(
+                category=GrammarCategory.INFLECTION_FEATURES,
+                source_guid=item_guid,
+                reason=SkipReason.DEPENDENCY_UNRESOLVED,
+                detail=(f"productivity restriction {item_guid} could not be "
+                        f"created: {type(exc).__name__}"),
+            ))
+            continue
+        _copy_multistrings_ws_mapped(
+            src_item, new_item, ("Name", "Abbreviation", "Description"),
+            source=source, target=target,
+            ws_map=_ws_map_dict(getattr(
+                getattr(context, "_run_plan", None), "ws_mapping", None)),
+        )
+    return skips
+
+
+def ICmPossibilityFactory_ref():  # noqa: N802 -- named for what it returns
+    """`ICmPossibilityFactory`, imported lazily so this module stays importable
+    without pythonnet (host-free unit tests)."""
+    from SIL.LCModel import ICmPossibilityFactory
+    return ICmPossibilityFactory
+
+
+def _msa_owner_map(context, plan):
+    """`{src_msa_guid: owning src LexEntry guid}` for this run (T074).
+
+    Prefers the plan's `msa_owner_entry` and falls back to the context stash,
+    mirroring exactly how `msa_slot_bindings` itself is read above -- the
+    host-free unit tests drive this pass with a bare context and no plan.
+    Returns `{}` when neither carries one, which makes every unresolved MSA
+    read as `NOT_IN_RUN`: without an owner there is no evidence the affix is
+    in the destination, and inventing a failure on no evidence is the
+    direction this task exists to remove.
+    """
+    if plan is not None:
+        owners = getattr(plan, "msa_owner_entry", None)
+        if owners:
+            return owners
+    return _binding_map(context, "msa_owner_entry") or {}
+
+
+def _affix_is_in_destination(target, entry_guid, remap=None):
+    """Is the affix LexEntry `entry_guid` in the destination? (T074, FR-019.)
+
+    This is the whole scoping question, and it is deliberately asked of the
+    DESTINATION rather than of the plan. "Did this run plan the affix" would
+    miss the case FR-020 cares about -- an affix the destination already held,
+    which this run may legitimately enrich with a column it lacked. "Is it
+    here" covers both and needs no plan at all.
+
+    An empty `entry_guid` answers False: no owner recorded is no evidence of
+    presence.
+    """
+    if not entry_guid:
+        return False
+    if remap:
+        entry_guid = remap.get(entry_guid, entry_guid)
+    return _resolve_target_by_guid(target, entry_guid) is not None
+
+
+def _record_affix_slot_link(context, record):
+    """Accumulate one `AffixSlotLinkRecord` on the run context (T074).
+
+    Same idiom as `_record_process_rule` / `context._dropped`: the executor
+    collects and `Lib/transfer.py` hands the tuple to
+    `report.build(extra_affix_slot_links=)`. Kept off the return value on
+    purpose -- `_run_171_subpass` returns a skip list that a dozen unit tests
+    unpack positionally, and FR-019 is not worth breaking them for.
+    """
+    records = getattr(context, "_affix_slot_links", None)
+    if records is None:
+        records = []
+        try:
+            object.__setattr__(context, "_affix_slot_links", records)
+        except Exception:  # noqa: BLE001 -- immutable fake context
+            return
+    records.append(record)
 
 
 def _wire_msa_infl_feats(context, target, plan):
@@ -6580,50 +10922,50 @@ def _wire_msa_infl_feats(context, target, plan):
             detail=detail,
         )
 
+    owners = _msa_owner_map(context, plan)
+
     for src_msa_guid, binding in bindings.items():
         target_msa_guid = remap.get(src_msa_guid, src_msa_guid)
         target_msa = _resolve_target_by_guid(target, target_msa_guid)
         if target_msa is None:
+            # T074's scoping, applied here for the SAME reason and by the same
+            # sweep: this producer also walks the whole source lexicon, so an
+            # unresolved MSA is usually an affix the run never selected. On the
+            # AFFIX_TEMPLATES-only measurement 78 of the 203 phantom failures
+            # came from this line, and 0 were real. An affix that is not in the
+            # destination has no feature cell to defer.
+            entry_guid = owners.get(src_msa_guid, "")
+            if not _affix_is_in_destination(target, entry_guid, remap):
+                continue
             skips.append(_skip(
-                src_msa_guid,
-                f"msa_guid={src_msa_guid} not in target; InflFeats deferred"))
+                entry_guid or src_msa_guid,
+                f"affix entry_guid={entry_guid} is in the destination but its "
+                f"inflectional msa_guid={src_msa_guid} is not; InflFeats "
+                "deferred"))
             continue
         target_msa = _cast_lcm(target_msa, "IMoInflAffMsa")
 
         # Resolve every endpoint BEFORE creating anything, so a partially
         # resolvable structure defers whole rather than landing half-written.
-        resolved = []
-        unresolved = False
-        for row in binding.get("specs", ()):
-            feat_guid, val_guid = row.get("feature", ""), row.get("value", "")
-            if not feat_guid or not val_guid:
-                skips.append(_skip(
-                    src_msa_guid,
-                    f"spec {row.get('spec_guid', '')} on msa={src_msa_guid} is "
-                    "not a closed value (complex/negated); not transferred"))
-                unresolved = True
-                continue
-            tgt_feat = _resolve_target_by_guid(target, feat_guid)
-            tgt_val = _resolve_target_by_guid(target, val_guid)
-            if tgt_feat is None or tgt_val is None:
-                which = "feature" if tgt_feat is None else "value"
-                missing = feat_guid if tgt_feat is None else val_guid
-                skips.append(_skip(
-                    missing,
-                    f"{which}_guid={missing} not in target; InflFeats for "
-                    f"msa={src_msa_guid} deferred"))
-                unresolved = True
-                continue
-            resolved.append((row.get("spec_guid", ""),
-                             _cast_lcm(tgt_feat, "IFsClosedFeature"),
-                             _cast_lcm(tgt_val, "IFsSymFeatVal")))
-        if unresolved or not resolved:
+        # T119 moved this into `_resolve_feat_struc_binding`, shared with the
+        # eight other owners, and with one behavioural change: an
+        # `IFsComplexValue` spec is now FOLLOWED rather than counted as
+        # unresolvable. That single line is why this owner measured 86/86 on
+        # Ejagham and 78/78 on Mbugwe but 38 -> 18 on Ngoreme -- Ngoreme is
+        # the only sanctioned project holding complex values (825 of them), and
+        # every structure containing one deferred whole, taking its closed
+        # siblings with it.
+        def _on_unresolved(guid, detail, _skips=skips):
+            _skips.append(_skip(guid, detail))
+
+        resolved = _resolve_feat_struc_binding(
+            target, binding, _on_unresolved, f"msa={src_msa_guid}")
+        if resolved is None or not resolved:
             continue
 
         # Idempotency guard: already carrying exactly these pairs -> no-op.
         existing = _existing_infl_feat_pairs(target_msa)
-        wanted = {(_guid_str_from(f), _guid_str_from(v)) for _, f, v in resolved}
-        if existing == wanted:
+        if existing == _wanted_feat_struc_pairs(resolved):
             continue
 
         struc = _get_or_create_feat_struc(
@@ -6634,14 +10976,152 @@ def _wire_msa_infl_feats(context, target, plan):
                 src_msa_guid,
                 f"could not create InflFeats structure for msa={src_msa_guid}"))
             continue
-        for spec_guid, tgt_feat, tgt_val in resolved:
-            if (_guid_str_from(tgt_feat), _guid_str_from(tgt_val)) in existing:
-                continue
-            if not _add_closed_value(target, struc, spec_guid, tgt_feat, tgt_val):
-                skips.append(_skip(
-                    spec_guid,
-                    f"could not create IFsClosedValue {spec_guid} on "
-                    f"msa={src_msa_guid}"))
+        _apply_feat_struc_rows(target, struc, resolved, existing,
+                               _on_unresolved, f"msa={src_msa_guid}")
+    return skips
+
+
+#: The owner attributes `_wire_owner_feat_strucs` writes, and the GrammarCategory
+#: each one's Skip is filed under. `MsEnvFeaturesOA` sits on an allomorph rather
+#: than an MSA, which is why the table is keyed by attribute and not by class.
+_FEAT_STRUC_OWNER_CATEGORIES = {
+    "MsFeaturesOA": "STEMS",
+    "FromMsFeaturesOA": "AFFIXES",
+    "ToMsFeaturesOA": "AFFIXES",
+    "MsEnvFeaturesOA": "AFFIXES",
+}
+
+
+def _wire_owner_feat_strucs(context, target, plan):
+    """Wire the feature structures feature 033's pass does not cover (T119).
+
+    `MoStemMsa.MsFeaturesOA`, `MoDerivAffMsa.From/ToMsFeaturesOA` and
+    `MoAffixAllomorph.MsEnvFeaturesOA`, from
+    `plan.msa_feat_struc_bindings`. Runs in the same 17.1 sub-pass and for the
+    same sequencing reason as `_wire_msa_infl_feats`: the `IFsClosedFeature` /
+    `IFsSymFeatVal` endpoints must already be in target, and
+    INFLECTION_FEATURES transfers earlier in the same Move.
+
+    THE DEFECT THIS CLOSES IS HOLLOWNESS, NOT ABSENCE, which is why it lands
+    as a separate pass over MATCHED owners rather than as more code in
+    `_create_msa_for_closure`. `MoStemMsa` is count-MATCHED on the pairs that
+    have it (153/153 ejagham, 139/139 mbugwe) and its `MsFeaturesOA` is
+    `{(none): 153}`, `{(none): 1953}`, `{(none): 139}` -- every stem MSA in
+    every destination arrives carrying no feature structure at all. A
+    counts-only acceptance passes today and would still pass if this function
+    did nothing, so its acceptance is stated per owning FIELD, per pair.
+
+    Shares `_resolve_feat_struc_binding` / `_apply_feat_struc_rows` with the
+    inflectional pass, so GUID preservation, all-or-nothing deferral,
+    idempotency and never-silent reporting are the same code, not a parallel
+    implementation that can drift.
+
+    Returns a list of Skip.
+    """
+    skips = []
+    if plan is not None:
+        bindings = getattr(plan, "msa_feat_struc_bindings", None) or {}
+        remap = getattr(plan, "identity_remap", None) or {}
+    else:
+        bindings = _binding_map(context, "msa_feat_struc_bindings") or {}
+        remap = getattr(context, "_identity_remap", None) or {}
+    # T074's owner->entry map, so an unresolved owner can be SCOPED rather than
+    # discarded unconditionally. Same source the inflectional pass reads.
+    owner_entries = _msa_owner_map(context, plan)
+    if not bindings:
+        return skips
+
+    for key, binding in bindings.items():
+        attr = binding.get("attr") or ""
+        owner_guid = binding.get("owner_guid") or ""
+        if not attr or not owner_guid:
+            # A binding we cannot attribute is a defect in the producer, not a
+            # transfer decision. Report it rather than skipping it quietly.
+            skips.append(Skip(
+                category=GrammarCategory.STEMS,
+                source_guid=str(key),
+                reason=SkipReason.DEPENDENCY_UNRESOLVED,
+                detail=f"feature-structure binding {key!r} carries no "
+                       "owner_guid/attr; not transferred"))
+            continue
+        category = getattr(GrammarCategory,
+                           _FEAT_STRUC_OWNER_CATEGORIES.get(attr, "STEMS"),
+                           GrammarCategory.STEMS)
+        label = f"{attr} on owner={owner_guid}"
+
+        def _skip(guid, detail, _cat=category):
+            return Skip(category=_cat, source_guid=guid,
+                        reason=SkipReason.DEPENDENCY_UNRESOLVED, detail=detail)
+
+        def _on_unresolved(guid, detail, _skips=skips, _mk=_skip):
+            _skips.append(_mk(guid, detail))
+
+        target_owner_guid = remap.get(owner_guid, owner_guid)
+        target_owner = _resolve_target_by_guid(target, target_owner_guid)
+        if target_owner is None:
+            # T074's scoping, for the same reason it applies to the
+            # inflectional pass: this producer also walks the WHOLE source
+            # lexicon regardless of the selection, so an owner absent from the
+            # destination is overwhelmingly an entry this run never selected,
+            # not a loss. An object that is not in the destination has no
+            # feature cell to fill.
+            #
+            # **BUT THE SCOPING ARGUMENT NEEDS A SCOPING PREDICATE, AND FOR A
+            # YEAR IT HAD NONE (038 T119, 2026-08-28).** An unconditional
+            # `continue` here converts every ORDERING or reachability bug in
+            # this pass into silence, and that is exactly what happened: the
+            # pass was anchored to AFFIX_TEMPLATES, ran one category before
+            # STEMS, and discarded all 1,003 `MoStemMsa.MsFeatures` bindings --
+            # no write, and no failure record either, so three census runs and
+            # a green suite said nothing. The comment above was TRUE and
+            # INSUFFICIENT; the missing half is the question the inflectional
+            # pass already asks (`_affix_is_in_destination`, T074/FR-019):
+            #
+            #     is the owner's ENTRY in the destination?
+            #
+            # If the entry is here and the owner is not, this run selected that
+            # entry and the owner should exist -- that is a real dependency
+            # failure and is now REPORTED. If the entry is absent too, the
+            # original scoping argument holds and the silence is correct.
+            #
+            # `msa_owner_entry` records EVERY MSA (its docstring is explicit),
+            # so stem MSAs are covered. `MoAffixAllomorph` owners are NOT in
+            # that map, so `MsEnvFeaturesOA` degrades to the old silent skip --
+            # stated here rather than hidden, because an un-scopable owner must
+            # not be reported as a failure on no evidence.
+            entry_guid = owner_entries.get(owner_guid, "")
+            if entry_guid and _affix_is_in_destination(
+                    target, entry_guid, remap):
+                _on_unresolved(
+                    owner_guid,
+                    f"{label}: owner absent from the destination although its "
+                    f"entry {entry_guid} is present -- the feature structure "
+                    f"could not be attached")
+            continue
+        # T088 again: `MsFeaturesOA` is declared on the concrete `IMoStemMsa`,
+        # not on the `IMoMorphSynAnalysis` the repository hands back, so this
+        # cast is what makes the assignment land at all.
+        target_owner = _cast_to_concrete(target_owner)
+
+        resolved = _resolve_feat_struc_binding(
+            target, binding, _on_unresolved, label)
+        if resolved is None or not resolved:
+            continue
+
+        existing = _existing_infl_feat_pairs(target_owner, attr)
+        if existing == _wanted_feat_struc_pairs(resolved):
+            continue
+
+        struc = _get_or_create_feat_struc(
+            target, target_owner, binding.get("struc_guid", ""),
+            binding.get("type_guid", ""), attr)
+        if struc is None:
+            skips.append(_skip(
+                owner_guid,
+                f"could not create {attr} structure for owner={owner_guid}"))
+            continue
+        _apply_feat_struc_rows(target, struc, resolved, existing,
+                               _on_unresolved, label)
     return skips
 
 
@@ -6692,28 +11172,65 @@ class _DuckClosedValue:
         self.ValueRA = None
 
 
-def _existing_infl_feat_pairs(target_msa):
-    """{(feature_guid, value_guid)} already on an MSA's InflFeatsOA."""
+class _DuckComplexValue:
+    """Offline stand-in for IFsComplexValue (host-free tests only). T119.
+
+    `ValueOA` starts None and is assigned the nested `_DuckFeatStruc` by
+    `_add_complex_value`, mirroring the live owning-atomic assignment."""
+
+    def __init__(self, guid=""):
+        self.guid = guid
+        self.FeatureRA = None
+        self.ValueOA = None
+
+
+def _existing_infl_feat_pairs(target_msa, attr="InflFeatsOA"):
+    """{(feature_guid, value_guid)} already on an owner's feature structure.
+
+    T119 gave this an `attr`: the identical question is asked of
+    `MsFeaturesOA`, `FromMsFeaturesOA`, `ToMsFeaturesOA` and
+    `MsEnvFeaturesOA`. The default keeps every feature-033 call site reading
+    exactly as it did.
+
+    A COMPLEX spec contributes `(feature_guid, "complex:<nested struc guid>")`
+    rather than being skipped. It has no `ValueRA` to report, and omitting it
+    would make a structure that already holds a complex value compare EQUAL to
+    one that does not -- the idempotency guard would then treat a half-written
+    structure as finished and never complete it.
+    """
     out = set()
-    struc = getattr(target_msa, "InflFeatsOA", None)
+    struc = getattr(target_msa, attr, None)
     if struc is None:
         return out
     for spec in getattr(_cast_lcm(struc, "IFsFeatStruc"), "FeatureSpecsOC", None) or []:
+        nested = getattr(_cast_lcm(spec, "IFsComplexValue"), "ValueOA", None)
+        if nested is not None:
+            out.add((_guid_str_from(getattr(
+                _cast_lcm(spec, "IFsComplexValue"), "FeatureRA", None)),
+                f"complex:{_guid_str_from(nested)}"))
+            continue
         cv = _cast_lcm(spec, "IFsClosedValue")
         out.add((_guid_str_from(getattr(cv, "FeatureRA", None)),
                  _guid_str_from(getattr(cv, "ValueRA", None))))
     return out
 
 
-def _get_or_create_feat_struc(target, target_msa, struc_guid, type_guid):
-    """Return the MSA's InflFeatsOA, creating it GUID-preserved if absent.
+def _get_or_create_feat_struc(target, target_msa, struc_guid, type_guid,
+                              attr="InflFeatsOA"):
+    """Return the owner's feature structure, creating it GUID-preserved if absent.
 
     Uses `IFsFeatStrucFactory.Create(Guid)` -- probed live on LCM 11.0.0 -- then
-    assigns it to InflFeatsOA (an owning-atomic property, so assignment IS the
+    assigns it to `attr` (an owning-atomic property, so assignment IS the
     ownership transfer). Falls back to `Create()` only if the GUID overload is
     unavailable or the GUID is already taken, so a collision degrades to a new
-    identity rather than aborting the whole affix."""
-    existing = getattr(target_msa, "InflFeatsOA", None)
+    identity rather than aborting the whole affix.
+
+    T119 gave this an `attr` so the stem, derivational and allomorph owners
+    create through the same GUID-preserving path as the inflectional one.
+    `MoStemMsa.MsFeaturesOA` is the reason: it is 1,003 objects across three
+    pairs and ZERO of them arrive today, because nothing anywhere in `Lib/`
+    ever assigns that property."""
+    existing = getattr(target_msa, attr, None)
     if existing is not None:
         return _cast_lcm(existing, "IFsFeatStruc")
     factory = _lcm_factory(target, "IFsFeatStrucFactory")
@@ -6736,7 +11253,7 @@ def _get_or_create_feat_struc(target, target_msa, struc_guid, type_guid):
                 struc = factory.Create()
             except Exception:  # noqa: BLE001
                 return None
-    target_msa.InflFeatsOA = struc
+    setattr(target_msa, attr, struc)
     if type_guid:
         tgt_type = _resolve_target_by_guid(target, type_guid)
         if tgt_type is not None:
@@ -6774,6 +11291,179 @@ def _add_closed_value(target, struc, spec_guid, tgt_feat, tgt_val):
     except Exception:  # noqa: BLE001
         return False
     return True
+
+
+def _add_complex_value(target, struc, spec_guid, tgt_feat, nested_guid,
+                       nested_type_guid):
+    """Create one GUID-preserved `IFsComplexValue` on `struc` and return the
+    nested `IFsFeatStruc` it owns (or None on failure).
+
+    T119. The twin of `_add_closed_value` for the spec kind feature 033 could
+    only report as undeliverable. `IFsComplexValue.ValueOA` is owning-atomic,
+    so assigning the nested structure IS the ownership transfer -- the same
+    shape `_get_or_create_feat_struc` uses for the owner's own slot.
+
+    This is what makes `FsComplexValue` transferable at all: 825 objects on
+    Ngoreme, measured `arrived: 0 / missing: 825` in
+    `tests/integration/_snapshots/two-mode-038-ngoreme.json` while
+    `FsComplexFeature` arrives 2 of 2. The DEFINITIONS transfer; the VALUES
+    did not, and this is the missing half.
+    """
+    factory = _lcm_factory(target, "IFsComplexValueFactory")
+    struc_factory = _lcm_factory(target, "IFsFeatStrucFactory")
+    if factory is None or struc_factory is None:
+        # Offline duck path (host-free tests): same SHAPE as the live branch.
+        cv = _DuckComplexValue(spec_guid)
+        nested = _DuckFeatStruc(nested_guid)
+    else:
+        cv = None
+        parsed = _parse_guid(spec_guid) if spec_guid else None
+        if parsed is not None:
+            try:
+                cv = factory.Create(parsed)
+            except Exception as exc:  # noqa: BLE001
+                _log_guid_fallback("IFsComplexValue", spec_guid, exc)
+                cv = None
+        if cv is None:
+            try:
+                cv = factory.Create()
+            except Exception:  # noqa: BLE001
+                return None
+        nested = None
+        nested_parsed = _parse_guid(nested_guid) if nested_guid else None
+        if nested_parsed is not None:
+            try:
+                nested = struc_factory.Create(nested_parsed)
+            except Exception as exc:  # noqa: BLE001
+                _log_guid_fallback("IFsFeatStruc", nested_guid, exc)
+                nested = None
+        if nested is None:
+            try:
+                nested = struc_factory.Create()
+            except Exception:  # noqa: BLE001
+                return None
+    try:
+        struc.FeatureSpecsOC.Add(cv)
+        cv = _cast_lcm(cv, "IFsComplexValue")
+        cv.FeatureRA = tgt_feat
+        cv.ValueOA = nested
+    except Exception:  # noqa: BLE001
+        return None
+    if nested_type_guid:
+        tgt_type = _resolve_target_by_guid(target, nested_type_guid)
+        if tgt_type is not None:
+            try:
+                _cast_lcm(nested, "IFsFeatStruc").TypeRA = _cast_lcm(
+                    tgt_type, "IFsFeatStrucType")
+            except Exception:  # noqa: BLE001 -- type is optional
+                pass
+    return _cast_lcm(nested, "IFsFeatStruc")
+
+
+def _resolve_feat_struc_binding(target, binding, on_unresolved, label,
+                                depth=0):
+    """Resolve every endpoint of one binding tree BEFORE anything is created.
+
+    T119. Returns a list of resolved rows, or None when any endpoint is
+    missing from target.
+
+    THE ALL-OR-NOTHING RULE IS DELIBERATE AND IS FEATURE 033'S, KEPT. A
+    partially resolvable structure defers WHOLE rather than landing
+    half-written, so a later run completes it once the missing endpoint exists
+    (FR-007's deferral rule). What T119 changes is not the rule but its
+    TRIGGER: a complex value used to trip it, because the reader had no way to
+    express one. It no longer does, so a structure now defers only when an
+    endpoint genuinely is not in the target yet.
+
+    Resolved row shapes:
+        ("closed",  spec_guid, tgt_feature, tgt_value)
+        ("complex", spec_guid, tgt_feature, nested_guid, nested_type, rows)
+    """
+    if depth > _FEAT_STRUC_MAX_DEPTH:
+        on_unresolved(label, f"feature structure nests deeper than "
+                             f"{_FEAT_STRUC_MAX_DEPTH}; not transferred")
+        return None
+    rows = []
+    for row in binding.get("specs", ()) or ():
+        kind = row.get("kind", "closed")
+        spec_guid = row.get("spec_guid", "")
+        feat_guid = row.get("feature", "")
+        if kind == "complex":
+            nested = row.get("nested") or {}
+            tgt_feat = (_resolve_target_by_guid(target, feat_guid)
+                        if feat_guid else None)
+            if tgt_feat is None:
+                on_unresolved(feat_guid or spec_guid,
+                              f"complex-value feature_guid={feat_guid} not in "
+                              f"target; {label} deferred")
+                return None
+            nested_rows = _resolve_feat_struc_binding(
+                target, nested, on_unresolved, label, depth + 1)
+            if nested_rows is None:
+                return None
+            rows.append(("complex", spec_guid,
+                         _cast_lcm(tgt_feat, "IFsComplexFeature"),
+                         nested.get("struc_guid", ""),
+                         nested.get("type_guid", ""), nested_rows))
+            continue
+        val_guid = row.get("value", "")
+        if not feat_guid or not val_guid:
+            on_unresolved(label,
+                          f"spec {spec_guid} on {label} is not a closed value "
+                          "(negated/disjunctive, or a complex value whose "
+                          "nested structure is empty); not transferred")
+            return None
+        tgt_feat = _resolve_target_by_guid(target, feat_guid)
+        tgt_val = _resolve_target_by_guid(target, val_guid)
+        if tgt_feat is None or tgt_val is None:
+            which = "feature" if tgt_feat is None else "value"
+            missing = feat_guid if tgt_feat is None else val_guid
+            on_unresolved(missing,
+                          f"{which}_guid={missing} not in target; {label} "
+                          "deferred")
+            return None
+        rows.append(("closed", spec_guid,
+                     _cast_lcm(tgt_feat, "IFsClosedFeature"),
+                     _cast_lcm(tgt_val, "IFsSymFeatVal")))
+    return rows
+
+
+def _wanted_feat_struc_pairs(rows):
+    """The `(feature_guid, value_guid)` set `rows` would produce, in the same
+    vocabulary `_existing_infl_feat_pairs` reports -- so the two compare."""
+    wanted = set()
+    for row in rows:
+        if row[0] == "complex":
+            wanted.add((_guid_str_from(row[2]), f"complex:{row[3]}"))
+        else:
+            wanted.add((_guid_str_from(row[2]), _guid_str_from(row[3])))
+    return wanted
+
+
+def _apply_feat_struc_rows(target, struc, rows, existing, on_failure, label):
+    """Create the resolved `rows` onto `struc`. Recurses into complex values."""
+    for row in rows:
+        if row[0] == "complex":
+            _, spec_guid, tgt_feat, nested_guid, nested_type, nested_rows = row
+            if (_guid_str_from(tgt_feat), f"complex:{nested_guid}") in existing:
+                continue
+            nested_struc = _add_complex_value(
+                target, struc, spec_guid, tgt_feat, nested_guid, nested_type)
+            if nested_struc is None:
+                on_failure(spec_guid,
+                           f"could not create IFsComplexValue {spec_guid} on "
+                           f"{label}")
+                continue
+            _apply_feat_struc_rows(target, nested_struc, nested_rows, set(),
+                                   on_failure, label)
+            continue
+        _, spec_guid, tgt_feat, tgt_val = row
+        if (_guid_str_from(tgt_feat), _guid_str_from(tgt_val)) in existing:
+            continue
+        if not _add_closed_value(target, struc, spec_guid, tgt_feat, tgt_val):
+            on_failure(spec_guid,
+                       f"could not create IFsClosedValue {spec_guid} on "
+                       f"{label}")
 
 
 def _log_guid_fallback(kind, guid, exc):
@@ -7122,11 +11812,21 @@ def _run_infl_feature_link_pass(context, target, tag=None):
     after both POS (GRAM_CATEGORIES) and features (INFLECTION_FEATURES) are
     stable in the target.
 
-    Bindings shape: `{target_pos_guid: [feature_guid, ...]}` (gathered by
-    `_stash_feature_category_links`). Each endpoint resolves via
-    `_resolve_target_by_guid` (offline fakes: `get_object_by_guid`; live:
-    the LCM object repository) -- GUIDs are preserved on transfer, so no
-    fingerprint/name fallback is needed.
+    Bindings shape: `{source_pos_guid: [feature_guid, ...]}` (gathered by
+    `_stash_feature_category_links`). The FEATURE endpoint resolves via
+    `_resolve_target_by_guid` (offline fakes: `get_object_by_guid`; live: the
+    LCM object repository), because features are GUID-preserved.
+
+    THE CATEGORY ENDPOINT IS NOT (T095). This docstring used to say "GUIDs are
+    preserved on transfer, so no fingerprint/name fallback is needed", and
+    that sentence was the whole defect: T091 taught the planner to REUSE a
+    destination category matched by natural key, so the source GUID is no
+    longer the destination GUID for a reused category. Measured on
+    `Ngoreme FLEx`: two of the five reused categories produced
+    `Skip(DEPENDENCY_UNRESOLVED)` here and lost their `InflectableFeatsRC`
+    wiring -- reported, never silent, and costing 0 shortfall, because a
+    reference collection is not a counted object class. It resolves through
+    `_target_pos_for_source_guid` now: identity first, natural key second.
 
     Returns a list of Skip(DEPENDENCY_UNRESOLVED) -- one per unresolved POS and
     one per unresolved feature (VR-4: deferred, never a dangling write).
@@ -7140,7 +11840,15 @@ def _run_infl_feature_link_pass(context, target, tag=None):
         bindings = _binding_map(context, "feature_category_links") or {}
 
     for pos_guid, feature_guids in bindings.items():
+        # IDENTITY FIRST, and through the object repository, because that is
+        # both the cheap answer and the one the offline fakes implement
+        # (`get_object_by_guid`; the contract note above). Only when it finds
+        # nothing does T095's resolver run, which re-tries identity over the
+        # POS scope and then consults the natural key -- so a run where every
+        # GUID was preserved behaves exactly as it did before T095.
         target_pos = _resolve_target_by_guid(target, pos_guid)
+        if target_pos is None:
+            target_pos = _target_pos_for_source_guid(context, target, pos_guid)
         if target_pos is None:
             skips.append(Skip(
                 category=GrammarCategory.GRAM_CATEGORIES,
@@ -7259,9 +11967,219 @@ def affixes_enumerate_source(context, selection):
 
 
 def affixes_dependencies(piece):
-    """Yield (GRAM_CATEGORIES, pos_guid) for each MSA's owning POS (E4).
-    MorphType is FW-global; no dependency edge emitted for it."""
-    return tuple(_entry_pos_deps(piece))
+    """Yield (GRAM_CATEGORIES, pos_guid) for each MSA's owning POS (E4), then
+    the MSA-side feature-structure refs (feature 038, T034): each MSA's
+    `InflFeatsOA`/`MsFeaturesOA`/`From-`/`ToMsFeaturesOA` contributes
+    (FEATURE_STRUCT_TYPES, type_guid) for its `TypeRA` and
+    (INFLECTION_FEATURES, guid) for every `FeatureRA`/`ValueRA` it references.
+
+    That second group is the ~2,083-MSA case the 038 census measured: every
+    restored MSA carries a `TypeRA`, and the target's
+    `MsFeatureSystemOA.TypesOC` being empty makes each one unsatisfiable.
+
+    MorphType is FW-global; no dependency edge is emitted for it."""
+    deps = list(_entry_pos_deps(piece))
+    for edge in _entry_feat_struc_deps(piece):
+        if edge not in deps:
+            deps.append(edge)
+    return tuple(deps)
+
+
+# ---------------------------------------------------------------------------
+# NARROW per-relationship producers for AFFIXES (feature 038 -- T067)
+# ---------------------------------------------------------------------------
+#
+# `affixes_dependencies` above returns a MIXED edge set: GRAM_CATEGORIES from
+# `_entry_pos_deps` plus FEATURE_STRUCT_TYPES *and* INFLECTION_FEATURES from
+# `_entry_feat_struc_deps`. That is the right shape for its callers (one pass
+# over the entry's MSAs, all of its outward references), and the WRONG shape
+# for `CLOSURE_EDGES_VERIFIED`, which is keyed by a single `DependencyKind`
+# and whose keys are unique. Registering the composite under `AFFIX_TO_POS`
+# would make `preview._closure_kind_lookup` file all three relationships under
+# one `verified_by` -- the substitution FR-018 exists to prevent, and the
+# decision the registry banner defers to "Phase 7's call".
+#
+# So the registry gets three NARROW producers instead, one per relationship,
+# each emitting only its own far category. `_closure_kind_lookup` keys on
+# `(category, dependency_category)`, so three rows with
+# `category=GrammarCategory.AFFIXES` and DISTINCT `dependency_category` values
+# are unambiguous by construction and each carries its own evidence.
+#
+# `affixes_dependencies` itself is UNCHANGED and still composite: it has
+# non-closure callers, and narrowing it would be a live-behaviour change
+# smuggled into a registration.
+#
+# The filter is STRICT (`is`, on the far category), and that is deliberate
+# rather than defensive. `_feat_struc_deps` classifies a `TypeRA` by OWNERSHIP
+# via `_feat_struc_type_categories`, which walks BOTH feature systems -- so an
+# MSA whose structure pointed into `PhFeatureSystemOA` would yield
+# PHON_FEAT_TYPES / PHONOLOGICAL_FEATURES edges. Those relationships are
+# unaudited and unregistered, and `preview._materialise_closure_edges` RAISES
+# on an edge no registry row authorises. Dropping them here is the correct
+# behaviour for an unregistered relationship (no verified evidence, no edge),
+# and the audit driver counts what was dropped rather than discarding it
+# silently (`foreign_edges` in the snapshot; measured 0 on both corpora).
+
+
+def _narrow_deps(deps, far_category):
+    """`deps` filtered to the single far `GrammarCategory` (T067).
+
+    Returns a tuple of `(far_category, guid)` refs, order and de-duplication
+    inherited from the composite producer that built `deps`.
+    """
+    out: list = []
+    for dep in deps or ():
+        if not (isinstance(dep, tuple) and len(dep) == 2):
+            continue
+        if dep[0] is not far_category:
+            continue
+        if dep not in out:
+            out.append(dep)
+    return tuple(out)
+
+
+def affixes_pos_dependencies(piece):
+    """NARROW producer for `DependencyKind.AFFIX_TO_POS`: only
+    `(GRAM_CATEGORIES, pos_guid)`.
+
+    `_entry_pos_deps` already emits nothing else, so the filter is a
+    no-op today; it is applied anyway so all three narrow producers share one
+    mechanism and a future change to `_entry_pos_deps` cannot leak a second
+    relationship into this one's `verified_by`.
+    """
+    return _narrow_deps(_entry_pos_deps(piece), GrammarCategory.GRAM_CATEGORIES)
+
+
+def affixes_feat_struc_type_dependencies(piece):
+    """NARROW producer for `DependencyKind.MSA_TO_FEAT_STRUC_TYPE`: only
+    `(FEATURE_STRUCT_TYPES, type_guid)`, the `IFsFeatStruc.TypeRA` arrow off
+    this entry's MSAs."""
+    return _narrow_deps(_entry_feat_struc_deps(piece),
+                        GrammarCategory.FEATURE_STRUCT_TYPES)
+
+
+def affixes_infl_feature_dependencies(piece):
+    """NARROW producer for `DependencyKind.MSA_TO_INFL_FEATURE`: only
+    `(INFLECTION_FEATURES, guid)`, the `FeatureSpecsOC` -> `FeatureRA` /
+    `ValueRA` arrows off this entry's MSAs."""
+    return _narrow_deps(_entry_feat_struc_deps(piece),
+                        GrammarCategory.INFLECTION_FEATURES)
+
+
+# ---------------------------------------------------------------------------
+# T076 (2026-08-22) -- the process-rule referent edges
+# ---------------------------------------------------------------------------
+#
+# An affix process rule reaches OUT of its own graph in exactly three places,
+# and all three land on the same two categories:
+#
+#   * `PhSimpleContextSeg.FeatureStructureRA`  -> `PhPhoneme`      (PHONEMES)
+#   * `PhSimpleContextNC.FeatureStructureRA`   -> `PhNC*`   (NATURAL_CLASSES)
+#   * `MoInsertPhones.ContentRS`               -> `PhPhoneme`      (PHONEMES)
+#
+# ...whether the context carrying the reference is OWNED by the rule
+# (`InputOS`) or shared through `PhPhonData.ContextsOS` and reached through a
+# `PhSequenceContext.MembersRS`. Both are walked here, deliberately: the
+# closure question is "what must exist for this rule to be rebuildable", and
+# the answer does not depend on who owns the context that points at it. The
+# shared CONTEXT itself is NOT an edge -- no category enumerates a member of
+# `ContextsOS`, so it is co-created (see condition 4 above and T089).
+
+
+def _iter_entry_allomorph_forms(entry):
+    """`LexemeFormOA` then `AlternateFormsOS`, the same order and the same two
+    slots `_walk_entry_allomorphs` walks -- an affix process rule can occupy
+    either, so a producer that read only one would silently miss rules."""
+    forms = []
+    lf = getattr(entry, "LexemeFormOA", None)
+    if lf is not None:
+        forms.append(lf)
+    forms.extend(getattr(entry, "AlternateFormsOS", None) or [])
+    return forms
+
+
+def _entry_process_rule_deps(entry):
+    """Every outward reference of every `MoAffixProcess` on this entry, as
+    `(PHONEMES | NATURAL_CLASSES, guid)` refs.
+
+    Fail-soft throughout: a dependency producer that raises would take down
+    the closure walk for an entry, which is strictly worse than one that
+    under-reports and lets the FR-025 skip do its job.
+    """
+    deps: list = []
+
+    def _add(obj):
+        if obj is None:
+            return
+        category = _PROCESS_REFERENT_CATEGORY.get(_class_name_of(obj) or "")
+        if category is None:
+            return
+        g = _guid_str_from(obj)
+        if not g:
+            return
+        edge = (category, g)
+        if edge not in deps:
+            deps.append(edge)
+
+    def _add_context(ctx):
+        # T107: the SECOND site that used to spell the context classes as an
+        # inline tuple. Derived now, for the same reason as the first -- but
+        # note the two sites are not symmetric, and admitting
+        # `PhSimpleContextBdry` here is deliberately a NO-OP. `_add` filters
+        # on `_PROCESS_REFERENT_CATEGORY`, which has no `PhBdryMarker` entry
+        # because boundary markers are fixed content nothing creates, so a
+        # boundary context is walked and contributes no edge. Deriving the set
+        # rather than extending the tuple is what makes the NEXT context class
+        # -- one whose referent IS creatable -- get its closure edge without a
+        # second edit nobody remembers to make.
+        cls = _class_name_of(ctx) or ""
+        if cls not in _PROCESS_SIMPLE_CONTEXT_CLASSES:
+            return
+        _add(getattr(_cast_lcm(ctx, "I" + cls), "FeatureStructureRA", None))
+
+    for form in _iter_entry_allomorph_forms(entry):
+        if (_class_name_of(form) or "") != "MoAffixProcess":
+            continue
+        try:
+            owned = {}
+            for member in _process_rule_members(form, "InputOS"):
+                g = _guid_str_from(member)
+                if g:
+                    owned[g] = member
+                _add_context(member)
+            for member in _process_rule_members(form, "InputOS"):
+                if (_class_name_of(member) or "") != "PhSequenceContext":
+                    continue
+                for ref in _process_ref_seq(
+                        member, "IPhSequenceContext", "MembersRS"):
+                    if _guid_str_from(ref) in owned:
+                        continue  # already walked as an owned member
+                    _add_context(ref)
+            for step in _process_rule_members(form, "OutputOS"):
+                if (_class_name_of(step) or "") != "MoInsertPhones":
+                    continue
+                for terminal in _process_ref_seq(
+                        step, "IMoInsertPhones", "ContentRS"):
+                    _add(terminal)
+        except Exception:  # noqa: BLE001 -- an unwalkable rule is not an edge
+            continue
+    return deps
+
+
+def affixes_process_rule_phoneme_dependencies(piece):
+    """NARROW producer for `DependencyKind.PROCESS_RULE_TO_PHONEME`: only
+    `(PHONEMES, guid)`, the phonemes this entry's affix process rules match
+    on or insert."""
+    return _narrow_deps(_entry_process_rule_deps(piece),
+                        GrammarCategory.PHONEMES)
+
+
+def affixes_process_rule_natural_class_dependencies(piece):
+    """NARROW producer for `DependencyKind.PROCESS_RULE_TO_NATURAL_CLASS`:
+    only `(NATURAL_CLASSES, guid)`, the natural classes this entry's affix
+    process rules match on."""
+    return _narrow_deps(_entry_process_rule_deps(piece),
+                        GrammarCategory.NATURAL_CLASSES)
 
 
 def affixes_required_writing_systems(piece):
@@ -7344,6 +12262,50 @@ def slots_dependencies(piece):
     return ((GrammarCategory.GRAM_CATEGORIES, g),) if g else ()
 
 
+# ---------------------------------------------------------------------------
+# NARROW per-relationship producer for SLOTS (feature 038 -- T068)
+# ---------------------------------------------------------------------------
+#
+# `slots_dependencies` is already narrow -- `Owner` is one atomic reference and
+# a slot's owner is always the `IPartOfSpeech` whose `AffixSlotsOC` holds it --
+# so this wrapper adds no filtering TODAY. It is added anyway, for the same
+# reason T067's `affixes_pos_dependencies` is a wrapper over an already-narrow
+# `_entry_pos_deps`: the registry row names THIS function, so a later change
+# that made `slots_dependencies` emit a second far category (a `StratumRA`, a
+# template back-reference) would be dropped here instead of arriving in a plan
+# under `SLOT_TO_POS`'s `verified_by`. `_narrow_deps` is the single mechanism
+# all narrow producers share, and the audit driver's `foreign_edges` column is
+# what makes the filter observable rather than decorative (measured 0 on both
+# corpora).
+#
+# THE MEMBER. This relationship had no `DependencyKind` before T068. The plan
+# listed `SLOT_TO_TEMPLATE`, which is the arrow in the opposite direction and
+# is emitted by nothing: in LCM a slot is OWNED by a POS and holds no reference
+# to any template, while `IMoInflAffixTemplate` references its slots through
+# five `*SlotsRS` sequences. `DependencyKind.SLOT_TO_POS` was added rather than
+# borrowing the wrong member, because a live relationship filed under another
+# relationship's name is the same substitution FR-018 refuses for `verified_by`
+# -- it would just fail in the FR-015 surfaces instead of at registration.
+
+
+def slots_pos_dependencies(piece):
+    """NARROW producer for `DependencyKind.SLOT_TO_POS`: only
+    `(GRAM_CATEGORIES, owning_pos_guid)`, the `IPartOfSpeech.AffixSlotsOC`
+    owner of this `IMoInflAffixSlot`.
+
+    No cast is needed at this site and that is a measured fact, not an
+    assumption: `Owner` is declared on `ICmObject`, so the bare `getattr` in
+    `slots_dependencies` sees it on the base-typed proxy `AffixSlotsOC` yields.
+    `debug/audit038_closure_edges.py` measures the uncast read against an
+    explicit cast and reports `NO_CAST_NEEDED` (19/19 on `Mbugwe LizzieHC
+    practice`, 9/9 on `Ejagham Mini`) -- which is what makes T088's
+    `CAST_REQUIRED` verdict on the MSA sites a real difference rather than the
+    instrument failing to see anything.
+    """
+    return _narrow_deps(slots_dependencies(piece),
+                        GrammarCategory.GRAM_CATEGORIES)
+
+
 def slots_required_writing_systems(piece):
     return ()
 
@@ -7390,12 +12352,14 @@ def slots_execute_action(action, context, ws_mapping, tag):
     src_guid = action.source_guid
 
     src_slot = None
+    src_owner_pos = None
     src_owner_pos_guid = None
     for pos in _iter_pos(source):
         pos_obj = _as_pos(pos)
         for slot in getattr(pos_obj, "AffixSlotsOC", None) or []:
             if _guid_str_from(slot) == src_guid:
                 src_slot = slot
+                src_owner_pos = pos_obj
                 src_owner_pos_guid = _guid_str_from(pos_obj)
                 break
         if src_slot is not None:
@@ -7403,9 +12367,16 @@ def slots_execute_action(action, context, ws_mapping, tag):
     if src_slot is None:
         return None
 
-    target_pos = _resolve_target_pos(target, src_owner_pos_guid)
+    target_pos = _resolve_target_pos(
+        target, src_owner_pos_guid,
+        src_pos=src_owner_pos, source_handle=source,
+    )
     if target_pos is None:
-        return None  # owner POS not in target; dependency unresolved.
+        _report_owner_pos_unresolved(
+            context, GrammarCategory.SLOTS, src_guid, src_owner_pos_guid,
+            "affix slot",
+        )
+        return None
 
     cache = getattr(target, "Cache")
     ws = cache.DefaultAnalWs
@@ -7416,20 +12387,16 @@ def slots_execute_action(action, context, ws_mapping, tag):
     new_slot = IMoInflAffixSlot(new_slot)
 
     src_typed = IMoInflAffixSlot(src_slot)
-    all_ws = {w.Id: w.Handle for w in source.WritingSystems.GetAll()}
-    for prop_name in ("Name", "Description"):
-        src_p = getattr(src_typed, prop_name, None)
-        tgt_p = getattr(new_slot, prop_name, None)
-        if src_p is None or tgt_p is None:
-            continue
-        for _ws_id, ws_handle in all_ws.items():
-            try:
-                text = src_p.get_String(ws_handle).Text
-                if text:
-                    tgt_p.set_String(ws_handle,
-                                     TsStringUtils.MakeString(text, ws_handle))
-            except Exception:
-                pass
+    # WS-FIDELITY: writing-system HANDLES are per-project and NOT portable --
+    # measured live, 999000002 is `en` in `Ngoreme FLEx` and `ngq` in
+    # `Ngoreme Target`, and `swh` has no target counterpart at all. Writing a
+    # source handle into the target therefore either mislabels the string or
+    # leaves a handle `WritingSystemManager.Get` cannot resolve, and the latter
+    # throws inside `XMLBackendProvider.Commit` at CloseProject -- discarding
+    # the ENTIRE unit of work, not just this slot (feature 038 T024g).
+    _copy_multistrings_ws_mapped(
+        src_typed, new_slot, ("Name", "Description"),
+        source=source, target=target, ws_map=_ws_map_dict(ws_mapping))
     try:
         new_slot.Optional = bool(src_typed.Optional)
     except (AttributeError, TypeError):
@@ -7491,6 +12458,67 @@ def affix_templates_dependencies(piece):
     return tuple(deps)
 
 
+# ---------------------------------------------------------------------------
+# NARROW per-relationship producers for AFFIX_TEMPLATES (feature 038 -- T069)
+# ---------------------------------------------------------------------------
+#
+# `affix_templates_dependencies` returns a MIXED edge set from one call: the
+# owning POS (GRAM_CATEGORIES) plus every slot referenced across the five
+# `*SlotsRS` sequences (SLOTS). That is the right shape for its callers and the
+# WRONG shape for `CLOSURE_EDGES_VERIFIED`, whose keys are one `DependencyKind`
+# each -- exactly T067's composite-producer problem, on a second producer. The
+# composite itself is UNCHANGED (it has non-closure callers, and narrowing it
+# would be a live-behaviour change smuggled into a registration).
+#
+# Unlike T067's case the split is bookkeeping rather than a blocked audit: both
+# far categories are unambiguous, both halves measured live-correct
+# (`NO_CAST_NEEDED`, uncast == cast on both corpora), and `Owner` plus the
+# `*SlotsRS` sequences are all declared on the types the collections yield, so
+# T088's polymorphic-member defect cannot apply here either.
+#
+# ONE MEASURABLE DIFFERENCE FROM THE COMPOSITE, worth stating because it shows
+# up in the numbers. `affix_templates_dependencies` appends without
+# de-duplicating, so a slot referenced from two sequences (or twice from one)
+# is emitted twice; `_narrow_deps` de-duplicates. The audit driver therefore
+# reports the narrow producer's DISTINCT edge count, which is the count the
+# closure walk acts on -- `closure.walk` visits a ref once however many times
+# it is handed.
+
+
+def affix_templates_pos_dependencies(piece):
+    """NARROW producer for `DependencyKind.TEMPLATE_TO_POS`: only
+    `(GRAM_CATEGORIES, owning_pos_guid)`, the `IPartOfSpeech.AffixTemplatesOS`
+    owner of this `IMoInflAffixTemplate`.
+
+    No cast needed, and measured rather than assumed: `Owner` is declared on
+    `ICmObject`, and `debug/audit038_closure_edges.py` reports
+    `edges.TEMPLATE_TO_POS = NO_CAST_NEEDED` (11 == 11 on `Mbugwe LizzieHC
+    practice`, 7 == 7 on `Ejagham Mini`).
+    """
+    return _narrow_deps(affix_templates_dependencies(piece),
+                        GrammarCategory.GRAM_CATEGORIES)
+
+
+def affix_templates_slot_dependencies(piece):
+    """NARROW producer for `DependencyKind.TEMPLATE_TO_SLOT`: only
+    `(SLOTS, slot_guid)`, across all five slot reference sequences in source
+    order (`PrefixSlotsRS`, `SuffixSlotsRS`, `EncliticSlotsRS`,
+    `ProcliticSlotsRS`, `SlotsRS`) per the T010 probe.
+
+    The relationship is TEMPLATE -> SLOT, not slot -> template: an
+    `IMoInflAffixSlot` carries no template reference at all (its own properties
+    are Name, Description, Optional, Affixes and
+    OtherInflectionalAffixLexEntries), so the reference this walks exists only
+    on the template side. `DependencyKind.SLOT_TO_TEMPLATE` names the arrow the
+    other way round and is emitted by nothing; `AFFIX_TO_SLOT`, which the first
+    audit used as this relationship's label, is `IMoInflAffMsa.SlotsRC` and is
+    carried as `RunPlan.msa_slot_bindings` for the 17.1 sub-pass (FR-019 /
+    T074) rather than as a closure edge. Hence a third member.
+    """
+    return _narrow_deps(affix_templates_dependencies(piece),
+                        GrammarCategory.SLOTS)
+
+
 def affix_templates_required_writing_systems(piece):
     return ()
 
@@ -7538,19 +12566,34 @@ def affix_templates_execute_action(action, context, ws_mapping, tag):
     src_guid = action.source_guid
 
     src_tpl = None
+    src_owner_pos = None
     src_owner_pos_guid = None
     for pos in _iter_pos(source):
         pos_obj = _as_pos(pos)
         for tpl in getattr(pos_obj, "AffixTemplatesOS", None) or []:
             if _guid_str_from(tpl) == src_guid:
                 src_tpl = tpl
+                src_owner_pos = pos_obj
                 src_owner_pos_guid = _guid_str_from(pos_obj)
                 break
         if src_tpl is not None:
             break
 
     if src_tpl is not None:
-        target_pos = _resolve_target_pos(target, src_owner_pos_guid)
+        target_pos = _resolve_target_pos(
+            target, src_owner_pos_guid,
+            src_pos=src_owner_pos, source_handle=source,
+        )
+        # T033: this was the worst of the eight, because the abandon was
+        # IMPLICIT -- there was no `else`, so an unresolved owner simply fell
+        # past the ~50-line create-and-wire body to the tail block and the
+        # shared `return None`, leaving nothing to distinguish "template
+        # written" from "template silently discarded".
+        if target_pos is None:
+            _report_owner_pos_unresolved(
+                context, GrammarCategory.AFFIX_TEMPLATES, src_guid,
+                src_owner_pos_guid, "affix template",
+            )
         if target_pos is not None:
             cache = getattr(target, "Cache")
             ws = cache.DefaultAnalWs
@@ -7641,9 +12684,21 @@ def stems_enumerate_source(context, selection):
 def stems_dependencies(piece):
     """Yield (GRAM_CATEGORIES, pos_guid) per MSA POS, (SEMANTIC_DOMAINS,
     domain_guid) per sense SemanticDomainsRC entry, and (STRATA, stratum_guid)
-    per MoStemMsa.StratumRA (E4/E10/FR-336)."""
+    per MoStemMsa.StratumRA (E4/E10/FR-336).
+
+    Feature 038 (T034) adds the MSA-side feature-structure refs, identically to
+    `affixes_dependencies`: `IMoStemMsa.MsFeaturesOA` is an `IFsFeatStruc`, so a
+    stem entry's MSAs reference struct types (FEATURE_STRUCT_TYPES) and feature
+    defns/values (INFLECTION_FEATURES) exactly as an affix entry's do."""
     deps = list(_entry_pos_deps(piece))
-    for msa in getattr(piece, "MorphoSyntaxAnalysesOC", None) or []:
+    for edge in _entry_feat_struc_deps(piece):
+        if edge not in deps:
+            deps.append(edge)
+    for raw_msa in getattr(piece, "MorphoSyntaxAnalysesOC", None) or []:
+        # T088: same polymorphic-member cast as `_entry_pos_deps`. `StratumRA`
+        # is declared on IMoStemMsa / IMoDerivAffMsa, not on the base
+        # `IMoMorphSynAnalysis` this collection's members are typed as.
+        msa = _cast_to_concrete(raw_msa)
         stratum = getattr(msa, "StratumRA", None)
         if stratum is not None:
             g = _guid_str_from(stratum)
@@ -7766,6 +12821,195 @@ helper — their skip branch in _phonology_simple_plan is unchanged.
 """
 
 
+def _natural_key_object_class(piece, category):
+    """The LCM class name to key `piece` under, or "" when it is not keyable.
+
+    Deliberately narrow. `PhNCSegments` and `PhNCFeatures` are separate roster
+    entries that must NEVER match each other, so the natural class is resolved
+    from the object's own exact class rather than from its category -- a
+    category-level answer would collapse the two and undo the subclass
+    restriction at the point it matters most (they share one `PhPhonData`
+    list, so they are each other's nearest neighbours).
+    """
+    if category is GrammarCategory.PHONEMES:
+        return "PhPhoneme"
+    if category is GrammarCategory.NATURAL_CLASSES:
+        obj = _unwrap_lcm(piece)
+        name = getattr(obj, "ClassName", None) or getattr(piece, "ClassName", None)
+        name = str(name) if name else ""
+        return name if name in ("PhNCSegments", "PhNCFeatures") else ""
+    return ""
+
+
+def _plan_natural_key_match(piece, category, context, object_class,
+                            target_iter):
+    """Step 2 at PLAN time: a roster-admitted natural-key match, or None.
+
+    Returns a `PlannedOverwrite` carrying the `MatchBasisRecord`, so that
+
+      * the executor RESOLVES the matched destination instead of creating a
+        second object (T036 consumes `match_basis`), and
+      * the run report can say the match was by NAME and not by GUID
+        (FR-006), which `Skip` cannot carry -- it has no `match_basis` field.
+
+    `write_mode="merge"` mirrors what `_plan_gold_reserved_edit` already emits
+    on a divergence: the non-destructive UPDATE path that fills empty target
+    fields and updates diverged ones, and never blanks a populated target from
+    an empty source.
+
+    WHY THIS EXISTS. T032/T033 gave the fallback to `_resolve_target_pos`, and
+    that is `PartOfSpeech` ONLY. Phonemes and natural classes plan through
+    `_phonology_simple_plan`, which checked the GUID and went straight to a
+    create. Measured live on `Ejagham Mini` -> a freshly created target: 23
+    starter phonemes + 32 created = 55, with 21 duplicate names, and the census
+    returned DUPLICATE_IDENTITY. That is SC-002's defect exactly, and it
+    survived every unit test because the machinery was present and simply
+    never called on this path.
+
+    Returns None -- never raises -- for every reason a key cannot decide.
+    `NaturalKeyAmbiguityError` propagates by design.
+
+    ROUTED THROUGH THE SEAM (T105). The candidate scope stays the CALLER'S:
+    `_phonology_simple_plan` passes the enumeration it already walked, and
+    `plan_match_decision` accepts supplied candidates for exactly this case, so
+    routing changes nothing about which objects are offered. What it removes is
+    the second copy of the handle-pair read -- the seam's docblock explains at
+    length why the two projects' writing-system handles must not be crossed,
+    and that explanation is worth more attached to the one implementation than
+    to two.
+
+    On ambiguity this site and the seam already AGREE: both propagate. Unlike
+    `_process_referent_by_natural_key` there is nothing to pick here, and no
+    `except` is added -- a `PlannedOverwrite` is a proposal to REUSE a specific
+    destination object, so an ambiguous key has no defensible answer to
+    propose and the operator has to see it.
+    """
+    if not object_class:
+        return None
+    if _matcher.natural_key_binding_for(object_class) is None:
+        return None
+    if _matcher.natural_key_roster_entry_for(object_class) is None:
+        return None
+
+    source = getattr(context, "source_handle", None)
+    target = getattr(context, "target_handle", None)
+    if source is None or target is None:
+        return None
+    if not _guid_str_from(piece):
+        return None
+
+    try:
+        candidates = [_unwrap_lcm(c) for c in (target_iter or ())]
+    except Exception:  # noqa: BLE001 -- an unenumerable scope is "no candidates"
+        return None
+
+    decision = _plan_match_decision(
+        object_class, _unwrap_lcm(piece), context, candidates=candidates,
+    )
+    if decision is None or decision.record.basis is not _MatchBasis.NATURAL_KEY:
+        return None
+
+    src_guid = _guid_str_from(piece)
+    return PlannedOverwrite(
+        category=category,
+        source_guid=src_guid,
+        target_guid=decision.record.target_guid,
+        summary=(
+            "%s %s... matched an existing destination object by NAME (%r) "
+            "rather than by GUID -- reusing it instead of creating a second "
+            "one (FR-002 / SC-002)"
+            % (object_class, src_guid[:8], decision.record.key_value)
+        ),
+        match_via="natural_key",
+        write_mode="merge",
+        match_basis=decision.record,
+    )
+
+
+def _phonology_present_outcome(piece, context, category, src_guid, label):
+    """The outcome for "the target already holds this GUID" (T043a).
+
+    SAME ROOT CAUSE AS T043, DIFFERENT SITE. `_phonology_simple_plan` used to
+    return a BARE `Skip` here. A `Skip` carries no `match_basis`, so
+    `report.py::_matched_class` cannot attribute the object, the class lands in
+    `matches_unattributed`, its census row falls back to `baseline_gross`, and
+    gross subtraction then removes starter objects the transfer had CORRECTLY
+    matched. Measured on the T039 live run (`c65579a`): run 2 flipped
+    `PhPhoneme` MATCHED -> SHORTFALL (unexplained 21) and `PhNCSegments`
+    MATCHED -> SHORTFALL (2) with BYTE-IDENTICAL destination counts in both
+    runs -- both phantoms. Stated plainly: the better the transfer got, the
+    worse the census reported it, because working matches turn creates into
+    identity skips and every identity skip degraded its row's subtraction
+    basis.
+
+    GIVING `Skip` A `match_basis` FIELD IS RECORDED AS CONSIDERED AND REJECTED.
+    `Skip` means "nothing will be written"; a skip carrying a match is really a
+    LINK, which is exactly the boundary US4 exists to sharpen. So this routes
+    through the SAME mechanism `preview._emit_present_outcome` already uses --
+    `lcm_class_for_category` + `match_basis_for_present_by_guid` -- and carries
+    the record on a `PlannedOverwrite(write_mode="merge")`, the non-destructive
+    fill-gaps mode `_plan_natural_key_match` already emits from this very
+    function for the natural-key half of the same decision.
+
+    WHEN THE CLASS IS NOT KNOWN, THE SKIP STANDS. `_emit_present_outcome`'s own
+    rule: "A category whose LCM class is NOT one-to-one yields no record rather
+    than a guessed one -- `object_class` is the field the report groups by, so
+    a wrong name would file the match under another class." That is
+    `PHONOLOGICAL_RULES` here (`PhRegularRule` / `PhMetathesisRule` share the
+    category), and for it the bare `Skip` remains the honest answer.
+    """
+    def _bare_skip():
+        return Skip(
+            category=category,
+            source_guid=src_guid,
+            reason=SkipReason.ALREADY_PRESENT_BY_GUID,
+            detail=f"{label} GUID {src_guid[:8]}... already present in target.",
+        )
+
+    # PHASE 0 EMITS A SKIP, AND THAT IS FR-009, NOT THE DEFECT.
+    # `_emit_present_outcome` (preview.py:1514) gates on exactly this: Phase 0
+    # (`enable_overwrite=False`, the DEFAULT) emits `Skip(ALREADY_PRESENT_BY_GUID)`
+    # per FR-009; only Phase 1 (`enable_overwrite=True`, FR-108) may emit a
+    # `PlannedOverwrite`. An unconditional overwrite here would make the mode
+    # whose entire contract is "nothing is overwritten" start planning merges.
+    # The live Selection is already threaded onto the context for precisely this
+    # purpose -- see preview.py:515-518, "so entry-shaped leaf plan_actions can
+    # honor enable_overwrite by emitting a PlannedOverwrite instead of a Skip
+    # when the target already has the GUID".
+    #
+    # This still fixes the measured T039 phantom, because the census runs are
+    # Phase 1: run 2 planned 38 overwrites (run 1: 23). The attribution gap that
+    # flipped PhPhoneme and PhNCSegments MATCHED -> SHORTFALL lives in the
+    # overwrite-enabled mode, which is the mode this now records a basis in.
+    _selection = getattr(context, "_selection", None)
+    if _selection is None or not getattr(_selection, "enable_overwrite", False):
+        return _bare_skip()
+
+    object_class = (_natural_key_object_class(piece, category)
+                    or _lcm_class_for_category(category))
+    if not object_class:
+        return Skip(
+            category=category,
+            source_guid=src_guid,
+            reason=SkipReason.ALREADY_PRESENT_BY_GUID,
+            detail=f"{label} GUID {src_guid[:8]}... already present in target.",
+        )
+    return PlannedOverwrite(
+        category=category,
+        source_guid=src_guid,
+        target_guid=src_guid,
+        summary=(
+            f"{label} GUID {src_guid[:8]}... already present in target -- "
+            f"matched by GUID and reused ({object_class})"
+        ),
+        match_via="guid",
+        write_mode="merge",
+        match_basis=_match_basis_for_present_by_guid(
+            object_class, src_guid, src_guid,
+        ),
+    )
+
+
 def _phonology_simple_plan(piece, context, category, ops_attr, label):
     """Shared plan_action helper for the 5 simple phonology categories.
 
@@ -7804,22 +13048,199 @@ def _phonology_simple_plan(piece, context, category, ops_attr, label):
     target = context.target_handle
     if target is not None and hasattr(target, ops_attr):
         try:
-            target_iter = getattr(target, ops_attr).GetAll()
+            # Materialised: it is consumed twice below (the GUID scan, then
+            # the natural-key candidate scope), and a one-shot iterator would
+            # silently present an EMPTY candidate list to the second consumer
+            # -- which reads as "no match" and creates a duplicate.
+            target_iter = list(getattr(target, ops_attr).GetAll())
         except (AttributeError, TypeError):
             target_iter = ()
         if _target_has_guid(target_iter, src_guid):
-            return Skip(
-                category=category,
-                source_guid=src_guid,
-                reason=SkipReason.ALREADY_PRESENT_BY_GUID,
-                detail=f"{label} GUID {src_guid[:8]}... already present in target.",
+            return _phonology_present_outcome(
+                piece, context, category, src_guid, label,
             )
+        # Identity found nothing. Step 2: the roster-admitted natural key,
+        # BEFORE emitting a create -- otherwise a starter object the source
+        # also has is duplicated rather than reused.
+        matched = _plan_natural_key_match(
+            piece, category, context,
+            _natural_key_object_class(piece, category), target_iter,
+        )
+        if matched is not None:
+            return matched
     return PlannedAction(
         category=category,
         source_guid=src_guid,
         intended_target_guid=src_guid,
         summary=f"{label} guid={src_guid[:8]}...",
     )
+
+
+#: `CmPossibility.SubPossibilities` (class 7, field 4). An object owned through
+#: this field is NESTED under another possibility; anything else (notably
+#: `CmPossibilityList.Possibilities`, 8008) is TOP-LEVEL.
+#:
+#: **WHY A FLID AND NOT A CLASS NAME (038 T123 second entry, 2026-08-28).**
+#: The nesting test used to read `if owner_class and "EntryType" in
+#: owner_class:`. `"EntryType"` is NOT a substring of `"LexEntryInflType"` --
+#: the characters are there but not contiguous ("Entry" + "Infl" + "Type") --
+#: so the test was False for EVERY nested variant type, `src_owner_guid`
+#: stayed None, and every one of them took the top-level branch and was
+#: demoted. T123's earlier fix to the missing `ICmObject` cast was correct and
+#: made `owner_class` read `"LexEntryInflType"` properly; the very next line
+#: then threw the answer away.
+#:
+#: Measured live on `Ejagham W Mini` 2026-08-28 (read-only, `op-144649829-015`):
+#: 6 of its 7 `LexEntryInflType` objects are `OwningFlid=7004` with
+#: `owner_class="LexEntryInflType"` (`Perfective`, `Past`, `Hortative`, ...),
+#: 1 is `OwningFlid=8008` under the `CmPossibilityList`. T124's per-GUID
+#: destination reading found ejagham arriving 2 nested / 5 top-level with 4
+#: NAMED demotions -- `Perfective`, `Hortative`, `Conditional`,
+#: `Retrospective`.
+#:
+#: A flid is the thing LCM actually keyed on, and it is class-agnostic: the
+#: same constant answers the question for every `CmPossibility` subclass, so a
+#: sibling list cannot acquire this bug by being named differently. The
+#: semantic-domain site three functions down already compared classes with
+#: `==` rather than `in` and was never affected -- which is why this defect
+#: hid in two of three otherwise-parallel functions.
+_CMPOSSIBILITY_SUBPOSSIBILITIES_FLID = 7004
+
+
+def _source_possibility_parent_guid(src_obj):
+    """The GUID of `src_obj`'s owning POSSIBILITY, or None when it is
+    top-level.
+
+    Class-agnostic on purpose -- see
+    `_CMPOSSIBILITY_SUBPOSSIBILITIES_FLID`. Never raises: a nesting question
+    that throws would be swallowed by the caller's `except` and read as
+    "top-level", which is the failure this replaces.
+
+    DUAL-MODE, like `_guid_str_from` and every other primitive here. The cast
+    is tried first because on live LCM `.Owner` hands back an `ICmObjectOrId`
+    proxy whose members do not surface uncast (T123's original defect); when
+    no LCM is present -- the host-free unit tests -- the plain attribute reads
+    answer the same question on duck-typed fakes. Without the fallback this
+    predicate would be untestable except against a live project, which is
+    exactly how the substring bug it replaces survived a green suite.
+    """
+    if src_obj is None:
+        return None
+    flid = None
+    owner = None
+    try:
+        cm = ICmObject(src_obj)
+        flid = cm.OwningFlid
+        owner = cm.Owner
+    except Exception:  # noqa: BLE001 -- no LCM, or not castable: read raw
+        flid = getattr(src_obj, "OwningFlid", None)
+        owner = getattr(src_obj, "Owner", None)
+    if flid != _CMPOSSIBILITY_SUBPOSSIBILITIES_FLID:
+        return None
+    if owner is None:
+        return None
+    try:
+        owner = ICmObject(owner)
+    except Exception:  # noqa: BLE001 -- duck fake, already the right thing
+        pass
+    return _guid_str_from(owner) or None
+
+
+def _entry_type_factory_for_source(src_obj, target):
+    """Choose the LCM creation factory for a `VariantEntryTypesOA` /
+    `ComplexEntryTypesOA` member by the SOURCE OBJECT'S OWN CLASS, not by
+    which possibility list it lives under (feature 038 T123 acceptance
+    line (b)).
+
+    Both lists legitimately mix plain `LexEntryType` items with
+    `LexEntryInflType` items -- membership in one list or the other says
+    nothing about which LCM subclass an individual member is.
+    `variant_types_execute_action` and `complex_form_types_execute_action`
+    used to key the factory choice to the LIST instead (unconditionally
+    `ILexEntryInflTypeFactory` for variant types, unconditionally
+    `ILexEntryTypeFactory` for complex form types). A plain `LexEntryType`
+    with a project-local GUID living under `VariantEntryTypesOA` --
+    ngoreme's "Perfective" (`e7983f52-77a7-4f0b-aa31-84678672e42d`), mbugwe's
+    "Periphrastic Form" (`99e0cab9-f284-45fb-84a5-4cb2516d0bf4`), both
+    missing the GOLD-GUID match that would have found them already present
+    -- fell through to creation via the wrong factory and arrived
+    reclassified as `LexEntryInflType`. GUID and nesting were preserved;
+    only the LCM class was wrong, so the census read -1 `LexEntryType` /
+    +1 `LexEntryInflType` on both pairs -- a create-time
+    misclassification, not a lost object.
+
+    Returns `(factory, factory_label)`. This corpus shows no
+    `LexEntryInflType` member under `ComplexEntryTypesOA`, so the inverse
+    branch there is currently LATENT -- claimed as nothing observed, not
+    as fixed-and-confirmed, and covered only by a duck-typed unit test.
+
+    DUAL-MODE like `_source_possibility_parent_guid`: the lazy import
+    pattern from `_guid_str_from` is used directly (rather than relying on
+    an already-imported module global) so this helper's live-LCM branch
+    does not depend on caller import order.
+    """
+    from SIL.LCModel import ILexEntryInflTypeFactory, ILexEntryTypeFactory
+    try:
+        from SIL.LCModel import ICmObject  # lazy -- not available in unit tests
+    except Exception:  # noqa: BLE001 -- no LCM present
+        ICmObject = None
+    class_name = ""
+    if ICmObject is not None:
+        try:
+            class_name = str(ICmObject(src_obj).ClassName)
+        except Exception:  # noqa: BLE001 -- not castable, fall back to raw
+            class_name = ""
+    if not class_name:
+        class_name = str(getattr(src_obj, "ClassName", "") or "")
+    if class_name == "LexEntryInflType":
+        return (
+            ILexEntryInflTypeFactory(target.GetFactory(ILexEntryInflTypeFactory)),
+            "ILexEntryInflTypeFactory",
+        )
+    return (
+        ILexEntryTypeFactory(target.GetFactory(ILexEntryTypeFactory)),
+        "ILexEntryTypeFactory",
+    )
+
+
+def _log_possibility_demoted(factory_label, src_guid, parent_guid):
+    """Record that a nested possibility was placed at TOP LEVEL because its
+    parent is not in the destination yet (feature 038 T123).
+
+    This is a SHAPE loss the census cannot see: the object count is unchanged,
+    so a counts-only gate reads green while the list's structure is wrong.
+    On ejagham, `LexEntryInflType` measures 7 -> 7 with 6 nested / 1 top-level
+    arriving as 2 nested / 5 top-level -- right number, wrong tree.
+
+    **IT WAS NEVER REACHED, AND NOT FOR THE REASON THE INVESTIGATION FIRST
+    LOOKED FOR (038 T123 second entry, 2026-08-28).** T124 re-ran ejagham with
+    full stderr captured (3,206 lines) and found ZERO occurrences of
+    `TOP LEVEL` while the same run demoted the same 4 objects. The stream was
+    fine -- the log carried 9 other WARNINGs -- and this function was simply
+    never called: its three call sites all sit inside `if src_owner_guid:`,
+    and `src_owner_guid` was ALWAYS None because the nesting test read
+    `"EntryType" in "LexEntryInflType"`, which is False. So every nested item
+    took the `else:` (top-level) branch, where no demotion is recorded because
+    on that branch none has occurred. Fixing the nesting predicate
+    (`_source_possibility_parent_guid`) is what makes this reachable; no call
+    site moved.
+
+    **WHERE IT GOES, STATED SO THE NEXT READER DOES NOT REPEAT THE SEARCH:
+    a LOGGER, not the run report.** A demotion produces no `DroppedItemRecord`
+    and no row in the report JSON -- the object arrived, so it is not a
+    dropped item -- which is why T124 looked in the report first and found
+    nothing there even for runs that did demote. Anyone auditing nesting must
+    read stderr, or measure the destination per GUID. Promoting this to a
+    reported event needs a record type for "arrived, but reshaped", which the
+    report schema does not currently have; that is a successor's work and is
+    named here rather than left to be rediscovered.
+    """
+    import logging as _logging
+    _logging.getLogger("gramtrans.Lib.categories").warning(
+        "%s: %s should nest under parent %s, which is not in the destination; "
+        "placed at TOP LEVEL instead. Object preserved, nesting lost -- the "
+        "count is unchanged so no census row will show this.",
+        factory_label, src_guid, parent_guid)
 
 
 def _safe_add_to_owner(new_obj, owner_collection, factory_label, src_guid):
@@ -7950,7 +13371,26 @@ def phonemes_enumerate_source(context, selection):
 
 
 def phonemes_dependencies(piece):
-    return ()
+    """Feature 038 (T034): an `IPhPhoneme`'s `FeaturesOA` is an `IFsFeatStruc`
+    in the PHONOLOGICAL feature system -- its `TypeRA` names an
+    `IFsFeatStrucType` in `PhFeatureSystemOA.TypesOC` (PHON_FEAT_TYPES) and its
+    `FeatureSpecsOC` name `IFsClosedFeature`/`IFsSymFeatVal` in
+    `PhFeatureSystemOA.FeaturesOC` (PHONOLOGICAL_FEATURES).
+
+    `PhonemeOperations.ApplySyncableProperties` rewires that structure against
+    the TARGET's `PhFeatureSystemOA` by GUID, so a phoneme written before those
+    objects exist arrives with a hollow feature structure -- the same silent
+    defect feature 037 measured for feature-based natural classes (0 of 34 and
+    0 of 11 arriving with a feature structure across two live projects).
+
+    Ref tuples, not bare guids: the two far endpoints are different categories.
+    `()` for a phoneme with no feature structure and for duck-typed fakes."""
+    return tuple(_feat_struc_deps(
+        getattr(_cast_lcm(_unwrap_lcm(piece), "IPhPhoneme"), "FeaturesOA", None),
+        GrammarCategory.PHON_FEAT_TYPES,
+        GrammarCategory.PHONOLOGICAL_FEATURES,
+        _feat_struc_type_categories(piece),
+    ))
 
 
 def phonemes_required_writing_systems(piece):
@@ -8002,7 +13442,332 @@ def phonemes_execute_action(action, context, ws_mapping, tag):
         apply_carrier_b(new_phon, cache.DefaultAnalWs, tag, strict=False)
     except Exception:
         pass
-    return new_phon
+    try:
+        return new_phon
+    finally:
+        # T121: codes are transferred by a TAIL pass, not here, because the
+        # loss covers phonemes this run CREATED *and* phonemes matched to the
+        # target's starter inventory -- and a matched phoneme never reaches
+        # this function at all (it plans as a natural-key PlannedOverwrite).
+        # A create-path-only fix would leave the enrichment half standing.
+        _run_tail_once(
+            context, target, tag, "_did_phoneme_codes",
+            GrammarCategory.PHONEMES, _wire_phoneme_codes,
+        )
+        # T081: FeaturesOA has the SAME two-population shape as codes, for the
+        # same reason, so it rides the same anchor rather than inventing a
+        # second one. Ordering is irrelevant between the two (codes touch
+        # CodesOS, features touch FeaturesOA), but sharing the "last PHONEMES
+        # action" anchor keeps both passes on one guarantee: every phoneme of
+        # the category is in target before either runs.
+        _run_tail_once(
+            context, target, tag, "_did_phoneme_features",
+            GrammarCategory.PHONEMES, _wire_phoneme_features,
+        )
+
+
+def _phoneme_code_targets(context, plan, target):
+    """`{src_phoneme_guid: target phoneme}` for every source phoneme that has a
+    counterpart in the destination -- CREATED or STARTER-MATCHED (T121).
+
+    Two resolution routes, because a phoneme reaches the destination two ways
+    and only one of them keeps the source GUID:
+
+      1. `identity_remap` then a straight GUID lookup -- the phoneme this run
+         created, GUID-preserved.
+      2. the run's `PlannedOverwrite`s -- the phoneme MATCHED to the target's
+         starter inventory by the roster natural key `(default vernacular WS,
+         exact Name)`. Its destination object carries the STARTER's GUID, not
+         the source's, so route 1 cannot find it. This is the route that makes
+         the enrichment half possible, and it is why the destination reads
+         exactly the starter baseline today: 23 phoneme codes on all three
+         pairs, unchanged since the project was created.
+    """
+    out = {}
+    remap = (getattr(plan, "identity_remap", None) or {}) if plan is not None \
+        else (getattr(context, "_identity_remap", None) or {})
+    for ov in (getattr(plan, "overwrites", None) or ()):
+        if getattr(ov, "category", None) is not GrammarCategory.PHONEMES:
+            continue
+        src_guid = getattr(ov, "source_guid", "")
+        tgt_guid = getattr(ov, "target_guid", "")
+        if not src_guid or not tgt_guid:
+            continue
+        obj = _resolve_target_by_guid(target, tgt_guid)
+        if obj is not None:
+            out[src_guid] = obj
+    return out, remap
+
+
+def _wire_phoneme_codes(context, target, tag):
+    """Transfer `PhPhoneme.CodesOS` (`PhTerminalUnit.Codes`, flid 5090003).
+
+    T121. Runs once, as a tail block after the PHONEMES category.
+
+    WHY THIS EXISTS AT ALL. flexicon 4.5.2's
+    `PhonemeOperations.GetSyncableProperties` returns exactly
+    `['BasicIPASymbol', 'Description', 'Features', 'FeaturesGuid', 'Name']` --
+    `CodesOS` is absent, and `ApplySyncableProperties` has no code handling. So
+    nothing carried codes and the destination read the starter baseline exactly
+    (25) on all three sanctioned pairs: not one `PhCode` was ever created.
+
+    THE ROUTE IS IN-TREE AND GUID-PRESERVING, WHICH IS ONE STEP BETTER THAN
+    T117 PROPOSED. T117 chose `PhonemeOperations.AddCode` to avoid an upstream
+    flexicon dependency, and that reasoning holds -- but `AddCode` mints a
+    fresh identity, and GUID loss is a defect in this codebase unless
+    justified (feature 033 exists because of it). Probed live on LCM 11.0.0
+    (`SIL.LCModel.DomainImpl.PhCodeFactory`): `IPhCodeFactory` exposes BOTH
+    `Create()` and `Create(Guid)`. So `_create_with_guid` works here exactly as
+    it does for every other create in this file, and the route stays in-tree
+    with no floor bump -- T117's conclusion, by a better road.
+
+    THE BOUNDARY-MARKER TRAP, AVOIDED BY CONSTRUCTION RATHER THAN BY A FILTER.
+    `PhCode` is owned via `PhTerminalUnit.Codes`, and `PhTerminalUnit` has TWO
+    concrete subclasses: measured live on `Ejagham W Mini`, 43 codes = 41 on
+    `PhPhoneme` + 2 on `PhBdryMarker`, same flid. The boundary-marker codes are
+    already MATCHED 2 -> 2 and must not be touched. This pass walks
+    `source.Phonemes.GetAll()` -- phonemes, never terminal units -- so a
+    boundary marker's codes are unreachable from here. A `PhCode`-repository
+    loop filtered by owner class would have been correct too and one edit away
+    from wrong; this cannot express the bug.
+    """
+    skips = []
+    plan = getattr(context, "_run_plan", None)
+    source = getattr(context, "source_handle", None)
+    if source is None or target is None:
+        return skips
+    try:
+        src_phonemes = list(source.Phonemes.GetAll())
+    except (AttributeError, TypeError):
+        return skips
+    if not src_phonemes:
+        return skips
+
+    matched, remap = _phoneme_code_targets(context, plan, target)
+    # WS-FIDELITY: a code's `Representation` is a multistring, and writing-system
+    # HANDLES are per-project and NOT portable (feature 038 T024g -- a source
+    # handle written into the target throws inside XMLBackendProvider.Commit and
+    # discards the ENTIRE unit of work). `_copy_multistrings_ws_mapped` maps by
+    # WS *Id* and skips a source WS with no target counterpart.
+    ws_map = _ws_map_dict(getattr(plan, "ws_mapping", None))
+
+    created = 0
+    for src_phon in src_phonemes:
+        src_guid = _guid_str_from(src_phon)
+        if not src_guid:
+            continue
+        tgt_phon = matched.get(src_guid)
+        if tgt_phon is None:
+            tgt_phon = _resolve_target_by_guid(
+                target, remap.get(src_guid, src_guid))
+        if tgt_phon is None:
+            # T074's scoping: a source phoneme with no destination counterpart
+            # is one this run never transferred, not a lost code.
+            continue
+        tgt_phon = _cast_lcm(tgt_phon, "IPhPhoneme")
+        try:
+            src_codes = list(getattr(
+                _cast_lcm(src_phon, "IPhPhoneme"), "CodesOS", None) or ())
+        except (AttributeError, TypeError):
+            continue
+        if not src_codes:
+            continue
+        try:
+            tgt_codes = getattr(tgt_phon, "CodesOS", None)
+            existing = {_guid_str_from(c) for c in (tgt_codes or ())}
+        except (AttributeError, TypeError):
+            continue
+        if tgt_codes is None:
+            continue
+        for src_code in src_codes:
+            code_guid = _guid_str_from(src_code)
+            if not code_guid or code_guid in existing:
+                continue          # idempotent: same GUID, already there
+            try:
+                new_code, _ = _create_with_guid(
+                    IPhCodeFactory_ref(), tgt_codes, code_guid, target)
+            except Exception as exc:  # noqa: BLE001
+                # `_create_with_guid` fails loud on a GUID it cannot preserve.
+                # A code is a LEAF: re-raising would abort the whole phoneme
+                # inventory over one representation, so this is REPORTED and
+                # the rest still transfers. Never silent -- the operator sees
+                # one Skip per code that did not land.
+                _log_guid_fallback("IPhCode", code_guid, exc)
+                skips.append(Skip(
+                    category=GrammarCategory.PHONEMES,
+                    source_guid=code_guid,
+                    reason=SkipReason.DEPENDENCY_UNRESOLVED,
+                    detail=f"PhCode {code_guid} on phoneme={src_guid} could "
+                           f"not be created: {type(exc).__name__}"))
+                continue
+            _copy_multistrings_ws_mapped(
+                _cast_lcm(src_code, "IPhCode"),
+                _cast_lcm(new_code, "IPhCode"),
+                ("Representation",),
+                source=source, target=target, ws_map=ws_map,
+            )
+            created += 1
+    if created:
+        _log_phoneme_codes(created)
+    return skips
+
+
+def IPhCodeFactory_ref():  # noqa: N802 -- named for the interface it returns
+    """`IPhCodeFactory`, imported lazily so this module stays importable
+    without pythonnet (host-free unit tests)."""
+    from SIL.LCModel import IPhCodeFactory
+    return IPhCodeFactory
+
+
+def _log_phoneme_codes(count):
+    import logging as _logging
+    _logging.getLogger("gramtrans.Lib.categories").info(
+        "T121: created %d PhCode object(s) on phonemes (GUID-preserved).",
+        count)
+
+
+def _wire_phoneme_features(context, target, tag):
+    """Transfer `PhPhoneme.FeaturesOA` onto phonemes this run MATCHED to the
+    destination's starter inventory (feature 038, T081 sixth re-gate).
+
+    THE HALF T121 LEFT STANDING, IN THE SHAPE ITS OWN DOCSTRING PREDICTED.
+    `phonemes_execute_action` calls `ApplySyncableProperties` -- which carries
+    `Features` -- on the CREATE path only, and `_wire_phoneme_codes` above
+    already records why that is not the whole population: "a matched phoneme
+    never reaches this function at all (it plans as a natural-key
+    `PlannedOverwrite`)". PHONEMES is MULTI_INSTANCE, not GOLD_RESERVED, so it
+    has no edit-copy route either (`_GOLD_RESERVED_PHONOLOGY_CATEGORIES` holds
+    PHONOLOGICAL_FEATURES alone). A matched phoneme therefore arrives with the
+    correct Name and the starter's GUID and `FeaturesOA` NULL, on every pair.
+
+    MEASURED, NOT INFERRED (`census-038-t134-*`, `t119_per_owning_field`):
+    `PhPhoneme.Features` reads 41 -> 20, 41 -> 21 and 46 -> 27 on ejagham,
+    ngoreme and mbugwe. Each destination figure equals the number of phonemes
+    that pair CREATED (41-21, 41-20, 46-19), so the loss is exactly the
+    matched half and nothing else. It is the whole of ejagham's `FsFeatStruc`
+    -21, and part of the other two alongside the T045 `ReferenceForms` shells
+    and `FsComplexValue.Value`.
+
+    WHY THIS IS A REAL DEFECT AND NOT COSMETIC METADATA. A phoneme with a
+    correct name but null `FeaturesOA` cannot satisfy any feature-based
+    natural-class membership test, silently disabling phonological-rule
+    matching for exactly those phonemes -- the same failure mode feature 037
+    exists to prevent for `IPhNCFeatures`, arriving one level down.
+
+    ADD-ONLY BY CONSTRUCTION, NOT BY A FLAG. The props dict is NARROWED to
+    `Features` before it is handed over, so this pass cannot reach a matched
+    starter phoneme's `Name`, `Description` or `BasicIPASymbol` even if
+    `fill_gaps` were ignored entirely. That is T121's own stated preference
+    ("a `PhCode`-repository loop filtered by owner class would have been
+    correct too and one edit away from wrong; this cannot express the bug").
+    `fill_gaps=True` is passed as well. BOTH are available at the declared
+    `pyflexicon>=4.5.2` floor -- verified against flexicon commit `3abf6b54`,
+    the 4.5.2 release, where `ApplySyncableProperties(item, props,
+    ws_map=None, fill_gaps=False)` already threads the flag into
+    `__ApplyFeatures`. NO FLOOR BUMP.
+
+    IDEMPOTENT. flexicon's `_ApplyFeatureStruc` matches existing specs by
+    `(FeatureGuid, ValueGuid)` and creates `FeaturesOA` only when missing, so
+    re-running is a no-op and a created phoneme that already carries its
+    features is left alone. The pass walks every source phoneme rather than
+    only the matched set for that reason: one code path, no second population
+    to keep in step.
+
+    KNOWN RESIDUE, RECORDED RATHER THAN HIDDEN: the `IFsFeatStruc` this
+    creates does NOT preserve the source structure's GUID. flexicon passes
+    `struct_guid=None` (`PhonemeOperations.__ApplyFeatures`), its own open
+    "Phoneme struct-GUID not preserved" gap (spec D2, fixed upstream in T9).
+    The census counts `FsFeatStruc` by class so the gate closes, and the
+    feature/value GUIDs carrying the linguistic function ARE resolved against
+    the target's feature system so rule matching is restored -- but the
+    structure identity is not, and that is upstream work, not in-tree.
+    """
+    skips = []
+    plan = getattr(context, "_run_plan", None)
+    source = getattr(context, "source_handle", None)
+    if source is None or target is None:
+        return skips
+    try:
+        src_phonemes = list(source.Phonemes.GetAll())
+    except (AttributeError, TypeError):
+        return skips
+    if not src_phonemes:
+        return skips
+
+    matched, remap = _phoneme_code_targets(context, plan, target)
+    # WS-FIDELITY: narrowed props carry no multistring today, but `ws_map` is
+    # threaded anyway so a future `GetSyncableProperties` addition cannot
+    # reach LCM with an unmapped source WS handle (T024g).
+    ws_map = _ws_map_dict(getattr(plan, "ws_mapping", None))
+
+    filled = 0
+    already = 0
+    for src_phon in src_phonemes:
+        src_guid = _guid_str_from(src_phon)
+        if not src_guid:
+            continue
+        tgt_phon = matched.get(src_guid)
+        if tgt_phon is None:
+            tgt_phon = _resolve_target_by_guid(
+                target, remap.get(src_guid, src_guid))
+        if tgt_phon is None:
+            # T074's scoping, as in T121: a source phoneme with no destination
+            # counterpart is one this run never transferred, not a lost
+            # feature structure.
+            continue
+        tgt_phon = _cast_lcm(tgt_phon, "IPhPhoneme")
+        try:
+            props = source.Phonemes.GetSyncableProperties(src_phon)
+        except Exception as exc:  # noqa: BLE001
+            # Mirrors the create path's Ruling Y guard -- flexicon raised
+            # ITsString.get_String for phonemes until the shape-tolerant
+            # reader shipped. Degrade per phoneme; never abort the pass. Never
+            # silent: the operator sees one Skip per phoneme that did not land.
+            skips.append(Skip(
+                category=GrammarCategory.PHONEMES,
+                source_guid=src_guid,
+                reason=SkipReason.DEPENDENCY_UNRESOLVED,
+                detail=f"phoneme {src_guid} syncable properties unreadable: "
+                       f"{type(exc).__name__}"))
+            continue
+        specs = (props or {}).get("Features")
+        if not specs:
+            # A source phoneme with no feature structure is not a loss.
+            continue
+        try:
+            had = getattr(tgt_phon, "FeaturesOA", None)
+        except (AttributeError, TypeError):
+            had = None
+        try:
+            target.Phonemes.ApplySyncableProperties(
+                tgt_phon, {"Features": specs}, ws_map=ws_map, fill_gaps=True,
+            )
+        except Exception as exc:  # noqa: BLE001
+            skips.append(Skip(
+                category=GrammarCategory.PHONEMES,
+                source_guid=src_guid,
+                reason=SkipReason.DEPENDENCY_UNRESOLVED,
+                detail=f"phoneme {src_guid} FeaturesOA could not be applied: "
+                       f"{type(exc).__name__}"))
+            continue
+        if had is None:
+            filled += 1
+        else:
+            already += 1
+    if filled or already:
+        _log_phoneme_features(filled, already)
+    return skips
+
+
+def _log_phoneme_features(filled, already):
+    """`filled` counts phonemes whose `FeaturesOA` was NULL before this pass --
+    the defect's actual population. `already` counts the create-path phonemes
+    the idempotent re-application left alone, reported separately so the log
+    can never be read as claiming more than was repaired."""
+    import logging as _logging
+    _logging.getLogger("gramtrans.Lib.categories").info(
+        "T081: filled FeaturesOA on %d matched phoneme(s); %d already carried "
+        "one (no-op).", filled, already)
 
 
 # ----- natural_classes (memo step 4) ---------------------------------------
@@ -8033,9 +13798,17 @@ def natural_classes_dependencies(piece):
     its referenced feature/value objects are missing from target. This
     function is correct and is intentionally KEPT AS-IS so the gate works
     the moment 038's Phase 2 closes RC-2 and wires the closure -- do not
-    delete it as "dead code," and do not attempt to wire the closure from
-    this branch (038 owns that work and it must not run concurrently with
-    feature 037)."""
+    delete it as "dead code."
+
+    Feature 038 (T010) makes that unconsumed-ness EXPLICIT rather than
+    merely documented: this producer is CURRENTLY UNCONSUMED because it is
+    not registered in `CLOSURE_EDGES_VERIFIED` (bottom of this module), and
+    while it is unregistered `closure_dependencies_for()` returns `()` for
+    PhNCSegments/PhNCFeatures without ever calling it. Registering it is
+    what makes it live, and FR-018 requires an audit plus a named
+    `verified_by` test first -- so do not assume a dependency gate exists
+    for natural classes until this function's key appears in that registry.
+    """
     try:
         from SIL.LCModel import (
             IPhNCSegments, IPhNCFeatures, IFsClosedValue, ICmObject,
@@ -8054,7 +13827,33 @@ def natural_classes_dependencies(piece):
         feat_struct = getattr(nc_feat, "FeaturesOA", None)
         if feat_struct is None:
             return ()
-        refs: list[str] = []
+        # Feature 038 (T034): the FeatureRA/ValueRA guids gathered below are
+        # only HALF this structure's references. `TypeRA` names the
+        # `IFsFeatStrucType` in `PhFeatureSystemOA.TypesOC` that PHON_FEAT_TYPES
+        # transfers, and a natural class written before that type exists has an
+        # unsatisfiable `TypeRA` -- the same defect class as the hollow
+        # `FeaturesOA` feature 037 fixed.
+        #
+        # It is emitted as a REF TUPLE, deliberately mixing shapes with this
+        # producer's bare guids: a bare guid here would be indistinguishable
+        # from a feature/value guid and a single `dependency_category` on the
+        # registry entry would file it under the wrong far category.
+        # `closure_dependencies_for` already accepts both shapes from one
+        # producer (it tests `isinstance(item, tuple)` before falling back to
+        # `dependency_category`). The remaining bare-guid half is what still
+        # blocks registration, exactly as the `CLOSURE_EDGES_VERIFIED` banner
+        # says -- splitting this producer per far category is that work, not
+        # this one.
+        refs: list = []
+        type_ra = getattr(feat_struct, "TypeRA", None)
+        if type_ra is not None:
+            type_guid = _guid_str_from(type_ra)
+            if type_guid:
+                refs.append((
+                    _feat_struc_type_categories(piece).get(
+                        type_guid, GrammarCategory.PHON_FEAT_TYPES),
+                    type_guid,
+                ))
         for raw_spec in feat_struct.FeatureSpecsOC:
             try:
                 cv = IFsClosedValue(raw_spec)
@@ -8393,12 +14192,27 @@ def natural_classes_execute_action(action, context, ws_mapping, tag):
                 nc_label = _guid_str_from(src_nc)
                 for src_phon in src_segs:
                     phon_guid = _guid_str_from(src_phon)
-                    tgt_phon = tgt_phoneme_by_guid.get(phon_guid)
+                    # Identity, then this run's own natural-key substitutions.
+                    # A GUID-only read here was a MEASURED defect, not a
+                    # theoretical one: T124's run reports carry
+                    # `identity_substitution` basis=NATURAL_KEY on 21 / 20 / 19
+                    # `PhPhoneme`, and those phonemes ARE in the destination
+                    # under the destination's own GUIDs. The source GUID missed,
+                    # this raised "no counterpart on the target", and because
+                    # the NC shell had already been added (see the "Orphan risk"
+                    # branch below, which says so), 7 natural classes across two
+                    # pairs arrived with an EMPTY `SegmentsRC` while the census
+                    # read the class MATCHED. Same defect as the phonological-
+                    # rule context route, which is why both call one helper.
+                    tgt_phon, _basis = _resolve_scoped_referent(
+                        context, src_phon, tgt_phoneme_by_guid, "PhPhoneme")
                     if tgt_phon is None:
                         raise RuntimeError(
                             f"natural_classes_execute_action: NC {nc_label} "
                             f"references source phoneme {phon_guid} which has no "
-                            f"counterpart on the target.  Transfer the phoneme "
+                            f"counterpart on the target (not found by GUID, by "
+                            f"this run's identity remap, or by roster-admitted "
+                            f"name).  Transfer the phoneme "
                             f"before transferring natural classes."
                         )
                     try:
@@ -8758,38 +14572,48 @@ def phonological_rules_dependencies(piece):
     except (TypeError, AttributeError):
         rr = None
     if rr is not None:
+        # T120: the same whole-loop guard as the two write-side loops, and
+        # here it truncates the FR-304 dependency closure rather than a write
+        # -- an abort partway means every LATER right-hand side contributes no
+        # phoneme / natural-class / POS / rule-feature edge at all.
+        #
+        # This one is LATENT, not measured, and is fixed anyway: as this
+        # function's own RC-2 note records, nothing consumes the return value
+        # yet. Fixing it now means the closure is already correct on the day
+        # 038 Phase 2 wires it up, instead of arriving as a fresh loss then.
         try:
-            for rhs in rr.RightHandSidesOS:
+            dep_rhs = list(rr.RightHandSidesOS)
+        except (AttributeError, TypeError):
+            dep_rhs = []
+        for rhs in dep_rhs:
+            try:
+                for cell in rhs.StrucChangeOS:
+                    _collect_cell(cell)
+            except (AttributeError, TypeError):
+                pass
+            for oa_attr in ("LeftContextOA", "RightContextOA"):
                 try:
-                    for cell in rhs.StrucChangeOS:
-                        _collect_cell(cell)
+                    _collect_cell(getattr(rhs, oa_attr, None))
                 except (AttributeError, TypeError):
                     pass
-                for oa_attr in ("LeftContextOA", "RightContextOA"):
-                    try:
-                        _collect_cell(getattr(rhs, oa_attr, None))
-                    except (AttributeError, TypeError):
-                        pass
-                # InputPOSesRC / ReqRuleFeatsRC / ExclRuleFeatsRC (coordinator
-                # live-run defect B, feature 037): these reference
-                # IPartOfSpeech / IPhPhonRuleFeat objects that must already
-                # exist in target -- previously surfaced as no hard
-                # dependency at all, so a rule referencing an
-                # exception-feature the target lacked silently lost that
-                # conditioning (see _phon_rule_apply_body's matching rc_attr
-                # loop, which now reports a DroppedItemRecord for the same
-                # gap instead of a bare [WARN]).
-                for rc_attr in ("InputPOSesRC", "ReqRuleFeatsRC", "ExclRuleFeatsRC"):
-                    try:
-                        rc = getattr(rhs, rc_attr, None)
-                        if rc is None:
-                            continue
-                        for item in rc:
-                            _add(item)
-                    except (AttributeError, TypeError):
-                        pass
-        except (AttributeError, TypeError):
-            pass
+            # InputPOSesRC / ReqRuleFeatsRC / ExclRuleFeatsRC (coordinator
+            # live-run defect B, feature 037): these reference
+            # IPartOfSpeech / IPhPhonRuleFeat objects that must already
+            # exist in target -- previously surfaced as no hard
+            # dependency at all, so a rule referencing an
+            # exception-feature the target lacked silently lost that
+            # conditioning (see _phon_rule_apply_body's matching rc_attr
+            # loop, which now reports a DroppedItemRecord for the same
+            # gap instead of a bare [WARN]).
+            for rc_attr in ("InputPOSesRC", "ReqRuleFeatsRC", "ExclRuleFeatsRC"):
+                try:
+                    rc = getattr(rhs, rc_attr, None)
+                    if rc is None:
+                        continue
+                    for item in rc:
+                        _add(item)
+                except (AttributeError, TypeError):
+                    pass
 
     return tuple(refs)
 
@@ -9110,6 +14934,99 @@ def _short_guid(guid) -> str:
     return str(guid)[:8]
 
 
+def _report_dropped_rhs(dropped, rule_guid, rhs_guid, exc):
+    """DroppedItemRecord for a whole `IPhSegRuleRHS` that could not be built
+    (feature 038 T120).
+
+    The record this replaces did not exist: the RHS loop was wrapped in a
+    single `except (AttributeError, TypeError): pass`, so one bad right-hand
+    side aborted the loop and every REMAINING right-hand side of that rule
+    vanished with no trace. The rule then reported success. That is a real
+    SC-010 never-silent violation independently of any count.
+
+    **THE SECOND HALF OF THAT CLAIM WAS WRONG AND IS CORRECTED HERE (2026-08-28).**
+    This docstring used to finish "That is the measured `PhSegRuleRHS`
+    shortfall (21 -> 18, 39 -> 28)". It is not. T124 measured **zero**
+    `RightHandSidesOS` drop records on all three pairs while 14 right-hand
+    sides went missing, and the reason is now located: every one of the 31
+    measured phonological-rule failures is a `RuntimeError`, which this
+    handler's `except (AttributeError, TypeError)` cannot catch, and 14 of
+    them fire in the **StrucDescOS loop upstream of this loop** -- before any
+    `PhSegRuleRHS` is created at all. So this reporter was added to the wrong
+    path AND behind the wrong exception class, and it could not have fired
+    for the shortfall it named. The shortfall's own reporter is
+    `_report_dropped_struc_desc_cell` below; this one now also catches
+    `Exception`, so a raise from `_copy_context_cell` inside the RHS loop
+    costs one right-hand side instead of the rest of the rule.
+    """
+    if dropped is None:
+        return
+    _append_dropped_once(dropped, DroppedItemRecord(
+        owner_kind="PhSegRuleRHS",
+        owner_guid=rhs_guid or "",
+        owner_label=f"rule={_short_guid(rule_guid)} rhs={_short_guid(rhs_guid)}",
+        field_name="RightHandSidesOS",
+        item_name=f"rhs={_short_guid(rhs_guid)}",
+        item_guid=rhs_guid or "",
+        reason=(
+            f"right-hand side could not be built ({type(exc).__name__}: {exc}); "
+            f"its StrucChange/LeftContext/RightContext children are lost with "
+            f"it. Remaining right-hand sides of this rule were still attempted."
+        ),
+    ))
+
+
+def _report_dropped_struc_desc_cell(dropped, rule_guid, cell_guid, exc):
+    """DroppedItemRecord for ONE `StrucDescOS` context cell of a
+    `PhRegularRule` that could not be built (feature 038, T120 second entry).
+
+    **THIS IS THE REPORTER THE MEASURED SHORTFALL ACTUALLY NEEDED**, and it is
+    a different one from `_report_dropped_rhs` for a structural reason, not a
+    stylistic one. `StrucDescOS` cells are the rule's OWN context cells and
+    are copied in a loop that runs BEFORE `RightHandSidesOS` is touched. Its
+    guard was `except (AttributeError, TypeError): pass` wrapping the WHOLE
+    loop, so a `RuntimeError` from `_copy_context_cell` escaped
+    `_phon_rule_apply_body` entirely, propagated out of
+    `phonological_rules_execute_action`, and was swallowed by
+    `transfer.py`'s `except Exception` -- after the rule shell had already
+    been created GUID-preserving. The result is a `PhRegularRule` that the
+    census reads as MATCHED carrying **no right-hand sides at all**, because
+    the loop that would have created them was never reached.
+
+    Measured by T124 across the three sanctioned pairs: 31 rule failures, all
+    `RuntimeError`, of which **14 fire here** -- 11 on mbugwe, 3 on ngoreme --
+    and every source holds exactly one `PhSegRuleRHS` per `PhRegularRule`
+    (6/6, 21/21, 39/39). So these 14 aborts ARE the measured `PhSegRuleRHS`
+    shortfall (-3 ngoreme, -11 mbugwe), to the object, with no residue. The
+    remaining 17 fire inside the RHS loop, where the RHS object survives and
+    only its contexts are lost -- which is why ejagham reads 6/6 MATCHED and
+    still loses content.
+
+    Reporting is not the fix, and this docstring must not be read as though it
+    were: `_resolve_ctx_referent` is what stops the 14 from happening. This
+    record exists for the residue that resolution genuinely cannot save, so
+    that a rule which loses a context cell says so instead of arriving as a
+    silent MATCHED shell.
+    """
+    if dropped is None:
+        return
+    _append_dropped_once(dropped, DroppedItemRecord(
+        owner_kind="PhRegularRule",
+        owner_guid=rule_guid or "",
+        owner_label=f"rule={_short_guid(rule_guid)}",
+        field_name="StrucDescOS",
+        item_name=f"cell={_short_guid(cell_guid)}",
+        item_guid=cell_guid or "",
+        reason=(
+            f"StrucDescOS context cell could not be built "
+            f"({type(exc).__name__}: {exc}). The rule shell was already "
+            f"created, so the census reads this rule MATCHED; without this "
+            f"record the loss is invisible. Remaining StrucDescOS cells and "
+            f"the rule's right-hand sides were still attempted."
+        ),
+    ))
+
+
 def _report_dropped_rule_ref(dropped, rule_guid, rhs_guid, field_name, item_guid, src_item):
     """DroppedItemRecord for an RHS reference-collection item
     (InputPOSesRC/ReqRuleFeatsRC/ExclRuleFeatsRC) absent from the target
@@ -9344,6 +15261,48 @@ def _phon_rule_apply_body(src_rule, new_rule, class_name, source, target,
     except (AttributeError, TypeError):
         pass
 
+    # -----------------------------------------------------------------------
+    # REFERENT RESOLUTION: identity first, then the plan's OWN natural-key
+    # match. Feature 038, T120 second entry (2026-08-28).
+    #
+    # WHY THIS EXISTS, MEASURED RATHER THAN ARGUED. The lookup dicts above are
+    # keyed by DESTINATION GUID and were being consulted with a SOURCE GUID.
+    # For a phoneme the source and destination genuinely share a GUID that is
+    # correct; for a phoneme this run matched to the destination's STARTER
+    # inventory by roster-admitted NAME it is not, and the miss was read as
+    # "absent from target" and raised. T124 measured `identity_substitution`
+    # basis=NATURAL_KEY on 21 / 20 / 19 `PhPhoneme` plus 1 `PhNCSegments` on
+    # two pairs: those objects ARE in the destination, under the destination's
+    # own GUIDs, and Preview had already emitted a `PlannedOverwrite` carrying
+    # both GUIDs and promising to reuse them. The rule route never consulted
+    # it. That is a PREVIEW/MOVE DIVERGENCE, and it is the single cause of all
+    # 31 measured phonological-rule aborts on the three sanctioned pairs.
+    #
+    # ORDERING IS FR-001/FR-002's, NOT A NEW ONE: identity is authoritative and
+    # the name is consulted ONLY when identity finds nothing. A GUID that
+    # already identified an object must never be second-guessed by a name
+    # collision, so the `by_guid` hit returns before either fallback is tried.
+    #
+    # AMBIGUITY IS NOT A PICK. `_process_referent_by_natural_key` absorbs
+    # `NaturalKeyAmbiguityError` and returns None, so a rule referencing one of
+    # two same-named destination phonemes still refuses -- and now refuses with
+    # a report instead of taking the whole rule down. Guessing here is how a
+    # rule comes to match the wrong segment silently, which is worse than the
+    # loss it would paper over.
+    #
+    # DEGRADATION: the UPDATE path (`_execute_phon_rule_structural_update`)
+    # passes `context=None` and has no plan. Both fallbacks are skipped there
+    # and behaviour is exactly what it was -- GUID-only.
+    # -----------------------------------------------------------------------
+    def _resolve_ctx_referent(src_ref, by_guid, expect_class):
+        """Bind this rule's `context` to the shared module-level resolver.
+
+        Deliberately a one-line delegation and NOT a local copy:
+        `natural_classes_execute_action` has the identical defect and calls
+        the same `_resolve_scoped_referent`, so the two sites cannot drift.
+        """
+        return _resolve_scoped_referent(context, src_ref, by_guid, expect_class)
+
     def _collect_nc_constraints(context_seq):
         """Yield (constraint_obj, constraint_guid) from NC contexts in seq."""
         for cell in context_seq:
@@ -9397,31 +15356,42 @@ def _phon_rule_apply_body(src_rule, new_rule, class_name, source, target,
         _pre_pass_constraints_from_seq(src_rr.StrucDescOS)
     except (AttributeError, TypeError):
         pass
+    # T120(a): SAME DEFECT SHAPE AS THE RHS CREATION LOOP BELOW, AND IT LANDS
+    # ON THE BIGGEST LOSS IN THE CONTEXT FAMILY. This `try` used to wrap the
+    # whole loop, so an error on one right-hand side aborted the constraint
+    # pre-pass and every REMAINING right-hand side's `PhFeatureConstraint`s
+    # were never created -- silently. `PhFeatureConstraint` is owned SOLELY by
+    # `PhPhonData.FeatConstraints` (a project-level shared pool, not a rule
+    # child) and measures -47 / -32, the single largest context-family loss.
+    # Guarding the acquisition and letting each right-hand side fail on its own
+    # is the whole fix; the pool itself is already created GUID-preserved by
+    # `_pre_pass_constraints_from_seq`.
     try:
-        for src_rhs in src_rr.RightHandSidesOS:
-            for attr in ("StrucChangeOS", "LeftContextOA", "RightContextOA"):
-                try:
-                    val = getattr(src_rhs, attr, None)
-                    if val is None:
-                        continue
-                    # OA returns a single object; OS is iterable
-                    if attr.endswith("OA"):
-                        # May itself be a sequence
-                        try:
-                            cn = ICmObject(val).ClassName
-                            if cn == "PhSequenceContext":
-                                seq_ctx = IPhSequenceContext(val)
-                                _pre_pass_constraints_from_seq(seq_ctx.MembersRS)
-                            else:
-                                _pre_pass_constraints_from_seq([val])
-                        except (AttributeError, TypeError):
-                            pass
-                    else:
-                        _pre_pass_constraints_from_seq(val)
-                except (AttributeError, TypeError):
-                    pass
+        pre_pass_rhs = list(src_rr.RightHandSidesOS)
     except (AttributeError, TypeError):
-        pass
+        pre_pass_rhs = []
+    for src_rhs in pre_pass_rhs:
+        for attr in ("StrucChangeOS", "LeftContextOA", "RightContextOA"):
+            try:
+                val = getattr(src_rhs, attr, None)
+                if val is None:
+                    continue
+                # OA returns a single object; OS is iterable
+                if attr.endswith("OA"):
+                    # May itself be a sequence
+                    try:
+                        cn = ICmObject(val).ClassName
+                        if cn == "PhSequenceContext":
+                            seq_ctx = IPhSequenceContext(val)
+                            _pre_pass_constraints_from_seq(seq_ctx.MembersRS)
+                        else:
+                            _pre_pass_constraints_from_seq([val])
+                    except (AttributeError, TypeError):
+                        pass
+                else:
+                    _pre_pass_constraints_from_seq(val)
+            except (AttributeError, TypeError):
+                pass
 
     # -----------------------------------------------------------------------
     # Helper: wire the scalar bounds + nested-context reference on a
@@ -9470,11 +15440,14 @@ def _phon_rule_apply_body(src_rule, new_rule, class_name, source, target,
                 src_feat_struct = IPhSimpleContextSeg(src_cell).FeatureStructureRA
                 if src_feat_struct is not None:
                     fg = _guid_str_from(src_feat_struct)
-                    tgt_phon = tgt_phoneme_by_guid.get(fg)
+                    tgt_phon, _basis = _resolve_ctx_referent(
+                        src_feat_struct, tgt_phoneme_by_guid, "PhPhoneme")
                     if tgt_phon is None:
                         raise RuntimeError(
                             f"PhSimpleContextSeg guid={cell_guid} references "
-                            f"phoneme guid={fg} absent from target"
+                            f"phoneme guid={fg} absent from target "
+                            f"(not found by GUID, by this run's identity "
+                            f"remap, or by roster-admitted name)"
                         )
                     IPhSimpleContextSeg(new_cell).FeatureStructureRA = tgt_phon
             except RuntimeError:
@@ -9493,11 +15466,15 @@ def _phon_rule_apply_body(src_rule, new_rule, class_name, source, target,
                 src_nc_ref = nc_src.FeatureStructureRA
                 if src_nc_ref is not None:
                     ng = _guid_str_from(src_nc_ref)
-                    tgt_nc = tgt_nc_by_guid.get(ng)
+                    tgt_nc, _basis = _resolve_ctx_referent(
+                        src_nc_ref, tgt_nc_by_guid,
+                        _class_name_of(src_nc_ref))
                     if tgt_nc is None:
                         raise RuntimeError(
                             f"PhSimpleContextNC guid={cell_guid} references "
-                            f"NC guid={ng} absent from target"
+                            f"NC guid={ng} absent from target "
+                            f"(not found by GUID, by this run's identity "
+                            f"remap, or by roster-admitted name)"
                         )
                     nc_new.FeatureStructureRA = tgt_nc
             except RuntimeError:
@@ -9593,11 +15570,29 @@ def _phon_rule_apply_body(src_rule, new_rule, class_name, source, target,
     # -----------------------------------------------------------------------
     # StrucDescOS (rule-owned context cells)
     # -----------------------------------------------------------------------
+    # PER CELL, not per loop. The guard here used to wrap the WHOLE loop and
+    # catch only `(AttributeError, TypeError)`, so a `RuntimeError` from
+    # `_copy_context_cell` escaped this function entirely, propagated out of
+    # `phonological_rules_execute_action`, and was swallowed by transfer.py's
+    # `except Exception` -- AFTER the rule shell had been created. The rule
+    # then census-read as MATCHED with no right-hand sides at all, because the
+    # RHS loop below was never reached. T124 measured 14 of the 31 rule aborts
+    # firing exactly here, and they ARE the whole `PhSegRuleRHS` shortfall
+    # (-3 ngoreme, -11 mbugwe) to the object. Report and continue: one bad
+    # cell costs that cell, not the rule's entire right-hand side tree.
     try:
-        for src_cell in src_rr.StrucDescOS:
-            _copy_context_cell(src_cell, new_rr.StrucDescOS)
+        _struc_desc_cells = list(src_rr.StrucDescOS)
     except (AttributeError, TypeError):
-        pass
+        _struc_desc_cells = []
+    for src_cell in _struc_desc_cells:
+        try:
+            _copy_context_cell(src_cell, new_rr.StrucDescOS)
+        except (AttributeError, TypeError):
+            pass
+        except Exception as exc:  # noqa: BLE001 -- reported, never hidden
+            _report_dropped_struc_desc_cell(
+                _dropped_list, src_guid, _guid_str_from(src_cell), exc)
+            continue
 
     # -----------------------------------------------------------------------
     # RightHandSidesOS
@@ -9645,8 +15640,28 @@ def _phon_rule_apply_body(src_rule, new_rule, class_name, source, target,
             if new_cell is not None:
                 setattr(new_rhs, attr_name, new_cell)
 
+    # T120(b): THE ITERATOR ACQUISITION IS GUARDED; THE LOOP BODY IS NOT.
+    #
+    # This `try` used to wrap the WHOLE loop with `except (AttributeError,
+    # TypeError): pass`, so an error in ANY iteration aborted the loop and
+    # SILENTLY dropped every REMAINING right-hand side of that rule. That is
+    # the exact shape of the measured loss: `PhRegularRule` is count-MATCHED on
+    # all three pairs (6/6, 21/21, 39/39) while `RightHandSides` is short on
+    # two (21 -> 18, 39 -> 28) -- a PARTIAL loss on a parent that arrived
+    # whole, which no create-path-absent and no enrichment-gap story explains,
+    # but a mid-loop abort explains exactly. Each lost RHS took its
+    # `LeftContext` / `RightContext` / `StrucChange` children with it (on
+    # Mbugwe, 11 lost RHS account for 35 lost child contexts).
+    #
+    # It was also a never-silent violation (SC-010): `pass` left no trace in
+    # the run report, so the rule reported success having transferred some of
+    # its right-hand sides.
     try:
-        for src_rhs in src_rr.RightHandSidesOS:
+        rhs_list = list(src_rr.RightHandSidesOS)
+    except (AttributeError, TypeError):
+        rhs_list = []
+    for src_rhs in rhs_list:
+        try:
             rhs_guid = _guid_str_from(src_rhs)
             new_rhs, _ = _create_with_guid(
                 IPhSegRuleRHSFactory, new_rr.RightHandSidesOS, rhs_guid, target
@@ -9688,8 +15703,22 @@ def _phon_rule_apply_body(src_rule, new_rule, class_name, source, target,
                             )
                 except (AttributeError, TypeError):
                     pass
-    except (AttributeError, TypeError):
-        pass
+        except Exception as exc:  # noqa: BLE001,PERF203
+            # ONE right-hand side failed. Report it and CONTINUE, so the rest
+            # of the rule's right-hand sides still transfer -- the previous
+            # behaviour lost all of them and said nothing.
+            #
+            # BROADENED FROM `(AttributeError, TypeError)` 2026-08-28. Every
+            # one of the 31 phonological-rule failures T124 measured is a
+            # `RuntimeError` raised by `_copy_context_cell`, so the narrower
+            # tuple could not catch a single real failure and this reporter
+            # had never fired on any pair. 17 of those 31 fire inside THIS
+            # loop, where the `PhSegRuleRHS` object already exists and only
+            # its contexts are lost -- which is why ejagham reads 6/6 MATCHED
+            # and still loses content a counts-only gate cannot see.
+            _report_dropped_rhs(_dropped_list, src_guid,
+                                _guid_str_from(src_rhs), exc)
+            continue
 
     # -----------------------------------------------------------------------
     # InitialStratumRA / FinalStratumRA.
@@ -9992,6 +16021,18 @@ LEAF_CATEGORIES = {
         "plan_action": gram_categories_plan_action,
         "execute_action": gram_categories_execute_action,
     },
+    # POS: the pick-driven ALIAS of gram_categories (see the banner above
+    # `pos_enumerate_source`). Shares dependencies / required_writing_systems /
+    # execute_action verbatim -- `gram_categories_execute_action` reads only
+    # `action.source_guid` and is category-agnostic -- and differs only in the
+    # narrowed enumeration and the category stamped on the decision.
+    GrammarCategory.POS: {
+        "enumerate_source": pos_enumerate_source,
+        "dependencies": gram_categories_dependencies,
+        "required_writing_systems": gram_categories_required_writing_systems,
+        "plan_action": pos_plan_action,
+        "execute_action": gram_categories_execute_action,
+    },
     GrammarCategory.INFLECTION_FEATURES: {
         "enumerate_source": inflection_features_enumerate_source,
         "dependencies": inflection_features_dependencies,
@@ -10163,3 +16204,555 @@ def for_category(category: GrammarCategory) -> dict:
     MSAs) are transferred via the closure/plan path in `Lib/preview.py` +
     `Lib/transfer.py` + `_create_msa_for_closure`, not through this registry."""
     return LEAF_CATEGORIES[category]
+
+
+# ============================================================================
+# Closure-edge verification registry (feature 038 -- FR-014 / FR-018, R3)
+# ============================================================================
+#
+# `Lib/closure.py`'s `walk()` consumes a `dependencies(category, source_guid)`
+# callable. This module supplies 23 `*_dependencies(piece)` producers -- one
+# per entry in LEAF_CATEGORIES -- and every one of them is UNVERIFIED BY
+# CONSTRUCTION: `preview.build_run_plan` and `transfer.execute` have never read
+# `bundle["dependencies"]` for ANY category, so no producer's edge set has ever
+# been checked against a real project (see the RC-2 notes on
+# `natural_classes_dependencies` and `phonological_rules_dependencies`).
+#
+# FR-018 requires each dependency relationship to be verified on its OWN
+# evidence before it may influence a plan. One global `include_closure=True`
+# flag cannot express "AFFIX_TO_POS is verified but PROCESS_RULE_TO_PHONEME is
+# not" -- it switches all 23 producers on at once, which is precisely US3's
+# stated widest-regression risk. Hence a per-relationship allowlist keyed by
+# `models.DependencyKind`.
+#
+# THIS REGISTRY LANDS EMPTY, AND EMPTINESS IS THE SAFETY PROPERTY: with nothing
+# registered, `closure_dependencies_for()` returns `()` for every ref it is
+# asked about, the walk is a no-op by construction, and no existing plan can
+# change. Registering an entry is a DELIBERATE, EVIDENCE-BACKED ACT -- it turns
+# one producer's output loose on real plans -- so `verified_by` (the test or
+# probe that audited that producer's edge set against a fixture) is MANDATORY
+# and validated here, mirroring what `models.ClosureEdge` demands of the edges
+# this registry ultimately produces. Add producers ONE AT A TIME, each with its
+# own census diff.
+#
+# Entry shape (kept as a comment -- do NOT uncomment without the audit and the
+# unit test that `verified_by` names):
+#
+#     DependencyKind.AFFIX_TO_POS: {
+#         "category": GrammarCategory.AFFIXES,       # whose pieces are walked
+#         "producer": affixes_dependencies,          # the *_dependencies fn
+#         "dependency_category": None,               # producer yields refs
+#         "verified_by": "tests/unit/test_closure_edges.py::test_affix_to_pos",
+#     },
+#
+# `dependency_category` reconciles the two producer shapes in this file: most
+# already yield `(GrammarCategory, guid)` refs and set it to None; a few --
+# `natural_classes_dependencies`, `phonological_rules_dependencies` -- yield
+# BARE guid strings, and those name the category the guids belong to here. A
+# bare-guid producer whose guids span SEVERAL categories (phonological rules
+# return phonemes, natural classes and strata undifferentiated) cannot be
+# registered as-is: split it into per-category producers first, because the
+# audit that earns `verified_by` cannot certify an edge whose far endpoint
+# category is a guess.
+#
+# T034 (the FsFeatStrucType closure edge) DELIBERATELY DID NOT REGISTER ITSELF
+# here. It made `affixes_dependencies`, `stems_dependencies`,
+# `gram_categories_dependencies`, `phonemes_dependencies` and
+# `natural_classes_dependencies` emit the `FsFeatStruc.TypeRA` ->
+# `IFsFeatStrucType` arrow (plus the `FeatureSpecsOC` -> feature/value arrows),
+# and added `DependencyKind.MSA_TO_FEAT_STRUC_TYPE` to name the relationship --
+# but registering it is Phase 7's job (T067-T069), for two reasons:
+#
+#   1. FR-018 makes `verified_by` mandatory and it must name a REAL audit. No
+#      audit of these edge sets against a live project exists yet, and a
+#      fabricated `verified_by` would defeat the entire mechanism.
+#   2. The registry is keyed by `DependencyKind` and a dict key is unique, so
+#      the five producers above cannot all be registered under one member.
+#      Phase 7 must decide the member split (`POS_TO_FEAT_STRUC_TYPE`,
+#      `PHONEME_TO_FEAT_STRUC_TYPE`, ...) as part of the same audit that earns
+#      each one its evidence.
+#
+# Until then the producers are correct and inert, exactly like the other 23.
+#
+# ---------------------------------------------------------------------------
+# T067 (2026-08-21) -- the FIRST two rows, and the one it REFUSED
+# ---------------------------------------------------------------------------
+#
+# T067's job was "confirm the edge is correct against a live pair, THEN
+# register". It took three attempts to get to a row, and the two failures are
+# the reason the rows below can be trusted:
+#
+#   1. The FIRST audit (`73a8b73`) measured both MSA-side relationships DEAD on
+#      live data -- 0 edges uncast against 296/245 cast. `_entry_pos_deps` read
+#      `PartOfSpeechRA` off members of `ILexEntry.MorphoSyntaxAnalysesOC`, a
+#      POLYMORPHIC collection typed `IMoMorphSynAnalysis` on which that property
+#      is not declared, so pythonnet's static-type resolution returned None for
+#      every MSA in every real project while all 3422 unit tests passed on
+#      duck-typed fakes. Registration was REFUSED; the defect was filed and
+#      fixed as T088 (`_cast_to_concrete`, `955267e`).
+#
+#   2. The COMPOSITE-PRODUCER problem, which is why these rows do not name
+#      `affixes_dependencies`. That producer returns a MIXED edge set --
+#      GRAM_CATEGORIES from `_entry_pos_deps` plus FEATURE_STRUCT_TYPES *and*
+#      INFLECTION_FEATURES from `_entry_feat_struc_deps` -- and this registry is
+#      keyed by ONE `DependencyKind` per row with unique keys. Registering the
+#      composite under `AFFIX_TO_POS` with `dependency_category: None` makes
+#      `preview._closure_kind_lookup` match every edge on the `(AFFIXES, None)`
+#      wildcard and stamp all three relationships `AFFIX_TO_POS`, filing two
+#      unaudited relationships under a third's `verified_by`. So the rows name
+#      NARROW per-relationship producers, each emitting one far category, and
+#      each row's `dependency_category` is EXPLICIT -- which also makes the
+#      lookup key `(AFFIXES, <far>)` unique per row instead of colliding.
+#      `affixes_dependencies` itself is unchanged and still composite for its
+#      non-closure callers.
+#
+#   3. `MSA_TO_INFL_FEATURE` is STILL REFUSED, on its own third kind of
+#      evidence, and this is the finding T067's second pass added. Its producer
+#      is narrow and its edges are live (206 on Mbugwe / 34 on Ejagham Mini,
+#      foreign_edges 0 on both). But the audit also resolves every far GUID
+#      against the far category's OWN `enumerate_source`, and 30 of 34 distinct
+#      far GUIDs on Mbugwe -- 8 of 10 on Ejagham Mini -- are `IFsSymFeatVal`
+#      SYMBOLIC VALUES, which `inflection_features_enumerate_source` never
+#      yields: it walks `FeatureGetAll()`, the feature DEFNS, and
+#      `inflection_features_dependencies` records that the values are
+#      "co-created in execute_action, not separately planned". An edge naming a
+#      piece the category cannot enumerate cannot be planned, marked pulled-in
+#      (T070) or deselected (T072), so registering it would put an unplannable
+#      item into a plan under a `verified_by`. Filed as T089.
+#
+# What each row therefore claims, and nothing more: for AFFIXES pieces, the
+# named narrow producer emits ONLY its own far category (measured
+# `foreign_edges == 0`) and EVERY distinct far GUID it emits resolves to a
+# piece the far category's own `enumerate_source` yields (measured
+# `unresolved == 0`, `resolved_as_owned_value == 0`), on BOTH corpora.
+#
+# STEMS is deliberately absent. `stems_dependencies` shares `_entry_pos_deps`
+# and `_entry_feat_struc_deps`, so it would very likely audit the same way --
+# but "likely" is not an audit, `DependencyKind` keys are unique so a STEMS row
+# would need its own member anyway, and T067 names the AFFIXES producer.
+
+# ---------------------------------------------------------------------------
+# T068 (2026-08-21) -- the SLOTS row, and the member the plan got backwards
+# ---------------------------------------------------------------------------
+#
+# `slots_dependencies` audited CLEAN the first time it was measured (`73a8b73`)
+# and for a reason that is checkable rather than lucky: it reads only `Owner`,
+# which IS declared on `ICmObject`, so the bare `getattr` sees it on the
+# base-typed proxy `AffixSlotsOC` yields and T088's polymorphic-member defect
+# cannot apply. Measured `NO_CAST_NEEDED`, 19 uncast == 19 cast on `Mbugwe
+# LizzieHC practice` and 9 == 9 on `Ejagham Mini`.
+#
+# What it did NOT have was a `DependencyKind`. The plan's member list named
+# `SLOT_TO_TEMPLATE`, which is a DIFFERENT relationship pointing the other way:
+# in LCM an `IMoInflAffixSlot` is owned by `IPartOfSpeech.AffixSlotsOC` and
+# holds no reference to any template, while `IMoInflAffixTemplate` references
+# its slots through five `*SlotsRS` sequences. Nothing in this module emits a
+# slot->template edge, and `slots_dependencies` emits only slot->POS. So
+# `DependencyKind.SLOT_TO_POS` was ADDED rather than the wrong member borrowed:
+# a live relationship filed under another relationship's name would pass
+# registration and then mislabel every FR-015 surface (T070) and every
+# deselection (T072), which is the substitution FR-018 exists to prevent moved
+# one step downstream where nothing checks for it.
+#
+# What the row claims: for SLOTS pieces, `slots_pos_dependencies` emits ONLY
+# `(GRAM_CATEGORIES, guid)` (measured `foreign_edges == 0`) and every distinct
+# far GUID resolves to a piece `gram_categories_enumerate_source` yields
+# (measured `unresolved == 0`, `resolved_as_owned_value == 0`) -- 19 edges over
+# 5 distinct POSes on Mbugwe, 9 over 6 on Ejagham Mini. The edge count and the
+# distinct-POS count differ because several slots share an owning POS, which is
+# the whole reason closure is worth having and the reason the census reports
+# both numbers.
+
+# ---------------------------------------------------------------------------
+# T069 (2026-08-21) -- the AFFIX_TEMPLATES rows: T067's composite split, on a
+# producer whose halves both audited clean
+# ---------------------------------------------------------------------------
+#
+# `affix_templates_dependencies` is the second MIXED producer in this module:
+# one call returns the owning POS (GRAM_CATEGORIES) and every slot referenced
+# across the five `*SlotsRS` sequences (SLOTS). So it needs T067's treatment --
+# two narrow producers, two rows, each with an EXPLICIT `dependency_category`
+# so the `_closure_kind_lookup` keys are `(AFFIX_TEMPLATES, GRAM_CATEGORIES)`
+# and `(AFFIX_TEMPLATES, SLOTS)` rather than one `(AFFIX_TEMPLATES, None)`
+# wildcard that would stamp both relationships with one `verified_by`.
+#
+# The difference from T067 is that here the split is bookkeeping rather than a
+# blocked audit. Both halves measured live-correct on both corpora
+# (`NO_CAST_NEEDED`, uncast == cast: 11/11 and 7/7 for the owner, 24/24 and
+# 9/9 for the sequences; 11 edges over 5 distinct POSes and 24 over 18 distinct
+# slots on Mbugwe, 7 over 6 and 9 over 9 on Ejagham Mini) because `Owner` is
+# declared on `ICmObject` and the `*SlotsRS`
+# sequences are on `IMoInflAffixTemplate` itself -- T088's polymorphic-member
+# defect has no purchase on either.
+#
+# THE MEMBER, again. `TEMPLATE_TO_POS` already existed. The slot half did not:
+# the plan's `SLOT_TO_TEMPLATE` names the arrow BACKWARDS (an
+# `IMoInflAffixSlot` carries no template reference -- its own properties are
+# Name, Description, Optional, Affixes, OtherInflectionalAffixLexEntries), and
+# `AFFIX_TO_SLOT`, which the first audit borrowed as this relationship's label,
+# is `IMoInflAffMsa.SlotsRC` -- carried as `RunPlan.msa_slot_bindings` for the
+# 17.1 sub-pass, which is FR-019 / SC-003 / T074's surface. So
+# `DependencyKind.TEMPLATE_TO_SLOT` was added, and the audit driver's `edges`
+# key was RENAMED from `AFFIX_TO_SLOT` to match what it has always measured.
+#
+# What the two rows claim: for AFFIX_TEMPLATES pieces, each narrow producer
+# emits ONLY its own far category (`foreign_edges == 0`) and every distinct far
+# GUID resolves to a piece that far category's own `enumerate_source` yields
+# (`unresolved == 0`, `resolved_as_owned_value == 0`), on BOTH corpora.
+
+CLOSURE_EDGES_VERIFIED: dict = {
+    DependencyKind.AFFIX_TO_POS: {
+        "category": GrammarCategory.AFFIXES,
+        "producer": affixes_pos_dependencies,
+        # EXPLICIT, not None: it makes `_closure_kind_lookup`'s key
+        # `(AFFIXES, GRAM_CATEGORIES)` rather than the `(AFFIXES, None)`
+        # wildcard that would also swallow this row's two siblings.
+        "dependency_category": GrammarCategory.GRAM_CATEGORIES,
+        "verified_by": (
+            "debug/audit038_closure_edges.py (read-only, 2026-08-21) over "
+            "'Mbugwe LizzieHC practice' and 'Ejagham Mini': "
+            "relationships.AFFIX_TO_POS = CONFIRMED (144/88 edges, "
+            "foreign_edges 0, unresolved 0) in "
+            "tests/integration/_snapshots/closure-edge-audit-038-*.json, "
+            "asserted by tests/integration/test_038_closure_edge_audit.py::"
+            "test_only_the_confirmed_relationships_are_registered"
+        ),
+    },
+    DependencyKind.MSA_TO_FEAT_STRUC_TYPE: {
+        "category": GrammarCategory.AFFIXES,
+        "producer": affixes_feat_struc_type_dependencies,
+        "dependency_category": GrammarCategory.FEATURE_STRUCT_TYPES,
+        "verified_by": (
+            "debug/audit038_closure_edges.py (read-only, 2026-08-21) over "
+            "'Mbugwe LizzieHC practice' and 'Ejagham Mini': "
+            "relationships.MSA_TO_FEAT_STRUC_TYPE = CONFIRMED (73/17 edges, "
+            "foreign_edges 0, unresolved 0) in "
+            "tests/integration/_snapshots/closure-edge-audit-038-*.json, "
+            "asserted by tests/integration/test_038_closure_edge_audit.py::"
+            "test_only_the_confirmed_relationships_are_registered"
+        ),
+    },
+    # -----------------------------------------------------------------------
+    # T068 (2026-08-21) -- the SLOTS row
+    # -----------------------------------------------------------------------
+    DependencyKind.SLOT_TO_POS: {
+        "category": GrammarCategory.SLOTS,
+        "producer": slots_pos_dependencies,
+        "dependency_category": GrammarCategory.GRAM_CATEGORIES,
+        "verified_by": (
+            "debug/audit038_closure_edges.py (read-only, 2026-08-21) over "
+            "'Mbugwe LizzieHC practice' and 'Ejagham Mini': "
+            "relationships.SLOT_TO_POS = CONFIRMED (19 edges over 5 distinct "
+            "POSes / 9 over 6, foreign_edges 0, unresolved 0, "
+            "resolved_as_owned_value 0; edges.SLOT_TO_POS = NO_CAST_NEEDED "
+            "19==19 / 9==9) in "
+            "tests/integration/_snapshots/closure-edge-audit-038-*.json, plus "
+            "the census in "
+            "tests/integration/_snapshots/closure-registration-038-t068.json "
+            "(debug/run038_closure_census.py, SLOTS-only selection against a "
+            "target restored from 'Target 2026-07-06 0218.fwbackup'), both "
+            "asserted by tests/integration/test_038_closure_edge_audit.py::"
+            "test_only_the_confirmed_relationships_are_registered and "
+            "::test_a_slots_only_plan_carries_the_registered_slot_to_pos_edges"
+        ),
+    },
+    # -----------------------------------------------------------------------
+    # T069 (2026-08-21) -- the AFFIX_TEMPLATES rows, both halves of the
+    # composite, each with its own far category and its own evidence
+    # -----------------------------------------------------------------------
+    DependencyKind.TEMPLATE_TO_POS: {
+        "category": GrammarCategory.AFFIX_TEMPLATES,
+        "producer": affix_templates_pos_dependencies,
+        "dependency_category": GrammarCategory.GRAM_CATEGORIES,
+        "verified_by": (
+            "debug/audit038_closure_edges.py (read-only, 2026-08-21) over "
+            "'Mbugwe LizzieHC practice' and 'Ejagham Mini': "
+            "relationships.TEMPLATE_TO_POS = CONFIRMED (11 edges over 5 "
+            "distinct POSes / 7 over 6, foreign_edges 0, unresolved 0, "
+            "resolved_as_owned_value 0; edges.TEMPLATE_TO_POS = "
+            "NO_CAST_NEEDED 11==11 / 7==7) in "
+            "tests/integration/_snapshots/closure-edge-audit-038-*.json, plus "
+            "the census in "
+            "tests/integration/_snapshots/closure-registration-038-t069.json "
+            "(debug/run038_closure_census.py, AFFIX_TEMPLATES-only selection "
+            "against a target restored from 'Target 2026-07-06 "
+            "0218.fwbackup'), both asserted by "
+            "tests/integration/test_038_closure_edge_audit.py::"
+            "test_only_the_confirmed_relationships_are_registered and "
+            "::test_a_templates_only_plan_carries_the_registered_edges"
+        ),
+    },
+    DependencyKind.TEMPLATE_TO_SLOT: {
+        "category": GrammarCategory.AFFIX_TEMPLATES,
+        "producer": affix_templates_slot_dependencies,
+        "dependency_category": GrammarCategory.SLOTS,
+        "verified_by": (
+            "debug/audit038_closure_edges.py (read-only, 2026-08-21) over "
+            "'Mbugwe LizzieHC practice' and 'Ejagham Mini': "
+            "relationships.TEMPLATE_TO_SLOT = CONFIRMED (24 edges over 18 "
+            "distinct slots / 9 over 9, foreign_edges 0, unresolved 0, "
+            "resolved_as_owned_value 0 -- every distinct far GUID resolves "
+            "against slots_enumerate_source; edges.TEMPLATE_TO_SLOT = "
+            "NO_CAST_NEEDED 24==24 / 9==9) in "
+            "tests/integration/_snapshots/closure-edge-audit-038-*.json, plus "
+            "the census in "
+            "tests/integration/_snapshots/closure-registration-038-t069.json "
+            "(debug/run038_closure_census.py, AFFIX_TEMPLATES-only selection "
+            "against a target restored from 'Target 2026-07-06 "
+            "0218.fwbackup'), both asserted by "
+            "tests/integration/test_038_closure_edge_audit.py::"
+            "test_only_the_confirmed_relationships_are_registered and "
+            "::test_a_templates_only_plan_carries_the_registered_edges"
+        ),
+    },
+    # -----------------------------------------------------------------------
+    # T076 (2026-08-22) -- the process-rule referent rows.
+    #
+    # READ THE `verified_by` CAREFULLY BEFORE TRUSTING THESE TWO: their
+    # evidence is SINGLE-CORPUS, and that is not the same standard the five
+    # rows above meet. `Ejagham Mini` holds ZERO `MoAffixProcess` rules, so
+    # the audit returns `NO_DATA` there -- which the driver deliberately
+    # distinguishes from `CONFIRMED`, because "found nothing because the
+    # corpus holds nothing" is not an audit. `Mbugwe LizzieHC practice` is
+    # the only sanctioned corpus that exercises this relationship at all, and
+    # it is also the corpus the defect was measured on. A second corpus with
+    # affix process rules would strengthen these rows; none exists today, and
+    # inventing one would be worse than saying so.
+    # -----------------------------------------------------------------------
+    DependencyKind.PROCESS_RULE_TO_PHONEME: {
+        "category": GrammarCategory.AFFIXES,
+        "producer": affixes_process_rule_phoneme_dependencies,
+        "dependency_category": GrammarCategory.PHONEMES,
+        "verified_by": (
+            "debug/audit038_closure_edges.py (read-only, 2026-08-22): "
+            "relationships.PROCESS_RULE_TO_PHONEME = CONFIRMED on 'Mbugwe "
+            "LizzieHC practice' (32 edges over 16 distinct phonemes, "
+            "foreign_edges 0, unresolved 0, resolved_as_owned_value 0) and "
+            "NO_DATA on 'Ejagham Mini', which holds zero MoAffixProcess "
+            "rules -- SINGLE-CORPUS evidence, stated rather than rounded up. "
+            "Snapshots tests/integration/_snapshots/"
+            "closure-edge-audit-038-*.json plus the condition-4 audit in "
+            "_snapshots/t076-process-context-audit.json "
+            "(debug/audit038_t076_process_contexts.py), asserted by "
+            "tests/integration/test_038_closure_edge_audit.py::"
+            "test_only_the_confirmed_relationships_are_registered"
+        ),
+    },
+    DependencyKind.PROCESS_RULE_TO_NATURAL_CLASS: {
+        "category": GrammarCategory.AFFIXES,
+        "producer": affixes_process_rule_natural_class_dependencies,
+        "dependency_category": GrammarCategory.NATURAL_CLASSES,
+        "verified_by": (
+            "debug/audit038_closure_edges.py (read-only, 2026-08-22): "
+            "relationships.PROCESS_RULE_TO_NATURAL_CLASS = CONFIRMED on "
+            "'Mbugwe LizzieHC practice' (10 edges over 2 distinct natural "
+            "classes, foreign_edges 0, unresolved 0, "
+            "resolved_as_owned_value 0) and NO_DATA on 'Ejagham Mini', which "
+            "holds zero MoAffixProcess rules -- SINGLE-CORPUS evidence, "
+            "stated rather than rounded up. Snapshots "
+            "tests/integration/_snapshots/closure-edge-audit-038-*.json plus "
+            "the condition-4 audit in "
+            "_snapshots/t076-process-context-audit.json "
+            "(debug/audit038_t076_process_contexts.py), asserted by "
+            "tests/integration/test_038_closure_edge_audit.py::"
+            "test_only_the_confirmed_relationships_are_registered"
+        ),
+    },
+    # -----------------------------------------------------------------------
+    # T104 (2026-08-22) -- the row T089 unblocked and deliberately did not
+    # register.
+    #
+    # READ THE HISTORY BEFORE TRUSTING THE `verified_by`, because this row
+    # spent longer REFUSED than any other in this registry and the reason it
+    # was refused is not the reason a reader would guess. Its producer was
+    # never broken: `affixes_infl_feature_dependencies` is narrow and its
+    # edges were always live. What was wrong was the FAR ENDPOINT. The
+    # `FeatureSpecsOC` -> `ValueRA` arrow named an `IFsSymFeatVal` symbolic
+    # value, and `inflection_features_enumerate_source` yields feature
+    # DEFNS -- so 30 of 34 distinct far GUIDs on `Mbugwe LizzieHC practice`
+    # (8 of 10 on `Ejagham Mini`) named something no category could
+    # enumerate. An edge like that has no `PlannedAction`, hence no row to
+    # mark pulled in (FR-015) and no checkbox to clear (FR-016), and it
+    # would fail SILENTLY -- the one direction Principle I forbids.
+    #
+    # T089 re-pointed the edge at the feature that OWNS the value
+    # (`_value_defn_ref`), which is the piece that IS planned and whose
+    # `execute_action` co-creates the value. Note the DIRECTION of the
+    # result: the edge set got SMALLER, because many values of one feature
+    # are one feature. 206 edges over 34 far GUIDs -> 99 over 4, and 34 over
+    # 10 -> 17 over 2, with `resolved_as_owned_value` and `unresolved` both
+    # 0 on both corpora.
+    #
+    # T089 then left this row UNREGISTERED on purpose, and T104 is the
+    # separate task that registers it, because the two need DIFFERENT
+    # measurements and neither driver can answer the other's question.
+    # T089's census (`debug/run038_t089_census.py`) holds the REGISTRY fixed
+    # and varies the producer -- "did the fix change a plan?" (measured: no).
+    # A registration needs the other axis: `debug/run038_closure_census.py`
+    # holds the PRODUCER fixed and varies the registry, under the one
+    # selection that can observe the row.
+    # -----------------------------------------------------------------------
+    DependencyKind.MSA_TO_INFL_FEATURE: {
+        "category": GrammarCategory.AFFIXES,
+        "producer": affixes_infl_feature_dependencies,
+        # EXPLICIT, like its two AFFIXES siblings above: a `None` here
+        # re-opens the `(AFFIXES, None)` wildcard in
+        # `preview._closure_kind_lookup` that would swallow every other
+        # AFFIXES row's far category into this one's `verified_by`.
+        "dependency_category": GrammarCategory.INFLECTION_FEATURES,
+        "verified_by": (
+            "TWO measurements, and this row needs both -- the audit says the "
+            "edge is well-formed, the census says registering it changes no "
+            "decision it should not. (1) AUDIT: "
+            "debug/audit038_closure_edges.py (read-only, re-run 2026-08-22 "
+            "after T089's `_value_defn_ref` fix) over 'Mbugwe LizzieHC "
+            "practice' and 'Ejagham Mini': relationships.MSA_TO_INFL_FEATURE "
+            "= CONFIRMED on BOTH (99 edges over 4 distinct far GUIDs / 17 "
+            "over 2, foreign_edges 0, unresolved 0, resolved_as_owned_value "
+            "0 -- every far GUID now resolves against "
+            "inflection_features_enumerate_source, which is the clause that "
+            "was 4-of-34 and 2-of-10 before T089), in "
+            "tests/integration/_snapshots/closure-edge-audit-038-*.json. "
+            "(2) CENSUS: "
+            "tests/integration/_snapshots/closure-registration-038-t104.json "
+            "(debug/run038_closure_census.py T104, AFFIXES-only selection "
+            "against a target restored from 'Target 2026-07-06 "
+            "0218.fwbackup'), which is the axis T089's producer census "
+            "could not measure. Asserted by "
+            "tests/integration/test_038_closure_edge_audit.py::"
+            "test_only_the_confirmed_relationships_are_registered and "
+            "::test_an_affixes_only_plan_carries_the_infl_feature_edges"
+        ),
+    },
+}
+
+
+def _closure_registry_by_category(registry: dict) -> dict:
+    """Validate a `CLOSURE_EDGES_VERIFIED` mapping and group it by the source
+    `GrammarCategory` whose pieces its producers are called on.
+
+    Raises ValueError on a malformed entry -- most importantly on one with an
+    empty `verified_by`, since FR-018's whole point is that an edge nobody
+    audited must not be able to reach a plan. Failing loudly at registry-build
+    time is deliberate: a silently-dropped entry would be indistinguishable
+    from a correctly-empty registry.
+    """
+    by_category: dict = {}
+    for kind, entry in registry.items():
+        if not isinstance(kind, DependencyKind):
+            raise ValueError(
+                "CLOSURE_EDGES_VERIFIED keys must be DependencyKind members, "
+                "got " + repr(kind)
+            )
+        category = entry.get("category")
+        producer = entry.get("producer")
+        if category is None or producer is None:
+            raise ValueError(
+                "CLOSURE_EDGES_VERIFIED[" + str(kind) + "] must name both a "
+                "'category' and a 'producer'"
+            )
+        if not entry.get("verified_by"):
+            raise ValueError(
+                "CLOSURE_EDGES_VERIFIED[" + str(kind) + "] has an empty "
+                "'verified_by' -- FR-018 requires naming the evidence that "
+                "verified the edge before it may influence a plan"
+            )
+        by_category.setdefault(category, []).append((kind, entry))
+    return by_category
+
+
+def closure_dependencies_for(context, selection=None, registry=None):
+    """Build the `dependencies(category, source_guid)` callable that
+    `Lib/closure.py`'s `walk()` consumes (feature 038 -- FR-014, FR-018, R3).
+
+    The returned callable consults ONLY the producers registered in
+    `CLOSURE_EDGES_VERIFIED` and returns `()` for every relationship that is
+    not registered. That is the hard guarantee: an unregistered producer is
+    never invoked, so its output cannot reach a plan by any path -- there is no
+    fall-through to `LEAF_CATEGORIES[...]["dependencies"]` here. While the
+    registry is empty (its shipped state), the callable returns `()` for
+    everything and the closure walk is a no-op.
+
+    Args:
+        context: the `RunContext` whose `source_handle` the pieces come from.
+        selection: optional `Selection` forwarded to `enumerate_source` so a
+            producer sees the same pieces the plan does. None enumerates all.
+        registry: override for `CLOSURE_EDGES_VERIFIED`, for tests that need to
+            exercise a registered edge without mutating module state.
+
+    Returns:
+        A `closure.DepFn` -- `(GrammarCategory, source_guid) -> tuple[Ref, ...]`.
+
+    Wiring this into `build_run_plan` is `Lib/preview.py`'s job, not this
+    module's (Principle III: the plan builder owns plan shape).
+    """
+    import logging as _logging
+    log = _logging.getLogger("gramtrans.Lib.categories")
+
+    active = CLOSURE_EDGES_VERIFIED if registry is None else registry
+    by_category = _closure_registry_by_category(active)
+    if not by_category:
+        log.info(
+            "closure: CLOSURE_EDGES_VERIFIED is empty -- no dependency edge "
+            "is verified (FR-018), so the closure walk contributes nothing"
+        )
+    _piece_cache: dict = {}
+
+    def _pieces_for(category):
+        """Lazily index this category's source pieces by GUID. Only ever
+        called for a category that has a registered producer."""
+        if category in _piece_cache:
+            return _piece_cache[category]
+        index: dict = {}
+        try:
+            bundle = LEAF_CATEGORIES[category]
+            for piece in bundle["enumerate_source"](context, selection) or ():
+                g = _guid_str_from(piece)
+                if g and g not in index:
+                    index[g] = piece
+        except Exception as exc:  # enumeration is best-effort, never fatal
+            log.warning(
+                "closure: could not enumerate source pieces for %s (%s) -- "
+                "its verified edges contribute nothing this run",
+                getattr(category, "value", category), exc,
+            )
+            index = {}
+        _piece_cache[category] = index
+        return index
+
+    def _dependencies(category, source_guid):
+        registered = by_category.get(category)
+        if not registered:
+            # Unregistered relationship: no verified evidence, so no edges.
+            return ()
+        piece = _pieces_for(category).get((source_guid or "").lower())
+        if piece is None:
+            return ()
+        refs: list = []
+        for kind, entry in registered:
+            dep_category = entry.get("dependency_category")
+            try:
+                produced = entry["producer"](piece) or ()
+            except Exception as exc:
+                log.warning(
+                    "closure: producer for %s raised on guid=%s (%s) -- "
+                    "treated as no edges", kind, str(source_guid)[:8], exc,
+                )
+                continue
+            for item in produced:
+                if isinstance(item, tuple):
+                    ref = item
+                elif dep_category is not None and item:
+                    ref = (dep_category, str(item).lower())
+                else:
+                    log.warning(
+                        "closure: %s produced a bare guid but no "
+                        "'dependency_category' is registered -- edge dropped",
+                        kind,
+                    )
+                    continue
+                if ref not in refs:
+                    refs.append(ref)
+        return tuple(refs)
+
+    return _dependencies

@@ -1,0 +1,265 @@
+{
+  "backup": "Target 2026-07-06 0218.fwbackup",
+  "claims": {
+    "P0_a_satisfied_closure_reports_nothing": true,
+    "P1_every_arriving_item_that_lost_a_dependency_is_reported": true,
+    "P1_records_are_fewer_than_edges_because_a_non_arriving_item_is_not_incomplete": true,
+    "P2_a_pulled_in_item_can_itself_arrive_incomplete": true,
+    "P3_a_full_copy_reports_nothing": true,
+    "P4_the_record_reaches_every_surface": true,
+    "every_record_carries_a_consequence": true
+  },
+  "destination": "GT038 Closure Target",
+  "measured": {
+    "P0_nothing_deselected": {
+      "arriving_items": 34,
+      "closure": {
+        "by_kind": {
+          "SLOT_TO_POS": {
+            "deselected": 0,
+            "edges": 18
+          },
+          "TEMPLATE_TO_POS": {
+            "deselected": 0,
+            "edges": 11
+          },
+          "TEMPLATE_TO_SLOT": {
+            "deselected": 0,
+            "edges": 24
+          }
+        },
+        "edges_marked_deselected": 0,
+        "total_edges": 53
+      },
+      "incompleteness": {
+        "by_category_pair": {},
+        "by_cause": {},
+        "distinct_incomplete_items": 0,
+        "distinct_missing_dependencies": 0,
+        "distinct_refs_with_no_resolvable_name": [],
+        "every_record_has_a_consequence": true,
+        "labels_falling_back_to_the_ref": 0,
+        "labels_total": 0,
+        "records": 0,
+        "sample": []
+      },
+      "pulled_in_refs": {
+        "count": 23,
+        "how": {
+          "gram_categories:0a63fb15-ccf8-432f-8816-a330d26010f6": "add",
+          "gram_categories:30d07580-5052-4d91-bc24-469b8b2d7df9": "add",
+          "gram_categories:86ff66f6-0774-407a-a0dc-3eeaf873daf7": "overwrite",
+          "gram_categories:a8e41fd3-e343-4c7c-aa05-01ea3dd5cfb5": "overwrite",
+          "gram_categories:e680330e-2b41-4bec-b96b-514743c47cae": "add",
+          "slots:03341da9-8bff-4bc8-8b14-80013a8250b8": "add",
+          "slots:134d9562-939e-4869-b9c2-6bb2e767d755": "add",
+          "slots:16d71c17-771a-43ab-b76d-0f0cf8ad0c00": "add",
+          "slots:1ad0eff9-4af1-4579-9feb-e9b6ab052ad4": "add",
+          "slots:1e0650ef-0401-483b-a3b5-3f58cf02bcec": "add",
+          "slots:23d810dd-503e-4217-97ce-14aab8689f05": "add",
+          "slots:45f22e64-fea2-4616-abc7-c93a8036e05e": "add",
+          "slots:52772da1-fd63-4c00-aeb2-83201a6698f0": "add",
+          "slots:53596c20-8211-4b3c-9ccb-b187b45dafd7": "add",
+          "slots:7ca6e036-b58e-4054-9e3c-9308803001d8": "add",
+          "slots:887515fe-2068-4eeb-955c-95b697e13d72": "add",
+          "slots:a2139e78-2239-4830-acda-b87e89251157": "add",
+          "slots:b3097983-387b-4b50-a318-f6d6e9b19da8": "add",
+          "slots:d589b260-dd53-4d06-b06a-3a350877f598": "add",
+          "slots:dd41a694-9825-4680-a68c-4dc69bcd2d4c": "add",
+          "slots:e4c34966-2f8a-4dc7-ab23-493d1fdbf197": "add",
+          "slots:e6bb6e70-bf5d-461e-b955-d70b7b72620d": "add",
+          "slots:f1b5b1bf-c006-4496-9cd3-83b070ad149a": "add"
+        }
+      }
+    },
+    "P1_everything_deselected": {
+      "closure": {
+        "by_kind": {
+          "SLOT_TO_POS": {
+            "deselected": 18,
+            "edges": 18
+          },
+          "TEMPLATE_TO_POS": {
+            "deselected": 11,
+            "edges": 11
+          },
+          "TEMPLATE_TO_SLOT": {
+            "deselected": 24,
+            "edges": 24
+          }
+        },
+        "edges_marked_deselected": 53,
+        "total_edges": 53
+      },
+      "deselected_guids": 23,
+      "incompleteness": {
+        "by_category_pair": {
+          "affix_templates": {
+            "gram_categories": 11,
+            "slots": 24
+          }
+        },
+        "by_cause": {
+          "deselected": 35
+        },
+        "distinct_incomplete_items": 11,
+        "distinct_missing_dependencies": 23,
+        "distinct_refs_with_no_resolvable_name": [
+          "affix_templates:6b3a0dd3-d13f-4ddc-afec-ac672e4c8af3",
+          "affix_templates:af524742-dd25-49e6-8018-621c5ec5cb1a",
+          "affix_templates:afe23c23-d1b1-4049-bd4c-8e2c0e601fe2"
+        ],
+        "every_record_has_a_consequence": true,
+        "labels_falling_back_to_the_ref": 7,
+        "labels_total": 70,
+        "records": 35,
+        "sample": [
+          {
+            "cause": "deselected",
+            "consequence": "arrives without the template_to_pos dependency the user deselected; the reference is left unwired in the destination",
+            "incomplete": "affix_templates:9b7a0f4c-01cd-41b2-99cc-3ba9acb07853",
+            "incomplete_label": "basic noun",
+            "missing": "gram_categories:a8e41fd3-e343-4c7c-aa05-01ea3dd5cfb5",
+            "missing_label": "Noun"
+          },
+          {
+            "cause": "deselected",
+            "consequence": "arrives without the template_to_slot dependency the user deselected; the reference is left unwired in the destination",
+            "incomplete": "affix_templates:9b7a0f4c-01cd-41b2-99cc-3ba9acb07853",
+            "incomplete_label": "basic noun",
+            "missing": "slots:e6bb6e70-bf5d-461e-b955-d70b7b72620d",
+            "missing_label": "aug"
+          },
+          {
+            "cause": "deselected",
+            "consequence": "arrives without the template_to_slot dependency the user deselected; the reference is left unwired in the destination",
+            "incomplete": "affix_templates:9b7a0f4c-01cd-41b2-99cc-3ba9acb07853",
+            "incomplete_label": "basic noun",
+            "missing": "slots:dd41a694-9825-4680-a68c-4dc69bcd2d4c",
+            "missing_label": "np"
+          }
+        ]
+      },
+      "skips": {
+        "gram_categories": 5,
+        "slots": 18
+      }
+    },
+    "P2_only_the_parts_of_speech_deselected": {
+      "closure": {
+        "by_kind": {
+          "SLOT_TO_POS": {
+            "deselected": 18,
+            "edges": 18
+          },
+          "TEMPLATE_TO_POS": {
+            "deselected": 11,
+            "edges": 11
+          },
+          "TEMPLATE_TO_SLOT": {
+            "deselected": 0,
+            "edges": 24
+          }
+        },
+        "edges_marked_deselected": 29,
+        "total_edges": 53
+      },
+      "deselected_guids": 5,
+      "incompleteness": {
+        "by_category_pair": {
+          "affix_templates": {
+            "gram_categories": 11
+          },
+          "slots": {
+            "gram_categories": 18
+          }
+        },
+        "by_cause": {
+          "deselected": 29
+        },
+        "distinct_incomplete_items": 29,
+        "distinct_missing_dependencies": 5,
+        "distinct_refs_with_no_resolvable_name": [
+          "affix_templates:6b3a0dd3-d13f-4ddc-afec-ac672e4c8af3",
+          "affix_templates:af524742-dd25-49e6-8018-621c5ec5cb1a",
+          "affix_templates:afe23c23-d1b1-4049-bd4c-8e2c0e601fe2"
+        ],
+        "every_record_has_a_consequence": true,
+        "labels_falling_back_to_the_ref": 3,
+        "labels_total": 58,
+        "records": 29,
+        "sample": [
+          {
+            "cause": "deselected",
+            "consequence": "arrives without the template_to_pos dependency the user deselected; the reference is left unwired in the destination",
+            "incomplete": "affix_templates:9b7a0f4c-01cd-41b2-99cc-3ba9acb07853",
+            "incomplete_label": "basic noun",
+            "missing": "gram_categories:a8e41fd3-e343-4c7c-aa05-01ea3dd5cfb5",
+            "missing_label": "Noun"
+          },
+          {
+            "cause": "deselected",
+            "consequence": "arrives without the slot_to_pos dependency the user deselected; the reference is left unwired in the destination",
+            "incomplete": "slots:e6bb6e70-bf5d-461e-b955-d70b7b72620d",
+            "incomplete_label": "aug",
+            "missing": "gram_categories:a8e41fd3-e343-4c7c-aa05-01ea3dd5cfb5",
+            "missing_label": "Noun"
+          },
+          {
+            "cause": "deselected",
+            "consequence": "arrives without the slot_to_pos dependency the user deselected; the reference is left unwired in the destination",
+            "incomplete": "slots:dd41a694-9825-4680-a68c-4dc69bcd2d4c",
+            "incomplete_label": "np",
+            "missing": "gram_categories:a8e41fd3-e343-4c7c-aa05-01ea3dd5cfb5",
+            "missing_label": "Noun"
+          }
+        ]
+      }
+    },
+    "P3_full_copy": {
+      "closure": {
+        "by_kind": {},
+        "edges_marked_deselected": 0,
+        "total_edges": 0
+      },
+      "incompleteness": {
+        "by_category_pair": {},
+        "by_cause": {},
+        "distinct_incomplete_items": 0,
+        "distinct_missing_dependencies": 0,
+        "distinct_refs_with_no_resolvable_name": [],
+        "every_record_has_a_consequence": true,
+        "labels_falling_back_to_the_ref": 0,
+        "labels_total": 0,
+        "records": 0,
+        "sample": []
+      }
+    },
+    "P4_surfaces_for_P1": {
+      "console_block_present": true,
+      "console_states_a_cause": true,
+      "has_incomplete_items": true,
+      "run_report_records": 35,
+      "snapshot_json_records": 35
+    },
+    "T093_dependencies_already_in_the_destination": {
+      "P1_records_naming_one_of_them": 8,
+      "note": "each of these is an OVER-report: the dependency already exists in the destination, so the dependent's reference resolves and it is not incomplete. T071 suppresses a deselected ref before its planner runs, so no ALREADY_PRESENT_BY_* skip exists for T073 to read.",
+      "refs_already_there": [
+        "gram_categories:86ff66f6-0774-407a-a0dc-3eeaf873daf7",
+        "gram_categories:a8e41fd3-e343-4c7c-aa05-01ea3dd5cfb5"
+      ]
+    }
+  },
+  "narrow_selection": "AFFIX_TEMPLATES",
+  "registered": [
+    "AFFIX_TO_POS",
+    "MSA_TO_FEAT_STRUC_TYPE",
+    "SLOT_TO_POS",
+    "TEMPLATE_TO_POS",
+    "TEMPLATE_TO_SLOT"
+  ],
+  "source": "Mbugwe LizzieHC practice",
+  "task": "T073",
+  "wrote_nothing": true
+}

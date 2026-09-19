@@ -1,0 +1,229 @@
+{
+  "audit": "038-phase7-closure-edges",
+  "edges": {
+    "AFFIX_TO_POS": {
+      "cast": 245,
+      "population": 247,
+      "producer": "categories._entry_pos_deps (affixes/stems_dependencies)",
+      "reads": [
+        "PartOfSpeechRA",
+        "FromPartOfSpeechRA",
+        "ToPartOfSpeechRA"
+      ],
+      "task": "T067",
+      "uncast": 0,
+      "verdict": "CAST_REQUIRED"
+    },
+    "MSA_TO_FEAT_STRUC_TYPE": {
+      "cast": 40,
+      "population": 247,
+      "producer": "categories._entry_feat_struc_deps",
+      "reads": [
+        "InflFeatsOA",
+        "MsFeaturesOA",
+        "FromMsFeaturesOA",
+        "ToMsFeaturesOA"
+      ],
+      "task": "T067 (edges landed by T034)",
+      "uncast": 0,
+      "verdict": "CAST_REQUIRED"
+    },
+    "SLOT_TO_POS": {
+      "cast": 9,
+      "population": 9,
+      "producer": "categories.slots_dependencies",
+      "reads": [
+        "Owner"
+      ],
+      "task": "T068",
+      "uncast": 9,
+      "verdict": "NO_CAST_NEEDED"
+    },
+    "TEMPLATE_TO_POS": {
+      "cast": 7,
+      "population": 7,
+      "producer": "categories.affix_templates_dependencies (owner half)",
+      "reads": [
+        "Owner"
+      ],
+      "task": "T069",
+      "uncast": 7,
+      "verdict": "NO_CAST_NEEDED"
+    },
+    "TEMPLATE_TO_SLOT": {
+      "cast": 9,
+      "population": 7,
+      "producer": "categories.affix_templates_dependencies (slot seqs)",
+      "reads": [
+        "PrefixSlotsRS",
+        "SuffixSlotsRS",
+        "EncliticSlotsRS",
+        "ProcliticSlotsRS",
+        "SlotsRS"
+      ],
+      "task": "T069",
+      "uncast": 9,
+      "verdict": "NO_CAST_NEEDED"
+    }
+  },
+  "population": {
+    "lex_entries": 252,
+    "msas": 247,
+    "msas_by_class": {
+      "MoInflAffMsa": 83,
+      "MoStemMsa": 164
+    },
+    "poses": 20,
+    "slots": 9,
+    "templates": 7
+  },
+  "producer_output": {
+    "adhoc_compound_rules_dependencies": {
+      "by_far_category": {},
+      "population": 0,
+      "total_edges": 0
+    },
+    "affixes_dependencies": {
+      "by_far_category": {
+        "feature_struct_types": 40,
+        "gram_categories": 245,
+        "inflection_features": 60
+      },
+      "population": 252,
+      "total_edges": 345
+    },
+    "stems_dependencies": {
+      "by_far_category": {
+        "feature_struct_types": 40,
+        "gram_categories": 245,
+        "inflection_features": 60
+      },
+      "population": 252,
+      "total_edges": 345
+    }
+  },
+  "read_only": true,
+  "relationships": {
+    "AFFIX_TO_POS": {
+      "dependency_category": "gram_categories",
+      "distinct_far_guids": 6,
+      "edges": 88,
+      "foreign_edges": 0,
+      "population": 88,
+      "producer": "categories.affixes_pos_dependencies",
+      "resolved_as_owned_value": 0,
+      "resolved_as_piece": 6,
+      "source_category": "affixes",
+      "task": "T067",
+      "unresolved": 0,
+      "unresolved_sample": [],
+      "verdict": "CONFIRMED"
+    },
+    "MSA_TO_FEAT_STRUC_TYPE": {
+      "dependency_category": "feature_struct_types",
+      "distinct_far_guids": 2,
+      "edges": 17,
+      "foreign_edges": 0,
+      "population": 88,
+      "producer": "categories.affixes_feat_struc_type_dependencies",
+      "resolved_as_owned_value": 0,
+      "resolved_as_piece": 2,
+      "source_category": "affixes",
+      "task": "T067",
+      "unresolved": 0,
+      "unresolved_sample": [],
+      "verdict": "CONFIRMED"
+    },
+    "MSA_TO_INFL_FEATURE": {
+      "dependency_category": "inflection_features",
+      "distinct_far_guids": 2,
+      "edges": 17,
+      "foreign_edges": 0,
+      "population": 88,
+      "producer": "categories.affixes_infl_feature_dependencies",
+      "resolved_as_owned_value": 0,
+      "resolved_as_piece": 2,
+      "source_category": "affixes",
+      "task": "T067",
+      "unresolved": 0,
+      "unresolved_sample": [],
+      "verdict": "CONFIRMED"
+    },
+    "PROCESS_RULE_TO_NATURAL_CLASS": {
+      "dependency_category": "natural_classes",
+      "distinct_far_guids": 0,
+      "edges": 0,
+      "foreign_edges": 0,
+      "population": 88,
+      "producer": "categories.affixes_process_rule_natural_class_dependencies",
+      "resolved_as_owned_value": 0,
+      "resolved_as_piece": 0,
+      "source_category": "affixes",
+      "task": "T076",
+      "unresolved": 0,
+      "unresolved_sample": [],
+      "verdict": "NO_DATA"
+    },
+    "PROCESS_RULE_TO_PHONEME": {
+      "dependency_category": "phonemes",
+      "distinct_far_guids": 0,
+      "edges": 0,
+      "foreign_edges": 0,
+      "population": 88,
+      "producer": "categories.affixes_process_rule_phoneme_dependencies",
+      "resolved_as_owned_value": 0,
+      "resolved_as_piece": 0,
+      "source_category": "affixes",
+      "task": "T076",
+      "unresolved": 0,
+      "unresolved_sample": [],
+      "verdict": "NO_DATA"
+    },
+    "SLOT_TO_POS": {
+      "dependency_category": "gram_categories",
+      "distinct_far_guids": 6,
+      "edges": 9,
+      "foreign_edges": 0,
+      "population": 9,
+      "producer": "categories.slots_pos_dependencies",
+      "resolved_as_owned_value": 0,
+      "resolved_as_piece": 6,
+      "source_category": "slots",
+      "task": "T068",
+      "unresolved": 0,
+      "unresolved_sample": [],
+      "verdict": "CONFIRMED"
+    },
+    "TEMPLATE_TO_POS": {
+      "dependency_category": "gram_categories",
+      "distinct_far_guids": 6,
+      "edges": 7,
+      "foreign_edges": 0,
+      "population": 7,
+      "producer": "categories.affix_templates_pos_dependencies",
+      "resolved_as_owned_value": 0,
+      "resolved_as_piece": 6,
+      "source_category": "affix_templates",
+      "task": "T069",
+      "unresolved": 0,
+      "unresolved_sample": [],
+      "verdict": "CONFIRMED"
+    },
+    "TEMPLATE_TO_SLOT": {
+      "dependency_category": "slots",
+      "distinct_far_guids": 9,
+      "edges": 9,
+      "foreign_edges": 0,
+      "population": 7,
+      "producer": "categories.affix_templates_slot_dependencies",
+      "resolved_as_owned_value": 0,
+      "resolved_as_piece": 9,
+      "source_category": "affix_templates",
+      "task": "T069",
+      "unresolved": 0,
+      "unresolved_sample": [],
+      "verdict": "CONFIRMED"
+    }
+  },
+  "source_project": "Ejagham Mini"
+}

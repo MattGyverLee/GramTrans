@@ -1,0 +1,67 @@
+{
+  "artifact": "process-rules-038-t107-ejagham",
+  "boundary_context_input_members": [
+    {
+      "index": 2,
+      "referent_guid": "3bde17ce-e39a-4bae-8a5c-a8d96fd4cb56",
+      "rule": "1a3f18a6-7ff7-4c43-ad4e-4e3866f5f3ae"
+    },
+    {
+      "index": 2,
+      "referent_guid": "3bde17ce-e39a-4bae-8a5c-a8d96fd4cb56",
+      "rule": "26589ff1-2d00-437b-80d6-504422c28c65"
+    },
+    {
+      "index": 2,
+      "referent_guid": "3bde17ce-e39a-4bae-8a5c-a8d96fd4cb56",
+      "rule": "2ab66874-1548-4fb7-a5e7-172582ae7469"
+    },
+    {
+      "index": 2,
+      "referent_guid": "3bde17ce-e39a-4bae-8a5c-a8d96fd4cb56",
+      "rule": "7676eacf-6a1a-43f5-8bac-bf9b55c73d80"
+    },
+    {
+      "index": 2,
+      "referent_guid": "3bde17ce-e39a-4bae-8a5c-a8d96fd4cb56",
+      "rule": "77d538e9-e812-4cb5-b687-c57d2a925fd3"
+    },
+    {
+      "index": 2,
+      "referent_guid": "3bde17ce-e39a-4bae-8a5c-a8d96fd4cb56",
+      "rule": "794faa38-203b-4730-9cd3-026a01508635"
+    },
+    {
+      "index": 2,
+      "referent_guid": "3bde17ce-e39a-4bae-8a5c-a8d96fd4cb56",
+      "rule": "8afa5252-b971-424a-9aaa-def1e56b2172"
+    },
+    {
+      "index": 2,
+      "referent_guid": "3bde17ce-e39a-4bae-8a5c-a8d96fd4cb56",
+      "rule": "dd620446-a08a-4f69-a377-22fc937de511"
+    }
+  ],
+  "census_artifact": "census-038-t107-ejagham.json",
+  "derived_read_only_from": "_run_reports/038-t107-ejagham-report.json",
+  "destination_project": "GT038 Ejagham After",
+  "input_context_class_totals": {
+    "PhSequenceContext": 34,
+    "PhSimpleContextBdry": 8,
+    "PhSimpleContextNC": 29,
+    "PhSimpleContextSeg": 21,
+    "PhVariable": 12
+  },
+  "purpose": "T107's live acceptance evidence for the PhSimpleContextBdry create path: per MoAffixProcess rule on the Ejagham pair, whether it reproduced, and for the one that did not, the reason the engine emitted. Derived read-only from the run report the T107 census judges -- _run_reports/ is gitignored, so this is the committed form, exactly as T078's process-rules-038-t078-corpus.json is.",
+  "rules_not_reproduced": [
+    {
+      "reason": "MoAffixProcess 24ed706a-7df2-4609-a37b-2bfa28853ccc output step 0 (MoCopyFromInput) copies (no ContentRA), which is not one of this rule's own input members -- the intra-rule back-reference cannot be rebuilt and the step would copy nothing (FR-023)",
+      "source_guid": "24ed706a-7df2-4609-a37b-2bfa28853ccc"
+    }
+  ],
+  "rules_reproduced": 12,
+  "rules_total": 13,
+  "run_id": "GT-20260825-143103",
+  "shared_context_attribution": "ATTRIBUTED BY T108, FROM A SEPARATE RUN -- and the separateness is the point rather than a caveat. ProcessContextSpec.co_created_shared, the only field that distinguishes 'this run co-created the shared PhPhonData.ContextsOS context' from 'it was already there', was never emitted by report._process_rule_json from T076 until T107 fixed the serializer, and T107's own run (this one) predates that fix. So the numbers in this artifact cover the DIRECT boundary route and the shared route's resolution, but not its co-creation. T108 re-ran the same source on the fixed serializer into a throwaway target of its own -- 'GT038 T108 Target', restored from backups/Target 2026-07-06 0218.fwbackup -- rather than re-transferring 'GT038 Ejagham After', which is the project the censuses beside this artifact are asserted to hash to. THE ANSWER: the affix-process co-create leg (categories._create_shared_process_context) created 13 shared PhPhonData.ContextsOS members -- 1 PhSimpleContextBdry, 7 PhSimpleContextNC, 5 PhSimpleContextSeg -- and the boundary one is 391e8cba-b951-4f1b-a64a-c5dc5fbe19c9, created by rule de6df83e-3556-42f8-82fc-30d22d4a68b9. The destination's one PhPhonData-owned PhSimpleContextBdry therefore came from THIS leg and not from the phonological-rule path (_copy_context_cell), which is the ambiguity recorded here originally. That run also reproduces this artifact's per-rule figures on an independent target -- 13 rules, 12 reproduced, the same refused rule, the same 8 direct boundary input members, the same input_context_class_totals. Evidence: process-rules-038-t108-ejagham.json.",
+  "source_project": "Ejagham W Mini"
+}

@@ -1,0 +1,2355 @@
+{
+  "schema_version": 1,
+  "census_id": "CENSUS-20260828-150151",
+  "generated_at": "2026-08-28T15:01:51",
+  "instrument": {
+    "name": "gramtrans.census_cli",
+    "version": "0.1.0",
+    "gramtrans_sha": "0610d3e",
+    "gramtrans_dirty": true,
+    "python_version": "3.12.7",
+    "flexicon_version": "4.5.2",
+    "flexicon_path": "D:\\Github\\_Projects\\_LEX\\flexicon\\flexicon\\__init__.py",
+    "flex_version": "9.3.10"
+  },
+  "projects": {
+    "source": {
+      "name": "Ngoreme FLEx",
+      "path": "C:\\ProgramData\\SIL\\FieldWorks\\Projects\\Ngoreme FLEx",
+      "opened_read_only": true,
+      "counted_at": "2026-08-28T15:01:48",
+      "fwdata_sha256_before": "d0ab2c6600a427b3e0192e88b8247b85970f54a6ff2ede78083a3e5089c149db",
+      "fwdata_sha256_after": "d0ab2c6600a427b3e0192e88b8247b85970f54a6ff2ede78083a3e5089c149db",
+      "data_model_version": 7000072,
+      "object_count_total": 205998
+    },
+    "destination": {
+      "name": "GT038 T124 Ngoreme",
+      "path": "C:\\ProgramData\\SIL\\FieldWorks\\Projects\\GT038 T124 Ngoreme",
+      "opened_read_only": true,
+      "counted_at": "2026-08-28T15:01:51",
+      "fwdata_sha256_before": "3821fe3bac9befcb41ca37a1ecc2070556662dde490663677e0b172bd8e84c36",
+      "fwdata_sha256_after": "3821fe3bac9befcb41ca37a1ecc2070556662dde490663677e0b172bd8e84c36",
+      "data_model_version": 7000072,
+      "declared_freshly_created": true,
+      "object_count_total": 30241
+    }
+  },
+  "class_list_provenance": {
+    "inventory_document": "specs/035-fullsweep-fidelity/object-inventory.md",
+    "inventory_sha256": "c81fb2f6eca17c7d7bb63bdf46640fa41a549c77d2e3236b4505492bbe2c79b3",
+    "coverage_floor_document": "specs/035-fullsweep-fidelity/contracts/coverage-floor.json",
+    "coverage_floor_sha256": "5ecfe96490e675bf3f34b5367464ce0cb345090ababb16516bbf4f09a74923bb",
+    "census_additions": [
+      {
+        "class": "MoAffixProcess",
+        "rationale": "Absent from object-inventory.md entirely, because the engine has no create path for it -- the class the transfer silently downgraded. A truth-source gap, not a corpus gap.",
+        "measured_evidence": "Ejagham 13 -> 0, Ngoreme 1 -> 0",
+        "owed_to_035": true
+      },
+      {
+        "class": "PhCode",
+        "rationale": "object-inventory.md TABLE 3 (ride-along): flexicon's phoneme GetSyncableProperties explicitly does not include CodesOS, so nothing carries it and nothing reports the drop.",
+        "measured_evidence": "43 -> 25, 89 -> 25",
+        "owed_to_035": true
+      },
+      {
+        "class": "CmTranslation",
+        "rationale": "Reached through the texts path; never projected into the floor.",
+        "measured_evidence": "Ngoreme 7925 -> 2",
+        "owed_to_035": true
+      }
+    ],
+    "excluded_not_measurable": [
+      {
+        "class": "MoForm",
+        "reason": "abstract LCM base class (no IMoFormFactory exists; subclasses MoStemAllomorph / MoAffixAllomorph carry every instance). Absent from every .fwdata by construction, not by corpus gap."
+      },
+      {
+        "class": "MoMorphSynAnalysis",
+        "reason": "abstract LCM base class (no IMoMorphSynAnalysisFactory exists; subclasses MoStemMsa / MoInflAffMsa / MoDerivAffMsa / MoUnclassifiedAffixMsa carry every instance). Absent from every .fwdata by construction, not by corpus gap."
+      }
+    ],
+    "in_scope_class_count": 69,
+    "natural_key_roster_document": "specs/035-fullsweep-fidelity/contracts/natural-key-identity-roster.json",
+    "natural_key_roster_sha256": "9e2fe0f684635e768e105f86049afad7af80eb9e837291886c79848fc1b58c4e",
+    "derivation_check": {
+      "performed": true,
+      "result": "match",
+      "derived_class_count": 71,
+      "in_inventory_not_in_floor": [],
+      "in_floor_not_in_inventory": []
+    },
+    "required_class_count": 75
+  },
+  "starter_baseline": {
+    "kind": "starter_capture",
+    "flex_version": "9.3.10",
+    "captured_at": "2026-08-19T10:46:44",
+    "project_name": "GT038 T023b Scratch",
+    "path": "D:\\Github\\_Projects\\_LEX\\GramTrans\\specs\\038-transfer-fidelity-gaps\\contracts\\starter-baseline.json",
+    "data_model_version": 7000072,
+    "class_count": 72,
+    "carries_natural_keys": false
+  },
+  "classes": [
+    {
+      "class": "CmAgent",
+      "source_count": 4,
+      "destination_count_total": 4,
+      "difference": 0,
+      "engine_can_create": true,
+      "destination_count_net": 4,
+      "difference_raw": 0,
+      "verdict_class": "MATCHED",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1",
+        "TABLE_2"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 4,
+      "starter_matched_to_source": 4,
+      "starter_subtraction_basis": "baseline_matched",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report"
+      },
+      "notes": [
+        "starter_matched_to_source=4 from the T048d IDENTITY AUDIT, not from the run report: this class has no matched tally of any kind (no action, no overwrite, no skip), which is what FW-global fixed content looks like. The number is a PROVABLE LOWER BOUND, the starter baseline of 4 minus the 0 destination object(s) whose GUID is absent from the source; subtracting 0 unmatched starter object(s) rather than the gross baseline of 4. The bound RESOLVES this row: it is the most negative the difference can be, and it is not negative, so no source object of this class failed to arrive.",
+        "match_basis.enriched is null: the run report carries no `enrichments` list, and an absent list is no evidence the enrichment pass ran -- never a measured zero"
+      ]
+    },
+    {
+      "class": "CmAnthroItem",
+      "source_count": 859,
+      "destination_count_total": 0,
+      "difference": -1718,
+      "engine_can_create": true,
+      "destination_count_net": -859,
+      "difference_raw": -859,
+      "verdict_class": "NOT_EVALUATED",
+      "not_evaluated_reason": "OUT_OF_SCOPE_CLASS",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1",
+        "TABLE_2"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 859,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report"
+      },
+      "notes": [
+        "match_basis.enriched is null: the run report carries no `enrichments` list, and an absent list is no evidence the enrichment pass ran -- never a measured zero"
+      ]
+    },
+    {
+      "class": "CmFile",
+      "source_count": 2,
+      "destination_count_total": 0,
+      "difference": -2,
+      "engine_can_create": true,
+      "destination_count_net": 0,
+      "difference_raw": -2,
+      "verdict_class": "SHORTFALL",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1",
+        "TABLE_2"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 2,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report"
+      },
+      "notes": [
+        "match_basis.enriched is null: the run report carries no `enrichments` list, and an absent list is no evidence the enrichment pass ran -- never a measured zero"
+      ]
+    },
+    {
+      "class": "CmFolder",
+      "source_count": 1,
+      "destination_count_total": 1,
+      "difference": -1,
+      "engine_can_create": true,
+      "destination_count_net": 0,
+      "difference_raw": 0,
+      "verdict_class": "SHORTFALL",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 1,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 1,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report"
+      },
+      "notes": [
+        "the T048d IDENTITY AUDIT narrows this row's shortfall to AT MOST 1 (starter_matched_to_source >= 0 by GUID), against the 1 the gross basis reports. The row KEEPS the gross basis and its shortfall stays advisory: the audit supplies a lower bound on the matched count, so the narrowed figure is an UPPER bound on the loss and not the loss itself, and 5.2's cap exists for exactly the arithmetic that can over-report a shortfall.",
+        "match_basis.enriched is null: the run report carries no `enrichments` list, and an absent list is no evidence the enrichment pass ran -- never a measured zero"
+      ]
+    },
+    {
+      "class": "CmPicture",
+      "source_count": 0,
+      "destination_count_total": 0,
+      "difference": 0,
+      "engine_can_create": true,
+      "destination_count_net": 0,
+      "difference_raw": 0,
+      "verdict_class": "MATCHED",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report"
+      },
+      "notes": [
+        "match_basis.enriched is null: the run report carries no `enrichments` list, and an absent list is no evidence the enrichment pass ran -- never a measured zero"
+      ]
+    },
+    {
+      "class": "CmPossibility",
+      "source_count": 398,
+      "destination_count_total": 303,
+      "difference": -397,
+      "engine_can_create": true,
+      "destination_count_net": 1,
+      "difference_raw": -95,
+      "verdict_class": "SHORTFALL",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1",
+        "TABLE_2"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 397,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 302,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report"
+      },
+      "notes": [
+        "the T048d IDENTITY AUDIT narrows this row's shortfall to AT MOST 378 (starter_matched_to_source >= 19 by GUID), against the 397 the gross basis reports. The row KEEPS the gross basis and its shortfall stays advisory: the audit supplies a lower bound on the matched count, so the narrowed figure is an UPPER bound on the loss and not the loss itself, and 5.2's cap exists for exactly the arithmetic that can over-report a shortfall.",
+        "match_basis.enriched is null: the run report carries no `enrichments` list, and an absent list is no evidence the enrichment pass ran -- never a measured zero"
+      ]
+    },
+    {
+      "class": "CmSemanticDomain",
+      "source_count": 1792,
+      "destination_count_total": 1792,
+      "difference": 0,
+      "engine_can_create": true,
+      "destination_count_net": 1792,
+      "difference_raw": 0,
+      "verdict_class": "MATCHED",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1",
+        "TABLE_2"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 1792,
+      "starter_matched_to_source": 1792,
+      "starter_subtraction_basis": "baseline_matched",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report"
+      },
+      "notes": [
+        "starter_matched_to_source=1792 from the T048d IDENTITY AUDIT, not from the run report: this class has no matched tally of any kind (no action, no overwrite, no skip), which is what FW-global fixed content looks like. The number is a PROVABLE LOWER BOUND, the starter baseline of 1792 minus the 0 destination object(s) whose GUID is absent from the source; subtracting 0 unmatched starter object(s) rather than the gross baseline of 1792. The bound RESOLVES this row: it is the most negative the difference can be, and it is not negative, so no source object of this class failed to arrive.",
+        "the `baseline_matched` basis is WITHHELD from this class (T048b): the run report carries an identity skip whose LCM class could not be determined and which could have been a CmSemanticDomain, so this class's matched tally may be understated. Shortfalls on this row are advisory (fidelity-census.md 5.2).",
+        "match_basis.enriched is null: the run report carries no `enrichments` list, and an absent list is no evidence the enrichment pass ran -- never a measured zero"
+      ]
+    },
+    {
+      "class": "FsClosedFeature",
+      "source_count": 24,
+      "destination_count_total": 24,
+      "difference": 0,
+      "engine_can_create": true,
+      "destination_count_net": 24,
+      "difference_raw": 0,
+      "verdict_class": "MATCHED",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1",
+        "TABLE_2"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report"
+      },
+      "notes": [
+        "match_basis.enriched is null: the run report carries no `enrichments` list, and an absent list is no evidence the enrichment pass ran -- never a measured zero"
+      ]
+    },
+    {
+      "class": "FsClosedValue",
+      "source_count": 2540,
+      "destination_count_total": 2075,
+      "difference": -465,
+      "engine_can_create": true,
+      "destination_count_net": 2075,
+      "difference_raw": -465,
+      "verdict_class": "SHORTFALL",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 465,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report"
+      },
+      "notes": [
+        "match_basis.enriched is null: the run report carries no `enrichments` list, and an absent list is no evidence the enrichment pass ran -- never a measured zero"
+      ]
+    },
+    {
+      "class": "FsComplexFeature",
+      "source_count": 2,
+      "destination_count_total": 2,
+      "difference": 0,
+      "engine_can_create": true,
+      "destination_count_net": 2,
+      "difference_raw": 0,
+      "verdict_class": "MATCHED",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report"
+      },
+      "notes": [
+        "match_basis.enriched is null: the run report carries no `enrichments` list, and an absent list is no evidence the enrichment pass ran -- never a measured zero"
+      ]
+    },
+    {
+      "class": "FsFeatStruc",
+      "source_count": 1771,
+      "destination_count_total": 1679,
+      "difference": -92,
+      "engine_can_create": true,
+      "destination_count_net": 1679,
+      "difference_raw": -92,
+      "verdict_class": "SHORTFALL",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 92,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report"
+      },
+      "notes": [
+        "match_basis.enriched is null: the run report carries no `enrichments` list, and an absent list is no evidence the enrichment pass ran -- never a measured zero"
+      ]
+    },
+    {
+      "class": "FsFeatStrucType",
+      "source_count": 3,
+      "destination_count_total": 3,
+      "difference": 0,
+      "engine_can_create": true,
+      "destination_count_net": 3,
+      "difference_raw": 0,
+      "verdict_class": "MATCHED",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "absent_from_baseline",
+      "match_basis": {
+        "basis_source": "run_report"
+      },
+      "notes": [
+        "Amendment A1: this row is one half of a class split by owning feature system, and the baseline document is not split, so no starter subtraction is applied to it (starter_baseline_source 'absent_from_baseline')."
+      ],
+      "owning_feature_system": "LangProject.MsFeatureSystemOA"
+    },
+    {
+      "class": "FsFeatStrucType",
+      "source_count": 1,
+      "destination_count_total": 1,
+      "difference": 0,
+      "engine_can_create": true,
+      "destination_count_net": 1,
+      "difference_raw": 0,
+      "verdict_class": "MATCHED",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "absent_from_baseline",
+      "match_basis": {
+        "basis_source": "run_report"
+      },
+      "notes": [
+        "Amendment A1: this row is one half of a class split by owning feature system, and the baseline document is not split, so no starter subtraction is applied to it (starter_baseline_source 'absent_from_baseline')."
+      ],
+      "owning_feature_system": "LangProject.PhFeatureSystemOA"
+    },
+    {
+      "class": "FsSymFeatVal",
+      "source_count": 90,
+      "destination_count_total": 90,
+      "difference": 0,
+      "engine_can_create": true,
+      "destination_count_net": 90,
+      "difference_raw": 0,
+      "verdict_class": "MATCHED",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1",
+        "TABLE_2"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report"
+      },
+      "notes": [
+        "match_basis.enriched is null: the run report carries no `enrichments` list, and an absent list is no evidence the enrichment pass ran -- never a measured zero"
+      ]
+    },
+    {
+      "class": "LexAppendix",
+      "source_count": 0,
+      "destination_count_total": 0,
+      "difference": 0,
+      "engine_can_create": false,
+      "destination_count_net": 0,
+      "difference_raw": 0,
+      "verdict_class": "MATCHED",
+      "gate_scope": "advisory",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_2"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report"
+      },
+      "notes": [
+        "match_basis.enriched is null: the run report carries no `enrichments` list, and an absent list is no evidence the enrichment pass ran -- never a measured zero"
+      ]
+    },
+    {
+      "class": "LexEntry",
+      "source_count": 2017,
+      "destination_count_total": 2017,
+      "difference": 0,
+      "engine_can_create": true,
+      "destination_count_net": 2017,
+      "difference_raw": 0,
+      "verdict_class": "MATCHED",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1",
+        "TABLE_2"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report"
+      },
+      "notes": [
+        "match_basis.enriched is null: the run report carries no `enrichments` list, and an absent list is no evidence the enrichment pass ran -- never a measured zero"
+      ]
+    },
+    {
+      "class": "LexEntryInflType",
+      "source_count": 3,
+      "destination_count_total": 4,
+      "difference": 0,
+      "engine_can_create": true,
+      "destination_count_net": 3,
+      "difference_raw": 1,
+      "verdict_class": "MATCHED",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1",
+        "TABLE_2"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 3,
+      "starter_matched_to_source": 2,
+      "starter_subtraction_basis": "baseline_matched",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report"
+      },
+      "duplicates": {
+        "roster_admitted": true,
+        "key_definition": "Name (default analysis alt), exact and case-sensitive, within the variant-entry-types list and restricted to LexEntryInflType",
+        "groups": 0,
+        "extra_objects": 0,
+        "examples": []
+      },
+      "notes": [
+        "starter_matched_to_source=2 from the T048d IDENTITY AUDIT, not from the run report: this class has no matched tally of any kind (no action, no overwrite, no skip), which is what FW-global fixed content looks like. The number is a PROVABLE LOWER BOUND, the starter baseline of 3 minus the 1 destination object(s) whose GUID is absent from the source; subtracting 1 unmatched starter object(s) rather than the gross baseline of 3. The bound RESOLVES this row: it is the most negative the difference can be, and it is not negative, so no source object of this class failed to arrive.",
+        "the `baseline_matched` basis is WITHHELD from this class (T048b): the run report carries an identity skip whose LCM class could not be determined and which could have been a LexEntryInflType, so this class's matched tally may be understated. Shortfalls on this row are advisory (fidelity-census.md 5.2).",
+        "match_basis.enriched is null: the run report carries no `enrichments` list, and an absent list is no evidence the enrichment pass ran -- never a measured zero"
+      ]
+    },
+    {
+      "class": "LexEntryRef",
+      "source_count": 92,
+      "destination_count_total": 92,
+      "difference": 0,
+      "engine_can_create": true,
+      "destination_count_net": 92,
+      "difference_raw": 0,
+      "verdict_class": "MATCHED",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report"
+      },
+      "notes": [
+        "match_basis.enriched is null: the run report carries no `enrichments` list, and an absent list is no evidence the enrichment pass ran -- never a measured zero"
+      ]
+    },
+    {
+      "class": "LexEntryType",
+      "source_count": 13,
+      "destination_count_total": 12,
+      "difference": -12,
+      "engine_can_create": true,
+      "destination_count_net": 1,
+      "difference_raw": -1,
+      "verdict_class": "SHORTFALL",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1",
+        "TABLE_2"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 12,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 11,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report"
+      },
+      "notes": [
+        "the T048d IDENTITY AUDIT narrows this row's shortfall to AT MOST 1 (starter_matched_to_source >= 11 by GUID), against the 12 the gross basis reports. The row KEEPS the gross basis and its shortfall stays advisory: the audit supplies a lower bound on the matched count, so the narrowed figure is an UPPER bound on the loss and not the loss itself, and 5.2's cap exists for exactly the arithmetic that can over-report a shortfall.",
+        "the `baseline_matched` basis is WITHHELD from this class (T048b): the run report carries an identity skip whose LCM class could not be determined and which could have been a LexEntryType, so this class's matched tally may be understated. Shortfalls on this row are advisory (fidelity-census.md 5.2).",
+        "match_basis.enriched is null: the run report carries no `enrichments` list, and an absent list is no evidence the enrichment pass ran -- never a measured zero"
+      ]
+    },
+    {
+      "class": "LexEtymology",
+      "source_count": 0,
+      "destination_count_total": 0,
+      "difference": 0,
+      "engine_can_create": true,
+      "destination_count_net": 0,
+      "difference_raw": 0,
+      "verdict_class": "MATCHED",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report"
+      },
+      "notes": [
+        "match_basis.enriched is null: the run report carries no `enrichments` list, and an absent list is no evidence the enrichment pass ran -- never a measured zero"
+      ]
+    },
+    {
+      "class": "LexExampleSentence",
+      "source_count": 2,
+      "destination_count_total": 2,
+      "difference": 0,
+      "engine_can_create": true,
+      "destination_count_net": 2,
+      "difference_raw": 0,
+      "verdict_class": "MATCHED",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report"
+      },
+      "notes": [
+        "match_basis.enriched is null: the run report carries no `enrichments` list, and an absent list is no evidence the enrichment pass ran -- never a measured zero"
+      ]
+    },
+    {
+      "class": "LexExtendedNote",
+      "source_count": 0,
+      "destination_count_total": 0,
+      "difference": 0,
+      "engine_can_create": true,
+      "destination_count_net": 0,
+      "difference_raw": 0,
+      "verdict_class": "MATCHED",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report"
+      },
+      "notes": [
+        "match_basis.enriched is null: the run report carries no `enrichments` list, and an absent list is no evidence the enrichment pass ran -- never a measured zero"
+      ]
+    },
+    {
+      "class": "LexPronunciation",
+      "source_count": 1796,
+      "destination_count_total": 1796,
+      "difference": 0,
+      "engine_can_create": true,
+      "destination_count_net": 1796,
+      "difference_raw": 0,
+      "verdict_class": "MATCHED",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report"
+      },
+      "notes": [
+        "match_basis.enriched is null: the run report carries no `enrichments` list, and an absent list is no evidence the enrichment pass ran -- never a measured zero"
+      ]
+    },
+    {
+      "class": "LexRefType",
+      "source_count": 7,
+      "destination_count_total": 7,
+      "difference": -7,
+      "engine_can_create": false,
+      "destination_count_net": 0,
+      "difference_raw": 0,
+      "verdict_class": "SHORTFALL",
+      "gate_scope": "advisory",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_2"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 7,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 7,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report"
+      },
+      "notes": [
+        "the T048d IDENTITY AUDIT narrows this row's shortfall to AT MOST 7 (starter_matched_to_source >= 0 by GUID), against the 7 the gross basis reports. The row KEEPS the gross basis and its shortfall stays advisory: the audit supplies a lower bound on the matched count, so the narrowed figure is an UPPER bound on the loss and not the loss itself, and 5.2's cap exists for exactly the arithmetic that can over-report a shortfall.",
+        "match_basis.enriched is null: the run report carries no `enrichments` list, and an absent list is no evidence the enrichment pass ran -- never a measured zero"
+      ]
+    },
+    {
+      "class": "LexReference",
+      "source_count": 5,
+      "destination_count_total": 0,
+      "difference": -5,
+      "engine_can_create": true,
+      "destination_count_net": 0,
+      "difference_raw": -5,
+      "verdict_class": "SHORTFALL",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 5,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report"
+      },
+      "notes": [
+        "match_basis.enriched is null: the run report carries no `enrichments` list, and an absent list is no evidence the enrichment pass ran -- never a measured zero"
+      ]
+    },
+    {
+      "class": "LexSense",
+      "source_count": 2233,
+      "destination_count_total": 2233,
+      "difference": 0,
+      "engine_can_create": true,
+      "destination_count_net": 2233,
+      "difference_raw": 0,
+      "verdict_class": "MATCHED",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1",
+        "TABLE_2"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report"
+      },
+      "notes": [
+        "match_basis.enriched is null: the run report carries no `enrichments` list, and an absent list is no evidence the enrichment pass ran -- never a measured zero"
+      ]
+    },
+    {
+      "class": "MoAdhocProhibGr",
+      "source_count": 0,
+      "destination_count_total": 0,
+      "difference": 0,
+      "engine_can_create": true,
+      "destination_count_net": 0,
+      "difference_raw": 0,
+      "verdict_class": "MATCHED",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report"
+      },
+      "notes": [
+        "match_basis.enriched is null: the run report carries no `enrichments` list, and an absent list is no evidence the enrichment pass ran -- never a measured zero"
+      ]
+    },
+    {
+      "class": "MoAffixAllomorph",
+      "source_count": 146,
+      "destination_count_total": 146,
+      "difference": 0,
+      "engine_can_create": true,
+      "destination_count_net": 146,
+      "difference_raw": 0,
+      "verdict_class": "MATCHED",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report"
+      },
+      "notes": [
+        "match_basis.enriched is null: the run report carries no `enrichments` list, and an absent list is no evidence the enrichment pass ran -- never a measured zero"
+      ]
+    },
+    {
+      "class": "MoAlloAdhocProhib",
+      "source_count": 0,
+      "destination_count_total": 0,
+      "difference": 0,
+      "engine_can_create": true,
+      "destination_count_net": 0,
+      "difference_raw": 0,
+      "verdict_class": "MATCHED",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report"
+      },
+      "notes": [
+        "match_basis.enriched is null: the run report carries no `enrichments` list, and an absent list is no evidence the enrichment pass ran -- never a measured zero"
+      ]
+    },
+    {
+      "class": "MoDerivAffMsa",
+      "source_count": 3,
+      "destination_count_total": 3,
+      "difference": 0,
+      "engine_can_create": true,
+      "destination_count_net": 3,
+      "difference_raw": 0,
+      "verdict_class": "MATCHED",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report"
+      },
+      "notes": [
+        "match_basis.enriched is null: the run report carries no `enrichments` list, and an absent list is no evidence the enrichment pass ran -- never a measured zero"
+      ]
+    },
+    {
+      "class": "MoEndoCompound",
+      "source_count": 1,
+      "destination_count_total": 1,
+      "difference": 0,
+      "engine_can_create": true,
+      "destination_count_net": 1,
+      "difference_raw": 0,
+      "verdict_class": "MATCHED",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report"
+      },
+      "notes": [
+        "match_basis.enriched is null: the run report carries no `enrichments` list, and an absent list is no evidence the enrichment pass ran -- never a measured zero"
+      ]
+    },
+    {
+      "class": "MoExoCompound",
+      "source_count": 0,
+      "destination_count_total": 0,
+      "difference": 0,
+      "engine_can_create": true,
+      "destination_count_net": 0,
+      "difference_raw": 0,
+      "verdict_class": "MATCHED",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report"
+      },
+      "notes": [
+        "match_basis.enriched is null: the run report carries no `enrichments` list, and an absent list is no evidence the enrichment pass ran -- never a measured zero"
+      ]
+    },
+    {
+      "class": "MoInflAffMsa",
+      "source_count": 134,
+      "destination_count_total": 134,
+      "difference": 0,
+      "engine_can_create": true,
+      "destination_count_net": 134,
+      "difference_raw": 0,
+      "verdict_class": "MATCHED",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report"
+      },
+      "notes": [
+        "match_basis.enriched is null: the run report carries no `enrichments` list, and an absent list is no evidence the enrichment pass ran -- never a measured zero"
+      ]
+    },
+    {
+      "class": "MoInflAffixSlot",
+      "source_count": 19,
+      "destination_count_total": 19,
+      "difference": 0,
+      "engine_can_create": true,
+      "destination_count_net": 19,
+      "difference_raw": 0,
+      "verdict_class": "MATCHED",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1",
+        "TABLE_2"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report"
+      },
+      "notes": [
+        "match_basis.enriched is null: the run report carries no `enrichments` list, and an absent list is no evidence the enrichment pass ran -- never a measured zero"
+      ]
+    },
+    {
+      "class": "MoInflAffixTemplate",
+      "source_count": 13,
+      "destination_count_total": 13,
+      "difference": 0,
+      "engine_can_create": true,
+      "destination_count_net": 13,
+      "difference_raw": 0,
+      "verdict_class": "MATCHED",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report"
+      },
+      "notes": [
+        "match_basis.enriched is null: the run report carries no `enrichments` list, and an absent list is no evidence the enrichment pass ran -- never a measured zero"
+      ]
+    },
+    {
+      "class": "MoInflClass",
+      "source_count": 5,
+      "destination_count_total": 5,
+      "difference": 0,
+      "engine_can_create": true,
+      "destination_count_net": 5,
+      "difference_raw": 0,
+      "verdict_class": "MATCHED",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report"
+      },
+      "notes": [
+        "match_basis.enriched is null: the run report carries no `enrichments` list, and an absent list is no evidence the enrichment pass ran -- never a measured zero"
+      ]
+    },
+    {
+      "class": "MoMorphAdhocProhib",
+      "source_count": 1,
+      "destination_count_total": 1,
+      "difference": 0,
+      "engine_can_create": true,
+      "destination_count_net": 1,
+      "difference_raw": 0,
+      "verdict_class": "MATCHED",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report"
+      },
+      "notes": [
+        "match_basis.enriched is null: the run report carries no `enrichments` list, and an absent list is no evidence the enrichment pass ran -- never a measured zero"
+      ]
+    },
+    {
+      "class": "MoMorphType",
+      "source_count": 19,
+      "destination_count_total": 19,
+      "difference": 0,
+      "engine_can_create": true,
+      "destination_count_net": 19,
+      "difference_raw": 0,
+      "verdict_class": "MATCHED",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1",
+        "TABLE_2"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 19,
+      "starter_matched_to_source": 19,
+      "starter_subtraction_basis": "baseline_matched",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report"
+      },
+      "duplicates": {
+        "roster_admitted": true,
+        "key_definition": "Name (default analysis alt), exact and case-sensitive, within the lexicon's morph-types list",
+        "groups": 0,
+        "extra_objects": 0,
+        "examples": []
+      },
+      "notes": [
+        "starter_matched_to_source=19 from the T048d IDENTITY AUDIT, not from the run report: this class has no matched tally of any kind (no action, no overwrite, no skip), which is what FW-global fixed content looks like. The number is a PROVABLE LOWER BOUND, the starter baseline of 19 minus the 0 destination object(s) whose GUID is absent from the source; subtracting 0 unmatched starter object(s) rather than the gross baseline of 19. The bound RESOLVES this row: it is the most negative the difference can be, and it is not negative, so no source object of this class failed to arrive.",
+        "match_basis.enriched is null: the run report carries no `enrichments` list, and an absent list is no evidence the enrichment pass ran -- never a measured zero"
+      ]
+    },
+    {
+      "class": "MoStemAllomorph",
+      "source_count": 2138,
+      "destination_count_total": 2138,
+      "difference": 0,
+      "engine_can_create": true,
+      "destination_count_net": 2138,
+      "difference_raw": 0,
+      "verdict_class": "MATCHED",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report"
+      },
+      "notes": [
+        "match_basis.enriched is null: the run report carries no `enrichments` list, and an absent list is no evidence the enrichment pass ran -- never a measured zero"
+      ]
+    },
+    {
+      "class": "MoStemMsa",
+      "source_count": 1954,
+      "destination_count_total": 1953,
+      "difference": -1,
+      "engine_can_create": true,
+      "destination_count_net": 1953,
+      "difference_raw": -1,
+      "verdict_class": "SHORTFALL",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 1,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report"
+      },
+      "notes": [
+        "match_basis.enriched is null: the run report carries no `enrichments` list, and an absent list is no evidence the enrichment pass ran -- never a measured zero"
+      ]
+    },
+    {
+      "class": "MoStemName",
+      "source_count": 0,
+      "destination_count_total": 0,
+      "difference": 0,
+      "engine_can_create": true,
+      "destination_count_net": 0,
+      "difference_raw": 0,
+      "verdict_class": "MATCHED",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1",
+        "TABLE_2"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report"
+      },
+      "notes": [
+        "match_basis.enriched is null: the run report carries no `enrichments` list, and an absent list is no evidence the enrichment pass ran -- never a measured zero"
+      ]
+    },
+    {
+      "class": "MoStratum",
+      "source_count": 0,
+      "destination_count_total": 0,
+      "difference": 0,
+      "engine_can_create": true,
+      "destination_count_net": 0,
+      "difference_raw": 0,
+      "verdict_class": "MATCHED",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1",
+        "TABLE_2"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report"
+      },
+      "notes": [
+        "match_basis.enriched is null: the run report carries no `enrichments` list, and an absent list is no evidence the enrichment pass ran -- never a measured zero"
+      ]
+    },
+    {
+      "class": "MoUnclassifiedAffixMsa",
+      "source_count": 2,
+      "destination_count_total": 2,
+      "difference": 0,
+      "engine_can_create": true,
+      "destination_count_net": 2,
+      "difference_raw": 0,
+      "verdict_class": "MATCHED",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report"
+      },
+      "notes": [
+        "match_basis.enriched is null: the run report carries no `enrichments` list, and an absent list is no evidence the enrichment pass ran -- never a measured zero"
+      ]
+    },
+    {
+      "class": "PartOfSpeech",
+      "source_count": 26,
+      "destination_count_total": 26,
+      "difference": 0,
+      "engine_can_create": true,
+      "destination_count_net": 26,
+      "difference_raw": 0,
+      "verdict_class": "MATCHED",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1",
+        "TABLE_2"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 5,
+      "starter_matched_to_source": 5,
+      "starter_subtraction_basis": "baseline_matched",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report"
+      },
+      "duplicates": {
+        "roster_admitted": true,
+        "key_definition": "Name (default analysis alt), exact and case-sensitive, project-wide over the recursive hierarchy; the owning parent is NOT part of the key",
+        "groups": 0,
+        "extra_objects": 0,
+        "examples": []
+      },
+      "notes": [
+        "starter_matched_to_source=5 read from the run report; subtracting 0 unmatched starter object(s) rather than the gross baseline of 5",
+        "match_basis.enriched is null: the run report carries no `enrichments` list, and an absent list is no evidence the enrichment pass ran -- never a measured zero"
+      ]
+    },
+    {
+      "class": "PhBdryMarker",
+      "source_count": 2,
+      "destination_count_total": 2,
+      "difference": 0,
+      "engine_can_create": false,
+      "destination_count_net": 2,
+      "difference_raw": 0,
+      "verdict_class": "MATCHED",
+      "gate_scope": "advisory",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_2"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 2,
+      "starter_matched_to_source": 2,
+      "starter_subtraction_basis": "baseline_matched",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report"
+      },
+      "notes": [
+        "starter_matched_to_source=2 from the T048d IDENTITY AUDIT, not from the run report: this class has no matched tally of any kind (no action, no overwrite, no skip), which is what FW-global fixed content looks like. The number is a PROVABLE LOWER BOUND, the starter baseline of 2 minus the 0 destination object(s) whose GUID is absent from the source; subtracting 0 unmatched starter object(s) rather than the gross baseline of 2. The bound RESOLVES this row: it is the most negative the difference can be, and it is not negative, so no source object of this class failed to arrive.",
+        "match_basis.enriched is null: the run report carries no `enrichments` list, and an absent list is no evidence the enrichment pass ran -- never a measured zero"
+      ]
+    },
+    {
+      "class": "PhEnvironment",
+      "source_count": 9,
+      "destination_count_total": 9,
+      "difference": 0,
+      "engine_can_create": true,
+      "destination_count_net": 9,
+      "difference_raw": 0,
+      "verdict_class": "MATCHED",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1",
+        "TABLE_2"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report"
+      },
+      "notes": [
+        "match_basis.enriched is null: the run report carries no `enrichments` list, and an absent list is no evidence the enrichment pass ran -- never a measured zero"
+      ]
+    },
+    {
+      "class": "PhFeatureConstraint",
+      "source_count": 70,
+      "destination_count_total": 23,
+      "difference": -47,
+      "engine_can_create": true,
+      "destination_count_net": 23,
+      "difference_raw": -47,
+      "verdict_class": "SHORTFALL",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1",
+        "TABLE_2"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 47,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report"
+      },
+      "notes": [
+        "match_basis.enriched is null: the run report carries no `enrichments` list, and an absent list is no evidence the enrichment pass ran -- never a measured zero"
+      ]
+    },
+    {
+      "class": "PhMetathesisRule",
+      "source_count": 0,
+      "destination_count_total": 0,
+      "difference": 0,
+      "engine_can_create": true,
+      "destination_count_net": 0,
+      "difference_raw": 0,
+      "verdict_class": "MATCHED",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report"
+      },
+      "notes": [
+        "match_basis.enriched is null: the run report carries no `enrichments` list, and an absent list is no evidence the enrichment pass ran -- never a measured zero"
+      ]
+    },
+    {
+      "class": "PhNCFeatures",
+      "source_count": 41,
+      "destination_count_total": 41,
+      "difference": 0,
+      "engine_can_create": true,
+      "destination_count_net": 41,
+      "difference_raw": 0,
+      "verdict_class": "MATCHED",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1",
+        "TABLE_2"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report"
+      },
+      "duplicates": {
+        "roster_admitted": true,
+        "key_definition": "Name (default analysis alt), exact and case-sensitive, within the PhPhonData natural-class list and restricted to PhNCFeatures, AND ONLY WHERE THAT NAME IS NOT A FLEx AUTO-GENERATED RULE LABEL (`Created automatically for rule \"<rule>\"`) -- such a label names the RULE that owns the class, not the class, so two objects sharing one are not the same linguistic object and are not a duplicate pair",
+        "groups": 0,
+        "extra_objects": 0,
+        "examples": []
+      },
+      "notes": [
+        "match_basis.enriched is null: the run report carries no `enrichments` list, and an absent list is no evidence the enrichment pass ran -- never a measured zero"
+      ]
+    },
+    {
+      "class": "PhNCSegments",
+      "source_count": 7,
+      "destination_count_total": 8,
+      "difference": 0,
+      "engine_can_create": true,
+      "destination_count_net": 7,
+      "difference_raw": 1,
+      "verdict_class": "MATCHED",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1",
+        "TABLE_2"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 2,
+      "starter_matched_to_source": 1,
+      "starter_subtraction_basis": "baseline_matched",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report"
+      },
+      "duplicates": {
+        "roster_admitted": true,
+        "key_definition": "Name (default analysis alt), exact and case-sensitive, within the PhPhonData natural-class list and restricted to PhNCSegments",
+        "groups": 0,
+        "extra_objects": 0,
+        "examples": []
+      },
+      "notes": [
+        "starter_matched_to_source=1 read from the run report; subtracting 1 unmatched starter object(s) rather than the gross baseline of 2",
+        "match_basis.enriched is null: the run report carries no `enrichments` list, and an absent list is no evidence the enrichment pass ran -- never a measured zero"
+      ]
+    },
+    {
+      "class": "PhPhoneme",
+      "source_count": 41,
+      "destination_count_total": 44,
+      "difference": 0,
+      "engine_can_create": true,
+      "destination_count_net": 41,
+      "difference_raw": 3,
+      "verdict_class": "MATCHED",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1",
+        "TABLE_2"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 23,
+      "starter_matched_to_source": 20,
+      "starter_subtraction_basis": "baseline_matched",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report"
+      },
+      "duplicates": {
+        "roster_admitted": true,
+        "key_definition": "Name (default vernacular alt), exact and case-sensitive",
+        "groups": 0,
+        "extra_objects": 0,
+        "examples": []
+      },
+      "notes": [
+        "starter_matched_to_source=20 read from the run report; subtracting 3 unmatched starter object(s) rather than the gross baseline of 23",
+        "match_basis.enriched is null: the run report carries no `enrichments` list, and an absent list is no evidence the enrichment pass ran -- never a measured zero"
+      ]
+    },
+    {
+      "class": "PhRegularRule",
+      "source_count": 21,
+      "destination_count_total": 21,
+      "difference": 0,
+      "engine_can_create": true,
+      "destination_count_net": 21,
+      "difference_raw": 0,
+      "verdict_class": "MATCHED",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report"
+      },
+      "notes": [
+        "match_basis.enriched is null: the run report carries no `enrichments` list, and an absent list is no evidence the enrichment pass ran -- never a measured zero"
+      ]
+    },
+    {
+      "class": "PhSegRuleRHS",
+      "source_count": 21,
+      "destination_count_total": 21,
+      "difference": 0,
+      "engine_can_create": true,
+      "destination_count_net": 21,
+      "difference_raw": 0,
+      "verdict_class": "MATCHED",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report"
+      },
+      "notes": [
+        "match_basis.enriched is null: the run report carries no `enrichments` list, and an absent list is no evidence the enrichment pass ran -- never a measured zero"
+      ]
+    },
+    {
+      "class": "PhSegmentRule",
+      "source_count": 0,
+      "destination_count_total": 0,
+      "difference": 0,
+      "engine_can_create": true,
+      "destination_count_net": 0,
+      "difference_raw": 0,
+      "verdict_class": "MATCHED",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report"
+      },
+      "notes": [
+        "match_basis.enriched is null: the run report carries no `enrichments` list, and an absent list is no evidence the enrichment pass ran -- never a measured zero"
+      ]
+    },
+    {
+      "class": "PhSequenceContext",
+      "source_count": 13,
+      "destination_count_total": 13,
+      "difference": 0,
+      "engine_can_create": true,
+      "destination_count_net": 13,
+      "difference_raw": 0,
+      "verdict_class": "MATCHED",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report"
+      },
+      "notes": [
+        "match_basis.enriched is null: the run report carries no `enrichments` list, and an absent list is no evidence the enrichment pass ran -- never a measured zero"
+      ]
+    },
+    {
+      "class": "PhSimpleContextBdry",
+      "source_count": 13,
+      "destination_count_total": 13,
+      "difference": 0,
+      "engine_can_create": true,
+      "destination_count_net": 13,
+      "difference_raw": 0,
+      "verdict_class": "MATCHED",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report"
+      },
+      "notes": [
+        "match_basis.enriched is null: the run report carries no `enrichments` list, and an absent list is no evidence the enrichment pass ran -- never a measured zero"
+      ]
+    },
+    {
+      "class": "PhSimpleContextNC",
+      "source_count": 47,
+      "destination_count_total": 47,
+      "difference": 0,
+      "engine_can_create": true,
+      "destination_count_net": 47,
+      "difference_raw": 0,
+      "verdict_class": "MATCHED",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report"
+      },
+      "notes": [
+        "match_basis.enriched is null: the run report carries no `enrichments` list, and an absent list is no evidence the enrichment pass ran -- never a measured zero"
+      ]
+    },
+    {
+      "class": "PhSimpleContextSeg",
+      "source_count": 10,
+      "destination_count_total": 10,
+      "difference": 0,
+      "engine_can_create": true,
+      "destination_count_net": 10,
+      "difference_raw": 0,
+      "verdict_class": "MATCHED",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report"
+      },
+      "notes": [
+        "match_basis.enriched is null: the run report carries no `enrichments` list, and an absent list is no evidence the enrichment pass ran -- never a measured zero"
+      ]
+    },
+    {
+      "class": "PunctuationForm",
+      "source_count": 3994,
+      "destination_count_total": 0,
+      "difference": -3994,
+      "engine_can_create": true,
+      "destination_count_net": 0,
+      "difference_raw": -3994,
+      "verdict_class": "SHORTFALL",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_2"
+      ],
+      "accounted_for": [
+        {
+          "reason": "GOVERNED_BY_OTHER_FEATURE",
+          "count": 3994,
+          "direction": "shortfall",
+          "detail": "governed by the texts/wordforms feature (spec.md Assumptions) -- not 038: this feature reports the figure and does not fix it (spec.md Assumptions; fidelity-census.md's reason table for GOVERNED_BY_OTHER_FEATURE). Needs no report_ref -- invariant 5 exempts the token, because there is no run-report line to resolve against: the objects were never this run's to create"
+        }
+      ],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report"
+      },
+      "notes": [
+        "match_basis.enriched is null: the run report carries no `enrichments` list, and an absent list is no evidence the enrichment pass ran -- never a measured zero"
+      ]
+    },
+    {
+      "class": "ReversalIndex",
+      "source_count": 2,
+      "destination_count_total": 1,
+      "difference": -2,
+      "engine_can_create": true,
+      "destination_count_net": 0,
+      "difference_raw": -1,
+      "verdict_class": "SHORTFALL",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1"
+      ],
+      "accounted_for": [
+        {
+          "reason": "GOVERNED_BY_OTHER_FEATURE",
+          "count": 2,
+          "direction": "shortfall",
+          "detail": "governed by the reversal-index feature (spec.md Assumptions) -- not 038: this feature reports the figure and does not fix it (spec.md Assumptions; fidelity-census.md's reason table for GOVERNED_BY_OTHER_FEATURE). Needs no report_ref -- invariant 5 exempts the token, because there is no run-report line to resolve against: the objects were never this run's to create"
+        }
+      ],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 1,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report"
+      },
+      "notes": [
+        "the T048d IDENTITY AUDIT narrows this row's shortfall to AT MOST 2 (starter_matched_to_source >= 0 by GUID), against the 2 the gross basis reports. The row KEEPS the gross basis and its shortfall stays advisory: the audit supplies a lower bound on the matched count, so the narrowed figure is an UPPER bound on the loss and not the loss itself, and 5.2's cap exists for exactly the arithmetic that can over-report a shortfall.",
+        "match_basis.enriched is null: the run report carries no `enrichments` list, and an absent list is no evidence the enrichment pass ran -- never a measured zero"
+      ]
+    },
+    {
+      "class": "ReversalIndexEntry",
+      "source_count": 0,
+      "destination_count_total": 0,
+      "difference": 0,
+      "engine_can_create": true,
+      "destination_count_net": 0,
+      "difference_raw": 0,
+      "verdict_class": "MATCHED",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report"
+      },
+      "notes": [
+        "match_basis.enriched is null: the run report carries no `enrichments` list, and an absent list is no evidence the enrichment pass ran -- never a measured zero"
+      ]
+    },
+    {
+      "class": "Segment",
+      "source_count": 28928,
+      "destination_count_total": 2262,
+      "difference": -26666,
+      "engine_can_create": true,
+      "destination_count_net": 2262,
+      "difference_raw": -26666,
+      "verdict_class": "SHORTFALL",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1"
+      ],
+      "accounted_for": [
+        {
+          "reason": "GOVERNED_BY_OTHER_FEATURE",
+          "count": 26666,
+          "direction": "shortfall",
+          "detail": "governed by the texts/wordforms feature (spec.md Assumptions) -- not 038: this feature reports the figure and does not fix it (spec.md Assumptions; fidelity-census.md's reason table for GOVERNED_BY_OTHER_FEATURE). Needs no report_ref -- invariant 5 exempts the token, because there is no run-report line to resolve against: the objects were never this run's to create"
+        }
+      ],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report"
+      },
+      "notes": [
+        "match_basis.enriched is null: the run report carries no `enrichments` list, and an absent list is no evidence the enrichment pass ran -- never a measured zero"
+      ]
+    },
+    {
+      "class": "StText",
+      "source_count": 4954,
+      "destination_count_total": 63,
+      "difference": -4903,
+      "engine_can_create": true,
+      "destination_count_net": 51,
+      "difference_raw": -4891,
+      "verdict_class": "SHORTFALL",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1"
+      ],
+      "accounted_for": [
+        {
+          "reason": "GOVERNED_BY_OTHER_FEATURE",
+          "count": 4903,
+          "direction": "shortfall",
+          "detail": "governed by the texts/wordforms feature (spec.md Assumptions) -- not 038: this feature reports the figure and does not fix it (spec.md Assumptions; fidelity-census.md's reason table for GOVERNED_BY_OTHER_FEATURE). Needs no report_ref -- invariant 5 exempts the token, because there is no run-report line to resolve against: the objects were never this run's to create"
+        }
+      ],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 12,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report"
+      },
+      "notes": [
+        "the T048d IDENTITY AUDIT narrows this row's shortfall to AT MOST 4900 (starter_matched_to_source >= 3 by GUID), against the 4903 the gross basis reports. The row KEEPS the gross basis and its shortfall stays advisory: the audit supplies a lower bound on the matched count, so the narrowed figure is an UPPER bound on the loss and not the loss itself, and 5.2's cap exists for exactly the arithmetic that can over-report a shortfall.",
+        "match_basis.enriched is null: the run report carries no `enrichments` list, and an absent list is no evidence the enrichment pass ran -- never a measured zero"
+      ]
+    },
+    {
+      "class": "StTxtPara",
+      "source_count": 7427,
+      "destination_count_total": 1945,
+      "difference": -5568,
+      "engine_can_create": true,
+      "destination_count_net": 1859,
+      "difference_raw": -5482,
+      "verdict_class": "SHORTFALL",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1"
+      ],
+      "accounted_for": [
+        {
+          "reason": "GOVERNED_BY_OTHER_FEATURE",
+          "count": 5568,
+          "direction": "shortfall",
+          "detail": "governed by the texts/wordforms feature (spec.md Assumptions) -- not 038: this feature reports the figure and does not fix it (spec.md Assumptions; fidelity-census.md's reason table for GOVERNED_BY_OTHER_FEATURE). Needs no report_ref -- invariant 5 exempts the token, because there is no run-report line to resolve against: the objects were never this run's to create"
+        }
+      ],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 86,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report"
+      },
+      "notes": [
+        "the T048d IDENTITY AUDIT narrows this row's shortfall to AT MOST 5558 (starter_matched_to_source >= 10 by GUID), against the 5568 the gross basis reports. The row KEEPS the gross basis and its shortfall stays advisory: the audit supplies a lower bound on the matched count, so the narrowed figure is an UPPER bound on the loss and not the loss itself, and 5.2's cap exists for exactly the arithmetic that can over-report a shortfall.",
+        "match_basis.enriched is null: the run report carries no `enrichments` list, and an absent list is no evidence the enrichment pass ran -- never a measured zero"
+      ]
+    },
+    {
+      "class": "Text",
+      "source_count": 65,
+      "destination_count_total": 51,
+      "difference": -14,
+      "engine_can_create": true,
+      "destination_count_net": 51,
+      "difference_raw": -14,
+      "verdict_class": "SHORTFALL",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1"
+      ],
+      "accounted_for": [
+        {
+          "reason": "GOVERNED_BY_OTHER_FEATURE",
+          "count": 14,
+          "direction": "shortfall",
+          "detail": "governed by the texts/wordforms feature (spec.md Assumptions) -- not 038: this feature reports the figure and does not fix it (spec.md Assumptions; fidelity-census.md's reason table for GOVERNED_BY_OTHER_FEATURE). Needs no report_ref -- invariant 5 exempts the token, because there is no run-report line to resolve against: the objects were never this run's to create"
+        }
+      ],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report"
+      },
+      "notes": [
+        "match_basis.enriched is null: the run report carries no `enrichments` list, and an absent list is no evidence the enrichment pass ran -- never a measured zero"
+      ]
+    },
+    {
+      "class": "TextTag",
+      "source_count": 0,
+      "destination_count_total": 0,
+      "difference": 0,
+      "engine_can_create": true,
+      "destination_count_net": 0,
+      "difference_raw": 0,
+      "verdict_class": "MATCHED",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report"
+      },
+      "notes": [
+        "match_basis.enriched is null: the run report carries no `enrichments` list, and an absent list is no evidence the enrichment pass ran -- never a measured zero"
+      ]
+    },
+    {
+      "class": "WfiAnalysis",
+      "source_count": 1628,
+      "destination_count_total": 0,
+      "difference": -1628,
+      "engine_can_create": true,
+      "destination_count_net": 0,
+      "difference_raw": -1628,
+      "verdict_class": "SHORTFALL",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1",
+        "TABLE_2"
+      ],
+      "accounted_for": [
+        {
+          "reason": "GOVERNED_BY_OTHER_FEATURE",
+          "count": 1628,
+          "direction": "shortfall",
+          "detail": "governed by the texts/wordforms feature (spec.md Assumptions) -- not 038: this feature reports the figure and does not fix it (spec.md Assumptions; fidelity-census.md's reason table for GOVERNED_BY_OTHER_FEATURE). Needs no report_ref -- invariant 5 exempts the token, because there is no run-report line to resolve against: the objects were never this run's to create"
+        }
+      ],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report"
+      },
+      "notes": [
+        "match_basis.enriched is null: the run report carries no `enrichments` list, and an absent list is no evidence the enrichment pass ran -- never a measured zero"
+      ]
+    },
+    {
+      "class": "WfiGloss",
+      "source_count": 752,
+      "destination_count_total": 0,
+      "difference": -752,
+      "engine_can_create": true,
+      "destination_count_net": 0,
+      "difference_raw": -752,
+      "verdict_class": "SHORTFALL",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1",
+        "TABLE_2"
+      ],
+      "accounted_for": [
+        {
+          "reason": "GOVERNED_BY_OTHER_FEATURE",
+          "count": 752,
+          "direction": "shortfall",
+          "detail": "governed by the texts/wordforms feature (spec.md Assumptions) -- not 038: this feature reports the figure and does not fix it (spec.md Assumptions; fidelity-census.md's reason table for GOVERNED_BY_OTHER_FEATURE). Needs no report_ref -- invariant 5 exempts the token, because there is no run-report line to resolve against: the objects were never this run's to create"
+        }
+      ],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report"
+      },
+      "notes": [
+        "match_basis.enriched is null: the run report carries no `enrichments` list, and an absent list is no evidence the enrichment pass ran -- never a measured zero"
+      ]
+    },
+    {
+      "class": "WfiMorphBundle",
+      "source_count": 4977,
+      "destination_count_total": 0,
+      "difference": -4977,
+      "engine_can_create": true,
+      "destination_count_net": 0,
+      "difference_raw": -4977,
+      "verdict_class": "SHORTFALL",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1"
+      ],
+      "accounted_for": [
+        {
+          "reason": "GOVERNED_BY_OTHER_FEATURE",
+          "count": 4977,
+          "direction": "shortfall",
+          "detail": "governed by the texts/wordforms feature (spec.md Assumptions) -- not 038: this feature reports the figure and does not fix it (spec.md Assumptions; fidelity-census.md's reason table for GOVERNED_BY_OTHER_FEATURE). Needs no report_ref -- invariant 5 exempts the token, because there is no run-report line to resolve against: the objects were never this run's to create"
+        }
+      ],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report"
+      },
+      "notes": [
+        "match_basis.enriched is null: the run report carries no `enrichments` list, and an absent list is no evidence the enrichment pass ran -- never a measured zero"
+      ]
+    },
+    {
+      "class": "WfiWordform",
+      "source_count": 8191,
+      "destination_count_total": 0,
+      "difference": -8191,
+      "engine_can_create": true,
+      "destination_count_net": 0,
+      "difference_raw": -8191,
+      "verdict_class": "SHORTFALL",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1",
+        "TABLE_2"
+      ],
+      "accounted_for": [
+        {
+          "reason": "GOVERNED_BY_OTHER_FEATURE",
+          "count": 8191,
+          "direction": "shortfall",
+          "detail": "governed by the texts/wordforms feature (spec.md Assumptions) -- not 038: this feature reports the figure and does not fix it (spec.md Assumptions; fidelity-census.md's reason table for GOVERNED_BY_OTHER_FEATURE). Needs no report_ref -- invariant 5 exempts the token, because there is no run-report line to resolve against: the objects were never this run's to create"
+        }
+      ],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report"
+      },
+      "duplicates": {
+        "roster_admitted": true,
+        "key_definition": "Form (default vernacular alt), exact and case-sensitive",
+        "groups": 0,
+        "extra_objects": 0,
+        "examples": []
+      },
+      "notes": [
+        "match_basis.enriched is null: the run report carries no `enrichments` list, and an absent list is no evidence the enrichment pass ran -- never a measured zero"
+      ]
+    },
+    {
+      "class": "MoAffixProcess",
+      "source_count": 1,
+      "destination_count_total": 1,
+      "difference": 0,
+      "engine_can_create": true,
+      "destination_count_net": 1,
+      "difference_raw": 0,
+      "verdict_class": "MATCHED",
+      "gate_scope": "required",
+      "in_class_list_via": "census_additions",
+      "inventory_tables": [
+        "NONE"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report"
+      },
+      "notes": [
+        "match_basis.enriched is null: the run report carries no `enrichments` list, and an absent list is no evidence the enrichment pass ran -- never a measured zero"
+      ]
+    },
+    {
+      "class": "PhCode",
+      "source_count": 89,
+      "destination_count_total": 112,
+      "difference": -2,
+      "engine_can_create": true,
+      "destination_count_net": 87,
+      "difference_raw": 23,
+      "verdict_class": "SHORTFALL",
+      "gate_scope": "required",
+      "in_class_list_via": "census_additions",
+      "inventory_tables": [
+        "NONE"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 2,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 25,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report"
+      },
+      "notes": [
+        "the T048d IDENTITY AUDIT narrows this row's shortfall to AT MOST 2 (starter_matched_to_source >= 0 by GUID), against the 2 the gross basis reports. The row KEEPS the gross basis and its shortfall stays advisory: the audit supplies a lower bound on the matched count, so the narrowed figure is an UPPER bound on the loss and not the loss itself, and 5.2's cap exists for exactly the arithmetic that can over-report a shortfall.",
+        "match_basis.enriched is null: the run report carries no `enrichments` list, and an absent list is no evidence the enrichment pass ran -- never a measured zero"
+      ]
+    },
+    {
+      "class": "CmTranslation",
+      "source_count": 7925,
+      "destination_count_total": 2,
+      "difference": -7923,
+      "engine_can_create": true,
+      "destination_count_net": 2,
+      "difference_raw": -7923,
+      "verdict_class": "SHORTFALL",
+      "gate_scope": "required",
+      "in_class_list_via": "census_additions",
+      "inventory_tables": [
+        "NONE"
+      ],
+      "accounted_for": [
+        {
+          "reason": "GOVERNED_BY_OTHER_FEATURE",
+          "count": 7923,
+          "direction": "shortfall",
+          "detail": "governed by the texts/wordforms feature (spec.md Assumptions) -- not 038: this feature reports the figure and does not fix it (spec.md Assumptions; fidelity-census.md's reason table for GOVERNED_BY_OTHER_FEATURE). Needs no report_ref -- invariant 5 exempts the token, because there is no run-report line to resolve against: the objects were never this run's to create"
+        }
+      ],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report"
+      },
+      "notes": [
+        "match_basis.enriched is null: the run report carries no `enrichments` list, and an absent list is no evidence the enrichment pass ran -- never a measured zero"
+      ]
+    },
+    {
+      "class": "MoForm",
+      "source_count": null,
+      "destination_count_total": null,
+      "difference": null,
+      "engine_can_create": false,
+      "destination_count_net": null,
+      "difference_raw": null,
+      "verdict_class": "NOT_EVALUATED",
+      "not_evaluated_reason": "ABSENT_BY_CONSTRUCTION",
+      "gate_scope": "advisory",
+      "in_class_list_via": "excluded_not_measurable",
+      "inventory_tables": [
+        "TABLE_2"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "absent_from_baseline",
+      "match_basis": {
+        "basis_source": "run_report"
+      },
+      "notes": [
+        "not measured: in_class_list_via 'excluded_not_measurable' (an abstract LCM base with no factory). The counts are null, not 0: null says the class could not be counted at all, where 0 would claim the project holds none of them.",
+        "match_basis.enriched is null: the run report carries no `enrichments` list, and an absent list is no evidence the enrichment pass ran -- never a measured zero"
+      ]
+    },
+    {
+      "class": "MoMorphSynAnalysis",
+      "source_count": null,
+      "destination_count_total": null,
+      "difference": null,
+      "engine_can_create": false,
+      "destination_count_net": null,
+      "difference_raw": null,
+      "verdict_class": "NOT_EVALUATED",
+      "not_evaluated_reason": "ABSENT_BY_CONSTRUCTION",
+      "gate_scope": "advisory",
+      "in_class_list_via": "excluded_not_measurable",
+      "inventory_tables": [
+        "TABLE_2"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "absent_from_baseline",
+      "match_basis": {
+        "basis_source": "run_report"
+      },
+      "notes": [
+        "not measured: in_class_list_via 'excluded_not_measurable' (an abstract LCM base with no factory). The counts are null, not 0: null says the class could not be counted at all, where 0 would claim the project holds none of them.",
+        "match_basis.enriched is null: the run report carries no `enrichments` list, and an absent list is no evidence the enrichment pass ran -- never a measured zero"
+      ]
+    }
+  ],
+  "totals": {
+    "classes_reported": 75,
+    "classes_matched": 50,
+    "classes_shortfall": 22,
+    "classes_surplus": 0,
+    "classes_not_evaluated": 3,
+    "total_shortfall": 67360,
+    "total_surplus": 0,
+    "unexplained_shortfall": 1024,
+    "unexplained_surplus": 0,
+    "duplicate_extra_objects": 0,
+    "accounted_shortfall": 64618,
+    "accounted_surplus": 0,
+    "advisory_shortfall": 7
+  },
+  "transfer_run": {
+    "run_id": "GT-20260828-145902",
+    "report_path": "D:\\Github\\_Projects\\_LEX\\GramTrans-038-transfer-fidelity-gaps\\_run_reports\\038-t126-ngoreme-report.json",
+    "mode": "MOVE",
+    "started_at": "2026-08-28T14:59:02",
+    "selected_categories": [
+      "GRAM_CATEGORIES",
+      "INFLECTION_FEATURES",
+      "CUSTOM_FIELDS",
+      "INFLECTION_CLASSES",
+      "FEATURE_STRUCT_TYPES",
+      "POS_INFLECTABLE_FEATS",
+      "PHON_FEAT_TYPES",
+      "VARIANT_TYPES",
+      "COMPLEX_FORM_TYPES",
+      "ADHOC_COMPOUND_RULES",
+      "AFFIXES",
+      "SLOTS",
+      "AFFIX_TEMPLATES",
+      "STEMS",
+      "PH_ENVIRONMENT",
+      "PHONOLOGICAL_FEATURES",
+      "PHONEMES",
+      "NATURAL_CLASSES",
+      "PHONOLOGICAL_RULES",
+      "SEMANTIC_DOMAINS"
+    ]
+  },
+  "verdict": "UNEXPLAINED_SHORTFALL",
+  "exit_code": 1,
+  "verdict_human_label": "Unexplained shortfall",
+  "notes": [
+    "[WARN] verdict CAPPED at CENSUS_ACCOUNTED by fidelity-census.md 5.2: 4 unexplained tallies on rows whose starter_subtraction_basis is baseline_gross are ADVISORY, not evidence -- gross subtraction also subtracts the starter objects the transfer correctly matched, so it reports a shortfall on a correct run. This is NOT a statement that nothing was lost; supply the run report to get a baseline_matched basis and a trustworthy answer.",
+    "[WARN]   CmFolder: unexplained_shortfall 1 suppressed (basis baseline_gross)",
+    "[WARN]   CmPossibility: unexplained_shortfall 397 suppressed (basis baseline_gross)",
+    "[WARN]   LexEntryType: unexplained_shortfall 12 suppressed (basis baseline_gross)",
+    "[WARN]   PhCode: unexplained_shortfall 2 suppressed (basis baseline_gross)"
+  ]
+}

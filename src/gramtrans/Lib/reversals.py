@@ -45,6 +45,7 @@ if __package__:
     from . import report
     from . import references
     from . import residue
+    from . import texts as _texts
     from . import ws_mapping
     from .models import (
         DroppedItemRecord,
@@ -61,6 +62,7 @@ else:
     import report
     import references
     import residue
+    import texts as _texts  # type: ignore
     import ws_mapping
     from models import (  # type: ignore
         DroppedItemRecord,
@@ -500,17 +502,44 @@ _INDEX_CREATED_KEY = "__reversals_index_created__"
 
 
 def _set_reversal_form_alt(entry, target, ws_id: str, text: str) -> None:
-    """Best-effort per-WS `ReversalForm` write. Duck-types past two shapes:
-    a live LCM `ICmMultiUnicode.set_String(wsHandle, ITsString)` call, or a
-    simpler test fake exposing `.set_string(ws_id, text)` (lowercase,
-    Id-keyed -- this module's own unit-test fakes). Never raises."""
+    """Best-effort per-WS `ReversalForm` write. Never raises.
+
+    Branches on WHAT `ReversalForm` IS, not on what this process happens to
+    have loaded. The previous version reached for the live path whenever
+    `TsStringUtils` was importable, which is a fact about the PROCESS: any
+    run that has imported flexicon (pythonnet + the SIL assemblies) makes
+    that import succeed regardless of the object in hand. Two ways that bit:
+
+      * a duck-typed multistring exposing the LCM-style `set_String` -- the
+        dominant fake shape in this suite -- was handed a REAL .NET
+        `ITsString` built by `TsStringUtils.MakeString`, which succeeds for
+        a plain `str` and so poisons a pure-Python object; and
+      * host-free, the `except ImportError: return` dropped that same write
+        on the floor SILENTLY, losing the alt with no report.
+
+    Three shapes, in order: this module's own Id-keyed fake
+    (`set_string(ws_id, text)`, lowercase); any other duck-typed
+    multistring (`set_String(ws_id, text)` with PLAIN text -- the shape
+    `residue.apply_carrier_b` already writes); and a genuine .NET
+    `ICmMultiUnicode` (`set_String(wsHandle, ITsString)`).
+    """
     ms = getattr(entry, "ReversalForm", None)
     if ms is None:
         return
-    fake_setter = getattr(ms, "set_string", None)
-    if callable(fake_setter):
-        fake_setter(ws_id, text)
+
+    if not _texts._is_dotnet_object(ms):
+        fake_setter = getattr(ms, "set_string", None)
+        if callable(fake_setter):
+            fake_setter(ws_id, text)
+            return
+        lcm_shaped = getattr(ms, "set_String", None)
+        if callable(lcm_shaped):
+            try:
+                lcm_shaped(ws_id, text)
+            except (AttributeError, TypeError):
+                pass
         return
+
     try:
         from SIL.LCModel.Core.Text import TsStringUtils  # lazy -- host-only
     except ImportError:
