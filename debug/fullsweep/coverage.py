@@ -649,3 +649,604 @@ def assert_allowlist_respects_floor(
     """
     for cls in allowlisted_classes:
         floor.assert_not_allowlistable(cls)
+
+
+# ===========================================================================
+# T045e -- THE CLASS -> CATEGORY JOIN
+# ===========================================================================
+#
+# ``guards.guard_comparisons_performed`` keys its counters on CATEGORY. Every
+# plane-2 surface in this package -- ``census_fields``, ``classify_coverage``,
+# ``coverage-floor.json``'s ``in_scope_classes`` -- keys on CLASS. Without a
+# join the category-keyed guard input cannot be produced at all, which is why
+# COMPARISONS-PERFORMED and CATEGORY-COVERAGE have been reporting
+# ``not-evaluated`` and sinking every run to VACUOUS under FR-109.
+#
+# The join is a TRACKED CONTRACT, not a dict in this file, and it is SHARED
+# with feature 038's per-class census: both instruments read
+# ``contracts/class-category-map.json``. A second copy living here would be a
+# mapping that can disagree with 038's without either instrument being able to
+# notice -- precisely the class of silent divergence this feature exists to
+# catch.
+#
+# TWO TRAPS, BOTH LIVE
+# --------------------
+# 1. ``classify_coverage``'s own ``comparisons`` parameter is
+#    ``{class_name: int}``. The guard's ``ctx.comparisons`` is
+#    ``{category: {source_objects, comparisons_performed, objects_compared}}``.
+#    They are different objects that happen to share a name. Wiring one into
+#    the other type-checks, runs, and produces a confidently wrong answer.
+#    ``project_comparisons_to_categories`` is the ONLY sanctioned bridge, and
+#    it takes class-keyed input and returns category-keyed output.
+#
+# 2. The projection REPLICATES a multi-category class into each of its
+#    categories; it does not partition. ``LexEntry`` is created under both
+#    AFFIXES and STEMS, so both are credited with it. That is right for the
+#    question COMPARISONS-PERFORMED asks ("did this category compare
+#    anything?") and WRONG for any total -- summing the projection
+#    double-counts. The returned provenance names every replicated class so a
+#    later reader cannot mistake the one for the other.
+#
+# WHAT AN EMPTY ``categories`` LIST MEANS
+# ---------------------------------------
+# Ten in-scope classes belong to no category: the post-pass classes
+# (``LexReference``, ``ReversalIndex``, ``ReversalIndexEntry``), the reference
+# CREATE-arm classes (``CmPossibility``, ``CmAnthroItem``, ``MoMorphType``),
+# and the never-created referenced-only classes (``LexRefType``,
+# ``LexAppendix``, ``PhBdryMarker``, ``PunctuationForm``). Each carries a
+# non-null ``unmapped_reason``, and the projection returns them as
+# ``unattributable`` rather than dropping them, so the caller reports them
+# not-evaluated at the category plane instead of letting them vanish into a
+# clean tally. Nine categories symmetrically carry no in-scope class; for them
+# zero comparisons is CORRECT, and reporting them as measured would be the
+# FR-137 defect in the other direction.
+
+CLASS_CATEGORY_MAP_NAME = "class-category-map.json"
+
+#: The create arms that are not a ``GrammarCategory``. A class reachable only
+#: through one of these has no category to be credited to.
+CREATE_ARM_REFERENCE = "reference-create-arm"
+
+#: ``category_dispatch`` values. ``phase0-unused`` is the one that means a full
+#: run never dispatches the category at all.
+DISPATCH_LEAF = "leaf"
+DISPATCH_DEDICATED_HOOK = "dedicated-hook"
+DISPATCH_PRE_PASS = "pre-pass"
+DISPATCH_PHASE0_UNUSED = "phase0-unused"
+
+_VALID_DISPATCH = frozenset(
+    {DISPATCH_LEAF, DISPATCH_DEDICATED_HOOK, DISPATCH_PRE_PASS, DISPATCH_PHASE0_UNUSED}
+)
+
+#: Sentinel distinguishing "caller did not discriminate by feature system" from
+#: "caller asked for the entry whose feature system is None". ``None`` is a
+#: REAL key here -- 67 of the 71 entries carry it -- so it cannot double as
+#: "unspecified".
+_ANY_FEATURE_SYSTEM = object()
+
+
+class ClassCategoryMapError(HarnessError):
+    """The class -> category contract is malformed, incomplete against the
+    coverage floor, or was asked a question it has no recorded answer to."""
+
+
+@dataclass(frozen=True)
+class ClassCategoryEntry:
+    """One row of ``class-category-map.json``.
+
+    ``owning_feature_system`` is the same discriminator feature 038's census
+    ``classRow`` carries, and for the same reason: a FieldWorks project has two
+    feature systems, both own ``FsFeatStrucType`` and ``FsClosedFeature``, and
+    the two halves map to DIFFERENT categories
+    (``feature_struct_types`` / ``phon_feat_types`` and
+    ``inflection_features`` / ``phonological_features``). Summing them into one
+    row would let a shortfall in one system be masked by a surplus in the
+    other. Keying on the same pair both instruments key on is what keeps the
+    join single-valued.
+    """
+
+    class_name: str
+    owning_feature_system: Optional[str]
+    categories: tuple
+    also_created_via: tuple
+    unmapped_reason: Optional[str]
+    inventory_tables: tuple
+    qualifier: Optional[str]
+
+    @property
+    def mapped(self) -> bool:
+        return bool(self.categories)
+
+    def as_dict(self) -> dict:
+        return {
+            "class": self.class_name,
+            "owning_feature_system": self.owning_feature_system,
+            "categories": list(self.categories),
+            "also_created_via": list(self.also_created_via),
+            "unmapped_reason": self.unmapped_reason,
+            "inventory_tables": list(self.inventory_tables),
+            "qualifier": self.qualifier,
+        }
+
+
+@dataclass(frozen=True)
+class CategoryGap:
+    """A category that creates no class on the coverage floor, with the reason.
+
+    FR-137 in the category direction: zero comparisons for one of these is
+    correct and must never be read as coverage, and equally must never be read
+    as a gap to be closed.
+    """
+
+    category: str
+    reason: str
+    detail: str = ""
+
+    def as_dict(self) -> dict:
+        return {"category": self.category, "reason": self.reason, "detail": self.detail}
+
+
+@dataclass(frozen=True)
+class ClassCategoryMap:
+    """``contracts/class-category-map.json``, parsed and validated."""
+
+    schema_version: int
+    entries: tuple
+    category_vocabulary: tuple
+    category_dispatch: Mapping
+    categories_without_in_scope_class: tuple  # tuple[CategoryGap, ...]
+    unmapped_class_reasons: Mapping = field(default_factory=dict)
+    categoryless_reasons: Mapping = field(default_factory=dict)
+    path: Optional[Path] = None
+
+    # -- lookups ------------------------------------------------------------
+
+    @property
+    def class_names(self) -> frozenset:
+        return frozenset(e.class_name for e in self.entries)
+
+    @property
+    def categoryless(self) -> frozenset:
+        return frozenset(g.category for g in self.categories_without_in_scope_class)
+
+    def entries_for(self, class_name: str) -> tuple:
+        rows = tuple(e for e in self.entries if e.class_name == class_name)
+        if not rows:
+            raise ClassCategoryMapError(
+                "[FR-136] %r has no row in %s, so this map has no statement about "
+                "which category creates it. Returning an empty category set here "
+                "would be the invisible default FR-135 forbids -- add the class to "
+                "the contract, with an unmapped_reason if no category creates it."
+                % (class_name, CLASS_CATEGORY_MAP_NAME)
+            )
+        return rows
+
+    def categories_for(self, class_name: str, owning_feature_system=_ANY_FEATURE_SYSTEM) -> tuple:
+        """The categories that CREATE ``class_name``.
+
+        An empty tuple is a real answer here, but only for a class whose row
+        carries an ``unmapped_reason`` -- ``unmapped_reason_for`` returns it.
+        An unknown class RAISES rather than returning empty, because the two
+        are not the same fact and a caller that cannot tell them apart will
+        report a gap as a clean.
+        """
+        rows = self.entries_for(class_name)
+        if owning_feature_system is not _ANY_FEATURE_SYSTEM:
+            rows = tuple(e for e in rows if e.owning_feature_system == owning_feature_system)
+            if not rows:
+                raise ClassCategoryMapError(
+                    "[FR-136] %r has no row in %s for owning_feature_system %r. The "
+                    "contract splits this class by feature system, so an unmatched "
+                    "discriminator is a caller bug, not an empty result."
+                    % (class_name, CLASS_CATEGORY_MAP_NAME, owning_feature_system)
+                )
+        out: list = []
+        for e in rows:
+            for c in e.categories:
+                if c not in out:
+                    out.append(c)
+        return tuple(out)
+
+    def unmapped_reason_for(self, class_name: str) -> Optional[str]:
+        """The recorded reason ``class_name`` belongs to no category, or None
+        when it does belong to at least one."""
+        rows = self.entries_for(class_name)
+        if any(e.mapped for e in rows):
+            return None
+        return rows[0].unmapped_reason
+
+    def classes_for(self, category: str) -> tuple:
+        """Every in-scope class the given category creates.
+
+        A category outside the vocabulary RAISES. A category in the vocabulary
+        but carrying no class returns an empty tuple -- ``is_categoryless``
+        says which of the two an empty result is.
+        """
+        if category not in self.category_vocabulary:
+            raise ClassCategoryMapError(
+                "[FR-136] %r is not a GrammarCategory in %s's category_vocabulary. "
+                "The vocabulary is closed on purpose: a typo'd category that "
+                "silently matched nothing would report zero classes and zero "
+                "findings, which reads as clean."
+                % (category, CLASS_CATEGORY_MAP_NAME)
+            )
+        return tuple(sorted({e.class_name for e in self.entries if category in e.categories}))
+
+    def is_categoryless(self, category: str) -> bool:
+        """True when the contract records that this category creates no class on
+        the coverage floor. Zero comparisons is then CORRECT, not a gap."""
+        if category not in self.category_vocabulary:
+            raise ClassCategoryMapError(
+                "[FR-136] %r is not a GrammarCategory in %s's category_vocabulary"
+                % (category, CLASS_CATEGORY_MAP_NAME)
+            )
+        return category in self.categoryless
+
+    def gap_for(self, category: str) -> Optional[CategoryGap]:
+        for g in self.categories_without_in_scope_class:
+            if g.category == category:
+                return g
+        return None
+
+    @property
+    def unmapped_classes(self) -> tuple:
+        """``((class_name, reason), ...)`` for every class no category creates."""
+        seen: dict = {}
+        for e in self.entries:
+            if not e.mapped and e.class_name not in seen:
+                seen[e.class_name] = e.unmapped_reason
+        return tuple(sorted(seen.items()))
+
+    @property
+    def multi_category_classes(self) -> tuple:
+        """Classes more than one category can create -- the rows the projection
+        REPLICATES rather than partitions."""
+        out: list = []
+        for name in sorted(self.class_names):
+            cats = self.categories_for(name)
+            if len(cats) > 1:
+                out.append((name, cats))
+        return tuple(out)
+
+    # -- validation ---------------------------------------------------------
+
+    def assert_covers_floor(self, floor: CoverageFloor) -> None:
+        """The map and the floor must name exactly the same classes.
+
+        Same discipline as 038's ``derivation_check``: coverage is PROVEN on
+        every load rather than asserted once. A class on the floor and off the
+        map cannot be attributed to any category, and a class on the map and
+        off the floor is being measured against a roster that does not contain
+        it -- both are silent holes, so both raise.
+        """
+        mapped = self.class_names
+        in_scope = frozenset(floor.in_scope_classes)
+        missing = sorted(in_scope - mapped)
+        extra = sorted(mapped - in_scope)
+        if missing or extra:
+            raise ClassCategoryMapError(
+                "[FR-136] %s and %s disagree on the class roster: %d on the floor "
+                "with no mapping (%r), %d mapped but not on the floor (%r). Until "
+                "they agree, no category-keyed measurement derived from a "
+                "class-keyed one can be trusted."
+                % (CLASS_CATEGORY_MAP_NAME, COVERAGE_FLOOR_NAME,
+                   len(missing), missing, len(extra), extra)
+            )
+
+    def as_dict(self) -> dict:
+        return {
+            "schema_version": self.schema_version,
+            "path": str(self.path) if self.path else None,
+            "class_count": len(self.class_names),
+            "entry_count": len(self.entries),
+            "category_vocabulary": list(self.category_vocabulary),
+            "categories_with_classes": sorted(
+                c for c in self.category_vocabulary if not self.is_categoryless(c)
+            ),
+            "categories_without_in_scope_class": [
+                g.as_dict() for g in self.categories_without_in_scope_class
+            ],
+            "unmapped_classes": [
+                {"class": c, "reason": r} for c, r in self.unmapped_classes
+            ],
+            "multi_category_classes": [
+                {"class": c, "categories": list(cats)} for c, cats in self.multi_category_classes
+            ],
+        }
+
+
+def load_class_category_map(path: Optional[Path] = None) -> ClassCategoryMap:
+    """Read and VALIDATE the tracked class -> category join.
+
+    Every check here exists because its absence would produce a confidently
+    wrong category-keyed number rather than an error: an unknown category in a
+    class row, a row that is neither mapped nor explained, a reason token with
+    no definition, or a vocabulary member that is neither carried by a class
+    nor recorded as carrying none.
+    """
+    p = Path(path) if path is not None else (DEFAULT_CONTRACTS_DIR / CLASS_CATEGORY_MAP_NAME)
+    try:
+        raw = json.loads(p.read_text(encoding="utf-8"))
+    except FileNotFoundError as exc:
+        raise ClassCategoryMapError(
+            "[FR-136] the class -> category map %s does not exist. Without it the "
+            "category-keyed guards (COMPARISONS-PERFORMED, CATEGORY-COVERAGE) have "
+            "no input and FR-109 sinks the run to VACUOUS." % p
+        ) from exc
+    except json.JSONDecodeError as exc:
+        raise ClassCategoryMapError(
+            "[FR-136] the class -> category map %s is not valid JSON: %s" % (p, exc)
+        ) from exc
+
+    version = raw.get("schema_version")
+    if version != SCHEMA_VERSION:
+        raise ClassCategoryMapError(
+            "[FR-136] %s declares schema_version %r; this reader implements %r. A "
+            "silently-read newer contract is how a coverage gap becomes invisible."
+            % (p, version, SCHEMA_VERSION)
+        )
+
+    vocabulary = tuple(raw.get("category_vocabulary") or ())
+    if not vocabulary:
+        raise ClassCategoryMapError(
+            "[FR-136] %s declares an EMPTY category_vocabulary. The vocabulary is "
+            "what makes an unrecognised category an error instead of a silent miss." % p
+        )
+    vocab_set = set(vocabulary)
+    if len(vocab_set) != len(vocabulary):
+        raise ClassCategoryMapError("[FR-136] %s lists a category twice in category_vocabulary" % p)
+
+    unmapped_reasons = dict(raw.get("unmapped_class_reasons") or {})
+    categoryless_reasons = dict(raw.get("categoryless_reasons") or {})
+
+    dispatch = dict(raw.get("category_dispatch") or {})
+    bad_dispatch = sorted(k for k, v in dispatch.items() if v not in _VALID_DISPATCH)
+    if bad_dispatch:
+        raise ClassCategoryMapError(
+            "[FR-136] %s gives %r a category_dispatch value outside %r"
+            % (p, bad_dispatch, sorted(_VALID_DISPATCH))
+        )
+    undispatched = sorted(vocab_set - set(dispatch))
+    if undispatched:
+        raise ClassCategoryMapError(
+            "[FR-136] %s records no category_dispatch for %r. A category whose "
+            "dispatch is unknown cannot be reported as measured OR as not "
+            "dispatched." % (p, undispatched)
+        )
+
+    entries: list = []
+    for row in raw.get("classes") or ():
+        name = row.get("class")
+        if not name:
+            raise ClassCategoryMapError("[FR-136] %s has a class row with no 'class' name" % p)
+        cats = tuple(row.get("categories") or ())
+        reason = row.get("unmapped_reason")
+        unknown = sorted(set(cats) - vocab_set)
+        if unknown:
+            raise ClassCategoryMapError(
+                "[FR-136] %s maps %r to %r, which are not in category_vocabulary"
+                % (p, name, unknown)
+            )
+        if bool(cats) == bool(reason):
+            raise ClassCategoryMapError(
+                "[FR-136] %r in %s has categories=%r and unmapped_reason=%r. Exactly "
+                "one must be present: a class with no category MUST say why, and a "
+                "class with a category must not also claim to be unmapped. An "
+                "unexplained empty list is the invisible default FR-135 forbids."
+                % (name, p, list(cats), reason)
+            )
+        if reason is not None and reason not in unmapped_reasons:
+            raise ClassCategoryMapError(
+                "[FR-136] %r in %s cites unmapped_reason %r, which is not defined in "
+                "unmapped_class_reasons. An undefined reason token is an unreviewable "
+                "excuse." % (name, p, reason)
+            )
+        entries.append(ClassCategoryEntry(
+            class_name=name,
+            owning_feature_system=row.get("owning_feature_system"),
+            categories=cats,
+            also_created_via=tuple(row.get("also_created_via") or ()),
+            unmapped_reason=reason,
+            inventory_tables=tuple(row.get("inventory_tables") or ()),
+            qualifier=row.get("qualifier"),
+        ))
+
+    if not entries:
+        raise ClassCategoryMapError(
+            "[FR-136] %s maps ZERO classes. An empty map makes every category "
+            "report zero comparisons, which reads as clean." % p
+        )
+
+    keys = [(e.class_name, e.owning_feature_system) for e in entries]
+    dupes = sorted({k for k in keys if keys.count(k) > 1})
+    if dupes:
+        raise ClassCategoryMapError(
+            "[FR-136] %s lists (class, owning_feature_system) %r more than once. That "
+            "pair is the join key feature 038's census shares; a duplicate makes the "
+            "join multi-valued and the category attribution ambiguous." % (p, dupes)
+        )
+
+    gaps: list = []
+    for row in raw.get("categories_without_in_scope_class") or ():
+        cat, reason = row.get("category"), (row.get("reason") or "").strip()
+        if cat not in vocab_set:
+            raise ClassCategoryMapError(
+                "[FR-136] %s records %r as carrying no class, but it is not in "
+                "category_vocabulary" % (p, cat)
+            )
+        if not reason:
+            raise ClassCategoryMapError(
+                "[FR-136] %s records %r as carrying no in-scope class with NO reason. "
+                "An unexplained categoryless category is indistinguishable from a "
+                "forgotten one." % (p, cat)
+            )
+        if reason not in categoryless_reasons:
+            raise ClassCategoryMapError(
+                "[FR-136] %r in %s cites categoryless reason %r, which is not defined "
+                "in categoryless_reasons" % (cat, p, reason)
+            )
+        gaps.append(CategoryGap(category=cat, reason=reason, detail=row.get("detail") or ""))
+
+    carried = {c for e in entries for c in e.categories}
+    declared_empty = {g.category for g in gaps}
+    both = sorted(carried & declared_empty)
+    if both:
+        raise ClassCategoryMapError(
+            "[FR-136] %s both maps a class to %r and declares it as carrying no "
+            "in-scope class" % (p, both)
+        )
+    unaccounted = sorted(vocab_set - carried - declared_empty)
+    if unaccounted:
+        raise ClassCategoryMapError(
+            "[FR-136] %s leaves %r neither carrying a class nor recorded as carrying "
+            "none. Silence about a category is what lets 'we compared zero and found "
+            "zero mismatches' read as a pass (FR-137)." % (p, unaccounted)
+        )
+
+    return ClassCategoryMap(
+        schema_version=version,
+        entries=tuple(entries),
+        category_vocabulary=vocabulary,
+        category_dispatch=dispatch,
+        categories_without_in_scope_class=tuple(gaps),
+        unmapped_class_reasons=unmapped_reasons,
+        categoryless_reasons=categoryless_reasons,
+        path=p,
+    )
+
+
+# ---------------------------------------------------------------------------
+# The bridge: class-keyed measurements -> the category-keyed guard input
+# ---------------------------------------------------------------------------
+
+
+def project_comparisons_to_categories(
+    cmap: ClassCategoryMap,
+    *,
+    source_objects: Optional[Mapping] = None,
+    comparisons_performed: Optional[Mapping] = None,
+    objects_compared: Optional[Mapping] = None,
+) -> Optional[dict]:
+    """Turn three CLASS-keyed measurements into ``guards.RunContext.comparisons``.
+
+    This is the ONLY sanctioned bridge between the two ``comparisons`` shapes
+    named at the top of this section, and it is deliberately not called
+    ``comparisons`` anything on its input side.
+
+    Returns ``None`` -- never ``{}`` -- when ``source_objects`` was not
+    measured, so ``guard_comparisons_performed`` reports ``not-evaluated``
+    rather than passing over an empty mapping. That is FR-109's whole
+    discipline, and the empty dict is the exact value that would break it.
+
+    The result is::
+
+        {
+          "comparisons": {category: {source_objects, comparisons_performed,
+                                     objects_compared, classes}},
+          "unattributable": [{class, reason, source_objects}],
+          "categoryless_categories": [...],
+          "replicated_classes": [...],
+        }
+
+    ``comparisons`` is ready to hand to ``RunContext(comparisons=...)``.
+    ``unattributable`` holds the measured classes no category creates: the
+    caller MUST report these at the class plane, because the category plane has
+    no place to put them and dropping them would hide real findings. Categories
+    the contract records as carrying no class are omitted from ``comparisons``
+    entirely rather than emitted as zeros -- a fabricated zero for one of them
+    is a measurement claim about something that was never measurable.
+
+    ``replicated_classes`` names the multi-category classes counted into more
+    than one category. Per-category totals are therefore NOT a partition and
+    MUST NOT be summed.
+    """
+    if source_objects is None:
+        return None
+
+    performed = comparisons_performed or {}
+    compared = objects_compared or {}
+
+    def _n(m: Mapping, k: str) -> int:
+        return int(m.get(k, 0) or 0)
+
+    measured_classes = sorted(
+        set(source_objects) | set(performed) | set(compared)
+    )
+
+    unknown = sorted(c for c in measured_classes if c not in cmap.class_names)
+    if unknown:
+        raise ClassCategoryMapError(
+            "[FR-136] the run measured %r, which %s does not map. A measured class "
+            "with no category cannot be attributed, and silently discarding it "
+            "would hide whatever it found." % (unknown, CLASS_CATEGORY_MAP_NAME)
+        )
+
+    out: dict = {}
+    unattributable: list = []
+    replicated: list = []
+
+    for cls in measured_classes:
+        cats = cmap.categories_for(cls)
+        if not cats:
+            unattributable.append({
+                "class": cls,
+                "reason": cmap.unmapped_reason_for(cls),
+                "source_objects": _n(source_objects, cls),
+                "comparisons_performed": _n(performed, cls),
+                "objects_compared": _n(compared, cls),
+            })
+            continue
+        if len(cats) > 1:
+            replicated.append({"class": cls, "categories": list(cats)})
+        for cat in cats:
+            rec = out.setdefault(cat, {
+                "source_objects": 0,
+                "comparisons_performed": 0,
+                "objects_compared": 0,
+                "classes": [],
+            })
+            rec["source_objects"] += _n(source_objects, cls)
+            rec["comparisons_performed"] += _n(performed, cls)
+            rec["objects_compared"] += _n(compared, cls)
+            rec["classes"].append(cls)
+
+    for rec in out.values():
+        rec["classes"].sort()
+
+    return {
+        "comparisons": out,
+        "unattributable": unattributable,
+        "categoryless_categories": sorted(cmap.categoryless),
+        "replicated_classes": replicated,
+    }
+
+
+def categories_reachable_only_through_excluded(
+    cmap: ClassCategoryMap, excluded_categories: Iterable[str]
+) -> tuple:
+    """Classes every one of whose creating categories this run excluded.
+
+    Feeds ``classify_coverage``'s ``reachable_only_through_excluded``, which is
+    FR-137's second clause. A class with two creating categories is only
+    reachable-only-through-excluded when BOTH are excluded -- ``LexEntry`` is
+    still reachable with STEMS off because AFFIXES also creates it, whereas
+    ``LexEntryRef`` is not, since STEMS is the only category that creates one
+    (object-inventory.md G3).
+
+    Classes belonging to no category are NOT returned: their unreachability has
+    a different cause, recorded as ``unmapped_reason``, and folding the two
+    together would attribute a permanent structural hole to a per-run exclusion.
+    """
+    excluded = set(excluded_categories)
+    unknown = sorted(excluded - set(cmap.category_vocabulary))
+    if unknown:
+        raise ClassCategoryMapError(
+            "[FR-136] %r were reported as excluded categories but are not in %s's "
+            "category_vocabulary" % (unknown, CLASS_CATEGORY_MAP_NAME)
+        )
+    out: list = []
+    for name in sorted(cmap.class_names):
+        cats = cmap.categories_for(name)
+        if cats and set(cats) <= excluded:
+            out.append(name)
+    return tuple(out)
