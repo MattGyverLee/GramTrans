@@ -1,5 +1,56 @@
 # GramTrans — Session Handoff
 
+## Session log — 2026-09-18h (038 IS COMPLETE — 150/150, merged to main at `562cb53`, worktree removed)
+
+**Feature 038 (transfer fidelity gaps) is closed.** T085 merged the branch to `main` as
+`562cb53` (`--no-ff`, pushed `44f4acc..562cb53`) and the worktree is removed. `main` now
+carries both features' work.
+
+**The merge went exactly as diagnosed**, which is worth recording because the diagnosis was
+written weeks in advance and could have been wrong. `git merge main` produced **precisely the
+two predicted conflicts and no others**. Both resolved file-by-file in opposite directions,
+neither side wholesale, **no `-X ours`**:
+
+- `debug/run_fullcopy_sweep.py` — took **main's** version entire. The hazard note's
+  instruction to re-apply the branch's 26 lines proved *impossible*, not merely unnecessary:
+  those lines are a docstring inside `compare_objects`, and main's 035 rewrite has no
+  `compare_objects` at all. The branch's own comment had predicted this and ruled on it in
+  advance — *"The correct resolution is that 035's version lands with 035."* Verified
+  content-identical to main, so **feature-035's work is preserved intact**, which is what the
+  `-X ours` prohibition existed to protect.
+- `tests/integration/harness/full_run.py` — resolved **in place**, not with `--ours` (which
+  would have discarded main's auto-merged 035 T045a docstring). The branch signature is a
+  strict superset. The one real risk was checked rather than assumed: the branch makes the
+  params keyword-only, and both of 035's callers pass `exclude=` by keyword.
+
+**STALE-MIRROR TRAP retired**, and verified before acting: main's committed
+`contracts/fidelity-census.md` was proven content-identical to the worktree's dirty copy
+*before* `git checkout --`, and the five untracked cycle14/15 review duplicates were each
+proven byte-identical to main's copies before removal. No evidence lost.
+
+**Tests: zero new failures.** Unit 4855 passed / 4 failed; census 503 passed / 5 failed / 29
+skipped. The 4 unit failures reproduce identically on `main` at the same flexicon rev
+`c08ede4a`; the 5 census failures match the recorded baseline, and
+`test_object_census.py` is branch-only and byte-identical (9000 lines) before and after the
+merge. Both groups filed as **issue #61**, which also corrects that baseline's wrong "635
+passed" figure — the file collects **537** (503+5+29), before and after alike.
+
+### What 038 did NOT fix, and where it now lives
+
+038 closed by **attribution**, not by fixing everything. Three named homes, and nothing is
+waiting on a decision:
+
+| | What | Severity |
+|---|---|---|
+| [#60](https://github.com/MattGyverLee/GramTrans/issues/60) | `PhSequenceContext.Members` is never descended. One `PhSimpleContextNC` uncreated; surviving sequence contexts arrive with **no members at all**. | **Live defect.** At least one phonological rule's right-hand context is incomplete on the mbugwe pair. An object census structurally cannot see this — it reads `-1`. |
+| [#61](https://github.com/MattGyverLee/GramTrans/issues/61) | Two pre-existing red test groups (flexicon fingerprint drift; census artifact digest drift). | Pre-existing, not merge fallout. 9 permanently-red tests train readers to ignore failures. |
+| `specs/040-feature-structure-residue/` | `FsClosedValue` (−19/−83/−660) and `FsFeatStruc` (−70/−396) residue, plus the census emitter. | Deferred by ruling. The emitter matters: `_phase_5` reads the **stored** `unexplained_shortfall`, so none of 038's final attributions are emitted by any future run yet. |
+
+**Next session: 038 needs nothing.** Pick up #60 (it ships with a probable location — the
+un-descended `PhSequenceContext.Members` / `PhIterationContext.MemberRA` descent, flagged in
+`contracts/unreferenced-feature-constraint-ruling.md` section 6), or #61, or open 040.
+
+
 ## Session log — 2026-09-18g (038: T081 CLOSED by ruling — last object filed as issue #60; T085 merge is all that remains)
 
 **The human ruled, and 038's census gate is closed.** Three decisions on 2026-09-18, all
