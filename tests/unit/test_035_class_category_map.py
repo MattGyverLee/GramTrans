@@ -222,14 +222,33 @@ def test_unmapped_classes_are_not_reported_as_excluded_reach(cmap):
     assert not (stranded & {c for c, _ in cmap.unmapped_classes})
 
 
-def test_categoryless_categories_are_the_recorded_nine(cmap):
+def test_categoryless_categories_are_the_recorded_eight(cmap):
     assert cmap.categoryless == {
         "custom_fields", "pos_inflectable_feats", "exception_features",
-        "writing_systems_check", "pos", "entry", "sense", "msa", "allomorph",
+        "writing_systems_check", "entry", "sense", "msa", "allomorph",
     }
     for cat in cmap.categoryless:
         gap = cmap.gap_for(cat)
         assert gap is not None and gap.reason and gap.detail
+
+
+def test_pos_is_a_dispatched_alias_of_gram_categories(cmap):
+    """POS is NOT a dead Phase-0 surface category, though its four siblings are.
+
+    transfer.py carries it in ``_LEAF_DISPATCH_CATEGORIES`` as "the pick-driven
+    ALIAS of GRAM_CATEGORIES", and its bundle's ``execute_action`` IS
+    ``gram_categories_execute_action`` -- the same create site under a different
+    stamped category. Crediting only GRAM_CATEGORIES would leave a pick-driven
+    run's POS work attributed to a category it never dispatched.
+
+    This is pinned because the contract was first authored against a branch
+    whose ``transfer.py`` predated the change, and
+    ``test_phase0_categories_are_marked_as_not_dispatched`` is what caught it.
+    """
+    assert "pos" not in cmap.categoryless
+    assert cmap.category_dispatch["pos"] == C.DISPATCH_LEAF
+    assert cmap.classes_for("pos") == ("PartOfSpeech",)
+    assert set(cmap.categories_for("PartOfSpeech")) == {"gram_categories", "pos"}
 
 
 def test_phase0_categories_are_marked_as_not_dispatched(cmap):
