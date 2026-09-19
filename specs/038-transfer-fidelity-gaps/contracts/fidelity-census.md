@@ -248,7 +248,7 @@ it, and says so rather than guessing:
 | `starter_subtraction_basis` | Condition | Consequence |
 |---|---|---|
 | `baseline_matched` | baseline present AND run report present | `difference` is fully trustworthy |
-| `baseline_gross` | baseline present, run report absent | `starter_matched_to_source: null`; gross subtraction used; every row is advisory for SHORTFALL purposes and the run verdict cannot exceed `CENSUS_ACCOUNTED`. **CLARIFIED 2026-08-19:** "cannot exceed" suppresses exactly `UNEXPLAINED_SHORTFALL` and `UNEXPLAINED_SURPLUS`. It is a **ceiling on unexplained tallies, not on severity**: `CENSUS_ERROR`, `COVERAGE_INCOMPLETE`, `BASELINE_MISSING`, `BASELINE_STALE` and `DUPLICATE_IDENTITY` are unaffected and still win. Read against the published severity ordering (:459-469) the bare phrase would also suppress those, contradicting 5.3 ("Staleness and absence are **verdicts**, not warnings. There is no path on which a missing baseline yields exit 0", :80-81) and 5.2's own closing line ("Section 6 is what does, and it is not optional", :49). The governing clause is the local one in this same sentence: advisory *for SHORTFALL purposes*. The cap is also the **run** verdict only -- `row_passes` and `evaluate_phase` are untouched, so a phase cannot declare itself done on gross-basis arithmetic |
+| `baseline_gross` | baseline present, run report absent | `starter_matched_to_source: null`; gross subtraction used; every row is advisory for SHORTFALL purposes and the run verdict cannot exceed `CENSUS_ACCOUNTED`. **CLARIFIED 2026-08-19:** "cannot exceed" suppresses exactly `UNEXPLAINED_SHORTFALL` and `UNEXPLAINED_SURPLUS`. It is a **ceiling on unexplained tallies, not on severity**: `CENSUS_ERROR`, `COVERAGE_INCOMPLETE`, `BASELINE_MISSING`, `BASELINE_STALE` and `DUPLICATE_IDENTITY` are unaffected and still win. Read against the published severity ordering (:459-469) the bare phrase would also suppress those, contradicting 5.3 ("Staleness and absence are **verdicts**, not warnings. There is no path on which a missing baseline yields exit 0", :80-81) and 5.2's own closing line ("Section 6 is what does, and it is not optional", :49). The governing clause is the local one in this same sentence: advisory *for SHORTFALL purposes*. The cap is also the **run** verdict only -- `row_passes` and `evaluate_phase` are untouched, so a phase cannot declare itself done on gross-basis arithmetic. **CARVED OUT 2026-08-26 (T110): a row whose `starter_baseline_count` is an integer `0` from a real `baseline_document` is NOT advisory and is NOT capped.** The cap's whole rationale is that gross subtraction "also subtracts the starter objects the transfer correctly matched"; on a zero baseline there are none to subtract, `starter_excluded` is 0, `destination_count_net == destination_count_total`, and the two bases compute the IDENTICAL number (`total - 0` versus `total - (0 - 0)`). The gross figure on such a row is not an upper bound -- it is the exact difference, and suppressing it would excuse a loss rather than avoid over-reporting one. Measured when the carve-out landed: 13 / 19 / 15 rows across the three sanctioned pairs, carrying 69,406 objects that had been reading as advisory, worst single row `CmFile` 2173 -> 0. **An ABSENT or `null` `starter_baseline_count`, or a source other than `baseline_document`, stays capped** -- absent is not zero, which is the same distinction `starter_baseline_source` exists to make and `census.unmatched_starter` refuses to blur. `census.is_gross_basis_row` is the single predicate all of this turns on |
 | `no_baseline` | no baseline at all | see 5.3 |
 
 ### 5.3 Missing or stale baseline
@@ -335,10 +335,10 @@ unexplained_surplus   = max(0,  difference) - sum(accounted_for where direction 
 Rules:
 
 - **R-1.** A line is valid only if it resolves to real report content. Every reason
-  except `STARTER_CONTENT`, `ABSENT_BY_CONSTRUCTION`, `OUT_OF_SCOPE_CLASS`, and
-  `GOVERNED_BY_OTHER_FEATURE` MUST carry a `report_ref` whose `count_in_report >=
-  count`. A line claiming 13 against a report that names 2 is `CENSUS_ERROR`, not a
-  pass.
+  except `STARTER_CONTENT`, `ABSENT_BY_CONSTRUCTION`, `OUT_OF_SCOPE_CLASS`,
+  `GOVERNED_BY_OTHER_FEATURE`, and `UNREFERENCED_IN_SOURCE` MUST carry a
+  `report_ref` whose `count_in_report >= count`. A line claiming 13 against a
+  report that names 2 is `CENSUS_ERROR`, not a pass.
 - **R-2.** Over-accounting fails. `sum(accounted_for)` exceeding the difference in
   its direction is `CENSUS_ERROR`. The census must not be able to explain away more
   than actually happened.
@@ -374,6 +374,7 @@ human-readable table prints the label.
 | `OUT_OF_SCOPE_CLASS` | either | `CmAnthroItem`. Needs no `report_ref`. |
 | `ABSENT_BY_CONSTRUCTION` | either | Abstract LCM base with no factory (`MoForm`, `MoMorphSynAnalysis`). Needs no `report_ref`. |
 | `SOURCE_REFERENT_ABSENT` | shortfall | A referent the engine required is absent on the **source**, so the dependent object was not transferred. The source-side sibling of `DEPENDENCY_UNRESOLVED` (FR-017), which is destination-side; the two are not interchangeable. |
+| `UNREFERENCED_IN_SOURCE` | shortfall | A pooled object (e.g. `PhFeatureConstraint`) that exists intact on the source but that nothing on the source references. The standing rule forbids creating target objects nothing in the source references, so no transfer is owed and the shortfall is fully explained. Needs no `report_ref`: nothing was dropped, so there is correctly no `DroppedItemRecord` to point at. NOT a `not_evaluated_reason` -- the row stays `SHORTFALL` and the objects stay counted; only the explanation is added. `max_claim` is capped at the measured orphan population per pair (47 ngoreme / 32 mbugwe), never an open-ended claim. See `contracts/unreferenced-feature-constraint-ruling.md` (T120(a), 2026-08-28). |
 
 There is deliberately **no `UNEXPLAINED` token and no `OTHER` token.** Unexplained
 is the *absence* of an accounting line, so it cannot be laundered into one.
@@ -482,7 +483,32 @@ predicate names classes and counts:
   `difference == 0` -- both, because either alone can be satisfied by the defect
   itself. (SC-006)
 - **Phase 5 (residual).** Every remaining `required` row is either MATCHED or
-  carries a valid `GOVERNED_BY_OTHER_FEATURE` / `NO_CREATE_PATH` line. (SC-005)
+  carries a valid `GOVERNED_BY_OTHER_FEATURE` / `NO_CREATE_PATH` /
+  `OUT_OF_SCOPE_CLASS` / `STARTER_CONTENT` / `UNREFERENCED_IN_SOURCE` line.
+  (SC-005)
+
+  > **This list has been widened twice, and the wording above was stale for
+  > the first of them.** It read "`GOVERNED_BY_OTHER_FEATURE` /
+  > `NO_CREATE_PATH`" from the beginning, when an owner named by the spec was
+  > the only route a ruled class had. T081's 4th re-gate added
+  > `OUT_OF_SCOPE_CLASS` and `STARTER_CONTENT` in
+  > `census.PHASE_5_ADMISSIBLE_REASONS` **without amending this line**, so the
+  > contract named two tokens while the gate admitted four; T120(a)'s
+  > `UNREFERENCED_IN_SOURCE` is the fifth and the occasion for reconciling
+  > them. The gate has not moved here -- the code was and remains the
+  > executable definition -- but a predicate whose contract understates what
+  > it admits is one an auditor cannot check, so the drift is recorded rather
+  > than quietly closed.
+  >
+  > P5's question is "is every remaining required row either MATCHED or
+  > accounted for by something this feature is not obliged to fix". An owner
+  > named by the spec is **one answer** to that question rather than the
+  > definition of it; a committed ruling putting a population out of scope, a
+  > destination that already HOLDS the content, and an object the standing
+  > no-unreferenced-create rule forbids transferring are three others.
+  > `DUPLICATE_CREATED` and `SOURCE_REFERENT_ABSENT` remain deliberately
+  > **inadmissible** -- see `census.PHASE_5_ADMISSIBLE_REASONS` for why each
+  > was refused.
 
 A phase is not done when its unit tests pass; it is done when the census run for its
 predicate exits 0 with the predicate satisfied.
@@ -615,8 +641,9 @@ remaining 15 still fail the gate.
    starter_matched_to_source)` whenever `starter_subtraction_basis ==
    "baseline_matched"`.
 5. Every `accounted_for` line whose reason is not `STARTER_CONTENT`,
-   `ABSENT_BY_CONSTRUCTION`, `OUT_OF_SCOPE_CLASS`, or `GOVERNED_BY_OTHER_FEATURE`
-   carries a `report_ref` with `count_in_report >= count` (R-1).
+   `ABSENT_BY_CONSTRUCTION`, `OUT_OF_SCOPE_CLASS`, `GOVERNED_BY_OTHER_FEATURE`, or
+   `UNREFERENCED_IN_SOURCE` carries a `report_ref` with `count_in_report >= count`
+   (R-1).
 6. `sum(accounted_for)` per direction never exceeds the difference in that direction
    (R-2).
 7. `opened_read_only` is `true` for both projects, and each project's

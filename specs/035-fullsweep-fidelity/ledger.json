@@ -1,0 +1,53 @@
+{
+  "Ejagham Mini": {
+    "status": "failed",
+    "reason": "worker exited 4; see D:\\Github\\_Projects\\_LEX\\GramTrans-035-fullsweep\\scratchpad\\035_sweep\\logs\\Ejagham Mini.log",
+    "revision_pair": {
+      "gramtrans": {
+        "sha": "88c2632908788f4348ac7d942a88146249acb2a8",
+        "dirty": true,
+        "error": ""
+      },
+      "flexicon": {
+        "sha": "74bc997527fb1c3fec1053e92cbe01206f48680f",
+        "dirty": true,
+        "error": ""
+      }
+    },
+    "updated_at": 1787087018.6128187
+  },
+  "Esperanto": {
+    "status": "failed",
+    "reason": "worker exited 4; see D:\\Github\\_Projects\\_LEX\\GramTrans-035-fullsweep\\scratchpad\\035_sweep\\logs\\Esperanto.log",
+    "revision_pair": {
+      "gramtrans": {
+        "sha": "88c2632908788f4348ac7d942a88146249acb2a8",
+        "dirty": true,
+        "error": ""
+      },
+      "flexicon": {
+        "sha": "74bc997527fb1c3fec1053e92cbe01206f48680f",
+        "dirty": true,
+        "error": ""
+      }
+    },
+    "updated_at": 1787087226.7676003
+  },
+  "Mbugwe LizzieHC practice": {
+    "status": "failed",
+    "reason": "worker exited 4; see D:\\Github\\_Projects\\_LEX\\GramTrans-035-fullsweep\\scratchpad\\035_sweep\\logs\\Mbugwe LizzieHC practice.log",
+    "revision_pair": {
+      "gramtrans": {
+        "sha": "88c2632908788f4348ac7d942a88146249acb2a8",
+        "dirty": true,
+        "error": ""
+      },
+      "flexicon": {
+        "sha": "74bc997527fb1c3fec1053e92cbe01206f48680f",
+        "dirty": true,
+        "error": ""
+      }
+    },
+    "updated_at": 1787087379.8238142
+  }
+}

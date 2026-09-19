@@ -1,5 +1,620 @@
 # GramTrans — Session Handoff
 
+## Session log — 2026-09-18g (038: T081 CLOSED by ruling — last object filed as issue #60; T085 merge is all that remains)
+
+**The human ruled, and 038's census gate is closed.** Three decisions on 2026-09-18, all
+taken after the measurements rather than instead of them:
+
+1. **`FsFeatStruc` — DEFERRED** to `specs/040-feature-structure-residue/spec.md`. Commit
+   `0664ae7` stands; `PartOfSpeech.ReferenceForms` and `FsComplexValue.Value` stay
+   unrostered. Residue −70 ngoreme / −396 mbugwe (334 unexplained) travels with its evidence.
+2. **`FsClosedValue` — DEFERRED** to the same feature. No `derived_from` pointer built, no
+   `fidelity-census.md` 7.1 amendment in 038. Residue −19 / −83 / −660. The cascade evidence
+   (16.0 / 19.0 / 18.0 closed values per phoneme structure vs corpus averages 3.70 / 1.43 /
+   1.71) is carried into 040 as its starting data.
+3. **The last object — FILED, not fixed and not deferred.**
+   [GramTrans issue #60](https://github.com/MattGyverLee/GramTrans/issues/60). T081 closes on
+   attribution to that issue — lex-lead's own route (iv), which it listed without recommending.
+
+**Why the close is honest rather than cosmetic.** The attribution probe
+(`reviews/cycle17-programmer-attribution-probe.md`) took P5 from **1/2/3 to 0/0/1** with
+`totals.total_shortfall` **bit-identical** before and after (3932 / 66938 / 32861) and
+`verdict_class` holding at `SHORTFALL` on every stamped row. Nothing stopped being counted
+to reach green. `count` must be the row's `unexplained_shortfall`, not the full difference
+— the full difference over-accounts and is `CENSUS_ERROR` under R-2.
+
+**What issue #60 carries, and the half worth more than the −1.** Cycle 18 measured the
+object as `SOURCE_REFERENCED` — live in `PhSegRuleRHS 32eb9ca9 .RightContext ->
+PhSequenceContext 1f36ff23 .Members -> e6a93fd6` — which refuted the cheap token route
+before it could be taken. But the incidental finding is the serious one: in the destination
+`PhSequenceContext 1f36ff23` survives as an **empty self-closed `<rt/>` with no `<Members>`
+at all**, having lost *both* members' membership entries including the one whose object *is*
+present. **An object census structurally cannot see this.** It counts objects, so it reads
+`−1`; the rule is referentially broken while the gate reads one short. Same shape as
+flexicon issue #222. Probable location, already flagged in
+`contracts/unreferenced-feature-constraint-ruling.md` section 6: the un-descended
+`PhSequenceContext.Members` / `PhIterationContext.MemberRA` descent.
+
+**What this close does NOT claim.** Issue #60 is a live defect — 038 ships with at least one
+phonological rule whose right-hand context is incomplete on the mbugwe pair, and that is the
+recorded cost of the ruling. The two deferred classes are not fixed. The emitter emits none
+of these attributions: `_phase_5` reads the **stored** `unexplained_shortfall`, so appending
+an `accounted_for` line alone moves nothing and *invalidates* the artifact unless
+`unexplained_counts`, `build_totals`, `verdict`, `exit_code` and `verdict_human_label` are
+recomputed with it. All three are feature 040's inheritance.
+
+**State: 149 of 150 rows checked. T085 (merge + worktree removal) is the only one left**, and
+it needs execution, not a decision. Its hazard is unchanged and still governs:
+`debug/run_fullcopy_sweep.py` takes **main's** rewrite plus the branch's 26 lines;
+`tests/integration/harness/full_run.py` takes the **branch's** 327 lines plus main's 26 —
+opposite directions, file by file, **never `-X ours`** and never one side wholesale, or
+feature-035's work vanishes with no conflict and no trace. `specs/` conflicts: main wins. Do
+not `git checkout --` the two deliberately dirty contract files; the merge is what retires the
+STALE-MIRROR TRAP.
+
+
+## Session log — 2026-09-18f (038: cycle 18 REFUTED the cheap route — T081's last object is a SOURCE-REFERENCED create-path loss; STOP, needs human)
+
+Cycle 18 of the crew loop, one read-only task, and it came back **negative for the route
+we wanted**. That is the spurt's entire value and it was worth one read.
+
+**The measurement.** `reviews/cycle18-verification-source-reference.md` (read-only XML
+parse; no project opened, no writes; both hashes re-verified against cycle 17 — source
+`3fb29a29` MATCH, dest `dd97c8c8` MATCH, no drift). Verdict **SOURCE_REFERENCED**.
+`e6a93fd6-ecfc-45a5-81df-497fba40766e` has two `objsur` occurrences in the mbugwe source,
+distinguished by `t`: the `t="o"` hit is the `PhPhonData.Contexts` ownership already known
+from cycle 17 (`be765e3e`), and the `t="r"` hit is a **genuine referrer** —
+`PhSequenceContext.Members` `1f36ff23-743b-4ee0-8078-18a38f492a30`, itself owned by
+`PhSegRuleRHS 32eb9ca9` via `RightContext`. Full path:
+`PhSegRuleRHS.RightContext -> PhSequenceContext.Members -> e6a93fd6`. The missing object is
+reachable from a **live phonological rule's right-hand context**.
+
+**So the token route is dead, and rightly so.** Route (i) — reuse the existing
+`UNREFERENCED_IN_SOURCE` precedent — is **closed negative**. Route (ii) — extend that token
+(or an equivalent) to `PhSimpleContextNC` — is **WITHDRAWN, not merely untried**: extending
+it here would excuse a genuine data loss on a live rule, and
+`contracts/unreferenced-feature-constraint-ruling.md` section 4 declines `PhSimpleContext*`
+on its own terms anyway. **Do not re-offer route (ii) in a later spurt.**
+
+**The two-way partition is the baseline any fix must beat.** `PhSimpleContextNC`: source
+104 = 59 referenced + 45 unreferenced; dest 103 = 58 + 45. The 45 unreferenced GUIDs are
+**identical in both files** — every source orphan of this class transferred untouched, so
+the defect is *not* orphan-handling. The whole −1 sits inside the referenced 59 -> 58 and
+the sole missing GUID is the target. `PhIterationContext` bodies were scanned separately:
+target absent from all.
+
+**The fix now has a probable location, not just a symptom.** The cycle-18 incidental —
+flagged, not chased — is that in the destination `PhSequenceContext 1f36ff23` survives as
+an empty self-closed `<rt/>` with **no `<Members>` element at all**: it lost *both* members'
+membership entries, not only the target's. That is exactly the suspicion
+`contracts/unreferenced-feature-constraint-ruling.md` section 6 recorded as UN-DESCENDED
+(`PhSequenceContext.Members` / `PhIterationContext.MemberRA`), now confirmed with a named
+object.
+
+**STOPPING HERE — `needs_human`.** The only live route is (iii), a create-path transfer fix
+plus the `PhSequenceContext.MembersRS` rewire, which is real code on a **write path** and
+needs a full crew cycle and a live-LCM gate against a restored throwaway `Target`. That is
+not something a Ralph iteration may do unattended. The human must authorise either the fix
+and its restored-Target re-census, or (fallback) deferring the one object to a successor
+feature the way `FsFeatStruc`/`FsClosedValue` went to 040.
+
+**T081 and T085 both remain UNCHECKED.** T085 stays blocked on T081 by its own recorded
+precondition (`tasks.md` T081/T085 rows, GATED ON PHASE 10, 2026-08-26: "validated" cannot
+mean "validated except for P5"), and it still carries the feature-035 merge hazard —
+`tests/integration/harness/full_run.py` and `debug/run_fullcopy_sweep.py` need
+**opposite-direction** resolutions, file-by-file with feature-035's owner, and **never
+`-X ours`**. The STALE-MIRROR TRAP in the worktree stays dirty until that merge retires it.
+
+**Carried forward to 040, from cycle 17's probe:** appending an `accounted_for` line *alone
+moves nothing* — `_phase_5` reads the **stored** `unexplained_shortfall`, so a line-only
+edit leaves it stale and makes the artifact INVALID. The deferral clause is written over an
+**emitter change** (recompute `unexplained_counts` per row, `build_totals`, `verdict`,
+`exit_code`, `verdict_human_label`), not over a stamp.
+
+Pickup: `specs/038-transfer-fidelity-gaps/.crew-handoff.json` — `blocker.human_must_decide`
+and `blocker.next_action_exact`, plus the new `T081-PSCNC-FIX` task row.
+
+## Session log — 2026-09-18e (038: T081's SIXTH AMENDMENT AND CLOSE — attributed, still UNCHECKED; 040 filed; T085 the only row left)
+
+Cycle 17 of the crew loop. Three read-only artifacts (`reviews/cycle17-programmer-attribution-probe.md`,
+`reviews/cycle17-verification-phsimplecontextnc.md`, `reviews/cycle17-doc-successor-filing.md`) closed
+out T081's clause but **not the checkbox**. `specs/038-transfer-fidelity-gaps/tasks.md` T081 carries a
+sixth dated amendment (append-only, in the same style as the five before it): the acceptance clause
+moves from "no unexplained difference remaining" to "no UNATTRIBUTED loss remaining," and under that
+new clause `FsClosedValue` (-19 / -83 / -660) and `FsFeatStruc` (-70 / -396, 334 unexplained) are
+**DEFERRED, NOT RESOLVED**, to the newly-filed `specs/040-feature-structure-residue/spec.md` — stamped
+in memory over the committed t135 artifacts, `total_shortfall` provably unchanged (3932 / 66938 /
+32861 before and after) so nothing is laundered, P5 failures 1 / 2 / 3 -> 0 / 0 / 1.
+
+**T081 STAYS UNCHECKED**, on one remaining ground: mbugwe's `PhSimpleContextNC` -1. Cycle-17
+verification named it exactly — object `e6a93fd6-ecfc-45a5-81df-497fba40766e`, owned by the
+(present, GUID-matched) `PhPhonData` singleton, referencing a (present, unchanged) `PhNCFeatures`
+natural class — **NAMED-AND-ISOLATED**, and deliberately judged **NOT ATTRIBUTED**: the only ruling
+touching `PhPhonData.Contexts` (T120(a)) explicitly disclaims it, crediting that pool instead to the
+`PhSegRuleRHS` closure route T120(b) already closed, which resolved the rest of the context family but
+not, on this evidence, this one member. It is a genuine one-object create-path loss under a present
+owner with no covering feature or ruling — not de minimis, not roundable, and the amendment says so
+rather than checking the box on "only 1 left." What would close it: a source-side referencedness read
+(is `e6a93fd6-...` referenced by anything at all in `Mbugwe LizzieHC practice`?) — if yes, a fix in the
+context-family create path; if no, a human ruling extending `UNREFERENCED_IN_SOURCE` to
+`PhSimpleContextNC` the way T120(a) extended it to `PhFeatureConstraint`. Neither was decided here.
+
+**T085 is now the only unchecked row in Phase 9/10** — still carrying the feature-035 merge hazard in
+`full_run.py` / `run_fullcopy_sweep.py`, to be resolved file-by-file with that feature's owner.
+
+## Session log — 2026-09-18d (038: T081 moved by a TRANSFER FIX for the first time; P5 3/3/4 → 1/2/3)
+
+Resumed through `/speckit-companion-resume`. Two changes landed on the worktree
+(`c9421cc`, artifacts `bbd4c3b`, pushed) and one live re-census ran, `t135`, all
+three pairs restored from `Target 2026-07-06 0218.fwbackup` into the `GT038 T124`
+throwaways. **T081 still STAYS UNCHECKED** — P5 is 1/2/3, not green — but every
+remaining failure is now either a ruling away or a designed-but-unbuilt
+mechanism, and none of them is an unattributed loss.
+
+**`PhPhoneme.FeaturesOA` never reached the matched half, and T121 predicted it.**
+T121's docstring says of codes: "a matched phoneme never reaches this function at
+all (it plans as a natural-key `PlannedOverwrite`). A create-path-only fix would
+leave the enrichment half standing." It fixed `CodesOS` on that reasoning and left
+`FeaturesOA` behind — `ApplySyncableProperties` runs on the CREATE path only, and
+PHONEMES is MULTI_INSTANCE so there is no edit-copy route either. The t134
+artifacts had already named the population before any code was written:
+`PhPhoneme.Features` 41→20, 41→21, 46→27, each destination figure exactly the
+count of phonemes that pair CREATED. The live run confirmed the split to the
+object — "filled FeaturesOA on 21 matched phoneme(s); 20 already carried one",
+then 20/21 and 19/27, summing to 41/41/46. Not cosmetic: a phoneme with a correct
+name and a null `FeaturesOA` cannot satisfy any feature-based natural-class
+membership test. `FsFeatStruc` −21→**0 MATCHED**, −90→−70, −415→−396.
+
+**Predictions were written down before the run and all three landed exactly.**
+That was deliberate, given how many readings this feature has had to retract.
+
+**The gross subtraction was being read as a loss, and 5.2 already said so.**
+`gross_basis_cap_notes` has capped the VERDICT for this since T024b, but the cap
+never reached `_phase_5`. A sixth accounting lane emits `STARTER_CONTENT` for
+`difference_raw − difference` — gated not on the basis but on an independent
+artifact-internal witness: a per-sub-key table that reconciles to `difference_raw`
+EXACTLY. Off by one object and nothing is emitted. Across the whole t134 corpus it
+fires on `CmPossibility` and **no other row**. `CmPossibility` unexplained
+302/271/301 → **0/0/0**, and that row needed no transfer work at all.
+
+**A crew inference became a measurement.** `cycle15-domain-fsclosedvalue.md` could
+only test the `FsClosedValue` cascade against corpus averages, needed a 3.6–4.6×
+density premium, called it "asserted, not measured by any committed pin", and said
+mbugwe "can't even be tested". Closing a population known to the object measures it:
+336 values under 21 structures = **16.0**, 380 under 20 = **19.0**, 342 under 19 =
+**18.0**, against corpus averages 3.70/1.43/1.71. Confirmed on all three, mbugwe
+included — and ejagham's 16.0 against the review's sole-driver 16.9 means the −19
+left over is a real independent residue, not an unknown.
+
+**What still blocks P5, and what kind of thing each one is.** ejagham
+`FsClosedValue` −19; ngoreme `FsClosedValue` −83 and `FsFeatStruc` −70; mbugwe
+`FsClosedValue` −660, `FsFeatStruc` −396 (334 unexplained) and `PhSimpleContextNC`
+−1. Both remaining `FsFeatStruc` owners (`PartOfSpeech.ReferenceForms`,
+`FsComplexValue.Value`) are the candidates `0664ae7` left unrostered ON PURPOSE —
+a ruling, not a fix. `FsClosedValue` is the one designed-but-unbuilt piece: no
+admissible token covers a cascade, and cycle15-domain's `derived_from` pointer is a
+7.1 amendment that can only fire where the PARENT row is closed — after t135 that
+is ejagham alone, so building it today closes 1 row on 1 pair. `PhSimpleContextNC`
+−1 is unattributed and needs a destination-side GUID diff (RULE 3), not a ruling.
+
+**Pick up at:** T081 needs three human rulings (rostering the two `FsFeatStruc`
+owners; whether to build `derived_from` for a one-row payoff; `PhSimpleContextNC`
+after measurement). T085 stays gated on T081 and still carries the feature-035
+merge hazard in `full_run.py` / `run_fullcopy_sweep.py` — resolve file-by-file with
+that feature's owner, never `-X ours`.
+
+## Session log — 2026-09-18c (038: T129 closed; three read-only measurements; one of my own instruments was wrong)
+
+Spurt 5, cycle 12, resumed through `/speckit-companion-resume`. **T129 is closed on
+both halves.** Everything else in feature 038 is now blocked on one live
+restore-bounded re-census — see `specs/038-transfer-fidelity-gaps/.crew-handoff.json`.
+
+**T129(1) — the harness enforces its own pin.** `run038_t124_recensus.py` recorded
+`$.projects.source.fwdata_sha256_*` in every artifact it ever emitted and never read
+one back. It now reads the pin out of the **comparand artifact** and compares;
+on a mismatch the `vs T078` section is **refused**, with the counts *withheld* rather
+than printed beside a warning — a number printed next to a caveat still gets quoted
+without it, which is exactly how a `LexEntryType SHORTFALL -> MATCHED` reading escaped
+and had to be retracted. The docstring's "Every SOURCE is on its pin" is **struck**,
+T086 style. Deliberately no hand-kept digest table for the code to read: the artifact
+*is* the pin. 13 new tests assert against the **committed artifacts**, not fixtures
+they built — the deliberate opposite of last spurt's "test that SET the value it then
+asserted". Unit suite 3894 -> 3911.
+
+**T129(2) — and the check changed the answer.** T129 said of ngoreme "CHECK IT, do not
+assume it". Checked: **ngoreme is not unaffected.** `Ngoreme FLEx` moved
+`838b7635..` -> `d0ab2c66..` between t124 and t126 — *three weeks before* the mbugwe
+drift T128 spotted. **Seven** committed `vs T078` sections are void (five ngoreme, two
+mbugwe), including all 41 of their `fixed` entries. Ejagham is on its pin throughout
+and **keeps** its comparand — the control, without which a check that fired on all
+three could not be told from one that always fires. Ruling:
+`contracts/t078-comparand-retirement.md`.
+
+**T127 — CONFIRMED, and narrowed to a create-path multistring gap.** Two-sided:
+16 of 16 entry types carry a `Name` in the source, **15 of 16** in the destination.
+`Periphrastic Form` has `Name`/`Abbreviation` in the source and **neither field
+present** in the destination, while carrying this run's own `[GT-Tag]` stamp — so the
+transfer *created* it and never copied its multistrings. The other 15 are
+`IsProtected=True` canonical starter content already present by GUID, so their names
+were never this transfer's job. That predicts the defect is invisible on any project
+whose entry types are all canonical, which is why no earlier pair caught it. Census
+row is 16 -> 16 **MATCHED**.
+
+**T128 / new row T130 — every ad-hoc prohibition group arrives empty.** Of 37
+group-owned `MoMorphAdhocProhib` in the source, **zero** are group-owned in the
+destination: 33 were re-homed to `MoMorphData` and all four `MoAdhocProhibGr`
+transferred GUID-identically as **empty shells**. The census reads
+`MoAdhocProhibGr` 4 -> 4 MATCHED and calls the whole thing `-4`. Suspected mechanism
+(`categories.py:4696`): `Remove` on an LCM **owning** collection is a disposal, not a
+detach — and this is the only one of the codebase's three `Remove` sites that uses it
+as a *move*; the other two dispose deliberately, one with an explicit `.Delete()`.
+That predicts −4, 0 re-parented and 4 empty groups exactly, and the lost child is the
+**first** entry in each group's source `<Members>`. **Hypothesis, not measurement** —
+and the fix touches a write path suspected of destroying owned objects, so it waits
+for a human.
+
+**FOURTH instrument failure, and it was mine.** My first probe called `elem.clear()`
+on every `iterparse` end event, which empties children before their parent is read.
+It produced two confident, published, *false* conclusions — that `.fwdata` records
+ownership only on the child, and that T127's name was missing in the source too. Both
+are **struck in place** in `reviews/cycle12-t128-adhoc-group-reparenting.md` rather
+than edited away. What caught it was not the code: "all 16 entry types are nameless in
+both projects" is not a plausible state for a real FLEx project, and checking that
+implausibility against the raw XML exposed it. Values read from `rt` *attributes* were
+never affected, which is why the T128/T130 ownership finding survived intact.
+
+**The re-census was authorized and run (t131, all three pairs), and it closed four
+rows.** T129 behaved exactly as designed on its first live outing: ejagham printed its
+vs-T078 section (`source pin: MATCH`), ngoreme and mbugwe were **refused** with both
+hashes named.
+
+**T130 — a DESTRUCTIVE bug, named by a stack trace rather than argued.** The t131 run
+report carried four `leaf_execution_failures`, one per `MoAdhocProhibGr`:
+`LcmObjectDeletedException: "Object has been deleted."` at
+`LcmOwningCollection.Add → BasicValidityCheck`. **`Remove` on an LCM owning collection
+destroys the object** — `categories.py:4696` was the only site in the repo using it as
+a *move*, and `LcmObjectDeletedException` is neither `AttributeError` nor `TypeError`,
+so it escaped both handlers and aborted each group after killing its first child.
+Fixed (`Add` moves by itself; per-child isolation; a `DroppedItemRecord` when one
+fails). Measured 0 → **37** group-owned, `<Members>` 0,0,0,0 → **7,9,10,11**,
+`MoMorphAdhocProhib` 39→35 → **39→39**, `leaf_execution_failures` 4 → **0**. T128
+closed with it — the `-4` *was* the destroyed children.
+
+**T127 — blunter than either explanation the row considered.**
+`variant_types_execute_action` never copied a single property: create, own,
+`apply_carrier_b` (the `[GT-Tag]` line), return — while its own comment claimed
+"ApplySyncableProperties". Only *project-authored* types take that path; the other 15
+are `IsProtected=True` canonical content matched by GUID, which is why exactly one of
+sixteen was affected and why no earlier pair caught it. Swept into
+`complex_form_types_execute_action`, which had the identical shape. Measured 15/16 →
+**16/16** named.
+
+**Two of those four defects were invisible to a class count** (`MoAdhocProhibGr` read
+4→4 MATCHED with every group emptied; `LexEntryType` read 16→16 MATCHED with a
+nameless object). That is now four such defects on this feature's rows, and it is the
+concrete case for the census-contract gap T127 asked to raise with T081:
+**non-count assertions**.
+
+**Next session — T081 and T085 only, and no transfer work left in T081.** P5 fails
+5/4/5 and **not one failure is a transfer defect**: every one is a row whose ruling
+exists but has no accounting line, or a token deliberately withheld from P5.
+`RULED_RESIDUE` is now proven end-to-end (`PhCode`/`CmFile`/`CmFolder` dropped off the
+gate for the first time). Three of the five need a **human ruling**, not code —
+`PhFeatureConstraint` and `MoAffixProcess` both hinge on admitting a token to
+`PHASE_5_ADMISSIBLE_REASONS`, which `census.py:3327` already says "belongs to a human".
+`CmPossibility` is the largest *code* step and is fully specified in
+`contracts/cmpossibility-list-rulings.md` section 4. See the handoff's
+`blocker.rulings_needed`.
+
+
+## Session log — 2026-09-18b (038: first authorized live re-census — one line passes, three instrument failures)
+
+Spurt 4, cycles 10-11. The user authorized the restore-bounded re-census (tag
+`t123c`). It measured T123's two acceptance lines for the first time. **T123 still
+cannot be checked**, and the spurt's most useful output is not a fix — it is three
+demonstrations that our *instruments* were lying.
+
+**T123(b) — PASSES, two-sided, both pairs.** `LexEntryType` 13 -> 13 and 12 -> 12
+AND `LexEntryInflType` 3 -> 3 and 4 -> 4, CHANGED=0 / absent=0 / dest_only=0 by GUID
+on both classes on both pairs; mbugwe's `Periphrastic Form` now resolves
+`ClassName=LexEntryType`. Stated on the **within-run** source->destination comparison,
+not the `vs T078` delta — see T129.
+
+**T123(a) — count half passed, referent half FAILED, now fixed.** `MoStemMsa`
+1954 = 1954, `MsFeatures` 782 = 782, the missing object present, `'omoona'` owning two
+MSAs again — but sense `'small child'` still carried a null `MorphoSyntaxAnalysisRA`
+(destination 14 null vs source 13, delta +1). **A count-only gate would have closed
+the row.** The referent is now rewired on all four exit paths (worktree `f60b361`).
+Acceptance needs one more re-census (`t123d`).
+
+**THREE INSTRUMENT FAILURES, all caught by measurement, none by argument.**
+1. *Wrong-tree citations.* `categories.py` is 10,165 lines on main and 16,022 on the
+   branch; a whole re-diagnosis was performed against main's superseded copy.
+2. *A test that could not fail.* The cycle-8 pinning test **set**
+   `sense.MorphoSyntaxAnalysisRA = out` itself and then asserted it — tautological,
+   green against a half-done fix. Same species as the `_FakeLexRefType` that hid this
+   row's `LexReference` defect through eleven gates. The repaired test is **proven to
+   fail against `73552e4`**, and verification reproduced that independently by
+   swapping the file rather than trusting the programmer's report.
+3. *A pin nothing checked.* `run038_t124_recensus.py` asserts in its own docstring
+   that every SOURCE is on its pin and drift is destination-side only. `Mbugwe
+   LizzieHC practice` moved on disk between runs (`fb6aadab...` -> `3fb29a29...`,
+   ~23,760 -> ~48,622 objects) and nothing noticed, so a violated premise produced
+   confident output. Every mbugwe `vs T078` verdict in `t123c` crosses that change —
+   **including its six "FIXED" entries** — and one relayed reading was retracted.
+
+**New rows filed:** T127 (a `LexEntryType` arriving with `Name` = None in all six
+writing systems — a genuine loss, with residue excluded *by construction* and WS
+rendering excluded *by measurement*, so NOT the same defect as ngoreme's `'*???'`),
+T128 (the mbugwe source drift plus a genuine, newly-exposed `-4` in
+`MoMorphAdhocProhib`), T129 (make the harness fail loud on a moved source pin, and
+re-establish or retire the mbugwe comparand).
+
+**Standing rules now cover the tools, not just the code.** A test that cannot fail, an
+instrument that cannot report its own violated premise, and a citation that does not
+say which tree it read are the same failure class: something that looks like evidence
+and is not.
+
+**Next session's blocking item is a decision:** authorize the `t123d` re-census in
+`specs/038-transfer-fidelity-gaps/.crew-handoff.json` (`blocker`). **PAIR FIRST** —
+`python debug/run038_t124_recensus.py ngoreme --tag t123d`; a leading `--tag` lands in
+the pair slot and exits 2.
+
+
+## Session log — 2026-09-18 (038: T123 spurt — BOTH acceptance lines fixed in code, NEITHER measured; awaiting authorization)
+
+Spurt 3 of the 038 crew loop, cycles 5-9. Checkpoint was "Phase 10 closed — T123's
+two remaining acceptance lines fixed or explicitly ruled." **NOT reached, and
+deliberately so.** Both lines now have landed, tested fixes; neither has been
+*measured*, because measuring them needs a restore-bounded live transfer that only
+the user can authorize. **T123 stays unchecked. Phase 10 stays open. T085 stays
+gated.**
+
+**Committed this spurt.** Worktree `73552e4` (single parent, not a merge; 9 files,
++1371/-80) — the LexEntryType factory fix, the natural-key MSA fix, the entry-owned
+MSA hardening, and the `UNREFERENCED_IN_SOURCE` token constants. Main `8972d9a`
+(token schema/prose + all cycle 5-8 crew reports) and `4818480` (T085 merge hazard).
+Unit suite 3881 -> 3894 across the spurt, every added test reconciled to a named fix.
+
+**T123(b) — LexEntryType, FIXED IN CODE.** `variant_types_execute_action` created
+every `VariantEntryTypesOA` member via `ILexEntryInflTypeFactory`, routing by which
+possibility list the item lives in rather than by the object's own class. **This is a
+MISCLASSIFICATION, not an absence** — the objects arrive, GUID and nesting preserved,
+as `LexEntryInflType`; the census -1 is exactly offset by +1, proven by GUID identity
+on both pairs. Acceptance is therefore two-sided (`LexEntryType` 13/13, 12/12 AND
+`LexEntryInflType` 3/3, 4/4); net cancellation is not acceptance.
+
+**T123(a) — MoStemMsa -1, DIAGNOSED AND FIXED IN CODE, after three refutations.**
+Three candidate mechanisms died by live read-only measurement, none by argument:
+never-enumerated (ops 005/006 — `A - B` empty in all four MSA classes, 2090 owned =
+2090 sense-referenced), cross-owner closure collision (op 007 — `B - A` = 0 across
+2233 senses), and POS-guard silent skip (op 009 — predicted population 1, measured 11,
+and the 11 are DISJOINT from the target by `MsFeaturesOA`). The fourth read settled it
+in one shot: a **destination-side GUID diff** (ops 010-013, against a destination whose
+`.fwdata` SHA-256 byte-matches the census artifact's recorded hash) named the object
+outright — MSA `8617b725-efc1-4f6d-935c-c6c87081c7cb` on entry `'omoona'`
+(`e2cd79ef-...`), with **zero extra** objects, so nothing was regenerated under a new
+GUID. Mechanism: entry `'omoona'` owns two MSAs identical in every syncable property
+and differing only by GUID; the second was matched by natural key, its create skipped,
+**and its sense left with a null `MorphoSyntaxAnalysisRA`**. Not dedup-and-reuse —
+reuse would have left the graph intact and only the count short; this broke both. The
+fix has two halves (create not skipped for a GUID-distinct MSA; referring sense
+non-null on every path including legitimate reuse) and acceptance is correspondingly
+two-sided: `MoStemMsa` 1951 = 1951 AND zero senses with a null `MsaRA` whose source
+counterpart had one AND destination extra = 0.
+
+**Three standing rules, each paid for in cycles.**
+1. *A static mechanism is not a diagnosis until its predicted population is counted.*
+   Cycle 5 reasoned statically and never asked whether its predicted population was
+   non-empty. It was empty.
+2. *No branch may be closed by an unexamined inference.* Cycle 5 discarded the
+   natural-key family — the RIGHT family — because "a natural-key match would leave the
+   count matched." False: a key match that skips the create without rewiring the
+   referent leaves the count short and the reference null, which is what was on disk.
+3. *On any count shortfall, the destination-side GUID diff is the FIRST read, not the
+   fifth.* Four source-side queries inferred; one destination diff named the object.
+
+**Tree-qualification rule (bit three times this spurt).** Every `file:line` citation
+must state its tree and `git rev-parse HEAD`. `src/gramtrans/Lib/categories.py` is
+10,165 lines on main and 16,022 on the branch. It cost a whole re-diagnosis (cycle 7
+analysed main's superseded copy, which predates the `_POS_ABSENT` rewrite), a
+hardcoded insertion point that had moved twice, and a Pyright signature scare
+reproduced only under a stale editable install resolving against main's 6-arg
+signature.
+
+**STALE-MIRROR TRAP — do not "clean up".** Two contract files
+(`specs/038-transfer-fidelity-gaps/contracts/census-artifact.schema.json` and
+`fidelity-census.md`) are **deliberately left dirty and uncommitted** in the worktree
+so `test_object_census.py`'s `_repo_root()` reads current contracts instead of the
+branch's stale snapshot. `git checkout --` on them turns the measured 635/5/29 into
+artifact-drift failures. The proper fix is the `git merge main` recorded on T085 —
+which currently conflicts in `tests/integration/harness/full_run.py` and
+`debug/run_fullcopy_sweep.py` (feature-035 divergence). **Do not force it with
+`-X ours`:** that records a merge asserting main's version was incorporated, and the
+eventual 038 -> main merge would then silently discard feature-035's work.
+
+**Not a defect (retired):** the destination headword rendering `'*???'` for `'omoona'`
+is NOT a fidelity loss — `LexemeForm[ngq]='Xna'` and `CitationForm[ngq]='omoona'`
+round-tripped exactly (ops 016/017). The destination carries 4 writing systems to the
+source's 3 and `HeadWord` resolves against the default vernacular. Spurt-4 row is
+**destination writing-system provisioning** (one confirming read:
+`LangProject.DefaultVernacularWritingSystem` on both). Mbugwe's `Periphrastic Form`
+arriving `'***'` is kept as an **independent** observation needing its own per-WS read
+— same shape is not same cause.
+
+**Next session's blocking item is a decision, not a task:** authorize the
+restore-bounded re-census in `specs/038-transfer-fidelity-gaps/.crew-handoff.json`
+(`blocker`). No live WRITE occurred anywhere this spurt; all 17 FLExToolsMCP
+operations were certified read-only.
+
+
+## Session log — 2026-08-28b (038: Fs* residue spurt — T119 + T120 RULED, Phase 10 down to T123)
+
+Spurt 2 of the 038 crew loop. Checkpoint was "T119's two residuals are either
+closed by a landed fix, or explicitly blocked by a committed ruling with named
+evidence — and the spurt's carried-forward polish is off the books." **Reached,
+by ruling on both counts rather than by code.**
+
+**T119 — FLIPPED TO [X]** (main `1e1a3c7`). Its two named residuals were
+diagnosed and ruled, not patched:
+
+- *R1, `MoStemMsa.MsFeatures` −1 of 782.* **Not a T119 defect — a defect
+  relocated one layer upstream.** The cascade pass enriched 781 of 781 owners
+  that exist; the missing structure belongs to an `MoStemMsa` that was never
+  created. `census-038-t126-ngoreme.json` narrows the −1 to exactly one owner
+  bucket, `LexEntry.MorphoSyntaxAnalyses` (1951 → 1950), with the other three
+  `MoStemMsa`-owning fields flat at 1/1/1 and `LexEntry` itself MATCHED
+  2017 = 2017. The load-bearing fact is an identity, not a count: source
+  `MoStemMsa.feature_structure` reads `{"(none)": 1172, "MsFeaturesOA": 782}`
+  and the T126 destination reads `{"(none)": 1172, "MsFeaturesOA": 781}` — the
+  `(none)` bucket is **identical 1172 = 1172**, which is impossible if the
+  all-or-nothing deferral had hollowed even one present owner (a hollowed owner
+  moves INTO `(none)`, it does not vanish from the class count). R1 was
+  **re-homed to T123's existing open acceptance line**, not given a new row, so
+  the −1 is still owed by somebody and is not rounded away.
+- *R2, `FsComplexValue.Value` −27 of 825.* **Fully partitioned, zero slack**, by
+  an exact arithmetic identity across the T124 and T126 probes: 20 + 778 = 798
+  arrived, 825 − 798 = 27 missing, and all 27 are confined to R1's single
+  uncreated object plus T045's `ReferenceForms` shells. No unexplained residue.
+
+**T120 — FLIPPED TO [X]** (both branches closed). (b) the rule route by
+measurement already on the row (`PhSegRuleRHS` 18→21, 28→39, MATCHED); (a) the
+shared pool by `contracts/unreferenced-feature-constraint-ruling.md`, which
+rules source-orphaned `PhFeatureConstraint`s **OUT OF SCOPE and WITHDRAWS the
+Phase-4b co-create decision** — stronger than deferral, since creating target
+objects nothing in the source references is forbidden by standing rule. The
+partition is exact both directions: ngoreme 47 missing / 0 referenced / 23
+transferred-all-referenced; mbugwe 32 / 0 / 57. Not force-closed — the ruling's
+own two caveats are recorded on the row: four flagged-not-reconciled
+contradictions in `process-morphology-create-path.md`, and a latent
+`_collect_nc_constraints` / `PhIterationContext.MemberRA` gap whose measured
+cost is 0 today and which is explicitly **not** a clearance.
+
+**Verification gate: all-PASS.** Every quantitative claim in both rulings was
+re-read against the committed JSON (13 claims, all PASS), plus two structural
+checks: T123's line 711 is byte-identical before/after (`old[710]==new[710]`),
+and rows 707/708 are provably append-only (old row text is an exact string
+prefix of the new; +3288 and +3219 chars appended, zero altered or removed).
+
+**Carried-forward polish: OFF THE BOOKS** (worktree `5cf155c`, tests flat at
+521 passed / 2 pre-existing failures). The `categories.py:6566` P1 was **wired,
+not deleted** — a new `_LEX_REF_TYPE_KEY_READERS` (reader, is_invalid) map lets
+`_lex_ref_type_natural_key` iterate `_LEX_REF_TYPE_KEY_FIELDS` while preserving
+the per-field invalidity rule exactly, which matters because `MappingType == 0`
+(`Synonyms`) is a valid key half that a falsy test would have eaten. Both P2s
+and the `run038_t124_recensus.py` supplements basename also fixed.
+
+**T082 also closed this spurt (cycle 3, main `6bad425`).** `038-NK-P3` verified
+against the t126 snapshots: `PhNCFeatures` MATCHED 15/15, 41/41, 113/113;
+`duplicate_extra_objects` 0/0/0 on all three; verdict moves off
+`DUPLICATE_IDENTITY` to `UNEXPLAINED_SHORTFALL` / exit 1. That removes the
+duplicate-identity blocker T125 named against T081.
+
+**Next pickup: T123 — the last unchecked row in Phase 10.** Two acceptance lines
+remain, and closing them closes Phase 10 and unblocks T085's merge:
+(a) ngoreme's single missing `MoStemMsa` under `LexEntry.MorphoSyntaxAnalyses`
+(−1), now carrying R1's full upstream diagnosis — the question is why the entry's
+MSA is never created, not why it arrives hollow; (b) `LexEntryType` −1/−1, whose
+two absent objects T124 already named (ngoreme's `Perfective`, mbugwe's
+`Periphrastic Form`) without fixing either.
+
+**Then T081, which is now a RE-EMIT plus one append, not a re-fix.** Its
+kind-(ii) accounting lines are proven correct in memory but are baked into no
+committed artifact, so the gate — which reads the artifact and never recomputes
+a line — still sees `accounted_for: []`. T120's ruling adds one piece of owed
+infrastructure to that same job: the new `UNREFERENCED_IN_SOURCE` reason token
+(`report_ref`-exempt, NOT in `CENSUS_NOT_EVALUATED_REASONS`, `max_claim` capped
+at 47/32) is designed but appended to nothing — grep confirms zero hits in
+`src/`. It belongs to whoever next closes T081, not to T120.
+
+**Process finding worth keeping.** The `census-038-t126-*.json` and
+`probes/t126/*.json` artifacts do **not** exist on `main` — they live only on
+the `038-transfer-fidelity-gaps` worktree branch (`efa57b5`). That is the repo's
+spec-on-main / work-on-worktree split behaving correctly, but a verifier
+checking `main` alone will wrongly conclude they are missing. Read them with
+`git show 038-transfer-fidelity-gaps:<path>`.
+
+No live FLEx write was performed this spurt; nothing under `src/` or `tests/`
+was committed to `main`.
+
+## Session log — 2026-08-28 (038: crash-residue spurt — T123 landed)
+
+A 2026-08-28 16:58 crash killed a session right after its validating run
+succeeded (`run038_t124_recensus.py --tag t123b ngoreme`, every artifact
+valid); this spurt did the housekeeping the crash prevented — commit, journal
+entry, tasks.md write-up — without redoing or second-guessing the run.
+
+**What landed.** `LexReference` (T123) has its `(Name, MappingType)` fallback
+plus `ILexRefTypeFactory` create leg, worktree commit `db41744`. Live
+re-census (`tests/integration/_snapshots/census-038-t123b-ngoreme.json`)
+reads `LexReference` **5 -> 5, MATCHED, `accounted_for: []`** on ngoreme —
+recovered by the transfer itself, the one sanctioned pair holding any
+relation at all (ejagham/mbugwe carry 0 on both sides). Same worktree,
+`1edb442` fixed a tag leak in `debug/run038_t124_recensus.py`: the owner-probe
+output path was frozen at import time rather than read from `RUN_TAG`, so a
+`--tag t123b` run still wrote into `probes/t124/` and overwrote the pinned
+T124 ngoreme comparand — the exact residue the crash left behind. A prior
+cycle this spurt (`7fbb9f9`, on `main`) refiled that residue: restored
+`probes/t124/owner-probe-GT038-T124-Ngoreme.json` to HEAD and moved the run's
+actual output to the new `probes/t123b/`, with a README recording the mix-up.
+See `specs/038-transfer-fidelity-gaps/journal/T123-the-type-list-that-canonical-guids-could-never-match.md`
+for the full account, including the governance finding that the tag guard
+covered two of the driver's three outputs, not three.
+
+**T123 ruling: STAYS UNCHECKED.** `LexReference` and the `LexEntryInflType`
+nesting clause (fixed in an earlier session, worktree `6fa753a`) are both
+closed now, but two of T123's own acceptance lines are still open and
+untouched by this spurt: ngoreme's single missing `MoStemMsa` under
+`LexEntry.MorphoSyntaxAnalyses` (-1), and `LexEntryType`'s target of -1/-1
+(T124 named both absent objects — ngoreme's `Perfective`, mbugwe's
+`Periphrastic Form` — but did not fix either). `contracts/cmpossibility-list-rulings.md`
+was also amended this session to rule `LexDb.References` IN SCOPE and
+transferred, closing an adjacent gap T123's own text had flagged as ruled by
+nothing.
+
+**Next pickup: T119.** Ngoreme carries the last two named residuals of the
+`Fs*` cascade fix: `MoStemMsa.MsFeatures` short **-1** of 782 (0/0/0 -> COMPLETE
+on ejagham and mbugwe, one object short on ngoreme), and `FsComplexValue.Value`
+short **-27** of 825 (0 -> 798). Both are named in T124's per-owning-field
+measurement as residue the schedule fix (`transfer._ensure_owner_feat_strucs`)
+did not reach; T119 itself flagged them as still open. No live FLEx write was
+performed this spurt; nothing under `src/` or `tests/` was committed to
+`main`.
+
+**Carried forward (recorded so the next session need not rediscover).**
+
+- *Cosmetic, `debug/run038_t124_recensus.py`.* The tag leak is closed — the
+  probe output DIRECTORY is now derived from `RUN_TAG` at call time — but the
+  T124-supplements file's BASENAME is still the literal
+  `t124-supplements-<source>.json` under any tag. Nothing writes into the wrong
+  directory; only the basename text fails to encode the tag. Cosmetic, no
+  functional leak.
+- *QC P1 from this spurt's cycle 1, unaddressed.* `categories.py:6566`
+  `_LEX_REF_TYPE_KEY_FIELDS = ("Name", "MappingType")` is documented as "the one
+  place its shape is written down" and is referenced NOWHERE —
+  `_lex_ref_type_natural_key` hardcodes the two reads instead of iterating it.
+  Editing the constant changes no behaviour. Either wire the key functions
+  through it or drop it. Two P2s ride along: (a) the `dropped if dropped is not
+  None else []` throwaway-list pattern in `_resolve_target_lex_ref_type`'s
+  ambiguity branch and `_create_target_lex_ref_type`'s failure branch — harmless
+  today (the sole production caller always passes a real list) but a silent-drop
+  trap for a future direct call; (b) the undocumented asymmetry whereby the
+  "ambiguous key" record dedups per TYPE while "type not found" is per RELATION.
+  The QC verdict was SAFE TO COMMIT AS-IS; these are polish. (Its third P2, the
+  untracked snapshot JSONs, is resolved — both landed inside `db41744`.)
+- *T081 needs a RE-EMIT, not a fix.* The kind-(ii) accounting lines are proven
+  correct in memory (probed against a COPY of the ejagham artifact: P5 failures
+  19 -> 10, every stamped row stays `SHORTFALL`, `total_shortfall` unchanged at
+  4781, nothing laundered) but that proof is baked into NO committed t126
+  artifact. The gate therefore needs the artifacts re-emitted with the lines
+  present — do not go looking for a bug in the accounting logic.
+
+**Crew state.** `specs/038-transfer-fidelity-gaps/.crew-handoff.json` carries the
+machine-readable pickup. Next code task **T119**; then **T120(a)** (emit the
+orphan-constraint ruling already committed in `19a1bd8`), then **T081**'s
+re-gate, then **T085**'s merge. **T082** is a T086-style clause amendment — pure
+docs, no `categories.py` — and is genuinely parallel, startable any time.
+
 ## Session log — 2026-08-19e (038: transfer fidelity gaps — Phase 3 census gate, 27/90)
 
 Phase 3 (US2, "the run report tells the truth about what moved") is essentially built.

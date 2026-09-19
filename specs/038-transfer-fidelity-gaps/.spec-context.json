@@ -806,6 +806,430 @@
       "kind": "complete",
       "by": "extension",
       "at": "2026-08-21T14:09:06.841Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T091",
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-08-21T21:12:15.977Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T094",
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-08-21T21:12:15.977Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T096",
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-08-21T21:12:15.977Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T098",
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-08-21T21:12:15.977Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T099",
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-08-21T21:12:15.977Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T073",
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-08-21T21:12:15.977Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T087",
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-08-21T23:11:18.164Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T100",
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-08-22T00:21:33.466Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T101",
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-08-22T00:21:33.466Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T090",
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-08-22T00:56:00.790Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T103",
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-08-22T00:56:00.790Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T074",
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-08-22T02:06:09.169Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T076",
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-22T06:09:27.750Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T077",
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-22T06:09:28.011Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T064",
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-22T06:09:28.241Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T089",
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-08-22T07:59:29.519Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T104",
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-08-22T08:34:13.850Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T092",
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-08-22T10:25:42.625Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T105",
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-08-22T11:09:02.792Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T093",
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-08-24T19:13:42.942Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T095",
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-08-24T19:56:00.419Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T097",
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-08-24T20:01:39.975Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T102",
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-08-24T20:09:29.960Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T083",
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-08-24T20:11:32.145Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T084",
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-08-24T20:11:32.145Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T106",
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-08-25T14:52:53.321Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T078",
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-25T17:46:19.980Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T107",
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-08-25T20:26:27.582Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T079",
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-08-25T20:26:27.582Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T108",
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-08-25T20:26:27.582Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T080",
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-08-25T21:06:35.367Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T109",
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-08-26T16:10:56.775Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T110",
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-08-26T16:10:56.775Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T111",
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-08-26T16:14:21.366Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T112",
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-08-26T16:14:21.366Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T113",
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-08-26T19:11:02.597Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T114",
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-08-26T20:33:00.132Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T115",
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-08-26T20:33:00.132Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T116",
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-08-26T20:33:00.132Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T117",
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-08-26T20:33:00.132Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T118",
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-08-26T20:33:00.132Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T122",
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-08-27T13:59:25.239Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T124",
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-08-27T13:59:25.239Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T125",
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-08-27T13:59:25.239Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T123",
+      "kind": "complete",
+      "by": "ai",
+      "at": "2026-09-18T18:38:52.436Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T082",
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-09-18T19:17:46.717Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T119",
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-09-18T19:17:46.717Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T120",
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-09-18T19:17:46.717Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T121",
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-09-18T19:17:46.717Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T129",
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-09-18T19:17:46.717Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T127",
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-09-18T19:37:59.664Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T128",
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-09-18T19:37:59.665Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T130",
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-09-18T19:37:59.665Z"
     }
   ],
   "decisions": [
@@ -843,6 +1267,66 @@
       "decision": "Land order 037 -> 038-affix-fidelity -> this feature -> re-census; claim categories.py for Phases 2/3 and transfer.py before any edit",
       "why": "transfer.py is a three-way hazard (modified on 037 +33 and 038-affix-fidelity +58); categories.py is the file every branch touches",
       "rejected": "Proceeding without lockout claims and resolving at merge"
+    },
+    {
+      "decision": "Co-create the shared PhPhonData.ContextsOS context instead of registering a closure edge for it, and register the referent edge one hop out",
+      "why": "Measured 0 of 6 far endpoints reachable from PhonRulesOS and no GrammarCategory enumerates a ContextsOS member, so an edge naming one is the unplannable far endpoint T089 refused -- it would have no PlannedAction, so FR-015 could not show it and FR-016 could not deselect it. The referent (PhPhoneme / PhNC*) is 6 of 6 enumerable.",
+      "rejected": "The task text as written: extend closure to pull the contexts and register THAT edge"
+    },
+    {
+      "decision": "Move the condition-4 resolvability test one hop out, from the context to its FeatureStructureRA referent, keeping identity first",
+      "why": "A None on the context only ever meant nobody has copied it yet; the referent is the thing the engine cannot invent, so that is where a refusal decides something. Identity first keeps SC-008 idempotence -- run 2 finds run 1s context and builds nothing.",
+      "rejected": "Co-creating unconditionally, which would duplicate the context on every re-run"
+    },
+    {
+      "decision": "Write T077 to new snapshot artifacts rather than overwriting T063s",
+      "why": "census-038-mbugwe-phase6.json is a link in the pairwise equality chain T102 filed, and T076 moves object counts by design -- overwriting would turn three unrelated tests red. Keeping both also makes T076s claim assertable as a delta.",
+      "rejected": "Overwriting the link and bumping the three comparisons"
+    },
+    {
+      "decision": "Replace the registry tests CONFIRMED-on-every-corpus rule with CONFIRMED-on-a-per-row-floor plus REFUSED-on-none plus every other reading must be NO_DATA",
+      "why": "Ejagham Mini holds zero MoAffixProcess rules, so it can neither confirm nor refuse. The old rule offered only two bad answers: refuse a relationship its only corpus confirms, or teach NO_DATA to count as a pass.",
+      "rejected": "Leaving the two rows unregistered, and separately: bumping the rule to at-least-one-CONFIRMED without the NO_DATA-only clause"
+    },
+    {
+      "decision": "Close T064 via T086s amended third clause rather than by bending the gate",
+      "why": "gate --phase 4 still exits 3 on PhNCFeatures. T086 met this exact case on T075 and amended the clause to predicate-satisfied plus every deciding row provably outside the phase, proved in a test off the shipped predicate.",
+      "rejected": "Bounding the exit code to the gated phase -- T086 rejected it because it would exit 0 on a run that lost 1643 objects"
+    },
+    {
+      "decision": "report_only_roster_defects check 5 requires governed SUBSET residue, never equality",
+      "why": "residue - governed is 14 classes report-only under an owner naming no feature that exists (phonology family, Fs* cascade, CmFile); equality would either launder them onto the gate-bearing governed roster or force them off the display roster where they belong",
+      "rejected": "set equality between the two rosters"
+    },
+    {
+      "decision": "check 5s exemption for a class the artifact already excludes from the delta is itself reported as a defect",
+      "why": "check 4 forbids rostering such a class so check 5 must exempt one; an exemption nothing watches would reproduce exactly the blind spot T113 was filed about",
+      "rejected": "a silent carve-out"
+    },
+    {
+      "decision": "Settle T082s 038-NK-P2 live in the throwaway Target project",
+      "why": "user decision 2026-08-26 at the resume gate: it is the one half of the remaining work reachable without new project data; the confirming test must run in a throwaway project only",
+      "rejected": "sanctioning a new read-only project pair; stopping at 131/134; merging with T081/T082 deferred"
+    },
+    {
+      "decision": "T081s P5 residue (FsClosedValue, FsFeatStruc, CmPossibility, the phonological-context family, PhCode, MoAffixProcess) is taken INTO feature 038 rather than filed out to a successor",
+      "why": "user decision 2026-08-26 at the resume gate; it is what would let P5 actually go green in this feature instead of leaving the gate permanently unturnable",
+      "rejected": "filing the residue out to a successor feature; deciding later"
+    },
+    {
+      "decision": "Ran 038-NK-P2 in a purpose-made throwaway (GT038 NKP2 Throwaway) rather than in Target",
+      "why": "the roster contracts own clause is stricter than the option chosen at the gate -- it reads never in a sanctioned read-only project and never in Target -- so a separate throwaway honours both the decision and the contract",
+      "rejected": "using the throwaway Target project as the option label proposed"
+    },
+    {
+      "decision": "Probed both the flexicon layer and the raw LCM factory layer, and recorded them as separate facts",
+      "why": "the claim names FLEx/the LCM but GramTrans reaches them only through flexicon; one layer alone would answer a different question than the one asked. A wrapper guard is not an enforcement claim and must not be recorded as one",
+      "rejected": "probing only the flexicon surface GramTrans uses"
+    },
+    {
+      "decision": "Phase 10 separates read-only attribution probes (W1) from create paths (W2), and its scope was authored over a re-measurement rather than over T081s residue sentence",
+      "why": "T107 is the measured precedent -- it built a correct create path on the wrong route and the class stayed red on two pairs; and T081s own list was short by seven classes, one of which (MoStemMsa) is a Phase 1 class whose two readings disagree",
+      "rejected": "authoring the phase directly from T081s prose; building create paths before attribution"
     }
   ],
   "verified": [
@@ -895,6 +1379,70 @@
       "warnings": [
         "The closure registry ships EMPTY, so every closure code path added in T010/T012 is exercised only by tests using a registry= override. That is intended (emptiness is the safety property) but means live closure behaviour remains unproven until a first edge is registered with real evidence."
       ]
+    },
+    {
+      "what": "full unit + integration suites, before and after, same session",
+      "command": "python -m pytest tests/unit -q; python -m pytest tests/integration -q",
+      "result": "unit 3612 -> 3624 passed (79 skipped, 14 xfailed, 0 failed); integration 490 -> 503 passed (75 skipped, 0 failed)",
+      "warnings": [
+        "a Windows access-violation dump in FLExInitialize appears in the integration run and is pre-existing -- it reproduces with this pass stashed and fails nothing",
+        "ruff on categories.py 176 -> 184; all 8 new findings are UP031 printf-formatting, the module idiom with 27 already present; every other engine file unchanged"
+      ]
+    },
+    {
+      "what": "T077 live corpus acceptance, Mbugwe LizzieHC practice into a throwaway restored from Target 2026-07-06 0218.fwbackup",
+      "command": "GT038_PHASE6_SNAPSHOT_SUFFIX=-t077 python debug/run038_phase6_live.py; python debug/verify038_t077_membersrs.py",
+      "result": "18 of 18 MoAffixProcess reproduced, 0 skipped; MoAffixAllomorph delta 124 unmoved; 6 of 6 sequences arrive with an identical ordered MembersRS; 6 of 6 shared ContextsOS contexts co-created, 0 missing; census total_shortfall 10262 -> 10243 = 6+6+5+2 with nothing else moved",
+      "warnings": [
+        "the census gate still exits 3 on PhNCFeatures DUPLICATE_IDENTITY, unchanged and proved outside phase 4 scope"
+      ]
+    },
+    {
+      "what": "closure-edge audit and registration census for the two new rows",
+      "command": "python debug/audit038_t076_process_contexts.py; GT038_AUDIT_SOURCE=... python debug/audit038_closure_edges.py; python debug/run038_closure_census.py T076",
+      "result": "PROCESS_RULE_TO_PHONEME CONFIRMED 32 edges/16 distinct and PROCESS_RULE_TO_NATURAL_CLASS CONFIRMED 10/2 on Mbugwe, NO_DATA on Ejagham Mini; full copy 0 closure edges live and empty with composition byte-identical; AFFIXES-only 259 edges live / 0 empty, composition changed by exactly the 26 pulled-in refs",
+      "warnings": [
+        "evidence for both new rows is single-corpus and is stated as such in verified_by and asserted by a test"
+      ]
+    },
+    {
+      "what": "mutation verification of the T076 fix",
+      "command": "scratchpad mutate_t076.py -- eight deliberate defects, suite re-run per mutation, file restored each time",
+      "result": "8 of 8 caught after closing the gap M2 exposed; M1 5 FAIL, M2b 2, M3/M4/M5/M6/M7 1 each, M2 1 after the new owner test",
+      "warnings": [
+        "M2 initially SURVIVED -- the owner half of the narrowing was untested because the only fake reaching it had no Owner at all; closed with test_a_context_owned_by_anything_but_phon_data_is_not_co_created"
+      ]
+    },
+    {
+      "what": "T113 unit + integration suites on the 038 worktree",
+      "command": "python3 -m pytest tests/unit -q; python3 -m pytest tests/integration -q",
+      "result": "unit 3743 passed / 79 skipped / 14 xfailed (3731 before, +12 new T113 tests); integration 718 passed / 75 skipped, unmoved",
+      "warnings": [
+        "FLExInitialize access violation traceback printed by the integration run -- pre-existing, survivable, documented in CLAUDE.md"
+      ]
+    },
+    {
+      "what": "T113 gate-inertness and tier consequence on the three committed T078 censuses",
+      "command": "scratchpad t113_measure.py -- T109 accounting line applied in memory, nothing re-emitted",
+      "result": "verdict DUPLICATE_IDENTITY / passed False before and after on all three pairs; all five added classes move to report_only, ngoreme Text is the predicted accounted -> report_only, StText control unmoved; report-only block 23->28 on each pair",
+      "warnings": []
+    },
+    {
+      "what": "038-NK-P2 live uniqueness-enforcement probe, two layers, in the throwaway GT038 NKP2 Throwaway (never Target, never a sanctioned read-only project)",
+      "command": "FLExToolsMCP flextools_run_module ops op-144922929-004 / op-145059498-007 / op-145120606-008 / op-145158674-009",
+      "result": "REFUTED -- no FLEx/LCM enforcement. Layer 1 (flexicon) refused PhPhoneme and PartOfSpeech and has no create surface for MoMorphType or LexEntryInflType; Layer 2 (raw LCM factories) silently accepted a duplicate-named sibling of all four and every one persisted, re-read in a fresh read-only session: PhPhoneme 23->25, PartOfSpeech 5->7, MoMorphType 19->21, VariantEntryTypes 7->9, each with one x3 duplicate group",
+      "warnings": [
+        "liblcm undoable=False legacy-mode notice on the write runs -- expected, the project is a throwaway",
+        "the runner executed Main twice, so each duplicate group is x3 rather than x2; left as measured"
+      ]
+    },
+    {
+      "what": "Re-measured the P5 residue rather than authoring Phase 10 over T081s prose",
+      "command": "scratchpad p5_residue.py -- T109 emitter line applied in memory to the three T078 censuses, then census.evaluate_phase(artifact, 5)",
+      "result": "10 / 16 / 14 failures, exactly T109s predicted figures; union is 16 lossy classes, not the nine T081 named. The seven T081 missed are CmFile, CmFolder, LexEntryType, LexReference, MoStemMsa, PhFeatureConstraint, PhSegRuleRHS",
+      "warnings": [
+        "PhNCFeatures appears in every pairs failure list at difference 0 MATCHED -- that is the duplicate-identity half (T082 038-NK-P3), deliberately excluded from Phase 10"
+      ]
     }
   ],
   "concerns": [
@@ -937,6 +1485,34 @@
     },
     {
       "note": "Roster JSON shape differs from the briefing in two ways the T009 accessor now tolerates: (1) the class-name key is \"class\", not \"object_class\" (data-model.md documents this correctly; it was my briefing that was wrong); (2) uniqueness_caveat is a dict on the ReversalIndexEntry row while NaturalKeyRosterEntry types it Optional[str], so the projection renders non-str values as stable sorted JSON rather than rejecting an otherwise-valid row on a shape difference alone.",
+      "step": "implement"
+    },
+    {
+      "note": "Both new registry rows rest on a single corpus. Mbugwe LizzieHC practice is the only sanctioned project with any MoAffixProcess rules at all (Ejagham Mini 0, Esperanto 0 of 15318 entries), so the create path and both closure rows cannot be shown to generalise. Recorded in research.md R5; a second corpus with affix process rules would settle it and none exists.",
+      "step": "implement"
+    },
+    {
+      "note": "T102 is now load-bearing for the next registration. This pass declined to extend the census equality chain (compare_census_to is None for T076) because the chain is already behind the instrument; anyone adding a row after this has the same problem and no link to compare against.",
+      "step": "implement"
+    },
+    {
+      "note": "ruff on categories.py rose 176 -> 184. All 8 are UP031 printf-style formatting, matching the modules dominant idiom (27 already present), so no new finding class -- but the repos usual claim of ruff UNCHANGED does not hold for this file this pass.",
+      "step": "implement"
+    },
+    {
+      "note": "T081 (P5 gate) is blocked on a re-census that is not reproducible as measured -- the source projects have moved off their pinned digests and Ngoreme Target must never be restored -- and on a scoping decision no task in this feature owns (the FsClosedValue / FsFeatStruc / CmPossibility / phonological-context / PhCode / MoAffixProcess residue). Not unfinished code.",
+      "step": "implement"
+    },
+    {
+      "note": "T082 needs live-project work a resume cannot self-authorise: 038-NK-P2 needs a duplicate-name creation attempt in the throwaway Target project, and 038-NK-P3 needs the same non-reproducible re-census as T081. T085 (merge) is gated behind both.",
+      "step": "implement"
+    },
+    {
+      "note": "How census-evidence.mds 21 duplicate phoneme names arose is still unexplained. The obvious candidate -- flexicons ws-scoped Create guard being bypassed by naming another writing system -- was tested and did NOT reproduce; the guard held. Open.",
+      "step": "implement"
+    },
+    {
+      "note": "MoStemMsa reads -1 on T078s ngoreme pair but P1 is recorded satisfied on CENSUS-20260820-114752. One of the two readings is stale and it is a Phase 1 class. T118 settles it first; until then P1s standing is not certain on the T078 corpus.",
       "step": "implement"
     }
   ],
@@ -1071,6 +1647,10 @@
         "T067",
         "T068",
         "T069"
+      ],
+      "tests": [
+        "tests/integration/test_038_closure_edge_audit.py::test_only_the_confirmed_relationships_are_registered",
+        "tests/integration/test_038_closure_edge_audit.py::test_the_process_rule_edges_come_from_the_registry_and_nowhere_else"
       ]
     },
     "FR-019": {
@@ -1105,6 +1685,10 @@
       "tasks": [
         "T053",
         "T054"
+      ],
+      "tests": [
+        "tests/integration/test_038_process_rules.py::test_t077_every_sequence_arrived_with_its_members_intact",
+        "tests/unit/test_038_process_rules.py::test_a_shared_phon_data_context_is_co_created_and_wired"
       ]
     },
     "FR-025": {
@@ -1114,6 +1698,10 @@
         "T055",
         "T056",
         "T057"
+      ],
+      "tests": [
+        "tests/unit/test_038_process_rules.py::test_an_unexercised_shared_context_class_is_not_co_created",
+        "tests/unit/test_038_process_rules.py::test_a_shared_context_carrying_feature_constraints_skips"
       ]
     },
     "FR-014": {
@@ -1129,15 +1717,37 @@
       "title": "Process-rule references resolve to the destination items matched under FR-001 and FR-002",
       "tasks": [
         "T060"
+      ],
+      "tests": [
+        "tests/unit/test_038_process_rules.py::test_a_shared_context_whose_referent_is_absent_still_skips"
+      ]
+    },
+    "SC-006": {
+      "tests": [
+        "tests/integration/test_038_process_rules.py::test_t077_all_eighteen_rules_transfer",
+        "tests/integration/test_038_process_rules.py::test_t077_p4_is_now_satisfied_in_both_halves"
+      ]
+    },
+    "SC-008": {
+      "tests": [
+        "tests/unit/test_038_process_rules.py::test_a_shared_context_already_present_is_not_co_created_twice"
+      ]
+    },
+    "SC-010": {
+      "tests": [
+        "tests/unit/test_038_process_rules.py::test_the_co_created_context_is_reported_on_the_input_spec"
       ]
     }
   },
   "step_summaries": {
     "tasks": {
       "summary": "85 tasks in 9 phases (Setup, Foundational, then 6 story phases ordered by verifiability -- US2 census first as the acceptance instrument, then US1, US4 || US5a, US3, US5b -- plus Polish); waves serialized on categories.py and models.py; 2 hard external gates (035 roster append, 037 landing)"
+    },
+    "implement": {
+      "summary": "T113 closed -- the report-only roster gains a completeness check and the five governed classes it was silently short of; T081/T082/T085 remain blocked on live-project work and a scoping decision"
     }
   },
-  "currentTask": "T064",
+  "currentTask": "T081",
   "task_summaries": {
     "T001": {
       "status": "DONE",
@@ -1313,6 +1923,77 @@
       "files": [
         "tests/integration/test_object_census.py"
       ]
+    },
+    "T076": {
+      "status": "DONE",
+      "did": "Condition-4 shared PhPhonData.ContextsOS contexts are co-created (no category enumerates them, so a closure edge would repeat T089); the referent edge one hop out is registered as PROCESS_RULE_TO_PHONEME / PROCESS_RULE_TO_NATURAL_CLASS on audited single-corpus evidence",
+      "files": [
+        "src/gramtrans/Lib/categories.py",
+        "src/gramtrans/Lib/models.py",
+        "debug/audit038_t076_process_contexts.py",
+        "debug/audit038_closure_edges.py",
+        "debug/run038_closure_census.py",
+        "tests/unit/test_038_process_rules.py",
+        "tests/unit/test_038_closure.py",
+        "tests/unit/test_038_foundational.py",
+        "tests/integration/test_038_closure_edge_audit.py"
+      ]
+    },
+    "T077": {
+      "status": "DONE",
+      "did": "Live corpus acceptance re-run: 18/18 MoAffixProcess transfer, 6/6 sequences arrive with identical MembersRS, 6/6 shared contexts co-created; new artifacts beside T063's rather than overwriting the T102 chain",
+      "files": [
+        "debug/run038_phase6_live.py",
+        "debug/verify038_t077_membersrs.py",
+        "tests/integration/test_038_process_rules.py",
+        "tests/integration/_snapshots/process-rules-038-t077-mbugwe.json",
+        "tests/integration/_snapshots/census-038-t077-mbugwe-phase6.json",
+        "tests/integration/_snapshots/t077-membersrs-completeness.json"
+      ]
+    },
+    "T064": {
+      "status": "DONE",
+      "did": "Census gate predicate P4 satisfied in both halves (MoAffixProcess 18/18 MATCHED, MoAffixAllomorph 124/124); exit 3 stands on PhNCFeatures, proved outside phase 4's scope the way T086 amended T075",
+      "files": [
+        "tests/integration/test_038_process_rules.py"
+      ]
+    },
+    "T078": {
+      "status": "DONE",
+      "did": "Post-037 baseline re-census (3 pairs, read-only, exit 3 each, reproduces predecessors 75/75 rows) and R7 report-only set re-scoped class by class; filed T107 for PhSimpleContextBdry",
+      "files": [
+        "tests/integration/test_object_census.py",
+        "tests/integration/_snapshots/census-038-t078-ejagham.json",
+        "tests/integration/_snapshots/census-038-t078-ngoreme.json",
+        "tests/integration/_snapshots/census-038-t078-mbugwe.json",
+        "tests/integration/_snapshots/process-rules-038-t078-corpus.json",
+        "src/gramtrans/Lib/categories.py",
+        "tests/unit/test_038_process_rules.py",
+        "tests/integration/test_038_process_rules.py",
+        "specs/038-transfer-fidelity-gaps/tasks.md",
+        "specs/038-transfer-fidelity-gaps/journal/T078-the-baseline-that-was-already-on-disk.md"
+      ]
+    },
+    "T113": {
+      "status": "DONE",
+      "did": "Closed the report-only roster's completeness blind spot: report_only_roster_defects gains check 5 (governed roster is a subset of the residue roster, with its carve-out itself guarded), and the five missing classes Text/TextTag/ReversalIndex/ReversalIndexEntry/CmPicture were added",
+      "files": [
+        "src/gramtrans/Lib/models.py",
+        "src/gramtrans/Lib/report.py",
+        "tests/unit/test_038_t079_report_only_residue.py",
+        "tests/integration/test_object_census.py",
+        "specs/038-transfer-fidelity-gaps/journal/T113-a-guard-that-only-looks-one-way.md"
+      ]
+    },
+    "T123": {
+      "status": "DONE",
+      "did": "T123 measured closed two-sided on live restore-bounded re-censuses: (a) subsense MSA wiring -- destination null MsaRA 13 == source 13, MoStemMsa 1954=1954, no duplicate (t123e); (b) LexEntryType misclassification -- 13/13 and 12/12 with LexEntryInflType 3/3 and 4/4, GUIDs unchanged (t123d)",
+      "files": [
+        "src/gramtrans/Lib/categories.py",
+        "tests/unit/test_038_t123a_subsense_msa_wiring.py",
+        "tests/unit/test_038_t123_entry_type_factory_choice.py"
+      ]
     }
-  }
+  },
+  "last_action": "T113 closed; 038-NK-P2 settled live (REFUTED); Phase 10 authored for the P5 residue -- 90/105 tasks, 15 open"
 }
