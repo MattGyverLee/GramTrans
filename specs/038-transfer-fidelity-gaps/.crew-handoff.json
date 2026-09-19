@@ -1,20 +1,13 @@
 {
   "feature": "038-transfer-fidelity-gaps",
-  "status": "needs_human",
-  "last_cycle": 17,
-  "spurts_completed": 7,
+  "status": "in_progress",
+  "last_cycle": 19,
+  "spurts_completed": 8,
   "tasks_done": [
-    "T082",
-    "T119",
-    "T120",
-    "T123",
-    "T127",
-    "T128",
-    "T129",
-    "T130"
+    "T081"
   ],
-  "next_checkpoint": "T081 only, and P5 is now 1/2/3. Three human rulings stand between it and green; none of the remaining failures is an unattributed loss. Then T085.",
-  "next_entry": "Spurt 6 moved this gate with a TRANSFER FIX for the first time. PhPhoneme.FeaturesOA never reached the natural-key-matched half (T121 predicted exactly this shape for CodesOS and left FeaturesOA behind); the tail pass closed PhPhoneme.Features on all three pairs and took FsFeatStruc -21 -> 0 MATCHED on ejagham. A sixth accounting lane retired CmPossibility entirely (302/271/301 -> 0) by stamping the baseline_gross double subtraction as STARTER_CONTENT, gated on a per-sub-key table reconciling to difference_raw exactly -- it fires on that one row and no other. P5 3/3/4 -> 1/2/3 on census-038-t135-*. Unchecked: T081, T085. See blocker.rulings_needed.",
+  "next_checkpoint": "T085 only: merge 038-transfer-fidelity-gaps to main and remove the worktree. T081 CLOSED 2026-09-18 by human ruling on route (iv) -- the one blocking object filed as GramTrans issue #60.",
+  "next_entry": "HUMAN RULING 2026-09-18 (cycle 19): route (iv). The single mbugwe PhSimpleContextNC e6a93fd6 is NOT deferred to a successor feature and NOT fixed in 038 -- it is filed as https://github.com/MattGyverLee/GramTrans/issues/60 and T081 closes on attribution to that issue. Issue 60 carries BOTH halves: the uncreated PhSimpleContextNC and the more serious one the object census structurally cannot see -- dest PhSequenceContext 1f36ff23 survives as an empty self-closed <rt/> with no <Members> at all, having lost both members including the one whose object IS present. Probable location per unreferenced-feature-constraint-ruling.md section 6: the un-descended PhSequenceContext.Members / PhIterationContext.MemberRA descent. All 150 rows except T085 are now checked.",
   "updated": "2026-09-18",
   "spurt_log": [
     {
@@ -104,6 +97,25 @@
       ],
       "commits_worktree": [],
       "ruling": "T081 STAYS UNCHECKED (not checked this spurt). FsFeatStruc and FsClosedValue RULED 2026-09-18 -- deferred to specs/040-feature-structure-residue/spec.md (040 filed), not solved in 038. PhSimpleContextNC MEASURED 2026-09-18, not ruled -- verdict NAMED-AND-ISOLATED, object e6a93fd6-ecfc-45a5-81df-497fba40766e owned by the present PhPhonData singleton, referencing an intact, unchanged PhNCFeatures natural class. The attribution probe (cycle17-programmer-attribution-probe.md) confirmed the two deferral stamps move P5 1/2/3 -> 0/0/1 with totals.total_shortfall BIT-IDENTICAL before and after on all three pairs (3932 / 66938 / 32861) -- nothing laundered, only unexplained_shortfall moves (19->0, 153->0, 995->1). One object blocks the row: mbugwe's PhSimpleContextNC -1, whose source-side referencedness has not yet been read. See blocker.routes_out for the three ways out and which to try first."
+    },
+    {
+      "spurt": 8,
+      "name": "refute-the-token-route",
+      "cycles": 1,
+      "checkpoint": "the one blocking object's source-side referencedness MEASURED, so T081's route is chosen on evidence rather than on a ruling",
+      "reached": true,
+      "commits_main": [],
+      "commits_worktree": [],
+      "ruling": "T081 STAYS UNCHECKED. The measurement came back NEGATIVE for the cheap route and that is the spurt's whole value. Verdict SOURCE_REFERENCED (cycle18-verification-source-reference.md, read-only XML parse, no project opened, no writes; both hashes re-verified against cycle 17 -- source 3fb29a29 MATCH, dest dd97c8c8 MATCH, no drift). Two objsur occurrences of e6a93fd6-ecfc-45a5-81df-497fba40766e in the mbugwe source, distinguished by t: t=o is the PhPhonData.Contexts ownership (be765e3e, already known from cycle 17); t=r is a GENUINE referrer, PhSequenceContext.Members 1f36ff23-743b-4ee0-8078-18a38f492a30, which is itself owned by PhSegRuleRHS 32eb9ca9 via RightContext. Path: PhSegRuleRHS.RightContext -> PhSequenceContext.Members -> target. So the object is NOT source-orphaned and the UNREFERENCED_IN_SOURCE precedent does not reach it. Two-way class partition (THE BASELINE for the fix): PhSimpleContextNC source 104 = 59 referenced + 45 unreferenced; dest 103 = 58 + 45. The 45 unreferenced GUIDs are IDENTICAL in both files -- every source orphan of this class transferred untouched, so the defect is not orphan-handling. The entire -1 sits inside the referenced 59 -> 58 and the sole missing GUID is the target. PhIterationContext bodies scanned separately: target absent from all. INCIDENTAL, flagged not chased, and now the leading fix lead: in the destination PhSequenceContext 1f36ff23 survives as an empty self-closed rt element with no Members element at all -- it lost BOTH members' membership entries, not only the target's."
+    },
+    {
+      "spurt": 9,
+      "name": "close-by-ruling",
+      "cycles": 1,
+      "checkpoint": "T081 closed; only T085 remains",
+      "reached": true,
+      "commits_main": [],
+      "ruling": "HUMAN RULING 2026-09-18, three parts. (1) FsFeatStruc and (2) FsClosedValue DEFERRED to feature 040, filed with their measured evidence -- no reversal of 0664ae7, no derived_from pointer. (3) The last object FILED as issue #60 rather than fixed in 038 or deferred to 040, and T081 CLOSED on attribution to it -- lex-lead route (iv), which lex-lead listed without recommending. Measured before the ruling was taken rather than after: cycle 17 named the object, cycle 18 proved it SOURCE_REFERENCED and so refuted the cheap token route. The attribution probe took P5 1/2/3 -> 0/0/1 with total_shortfall bit-identical, which is what makes the close honest rather than cosmetic. Issue 60 carries a second defect the census cannot see at all: dest PhSequenceContext 1f36ff23 arrives as an empty <rt/> with no Members, having lost both, so the rule is referentially broken while the gate reads -1."
     }
   ],
   "task_queue": [
@@ -116,14 +128,14 @@
     {
       "id": "T081",
       "kind": "gate",
-      "state": "blocked",
-      "note": "SIXTH AMENDMENT LANDED this spurt (tasks.md, checkbox stays [ ] -- do not check it). Acceptance clause moved from 'no unexplained difference remaining' to 'no UNATTRIBUTED loss remaining'. FsFeatStruc and FsClosedValue RULED and deferred to specs/040-feature-structure-residue/spec.md; PhSimpleContextNC MEASURED as NAMED-AND-ISOLATED. P5 moved 1/2/3 -> 0/0/1. BLOCKED on exactly one object: mbugwe PhSimpleContextNC -1 (e6a93fd6-ecfc-45a5-81df-497fba40766e), a named, isolated create-path loss under a present owner, attributed to nothing yet. See top-level blocker.routes_out -- try the source-side referencedness measurement FIRST, before reaching for a new ruling."
+      "state": "blocked_needs_human",
+      "note": "CHECKBOX STAYS [ ] -- do not check it. P5 0/0/1 under the sixth amendment ('no UNATTRIBUTED loss remaining'). FsFeatStruc and FsClosedValue are RULED and deferred to specs/040-feature-structure-residue/spec.md. BLOCKED on exactly one object: mbugwe PhSimpleContextNC -1 (e6a93fd6-ecfc-45a5-81df-497fba40766e), now MEASURED SOURCE_REFERENCED (cycle 18) and therefore NOT attributable by accounting. The remaining work is a create-path TRANSFER FIX on a write path plus a live-LCM re-census -- full crew cycle, human-authorised, never unattended. Do NOT reopen the token-extension route: it is refuted, not merely untried."
     },
     {
       "id": "T085",
       "kind": "merge",
-      "state": "queued",
-      "note": "GATED ON T123. Carries a PRE-IDENTIFIED MERGE HAZARD recorded on its tasks.md row (main 4818480): git merge main into 038-transfer-fidelity-gaps conflicts in tests/integration/harness/full_run.py and debug/run_fullcopy_sweep.py (feature-035 divergence, unrelated to 038). Resolve file-by-file with feature-035's owner. NEVER -X ours: that records a merge asserting main's version was incorporated and would silently discard feature-035's work at merge-back. The same merge retires the stale-mirror trap in carried_forward."
+      "state": "blocked",
+      "note": "UNCHECKED and BLOCKED ON T081 BY ITS OWN RECORDED PRECONDITION: tasks.md:610, GATED ON PHASE 10 (2026-08-26), states that because the residue blocking T081 is now 038's own work (T114-T125), 'validated' CANNOT mean 'validated except for P5'. T085 therefore also waits on T124/T125 and on T082's remaining half 038-NK-P3. PRE-IDENTIFIED MERGE HAZARD, carry forward intact (recorded on the tasks.md row, main 4818480): git merge main into 038-transfer-fidelity-gaps CONFLICTS in tests/integration/harness/full_run.py and debug/run_fullcopy_sweep.py -- feature-035 divergence, entirely unrelated to 038. It was attempted, conflicted, and correctly ABORTED rather than forced. The two files need OPPOSITE-DIRECTION resolutions and must be resolved file-by-file with feature-035's owner. NEVER -X ours, and never take the branch side wholesale: that records a merge asserting main's version was incorporated and would silently DISCARD feature-035's changes to both files -- no conflict, no trace. The same pass must also handle the branch's stale specs/ snapshot (it lacks the UNREFERENCED_IN_SOURCE schema/prose from main 8972d9a) and retire the STALE-MIRROR TRAP in carried_forward."
     },
     {
       "id": "038-WS-PROVISIONING",
@@ -148,6 +160,18 @@
       "kind": "instrument",
       "state": "filed",
       "note": "Make run038_t124_recensus.py FAIL LOUD when a source hash leaves its pin -- the script's own docstring assumes every source is pinned, and nothing enforced it. Also re-establish or RETIRE the mbugwe T078 comparand, and CHECK (do not assume) that ngoreme is still on pin. Third instrument failure of spurt 4; the standing rules now cover tools as well as code."
+    },
+    {
+      "id": "T081-PSCNC-FIX",
+      "kind": "code",
+      "state": "awaiting_authorization",
+      "note": "THE ONE REMAINING BLOCKER, promoted to its own row so it is not mistaken for an accounting task. Fix the create path so a source PhSimpleContextNC that is REFERENCED from a rule context is created in the destination PhPhonData.Contexts pool AND rewired into its referrer's PhSequenceContext.MembersRS. Probable location (already suspected, now confirmed with a named object): the UN-DESCENDED PhSequenceContext.Members / PhIterationContext.MemberRA descent flagged in contracts/unreferenced-feature-constraint-ruling.md section 6 and in this file's process_notes entry on T120's non-clearance. Code neighbourhood, worktree D:/Github/_Projects/_LEX/GramTrans-038-transfer-fidelity-gaps @ 5ef10f6 (ANCHOR BY FUNCTION NAME per RULE 4 -- categories.py is 16,022 lines on the branch vs 10,165 on main): phonological_rules_dependencies and its nested _collect_cell, _phon_rule_fingerprint and its nested _cell_fp, phonological_rules_plan_action, and the _copy_context_cell OA-context copier. MEASURE THE CLASS-WIDE SCOPE BEFORE FIXING (RULE 1: a static mechanism is not a diagnosis until its predicted population is COUNTED) -- the cycle-18 two-way partition is the baseline: source 104 = 59 referenced + 45 unreferenced, dest 103 = 58 + 45, the 45 orphans identical in both. Acceptance is TWO-SIDED, per T123's lesson: the count must move 58 -> 59 AND the referrer PhSequenceContext 1f36ff23 must stop being an empty self-closed rt element and carry its Members again. A count-only gate passes a half-done fix -- that has already happened twice on this feature."
+    },
+    {
+      "id": "040-EMITTER-CAVEAT",
+      "kind": "inherited",
+      "state": "attributed_to_040",
+      "note": "INHERITED BY specs/040-feature-structure-residue, carried forward from the cycle-17 attribution probe's 'Blocking caveat for the amended clause' (reviews/cycle17-programmer-attribution-probe.md). Appending an accounted_for LINE ALONE MOVES NOTHING: _phase_5 (src/gramtrans/Lib/census.py:4883, worktree @ 5ef10f6) reads the STORED unexplained_shortfall, so a line-only edit leaves it stale -- all three pairs stay at 1/2/3 failures AND the artifact becomes INVALID (section 7 / R-5, one failure per stamped row). The probe's measured 0/0/1 therefore requires an EMITTER change: recompute unexplained_counts per row, plus build_totals, verdict, exit_code and verdict_human_label. The deferral clause is written OVER AN EMITTER CHANGE, NOT A STAMP -- 040 must not assume the stamp is sufficient. Ancillary, and 040's to use: neither FsFeatStruc nor FsClosedValue is on GOVERNED_BY_OTHER_FEATURE_CLASSES or RULED_RESIDUE_CLASSES and neither is phase-owned, so a future roster entry clears T109 LOCK 1 and T081 LOCKs 1-2 by construction. Also attributed to 040: PartOfSpeech.ReferenceForms and FsComplexValue.Value residue, and the derived_from cascade-accounting design."
     }
   ],
   "carried_forward": [
@@ -174,27 +198,24 @@
     "ARTIFACT LOCATION TRAP: census-038-t126-*.json and probes/t126/*.json do NOT exist on main -- they are committed only on the 038-transfer-fidelity-gaps branch. Read with: git show 038-transfer-fidelity-gaps:<path>.",
     ".specify/extensions/companion/commands/speckit.companion.resume.md is intentionally left dirty on main.",
     "T120's ruling is NOT a clearance on two points, deliberately recorded rather than closed: four flagged-not-reconciled contradictions in process-morphology-create-path.md, and a latent _collect_nc_constraints / PhIterationContext.MemberRA gap whose measured cost is 0 on this corpus TODAY.",
-    "Resolved false alarm, do not re-investigate: an editor reported _PROBE_OUT undefined at run038_t124_recensus.py:388-389 from a mid-edit capture. The file compiles."
+    "Resolved false alarm, do not re-investigate: an editor reported _PROBE_OUT undefined at run038_t124_recensus.py:388-389 from a mid-edit capture. The file compiles.",
+    "RULE 3 CONFIRMED AGAIN, and cheaply: cycle 18 spent ONE read-only XML pass to kill a route that a ruling would have taken a human decision to get wrong. A NEGATIVE measurement is a result -- record the refutation in the handoff so no later spurt re-offers the dead route.",
+    "Cycle 18's t-attribute discipline is reusable: an objsur hit is NOT a referrer until its t attribute is read. t=o is the ownership edge (the object's own owner) and t=r is a genuine reference. Counting raw objsur occurrences would have called the cycle-17 OWNER a referrer and produced SOURCE_REFERENCED for the wrong reason."
   ],
   "blocker": {
-    "what": "Cycle 16's three rulings_needed are ALL DISCHARGED as of 2026-09-18. FsFeatStruc and FsClosedValue were RULED (deferred to specs/040-feature-structure-residue/spec.md, not solved here) and PhSimpleContextNC was MEASURED (NAMED-AND-ISOLATED, cycle17-verification-phsimplecontextnc.md). T081 P5 moved 1/2/3 -> 0/0/1. The ONLY thing left between T081 and green is the single mbugwe PhSimpleContextNC object.",
-    "p5_failures_now": {
-      "ejagham (t135)": [],
-      "ngoreme (t135)": [],
-      "mbugwe (t135)": [
-        "PhSimpleContextNC -1 (object e6a93fd6-ecfc-45a5-81df-497fba40766e, owned by PhPhonData be765e3e-..., referencing PhNCFeatures 3ab6ae6a-... 'Short vowels' which IS present unchanged in the destination -- NAMED-AND-ISOLATED, not yet attributed to any ruling or fix)"
-      ]
+    "what": "NOT BLOCKED ON A RULING ANY MORE. T081 closed 2026-09-18 by human ruling on route (iv), attributing its last object to GramTrans issue #60. The only open row is T085, the merge, and what it needs is execution plus care -- not a decision.",
+    "resolved_this_cycle": {
+      "FsFeatStruc": "RULED 2026-09-18 -- deferred to specs/040-feature-structure-residue/spec.md. 0664ae7 stands; nothing rostered.",
+      "FsClosedValue": "RULED 2026-09-18 -- deferred to specs/040-feature-structure-residue/spec.md. No derived_from pointer built, no fidelity-census.md 7.1 amendment in 038.",
+      "PhSimpleContextNC": "MEASURED cycle 17 (NAMED-AND-ISOLATED) then cycle 18 (SOURCE_REFERENCED), then RULED 2026-09-18 -- filed as issue #60, T081 closed on attribution."
     },
-    "discharged_rulings": {
-      "FsFeatStruc": "RULED 2026-09-18 -- deferred to specs/040-feature-structure-residue/spec.md (PartOfSpeech.ReferenceForms and FsComplexValue.Value residue carried over, not solved in 038).",
-      "FsClosedValue": "RULED 2026-09-18 -- deferred to specs/040-feature-structure-residue/spec.md (the derived_from cascade-accounting design, carried over, not solved in 038).",
-      "PhSimpleContextNC": "MEASURED 2026-09-18 (not ruled) -- verdict NAMED-AND-ISOLATED. Every sibling in the family MATCHED (PhNCFeatures 119->119, PhNCSegments 0->0, owning PhRegularRule 37->37); the missing object's owner and referenced natural class both transferred intact. This is a create-path omission report, not a closure -- see the new blocker below for what still has to happen."
-    },
-    "routes_out": {
-      "route_i_measure_first": "TRY THIS FIRST, per crew RULE 3 (measure before ruling): read whether e6a93fd6-ecfc-45a5-81df-497fba40766e is referenced by ANYTHING at all in the SOURCE ('Mbugwe LizzieHC practice'), the same source-side referencedness read T120(a) used for PhFeatureConstraint. If it is source-orphaned, this falls under the existing contracts/unreferenced-feature-constraint-ruling.md precedent for source-orphaned shared-pool objects and needs NO new ruling -- T081 can close on the strength of a precedent already on the books.",
-      "route_ii_human_ruling": "If route (i) shows the object IS referenced in the source, a human ruling is needed to extend UNREFERENCED_IN_SOURCE (or an equivalent token) to PhSimpleContextNC -- this would be a new extension, not a reuse of the existing precedent, and should not be assumed without the measurement.",
-      "route_iii_create_path_fix": "If referenced in the source, the alternative to a ruling is a create-path fix for the one-object PhPhonData.Contexts omission (the shared, flat, project-level collection every PhPhonContext subtype writes into) -- a TRANSFER FIX, not an accounting move."
-    },
-    "note_on_the_gate": "The gross-subtraction lane is the first mechanism that lets 5.2s long-standing observation reach _phase_5 rather than only the verdict cap. It is deliberately witness-gated rather than basis-gated: off by ONE object in the per-sub-key table and it emits nothing. Applied to the whole t134 corpus it fired on CmPossibility and no other row, which is the evidence that it is not a blanket amnesty."
+    "explicitly_not_an_option": "Extending UNREFERENCED_IN_SOURCE to PhSimpleContextNC is REFUTED and must not be rediscovered as untried: cycle 18 measured the object as referenced from a live rule's right-hand context (PhSegRuleRHS 32eb9ca9 .RightContext -> PhSequenceContext 1f36ff23 .Members -> e6a93fd6), so the token would excuse a genuine loss. contracts/unreferenced-feature-constraint-ruling.md section 4 declines PhSimpleContext* independently, so it was always a new grant, never a reuse of precedent.",
+    "what_the_close_does_not_claim": [
+      "Issue 60 is a LIVE DEFECT in the transfer. 038 ships with at least one phonological rule whose right-hand context is incomplete in the mbugwe pair. That is the cost of the ruling and it is recorded, not hidden.",
+      "FsClosedValue (-19 / -83 / -660) and FsFeatStruc (-70 / -396) are DEFERRED, not fixed. Feature 040.",
+      "The emitter still emits NONE of this cycle attributions. _phase_5 reads the STORED unexplained_shortfall, so an accounted_for line alone moves nothing and invalidates the artifact unless unexplained_counts, build_totals, verdict, exit_code and verdict_human_label are recomputed with it. Feature 040."
+    ],
+    "p5_at_close": "0 / 0 / 1 on census-038-t135-{ejagham,ngoreme,mbugwe} with the deferrals stamped IN MEMORY; totals.total_shortfall bit-identical before/after (3932 / 66938 / 32861) and verdict_class holding at SHORTFALL on every stamped row -- the proof nothing was laundered. The remaining 1 is issue #60.",
+    "next_action_exact": "T085. Merge 038-transfer-fidelity-gaps to main, file-by-file on the two known conflicts: debug/run_fullcopy_sweep.py takes MAIN rewrite plus the branch 26 lines; tests/integration/harness/full_run.py takes the BRANCH 327 lines plus main 26. NEVER -X ours and never one side wholesale -- that silently discards feature-035. specs/ conflicts: MAIN wins. Do NOT git checkout -- the two deliberately dirty contract files (census-artifact.schema.json, fidelity-census.md); the merge is what retires the STALE-MIRROR TRAP. Then remove the worktree."
   }
 }

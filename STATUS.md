@@ -1,5 +1,119 @@
 # GramTrans — Session Handoff
 
+## Session log — 2026-09-18g (038: T081 CLOSED by ruling — last object filed as issue #60; T085 merge is all that remains)
+
+**The human ruled, and 038's census gate is closed.** Three decisions on 2026-09-18, all
+taken after the measurements rather than instead of them:
+
+1. **`FsFeatStruc` — DEFERRED** to `specs/040-feature-structure-residue/spec.md`. Commit
+   `0664ae7` stands; `PartOfSpeech.ReferenceForms` and `FsComplexValue.Value` stay
+   unrostered. Residue −70 ngoreme / −396 mbugwe (334 unexplained) travels with its evidence.
+2. **`FsClosedValue` — DEFERRED** to the same feature. No `derived_from` pointer built, no
+   `fidelity-census.md` 7.1 amendment in 038. Residue −19 / −83 / −660. The cascade evidence
+   (16.0 / 19.0 / 18.0 closed values per phoneme structure vs corpus averages 3.70 / 1.43 /
+   1.71) is carried into 040 as its starting data.
+3. **The last object — FILED, not fixed and not deferred.**
+   [GramTrans issue #60](https://github.com/MattGyverLee/GramTrans/issues/60). T081 closes on
+   attribution to that issue — lex-lead's own route (iv), which it listed without recommending.
+
+**Why the close is honest rather than cosmetic.** The attribution probe
+(`reviews/cycle17-programmer-attribution-probe.md`) took P5 from **1/2/3 to 0/0/1** with
+`totals.total_shortfall` **bit-identical** before and after (3932 / 66938 / 32861) and
+`verdict_class` holding at `SHORTFALL` on every stamped row. Nothing stopped being counted
+to reach green. `count` must be the row's `unexplained_shortfall`, not the full difference
+— the full difference over-accounts and is `CENSUS_ERROR` under R-2.
+
+**What issue #60 carries, and the half worth more than the −1.** Cycle 18 measured the
+object as `SOURCE_REFERENCED` — live in `PhSegRuleRHS 32eb9ca9 .RightContext ->
+PhSequenceContext 1f36ff23 .Members -> e6a93fd6` — which refuted the cheap token route
+before it could be taken. But the incidental finding is the serious one: in the destination
+`PhSequenceContext 1f36ff23` survives as an **empty self-closed `<rt/>` with no `<Members>`
+at all**, having lost *both* members' membership entries including the one whose object *is*
+present. **An object census structurally cannot see this.** It counts objects, so it reads
+`−1`; the rule is referentially broken while the gate reads one short. Same shape as
+flexicon issue #222. Probable location, already flagged in
+`contracts/unreferenced-feature-constraint-ruling.md` section 6: the un-descended
+`PhSequenceContext.Members` / `PhIterationContext.MemberRA` descent.
+
+**What this close does NOT claim.** Issue #60 is a live defect — 038 ships with at least one
+phonological rule whose right-hand context is incomplete on the mbugwe pair, and that is the
+recorded cost of the ruling. The two deferred classes are not fixed. The emitter emits none
+of these attributions: `_phase_5` reads the **stored** `unexplained_shortfall`, so appending
+an `accounted_for` line alone moves nothing and *invalidates* the artifact unless
+`unexplained_counts`, `build_totals`, `verdict`, `exit_code` and `verdict_human_label` are
+recomputed with it. All three are feature 040's inheritance.
+
+**State: 149 of 150 rows checked. T085 (merge + worktree removal) is the only one left**, and
+it needs execution, not a decision. Its hazard is unchanged and still governs:
+`debug/run_fullcopy_sweep.py` takes **main's** rewrite plus the branch's 26 lines;
+`tests/integration/harness/full_run.py` takes the **branch's** 327 lines plus main's 26 —
+opposite directions, file by file, **never `-X ours`** and never one side wholesale, or
+feature-035's work vanishes with no conflict and no trace. `specs/` conflicts: main wins. Do
+not `git checkout --` the two deliberately dirty contract files; the merge is what retires the
+STALE-MIRROR TRAP.
+
+
+## Session log — 2026-09-18f (038: cycle 18 REFUTED the cheap route — T081's last object is a SOURCE-REFERENCED create-path loss; STOP, needs human)
+
+Cycle 18 of the crew loop, one read-only task, and it came back **negative for the route
+we wanted**. That is the spurt's entire value and it was worth one read.
+
+**The measurement.** `reviews/cycle18-verification-source-reference.md` (read-only XML
+parse; no project opened, no writes; both hashes re-verified against cycle 17 — source
+`3fb29a29` MATCH, dest `dd97c8c8` MATCH, no drift). Verdict **SOURCE_REFERENCED**.
+`e6a93fd6-ecfc-45a5-81df-497fba40766e` has two `objsur` occurrences in the mbugwe source,
+distinguished by `t`: the `t="o"` hit is the `PhPhonData.Contexts` ownership already known
+from cycle 17 (`be765e3e`), and the `t="r"` hit is a **genuine referrer** —
+`PhSequenceContext.Members` `1f36ff23-743b-4ee0-8078-18a38f492a30`, itself owned by
+`PhSegRuleRHS 32eb9ca9` via `RightContext`. Full path:
+`PhSegRuleRHS.RightContext -> PhSequenceContext.Members -> e6a93fd6`. The missing object is
+reachable from a **live phonological rule's right-hand context**.
+
+**So the token route is dead, and rightly so.** Route (i) — reuse the existing
+`UNREFERENCED_IN_SOURCE` precedent — is **closed negative**. Route (ii) — extend that token
+(or an equivalent) to `PhSimpleContextNC` — is **WITHDRAWN, not merely untried**: extending
+it here would excuse a genuine data loss on a live rule, and
+`contracts/unreferenced-feature-constraint-ruling.md` section 4 declines `PhSimpleContext*`
+on its own terms anyway. **Do not re-offer route (ii) in a later spurt.**
+
+**The two-way partition is the baseline any fix must beat.** `PhSimpleContextNC`: source
+104 = 59 referenced + 45 unreferenced; dest 103 = 58 + 45. The 45 unreferenced GUIDs are
+**identical in both files** — every source orphan of this class transferred untouched, so
+the defect is *not* orphan-handling. The whole −1 sits inside the referenced 59 -> 58 and
+the sole missing GUID is the target. `PhIterationContext` bodies were scanned separately:
+target absent from all.
+
+**The fix now has a probable location, not just a symptom.** The cycle-18 incidental —
+flagged, not chased — is that in the destination `PhSequenceContext 1f36ff23` survives as
+an empty self-closed `<rt/>` with **no `<Members>` element at all**: it lost *both* members'
+membership entries, not only the target's. That is exactly the suspicion
+`contracts/unreferenced-feature-constraint-ruling.md` section 6 recorded as UN-DESCENDED
+(`PhSequenceContext.Members` / `PhIterationContext.MemberRA`), now confirmed with a named
+object.
+
+**STOPPING HERE — `needs_human`.** The only live route is (iii), a create-path transfer fix
+plus the `PhSequenceContext.MembersRS` rewire, which is real code on a **write path** and
+needs a full crew cycle and a live-LCM gate against a restored throwaway `Target`. That is
+not something a Ralph iteration may do unattended. The human must authorise either the fix
+and its restored-Target re-census, or (fallback) deferring the one object to a successor
+feature the way `FsFeatStruc`/`FsClosedValue` went to 040.
+
+**T081 and T085 both remain UNCHECKED.** T085 stays blocked on T081 by its own recorded
+precondition (`tasks.md` T081/T085 rows, GATED ON PHASE 10, 2026-08-26: "validated" cannot
+mean "validated except for P5"), and it still carries the feature-035 merge hazard —
+`tests/integration/harness/full_run.py` and `debug/run_fullcopy_sweep.py` need
+**opposite-direction** resolutions, file-by-file with feature-035's owner, and **never
+`-X ours`**. The STALE-MIRROR TRAP in the worktree stays dirty until that merge retires it.
+
+**Carried forward to 040, from cycle 17's probe:** appending an `accounted_for` line *alone
+moves nothing* — `_phase_5` reads the **stored** `unexplained_shortfall`, so a line-only
+edit leaves it stale and makes the artifact INVALID. The deferral clause is written over an
+**emitter change** (recompute `unexplained_counts` per row, `build_totals`, `verdict`,
+`exit_code`, `verdict_human_label`), not over a stamp.
+
+Pickup: `specs/038-transfer-fidelity-gaps/.crew-handoff.json` — `blocker.human_must_decide`
+and `blocker.next_action_exact`, plus the new `T081-PSCNC-FIX` task row.
+
 ## Session log — 2026-09-18e (038: T081's SIXTH AMENDMENT AND CLOSE — attributed, still UNCHECKED; 040 filed; T085 the only row left)
 
 Cycle 17 of the crew loop. Three read-only artifacts (`reviews/cycle17-programmer-attribution-probe.md`,
