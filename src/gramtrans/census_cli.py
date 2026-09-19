@@ -2233,15 +2233,30 @@ def accounted_for_gross_subtraction(
     only the room every finer, evidenced claim has already declined.
 
     THE ARITHMETIC IT UNDOES. On `baseline_gross`, `difference` is
-    `destination - starter_excluded - source`, so it subtracts the starter
-    population from a destination that -- on a correct run -- is where the
-    source's own objects LANDED, by natural-key match onto starter content.
-    5.2 says this in as many words ("gross subtraction also subtracts the
-    starter objects the transfer correctly matched, so it reports a shortfall
-    on a correct run") and `gross_basis_cap_notes` already caps the VERDICT
-    for it -- but the cap never reached `_phase_5`, so the gate kept reading a
-    phantom as an unexplained loss. `difference_raw - difference` is exactly
+    `destination - starter_excluded - source`, so it subtracts the whole
+    starter population from a destination that, on a correct run, still
+    legitimately holds it. 5.2 describes one route to that state ("gross
+    subtraction also subtracts the starter objects the transfer correctly
+    matched, so it reports a shortfall on a correct run") and
+    `gross_basis_cap_notes` already caps the VERDICT for it -- but the cap
+    never reached `_phase_5`, so the gate kept reading a phantom as an
+    unexplained loss. `difference_raw - difference` is exactly
     `starter_excluded`, and that is the whole of what this lane may claim.
+
+    5.2'S ROUTE IS NOT THE ONLY ONE, AND ON THIS CORPUS IT IS NOT THE ACTUAL
+    ONE -- corrected by lex-domain, cycle 16, against an earlier draft of this
+    docstring that asserted natural-key matching here. `CmPossibility` is NOT
+    an admitted natural-key class (it is absent from feature 035's
+    `natural-key-identity-roster.json`), so nothing was MATCHED onto starter
+    content and nothing needed to be. The canonical FLEx-shipped taxonomies
+    (Confidence Levels, Education, Status, Publication Types ...) are
+    identical in source and destination because BOTH projects were made from
+    the same FieldWorks template and NEITHER side edited that content. The
+    objects were never at risk, so no transfer of them was required or
+    attempted. That is why the lane is gated on the reconciliation and not on
+    any claim about matching: the witness establishes that the population is
+    accounted for, without needing to know which of the two routes put it
+    there.
 
     WHY THIS IS NOT "BASELINE_GROSS EXCUSES EVERYTHING". It would be, if the
     basis alone licensed the line -- which is precisely why the basis alone
@@ -2309,8 +2324,11 @@ def accounted_for_gross_subtraction(
     detail = (
         "gross starter subtraction: this row is on the "
         + census.GROSS_SUBTRACTION_BASIS + " basis, which subtracts the "
-        + str(over) + " starter object(s) the transfer correctly MATCHED the "
-        "source onto (fidelity-census.md 5.2). The per-" + reconciling_kind
+        + str(over) + " starter object(s) the destination already held and "
+        "that were never at risk -- content both projects inherited from the "
+        "same FieldWorks template, which neither side edited, so no transfer "
+        "of it was required or attempted. That this basis over-subtracts on a "
+        "correct run is fidelity-census.md 5.2. The per-" + reconciling_kind
         + " table reconciles to difference_raw " + str(int(difference_raw))
         + " exactly, locating every source object at sub-key granularity, so "
         "the gap between difference and difference_raw is the double "
