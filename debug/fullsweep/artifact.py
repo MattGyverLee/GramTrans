@@ -4,6 +4,7 @@ specs/035-fullsweep-fidelity/tasks.md Phase 1).
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -135,6 +136,41 @@ class ProjectArtifact:
     #: VACUOUS verdict is only actionable if a reader can see WHICH input was
     #: missing, instead of being told that fifteen guards declined to answer.
     guard_inputs_measured: list = field(default_factory=list)
+
+    # ---- T045f additions (Phase 5 / US2 wave 3b): plane 2's home --------
+    # FR-093 keeps the two accounting planes structurally separate.
+    # ``accounting`` above is plane 1 (object presence/absence) and
+    # ``compare.assert_object_plane_only`` REFUSES field-plane keys there.
+    # Until now that assertion had nowhere to send them: the field plane was
+    # computed (compare.py's T039-T043 rules, coverage.py's report) and then
+    # dropped on the floor. These five fields are where it lands instead.
+
+    #: FR-069..FR-084: the field-plane comparison rules' output -- per-class,
+    #: per-rule verdict tallies plus the comparison records themselves. A
+    #: finding in ``findings`` says WHAT differed; this block says which rule
+    #: judged it and how many comparisons that rule actually performed, which
+    #: is what separates "clean" from "never looked" (FR-137).
+    comparisons: dict = field(default_factory=dict)
+
+    #: FR-085..FR-090: one ``compare.LinkResult.as_dict()`` per classified
+    #: reference, in the five-verdict vocabulary and no sixth. Never
+    #: truncated here (FR-144) -- truncation is a console-only concern.
+    link_findings: list = field(default_factory=list)
+
+    #: FR-189/SC-017: structural depth and per-parent degree. See
+    #: ``depth_block``.
+    depth: dict = field(default_factory=dict)
+
+    #: FR-136/FR-137: ``coverage.CoverageReport.as_dict()``. The three
+    #: buckets stay separately counted and an unmeasured class never reports
+    #: the status a measured one does.
+    coverage: dict = field(default_factory=dict)
+
+    #: FR-052/FR-066: THIS feature's own field census -- the per-class
+    #: engine-omitted property set and its growth since the previous run --
+    #: plus a REFERENCE to feature 038's plane-1 census artifact. Never a
+    #: second copy of that artifact's rows. See ``census_block``.
+    census: dict = field(default_factory=dict)
 
 
 def summarize_drops(report) -> dict:
@@ -300,3 +336,264 @@ def flush_artifact(artifact: ProjectArtifact, artifacts_dir: Path) -> Path:
     out = artifacts_dir / ("%s.json" % re.sub(r"[^A-Za-z0-9._ -]", "_", artifact.project))
     _atomic_write_json(out, asdict(artifact))
     return out
+
+
+# ===========================================================================
+# T045f -- PLANE 2's ARTIFACT HOME
+# (FR-052/FR-066, FR-069..FR-090, FR-136/FR-137, FR-145, FR-189)
+#
+# Contract: specs/035-fullsweep-fidelity/contracts/artifact-schema.md.
+#
+# The rules that PRODUCE this output are pure functions in compare.py and
+# coverage.py, and every one of them already returns a record with an
+# ``as_dict()``. What was missing was somewhere on the document to put the
+# result -- so the field plane was being computed and discarded, and a run
+# could only ever report the object plane. These helpers are the one place
+# plane-2 output reaches ``ProjectArtifact``.
+#
+# FR-093's separation runs in BOTH directions and is asserted in both:
+# ``compare.assert_object_plane_only`` keeps field-plane keys out of
+# ``accounting``, and ``record_field_plane`` re-asserts it every time it
+# writes, so folding a field block into the object block fails at the write
+# rather than in a reader's head.
+# ===========================================================================
+
+#: The artifact fields that carry plane-2 output. Named as a tuple so the
+#: serializability check below cannot drift out of step with the dataclass.
+FIELD_PLANE_ARTIFACT_FIELDS: tuple = (
+    "comparisons", "link_findings", "depth", "coverage", "census",
+)
+
+
+def assert_artifact_json_serializable(name: str, block) -> None:
+    """FR-145: refuse a block ``flush_artifact`` could only write as a repr.
+
+    ``_atomic_write_json`` passes ``default=str``, which is right for a stray
+    ``Path`` or ``datetime`` and badly wrong for a record object: a
+    ``LinkResult`` stored raw would land in the document as
+    ``"LinkResult(verdict='SILENTLY_UNSET', ...)"`` -- a string that LOOKS
+    like evidence, cannot be read by any consumer, and fails no test. So the
+    strict check happens here, at the point of record, where the caller that
+    still holds the object can be told to call ``as_dict()``.
+    """
+    from .moves import HarnessError
+    try:
+        json.dumps(block, allow_nan=False)
+    except (TypeError, ValueError) as exc:
+        raise HarnessError(
+            "[FR-145] the artifact's %r block is not JSON-serializable (%s: %s). "
+            "flush_artifact writes with default=str, so this would be recorded as "
+            "a repr string and read downstream as evidence. Store the record's "
+            "as_dict(), not the record." % (name, type(exc).__name__, exc)
+        ) from exc
+
+
+def _as_dicts(records, what: str) -> list:
+    """Coerce a sequence of plane-2 records to plain dicts, refusing anything
+    that is neither. Accepts records (``as_dict()``) and dicts, because both
+    call shapes are legitimate; rejects everything else rather than letting
+    ``default=str`` stringify it later."""
+    from .moves import HarnessError
+    out = []
+    for rec in records or ():
+        if hasattr(rec, "as_dict"):
+            out.append(rec.as_dict())
+        elif isinstance(rec, dict):
+            out.append(dict(rec))
+        else:
+            raise HarnessError(
+                "[FR-145] %s carries a %s, which is neither a record with "
+                "as_dict() nor a dict" % (what, type(rec).__name__)
+            )
+    return out
+
+
+def depth_block(results) -> dict:
+    """FR-189/SC-017: the artifact's ``depth`` block from
+    ``compare.StructuralDepthResult`` records.
+
+    Three dispositions are kept apart on purpose, because collapsing any two
+    of them is the failure FR-137 names:
+
+    * ``vacuous_classes`` -- the target's maximum depth is BELOW the source's,
+      so any per-parent agreement further down was measured over nesting the
+      target never reached. Agreement there is not evidence.
+    * ``not_evaluated_classes`` -- the corpus itself never nested this class
+      deeper than one level, so the run has no depth statement about it at
+      all. Distinct from a clean pass, and never reported as one.
+    * ``per_parent_degree_findings`` -- a real disagreement, which FAILS.
+    """
+    max_nesting: dict = {}
+    degree_findings: list = []
+    vacuous: list = []
+    not_evaluated: list = []
+    per_class: list = []
+    for r in sorted(results or (), key=lambda r: r.class_name):
+        per_class.append(r.as_dict())
+        max_nesting[r.class_name] = {
+            "source": r.source_max_depth, "target": r.target_max_depth,
+        }
+        for parent_id, src_children, tgt_children in r.degree_mismatches:
+            degree_findings.append({
+                "class": r.class_name,
+                "parent_source_id": parent_id,
+                "source_children": src_children,
+                "target_children": tgt_children,
+            })
+        if not r.evaluated:
+            not_evaluated.append(r.class_name)
+        elif r.target_max_depth < r.source_max_depth:
+            vacuous.append(r.class_name)
+    return {
+        "max_nesting_depth": max_nesting,
+        "per_parent_degree_findings": degree_findings,
+        "vacuous_classes": vacuous,
+        "not_evaluated_classes": not_evaluated,
+        "classes_compared": len(per_class),
+        "per_class": per_class,
+    }
+
+
+#: What a plane-1 census reference may NOT carry. Named here so the refusal
+#: below can say why it is refused rather than silently dropping it.
+CENSUS_REFERENCE_FORBIDDEN_KEYS: frozenset = frozenset({"classes", "rows", "per_class"})
+
+
+def assert_census_is_reference_only(ref: dict) -> None:
+    """The 038 cut, asserted: this feature REFERENCES 038's census, it does
+    not carry a copy.
+
+    Two censuses of the same run that can disagree is worse than one census,
+    because a reader then has to work out which is authoritative -- and the
+    copy is the one that goes stale silently. Path plus content hash is the
+    whole reference.
+    """
+    from .moves import HarnessError
+    intruders = sorted(CENSUS_REFERENCE_FORBIDDEN_KEYS & set(ref or {}))
+    if intruders:
+        raise HarnessError(
+            "[038 cut] the plane-1 census reference must carry a path and a "
+            "content hash, never the census itself; found %r. 038's artifact "
+            "is the one authoritative copy of those rows." % (intruders,)
+        )
+
+
+def plane1_census_reference(path) -> dict:
+    """A reference to feature 038's plane-1 census artifact: where it is and
+    exactly which bytes were read, so a later reader can tell whether the
+    census this run was gated against is the one still on disk.
+
+    Never raises for a missing or malformed document. An absent census is a
+    fact about the run that belongs ON the artifact -- recorded as
+    ``present: false`` with the reason -- not an exception that loses the rest
+    of the evidence. Its consequence (a plane-1 input that did not arrive,
+    hence a guard that cannot answer) is the guard block's job to report, not
+    this function's.
+    """
+    p = Path(path)
+    ref: dict = {
+        "path": str(p), "present": False, "content_hash": None,
+        "schema_version": None, "census_id": None, "taken_at": None,
+        "class_row_count": None, "verdict": None, "error": "",
+    }
+    try:
+        raw = p.read_bytes()
+    except OSError as exc:
+        ref["error"] = "could not read %s: %s: %s" % (p, type(exc).__name__, exc)
+        return ref
+    ref["present"] = True
+    ref["content_hash"] = "sha256:" + hashlib.sha256(raw).hexdigest()
+    try:
+        doc = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError) as exc:
+        ref["error"] = "%s is not valid JSON: %s" % (p, exc)
+        return ref
+    if not isinstance(doc, dict):
+        ref["error"] = "%s is a %s, not a census document" % (p, type(doc).__name__)
+        return ref
+    ref["schema_version"] = doc.get("schema_version")
+    ref["census_id"] = doc.get("census_id") or doc.get("run_id")
+    ref["taken_at"] = doc.get("taken_at")
+    ref["verdict"] = doc.get("verdict")
+    rows = doc.get("classes")
+    if not isinstance(ref["schema_version"], int) or not isinstance(rows, list):
+        # The same refusal census_cli.load_artifact makes, for the same
+        # reason: pointing confidently at a stranger's JSON is worse than
+        # pointing at nothing.
+        ref["error"] = (
+            "%s has no integer schema_version and/or no `classes` array, so it "
+            "is not a census artifact" % p
+        )
+        return ref
+    ref["class_row_count"] = len(rows)
+    return ref
+
+
+def census_block(
+    field_census=None, *, omitted_growth=None, cost=None, plane1_reference=None,
+) -> dict:
+    """The artifact's ``census`` block: FR-052/FR-066's FIELD census, which is
+    this feature's own, plus a reference to 038's OBJECT census.
+
+    The two are different measurements and the block keeps them visibly
+    different. 038 counts objects; it is count-only and structurally cannot
+    see whether a correctly-counted object arrived with its fields intact.
+    That question is what ``field_census`` answers and what nothing else in
+    either feature measures.
+
+    ``omitted_properties_per_class`` is the recorded decision made concrete:
+    the per-class set of properties the engine's own ``GetSyncableProperties``
+    surface does not carry, published on EVERY artifact rather than derived on
+    demand -- because a coverage gap nobody prints is indistinguishable from
+    no gap.
+    """
+    block: dict = {
+        "omitted_properties_per_class": (
+            field_census.omitted_by_class() if field_census is not None else {}
+        ),
+        "omitted_growth_since_previous_run": dict(omitted_growth or {}),
+        "cost": dict(cost or {}),
+        "field_census": field_census.as_dict() if field_census is not None else {},
+        "field_census_measured": field_census is not None,
+    }
+    ref = dict(plane1_reference or {
+        "present": False, "error": "no plane-1 census reference recorded",
+    })
+    assert_census_is_reference_only(ref)
+    block["plane1_reference"] = ref
+    return block
+
+
+def record_field_plane(
+    artifact: "ProjectArtifact", *, comparisons=None, link_findings=None,
+    depth=None, coverage=None, census=None,
+) -> None:
+    """The ONE place plane-2 output lands on a ``ProjectArtifact``.
+
+    Every argument is optional and ``None`` means "this run did not measure
+    it", which leaves the field at its empty default rather than writing an
+    empty block that would read as a measured zero. Passing an explicitly
+    empty container is a different statement -- measured, and empty -- and is
+    honored as such.
+
+    Re-asserts FR-093 on every write: the object plane must still be free of
+    field-plane keys afterwards. Writing plane 2 is exactly the moment someone
+    would be tempted to fold a finding into ``accounting``.
+    """
+    from .compare import assert_object_plane_only
+
+    if comparisons is not None:
+        artifact.comparisons = dict(comparisons)
+    if link_findings is not None:
+        artifact.link_findings = _as_dicts(link_findings, "link_findings")
+    if depth is not None:
+        artifact.depth = dict(depth)
+    if coverage is not None:
+        artifact.coverage = dict(coverage)
+    if census is not None:
+        assert_census_is_reference_only(census.get("plane1_reference") or {})
+        artifact.census = dict(census)
+
+    for name in FIELD_PLANE_ARTIFACT_FIELDS:
+        assert_artifact_json_serializable(name, getattr(artifact, name))
+    assert_object_plane_only(artifact.accounting)
