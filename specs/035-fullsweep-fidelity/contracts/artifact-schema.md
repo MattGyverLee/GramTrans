@@ -75,10 +75,38 @@ in one phase is never reported as an undifferentiated whole-project failure.
     "reachable_only_through_excluded": ["..."]   // FR-137, also NOT-EVALUATED
   },
 
-  "census": {
+  "census": {                            // THE FIELD census -- this feature's own
     "omitted_properties_per_class": { "ClassName": ["prop", "..."] },  // FR-066
     "omitted_growth_since_previous_run": { "ClassName": ["prop"] },     // => COVERAGE_REDUCED
-    "cost": { "field_reads": 2500, "seconds": 0.11 }                    // Open Question 2
+    "cost": { "field_reads": 2500, "seconds": 0.11 },                   // Open Question 2
+    "field_census": { "...": "..." },    // census.FieldCensus.as_dict()
+    "field_census_measured": true,       // false => not measured, NOT "measured empty"
+
+    // The 038 cut: plane 1 (object counts) is 038's census, and this document
+    // REFERENCES it rather than carrying a copy. Two censuses of one run that
+    // can disagree is worse than one, and the copy is the one that goes stale
+    // silently. Path plus content hash is the whole reference; a reader can
+    // then tell whether the census this run was gated against is the one still
+    // on disk. Embedding `classes` / `rows` / `per_class` here is REFUSED by
+    // artifact.assert_census_is_reference_only.
+    "plane1_reference": {
+      "path": "scratchpad/035_sweep/<batch>/<project>.census.json",
+      "present": true,
+      "content_hash": "sha256:...",
+      "schema_version": 1,
+      "census_id": "CENSUS-20260919-101500",
+      "taken_at": "...", "verdict": "CENSUS_CLEAN",
+      "class_row_count": 69,
+      "error": ""                        // non-empty => absent or not a census
+    }
+  },
+
+  "comparisons": {                       // FR-069..FR-084: the FIELD plane's verdicts
+    // Per class (and per rule), how many comparisons each rule actually
+    // PERFORMED alongside what it found. The count is the load-bearing half:
+    // "zero findings" and "never looked" are the same number of findings, and
+    // FR-137 forbids reporting them the same way.
+    "ClassName": { "rule": "ws-mapped", "performed": 12, "findings": 0 }
   },
 
   "plan_conservation": {                 // FR-101, both directions, per category and total
@@ -120,7 +148,10 @@ in one phase is never reported as an undifferentiated whole-project failure.
       { "class": "...", "parent_source_id": "...",
         "source_children": 5, "target_children": 4 }   // disagreement FAILS the run
     ],
-    "vacuous_classes": []                // target max depth < source max depth
+    "vacuous_classes": [],               // target max depth < source max depth
+    "not_evaluated_classes": [],         // the corpus never nested this class at all
+    "classes_compared": 0,
+    "per_class": [ { "...": "..." } ]    // compare.StructuralDepthResult.as_dict()
   },
 
   "axis_coverage": {                     // FR-190, FR-191, FR-193

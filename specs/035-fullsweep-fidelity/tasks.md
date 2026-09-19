@@ -517,6 +517,13 @@ the comparator's verdict for each -- no corpus-wide run needed.
 > `RunContext` fields), T045c is landed, and the first unchecked link in the
 > superseding chain above is **T045d**. T045a(c) is a hard dependency on T045d and
 > cannot be built first.
+>
+> **CHAIN ADVANCED 2026-09-19.** T045d, T045e and T045f are now landed. The first
+> unchecked link is **T045a(c)** -- the driver wiring that calls
+> `artifact.record_field_plane` with the comparison, link, depth, coverage and census
+> blocks T045f just gave a home to. The resolver will keep reporting `nextTask=T045a`
+> because T045a's box is the first unchecked one positionally; from here that answer
+> happens to be right, for the wrong reason.
 
 - [ ] **T045a** [US2] Wire the driver's OWN measurements into `RunContext`, and the two
       accounting planes into the guard inputs. `run_one_project` currently calls
@@ -884,7 +891,7 @@ points, then the corrections to claims already written in this file.
   >    not landed. It is not on T045e's path; file or fold it into the task that owns
   >    `full_run.py`.
 
-- [ ] **T045f** [US2] Give plane-2 output a home in the artifact. `ProjectArtifact`
+- [X] **T045f** [US2] Give plane-2 output a home in the artifact. `ProjectArtifact`
       (`debug/fullsweep/artifact.py:71-137`) has **no** `comparisons`, `census`, `coverage`,
       `link_findings` or `depth` field -- all of which
       [contracts/artifact-schema.md](./contracts/artifact-schema.md) lines 69-127 already
@@ -902,6 +909,66 @@ points, then the corrections to claims already written in this file.
   > block becomes a **reference to** 038's census artifact (path plus content hash),
   > never a second census embedded here. The `assert_object_plane_only` constraint at
   > `compare.py:187-196` is unaffected and still applies.
+
+  > **DONE 2026-09-19.** Five declared dataclass fields on `ProjectArtifact`
+  > (`comparisons`, `link_findings`, `depth`, `coverage`, `census`) plus the surface that
+  > fills them: `record_field_plane` (the one write point), `depth_block`, `census_block`,
+  > `plane1_census_reference`, `assert_census_is_reference_only`,
+  > `assert_artifact_json_serializable`. 19 new tests in
+  > `tests/unit/test_035_artifact_field_plane.py`, all passing; full unit suite **4945
+  > passed / 4 failed**, the 4 being blocker (1) below and nothing else.
+  >
+  > **Three rulings taken, each recorded rather than assumed:**
+  >
+  > 1. **`census` keeps BOTH measurements, visibly separated.** The retarget above reads
+  >    as if the whole block becomes a reference. It cannot: FR-052/FR-066's
+  >    `omitted_properties_per_class` is the FIELD census, which is this feature's own and
+  >    the one thing the KEEP note at T045d says 038 "cannot substitute for" -- 038's
+  >    census is count-only. So the block carries the field census directly and 038's
+  >    OBJECT census by `plane1_reference` (path + `sha256:` content hash + `census_id` +
+  >    `class_row_count`). `assert_census_is_reference_only` REFUSES `classes` / `rows` /
+  >    `per_class` in that reference, so the copy the retarget forbids cannot be
+  >    reintroduced quietly.
+  >
+  > 2. **`flush_artifact`'s `default=str` is a silent-evidence hazard, so the strict check
+  >    moved to the point of record.** `_atomic_write_json` serializes with
+  >    `default=str`: a `LinkResult` stored raw would have been written as
+  >    `"LinkResult(verdict='SILENTLY_UNSET', ...)"` -- a string that reads as evidence,
+  >    cannot be parsed by any consumer, and fails no test.
+  >    `assert_artifact_json_serializable` refuses it at `record_field_plane`, where the
+  >    caller still holds the object and can be told to call `as_dict()`.
+  >    `link_findings` additionally coerces records via `as_dict()` rather than trusting
+  >    callers to remember.
+  >
+  > 3. **The depth block keeps THREE dispositions apart, not two.** The contract named
+  >    `vacuous_classes` only. `not_evaluated_classes` is now beside it: "the corpus never
+  >    nested this class deeper than one level" is a different statement from "the target
+  >    lost the nesting", and collapsing them is precisely FR-137's failure. A class lands
+  >    in exactly one, asserted by test.
+  >
+  > **Task-text correction.** T045f says all five keys are "already specified" by
+  > `contracts/artifact-schema.md` lines 69-127. Four were; **`comparisons` was not in the
+  > contract at all**. It is now, with `performed` alongside `findings`, because "zero
+  > findings" and "never looked" are the same number of findings and FR-137 forbids
+  > reporting them alike.
+  >
+  > **Scope line held:** this task ends at the artifact surface. Nothing in
+  > `run_fullcopy_sweep.py` calls `record_field_plane` yet -- that wiring is **T045a(c)**,
+  > the next link in the chain, and doing it here would have made the two tasks
+  > indistinguishable in review.
+  >
+  > **The two T045e blockers are NOT discharged by this task and remain open:**
+  > 1. The T023 capability fingerprint still does not match the live dependency.
+  >    `test_035_sweep_safety.py` fails 4 tests; preflight exits 6. Re-measured
+  >    2026-09-19: live flexicon is now rev `296f3b5` (T045e recorded `18a293b`; the
+  >    fingerprint pins `5994acc`), and
+  >    `grammar_overrides.flexicon.GramCatOperations.ApplySyncableProperties.declared`
+  >    still reads **False** where the fingerprint pins **True**. This blocks any run that
+  >    goes through preflight, T035's batch-1 re-run included. Needs the flexicon override
+  >    restored or a DELIBERATE re-pin.
+  > 2. `tests/integration/harness/full_run.py:48-50` still reads
+  >    `exclude: frozenset = frozenset({GrammarCategory.STEMS})` -- the invisible default
+  >    argument FR-135 forbids. Still unowned by any task.
 
 #### Rulings taken on T045b's under-specified points (2026-08-19)
 
