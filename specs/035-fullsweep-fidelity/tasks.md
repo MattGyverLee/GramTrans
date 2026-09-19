@@ -47,15 +47,30 @@ below:
    give the repo two competing ways to bless a known loss -- the precise failure
    mode this feature exists to retire. **The allowlist loses.**
 
+> **Premises 2 and 4 re-verified (2026-09-19).** Re-checked against the worktree at
+> `d7fb798` and both still hold. `src/gramtrans/Lib/census.py` is still count-only --
+> its single `GetSyncableProperties` occurrence (line 313) is a DOCSTRING sentence
+> about what flexicon's phoneme ops exclude, not a call. The owning-field machinery
+> (`OWNING_FIELD_RULINGS` ~172, `owning_field_counts` ~1451-1584, `_owning_field_label`
+> ~2564) reads `OwningFlid`/`GetFieldName` for loss ATTRIBUTION and never reads a
+> field's value, so it does not satisfy T045d's
+> `field_source(cls, guid) -> (model_fields, syncable_props)` contract.
+
 ### The buckets
 
 | bucket | tasks | ruling |
 | --- | --- | --- |
 | **KEEP** -- uniquely valuable, no 038 equivalent | T045d, T047, T050, T056, T063 | Build as written |
-| **KEEP** -- cheap, closes an honesty gap | T064, T065 | Build as written |
+| **KEEP** -- cheap, closes an honesty gap | T064, T065, **T069 (new)** | Build as written |
 | **RETARGET** -- consume 038's census instead of re-deriving plane 1 | T045a(c), T045b, T045e, T045f, T045, T048, T051, T052, T053, T057, **T068 (new)** | Scope narrowed in place; see each task's note |
 | **CUT** -- superseded by 038's closed vocabulary | T058, T059, T060, T061 | Struck. Not deferred -- struck |
 | **GATED** -- only meaningful once a full corpus run is authorized | T035, T046, T049, T054, T055, T062, T066, T067 | Text unchanged; blocked on an explicit go/no-go |
+
+> **GATED bucket update (2026-09-19).** 038 T085 is DONE. Feature 038 merged to
+> `main` (merge commit `562cb53`; `main` now at `d7fb798`; 150/150 tasks). That half
+> of the blocker on T035, T046, T049, T054, T055, T062, T066, T067 is DISCHARGED.
+> What remains is only the explicit human go/no-go for a full corpus run -- a
+> decision, not code. T062 additionally stays blocked on T063.
 
 A **CUT** task keeps its `- [ ]` box. It is not checked: checking it would claim
 work that was deliberately not done, and this file's whole discipline is that a
@@ -69,6 +84,12 @@ superseded, which **this feature's own FR-158 / SC-010 would mark STALE**. Every
 KEEP and RETARGET task that opens a live project therefore waits on 038 T085. The
 two that open nothing -- **T045d** (the field reader) and **T063** (instrument
 retirement) -- may start immediately.
+
+> **DISCHARGED (2026-09-19).** 038 T085 is DONE: feature 038 merged to `main`
+> (merge commit `562cb53`; `main` now at `d7fb798`; 150/150 tasks). The precondition
+> this section is named for has been met. What remains before T035, T046,
+> T048-T057, T066, T067 may run for real is only the explicit human go/no-go for a
+> full corpus run named in the GATED bucket above -- a decision, not code.
 
 ### What the cut leaves behind, and who cleans it
 
@@ -488,6 +509,15 @@ the comparator's verdict for each -- no corpus-wide run needed.
 > T045c is last of the wiring tasks on purpose: it is unreachable until the answering
 > set is complete, and it is the thing that fires when it is.
 
+> **ORDERING SETTLED (2026-09-19).** The companion resolver reported
+> `nextTask=T045a`; that was POSITIONAL, not dependency-correct. Verified against
+> the worktree at `7011b5b`: T045a parts (a)+(b) are landed (`build_run_context` at
+> `debug/run_fullcopy_sweep.py:415-418, 731`; `reconcile_project_objects` at `:464`;
+> MEASURABLE/UNMEASURED field sets at `:335-350` and `:364-389` partition all 23
+> `RunContext` fields), T045c is landed, and the first unchecked link in the
+> superseding chain above is **T045d**. T045a(c) is a hard dependency on T045d and
+> cannot be built first.
+
 - [ ] **T045a** [US2] Wire the driver's OWN measurements into `RunContext`, and the two
       accounting planes into the guard inputs. `run_one_project` currently calls
       `run_all_guards(RunContext(project=source_name))` -- **positionally empty**. Every
@@ -680,6 +710,29 @@ points, then the corrections to claims already written in this file.
   > count-only, so without this reader **nothing anywhere** measures whether a
   > correctly-counted object arrived with its fields intact. It opens no live project
   > of its own, so it does not wait on 038 T085. Start here.
+
+  > **Live-verified constraints (2026-09-19)**, against installed pyflexicon 4.8.0,
+  > above the 4.5.2 floor:
+  > - `BaseOperations.GetSyncableProperties` still raises `NotImplementedError`
+  >   unless overridden (`BaseOperations.py:1286-1378`, raise at `:1373`) -- the
+  >   task's 2026-08-19 premise is CONFIRMED at 4.8.0, so the dispatch table is
+  >   still required.
+  > - 46 effectively-covered Operations classes: 41 define `GetSyncableProperties`
+  >   directly, 5 inherit it (`GramCatOperations` from `POSOperations`;
+  >   `AgentOperations`/`ConfidenceOperations`/`OverlayOperations`/
+  >   `PublicationOperations`/`TranslationTypeOperations` from
+  >   `PossibilityItemOperations`).
+  > - CONFIRMED COVERAGE HOLE: `MoAdhocProhibGr`, `MoAlloAdhocProhib`,
+  >   `MoMorphAdhocProhib` are handled only by `Grammar/adhoc_prohibition.py`'s
+  >   `AdhocProhibition`, which subclasses `LCMObjectWrapper`, NOT `BaseOperations`
+  >   -- they have no `GetSyncableProperties` at all. T045d MUST report these three
+  >   as an explicit unreachable-coverage hole and MUST NOT silently skip them.
+  >   Open sub-question: `MorphRuleOperations.py:469` refers to them by the
+  >   differently-spelled `MoAdhocProhibMorph`/`MoAdhocProhibAllomorph`; whether
+  >   those are the same classes under another name needs checking against the
+  >   roster.
+  > - `FLExProject.GetFieldID(className, fieldName)` (`FLExProject.py:4234`) is
+  >   public and generic, via `MetaDataCacheAccessor.GetFieldId`.
 
 - [ ] **T045e** [US2] The class -> `GrammarCategory` mapping, as a tracked contract.
       `guard_comparisons_performed` keys its counters on **category**
@@ -906,7 +959,7 @@ passes from stale ones.
 
 **Wave 1 -- independent (different modules):**
 
-- [ ] **T047** [P] [US3] Extend the read-only survey with the two axes the presence-only scan
+- [x] **T047** [P] [US3] Extend the read-only survey with the two axes the presence-only scan
       lacks: writing-system breadth and same-class structural depth (FR-190, FR-192) ·
       `debug/prescan_type_coverage.py`
 
@@ -914,6 +967,12 @@ passes from stale ones.
   > cheapest de-risking available for what 038 just landed: 038 validated two or three
   > project pairs, and nobody knows which of the roughly 82 transferable projects carry
   > constructs never once exercised.
+
+  > **ALREADY BUILT (2026-09-19), checkbox drift within 035 itself.**
+  > `debug/prescan_type_coverage.py:226-322` (commits `53b84658`, `a841b0e1`, both
+  > already on `main`) captures `writing_systems` (total/vernacular/analysis/tags)
+  > and `nesting_depth` (reversal_entry/sense/possibility) per project -- exactly
+  > FR-190/FR-192's two axes.
 
 - [ ] **T048** [P] [US3] Batching and gating: batches of 3 to 5, a hard stop for analysis after
       each, failed-only re-run, the canary re-run in every batch regardless of its ledger
@@ -949,6 +1008,13 @@ passes from stale ones.
   > **KEEP 2026-08-22 (the 038 cut).** Pairs with T047 -- the survey is the corpus
   > reconnaissance 038 never had. Blocked on 038 T085 only because it opens live
   > projects, not because its scope changed.
+
+  > **NARROWED (2026-09-19).** The read-only measurement is already done --
+  > `scratchpad/prescan_results/*.json`, 85 projects -- but `scratchpad/` is
+  > gitignored (`.gitignore:117`) so nothing was committed. What REMAINS is only:
+  > wire the `survey` subcommand in `debug/run_fullcopy_sweep.py`, and commit the
+  > measured three-axis maxima to a TRACKED file under
+  > `specs/035-fullsweep-fidelity/`.
 
 - [ ] **T051** [P] [US3] Mechanical re-run scope derivation from changed files' transitive
       importers, failing closed to the full corpus whenever narrowness cannot be proven; no
@@ -1152,6 +1218,21 @@ reachable, bounded, disclosed, and self-retiring.
   > tokens (`CENSUS_CLEAN` and peers). Retiring `PASS_WITH_ALLOWLIST` from this
   > feature's token list touches nothing 038 reads.
 
+- [ ] **T069** [P] **NEW 2026-09-19 (cycle-6 reconciliation).** Absorb 038's three
+      `owed_to_035` debts into the coverage floor. `src/gramtrans/Lib/census.py:298-327`
+      (`CENSUS_ADDITIONS`) carries three entries flagged `owed_to_035: True`, and NONE
+      of the three appears in `contracts/coverage-floor.json`'s 69 `in_scope_classes`:
+      - `MoAffixProcess` -- no create path; measured 13 -> 0 (Ejagham), 1 -> 0 (Ngoreme)
+      - `PhCode` -- flexicon's phoneme `GetSyncableProperties` excludes `CodesOS`, so
+        nothing carries it and nothing reports the drop; measured 43 -> 25, 89 -> 25
+      - `CmTranslation` -- reached via the texts path, never projected into the floor;
+        measured 7925 -> 2 (Ngoreme)
+      Discharge each debt by adding the class to the floor roster IN THE SAME change
+      that removes the `CENSUS_ADDITIONS` entry, so the two instruments never disagree
+      about the roster. This raises the roster above 69, and T044's note above must be
+      updated with it · `specs/035-fullsweep-fidelity/contracts/coverage-floor.json`,
+      `src/gramtrans/Lib/census.py`
+
 - [ ] **T064** [P] Crash-resume evidence: a simulated mid-project kill leaves a partial artifact
       naming the last completed phase, in place of no evidence at all (FR-150, SC-009) ·
       `tests/unit/test_035_guards.py`
@@ -1253,3 +1334,19 @@ cannot start before both planes measure; and US5 hardens the valve US1 opened.
 US2 Wave 2 (five independent comparison rules), and US3 Wave 2 (four independent CLI
 surfaces). Every other wave is two to four tasks wide. Nothing after T053 parallelizes:
 the live measurements gate each other by design, and the final claim gates on all of them.
+
+---
+
+## Amendment (2026-09-19) -- cycle-6 reconciliation
+
+> **TOOLING CAVEAT.** The `lex-domain` agent declares `tools: Read, Grep, Glob,
+> WebFetch` and therefore CANNOT reach live LCM or FLExToolsMCP. That, not transient
+> unavailability, is why 3 of 5 review cycles lacked live confirmation. Cycle-5
+> identity points 2 (reversal-index one-container-per-WS + form-keyed dedup) and 3
+> (`WfiWordform` (WS, form) natural key) are CLOSED BY RULING on repository-API
+> evidence -- `IReversalIndexRepository.FindOrCreateIndexForWs` /
+> `.FindOrCreateReversalEntry` and `IWfiWordformRepository.GetMatchingWordform(Int32
+> ws, String form)` are the repository's declared contract, which for an identity
+> ruling is stronger evidence than any single project's instance data. Point 1
+> (CmAgent stock-template default GUIDs) remains open and is routed to
+> lex-verification.
