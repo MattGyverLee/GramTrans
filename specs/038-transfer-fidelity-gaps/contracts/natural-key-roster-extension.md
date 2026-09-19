@@ -5,7 +5,27 @@
 **Target file (owned by feature 035):**
 `specs/035-fullsweep-fidelity/contracts/natural-key-identity-roster.json`
 **Written:** 2026-08-19
-**Status:** PROPOSAL. Nothing here is in force until the 035 session lands it.
+**Status:** ~~PROPOSAL. Nothing here is in force until the 035 session lands
+it.~~ **LANDED 2026-08-19; corrected 2026-08-28 per T098.** The status line is
+kept struck as the recorded BEFORE rather than edited away, because it was
+stale for nine days while this file went on describing itself as not-in-force.
+035 landed all six proposed entries on **2026-08-19**:
+[`specs/035-fullsweep-fidelity/contracts/natural-key-identity-roster.json`](../../035-fullsweep-fidelity/contracts/natural-key-identity-roster.json)
+now holds **9** entries -- `PhPhoneme`, `PhNCSegments`, `PhNCFeatures`,
+`PartOfSpeech`, `MoMorphType`, `LexEntryInflType` appended as entries 4-9, in
+the order this proposal asked for -- with the admission evidence recorded as the
+top-level sibling key `live_confirmation_038` (`proposed_by: "feature
+038-transfer-fidelity-gaps, task T028"`, `landed_at: "2026-08-19"`), exactly
+where [section 5](#5-coordination-protocol)'s `coordination.step_4` said to put
+it. This file stays the ARGUMENT and the PROPOSAL RECORD and is correctly not
+emptied on landing -- but "nothing here is in force" is no longer true of the
+entries it proposes, and `roster_admitted_classes` has been reading them from
+035's roster at run time ever since. See the `T098` line in
+[`tasks.md`](../tasks.md) and
+[`journal/T098-the-tripwire-that-was-not-the-tripwire.md`](../journal/T098-the-tripwire-that-was-not-the-tripwire.md).
+**Amended:** 2026-08-28 -- `038-NK-P3`'s acceptance clause is narrowed to the
+rows it names; see [section 3.1](#31-038-nk-p3-as-amended-2026-08-28). The census
+gate is unchanged.
 
 This document is the argument. The JSON is the artefact. Feature 038 does not
 edit 035's roster; see [section 5](#5-coordination-protocol).
@@ -331,13 +351,45 @@ Two residual risks are recorded as **pending measurements** in the JSON rather
 than mitigated, because pretending to have measured them would be worse than
 naming them:
 
-- `038-NK-P2` -- no enforcement of name uniqueness was located for `PhPhoneme`,
-  `PartOfSpeech`, `MoMorphType` or `LexEntryInflType` in FLEx or the LCM. Only
-  the observable consequence was measured (zero collisions). Every entry
-  therefore behaves as if no enforcement existed; a later confirmation could only
-  relax an entry from `false` to `true`, never tighten one. The confirming test
-  must be run in a throwaway project, never in a sanctioned read-only project and
-  never in `Target`.
+- `038-NK-P2` -- **SETTLED 2026-08-26, AND THE ANSWER IS THAT THERE IS NO
+  ENFORCEMENT.** As filed, no enforcement of name uniqueness had been *located*
+  for `PhPhoneme`, `PartOfSpeech`, `MoMorphType` or `LexEntryInflType` in FLEx
+  or the LCM; only the observable consequence was measured (zero collisions in
+  three projects), which is absence of evidence and not evidence of absence.
+  The confirming test has now been run, in the throwaway project
+  `GT038 NKP2 Throwaway` -- never a sanctioned read-only project and never
+  `Target`, as this item requires.
+
+  **Two layers, because the claim names FLEx/the LCM and GramTrans reaches them
+  only through flexicon.** *Layer 1, the flexicon Operations surface:*
+  `PhonemeOperations.Create("a")` and `POSOperations.Create("Noun", "Nx")` both
+  **refused** (`FP_ParameterError: Phoneme 'a' already exists` /
+  `Part of Speech 'Noun' already exists`), and flexicon exposes **no create
+  surface at all** for `MoMorphType` or `LexEntryInflType`, so on those two
+  there is nothing to refuse. *Layer 2, the raw LCM factories -- what the claim
+  is actually about:* `IPhPhonemeFactory`, `IPartOfSpeechFactory`,
+  `IMoMorphTypeFactory` and `ILexEntryInflTypeFactory` each created a
+  duplicate-named sibling and **every one was silently accepted**. Re-read in a
+  fresh read-only session, so the duplicates are on disk: `PhPhoneme` 23 -> 25
+  (`'a'` x3), `PartOfSpeech` 5 -> 7 (`'Noun'` x3), `MoMorphType` 19 -> 21
+  (`'stem'` x3), Variant Entry Types 7 -> 9 (`'Plural'` x3).
+
+  **No entry moves.** Every one already sets `key_unique_by_construction=false`
+  and relies on `on_ambiguous_key=harness_error`; the measurement *confirms*
+  that setting. What changes is that the escape hatch this item left open --
+  "a later confirmation could only relax an entry from `false` to `true`" --
+  is now **closed by measurement**, which is strictly better than leaving it
+  open.
+
+  **A layer-1 guard is not an enforcement claim.** flexicon refusing a
+  duplicate on the two classes where it has a create surface means GramTrans's
+  own writes cannot mint one *through those calls*; it says nothing about what
+  a project already contains. census-evidence.md's 21 duplicate phoneme names
+  and the 66-of-113 `PhNCFeatures` collisions are the standing proof that
+  duplicates arrive by other paths -- and the obvious candidate was tested and
+  **did not reproduce**: `Create("a", default analysis ws)` also refused,
+  because the starter phoneme carries `'a'` in both writing systems. How those
+  21 arose is still unexplained, and is not claimed here.
 - `038-NK-P1` -- the blank-project starter baseline (038 FR-010, plan Phase 0) was
   **not** measured. `Esperanto`'s inventory coincides with it exactly, which is
   corroboration, not a measurement of a new project.
@@ -348,6 +400,139 @@ recovers the 2,088 MSAs, the 21 duplicate phonemes, the 41 missing categories an
 the `+1` inflection type is a question for 038 plan Phase 0's census run against
 a fresh transfer (SC-001, SC-002, SC-005, SC-008). **Acceptance for this roster
 extension is a census diff, not this file.**
+
+### 3.1 `038-NK-P3`, as amended 2026-08-28
+
+The paragraph above is kept as the recorded BEFORE rather than edited away. Its
+last sentence is **mis-stated**, and mis-stated in the way T086 named: a signal
+computed over the WHOLE RUN, used to gate an item that names four losses in it.
+The sentence being amended, verbatim:
+
+> **Acceptance for this roster extension is a census diff, not this file.**
+
+The proposal JSON restates it in
+`live_confirmation.pending_measurements[2].required_measurement`, verbatim:
+
+> 038 plan Phase 0's per-class object census, run against a fresh transfer into
+> a newly created project after Phase 1 lands (038 SC-001, SC-002, SC-005,
+> SC-008). Acceptance for the roster extension is a census diff, not this file.
+
+**How it over-reaches.** "A census diff" is the whole artifact and, with it, the
+whole run verdict. That verdict is decided by every required row the census
+measures, and on the three T124 pairs it is decided by rows this item never
+named: P5's **38 row failures across three pairs** (9 / 16 / 13), every one of
+the shape "SHORTFALL carrying NO accounting line" (T124, obligation 2) -- 23 of
+them after the T126 re-census, fewer rows of the same kind and still not one of
+them a natural-key row -- plus the `CmPossibility` per-list content that
+[`cmpossibility-list-rulings.md`](cmpossibility-list-rulings.md) rules
+`OUT_OF_SCOPE_CLASS` -- Scripture note categories, chart markers, text genres.
+Not one of those is a natural-key row, not one of them is recoverable by a
+natural-key fallback, and no measurement of them says anything about whether the
+fallback works.
+
+The consequence is not "P3 was not gated"; it is that P3 **could not be gated at
+all**. With all four named recoveries confirmed and `duplicate_extra_objects` at
+0 / 0 / 0, all three runs still exit 1 on out-of-scope rows -- so this item's
+acceptance sat behind T081 / P5's work, an ordering inversion and the same one
+T086 was filed about ("phase 1's acceptance gated on phase 9's work"). The
+clause also cannot express a partial: ngoreme's one residual MSA is a fact about
+a named row, and a run-level verdict has no vocabulary for it.
+
+**The amended clause.**
+
+> **`038-NK-P3`, as amended 2026-08-28.** Acceptance for this roster extension
+> is stated **per row, over the four losses this item names**, and over nothing
+> else: the four MSA subclasses (`MoStemMsa`, `MoInflAffMsa`, `MoDerivAffMsa`,
+> `MoUnclassifiedAffixMsa`), `PhPhoneme`, `PartOfSpeech` and
+> `LexEntryInflType`. For each of those rows, read off a census artifact from a
+> fresh transfer: `difference_raw` and that row's `duplicates` figures, with any
+> residual **named and counted** rather than rounded into a pass. **The
+> run-level verdict is not this item's acceptance.** A row this item does not
+> name can neither satisfy it nor fail it; rows outside the four stay gated
+> exactly where they are already gated -- P5 / T081 for the required rows, the
+> per-class rulings in `contracts/` for the rest -- and this amendment moves
+> none of them.
+
+Stated over what it DEMONSTRATES rather than over an exit code, per T111: the
+clause names rows and figures, so it cannot go stale the next time a verdict
+integer moves.
+
+**The evidence it is amended on.** Read against the T124 artifacts
+(`tests/integration/_snapshots/census-038-t124-{ejagham,ngoreme,mbugwe}.json`).
+All four named recoveries check out:
+
+| named loss | rows read | measured | reading |
+|---|---|---|---|
+| 2,088 MSAs | the four MSA subclasses | 264 / 264, 2092 / 2093, 282 / 282 raw | **recovered**, one residual on ngoreme, named rather than smoothed |
+| 21 duplicate phonemes | `PhPhoneme` duplicates | `duplicates.groups` **0 / 0 / 0** | **recovered** |
+| 41 missing categories | `PartOfSpeech` | `difference_raw` 0 / 0 on both originating pairs, 0 duplicates | **recovered** |
+| the `+1` inflection type | `LexEntryInflType` | 0 duplicate groups anywhere; the 4th object is a starter object the source does not have | the "duplicate-creation smell" diagnosis is measured **FALSE** |
+
+**And the reading that was failing the gate was the instrument, not the
+transfer.** `PhNCFeatures` is admitted to the roster BY PREDICATE -- "*and only
+where that name is not a FLEx auto-generated rule label*" -- which `matcher.py`
+implements (`KEY_INELIGIBLE_AUTO_GENERATED`) and `census.py` never did, so the
+census grouped on a strictly WIDER key than the roster it measures. **36 of 36**
+duplicate groups across the three pairs are the auto-generated label; they
+contribute ALL of `duplicate_extra_objects` while the row is MATCHED
+(15 -> 15, 41 -> 41, 113 -> 113) against a starter baseline of ZERO, and
+mbugwe's SOURCE independently measures the same 113 objects / 66 collisions.
+Reproduced, not manufactured, exactly as the roster's own
+`collision_forensics` already said. Fixed in worktree commit `478df6d` as a
+**key correction and not an exemption** -- an exemption suppresses a true
+reading, whereas the right key keeps the detector live for a real
+`PhNCFeatures` duplicate on a linguist-chosen name. **Measured on the post-fix
+re-census, 2026-08-28: `duplicate_extra_objects` 3 / 21 / 66 -> 0 / 0 / 0, and the
+run verdict moves `DUPLICATE_IDENTITY` (exit 3) -> exit 1 on all three pairs.**
+
+That decides the shape of this amendment: the reading a narrowing could
+otherwise be accused of stepping around **no longer exists**. `PhNCFeatures` is
+a roster class, but it is not one of P3's four named losses, and its duplicate
+figures are now zero on every pair by measurement.
+
+**What this amendment does NOT do.**
+
+1. **It does not weaken the census gate.** `gate` and `gate --phase N` are
+   untouched, P5 stays **unbounded** (`phase_classes(5)` is `None` per T086, so
+   T081 gets no escape hatch), and **T081 / P5 remains exactly as it is**: not
+   satisfied on any pair (9 / 16 / 13 failures at T124, 23 in total after the
+   T126 re-census), and the exit-1 runs stay exit-1 runs. Narrowing what THIS ITEM is gated on takes nothing out of the gate's
+   scope -- those rows stay where they already are, failing where they already
+   fail.
+2. **It does not check this item's line, or T082's.** This document amends a
+   clause and records the evidence measured against it. Whether `038-NK-P3` or
+   T082 is checked off is decided in `tasks.md` by the session that owns the
+   task, and the JSON's `verdict` for this item is left as written.
+3. **It does not settle `038-NK-P1` or reopen `038-NK-P2`.** The blank-project
+   baseline is still not measured; P2 is still REFUTED by measurement, and no
+   roster entry moves either way.
+4. **It does not claim any recovery beyond the rows it names.** Nothing here
+   says the four hold on a pair not yet transferred, and nothing here accounts
+   for a row this item does not name.
+
+**Closure, 2026-08-28 (T126 artifacts).** The `duplicate_extra_objects` figure
+measured above ("precisely as predicted", per `tasks.md`'s T082 line) is now
+read directly rather than inferred, from
+`tests/integration/_snapshots/census-038-t126-{ejagham,ngoreme,mbugwe}.json`
+(fresh `census_cli run` invocations against `GT038 T124 {Ejagham,Ngoreme,Mbugwe}`)
+and their `recensus-038-t126-*.json` twins: `PhNCFeatures` reads
+`verdict_class: "MATCHED"` on all three (15/15, 41/41, 113/113),
+`totals.duplicate_extra_objects` is **0** on all three (was 3/21/66 at T124),
+and `verdict` is `"UNEXPLAINED_SHORTFALL"` with `exit_code: 1` on all three --
+not `DUPLICATE_IDENTITY` / exit 3. The recensus twins' `phase_5.failures` count
+6 / 10 / 7 across the three pairs, none of them `PhNCFeatures`.
+
+Combined with the four-row recovery this section already established against
+the T124 artifacts (the table above), `038-NK-P3` is now met on **both**
+readings that have been in play: the amended per-row clause stated above (the
+four named losses recover, independently of `PhNCFeatures`, which this
+amendment already excluded from the item's scope), and the plainer reading
+`038-NK-P3` was narrowed to at T098 -- 2026-08-22 -- (the `PhNCFeatures`
+duplicate figure that was driving every run-level verdict to
+`DUPLICATE_IDENTITY` is now genuinely zero, by the census-key fix measured
+above, not by narrowing around it). `038-NK-P2` was already settled
+2026-08-26 (REFUTED -- no enforcement located; no roster entry moves). With
+both roster pending items settled, `tasks.md`'s **T082 is checked.**
 
 ---
 

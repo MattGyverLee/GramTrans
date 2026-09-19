@@ -1,0 +1,1086 @@
+{
+  "schema_version": 1,
+  "_source": "Feature 035 T045e. The ONE tracked class -> GrammarCategory mapping. guard_comparisons_performed (debug/fullsweep/guards.py:323) keys its counters on CATEGORY; every plane-2 surface (census_fields, coverage.classify_coverage, coverage-floor.json in_scope_classes) keys on CLASS. This file is the join, and it is SHARED: feature 038's per-class census reads the same document. Do not fork a second copy inside debug/fullsweep/ -- a class-to-category mapping that disagrees between the two instruments is a silent divergence neither one can detect.",
+  "_derived_from": [
+    "specs/035-fullsweep-fidelity/object-inventory.md TABLE 1 (GrammarCategory column) and TABLE 2",
+    "specs/035-fullsweep-fidelity/contracts/coverage-floor.json (in_scope_classes)",
+    "src/gramtrans/Lib/models.py GrammarCategory",
+    "src/gramtrans/Lib/transfer.py _LEAF_DISPATCH_CATEGORIES"
+  ],
+  "_shared_with": [
+    "specs/038-transfer-fidelity-gaps/contracts/census-artifact.schema.json -- its classRow 'class' plus optional 'owning_feature_system' are the join key this file reproduces exactly, so a feature-system-split census row joins to exactly one category."
+  ],
+  "_not_a_default": "A class whose 'categories' is empty carries a NON-NULL 'unmapped_reason' and MUST be reported not-evaluated at the category plane, never folded into a category's clean tally (FR-109, FR-136, FR-137). A reader that silently treats an empty list as 'no findings' reproduces the exact defect this feature exists to catch.",
+  "category_vocabulary": [
+    "writing_systems_check",
+    "gram_categories",
+    "inflection_features",
+    "custom_fields",
+    "inflection_classes",
+    "feature_struct_types",
+    "pos_inflectable_feats",
+    "phon_feat_types",
+    "stem_names",
+    "exception_features",
+    "variant_types",
+    "complex_form_types",
+    "adhoc_compound_rules",
+    "affixes",
+    "slots",
+    "affix_templates",
+    "stems",
+    "pos",
+    "entry",
+    "sense",
+    "msa",
+    "allomorph",
+    "ph_environment",
+    "phonological_features",
+    "phonemes",
+    "natural_classes",
+    "phonological_rules",
+    "strata",
+    "semantic_domains",
+    "texts"
+  ],
+  "category_dispatch": {
+    "writing_systems_check": "pre-pass",
+    "gram_categories": "leaf",
+    "inflection_features": "leaf",
+    "custom_fields": "leaf",
+    "inflection_classes": "leaf",
+    "feature_struct_types": "leaf",
+    "pos_inflectable_feats": "leaf",
+    "phon_feat_types": "leaf",
+    "stem_names": "leaf",
+    "exception_features": "leaf",
+    "variant_types": "leaf",
+    "complex_form_types": "leaf",
+    "adhoc_compound_rules": "leaf",
+    "affixes": "leaf",
+    "slots": "leaf",
+    "affix_templates": "leaf",
+    "stems": "leaf",
+    "pos": "phase0-unused",
+    "entry": "phase0-unused",
+    "sense": "phase0-unused",
+    "msa": "phase0-unused",
+    "allomorph": "phase0-unused",
+    "ph_environment": "leaf",
+    "phonological_features": "leaf",
+    "phonemes": "leaf",
+    "natural_classes": "leaf",
+    "phonological_rules": "leaf",
+    "strata": "leaf",
+    "semantic_domains": "leaf",
+    "texts": "dedicated-hook"
+  },
+  "unmapped_class_reasons": {
+    "post-pass-no-category": "Created by a post-pass over ctx._copy_set rather than by any category's execute_action, so no category can be credited with creating it.",
+    "reference-create-arm-only": "Created on demand by the reference CREATE arm (Lib/references.py:1119) under whichever category is resolving the referring field. It has no category of its own, and no single category may claim coverage of it.",
+    "never-created-referenced-only": "Referenced by the engine but created by no path at all. Every source project using it registers a permanent expected loss (object-inventory.md G4.8)."
+  },
+  "categoryless_reasons": {
+    "no-lcm-object-created": "The category dispatches and does real work, but creates no LCM object on the coverage floor -- it wires references or mutates schema. Zero comparisons is CORRECT for it, and is not evidence of coverage.",
+    "configuration-artifact-not-an-lcm-object": "The category's product is a TABLE 4 configuration artifact, not an LCM object on the coverage floor.",
+    "phase0-surface-category-not-in-full-run-dispatch": "A Phase-0 MVP surface category used by transfer_verb_vertical and absent from transfer.py _LEAF_DISPATCH_CATEGORIES. A full run never dispatches it, so it can neither be measured nor reported clean."
+  },
+  "classes": [
+    {
+      "class": "CmAgent",
+      "owning_feature_system": null,
+      "categories": [
+        "texts"
+      ],
+      "also_created_via": [],
+      "unmapped_reason": null,
+      "inventory_tables": [
+        1
+      ],
+      "qualifier": "Target-side singleton per run, created only when absent; Agents.Create(name) takes no guid, so its identity is minted (object-inventory.md G4.2). Lib/wordforms.py:198."
+    },
+    {
+      "class": "CmAnthroItem",
+      "owning_feature_system": null,
+      "categories": [],
+      "also_created_via": [],
+      "unmapped_reason": "reference-create-arm-only",
+      "inventory_tables": [
+        1,
+        2
+      ],
+      "qualifier": "Lib/references.py:1119, typed by ItemClsid 26. Created on demand by whichever category is dispatching when LexSense.AnthroCodesRC is resolved; it has no category of its own."
+    },
+    {
+      "class": "CmFile",
+      "owning_feature_system": null,
+      "categories": [
+        "affixes",
+        "stems"
+      ],
+      "also_created_via": [],
+      "unmapped_reason": null,
+      "inventory_tables": [
+        1,
+        2
+      ],
+      "qualifier": "Per sense. The raw path preserves the GUID; the Senses.AddPicture seam does not (Lib/pictures.py:457)."
+    },
+    {
+      "class": "CmFolder",
+      "owning_feature_system": null,
+      "categories": [
+        "affixes",
+        "stems"
+      ],
+      "also_created_via": [],
+      "unmapped_reason": null,
+      "inventory_tables": [
+        1
+      ],
+      "qualifier": "Once per target. Target-side container (Local Pictures) with no source counterpart and a deliberately minted GUID (Lib/pictures.py:417-423, object-inventory.md G4.1)."
+    },
+    {
+      "class": "CmPicture",
+      "owning_feature_system": null,
+      "categories": [
+        "affixes",
+        "stems"
+      ],
+      "also_created_via": [],
+      "unmapped_reason": null,
+      "inventory_tables": [
+        1
+      ],
+      "qualifier": "Per sense. The raw path preserves the GUID; the Senses.AddPicture seam does not (Lib/pictures.py:448 and :490)."
+    },
+    {
+      "class": "CmPossibility",
+      "owning_feature_system": null,
+      "categories": [],
+      "also_created_via": [],
+      "unmapped_reason": "reference-create-arm-only",
+      "inventory_tables": [
+        1,
+        2
+      ],
+      "qualifier": "Lib/references.py:1119. The inventory cell reads 'any category, via the reference CREATE arm': it is created, with its full root-to-leaf ancestor chain, under whichever category resolves the referring field. Fourteen distinct owning lists in TABLE 2."
+    },
+    {
+      "class": "CmSemanticDomain",
+      "owning_feature_system": null,
+      "categories": [
+        "semantic_domains"
+      ],
+      "also_created_via": [
+        "reference-create-arm"
+      ],
+      "unmapped_reason": null,
+      "inventory_tables": [
+        1,
+        2
+      ],
+      "qualifier": "Two create sites: the SEMANTIC_DOMAINS category (Lib/categories.py:2797) and the reference CREATE arm (Lib/references.py:1119, ItemClsid 66) when LexSense.SemanticDomainsRC is resolved."
+    },
+    {
+      "class": "FsClosedFeature",
+      "owning_feature_system": "LangProject.MsFeatureSystemOA",
+      "categories": [
+        "inflection_features"
+      ],
+      "also_created_via": [],
+      "unmapped_reason": null,
+      "inventory_tables": [
+        1,
+        2
+      ],
+      "qualifier": "Owner MsFeatureSystemOA.FeaturesOC (Lib/categories.py:843 and :854)."
+    },
+    {
+      "class": "FsClosedFeature",
+      "owning_feature_system": "LangProject.PhFeatureSystemOA",
+      "categories": [
+        "phonological_features"
+      ],
+      "also_created_via": [],
+      "unmapped_reason": null,
+      "inventory_tables": [
+        1
+      ],
+      "qualifier": "Same class, different feature system: owner PhFeatureSystemOA.FeaturesOC (Lib/categories.py:7930)."
+    },
+    {
+      "class": "FsClosedValue",
+      "owning_feature_system": null,
+      "categories": [
+        "affixes",
+        "stems"
+      ],
+      "also_created_via": [],
+      "unmapped_reason": null,
+      "inventory_tables": [
+        1
+      ],
+      "qualifier": "Internal. Lib/categories.py:6752, Lib/owned.py:1861. Also created with a MINTED guid by flexicon PhonemeOperations under PHONEMES (TABLE 3); that path is a dependency-owned side effect, not a GramTrans create site."
+    },
+    {
+      "class": "FsComplexFeature",
+      "owning_feature_system": null,
+      "categories": [
+        "inflection_features"
+      ],
+      "also_created_via": [],
+      "unmapped_reason": null,
+      "inventory_tables": [
+        1
+      ],
+      "qualifier": null
+    },
+    {
+      "class": "FsFeatStruc",
+      "owning_feature_system": null,
+      "categories": [
+        "affixes",
+        "stems"
+      ],
+      "also_created_via": [],
+      "unmapped_reason": null,
+      "inventory_tables": [
+        1
+      ],
+      "qualifier": "Internal; no Name, never surfaced as a dependency row (Lib/selection.py:1608). Also created with a MINTED guid by flexicon PhonemeOperations under PHONEMES (TABLE 3)."
+    },
+    {
+      "class": "FsFeatStrucType",
+      "owning_feature_system": "LangProject.MsFeatureSystemOA",
+      "categories": [
+        "feature_struct_types"
+      ],
+      "also_created_via": [],
+      "unmapped_reason": null,
+      "inventory_tables": [
+        1
+      ],
+      "qualifier": "Owner MsFeatureSystemOA.TypesOC (Lib/categories.py:1631-1637)."
+    },
+    {
+      "class": "FsFeatStrucType",
+      "owning_feature_system": "LangProject.PhFeatureSystemOA",
+      "categories": [
+        "phon_feat_types"
+      ],
+      "also_created_via": [],
+      "unmapped_reason": null,
+      "inventory_tables": [
+        1
+      ],
+      "qualifier": "Owner PhFeatureSystemOA.TypesOC (Lib/categories.py:1864-1870)."
+    },
+    {
+      "class": "FsSymFeatVal",
+      "owning_feature_system": null,
+      "categories": [
+        "inflection_features"
+      ],
+      "also_created_via": [],
+      "unmapped_reason": null,
+      "inventory_tables": [
+        1,
+        2
+      ],
+      "qualifier": null
+    },
+    {
+      "class": "LexAppendix",
+      "owning_feature_system": null,
+      "categories": [],
+      "also_created_via": [],
+      "unmapped_reason": "never-created-referenced-only",
+      "inventory_tables": [
+        2
+      ],
+      "qualifier": "Referenced by LexSense.AppendixesRC, resolved by GUID against target-owned appendixes only and NEVER created by any path; its owned StText is never reproduced. Also pinned absent corpus-wide in coverage-floor.json (research D-07's appendix)."
+    },
+    {
+      "class": "LexEntry",
+      "owning_feature_system": null,
+      "categories": [
+        "affixes",
+        "stems"
+      ],
+      "also_created_via": [],
+      "unmapped_reason": null,
+      "inventory_tables": [
+        1,
+        2
+      ],
+      "qualifier": "The closure root."
+    },
+    {
+      "class": "LexEntryInflType",
+      "owning_feature_system": null,
+      "categories": [
+        "variant_types"
+      ],
+      "also_created_via": [],
+      "unmapped_reason": null,
+      "inventory_tables": [
+        1,
+        2
+      ],
+      "qualifier": null
+    },
+    {
+      "class": "LexEntryRef",
+      "owning_feature_system": null,
+      "categories": [
+        "stems"
+      ],
+      "also_created_via": [],
+      "unmapped_reason": null,
+      "inventory_tables": [
+        1
+      ],
+      "qualifier": "ADJUDICATED. object-inventory.md TABLE 1 lists this row as 'AFFIXES, STEMS (created only in the STEMS tail)'. Gap analysis G3 measures the parenthetical: _run_entryref_create_pass and _run_post_pass_a are invoked ONLY from stems_execute_action (Lib/categories.py:7714-7718), so nothing creates a LexEntryRef under AFFIXES. Mapping it to affixes would let an affixes-only run report coverage of a class it cannot create, which is exactly FR-137's defect; the map therefore records STEMS alone."
+    },
+    {
+      "class": "LexEntryType",
+      "owning_feature_system": null,
+      "categories": [
+        "variant_types",
+        "complex_form_types"
+      ],
+      "also_created_via": [
+        "reference-create-arm"
+      ],
+      "unmapped_reason": null,
+      "inventory_tables": [
+        1,
+        2
+      ],
+      "qualifier": "One create helper (Lib/categories.py:2686) serving two categories by owner: LexDbOA.VariantEntryTypesOA vs LexDbOA.ComplexEntryTypesOA. Also reachable through the reference CREATE arm (ItemClsid 5118)."
+    },
+    {
+      "class": "LexEtymology",
+      "owning_feature_system": null,
+      "categories": [
+        "affixes",
+        "stems"
+      ],
+      "also_created_via": [],
+      "unmapped_reason": null,
+      "inventory_tables": [
+        1
+      ],
+      "qualifier": null
+    },
+    {
+      "class": "LexExampleSentence",
+      "owning_feature_system": null,
+      "categories": [
+        "affixes",
+        "stems"
+      ],
+      "also_created_via": [],
+      "unmapped_reason": null,
+      "inventory_tables": [
+        1
+      ],
+      "qualifier": "Two OWNED_OBJECT_MAP rows: sense-owned (OWNER_TAKING) and extended-note-owned (UNOWNED_THEN_ADD)."
+    },
+    {
+      "class": "LexExtendedNote",
+      "owning_feature_system": null,
+      "categories": [
+        "affixes",
+        "stems"
+      ],
+      "also_created_via": [],
+      "unmapped_reason": null,
+      "inventory_tables": [
+        1
+      ],
+      "qualifier": null
+    },
+    {
+      "class": "LexPronunciation",
+      "owning_feature_system": null,
+      "categories": [
+        "affixes",
+        "stems"
+      ],
+      "also_created_via": [],
+      "unmapped_reason": null,
+      "inventory_tables": [
+        1
+      ],
+      "qualifier": null
+    },
+    {
+      "class": "LexRefType",
+      "owning_feature_system": null,
+      "categories": [],
+      "also_created_via": [],
+      "unmapped_reason": "never-created-referenced-only",
+      "inventory_tables": [
+        2
+      ],
+      "qualifier": "Owner of LexReference via MembersOC, resolved by GUID only and NEVER created; an unresolved type makes _evaluate_lexical_relation report and skip the relation."
+    },
+    {
+      "class": "LexReference",
+      "owning_feature_system": null,
+      "categories": [],
+      "also_created_via": [],
+      "unmapped_reason": "post-pass-no-category",
+      "inventory_tables": [
+        1
+      ],
+      "qualifier": "Created in a post-pass over ctx._copy_set (Lib/categories.py:5219), not by any category's execute_action. G3: with STEMS excluded the copy set holds only affix entries, so most relations have no member to rebuild."
+    },
+    {
+      "class": "LexSense",
+      "owning_feature_system": null,
+      "categories": [
+        "affixes",
+        "stems"
+      ],
+      "also_created_via": [],
+      "unmapped_reason": null,
+      "inventory_tables": [
+        1,
+        2
+      ],
+      "qualifier": null
+    },
+    {
+      "class": "MoAdhocProhibGr",
+      "owning_feature_system": null,
+      "categories": [
+        "adhoc_compound_rules"
+      ],
+      "also_created_via": [],
+      "unmapped_reason": null,
+      "inventory_tables": [
+        1
+      ],
+      "qualifier": "Children re-parented in the T011 pass."
+    },
+    {
+      "class": "MoAffixAllomorph",
+      "owning_feature_system": null,
+      "categories": [
+        "affixes"
+      ],
+      "also_created_via": [],
+      "unmapped_reason": null,
+      "inventory_tables": [
+        1
+      ],
+      "qualifier": "LexemeFormOA first, then each AlternateFormsOS member. Concrete subclass of the abstract MoForm that TABLE 2 references."
+    },
+    {
+      "class": "MoAlloAdhocProhib",
+      "owning_feature_system": null,
+      "categories": [
+        "adhoc_compound_rules"
+      ],
+      "also_created_via": [],
+      "unmapped_reason": null,
+      "inventory_tables": [
+        1
+      ],
+      "qualifier": null
+    },
+    {
+      "class": "MoDerivAffMsa",
+      "owning_feature_system": null,
+      "categories": [
+        "affixes"
+      ],
+      "also_created_via": [],
+      "unmapped_reason": null,
+      "inventory_tables": [
+        1
+      ],
+      "qualifier": null
+    },
+    {
+      "class": "MoEndoCompound",
+      "owning_feature_system": null,
+      "categories": [
+        "adhoc_compound_rules"
+      ],
+      "also_created_via": [],
+      "unmapped_reason": null,
+      "inventory_tables": [
+        1
+      ],
+      "qualifier": null
+    },
+    {
+      "class": "MoExoCompound",
+      "owning_feature_system": null,
+      "categories": [
+        "adhoc_compound_rules"
+      ],
+      "also_created_via": [],
+      "unmapped_reason": null,
+      "inventory_tables": [
+        1
+      ],
+      "qualifier": null
+    },
+    {
+      "class": "MoInflAffMsa",
+      "owning_feature_system": null,
+      "categories": [
+        "affixes"
+      ],
+      "also_created_via": [],
+      "unmapped_reason": null,
+      "inventory_tables": [
+        1
+      ],
+      "qualifier": "SlotsRC deferred to the 17.1 sub-pass (_wire_msa_infl_feats)."
+    },
+    {
+      "class": "MoInflAffixSlot",
+      "owning_feature_system": null,
+      "categories": [
+        "slots"
+      ],
+      "also_created_via": [],
+      "unmapped_reason": null,
+      "inventory_tables": [
+        1,
+        2
+      ],
+      "qualifier": "Owner POS.AffixSlotsOC."
+    },
+    {
+      "class": "MoInflAffixTemplate",
+      "owning_feature_system": null,
+      "categories": [
+        "affix_templates"
+      ],
+      "also_created_via": [],
+      "unmapped_reason": null,
+      "inventory_tables": [
+        1
+      ],
+      "qualifier": "Owner POS.AffixTemplatesOS; slot sequences are order-critical per FR-083."
+    },
+    {
+      "class": "MoInflClass",
+      "owning_feature_system": null,
+      "categories": [
+        "inflection_classes"
+      ],
+      "also_created_via": [],
+      "unmapped_reason": null,
+      "inventory_tables": [
+        1
+      ],
+      "qualifier": "Owned per-POS."
+    },
+    {
+      "class": "MoMorphAdhocProhib",
+      "owning_feature_system": null,
+      "categories": [
+        "adhoc_compound_rules"
+      ],
+      "also_created_via": [],
+      "unmapped_reason": null,
+      "inventory_tables": [
+        1
+      ],
+      "qualifier": null
+    },
+    {
+      "class": "MoMorphType",
+      "owning_feature_system": null,
+      "categories": [],
+      "also_created_via": [],
+      "unmapped_reason": "reference-create-arm-only",
+      "inventory_tables": [
+        1,
+        2
+      ],
+      "qualifier": "Lib/references.py:1119, ItemClsid 5042. Created on demand when MoForm.MorphTypeRA is resolved; no category of its own."
+    },
+    {
+      "class": "MoStemAllomorph",
+      "owning_feature_system": null,
+      "categories": [
+        "stems",
+        "affixes"
+      ],
+      "also_created_via": [],
+      "unmapped_reason": null,
+      "inventory_tables": [
+        1
+      ],
+      "qualifier": "The inventory cell reads 'STEMS (and any affix entry whose form is a stem type)', so both categories can create one. Live-unproven under build_full_selection: new=0 / missing=187 in the last audit because STEMS is excluded (FR-134)."
+    },
+    {
+      "class": "MoStemMsa",
+      "owning_feature_system": null,
+      "categories": [
+        "affixes",
+        "stems",
+        "adhoc_compound_rules"
+      ],
+      "also_created_via": [],
+      "unmapped_reason": null,
+      "inventory_tables": [
+        1
+      ],
+      "qualifier": "TWO distinct create sites: entry-owned (Lib/categories.py:6412-6441, under AFFIXES and STEMS) and compound-rule-owned (Lib/categories.py:3546 _create_owned_msa, assigned to LeftMsaOA / RightMsaOA / OverridingMsaOA / ToMsaOA under ADHOC_COMPOUND_RULES). Concrete subclass of the abstract MoMorphSynAnalysis that TABLE 2 references."
+    },
+    {
+      "class": "MoStemName",
+      "owning_feature_system": null,
+      "categories": [
+        "stem_names"
+      ],
+      "also_created_via": [],
+      "unmapped_reason": null,
+      "inventory_tables": [
+        1,
+        2
+      ],
+      "qualifier": "Owner POS.StemNamesOC; MoForm.StemNameRA resolves against the OWNING POS's own list."
+    },
+    {
+      "class": "MoStratum",
+      "owning_feature_system": null,
+      "categories": [
+        "strata"
+      ],
+      "also_created_via": [],
+      "unmapped_reason": null,
+      "inventory_tables": [
+        1,
+        2
+      ],
+      "qualifier": "Referenced by a DEFERRED drain (_drain_phon_rule_stratum_wiring) because PHONOLOGICAL_RULES dispatches before STRATA. Also pinned absent corpus-wide in coverage-floor.json (research D-07's stratum)."
+    },
+    {
+      "class": "MoUnclassifiedAffixMsa",
+      "owning_feature_system": null,
+      "categories": [
+        "affixes"
+      ],
+      "also_created_via": [],
+      "unmapped_reason": null,
+      "inventory_tables": [
+        1
+      ],
+      "qualifier": null
+    },
+    {
+      "class": "PartOfSpeech",
+      "owning_feature_system": null,
+      "categories": [
+        "gram_categories"
+      ],
+      "also_created_via": [
+        "reference-create-arm"
+      ],
+      "unmapped_reason": null,
+      "inventory_tables": [
+        1,
+        2
+      ],
+      "qualifier": "The GRAM_CATEGORIES create site is Lib/categories.py:453 and :466. The reference CREATE arm (Lib/references.py:1112) is an owner-taking special case scoped to ReversalIndex.PartsOfSpeechOA -- the reversal category list, NEVER LangProject.PartsOfSpeechOA."
+    },
+    {
+      "class": "PhBdryMarker",
+      "owning_feature_system": null,
+      "categories": [],
+      "also_created_via": [],
+      "unmapped_reason": "never-created-referenced-only",
+      "inventory_tables": [
+        2
+      ],
+      "qualifier": "Referenced by PhSimpleContextBdry.FeatureStructureRA and never created. Its absence leaves FeatureStructureRA UNSET with only a [WARN] print and no DroppedItemRecord (Lib/categories.py:8811-8816) -- object-inventory.md G4.6 records this as an engine never-silent violation the sweep will surface as an uncorroborated silent unset."
+    },
+    {
+      "class": "PhEnvironment",
+      "owning_feature_system": null,
+      "categories": [
+        "ph_environment"
+      ],
+      "also_created_via": [],
+      "unmapped_reason": null,
+      "inventory_tables": [
+        1,
+        2
+      ],
+      "qualifier": "Owner PhonologicalDataOA.EnvironmentsOS; MoForm.PhoneEnvRC links to it but never creates it."
+    },
+    {
+      "class": "PhFeatureConstraint",
+      "owning_feature_system": null,
+      "categories": [
+        "phonological_rules"
+      ],
+      "also_created_via": [],
+      "unmapped_reason": null,
+      "inventory_tables": [
+        1,
+        2
+      ],
+      "qualifier": "Created in the in-rule constraint pre-pass into FeatConstraintsOS. An unresolved constraint RAISES (Lib/categories.py:8794) -- the one referenced class that fails loud."
+    },
+    {
+      "class": "PhMetathesisRule",
+      "owning_feature_system": null,
+      "categories": [
+        "phonological_rules"
+      ],
+      "also_created_via": [],
+      "unmapped_reason": null,
+      "inventory_tables": [
+        1
+      ],
+      "qualifier": null
+    },
+    {
+      "class": "PhNCFeatures",
+      "owning_feature_system": null,
+      "categories": [
+        "natural_classes"
+      ],
+      "also_created_via": [],
+      "unmapped_reason": null,
+      "inventory_tables": [
+        1,
+        2
+      ],
+      "qualifier": null
+    },
+    {
+      "class": "PhNCSegments",
+      "owning_feature_system": null,
+      "categories": [
+        "natural_classes"
+      ],
+      "also_created_via": [],
+      "unmapped_reason": null,
+      "inventory_tables": [
+        1,
+        2
+      ],
+      "qualifier": null
+    },
+    {
+      "class": "PhPhoneme",
+      "owning_feature_system": null,
+      "categories": [
+        "phonemes"
+      ],
+      "also_created_via": [],
+      "unmapped_reason": null,
+      "inventory_tables": [
+        1,
+        2
+      ],
+      "qualifier": "Owner PhonologicalDataOA.PhonemeSetsOS[0].PhonemesOC; returns None SILENTLY when the target has no phoneme set. Its CodesOS (PhCode) is carried by nothing and produces no drop record (G4.5)."
+    },
+    {
+      "class": "PhRegularRule",
+      "owning_feature_system": null,
+      "categories": [
+        "phonological_rules"
+      ],
+      "also_created_via": [],
+      "unmapped_reason": null,
+      "inventory_tables": [
+        1
+      ],
+      "qualifier": null
+    },
+    {
+      "class": "PhSegRuleRHS",
+      "owning_feature_system": null,
+      "categories": [
+        "phonological_rules"
+      ],
+      "also_created_via": [],
+      "unmapped_reason": null,
+      "inventory_tables": [
+        1
+      ],
+      "qualifier": "Internal; owner rule.RightHandSidesOS."
+    },
+    {
+      "class": "PhSegmentRule",
+      "owning_feature_system": null,
+      "categories": [
+        "phonological_rules"
+      ],
+      "also_created_via": [],
+      "unmapped_reason": null,
+      "inventory_tables": [
+        1
+      ],
+      "qualifier": "Also pinned absent corpus-wide in coverage-floor.json (research D-07's 'one phonological-rule subclass'). Siblings ARE present: PhRegularRule 398/33, PhMetathesisRule 4/4."
+    },
+    {
+      "class": "PhSequenceContext",
+      "owning_feature_system": null,
+      "categories": [
+        "phonological_rules"
+      ],
+      "also_created_via": [],
+      "unmapped_reason": null,
+      "inventory_tables": [
+        1
+      ],
+      "qualifier": "Internal; members owned in PhPhonData.ContextsOS, referenced from MembersRS."
+    },
+    {
+      "class": "PhSimpleContextBdry",
+      "owning_feature_system": null,
+      "categories": [
+        "phonological_rules"
+      ],
+      "also_created_via": [],
+      "unmapped_reason": null,
+      "inventory_tables": [
+        1
+      ],
+      "qualifier": "Internal. See PhBdryMarker: its FeatureStructureRA is left unset without a drop record when the boundary marker is absent."
+    },
+    {
+      "class": "PhSimpleContextNC",
+      "owning_feature_system": null,
+      "categories": [
+        "phonological_rules"
+      ],
+      "also_created_via": [],
+      "unmapped_reason": null,
+      "inventory_tables": [
+        1
+      ],
+      "qualifier": "Internal."
+    },
+    {
+      "class": "PhSimpleContextSeg",
+      "owning_feature_system": null,
+      "categories": [
+        "phonological_rules"
+      ],
+      "also_created_via": [],
+      "unmapped_reason": null,
+      "inventory_tables": [
+        1
+      ],
+      "qualifier": "Internal."
+    },
+    {
+      "class": "PunctuationForm",
+      "owning_feature_system": null,
+      "categories": [],
+      "also_created_via": [],
+      "unmapped_reason": "never-created-referenced-only",
+      "inventory_tables": [
+        2
+      ],
+      "qualifier": "ADJUDICATED. Reachable only as a Segment.AnalysesRS alignment token under TEXTS, and _normalize_token_to_analysis maps IPunctuationForm to None (Lib/wordforms.py:380) -- GramTrans has no create site for it. Any target-side instance is an LCM side effect of assigning StTxtPara.Contents (TABLE 3's 'CmObject subclasses auto-created by LCM Contents assignment'), not an engine create, so no category may claim it."
+    },
+    {
+      "class": "ReversalIndex",
+      "owning_feature_system": null,
+      "categories": [],
+      "also_created_via": [],
+      "unmapped_reason": "post-pass-no-category",
+      "inventory_tables": [
+        1,
+        2
+      ],
+      "qualifier": "Created one-per-mapped-writing-system in a post-pass (Lib/reversals.py:559); ReversalIndexes.Create(ws_id, ws_id) has no guid parameter, so identity is the WS tag, not the GUID (G4.3). T045d additionally found ReversalIndexOperations does not override GetSyncableProperties, so its fields are currently unreadable by the census (T070)."
+    },
+    {
+      "class": "ReversalIndexEntry",
+      "owning_feature_system": null,
+      "categories": [],
+      "also_created_via": [],
+      "unmapped_reason": "post-pass-no-category",
+      "inventory_tables": [
+        1,
+        2
+      ],
+      "qualifier": "Post-pass over ctx._copy_set. Top-level entries (Lib/reversals.py:642) have no guid overload and are deduped by reversal FORM; sub-entries (:717) do preserve the GUID. Identity is therefore the form, not the GUID (G4.3). T045d: no GetSyncableProperties override (T070)."
+    },
+    {
+      "class": "Segment",
+      "owning_feature_system": null,
+      "categories": [
+        "texts"
+      ],
+      "also_created_via": [],
+      "unmapped_reason": null,
+      "inventory_tables": [
+        1
+      ],
+      "qualifier": "LCM auto-segments when Contents is set; the code deletes and re-creates each segment at its existing offset. Segment NotesOS is NOT reproduced -- one drop record per note."
+    },
+    {
+      "class": "StText",
+      "owning_feature_system": null,
+      "categories": [
+        "texts"
+      ],
+      "also_created_via": [],
+      "unmapped_reason": null,
+      "inventory_tables": [
+        1
+      ],
+      "qualifier": "Created as Text.ContentsOA by the same Texts.Create call."
+    },
+    {
+      "class": "StTxtPara",
+      "owning_feature_system": null,
+      "categories": [
+        "texts"
+      ],
+      "also_created_via": [],
+      "unmapped_reason": null,
+      "inventory_tables": [
+        1
+      ],
+      "qualifier": "Two paths: the flexicon wrapper and a raw IStTxtParaFactory that avoids flexicon's strip() and empty-content guard."
+    },
+    {
+      "class": "Text",
+      "owning_feature_system": null,
+      "categories": [
+        "texts"
+      ],
+      "also_created_via": [],
+      "unmapped_reason": null,
+      "inventory_tables": [
+        1
+      ],
+      "qualifier": "Reuses an existing text when Exists(name) hits -- name-based, not GUID-based."
+    },
+    {
+      "class": "TextTag",
+      "owning_feature_system": null,
+      "categories": [
+        "texts"
+      ],
+      "also_created_via": [],
+      "unmapped_reason": null,
+      "inventory_tables": [
+        1
+      ],
+      "qualifier": "The raw path preserves the GUID from SegmentPlan.tag_source_guids; the TextTags.Create seam does not. T045d: no ITextTag reference anywhere in installed flexicon, so this class is currently unreachable by the field census (T070)."
+    },
+    {
+      "class": "WfiAnalysis",
+      "owning_feature_system": null,
+      "categories": [
+        "texts"
+      ],
+      "also_created_via": [],
+      "unmapped_reason": null,
+      "inventory_tables": [
+        1,
+        2
+      ],
+      "qualifier": null
+    },
+    {
+      "class": "WfiGloss",
+      "owning_feature_system": null,
+      "categories": [
+        "texts"
+      ],
+      "also_created_via": [],
+      "unmapped_reason": null,
+      "inventory_tables": [
+        1,
+        2
+      ],
+      "qualifier": null
+    },
+    {
+      "class": "WfiMorphBundle",
+      "owning_feature_system": null,
+      "categories": [
+        "texts"
+      ],
+      "also_created_via": [],
+      "unmapped_reason": null,
+      "inventory_tables": [
+        1
+      ],
+      "qualifier": null
+    },
+    {
+      "class": "WfiWordform",
+      "owning_feature_system": null,
+      "categories": [
+        "texts"
+      ],
+      "also_created_via": [],
+      "unmapped_reason": null,
+      "inventory_tables": [
+        1,
+        2
+      ],
+      "qualifier": "Find(form, handle) runs BEFORE Create(..., guid=), so a pre-existing target wordform is reused under a foreign GUID BY DESIGN (Lib/wordforms.py:1077-1087). Identity is the (writing system, form) pair, not the GUID (G4.4). On the natural-key identity roster per FR-185."
+    }
+  ],
+  "categories_without_in_scope_class": [
+    {
+      "category": "custom_fields",
+      "reason": "no-lcm-object-created",
+      "detail": "custom_fields_execute_action (Lib/categories.py:1289) is a documented NO-OP returning None. The schema creation happens in api._ensure_custom_fields (Lib/api.py:671-790) as an in-memory MDC mutation persisted by a PATH-CLOSE-REBIND checkpoint; values ride on the transferred objects. TABLE 4, not TABLE 1."
+    },
+    {
+      "category": "pos_inflectable_feats",
+      "reason": "no-lcm-object-created",
+      "detail": "Pure reference wiring into POS.InflectableFeatsRC (Lib/categories.py:2034). The FsClosedFeature / FsSymFeatVal it links were created by INFLECTION_FEATURES."
+    },
+    {
+      "category": "exception_features",
+      "reason": "no-lcm-object-created",
+      "detail": "Adds an ALREADY-EXISTING FsSymFeatVal to POS.ExceptionFeaturesOC (Lib/categories.py:2339-2386); returns None if the value is not already in the target."
+    },
+    {
+      "category": "writing_systems_check",
+      "reason": "configuration-artifact-not-an-lcm-object",
+      "detail": "Writing systems are created by api._ensure_writing_systems (Lib/api.py:802-882) BEFORE transfer.execute, and are TABLE 4 configuration artifacts rather than LCM objects on the coverage floor. Deliberately excluded from the roster per the ratified FR-185 decision (wordform on roster; writing systems excluded)."
+    },
+    {
+      "category": "pos",
+      "reason": "phase0-surface-category-not-in-full-run-dispatch",
+      "detail": "Phase-0 MVP surface category used by gramtrans.py transfer_verb_vertical. Absent from transfer.py _LEAF_DISPATCH_CATEGORIES, so a full run never dispatches it; PartOfSpeech is created under GRAM_CATEGORIES instead."
+    },
+    {
+      "category": "entry",
+      "reason": "phase0-surface-category-not-in-full-run-dispatch",
+      "detail": "Phase-0 MVP surface category. LexEntry is created under AFFIXES / STEMS in a full run."
+    },
+    {
+      "category": "sense",
+      "reason": "phase0-surface-category-not-in-full-run-dispatch",
+      "detail": "Phase-0 MVP surface category. LexSense is created under AFFIXES / STEMS in a full run."
+    },
+    {
+      "category": "msa",
+      "reason": "phase0-surface-category-not-in-full-run-dispatch",
+      "detail": "Phase-0 MVP surface category. The four MSA subclasses are created under AFFIXES / STEMS (and ADHOC_COMPOUND_RULES for compound-rule-owned MoStemMsa) in a full run."
+    },
+    {
+      "category": "allomorph",
+      "reason": "phase0-surface-category-not-in-full-run-dispatch",
+      "detail": "Phase-0 MVP surface category. MoStemAllomorph / MoAffixAllomorph are created under STEMS / AFFIXES in a full run."
+    }
+  ]
+}

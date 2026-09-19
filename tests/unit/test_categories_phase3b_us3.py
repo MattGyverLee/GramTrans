@@ -79,19 +79,28 @@ class _Project:
 
 
 class _FsSpec:
-    def __init__(self, val_guid):
-        self.ValueRA = _ValueRef(val_guid)
+    def __init__(self, val_guid, feature=None):
+        self.ValueRA = _ValueRef(val_guid, owner=feature)
+        if feature is not None:
+            self.FeatureRA = feature
 
 
 class _ValueRef:
-    def __init__(self, guid):
+    def __init__(self, guid, owner=None):
         self.guid = guid
         self.Guid = guid
+        if owner is not None:
+            # T089: `ICmObject.Owner`. An `IFsSymFeatVal` is owned by the
+            # `IFsClosedFeature` whose `ValuesOC` holds it, and that owner is
+            # the endpoint the dependency now names -- the value itself is not
+            # something `inflection_features_enumerate_source` yields.
+            self.Owner = owner
 
 
 class _FeatStruc:
-    def __init__(self, value_guids):
-        self.FeatureSpecsOC = [_FsSpec(g) for g in value_guids]
+    def __init__(self, value_guids, feature_guid=None):
+        feature = None if feature_guid is None else _ValueRef(feature_guid)
+        self.FeatureSpecsOC = [_FsSpec(g, feature) for g in value_guids]
 
 
 def _ctx(src, tgt) -> RunContext:
@@ -134,13 +143,23 @@ def test_variant_types_enumerate_empty_no_lexdb() -> None:
 
 
 def test_variant_types_dependencies_walks_inflfeats() -> None:
-    fs = _FeatStruc(value_guids=["val-a", "val-b"])
+    """T089: the constraint's two `IFsSymFeatVal`s collapse onto the ONE
+    feature that owns them. The value guids used to be emitted directly, and
+    nothing enumerates an `IFsSymFeatVal` -- so those edges named an endpoint
+    that could be neither planned (FR-015) nor deselected (FR-016)."""
+    fs = _FeatStruc(value_guids=["val-a", "val-b"], feature_guid="feat-1")
     vt = _Node("vt-with-constraint", infl_feats=fs)
     deps = tuple(categories.variant_types_dependencies(vt))
-    assert deps == (
-        (GrammarCategory.INFLECTION_FEATURES, "val-a"),
-        (GrammarCategory.INFLECTION_FEATURES, "val-b"),
-    )
+    assert deps == ((GrammarCategory.INFLECTION_FEATURES, "feat-1"),)
+
+
+def test_variant_types_dependencies_drop_a_value_with_no_owning_feature() -> None:
+    """The absence of a plannable endpoint, not the dropping of one: a value
+    whose `Owner` is unreadable and whose spec declares no `FeatureRA` names
+    nothing this repo can enumerate, so no edge is the correct output."""
+    fs = _FeatStruc(value_guids=["val-a"])  # no owner, no FeatureRA
+    vt = _Node("vt-orphan-constraint", infl_feats=fs)
+    assert tuple(categories.variant_types_dependencies(vt)) == ()
 
 
 def test_variant_types_dependencies_empty_for_base_type() -> None:

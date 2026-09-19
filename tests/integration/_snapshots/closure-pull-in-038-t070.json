@@ -1,0 +1,449 @@
+{
+  "A_narrow_registry_empty": {
+    "closure": {
+      "by_kind": {},
+      "distinct_pulled_in_refs": 0,
+      "pulled_in_refs": [],
+      "total_edges": 0
+    },
+    "composition": {
+      "actions": {
+        "affix_templates": 11
+      },
+      "actions_total": 11,
+      "dropped_items": 55,
+      "enrichments": 0,
+      "excluded_lossy": 0,
+      "overwrites": {},
+      "overwrites_total": 0,
+      "process_rules": 0,
+      "skips": {},
+      "skips_total": 0
+    },
+    "deselection_skips": {
+      "by_category": {},
+      "count": 0,
+      "every_skip_names_its_puller": true,
+      "guids": []
+    },
+    "ordering": {
+      "every_pulled_in_member_precedes_the_selection": true,
+      "first_selected_member_index": 0,
+      "last_pulled_in_index_by_category": {}
+    },
+    "pulled_in_members": {}
+  },
+  "A_narrow_registry_live": {
+    "closure": {
+      "by_kind": {
+        "SLOT_TO_POS": {
+          "deselected": 0,
+          "edges": 18,
+          "origins": {
+            "pulled_in": 18
+          }
+        },
+        "TEMPLATE_TO_POS": {
+          "deselected": 0,
+          "edges": 11,
+          "origins": {
+            "pulled_in": 11
+          }
+        },
+        "TEMPLATE_TO_SLOT": {
+          "deselected": 0,
+          "edges": 24,
+          "origins": {
+            "pulled_in": 24
+          }
+        }
+      },
+      "distinct_pulled_in_refs": 23,
+      "pulled_in_refs": [
+        "03341da9-8bff-4bc8-8b14-80013a8250b8",
+        "0a63fb15-ccf8-432f-8816-a330d26010f6",
+        "134d9562-939e-4869-b9c2-6bb2e767d755",
+        "16d71c17-771a-43ab-b76d-0f0cf8ad0c00",
+        "1ad0eff9-4af1-4579-9feb-e9b6ab052ad4",
+        "1e0650ef-0401-483b-a3b5-3f58cf02bcec",
+        "23d810dd-503e-4217-97ce-14aab8689f05",
+        "30d07580-5052-4d91-bc24-469b8b2d7df9",
+        "45f22e64-fea2-4616-abc7-c93a8036e05e",
+        "52772da1-fd63-4c00-aeb2-83201a6698f0",
+        "53596c20-8211-4b3c-9ccb-b187b45dafd7",
+        "7ca6e036-b58e-4054-9e3c-9308803001d8",
+        "86ff66f6-0774-407a-a0dc-3eeaf873daf7",
+        "887515fe-2068-4eeb-955c-95b697e13d72",
+        "a2139e78-2239-4830-acda-b87e89251157",
+        "a8e41fd3-e343-4c7c-aa05-01ea3dd5cfb5",
+        "b3097983-387b-4b50-a318-f6d6e9b19da8",
+        "d589b260-dd53-4d06-b06a-3a350877f598",
+        "dd41a694-9825-4680-a68c-4dc69bcd2d4c",
+        "e4c34966-2f8a-4dc7-ab23-493d1fdbf197",
+        "e680330e-2b41-4bec-b96b-514743c47cae",
+        "e6bb6e70-bf5d-461e-b955-d70b7b72620d",
+        "f1b5b1bf-c006-4496-9cd3-83b070ad149a"
+      ],
+      "total_edges": 53
+    },
+    "composition": {
+      "actions": {
+        "affix_templates": 11,
+        "gram_categories": 3,
+        "slots": 18
+      },
+      "actions_total": 32,
+      "dropped_items": 55,
+      "enrichments": 2,
+      "excluded_lossy": 0,
+      "overwrites": {
+        "gram_categories": 2
+      },
+      "overwrites_total": 2,
+      "process_rules": 0,
+      "skips": {},
+      "skips_total": 0
+    },
+    "deselection_skips": {
+      "by_category": {},
+      "count": 0,
+      "every_skip_names_its_puller": true,
+      "guids": []
+    },
+    "ordering": {
+      "every_pulled_in_member_precedes_the_selection": true,
+      "first_selected_member_index": 21,
+      "last_pulled_in_index_by_category": {
+        "gram_categories": 2,
+        "slots": 20
+      }
+    },
+    "pulled_in_members": {
+      "gram_categories": {
+        "count": 5,
+        "guids": [
+          "0a63fb15-ccf8-432f-8816-a330d26010f6",
+          "30d07580-5052-4d91-bc24-469b8b2d7df9",
+          "86ff66f6-0774-407a-a0dc-3eeaf873daf7",
+          "a8e41fd3-e343-4c7c-aa05-01ea3dd5cfb5",
+          "e680330e-2b41-4bec-b96b-514743c47cae"
+        ],
+        "pullers_named": true
+      },
+      "slots": {
+        "count": 18,
+        "guids": [
+          "03341da9-8bff-4bc8-8b14-80013a8250b8",
+          "134d9562-939e-4869-b9c2-6bb2e767d755",
+          "16d71c17-771a-43ab-b76d-0f0cf8ad0c00",
+          "1ad0eff9-4af1-4579-9feb-e9b6ab052ad4",
+          "1e0650ef-0401-483b-a3b5-3f58cf02bcec",
+          "23d810dd-503e-4217-97ce-14aab8689f05",
+          "45f22e64-fea2-4616-abc7-c93a8036e05e",
+          "52772da1-fd63-4c00-aeb2-83201a6698f0",
+          "53596c20-8211-4b3c-9ccb-b187b45dafd7",
+          "7ca6e036-b58e-4054-9e3c-9308803001d8",
+          "887515fe-2068-4eeb-955c-95b697e13d72",
+          "a2139e78-2239-4830-acda-b87e89251157",
+          "b3097983-387b-4b50-a318-f6d6e9b19da8",
+          "d589b260-dd53-4d06-b06a-3a350877f598",
+          "dd41a694-9825-4680-a68c-4dc69bcd2d4c",
+          "e4c34966-2f8a-4dc7-ab23-493d1fdbf197",
+          "e6bb6e70-bf5d-461e-b955-d70b7b72620d",
+          "f1b5b1bf-c006-4496-9cd3-83b070ad149a"
+        ],
+        "pullers_named": true
+      }
+    }
+  },
+  "A_pull_in_requires_the_registry": true,
+  "B_deselection_restores_the_unregistered_composition": true,
+  "B_narrow_all_deselected": {
+    "closure": {
+      "by_kind": {
+        "SLOT_TO_POS": {
+          "deselected": 18,
+          "edges": 18,
+          "origins": {
+            "pulled_in": 18
+          }
+        },
+        "TEMPLATE_TO_POS": {
+          "deselected": 11,
+          "edges": 11,
+          "origins": {
+            "pulled_in": 11
+          }
+        },
+        "TEMPLATE_TO_SLOT": {
+          "deselected": 24,
+          "edges": 24,
+          "origins": {
+            "pulled_in": 24
+          }
+        }
+      },
+      "distinct_pulled_in_refs": 23,
+      "pulled_in_refs": [
+        "03341da9-8bff-4bc8-8b14-80013a8250b8",
+        "0a63fb15-ccf8-432f-8816-a330d26010f6",
+        "134d9562-939e-4869-b9c2-6bb2e767d755",
+        "16d71c17-771a-43ab-b76d-0f0cf8ad0c00",
+        "1ad0eff9-4af1-4579-9feb-e9b6ab052ad4",
+        "1e0650ef-0401-483b-a3b5-3f58cf02bcec",
+        "23d810dd-503e-4217-97ce-14aab8689f05",
+        "30d07580-5052-4d91-bc24-469b8b2d7df9",
+        "45f22e64-fea2-4616-abc7-c93a8036e05e",
+        "52772da1-fd63-4c00-aeb2-83201a6698f0",
+        "53596c20-8211-4b3c-9ccb-b187b45dafd7",
+        "7ca6e036-b58e-4054-9e3c-9308803001d8",
+        "86ff66f6-0774-407a-a0dc-3eeaf873daf7",
+        "887515fe-2068-4eeb-955c-95b697e13d72",
+        "a2139e78-2239-4830-acda-b87e89251157",
+        "a8e41fd3-e343-4c7c-aa05-01ea3dd5cfb5",
+        "b3097983-387b-4b50-a318-f6d6e9b19da8",
+        "d589b260-dd53-4d06-b06a-3a350877f598",
+        "dd41a694-9825-4680-a68c-4dc69bcd2d4c",
+        "e4c34966-2f8a-4dc7-ab23-493d1fdbf197",
+        "e680330e-2b41-4bec-b96b-514743c47cae",
+        "e6bb6e70-bf5d-461e-b955-d70b7b72620d",
+        "f1b5b1bf-c006-4496-9cd3-83b070ad149a"
+      ],
+      "total_edges": 53
+    },
+    "composition": {
+      "actions": {
+        "affix_templates": 11
+      },
+      "actions_total": 11,
+      "dropped_items": 55,
+      "enrichments": 0,
+      "excluded_lossy": 0,
+      "overwrites": {},
+      "overwrites_total": 0,
+      "process_rules": 0,
+      "skips": {
+        "gram_categories": 5,
+        "slots": 18
+      },
+      "skips_total": 23
+    },
+    "deselection_skips": {
+      "by_category": {
+        "gram_categories": 5,
+        "slots": 18
+      },
+      "count": 23,
+      "every_skip_names_its_puller": true,
+      "guids": [
+        "03341da9-8bff-4bc8-8b14-80013a8250b8",
+        "0a63fb15-ccf8-432f-8816-a330d26010f6",
+        "134d9562-939e-4869-b9c2-6bb2e767d755",
+        "16d71c17-771a-43ab-b76d-0f0cf8ad0c00",
+        "1ad0eff9-4af1-4579-9feb-e9b6ab052ad4",
+        "1e0650ef-0401-483b-a3b5-3f58cf02bcec",
+        "23d810dd-503e-4217-97ce-14aab8689f05",
+        "30d07580-5052-4d91-bc24-469b8b2d7df9",
+        "45f22e64-fea2-4616-abc7-c93a8036e05e",
+        "52772da1-fd63-4c00-aeb2-83201a6698f0",
+        "53596c20-8211-4b3c-9ccb-b187b45dafd7",
+        "7ca6e036-b58e-4054-9e3c-9308803001d8",
+        "86ff66f6-0774-407a-a0dc-3eeaf873daf7",
+        "887515fe-2068-4eeb-955c-95b697e13d72",
+        "a2139e78-2239-4830-acda-b87e89251157",
+        "a8e41fd3-e343-4c7c-aa05-01ea3dd5cfb5",
+        "b3097983-387b-4b50-a318-f6d6e9b19da8",
+        "d589b260-dd53-4d06-b06a-3a350877f598",
+        "dd41a694-9825-4680-a68c-4dc69bcd2d4c",
+        "e4c34966-2f8a-4dc7-ab23-493d1fdbf197",
+        "e680330e-2b41-4bec-b96b-514743c47cae",
+        "e6bb6e70-bf5d-461e-b955-d70b7b72620d",
+        "f1b5b1bf-c006-4496-9cd3-83b070ad149a"
+      ]
+    },
+    "ordering": {
+      "every_pulled_in_member_precedes_the_selection": true,
+      "first_selected_member_index": 0,
+      "last_pulled_in_index_by_category": {}
+    },
+    "pulled_in_members": {}
+  },
+  "C_full_copy_registry_empty": {
+    "closure": {
+      "by_kind": {},
+      "distinct_pulled_in_refs": 0,
+      "pulled_in_refs": [],
+      "total_edges": 0
+    },
+    "composition": {
+      "actions": {
+        "adhoc_compound_rules": 3,
+        "affix_templates": 11,
+        "affixes": 118,
+        "custom_fields": 5,
+        "feature_struct_types": 6,
+        "gram_categories": 10,
+        "inflection_features": 5,
+        "natural_classes": 113,
+        "ph_environment": 3,
+        "phon_feat_types": 1,
+        "phonemes": 23,
+        "phonological_features": 17,
+        "phonological_rules": 39,
+        "pos_inflectable_feats": 13,
+        "slots": 19,
+        "stems": 137,
+        "variant_types": 2
+      },
+      "actions_total": 525,
+      "dropped_items": 8879,
+      "enrichments": 2,
+      "excluded_lossy": 2,
+      "overwrites": {
+        "gram_categories": 2,
+        "phonemes": 19,
+        "semantic_domains": 1730
+      },
+      "overwrites_total": 1751,
+      "process_rules": 6,
+      "skips": {
+        "complex_form_types": 7,
+        "gram_categories": 1,
+        "semantic_domains": 62,
+        "variant_types": 7
+      },
+      "skips_total": 77
+    },
+    "deselection_skips": {
+      "by_category": {},
+      "count": 0,
+      "every_skip_names_its_puller": true,
+      "guids": []
+    },
+    "ordering": {
+      "every_pulled_in_member_precedes_the_selection": true,
+      "first_selected_member_index": 377,
+      "last_pulled_in_index_by_category": {}
+    },
+    "pulled_in_members": {}
+  },
+  "C_full_copy_registry_live": {
+    "closure": {
+      "by_kind": {},
+      "distinct_pulled_in_refs": 0,
+      "pulled_in_refs": [],
+      "total_edges": 0
+    },
+    "composition": {
+      "actions": {
+        "adhoc_compound_rules": 3,
+        "affix_templates": 11,
+        "affixes": 118,
+        "custom_fields": 5,
+        "feature_struct_types": 6,
+        "gram_categories": 10,
+        "inflection_features": 5,
+        "natural_classes": 113,
+        "ph_environment": 3,
+        "phon_feat_types": 1,
+        "phonemes": 23,
+        "phonological_features": 17,
+        "phonological_rules": 39,
+        "pos_inflectable_feats": 13,
+        "slots": 19,
+        "stems": 137,
+        "variant_types": 2
+      },
+      "actions_total": 525,
+      "dropped_items": 8879,
+      "enrichments": 2,
+      "excluded_lossy": 2,
+      "overwrites": {
+        "gram_categories": 2,
+        "phonemes": 19,
+        "semantic_domains": 1730
+      },
+      "overwrites_total": 1751,
+      "process_rules": 6,
+      "skips": {
+        "complex_form_types": 7,
+        "gram_categories": 1,
+        "semantic_domains": 62,
+        "variant_types": 7
+      },
+      "skips_total": 77
+    },
+    "deselection_skips": {
+      "by_category": {},
+      "count": 0,
+      "every_skip_names_its_puller": true,
+      "guids": []
+    },
+    "ordering": {
+      "every_pulled_in_member_precedes_the_selection": true,
+      "first_selected_member_index": 377,
+      "last_pulled_in_index_by_category": {}
+    },
+    "pulled_in_members": {}
+  },
+  "C_full_copy_unchanged_by_the_pull_in": true,
+  "D_arrival_in_target": {
+    "MoInflAffixSlot": {
+      "after": 19,
+      "after_without_pull_in": 0,
+      "arrived": 19,
+      "arrived_without_pull_in": 0,
+      "before": 0
+    },
+    "MoInflAffixTemplate": {
+      "after": 11,
+      "after_without_pull_in": 8,
+      "arrived": 11,
+      "arrived_without_pull_in": 8,
+      "before": 0
+    },
+    "PartOfSpeech": {
+      "after": 8,
+      "after_without_pull_in": 5,
+      "arrived": 3,
+      "arrived_without_pull_in": 0,
+      "before": 5
+    }
+  },
+  "D_run_report_closure_pulled_in": {
+    "gram_categories": 5,
+    "slots": 18
+  },
+  "E_registry_empty_transfer": {
+    "composition": {
+      "actions": {
+        "affix_templates": 11
+      },
+      "actions_total": 11,
+      "dropped_items": 55,
+      "enrichments": 0,
+      "excluded_lossy": 0,
+      "overwrites": {},
+      "overwrites_total": 0,
+      "process_rules": 0,
+      "skips": {},
+      "skips_total": 0
+    },
+    "run_id": ""
+  },
+  "backup": "Target 2026-07-06 0218.fwbackup",
+  "destination": "GT038 Closure Target",
+  "narrow_selection": "AFFIX_TEMPLATES",
+  "registered": [
+    "AFFIX_TO_POS",
+    "MSA_TO_FEAT_STRUC_TYPE",
+    "SLOT_TO_POS",
+    "TEMPLATE_TO_POS",
+    "TEMPLATE_TO_SLOT"
+  ],
+  "report": {
+    "run_id": ""
+  },
+  "source": "Mbugwe LizzieHC practice",
+  "task": "T070/T071/T072"
+}

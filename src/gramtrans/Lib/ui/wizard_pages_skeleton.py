@@ -544,6 +544,64 @@ class _PageSkeleton(_PickDerivedMixin, _ProjectHandlesMixin, _FlowPage):
             "template_guids": template_guids,
         }
 
+    def deselected_skeleton_guids(self) -> frozenset:
+        """Preselected POS / slot / template GUIDs the user unchecked.
+
+        Feature 038 T072 (FR-016). Sibling of `_PageGramDeps
+        .deselected_dep_guids`, and needed for the same reason at a different
+        level: this page's three node kinds are precisely the far endpoints of
+        the five registered closure edges (`AFFIX_TO_POS`, `SLOT_TO_POS`,
+        `TEMPLATE_TO_POS`, `TEMPLATE_TO_SLOT`, `MSA_TO_FEAT_STRUC_TYPE`).
+
+        Before T070 an unchecked POS simply stayed out of `pos_picks` and
+        nothing else happened. Now that a selected affix PULLS ITS POS IN by
+        default, omission from the pick set no longer means "do not transfer
+        it" -- the closure would put it straight back. This method is what
+        turns the uncheck into an explicit refusal that
+        `preview._plan_pulled_in_items` honours via `Selection.excluded_deps`.
+
+        Distinct from `deselected_filled_slot_guids`, which answers a narrower
+        question (slots a picked affix FILLS, for the EXCLUDED-LOSSY warning
+        count) and covers neither POSes nor templates.
+
+        NOT `preselected - collect_skeleton_picks()`, and the difference is
+        load-bearing. POS rows carry `ItemIsAutoTristate`, so a POS with any
+        unchecked child sits at `PartiallyChecked` -- which
+        `collect_skeleton_picks` (an `== Checked` test) omits. Deriving from
+        it would report a POS the user never touched as REFUSED, and since
+        T070 a refusal is acted on: the affix's `AFFIX_TO_POS` pull-in would
+        be suppressed and the affix would arrive with no part of speech. Only
+        an explicitly `Unchecked` node is a deselection.
+        """
+        if self._skeleton is None:
+            return frozenset()
+        preselected: Set[str] = set()
+        for pos_node in self._skeleton.pos_nodes:
+            if pos_node.preselected and pos_node.pos_guid:
+                preselected.add(pos_node.pos_guid)
+            for slot in pos_node.slots:
+                if slot.preselected and slot.slot_guid:
+                    preselected.add(slot.slot_guid)
+            for tpl in pos_node.templates:
+                if tpl.preselected and tpl.template_guid:
+                    preselected.add(tpl.template_guid)
+
+        unchecked: Set[str] = set()
+
+        def _walk(node: QtWidgets.QTreeWidgetItem) -> None:
+            if (node.data(0, _SKEL_KIND_ROLE) in ("pos", "slot", "template")
+                    and node.checkState(0) == QtCore.Qt.CheckState.Unchecked):
+                g = node.data(0, _SKEL_GUID_ROLE)
+                if g:
+                    unchecked.add(g)
+            for i in range(node.childCount()):
+                _walk(node.child(i))
+
+        root = self._tree.invisibleRootItem()
+        for i in range(root.childCount()):
+            _walk(root.child(i))
+        return frozenset(preselected & unchecked)
+
     def deselected_filled_slot_guids(self) -> frozenset:
         """Return slot GUIDs that a picked affix fills but the user unchecked.
 

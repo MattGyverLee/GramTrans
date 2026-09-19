@@ -1,0 +1,806 @@
+{
+  "backup": "Target 2026-07-06 0218.fwbackup",
+  "measurements": {
+    "A-full-copy": {
+      "affix_or_stem_entries_transferred": 255,
+      "affix_slot_link_block": {
+        "attempted": 125,
+        "by_outcome": {
+          "LINKED": 125
+        },
+        "failures": [],
+        "linked_of_attempted": 125,
+        "not_in_run": 0,
+        "source_msas_with_a_column": 125
+      },
+      "excluded_categories": [],
+      "link_skip_examples": [],
+      "link_skips": {
+        "msa_unresolved_for_an_affix_this_run_never_transferred": 0,
+        "msa_unresolved_for_an_affix_this_run_transferred": 0,
+        "not_attributable_from_the_skip_alone": 0,
+        "total": 0
+      },
+      "newly_wired_in_target": 125,
+      "note": "SC-003's own claim: transfer everything, count the columns",
+      "report_link_tally": {
+        "categoryreport_link_or_slot_fields": [],
+        "runreport_fields_present": {
+          "affix_slot_links": 125
+        }
+      },
+      "source_wired_msas_linked_in_target": 125,
+      "source_wired_msas_total": 125,
+      "target_after": {
+        "slot_refs": 125,
+        "total_MoInflAffMsa": 126,
+        "with_SlotsRC": 125
+      },
+      "target_before": {
+        "slot_refs": 0,
+        "total_MoInflAffMsa": 0,
+        "with_SlotsRC": 0
+      }
+    },
+    "B-templates-only": {
+      "affix_or_stem_entries_transferred": 0,
+      "affix_slot_link_block": {
+        "attempted": 0,
+        "by_outcome": {
+          "NOT_IN_RUN": 125
+        },
+        "failures": [],
+        "linked_of_attempted": 0,
+        "not_in_run": 125,
+        "source_msas_with_a_column": 125
+      },
+      "excluded_categories": [
+        "adhoc_compound_rules",
+        "affixes",
+        "allomorph",
+        "complex_form_types",
+        "custom_fields",
+        "entry",
+        "exception_features",
+        "feature_struct_types",
+        "gram_categories",
+        "inflection_classes",
+        "inflection_features",
+        "msa",
+        "natural_classes",
+        "ph_environment",
+        "phon_feat_types",
+        "phonemes",
+        "phonological_features",
+        "phonological_rules",
+        "pos",
+        "pos_inflectable_feats",
+        "semantic_domains",
+        "sense",
+        "slots",
+        "stem_names",
+        "stems",
+        "strata",
+        "texts",
+        "variant_types",
+        "writing_systems_check"
+      ],
+      "link_skip_examples": [],
+      "link_skips": {
+        "msa_unresolved_for_an_affix_this_run_never_transferred": 0,
+        "msa_unresolved_for_an_affix_this_run_transferred": 0,
+        "not_attributable_from_the_skip_alone": 0,
+        "total": 0
+      },
+      "newly_wired_in_target": 0,
+      "note": "no affixes transferred; every reported failure is an over-report",
+      "report_link_tally": {
+        "categoryreport_link_or_slot_fields": [],
+        "runreport_fields_present": {
+          "affix_slot_links": 125
+        }
+      },
+      "source_wired_msas_linked_in_target": 0,
+      "source_wired_msas_total": 125,
+      "target_after": {
+        "slot_refs": 0,
+        "total_MoInflAffMsa": 0,
+        "with_SlotsRC": 0
+      },
+      "target_before": {
+        "slot_refs": 0,
+        "total_MoInflAffMsa": 0,
+        "with_SlotsRC": 0
+      }
+    },
+    "C-affixes-only": {
+      "affix_or_stem_entries_transferred": 118,
+      "affix_slot_link_block": {
+        "attempted": 125,
+        "by_outcome": {
+          "LINKED": 73,
+          "SLOT_MISSING": 52
+        },
+        "failures": [
+          {
+            "entry_guid": "1310f3e3-ef53-4fcc-887b-49f2d9505d04",
+            "msa_guid": "b35ba1f9-a062-4077-bc7d-8f091bf08c4a",
+            "outcome": "SLOT_MISSING",
+            "source_slot_guids": [
+              "a2139e78-2239-4830-acda-b87e89251157"
+            ],
+            "unresolved_slot_guids": [
+              "a2139e78-2239-4830-acda-b87e89251157"
+            ]
+          },
+          {
+            "entry_guid": "1ae63e24-2e61-4a71-8694-a2756be7707e",
+            "msa_guid": "98c8f53d-9512-4cb4-8431-b6e253af3962",
+            "outcome": "SLOT_MISSING",
+            "source_slot_guids": [
+              "52772da1-fd63-4c00-aeb2-83201a6698f0"
+            ],
+            "unresolved_slot_guids": [
+              "52772da1-fd63-4c00-aeb2-83201a6698f0"
+            ]
+          },
+          {
+            "entry_guid": "1ce7d3cf-6afa-4101-9511-b7cbef293d94",
+            "msa_guid": "b50b3f3e-d1b1-4ad0-bdbc-b83c996c5d53",
+            "outcome": "SLOT_MISSING",
+            "source_slot_guids": [
+              "a2139e78-2239-4830-acda-b87e89251157"
+            ],
+            "unresolved_slot_guids": [
+              "a2139e78-2239-4830-acda-b87e89251157"
+            ]
+          },
+          {
+            "entry_guid": "239b3fd4-7708-405c-9bb7-b606cf66df64",
+            "msa_guid": "a109d92f-af01-451d-844c-3c3c4fa460d6",
+            "outcome": "SLOT_MISSING",
+            "source_slot_guids": [
+              "a2139e78-2239-4830-acda-b87e89251157"
+            ],
+            "unresolved_slot_guids": [
+              "a2139e78-2239-4830-acda-b87e89251157"
+            ]
+          },
+          {
+            "entry_guid": "27d3337f-4b59-4c3c-ad6b-125d93e90159",
+            "msa_guid": "07eb5512-9a5f-4710-841c-954a1d8951c5",
+            "outcome": "SLOT_MISSING",
+            "source_slot_guids": [
+              "23d810dd-503e-4217-97ce-14aab8689f05"
+            ],
+            "unresolved_slot_guids": [
+              "23d810dd-503e-4217-97ce-14aab8689f05"
+            ]
+          },
+          {
+            "entry_guid": "2c847abd-5670-4b18-af76-a02183d89a3e",
+            "msa_guid": "ff5a1cb3-c317-44d5-95b9-059f1a15d487",
+            "outcome": "SLOT_MISSING",
+            "source_slot_guids": [
+              "a2139e78-2239-4830-acda-b87e89251157"
+            ],
+            "unresolved_slot_guids": [
+              "a2139e78-2239-4830-acda-b87e89251157"
+            ]
+          },
+          {
+            "entry_guid": "2f442c5c-43b6-483d-b761-cd0a745ff88d",
+            "msa_guid": "fe4cd572-0bb0-4b91-8780-6f92a3557174",
+            "outcome": "SLOT_MISSING",
+            "source_slot_guids": [
+              "52772da1-fd63-4c00-aeb2-83201a6698f0"
+            ],
+            "unresolved_slot_guids": [
+              "52772da1-fd63-4c00-aeb2-83201a6698f0"
+            ]
+          },
+          {
+            "entry_guid": "35ab6e9e-f4c7-44ac-82b5-600474764be9",
+            "msa_guid": "0175fd99-3d79-485a-b9d6-4a1ffe5f35d5",
+            "outcome": "SLOT_MISSING",
+            "source_slot_guids": [
+              "23d810dd-503e-4217-97ce-14aab8689f05"
+            ],
+            "unresolved_slot_guids": [
+              "23d810dd-503e-4217-97ce-14aab8689f05"
+            ]
+          },
+          {
+            "entry_guid": "3809ed09-1b0d-441f-896e-ed7b50a4eaf6",
+            "msa_guid": "987b7385-1319-4a86-a46a-9546fd55ef19",
+            "outcome": "SLOT_MISSING",
+            "source_slot_guids": [
+              "a2139e78-2239-4830-acda-b87e89251157"
+            ],
+            "unresolved_slot_guids": [
+              "a2139e78-2239-4830-acda-b87e89251157"
+            ]
+          },
+          {
+            "entry_guid": "3e35ebb6-297e-403e-b357-d6371cf894a2",
+            "msa_guid": "ae0249d5-bc83-4dd7-a518-0f2e47033acc",
+            "outcome": "SLOT_MISSING",
+            "source_slot_guids": [
+              "23d810dd-503e-4217-97ce-14aab8689f05"
+            ],
+            "unresolved_slot_guids": [
+              "23d810dd-503e-4217-97ce-14aab8689f05"
+            ]
+          },
+          {
+            "entry_guid": "41b8981c-735f-40ac-8bd3-03da57b2033a",
+            "msa_guid": "22bbb73c-2262-47d8-addb-beedf5f569e4",
+            "outcome": "SLOT_MISSING",
+            "source_slot_guids": [
+              "52772da1-fd63-4c00-aeb2-83201a6698f0"
+            ],
+            "unresolved_slot_guids": [
+              "52772da1-fd63-4c00-aeb2-83201a6698f0"
+            ]
+          },
+          {
+            "entry_guid": "44fb71cb-9f50-4f59-9510-83bad978e271",
+            "msa_guid": "0154b3dd-43fd-4449-9f10-268373daed60",
+            "outcome": "SLOT_MISSING",
+            "source_slot_guids": [
+              "52772da1-fd63-4c00-aeb2-83201a6698f0"
+            ],
+            "unresolved_slot_guids": [
+              "52772da1-fd63-4c00-aeb2-83201a6698f0"
+            ]
+          },
+          {
+            "entry_guid": "4b81a079-1055-4f62-bd48-a5a32ecca623",
+            "msa_guid": "5075c36f-ff2a-497d-a8c4-ab435fafc144",
+            "outcome": "SLOT_MISSING",
+            "source_slot_guids": [
+              "52772da1-fd63-4c00-aeb2-83201a6698f0"
+            ],
+            "unresolved_slot_guids": [
+              "52772da1-fd63-4c00-aeb2-83201a6698f0"
+            ]
+          },
+          {
+            "entry_guid": "4e58721d-43ff-4228-aa4c-56bbc8f14e83",
+            "msa_guid": "ecf1a10c-8937-43a1-bd83-137efc74ac95",
+            "outcome": "SLOT_MISSING",
+            "source_slot_guids": [
+              "52772da1-fd63-4c00-aeb2-83201a6698f0"
+            ],
+            "unresolved_slot_guids": [
+              "52772da1-fd63-4c00-aeb2-83201a6698f0"
+            ]
+          },
+          {
+            "entry_guid": "5036c5dc-43de-4586-a6ef-4d6b181dd578",
+            "msa_guid": "c0893dbb-d801-488d-a57c-df2525309ecf",
+            "outcome": "SLOT_MISSING",
+            "source_slot_guids": [
+              "23d810dd-503e-4217-97ce-14aab8689f05"
+            ],
+            "unresolved_slot_guids": [
+              "23d810dd-503e-4217-97ce-14aab8689f05"
+            ]
+          },
+          {
+            "entry_guid": "5ee883bd-2013-4bfe-9f47-8bf8ea389297",
+            "msa_guid": "071999c2-ae77-4222-83f5-60dae6486a8b",
+            "outcome": "SLOT_MISSING",
+            "source_slot_guids": [
+              "52772da1-fd63-4c00-aeb2-83201a6698f0"
+            ],
+            "unresolved_slot_guids": [
+              "52772da1-fd63-4c00-aeb2-83201a6698f0"
+            ]
+          },
+          {
+            "entry_guid": "5f5ba6b2-4e80-49bf-9594-95e7bd8ea8b2",
+            "msa_guid": "6d92f640-6b81-4051-8020-75c4c5d64e97",
+            "outcome": "SLOT_MISSING",
+            "source_slot_guids": [
+              "a2139e78-2239-4830-acda-b87e89251157"
+            ],
+            "unresolved_slot_guids": [
+              "a2139e78-2239-4830-acda-b87e89251157"
+            ]
+          },
+          {
+            "entry_guid": "6afc230b-1ca8-4651-9fc5-d3184bcc760c",
+            "msa_guid": "950906b5-fca6-4531-a019-270d726eae91",
+            "outcome": "SLOT_MISSING",
+            "source_slot_guids": [
+              "23d810dd-503e-4217-97ce-14aab8689f05"
+            ],
+            "unresolved_slot_guids": [
+              "23d810dd-503e-4217-97ce-14aab8689f05"
+            ]
+          },
+          {
+            "entry_guid": "6ea9e321-5732-4434-af84-9d25fd88756b",
+            "msa_guid": "b13ff105-7218-48ed-ae7c-a827fc81f989",
+            "outcome": "SLOT_MISSING",
+            "source_slot_guids": [
+              "52772da1-fd63-4c00-aeb2-83201a6698f0"
+            ],
+            "unresolved_slot_guids": [
+              "52772da1-fd63-4c00-aeb2-83201a6698f0"
+            ]
+          },
+          {
+            "entry_guid": "7495f2e7-8314-411f-86fd-f5bba10a1beb",
+            "msa_guid": "8e12fade-1560-4ba1-be4b-ee5b9cec100e",
+            "outcome": "SLOT_MISSING",
+            "source_slot_guids": [
+              "52772da1-fd63-4c00-aeb2-83201a6698f0"
+            ],
+            "unresolved_slot_guids": [
+              "52772da1-fd63-4c00-aeb2-83201a6698f0"
+            ]
+          },
+          {
+            "entry_guid": "776e197e-6653-403a-9025-3f32373f648e",
+            "msa_guid": "3855932a-8baa-4d85-bfc8-48719ae5af9b",
+            "outcome": "SLOT_MISSING",
+            "source_slot_guids": [
+              "23d810dd-503e-4217-97ce-14aab8689f05"
+            ],
+            "unresolved_slot_guids": [
+              "23d810dd-503e-4217-97ce-14aab8689f05"
+            ]
+          },
+          {
+            "entry_guid": "8ea7f3d8-2c44-4771-bdec-469f2c4f4e5d",
+            "msa_guid": "6dd5b861-8fdf-47e7-8e7a-d5134e38fe8a",
+            "outcome": "SLOT_MISSING",
+            "source_slot_guids": [
+              "52772da1-fd63-4c00-aeb2-83201a6698f0"
+            ],
+            "unresolved_slot_guids": [
+              "52772da1-fd63-4c00-aeb2-83201a6698f0"
+            ]
+          },
+          {
+            "entry_guid": "94f996ff-43c4-4ae6-a960-de46035a0859",
+            "msa_guid": "8db686ca-0ab3-4281-8f43-3c4071325822",
+            "outcome": "SLOT_MISSING",
+            "source_slot_guids": [
+              "a2139e78-2239-4830-acda-b87e89251157"
+            ],
+            "unresolved_slot_guids": [
+              "a2139e78-2239-4830-acda-b87e89251157"
+            ]
+          },
+          {
+            "entry_guid": "99ec6604-5c05-4980-96ea-e0c73ed0bab0",
+            "msa_guid": "dc60de27-0e54-4537-a351-7b80001ea445",
+            "outcome": "SLOT_MISSING",
+            "source_slot_guids": [
+              "52772da1-fd63-4c00-aeb2-83201a6698f0"
+            ],
+            "unresolved_slot_guids": [
+              "52772da1-fd63-4c00-aeb2-83201a6698f0"
+            ]
+          },
+          {
+            "entry_guid": "9a03bb53-b7e9-4c80-aa0f-e1ea1a15ad0b",
+            "msa_guid": "10557c50-4e02-4385-b9f8-0160134cc8dc",
+            "outcome": "SLOT_MISSING",
+            "source_slot_guids": [
+              "23d810dd-503e-4217-97ce-14aab8689f05"
+            ],
+            "unresolved_slot_guids": [
+              "23d810dd-503e-4217-97ce-14aab8689f05"
+            ]
+          },
+          {
+            "entry_guid": "9b8cf933-d432-433a-b162-c2a82803d34c",
+            "msa_guid": "0c0d1e6a-1529-464f-b23b-a4bedbc536ce",
+            "outcome": "SLOT_MISSING",
+            "source_slot_guids": [
+              "e4c34966-2f8a-4dc7-ab23-493d1fdbf197"
+            ],
+            "unresolved_slot_guids": [
+              "e4c34966-2f8a-4dc7-ab23-493d1fdbf197"
+            ]
+          },
+          {
+            "entry_guid": "9d086507-43ea-48d3-b86b-73858de8db8e",
+            "msa_guid": "f74b59c9-d133-4ec9-a5d8-5f3e7eaa956e",
+            "outcome": "SLOT_MISSING",
+            "source_slot_guids": [
+              "23d810dd-503e-4217-97ce-14aab8689f05"
+            ],
+            "unresolved_slot_guids": [
+              "23d810dd-503e-4217-97ce-14aab8689f05"
+            ]
+          },
+          {
+            "entry_guid": "a8dc6af5-0868-418f-beda-7f04acd15634",
+            "msa_guid": "9887b0c3-6275-456d-b8f0-bcd357793f05",
+            "outcome": "SLOT_MISSING",
+            "source_slot_guids": [
+              "a2139e78-2239-4830-acda-b87e89251157"
+            ],
+            "unresolved_slot_guids": [
+              "a2139e78-2239-4830-acda-b87e89251157"
+            ]
+          },
+          {
+            "entry_guid": "ac0207b9-2cfe-4187-914c-19d72e809477",
+            "msa_guid": "0b8a8b77-402b-46f6-b42f-817386811890",
+            "outcome": "SLOT_MISSING",
+            "source_slot_guids": [
+              "23d810dd-503e-4217-97ce-14aab8689f05"
+            ],
+            "unresolved_slot_guids": [
+              "23d810dd-503e-4217-97ce-14aab8689f05"
+            ]
+          },
+          {
+            "entry_guid": "ac52d0c1-dfce-4703-adf6-c0e85ad6006e",
+            "msa_guid": "c3e95937-a7d9-4d7f-bf9e-0ab31be0965a",
+            "outcome": "SLOT_MISSING",
+            "source_slot_guids": [
+              "a2139e78-2239-4830-acda-b87e89251157"
+            ],
+            "unresolved_slot_guids": [
+              "a2139e78-2239-4830-acda-b87e89251157"
+            ]
+          },
+          {
+            "entry_guid": "adf3a5c6-79a3-45d6-aa03-9afc6791f97a",
+            "msa_guid": "e82efd6d-2238-4285-9aaa-f1556d7d338e",
+            "outcome": "SLOT_MISSING",
+            "source_slot_guids": [
+              "a2139e78-2239-4830-acda-b87e89251157"
+            ],
+            "unresolved_slot_guids": [
+              "a2139e78-2239-4830-acda-b87e89251157"
+            ]
+          },
+          {
+            "entry_guid": "b1bd1cd6-f75d-4d46-87a2-81d96cca1130",
+            "msa_guid": "d1162f6c-c843-4f74-b9e3-246179e63b7d",
+            "outcome": "SLOT_MISSING",
+            "source_slot_guids": [
+              "23d810dd-503e-4217-97ce-14aab8689f05"
+            ],
+            "unresolved_slot_guids": [
+              "23d810dd-503e-4217-97ce-14aab8689f05"
+            ]
+          },
+          {
+            "entry_guid": "b5965d9a-6c09-4de3-ab30-74ffa86c286c",
+            "msa_guid": "ddd46440-8df5-43d2-81f8-becd399ceee7",
+            "outcome": "SLOT_MISSING",
+            "source_slot_guids": [
+              "23d810dd-503e-4217-97ce-14aab8689f05"
+            ],
+            "unresolved_slot_guids": [
+              "23d810dd-503e-4217-97ce-14aab8689f05"
+            ]
+          },
+          {
+            "entry_guid": "c2870c23-4b75-4d57-81fe-ea26e50e860b",
+            "msa_guid": "f146cb3c-c51d-495f-a96c-e3fa2114d037",
+            "outcome": "SLOT_MISSING",
+            "source_slot_guids": [
+              "52772da1-fd63-4c00-aeb2-83201a6698f0"
+            ],
+            "unresolved_slot_guids": [
+              "52772da1-fd63-4c00-aeb2-83201a6698f0"
+            ]
+          },
+          {
+            "entry_guid": "c2e626fe-6011-41b7-99e9-af10d2e1ab78",
+            "msa_guid": "f1cc531c-8781-4882-ad87-5ae1bafad4ed",
+            "outcome": "SLOT_MISSING",
+            "source_slot_guids": [
+              "23d810dd-503e-4217-97ce-14aab8689f05"
+            ],
+            "unresolved_slot_guids": [
+              "23d810dd-503e-4217-97ce-14aab8689f05"
+            ]
+          },
+          {
+            "entry_guid": "c3ae4077-e16d-481b-81d2-5cc56e3f68dd",
+            "msa_guid": "bfd0b257-eba0-4342-9816-dc1109097bf9",
+            "outcome": "SLOT_MISSING",
+            "source_slot_guids": [
+              "23d810dd-503e-4217-97ce-14aab8689f05"
+            ],
+            "unresolved_slot_guids": [
+              "23d810dd-503e-4217-97ce-14aab8689f05"
+            ]
+          },
+          {
+            "entry_guid": "c5d098a1-1c7d-4e66-9bac-3a28264c0a96",
+            "msa_guid": "6498d52b-66d7-44da-ace2-259221db6c68",
+            "outcome": "SLOT_MISSING",
+            "source_slot_guids": [
+              "a2139e78-2239-4830-acda-b87e89251157"
+            ],
+            "unresolved_slot_guids": [
+              "a2139e78-2239-4830-acda-b87e89251157"
+            ]
+          },
+          {
+            "entry_guid": "c6395931-491e-4800-adbe-5ad12c249e8b",
+            "msa_guid": "20352469-9e95-4a74-88bd-fe9252f6ca15",
+            "outcome": "SLOT_MISSING",
+            "source_slot_guids": [
+              "52772da1-fd63-4c00-aeb2-83201a6698f0"
+            ],
+            "unresolved_slot_guids": [
+              "52772da1-fd63-4c00-aeb2-83201a6698f0"
+            ]
+          },
+          {
+            "entry_guid": "c77fc7de-a736-42b5-8455-05ba208e2747",
+            "msa_guid": "b84dbbb4-799b-4f80-8608-ae6b9c841e58",
+            "outcome": "SLOT_MISSING",
+            "source_slot_guids": [
+              "a2139e78-2239-4830-acda-b87e89251157"
+            ],
+            "unresolved_slot_guids": [
+              "a2139e78-2239-4830-acda-b87e89251157"
+            ]
+          },
+          {
+            "entry_guid": "c8caccc2-dbe5-4a4d-8f2c-fbcbc098deff",
+            "msa_guid": "3fa8fb52-aa0e-4ff7-9b61-e1b495f0c9a1",
+            "outcome": "SLOT_MISSING",
+            "source_slot_guids": [
+              "23d810dd-503e-4217-97ce-14aab8689f05"
+            ],
+            "unresolved_slot_guids": [
+              "23d810dd-503e-4217-97ce-14aab8689f05"
+            ]
+          },
+          {
+            "entry_guid": "cfd26c8b-f875-47f7-b4fd-8ca5e2869591",
+            "msa_guid": "e9ac726e-8e17-47fd-b82c-91712a5f7bc8",
+            "outcome": "SLOT_MISSING",
+            "source_slot_guids": [
+              "23d810dd-503e-4217-97ce-14aab8689f05"
+            ],
+            "unresolved_slot_guids": [
+              "23d810dd-503e-4217-97ce-14aab8689f05"
+            ]
+          },
+          {
+            "entry_guid": "d0e267f5-959d-4ad9-a940-5c384ba62b31",
+            "msa_guid": "2c7dd4cb-067d-4e2a-86a3-439be20864eb",
+            "outcome": "SLOT_MISSING",
+            "source_slot_guids": [
+              "a2139e78-2239-4830-acda-b87e89251157"
+            ],
+            "unresolved_slot_guids": [
+              "a2139e78-2239-4830-acda-b87e89251157"
+            ]
+          },
+          {
+            "entry_guid": "d14ce344-5429-4cb3-a1c1-6da2e706c61b",
+            "msa_guid": "06e08943-6032-4e44-a012-537fd71f48d3",
+            "outcome": "SLOT_MISSING",
+            "source_slot_guids": [
+              "a2139e78-2239-4830-acda-b87e89251157"
+            ],
+            "unresolved_slot_guids": [
+              "a2139e78-2239-4830-acda-b87e89251157"
+            ]
+          },
+          {
+            "entry_guid": "d527ea36-c508-44b0-8024-3c7910f45c76",
+            "msa_guid": "61fe1d85-4475-4918-8727-c789edf01c23",
+            "outcome": "SLOT_MISSING",
+            "source_slot_guids": [
+              "a2139e78-2239-4830-acda-b87e89251157"
+            ],
+            "unresolved_slot_guids": [
+              "a2139e78-2239-4830-acda-b87e89251157"
+            ]
+          },
+          {
+            "entry_guid": "d61d0b43-4ac4-4dfc-bf0b-f3eb65b5519e",
+            "msa_guid": "27dd5932-d614-44da-a86f-aeeb0035f57e",
+            "outcome": "SLOT_MISSING",
+            "source_slot_guids": [
+              "a2139e78-2239-4830-acda-b87e89251157"
+            ],
+            "unresolved_slot_guids": [
+              "a2139e78-2239-4830-acda-b87e89251157"
+            ]
+          },
+          {
+            "entry_guid": "d7d10667-e77c-4a91-a73d-25439d993ef8",
+            "msa_guid": "2f32252b-8b40-4d2b-8d68-8bad3841ee12",
+            "outcome": "SLOT_MISSING",
+            "source_slot_guids": [
+              "23d810dd-503e-4217-97ce-14aab8689f05"
+            ],
+            "unresolved_slot_guids": [
+              "23d810dd-503e-4217-97ce-14aab8689f05"
+            ]
+          },
+          {
+            "entry_guid": "dbe83360-b7e9-46c0-9279-b250e3fe8f44",
+            "msa_guid": "53662d52-3d89-4a1d-93d4-3a0a2ab3964b",
+            "outcome": "SLOT_MISSING",
+            "source_slot_guids": [
+              "52772da1-fd63-4c00-aeb2-83201a6698f0"
+            ],
+            "unresolved_slot_guids": [
+              "52772da1-fd63-4c00-aeb2-83201a6698f0"
+            ]
+          },
+          {
+            "entry_guid": "f2baaeb4-15b5-4969-9947-8e9e2032ab20",
+            "msa_guid": "ea4ecff9-fe62-4f3f-a67a-54f6ded1a179",
+            "outcome": "SLOT_MISSING",
+            "source_slot_guids": [
+              "a2139e78-2239-4830-acda-b87e89251157"
+            ],
+            "unresolved_slot_guids": [
+              "a2139e78-2239-4830-acda-b87e89251157"
+            ]
+          },
+          {
+            "entry_guid": "f86c71d8-0663-4639-b5db-99d33324fb8a",
+            "msa_guid": "00ad8573-116f-4c00-9d25-a2b402981773",
+            "outcome": "SLOT_MISSING",
+            "source_slot_guids": [
+              "52772da1-fd63-4c00-aeb2-83201a6698f0"
+            ],
+            "unresolved_slot_guids": [
+              "52772da1-fd63-4c00-aeb2-83201a6698f0"
+            ]
+          },
+          {
+            "entry_guid": "f888f7c0-8d47-402d-855e-0a034a478bdb",
+            "msa_guid": "742d692f-a335-4ab4-887c-54ae81d4d2a7",
+            "outcome": "SLOT_MISSING",
+            "source_slot_guids": [
+              "23d810dd-503e-4217-97ce-14aab8689f05"
+            ],
+            "unresolved_slot_guids": [
+              "23d810dd-503e-4217-97ce-14aab8689f05"
+            ]
+          },
+          {
+            "entry_guid": "fe0cfbd7-b1bd-46f3-883c-695e86a4059c",
+            "msa_guid": "a65776bd-bed6-4f1e-8b44-655c87df086c",
+            "outcome": "SLOT_MISSING",
+            "source_slot_guids": [
+              "52772da1-fd63-4c00-aeb2-83201a6698f0"
+            ],
+            "unresolved_slot_guids": [
+              "52772da1-fd63-4c00-aeb2-83201a6698f0"
+            ]
+          },
+          {
+            "entry_guid": "fea8e091-5cc2-403a-a319-3e9f48869718",
+            "msa_guid": "8a194aa2-d342-45aa-88d5-ce0e59029099",
+            "outcome": "SLOT_MISSING",
+            "source_slot_guids": [
+              "52772da1-fd63-4c00-aeb2-83201a6698f0"
+            ],
+            "unresolved_slot_guids": [
+              "52772da1-fd63-4c00-aeb2-83201a6698f0"
+            ]
+          }
+        ],
+        "linked_of_attempted": 73,
+        "not_in_run": 0,
+        "source_msas_with_a_column": 125
+      },
+      "excluded_categories": [
+        "adhoc_compound_rules",
+        "affix_templates",
+        "allomorph",
+        "complex_form_types",
+        "custom_fields",
+        "entry",
+        "exception_features",
+        "feature_struct_types",
+        "gram_categories",
+        "inflection_classes",
+        "inflection_features",
+        "msa",
+        "natural_classes",
+        "ph_environment",
+        "phon_feat_types",
+        "phonemes",
+        "phonological_features",
+        "phonological_rules",
+        "pos",
+        "pos_inflectable_feats",
+        "semantic_domains",
+        "sense",
+        "slots",
+        "stem_names",
+        "stems",
+        "strata",
+        "texts",
+        "variant_types",
+        "writing_systems_check"
+      ],
+      "link_skip_examples": [
+        {
+          "category": "affix_templates",
+          "detail": "slot_guid=a2139e78-2239-4830-acda-b87e89251157 not in target after slot transfer, so affix entry_guid=1310f3e3-ef53-4fcc-887b-49f2d9505d04 (msa_guid=b35ba1f9-a062-4077-bc7d-8f091bf08c4a) could not be linked to the template column it occupied in the source",
+          "kind": "msa_unresolved",
+          "reason": "DEPENDENCY_UNRESOLVED",
+          "source_guid": "a2139e78-2239-4830-acda-b87e89251157"
+        },
+        {
+          "category": "affix_templates",
+          "detail": "slot_guid=52772da1-fd63-4c00-aeb2-83201a6698f0 not in target after slot transfer, so affix entry_guid=1ae63e24-2e61-4a71-8694-a2756be7707e (msa_guid=98c8f53d-9512-4cb4-8431-b6e253af3962) could not be linked to the template column it occupied in the source",
+          "kind": "msa_unresolved",
+          "reason": "DEPENDENCY_UNRESOLVED",
+          "source_guid": "52772da1-fd63-4c00-aeb2-83201a6698f0"
+        },
+        {
+          "category": "affix_templates",
+          "detail": "slot_guid=a2139e78-2239-4830-acda-b87e89251157 not in target after slot transfer, so affix entry_guid=1ce7d3cf-6afa-4101-9511-b7cbef293d94 (msa_guid=b50b3f3e-d1b1-4ad0-bdbc-b83c996c5d53) could not be linked to the template column it occupied in the source",
+          "kind": "msa_unresolved",
+          "reason": "DEPENDENCY_UNRESOLVED",
+          "source_guid": "a2139e78-2239-4830-acda-b87e89251157"
+        },
+        {
+          "category": "affix_templates",
+          "detail": "slot_guid=a2139e78-2239-4830-acda-b87e89251157 not in target after slot transfer, so affix entry_guid=239b3fd4-7708-405c-9bb7-b606cf66df64 (msa_guid=a109d92f-af01-451d-844c-3c3c4fa460d6) could not be linked to the template column it occupied in the source",
+          "kind": "msa_unresolved",
+          "reason": "DEPENDENCY_UNRESOLVED",
+          "source_guid": "a2139e78-2239-4830-acda-b87e89251157"
+        },
+        {
+          "category": "affix_templates",
+          "detail": "slot_guid=23d810dd-503e-4217-97ce-14aab8689f05 not in target after slot transfer, so affix entry_guid=27d3337f-4b59-4c3c-ad6b-125d93e90159 (msa_guid=07eb5512-9a5f-4710-841c-954a1d8951c5) could not be linked to the template column it occupied in the source",
+          "kind": "msa_unresolved",
+          "reason": "DEPENDENCY_UNRESOLVED",
+          "source_guid": "23d810dd-503e-4217-97ce-14aab8689f05"
+        }
+      ],
+      "link_skips": {
+        "msa_unresolved_for_an_affix_this_run_never_transferred": 0,
+        "msa_unresolved_for_an_affix_this_run_transferred": 0,
+        "not_attributable_from_the_skip_alone": 52,
+        "total": 52
+      },
+      "newly_wired_in_target": 73,
+      "note": "affixes arrive, slots do not: the real failure-to-link case",
+      "report_link_tally": {
+        "categoryreport_link_or_slot_fields": [],
+        "runreport_fields_present": {
+          "affix_slot_links": 125
+        }
+      },
+      "source_wired_msas_linked_in_target": 73,
+      "source_wired_msas_total": 125,
+      "target_after": {
+        "slot_refs": 73,
+        "total_MoInflAffMsa": 126,
+        "with_SlotsRC": 73
+      },
+      "target_before": {
+        "slot_refs": 0,
+        "total_MoInflAffMsa": 0,
+        "with_SlotsRC": 0
+      }
+    }
+  },
+  "source_project": "Mbugwe LizzieHC practice",
+  "source_truth": {
+    "distinct_slots_referenced": 17,
+    "slot_refs": 125,
+    "total_MoInflAffMsa": 126,
+    "with_SlotsRC": 125
+  },
+  "target_project": "GT038 Closure Target"
+}

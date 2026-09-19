@@ -16,15 +16,16 @@ import types
 
 import pytest
 
-# Phase 3c leaf-dispatch for slots (T029/T032-T033) is still stubbed in
-# categories.py (`raise NotImplementedError("Phase 3c T029")`). These are
-# red-by-design TDD tests for that pending work (spec 007); mark xfail so the
-# trunk suite stays green and they auto-flip to passing once implemented.
-pytestmark = pytest.mark.xfail(
-    reason="Phase 3c T029 slots leaf-dispatch not yet implemented (spec 007)",
-    raises=NotImplementedError,
-    strict=False,
-)
+# THE MODULE-LEVEL `xfail` MARK IS GONE (feature 038, T069).
+#
+# It was added when Phase 3c T029 slots leaf-dispatch was still a
+# `raise NotImplementedError` stub. T029 landed; the mark did not. All four
+# tests in this file were XPASSING, and a non-strict xfail that xpasses is a
+# test that cannot fail: pytest reports XPASS, the run stays green, and no gate
+# notices. Found while mutation-verifying T068/T069, where breaking
+# `slots_dependencies` outright left `tests/unit` at "3426 passed" with no
+# failures. Removed rather than re-pointed; all four tests pass on their own
+# merits.
 
 from gramtrans.Lib import categories
 import gramtrans.Lib.categories as _cat_mod
@@ -116,8 +117,37 @@ def _patch_lcm_cast(monkeypatch):
 # Tests
 # ============================================================================
 
-def test_dependencies_returns_empty_tuple() -> None:
+def test_dependencies_are_empty_only_when_the_owner_is_unavailable() -> None:
+    """RE-POINTED by feature 038 T068, which falsified this test's premise.
+
+    It used to be called `test_dependencies_returns_empty_tuple` and asserted
+    `()` for a slot -- true of `_FakeSlot`, which has no `Owner`, and false of
+    the producer: `slots_dependencies` yields
+    `(GRAM_CATEGORIES, owning_pos_guid)`, and T068 registered exactly that edge
+    as `DependencyKind.SLOT_TO_POS` after measuring it live (19 edges over 5
+    POSes on `Mbugwe LizzieHC practice`, 9 over 6 on `Ejagham Mini`).
+
+    Both branches are asserted now, because the empty case is a real one that
+    the docstring promises ("empty when the owner is unavailable") and asserting
+    only it made a passing test out of an incomplete fake.
+    """
     assert tuple(_BUNDLE["dependencies"](piece=_FakeSlot("s-1"))) == ()
+
+    class _OwnedSlot:
+        def __init__(self, guid, owner_guid):
+            self.guid = guid
+            self.Owner = _FakePOS(owner_guid)
+
+    deps = tuple(_BUNDLE["dependencies"](
+        piece=_OwnedSlot("s-2", "pos-verb")))
+    assert deps == ((GrammarCategory.GRAM_CATEGORIES, "pos-verb"),)
+
+    # And the NARROW producer the registry row actually names must agree with
+    # the composite -- a row whose producer diverged from the composite it
+    # wraps would be verified against evidence about a different function.
+    assert tuple(categories.slots_pos_dependencies(
+        _OwnedSlot("s-3", "pos-noun"))) == (
+            (GrammarCategory.GRAM_CATEGORIES, "pos-noun"),)
 
 
 def test_enumerate_source_yields_all_slots_across_poses() -> None:

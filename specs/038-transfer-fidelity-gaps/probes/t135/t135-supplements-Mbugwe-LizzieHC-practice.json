@@ -1,0 +1,138 @@
+{
+ "lex_references": {
+  "lex_references_total": 0,
+  "owning_types_uncastable": 0,
+  "by_owning_type": {}
+ },
+ "possibility_nesting": {
+  "LexEntryInflType": {
+   "exact_class": 4,
+   "nested": 3,
+   "top_level": 1,
+   "other": 0,
+   "by_owning_field": {
+    "CmPossibility.SubPossibilities (flid=7004)": 3,
+    "CmPossibilityList.Possibilities (flid=8008)": 1
+   },
+   "by_guid": {
+    "01d4fbc1-3b0c-4f52-9163-7ab0d4f4711c": {
+     "name": "Irregularly Inflected Form",
+     "nesting": "top_level",
+     "owning_field": "CmPossibilityList.Possibilities (flid=8008)",
+     "owner_guid": "bb372467-5230-43ef-9cc7-4d40b053fb94"
+    },
+    "837ebe72-8c1d-4864-95d9-fa313c499d78": {
+     "name": "Past",
+     "nesting": "nested",
+     "owning_field": "CmPossibility.SubPossibilities (flid=7004)",
+     "owner_guid": "01d4fbc1-3b0c-4f52-9163-7ab0d4f4711c"
+    },
+    "a32f1d1c-4832-46a2-9732-c2276d6547e8": {
+     "name": "Plural",
+     "nesting": "nested",
+     "owning_field": "CmPossibility.SubPossibilities (flid=7004)",
+     "owner_guid": "01d4fbc1-3b0c-4f52-9163-7ab0d4f4711c"
+    },
+    "f84f013b-455f-4433-b378-3a2bfa7f574b": {
+     "name": "Class 10",
+     "nesting": "nested",
+     "owning_field": "CmPossibility.SubPossibilities (flid=7004)",
+     "owner_guid": "01d4fbc1-3b0c-4f52-9163-7ab0d4f4711c"
+    }
+   }
+  },
+  "LexEntryType": {
+   "exact_class": 12,
+   "nested": 0,
+   "top_level": 12,
+   "other": 0,
+   "by_owning_field": {
+    "CmPossibilityList.Possibilities (flid=8008)": 12
+   },
+   "by_guid": {
+    "024b62c9-93b3-41a0-ab19-587a0030219a": {
+     "name": "Dialectal Variant",
+     "nesting": "top_level",
+     "owning_field": "CmPossibilityList.Possibilities (flid=8008)",
+     "owner_guid": "bb372467-5230-43ef-9cc7-4d40b053fb94"
+    },
+    "0c4663b3-4d9a-47af-b9a1-c8565d8112ed": {
+     "name": "Spelling Variant",
+     "nesting": "top_level",
+     "owning_field": "CmPossibilityList.Possibilities (flid=8008)",
+     "owner_guid": "bb372467-5230-43ef-9cc7-4d40b053fb94"
+    },
+    "1f6ae209-141a-40db-983c-bee93af0ca3c": {
+     "name": "Compound",
+     "nesting": "top_level",
+     "owning_field": "CmPossibilityList.Possibilities (flid=8008)",
+     "owner_guid": "1ee09905-63dd-4c7a-a9bd-1d496743ccd6"
+    },
+    "35cee792-74c8-444e-a9b7-ed0461d4d3b7": {
+     "name": "Phrasal Verb",
+     "nesting": "top_level",
+     "owning_field": "CmPossibilityList.Possibilities (flid=8008)",
+     "owner_guid": "1ee09905-63dd-4c7a-a9bd-1d496743ccd6"
+    },
+    "3942addb-99fd-43e9-ab7d-99025ceb0d4e": {
+     "name": "Unspecified Variant",
+     "nesting": "top_level",
+     "owning_field": "CmPossibilityList.Possibilities (flid=8008)",
+     "owner_guid": "bb372467-5230-43ef-9cc7-4d40b053fb94"
+    },
+    "4343b1ef-b54f-4fa4-9998-271319a6d74c": {
+     "name": "Free Variant",
+     "nesting": "top_level",
+     "owning_field": "CmPossibilityList.Possibilities (flid=8008)",
+     "owner_guid": "bb372467-5230-43ef-9cc7-4d40b053fb94"
+    },
+    "73266a3a-48e8-4bd7-8c84-91c730340b7d": {
+     "name": "Contraction",
+     "nesting": "top_level",
+     "owning_field": "CmPossibilityList.Possibilities (flid=8008)",
+     "owner_guid": "1ee09905-63dd-4c7a-a9bd-1d496743ccd6"
+    },
+    "9466d126-246e-400b-8bba-0703e09bc567": {
+     "name": "Saying",
+     "nesting": "top_level",
+     "owning_field": "CmPossibilityList.Possibilities (flid=8008)",
+     "owner_guid": "1ee09905-63dd-4c7a-a9bd-1d496743ccd6"
+    },
+    "98c273c4-f723-4fb0-80df-eede2204dfca": {
+     "name": "Derivative",
+     "nesting": "top_level",
+     "owning_field": "CmPossibilityList.Possibilities (flid=8008)",
+     "owner_guid": "1ee09905-63dd-4c7a-a9bd-1d496743ccd6"
+    },
+    "99e0cab9-f284-45fb-84a5-4cb2516d0bf4": {
+     "name": "Periphrastic Form",
+     "nesting": "top_level",
+     "owning_field": "CmPossibilityList.Possibilities (flid=8008)",
+     "owner_guid": "bb372467-5230-43ef-9cc7-4d40b053fb94"
+    },
+    "b2276dec-b1a6-4d82-b121-fd114c009c59": {
+     "name": "Idiom",
+     "nesting": "top_level",
+     "owning_field": "CmPossibilityList.Possibilities (flid=8008)",
+     "owner_guid": "1ee09905-63dd-4c7a-a9bd-1d496743ccd6"
+    },
+    "fec038ed-6a8c-4fa5-bc96-a4f515a98c50": {
+     "name": "Unspecified Complex Form",
+     "nesting": "top_level",
+     "owning_field": "CmPossibilityList.Possibilities (flid=8008)",
+     "owner_guid": "1ee09905-63dd-4c7a-a9bd-1d496743ccd6"
+    }
+   }
+  },
+  "CmPossibility": {
+   "exact_class": 338,
+   "nested": 220,
+   "top_level": 118,
+   "other": 0,
+   "by_owning_field": {
+    "CmPossibility.SubPossibilities (flid=7004)": 220,
+    "CmPossibilityList.Possibilities (flid=8008)": 118
+   }
+  }
+ }
+}

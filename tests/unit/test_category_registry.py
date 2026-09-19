@@ -50,20 +50,28 @@ LEAF_CATEGORIES = {
     GrammarCategory.SLOTS,
     GrammarCategory.AFFIX_TEMPLATES,
     GrammarCategory.STEMS,
+    # POS migrated HEAVY -> LEAF: it is now the pick-driven ALIAS of
+    # GRAM_CATEGORIES (same enumeration source, same GOLD-reserved merge
+    # decision, same GUID-preserving creator; narrowed to
+    # `Selection.pos_picks`). The inline verb-vertical path it used to live
+    # on has been gated off since 2026-07-06 (`_VERB_VERTICAL_ENABLED =
+    # False`), which left `categories[POS]=True` reaching nothing at all.
+    GrammarCategory.POS,
 }
 
-# Heavy categories (MSAs, ALLOMORPH, ENTRY, SENSE, POS, WRITING_SYSTEMS_CHECK)
+# Heavy categories (MSAs, ALLOMORPH, ENTRY, SENSE, WRITING_SYSTEMS_CHECK)
 # live in inline verb-vertical / Layer-3 paths and are absent from the leaf
 # registry. AFFIXES / AFFIX_TEMPLATES / SLOTS migrated to LEAF in Phase 3c
 # (still served by inline paths during the migration window; leaf stubs
 # raise NotImplementedError so duplicate planning does not occur).
+# POS migrated to LEAF as the pick-driven gram_categories alias -- see the
+# note in LEAF_CATEGORIES above.
 HEAVY_CATEGORIES = {
     GrammarCategory.MSA,
     GrammarCategory.ALLOMORPH,
     # PH_ENVIRONMENT moved to LEAF_CATEGORIES in Phase 3a (memo step 4b).
     GrammarCategory.ENTRY,
     GrammarCategory.SENSE,
-    GrammarCategory.POS,
     GrammarCategory.WRITING_SYSTEMS_CHECK,
 }
 

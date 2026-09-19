@@ -114,10 +114,36 @@ def main() -> int:
         _guid_str_from,
     )
 
+    # T090 (sibling of the two drivers that task names): flexicon takes the
+    # Palaso file lock on ANY open, read-only included, and releases it only
+    # on `CloseProject()`. This probe used to return without closing either
+    # handle, so it left two `<project>.fwdata.lock` files behind naming a
+    # dead PID -- which the next `tests/integration` run reads as "locked by
+    # FieldWorks" and skips on. Close both, on every path.
     source = FLExProject()
     source.OpenProject(projectName=SOURCE, writeEnabled=False)
-    target = FLExProject()
-    target.OpenProject(projectName=TARGET, writeEnabled=False)
+    try:
+        target = FLExProject()
+        target.OpenProject(projectName=TARGET, writeEnabled=False)
+        try:
+            return _probe(source, target,
+                          _rules_enumerate_all,
+                          adhoc_compound_rules_dependencies,
+                          _guid_str_from)
+        finally:
+            try:
+                target.CloseProject()
+            except Exception:  # noqa: BLE001 -- read-only; nothing to lose
+                pass
+    finally:
+        try:
+            source.CloseProject()
+        except Exception:  # noqa: BLE001 -- read-only; nothing to lose
+            pass
+
+
+def _probe(source, target, _rules_enumerate_all,
+           adhoc_compound_rules_dependencies, _guid_str_from) -> int:
     print(f"[OK] opened SOURCE={SOURCE!r} and TARGET={TARGET!r} read-only")
 
     # Target GUID membership: rule GUIDs + a repository check for dependencies.

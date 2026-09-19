@@ -40,10 +40,30 @@ pytestmark = pytest.mark.integration
 # ---------------------------------------------------------------------------
 
 def _open_project(name: str, *, write: bool):
+    """Open a FLEx project through flexicon, FieldWorks initialized first.
+
+    Currently unreachable -- every fixture in this module skips before calling
+    it -- but kept correct rather than left as a trap for whoever wires those
+    fixtures up. It previously opened through stock `flexlibs`, whose
+    `FLExProject` exposes no `.Cache`; the inventory builders read
+    `source.Cache.LangProject.*` behind an `except (AttributeError, TypeError)`
+    fail-soft, so a wrong handle degrades SILENTLY to an empty inventory and
+    every count anchor fails as though the data had regressed. That is exactly
+    how the defect fixed in `test_affix_pos_picker_live.py` on 2026-08-20 hid,
+    and GramTrans depends on flexicon, not stock flexlibs (CLAUDE.md).
+
+    `ensure_flex_initialized()` on every call: it is idempotent, and a pytest
+    session runs many fixtures in one process where any `FLExCleanup()` takes
+    the SLDR down for the rest -- opening without it can quarantine a project's
+    `WritingSystemStore/*.ldml`.
+    """
     try:
-        import flexlibs  # type: ignore
-        project = flexlibs.FLExProject()
-        project.OpenProject(name, writeEnabled=write)
+        from gramtrans.Lib.flexinit import ensure_flex_initialized
+        from flexicon import FLExProject  # type: ignore
+
+        ensure_flex_initialized()
+        project = FLExProject()
+        project.OpenProject(projectName=name, writeEnabled=write)
         return project
     except Exception as e:  # noqa: BLE001
         pytest.skip(f"Cannot open project '{name}': {e}")

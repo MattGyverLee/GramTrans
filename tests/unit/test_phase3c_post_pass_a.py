@@ -31,6 +31,7 @@ import pytest
 
 from gramtrans.Lib import categories
 from gramtrans.Lib.models import (
+    AffixSlotLinkOutcome,
     GrammarCategory,
     RunContext,
     Skip,
@@ -119,14 +120,24 @@ def _ctx_post_pass_a(lexentry_ref_bindings, in_plan_entries=None) -> RunContext:
     return ctx
 
 
-def _ctx_171(msa_slot_bindings, identity_remap=None) -> RunContext:
+def _ctx_171(msa_slot_bindings, identity_remap=None, msa_owner_entry=None) -> RunContext:
     ctx = _make_ctx()
     plan = types.SimpleNamespace(
         msa_slot_bindings=dict(msa_slot_bindings),
         identity_remap=dict(identity_remap or {}),
+        # T074 (FR-019): which entry owns each MSA. Absent by default, which
+        # is the honest default for these fakes -- with no owner recorded the
+        # sub-pass has no evidence the affix is in the destination, so an
+        # unresolved MSA is NOT_IN_RUN rather than a failure to link.
+        msa_owner_entry=dict(msa_owner_entry or {}),
     )
     object.__setattr__(ctx, "_run_plan", plan)
     return ctx
+
+
+def _link_records(ctx):
+    """The `AffixSlotLinkRecord`s the sub-pass stashed on `ctx` (T074)."""
+    return list(getattr(ctx, "_affix_slot_links", []) or [])
 
 
 # ============================================================================
@@ -308,17 +319,58 @@ def test_171_resolves_msa_via_identity_remap() -> None:
     assert msa.SlotsRC.add_log == [slot]
 
 
-def test_171_unresolved_msa() -> None:
-    """MSA absent from target → 1 Skip carrying msa_guid=<g> detail."""
+def test_171_unresolved_msa_for_an_affix_not_in_the_destination_is_not_reported() -> None:
+    """T074 (FR-019): an MSA absent from target whose OWNING AFFIX is also
+    absent is not a failure to link -- this run never undertook to put the
+    affix there, so there is nothing it failed to do.
+
+    This test asserted the opposite until T074. The producer walks the whole
+    source lexicon on purpose, so reading every binding as a promise this run
+    made produced, measured on `Mbugwe LizzieHC practice` under an
+    AFFIX_TEMPLATES-only selection, 203 reported failures of which 0 were real.
+
+    NOT silent: the suppression is recorded as NOT_IN_RUN, so the count stays
+    auditable. The negative half of this pair is
+    `test_171_unresolved_msa_for_an_affix_in_the_destination_is_reported`,
+    which is what stops this from being "emit fewer skips".
+    """
     slot = _FakeObj("slot-1")
-    target = _FakeTarget({"slot-1": slot})  # msa absent
-    ctx = _ctx_171({"msa-missing": ["slot-1"]})
+    target = _FakeTarget({"slot-1": slot})  # msa AND its entry absent
+    ctx = _ctx_171({"msa-missing": ["slot-1"]},
+                   msa_owner_entry={"msa-missing": "entry-gone"})
+
+    skips = categories._run_171_subpass(ctx, target, tag=None)
+
+    assert skips == []
+    records = _link_records(ctx)
+    assert len(records) == 1
+    assert records[0].outcome is AffixSlotLinkOutcome.NOT_IN_RUN
+    assert records[0].msa_guid == "msa-missing"
+    assert records[0].entry_guid == "entry-gone"
+    assert records[0].source_slot_guids == ("slot-1",)
+
+
+def test_171_unresolved_msa_for_an_affix_in_the_destination_is_reported() -> None:
+    """T074 (FR-019): the affix IS in the destination and its inflectional MSA
+    is not, so it arrived in a shape that cannot carry a template column. Real,
+    unique to this pass, and reported AGAINST THE AFFIX -- the pre-T074 skip
+    named the absent MSA and left the reader to work out whose it was.
+    """
+    slot = _FakeObj("slot-1")
+    entry = _FakeObj("entry-here")
+    target = _FakeTarget({"slot-1": slot, "entry-here": entry})  # msa absent
+    ctx = _ctx_171({"msa-missing": ["slot-1"]},
+                   msa_owner_entry={"msa-missing": "entry-here"})
 
     skips = categories._run_171_subpass(ctx, target, tag=None)
 
     assert len(skips) == 1
     assert skips[0].reason == SkipReason.DEPENDENCY_UNRESOLVED
+    assert skips[0].source_guid == "entry-here"
+    assert "entry_guid=entry-here" in skips[0].detail
     assert "msa_guid=msa-missing" in skips[0].detail
+    records = _link_records(ctx)
+    assert [r.outcome for r in records] == [AffixSlotLinkOutcome.MSA_MISSING]
 
 
 def test_171_unresolved_slot() -> None:
@@ -357,9 +409,17 @@ def test_171_empty_bindings_noop() -> None:
 
 
 def test_171_skips_are_skip_instances() -> None:
-    """Returned skips are model Skip objects (not tuples/strings)."""
-    ctx = _ctx_171({"msa-missing": ["slot-1"]})
-    skips = categories._run_171_subpass(ctx, _FakeTarget({}), tag=None)
+    """Returned skips are model Skip objects (not tuples/strings).
+
+    Driven through the REPORTED branch (an affix present in the destination
+    whose MSA is not) since T074 -- the previously-used unresolved-MSA case now
+    correctly returns no skip at all, which would make this vacuous.
+    """
+    entry = _FakeObj("entry-here")
+    ctx = _ctx_171({"msa-missing": ["slot-1"]},
+                   msa_owner_entry={"msa-missing": "entry-here"})
+    skips = categories._run_171_subpass(
+        ctx, _FakeTarget({"entry-here": entry}), tag=None)
     assert skips and all(isinstance(s, Skip) for s in skips)
 
 

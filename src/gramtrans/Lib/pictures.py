@@ -351,14 +351,28 @@ def _get_service(ctx, iface_name):
     getsvc = getattr(target, "GetService", None)
     if getsvc is None:
         return None
+    # Typed lookup first (the live host). A lookup that returns None did NOT
+    # succeed -- the old code only fell back when the typed attempt RAISED, so
+    # a resolver that answers unknown keys with None (every duck-typed fake,
+    # and any tolerant locator) silently yielded no factory the moment
+    # `SIL.LCModel` became importable in-process. Fall back on None too.
+    iface = None
     try:
         import SIL.LCModel as _lcm
-        return getsvc(getattr(_lcm, iface_name))
-    except Exception:
+        iface = getattr(_lcm, iface_name, None)
+    except Exception:  # noqa: BLE001 -- offline: no pythonnet
+        iface = None
+    if iface is not None:
         try:
-            return getsvc(iface_name)
-        except Exception:
-            return None
+            svc = getsvc(iface)
+        except Exception:  # noqa: BLE001
+            svc = None
+        if svc is not None:
+            return svc
+    try:
+        return getsvc(iface_name)
+    except Exception:  # noqa: BLE001
+        return None
 
 
 def _append_owned_picture(new_sense, picture) -> None:

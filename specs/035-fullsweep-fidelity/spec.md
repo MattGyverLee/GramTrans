@@ -216,6 +216,23 @@ refused before any file is touched.
 
 ### User Story 5 - Loss is either explained or it fails; there is no dumping ground (Priority: P4)
 
+> **AMENDED 2026-08-22 by the 038 cut -- the principle stands, the mechanism is
+> struck.** This story's premise, that a loss is either explained or it fails, is
+> retained and is now satisfied *more strictly* than this story proposed: feature
+> 038's per-class census closes its reason vocabulary at 16 tokens with no
+> `UNEXPLAINED` and no `OTHER`, so an unexplained loss cannot be recorded at all
+> rather than being recorded and forgiven. What is CUT is the **allowlist** -- the
+> safety valve itself, FR-115..FR-122 and FR-182 (Section H), and the four
+> acceptance scenarios below, all of which test allowlist-entry validity and so
+> test a mechanism that will not exist.
+>
+> The story keeps its "no dumping ground" name honestly: the cut removes the
+> valve rather than widening it. Its Independent Test is therefore unreachable as
+> written and is superseded by 038's census gate. See "Amendment (2026-08-22) --
+> the 038 cut" in [tasks.md](tasks.md); tasks T058-T061 are CUT, T063 retires the
+> already-built part, and T068 collapses the now-unreachable
+> `PASS_WITH_ALLOWLIST` verdict.
+
 A small number of losses are genuinely already understood, tracked, and
 accepted — for instance, a documented API-misuse bug already fixed upstream.
 The maintainer needs a way to record exactly that kind of accepted loss without
@@ -1080,8 +1097,8 @@ failure, never a pass. Source: cycle1-qc.md, Section 2 (VG-01..VG-12).*
 
 | Verdict | Meaning |
 |---|---|
-| Clean pass | Zero loss, zero extras, all guards pass, no allowlist entry consumed |
-| Pass with allowlist | As a clean pass, but one or more losses each matched to a valid allowlist entry within its cap |
+| Clean pass | Zero loss, zero extras, all guards pass. **Amended 2026-08-22 (the 038 cut): the trailing "no allowlist entry consumed" clause is struck with Section H -- with no allowlist, this is the only passing verdict** |
+| Pass with allowlist | As a clean pass, but one or more losses each matched to a valid allowlist entry within its cap **CUT-BY-DECISION 2026-08-22 (the 038 cut): unreachable, see T068** |
 | Unexplained loss | A total-accounting, plan-conservation, no-extra, or no-engine-bug-as-loss guard failed, or a loss with no matching allowlist entry, or a count over an entry's cap |
 | Non-idempotent | The idempotency-in-written-classes guard failed |
 | Coverage reduced | The category-coverage guard failed — any excluded category, any unmeasured enabled category |
@@ -1089,7 +1106,7 @@ failure, never a pass. Source: cycle1-qc.md, Section 2 (VG-01..VG-12).*
 | Harness error | The accessor-integrity, no-truncation, or clean-close guard failed, or any accessor/restore/close/artifact-write failure, or an unhandled exception |
 | Preflight mismatch | The capability preflight (Section I) found a difference from the pinned expectation |
 | Incomplete | The artifact-integrity guard failed — any corpus project not run, skipped, or without an artifact |
-| Allowlist invalid | An allowlist entry is malformed, expired, unowned, capless, over-broad, or stale |
+| Allowlist invalid | An allowlist entry is malformed, expired, unowned, capless, over-broad, or stale **CUT-BY-DECISION 2026-08-22 (the 038 cut): unreachable, see T068** |
 
 - **FR-110**: The sweep MUST assign exactly one of the ten verdicts above to
   each project's run.
@@ -1114,6 +1131,29 @@ failure, never a pass. Source: cycle1-qc.md, Section 2 (VG-01..VG-12).*
 
 *Schema and anti-dumping-ground rules. Source: cycle1-qc.md, Section 3.*
 
+> **CUT-BY-DECISION 2026-08-22 -- this whole section (FR-115..FR-122), together
+> with FR-182, SC-007 and SC-015, is struck.** Nothing below is implemented and
+> nothing below should be. See "Amendment (2026-08-22) -- the 038 cut" in
+> [tasks.md](tasks.md) for the full reasoning and the task-by-task ruling; the
+> short form is that feature 038 shipped a per-class census whose reason
+> vocabulary is **closed at 16 tokens with no `UNEXPLAINED` and no `OTHER`**, so a
+> loss is either explained by a vocabulary member or the run fails. This section
+> is the opposite design: an explicit, expiring, capped way to *forgive* a loss.
+> Shipping both would give the repository two competing ways to bless a known
+> loss -- precisely the failure mode this feature exists to retire, and a stronger
+> objection than any of the eight anti-dumping-ground rules below can answer.
+>
+> The text is retained rather than deleted so a later reader can see that the gap
+> is a decision and not an oversight, and so the anti-dumping-ground reasoning
+> stays available if a future feature ever reopens the question. Retiring the
+> already-built part -- `debug/fullsweep/allowlist.py` (T032), its contract file,
+> its export and its one call site -- is folded into task T063; collapsing the
+> now-unreachable `PASS_WITH_ALLOWLIST` verdict is task T068.
+>
+> **FR-097 consequence:** its dropped-and-allowlisted bucket loses its
+> allowlisted arm. A drop is henceforth either explained by a closed-vocabulary
+> reason or it fails the run.
+
 Every allowlist entry MUST record at minimum: a stable identifier that is
 never reused; a person responsible for it; an open tracking issue reference;
 the exact project(s), object class, and field name it applies to; an
@@ -1123,17 +1163,21 @@ absence of a dependency capability, the identifier of that specific
 capability as pinned by the capability preflight (Section I), per the
 inverted invalidation trigger of FR-182.
 
-- **FR-115**: The loss allowlist MUST be a git-tracked artifact, reviewed as
+- **FR-115**: **CUT-BY-DECISION 2026-08-22 (the 038 cut).**
+  The loss allowlist MUST be a git-tracked artifact, reviewed as
   source, containing one entry per accepted loss pattern, with all the
   fields listed above present on every entry.
-- **FR-116**: An allowlist entry's reason MUST be matched exactly against the
+- **FR-116**: **CUT-BY-DECISION 2026-08-22 (the 038 cut).**
+  An allowlist entry's reason MUST be matched exactly against the
   observed loss reason; wildcard or pattern-based matching of the reason MUST
   be forbidden, so that one entry cannot be stretched to cover two different
   failure modes.
-- **FR-117**: Every allowlist entry MUST declare a maximum count; an observed
+- **FR-117**: **CUT-BY-DECISION 2026-08-22 (the 038 cut).**
+  Every allowlist entry MUST declare a maximum count; an observed
   count exceeding that maximum MUST be treated as unexplained loss, not as a
   widened allowance.
-- **FR-118**: Every allowlist entry MUST declare an expiry date no more than
+- **FR-118**: **CUT-BY-DECISION 2026-08-22 (the 038 cut).**
+  Every allowlist entry MUST declare an expiry date no more than
   120 days after the date the loss was first observed; an expired entry MUST
   cause the run to fail rather than silently continue to pass, and renewing
   an entry MUST require an edit to the tracked file that a reviewer will
@@ -1141,13 +1185,15 @@ inverted invalidation trigger of FR-182.
   justification is the absence of a dependency capability; such an entry is
   additionally governed by the inverted trigger of FR-182, which can
   invalidate it before its declared expiry.
-- **FR-119**: Every allowlist entry MUST reference an open tracking issue;
+- **FR-119**: **CUT-BY-DECISION 2026-08-22 (the 038 cut).**
+  Every allowlist entry MUST reference an open tracking issue;
   the sweep MUST verify that the referenced issue is open at the time of the
   run, and a closed or missing issue MUST invalidate the entry. (See FR-107
   for the classification distinguishing a coverage-gap loss, which this
   requirement's open-issue rule makes allowlistable, from an
   engine-bug-signature loss, which FR-121 forbids allowlisting regardless.)
-- **FR-120**: An allowlist entry that matches zero observed losses across two
+- **FR-120**: **CUT-BY-DECISION 2026-08-22 (the 038 cut).**
+  An allowlist entry that matches zero observed losses across two
   consecutive full-corpus runs MUST be flagged as stale and MUST invalidate
   the run rather than silently continuing to be honored, forcing its
   removal; an entry whose maximum count exceeds the observed count by more
@@ -1156,10 +1202,12 @@ inverted invalidation trigger of FR-182.
   retire an entry whose justification is the absence of a dependency
   capability and which therefore matches an observed loss on every run;
   such an entry is additionally governed by the inverted trigger of FR-182.
-- **FR-121**: A loss reason matching the recognized engine-bug signature set
+- **FR-121**: **CUT-BY-DECISION 2026-08-22 (the 038 cut).**
+  A loss reason matching the recognized engine-bug signature set
   MUST NOT be allowlistable under any circumstance, regardless of how the
   entry is written.
-- **FR-122**: The total number of objects covered by allowlist entries for a
+- **FR-122**: **CUT-BY-DECISION 2026-08-22 (the 038 cut).**
+  The total number of objects covered by allowlist entries for a
   given project MUST NOT exceed 1% of that project's in-scope source
   objects, and the total number of allowlist entries MUST NOT exceed 25;
   exceeding either cap MUST invalidate the run, on the principle that the
@@ -1574,7 +1622,9 @@ class, whose depth the comparator's own recursion can silently fail to
 reach. Each requirement below is cross-referenced from the requirement it
 amends — existing or introduced here — and vice versa.*
 
-- **FR-182 (capability-conditional exemption, inverted trigger)**: An
+- **FR-182 (capability-conditional exemption, inverted trigger)**:
+  **CUT-BY-DECISION 2026-08-22 (the 038 cut).**
+  An
   allowlist or exemption entry whose written justification is the absence of
   a dependency capability MUST declare the identifier of that specific
   capability, which MUST be one of the capabilities pinned by the capability
@@ -1863,7 +1913,8 @@ guards being able to fire at all, and it needs requirements of its own.
   either a terminal verdict or an explicit exclusion record; the corpus-level
   status is never reported as complete while any project is silently absent
   from both.
-- **SC-007**: Every allowlist entry consumed in a passing run is listed in
+- **SC-007**: **CUT-BY-DECISION 2026-08-22 (the 038 cut).**
+  Every allowlist entry consumed in a passing run is listed in
   that run's artifact with its identifier, matched count, and remaining
   headroom — a passing result never leaves a reader unable to reconstruct
   what was forgiven.
@@ -1887,7 +1938,8 @@ guards being able to fire at all, and it needs requirements of its own.
 - **SC-014**: No corpus-level fidelity claim is ever issued on the basis of
   passing results assembled across more than one driver-and-dependency
   revision pair; every such claim traces to exactly one uniform final sweep.
-- **SC-015**: Zero allowlist entries justified by the absence of a
+- **SC-015**: **CUT-BY-DECISION 2026-08-22 (the 038 cut).**
+  Zero allowlist entries justified by the absence of a
   dependency capability remain valid in any run in which the capability
   preflight observes that capability to be present; each such entry either
   was already removed or the run reports it INVALID per FR-182.

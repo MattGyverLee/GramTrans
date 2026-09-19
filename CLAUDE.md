@@ -1,7 +1,7 @@
 <!-- SPECKIT START -->
 For additional context about technologies to be used, project structure,
 shell commands, and other important information, read the current plan
-at specs/029-sense-pictures/plan.md
+at specs/038-transfer-fidelity-gaps/plan.md
 <!-- SPECKIT END -->
 
 ## Git Workflow Protocol (specs → main, work → worktree)

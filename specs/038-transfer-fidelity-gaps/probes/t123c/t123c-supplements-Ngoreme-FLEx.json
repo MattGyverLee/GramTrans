@@ -1,0 +1,160 @@
+{
+ "lex_references": {
+  "lex_references_total": 5,
+  "owning_types_uncastable": 0,
+  "by_owning_type": {
+   "Calendar | MappingType=4": {
+    "references": 1,
+    "targets_per_reference": [
+     13
+    ]
+   },
+   "Specific | MappingType=3": {
+    "references": 3,
+    "targets_per_reference": [
+     2,
+     2,
+     2
+    ]
+   },
+   "Synonyms | MappingType=0": {
+    "references": 1,
+    "targets_per_reference": [
+     2
+    ]
+   }
+  }
+ },
+ "possibility_nesting": {
+  "LexEntryInflType": {
+   "exact_class": 3,
+   "nested": 2,
+   "top_level": 1,
+   "other": 0,
+   "by_owning_field": {
+    "CmPossibility.SubPossibilities (flid=7004)": 2,
+    "CmPossibilityList.Possibilities (flid=8008)": 1
+   },
+   "by_guid": {
+    "01d4fbc1-3b0c-4f52-9163-7ab0d4f4711c": {
+     "name": "Irregularly Inflected Form",
+     "nesting": "top_level",
+     "owning_field": "CmPossibilityList.Possibilities (flid=8008)",
+     "owner_guid": "3ece8b71-eb82-418c-9bb5-a704ed760813"
+    },
+    "837ebe72-8c1d-4864-95d9-fa313c499d78": {
+     "name": "Past",
+     "nesting": "nested",
+     "owning_field": "CmPossibility.SubPossibilities (flid=7004)",
+     "owner_guid": "01d4fbc1-3b0c-4f52-9163-7ab0d4f4711c"
+    },
+    "a32f1d1c-4832-46a2-9732-c2276d6547e8": {
+     "name": "Plural",
+     "nesting": "nested",
+     "owning_field": "CmPossibility.SubPossibilities (flid=7004)",
+     "owner_guid": "01d4fbc1-3b0c-4f52-9163-7ab0d4f4711c"
+    }
+   }
+  },
+  "LexEntryType": {
+   "exact_class": 13,
+   "nested": 1,
+   "top_level": 12,
+   "other": 0,
+   "by_owning_field": {
+    "CmPossibilityList.Possibilities (flid=8008)": 12,
+    "CmPossibility.SubPossibilities (flid=7004)": 1
+   },
+   "by_guid": {
+    "024b62c9-93b3-41a0-ab19-587a0030219a": {
+     "name": "Dialectal Variant",
+     "nesting": "top_level",
+     "owning_field": "CmPossibilityList.Possibilities (flid=8008)",
+     "owner_guid": "3ece8b71-eb82-418c-9bb5-a704ed760813"
+    },
+    "0c4663b3-4d9a-47af-b9a1-c8565d8112ed": {
+     "name": "Spelling Variant",
+     "nesting": "top_level",
+     "owning_field": "CmPossibilityList.Possibilities (flid=8008)",
+     "owner_guid": "3ece8b71-eb82-418c-9bb5-a704ed760813"
+    },
+    "1f6ae209-141a-40db-983c-bee93af0ca3c": {
+     "name": "Compound",
+     "nesting": "top_level",
+     "owning_field": "CmPossibilityList.Possibilities (flid=8008)",
+     "owner_guid": "2df59ac9-d5d8-4b47-89b5-956dd6510f87"
+    },
+    "35cee792-74c8-444e-a9b7-ed0461d4d3b7": {
+     "name": "Phrasal Verb",
+     "nesting": "top_level",
+     "owning_field": "CmPossibilityList.Possibilities (flid=8008)",
+     "owner_guid": "2df59ac9-d5d8-4b47-89b5-956dd6510f87"
+    },
+    "3942addb-99fd-43e9-ab7d-99025ceb0d4e": {
+     "name": "Unspecified Variant",
+     "nesting": "top_level",
+     "owning_field": "CmPossibilityList.Possibilities (flid=8008)",
+     "owner_guid": "3ece8b71-eb82-418c-9bb5-a704ed760813"
+    },
+    "4343b1ef-b54f-4fa4-9998-271319a6d74c": {
+     "name": "Free Variant",
+     "nesting": "top_level",
+     "owning_field": "CmPossibilityList.Possibilities (flid=8008)",
+     "owner_guid": "3ece8b71-eb82-418c-9bb5-a704ed760813"
+    },
+    "73266a3a-48e8-4bd7-8c84-91c730340b7d": {
+     "name": "Contraction",
+     "nesting": "top_level",
+     "owning_field": "CmPossibilityList.Possibilities (flid=8008)",
+     "owner_guid": "2df59ac9-d5d8-4b47-89b5-956dd6510f87"
+    },
+    "9466d126-246e-400b-8bba-0703e09bc567": {
+     "name": "Saying",
+     "nesting": "top_level",
+     "owning_field": "CmPossibilityList.Possibilities (flid=8008)",
+     "owner_guid": "2df59ac9-d5d8-4b47-89b5-956dd6510f87"
+    },
+    "98c273c4-f723-4fb0-80df-eede2204dfca": {
+     "name": "Derivative",
+     "nesting": "top_level",
+     "owning_field": "CmPossibilityList.Possibilities (flid=8008)",
+     "owner_guid": "2df59ac9-d5d8-4b47-89b5-956dd6510f87"
+    },
+    "b2276dec-b1a6-4d82-b121-fd114c009c59": {
+     "name": "Idiom",
+     "nesting": "top_level",
+     "owning_field": "CmPossibilityList.Possibilities (flid=8008)",
+     "owner_guid": "2df59ac9-d5d8-4b47-89b5-956dd6510f87"
+    },
+    "cce519d8-a9c5-4f28-9c7d-5370788bfbd5": {
+     "name": "Keyterm Phrase",
+     "nesting": "top_level",
+     "owning_field": "CmPossibilityList.Possibilities (flid=8008)",
+     "owner_guid": "2df59ac9-d5d8-4b47-89b5-956dd6510f87"
+    },
+    "e7983f52-77a7-4f0b-aa31-84678672e42d": {
+     "name": "Perfective",
+     "nesting": "nested",
+     "owning_field": "CmPossibility.SubPossibilities (flid=7004)",
+     "owner_guid": "01d4fbc1-3b0c-4f52-9163-7ab0d4f4711c"
+    },
+    "fec038ed-6a8c-4fa5-bc96-a4f515a98c50": {
+     "name": "Unspecified Complex Form",
+     "nesting": "top_level",
+     "owning_field": "CmPossibilityList.Possibilities (flid=8008)",
+     "owner_guid": "2df59ac9-d5d8-4b47-89b5-956dd6510f87"
+    }
+   }
+  },
+  "CmPossibility": {
+   "exact_class": 398,
+   "nested": 277,
+   "top_level": 121,
+   "other": 0,
+   "by_owning_field": {
+    "CmPossibility.SubPossibilities (flid=7004)": 277,
+    "CmPossibilityList.Possibilities (flid=8008)": 121
+   }
+  }
+ }
+}
