@@ -79,7 +79,19 @@ def test_every_run_context_field_is_classified_measurable_or_not(driver):
 def test_every_unmeasured_field_records_why(driver):
     """FR-109 makes any not-evaluated guard sink the run to VACUOUS, so "why is
     this VACUOUS?" must have a written answer in the code, not require an
-    archaeology session through fifteen guards."""
+    archaeology session through fifteen guards.
+
+    T045b emptied the registry, and an empty dict makes the loop below pass
+    over nothing. That is the vacuous pass the 2026-08-19 correction warned
+    about, so the EMPTINESS is asserted first and separately: this test now
+    fails if a future field is added back without a reason AND fails to be
+    silently satisfied by there being no fields.
+    """
+    assert driver.UNMEASURED_RUN_CONTEXT_FIELDS == {}, (
+        "the registry is no longer empty -- T045b deposited all nine of its "
+        "members. Re-adding one is a deliberate act: state the reason, and "
+        "update this assertion so the emptiness claim stays true or is "
+        "consciously dropped.")
     for name, reason in driver.UNMEASURED_RUN_CONTEXT_FIELDS.items():
         assert reason and len(reason) > 20, "%s has no substantive reason" % name
 
@@ -143,7 +155,15 @@ def test_no_field_is_defaulted_to_an_empty_container(driver):
     ACCESSOR-INTEGRITY report all-zeros and pass a project it never opened. So
     build_run_context must pass None through, not {}."""
     ctx = driver.build_run_context("P", {})
-    for name in driver.UNMEASURED_RUN_CONTEXT_FIELDS:
+    # Over EVERY measurement field, not merely the unmeasured registry --
+    # which T045b emptied, making the original loop pass over nothing. The
+    # invariant was never about that registry anyway: it is that an ABSENT
+    # measurement yields None, whichever field it is.
+    measurement_fields = (
+        {f.name for f in dataclasses.fields(guards.RunContext)}
+        - {"project", "extra"})
+    assert measurement_fields, "RunContext has no measurement fields to check"
+    for name in sorted(measurement_fields):
         assert getattr(ctx, name) is None, "%s was defaulted to a container" % name
 
 
@@ -445,19 +465,35 @@ def test_accounting_block_keeps_the_two_planes_separate(driver):
 
 
 def test_pending_plane_2_fields_are_named_measurable_but_not_yet_deposited(driver):
-    """The honest bookkeeping for part (c): both fields' shapes are settled and
-    their guards are built, so they belong on the measurable tuple; only the live
-    field reader is missing. Naming them here keeps "why is CATEGORY-COVERAGE
-    still not-evaluated?" answerable from the code."""
+    """The honest bookkeeping for a "measurable in principle, not deposited
+    yet" field.
+
+    T045a(c) emptied this tuple and kept it as the slot the next such field
+    goes in. An empty tuple makes the loop below pass over nothing, so the
+    emptiness is asserted explicitly -- otherwise this test would report
+    success for a tuple whose members had all silently become false.
+    """
+    assert driver.PENDING_PLANE_2_FIELDS == (), (
+        "a field is parked as pending again -- check it really is measurable "
+        "but undeposited, and not simply unmeasured (that belongs in "
+        "UNMEASURED_RUN_CONTEXT_FIELDS, with a reason)")
     for name in driver.PENDING_PLANE_2_FIELDS:
         assert name in driver.MEASURABLE_RUN_CONTEXT_FIELDS
         assert name not in driver.UNMEASURED_RUN_CONTEXT_FIELDS
 
 
-def test_the_measured_ten_answer_and_the_rest_decline(driver):
-    """The state of the instrument after T045a parts (a) and (b), pinned so a
-    regression to batch 1's all-not-evaluated block is caught immediately, and so
-    a later claim of "non-VACUOUS" has to update this list deliberately."""
+def test_the_five_object_plane_guards_answer_from_object_plane_input_alone(driver):
+    """The object plane, measured on its own, answers exactly five guards.
+
+    RENAMED at T045b. The name said "ten" while the assertion listed five --
+    the 2026-08-19 survey caught the lie and asked that it be fixed when the
+    answering set moved. It has moved, twice (T045a(c) to 7/15, T045b to
+    15/15), so the name now says what the body actually pins: feed ONLY the
+    object-plane measurements and five guards answer. The other ten decline
+    because their inputs are absent from this dict, not because they cannot
+    be measured -- ``test_the_full_measurement_set_answers_all_fifteen``
+    below is the counterpart that pins the other direction.
+    """
     from debug.fullsweep.moves import IdempotencyResult
 
     acc = compare.ObjectAccounting(project="P")
@@ -487,7 +523,8 @@ def test_the_measured_ten_answer_and_the_rest_decline(driver):
         "PLAN-CONSERVATION", "NO-ENGINE-BUG-AS-LOSS",
     }, "the set of answerable guards changed -- update this test deliberately"
 
-    # FR-109: ten guards still decline, so the verdict is STILL VACUOUS. T045a
-    # is necessary but not sufficient; part (c) plus the reverse walk plus four
-    # pieces of harness instrumentation stand between here and a real verdict.
+    # FR-109: ten guards decline on THIS input, so the verdict is VACUOUS --
+    # correctly. A partial measurement must not produce a real verdict, and
+    # that remains true after T045b: what T045b changed is that a full run now
+    # HAS the other ten inputs, not that a partial one may skip them.
     assert driver.verdict_for_guard_results(results) == "VACUOUS"

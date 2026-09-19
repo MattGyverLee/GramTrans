@@ -39,6 +39,14 @@ specs/035-fullsweep-fidelity/tasks.md) added on top of it:
                    dispatcher, the payload comparator ``reconcile_objects``
                    actually calls, and the read-only per-project gather that
                    feeds it (T045a(c))
+  * ``instrument``-- T045b: the anti-silence plumbing. The accessor counters
+                   FR-103 wants, the project-handle operation log FR-104 and
+                   FR-108 read, and FR-105's durable-artifact omission
+                   counters. Measures the INSTRUMENT, not the transfer.
+  * ``distortion``-- T045b: the three distortion detectors' inputs --
+                   FR-098's empty source collections, FR-099's unhandled
+                   subtypes and FR-102/FR-183's reverse walk. Pure
+                   derivations over measurements the run already took.
 
 ``debug/run_fullcopy_sweep.py`` is now a thin CLI entry point over this
 package. The field-level comparator's REAL logic (Groups E/H/P, still in
@@ -85,10 +93,14 @@ from .field_dispatch import *  # noqa: F401,F403,E402 -- the live field_source(c
 from .fieldplane import *  # noqa: F401,F403,E402 -- plane 2 WIRED: the value-shape
                             # dispatcher, the payload comparator reconcile_objects
                             # calls, and the live per-project gather (T045a(c))
+from .instrument import *  # noqa: F401,F403,E402 -- T045b: accessor counters, the
+                            # handle/close operation log, truncation counters
+from .distortion import *  # noqa: F401,F403,E402 -- T045b: empty-source, unhandled
+                            # subtype and reverse-walk derivations
 
 from . import (corpus, safety, pool, moves, artifact, batch, errors, verdict,  # noqa: F401,E402
                guards, baseline, preflight, identity, allowlist, compare, census,
-               coverage, field_dispatch, fieldplane)
+               coverage, field_dispatch, fieldplane, instrument, distortion)
 
 # NOTE for tests and callers: ``import *`` above BINDS A COPY of each module
 # global onto this package namespace. Patching ``fullsweep.NAME`` therefore

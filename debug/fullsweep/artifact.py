@@ -172,6 +172,22 @@ class ProjectArtifact:
     #: second copy of that artifact's rows. See ``census_block``.
     census: dict = field(default_factory=dict)
 
+    # ---- T045b additions: the distortion detectors and the instrument ----
+
+    #: FR-098/FR-099/FR-102: the three distortion detectors' records, derived
+    #: by ``distortion.py`` from measurements the run already took. Kept as
+    #: one block rather than three fields because they answer one question --
+    #: "could this run's clean-looking numbers be an artefact of the
+    #: measurement" -- and a reader who finds one should find all three.
+    distortion: dict = field(default_factory=dict)
+
+    #: FR-103/FR-104/FR-105/FR-108: what the INSTRUMENT did, as opposed to
+    #: what the transfer did. The accessor counters, the project-handle
+    #: operation log (opens, binds and closes, with durations) and the durable
+    #: artifact's own omission counters. This block is the evidence behind
+    #: four guards whose failure means "do not believe the other eleven".
+    instrumentation: dict = field(default_factory=dict)
+
     # ---- T045a(c) additions: what plane 2 was MEASURED UNDER -------------
 
     #: FR-071/FR-135: the writing-system mapping this run's transfers used,
@@ -349,11 +365,37 @@ def _atomic_write_json(path: Path, obj) -> None:
     os.replace(str(tmp), str(path))
 
 
-def flush_artifact(artifact: ProjectArtifact, artifacts_dir: Path) -> Path:
+def flush_artifact(
+    artifact: ProjectArtifact,
+    artifacts_dir: Path,
+    *,
+    counters=None,
+    label: str = "",
+) -> Path:
     """FR-150: flush after every phase, so a crash leaves a partial artifact
-    naming the last completed phase, never no evidence at all."""
+    naming the last completed phase, never no evidence at all.
+
+    ``counters`` (T045b / FR-105) is an optional
+    ``instrument.TruncationCounters``. When supplied, each flush compares the
+    in-memory artifact against the document it just serialized and accumulates
+    what, if anything, the document omitted. That comparison is what lets
+    NO-TRUNCATION report a MEASURED zero: FR-105 asks for two zeros in the
+    durable artifact, and writing the literal ``0`` would be a claim about the
+    writer rather than an observation of the document.
+
+    ``None`` keeps every pre-existing call site byte-identical.
+    """
     out = artifacts_dir / ("%s.json" % re.sub(r"[^A-Za-z0-9._ -]", "_", artifact.project))
-    _atomic_write_json(out, asdict(artifact))
+    document = asdict(artifact)
+    _atomic_write_json(out, document)
+    if counters is not None:
+        from .instrument import serialized_view
+        # Against the SERIALIZED view, never against the document object
+        # itself: comparing a dict with itself measures nothing, and what
+        # FR-105 is about is what the WRITER does to the document. See
+        # ``serialized_view``.
+        counters.observe(label or (artifact.phase_reached or "flush"),
+                         document, serialized_view(document))
     return out
 
 
@@ -616,3 +658,271 @@ def record_field_plane(
     for name in FIELD_PLANE_ARTIFACT_FIELDS:
         assert_artifact_json_serializable(name, getattr(artifact, name))
     assert_object_plane_only(artifact.accounting)
+
+
+# ===========================================================================
+# T045b -- THE CORPUS-LEVEL DOCUMENT (FR-106)
+#
+# ARTIFACT-INTEGRITY is the one guard in the registry whose question is not
+# about a project. "Is there an artifact for every project in the run's
+# corpus, and does each carry its six required fields" cannot be answered from
+# inside ``run_one_project``, which knows about exactly one project and runs in
+# a SUBPROCESS that exits before the next one starts.
+#
+# WHY A SEPARATE DOCUMENT RATHER THAN PATCHING THE CHILDREN. The alternative
+# considered was to re-open each per-project artifact after the loop and write
+# the corpus verdict into it. That was rejected: each child's exit code has
+# ALREADY been consumed by the batch loop by then (the loop reads
+# ``cp.returncode`` the moment the worker exits), so a patched verdict would
+# disagree with the exit code the run acted on, and every child's verdict
+# would become provisional on a document written later.
+#
+# THE CONSTRAINT THIS MUST NOT BREAK. FR-109's fifteen-key completeness is a
+# PER-PROJECT invariant, asserted twice in ``run_one_project``. FR-106 is a
+# CORPUS predicate. The subprocess boundary sits between them. So the corpus
+# document names its single-guard block ``corpus_guards``, NEVER ``guards``: a
+# fifteen-key assertion must never be satisfiable by a one-key block, and a
+# fourteen-key per-project block must never become expressible because a
+# corpus document showed that a smaller block is legal somewhere.
+# ===========================================================================
+
+#: The corpus document's schema tag, and its filename.
+CORPUS_SCHEMA = "035-corpus-1"
+CORPUS_ARTIFACT_NAME = "_corpus.json"
+
+
+def artifact_completeness_record(document: dict, *,
+                                 guards_present: Optional[bool] = None) -> dict:
+    """FR-106's six required fields, evaluated over one artifact DOCUMENT.
+
+    **NOT ONE of the six contract names is a ``ProjectArtifact`` attribute
+    name, and no mapping between them existed anywhere before T045b.**
+    ``guards.ARTIFACT_REQUIRED_FIELDS`` names ``driver_revision``,
+    ``capability_fingerprint`` and ``baseline_identity``; the dataclass calls
+    the same three facts ``revision_pair``, ``preflight`` and ``baseline``.
+    A reader who indexed the document by the contract names directly would
+    find every one of them absent and fail every project -- which nobody had
+    noticed, because ARTIFACT-INTEGRITY has never once been evaluated. This
+    function is the one place the two vocabularies meet, used by BOTH the
+    in-memory per-project evaluation and the on-disk corpus index, so they
+    cannot drift into disagreeing about whether an artifact is complete.
+
+    **Two of the six are not truthiness questions.**
+
+    ``excluded_categories``
+        An EMPTY exclusion list is the correct, fully-recorded state for a
+        full-coverage sweep (FR-134) and ``bool([])`` is False, so reading
+        truthiness would fail exactly the run this feature exists to perform.
+        What FR-135 requires is that the decision be explicit and recorded
+        WITH reasons, so the predicate is that the names and the reasoned
+        records AGREE in number -- satisfied by two empty lists, and violated
+        by a name recorded without a reason.
+
+    ``guards``
+        Read from the document when ``guards_present`` is ``None``. The
+        in-memory caller passes it explicitly, because at the moment it asks,
+        the block is still being assembled out of the other fourteen results.
+    """
+    rp = document.get("revision_pair") or {}
+    names = document.get("excluded_categories")
+    records = document.get("excluded_category_records")
+    exclusions_recorded = (
+        isinstance(names, list) and isinstance(records, list)
+        and len(names) == len(records)
+    )
+    if guards_present is None:
+        block = document.get("guards") or {}
+        guards_present = len(block) == len(ARTIFACT_REQUIRED_GUARD_COUNT_SOURCE())
+
+    return {
+        "driver_revision": bool((rp.get("gramtrans") or {}).get("sha")),
+        "capability_fingerprint": bool(document.get("preflight")),
+        "baseline_identity": bool(document.get("baseline")),
+        "diagnostic_level": bool(document.get("diagnostic_level")),
+        "excluded_categories": bool(exclusions_recorded),
+        "guards": bool(guards_present),
+    }
+
+
+def ARTIFACT_REQUIRED_GUARD_COUNT_SOURCE():
+    """The fifteen guard names, fetched late to avoid an import cycle."""
+    from .guards import GUARD_NAMES
+    return GUARD_NAMES
+
+
+def build_artifact_index(artifacts_dir: Path) -> dict:
+    """Index the per-project artifacts on disk, keyed by the project they NAME.
+
+    Read back from each document's own ``project`` key -- never by de-mangling
+    the filename. ``flush_artifact`` sanitizes a project name with
+    ``re.sub(r"[^A-Za-z0-9._ -]", "_", ...)``, which is LOSSY: two projects
+    differing only in characters that both map to an underscore collide onto
+    one filename, and no inverse of that substitution exists. Reading the key
+    back out of the document is exact.
+
+    Returns ``{project: {field: present, ..., "_path": str}}`` over
+    ``ARTIFACT_REQUIRED_FIELDS`` -- the shape ``guard_artifact_integrity``
+    indexes. A file that cannot be parsed is recorded as a problem rather than
+    skipped, because a corrupt artifact is a missing measurement, not an
+    absent project.
+    """
+    from .guards import ARTIFACT_REQUIRED_FIELDS
+
+    index: dict = {}
+    unreadable: list = []
+    collisions: list = []
+    d = Path(artifacts_dir)
+    if not d.is_dir():
+        return index
+
+    for path in sorted(d.glob("*.json")):
+        if path.name == CORPUS_ARTIFACT_NAME:
+            continue
+        try:
+            doc = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            unreadable.append({"path": str(path),
+                               "error": "%s: %s" % (type(exc).__name__, exc)})
+            continue
+        project = doc.get("project")
+        if not project:
+            unreadable.append({"path": str(path),
+                               "error": "no project key to index it by"})
+            continue
+        # Via the vocabulary bridge, NOT by indexing the document with the
+        # contract names -- see ``artifact_completeness_record``.
+        record: dict = artifact_completeness_record(doc)
+        assert set(record) == set(ARTIFACT_REQUIRED_FIELDS), (
+            "the completeness record must cover exactly FR-106's six fields")
+        record["_path"] = str(path)
+        record["_status"] = doc.get("status")
+        record["_verdict"] = doc.get("verdict")
+        record["_exit_code"] = doc.get("exit_code")
+        if project in index:
+            # Two documents claiming one project. Recorded rather than
+            # last-one-wins, which would silently pick a winner.
+            collisions.append({"project": project,
+                               "paths": [index[project]["_path"], str(path)]})
+        index[project] = record
+
+    if unreadable or collisions:
+        # Carried on a reserved key so the caller can surface it. A leading
+        # underscore cannot collide with a project name in the same dict,
+        # because the guard only ever looks projects up by the names it is
+        # given in ``corpus_projects``.
+        index["_index_problems"] = {
+            "unreadable": unreadable, "collisions": collisions,
+        }
+    return index
+
+
+def corpus_artifact_document(
+    *,
+    corpus_projects,
+    artifacts_present: dict,
+    batch,
+    run_intent: str,
+    guard_result,
+    verdict: str,
+    exit_code: int,
+) -> dict:
+    """The corpus document itself.
+
+    ``corpus_projects`` is the FROZEN source manifest, not the narrowed batch.
+    FR-106 says "every project in the run's corpus", and a batch of three
+    drawn from a corpus of eighty-four that reported "3 of 3 artifacts
+    present" would be answering an easier question than the one asked. The
+    batch is recorded beside it, so the document says both what was demanded
+    and what this invocation attempted.
+    """
+    projects = list(corpus_projects)
+    attempted = list(batch)
+    guards_block = (
+        {guard_result.guard: guard_result.as_dict()}
+        if hasattr(guard_result, "as_dict")
+        else {"ARTIFACT-INTEGRITY": guard_result}
+    )
+    return {
+        "schema": CORPUS_SCHEMA,
+        "kind": "corpus",
+        "run_intent": normalize_intent(run_intent),
+        "revision_pair": revision_pair(),
+        "written_at": time.time(),
+        "corpus_projects": projects,
+        "corpus_size": len(projects),
+        "batch_attempted": attempted,
+        "batch_size": len(attempted),
+        "artifacts_present": {
+            k: v for k, v in artifacts_present.items() if not k.startswith("_")
+        },
+        "index_problems": artifacts_present.get(
+            "_index_problems", {"unreadable": [], "collisions": []}),
+        # NOT ``guards``: see this section's header. One guard, named as one.
+        "corpus_guards": guards_block,
+        "corpus_guard_scope": (
+            "FR-106 only. The other fourteen guards are per-project invariants "
+            "and are evaluated in each project's own artifact; a corpus "
+            "document must never be mistaken for a guard block, which is why "
+            "this key is not called guards."
+        ),
+        "verdict": verdict,
+        "exit_code": exit_code,
+    }
+
+
+#: This document's own word for "every corpus project has a complete
+#: artifact". Deliberately NOT one of the ten verdicts in
+#: contracts/verdict-exit-model.md: those describe a PROJECT's fidelity, and
+#: borrowing CLEAN_PASS here would let a corpus whose every child failed
+#: report a passing word at the top level.
+CORPUS_VERDICT_COMPLETE = "CORPUS_COMPLETE"
+
+
+def write_corpus_artifact(
+    *,
+    corpus_projects,
+    batch,
+    run_intent: str,
+    artifacts_dir: Path,
+) -> tuple:
+    """Evaluate FR-106 over the run and write the corpus document.
+
+    Returns ``(path, document)``. The caller folds ``document["exit_code"]``
+    into the batch's own exit code -- an incomplete corpus is a real result,
+    not a footnote.
+    """
+    from .guards import RunContext, guard_artifact_integrity
+    from .verdict import exit_code_for
+
+    index = build_artifact_index(Path(artifacts_dir))
+    projects = list(corpus_projects)
+    result = guard_artifact_integrity(RunContext(
+        project="(corpus)",
+        corpus_projects=projects,
+        artifacts_present={k: v for k, v in index.items()
+                           if not k.startswith("_")},
+    ))
+    # FR-109's meta-rule, applied at the scope that owns this guard: a
+    # not-evaluated guard sinks the verdict to VACUOUS. A ``fail`` is
+    # INCOMPLETE, the row ARTIFACT-INTEGRITY maps to in
+    # ``guards.GUARD_FAILURE_VERDICT``. A ``pass`` says only that the
+    # artifacts are all there and complete -- never that they passed, which
+    # is each child's own verdict to report.
+    if result.result == "not-evaluated":
+        verdict = "VACUOUS"
+    elif result.result == "fail":
+        verdict = "INCOMPLETE"
+    else:
+        verdict = CORPUS_VERDICT_COMPLETE
+    document = corpus_artifact_document(
+        corpus_projects=projects,
+        artifacts_present=index,
+        batch=batch,
+        run_intent=run_intent,
+        guard_result=result,
+        verdict=verdict,
+        exit_code=0 if verdict == CORPUS_VERDICT_COMPLETE else exit_code_for(verdict),
+    )
+    out = Path(artifacts_dir) / CORPUS_ARTIFACT_NAME
+    _atomic_write_json(out, document)
+    return out, document

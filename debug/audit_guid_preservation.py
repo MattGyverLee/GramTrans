@@ -59,9 +59,41 @@ def _banner(msg):
     print("=" * 72)
 
 
-def inventory_all(project_name):
-    """{class_name: set(guid)} over EVERY object in the project (read-only)."""
+def inventory_all(project_name, *, counters=None, oplog=None, scope=None):
+    """{class_name: set(guid)} over EVERY object in the project (read-only).
+
+    ``counters`` (feature 035 T045b / FR-103)
+        An optional ``fullsweep.instrument.AccessorCounters``. Every per-object
+        read failure below used to be swallowed by a bare
+        ``except Exception: continue`` -- the object simply vanished from the
+        inventory and the inventory reported a smaller, cleaner number with no
+        trace that anything had been dropped. The swallow is KEPT (aborting a
+        half-million-object enumeration over one unreadable object trades a
+        partial measurement for none); what changes is that the drop is now
+        COUNTED, at the exact point it happens, when a counter is supplied.
+
+        ``None`` -- the default, and what every pre-existing caller passes --
+        behaves byte-identically to before.
+
+    ``oplog`` (FR-104 / FR-108)
+        An optional ``fullsweep.instrument.OperationLog``. Records the open and
+        the close with their outcomes and durations. The close below is inside
+        a bare ``except`` for the same reason as always -- a failed close must
+        not lose an inventory that succeeded -- but the failure is now on the
+        record instead of being discarded with the exception.
+
+    ``scope``
+        The label counter increments are attributed to. Defaults to the project
+        name; the sweep passes ``"<project>:<step>"`` because one run
+        enumerates the target three times and the source once, and a counter
+        that cannot say which of the four dropped objects cannot be acted on.
+    """
     import flexicon
+
+    where = scope or project_name
+    if counters is not None:
+        counters.open_scope(where)
+
     flexicon.FLExInitialize()
     try:
         from SIL.WritingSystems import Sldr
@@ -73,22 +105,64 @@ def inventory_all(project_name):
     from SIL.LCModel import ICmObjectRepository
 
     proj = FLExProject()
-    proj.OpenProject(projectName=project_name, writeEnabled=False)
+    if oplog is not None:
+        with oplog.watch("OpenProject(writeEnabled=False)", project_name,
+                         kind="open"):
+            proj.OpenProject(projectName=project_name, writeEnabled=False)
+    else:
+        proj.OpenProject(projectName=project_name, writeEnabled=False)
     out = defaultdict(set)
     try:
-        repo = proj.project.ServiceLocator.GetInstance[ICmObjectRepository]() \
-            if hasattr(proj.project.ServiceLocator, "GetInstance") \
-            else proj.project.ServiceLocator.GetService(ICmObjectRepository)
-        for obj in repo.AllInstances():
+        try:
+            repo = proj.project.ServiceLocator.GetInstance[ICmObjectRepository]() \
+                if hasattr(proj.project.ServiceLocator, "GetInstance") \
+                else proj.project.ServiceLocator.GetService(ICmObjectRepository)
+            instances = repo.AllInstances()
+        except Exception as exc:  # noqa: BLE001 -- counted, then re-raised
+            # FR-103: a failure to ENUMERATE is categorically worse than a
+            # failure to read one object -- it means the inventory is not
+            # merely incomplete but unbounded-unknown. It is counted and then
+            # raised, because continuing would report an empty project.
+            if counters is not None:
+                counters.record("enumeration_failures", scope=where,
+                                accessor="ICmObjectRepository.AllInstances",
+                                error=exc)
+            raise
+        for obj in instances:
             try:
-                out[obj.ClassName].add(str(obj.Guid).lower())
-            except Exception:  # noqa: BLE001
+                class_name = obj.ClassName
+            except Exception as exc:  # noqa: BLE001
+                # The object could not even say what it is. Counted against
+                # `unreadable_names`, since ClassName is the name accessor.
+                if counters is not None:
+                    counters.record("unreadable_names", scope=where,
+                                    accessor="ICmObject.ClassName", error=exc)
+                    counters.record("skipped_source_objects", scope=where,
+                                    accessor="ICmObject.ClassName", error=exc)
+                continue
+            try:
+                out[class_name].add(str(obj.Guid).lower())
+            except Exception as exc:  # noqa: BLE001
+                if counters is not None:
+                    counters.record("unreadable_identifiers", scope=where,
+                                    accessor="ICmObject.Guid (%s)" % class_name,
+                                    error=exc)
+                    counters.record("skipped_source_objects", scope=where,
+                                    accessor="ICmObject.Guid (%s)" % class_name,
+                                    error=exc)
                 continue
     finally:
-        try:
-            proj.CloseProject()
-        except Exception:  # noqa: BLE001
-            pass
+        if oplog is not None:
+            try:
+                with oplog.watch("CloseProject", project_name, kind="close"):
+                    proj.CloseProject()
+            except Exception:  # noqa: BLE001 -- recorded by the watch above
+                pass
+        else:
+            try:
+                proj.CloseProject()
+            except Exception:  # noqa: BLE001
+                pass
     return {k: v for k, v in out.items()}
 
 

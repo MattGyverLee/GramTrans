@@ -309,6 +309,7 @@ def scan_class_presence(
     projects_root: Path,
     *,
     classes: Optional[Iterable[str]] = None,
+    projects: Optional[Iterable[str]] = None,
 ) -> dict:
     """Count ``<rt class="X">`` rows per class across every project on disk.
 
@@ -325,9 +326,23 @@ def scan_class_presence(
     "instances": {class: n}, "projects_with": {class: n}}``. A class in
     ``classes`` with no row at all is present in ``instances`` with 0, so the
     caller never has to distinguish "absent" from "not asked about".
+
+    ``projects`` (T045b) narrows the scan to the named projects. Without it
+    this function aggregates CORPUS-WIDE, which is the right shape for the
+    coverage survey it was written for and the wrong one for FR-098: "is this
+    class present in the SOURCE of this transfer" cannot be answered by a
+    count that summed eighty-four other projects into it. A named project the
+    root does not contain is reported in ``missing`` rather than silently
+    contributing nothing -- an absence that is really a typo must not read as
+    a corroborated empty.
+
+    The ``Target[0-9]*`` refusal still applies and still takes precedence: the
+    disposable pool's contents are this harness's own writes, so they are
+    never corpus evidence, however explicitly they are asked for.
     """
     root = Path(projects_root)
     wanted = set(classes) if classes is not None else None
+    only = set(projects) if projects is not None else None
     instances: dict = {c: 0 for c in (wanted or ())}
     projects_with: dict = {c: 0 for c in (wanted or ())}
     scanned: list = []
@@ -337,6 +352,8 @@ def scan_class_presence(
         project = fwdata.parent.name
         if _TARGET_POOL.fullmatch(project):
             skipped.append(project)
+            continue
+        if only is not None and project not in only:
             continue
         scanned.append(project)
         here: dict = {}
@@ -357,6 +374,11 @@ def scan_class_presence(
         "projects_scanned": len(scanned),
         "projects": sorted(scanned),
         "skipped": sorted(skipped),
+        # Named but not found on disk. Empty unless ``projects`` was given.
+        # A caller asking about a project that is not there gets told so,
+        # because a corroborating count of zero from a project that was never
+        # opened is not a corroboration.
+        "missing": sorted(only - set(scanned) - set(skipped)) if only else [],
         "instances": instances,
         "projects_with": projects_with,
     }

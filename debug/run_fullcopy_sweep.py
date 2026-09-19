@@ -77,6 +77,7 @@ ASCII-only console output (Windows-terminal safe).
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import re
 import subprocess
@@ -347,6 +348,20 @@ MEASURABLE_RUN_CONTEXT_FIELDS: tuple = (
     "comparisons",           # plane 2, deposited since T045a(c)
     "drop_reasons",
     "engine_bug_signatures",
+    # ---- T045b: the remaining eight guard inputs ----------------------
+    # Three DERIVED from measurements the run already took (distortion.py)
+    # and five MEASURED by instrumentation the run now carries
+    # (instrument.py). Every one of them was named in
+    # UNMEASURED_RUN_CONTEXT_FIELDS below until this task.
+    "empty_measurements",    # FR-098, derived  -- distortion.empty_measurements
+    "unhandled_subtypes",    # FR-099, derived  -- distortion.unhandled_subtypes
+    "extras",                # FR-102, derived  -- distortion.extras
+    "accessor_counters",     # FR-103, measured -- instrument.AccessorCounters
+    "handle_operations",     # FR-104, measured -- instrument.OperationLog
+    "truncation",            # FR-105, measured -- instrument.TruncationCounters
+    "corpus_projects",       # FR-106, measured -- at THIS run's own scope
+    "artifacts_present",     # FR-106, measured -- ditto; see artifact_self_record
+    "close_operations",      # FR-108, measured -- instrument.OperationLog
 )
 
 #: WAS "named measurable but not yet deposited". T045a(c) deposits both: the
@@ -363,32 +378,14 @@ PENDING_PLANE_2_FIELDS: tuple = ()
 #: The guard inputs ``run_one_project`` has NO measurement for, with the reason.
 #: Recorded here, in code, so "why is this run still VACUOUS?" has a written
 #: answer instead of requiring an archaeology session through fifteen guards.
-UNMEASURED_RUN_CONTEXT_FIELDS: dict = {
-    "empty_measurements": "plane 2 has to record, per empty source collection, "
-                          "which of FR-098's two distinct outcomes applied and "
-                          "the independent corroborating count",
-    "unhandled_subtypes": "plane 2 has to name and count each subtype the engine "
-                          "did not handle (FR-099)",
-    "extras": "the reverse walk -- target objects absent from the source, with "
-              "traceable_to_source and tool_owned_duplicate decided per object "
-              "(FR-102/FR-183)",
-    "accessor_counters": "audit_guid_preservation.inventory_all currently "
-                         "swallows a per-object read failure with "
-                         "`except Exception: continue`, so the four FR-103 "
-                         "counters are not merely unmeasured -- they are "
-                         "actively discarded at the point they occur",
-    "handle_operations": "no project-handle operation log exists (FR-104)",
-    "truncation": "the durable artifact writer keeps no omission counters, so "
-                  "FR-105's two zeros cannot be asserted -- and hardcoding them "
-                  "to 0 would be a claim, not a measurement",
-    "close_operations": "CloseProject outcomes are not logged; both inventory_all "
-                        "and run_full_transfer close inside a bare except "
-                        "(FR-108)",
-    "corpus_projects": "corpus-level, not per-project: only the batch driver "
-                       "knows the frozen project list (FR-106)",
-    "artifacts_present": "corpus-level, as above -- an artifact index over the "
-                         "whole run",
-}
+#:
+#: EMPTY SINCE T045b, and kept as the place the next such field goes. All nine
+#: names that stood here are now deposited -- three derived (``distortion``)
+#: and six measured (``instrument``, plus FR-106 evaluated at this run's own
+#: scope). The emptiness is asserted by a test rather than merely iterated
+#: over, because iterating an empty dict passes vacuously and vacuous passes
+#: are the exact failure mode this whole feature exists to refuse.
+UNMEASURED_RUN_CONTEXT_FIELDS: dict = {}
 
 
 def build_run_context(project: str, measured: dict) -> RunContext:
@@ -418,6 +415,81 @@ def build_run_context(project: str, measured: dict) -> RunContext:
         project=project,
         **{k: v for k, v in measured.items()},
     )
+
+
+def _close_timeout_s() -> float:
+    """The deadline ``OperationLog`` judges a close against (FR-108).
+
+    Read from ``gramtrans.Lib.api`` so the sweep and the engine cannot drift
+    apart on what "hung" means -- ``_SCHEMA_CLOSE_TIMEOUT_S`` is itself
+    environment-overridable, and a log using a different number than the
+    watchdog would label the same close two ways. The import is local and
+    guarded because it pulls FieldWorks in, and a pure-unit caller of this
+    module must not be made to.
+    """
+    try:
+        from gramtrans.Lib import api
+        return float(api._SCHEMA_CLOSE_TIMEOUT_S)
+    except Exception:  # noqa: BLE001 -- the fallback is the same default
+        return float(OperationLog.DEFAULT_TIMEOUT_S)
+
+
+def artifact_self_record(artifact, *, exclusion_decision_recorded: bool,
+                         guards_complete: bool) -> dict:
+    """FR-106's six required fields, MEASURED on this run's own artifact.
+
+    **Why a per-project evaluation of a corpus predicate exists at all.**
+    FR-106 asks a corpus question and its guard lives in a fifteen-guard block
+    that FR-109 requires each PROJECT's artifact to fill completely. Those two
+    facts pull in opposite directions across the subprocess boundary: a worker
+    knows about exactly one project, so if ARTIFACT-INTEGRITY could only ever
+    be answered corpus-wide, every per-project artifact would ship a
+    permanently ``not-evaluated`` guard and FR-109 would sink every project to
+    ``VACUOUS`` forever -- the very outcome this wave exists to lift.
+
+    So the guard is evaluated TWICE, at two scopes, and each says which it is.
+    Here the corpus is this run's own single project and the question is "did
+    this run produce a complete artifact for the project it was asked about".
+    In ``_cmd_batch`` the corpus is the frozen source manifest and the
+    question is FR-106's full one. The per-project evidence names its scope so
+    a reader cannot mistake a passing ARTIFACT-INTEGRITY here for a claim
+    about eighty-four projects.
+
+    **Two of the six cannot be read as truthiness, and are not.**
+
+    ``excluded_categories``
+        An EMPTY exclusion list is the correct, fully-recorded state for a
+        full-copy sweep, and ``bool([])`` is False. Reading this field's
+        truthiness would therefore fail exactly the run FR-134 demands. What
+        FR-135 requires is that the exclusion DECISION be explicit and
+        recorded, which ``resolve_excluded_categories`` having run is what
+        establishes -- so the caller passes that fact, and the empty list
+        stays a legitimate answer.
+
+    ``guards``
+        The block does not exist yet when the other fourteen guards run; it is
+        being built out of them. The caller passes ``guards_complete=True``
+        only once the other fourteen results are in hand, so the claim is
+        "fourteen computed plus this one makes fifteen" -- arithmetic, not a
+        promise. ``assert_guard_block_complete`` re-checks the composed block
+        immediately afterwards and again before the flush, so a false claim
+        here raises rather than shipping.
+    """
+    # ONE definition of "complete", shared with the on-disk corpus index, so
+    # the two scopes cannot drift into disagreeing about what completeness is.
+    record = artifact_completeness_record(asdict(artifact),
+                                          guards_present=guards_complete)
+    if exclusion_decision_recorded:
+        # ``resolve_excluded_categories`` ran, so the decision IS recorded --
+        # including the legitimate decision to exclude nothing.
+        record["excluded_categories"] = True
+    record.update({
+        # Diagnostics, ignored by the guard, read by humans.
+        "_scope": "this worker's own project only -- NOT the corpus",
+        "_excluded_category_count": len(artifact.excluded_category_records or []),
+        "_path": "written by flush_artifact in this run's artifacts dir",
+    })
+    return record
 
 
 def reconcile_project_objects(
@@ -633,6 +705,109 @@ def record_plane_2_measurements(
     artifact.findings = list(artifact.findings) + comparator.value_findings()
 
 
+def record_distortion_measurements(
+    artifact,
+    *,
+    measured: dict,
+    source_inventory: dict,
+    target_before: dict,
+    target_after: dict,
+    comparator,
+    contracts_dir: Path,
+    projects_root: Optional[str],
+    source_name: str,
+) -> None:
+    """T045b: derive FR-098, FR-099 and FR-102's guard inputs, and record them.
+
+    All three are DERIVATIONS over measurements ``run_one_project`` already
+    took. None of them opens a project, and that is deliberate on two counts:
+    a second live reading would give the run two numbers for one fact with no
+    way to adjudicate a disagreement, and the reverse walk in particular
+    turned out to need nothing the reconciliation was not already holding in
+    its locals.
+
+    The corroborating count for FR-098 is the one exception to "nothing new is
+    read", and it reads BYTES, not LCM: ``coverage.scan_class_presence`` runs
+    a regex over the source's ``.fwdata`` without opening a project, taking a
+    lock, or calling ``AllInstances``. That independence is the entire value
+    of it -- corroborating a census with a second census would corroborate
+    nothing, since both would fail the same way.
+    """
+    floor = load_coverage_floor(Path(contracts_dir) / COVERAGE_FLOOR_NAME)
+    in_scope = list(floor.in_scope_classes)
+
+    # -- FR-098's independent count ------------------------------------
+    # A failure here costs the CORROBORATION, not the run: the records are
+    # still emitted with ``corroborating_count: None``, which is precisely
+    # what EMPTY-CORROBORATION fails on. Substituting zeros would invent the
+    # corroboration, which is worse than not having it.
+    corroborating = None
+    scan_error = ""
+    try:
+        scan = scan_class_presence(
+            resolve_projects_root(projects_root),
+            classes=in_scope, projects=[source_name])
+        if scan.get("projects_scanned"):
+            corroborating = scan.get("instances") or {}
+        else:
+            scan_error = ("the source project was not found on disk under the "
+                          "projects root, so no independent count was taken "
+                          "(missing=%r, skipped=%r)"
+                          % (scan.get("missing"), scan.get("skipped")))
+    except Exception as exc:  # noqa: BLE001 -- recorded, never silently zeroed
+        scan_error = "%s: %s" % (type(exc).__name__, exc)
+        artifact.errors.append({
+            "phase": "census_2",
+            "error": "[FR-098] the independent class-presence scan failed: %s"
+                     % scan_error,
+            "traceback": traceback.format_exc(),
+        })
+
+    empties = empty_measurements(
+        source_census=source_inventory,
+        in_scope_classes=in_scope,
+        corroborating_counts=corroborating,
+    )
+    measured["empty_measurements"] = empties
+
+    # -- FR-099 ---------------------------------------------------------
+    side = getattr(comparator, "source_side", None)
+    subtypes = unhandled_subtypes(
+        source_census=source_inventory,
+        undispatchable=getattr(side, "undispatchable_classes", None),
+        unreadable=getattr(side, "unreadable_classes", None),
+        in_scope_classes=in_scope,
+    )
+    measured["unhandled_subtypes"] = subtypes
+
+    # -- FR-102/FR-183, the reverse walk --------------------------------
+    extra_records = extras(
+        source_census=source_inventory,
+        target_before=target_before,
+        target_after=target_after,
+    )
+    measured["extras"] = extra_records
+
+    artifact.distortion = {
+        "schema": "035-distortion-1",
+        "empty_measurements": {
+            "records": empties,
+            "in_scope_classes": len(in_scope),
+            "empty_in_source": len(empties),
+            "corroborated": corroborating is not None,
+            "corroborating_scan_error": scan_error,
+        },
+        "unhandled_subtypes": {
+            "records": subtypes,
+            "by_outcome": {
+                name: sum(1 for r in subtypes if r["outcome_name"] == name)
+                for name in UNHANDLED_OUTCOMES
+            },
+        },
+        "extras": extras_summary(extra_records),
+    }
+
+
 # ===========================================================================
 # PER-PROJECT DOUBLE-MOVE LOOP (Groups B/D/K wired together)
 # ===========================================================================
@@ -659,6 +834,7 @@ def run_one_project(
     plane1_census_path: Optional[str] = None,
     max_objects_per_class: Optional[int] = None,
     gather_side: Callable = gather_field_plane_side,
+    preflight_record: Optional[dict] = None,
 ) -> ProjectArtifact:
     """FR-043: restore -> census -> Move #1 -> census -> Move #2 -> census ->
     restore, for exactly one project, with the write-safety choke point
@@ -689,6 +865,15 @@ def run_one_project(
     ``max_objects_per_class`` caps the field census per class. ``None`` (the
     default) reads every object; any cap is an exclusion and is recorded as
     one.
+
+    ``preflight_record`` (T045b) is the capability-preflight result stamped
+    onto the artifact. It is one of FR-106's six required artifact fields and
+    NOTHING wrote it before this task: ``_preflight_gate`` discarded its
+    result on the success path and wrote a separate document only on refusal,
+    so every artifact this driver has ever produced was missing a field FR-106
+    requires -- and ARTIFACT-INTEGRITY, reporting ``not-evaluated`` for want
+    of a corpus index, never noticed. ``None`` leaves it absent, which the
+    guard then FAILS on, correctly.
     """
     if run_intent not in VALID_RUN_INTENTS:
         raise ValueError("run_intent must be one of %r" % (VALID_RUN_INTENTS,))
@@ -717,6 +902,10 @@ def run_one_project(
     artifact.excluded_category_records = excluded_records
     artifact.diagnostic_level = diagnostic_level
     artifact.baseline = pinned_baseline.as_dict()
+    # FR-106: one of the six required artifact fields, and the only one that
+    # was never written. See the parameter's docstring entry.
+    if preflight_record is not None:
+        artifact.preflight = dict(preflight_record)
     if ws_mapping_mode not in WS_MODES:
         raise ValueError("ws_mapping_mode must be one of %r" % (WS_MODES,))
     artifact.writing_system_mapping = {"mode": ws_mapping_mode}
@@ -739,6 +928,24 @@ def run_one_project(
     # the census triple, the written-class delta, idempotency and 210/27,929/879
     # drop reasons, and handed none of them to a single guard.
     measured: dict = {}
+
+    # ---- T045b: the anti-silence accumulators ---------------------------
+    # Created HERE, beside ``measured`` and BEFORE the ``try``, for exactly
+    # the reason ``measured`` is: the guards run in the ``finally`` below, and
+    # the ``finally`` runs even when the ``try`` raised. An accumulator
+    # created on the happy path would be lost on precisely the runs that most
+    # need it -- a run that died mid-transfer is the one where "did the census
+    # silently drop objects" and "did a close hang" are the interesting
+    # questions.
+    #
+    # Each is passed DOWN into the call that can observe the failure, never
+    # reconstructed afterwards from what survived. That is the whole point:
+    # the four counters FR-103 names are not merely unmeasured today, they are
+    # actively discarded inside ``inventory_all``'s bare except at the moment
+    # they occur, and no amount of after-the-fact inspection can recover them.
+    accessor_counters = AccessorCounters()
+    oplog = OperationLog(timeout_s=_close_timeout_s())
+    truncation = TruncationCounters()
 
     # ---- T045a: the tracked rosters, read BEFORE any database is touched.
     # NO-ENGINE-BUG-AS-LOSS needs its signature roster; the reconciliation needs
@@ -789,11 +996,16 @@ def run_one_project(
         artifact.phases_completed.append("restore_initial")
         advance_phase(artifact, "restore", artifacts_dir)
 
-        census_before = census_project(target_name)
+        census_before = census_project(
+            target_name, counters=accessor_counters, oplog=oplog,
+            scope="%s:census_baseline" % target_name)
         artifact.census_before = {k: sorted(v) for k, v in census_before.items()}
         measured["census_baseline"] = census_before
+        oplog.note_measurement("census_baseline")
         artifact.phases_completed.append("census_before")
-        flush_artifact(artifact, artifacts_dir)  # still within the "restore" phase (T013)
+        # still within the "restore" phase (T013)
+        flush_artifact(artifact, artifacts_dir, counters=truncation,
+                       label="census_baseline")
 
         # T045a: ONE selection object, built from the resolved enum members,
         # recorded here AND handed to both transfers below. Before this, the
@@ -814,7 +1026,7 @@ def run_one_project(
         )
         plan1, report1 = full_run.run_full_transfer(
             source_name, target_name, target_path, exclude=excluded_members,
-            ws_mapping_mode=ws_mapping_mode)
+            ws_mapping_mode=ws_mapping_mode, oplog=oplog)
         # FR-161/SC-005: the engine's drop channel is the ONLY place the two
         # historically dominant loss classes and the named residual list can be
         # read from. Recorded per transfer, before anything downstream can lose
@@ -826,9 +1038,12 @@ def run_one_project(
         artifact.phases_completed.append("first_transfer")
         advance_phase(artifact, "transfer_1", artifacts_dir)
 
-        census_after_1 = census_project(target_name)
+        census_after_1 = census_project(
+            target_name, counters=accessor_counters, oplog=oplog,
+            scope="%s:census_after_first" % target_name)
         artifact.census_after_first = {k: sorted(v) for k, v in census_after_1.items()}
         measured["census_after_first"] = census_after_1
+        oplog.note_measurement("census_after_first")
         artifact.phases_completed.append("census_after_first")
         advance_phase(artifact, "census_1", artifacts_dir)
 
@@ -842,15 +1057,18 @@ def run_one_project(
         )
         plan2, report2 = full_run.run_full_transfer(
             source_name, target_name, target_path, exclude=excluded_members,
-            ws_mapping_mode=ws_mapping_mode)
+            ws_mapping_mode=ws_mapping_mode, oplog=oplog)
         artifact.drops["second"] = summarize_drops(report2)
         measured["drop_reasons"] = observed_drop_reasons(artifact.drops)
         artifact.phases_completed.append("second_transfer")
         advance_phase(artifact, "transfer_2", artifacts_dir)
 
-        census_after_2 = census_project(target_name)
+        census_after_2 = census_project(
+            target_name, counters=accessor_counters, oplog=oplog,
+            scope="%s:census_after_second" % target_name)
         artifact.census_after_second = {k: sorted(v) for k, v in census_after_2.items()}
         measured["census_after_second"] = census_after_2
+        oplog.note_measurement("census_after_second")
         artifact.phases_completed.append("census_after_second")
         advance_phase(artifact, "census_2", artifacts_dir)
 
@@ -860,7 +1078,10 @@ def run_one_project(
         if idem.harness_error:
             raise HarnessError(idem.harness_error)
 
-        source_inventory = census_project(source_name)
+        source_inventory = census_project(
+            source_name, counters=accessor_counters, oplog=oplog,
+            scope="%s:source_inventory" % source_name)
+        oplog.note_measurement("source_inventory")
         drop_records = drop_records_from_artifact(artifact.drops)
 
         # ---- plane 2: the FIELD plane (T045a part c) ---------------------
@@ -908,6 +1129,22 @@ def run_one_project(
                 excluded_records=excluded_records,
                 plane1_census_path=plane1_census_path,
             )
+
+        # ---- T045b: the three distortion detectors (FR-098/099/102) ------
+        # DERIVED, here, from measurements this run already holds in its
+        # locals -- not re-measured. The 038 cut says so for two of them, and
+        # the third (unhandled subtypes) reads the gather's own record of what
+        # it could not read. Nothing below opens a project.
+        record_distortion_measurements(
+            artifact, measured=measured,
+            source_inventory=source_inventory,
+            target_before=census_before,
+            target_after=census_after_2,
+            comparator=comparator,
+            contracts_dir=Path(contracts_dir),
+            projects_root=projects_root,
+            source_name=source_name,
+        )
 
         artifact.status = "passed" if (idem.passed and not artifact.findings) else "failed"
         artifact.reason = "" if artifact.status == "passed" else (
@@ -978,7 +1215,62 @@ def run_one_project(
         # guard an empty container instead would let it report all-zeros and pass
         # a project it never opened, which is the trap RunContext's own docstring
         # names and the reason the fields default to None rather than to {}.
-        guard_results = run_all_guards(build_run_context(source_name, measured))
+        #
+        # T045b: the instrument's own measurements are deposited HERE rather
+        # than where they were taken, because each accumulator is live for the
+        # whole run and reading it early would freeze a partial count. Every
+        # one of them is deposited unconditionally: a zero from an accumulator
+        # that was threaded through every call site IS a measurement, and the
+        # thing being measured -- "did this run's instrument stay honest" --
+        # has no other witness.
+        measured["accessor_counters"] = accessor_counters.as_dict()
+        measured["handle_operations"] = oplog.handle_operations()
+        measured["close_operations"] = oplog.close_operations()
+
+        # FR-105: measured against the document as it stands NOW, before the
+        # guard block is attached. See TruncationCounters' docstring for why
+        # this closes the "the final flush is unmeasured by construction"
+        # ordering problem rather than merely moving it.
+        _pending_doc = asdict(artifact)
+        truncation.observe("pre-verdict (dry run)", _pending_doc,
+                           serialized_view(_pending_doc))
+        measured["truncation"] = truncation.as_dict()
+
+        artifact.instrumentation = {
+            "schema": "035-instrument-1",
+            "accessor_counters": measured["accessor_counters"],
+            "handle_operations": measured["handle_operations"],
+            "close_operations": measured["close_operations"],
+            "truncation": measured["truncation"],
+        }
+
+        # ---- FR-106, evaluated at THIS run's own scope -------------------
+        # Two passes, and the second one is not a re-run of the first. The
+        # fourteen other guards answer from ``measured``; ARTIFACT-INTEGRITY
+        # cannot, because one of the six fields it checks for is the guard
+        # block being built out of those fourteen results. So the block is
+        # composed first, counted, and only then is the sixth field's claim
+        # made -- arithmetic over results in hand, not a promise about a
+        # document that does not exist yet. ``assert_guard_block_complete``
+        # below re-checks the composed block, twice, so a wrong claim raises.
+        first_pass = run_all_guards(build_run_context(source_name, measured))
+        measured["corpus_projects"] = [source_name]
+        measured["artifacts_present"] = {
+            source_name: artifact_self_record(
+                artifact,
+                # FR-135: the exclusion decision was RECORDED, whether or not
+                # it excluded anything. An empty list is a legitimate record
+                # and must not read as an absent one.
+                exclusion_decision_recorded=True,
+                # Fourteen results in hand plus the one about to be spliced in.
+                guards_complete=(
+                    len([n for n in first_pass if n != "ARTIFACT-INTEGRITY"]) == 14),
+            )
+        }
+        guard_results = dict(first_pass)
+        guard_results["ARTIFACT-INTEGRITY"] = guard_artifact_integrity(
+            build_run_context(source_name, measured))
+
         artifact.guards = guard_block_as_dict(guard_results)
         artifact.guard_inputs_measured = sorted(measured)
         assert_guard_block_complete(artifact.guards)
@@ -987,7 +1279,23 @@ def run_one_project(
         assert_guard_block_complete(artifact.guards)
 
         artifact.finished_at = time.time()
-        flush_artifact(artifact, artifacts_dir)
+        artifact_path = flush_artifact(artifact, artifacts_dir)
+
+        # FR-105: prove the bound the dry run above rests on. A mismatch is
+        # recorded on the counters and printed; it deliberately does NOT
+        # rewrite the verdict, because a verdict that changed after the
+        # document was written would make the artifact disagree with the exit
+        # code the caller has already been handed.
+        try:
+            written = json.loads(Path(artifact_path).read_text(encoding="utf-8"))
+            final = truncation.verify_final(asdict(artifact), written)
+            if final["dropped_breakdown_omitted"] or final["detail_omitted"]:
+                print("[ERROR] [FR-105] the final flush of %s omitted rows the "
+                      "in-memory artifact carried: %r"
+                      % (artifact.project, final["where"]))
+        except Exception as exc:  # noqa: BLE001 -- recorded, never silent
+            print("[WARN] [FR-105] could not verify the final flush of %s: %s: %s"
+                  % (artifact.project, type(exc).__name__, exc))
 
     return artifact
 
@@ -996,22 +1304,56 @@ def run_one_project(
 # CLI
 # ===========================================================================
 
-def _preflight_gate(args) -> Optional[int]:
+def _preflight_gate(args) -> tuple:
     """FR-124/SC-008: performed ONCE at startup, BEFORE any restore or write.
 
-    Returns an exit code when the run must refuse, or None to proceed. There
-    is no third outcome: FR-132 forbids a best-effort degradation and FR-133
-    forbids selecting a different runtime path around a mismatch.
+    Returns ``(exit_code_or_None, record_or_None)``: an exit code when the run
+    must refuse, or ``None`` to proceed. There is no third outcome -- FR-132
+    forbids a best-effort degradation and FR-133 forbids selecting a different
+    runtime path around a mismatch.
+
+    T045b widened the return. This function used to discard ``result``
+    entirely on the success path, writing a document only on refusal, so the
+    capability fingerprint -- one of FR-106's SIX REQUIRED artifact fields --
+    was never stamped on any artifact this driver produced. Nothing noticed,
+    because ARTIFACT-INTEGRITY had no corpus index and reported
+    ``not-evaluated`` regardless. The passing record now travels to
+    ``run_one_project``, which stamps it.
     """
     result = run_preflight(Path(args.contracts_dir))
     if result.ok:
-        return None
+        return None, _preflight_record(result)
     print(format_diff_report(result, max_rows=getattr(args, "max_console_rows", None)))
     artifact_path = write_preflight_artifact(result, Path(args.artifacts_dir))
     print("[ARTIFACT] %s" % artifact_path)
     print("[REFUSED] capability preflight mismatch -- no project database was "
           "touched, no restore and no write attempted (SC-008).")
-    return result.exit_code
+    return result.exit_code, None
+
+
+def _preflight_record(result) -> dict:
+    """The passing preflight, reduced to what the artifact needs to carry.
+
+    FR-106 asks the artifact to carry a ``capability_fingerprint``; the whole
+    diff report is neither needed nor small. What is recorded is the identity
+    of what was checked and the fact that it matched -- enough for a reader to
+    tell two runs apart by the dependency they ran against, which is the
+    question FR-125/FR-157 make this field answer.
+    """
+    record = {"ok": bool(getattr(result, "ok", False)),
+              "checked_at": time.time()}
+    for name in ("fingerprint_sha256", "fingerprint_path", "flexicon_revision",
+                 "expected_revision", "observed_revision", "rows_checked",
+                 "exit_code"):
+        if hasattr(result, name):
+            record[name] = getattr(result, name)
+    if not record["ok"]:
+        raise HarnessError(
+            "[FR-132] _preflight_record was handed a FAILING preflight. A "
+            "refusal must return through the gate's refusal path, never be "
+            "stamped on an artifact as a capability fingerprint."
+        )
+    return record
 
 
 def _pinned_baseline_from_args(args):
@@ -1062,7 +1404,7 @@ def _cmd_project(args) -> int:
               % (args.source, STATUS_SKIPPED, exit_code_for("VACUOUS")))
         return exit_code_for("VACUOUS")
     allowlist = tuple(args.allowlist) if args.allowlist else DEFAULT_ALLOWLIST
-    refused = _preflight_gate(args)
+    refused, preflight_record = _preflight_gate(args)
     if refused is not None:
         return refused
     try:
@@ -1078,6 +1420,7 @@ def _cmd_project(args) -> int:
             ws_mapping_mode=args.ws_mapping_mode,
             plane1_census_path=args.plane1_census,
             max_objects_per_class=args.max_objects_per_class,
+            preflight_record=preflight_record,
         )
     except (WriteSafetyError, SourceTamperError, EvidenceProvenanceError) as exc:
         # These MUST abort the whole run -- re-raise after making that loud.
@@ -1130,7 +1473,7 @@ def _cmd_batch(args) -> int:
     skeleton runs workers SERIALLY when --workers=1 (the FR-031 default);
     it refuses to do otherwise without a recorded concurrency-trial
     artifact (assert_concurrency_gate_satisfied)."""
-    refused = _preflight_gate(args)
+    refused, _preflight = _preflight_gate(args)
     if refused is not None:
         return refused
     # FR-149: the driver, the capability expectation and the ledger this
@@ -1205,6 +1548,43 @@ def _cmd_batch(args) -> int:
         if status != "passed":
             exit_code = 1
         print("[BATCH] %-38s %s (see %s)" % (source, status, log_path))
+
+    # ---- T045b / FR-106: the corpus-level document -----------------------
+    # ARTIFACT-INTEGRITY is the one guard whose question spans projects, and
+    # this is the only scope that can answer it: `run_one_project` runs in a
+    # subprocess that knows one project and exits. The corpus is the FROZEN
+    # manifest, not `batch` -- FR-106 says "every project in the run's
+    # corpus", and reporting "3 of 3" for a batch drawn from eighty-four
+    # would answer an easier question than the one asked.
+    try:
+        corpus_path, corpus_doc = write_corpus_artifact(
+            corpus_projects=sorted(frozen),
+            batch=batch,
+            run_intent=args.intent,
+            artifacts_dir=Path(args.artifacts_dir),
+        )
+        print("[CORPUS] %s -- %d of %d corpus projects have a complete "
+              "artifact (verdict=%s, exit=%d)"
+              % (corpus_path,
+                 sum(1 for p in corpus_doc["corpus_projects"]
+                     if corpus_doc["artifacts_present"].get(p)),
+                 corpus_doc["corpus_size"], corpus_doc["verdict"],
+                 corpus_doc["exit_code"]))
+        problems = corpus_doc.get("index_problems") or {}
+        for row in problems.get("unreadable", ()):
+            print("[WARN] unreadable artifact: %s (%s)"
+                  % (row.get("path"), row.get("error")))
+        for row in problems.get("collisions", ()):
+            print("[WARN] two artifacts claim project %r: %s"
+                  % (row.get("project"), row.get("paths")))
+        # An incomplete corpus is a result, not a footnote. It cannot MASK a
+        # child's failure -- `exit_code` is only widened here, never reset.
+        exit_code = exit_code or corpus_doc["exit_code"]
+    except Exception as exc:  # noqa: BLE001 -- recorded loudly, never swallowed
+        print("[ERROR] [FR-106] the corpus artifact could not be written: "
+              "%s: %s" % (type(exc).__name__, exc))
+        traceback.print_exc()
+        exit_code = exit_code or 1
 
     print("\n[INFO] batch complete; stopping for analysis before any further "
           "batch is admitted (FR-153).")

@@ -21,11 +21,25 @@ class HarnessError(RuntimeError):
     ordinary project fidelity failure."""
 
 
-def census_project(project_name: str) -> dict[str, set]:
+def census_project(
+    project_name: str,
+    *,
+    counters=None,
+    oplog=None,
+    scope: Optional[str] = None,
+) -> dict[str, set]:
     """FR-043/FR-044: a per-class object inventory keyed by identity (GUID),
     reusing the exact ``AllInstances`` shape ``audit_guid_preservation.py``
-    already proved out (``{class_name: {guid, ...}}``). Opens read-only."""
-    return dict(guid_audit.inventory_all(project_name))
+    already proved out (``{class_name: {guid, ...}}``). Opens read-only.
+
+    ``counters`` / ``oplog`` / ``scope`` (T045b) are passed straight through to
+    ``inventory_all``; see its docstring. All three default to ``None``, which
+    is byte-identical to this function's behaviour before T045b -- the
+    instrumentation is opt-in per call site, so a caller that supplies nothing
+    cannot accidentally report an uninstrumented run as a measured one.
+    """
+    return dict(guid_audit.inventory_all(
+        project_name, counters=counters, oplog=oplog, scope=scope))
 
 
 def written_classes(before: dict[str, set], after: dict[str, set]) -> dict[str, dict]:

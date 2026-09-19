@@ -370,6 +370,7 @@ def run_full_transfer(
     report_path: Optional[str] = None,
     preview_only: bool = False,
     selection_transform=None,
+    oplog=None,
 ) -> Tuple[RunPlan, RunReport]:
     """Run a full (all-categories-except-STEMS by default) transfer end to end.
 
@@ -424,6 +425,19 @@ def run_full_transfer(
         `excluded_deps` on an otherwise identical run, so the deselection is
         the only difference between the two plans being compared. ``None``
         (the default) leaves every existing caller byte-identical.
+    ``oplog``
+        Optional ``debug.fullsweep.instrument.OperationLog`` (feature 035
+        T045b). Records the source open, the target bind, and BOTH closes in
+        the finally below, with each one's outcome and wall-clock duration.
+        Those two closes are inside bare excepts -- correctly, since a failed
+        close must not discard a transfer that succeeded -- and until this
+        parameter existed the failure went down with the exception, leaving
+        FR-108's CLEAN-CLOSE guard nothing to read. A close that hung is not
+        observable from an exception at all (`_close_project_watchdog` only
+        LOGS after its deadline; a wedged .NET call cannot be interrupted from
+        Python), so the log derives `timed_out` by timing the call against
+        `api._SCHEMA_CLOSE_TIMEOUT_S`. ``None`` -- every pre-existing caller --
+        is byte-identical to the previous behaviour.
     ``preview_only``
         Stop after `compute_preview` and return ``(plan, None)`` -- NO
         `execute_move`, so nothing is written. Added for feature 038 T067,
@@ -439,7 +453,12 @@ def run_full_transfer(
     os.environ.setdefault(DEBUG_ENV, "1")
 
     context = None
-    source_handle = _open_source_readonly(source_name)
+    if oplog is not None:
+        with oplog.watch("OpenProject(writeEnabled=False)", source_name,
+                         kind="open"):
+            source_handle = _open_source_readonly(source_name)
+    else:
+        source_handle = _open_source_readonly(source_name)
     try:
         stub = api.initialize_run(
             source_handle,
@@ -450,7 +469,11 @@ def run_full_transfer(
             project_name=target_name,
             project_path=target_path,
         )
-        context = api.bind_target(stub, choice)
+        if oplog is not None:
+            with oplog.watch("bind_target", target_name, kind="initialize"):
+                context = api.bind_target(stub, choice)
+        else:
+            context = api.bind_target(stub, choice)
 
         selection = (build_full_selection() if exclude is None
                      else build_full_selection(exclude=exclude))
@@ -526,17 +549,36 @@ def run_full_transfer(
         # the log after the deadline (it cannot abort the call -- LCM thread
         # affinity forbids off-thread closes); a raised close error is
         # warning-grade here.
+        # T045b/FR-108: the bare excepts stay -- a close failure must not
+        # discard a transfer that succeeded -- but when an oplog is supplied
+        # the failure is RECORDED before it is swallowed, instead of going
+        # down with the exception. `oplog.watch` re-raises, so the except
+        # clauses below still do exactly what they did.
         if context is not None:
             try:
-                api._close_project_watchdog(
-                    context.target_handle,
-                    api._SCHEMA_CLOSE_TIMEOUT_S,
-                    "harness target handle",
-                )
+                if oplog is not None:
+                    with oplog.watch("CloseProject(target, watchdog)",
+                                     target_name, kind="close"):
+                        api._close_project_watchdog(
+                            context.target_handle,
+                            api._SCHEMA_CLOSE_TIMEOUT_S,
+                            "harness target handle",
+                        )
+                else:
+                    api._close_project_watchdog(
+                        context.target_handle,
+                        api._SCHEMA_CLOSE_TIMEOUT_S,
+                        "harness target handle",
+                    )
             except Exception as exc:  # noqa: BLE001
                 print(f"[WARN] target CloseProject failed/timed out: {exc}")
         try:
-            source_handle.CloseProject()
+            if oplog is not None:
+                with oplog.watch("CloseProject(source)", source_name,
+                                 kind="close"):
+                    source_handle.CloseProject()
+            else:
+                source_handle.CloseProject()
         except Exception:  # noqa: BLE001
             pass
 
