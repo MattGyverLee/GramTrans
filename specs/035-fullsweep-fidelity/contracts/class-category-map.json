@@ -61,7 +61,7 @@
     "slots": "leaf",
     "affix_templates": "leaf",
     "stems": "leaf",
-    "pos": "phase0-unused",
+    "pos": "leaf",
     "entry": "phase0-unused",
     "sense": "phase0-unused",
     "msa": "phase0-unused",
@@ -683,7 +683,8 @@
       "class": "PartOfSpeech",
       "owning_feature_system": null,
       "categories": [
-        "gram_categories"
+        "gram_categories",
+        "pos"
       ],
       "also_created_via": [
         "reference-create-arm"
@@ -693,7 +694,7 @@
         1,
         2
       ],
-      "qualifier": "The GRAM_CATEGORIES create site is Lib/categories.py:453 and :466. The reference CREATE arm (Lib/references.py:1112) is an owner-taking special case scoped to ReversalIndex.PartsOfSpeechOA -- the reversal category list, NEVER LangProject.PartsOfSpeechOA."
+      "qualifier": "The GRAM_CATEGORIES create site is Lib/categories.py:453 and :466. POS is NOT a dead Phase-0 surface category here: transfer.py _LEAF_DISPATCH_CATEGORIES carries it as 'the pick-driven ALIAS of GRAM_CATEGORIES', and its bundle's execute_action IS gram_categories_execute_action -- same create site, narrowed enumeration, different category stamped on the decision. Both categories therefore create PartOfSpeech, and crediting only GRAM_CATEGORIES would leave a pick-driven run's POS work attributed to a category it never dispatched. The reference CREATE arm (Lib/references.py:1112) is an owner-taking special case scoped to ReversalIndex.PartsOfSpeechOA -- the reversal category list, NEVER LangProject.PartsOfSpeechOA."
     },
     {
       "class": "PhBdryMarker",
@@ -1056,11 +1057,6 @@
       "category": "writing_systems_check",
       "reason": "configuration-artifact-not-an-lcm-object",
       "detail": "Writing systems are created by api._ensure_writing_systems (Lib/api.py:802-882) BEFORE transfer.execute, and are TABLE 4 configuration artifacts rather than LCM objects on the coverage floor. Deliberately excluded from the roster per the ratified FR-185 decision (wordform on roster; writing systems excluded)."
-    },
-    {
-      "category": "pos",
-      "reason": "phase0-surface-category-not-in-full-run-dispatch",
-      "detail": "Phase-0 MVP surface category used by gramtrans.py transfer_verb_vertical. Absent from transfer.py _LEAF_DISPATCH_CATEGORIES, so a full run never dispatches it; PartOfSpeech is created under GRAM_CATEGORIES instead."
     },
     {
       "category": "entry",

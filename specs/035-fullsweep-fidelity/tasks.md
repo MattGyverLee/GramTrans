@@ -793,12 +793,12 @@ points, then the corrections to claims already written in this file.
 
   > **DONE 2026-09-19.** `contracts/class-category-map.json` (schema_version 1) ships
   > the join: **71 entries over 69 classes**, set-equal to `coverage-floor.json`'s
-  > `in_scope_classes`, with **21 categories carrying at least one class and 9
+  > `in_scope_classes`, with **22 categories carrying at least one class and 8
   > recorded as carrying none** -- together the whole 30-member `GrammarCategory`
   > vocabulary, so no category is merely unmentioned. Reader + bridge in
   > `debug/fullsweep/coverage.py`: `load_class_category_map`, `ClassCategoryMap`,
   > `project_comparisons_to_categories`, `categories_reachable_only_through_excluded`.
-  > 42 tests in `tests/unit/test_035_class_category_map.py`.
+  > 43 tests in `tests/unit/test_035_class_category_map.py`.
   >
   > **The guard moved.** `COMPARISONS-PERFORMED` now returns `pass` / `fail` instead
   > of `not-evaluated` when fed a projected measurement -- verified end-to-end against
@@ -846,9 +846,24 @@ points, then the corrections to claims already written in this file.
   > summed (a 40-object `LexEntry` measurement sums to 80). The provenance names
   > every replicated class so the two cannot be confused.
   >
-  > **Test posture:** 42 new, all passing. Full unit suite 3671 passed / 31 failed,
-  > against 3629 / 31 at the parent -- **+42 passes, zero new failures**. The 31 are
-  > the pre-existing 026/028/031 debt this feature deliberately does not absorb.
+  > **A THIRD ADJUDICATION, forced by the merge and caught by this task's own test.**
+  > `POS` is **not** a dead Phase-0 surface category, though its four siblings are.
+  > The contract was first authored against the branch's `transfer.py`, where POS was
+  > absent from `_LEAF_DISPATCH_CATEGORIES`; merging `main` brought the version that
+  > carries it as "the pick-driven ALIAS of GRAM_CATEGORIES", whose bundle's
+  > `execute_action` **is** `gram_categories_execute_action` -- the same create site
+  > under a different stamped category. `PartOfSpeech` therefore maps to
+  > `["gram_categories", "pos"]`, and `pos` moved out of the categoryless set (22
+  > carrying / 8 empty, not 21 / 9). Crediting only GRAM_CATEGORIES would have left a
+  > pick-driven run's POS work attributed to a category it never dispatched.
+  > `test_phase0_categories_are_marked_as_not_dispatched` is what caught it -- the
+  > argument for deriving the vocabulary checks from the code rather than pinning a
+  > hand-written list.
+  >
+  > **Test posture:** 43 new, all passing. After merging `main` into the branch the
+  > full unit suite reads **4926 passed / 4 failed**. The 31 pre-existing 026/028/031
+  > failures recorded in the handoff are GONE -- 038's work on `main` closed them --
+  > and the only remaining 4 are finding (1) below.
   >
   > **TWO FINDINGS, neither T045e's to fix:**
   > 1. **The T023 capability fingerprint no longer matches the live dependency.**
