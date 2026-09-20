@@ -278,3 +278,228 @@ in one phase is never reported as an undifferentiated whole-project failure.
 10. Project and corpus status are derived SOLELY from these documents; no status
     is hand-set in the ledger independently of the artifact justifying it
     (FR-151).
+
+## T045b additions: the distortion detectors and the instrument
+
+Two blocks the per-project document gains, plus a second document at corpus
+scope. Together they are what takes FR-109's answering set from 7/15 to 15/15.
+
+### `distortion` (FR-098, FR-099, FR-102/FR-183)
+
+```jsonc
+"distortion": {
+  "schema": "035-distortion-1",
+
+  "empty_measurements": {              // FR-098
+    "records": [
+      { "class": "PhEnvironment",
+        "outcome": "absent-or-null",   // NEVER folded into present-but-empty
+        "reason": "...",               // why THIS outcome, per record
+        "census_instances": 0,
+        "present_in_census_as_empty": false,
+        "corroborating_count": 0,      // null == the scan did not run -> guard FAILS
+        "corroborating_source": "coverage.scan_class_presence over this project's .fwdata",
+        "granularity": "class" }
+    ],
+    "in_scope_classes": 69,
+    "empty_in_source": 27,
+    "corroborated": true,
+    "corroborating_scan_error": ""
+  },
+
+  "unhandled_subtypes": {              // FR-099
+    "records": [
+      { "subtype": "ReversalIndex",
+        "outcome_name": "accessor-raised-on-subtype",
+        "count": 2,                    // named AND counted, both required
+        "reason": "...",
+        "reduced_to_equal_comparison": false,
+        "why_not_reduced": "..." }
+    ],
+    "by_outcome": { "no-dispatch-for-subtype": 3,
+                    "accessor-raised-on-subtype": 10,
+                    "in-source-but-not-on-the-in-scope-roster": 23 }
+  },
+
+  "extras": {                          // FR-102/FR-183, the REVERSE walk
+    "walk": "target -> source (the reverse of reconcile_objects)",
+    "extras_examined": 0,
+    "untraceable": 0,
+    "tool_owned_duplicates": 0,
+    "by_class": { "ClassName": { "new": 0, "traceable": 0,
+                                 "untraceable": 0, "tool_owned_duplicate": 0 } }
+  }
+}
+```
+
+Rules a validator MUST enforce on this block:
+
+- The two FR-098 outcomes are `absent-or-null` and `present-but-empty`, and a
+  record carrying anything else FAILS. They are never folded together.
+- A record whose `corroborating_count` is `null` FAILS the run. Substituting
+  `0` for a scan that did not run invents the corroboration.
+- Every `unhandled_subtypes` record carries BOTH a non-empty `outcome_name`
+  and a non-null `count`. The three outcome names are distinct statements and
+  do not collapse into one another.
+- `extras[*].allowlisted` is `false` except for an object carrying a PINNED
+  tool-owned GUID, which is allowlisted by `identity.TOOL_OWNED_IDENTITY_
+  CLASSES` -- the single tracked roster of expected target-native additions.
+  There is no other roster, and inventing one is a contract change.
+- `tool_owned_duplicate` ranges over instances purporting to record the TOOL'S
+  OWN act -- those carrying the pinned GUID, plus newly-created ones tracing
+  to no source object. NOT over every instance of the class: a FieldWorks
+  project natively ships several `CmAgent`s (measured: four in `Ejagham
+  Mini`), and counting those reports a duplicate on a clean transfer.
+
+### `instrumentation` (FR-103, FR-104, FR-105, FR-108)
+
+What the INSTRUMENT did, as distinct from what the transfer did. Four guards
+read this block, and their failure means "do not believe the other eleven".
+
+```jsonc
+"instrumentation": {
+  "schema": "035-instrument-1",
+
+  "accessor_counters": {               // FR-103: all four MUST be zero
+    "unreadable_identifiers": 0,
+    "unreadable_names": 0,
+    "enumeration_failures": 0,
+    "skipped_source_objects": 0,
+    "failed_accessors": [              // deduped by shape; `occurrences` keeps the count
+      { "scope": "...", "counter": "...", "accessor": "...",
+        "error_type": "...", "error_message": "...", "occurrences": 1 }
+    ],
+    "by_scope": { "Ejagham Mini:source_inventory": { "...": 0 } },
+    "scopes_instrumented": 4,          // 0 here means NOTHING was instrumented
+    "detail_shapes_omitted": 0
+  },
+
+  "handle_operations": [               // FR-104: open, reopen, close, initialize
+    { "operation": "OpenProject(writeEnabled=False)", "kind": "open",
+      "project": "...", "ok": true, "error_type": "", "error_message": "",
+      "duration_s": 1.47 }
+  ],
+
+  "close_operations": [                // FR-108: the closes, with what followed
+    { "operation": "CloseProject", "project": "...", "ok": true,
+      "timed_out": false, "error_message": "", "duration_s": 1.09,
+      "followed_by": ["census_after_first"] }
+  ],
+
+  "truncation": {                      // FR-105: both MUST be zero
+    "dropped_breakdown_omitted": 0,
+    "detail_omitted": 0,
+    "flushes_measured": 10,
+    "by_flush": [ { "flush": "...", "dropped_breakdown_omitted": 0,
+                    "detail_omitted": 0, "where": [] } ],
+    "final_flush_scope": {
+      "measured_by": "a dry-run serialization taken immediately before the guards run",
+      "adds_after_measurement": ["guards", "verdict", "exit_code",
+                                 "guard_inputs_measured", "finished_at", "truncation"],
+      "none_is_a_detail_bearing_list": true,
+      "verified": true,
+      "mismatch": []
+    }
+  }
+}
+```
+
+Rules a validator MUST enforce on this block:
+
+- `scopes_instrumented` is non-zero. All four counters at zero is FR-103's
+  PASS condition, so "nothing went wrong" and "nothing was instrumented" must
+  be distinguishable, and only this field distinguishes them.
+- A close appears in BOTH `handle_operations` and `close_operations`, in each
+  guard's own shape. FR-104 reads `error_type`; FR-108 reads `timed_out` and
+  `followed_by`. One shared record list, two projections -- never two
+  independently appended lists, which is how a close ends up in one and not
+  the other.
+- `timed_out` is derived by WALL CLOCK against `api._SCHEMA_CLOSE_TIMEOUT_S`,
+  never from an exception. `api._close_project_watchdog` only logs after its
+  deadline; a wedged .NET call cannot be interrupted from Python, so a hung
+  close returns normally and raises nothing.
+- The truncation counters are MEASURED against the serialized view of the
+  document, not asserted. `json.dumps(..., default=str)` is not an identity
+  map, so comparing the document with itself measures nothing.
+
+### The corpus document (FR-106)
+
+`ARTIFACT-INTEGRITY` is the one guard whose question spans projects, and it is
+evaluated at TWO scopes that each name themselves:
+
+- **per project**, inside `run_one_project`, where the corpus is this worker's
+  own single project. Without this the guard could never be evaluated in a
+  worker at all, and FR-109's fifteen-key completeness would sink every
+  project to `VACUOUS` forever.
+- **per corpus**, written by `_cmd_batch` after the loop, over the FROZEN
+  source manifest -- not the narrowed batch. FR-106 says "every project in the
+  run's corpus"; reporting 3-of-3 for a batch drawn from eighty-four answers
+  an easier question.
+
+The corpus document is a SEPARATE file, `_corpus.json`, in the artifacts dir:
+
+```jsonc
+{
+  "schema": "035-corpus-1",
+  "kind": "corpus",
+  "run_intent": "BASELINE",
+  "revision_pair": { "...": "..." },
+  "written_at": 0,
+  "corpus_projects": ["..."],          // the frozen manifest
+  "corpus_size": 84,
+  "batch_attempted": ["..."],          // what THIS invocation ran
+  "batch_size": 3,
+  "artifacts_present": {
+    "ProjectName": { "driver_revision": true, "capability_fingerprint": true,
+                     "baseline_identity": true, "diagnostic_level": true,
+                     "excluded_categories": true, "guards": true,
+                     "_path": "...", "_status": "...", "_verdict": "...",
+                     "_exit_code": 0 }
+  },
+  "index_problems": { "unreadable": [], "collisions": [] },
+  "corpus_guards": { "ARTIFACT-INTEGRITY": { "...": "..." } },
+  "corpus_guard_scope": "FR-106 only. ...",
+  "verdict": "CORPUS_COMPLETE",        // or INCOMPLETE / VACUOUS
+  "exit_code": 0
+}
+```
+
+Rules a validator MUST enforce on the corpus document:
+
+- Its single-guard block is named `corpus_guards`, NEVER `guards`. FR-109's
+  fifteen-key completeness is a PER-PROJECT invariant; a one-guard block
+  called `guards` would make a fourteen-key per-project block expressible by
+  precedent, and the subprocess boundary sits between the two scopes.
+- `CORPUS_COMPLETE` is this document's own word and is NOT one of the ten
+  verdicts in `verdict-exit-model.md`. Those describe a PROJECT's fidelity;
+  borrowing `CLEAN_PASS` here would let a corpus whose every child failed
+  report a passing word at the top level. It says only that every corpus
+  project has a complete artifact.
+- The artifact index is keyed by each document's own `project` key, read back
+  from the file -- never by de-mangling the filename.
+  `flush_artifact`'s `re.sub(r"[^A-Za-z0-9._ -]", "_", ...)` is lossy and has
+  no inverse.
+- An unparseable or unkeyed artifact is recorded in `index_problems`, never
+  skipped. A corrupt artifact is a missing measurement, not an absent project.
+
+### FR-106's six required fields are CONTRACT names, not dataclass names
+
+`guards.ARTIFACT_REQUIRED_FIELDS` names `driver_revision`,
+`capability_fingerprint` and `baseline_identity`; `ProjectArtifact` calls the
+same three facts `revision_pair`, `preflight` and `baseline`. A reader
+indexing the document by the contract names directly finds every one absent.
+`artifact.artifact_completeness_record` is the single bridge, used by both
+scopes. Two of the six are not truthiness questions:
+
+- `excluded_categories` -- an EMPTY exclusion list is the correct, fully
+  recorded state for a full-coverage sweep (FR-134) and `bool([])` is false.
+  The predicate is that the names and the reasoned records AGREE in number.
+- `guards` -- read from the document on disk; supplied explicitly in memory,
+  where the block is still being assembled out of the other fourteen results.
+
+> **Defect this surfaced.** `capability_fingerprint` was never written by any
+> artifact this driver produced: `_preflight_gate` discarded its result on the
+> success path and wrote a document only on refusal. Nothing noticed, because
+> ARTIFACT-INTEGRITY had no corpus index and reported `not-evaluated`
+> regardless. The gate now returns the passing record and
+> `run_one_project` stamps it.
