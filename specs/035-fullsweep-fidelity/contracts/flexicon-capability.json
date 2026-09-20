@@ -1,18 +1,18 @@
 {
   "schema_version": 1,
-  "captured_by": "T023 -- specs/035-fullsweep-fidelity/tasks.md Phase 3 / US4",
-  "captured_at": "2026-08-18",
+  "captured_by": "T023 (2026-08-18 original capture) -- RE-PINNED 2026-09-20 under specs/035-fullsweep-fidelity/tasks.md T035 (batch-1 re-run), by measurement",
+  "captured_at": "2026-09-20",
   "reported_version": "4.3.1",
   "version_note": "RECORDED ONLY (FR-126); NEVER the basis of the preflight decision (FR-125). This installation is a LIVE INSTANCE of the exact hazard FR-125 names: the editable install's distribution metadata reports 4.3.1, FLExToolsMCP health reports installed=4.4.0 / index=4.4.0, and the working tree's own git log is post-4.4.0 (5994acc, 'before 4.4.1'). Three sources, three answers. flexicon.__version__ is None. Only the introspected block below is decisive.",
   "provenance": {
     "resolved_path": "D:\\Github\\_Projects\\_LEX\\flexicon\\flexicon\\__init__.py",
     "from_site_packages": false,
     "revision": {
-      "sha": "5994acc226862cef4c3a3f0a3ae25e5c54bb8b3f",
-      "dirty": true,
+      "sha": "ef94601c70570e4fe9ad34f051a3f7cd02c55c53",
+      "dirty": false,
       "error": ""
     },
-    "note": "FR-126: a dependency resolved from a stale packaged copy rather than the tracked working installation MUST fail the preflight. This capture resolved to the working tree, not site-packages."
+    "note": "FR-126: a dependency resolved from a stale packaged copy rather than the tracked working installation MUST fail the preflight. This capture resolved to the working tree, not site-packages. Revision advanced 5994acc -> ef94601 since the original capture; the revision is RECORDED, never the basis of the decision (FR-125) -- the single capability difference across that span is the GramCat override retired by 4b911d3."
   },
   "accessors_verified_live": {
     "verified_via": "FLExToolsMCP flextools_run_module, read-only, project 'Ejagham Mini', op-101942581-001, 2026-08-18",
@@ -215,7 +215,7 @@
         "declared": true
       },
       "flexicon.GramCatOperations.ApplySyncableProperties": {
-        "declared": true
+        "declared": false
       },
       "flexicon.InflectionFeatureOperations.ApplySyncableProperties": {
         "declared": true
@@ -239,7 +239,7 @@
       }
     }
   },
-  "summary_hash": "5c4df800d9134818c59c26f7d938a6b66a5711d0d2f9b7b3714a89c2675d35f8",
+  "summary_hash": "7c61f3632b8cf197b50a8e9e8a15df616c589c45a5d6a659d2bb634b4215e16b",
   "drift_observed_at_capture": [
     {
       "symbol": "flexicon.code.BaseOperations.BaseOperations.ApplySyncableProperties",
@@ -253,5 +253,30 @@
       "symbol": "guid-preserving create surface",
       "note": "present and complete on all eight targets, but NOT under the class names CLAUDE.md uses. Texts/Paragraphs/Segments/Wordforms/WfiAnalyses/WfiGlosses/WfiMorphBundles are FLExProject ACCESSOR names; the classes are flexicon.code.TextsWords.{Text,Paragraph,Segment,Wordform,WfiAnalysis,WfiGloss,WfiMorphBundle}Operations. Each Create is wrapped in an OperationsMethod descriptor whose __get__ returns a generic (project, *args, **kwargs) dispatcher -- introspecting via getattr records the wrapper, not the real signature, and reports guid= as ABSENT on all seven. preflight._lookup reads the class __dict__ and preflight._unwrap follows .func to defeat both."
     }
-  ]
+  ],
+  "repin_history": [
+    {
+      "at": "2026-09-20",
+      "from_revision": "5994acc226862cef4c3a3f0a3ae25e5c54bb8b3f",
+      "to_revision": "ef94601c70570e4fe9ad34f051a3f7cd02c55c53",
+      "differences_measured": 1,
+      "differences": [
+        {
+          "symbol": "grammar_overrides.flexicon.GramCatOperations.ApplySyncableProperties.declared",
+          "was": true,
+          "now": false,
+          "kind": "changed"
+        }
+      ],
+      "decision": "DELIBERATE RE-PIN (FR-125/FR-132), authorized by the maintainer 2026-09-20.",
+      "rationale": "flexicon 4b911d3 (issue #276) retired the GramCat surface on a domain ruling; GramCatOperations is a deprecated alias of POSOperations scheduled for removal at v5.0.0. The pin followed upstream rather than requiring upstream to re-add a retired surface.",
+      "method": "Re-measured with preflight.introspect_capabilities() and diffed field-by-field against the previous pin via preflight.diff_capabilities(); exactly 1 difference, applied. No field was hand-edited except as that diff directed.",
+      "consequence": "GramTrans CLAUDE.md's 'the 8 Grammar Operations subclasses each declare an override' rule is now stale for GramCatOperations; 7 of 8 still hold."
+    }
+  ],
+  "summary_hash_recipe": "sha256(json.dumps(introspected, sort_keys=True, separators=(',',':'))) -- RECORDED 2026-09-20. Nothing in debug/fullsweep consumes this field; the preflight decision is the field-by-field diff of 'introspected'. The 2026-08-18 value (5c4df800...) was produced by an UNDOCUMENTED recipe this one does not reproduce, so the two are not comparable -- treat this entry as the first hash with a stated recipe, not as a continuation.",
+  "introspected_annotations": {
+    "_why_not_inline": "FR-125: 'introspected' is diffed key-for-key against what introspect_capabilities() measures. A commentary key added inside it has no measured counterpart and is reported as [missing], failing the preflight. Verified by doing exactly that on 2026-09-20 and watching it exit 6. Annotations therefore live in this sibling block, which nothing diffs.",
+    "grammar_overrides.flexicon.GramCatOperations.ApplySyncableProperties.declared": "RE-PINNED 2026-09-20 as FALSE, deliberately (FR-125/FR-132). flexicon commit 4b911d3 'fix(276): retire the GramCat TypesOC surface' DELETED this override along with the whole GramCat CRUD surface, on a recorded domain ruling: a list-level grammatical category IS a Part of Speech, so GramCatOperations is now a DEPRECATED ALIAS of POSOperations (removal scheduled for the v5.0.0 boundary) and inherits ApplySyncableProperties from it. This is upstream design, not an indexer-visibility regression -- the other 7 of 8 Grammar Operations subclasses still DECLARE the override and are pinned True. Restoring a declared override on a class upstream has retired was the rejected alternative."
+  }
 }
