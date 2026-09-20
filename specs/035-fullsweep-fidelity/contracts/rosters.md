@@ -257,3 +257,10 @@ At run time each `guard_module_hash` is recomputed. A changed guard whose contro
 was not re-run reports `not-evaluated`, making the run `VACUOUS` (FR-178..FR-181).
 A green test suite is NOT a substitute: it produces no durable artifact and cannot
 express staleness relative to guard code.
+
+The same file also carries the Section E field-plane detectors' controls (T045),
+under `FIELD-PLANE:`-prefixed names and the identical record shape - see
+`contracts/guards.md`, "Section E detectors share the artifact". Their
+`guard_module_hash` covers BOTH `compare.py` (the rule) and `fieldplane.py`
+(the dispatch that chooses it), because a defect in either is a defect in the
+demonstration.

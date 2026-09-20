@@ -61,7 +61,7 @@ below:
 | bucket | tasks | ruling |
 | --- | --- | --- |
 | **KEEP** -- uniquely valuable, no 038 equivalent | T045d, T047, T050, T056, T063 | Build as written |
-| **KEEP** -- cheap, closes an honesty gap | T064, T065, **T069 (new)**, **T070 (new)** | Build as written |
+| **KEEP** -- cheap, closes an honesty gap | T064, T065, **T069 (new)**, **T070 (new)**, **T071 (new)** | Build as written |
 | **RETARGET** -- consume 038's census instead of re-deriving plane 1 | T045a(c), T045b, T045e, T045f, T045, T048, T051, T052, T053, T057, **T068 (new)** | Scope narrowed in place; see each task's note |
 | **CUT** -- superseded by 038's closed vocabulary | T058, T059, T060, T061 | Struck. Not deferred -- struck |
 | **GATED** -- only meaningful once a full corpus run is authorized | T035, T046, T049, T054, T055, T062, T066, T067 | Text unchanged; blocked on an explicit go/no-go |
@@ -538,6 +538,17 @@ the comparator's verdict for each -- no corpus-wide run needed.
 > mismatch** -- preflight exits 6 today, so no run reaches `run_one_project`
 > at all. That blocker is now the single thing standing between this
 > instrument and a real measured verdict.
+>
+> **T045 LANDED 2026-09-19.** Every code task ahead of the T035 batch-1
+> re-run is done; see T045's DONE note. The **T023 capability-fingerprint
+> mismatch is now the ONLY remaining blocker** on a live run -- preflight
+> still exits 6 (flexicon is at rev `ef94601`, the fingerprint pins
+> `5994acc`, and `GramCatOperations.ApplySyncableProperties.declared` reads
+> False where the fingerprint pins True). It needs the flexicon override
+> restored or a DELIBERATE re-pin; it is not code this feature owns.
+> T045 also filed **T071** -- FR-189's depth findings reach no verdict -- but
+> that is an honesty gap in what a passing run may claim, not a blocker on
+> taking the measurement.
 
 - [X] **T045a** [US2] Wire the driver's OWN measurements into `RunContext`, and the two
       accounting planes into the guard inputs. `run_one_project` currently calls
@@ -1385,7 +1396,7 @@ Four were ruled; three remain open and are marked as such.
 
 **Wave 3c -- the guard semantics T045a makes observable:**
 
-- [ ] **T045** [US2] Implement `CATEGORY-COVERAGE` for real (any excluded category, any
+- [X] **T045** [US2] Implement `CATEGORY-COVERAGE` for real (any excluded category, any
       unmeasured enabled category → `COVERAGE_REDUCED`), enable the stem-allomorph category for
       the full corpus pass, and record each field-plane guard's seeded defect into the
       negative-control artifact (FR-096, FR-134, FR-135, FR-137, FR-179) ·
@@ -1402,6 +1413,97 @@ Four were ruled; three remain open and are marked as such.
   > category excluded MUST NOT report the same success status as a full-coverage run" --
   > so a non-empty excluded set must itself force `COVERAGE_REDUCED`, recorded reason or
   > not. The reason check stays; it becomes the second failure mode, not the only one.
+
+  > **DONE 2026-09-19.** All three halves landed; the third one found a fourth thing.
+  > 40 new tests in `tests/unit/test_035_t045_coverage_and_controls.py`; full unit suite
+  > **5093 passed / 4 failed** (5053/4 before -- delta exactly +40, all passes), the 4
+  > being the T023 fingerprint blocker recorded under T045b and nothing else.
+  >
+  > **(a) FR-137 is enforced, and the case it closes had been passing.**
+  > `guard_category_coverage` now reports THREE failure modes together rather than one
+  > at a time: a non-empty excluded set (FR-137), an enabled-but-unmeasured category
+  > (FR-096), and an exclusion with no recorded reason (FR-135). Reporting them one at a
+  > time would make fixing the first reveal the second on the NEXT run instead of this
+  > one. The evidence block gains `excluded_count` and `full_coverage`. The CLI help for
+  > `--exclude-categories` has read "A non-empty value forces `COVERAGE_REDUCED`" since
+  > T024; until today that sentence was false.
+  >
+  > **(b) FR-134/FR-135: the invisible default is gone, and it was the recorded decision
+  > nobody owned.** `tests/integration/harness/full_run.py:49` no longer defaults
+  > `exclude` to `frozenset({GrammarCategory.STEMS})` -- the parameter is REQUIRED, and
+  > two named constants replace the default: `FULL_COVERAGE` (`frozenset()`) and
+  > `LEGACY_STEMLESS_EXCLUSION`. T045b, T045e and T045f each recorded this as "still
+  > unowned by any task"; it is FR-134's own clause ("MUST NOT inherit an existing
+  > narrower harness's default exclusion of this category unexamined"), so T045 owns it.
+  >
+  > Three call sites inherited the default and each is now explicit. Two of them were
+  > wrong in the way FR-136 names -- they claimed one thing and ran another:
+  > `run_fullsweep_verify.py:298` carried the comment "all cats except STEMS" directly
+  > under a module docstring promising "every GrammarCategory", and
+  > `audit_guid_preservation.run_full_move` is named for auditing a full copy and was
+  > auditing a stem-less one. Both now pass `FULL_COVERAGE`. The third,
+  > `run_full_transfer`'s `exclude=None` path, keeps its historical shape byte-identical
+  > by naming `LEGACY_STEMLESS_EXCLUSION` at the call site -- its dozen callers and
+  > feature 038's tests are unaffected, and `exclude`'s own default stays `None` as
+  > `test_run_full_transfer_accepts_the_exclusion` requires. An AST-level audit test
+  > fails the suite if any bare `build_full_selection()` ever reappears.
+  >
+  > The `reopen_and_count` / `_COUNT_ACCESSORS` / `total_count` half of that same
+  > recorded decision is NOT done and is NOT T045's: three live integration tests
+  > (`test_full_workflow_e2e`, `test_target_preserved`, `test_residue_tagging`) call
+  > them, and deleting them needs a task that can re-run those against a live target.
+  > Still unowned.
+  >
+  > **(c) The Section E detectors have controls, and they run the whole chain.** FR-178
+  > covers "every distortion or loss detector (Section E)", not only the fifteen guards;
+  > until today not one field-plane rule had ever been shown able to say no, so all of
+  > User Story 2 rested on instruments never demonstrated capable of failing. Four
+  > controls now do, recorded in `contracts/negative-controls.json` under
+  > `FIELD-PLANE:`-prefixed names (19 records total, 15 + 4):
+  >
+  > | control | seeded defect | fires | verdict |
+  > | --- | --- | --- | --- |
+  > | `FIELD-PLANE:ws-alternatives` | a declared source WS resolving to nothing in the target | `ws-alternatives` | `UNEXPLAINED_LOSS` |
+  > | `FIELD-PLANE:text` | a text value arriving with trailing whitespace | `text` | `UNEXPLAINED_LOSS` |
+  > | `FIELD-PLANE:order` | an order-critical owned sequence scrambled, membership identical | `order` | `UNEXPLAINED_LOSS` |
+  > | `FIELD-PLANE:link` | a set source reference arriving unset, no drop/skip record | `link` | `UNEXPLAINED_LOSS` |
+  >
+  > Each seeds ONE field of ONE matched pair and runs the REAL chain -- `compare_field`
+  > dispatch, `FieldPlaneComparator.payload_equal`, `reconcile_objects`,
+  > `guard_total_accounting` -- because a control that called `classify_distortion`
+  > directly would demonstrate a function, not the sweep, and three things between the
+  > rule and the verdict can each swallow a finding. The rule that fired is asserted
+  > too: a defect failing through a DIFFERENT rule would record a demonstration of the
+  > wrong detector, which reads as coverage while being none. A control-of-the-control
+  > pins that an undistorted pair passes the same chain.
+  >
+  > **All four produce the same verdict, and that is a finding, not a coincidence.** The
+  > field plane has NO verdict channel of its own: a finding becomes `payload_equal ->
+  > False`, an unaccounted object, a `TOTAL-ACCOUNTING` failure. It borrows the object
+  > plane's channel entirely.
+  >
+  > **(d) WHICH IS HOW THE FIFTH DETECTOR TURNED OUT TO HAVE NO CHANNEL AT ALL.**
+  > `compare_structural_depth` (T043/FR-189) has no route into the accounting, so it
+  > reaches no verdict: a seeded per-parent degree disagreement populates
+  > `artifact.depth.per_parent_degree_findings` and stops. `record_plane_2_measurements`
+  > writes that block and **nothing reads it** -- not `artifact.findings`, not
+  > `measured`, not any of the fifteen guards; `RunContext` has no depth field of any
+  > name. FR-189 says such a disagreement "MUST fail the run" and
+  > `artifact.depth_block`'s own docstring says degree findings are "a real
+  > disagreement, which FAILS". Both are currently false. Recording a control anyway
+  > would mean writing down a verdict token the run does not produce -- the exact
+  > dishonesty this regime exists to prevent -- so the record is ABSENT, which FR-180
+  > already reads as `not-evaluated`. Wiring it is **T071**, filed below;
+  > `guards.FIELD_PLANE_DETECTOR_WITHOUT_A_CONTROL` makes the gap greppable and a test
+  > pins it so it can be neither forgotten nor quietly closed.
+  >
+  > **Staleness scope widened, deliberately.** `guard_module_hash` now takes a per-name
+  > module tuple (`_CONTROL_MODULES`): a field-plane control hashes `compare.py` AND
+  > `fieldplane.py`, since the rule lives in one and the dispatch that chooses it in the
+  > other, and hashing one would let an edit to the other pass as still-demonstrated.
+  > The fifteen fall to the default and their hash is byte-identical to before.
+  > Re-running the suite was mandatory here rather than optional: T045 edited
+  > `guards.py`, which staled all fifteen records at once (FR-180).
 
 **⟶ T045a must land before T035 is re-run, or the re-run repeats batch 1's result.**
 
@@ -1789,6 +1891,48 @@ reachable, bounded, disclosed, and self-retiring.
       on exactly the axis it was chosen to exercise ·
       `debug/fullsweep/field_dispatch.py`,
       `specs/035-fullsweep-fidelity/contracts/coverage-floor.json`
+
+- [ ] **T071** [P] **NEW 2026-09-19 (T045 follow-on).** FR-189's "MUST fail the run",
+      which today does not. Give `compare_structural_depth`'s output a route to the
+      verdict, then give it the negative control T045 could not record.
+      **The measurement, taken while building T045's field-plane controls:** a seeded
+      per-parent child-count disagreement populates
+      `artifact.depth.per_parent_degree_findings` and stops there.
+      `record_plane_2_measurements` (`debug/run_fullcopy_sweep.py:694-700`) writes the
+      depth block and **nothing reads it** -- not `artifact.findings`, not `measured`,
+      not any of the fifteen guards. `RunContext` has no depth field of any name, which
+      is the structural proof rather than a grep: a guard has no other surface to read
+      from. So a target that flattened every nested sense reports `CLEAN_PASS`.
+      Two spec sentences are currently false and this task is what makes them true:
+      FR-189's "A per-parent child-count disagreement MUST fail the run even when every
+      child actually visited compared clean", and `artifact.depth_block`'s own docstring
+      calling degree findings "a real disagreement, which FAILS".
+      FR-189 asks for TWO distinct outcomes and they must not be collapsed: a degree
+      disagreement FAILS the run, while a class whose target-side maximum depth is below
+      its source-side maximum is `VACUOUS` **for that class**. T045f already keeps
+      `vacuous_classes` and `not_evaluated_classes` apart on the artifact -- the corpus
+      never nesting a class is not the target losing the nesting -- and whatever route
+      is chosen must preserve all three dispositions, not flatten them into one boolean.
+      **Deciding the route is the hard half, and it is a contract question.** The field
+      plane has no verdict channel of its own: every other field finding reaches a
+      verdict by making `payload_equal` return False, which `reconcile_objects` buckets
+      as unaccounted, which fails `TOTAL-ACCOUNTING`. Depth is computed AFTER
+      reconciliation, from the two gathers' `nesting` records, so it has no such hook.
+      The candidate routes each cost something: a sixteenth guard changes
+      `contracts/guards.md`, the FR-109 set-equality assertion, and the fifteen-name
+      literal transcribed in four test modules; routing degree findings into the
+      existing accounting means assigning a bucket to an object already bucketed;
+      folding them into `artifact.findings` alone moves `artifact.status` but NOT the
+      verdict, which would leave the two disagreeing. Pick deliberately and record why.
+      **Then close FR-178's remaining hole.** With a verdict reachable, add the fifth
+      Section E control alongside T045's four, delete
+      `guards.FIELD_PLANE_DETECTOR_WITHOUT_A_CONTROL`, and remove the two tests in
+      `tests/unit/test_035_t045_coverage_and_controls.py` that pin the gap as a known
+      state -- they are written to FAIL the day it is closed, on purpose ·
+      `debug/fullsweep/guards.py`, `debug/fullsweep/artifact.py`,
+      `debug/run_fullcopy_sweep.py`,
+      `specs/035-fullsweep-fidelity/contracts/guards.md`,
+      `specs/035-fullsweep-fidelity/contracts/negative-controls.json`
 
 - [ ] **T064** [P] Crash-resume evidence: a simulated mid-project kill leaves a partial artifact
       naming the last completed phase, in place of no evidence at all (FR-150, SC-009) ·

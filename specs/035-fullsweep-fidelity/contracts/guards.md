@@ -84,6 +84,15 @@ before the verdict is computed and again before the artifact is flushed.
   task, ticket, issue, probe, or TODO identifier. Distinct from a "never
   implemented" coverage gap, which IS allowlistable but only with the open
   tracking issue FR-119 already requires.
+- **`CATEGORY-COVERAGE`** - THREE failure modes, reported together, not one
+  at a time (T045). A non-empty excluded set is ITSELF the failure, recorded
+  reason or not: FR-137 says a reduced-coverage run "MUST NOT report the same
+  success status as a full-coverage run", and a recorded reason makes the
+  reduction legible without making it full coverage. The other two are FR-096's
+  enabled-but-unmeasured category and FR-135's exclusion with no recorded
+  reason. FR-137's closing clause - "this distinction MUST NOT be 'fixed' by a
+  later change to make it report success" - is why the first mode has no
+  allowlist and no reason-good-enough-to-pass branch.
 - **`ARTIFACT-INTEGRITY`** - checks for driver revision identity, dependency
   capability fingerprint, baseline backup identity, effective diagnostic level,
   excluded-category set, and a complete guards block, on EVERY corpus project.
@@ -96,3 +105,32 @@ in a TRACKED negative-control artifact: the seeded defect, the verdict produced,
 and a content hash of that guard's source module. At run time the hash is
 recomputed; a changed guard whose control was not re-run reports
 `not-evaluated`, making the run `VACUOUS` (FR-178..FR-181).
+
+### Section E detectors share the artifact (T045)
+
+FR-178 covers "every distortion or loss detector (Section E)", not only the
+fifteen guards above. Four field-plane detectors are therefore recorded in the
+same artifact, under the same record shape, with names prefixed `FIELD-PLANE:`
+so they can never be confused with a registry key - FR-109's completeness rule
+stays over the fifteen alone:
+
+| Control | Rule it demonstrates | Seeded defect | Produces |
+|---|---|---|---|
+| `FIELD-PLANE:ws-alternatives` | T039 / FR-069..FR-072 | a declared source writing system resolving to nothing in the target | `UNEXPLAINED_LOSS` |
+| `FIELD-PLANE:text` | T040 / FR-073..FR-078 | a text value arriving with trailing whitespace added | `UNEXPLAINED_LOSS` |
+| `FIELD-PLANE:order` | T041 / FR-079..FR-084 | an order-critical owned sequence scrambled, membership identical | `UNEXPLAINED_LOSS` |
+| `FIELD-PLANE:link` | T042 / FR-085..FR-090 | a set source reference arriving unset with no drop or skip record | `UNEXPLAINED_LOSS` |
+
+All four produce the same verdict because **the field plane has no verdict
+channel of its own**: a finding makes `payload_equal` return `False`, which
+`reconcile_objects` buckets as unaccounted, which fails `TOTAL-ACCOUNTING`.
+Each control runs that whole chain - dispatch, comparator, reconciliation,
+guard - and asserts which rule fired, because a defect that failed the run
+through a different rule would record a demonstration of the wrong detector.
+
+`compare_structural_depth` (T043 / FR-189) is the one Section E detector with
+NO control. Measured: its findings reach `artifact.depth` and nothing reads
+that block, so a seeded per-parent degree disagreement changes no verdict.
+Recording a control would mean writing down a token the run does not produce.
+The record is absent, which FR-180 already reads as `not-evaluated`; the wiring
+is **T071**.
