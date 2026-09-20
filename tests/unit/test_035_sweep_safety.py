@@ -902,13 +902,63 @@ def test_the_guid_preserving_create_surface_is_pinned_and_present():
         assert shape.get("accepts_guid_kwarg") is True, key
 
 
-def test_all_eight_grammar_overrides_are_declared_not_inherited():
+#: The single Grammar Operations class exempted from FR-130's
+#: declared-override rule, and the ONLY one. flexicon 4b911d3 ("fix(276):
+#: retire the GramCat TypesOC surface") deleted the override along with the
+#: whole GramCat CRUD surface, on a domain ruling that a list-level
+#: grammatical category IS a Part of Speech: GramCatOperations is now a
+#: deprecated alias of POSOperations, removal scheduled for v5.0.0, and it
+#: INHERITS ApplySyncableProperties. Re-pinned deliberately 2026-09-20 under
+#: FR-125/FR-132 rather than asking upstream to re-add a retired surface.
+#: This repo's CLAUDE.md still states the all-eight rule and is stale here.
+_RETIRED_GRAMMAR_OVERRIDE = "flexicon.GramCatOperations.ApplySyncableProperties"
+
+
+def test_seven_grammar_overrides_are_declared_and_the_eighth_is_a_recorded_retirement():
     """FR-130 + this repo's CLAUDE.md: the MCP indexer's static analysis does
-    not follow inheritance, so the override must be DECLARED on each class."""
+    not follow inheritance, so the override must be DECLARED on each class --
+    for every class upstream still declares one on.
+
+    This is deliberately NOT ``assert all(... is True)`` minus a skip. Each of
+    the eight is asserted individually against the pinned expectation, so the
+    test still fails loudly if a DIFFERENT class loses its override, and fails
+    just as loudly if the retired one comes back without the pin being
+    updated. A blanket exemption would have let the next retirement pass
+    unnoticed, which is the drift FR-125 exists to catch.
+    """
     measured = sweep.introspect_capabilities()
     overrides = measured["grammar_overrides"]
-    assert len(overrides) == 8
-    assert all(v.get("declared") is True for v in overrides.values()), overrides
+    assert len(overrides) == 8, overrides
+
+    pinned = sweep.load_pinned_fingerprint()["introspected"]["grammar_overrides"]
+    assert set(pinned) == set(overrides), (
+        "the pinned override roster and the measured one name different "
+        "classes: pinned-only=%r measured-only=%r"
+        % (sorted(set(pinned) - set(overrides)), sorted(set(overrides) - set(pinned)))
+    )
+
+    for key, shape in sorted(overrides.items()):
+        expected = pinned[key].get("declared")
+        assert shape.get("declared") is expected, (
+            "%s: declared=%r but the pin expects %r. If upstream deliberately "
+            "changed this, RE-PIN the fingerprint (FR-125/FR-132) and record "
+            "the ruling -- do not loosen this assertion."
+            % (key, shape.get("declared"), expected)
+        )
+
+    declared = {k for k, v in overrides.items() if v.get("declared") is True}
+    assert len(declared) == 7, sorted(declared)
+    assert _RETIRED_GRAMMAR_OVERRIDE not in declared
+    assert overrides[_RETIRED_GRAMMAR_OVERRIDE]["declared"] is False
+
+    # FR-132: the exemption is only legitimate because it is RECORDED. An
+    # undocumented False would be indistinguishable from a silent regression.
+    annotations = sweep.load_pinned_fingerprint().get("introspected_annotations", {})
+    note = annotations.get("grammar_overrides.%s.declared" % _RETIRED_GRAMMAR_OVERRIDE)
+    assert note and "4b911d3" in note, (
+        "the retired override carries no recorded rationale in the pinned "
+        "fingerprint's introspected_annotations block: %r" % (note,)
+    )
 
 
 def test_the_dead_lexicon_accessor_must_not_resolve():
