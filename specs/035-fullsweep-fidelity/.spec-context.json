@@ -340,6 +340,134 @@
       "kind": "complete",
       "by": "ai",
       "at": "2026-08-18T20:02:16.568Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T036",
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-09-19T13:29:03.643Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T037",
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-09-19T13:29:03.643Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T038",
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-09-19T13:29:03.643Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T039",
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-09-19T13:29:03.643Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T040",
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-09-19T13:29:03.643Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T041",
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-09-19T13:29:03.643Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T042",
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-09-19T13:29:03.643Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T043",
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-09-19T13:29:03.643Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T044",
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-09-19T13:29:03.643Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T045c",
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-09-19T13:29:03.643Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T045d",
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-09-19T13:29:03.643Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T045e",
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-09-19T13:29:03.643Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T045f",
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-09-19T13:29:03.643Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T047",
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-09-19T13:29:03.643Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T045a",
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-09-19T22:07:23.150Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "task": "T045b",
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-09-20T00:00:51.755Z"
     }
   ],
   "decisions": [
@@ -426,6 +554,18 @@
     },
     {
       "decision": "T039-T043 complete on branch as 2ea137f. Remaining before the batch 1 re-run: T044/T045 (coverage accounting) and the newly added T045a (driver wiring), which is the actual blocker to a non-VACUOUS verdict."
+    },
+    {
+      "decision": "T045f: the artifact census block keeps BOTH measurements -- 035's own field census (FR-052/FR-066 omitted_properties_per_class) inline, plus plane1_reference (path + sha256 content hash + census_id + class_row_count) to 038's object census; assert_census_is_reference_only refuses embedded rows"
+    },
+    {
+      "decision": "T045f: plane-2 blocks are refused at the point of record unless JSON-serializable, because flush_artifact's default=str would otherwise write a record's repr into the document as evidence"
+    },
+    {
+      "decision": "T045f: the depth block carries not_evaluated_classes separately from vacuous_classes -- the corpus never nesting a class is not the target losing the nesting"
+    },
+    {
+      "decision": "T045f held its scope at the artifact surface; no driver calls record_field_plane yet -- that is T045a(c), the next unchecked link"
     }
   ],
   "approach": "Grow the tracked skeleton debug/run_fullcopy_sweep.py (commit 8c72bdc) into a package debug/fullsweep/, adding the field comparator, the 15-guard registry, the 10-verdict model, the loss allowlist, the capability preflight, the coverage floor, negative controls, identity substitution, and the three-axis corpus survey. The sweep drives the shipped engine through the existing Lib/preview.py + Lib/transfer.py split via tests/integration/harness/full_run.py, and reads fields generically through flexicon's native GetSyncableProperties surface. Six phases: taxonomy spine, measurement core, gates, survey/selection, negative controls, then the batched live corpus run.",
@@ -1793,7 +1933,7 @@
       ]
     }
   },
-  "currentTask": "T034",
+  "currentTask": "T045",
   "task_summaries": {
     "T025": {
       "status": "DONE",
