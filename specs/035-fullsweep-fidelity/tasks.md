@@ -1530,6 +1530,59 @@ Four were ruled; three remain open and are marked as such.
 
   > **GATED 2026-08-22 (the 038 cut).** Text unchanged. Blocked on 038 T085 and on an
   > explicit go/no-go for the full corpus run; see the amendment's GATED bucket.
+  >
+  > **GATE DISCHARGED 2026-09-20 -- RE-RUN ATTEMPTED, BATCH INCOMPLETE, BOX STAYS
+  > UNCHECKED.** The explicit human go/no-go was given this session, scoped to
+  > **batch 1 only** (the three pilots), NOT the full corpus -- so T046, T049,
+  > T054-T057, T062, T066 and T067 remain gated. With 038 T085 (`562cb53`) and the
+  > T023 fingerprint re-pin (`245eed9`, preflight now exit 0) already discharged,
+  > every precondition on T035 was met for the first time.
+  >
+  > Two same-day batch invocations were both killed by the agent harness for HOST
+  > MEMORY PRESSURE, not by any fault of the sweep. The first completed Ejagham Mini
+  > and Esperanto (7/7 phases each, sources `UNCHANGED`, artifacts flushed) and
+  > stopped before Mbugwe; the second was killed during its first project and
+  > overwrote nothing. Artifacts preserved at
+  > `scratchpad/035_sweep/batch01-prior-20260920/`. Full measurement in
+  > [batch01-results.md](./batch01-results.md), addendum dated 2026-09-20.
+  >
+  > **What the re-run PROVED (the reason this task was relocated here):** the
+  > ordering defect is FIXED. The guards now answer -- **10 pass, 5 fail, ZERO
+  > not-evaluated**, against 15/15 not-evaluated in August -- and no finding carries
+  > `NOT_YET_CLASSIFIED_MISSING_FROM_TARGET` any more. Both runs print `VACUOUS`,
+  > but it is no longer the empty-`RunContext` `VACUOUS` of T045a: it is now
+  > `COMPARISONS-PERFORMED` genuinely failing and outranking the concurrent
+  > `COVERAGE_REDUCED` and `UNEXPLAINED_LOSS` under the published severity ordering.
+  >
+  > **Why the box stays unchecked, on two independent grounds:**
+  > 1. **Incompleteness.** Only 2 of 3 pilots hold artifacts at the current
+  >    revision pair. Mbugwe was never reached.
+  > 2. **FR-161 still fails, by a WIDER margin.** `alignment token had no copied
+  >    target referent` measures **37,767** against its historical 27,844 (+35.6%),
+  >    and the first-transfer total is 61,422 against 27,929 in August. This is NOT
+  >    recorded as a regression: the rise is concentrated in classes showing the
+  >    engine now ATTEMPTS far more (wordform-WS drops 2 -> 8,310), and a drop is
+  >    only recorded for work attempted. Distinguishing new loss from newly-visible
+  >    attempt needs a trustworthy denominator, which `TOTAL-ACCOUNTING`'s 459,914
+  >    unaccounted objects says we do not yet have. **Open question, not a verdict.**
+  >    One genuine improvement did land: Esperanto's second transfer drops **2**,
+  >    where in August it re-dropped all 27,929 identically.
+  >
+  > **NEW BLOCKER for the next attempt -- `Mbugwe LizzieHC practice` SOURCE DRIFT.**
+  > Its live `.fwdata` hashes `3fb29a29...` against the `fb6aadab...` recorded in
+  > the August artifact, with an mtime of **2026-09-06**. The sweep did not do this
+  > (it never reached Mbugwe today, and both August runs fingerprinted that source
+  > `UNCHANGED`). The August Mbugwe artifact is therefore stale **by source
+  > content**, not merely by revision pair as FR-158 contemplates -- so batch 1
+  > cannot be completed by re-running Mbugwe alone and splicing. **Wants a recorded
+  > ruling before the next attempt.**
+  >
+  > **FR-149 is NOT a blocker** -- the (c) note above and August's finding 5.3 both
+  > overstate it. FR-149 scopes trackedness to the evidence BASE (driver, rosters,
+  > allowlist, capability expectation, ledger), not to the per-run RESULT; all of
+  > those were verified tracked and unignored this session, and the untracked
+  > `scratchpad/` artifact location is the recorded storage-split decision. The
+  > narrower real gap -- nothing ASSERTS the split -- stays with T049/T050.
 
 **Checkpoint**: User Story 2 is independently functional. "Faithful" now means every
 field the engine exposes, with a reviewed, tracked exclusion list and an honest count
