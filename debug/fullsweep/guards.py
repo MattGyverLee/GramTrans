@@ -192,17 +192,37 @@ def _counts_by_class(census: dict) -> dict:
     return {cls: len(ids) for cls, ids in census.items()}
 
 
+#: FR-180's staleness scope, per control name. A control is stale when ANY
+#: module carrying the logic it demonstrated has changed since it was
+#: recorded, so a detector spread over two modules must hash both -- hashing
+#: only one would let an edit to the other pass as still-demonstrated.
+#:
+#: The fifteen object-plane guards are not listed: they all live in this
+#: module and fall to the default, which keeps their recorded hash byte-equal
+#: to what it was before this table existed. The field-plane detectors are
+#: listed because ``compare.py`` holds the rule and ``fieldplane.py`` holds
+#: the dispatch that chooses it, and a defect in either one is a defect in
+#: the demonstration.
+_CONTROL_MODULES: dict[str, tuple] = {}
+
+
 def guard_module_hash(guard_name: str, *, module_path: Optional[Path] = None) -> str:
     """FR-180: the staleness signal for a guard's negative control is a content
-    hash of the module the guard's own logic lives in.
+    hash of the module(s) the guard's own logic lives in.
 
     All fifteen guards live in this module today, so they share its hash. The
     signature takes the guard name so a later split into per-guard modules does
-    not change any call site.
+    not change any call site -- and ``_CONTROL_MODULES`` is where that split is
+    recorded when it happens, as it already has for the field-plane detectors.
     """
-    path = Path(__file__) if module_path is None else Path(module_path)
-    digest = hashlib.sha256(path.read_bytes()).hexdigest()
-    return "sha256:%s" % digest
+    if module_path is not None:
+        paths = (Path(module_path),)
+    else:
+        paths = _CONTROL_MODULES.get(guard_name) or (Path(__file__),)
+    digest = hashlib.sha256()
+    for path in paths:
+        digest.update(Path(path).read_bytes())
+    return "sha256:%s" % digest.hexdigest()
 
 
 def load_engine_bug_signatures(
@@ -345,7 +365,30 @@ def guard_comparisons_performed(ctx: RunContext) -> GuardResult:
 
 
 def guard_category_coverage(ctx: RunContext) -> GuardResult:
-    """FR-096. Fails as COVERAGE_REDUCED -- never a silent gap."""
+    """FR-096 + FR-137. Fails as COVERAGE_REDUCED -- never a silent gap.
+
+    THREE failure modes, reported together rather than one at a time, because
+    a run can have all three and fixing the first would otherwise reveal the
+    second on the next run instead of this one:
+
+    1. **FR-137, and the one T045 added.** A non-empty excluded set is ITSELF
+       the failure. "A run performed with any category excluded from coverage
+       MUST NOT report the same success status as a full-coverage run" leaves
+       no room for an exclusion to pass merely because the operator wrote down
+       why: a recorded reason makes the reduction legible, it does not make it
+       full coverage. Before T045 this guard passed exactly that run, so a
+       reduced-coverage sweep and a complete one were indistinguishable at the
+       verdict -- which is the confusion FR-137 exists to prevent.
+    2. **FR-096.** An enabled category that was never measured and never
+       recorded as excluded: the silent gap.
+    3. **FR-135.** An exclusion with no recorded reason. Kept as its own mode
+       rather than folded into (1): (1) says the run was narrowed, (3) says
+       the narrowing is not even explicable, and a reader needs both.
+
+    FR-137's closing clause -- "this distinction MUST NOT be 'fixed' by a
+    later change to make it report success" -- is why (1) has no escape hatch,
+    no allowlist, and no "reason good enough to pass" branch.
+    """
     name = "CATEGORY-COVERAGE"
     if ctx.enabled_categories is None or ctx.measured_categories is None:
         return _not_evaluated(name, "the enabled and measured category sets")
@@ -358,31 +401,40 @@ def guard_category_coverage(ctx: RunContext) -> GuardResult:
     unrecorded_exclusions = [
         e.get("category") for e in ctx.excluded_categories if not e.get("reason")
     ]
+    excluded = sorted(x for x in excluded_named if x)
     unmeasured = sorted(enabled - measured - excluded_named)
 
     evidence = {
         "enabled_count": len(enabled),
         "measured_count": len(measured),
-        "excluded": sorted(x for x in excluded_named if x),
+        "excluded": excluded,
+        "excluded_count": len(ctx.excluded_categories),
         "enabled_but_unmeasured": unmeasured,
         "exclusions_missing_a_reason": unrecorded_exclusions,
+        "full_coverage": not ctx.excluded_categories and not unmeasured,
     }
+
+    reasons = []
+    if excluded_named:
+        reasons.append(
+            "[FR-137] %d category(ies) were excluded from coverage (%r) -- a "
+            "reduced-coverage run must never report the same success status as "
+            "a full-coverage one, recorded reason or not"
+            % (len(ctx.excluded_categories), excluded))
     if unmeasured:
-        return GuardResult(
-            guard=name, result="fail",
-            message="[FR-096] %d enabled category(ies) were never measured and "
-                    "were not recorded as excluded: %r" % (len(unmeasured), unmeasured),
-            evidence=evidence,
-        )
+        reasons.append(
+            "[FR-096] %d enabled category(ies) were never measured and were "
+            "not recorded as excluded: %r" % (len(unmeasured), unmeasured))
     if unrecorded_exclusions:
-        return GuardResult(
-            guard=name, result="fail",
-            message="[FR-096] excluded category(ies) %r carry no recorded reason -- "
-                    "every exclusion must be explicit" % (unrecorded_exclusions,),
-            evidence=evidence,
-        )
+        reasons.append(
+            "[FR-096] excluded category(ies) %r carry no recorded reason -- "
+            "every exclusion must be explicit" % (unrecorded_exclusions,))
+    if reasons:
+        return GuardResult(guard=name, result="fail",
+                           message="; ".join(reasons), evidence=evidence)
     return GuardResult(guard=name, result="pass",
-                       message="the measured set covers every enabled category",
+                       message="the measured set covers every enabled category "
+                               "and nothing was excluded",
                        evidence=evidence)
 
 
@@ -1213,6 +1265,250 @@ SEEDED_DEFECT_DESCRIPTIONS: dict[str, str] = {
 }
 
 
+# ---------------------------------------------------------------------------
+# T045 -- the FIELD-PLANE controls (FR-178, FR-179)
+# ---------------------------------------------------------------------------
+# FR-178 does not stop at the fifteen vacuity guards: "every distortion or
+# loss detector (Section E)" must also be demonstrated capable of failing.
+# Section E's detectors are the field-plane rules T039-T043 built, and until
+# T045 not one of them had a control -- the whole of User Story 2's claim
+# rested on instruments never shown able to say no.
+#
+# WHAT THESE CONTROLS RUN, AND WHY IT IS THE WHOLE CHAIN
+# ------------------------------------------------------
+# A control that called ``classify_distortion`` directly and checked it
+# returned DISTORTED would demonstrate a function, not the sweep. The rule
+# only matters if a finding it produces reaches a verdict, and between the
+# rule and the verdict sit three more things that can each swallow it: the
+# ``compare_field`` dispatch (does the seeded value even reach the rule under
+# test?), ``FieldPlaneComparator.payload_equal`` (does a finding turn into
+# ``False`` rather than ``None``?), and ``reconcile_objects`` (does ``False``
+# land in an unaccounted bucket?). So each control seeds ONE field of ONE
+# matched object pair and runs the real dispatch, the real comparator, the
+# real reconciliation and the real ``TOTAL-ACCOUNTING`` guard, then records
+# the verdict that came out the far end.
+#
+# The rule that fired is asserted too. A seeded defect that failed the run
+# through a DIFFERENT rule than the one it was built for would record a
+# demonstration of the wrong detector, which is worse than none: it would
+# read as coverage.
+#
+# THE 038 CUT'S RETARGET, APPLIED
+# --------------------------------
+# The cut's premise 2 is that 038's census is count-only and the field plane
+# is uncovered by it, so every detector here is still this feature's own.
+# Nothing below reads an 038 artifact, and no control is seeded for a guard
+# whose input now arrives from 038's census -- that would test 038's
+# instrument through this one, and a failure would not say which of the two
+# broke.
+
+#: One control per Section E field-plane rule that can reach a verdict. The
+#: names carry the ``FIELD-PLANE:`` prefix so they can never be mistaken for,
+#: or collide with, one of the fifteen registry keys -- these are detectors,
+#: not guards, and the registry completeness assertion (FR-109) is over the
+#: fifteen alone.
+FIELD_PLANE_WS = "FIELD-PLANE:ws-alternatives"
+FIELD_PLANE_TEXT = "FIELD-PLANE:text"
+FIELD_PLANE_ORDER = "FIELD-PLANE:order"
+FIELD_PLANE_LINK = "FIELD-PLANE:link"
+
+FIELD_PLANE_CONTROL_NAMES: tuple[str, ...] = (
+    FIELD_PLANE_WS, FIELD_PLANE_TEXT, FIELD_PLANE_ORDER, FIELD_PLANE_LINK,
+)
+
+#: THE ONE SECTION E DETECTOR WITH NO CONTROL, AND WHY -- measured, T045.
+#:
+#: ``compare.compare_structural_depth`` (T043/FR-189) is a Section E detector
+#: and FR-178 therefore requires a control for it. It has none, because
+#: measuring the chain showed there is nothing to record: a seeded per-parent
+#: child-count disagreement produces a populated
+#: ``depth.per_parent_degree_findings`` block on the artifact and then stops.
+#: ``record_plane_2_measurements`` writes the depth block and nothing reads
+#: it -- not ``artifact.findings``, not ``measured``, not any of the fifteen
+#: guards -- so the verdict is unchanged by it. FR-189 says such a
+#: disagreement "MUST fail the run"; ``artifact.depth_block``'s own docstring
+#: says degree findings are "a real disagreement, which FAILS". Both are
+#: currently false.
+#:
+#: Recording a control for it anyway would mean writing a verdict token the
+#: run does not produce, which is the exact dishonesty the negative-control
+#: regime exists to prevent. Leaving the record ABSENT is what FR-180 already
+#: has a meaning for: absent control => ``not-evaluated``. The wiring is
+#: T071; this constant exists so the gap is a named, greppable fact rather
+#: than a silence in a roster.
+FIELD_PLANE_DETECTOR_WITHOUT_A_CONTROL = "compare_structural_depth (FR-189; see T071)"
+
+#: The two modules every field-plane control's demonstration depends on.
+_FIELD_PLANE_MODULES: tuple = (
+    Path(__file__).parent / "compare.py",
+    Path(__file__).parent / "fieldplane.py",
+)
+
+for _control_name in FIELD_PLANE_CONTROL_NAMES:
+    _CONTROL_MODULES[_control_name] = _FIELD_PLANE_MODULES
+del _control_name
+
+#: Every field-plane control fails the run the same way, and it is not a
+#: coincidence: a field finding makes ``payload_equal`` return False, which
+#: ``reconcile_objects`` buckets as ``present-but-payload-compared-unequal``,
+#: which is unaccounted, which fails ``TOTAL-ACCOUNTING``. The field plane has
+#: no verdict channel of its own -- it borrows the object plane's, which is
+#: why ``compare_structural_depth`` above, having no route into the
+#: accounting, has no verdict at all.
+FIELD_PLANE_VERDICT_VIA = "TOTAL-ACCOUNTING"
+
+_CONTROL_GUID_A = "11111111-1111-4111-8111-111111111111"
+_CONTROL_GUID_B = "22222222-2222-4222-8222-222222222222"
+_CONTROL_OWNER = "33333333-3333-4333-8333-333333333333"
+
+#: ``(class, field, source_value, target_value, expected_rule, description)``
+#: per control. The class/field pairs are real ones whose rule choice is
+#: decided by the tool's own conventions rather than by anything written
+#: here: ``LexEntry.SensesOS`` is order-critical by FR-082's roster, and
+#: ``LexSense.MorphoSyntaxAnalysisRA`` is a reference by its value's shape.
+_FIELD_PLANE_CASES: dict = {
+    FIELD_PLANE_TEXT: (
+        "LexEntry", "CitationForm",
+        "ngoreme", "ngoreme ",
+        "text",
+        "a text value arriving with trailing whitespace added",
+    ),
+    FIELD_PLANE_WS: (
+        "LexSense", "Gloss",
+        {"en": "water", "ngq": "amanzi"}, {"en": "water"},
+        "ws-alternatives",
+        "a source writing system the run declared it would create, resolving "
+        "to nothing in the target",
+    ),
+    FIELD_PLANE_ORDER: (
+        "LexEntry", "SensesOS",
+        [_CONTROL_GUID_A, _CONTROL_GUID_B], [_CONTROL_GUID_B, _CONTROL_GUID_A],
+        "order",
+        "an order-critical owned sequence arriving scrambled with identical "
+        "membership",
+    ),
+    FIELD_PLANE_LINK: (
+        "LexSense", "MorphoSyntaxAnalysisRA",
+        _CONTROL_GUID_A, None,
+        "link",
+        "a set source reference arriving unset, with no drop or skip record "
+        "for it",
+    ),
+}
+
+
+class _ControlCensus:
+    """The ``.values`` surface ``FieldPlaneComparator`` reads.
+
+    A real ``census.FieldCensus`` also carries a coverage block these controls
+    have no use for, and building one would make the demonstration depend on
+    the census module's shape as well as the comparator's.
+    """
+
+    def __init__(self, values):
+        self.values = values
+
+
+def _field_plane_control(name: str):
+    """Run one field-plane seeded defect through the whole chain.
+
+    Returns ``(verdict_token, rule_that_fired, detail)``. ``verdict_token`` is
+    ``None`` when the chain reached no failing verdict, which is FR-181's
+    finding and is reported as ``unfalsifiable`` by the caller rather than
+    smoothed over.
+    """
+    from . import compare as compare_mod
+    from . import fieldplane as fp
+
+    class_name, field_name, src_value, tgt_value, expected_rule, _desc = (
+        _FIELD_PLANE_CASES[name])
+
+    # The two projects' writing systems. Only the WS control needs more than
+    # one; the others get the same single tag on both sides so their values
+    # cannot accidentally be classified as multistrings.
+    source_tags = ("en", "ngq") if name == FIELD_PLANE_WS else ("en",)
+    target_tags = ("en",)
+    ws_mapping = compare_mod.build_writing_system_mapping(source_tags, target_tags)
+
+    source_census = _ControlCensus(
+        {class_name: {_CONTROL_OWNER: {field_name: src_value}}})
+    target_census = _ControlCensus(
+        {class_name: {_CONTROL_OWNER: {field_name: tgt_value}}})
+
+    comparator = fp.FieldPlaneComparator(
+        source_census=source_census,
+        target_census=target_census,
+        ws_mapping=ws_mapping,
+        source_ws_keys=source_tags,
+        target_ws_keys=target_tags,
+        target_ws_tags=target_tags,
+        # No drops, so the link control's null target has no accounting
+        # record -- FR-087's SILENTLY_UNSET rather than FR-088's milder
+        # LOST-BUT-ACCOUNTED. Handing it a record would demonstrate the wrong
+        # branch of the same detector.
+        drops=(),
+    )
+
+    census_ids = {class_name: {_CONTROL_OWNER}}
+    accounting = compare_mod.reconcile_objects(
+        census_ids, census_ids, census_ids,
+        project="negative-control",
+        payload_equal=comparator.payload_equal,
+    )
+
+    # ``value_findings`` rows name their rule under ``kind`` (the artifact's
+    # own spelling, contracts/artifact-schema.md). ``link_findings`` is a
+    # parallel record of every classified reference, failing or not, so it is
+    # counted but never consulted for which rule fired.
+    findings = comparator.value_findings()
+    rules = sorted({f.get("kind") for f in findings if f.get("kind")})
+    rule = rules[0] if len(rules) == 1 else ",".join(rules)
+
+    result = guard_total_accounting(RunContext(project="negative-control",
+                                               accounting=accounting))
+    detail = {
+        "class": class_name,
+        "field": field_name,
+        "rule_expected": expected_rule,
+        "rule_fired": rule,
+        "findings": len(findings),
+        "link_rows_recorded": len(comparator.link_findings()),
+        "guard": FIELD_PLANE_VERDICT_VIA,
+        "guard_result": result.result,
+        "guard_message": result.message,
+    }
+    if result.result != "fail" or rule != expected_rule:
+        return None, rule, detail
+    return GUARD_FAILURE_VERDICT[FIELD_PLANE_VERDICT_VIA], rule, detail
+
+
+def run_field_plane_controls() -> tuple:
+    """FR-178/FR-179 for the Section E field-plane detectors.
+
+    Same ``NegativeControlOutcome`` shape as the fifteen guards', so the
+    durable artifact keeps ONE record shape and a reader does not have to
+    learn a second one to read half the file.
+    """
+    out = []
+    for name in FIELD_PLANE_CONTROL_NAMES:
+        token, rule, detail = _field_plane_control(name)
+        unfalsifiable = token is None
+        out.append(NegativeControlOutcome(
+            guard=name,
+            seeded_defect=_FIELD_PLANE_CASES[name][5],
+            result="fail" if not unfalsifiable else detail["guard_result"],
+            verdict_produced=token or GUARD_FAILURE_VERDICT[FIELD_PLANE_VERDICT_VIA],
+            guard_module_hash=guard_module_hash(name),
+            unfalsifiable=unfalsifiable,
+            message="rule %r -> %s via %s%s" % (
+                rule, detail["guard_result"], FIELD_PLANE_VERDICT_VIA,
+                "" if not unfalsifiable
+                else " -- SEEDED DEFECT DID NOT FAIL THE RUN (expected rule "
+                     "%r)" % (detail["rule_expected"],)),
+        ))
+    return tuple(out)
+
+
 @dataclass
 class NegativeControlOutcome:
     """One guard's demonstration. ``unfalsifiable`` is FR-181's finding: the
@@ -1262,6 +1558,11 @@ def run_negative_controls(
             unfalsifiable=unfalsifiable,
             message=res.message,
         ))
+    # FR-178's "every distortion or loss detector (Section E)" -- the
+    # field plane's rules, demonstrated through the same chain a real run
+    # uses. Appended rather than interleaved so the artifact lists the
+    # fifteen guards first and the detectors after them.
+    out.extend(run_field_plane_controls())
     return tuple(out)
 
 

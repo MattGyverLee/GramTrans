@@ -181,7 +181,10 @@ def run_full_move():
             source_handle, source_project_name=SOURCE, source_project_path="")
         choice = api.TargetCandidate(project_name=TARGET, project_path=TARGET_PATH)
         context = api.bind_target(stub, choice)
-        selection = full_run.build_full_selection()
+        # FR-134 (feature 035 T045): a FULL move excludes nothing. This line
+        # used to inherit build_full_selection's stem-less default, so a
+        # script named for auditing a full copy audited a stem-less one.
+        selection = full_run.build_full_selection(exclude=full_run.FULL_COVERAGE)
         src_vern = source_handle.GetDefaultVernacularWS()[0]
         tgt_vern = context.target_handle.GetDefaultVernacularWS()[0]
         ws_mapping = WSMapping(entries=(WSMappingEntry(

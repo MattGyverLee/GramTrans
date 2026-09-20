@@ -1,6 +1,6 @@
 """Full-sweep transfer + structural intactness verification (attended, destructive).
 
-Runs a FULL-selection Move (every GrammarCategory except STEMS, per
+Runs a FULL-selection Move (every GrammarCategory, stems included -- T045,
 harness.full_run.build_full_selection) from SOURCE into a disposable TARGET that
 this driver restores from a clean backup first -- then proves, by GUID-keyed
 source-vs-target diff, that four domains arrived INTACT:
@@ -295,7 +295,11 @@ def run_full_move():
             source_handle, source_project_name=SOURCE, source_project_path="")
         choice = api.TargetCandidate(project_name=TARGET, project_path=TARGET_PATH)
         context = api.bind_target(stub, choice)
-        selection = full_run.build_full_selection()   # all cats except STEMS
+        # FR-134 (feature 035 T045): every category, stems included. The
+        # comment that used to sit here read "all cats except STEMS" while
+        # the module docstring promised "every GrammarCategory" -- the
+        # inherited default, disagreeing with the claim above it.
+        selection = full_run.build_full_selection(exclude=full_run.FULL_COVERAGE)
         src_vern = source_handle.GetDefaultVernacularWS()[0]
         tgt_vern = context.target_handle.GetDefaultVernacularWS()[0]
         ws_mapping = WSMapping(entries=(WSMappingEntry(

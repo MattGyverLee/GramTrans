@@ -1623,7 +1623,8 @@ def _split_categories(value: str) -> list:
     """``--exclude-categories`` is REQUIRED AND EXPLICIT, and may legitimately
     be EMPTY. An empty string therefore means "exclude nothing", stated
     deliberately -- never a default argument that silently excludes STEMS the
-    way ``full_run.build_full_selection`` does on its own."""
+    way ``full_run.build_full_selection`` used to on its own (T045 made that
+    parameter required, so no caller can inherit it any more)."""
     if value is None:
         raise argparse.ArgumentTypeError(
             "--exclude-categories must be given explicitly (pass '' to exclude "

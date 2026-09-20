@@ -10,18 +10,20 @@ ASCII-only console output.
 
 Public API
 ----------
-build_full_selection(exclude=frozenset({GrammarCategory.STEMS})) -> Selection
+build_full_selection(exclude) -> Selection
     Every GrammarCategory member set True except those in ``exclude``. All
     pick-sets left empty (engine walks all POSes / transfer-all leaf items).
+    ``exclude`` is REQUIRED: see FULL_COVERAGE / LEGACY_STEMLESS_EXCLUSION and
+    the note on the function itself.
 
 run_full_transfer(source_name, target_name, target_path, exclude=None)
         -> (RunPlan, RunReport)
     Opens source RO, binds target, compute_preview, execute_move. Sets the
     GRAMTRANS_DEBUG env var first so export/persist diagnostics fire.
-    ``exclude`` is a frozenset of GrammarCategory MEMBERS; None keeps
-    build_full_selection's own default (which excludes STEMS). Pass an explicit
-    set when the caller must be able to state, on its artifact, what actually
-    ran -- see the note on that function.
+    ``exclude`` is a frozenset of GrammarCategory MEMBERS; None keeps this
+    function's historical stem-less shape (LEGACY_STEMLESS_EXCLUSION). Pass an
+    explicit set when the caller must be able to state, on its artifact, what
+    actually ran -- see the note on build_full_selection.
 
 reopen_and_count(target_name) -> dict[str, int]
     Reopens the target fresh (read-only) and returns a few cheap, robust
@@ -46,15 +48,39 @@ from gramtrans.Lib.models import (
 # Selection builder
 # ---------------------------------------------------------------------------
 
-def build_full_selection(
-    exclude: frozenset = frozenset({GrammarCategory.STEMS}),
-) -> Selection:
+#: Exclude nothing: every GrammarCategory member, stems included. What a FULL
+#: copy means, and what feature 035's sweep passes.
+FULL_COVERAGE: frozenset = frozenset()
+
+#: The exclusion this module carried as an INVISIBLE DEFAULT until feature 035
+#: T045. It is kept, named, so the callers that genuinely want the historical
+#: stem-less shape can say so out loud and a reader of their results can see
+#: it. It is never a default.
+LEGACY_STEMLESS_EXCLUSION: frozenset = frozenset({GrammarCategory.STEMS})
+
+
+def build_full_selection(exclude: frozenset) -> Selection:
     """Build a Selection with EVERY GrammarCategory True except ``exclude``.
 
     Pick-sets (pos_picks / affix_picks / stem_picks / leaf_item_picks) are left
     empty so the engine walks all POSes and transfers all leaf items.
     Custom Fields is included (it is a normal GrammarCategory member), which is
     what exercises the PATH-CLOSE-REBIND persist branch in execute_move.
+
+    ``exclude`` IS REQUIRED (feature 035 T045, FR-134/FR-135). It used to
+    default to ``frozenset({GrammarCategory.STEMS})``, and that default is the
+    exact defect FR-134 names: "the sweep MUST NOT inherit an existing narrower
+    harness's default exclusion of this category unexamined, because that
+    exclusion exists to serve a different, narrower goal, not because
+    transferring this category is known to be unsafe." The stem-less default
+    exists here because this harness grew up driving stem-less regression runs;
+    a caller who never typed the word "stems" then shipped a run that skipped
+    them, and FR-135 forbids exactly that -- an exclusion "expressed as an
+    invisible default argument that a reader of the results cannot see".
+
+    Making it required does not forbid the narrow shape; it forbids getting it
+    by accident. Pass ``FULL_COVERAGE`` for a real full copy or
+    ``LEGACY_STEMLESS_EXCLUSION`` for the historical one.
     """
     categories = {
         cat: True
@@ -402,8 +428,10 @@ def run_full_transfer(
     dozen existing callers are byte-identical:
 
     ``exclude``
-        Passed to `build_full_selection`. ``None`` keeps that function's own
-        default (STEMS excluded). T024c passes ``frozenset()`` because a FULL
+        Passed to `build_full_selection`. ``None`` keeps this function's
+        historical shape, ``LEGACY_STEMLESS_EXCLUSION``; since T045 that is
+        named at the call site rather than inherited from the callee, which
+        has no default any more. T024c passes ``frozenset()`` because a FULL
         copy must not exclude stems -- the census then measures what a full
         copy actually does, not what a stem-less one does.
     ``ws_mapping_mode``
@@ -475,8 +503,12 @@ def run_full_transfer(
         else:
             context = api.bind_target(stub, choice)
 
-        selection = (build_full_selection() if exclude is None
-                     else build_full_selection(exclude=exclude))
+        # ``exclude=None`` keeps this function's documented historical
+        # behaviour, but names it now that `build_full_selection` has no
+        # default of its own (T045): the stem-less shape is a choice this line
+        # makes, not one a reader has to know the callee's default to see.
+        selection = build_full_selection(
+            exclude=LEGACY_STEMLESS_EXCLUSION if exclude is None else exclude)
         if selection_transform is not None:
             # Feature 038 T070-T072: the ONLY way to measure a deselection
             # live is to build the same plan twice and change nothing but the
