@@ -322,3 +322,47 @@ Mbugwe, leaving a stale `running` entry for Esperanto in the ledger.
 
 **Still to do before T035 can be checked**: a complete three-pilot batch at one
 revision pair, and a ruling on the Mbugwe source drift in section 3.
+
+## 6. The real blocker on a non-VACUOUS verdict: five flexicon read defects
+
+Investigated 2026-09-21. The instrument is not the problem -- **GramTrans's own
+functions work**. The comparator performed **8,995 comparisons** across 8 rule
+types, produced 174 findings, and **refused 42 comparisons with a recorded reason
+rather than guessing** (27 natural-key identity per FR-085, 12 undeclared-numeric
+per FR-078, 3 unclassifiable shape). The guards, verdict resolution, safety spine
+and classifier all function.
+
+What fails is **reading the objects back**. `GetSyncableProperties` raises for 10
+classes, leaving **3,388 of 4,954 object pairs (68%) unread** on Ejagham Mini. All
+five causes are flexicon defects, each verified in the flexicon working tree at
+`ef94601` and filed upstream:
+
+| Defect | Site | Objects | Issue |
+|---|---|---|---|
+| `FLExProject.GetMultiStringDict` called by 7 overrides, **defined nowhere** | 10 call sites / 7 files | ~970 | **#332** (pre-existing; live evidence added) |
+| `item.OcmCodes` is `None`, so `.get_String()` raises | `SemanticDomainOperations.py:1267` | **1,792** | **#348** |
+| calls `self.__ResolveObject`, never defined (name mangling) | `AnthropologyOperations.py:2001` | 859 | **#349** |
+| inherits possibility-shaped impl reading `item.Description` unguarded | `possibility_item_base.py:498` | 4 | **#350** |
+| `ITsString.get_WritingSystemAt` does not exist | `ParagraphOperations.py:404` | 205 | **#351** |
+
+`#332` was already open from a Sena 3 finding and explicitly asked whether the
+other 7 sites fail identically; this run answers yes, on a second project, and
+that evidence is now attached to it.
+
+### The distinction that matters for reading this feature's results
+
+The transfer engine **writes** these classes correctly -- `Text`, `Segment`,
+`WfiWordform`, `WfiGloss` and `WfiMorphBundle` are all in the written-class set and
+`IDEMPOTENCY-IN-WRITTEN-CLASSES` passes on them. What is blocked is reading them
+back to **verify** the write. So the texts/wordforms transfer is not demonstrably
+broken; it is **currently unverifiable**, which is precisely why the honest verdict
+is `VACUOUS` rather than a green.
+
+This also fully explains the 16 unmeasured categories of section 1: they are the
+texts, wordforms, semantic-domains and lexicon families -- exactly the accessors
+that raise.
+
+**Consequence for T035**: no complete three-pilot batch can reach a non-`VACUOUS`
+verdict until at least #332 and #348 land. Those two alone would take the unread
+fraction from 68% to roughly 15%.
+
