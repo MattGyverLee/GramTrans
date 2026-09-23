@@ -15303,20 +15303,45 @@ def _phon_rule_apply_body(src_rule, new_rule, class_name, source, target,
         """
         return _resolve_scoped_referent(context, src_ref, by_guid, expect_class)
 
-    def _collect_nc_constraints(context_seq):
-        """Yield (constraint_obj, constraint_guid) from NC contexts in seq."""
+    def _walk_context_cells(context_seq):
+        """Yield every context cell in ``context_seq``, descending nested
+        ``PhSequenceContext.MembersRS`` and ``PhIterationContext.MemberRA``."""
         for cell in context_seq:
+            if cell is None:
+                continue
+            yield cell
             try:
                 cn = ICmObject(cell).ClassName
             except (AttributeError, TypeError):
                 cn = ""
-            if cn == "PhSimpleContextNC":
+            if cn == "PhSequenceContext":
                 try:
-                    nc_ctx = IPhSimpleContextNC(cell)
-                    for constr in list(nc_ctx.PlusConstrRS) + list(nc_ctx.MinusConstrRS):
-                        yield constr, _guid_str_from(constr)
+                    yield from _walk_context_cells(IPhSequenceContext(cell).MembersRS)
                 except (AttributeError, TypeError):
                     pass
+            elif cn == "PhIterationContext":
+                try:
+                    member = getattr(IPhIterationContext(cell), "MemberRA", None)
+                except (AttributeError, TypeError):
+                    member = None
+                if member is not None:
+                    yield from _walk_context_cells((member,))
+
+    def _collect_nc_constraints(context_seq):
+        """Yield (constraint_obj, constraint_guid) from NC contexts in seq."""
+        for cell in _walk_context_cells(context_seq):
+            try:
+                cn = ICmObject(cell).ClassName
+            except (AttributeError, TypeError):
+                cn = ""
+            if cn != "PhSimpleContextNC":
+                continue
+            try:
+                nc_ctx = IPhSimpleContextNC(cell)
+                for constr in list(nc_ctx.PlusConstrRS) + list(nc_ctx.MinusConstrRS):
+                    yield constr, _guid_str_from(constr)
+            except (AttributeError, TypeError):
+                pass
 
     def _pre_pass_constraints_from_seq(seq):
         for constr, cg in _collect_nc_constraints(seq):
@@ -15376,20 +15401,8 @@ def _phon_rule_apply_body(src_rule, new_rule, class_name, source, target,
                 val = getattr(src_rhs, attr, None)
                 if val is None:
                     continue
-                # OA returns a single object; OS is iterable
-                if attr.endswith("OA"):
-                    # May itself be a sequence
-                    try:
-                        cn = ICmObject(val).ClassName
-                        if cn == "PhSequenceContext":
-                            seq_ctx = IPhSequenceContext(val)
-                            _pre_pass_constraints_from_seq(seq_ctx.MembersRS)
-                        else:
-                            _pre_pass_constraints_from_seq([val])
-                    except (AttributeError, TypeError):
-                        pass
-                else:
-                    _pre_pass_constraints_from_seq(val)
+                # OA returns a single object; OS is iterable.
+                _pre_pass_constraints_from_seq([val] if attr.endswith("OA") else val)
             except (AttributeError, TypeError):
                 pass
 
