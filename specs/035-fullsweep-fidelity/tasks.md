@@ -15,6 +15,112 @@ dependency) and may be built in any order.
 
 ---
 
+---
+
+## Amendment (2026-08-22) -- the 038 cut
+
+Feature 038 landed a second fidelity instrument while this feature's driver sat
+dormant on `main`: `src/gramtrans/Lib/census.py` + `src/gramtrans/census_cli.py`,
+7,442 lines, live-validated, at 111/125 tasks on worktree branch
+`038-transfer-fidelity-gaps` (82 commits ahead of `main`, unmerged). This file was
+cut against that overlap on 2026-08-22. Four measured facts shape every ruling
+below:
+
+1. **The dependency runs 035 -> 038, and only that way.** 038's census re-derives
+   its class list from [object-inventory.md](./object-inventory.md) TABLE 1 +
+   TABLE 2 **at run time**, and loads `contracts/natural-key-identity-roster.json`
+   and `contracts/coverage-floor.json`. This feature's **contracts are load-bearing
+   production inputs** and are NOT touched by this amendment -- no entry removed,
+   no file renamed, no identifier renumbered. What shrinks is the **driver**.
+2. **038's census is count-only.** Grepped 2026-08-22: `Lib/census.py` contains no
+   `GetSyncableProperties` call and no field reader of any kind. A class can arrive
+   at the correct count with every field blank and 038's gate reports `MATCHED`.
+   The **field plane -- User Story 2's actual claim -- is uncovered by 038** and
+   stays in scope here.
+3. **038's plane-1 counting is strictly better than this driver's.** It fixed the
+   polymorphic-repository double-count (2,731 objects over-counted), subtracts a
+   captured starter baseline, and groups duplicate natural keys per class.
+   Re-implementing any of that here would install a second, worse truth source.
+4. **038 chose the opposite escape-hatch design.** Its reason vocabulary is closed
+   at 16 tokens with no `UNEXPLAINED` and no `OTHER`. This feature's loss allowlist
+   is an explicit, expiring, capped way to *forgive* a loss. Shipping both would
+   give the repo two competing ways to bless a known loss -- the precise failure
+   mode this feature exists to retire. **The allowlist loses.**
+
+> **Premises 2 and 4 re-verified (2026-09-19).** Re-checked against the worktree at
+> `d7fb798` and both still hold. `src/gramtrans/Lib/census.py` is still count-only --
+> its single `GetSyncableProperties` occurrence (line 313) is a DOCSTRING sentence
+> about what flexicon's phoneme ops exclude, not a call. The owning-field machinery
+> (`OWNING_FIELD_RULINGS` ~172, `owning_field_counts` ~1451-1584, `_owning_field_label`
+> ~2564) reads `OwningFlid`/`GetFieldName` for loss ATTRIBUTION and never reads a
+> field's value, so it does not satisfy T045d's
+> `field_source(cls, guid) -> (model_fields, syncable_props)` contract.
+
+### The buckets
+
+| bucket | tasks | ruling |
+| --- | --- | --- |
+| **KEEP** -- uniquely valuable, no 038 equivalent | T045d, T047, T050, T056, T063 | Build as written |
+| **KEEP** -- cheap, closes an honesty gap | T064, T065, **T069 (new)**, **T070 (new)**, **T071 (new)** | Build as written |
+| **RETARGET** -- consume 038's census instead of re-deriving plane 1 | T045a(c), T045b, T045e, T045f, T045, T048, T051, T052, T053, T057, **T068 (new)** | Scope narrowed in place; see each task's note |
+| **CUT** -- superseded by 038's closed vocabulary | T058, T059, T060, T061 | Struck. Not deferred -- struck |
+| **GATED** -- only meaningful once a full corpus run is authorized | T035, T046, T049, T054, T055, T062, T066, T067 | Text unchanged; blocked on an explicit go/no-go |
+
+> **GATED bucket update (2026-09-19).** 038 T085 is DONE. Feature 038 merged to
+> `main` (merge commit `562cb53`; `main` now at `d7fb798`; 150/150 tasks). That half
+> of the blocker on T035, T046, T049, T054, T055, T062, T066, T067 is DISCHARGED.
+> What remains is only the explicit human go/no-go for a full corpus run -- a
+> decision, not code. T062 additionally stays blocked on T063.
+
+A **CUT** task keeps its `- [ ]` box. It is not checked: checking it would claim
+work that was deliberately not done, and this file's whole discipline is that a
+box means a measurement happened. Read the box plus the `CUT` marker together.
+
+### Ordering: nothing re-runs before 038 merges
+
+038's T085 merges `038-transfer-fidelity-gaps` to `main`, and its T078..T084 are
+still open. A measurement taken now is taken under a revision pair about to be
+superseded, which **this feature's own FR-158 / SC-010 would mark STALE**. Every
+KEEP and RETARGET task that opens a live project therefore waits on 038 T085. The
+two that open nothing -- **T045d** (the field reader) and **T063** (instrument
+retirement) -- may start immediately.
+
+> **DISCHARGED (2026-09-19).** 038 T085 is DONE: feature 038 merged to `main`
+> (merge commit `562cb53`; `main` now at `d7fb798`; 150/150 tasks). The precondition
+> this section is named for has been met. What remains before T035, T046,
+> T048-T057, T066, T067 may run for real is only the explicit human go/no-go for a
+> full corpus run named in the GATED bucket above -- a decision, not code.
+
+### What the cut leaves behind, and who cleans it
+
+The loss allowlist is **partly built already**: T032 is `[x]`, so
+`debug/fullsweep/allowlist.py` (323 lines: exact-reason matching plus the per-entry
+cap, FR-115..FR-117) and `contracts/loss-allowlist.json` exist, with a live call
+site at `debug/run_fullcopy_sweep.py:543` (`load_loss_allowlist`) and a star-export
+at `debug/fullsweep/__init__.py:71`. Do **not** confuse it with the
+destination-project-name allowlist in `safety.py` -- an unrelated concept that
+happens to share an English word, and which stays. Retiring the loss-allowlist
+module, its contract file, its export and its one call site is folded into **T063**.
+
+The cut also creates one defect that must not be left standing, which is why
+**T068** is new below. `verdict.py:210` returns `PASS_WITH_ALLOWLIST` whenever
+`allowlist_consumed is None`, and `None` is today's only call site -- a deliberate
+under-claim, pending a caller that would pass the real fact. With the allowlist
+struck, no run can ever consume an entry, so every clean run would report
+`PASS_WITH_ALLOWLIST` forever and `CLEAN_PASS` would be **unreachable**. The cut is
+not finished until that collapses.
+
+### Spec consequences (recorded, not silently absorbed)
+
+`spec.md` Section H and these identifiers describe a surface this amendment struck:
+**FR-115..FR-122, FR-182, SC-007, SC-015**. They are marked CUT-BY-DECISION in
+`spec.md` rather than deleted, so the reasoning stays readable and a later reader
+cannot mistake the gap for an oversight. FR-097's dropped-and-allowlisted bucket
+loses its allowlisted arm: a drop is henceforth either explained by a
+closed-vocabulary reason or it fails.
+
+---
+
 ## Phase 1: Setup -- package promotion
 
 Mechanical only. No behavior changes, no new checks. `tests/unit/test_035_sweep_safety.py`
@@ -406,7 +512,48 @@ the comparator's verdict for each -- no corpus-wide run needed.
 > T045c is last of the wiring tasks on purpose: it is unreachable until the answering
 > set is complete, and it is the thing that fires when it is.
 
-- [ ] **T045a** [US2] Wire the driver's OWN measurements into `RunContext`, and the two
+> **ORDERING SETTLED (2026-09-19).** The companion resolver reported
+> `nextTask=T045a`; that was POSITIONAL, not dependency-correct. Verified against
+> the worktree at `7011b5b`: T045a parts (a)+(b) are landed (`build_run_context` at
+> `debug/run_fullcopy_sweep.py:415-418, 731`; `reconcile_project_objects` at `:464`;
+> MEASURABLE/UNMEASURED field sets at `:335-350` and `:364-389` partition all 23
+> `RunContext` fields), T045c is landed, and the first unchecked link in the
+> superseding chain above is **T045d**. T045a(c) is a hard dependency on T045d and
+> cannot be built first.
+>
+> **CHAIN ADVANCED 2026-09-19.** T045d, T045e and T045f are now landed. The first
+> unchecked link is **T045a(c)** -- the driver wiring that calls
+> `artifact.record_field_plane` with the comparison, link, depth, coverage and census
+> blocks T045f just gave a home to. The resolver will keep reporting `nextTask=T045a`
+> because T045a's box is the first unchecked one positionally; from here that answer
+> happens to be right, for the wrong reason.
+>
+> **T045a(c) LANDED 2026-09-19** -- see the DONE note under T045a below. The chain's
+> first unchecked link is now **T045b** (the remaining eight guard inputs). T045c is
+> already done, so T045b is the last thing between the answering set and 15/15.
+>
+> **T045b LANDED 2026-09-19.** The answering set is **15/15** and FR-109 no
+> longer sinks a complete run to `VACUOUS`. The chain
+> T044 -> T045d -> T045e -> T045f -> T045a(c) -> T045b -> T045c is COMPLETE.
+> What remains before the T035 batch-1 re-run is **T045** (the
+> `CATEGORY-COVERAGE` semantics and the negative-control seeding) and, as a
+> hard external blocker on ANY live run, the **T023 capability-fingerprint
+> mismatch** -- preflight exits 6 today, so no run reaches `run_one_project`
+> at all. That blocker is now the single thing standing between this
+> instrument and a real measured verdict.
+>
+> **T045 LANDED 2026-09-19.** Every code task ahead of the T035 batch-1
+> re-run is done; see T045's DONE note. The **T023 capability-fingerprint
+> mismatch is now the ONLY remaining blocker** on a live run -- preflight
+> still exits 6 (flexicon is at rev `ef94601`, the fingerprint pins
+> `5994acc`, and `GramCatOperations.ApplySyncableProperties.declared` reads
+> False where the fingerprint pins True). It needs the flexicon override
+> restored or a DELIBERATE re-pin; it is not code this feature owns.
+> T045 also filed **T071** -- FR-189's depth findings reach no verdict -- but
+> that is an honesty gap in what a passing run may claim, not a blocker on
+> taking the measurement.
+
+- [X] **T045a** [US2] Wire the driver's OWN measurements into `RunContext`, and the two
       accounting planes into the guard inputs. `run_one_project` currently calls
       `run_all_guards(RunContext(project=source_name))` -- **positionally empty**. Every
       `RunContext` measurement field defaults to `None` and a `None` input makes its guard
@@ -432,6 +579,15 @@ the comparator's verdict for each -- no corpus-wide run needed.
       `NOT_YET_CLASSIFIED_MISSING_FROM_TARGET`.
       · `debug/run_fullcopy_sweep.py`, `debug/fullsweep/guards.py`
 
+  > **RETARGETED 2026-08-22 (the 038 cut).** Parts (a) and (b) are done and
+  > unaffected. Part (c) stands **minus plane 1**: do not re-derive object counts here.
+  > 038's census artifact already carries per-class source / destination / net counts
+  > with the starter baseline subtracted, exact-class (non-polymorphic) counting, and
+  > per-class duplicate-natural-key grouping -- all three of which this driver either
+  > lacks or got wrong. Consume that artifact as the plane-1 input and keep this task's
+  > remaining work on the **field** plane: the five comparison rules and the
+  > `comparisons` shape.
+
   > **(a) and (b) DONE 2026-08-19.** The guard block went from **0/15 to 5/15
   > answering**: `BASELINE-DELTA`, `TOTAL-ACCOUNTING`,
   > `IDEMPOTENCY-IN-WRITTEN-CLASSES`, `PLAN-CONSERVATION` and
@@ -454,6 +610,102 @@ the comparator's verdict for each -- no corpus-wide run needed.
   >    reader to mistake", in its strongest form, plus FR-135's invisible-default
   >    prohibition. `run_full_transfer` now takes an `exclude` parameter.
   >
+  > **(c) DONE 2026-09-19.** `debug/fullsweep/fieldplane.py` (new, ~1180 lines) is
+  > the missing middle: the value-shape -> rule dispatcher, the payload comparator
+  > `reconcile_objects` has been calling a no-op stand-in for, and the read-only
+  > per-project gather that feeds it. `run_one_project` now builds it (two new
+  > helpers, `build_field_plane` and `record_plane_2_measurements`), hands it to the
+  > reconciliation as `payload_equal`, and writes all five plane-2 blocks through
+  > T045f's `record_field_plane`. 61 new tests; full unit suite **5006 passed /
+  > 4 failed**, the 4 being the T023 fingerprint blocker below and nothing else
+  > (4945/4 before this task -- delta exactly +61, all passes).
+  >
+  > **The answering set moved 5/15 -> 7/15.** `COMPARISONS-PERFORMED` and
+  > `CATEGORY-COVERAGE` now return pass or fail against the real guards, verified
+  > both ways (a category with source objects and zero comparisons still fails; an
+  > absent measurement still reports `not-evaluated`).
+  >
+  > **LIVE VERIFICATION, read-only, 2026-09-19** (pyflexicon 4.8.0; no project
+  > written to and no transfer run -- the sweep's own write path is still blocked by
+  > the T023 fingerprint mismatch recorded under T045f):
+  > 1. `Ejagham Mini` -> `Ejagham Full GT-Test`: both sides gathered, 21 of 65
+  >    source classes measured, the two guards ANSWER (fail -- correctly: the pair
+  >    is not a transfer pair, 900 objects unmatched).
+  > 2. **Negative control -- `Ejagham Mini` compared with ITSELF**: 15,142 objects,
+  >    1,672 matched pairs, **9,148 comparisons performed across six rules
+  >    (ws-alternatives 5,353 / link 1,154 / order 1,004 / scalar 930 / text 591 /
+  >    structure 116) and ZERO findings.** A self-comparison has no loss by
+  >    construction, so any finding here would be a defect in the comparator. 17
+  >    refusals, each with its reason: 12 undeclared integers (FR-078) and 5
+  >    undetermined order significances (FR-079).
+  >
+  > **Five rulings, each taken from a live measurement rather than from the shape
+  > the surface ought to have:**
+  >
+  > 1. **A writing-system HANDLE is not a language tag, and handles are
+  >    per-project.** Measured: `PartOfSpeech.Name` is `{'en': ...}` but
+  >    `CmPossibility.Name`, `LexEntryType.Name`, `LexEntryInflType.Name`,
+  >    `LexRefType.Name` and `MoMorphType.Name` are `{'999000001': ...}` --
+  >    handle-keyed, via `PossibilityItemOperations`. `full_run.py` already records
+  >    that `999000002` is `en` in `Ngoreme FLEx` and `ngq` in `Ngoreme Target`.
+  >    Comparing two projects' handle-keyed dicts directly would compare unrelated
+  >    writing systems and call the result fidelity, so every multistring is
+  >    normalized to tags through the handle map OF ITS OWN PROJECT first (FR-068),
+  >    nested ones included.
+  > 2. **A dict is a multistring only when its keys name writing systems.**
+  >    Measured: `MoStemMsa.MsFeatures` is `{'TypeGuid': ..., 'specs': [...]}`.
+  >    The discriminator is the project's own writing-system key set, not a guess.
+  > 3. **The writing-system mapping plane 2 compares under MUST mirror the one the
+  >    transfer ran under**, so `ws_mapping_mode` is now ONE parameter feeding both
+  >    transfers and the comparison, recorded on every artifact (FR-135) -- the same
+  >    defect shape T045a(a) found in the category selection. Its default is
+  >    **`full`**, not `full_run`'s `default-vernacular`: this is a full-copy sweep,
+  >    and FR-071 names the single-default-vernacular map as "the narrower default
+  >    this exists to refuse". Under the narrow mode the SAME clean data reports
+  >    `unmapped-writing-system-with-no-skip-record` on every analysis alternative
+  >    -- a defect in the run's own mapping construction, which is exactly what it
+  >    would be. Both modes are on the CLI; neither is invisible.
+  > 4. **A rule that refuses to classify costs the FIELD, not the run.** FR-078
+  >    (a stored integer with no decoder), FR-079 (an order significance the tool's
+  >    own convention does not determine -- measured: flexicon renames `SegmentsRC`
+  >    to `PhonemeGuids`, which no suffix rule can read) and FR-085 (a natural-key
+  >    roster class with no remap record) each RAISE by design. Each is recorded as
+  >    a refused comparison with its reason and counted separately from both a pass
+  >    and a finding; an object whose every field was refused returns `None`, which
+  >    FR-097 reports as never-compared. Nothing is ever passed on zero comparisons.
+  > 5. **An unknown value shape is a finding, not a pass.** The comparator did not
+  >    establish equality, and "we could not tell" must never read as "they matched".
+  >
+  > **Two census contract rules were disproved by running the census live, and
+  > corrected here** (`debug/fullsweep/census.py` -- T037's deliverable; both rules
+  > predate any live run). Together they were refusing NINE of the eleven classes
+  > `Ejagham Mini` could otherwise measure:
+  > 1. *"Two objects of one class must expose the same syncable surface."* False:
+  >    flexicon emits a key on PRESENCE, not truthiness -- POSOperations' own
+  >    contract says a NULL owning property "omits both keys entirely" -- so a
+  >    sparse object legitimately exposes a smaller surface. The raise cost SEVEN
+  >    classes their whole measurement (`PartOfSpeech`, `MoStemMsa`, `MoInflAffMsa`,
+  >    `MoInflAffixTemplate`, `PhEnvironment`, `FsClosedFeature`, `WfiAnalysis`).
+  >    The class's surface is now the UNION over its objects, and what varied is
+  >    published as `surface_variance`.
+  > 2. *"Every syncable key names a model field."* False for two different and
+  >    harmless reasons: a SYNTHESIZED name (`PhNCSegments.PhonemeGuids` is the
+  >    model's `SegmentsRC`) and a PHANTOM key (`LexSense.DoNotShowMainEntryInRC`,
+  >    which `field_dispatch`'s docstring already records as backed by no MDC
+  >    field). Refusing cost `LexSense` -- the most-transferred class in the corpus
+  >    -- its entire measurement to report a naming difference. Such keys are now
+  >    published as `unmapped_syncable_fields`, stay in `compared` (they carry real
+  >    values), and stay OUT of `engine_omitted`, which remains exactly
+  >    `model - syncable`. Measured effect: source classes measured 11 -> 21,
+  >    unreadable 20 -> 10 (the ten being exactly the flexicon accessor defects
+  >    T045d already recorded).
+  >
+  > **Scope line held.** The eight guard inputs of T045b are untouched and still
+  > report `not-evaluated`; FR-109 therefore still yields `VACUOUS`, with 7 real
+  > guard results attached instead of 5. `contracts/artifact-schema.md` now carries
+  > the settled `comparisons` shape, the two new census keys, and the two new
+  > artifact blocks (`writing_system_mapping`, `field_plane`).
+
   > **(c) NOT done, and T045a's own premise was wrong.** The task says it "is the
   > ONLY thing standing between T036-T045 and a non-`VACUOUS` verdict". Measured:
   > it is **necessary but not sufficient**. Ten guards still report
@@ -463,7 +715,7 @@ the comparator's verdict for each -- no corpus-wide run needed.
   > `UNMEASURED_RUN_CONTEXT_FIELDS`, and a test pins the answering set so a later
   > "non-VACUOUS" claim has to update it deliberately.
 
-- [ ] **T045b** [US2] **NEW, 2026-08-19** -- the remaining eight guard inputs. After T045a
+- [X] **T045b** [US2] **NEW, 2026-08-19** -- the remaining eight guard inputs. After T045a
       (a)+(b) the answering set is 5/15 and FR-109 therefore still reports `VACUOUS`. Part (c)
       buys back two more (`COMPARISONS-PERFORMED`, `CATEGORY-COVERAGE`); these eight are
       what remains, and **no other task covers them**:
@@ -489,6 +741,219 @@ the comparator's verdict for each -- no corpus-wide run needed.
       one belongs to `_cmd_batch`, not `run_one_project`.
       · `debug/run_fullcopy_sweep.py`, `debug/audit_guid_preservation.py`,
       `debug/fullsweep/moves.py`, `debug/fullsweep/artifact.py`
+
+  > **RETARGETED 2026-08-22 (the 038 cut).** Two of the eight inputs stop being
+  > measurements this driver takes: (i) `empty_measurements` is **derivable** from the
+  > census's per-class source counts plus its duplicate grouping -- take it from there
+  > rather than measuring the same thing twice; and (iii) `extras` -- the reverse walk,
+  > target objects absent from the source, with `tool_owned_duplicate` -- is covered by
+  > the census's `destination_count_net` arithmetic and its duplicate rows. What remains
+  > is the real reason this task survives the cut: the **anti-silence plumbing**, which
+  > has no 038 equivalent because it does not measure the transfer, it measures whether
+  > the instrument is telling the truth about its own coverage -- (ii)
+  > `unhandled_subtypes`, (iv) `accessor_counters`, (v) `close_operations`, (vi)
+  > `handle_operations`, (vii) `truncation`, (viii) `corpus_projects` +
+  > `artifacts_present`. (iv) is the sharpest of them and the cut does not touch it:
+  > `audit_guid_preservation.inventory_all` still swallows every per-object read failure
+  > in a bare `except Exception: continue`, at the exact point the counter should
+  > increment.
+
+  > **DONE 2026-09-19.** Two new modules -- `debug/fullsweep/instrument.py`
+  > (the anti-silence plumbing) and `debug/fullsweep/distortion.py` (the three
+  > derivations) -- plus the driver wiring, the corpus document, and the
+  > out-parameters threaded through `inventory_all`, `census_project`,
+  > `run_full_transfer` and `flush_artifact`. 47 new tests in
+  > `tests/unit/test_035_t045b_guard_inputs.py`; full unit suite **5053 passed
+  > / 4 failed** (5006/4 before -- delta exactly +47, all passes), the 4 being
+  > the T023 fingerprint blocker below and nothing else.
+  >
+  > **THE ANSWERING SET IS 15/15, and FR-109 no longer sinks the run.**
+  > `test_the_full_measurement_set_answers_all_fifteen` pins it in one place,
+  > and `test_removing_any_t045b_input_puts_the_run_straight_back_to_vacuous`
+  > pins the other direction for each of the eight -- FR-109 is not a majority
+  > vote, so fourteen answers and one abstention is still VACUOUS. That is
+  > what makes 15/15 the only interesting number.
+  >
+  > **Every out-parameter defaults to `None` and every pre-existing call site
+  > is byte-identical.** The bare `except`s at the swallow points are KEPT --
+  > aborting a 15,000-object enumeration over one unreadable object trades a
+  > partial measurement for none, and a close failure must not discard a
+  > transfer that succeeded. What changed is that the evidence no longer goes
+  > down with the exception: `oplog.watch` records and then RE-RAISES, so the
+  > excepts still do exactly what they did.
+  >
+  > **LIVE VERIFICATION, read-only, 2026-09-19** (`Ejagham Mini`, 65 classes /
+  > 15,142 objects; no project written to and no transfer run -- the sweep's
+  > own write path is still blocked by the T023 fingerprint mismatch):
+  > 1. **FR-103**: all four counters at a MEASURED zero over one instrumented
+  >    scope; `scopes_instrumented=1` is what distinguishes that from an
+  >    uninstrumented run, since all-zero is the PASS condition.
+  > 2. **FR-104/FR-108**: open 1.47s, close 1.09s, both `ok`, neither near the
+  >    90s deadline; the close carries `followed_by=['source_inventory']`.
+  > 3. **FR-098**: the per-project `.fwdata` scan found 42 of 69 in-scope
+  >    classes present; 27 empty, all `absent-or-null`, and **zero
+  >    census/.fwdata disagreements** -- the census and the independent count
+  >    agree completely, which is the corroboration working rather than a
+  >    coincidence to shrug at.
+  > 4. **FR-102**, six discriminations, all correct: identity-preserving full
+  >    copy over all 15,142 objects -> 0 untraceable, **pass**;
+  >    GUID-regenerating copy -> 15,142 untraceable, **fail** (the exact
+  >    defect `audit_guid_preservation` exists to find); pinned tool-owned
+  >    agent -> pass; unpinned agent -> fail; two agents -> fail; ordinary
+  >    ghost object -> fail.
+  >
+  > **FOUR RULINGS, and two of them were forced by the live run rather than
+  > chosen at the desk:**
+  >
+  > 1. **(open point (b), ruled) One shared record list, TWO projections.**
+  >    The task text concluded "one shared record list satisfies neither"
+  >    guard. True of one shared record SHAPE; not true of one list with two
+  >    projections, and the alternative -- two independently appended lists --
+  >    is exactly how a close ends up in one and not the other. A close is a
+  >    handle operation AND a close; `handle_record()` emits FR-104's keys and
+  >    `close_record()` emits FR-108's. Each guard is handed only what it
+  >    reads, because a guard given a key it ignores hides a fact it should
+  >    have failed on. `timed_out` is wall-clock against
+  >    `api._SCHEMA_CLOSE_TIMEOUT_S`, never an exception: the watchdog only
+  >    LOGS after its deadline, so a hung close returns normally and raises
+  >    nothing.
+  >
+  > 2. **(open point (a), CLOSED not deferred) The final flush is bounded, not
+  >    unmeasured.** The guards run inside `finally` and the artifact is
+  >    flushed immediately after, so the last write cannot feed the guard that
+  >    judges it. Closed by measuring a dry-run serialization BEFORE the
+  >    guards and NAMING what the final flush adds on top -- `guards`,
+  >    `verdict`, `exit_code`, `guard_inputs_measured`, `finished_at`,
+  >    `truncation`. A test asserts none of those is a detail-bearing list, so
+  >    the bound is machine-checked rather than asserted in prose, and
+  >    `verify_final` re-reads the written file afterwards and reports a
+  >    mismatch instead of assuming none. Separately: the counters are
+  >    measured against the SERIALIZED view, because `json.dumps(...,
+  >    default=str)` is not an identity map and comparing a document with
+  >    itself measures nothing.
+  >
+  > 3. **(open point (c), ruled) Accessor counters aggregate over the RUN,
+  >    with a per-scope breakdown.** The four `census_project` calls span two
+  >    projects and `RunContext` has one dict field. A census triple whose
+  >    SOURCE enumeration dropped objects is exactly as untrustworthy as one
+  >    whose target enumeration did -- the reconciliation subtracts one from
+  >    the other -- so the run is the right unit for the verdict, and
+  >    `by_scope` carries the diagnostic.
+  >
+  > 4. **(FORCED BY THE LIVE RUN) FR-183's population is not "every instance
+  >    of the class", and the desk answer was wrong.** This task first judged
+  >    tool-owned duplication over the whole post-run set, with a docstring
+  >    arguing that looking only at the delta would miss a new instance beside
+  >    a pre-existing one. The live control refuted it: `Ejagham Mini`
+  >    natively contains **four** `CmAgent`s (the default user, the parser
+  >    agents), so an identity-preserving walk that lost nothing reported four
+  >    duplicates -- a false FR-102 failure on **every project in the
+  >    corpus**. The population is instances purporting to record THE TOOL'S
+  >    OWN act: those carrying the pinned GUID, plus newly-created ones
+  >    tracing to no source. A pre-existing native agent is the target's own
+  >    data; a newly-present agent that IS traceable to the source is a copied
+  >    source object, which FR-183 handles separately through
+  >    `assert_identity_not_derived_from_source`.
+  >
+  > **A FIFTH RULING the 2026-08-19 note did not anticipate.** Ruling 1 of
+  > that note says `extras[*].allowlisted` is `False` always. It is, with
+  > exactly ONE enumerated exception: an object carrying a PINNED tool-owned
+  > GUID. FR-183 does not merely expect that object, it REQUIRES the engine to
+  > create it under that identity and derived from no source value, so failing
+  > it as an unexplained extra reports the contract being HONOURED as a
+  > fidelity defect. The roster that "does not exist" for arbitrary additions
+  > does exist for this one object --
+  > `identity.TOOL_OWNED_IDENTITY_CLASSES`. The asymmetry is safe in the
+  > direction that matters: `guard_no_extra` checks its duplicate branch
+  > BEFORE the allowlist branch and ignores the allowlist there, so FR-183's
+  > "never allowlistable" survives, verified live (two agents -> fail even
+  > though one of them is the pinned one). The note's stated consequence
+  > stands for everything else: real extras flip a project from VACUOUS to
+  > UNEXPLAINED_LOSS, a worse-looking result and a truer one.
+  >
+  > **A REQUIRED ARTIFACT FIELD THAT NOTHING HAS EVER WRITTEN.** FR-106's six
+  > required fields are CONTRACT names and **not one of the three interesting
+  > ones is a `ProjectArtifact` attribute name** -- the contract says
+  > `driver_revision` / `capability_fingerprint` / `baseline_identity`, the
+  > dataclass says `revision_pair` / `preflight` / `baseline`, and no mapping
+  > existed anywhere. Worse, `capability_fingerprint` had no value to map:
+  > `_preflight_gate` discarded its result on the success path and wrote a
+  > document only on refusal, so **every artifact this driver has ever
+  > produced was missing a field FR-106 requires**. Nothing noticed, because
+  > ARTIFACT-INTEGRITY has never once been evaluated. The gate now returns the
+  > passing record, `run_one_project` stamps it, and
+  > `artifact.artifact_completeness_record` is the one bridge both scopes use.
+  > `excluded_categories` is checked as "names and reasoned records AGREE in
+  > number", NOT as truthiness -- an empty exclusion list is the correct state
+  > for the full-coverage sweep FR-134 demands, and `bool([])` is False.
+  >
+  > **FR-106 is evaluated at TWO scopes, each naming itself.** Per project the
+  > corpus is this worker's own single project -- without which the guard
+  > could never be evaluated inside a worker at all and FR-109 would sink
+  > every project to VACUOUS forever, which is the outcome this wave exists to
+  > lift. Per corpus, `_cmd_batch` writes `_corpus.json` over the FROZEN
+  > manifest (not the narrowed batch), indexed by each document's own
+  > `project` key read back from the file -- never by de-mangling the
+  > filename, since `re.sub(r"[^A-Za-z0-9._ -]", "_", ...)` is lossy and has
+  > no inverse (pinned by a test that collides two real-shaped names onto one
+  > file). The corpus block is named `corpus_guards`, NEVER `guards`, so a
+  > one-guard block cannot make a fourteen-key per-project block expressible
+  > by precedent; a test asserts `assert_guard_block_complete` still REFUSES
+  > it. Its verdict word `CORPUS_COMPLETE` is deliberately not one of the ten,
+  > so a corpus whose every child failed cannot report a passing project
+  > verdict at the top level.
+  >
+  > **Three tests were passing VACUOUSLY and now assert their own
+  > preconditions.** `UNMEASURED_RUN_CONTEXT_FIELDS` is empty (all nine
+  > deposited) and `PENDING_PLANE_2_FIELDS` has been empty since T045a(c), so
+  > the three tests that iterate them passed over nothing -- the exact failure
+  > mode this feature exists to refuse, in its own test suite. Each now
+  > asserts the emptiness explicitly first. `test_no_field_is_defaulted_to_an_
+  > empty_container` was rewritten to range over every `RunContext`
+  > measurement field rather than over that registry, which is what its
+  > invariant was always about.
+  >
+  > **The lying test name is fixed.** `test_the_measured_ten_answer_and_the_
+  > rest_decline` (asserting five) is now
+  > `test_the_five_object_plane_guards_answer_from_object_plane_input_alone`,
+  > which is what its body pins. Honouring the assertion's own instruction to
+  > update it deliberately.
+  >
+  > **MEASURED WHILE PINNING THE ABOVE, recorded rather than tidied away.**
+  > `written` is on `MEASURABLE_RUN_CONTEXT_FIELDS` and deposited every run,
+  > but **no guard reads `ctx.written`** -- idempotency takes the class set
+  > off `IdempotencyResult.written_class_set` instead. It is not dead (the
+  > artifact carries it, FR-045's derivation needs it); it is simply not a
+  > guard input, which is why dropping it leaves the verdict unchanged.
+  > `test_written_is_deposited_but_no_guard_reads_it` pins that so a future
+  > guard reading it is noticed.
+  >
+  > **FR-099 found 23 out-of-scope classes in `Ejagham Mini`**, led by
+  > `CmDomainQ` at **7,938 instances** -- present in the source, absent from
+  > the in-scope roster, so no rule was ever selected for them. Reported as
+  > `in-source-but-not-on-the-in-scope-roster` rather than passed over.
+  > Whether the roster should grow is a coverage-floor question (T044's
+  > territory), not this task's; what T045b guarantees is that the number is
+  > no longer invisible.
+  >
+  > **SCOPE LINE HELD -- two things deliberately NOT done here:**
+  > 1. `tests/integration/harness/full_run.py:48-50` still reads
+  >    `exclude: frozenset = frozenset({GrammarCategory.STEMS})`, the
+  >    invisible default argument FR-135 forbids. T045b touches this file (for
+  >    the oplog) but does NOT own it: making the parameter required is a
+  >    breaking change to a harness function feature 038's tests also call,
+  >    and it belongs in a task that can re-run those. Still unowned; still
+  >    open. The same applies to deleting `reopen_and_count` /
+  >    `_COUNT_ACCESSORS` / `total_count`.
+  > 2. The T023 capability fingerprint still does not match the live
+  >    dependency. Re-measured 2026-09-19: flexicon is now rev `bc65a7b` (the
+  >    fingerprint pins `5994acc`; T045e saw `18a293b`, T045f saw `296f3b5`)
+  >    and `GramCatOperations.ApplySyncableProperties.declared` still reads
+  >    **False** where the fingerprint pins **True**. Preflight exits 6, which
+  >    **blocks any run that goes through it, T035's batch-1 re-run
+  >    included**. Needs the flexicon override restored or a DELIBERATE
+  >    re-pin. This is the last thing between here and a non-VACUOUS live
+  >    verdict.
 
 **⟶ A non-`VACUOUS` verdict requires T045a(c) AND T045b -- and, as of the 2026-08-19
 reconnaissance below, four further tasks neither of them names. T035's re-run before all
@@ -552,7 +1017,7 @@ points, then the corrections to claims already written in this file.
   > modules to depend on. 105 tests; `GUARD_FAILURE_VERDICT` verified total over all
   > fifteen guard names, so the lookup has no `KeyError` path.
 
-- [ ] **T045d** [US2] **The prerequisite T045a(c) cannot be built without.** Write the
+- [x] **T045d** [US2] **The prerequisite T045a(c) cannot be built without.** Write the
       generic field reader `field_source(cls, guid) -> (model_fields, syncable_props)` that
       `census.census_fields` (`debug/fullsweep/census.py:274-326`) requires. **No such
       reader exists anywhere in the repo.** `GetSyncableProperties` is *not* dispatchable by
@@ -635,7 +1100,69 @@ points, then the corrections to claims already written in this file.
       whose category map needs the final class list.
       · `contracts/coverage-floor.json`, `object-inventory.md`
 
-- [ ] **T045e** [US2] The class -> `GrammarCategory` mapping, as a tracked contract.
+  > **DONE 2026-09-19** (`00627d6`, branch `035-fullsweep-fidelity`).
+  > `debug/fullsweep/field_dispatch.py` (526 lines) implements the real
+  > `field_source(cls, guid) -> (model_fields, syncable_props)` that
+  > `census.census_fields` has taken as an injected callable since it was written --
+  > every previous caller was a unit-test lambda. Live-verified against `Ejagham Mini`
+  > (read-only, pyflexicon 4.8.0): **49 of the 66** present in-scope classes dispatch.
+  > 28 new tests; the 31 full-suite failures were proven PRE-EXISTING by re-running the
+  > parent commit `7011b5b` in a temp worktree (31 failed / 3601 passed there vs
+  > 31 failed / 3629 passed here -- delta exactly +28, all passes).
+  >
+  > **The two halves are sourced differently on purpose; do not collapse them.**
+  > `model_fields` comes from the generic metadata-cache route (`GetFieldID` /
+  > `mdc.GetFields`), `syncable_props` from the per-class Operations-accessor dispatch
+  > table -- because `BaseOperations.GetSyncableProperties` raises `NotImplementedError`
+  > unless overridden and so cannot be dispatched by class name. The omitted-property
+  > set this feature publishes is the DIFFERENCE between the two; collapsing them
+  > destroys the measurement.
+  >
+  > **The coverage hole was honored, and extended.** The three mandated
+  > adhoc-prohibition classes raise a dedicated `UnreachableClassError` rather than
+  > being skipped or handed an empty dict (an empty syncable surface is a measurement
+  > claim, and a false one). The open naming sub-question is **resolved**:
+  > `MoAdhocProhibMorph`/`MoAdhocProhibAllomorph` at `MorphRuleOperations.py:469` are
+  > historical flexicon misspellings of names that never existed in LCM; the real
+  > classes are `MoMorphAdhocProhib` (102) and `MoAlloAdhocProhib` (101), matching
+  > `coverage-floor.json`. Those branches can never fire.
+  >
+  > **Three NEW holes found live** and recorded in `DISCOVERED_UNREACHABLE_CLASSES`
+  > with reasons: `ReversalIndex` and `ReversalIndexEntry` (their Operations classes do
+  > not override `GetSyncableProperties`, so the call hits `BaseOperations`' stub) and
+  > `TextTag` (no reference to `ITextTag` exists anywhere in installed flexicon -- there
+  > is no accessor to even attempt). The residue in NEITHER table is **T070**.
+
+  > **KEEP, unblocked 2026-08-22 (the 038 cut).** The highest-leverage item left in
+  > this feature, and the one thing 038 cannot substitute for: 038's census is
+  > count-only, so without this reader **nothing anywhere** measures whether a
+  > correctly-counted object arrived with its fields intact. It opens no live project
+  > of its own, so it does not wait on 038 T085. Start here.
+
+  > **Live-verified constraints (2026-09-19)**, against installed pyflexicon 4.8.0,
+  > above the 4.5.2 floor:
+  > - `BaseOperations.GetSyncableProperties` still raises `NotImplementedError`
+  >   unless overridden (`BaseOperations.py:1286-1378`, raise at `:1373`) -- the
+  >   task's 2026-08-19 premise is CONFIRMED at 4.8.0, so the dispatch table is
+  >   still required.
+  > - 46 effectively-covered Operations classes: 41 define `GetSyncableProperties`
+  >   directly, 5 inherit it (`GramCatOperations` from `POSOperations`;
+  >   `AgentOperations`/`ConfidenceOperations`/`OverlayOperations`/
+  >   `PublicationOperations`/`TranslationTypeOperations` from
+  >   `PossibilityItemOperations`).
+  > - CONFIRMED COVERAGE HOLE: `MoAdhocProhibGr`, `MoAlloAdhocProhib`,
+  >   `MoMorphAdhocProhib` are handled only by `Grammar/adhoc_prohibition.py`'s
+  >   `AdhocProhibition`, which subclasses `LCMObjectWrapper`, NOT `BaseOperations`
+  >   -- they have no `GetSyncableProperties` at all. T045d MUST report these three
+  >   as an explicit unreachable-coverage hole and MUST NOT silently skip them.
+  >   Open sub-question: `MorphRuleOperations.py:469` refers to them by the
+  >   differently-spelled `MoAdhocProhibMorph`/`MoAdhocProhibAllomorph`; whether
+  >   those are the same classes under another name needs checking against the
+  >   roster.
+  > - `FLExProject.GetFieldID(className, fieldName)` (`FLExProject.py:4234`) is
+  >   public and generic, via `MetaDataCacheAccessor.GetFieldId`.
+
+- [x] **T045e** [US2] The class -> `GrammarCategory` mapping, as a tracked contract.
       `guard_comparisons_performed` keys its counters on **category**
       (`debug/fullsweep/guards.py:323`); every plane-2 surface keys on **class**
       (`census_fields`, `coverage.classify_coverage`, `coverage-floor.json`'s
@@ -650,7 +1177,109 @@ points, then the corrections to claims already written in this file.
       · new `specs/035-fullsweep-fidelity/contracts/class-category-map.json`,
       `debug/fullsweep/coverage.py`
 
-- [ ] **T045f** [US2] Give plane-2 output a home in the artifact. `ProjectArtifact`
+  > **RETARGETED 2026-08-22 (the 038 cut).** Still needed for the reason stated above
+  > -- `guard_comparisons_performed` keys on category, every plane-2 surface keys on
+  > class -- but the mapping is now **shared**, not local: 038's census keys on class
+  > and states its gate predicates per class. Write
+  > `contracts/class-category-map.json` as the one tracked mapping both instruments
+  > read. Do not fork a second copy inside `debug/fullsweep/`; a class-to-category
+  > mapping that disagrees between the two instruments is a silent divergence neither
+  > one can detect.
+
+  > **DONE 2026-09-19.** `contracts/class-category-map.json` (schema_version 1) ships
+  > the join: **71 entries over 69 classes**, set-equal to `coverage-floor.json`'s
+  > `in_scope_classes`, with **22 categories carrying at least one class and 8
+  > recorded as carrying none** -- together the whole 30-member `GrammarCategory`
+  > vocabulary, so no category is merely unmentioned. Reader + bridge in
+  > `debug/fullsweep/coverage.py`: `load_class_category_map`, `ClassCategoryMap`,
+  > `project_comparisons_to_categories`, `categories_reachable_only_through_excluded`.
+  > 43 tests in `tests/unit/test_035_class_category_map.py`.
+  >
+  > **The guard moved.** `COMPARISONS-PERFORMED` now returns `pass` / `fail` instead
+  > of `not-evaluated` when fed a projected measurement -- verified end-to-end against
+  > the real `guards.guard_comparisons_performed`, including that it still returns
+  > `not-evaluated` when the measurement is genuinely absent.
+  >
+  > **71 entries, not 69, and that is the point.** `FsFeatStrucType` and
+  > `FsClosedFeature` are each split on `owning_feature_system`, because a FieldWorks
+  > project has TWO feature systems that own them and the halves map to DIFFERENT
+  > categories (`feature_struct_types`/`phon_feat_types`,
+  > `inflection_features`/`phonological_features`). The discriminator is spelled
+  > exactly as 038's census `classRow.owning_feature_system` (Amendment A1) so the two
+  > instruments join single-valued on the same key rather than on a class name that is
+  > ambiguous in both.
+  >
+  > **Two adjudications the prose column could not express.**
+  > 1. **`LexEntryRef` is `stems` ONLY.** TABLE 1 reads "AFFIXES, STEMS (created only
+  >    in the STEMS tail)"; G3 measures that `_run_entryref_create_pass` is invoked
+  >    only from `stems_execute_action` (`categories.py:7714-7718`). Recording
+  >    `affixes` would let an affixes-only run claim coverage of a class it cannot
+  >    create -- FR-137's defect exactly. A test now pins the consequence: excluding
+  >    STEMS strands **exactly** `LexEntryRef` as reachable-only-through-excluded,
+  >    while `LexEntry` stays reachable because AFFIXES also creates it. G3's
+  >    "appears to be undocumented" consequence is now machine-checkable.
+  > 2. **`PunctuationForm` is never-created-referenced-only**, the fourth such class
+  >    beyond TABLE 2's named three. `_normalize_token_to_analysis` maps
+  >    `IPunctuationForm` to `None` (`wordforms.py:380`); any target-side instance is
+  >    an LCM side effect of assigning `StTxtPara.Contents`, not an engine create, so
+  >    no category may claim it.
+  >
+  > **Ten classes belong to no category** and each says why:
+  > `post-pass-no-category` (`LexReference`, `ReversalIndex`, `ReversalIndexEntry`),
+  > `reference-create-arm-only` (`CmPossibility`, `CmAnthroItem`, `MoMorphType`),
+  > `never-created-referenced-only` (`LexRefType`, `LexAppendix`, `PhBdryMarker`,
+  > `PunctuationForm`). The projector returns them as `unattributable` rather than
+  > dropping them, so the caller reports them not-evaluated at the class plane; the
+  > loader REFUSES a row that is empty without a reason, which is the invisible
+  > default FR-135 forbids.
+  >
+  > **Both named traps are pinned by a test, because neither raises on its own.**
+  > (a) feeding the category-keyed dict to `classify_coverage`'s class-keyed
+  > `comparisons` parameter does not error -- it silently demotes every class to
+  > `NOT-EVALUATED`; (b) the projection REPLICATES a multi-category class into each
+  > of its categories rather than partitioning, so per-category totals must not be
+  > summed (a 40-object `LexEntry` measurement sums to 80). The provenance names
+  > every replicated class so the two cannot be confused.
+  >
+  > **A THIRD ADJUDICATION, forced by the merge and caught by this task's own test.**
+  > `POS` is **not** a dead Phase-0 surface category, though its four siblings are.
+  > The contract was first authored against the branch's `transfer.py`, where POS was
+  > absent from `_LEAF_DISPATCH_CATEGORIES`; merging `main` brought the version that
+  > carries it as "the pick-driven ALIAS of GRAM_CATEGORIES", whose bundle's
+  > `execute_action` **is** `gram_categories_execute_action` -- the same create site
+  > under a different stamped category. `PartOfSpeech` therefore maps to
+  > `["gram_categories", "pos"]`, and `pos` moved out of the categoryless set (22
+  > carrying / 8 empty, not 21 / 9). Crediting only GRAM_CATEGORIES would have left a
+  > pick-driven run's POS work attributed to a category it never dispatched.
+  > `test_phase0_categories_are_marked_as_not_dispatched` is what caught it -- the
+  > argument for deriving the vocabulary checks from the code rather than pinning a
+  > hand-written list.
+  >
+  > **Test posture:** 43 new, all passing. After merging `main` into the branch the
+  > full unit suite reads **4926 passed / 4 failed**. The 31 pre-existing 026/028/031
+  > failures recorded in the handoff are GONE -- 038's work on `main` closed them --
+  > and the only remaining 4 are finding (1) below.
+  >
+  > **TWO FINDINGS, neither T045e's to fix:**
+  > 1. **The T023 capability fingerprint no longer matches the live dependency.**
+  >    `test_035_sweep_safety.py` fails 4 tests (verified identical with this task's
+  >    edit stashed, so it predates T045e): `flexicon` at
+  >    `D:/Github/_Projects/_LEX/flexicon` is now rev `18a293b`, not the pinned
+  >    `5994acc`, and `GramCatOperations.ApplySyncableProperties.declared` reads
+  >    **False** where the fingerprint pins **True** -- one of the eight declared
+  >    overrides this repo's CLAUDE.md requires for MCP-indexer visibility. Preflight
+  >    exits 6. This is FR-125/FR-132 working as designed; closing it needs either the
+  >    flexicon override restored or a DELIBERATE re-pin, and it **blocks any run that
+  >    goes through preflight**, including the T035 batch-1 re-run.
+  > 2. **The recorded `build_full_selection` decision is still unimplemented.**
+  >    `tests/integration/harness/full_run.py:48-50` still reads
+  >    `exclude: frozenset = frozenset({GrammarCategory.STEMS})` -- the invisible
+  >    default argument FR-135 forbids and G3 calls out by name. The recorded decision
+  >    ("make `build_full_selection` exclude set an explicit required argument") has
+  >    not landed. It is not on T045e's path; file or fold it into the task that owns
+  >    `full_run.py`.
+
+- [X] **T045f** [US2] Give plane-2 output a home in the artifact. `ProjectArtifact`
       (`debug/fullsweep/artifact.py:71-137`) has **no** `comparisons`, `census`, `coverage`,
       `link_findings` or `depth` field -- all of which
       [contracts/artifact-schema.md](./contracts/artifact-schema.md) lines 69-127 already
@@ -662,6 +1291,72 @@ points, then the corrections to claims already written in this file.
       the keys `link_findings` / `findings` / `field_verdicts` / `verdict_plane`. Plane-2
       output must land on its own artifact field, never folded into `accounting`.
       · `debug/fullsweep/artifact.py`, `contracts/artifact-schema.md`
+
+  > **RETARGETED 2026-08-22 (the 038 cut).** The new artifact block narrows to the
+  > field plane -- `comparisons`, `link_findings`, `depth`, `coverage`. The `census`
+  > block becomes a **reference to** 038's census artifact (path plus content hash),
+  > never a second census embedded here. The `assert_object_plane_only` constraint at
+  > `compare.py:187-196` is unaffected and still applies.
+
+  > **DONE 2026-09-19.** Five declared dataclass fields on `ProjectArtifact`
+  > (`comparisons`, `link_findings`, `depth`, `coverage`, `census`) plus the surface that
+  > fills them: `record_field_plane` (the one write point), `depth_block`, `census_block`,
+  > `plane1_census_reference`, `assert_census_is_reference_only`,
+  > `assert_artifact_json_serializable`. 19 new tests in
+  > `tests/unit/test_035_artifact_field_plane.py`, all passing; full unit suite **4945
+  > passed / 4 failed**, the 4 being blocker (1) below and nothing else.
+  >
+  > **Three rulings taken, each recorded rather than assumed:**
+  >
+  > 1. **`census` keeps BOTH measurements, visibly separated.** The retarget above reads
+  >    as if the whole block becomes a reference. It cannot: FR-052/FR-066's
+  >    `omitted_properties_per_class` is the FIELD census, which is this feature's own and
+  >    the one thing the KEEP note at T045d says 038 "cannot substitute for" -- 038's
+  >    census is count-only. So the block carries the field census directly and 038's
+  >    OBJECT census by `plane1_reference` (path + `sha256:` content hash + `census_id` +
+  >    `class_row_count`). `assert_census_is_reference_only` REFUSES `classes` / `rows` /
+  >    `per_class` in that reference, so the copy the retarget forbids cannot be
+  >    reintroduced quietly.
+  >
+  > 2. **`flush_artifact`'s `default=str` is a silent-evidence hazard, so the strict check
+  >    moved to the point of record.** `_atomic_write_json` serializes with
+  >    `default=str`: a `LinkResult` stored raw would have been written as
+  >    `"LinkResult(verdict='SILENTLY_UNSET', ...)"` -- a string that reads as evidence,
+  >    cannot be parsed by any consumer, and fails no test.
+  >    `assert_artifact_json_serializable` refuses it at `record_field_plane`, where the
+  >    caller still holds the object and can be told to call `as_dict()`.
+  >    `link_findings` additionally coerces records via `as_dict()` rather than trusting
+  >    callers to remember.
+  >
+  > 3. **The depth block keeps THREE dispositions apart, not two.** The contract named
+  >    `vacuous_classes` only. `not_evaluated_classes` is now beside it: "the corpus never
+  >    nested this class deeper than one level" is a different statement from "the target
+  >    lost the nesting", and collapsing them is precisely FR-137's failure. A class lands
+  >    in exactly one, asserted by test.
+  >
+  > **Task-text correction.** T045f says all five keys are "already specified" by
+  > `contracts/artifact-schema.md` lines 69-127. Four were; **`comparisons` was not in the
+  > contract at all**. It is now, with `performed` alongside `findings`, because "zero
+  > findings" and "never looked" are the same number of findings and FR-137 forbids
+  > reporting them alike.
+  >
+  > **Scope line held:** this task ends at the artifact surface. Nothing in
+  > `run_fullcopy_sweep.py` calls `record_field_plane` yet -- that wiring is **T045a(c)**,
+  > the next link in the chain, and doing it here would have made the two tasks
+  > indistinguishable in review.
+  >
+  > **The two T045e blockers are NOT discharged by this task and remain open:**
+  > 1. The T023 capability fingerprint still does not match the live dependency.
+  >    `test_035_sweep_safety.py` fails 4 tests; preflight exits 6. Re-measured
+  >    2026-09-19: live flexicon is now rev `296f3b5` (T045e recorded `18a293b`; the
+  >    fingerprint pins `5994acc`), and
+  >    `grammar_overrides.flexicon.GramCatOperations.ApplySyncableProperties.declared`
+  >    still reads **False** where the fingerprint pins **True**. This blocks any run that
+  >    goes through preflight, T035's batch-1 re-run included. Needs the flexicon override
+  >    restored or a DELIBERATE re-pin.
+  > 2. `tests/integration/harness/full_run.py:48-50` still reads
+  >    `exclude: frozenset = frozenset({GrammarCategory.STEMS})` -- the invisible default
+  >    argument FR-135 forbids. Still unowned by any task.
 
 #### Rulings taken on T045b's under-specified points (2026-08-19)
 
@@ -771,17 +1466,114 @@ Four were ruled; three remain open and are marked as such.
 
 **Wave 3c -- the guard semantics T045a makes observable:**
 
-- [ ] **T045** [US2] Implement `CATEGORY-COVERAGE` for real (any excluded category, any
+- [X] **T045** [US2] Implement `CATEGORY-COVERAGE` for real (any excluded category, any
       unmeasured enabled category → `COVERAGE_REDUCED`), enable the stem-allomorph category for
       the full corpus pass, and record each field-plane guard's seeded defect into the
       negative-control artifact (FR-096, FR-134, FR-135, FR-137, FR-179) ·
       `debug/fullsweep/guards.py`, `specs/035-fullsweep-fidelity/contracts/negative-controls.json`
+
+  > **RETARGETED 2026-08-22 (the 038 cut).** The `CATEGORY-COVERAGE` half stands
+  > unchanged, FR-137 ruling above included. The negative-control half narrows: seed a
+  > defect only for the guards this feature still owns after T045b's retarget. Seeding
+  > one for a guard whose input now arrives from 038's census would be testing 038's
+  > instrument through this one, and a failure would not say which of the two broke.
 
   > Note for the implementer: today `guard_category_coverage` PASSES a run whose
   > exclusions all carry a reason. FR-137 forbids that -- "a run performed with any
   > category excluded MUST NOT report the same success status as a full-coverage run" --
   > so a non-empty excluded set must itself force `COVERAGE_REDUCED`, recorded reason or
   > not. The reason check stays; it becomes the second failure mode, not the only one.
+
+  > **DONE 2026-09-19.** All three halves landed; the third one found a fourth thing.
+  > 40 new tests in `tests/unit/test_035_t045_coverage_and_controls.py`; full unit suite
+  > **5093 passed / 4 failed** (5053/4 before -- delta exactly +40, all passes), the 4
+  > being the T023 fingerprint blocker recorded under T045b and nothing else.
+  >
+  > **(a) FR-137 is enforced, and the case it closes had been passing.**
+  > `guard_category_coverage` now reports THREE failure modes together rather than one
+  > at a time: a non-empty excluded set (FR-137), an enabled-but-unmeasured category
+  > (FR-096), and an exclusion with no recorded reason (FR-135). Reporting them one at a
+  > time would make fixing the first reveal the second on the NEXT run instead of this
+  > one. The evidence block gains `excluded_count` and `full_coverage`. The CLI help for
+  > `--exclude-categories` has read "A non-empty value forces `COVERAGE_REDUCED`" since
+  > T024; until today that sentence was false.
+  >
+  > **(b) FR-134/FR-135: the invisible default is gone, and it was the recorded decision
+  > nobody owned.** `tests/integration/harness/full_run.py:49` no longer defaults
+  > `exclude` to `frozenset({GrammarCategory.STEMS})` -- the parameter is REQUIRED, and
+  > two named constants replace the default: `FULL_COVERAGE` (`frozenset()`) and
+  > `LEGACY_STEMLESS_EXCLUSION`. T045b, T045e and T045f each recorded this as "still
+  > unowned by any task"; it is FR-134's own clause ("MUST NOT inherit an existing
+  > narrower harness's default exclusion of this category unexamined"), so T045 owns it.
+  >
+  > Three call sites inherited the default and each is now explicit. Two of them were
+  > wrong in the way FR-136 names -- they claimed one thing and ran another:
+  > `run_fullsweep_verify.py:298` carried the comment "all cats except STEMS" directly
+  > under a module docstring promising "every GrammarCategory", and
+  > `audit_guid_preservation.run_full_move` is named for auditing a full copy and was
+  > auditing a stem-less one. Both now pass `FULL_COVERAGE`. The third,
+  > `run_full_transfer`'s `exclude=None` path, keeps its historical shape byte-identical
+  > by naming `LEGACY_STEMLESS_EXCLUSION` at the call site -- its dozen callers and
+  > feature 038's tests are unaffected, and `exclude`'s own default stays `None` as
+  > `test_run_full_transfer_accepts_the_exclusion` requires. An AST-level audit test
+  > fails the suite if any bare `build_full_selection()` ever reappears.
+  >
+  > The `reopen_and_count` / `_COUNT_ACCESSORS` / `total_count` half of that same
+  > recorded decision is NOT done and is NOT T045's: three live integration tests
+  > (`test_full_workflow_e2e`, `test_target_preserved`, `test_residue_tagging`) call
+  > them, and deleting them needs a task that can re-run those against a live target.
+  > Still unowned.
+  >
+  > **(c) The Section E detectors have controls, and they run the whole chain.** FR-178
+  > covers "every distortion or loss detector (Section E)", not only the fifteen guards;
+  > until today not one field-plane rule had ever been shown able to say no, so all of
+  > User Story 2 rested on instruments never demonstrated capable of failing. Four
+  > controls now do, recorded in `contracts/negative-controls.json` under
+  > `FIELD-PLANE:`-prefixed names (19 records total, 15 + 4):
+  >
+  > | control | seeded defect | fires | verdict |
+  > | --- | --- | --- | --- |
+  > | `FIELD-PLANE:ws-alternatives` | a declared source WS resolving to nothing in the target | `ws-alternatives` | `UNEXPLAINED_LOSS` |
+  > | `FIELD-PLANE:text` | a text value arriving with trailing whitespace | `text` | `UNEXPLAINED_LOSS` |
+  > | `FIELD-PLANE:order` | an order-critical owned sequence scrambled, membership identical | `order` | `UNEXPLAINED_LOSS` |
+  > | `FIELD-PLANE:link` | a set source reference arriving unset, no drop/skip record | `link` | `UNEXPLAINED_LOSS` |
+  >
+  > Each seeds ONE field of ONE matched pair and runs the REAL chain -- `compare_field`
+  > dispatch, `FieldPlaneComparator.payload_equal`, `reconcile_objects`,
+  > `guard_total_accounting` -- because a control that called `classify_distortion`
+  > directly would demonstrate a function, not the sweep, and three things between the
+  > rule and the verdict can each swallow a finding. The rule that fired is asserted
+  > too: a defect failing through a DIFFERENT rule would record a demonstration of the
+  > wrong detector, which reads as coverage while being none. A control-of-the-control
+  > pins that an undistorted pair passes the same chain.
+  >
+  > **All four produce the same verdict, and that is a finding, not a coincidence.** The
+  > field plane has NO verdict channel of its own: a finding becomes `payload_equal ->
+  > False`, an unaccounted object, a `TOTAL-ACCOUNTING` failure. It borrows the object
+  > plane's channel entirely.
+  >
+  > **(d) WHICH IS HOW THE FIFTH DETECTOR TURNED OUT TO HAVE NO CHANNEL AT ALL.**
+  > `compare_structural_depth` (T043/FR-189) has no route into the accounting, so it
+  > reaches no verdict: a seeded per-parent degree disagreement populates
+  > `artifact.depth.per_parent_degree_findings` and stops. `record_plane_2_measurements`
+  > writes that block and **nothing reads it** -- not `artifact.findings`, not
+  > `measured`, not any of the fifteen guards; `RunContext` has no depth field of any
+  > name. FR-189 says such a disagreement "MUST fail the run" and
+  > `artifact.depth_block`'s own docstring says degree findings are "a real
+  > disagreement, which FAILS". Both are currently false. Recording a control anyway
+  > would mean writing down a verdict token the run does not produce -- the exact
+  > dishonesty this regime exists to prevent -- so the record is ABSENT, which FR-180
+  > already reads as `not-evaluated`. Wiring it is **T071**, filed below;
+  > `guards.FIELD_PLANE_DETECTOR_WITHOUT_A_CONTROL` makes the gap greppable and a test
+  > pins it so it can be neither forgotten nor quietly closed.
+  >
+  > **Staleness scope widened, deliberately.** `guard_module_hash` now takes a per-name
+  > module tuple (`_CONTROL_MODULES`): a field-plane control hashes `compare.py` AND
+  > `fieldplane.py`, since the rule lives in one and the dispatch that chooses it in the
+  > other, and hashing one would let an edit to the other pass as still-demonstrated.
+  > The fifteen fall to the default and their hash is byte-identical to before.
+  > Re-running the suite was mandatory here rather than optional: T045 edited
+  > `guards.py`, which staled all fifteen records at once (FR-180).
 
 **⟶ T045a must land before T035 is re-run, or the re-run repeats batch 1's result.**
 
@@ -806,6 +1598,62 @@ Four were ruled; three remain open and are marked as such.
       (c) FR-149: batch 1's artifacts are in gitignored `scratchpad/` (`.gitignore:117`) and
       `assert_evidence_base_tracked()` does not cover the artifact dir -- fix before T049/T050.
 
+  > **GATED 2026-08-22 (the 038 cut).** Text unchanged. Blocked on 038 T085 and on an
+  > explicit go/no-go for the full corpus run; see the amendment's GATED bucket.
+  >
+  > **GATE DISCHARGED 2026-09-20 -- RE-RUN ATTEMPTED, BATCH INCOMPLETE, BOX STAYS
+  > UNCHECKED.** The explicit human go/no-go was given this session, scoped to
+  > **batch 1 only** (the three pilots), NOT the full corpus -- so T046, T049,
+  > T054-T057, T062, T066 and T067 remain gated. With 038 T085 (`562cb53`) and the
+  > T023 fingerprint re-pin (`245eed9`, preflight now exit 0) already discharged,
+  > every precondition on T035 was met for the first time.
+  >
+  > Two same-day batch invocations were both killed by the agent harness for HOST
+  > MEMORY PRESSURE, not by any fault of the sweep. The first completed Ejagham Mini
+  > and Esperanto (7/7 phases each, sources `UNCHANGED`, artifacts flushed) and
+  > stopped before Mbugwe; the second was killed during its first project and
+  > overwrote nothing. Artifacts preserved at
+  > `scratchpad/035_sweep/batch01-prior-20260920/`. Full measurement in
+  > [batch01-results.md](./batch01-results.md), addendum dated 2026-09-20.
+  >
+  > **What the re-run PROVED (the reason this task was relocated here):** the
+  > ordering defect is FIXED. The guards now answer -- **10 pass, 5 fail, ZERO
+  > not-evaluated**, against 15/15 not-evaluated in August -- and no finding carries
+  > `NOT_YET_CLASSIFIED_MISSING_FROM_TARGET` any more. Both runs print `VACUOUS`,
+  > but it is no longer the empty-`RunContext` `VACUOUS` of T045a: it is now
+  > `COMPARISONS-PERFORMED` genuinely failing and outranking the concurrent
+  > `COVERAGE_REDUCED` and `UNEXPLAINED_LOSS` under the published severity ordering.
+  >
+  > **Why the box stays unchecked, on two independent grounds:**
+  > 1. **Incompleteness.** Only 2 of 3 pilots hold artifacts at the current
+  >    revision pair. Mbugwe was never reached.
+  > 2. **FR-161 still fails, by a WIDER margin.** `alignment token had no copied
+  >    target referent` measures **37,767** against its historical 27,844 (+35.6%),
+  >    and the first-transfer total is 61,422 against 27,929 in August. This is NOT
+  >    recorded as a regression: the rise is concentrated in classes showing the
+  >    engine now ATTEMPTS far more (wordform-WS drops 2 -> 8,310), and a drop is
+  >    only recorded for work attempted. Distinguishing new loss from newly-visible
+  >    attempt needs a trustworthy denominator, which `TOTAL-ACCOUNTING`'s 459,914
+  >    unaccounted objects says we do not yet have. **Open question, not a verdict.**
+  >    One genuine improvement did land: Esperanto's second transfer drops **2**,
+  >    where in August it re-dropped all 27,929 identically.
+  >
+  > **NEW BLOCKER for the next attempt -- `Mbugwe LizzieHC practice` SOURCE DRIFT.**
+  > Its live `.fwdata` hashes `3fb29a29...` against the `fb6aadab...` recorded in
+  > the August artifact, with an mtime of **2026-09-06**. The sweep did not do this
+  > (it never reached Mbugwe today, and both August runs fingerprinted that source
+  > `UNCHANGED`). The August Mbugwe artifact is therefore stale **by source
+  > content**, not merely by revision pair as FR-158 contemplates -- so batch 1
+  > cannot be completed by re-running Mbugwe alone and splicing. **Wants a recorded
+  > ruling before the next attempt.**
+  >
+  > **FR-149 is NOT a blocker** -- the (c) note above and August's finding 5.3 both
+  > overstate it. FR-149 scopes trackedness to the evidence BASE (driver, rosters,
+  > allowlist, capability expectation, ledger), not to the per-run RESULT; all of
+  > those were verified tracked and unignored this session, and the untracked
+  > `scratchpad/` artifact location is the recorded storage-split decision. The
+  > narrower real gap -- nothing ASSERTS the split -- stays with T049/T050.
+
 **Checkpoint**: User Story 2 is independently functional. "Faithful" now means every
 field the engine exposes, with a reviewed, tracked exclusion list and an honest count
 of what was not looked at.
@@ -829,23 +1677,49 @@ passes from stale ones.
       per-axis maxima beside the corpus's; and `NOT-EVALUATED` for any claim whose axis the
       subset does not reach (FR-190..FR-193) · `tests/unit/test_035_selection.py`
 
+  > **GATED 2026-08-22 (the 038 cut).** Text unchanged. Blocked on 038 T085 and on an
+  > explicit go/no-go for the full corpus run; see the amendment's GATED bucket.
+
 ### Implementation
 
 **Wave 1 -- independent (different modules):**
 
-- [ ] **T047** [P] [US3] Extend the read-only survey with the two axes the presence-only scan
+- [x] **T047** [P] [US3] Extend the read-only survey with the two axes the presence-only scan
       lacks: writing-system breadth and same-class structural depth (FR-190, FR-192) ·
       `debug/prescan_type_coverage.py`
+
+  > **KEEP 2026-08-22 (the 038 cut).** Read-only, cannot write to a source, and the
+  > cheapest de-risking available for what 038 just landed: 038 validated two or three
+  > project pairs, and nobody knows which of the roughly 82 transferable projects carry
+  > constructs never once exercised.
+
+  > **ALREADY BUILT (2026-09-19), checkbox drift within 035 itself.**
+  > `debug/prescan_type_coverage.py:226-322` (commits `53b84658`, `a841b0e1`, both
+  > already on `main`) captures `writing_systems` (total/vernacular/analysis/tags)
+  > and `nesting_depth` (reversal_entry/sense/possibility) per project -- exactly
+  > FR-190/FR-192's two axes.
+
 - [ ] **T048** [P] [US3] Batching and gating: batches of 3 to 5, a hard stop for analysis after
       each, failed-only re-run, the canary re-run in every batch regardless of its ledger
       status, every result stamped with the driver-and-dependency revision pair, a pass under a
       superseded pair reported STALE, and the ledger's status derived solely from artifact
       presence and content -- never hand-set (FR-152..FR-161, SC-010, SC-011) ·
       `debug/fullsweep/batch.py`, `specs/035-fullsweep-fidelity/ledger.json`
+
+  > **RETARGETED 2026-08-22 (the 038 cut).** Batching, the hard stop, failed-only
+  > re-run, the canary, the revision stamp and the artifact-derived ledger status all
+  > stand: 038 has no corpus notion whatever. What changes is what a batch **runs** --
+  > per project, invoke 038's census gate (`python -m gramtrans.census_cli`) for plane
+  > 1 alongside this driver's field plane, and record both verdicts on the artifact.
+  > Blocked on 038 T085.
+
 - [ ] **T049** [P] [US3] Three-axis selection: order and compose batches to maximize distinct
       object-category diversity earliest, retaining each axis's MEASURED maximum carrier rather
       than naming projects, and recording the selection axes and measured maxima on every run
       artifact (FR-168, FR-190..FR-193) · `debug/fullsweep/select.py`
+
+  > **GATED 2026-08-22 (the 038 cut).** Text unchanged. Blocked on 038 T085 and on an
+  > explicit go/no-go for the full corpus run; see the amendment's GATED bucket.
 
 **⟶ Wait for Wave 1 to finish, then:**
 
@@ -855,17 +1729,78 @@ passes from stale ones.
       Group B write-safety regime, writes per-project axis JSON, never writes to a source; then
       run it over the corpus and commit the measured maxima (FR-192, SC-001) ·
       `debug/run_fullcopy_sweep.py`, `scratchpad/prescan_results/`
+
+  > **KEEP 2026-08-22 (the 038 cut).** Pairs with T047 -- the survey is the corpus
+  > reconnaissance 038 never had. Blocked on 038 T085 only because it opens live
+  > projects, not because its scope changed.
+
+  > **NARROWED (2026-09-19) -- then CORRECTED the same day. Read the correction, not
+  > the narrowing.** The narrowing claimed "the read-only measurement is already done
+  > -- `scratchpad/prescan_results/*.json`, 85 projects -- what REMAINS is only the
+  > subcommand plus committing the maxima." That was **wrong**, and wrong in this
+  > feature's own signature way: it took a COUNT of 85 result files as evidence that a
+  > MEASUREMENT existed, without opening one to see whether the fields were populated.
+  >
+  > **Measured 2026-09-19 (lex-verification, live):** the on-disk prescan cache
+  > PREDATES the commit that added the writing-system and structural-depth fields to
+  > `debug/prescan_type_coverage.py`. Every cached file carries both axes as **null**.
+  > Only the **class-presence** axis has a real maximum: **120 classes**, a three-way
+  > tie among the Tlachichilco Tepehua variants. The writing-system-breadth and
+  > structural-depth maxima **DO NOT EXIST** and cannot be committed to a tracked file
+  > until the corpus is re-swept with the CURRENT script.
+  >
+  > This is precisely the defect FR-051/FR-066 exist to catch -- a correct count over
+  > blank fields -- and `.crew-handoff.json` had already recorded it under
+  > `new_findings` ("the prescan data itself is still inadmissible. Fix before
+  > T049/T050 claim a measured maximum"). The narrowing was written without reading it.
+  >
+  > **What actually remains, in order:** (1) RE-SWEEP the corpus read-only with the
+  > current `debug/prescan_type_coverage.py` so all three axes are populated;
+  > (2) commit the three measured maxima to a TRACKED file under
+  > `specs/035-fullsweep-fidelity/` (FR-149: gitignored evidence is inadmissible);
+  > (3) wire the `survey` subcommand in `debug/run_fullcopy_sweep.py`.
+  >
+  > **The re-sweep is NOT gated by the corpus go/no-go, and must not be treated as
+  > though it were.** The go/no-go gates a full-corpus DOUBLE-MOVE, which writes to
+  > `Target<N>`. The prescan opens every project READ-ONLY and writes to none. Gating
+  > it behind the go/no-go would be circular: the three-axis maxima are inputs to the
+  > corpus SELECTION that the go/no-go decision is made on, so withholding the evidence
+  > until the decision is taken makes the decision unmakeable.
+  >
+  > **T047 stays `[x]` and is unaffected.** T047 asked for the CODE, and
+  > `prescan_type_coverage.py:226-322` genuinely implements both axes. The code is
+  > built; the data is stale. Both are true at once -- do not "fix" T047 on the
+  > strength of this note.
+
 - [ ] **T051** [P] [US3] Mechanical re-run scope derivation from changed files' transitive
       importers, failing closed to the full corpus whenever narrowness cannot be proven; no
       scope is ever narrowed on a human's or an agent's judgement about what a change
       "probably" affects (FR-163..FR-166, SC-013) · `debug/fullsweep/batch.py`
+
+  > **RETARGETED 2026-08-22 (the 038 cut).** Unchanged in substance, wider in input:
+  > the transitive-importer derivation must treat `src/gramtrans/Lib/census.py` and
+  > `src/gramtrans/census_cli.py` as sweep-invalidating files too. Miss them and a
+  > census change silently leaves every prior pass looking current -- the precise
+  > failure FR-163..FR-166 exist to prevent. Blocked on 038 T085.
+
 - [ ] **T052** [P] [US3] The `report` subcommand: aggregate per-project artifacts to the single
       most severe verdict and exit with its code; refuse a corpus-level fidelity claim assembled
       across more than one revision pair, or from any artifact recording the `BASELINE` intent
       (FR-113, FR-114, SC-014, SC-016) · `debug/run_fullcopy_sweep.py`
+
+  > **RETARGETED 2026-08-22 (the 038 cut).** The aggregation and the
+  > one-revision-pair refusal stand, over a **triple** rather than a pair: this driver,
+  > the dependency, and the census instrument. A corpus claim assembled across two
+  > census revisions is exactly the staleness this task exists to refuse. Blocked on
+  > 038 T085.
+
 - [ ] **T053** [P] [US3] Pin and record the dependency revision for the whole duration of a
       sweep, so a mid-sweep dependency change is a recorded finding rather than an invisible
       one (FR-167) · `debug/fullsweep/batch.py`
+
+  > **RETARGETED 2026-08-22 (the 038 cut).** Same widening as T052 -- pin and record
+  > the census instrument's revision for the whole duration of a sweep, not only the
+  > dependency's.
 
 **⟶ Wait for Wave 2 to finish, then:**
 
@@ -875,17 +1810,37 @@ passes from stale ones.
       host data layer and write the authorizing artifact -- or record the trial's absence and
       keep the worker count at 1, publishing no runtime estimate that presumes otherwise
       (FR-032, FR-033, SC-012) · `scratchpad/035_sweep/concurrency-trial.json`
+
+  > **GATED 2026-08-22 (the 038 cut).** Text unchanged. Blocked on 038 T085 and on an
+  > explicit go/no-go for the full corpus run; see the amendment's GATED bucket.
+
 - [ ] **T055** [US3] Census cost run against the corpus's largest project, recording the actual
       per-project census cost that every artifact carries thereafter, so a pathological case is
       caught in flight · `scratchpad/035_sweep/census-cost.json`
+
+  > **GATED 2026-08-22 (the 038 cut).** Text unchanged. Blocked on 038 T085 and on an
+  > explicit go/no-go for the full corpus run; see the amendment's GATED bucket.
+
 - [ ] **T056** [US3] Settle FR-162 with a measured answer: does a diverged shared/default item
       leave the target link `RESOLVED`, or `SILENTLY_UNSET`? This is the link census's first
       question and it covers 109 of the 160 residual pilot records (FR-162) ·
       `specs/035-fullsweep-fidelity/probe-results-live.md`
+
+  > **KEEP 2026-08-22 (the 038 cut), and now more valuable than its P3 position
+  > suggests.** 038's census counts objects, so it **structurally cannot see this**: an
+  > unset link on an object that is present and correctly counted reports `MATCHED`.
+  > This single question covers 109 of the 160 residual pilot records, and it is a
+  > question about the **engine**, not about either instrument.
+
 - [ ] **T057** [US3] Run the corpus in gated batches: canary in every batch, stop for analysis
       after each, fix forward, re-run only what the mechanical scope derivation invalidates, and
       keep the ledger current from artifacts alone (FR-152..FR-159, SC-006, SC-011) ·
       `specs/035-fullsweep-fidelity/ledger.json`, `scratchpad/035_sweep/`
+
+  > **RETARGETED 2026-08-22 (the 038 cut).** Scope unchanged, and now the largest
+  > single piece of uncovered value in the feature: 038 validated two or three project
+  > pairs against a corpus of roughly 82. Blocked on 038 T085 **and** on the go/no-go
+  > this amendment's GATED bucket names.
 
 **Checkpoint**: User Story 3 is independently functional. The corpus is covered in
 gated batches, and no stale pass can pose as current evidence.
@@ -904,16 +1859,21 @@ passing quietly.
 
 ### Tests
 
-- [ ] **T058** [P] [US5] Allowlist tests: required-field validity, exact-reason matching,
+- [ ] **T058** [P] [US5] **CUT 2026-08-22 (the 038 cut) -- DO NOT BUILD.**
+      Allowlist tests: required-field validity, exact-reason matching,
       over-cap, expiry, closed issue, two-run staleness, the 25-entry and 1%-of-project hard
       caps, an engine-bug-signature reason refused however written, and FR-182's inverted
       trigger (FR-115..FR-122, FR-182) · `tests/unit/test_035_allowlist.py`
+
+  > **CUT 2026-08-22 (the 038 cut).** These are the tests for a mechanism the cut
+  > struck. There is nothing left to test.
 
 ### Implementation
 
 **Wave 1 -- single task (one module owns every rule):**
 
-- [ ] **T059** [US5] Full allowlist validity: every field present; EXACT reason match, no
+- [ ] **T059** [US5] **CUT 2026-08-22 (the 038 cut) -- DO NOT BUILD.**
+      Full allowlist validity: every field present; EXACT reason match, no
       wildcards or patterns; over-cap is unexplained loss, never a widened allowance; `expires`
       at most 120 days after `first_observed` and an expired entry fails the run; the tracking
       issue verified OPEN at run time; zero matches across two consecutive full-corpus runs is
@@ -925,17 +1885,35 @@ passing quietly.
       violation yields `ALLOWLIST_INVALID` (FR-115..FR-122, FR-182, SC-015) ·
       `debug/fullsweep/allowlist.py`
 
+  > **CUT 2026-08-22 (the 038 cut).** 038's closed 16-token reason vocabulary replaces
+  > the entire regime: a loss is either explained by a vocabulary member or the run
+  > fails, so there is no entry to validate, cap, expire, or verify an open issue for.
+  > Two competing ways to forgive a loss is worse than either one alone.
+  > FR-115..FR-122 / FR-182 / SC-015 are marked CUT-BY-DECISION in `spec.md`.
+
 **⟶ Wait for Wave 1 to finish, then:**
 
 **Wave 2 -- independent (the data and the disclosure):**
 
-- [ ] **T060** [P] [US5] Populate the allowlist from the measured residual only -- each entry
+- [ ] **T060** [P] [US5] **CUT 2026-08-22 (the 038 cut) -- DO NOT BUILD.**
+      Populate the allowlist from the measured residual only -- each entry
       with its owner, its verified-open issue, exact project names, exact reason, cap, and
       expiry. An entry that cannot name all of those is not written (FR-115..FR-119) ·
       `specs/035-fullsweep-fidelity/contracts/loss-allowlist.json`
-- [ ] **T061** [P] [US5] Every consumed entry listed on the artifact with its identifier,
+
+  > **CUT 2026-08-22 (the 038 cut).** No allowlist to populate. The measured residual
+  > does **not** disappear with it: every record must be accounted for by a
+  > closed-vocabulary reason under the retargeted T045b, or the run fails. T056 -- KEPT
+  > -- is the open question covering 109 of those 160 records.
+
+- [ ] **T061** [P] [US5] **CUT 2026-08-22 (the 038 cut) -- DO NOT BUILD.**
+      Every consumed entry listed on the artifact with its identifier,
       matched count, and remaining headroom, so a passing result never leaves a reader unable to
       reconstruct what was forgiven (FR-114, SC-007) · `debug/fullsweep/artifact.py`
+
+  > **CUT 2026-08-22 (the 038 cut).** Nothing is forgiven, so there is nothing to
+  > disclose. The artifact's `allowlist_hits` block retires with the module under
+  > T063.
 
 **Checkpoint**: User Story 5 is independently functional. `PASS_WITH_ALLOWLIST` is
 reachable, bounded, disclosed, and self-retiring.
@@ -947,25 +1925,171 @@ reachable, bounded, disclosed, and self-retiring.
 - [ ] **T062** [P] Prove the Anti-Silence Acceptance Surface live: all 65 rows S-01..S-65 map
       to a module that exists and a test that runs, asserted as a completeness check rather than
       a hand-maintained checklist. Waivers: none · `tests/unit/test_035_silence_ledger.py`
+
+  > **GATED 2026-08-22 (the 038 cut), and its row count is now wrong.** The 65-row
+  > surface asserts that every row maps to a module that exists and a test that runs.
+  > The rows covering FR-115..FR-122 / FR-182 / SC-007 / SC-015 map to a module T063
+  > retires, so the surface must be **re-derived** -- not hand-trimmed -- before this
+  > task can pass. A completeness check that was hand-adjusted to fit is the very thing
+  > this task exists to replace.
+
 - [ ] **T063** [P] Retire the four instruments per research D-11: promote `inventory_all` out of
       the GUID audit as a library and drop its verdict; delete `reopen_and_count` and give the
       harness an explicit exclude argument; fold the domain diff of the verify driver into the
       comparator and retire it · `debug/audit_guid_preservation.py`,
       `debug/run_fullsweep_verify.py`, `tests/integration/harness/full_run.py`
+
+  > **KEEP and WIDENED 2026-08-22 (the 038 cut).** More urgent than when written: 038
+  > added a fifth instrument to the four this task retires. Added to its scope, all of
+  > it dead on the T058-T061 cut -- the loss-allowlist module
+  > `debug/fullsweep/allowlist.py`, its contract file `contracts/loss-allowlist.json`,
+  > its star-export at `debug/fullsweep/__init__.py:71`, and its call site
+  > `load_loss_allowlist` at `debug/run_fullcopy_sweep.py:543`. **Leave the
+  > destination-project-name allowlist in `safety.py` alone** -- a different concept
+  > that happens to share an English word, and it stays. Opens no live project, so it
+  > does not wait on 038 T085.
+
+
+- [ ] **T068** [P] **NEW 2026-08-22 (the 038 cut).** Collapse the now-unreachable
+      `PASS_WITH_ALLOWLIST` verdict -- without this, the cut is not finished. With the
+      loss allowlist struck (T058-T061 CUT), no run can ever consume an entry, so
+      `verdict.py:210`'s cautious `allowlist_consumed in (True, None) ->
+      PASS_WITH_ALLOWLIST` default -- whose `None` arm is today's only call site --
+      would make **every** clean run report `PASS_WITH_ALLOWLIST` and leave `CLEAN_PASS`
+      unreachable forever. Remove the `allowlist_consumed` keyword, return `CLEAN_PASS`
+      when no guard failed, and retire the token from `VERDICT_SPECS` (`verdict.py:33`)
+      and from the severity ordering (`:68`). Both tokens are exit code 0 under FR-111,
+      so this changes no exit code -- it changes what a passing run *claims*, from a
+      permanent under-claim to the truth · `debug/fullsweep/verdict.py`,
+      `specs/035-fullsweep-fidelity/contracts/verdict-exit-model.md`
+
+  > **NEW 2026-08-22.** Created by the cut, not by a measurement. `GUARD_FAILURE_VERDICT`
+  > is asserted total over all fifteen guard names and `VERDICT_SPECS` is asserted against
+  > the contract, so retiring a token by deletion alone will fail those tests -- update
+  > the contract in the same change, which is why it is on the path line.
+  >
+  > **Checked 2026-08-22: 038 does not block this.** `Lib/census.py:2976` cites
+  > `contracts/verdict-exit-model.md` for its *house style* only -- the
+  > machine-token / human-label / exit-code split -- and carries its own verdict
+  > tokens (`CENSUS_CLEAN` and peers). Retiring `PASS_WITH_ALLOWLIST` from this
+  > feature's token list touches nothing 038 reads.
+
+- [ ] **T069** [P] **NEW 2026-09-19 (cycle-6 reconciliation).** Absorb 038's three
+      `owed_to_035` debts into the coverage floor. `src/gramtrans/Lib/census.py:298-327`
+      (`CENSUS_ADDITIONS`) carries three entries flagged `owed_to_035: True`, and NONE
+      of the three appears in `contracts/coverage-floor.json`'s 69 `in_scope_classes`:
+      - `MoAffixProcess` -- no create path; measured 13 -> 0 (Ejagham), 1 -> 0 (Ngoreme)
+      - `PhCode` -- flexicon's phoneme `GetSyncableProperties` excludes `CodesOS`, so
+        nothing carries it and nothing reports the drop; measured 43 -> 25, 89 -> 25
+      - `CmTranslation` -- reached via the texts path, never projected into the floor;
+        measured 7925 -> 2 (Ngoreme)
+      Discharge each debt by adding the class to the floor roster IN THE SAME change
+      that removes the `CENSUS_ADDITIONS` entry, so the two instruments never disagree
+      about the roster. This raises the roster above 69, and T044's note above must be
+      updated with it · `specs/035-fullsweep-fidelity/contracts/coverage-floor.json`,
+      `src/gramtrans/Lib/census.py`
+
+- [ ] **T070** [P] **NEW 2026-09-19 (cycle-6, T045d follow-on).** Account for the
+      dispatch table's unmapped residue -- every in-scope class that is in NEITHER
+      table. T045d landed (`debug/fullsweep/field_dispatch.py`, commit `00627d6`) and
+      reaches **49** of the 66 present in-scope classes. Six of the remaining 17 carry
+      a recorded reason: three in `MANDATORY_UNREACHABLE_CLASSES` (`MoAdhocProhibGr`,
+      `MoAlloAdhocProhib`, `MoMorphAdhocProhib`) and three in
+      `DISCOVERED_UNREACHABLE_CLASSES` (`ReversalIndex`, `ReversalIndexEntry`,
+      `TextTag`). That leaves roughly **11 classes in neither table** -- reachable by
+      no dispatch entry and carrying no stated reason. `field_dispatch` already
+      distinguishes this third state ("in neither table at all, genuinely unmapped"),
+      which is the honest shape; what it does not yet have is a resolution.
+      **Measure the exact residue first -- do not trust the arithmetic above** -- then
+      resolve every member into exactly one of: a dispatch entry (it was reachable and
+      we missed it), or a `DISCOVERED_UNREACHABLE_CLASSES` entry WITH its reason (it is
+      a real hole). An in-scope class in neither table is FR-136's precise failure
+      mode: a silent gap a reader cannot see.
+      **Flagged consequence, to be assessed as part of this task, not after it:** the
+      `ReversalIndex` / `ReversalIndexEntry` hole collides with corpus selection. The
+      structural-depth axis's leading carrier is reversal-heavy (Yi Sichuan, confirmed
+      live 2026-09-19 at 7 `ReversalIndex` / 25,116 `ReversalIndexEntry`), and no
+      reversal field can currently be READ at all. Selecting a corpus maximum whose
+      distinguishing content is unreadable would produce a confidently VACUOUS result
+      on exactly the axis it was chosen to exercise ·
+      `debug/fullsweep/field_dispatch.py`,
+      `specs/035-fullsweep-fidelity/contracts/coverage-floor.json`
+
+- [ ] **T071** [P] **NEW 2026-09-19 (T045 follow-on).** FR-189's "MUST fail the run",
+      which today does not. Give `compare_structural_depth`'s output a route to the
+      verdict, then give it the negative control T045 could not record.
+      **The measurement, taken while building T045's field-plane controls:** a seeded
+      per-parent child-count disagreement populates
+      `artifact.depth.per_parent_degree_findings` and stops there.
+      `record_plane_2_measurements` (`debug/run_fullcopy_sweep.py:694-700`) writes the
+      depth block and **nothing reads it** -- not `artifact.findings`, not `measured`,
+      not any of the fifteen guards. `RunContext` has no depth field of any name, which
+      is the structural proof rather than a grep: a guard has no other surface to read
+      from. So a target that flattened every nested sense reports `CLEAN_PASS`.
+      Two spec sentences are currently false and this task is what makes them true:
+      FR-189's "A per-parent child-count disagreement MUST fail the run even when every
+      child actually visited compared clean", and `artifact.depth_block`'s own docstring
+      calling degree findings "a real disagreement, which FAILS".
+      FR-189 asks for TWO distinct outcomes and they must not be collapsed: a degree
+      disagreement FAILS the run, while a class whose target-side maximum depth is below
+      its source-side maximum is `VACUOUS` **for that class**. T045f already keeps
+      `vacuous_classes` and `not_evaluated_classes` apart on the artifact -- the corpus
+      never nesting a class is not the target losing the nesting -- and whatever route
+      is chosen must preserve all three dispositions, not flatten them into one boolean.
+      **Deciding the route is the hard half, and it is a contract question.** The field
+      plane has no verdict channel of its own: every other field finding reaches a
+      verdict by making `payload_equal` return False, which `reconcile_objects` buckets
+      as unaccounted, which fails `TOTAL-ACCOUNTING`. Depth is computed AFTER
+      reconciliation, from the two gathers' `nesting` records, so it has no such hook.
+      The candidate routes each cost something: a sixteenth guard changes
+      `contracts/guards.md`, the FR-109 set-equality assertion, and the fifteen-name
+      literal transcribed in four test modules; routing degree findings into the
+      existing accounting means assigning a bucket to an object already bucketed;
+      folding them into `artifact.findings` alone moves `artifact.status` but NOT the
+      verdict, which would leave the two disagreeing. Pick deliberately and record why.
+      **Then close FR-178's remaining hole.** With a verdict reachable, add the fifth
+      Section E control alongside T045's four, delete
+      `guards.FIELD_PLANE_DETECTOR_WITHOUT_A_CONTROL`, and remove the two tests in
+      `tests/unit/test_035_t045_coverage_and_controls.py` that pin the gap as a known
+      state -- they are written to FAIL the day it is closed, on purpose ·
+      `debug/fullsweep/guards.py`, `debug/fullsweep/artifact.py`,
+      `debug/run_fullcopy_sweep.py`,
+      `specs/035-fullsweep-fidelity/contracts/guards.md`,
+      `specs/035-fullsweep-fidelity/contracts/negative-controls.json`
+
 - [ ] **T064** [P] Crash-resume evidence: a simulated mid-project kill leaves a partial artifact
       naming the last completed phase, in place of no evidence at all (FR-150, SC-009) ·
       `tests/unit/test_035_guards.py`
+
+  > **KEEP 2026-08-22 (the 038 cut).** Unchanged. Cheap, and it is the difference
+  > between a killed run leaving partial evidence and leaving none.
+
 - [ ] **T065** [P] Document the delivered sweep -- subcommands, tracked inputs, exit codes, and
       how to read an artifact -- and walk the quickstart end to end against a pilot ·
       `debug/README.md`, `specs/035-fullsweep-fidelity/quickstart.md`
+
+  > **KEEP 2026-08-22 (the 038 cut), with one addition.** Document the **reduced**
+  > surface this amendment leaves, and say plainly which plane comes from 038's census
+  > and which from this driver -- a reader holding an artifact must be able to tell
+  > which instrument made which claim.
+
 - [ ] **T066** The uniform final sweep: one frozen revision pair, `--intent gate`, whole corpus,
       no results carried over from an earlier pair. This is the only run from which a
       corpus-level fidelity claim may be issued (FR-166, SC-014, SC-016) ·
       `specs/035-fullsweep-fidelity/ledger.json`
+
+  > **GATED 2026-08-22 (the 038 cut).** Text unchanged. Blocked on 038 T085 and on an
+  > explicit go/no-go for the full corpus run; see the amendment's GATED bucket.
+
 - [ ] **T067** Validate all seventeen Success Criteria against the final run's artifacts and
       record the evidence per criterion, naming any that the corpus cannot reach as
       `NOT-EVALUATED` rather than clean (SC-001..SC-017) ·
       `specs/035-fullsweep-fidelity/verification.md`
+
+  > **GATED 2026-08-22 (the 038 cut).** Two of the seventeen -- **SC-007** and
+  > **SC-015** -- are CUT-BY-DECISION and must be recorded as exactly that, never as
+  > `NOT-EVALUATED`. The difference matters: `NOT-EVALUATED` says the corpus could not
+  > reach the criterion; CUT-BY-DECISION says nothing will ever evaluate it.
 
 ---
 
@@ -973,7 +2097,24 @@ reachable, bounded, disclosed, and self-retiring.
 
 **Phase order**: Setup (T001-T010) → Foundational (T011-T016) → US4 (T017-T024) →
 US1 (T025-T034) → US2 (T036-T045f, then T035) → US3 (T046-T057) → US5 (T058-T061) →
-Polish (T062-T067).
+Polish (T062-T068).
+
+**Amended 2026-08-22 by the 038 cut** -- the phase order above is the ORIGINAL plan and
+is kept for the record. What is actually left to build no longer follows it:
+
+- **US5 is gone.** T058-T061 are CUT, so the phase has no remaining work; T032, its one
+  built task, is retired by T063.
+- **The critical path is now two tasks that open no live project**, independent of each
+  other and startable today: **T045d** (the generic field reader -- the only route to
+  the field plane, which 038 does not cover) and **T063** (retiring five instruments,
+  the loss-allowlist module now among them).
+- **Everything that opens a live project waits on 038 T085**, the merge of
+  `038-transfer-fidelity-gaps` to `main`. Measuring before it lands means measuring
+  under a revision pair about to be superseded, which FR-158 / SC-010 would mark STALE.
+  That covers T035, T047, T048, T050-T057, T066 and T067.
+- **T068 gates the closing claim** alongside T066/T067: a run reporting
+  `PASS_WITH_ALLOWLIST` for a mechanism that no longer exists is not a claim anyone
+  should accept.
 
 Story phases are ordered by priority, but the ordering is also a real dependency
 chain: US1's `TOTAL-ACCOUNTING` consumes US4's preflight and the exact-match
@@ -1001,16 +2142,39 @@ cannot start before both planes measure; and US5 hardens the valve US1 opened.
   → T045c (the verdict assignment table) → T045 → T035. T045d/T045e/T045f are the
   only genuinely parallel trio in the tail: disjoint files, no shared state. Everything
   after them gates on all three. See "Wave 3b-bis" in the US2 phase for why.
+  **Amended 2026-09-19:** T045c, T045d, T045e, T045f and T045a(c) are all landed, so
+  the remaining tail is **T045b -> T045 -> T035**. T045b alone now separates the
+  answering set (7/15) from 15/15, which is what FR-109 needs before any verdict other
+  than `VACUOUS` is reachable.
 - **US3** — test T046 → three independent modules (T047-T049) → four independent CLI
   surfaces (T050-T053) → the scheduled live measurements in order (T054-T057), which
   are strictly sequential: the concurrency trial gates worker count, the census cost
   run gates the estimate, FR-162 gates the residual accounting, and only then does the
   corpus run.
 - **US5** — T059 alone → T060/T061 independent.
-- **Polish** — T062-T065 independent → T066 (needs everything green under one revision
-  pair) → T067 (reads T066's artifacts).
+- **Polish** — T062-T065 and T068 independent → T066 (needs everything green under one revision
+  pair) → T067 (reads T066's artifacts). **CUT 2026-08-22: no remaining work.**
+  **Amended 2026-08-22:** T063 and T068 are the two Polish tasks that block
+  nothing and are blocked by nothing; T062's row count must be re-derived after
+  T063 retires the allowlist module some of its rows map to.
 
 **Parallel opportunities**: the largest are Setup Wave 2 (six independent Group moves),
 US2 Wave 2 (five independent comparison rules), and US3 Wave 2 (four independent CLI
 surfaces). Every other wave is two to four tasks wide. Nothing after T053 parallelizes:
 the live measurements gate each other by design, and the final claim gates on all of them.
+
+---
+
+## Amendment (2026-09-19) -- cycle-6 reconciliation
+
+> **TOOLING CAVEAT.** The `lex-domain` agent declares `tools: Read, Grep, Glob,
+> WebFetch` and therefore CANNOT reach live LCM or FLExToolsMCP. That, not transient
+> unavailability, is why 3 of 5 review cycles lacked live confirmation. Cycle-5
+> identity points 2 (reversal-index one-container-per-WS + form-keyed dedup) and 3
+> (`WfiWordform` (WS, form) natural key) are CLOSED BY RULING on repository-API
+> evidence -- `IReversalIndexRepository.FindOrCreateIndexForWs` /
+> `.FindOrCreateReversalEntry` and `IWfiWordformRepository.GetMatchingWordform(Int32
+> ws, String form)` are the repository's declared contract, which for an identity
+> ruling is stronger evidence than any single project's instance data. Point 1
+> (CmAgent stock-template default GUIDs) remains open and is routed to
+> lex-verification.

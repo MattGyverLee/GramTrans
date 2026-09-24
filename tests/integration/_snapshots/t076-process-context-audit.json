@@ -1,0 +1,353 @@
+{
+  "Ejagham Mini": {
+    "affix_process_rules": 0,
+    "condition_4_rules": 0,
+    "contexts_os_by_class": {},
+    "contexts_os_total": 0,
+    "contexts_reachable_from_phon_rules": 0,
+    "distinct_far_endpoints": 0,
+    "enumerable_by_class": {
+      "PhNCSegments": 5,
+      "PhPhoneme": 32
+    },
+    "enumerable_referents": 37,
+    "far_by_class": {},
+    "far_endpoints": [],
+    "far_in_contexts_os": 0,
+    "far_reachable_from_phon_rules": 0,
+    "far_referent_by_class": {},
+    "far_referents_enumerable": 0,
+    "phon_rules_count": 0,
+    "project": "Ejagham Mini",
+    "rules": []
+  },
+  "Mbugwe LizzieHC practice": {
+    "affix_process_rules": 18,
+    "condition_4_rules": 6,
+    "contexts_os_by_class": {
+      "PhIterationContext": 11,
+      "PhSimpleContextBdry": 22,
+      "PhSimpleContextNC": 30,
+      "PhSimpleContextSeg": 30
+    },
+    "contexts_os_total": 93,
+    "contexts_reachable_from_phon_rules": 205,
+    "distinct_far_endpoints": 6,
+    "enumerable_by_class": {
+      "PhNCFeatures": 113,
+      "PhPhoneme": 42
+    },
+    "enumerable_referents": 155,
+    "far_by_class": {
+      "PhSimpleContextNC": 5,
+      "PhSimpleContextSeg": 1
+    },
+    "far_endpoints": [
+      {
+        "class": "PhSimpleContextNC",
+        "guid": "6464f7f4-1405-4427-a397-983ddb0b06fc",
+        "in_contexts_os": true,
+        "input_index": 0,
+        "owner_chain": [
+          "PhPhonData(flid=5099004)",
+          "LangProject(flid=6001035)"
+        ],
+        "position": 0,
+        "reachable_from_phon_rules": false,
+        "referent_class": "PhNCFeatures",
+        "referent_enumerable": true,
+        "referent_guid": "8f5b331b-6257-44c8-9d9f-0d04b25c3e78"
+      },
+      {
+        "class": "PhSimpleContextNC",
+        "guid": "afc4571e-1ae7-4d32-8b24-c0acc930588b",
+        "in_contexts_os": true,
+        "input_index": 0,
+        "owner_chain": [
+          "PhPhonData(flid=5099004)",
+          "LangProject(flid=6001035)"
+        ],
+        "position": 0,
+        "reachable_from_phon_rules": false,
+        "referent_class": "PhNCFeatures",
+        "referent_enumerable": true,
+        "referent_guid": "8f5b331b-6257-44c8-9d9f-0d04b25c3e78"
+      },
+      {
+        "class": "PhSimpleContextSeg",
+        "guid": "3c4e8c34-e0ec-44e7-b97f-5ba02b151590",
+        "in_contexts_os": true,
+        "input_index": 0,
+        "owner_chain": [
+          "PhPhonData(flid=5099004)",
+          "LangProject(flid=6001035)"
+        ],
+        "position": 0,
+        "reachable_from_phon_rules": false,
+        "referent_class": "PhPhoneme",
+        "referent_enumerable": true,
+        "referent_guid": "7ab3b4de-beb1-4e06-9e6a-804516fa5756"
+      },
+      {
+        "class": "PhSimpleContextNC",
+        "guid": "735be4f2-6cd8-4a1c-9c9e-13e8eaf012f1",
+        "in_contexts_os": true,
+        "input_index": 1,
+        "owner_chain": [
+          "PhPhonData(flid=5099004)",
+          "LangProject(flid=6001035)"
+        ],
+        "position": 0,
+        "reachable_from_phon_rules": false,
+        "referent_class": "PhNCFeatures",
+        "referent_enumerable": true,
+        "referent_guid": "c6384106-86e1-4d19-a212-980a9c9eba83"
+      },
+      {
+        "class": "PhSimpleContextNC",
+        "guid": "e2a39650-41ed-4716-bed1-8b8064188c00",
+        "in_contexts_os": true,
+        "input_index": 0,
+        "owner_chain": [
+          "PhPhonData(flid=5099004)",
+          "LangProject(flid=6001035)"
+        ],
+        "position": 0,
+        "reachable_from_phon_rules": false,
+        "referent_class": "PhNCFeatures",
+        "referent_enumerable": true,
+        "referent_guid": "8f5b331b-6257-44c8-9d9f-0d04b25c3e78"
+      },
+      {
+        "class": "PhSimpleContextNC",
+        "guid": "bbab8d1d-9a96-42ee-8b0c-47517bd7d131",
+        "in_contexts_os": true,
+        "input_index": 0,
+        "owner_chain": [
+          "PhPhonData(flid=5099004)",
+          "LangProject(flid=6001035)"
+        ],
+        "position": 0,
+        "reachable_from_phon_rules": false,
+        "referent_class": "PhNCFeatures",
+        "referent_enumerable": true,
+        "referent_guid": "8f5b331b-6257-44c8-9d9f-0d04b25c3e78"
+      }
+    ],
+    "far_in_contexts_os": 6,
+    "far_reachable_from_phon_rules": 0,
+    "far_referent_by_class": {
+      "PhNCFeatures": 5,
+      "PhPhoneme": 1
+    },
+    "far_referents_enumerable": 6,
+    "phon_rules_count": 39,
+    "project": "Mbugwe LizzieHC practice",
+    "rules": [
+      {
+        "condition_4": false,
+        "far_refs": [],
+        "input_count": 2,
+        "rule_guid": "311f04ea-eb20-4631-a8c4-bacdaacfa24d"
+      },
+      {
+        "condition_4": true,
+        "far_refs": [
+          {
+            "class": "PhSimpleContextNC",
+            "guid": "6464f7f4-1405-4427-a397-983ddb0b06fc",
+            "in_contexts_os": true,
+            "input_index": 0,
+            "owner_chain": [
+              "PhPhonData(flid=5099004)",
+              "LangProject(flid=6001035)"
+            ],
+            "position": 0,
+            "reachable_from_phon_rules": false,
+            "referent_class": "PhNCFeatures",
+            "referent_enumerable": true,
+            "referent_guid": "8f5b331b-6257-44c8-9d9f-0d04b25c3e78"
+          }
+        ],
+        "input_count": 2,
+        "rule_guid": "fda9c04e-e71b-43ed-b4a1-c977610fa3b9"
+      },
+      {
+        "condition_4": false,
+        "far_refs": [],
+        "input_count": 2,
+        "rule_guid": "f61db720-49f7-46a3-9d10-fcfaf0babcfe"
+      },
+      {
+        "condition_4": true,
+        "far_refs": [
+          {
+            "class": "PhSimpleContextNC",
+            "guid": "afc4571e-1ae7-4d32-8b24-c0acc930588b",
+            "in_contexts_os": true,
+            "input_index": 0,
+            "owner_chain": [
+              "PhPhonData(flid=5099004)",
+              "LangProject(flid=6001035)"
+            ],
+            "position": 0,
+            "reachable_from_phon_rules": false,
+            "referent_class": "PhNCFeatures",
+            "referent_enumerable": true,
+            "referent_guid": "8f5b331b-6257-44c8-9d9f-0d04b25c3e78"
+          }
+        ],
+        "input_count": 2,
+        "rule_guid": "78c5cf68-fadb-42d6-a831-4d330a90b728"
+      },
+      {
+        "condition_4": true,
+        "far_refs": [
+          {
+            "class": "PhSimpleContextSeg",
+            "guid": "3c4e8c34-e0ec-44e7-b97f-5ba02b151590",
+            "in_contexts_os": true,
+            "input_index": 0,
+            "owner_chain": [
+              "PhPhonData(flid=5099004)",
+              "LangProject(flid=6001035)"
+            ],
+            "position": 0,
+            "reachable_from_phon_rules": false,
+            "referent_class": "PhPhoneme",
+            "referent_enumerable": true,
+            "referent_guid": "7ab3b4de-beb1-4e06-9e6a-804516fa5756"
+          }
+        ],
+        "input_count": 2,
+        "rule_guid": "f7967773-421a-482c-963c-6942c4cac4d7"
+      },
+      {
+        "condition_4": false,
+        "far_refs": [],
+        "input_count": 2,
+        "rule_guid": "05c24042-c57e-46ac-afd2-1f3eadd41d09"
+      },
+      {
+        "condition_4": false,
+        "far_refs": [],
+        "input_count": 6,
+        "rule_guid": "2b20c001-3d37-466b-afeb-f5ef4d112c81"
+      },
+      {
+        "condition_4": false,
+        "far_refs": [],
+        "input_count": 2,
+        "rule_guid": "a1ff1673-1e08-49e7-9101-65a5c4f9aa62"
+      },
+      {
+        "condition_4": false,
+        "far_refs": [],
+        "input_count": 4,
+        "rule_guid": "d702a830-5b29-4413-8672-8ada8f289f42"
+      },
+      {
+        "condition_4": false,
+        "far_refs": [],
+        "input_count": 3,
+        "rule_guid": "b160bb32-520c-4e76-88bb-a2583b043d6a"
+      },
+      {
+        "condition_4": false,
+        "far_refs": [],
+        "input_count": 2,
+        "rule_guid": "722f6825-fd73-4bb7-bf61-0d0536af6d0b"
+      },
+      {
+        "condition_4": false,
+        "far_refs": [],
+        "input_count": 2,
+        "rule_guid": "ca9e6217-60d8-4d29-85d8-0c2c55199f23"
+      },
+      {
+        "condition_4": true,
+        "far_refs": [
+          {
+            "class": "PhSimpleContextNC",
+            "guid": "735be4f2-6cd8-4a1c-9c9e-13e8eaf012f1",
+            "in_contexts_os": true,
+            "input_index": 1,
+            "owner_chain": [
+              "PhPhonData(flid=5099004)",
+              "LangProject(flid=6001035)"
+            ],
+            "position": 0,
+            "reachable_from_phon_rules": false,
+            "referent_class": "PhNCFeatures",
+            "referent_enumerable": true,
+            "referent_guid": "c6384106-86e1-4d19-a212-980a9c9eba83"
+          }
+        ],
+        "input_count": 3,
+        "rule_guid": "ac89feae-833e-4908-8657-a2f80a1ec260"
+      },
+      {
+        "condition_4": false,
+        "far_refs": [],
+        "input_count": 2,
+        "rule_guid": "1f6b8c3c-6121-4ae8-b228-b96a8b2354f7"
+      },
+      {
+        "condition_4": false,
+        "far_refs": [],
+        "input_count": 2,
+        "rule_guid": "6920af1f-6b11-4a9d-b7a3-c5607d604fcb"
+      },
+      {
+        "condition_4": false,
+        "far_refs": [],
+        "input_count": 2,
+        "rule_guid": "be6bc953-78e5-4bf2-a72e-2977bd0ed683"
+      },
+      {
+        "condition_4": true,
+        "far_refs": [
+          {
+            "class": "PhSimpleContextNC",
+            "guid": "e2a39650-41ed-4716-bed1-8b8064188c00",
+            "in_contexts_os": true,
+            "input_index": 0,
+            "owner_chain": [
+              "PhPhonData(flid=5099004)",
+              "LangProject(flid=6001035)"
+            ],
+            "position": 0,
+            "reachable_from_phon_rules": false,
+            "referent_class": "PhNCFeatures",
+            "referent_enumerable": true,
+            "referent_guid": "8f5b331b-6257-44c8-9d9f-0d04b25c3e78"
+          }
+        ],
+        "input_count": 2,
+        "rule_guid": "081a21b1-2e2f-477d-b7a8-59658298880b"
+      },
+      {
+        "condition_4": true,
+        "far_refs": [
+          {
+            "class": "PhSimpleContextNC",
+            "guid": "bbab8d1d-9a96-42ee-8b0c-47517bd7d131",
+            "in_contexts_os": true,
+            "input_index": 0,
+            "owner_chain": [
+              "PhPhonData(flid=5099004)",
+              "LangProject(flid=6001035)"
+            ],
+            "position": 0,
+            "reachable_from_phon_rules": false,
+            "referent_class": "PhNCFeatures",
+            "referent_enumerable": true,
+            "referent_guid": "8f5b331b-6257-44c8-9d9f-0d04b25c3e78"
+          }
+        ],
+        "input_count": 2,
+        "rule_guid": "f7c7c2bd-4e96-49aa-9432-ae5dae931094"
+      }
+    ]
+  }
+}

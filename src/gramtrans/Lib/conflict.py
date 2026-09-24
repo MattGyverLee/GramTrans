@@ -334,6 +334,15 @@ def collect_overwrite_conflicts(plan, source, target, prior_logs_by_guid=None):
         except ImportError:
             continue
         if cat == "pos":
+            # T106: identity-only, and DELIBERATELY so. `ow.target_guid` is
+            # already a DESTINATION GUID -- the same value this function uses a
+            # few lines down as a destination identity key
+            # (`prior_logs_by_guid.get(ow.target_guid)`), and every producer of
+            # a POS overwrite either verified the GUID present in the target or
+            # took it from the matched destination object itself. Routing it
+            # through the natural key would re-derive a decision Preview
+            # already recorded, and could override a T091 reuse with a fresh
+            # name match. Principle III.
             tgt_obj = finder(target, ow.target_guid)
             src_obj = None
             for p in source.POS.GetAll(recursive=True):

@@ -747,6 +747,39 @@ def _compute_wizard_plan(wizard) -> tuple:
                 text_picks=frozenset(g.lower() for g in text_picks),
             )
 
+    # Step 5h: grammatical-dependency deselection (feature 038 T072, FR-016).
+    # `_PageGramDeps` preselects every dependency it derived from the affix
+    # picks and invites the user to uncheck what they do not want;
+    # `deselected_dep_guids()` returns exactly the GUIDs they unchecked. Until
+    # this step existed NOTHING called it, so `Selection.excluded_deps` was
+    # empty on every plan the wizard has ever built and the checkbox changed
+    # nothing. `preview._plan_pulled_in_items` (T070/T071) is the reader:
+    # a GUID in this set suppresses the pull-in and emits
+    # `SkipReason.DEPENDENCY_DESELECTED` instead of transferring the object.
+    # GUIDs are lower-cased for the same reason the skeleton/stems/texts steps
+    # do it -- the engine compares against `categories._guid_str_from` output.
+    #
+    # TWO pages contribute, not one. `_PageGramDeps` owns the inflection
+    # features / classes / stem names; `_PageSkeleton` owns the POSes, slots
+    # and templates -- which are precisely the far endpoints of the five
+    # registered closure edges, so leaving them out would make "individually
+    # deselectable" true of the deps the closure does not pull in and false of
+    # the ones it does. Step 5e above reads the skeleton page's CHECKED POSes
+    # into `pos_picks`; this reads its UNCHECKED ones, which since T070 is a
+    # different statement (omission no longer prevents a pull-in).
+    _deselected: set = set()
+    deps_page = (wizard.page_gram_deps()
+                 if hasattr(wizard, "page_gram_deps") else None)
+    if deps_page is not None and hasattr(deps_page, "deselected_dep_guids"):
+        _deselected |= set(deps_page.deselected_dep_guids() or ())
+    if skel_page is not None and hasattr(skel_page, "deselected_skeleton_guids"):
+        _deselected |= set(skel_page.deselected_skeleton_guids() or ())
+    if _deselected:
+        selection = dataclasses.replace(
+            selection,
+            excluded_deps=frozenset(g.lower() for g in _deselected),
+        )
+
     # Step 6: WS mapping -- from the writing-systems page, which owns it since
     # the FR-006 split. `page_project_ws()` no longer answers for the mapping,
     # and the hasattr guards keep the fake wizards in the unit suite (which

@@ -1,0 +1,16 @@
+{
+  "destination": "GT038 Phase6 Target",
+  "destination_contexts_os_total": 56,
+  "destination_rules": 18,
+  "findings": [],
+  "read_only": true,
+  "sequences_empty_in_destination": 0,
+  "sequences_identical": 6,
+  "shared_contexts_missing_from_destination": [],
+  "shared_contexts_present_in_destination": 6,
+  "shared_contexts_referenced_by_a_sequence": 6,
+  "source": "Mbugwe LizzieHC practice",
+  "source_contexts_os_total": 93,
+  "source_rules": 18,
+  "source_sequences": 6
+}

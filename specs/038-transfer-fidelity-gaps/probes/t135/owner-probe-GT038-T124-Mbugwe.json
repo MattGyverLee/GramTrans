@@ -1,0 +1,392 @@
+{
+ "project": "GT038 T124 Mbugwe",
+ "classes": {
+  "FsFeatStruc": {
+   "subtree_total": 801,
+   "exact_class": 801,
+   "owners": {
+    "PartOfSpeech.ReferenceForms (flid=5049010)": 288,
+    "FsComplexValue.Value (flid=53001)": 146,
+    "PhNCFeatures.Features (flid=5094001)": 119,
+    "MoStemMsa.MsFeatures (flid=5001001)": 108,
+    "MoInflAffMsa.InflFeats (flid=5038001)": 55,
+    "PhPhoneme.Features (flid=5092002)": 46,
+    "MoDerivAffMsa.ToMsFeatures (flid=5031002)": 17,
+    "MoDerivAffMsa.FromMsFeatures (flid=5031001)": 17,
+    "MoAffixAllomorph.MsEnvFeatures (flid=5027001)": 5
+   }
+  },
+  "FsClosedValue": {
+   "subtree_total": 1382,
+   "exact_class": 1382,
+   "owners": {
+    "FsFeatStruc.FeatureSpecs (flid=57002)": 1382
+   }
+  },
+  "FsSymFeatVal": {
+   "subtree_total": 79,
+   "exact_class": 79,
+   "owners": {
+    "FsClosedFeature.Values (flid=50001)": 79
+   }
+  },
+  "FsClosedFeature": {
+   "subtree_total": 26,
+   "exact_class": 26,
+   "owners": {
+    "FsFeatureSystem.Features (flid=49003)": 26
+   }
+  },
+  "FsFeatStrucType": {
+   "subtree_total": 7,
+   "exact_class": 7,
+   "owners": {
+    "FsFeatureSystem.Types (flid=49002)": 7
+   }
+  },
+  "CmPossibility": {
+   "subtree_total": 2177,
+   "exact_class": 305,
+   "owners": {
+    "CmPossibility.SubPossibilities (flid=7004)": 202,
+    "CmPossibilityList.Possibilities (flid=8008)": 103
+   },
+   "possibility_lists": {
+    "DsDiscourseData.ChartMarkers (flid=5124003) | name=None": 67,
+    "LexDb.DomainTypes (flid=5005007) | name=None": 55,
+    "LangProject.TextMarkupTags (flid=6001055) | name=None": 52,
+    "LangProject.GenreList (flid=6001052) | name=None": 29,
+    "LexDb.UsageTypes (flid=5005006) | name=None": 26,
+    "RnResearchNbk.RecTypes (flid=4001003) | name=None": 11,
+    "LangProject.TimeOfDay (flid=6001033) | name=None": 11,
+    "DsDiscourseData.ConstChartTempl (flid=5124001) | name=None": 11,
+    "LangProject.Roles (flid=6001028) | name=None": 10,
+    "LangProject.Education (flid=6001032) | name=None": 7,
+    "LexDb.ExtendedNoteTypes (flid=5005025) | name=None": 5,
+    "LangProject.Restrictions (flid=6001026) | name=None": 4,
+    "LangProject.Status (flid=6001029) | name=None": 4,
+    "LangProject.ConfidenceLevels (flid=6001025) | name=None": 4,
+    "MoMorphData.ProdRestrict (flid=5040009) | name=None": 3,
+    "LangProject.TranslationTags (flid=6001007) | name=None": 3,
+    "LexDb.SenseTypes (flid=5005005) | name=None": 2,
+    "LexDb.PublicationTypes (flid=5005024) | name=None": 1
+   }
+  },
+  "PhSequenceContext": {
+   "subtree_total": 77,
+   "exact_class": 77,
+   "owners": {
+    "MoAffixProcess.Input (flid=5029002)": 49,
+    "PhSegRuleRHS.RightContext (flid=5131002)": 22,
+    "PhSegRuleRHS.LeftContext (flid=5131001)": 6
+   }
+  },
+  "PhSimpleContextNC": {
+   "subtree_total": 103,
+   "exact_class": 103,
+   "owners": {
+    "PhPhonData.Contexts (flid=5099004)": 47,
+    "PhSegRuleRHS.StrucChange (flid=5131003)": 16,
+    "PhSegmentRule.StrucDesc (flid=5128006) [runtime=PhRegularRule]": 13,
+    "MoAffixProcess.Input (flid=5029002)": 11,
+    "PhSegRuleRHS.LeftContext (flid=5131001)": 10,
+    "PhSegRuleRHS.RightContext (flid=5131002)": 6
+   }
+  },
+  "PhSimpleContextSeg": {
+   "subtree_total": 131,
+   "exact_class": 131,
+   "owners": {
+    "MoAffixProcess.Input (flid=5029002)": 46,
+    "PhPhonData.Contexts (flid=5099004)": 36,
+    "PhSegmentRule.StrucDesc (flid=5128006) [runtime=PhRegularRule]": 27,
+    "PhSegRuleRHS.StrucChange (flid=5131003)": 16,
+    "PhSegRuleRHS.RightContext (flid=5131002)": 3,
+    "PhSegRuleRHS.LeftContext (flid=5131001)": 3
+   }
+  },
+  "PhSimpleContextBdry": {
+   "subtree_total": 33,
+   "exact_class": 33,
+   "owners": {
+    "PhPhonData.Contexts (flid=5099004)": 30,
+    "MoAffixProcess.Input (flid=5029002)": 2,
+    "PhSegRuleRHS.RightContext (flid=5131002)": 1
+   }
+  },
+  "PhSegRuleRHS": {
+   "subtree_total": 37,
+   "exact_class": 37,
+   "owners": {
+    "PhRegularRule.RightHandSides (flid=5129001)": 37
+   }
+  },
+  "PhFeatureConstraint": {
+   "subtree_total": 57,
+   "exact_class": 57,
+   "owners": {
+    "PhPhonData.FeatConstraints (flid=5099005)": 57
+   }
+  },
+  "PhCode": {
+   "subtree_total": 106,
+   "exact_class": 106,
+   "owners": {
+    "PhTerminalUnit.Codes (flid=5090003) [runtime=PhPhoneme]": 104,
+    "PhTerminalUnit.Codes (flid=5090003) [runtime=PhBdryMarker]": 2
+   }
+  },
+  "PhPhoneme": {
+   "subtree_total": 50,
+   "exact_class": 50,
+   "owners": {
+    "PhPhonemeSet.Phonemes (flid=5089002)": 50
+   },
+   "feature_structure": {
+    "FeaturesOA": 46,
+    "(none)": 4
+   }
+  },
+  "PhNCFeatures": {
+   "subtree_total": 119,
+   "exact_class": 119,
+   "owners": {
+    "PhPhonData.NaturalClasses (flid=5099003)": 119
+   },
+   "feature_structure": {
+    "FeaturesOA": 119
+   }
+  },
+  "PhRegularRule": {
+   "subtree_total": 37,
+   "exact_class": 37,
+   "owners": {
+    "PhPhonData.PhonRules (flid=5099007)": 37
+   }
+  },
+  "PhMetathesisRule": {
+   "subtree_total": 0,
+   "exact_class": 0,
+   "owners": {}
+  },
+  "MoStemMsa": {
+   "subtree_total": 177,
+   "exact_class": 177,
+   "owners": {
+    "LexEntry.MorphoSyntaxAnalyses (flid=5002009)": 168,
+    "MoBinaryCompoundRule.RightMsa (flid=5106002) [runtime=MoEndoCompound]": 3,
+    "MoEndoCompound.OverridingMsa (flid=5033002)": 3,
+    "MoBinaryCompoundRule.LeftMsa (flid=5106001) [runtime=MoEndoCompound]": 3
+   },
+   "feature_structure": {
+    "MsFeaturesOA": 108,
+    "(none)": 69
+   }
+  },
+  "MoInflAffMsa": {
+   "subtree_total": 203,
+   "exact_class": 203,
+   "owners": {
+    "LexEntry.MorphoSyntaxAnalyses (flid=5002009)": 203
+   },
+   "feature_structure": {
+    "(none)": 148,
+    "InflFeatsOA": 55
+   }
+  },
+  "LexEntryType": {
+   "subtree_total": 16,
+   "exact_class": 12,
+   "owners": {
+    "CmPossibilityList.Possibilities (flid=8008)": 12
+   },
+   "possibility_lists": {
+    "LexDb.ComplexEntryTypes (flid=5005023) | name=None": 7,
+    "LexDb.VariantEntryTypes (flid=5005022) | name=None": 5
+   }
+  },
+  "LexEntryInflType": {
+   "subtree_total": 4,
+   "exact_class": 4,
+   "owners": {
+    "CmPossibility.SubPossibilities (flid=7004) [runtime=LexEntryInflType]": 3,
+    "CmPossibilityList.Possibilities (flid=8008)": 1
+   },
+   "possibility_lists": {
+    "LexDb.VariantEntryTypes (flid=5005022) | name=None": 4
+   }
+  },
+  "LexReference": {
+   "subtree_total": 0,
+   "exact_class": 0,
+   "owners": {}
+  },
+  "MoAffixProcess": {
+   "subtree_total": 74,
+   "exact_class": 74,
+   "owners": {
+    "LexEntry.AlternateForms (flid=5002030)": 73,
+    "LexEntry.LexemeForm (flid=5002029)": 1
+   }
+  },
+  "CmFile": {
+   "subtree_total": 0,
+   "exact_class": 0,
+   "owners": {}
+  },
+  "CmFolder": {
+   "subtree_total": 1,
+   "exact_class": 1,
+   "owners": {
+    "LangProject.FilePathsInTsStrings (flid=6001056)": 1
+   }
+  },
+  "PartOfSpeech": {
+   "subtree_total": 22,
+   "exact_class": 22,
+   "owners": {
+    "CmPossibilityList.Possibilities (flid=8008)": 14,
+    "CmPossibility.SubPossibilities (flid=7004) [runtime=PartOfSpeech]": 8
+   },
+   "feature_structure": {
+    "(none)": 22
+   }
+  }
+ },
+ "lex_references": {
+  "lex_references_total": 0,
+  "owning_types_uncastable": 0,
+  "by_owning_type": {}
+ },
+ "possibility_nesting": {
+  "LexEntryInflType": {
+   "exact_class": 4,
+   "nested": 3,
+   "top_level": 1,
+   "other": 0,
+   "by_owning_field": {
+    "CmPossibility.SubPossibilities (flid=7004)": 3,
+    "CmPossibilityList.Possibilities (flid=8008)": 1
+   },
+   "by_guid": {
+    "01d4fbc1-3b0c-4f52-9163-7ab0d4f4711c": {
+     "name": "Irregularly Inflected Form",
+     "nesting": "top_level",
+     "owning_field": "CmPossibilityList.Possibilities (flid=8008)",
+     "owner_guid": "bb372467-5230-43ef-9cc7-4d40b053fb94"
+    },
+    "837ebe72-8c1d-4864-95d9-fa313c499d78": {
+     "name": "Past",
+     "nesting": "nested",
+     "owning_field": "CmPossibility.SubPossibilities (flid=7004)",
+     "owner_guid": "01d4fbc1-3b0c-4f52-9163-7ab0d4f4711c"
+    },
+    "a32f1d1c-4832-46a2-9732-c2276d6547e8": {
+     "name": "Plural",
+     "nesting": "nested",
+     "owning_field": "CmPossibility.SubPossibilities (flid=7004)",
+     "owner_guid": "01d4fbc1-3b0c-4f52-9163-7ab0d4f4711c"
+    },
+    "f84f013b-455f-4433-b378-3a2bfa7f574b": {
+     "name": "Class 10",
+     "nesting": "nested",
+     "owning_field": "CmPossibility.SubPossibilities (flid=7004)",
+     "owner_guid": "01d4fbc1-3b0c-4f52-9163-7ab0d4f4711c"
+    }
+   }
+  },
+  "LexEntryType": {
+   "exact_class": 12,
+   "nested": 0,
+   "top_level": 12,
+   "other": 0,
+   "by_owning_field": {
+    "CmPossibilityList.Possibilities (flid=8008)": 12
+   },
+   "by_guid": {
+    "024b62c9-93b3-41a0-ab19-587a0030219a": {
+     "name": "Dialectal Variant",
+     "nesting": "top_level",
+     "owning_field": "CmPossibilityList.Possibilities (flid=8008)",
+     "owner_guid": "bb372467-5230-43ef-9cc7-4d40b053fb94"
+    },
+    "0c4663b3-4d9a-47af-b9a1-c8565d8112ed": {
+     "name": "Spelling Variant",
+     "nesting": "top_level",
+     "owning_field": "CmPossibilityList.Possibilities (flid=8008)",
+     "owner_guid": "bb372467-5230-43ef-9cc7-4d40b053fb94"
+    },
+    "1f6ae209-141a-40db-983c-bee93af0ca3c": {
+     "name": "Compound",
+     "nesting": "top_level",
+     "owning_field": "CmPossibilityList.Possibilities (flid=8008)",
+     "owner_guid": "1ee09905-63dd-4c7a-a9bd-1d496743ccd6"
+    },
+    "35cee792-74c8-444e-a9b7-ed0461d4d3b7": {
+     "name": "Phrasal Verb",
+     "nesting": "top_level",
+     "owning_field": "CmPossibilityList.Possibilities (flid=8008)",
+     "owner_guid": "1ee09905-63dd-4c7a-a9bd-1d496743ccd6"
+    },
+    "4343b1ef-b54f-4fa4-9998-271319a6d74c": {
+     "name": "Free Variant",
+     "nesting": "top_level",
+     "owning_field": "CmPossibilityList.Possibilities (flid=8008)",
+     "owner_guid": "bb372467-5230-43ef-9cc7-4d40b053fb94"
+    },
+    "3942addb-99fd-43e9-ab7d-99025ceb0d4e": {
+     "name": "Unspecified Variant",
+     "nesting": "top_level",
+     "owning_field": "CmPossibilityList.Possibilities (flid=8008)",
+     "owner_guid": "bb372467-5230-43ef-9cc7-4d40b053fb94"
+    },
+    "73266a3a-48e8-4bd7-8c84-91c730340b7d": {
+     "name": "Contraction",
+     "nesting": "top_level",
+     "owning_field": "CmPossibilityList.Possibilities (flid=8008)",
+     "owner_guid": "1ee09905-63dd-4c7a-a9bd-1d496743ccd6"
+    },
+    "9466d126-246e-400b-8bba-0703e09bc567": {
+     "name": "Saying",
+     "nesting": "top_level",
+     "owning_field": "CmPossibilityList.Possibilities (flid=8008)",
+     "owner_guid": "1ee09905-63dd-4c7a-a9bd-1d496743ccd6"
+    },
+    "98c273c4-f723-4fb0-80df-eede2204dfca": {
+     "name": "Derivative",
+     "nesting": "top_level",
+     "owning_field": "CmPossibilityList.Possibilities (flid=8008)",
+     "owner_guid": "1ee09905-63dd-4c7a-a9bd-1d496743ccd6"
+    },
+    "99e0cab9-f284-45fb-84a5-4cb2516d0bf4": {
+     "name": "Periphrastic Form",
+     "nesting": "top_level",
+     "owning_field": "CmPossibilityList.Possibilities (flid=8008)",
+     "owner_guid": "bb372467-5230-43ef-9cc7-4d40b053fb94"
+    },
+    "b2276dec-b1a6-4d82-b121-fd114c009c59": {
+     "name": "Idiom",
+     "nesting": "top_level",
+     "owning_field": "CmPossibilityList.Possibilities (flid=8008)",
+     "owner_guid": "1ee09905-63dd-4c7a-a9bd-1d496743ccd6"
+    },
+    "fec038ed-6a8c-4fa5-bc96-a4f515a98c50": {
+     "name": "Unspecified Complex Form",
+     "nesting": "top_level",
+     "owning_field": "CmPossibilityList.Possibilities (flid=8008)",
+     "owner_guid": "1ee09905-63dd-4c7a-a9bd-1d496743ccd6"
+    }
+   }
+  },
+  "CmPossibility": {
+   "exact_class": 305,
+   "nested": 202,
+   "top_level": 103,
+   "other": 0,
+   "by_owning_field": {
+    "CmPossibility.SubPossibilities (flid=7004)": 202,
+    "CmPossibilityList.Possibilities (flid=8008)": 103
+   }
+  }
+ }
+}

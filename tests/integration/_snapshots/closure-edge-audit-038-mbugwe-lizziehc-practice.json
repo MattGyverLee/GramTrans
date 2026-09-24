@@ -1,0 +1,230 @@
+{
+  "audit": "038-phase7-closure-edges",
+  "edges": {
+    "AFFIX_TO_POS": {
+      "cast": 296,
+      "population": 279,
+      "producer": "categories._entry_pos_deps (affixes/stems_dependencies)",
+      "reads": [
+        "PartOfSpeechRA",
+        "FromPartOfSpeechRA",
+        "ToPartOfSpeechRA"
+      ],
+      "task": "T067",
+      "uncast": 0,
+      "verdict": "CAST_REQUIRED"
+    },
+    "MSA_TO_FEAT_STRUC_TYPE": {
+      "cast": 216,
+      "population": 279,
+      "producer": "categories._entry_feat_struc_deps",
+      "reads": [
+        "InflFeatsOA",
+        "MsFeaturesOA",
+        "FromMsFeaturesOA",
+        "ToMsFeaturesOA"
+      ],
+      "task": "T067 (edges landed by T034)",
+      "uncast": 0,
+      "verdict": "CAST_REQUIRED"
+    },
+    "SLOT_TO_POS": {
+      "cast": 19,
+      "population": 19,
+      "producer": "categories.slots_dependencies",
+      "reads": [
+        "Owner"
+      ],
+      "task": "T068",
+      "uncast": 19,
+      "verdict": "NO_CAST_NEEDED"
+    },
+    "TEMPLATE_TO_POS": {
+      "cast": 11,
+      "population": 11,
+      "producer": "categories.affix_templates_dependencies (owner half)",
+      "reads": [
+        "Owner"
+      ],
+      "task": "T069",
+      "uncast": 11,
+      "verdict": "NO_CAST_NEEDED"
+    },
+    "TEMPLATE_TO_SLOT": {
+      "cast": 24,
+      "population": 11,
+      "producer": "categories.affix_templates_dependencies (slot seqs)",
+      "reads": [
+        "PrefixSlotsRS",
+        "SuffixSlotsRS",
+        "EncliticSlotsRS",
+        "ProcliticSlotsRS",
+        "SlotsRS"
+      ],
+      "task": "T069",
+      "uncast": 24,
+      "verdict": "NO_CAST_NEEDED"
+    }
+  },
+  "population": {
+    "lex_entries": 255,
+    "msas": 279,
+    "msas_by_class": {
+      "MoDerivAffMsa": 17,
+      "MoInflAffMsa": 126,
+      "MoStemMsa": 136
+    },
+    "poses": 13,
+    "slots": 19,
+    "templates": 11
+  },
+  "producer_output": {
+    "adhoc_compound_rules_dependencies": {
+      "by_far_category": {},
+      "population": 3,
+      "total_edges": 4
+    },
+    "affixes_dependencies": {
+      "by_far_category": {
+        "feature_struct_types": 177,
+        "gram_categories": 280,
+        "inflection_features": 299
+      },
+      "population": 255,
+      "total_edges": 756
+    },
+    "stems_dependencies": {
+      "by_far_category": {
+        "feature_struct_types": 177,
+        "gram_categories": 280,
+        "inflection_features": 299
+      },
+      "population": 255,
+      "total_edges": 756
+    }
+  },
+  "read_only": true,
+  "relationships": {
+    "AFFIX_TO_POS": {
+      "dependency_category": "gram_categories",
+      "distinct_far_guids": 6,
+      "edges": 144,
+      "foreign_edges": 0,
+      "population": 118,
+      "producer": "categories.affixes_pos_dependencies",
+      "resolved_as_owned_value": 0,
+      "resolved_as_piece": 6,
+      "source_category": "affixes",
+      "task": "T067",
+      "unresolved": 0,
+      "unresolved_sample": [],
+      "verdict": "CONFIRMED"
+    },
+    "MSA_TO_FEAT_STRUC_TYPE": {
+      "dependency_category": "feature_struct_types",
+      "distinct_far_guids": 2,
+      "edges": 73,
+      "foreign_edges": 0,
+      "population": 118,
+      "producer": "categories.affixes_feat_struc_type_dependencies",
+      "resolved_as_owned_value": 0,
+      "resolved_as_piece": 2,
+      "source_category": "affixes",
+      "task": "T067",
+      "unresolved": 0,
+      "unresolved_sample": [],
+      "verdict": "CONFIRMED"
+    },
+    "MSA_TO_INFL_FEATURE": {
+      "dependency_category": "inflection_features",
+      "distinct_far_guids": 4,
+      "edges": 99,
+      "foreign_edges": 0,
+      "population": 118,
+      "producer": "categories.affixes_infl_feature_dependencies",
+      "resolved_as_owned_value": 0,
+      "resolved_as_piece": 4,
+      "source_category": "affixes",
+      "task": "T067",
+      "unresolved": 0,
+      "unresolved_sample": [],
+      "verdict": "CONFIRMED"
+    },
+    "PROCESS_RULE_TO_NATURAL_CLASS": {
+      "dependency_category": "natural_classes",
+      "distinct_far_guids": 2,
+      "edges": 10,
+      "foreign_edges": 0,
+      "population": 118,
+      "producer": "categories.affixes_process_rule_natural_class_dependencies",
+      "resolved_as_owned_value": 0,
+      "resolved_as_piece": 2,
+      "source_category": "affixes",
+      "task": "T076",
+      "unresolved": 0,
+      "unresolved_sample": [],
+      "verdict": "CONFIRMED"
+    },
+    "PROCESS_RULE_TO_PHONEME": {
+      "dependency_category": "phonemes",
+      "distinct_far_guids": 16,
+      "edges": 32,
+      "foreign_edges": 0,
+      "population": 118,
+      "producer": "categories.affixes_process_rule_phoneme_dependencies",
+      "resolved_as_owned_value": 0,
+      "resolved_as_piece": 16,
+      "source_category": "affixes",
+      "task": "T076",
+      "unresolved": 0,
+      "unresolved_sample": [],
+      "verdict": "CONFIRMED"
+    },
+    "SLOT_TO_POS": {
+      "dependency_category": "gram_categories",
+      "distinct_far_guids": 5,
+      "edges": 19,
+      "foreign_edges": 0,
+      "population": 19,
+      "producer": "categories.slots_pos_dependencies",
+      "resolved_as_owned_value": 0,
+      "resolved_as_piece": 5,
+      "source_category": "slots",
+      "task": "T068",
+      "unresolved": 0,
+      "unresolved_sample": [],
+      "verdict": "CONFIRMED"
+    },
+    "TEMPLATE_TO_POS": {
+      "dependency_category": "gram_categories",
+      "distinct_far_guids": 5,
+      "edges": 11,
+      "foreign_edges": 0,
+      "population": 11,
+      "producer": "categories.affix_templates_pos_dependencies",
+      "resolved_as_owned_value": 0,
+      "resolved_as_piece": 5,
+      "source_category": "affix_templates",
+      "task": "T069",
+      "unresolved": 0,
+      "unresolved_sample": [],
+      "verdict": "CONFIRMED"
+    },
+    "TEMPLATE_TO_SLOT": {
+      "dependency_category": "slots",
+      "distinct_far_guids": 18,
+      "edges": 24,
+      "foreign_edges": 0,
+      "population": 11,
+      "producer": "categories.affix_templates_slot_dependencies",
+      "resolved_as_owned_value": 0,
+      "resolved_as_piece": 18,
+      "source_category": "affix_templates",
+      "task": "T069",
+      "unresolved": 0,
+      "unresolved_sample": [],
+      "verdict": "CONFIRMED"
+    }
+  },
+  "source_project": "Mbugwe LizzieHC practice"
+}

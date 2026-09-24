@@ -1112,6 +1112,251 @@ def test_phon_rule_apply_body_leaves_enabled_rule_enabled():
 
 
 # ============================================================================
+# Feature 038 / issue #60 -- nested phonological-rule contexts must be fully
+# descended before the copy path wires their reference members.
+# ============================================================================
+
+
+class _FakeContextCell:
+    def __init__(self, class_name, guid, feature=None, plus=(), minus=(),
+                 members=(), member=None, minimum=0, maximum=0):
+        self.ClassName = class_name
+        self.guid = guid
+        self.Guid = guid
+        self.FeatureStructureRA = feature
+        self.PlusConstrRS = _FakeCollection(plus)
+        self.MinusConstrRS = _FakeCollection(minus)
+        self.MembersRS = _FakeCollection(members)
+        self.MemberRA = member
+        self.Minimum = minimum
+        self.Maximum = maximum
+
+
+class _FakePhRuleRHS:
+    def __init__(self, guid, struc_change=(), left=None, right=None):
+        self.guid = guid
+        self.Guid = guid
+        self.StrucChangeOS = _FakeCollection(struc_change)
+        self.LeftContextOA = left
+        self.RightContextOA = right
+        self.InputPOSesRC = _FakeCollection()
+        self.ReqRuleFeatsRC = _FakeCollection()
+        self.ExclRuleFeatsRC = _FakeCollection()
+
+
+class _FakePhRule:
+    def __init__(self, rhs_list=()):
+        self.ClassName = "PhRegularRule"
+        self.Direction = 0
+        self.Disabled = False
+        self.StrucDescOS = _FakeCollection()
+        self.RightHandSidesOS = _FakeCollection(rhs_list)
+        self.InitialStratumRA = None
+        self.FinalStratumRA = None
+
+
+class _FakeRef:
+    def __init__(self, guid, class_name):
+        self.guid = guid
+        self.Guid = guid
+        self.ClassName = class_name
+
+
+def _stub_lcm_phon_rule_imports():
+    import sys
+    import types
+
+    def _passthrough(name):
+        class _Cast:
+            def __new__(cls, obj):
+                return obj
+
+        _Cast.__name__ = name
+        return _Cast
+
+    fake = types.ModuleType("SIL.LCModel")
+    for name in (
+        "IPhRegularRule",
+        "IPhSimpleContextSeg",
+        "IPhSimpleContextNC",
+        "IPhSimpleContextBdry",
+        "IPhSequenceContext",
+        "IPhIterationContext",
+        "ICmObject",
+    ):
+        setattr(fake, name, _passthrough(name))
+    for name in (
+        "IPhSegRuleRHSFactory",
+        "IPhSimpleContextSegFactory",
+        "IPhSimpleContextNCFactory",
+        "IPhSimpleContextBdryFactory",
+        "IPhSequenceContextFactory",
+        "IPhIterationContextFactory",
+        "IPhFeatureConstraintFactory",
+    ):
+        setattr(fake, name, type(name, (), {}))
+
+    original_sil = sys.modules.get("SIL")
+    original_lcm = sys.modules.get("SIL.LCModel")
+    sil = types.ModuleType("SIL")
+    sil.LCModel = fake
+    sys.modules["SIL"] = sil
+    sys.modules["SIL.LCModel"] = fake
+    return original_sil, original_lcm
+
+
+def _restore_lcm_pair(original_sil, original_lcm):
+    import sys
+    if original_sil is None:
+        sys.modules.pop("SIL", None)
+    else:
+        sys.modules["SIL"] = original_sil
+    if original_lcm is None:
+        sys.modules.pop("SIL.LCModel", None)
+    else:
+        sys.modules["SIL.LCModel"] = original_lcm
+
+
+def _install_fake_phon_rule_creators(monkeypatch):
+    def _new_context(class_name, guid):
+        return _FakeContextCell(class_name, guid)
+
+    def _create_with_guid(factory_iface, owner_collection, guid_str, _target):
+        mapping = {
+            "IPhSegRuleRHSFactory": lambda: _FakePhRuleRHS(guid_str),
+            "IPhSimpleContextSegFactory": lambda: _new_context("PhSimpleContextSeg", guid_str),
+            "IPhSimpleContextNCFactory": lambda: _new_context("PhSimpleContextNC", guid_str),
+            "IPhSimpleContextBdryFactory": lambda: _new_context("PhSimpleContextBdry", guid_str),
+            "IPhSequenceContextFactory": lambda: _new_context("PhSequenceContext", guid_str),
+            "IPhIterationContextFactory": lambda: _new_context("PhIterationContext", guid_str),
+            "IPhFeatureConstraintFactory": lambda: _FakeRef(guid_str, "PhFeatureConstraint"),
+        }
+        obj = mapping[factory_iface.__name__]()
+        owner_collection.Add(obj)
+        return obj, True
+
+    def _create_with_guid_oa(factory_iface, guid_str, _target):
+        mapping = {
+            "IPhSequenceContextFactory": lambda: _new_context("PhSequenceContext", guid_str),
+            "IPhIterationContextFactory": lambda: _new_context("PhIterationContext", guid_str),
+        }
+        return mapping[factory_iface.__name__]()
+
+    monkeypatch.setattr(categories, "_create_with_guid", _create_with_guid)
+    monkeypatch.setattr(categories, "_create_with_guid_oa", _create_with_guid_oa)
+
+
+def _build_phon_rule_apply_handles(target_ncs):
+    source = MagicMock()
+    source.PhonRules.GetSyncableProperties.return_value = {}
+
+    phon_data = type("PhonData", (), {})()
+    phon_data.ContextsOS = _FakeCollection()
+    phon_data.FeatConstraintsOS = _FakeCollection()
+    phon_data.PhonemeSetsOS = []
+    phon_data.PhonRuleFeatsOA = []
+
+    cache = type("Cache", (), {})()
+    cache.LangProject = type("LangProject", (), {})()
+    cache.LangProject.PhonologicalDataOA = phon_data
+    cache.DefaultAnalWs = None
+
+    target = MagicMock()
+    target.Cache = cache
+    target.PhonRules.ApplySyncableProperties.return_value = None
+    target.Phonemes.GetAll.return_value = []
+    target.NaturalClasses.GetAll.return_value = list(target_ncs)
+    target.PhonFeatures.GetAll.return_value = []
+    target.Strata.GetAll.return_value = []
+
+    return source, target
+
+
+def test_phon_rule_apply_body_descends_nested_sequence_members(monkeypatch):
+    """A nested `PhSequenceContext` must not survive as an empty shell.
+
+    Regression for issue #60's measured shape: the containing sequence object
+    can arrive while its `MembersRS` silently empties if the pre-pass never
+    reaches the nested `PhSimpleContextNC` that forces the copy path to fail.
+    """
+    original_sil, original_lcm = _stub_lcm_phon_rule_imports()
+    _install_fake_phon_rule_creators(monkeypatch)
+    try:
+        target_nc = _FakeRef("nc-1", "PhNCFeatures")
+        source, target = _build_phon_rule_apply_handles([target_nc])
+        constrained_nc = _FakeContextCell(
+            "PhSimpleContextNC",
+            "ctx-nc-nested",
+            feature=_FakeRef("nc-1", "PhNCFeatures"),
+            plus=[_FakeRef("fc-nested", "PhFeatureConstraint")],
+        )
+        inner_seq = _FakeContextCell(
+            "PhSequenceContext", "ctx-seq-inner", members=[constrained_nc])
+        outer_seq = _FakeContextCell(
+            "PhSequenceContext", "ctx-seq-outer", members=[inner_seq])
+        src_rule = _FakePhRule([_FakePhRuleRHS("rhs-1", right=outer_seq)])
+        new_rule = _FakePhRule()
+        dropped = []
+
+        categories._phon_rule_apply_body(
+            src_rule, new_rule, "PhRegularRule", source, target,
+            ws_mapping=None, tag="test-tag", src_guid="rule-seq-nested",
+            context=None, dropped=dropped,
+        )
+    finally:
+        _restore_lcm_pair(original_sil, original_lcm)
+
+    assert dropped == []
+    new_rhs = list(new_rule.RightHandSidesOS)[0]
+    copied_outer = new_rhs.RightContextOA
+    copied_inner = list(copied_outer.MembersRS)[0]
+    copied_nc = list(copied_inner.MembersRS)[0]
+    assert copied_inner.ClassName == "PhSequenceContext"
+    assert copied_nc.guid == "ctx-nc-nested"
+    assert copied_nc.FeatureStructureRA is target_nc
+
+
+def test_phon_rule_apply_body_descends_iteration_memberra(monkeypatch):
+    """A nested `PhIterationContext.MemberRA` must be wired, not left null."""
+    original_sil, original_lcm = _stub_lcm_phon_rule_imports()
+    _install_fake_phon_rule_creators(monkeypatch)
+    try:
+        target_nc = _FakeRef("nc-2", "PhNCFeatures")
+        source, target = _build_phon_rule_apply_handles([target_nc])
+        constrained_nc = _FakeContextCell(
+            "PhSimpleContextNC",
+            "ctx-nc-iter",
+            feature=_FakeRef("nc-2", "PhNCFeatures"),
+            plus=[_FakeRef("fc-iter", "PhFeatureConstraint")],
+        )
+        iter_ctx = _FakeContextCell(
+            "PhIterationContext", "ctx-iter-1", member=constrained_nc,
+            minimum=1, maximum=3,
+        )
+        seq_ctx = _FakeContextCell(
+            "PhSequenceContext", "ctx-seq-iter", members=[iter_ctx])
+        src_rule = _FakePhRule([_FakePhRuleRHS("rhs-2", right=seq_ctx)])
+        new_rule = _FakePhRule()
+        dropped = []
+
+        categories._phon_rule_apply_body(
+            src_rule, new_rule, "PhRegularRule", source, target,
+            ws_mapping=None, tag="test-tag", src_guid="rule-iter-nested",
+            context=None, dropped=dropped,
+        )
+    finally:
+        _restore_lcm_pair(original_sil, original_lcm)
+
+    assert dropped == []
+    new_rhs = list(new_rule.RightHandSidesOS)[0]
+    copied_iter = list(new_rhs.RightContextOA.MembersRS)[0]
+    assert copied_iter.MemberRA is not None
+    assert copied_iter.MemberRA.guid == "ctx-nc-iter"
+    assert copied_iter.MemberRA.FeatureStructureRA is target_nc
+    assert (copied_iter.Minimum, copied_iter.Maximum) == (1, 3)
+
+
+# ============================================================================
 # Feature 037 (task 7) -- already-present-by-GUID phonological rules must be
 # reconciled (skip if structurally identical, update if different), not
 # blindly skipped.  `_fake_lcmodel` (module-level fixture, extended above

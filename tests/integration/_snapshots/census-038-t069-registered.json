@@ -1,0 +1,2415 @@
+{
+  "schema_version": 1,
+  "census_id": "CENSUS-20260821-153635",
+  "generated_at": "2026-08-21T15:36:35",
+  "instrument": {
+    "name": "gramtrans.census_cli",
+    "version": "0.1.0",
+    "gramtrans_sha": "072065b",
+    "gramtrans_dirty": true,
+    "python_version": "3.12.7",
+    "flexicon_version": "4.5.2",
+    "flexicon_path": "D:\\Github\\_Projects\\_LEX\\flexicon\\flexicon\\__init__.py",
+    "flex_version": "9.3.10"
+  },
+  "projects": {
+    "source": {
+      "name": "Mbugwe LizzieHC practice",
+      "path": "C:\\ProgramData\\SIL\\FieldWorks\\Projects\\Mbugwe LizzieHC practice",
+      "opened_read_only": true,
+      "counted_at": "2026-08-21T15:36:34",
+      "fwdata_sha256_before": "fb6aadabb28a3606192852a99d64bc58d835d591538520126f1b7982226c3161",
+      "fwdata_sha256_after": "fb6aadabb28a3606192852a99d64bc58d835d591538520126f1b7982226c3161",
+      "data_model_version": 7000072,
+      "object_count_total": 23760
+    },
+    "destination": {
+      "name": "GT038 Closure Target",
+      "path": "C:\\ProgramData\\SIL\\FieldWorks\\Projects\\GT038 Closure Target",
+      "opened_read_only": true,
+      "counted_at": "2026-08-21T15:36:35",
+      "fwdata_sha256_before": "ec4409477b267926917fe96f3db9a2dc4fbbb977c4cda8a4022eb7e0f20515a3",
+      "fwdata_sha256_after": "ec4409477b267926917fe96f3db9a2dc4fbbb977c4cda8a4022eb7e0f20515a3",
+      "data_model_version": 7000072,
+      "declared_freshly_created": true,
+      "object_count_total": 13501
+    }
+  },
+  "class_list_provenance": {
+    "inventory_document": "specs/035-fullsweep-fidelity/object-inventory.md",
+    "inventory_sha256": "c81fb2f6eca17c7d7bb63bdf46640fa41a549c77d2e3236b4505492bbe2c79b3",
+    "coverage_floor_document": "specs/035-fullsweep-fidelity/contracts/coverage-floor.json",
+    "coverage_floor_sha256": "5ecfe96490e675bf3f34b5367464ce0cb345090ababb16516bbf4f09a74923bb",
+    "census_additions": [
+      {
+        "class": "MoAffixProcess",
+        "rationale": "Absent from object-inventory.md entirely, because the engine has no create path for it -- the class the transfer silently downgraded. A truth-source gap, not a corpus gap.",
+        "measured_evidence": "Ejagham 13 -> 0, Ngoreme 1 -> 0",
+        "owed_to_035": true
+      },
+      {
+        "class": "PhCode",
+        "rationale": "object-inventory.md TABLE 3 (ride-along): flexicon's phoneme GetSyncableProperties explicitly does not include CodesOS, so nothing carries it and nothing reports the drop.",
+        "measured_evidence": "43 -> 25, 89 -> 25",
+        "owed_to_035": true
+      },
+      {
+        "class": "CmTranslation",
+        "rationale": "Reached through the texts path; never projected into the floor.",
+        "measured_evidence": "Ngoreme 7925 -> 2",
+        "owed_to_035": true
+      }
+    ],
+    "excluded_not_measurable": [
+      {
+        "class": "MoForm",
+        "reason": "abstract LCM base class (no IMoFormFactory exists; subclasses MoStemAllomorph / MoAffixAllomorph carry every instance). Absent from every .fwdata by construction, not by corpus gap."
+      },
+      {
+        "class": "MoMorphSynAnalysis",
+        "reason": "abstract LCM base class (no IMoMorphSynAnalysisFactory exists; subclasses MoStemMsa / MoInflAffMsa / MoDerivAffMsa / MoUnclassifiedAffixMsa carry every instance). Absent from every .fwdata by construction, not by corpus gap."
+      }
+    ],
+    "in_scope_class_count": 69,
+    "natural_key_roster_document": "specs/035-fullsweep-fidelity/contracts/natural-key-identity-roster.json",
+    "natural_key_roster_sha256": "9e2fe0f684635e768e105f86049afad7af80eb9e837291886c79848fc1b58c4e",
+    "derivation_check": {
+      "performed": true,
+      "result": "match",
+      "derived_class_count": 71,
+      "in_inventory_not_in_floor": [],
+      "in_floor_not_in_inventory": []
+    },
+    "required_class_count": 75
+  },
+  "starter_baseline": {
+    "kind": "starter_capture",
+    "flex_version": "9.3.10",
+    "captured_at": "2026-08-21T15:34:11",
+    "project_name": "GT038 Closure Target",
+    "path": "D:\\Github\\_Projects\\_LEX\\GramTrans-038-transfer-fidelity-gaps\\scratchpad\\038_t069\\t069-starter.json",
+    "data_model_version": 7000072,
+    "class_count": 72,
+    "carries_natural_keys": false
+  },
+  "classes": [
+    {
+      "class": "CmAgent",
+      "source_count": 4,
+      "destination_count_total": 4,
+      "difference": 0,
+      "engine_can_create": true,
+      "destination_count_net": 4,
+      "difference_raw": 0,
+      "verdict_class": "MATCHED",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1",
+        "TABLE_2"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 4,
+      "starter_matched_to_source": 4,
+      "starter_subtraction_basis": "baseline_matched",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report",
+        "enriched": 0
+      },
+      "notes": [
+        "starter_matched_to_source=4 from the T048d IDENTITY AUDIT, not from the run report: this class has no matched tally of any kind (no action, no overwrite, no skip), which is what FW-global fixed content looks like. The number is a PROVABLE LOWER BOUND, the starter baseline of 4 minus the 0 destination object(s) whose GUID is absent from the source; subtracting 0 unmatched starter object(s) rather than the gross baseline of 4. The bound RESOLVES this row: it is the most negative the difference can be, and it is not negative, so no source object of this class failed to arrive."
+      ]
+    },
+    {
+      "class": "CmAnthroItem",
+      "source_count": 859,
+      "destination_count_total": 0,
+      "difference": -859,
+      "engine_can_create": true,
+      "destination_count_net": 0,
+      "difference_raw": -859,
+      "verdict_class": "NOT_EVALUATED",
+      "not_evaluated_reason": "OUT_OF_SCOPE_CLASS",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1",
+        "TABLE_2"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report",
+        "enriched": 0
+      }
+    },
+    {
+      "class": "CmFile",
+      "source_count": 2173,
+      "destination_count_total": 0,
+      "difference": -2173,
+      "engine_can_create": true,
+      "destination_count_net": 0,
+      "difference_raw": -2173,
+      "verdict_class": "SHORTFALL",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1",
+        "TABLE_2"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 2173,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report",
+        "enriched": 0
+      }
+    },
+    {
+      "class": "CmFolder",
+      "source_count": 3,
+      "destination_count_total": 1,
+      "difference": -3,
+      "engine_can_create": true,
+      "destination_count_net": 0,
+      "difference_raw": -2,
+      "verdict_class": "SHORTFALL",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 3,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 1,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report",
+        "enriched": 0
+      },
+      "notes": [
+        "the T048d IDENTITY AUDIT narrows this row's shortfall to AT MOST 2 (starter_matched_to_source >= 1 by GUID), against the 3 the gross basis reports. The row KEEPS the gross basis and its shortfall stays advisory: the audit supplies a lower bound on the matched count, so the narrowed figure is an UPPER bound on the loss and not the loss itself, and 5.2's cap exists for exactly the arithmetic that can over-report a shortfall."
+      ]
+    },
+    {
+      "class": "CmPicture",
+      "source_count": 0,
+      "destination_count_total": 0,
+      "difference": 0,
+      "engine_can_create": true,
+      "destination_count_net": 0,
+      "difference_raw": 0,
+      "verdict_class": "MATCHED",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report",
+        "enriched": 0
+      }
+    },
+    {
+      "class": "CmPossibility",
+      "source_count": 335,
+      "destination_count_total": 302,
+      "difference": -335,
+      "engine_can_create": true,
+      "destination_count_net": 0,
+      "difference_raw": -33,
+      "verdict_class": "SHORTFALL",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1",
+        "TABLE_2"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 335,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 302,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report",
+        "enriched": 0
+      },
+      "notes": [
+        "the T048d IDENTITY AUDIT narrows this row's shortfall to AT MOST 35 (starter_matched_to_source >= 300 by GUID), against the 335 the gross basis reports. The row KEEPS the gross basis and its shortfall stays advisory: the audit supplies a lower bound on the matched count, so the narrowed figure is an UPPER bound on the loss and not the loss itself, and 5.2's cap exists for exactly the arithmetic that can over-report a shortfall."
+      ]
+    },
+    {
+      "class": "CmSemanticDomain",
+      "source_count": 1792,
+      "destination_count_total": 1792,
+      "difference": 0,
+      "engine_can_create": true,
+      "destination_count_net": 1792,
+      "difference_raw": 0,
+      "verdict_class": "MATCHED",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1",
+        "TABLE_2"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 1792,
+      "starter_matched_to_source": 1792,
+      "starter_subtraction_basis": "baseline_matched",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report",
+        "enriched": 0
+      },
+      "notes": [
+        "starter_matched_to_source=1792 from the T048d IDENTITY AUDIT, not from the run report: this class has no matched tally of any kind (no action, no overwrite, no skip), which is what FW-global fixed content looks like. The number is a PROVABLE LOWER BOUND, the starter baseline of 1792 minus the 0 destination object(s) whose GUID is absent from the source; subtracting 0 unmatched starter object(s) rather than the gross baseline of 1792. The bound RESOLVES this row: it is the most negative the difference can be, and it is not negative, so no source object of this class failed to arrive.",
+        "the `baseline_matched` basis is WITHHELD from this class (T048b): the run report carries an identity skip whose LCM class could not be determined and which could have been a CmSemanticDomain, so this class's matched tally may be understated. Shortfalls on this row are advisory (fidelity-census.md 5.2)."
+      ]
+    },
+    {
+      "class": "FsClosedFeature",
+      "source_count": 21,
+      "destination_count_total": 21,
+      "difference": 0,
+      "engine_can_create": true,
+      "destination_count_net": 21,
+      "difference_raw": 0,
+      "verdict_class": "MATCHED",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1",
+        "TABLE_2"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report",
+        "enriched": 0
+      }
+    },
+    {
+      "class": "FsClosedValue",
+      "source_count": 1352,
+      "destination_count_total": 722,
+      "difference": -630,
+      "engine_can_create": true,
+      "destination_count_net": 722,
+      "difference_raw": -630,
+      "verdict_class": "SHORTFALL",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 630,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report",
+        "enriched": 0
+      }
+    },
+    {
+      "class": "FsComplexFeature",
+      "source_count": 1,
+      "destination_count_total": 1,
+      "difference": 0,
+      "engine_can_create": true,
+      "destination_count_net": 1,
+      "difference_raw": 0,
+      "verdict_class": "MATCHED",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report",
+        "enriched": 0
+      }
+    },
+    {
+      "class": "FsFeatStruc",
+      "source_count": 429,
+      "destination_count_total": 231,
+      "difference": -198,
+      "engine_can_create": true,
+      "destination_count_net": 231,
+      "difference_raw": -198,
+      "verdict_class": "SHORTFALL",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 198,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report",
+        "enriched": 0
+      }
+    },
+    {
+      "class": "FsFeatStrucType",
+      "source_count": 6,
+      "destination_count_total": 6,
+      "difference": 0,
+      "engine_can_create": true,
+      "destination_count_net": 6,
+      "difference_raw": 0,
+      "verdict_class": "MATCHED",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "absent_from_baseline",
+      "match_basis": {
+        "basis_source": "run_report"
+      },
+      "notes": [
+        "Amendment A1: this row is one half of a class split by owning feature system, and the baseline document is not split, so no starter subtraction is applied to it (starter_baseline_source 'absent_from_baseline')."
+      ],
+      "owning_feature_system": "LangProject.MsFeatureSystemOA"
+    },
+    {
+      "class": "FsFeatStrucType",
+      "source_count": 1,
+      "destination_count_total": 1,
+      "difference": 0,
+      "engine_can_create": true,
+      "destination_count_net": 1,
+      "difference_raw": 0,
+      "verdict_class": "MATCHED",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "absent_from_baseline",
+      "match_basis": {
+        "basis_source": "run_report"
+      },
+      "notes": [
+        "Amendment A1: this row is one half of a class split by owning feature system, and the baseline document is not split, so no starter subtraction is applied to it (starter_baseline_source 'absent_from_baseline')."
+      ],
+      "owning_feature_system": "LangProject.PhFeatureSystemOA"
+    },
+    {
+      "class": "FsSymFeatVal",
+      "source_count": 70,
+      "destination_count_total": 70,
+      "difference": 0,
+      "engine_can_create": true,
+      "destination_count_net": 70,
+      "difference_raw": 0,
+      "verdict_class": "MATCHED",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1",
+        "TABLE_2"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report",
+        "enriched": 0
+      }
+    },
+    {
+      "class": "LexAppendix",
+      "source_count": 0,
+      "destination_count_total": 0,
+      "difference": 0,
+      "engine_can_create": false,
+      "destination_count_net": 0,
+      "difference_raw": 0,
+      "verdict_class": "MATCHED",
+      "gate_scope": "advisory",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_2"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report",
+        "enriched": 0
+      }
+    },
+    {
+      "class": "LexEntry",
+      "source_count": 255,
+      "destination_count_total": 255,
+      "difference": 0,
+      "engine_can_create": true,
+      "destination_count_net": 255,
+      "difference_raw": 0,
+      "verdict_class": "MATCHED",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1",
+        "TABLE_2"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report",
+        "enriched": 0
+      }
+    },
+    {
+      "class": "LexEntryInflType",
+      "source_count": 4,
+      "destination_count_total": 5,
+      "difference": 0,
+      "engine_can_create": true,
+      "destination_count_net": 4,
+      "difference_raw": 1,
+      "verdict_class": "MATCHED",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1",
+        "TABLE_2"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 3,
+      "starter_matched_to_source": 2,
+      "starter_subtraction_basis": "baseline_matched",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report",
+        "enriched": 0
+      },
+      "duplicates": {
+        "roster_admitted": true,
+        "key_definition": "Name (default analysis alt), exact and case-sensitive, within the variant-entry-types list and restricted to LexEntryInflType",
+        "groups": 0,
+        "extra_objects": 0,
+        "examples": []
+      },
+      "notes": [
+        "starter_matched_to_source=2 from the T048d IDENTITY AUDIT, not from the run report: this class has no matched tally of any kind (no action, no overwrite, no skip), which is what FW-global fixed content looks like. The number is a PROVABLE LOWER BOUND, the starter baseline of 3 minus the 1 destination object(s) whose GUID is absent from the source; subtracting 1 unmatched starter object(s) rather than the gross baseline of 3. The bound RESOLVES this row: it is the most negative the difference can be, and it is not negative, so no source object of this class failed to arrive.",
+        "the `baseline_matched` basis is WITHHELD from this class (T048b): the run report carries an identity skip whose LCM class could not be determined and which could have been a LexEntryInflType, so this class's matched tally may be understated. Shortfalls on this row are advisory (fidelity-census.md 5.2)."
+      ]
+    },
+    {
+      "class": "LexEntryRef",
+      "source_count": 3,
+      "destination_count_total": 3,
+      "difference": 0,
+      "engine_can_create": true,
+      "destination_count_net": 3,
+      "difference_raw": 0,
+      "verdict_class": "MATCHED",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report",
+        "enriched": 0
+      }
+    },
+    {
+      "class": "LexEntryType",
+      "source_count": 12,
+      "destination_count_total": 11,
+      "difference": -12,
+      "engine_can_create": true,
+      "destination_count_net": 0,
+      "difference_raw": -1,
+      "verdict_class": "SHORTFALL",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1",
+        "TABLE_2"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 12,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 11,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report",
+        "enriched": 0
+      },
+      "notes": [
+        "the T048d IDENTITY AUDIT narrows this row's shortfall to AT MOST 1 (starter_matched_to_source >= 11 by GUID), against the 12 the gross basis reports. The row KEEPS the gross basis and its shortfall stays advisory: the audit supplies a lower bound on the matched count, so the narrowed figure is an UPPER bound on the loss and not the loss itself, and 5.2's cap exists for exactly the arithmetic that can over-report a shortfall.",
+        "the `baseline_matched` basis is WITHHELD from this class (T048b): the run report carries an identity skip whose LCM class could not be determined and which could have been a LexEntryType, so this class's matched tally may be understated. Shortfalls on this row are advisory (fidelity-census.md 5.2)."
+      ]
+    },
+    {
+      "class": "LexEtymology",
+      "source_count": 0,
+      "destination_count_total": 0,
+      "difference": 0,
+      "engine_can_create": true,
+      "destination_count_net": 0,
+      "difference_raw": 0,
+      "verdict_class": "MATCHED",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report",
+        "enriched": 0
+      }
+    },
+    {
+      "class": "LexExampleSentence",
+      "source_count": 0,
+      "destination_count_total": 0,
+      "difference": 0,
+      "engine_can_create": true,
+      "destination_count_net": 0,
+      "difference_raw": 0,
+      "verdict_class": "MATCHED",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report",
+        "enriched": 0
+      }
+    },
+    {
+      "class": "LexExtendedNote",
+      "source_count": 0,
+      "destination_count_total": 0,
+      "difference": 0,
+      "engine_can_create": true,
+      "destination_count_net": 0,
+      "difference_raw": 0,
+      "verdict_class": "MATCHED",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report",
+        "enriched": 0
+      }
+    },
+    {
+      "class": "LexPronunciation",
+      "source_count": 0,
+      "destination_count_total": 0,
+      "difference": 0,
+      "engine_can_create": true,
+      "destination_count_net": 0,
+      "difference_raw": 0,
+      "verdict_class": "MATCHED",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report",
+        "enriched": 0
+      }
+    },
+    {
+      "class": "LexRefType",
+      "source_count": 7,
+      "destination_count_total": 7,
+      "difference": 0,
+      "engine_can_create": false,
+      "destination_count_net": 7,
+      "difference_raw": 0,
+      "verdict_class": "MATCHED",
+      "gate_scope": "advisory",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_2"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 7,
+      "starter_matched_to_source": 7,
+      "starter_subtraction_basis": "baseline_matched",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report",
+        "enriched": 0
+      },
+      "notes": [
+        "starter_matched_to_source=7 from the T048d IDENTITY AUDIT, not from the run report: this class has no matched tally of any kind (no action, no overwrite, no skip), which is what FW-global fixed content looks like. The number is a PROVABLE LOWER BOUND, the starter baseline of 7 minus the 0 destination object(s) whose GUID is absent from the source; subtracting 0 unmatched starter object(s) rather than the gross baseline of 7. The bound RESOLVES this row: it is the most negative the difference can be, and it is not negative, so no source object of this class failed to arrive."
+      ]
+    },
+    {
+      "class": "LexReference",
+      "source_count": 0,
+      "destination_count_total": 0,
+      "difference": 0,
+      "engine_can_create": true,
+      "destination_count_net": 0,
+      "difference_raw": 0,
+      "verdict_class": "MATCHED",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report",
+        "enriched": 0
+      }
+    },
+    {
+      "class": "LexSense",
+      "source_count": 280,
+      "destination_count_total": 280,
+      "difference": 0,
+      "engine_can_create": true,
+      "destination_count_net": 280,
+      "difference_raw": 0,
+      "verdict_class": "MATCHED",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1",
+        "TABLE_2"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report",
+        "enriched": 0
+      }
+    },
+    {
+      "class": "MoAdhocProhibGr",
+      "source_count": 0,
+      "destination_count_total": 0,
+      "difference": 0,
+      "engine_can_create": true,
+      "destination_count_net": 0,
+      "difference_raw": 0,
+      "verdict_class": "MATCHED",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report",
+        "enriched": 0
+      }
+    },
+    {
+      "class": "MoAffixAllomorph",
+      "source_count": 124,
+      "destination_count_total": 124,
+      "difference": 0,
+      "engine_can_create": true,
+      "destination_count_net": 124,
+      "difference_raw": 0,
+      "verdict_class": "MATCHED",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report",
+        "enriched": 0
+      }
+    },
+    {
+      "class": "MoAlloAdhocProhib",
+      "source_count": 0,
+      "destination_count_total": 0,
+      "difference": 0,
+      "engine_can_create": true,
+      "destination_count_net": 0,
+      "difference_raw": 0,
+      "verdict_class": "MATCHED",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report",
+        "enriched": 0
+      }
+    },
+    {
+      "class": "MoDerivAffMsa",
+      "source_count": 17,
+      "destination_count_total": 17,
+      "difference": 0,
+      "engine_can_create": true,
+      "destination_count_net": 17,
+      "difference_raw": 0,
+      "verdict_class": "MATCHED",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report",
+        "enriched": 0
+      }
+    },
+    {
+      "class": "MoEndoCompound",
+      "source_count": 1,
+      "destination_count_total": 1,
+      "difference": 0,
+      "engine_can_create": true,
+      "destination_count_net": 1,
+      "difference_raw": 0,
+      "verdict_class": "MATCHED",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report",
+        "enriched": 0
+      }
+    },
+    {
+      "class": "MoExoCompound",
+      "source_count": 0,
+      "destination_count_total": 0,
+      "difference": 0,
+      "engine_can_create": true,
+      "destination_count_net": 0,
+      "difference_raw": 0,
+      "verdict_class": "MATCHED",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report",
+        "enriched": 0
+      }
+    },
+    {
+      "class": "MoInflAffMsa",
+      "source_count": 126,
+      "destination_count_total": 126,
+      "difference": 0,
+      "engine_can_create": true,
+      "destination_count_net": 126,
+      "difference_raw": 0,
+      "verdict_class": "MATCHED",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report",
+        "enriched": 0
+      }
+    },
+    {
+      "class": "MoInflAffixSlot",
+      "source_count": 19,
+      "destination_count_total": 19,
+      "difference": 0,
+      "engine_can_create": true,
+      "destination_count_net": 19,
+      "difference_raw": 0,
+      "verdict_class": "MATCHED",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1",
+        "TABLE_2"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report",
+        "enriched": 0
+      }
+    },
+    {
+      "class": "MoInflAffixTemplate",
+      "source_count": 11,
+      "destination_count_total": 11,
+      "difference": 0,
+      "engine_can_create": true,
+      "destination_count_net": 11,
+      "difference_raw": 0,
+      "verdict_class": "MATCHED",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report",
+        "enriched": 0
+      }
+    },
+    {
+      "class": "MoInflClass",
+      "source_count": 0,
+      "destination_count_total": 0,
+      "difference": 0,
+      "engine_can_create": true,
+      "destination_count_net": 0,
+      "difference_raw": 0,
+      "verdict_class": "MATCHED",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report",
+        "enriched": 0
+      }
+    },
+    {
+      "class": "MoMorphAdhocProhib",
+      "source_count": 2,
+      "destination_count_total": 2,
+      "difference": 0,
+      "engine_can_create": true,
+      "destination_count_net": 2,
+      "difference_raw": 0,
+      "verdict_class": "MATCHED",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report",
+        "enriched": 0
+      }
+    },
+    {
+      "class": "MoMorphType",
+      "source_count": 19,
+      "destination_count_total": 19,
+      "difference": 0,
+      "engine_can_create": true,
+      "destination_count_net": 19,
+      "difference_raw": 0,
+      "verdict_class": "MATCHED",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1",
+        "TABLE_2"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 19,
+      "starter_matched_to_source": 19,
+      "starter_subtraction_basis": "baseline_matched",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report",
+        "enriched": 0
+      },
+      "duplicates": {
+        "roster_admitted": true,
+        "key_definition": "Name (default analysis alt), exact and case-sensitive, within the lexicon's morph-types list",
+        "groups": 0,
+        "extra_objects": 0,
+        "examples": []
+      },
+      "notes": [
+        "starter_matched_to_source=19 from the T048d IDENTITY AUDIT, not from the run report: this class has no matched tally of any kind (no action, no overwrite, no skip), which is what FW-global fixed content looks like. The number is a PROVABLE LOWER BOUND, the starter baseline of 19 minus the 0 destination object(s) whose GUID is absent from the source; subtracting 0 unmatched starter object(s) rather than the gross baseline of 19. The bound RESOLVES this row: it is the most negative the difference can be, and it is not negative, so no source object of this class failed to arrive."
+      ]
+    },
+    {
+      "class": "MoStemAllomorph",
+      "source_count": 137,
+      "destination_count_total": 137,
+      "difference": 0,
+      "engine_can_create": true,
+      "destination_count_net": 137,
+      "difference_raw": 0,
+      "verdict_class": "MATCHED",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report",
+        "enriched": 0
+      }
+    },
+    {
+      "class": "MoStemMsa",
+      "source_count": 139,
+      "destination_count_total": 139,
+      "difference": 0,
+      "engine_can_create": true,
+      "destination_count_net": 139,
+      "difference_raw": 0,
+      "verdict_class": "MATCHED",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report",
+        "enriched": 0
+      }
+    },
+    {
+      "class": "MoStemName",
+      "source_count": 0,
+      "destination_count_total": 0,
+      "difference": 0,
+      "engine_can_create": true,
+      "destination_count_net": 0,
+      "difference_raw": 0,
+      "verdict_class": "MATCHED",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1",
+        "TABLE_2"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report",
+        "enriched": 0
+      }
+    },
+    {
+      "class": "MoStratum",
+      "source_count": 0,
+      "destination_count_total": 0,
+      "difference": 0,
+      "engine_can_create": true,
+      "destination_count_net": 0,
+      "difference_raw": 0,
+      "verdict_class": "MATCHED",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1",
+        "TABLE_2"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report",
+        "enriched": 0
+      }
+    },
+    {
+      "class": "MoUnclassifiedAffixMsa",
+      "source_count": 0,
+      "destination_count_total": 0,
+      "difference": 0,
+      "engine_can_create": true,
+      "destination_count_net": 0,
+      "difference_raw": 0,
+      "verdict_class": "MATCHED",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report",
+        "enriched": 0
+      }
+    },
+    {
+      "class": "PartOfSpeech",
+      "source_count": 13,
+      "destination_count_total": 15,
+      "difference": 0,
+      "engine_can_create": true,
+      "destination_count_net": 13,
+      "difference_raw": 2,
+      "verdict_class": "MATCHED",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1",
+        "TABLE_2"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 5,
+      "starter_matched_to_source": 3,
+      "starter_subtraction_basis": "baseline_matched",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report",
+        "enriched": 2
+      },
+      "duplicates": {
+        "roster_admitted": true,
+        "key_definition": "Name (default analysis alt), exact and case-sensitive, project-wide over the recursive hierarchy; the owning parent is NOT part of the key",
+        "groups": 0,
+        "extra_objects": 0,
+        "examples": []
+      },
+      "notes": [
+        "starter_matched_to_source=3 read from the run report; subtracting 2 unmatched starter object(s) rather than the gross baseline of 5"
+      ]
+    },
+    {
+      "class": "PhBdryMarker",
+      "source_count": 2,
+      "destination_count_total": 2,
+      "difference": 0,
+      "engine_can_create": false,
+      "destination_count_net": 2,
+      "difference_raw": 0,
+      "verdict_class": "MATCHED",
+      "gate_scope": "advisory",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_2"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 2,
+      "starter_matched_to_source": 2,
+      "starter_subtraction_basis": "baseline_matched",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report",
+        "enriched": 0
+      },
+      "notes": [
+        "starter_matched_to_source=2 from the T048d IDENTITY AUDIT, not from the run report: this class has no matched tally of any kind (no action, no overwrite, no skip), which is what FW-global fixed content looks like. The number is a PROVABLE LOWER BOUND, the starter baseline of 2 minus the 0 destination object(s) whose GUID is absent from the source; subtracting 0 unmatched starter object(s) rather than the gross baseline of 2. The bound RESOLVES this row: it is the most negative the difference can be, and it is not negative, so no source object of this class failed to arrive."
+      ]
+    },
+    {
+      "class": "PhEnvironment",
+      "source_count": 3,
+      "destination_count_total": 3,
+      "difference": 0,
+      "engine_can_create": true,
+      "destination_count_net": 3,
+      "difference_raw": 0,
+      "verdict_class": "MATCHED",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1",
+        "TABLE_2"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report",
+        "enriched": 0
+      }
+    },
+    {
+      "class": "PhFeatureConstraint",
+      "source_count": 89,
+      "destination_count_total": 57,
+      "difference": -32,
+      "engine_can_create": true,
+      "destination_count_net": 57,
+      "difference_raw": -32,
+      "verdict_class": "SHORTFALL",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1",
+        "TABLE_2"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 32,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report",
+        "enriched": 0
+      }
+    },
+    {
+      "class": "PhMetathesisRule",
+      "source_count": 0,
+      "destination_count_total": 0,
+      "difference": 0,
+      "engine_can_create": true,
+      "destination_count_net": 0,
+      "difference_raw": 0,
+      "verdict_class": "MATCHED",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report",
+        "enriched": 0
+      }
+    },
+    {
+      "class": "PhNCFeatures",
+      "source_count": 113,
+      "destination_count_total": 113,
+      "difference": 0,
+      "engine_can_create": true,
+      "destination_count_net": 113,
+      "difference_raw": 0,
+      "verdict_class": "MATCHED",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1",
+        "TABLE_2"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report",
+        "enriched": 0
+      },
+      "duplicates": {
+        "roster_admitted": true,
+        "key_definition": "Name (default analysis alt), exact and case-sensitive, within the PhPhonData natural-class list and restricted to PhNCFeatures",
+        "groups": 23,
+        "extra_objects": 66,
+        "examples": [
+          {
+            "key": "Created automatically for rule \"***\"",
+            "count": 27,
+            "guids": [
+              "02d9e9e5-2e5f-4b6f-9a76-1beebfb6048a",
+              "0a7d88d3-0419-4b56-8ab0-bfc170087264",
+              "0d744eb4-3bc7-4a51-9fe8-9a22a48c6dd2",
+              "1eb1d7e3-00ef-490b-bb68-45609412fa24",
+              "1ec9dafa-5f52-4e10-b36d-cdf0946cbf59",
+              "1f123b91-b39e-4c73-8405-dafb55ed3a8d",
+              "1f224bd8-4a0e-4486-ae3d-0da39e833329",
+              "2e061896-53fa-4f9a-9522-98d5ea40b5b6",
+              "39fe7aee-a616-406d-b303-340411a09567",
+              "410ef9df-3b4d-4075-a591-adcaab506949",
+              "5520e1ad-ef39-4ceb-b535-9bad3bc43712",
+              "662dfb07-d52b-43f6-869b-dd48b07e9738",
+              "6f1edc1f-a23b-4ab2-82de-30e3d132e6d6",
+              "6f6c2991-2723-458f-aa77-9568eda6fd67",
+              "7afe879a-63e8-4c7f-a6bb-f71f54e75305",
+              "7c4e7188-5c12-479e-ac9a-3a91bf64c899",
+              "7dffa92b-5830-4730-ac98-16e3179d4561",
+              "7ebd73c7-1b9e-45fb-9b97-f6a82d5204d7",
+              "80373edb-91b6-4fbd-8456-61fa12050e4f",
+              "871a04c4-08cd-491a-b0e4-9462e97869df",
+              "a0bdddaf-61dd-4efd-8a26-03f017b5caa3",
+              "b10f3e93-ca33-44fc-b51d-5dbf9dc2f0f2",
+              "c01b5001-38d5-45e9-bfed-b8161a137caf",
+              "c17fd201-0422-480f-ab81-f6a263bf7cb6",
+              "cf05fb57-dc98-40bd-9268-5202354dd62c",
+              "d0ea3909-8929-45ab-951d-a36e5de2b4ee",
+              "dcf39551-b875-4c99-8db9-153b05ea8e0c"
+            ]
+          },
+          {
+            "key": "Created automatically for rule \"long tone vowel short after w\"",
+            "count": 5,
+            "guids": [
+              "143a8a31-de41-4eed-9e0b-0e3832fa5fe2",
+              "4f69ef4a-2603-4b4b-ac30-dfc7834cac21",
+              "d287fed2-5c97-44a8-8a55-1e740ecc73df",
+              "e5d979db-d6f8-4007-8321-6bcd84749feb",
+              "fdf2ccd6-68ac-4e96-8449-a12bb76a6918"
+            ]
+          },
+          {
+            "key": "Created automatically for rule \"delete short vowel after a long vowel\"",
+            "count": 2,
+            "guids": [
+              "1467f834-45a6-4fa9-9a28-2f74beb114e2",
+              "3265862c-6cbd-4420-9342-bf99e8d3f733"
+            ]
+          },
+          {
+            "key": "Created automatically for rule \"vowel lengthening after glide formation\"",
+            "count": 4,
+            "guids": [
+              "15895c17-6ee9-44a7-86dd-48f765e57424",
+              "3f454f6e-e4a1-4eef-9614-547d901e04f5",
+              "7aa7a72b-b234-487a-9120-15a26dae21ae",
+              "d4648bcb-d951-44d6-9bfc-c73ddbe9372d"
+            ]
+          },
+          {
+            "key": "Created automatically for rule \"insert a geminate vowel after w̄\"",
+            "count": 2,
+            "guids": [
+              "1cbe16ea-d620-41d1-bd85-d73710bc1e1c",
+              "525a614f-1a11-48b9-a8d6-c1171fd398cd"
+            ]
+          },
+          {
+            "key": "Created automatically for rule \"palatalisation k->c\"",
+            "count": 2,
+            "guids": [
+              "2a6a044d-1d41-4260-bbb4-3391666d8b04",
+              "fdcfa5b1-6305-4e1e-afb1-07a1292b10d5"
+            ]
+          },
+          {
+            "key": "Created automatically for rule \"assign features to underspecified vowel\"",
+            "count": 3,
+            "guids": [
+              "31ea9eda-027a-46b8-9267-2edc692d6e6d",
+              "65c80e4f-f397-435e-8559-6d43a73bf85b",
+              "66d2b556-e403-4315-8be0-796dbb12a8e0"
+            ]
+          },
+          {
+            "key": "Created automatically for rule \"assimilation for o word-medially\"",
+            "count": 3,
+            "guids": [
+              "3382e08a-b12b-4a33-9562-8ee9d3e572ad",
+              "afba9b3d-bbf0-40b9-9b76-39f1520748b6",
+              "da2810cb-1c17-4d9f-8b77-916e659c3a22"
+            ]
+          },
+          {
+            "key": "Created automatically for rule \"make two short vowels long\"",
+            "count": 2,
+            "guids": [
+              "3a2a3b07-dc49-42cb-b51b-cf6f32f38d29",
+              "7f4dad79-ced5-4bb5-9741-b755186dab96"
+            ]
+          },
+          {
+            "key": "Created automatically for rule \"insert a after tone a\"",
+            "count": 5,
+            "guids": [
+              "3e5a3b34-dc14-42fe-90ed-966215695d5a",
+              "74d98333-95c1-4129-9d65-7f3cbf4c4202",
+              "ad63e9f6-0230-4105-979f-ea94c313883f",
+              "b65c8215-3e73-443f-96cf-0993a874c014",
+              "c8d89713-864f-4d0d-8612-00f5cb8a1c9c"
+            ]
+          },
+          {
+            "key": "Created automatically for rule \"nasal assimilation\"",
+            "count": 2,
+            "guids": [
+              "3e7cb4a9-25d0-45f5-bffa-32f13e70c14d",
+              "4cdcb6d5-7313-43b1-80b4-3fe8811effc3"
+            ]
+          },
+          {
+            "key": "Created automatically for rule \"glide formation for mid-vowels word-initially\"",
+            "count": 2,
+            "guids": [
+              "421f2073-7538-4aaf-a33f-f43a34c5b865",
+              "ef3d7943-47de-4116-92b3-14212e8dcc52"
+            ]
+          },
+          {
+            "key": "Created automatically for rule \"insert vowel after tone vowel\"",
+            "count": 2,
+            "guids": [
+              "431b79f6-cfde-4db1-9dfd-b2a403f6f3dd",
+              "a4725730-c8a1-4ae0-a21f-ea5c9ba24915"
+            ]
+          },
+          {
+            "key": "Created automatically for rule \"a assimilates to e\"",
+            "count": 4,
+            "guids": [
+              "58daf68d-d2d6-4388-be52-48e453491d7a",
+              "7b22190a-bda5-463f-8b50-40e3f02e273d",
+              "8a5ba2f6-257d-44ac-93cf-8c1bf0f7d07d",
+              "de244f4d-5ebf-4812-b0d5-8d67ced2333b"
+            ]
+          },
+          {
+            "key": "Created automatically for rule \"vowel lengthening\"",
+            "count": 8,
+            "guids": [
+              "67c0f4fb-32bc-4f76-836f-228788649228",
+              "7012d247-473a-4907-9617-f92b4703e052",
+              "a5460193-13b1-442c-8859-eaa07fd1ee53",
+              "c0366b75-35c0-4b12-8c24-b6940d1289d6",
+              "f2e1607b-db81-4650-8ec8-d364d453d086",
+              "fb65a6c5-7e4c-43a3-b4b7-21a88ad31016",
+              "fcad7bb4-4dfa-4187-a1c9-2d3b215a9370",
+              "ffffc513-5ba5-4aa5-b60f-93c5039d0cc5"
+            ]
+          },
+          {
+            "key": "Created automatically for rule \"glide formation\"",
+            "count": 2,
+            "guids": [
+              "6b3afaf4-39df-4448-8fa9-990739df62e3",
+              "ede356d5-744f-47bd-ad2b-2e0d7499cd5a"
+            ]
+          },
+          {
+            "key": "Created automatically for rule \"i becomes y after a\"",
+            "count": 2,
+            "guids": [
+              "6c50521a-fa10-4bee-a558-fb481073e3fe",
+              "a9704043-bde3-4507-b5b6-49334306bed3"
+            ]
+          },
+          {
+            "key": "Created automatically for rule \"vowel shortening in a coda syllable\"",
+            "count": 2,
+            "guids": [
+              "761fbc24-013e-407c-83c6-458a0af04e2c",
+              "d8a64dc1-43ff-48ef-8eca-574a97869153"
+            ]
+          },
+          {
+            "key": "Created automatically for rule \"vowel lengthening before NC\"",
+            "count": 2,
+            "guids": [
+              "7c77f60d-8ddb-4d6b-87d1-3ce602e9ebfc",
+              "c25fea5c-6ca9-420a-95f3-4ce7e2a30a0e"
+            ]
+          },
+          {
+            "key": "Created automatically for rule \"long vowel becomes short after w̄\"",
+            "count": 2,
+            "guids": [
+              "ac6bd3b5-91f1-4df9-b38e-d69174447c3b",
+              "bb132bd9-6b2e-488b-93d6-9549c115ff1a"
+            ]
+          },
+          {
+            "key": "Created automatically for rule \"insert a geminate vowel after ẅ\"",
+            "count": 2,
+            "guids": [
+              "b44be6c7-dec8-4c15-bdb2-792e78254aae",
+              "e2ca6010-4a07-4e1e-926e-68f6dee63633"
+            ]
+          },
+          {
+            "key": "Created automatically for rule \"y-initial stems\"",
+            "count": 2,
+            "guids": [
+              "b9e62231-5956-45a4-a82e-64abe3a91eff",
+              "fd9e765c-2706-40f6-a4f0-3fce4e888f8e"
+            ]
+          },
+          {
+            "key": "Created automatically for rule \"add 2SG to vowel\"",
+            "count": 2,
+            "guids": [
+              "da784061-03ee-42ba-8357-ae6e1a965445",
+              "e2e024da-f7c2-4b20-808d-9aca169683a9"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "class": "PhNCSegments",
+      "source_count": 0,
+      "destination_count_total": 2,
+      "difference": 0,
+      "engine_can_create": true,
+      "destination_count_net": 0,
+      "difference_raw": 2,
+      "verdict_class": "MATCHED",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1",
+        "TABLE_2"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 2,
+      "starter_matched_to_source": 0,
+      "starter_subtraction_basis": "baseline_matched",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report",
+        "enriched": 0
+      },
+      "duplicates": {
+        "roster_admitted": true,
+        "key_definition": "Name (default analysis alt), exact and case-sensitive, within the PhPhonData natural-class list and restricted to PhNCSegments",
+        "groups": 0,
+        "extra_objects": 0,
+        "examples": []
+      },
+      "notes": [
+        "starter_matched_to_source=0 from the T048d IDENTITY AUDIT, not from the run report: this class has no matched tally of any kind (no action, no overwrite, no skip), which is what FW-global fixed content looks like. The number is a PROVABLE LOWER BOUND, the starter baseline of 2 minus the 2 destination object(s) whose GUID is absent from the source; subtracting 2 unmatched starter object(s) rather than the gross baseline of 2. The bound RESOLVES this row: it is the most negative the difference can be, and it is not negative, so no source object of this class failed to arrive."
+      ]
+    },
+    {
+      "class": "PhPhoneme",
+      "source_count": 42,
+      "destination_count_total": 46,
+      "difference": 0,
+      "engine_can_create": true,
+      "destination_count_net": 42,
+      "difference_raw": 4,
+      "verdict_class": "MATCHED",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1",
+        "TABLE_2"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 23,
+      "starter_matched_to_source": 19,
+      "starter_subtraction_basis": "baseline_matched",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report",
+        "enriched": 0
+      },
+      "duplicates": {
+        "roster_admitted": true,
+        "key_definition": "Name (default vernacular alt), exact and case-sensitive",
+        "groups": 0,
+        "extra_objects": 0,
+        "examples": []
+      },
+      "notes": [
+        "starter_matched_to_source=19 read from the run report; subtracting 4 unmatched starter object(s) rather than the gross baseline of 23"
+      ]
+    },
+    {
+      "class": "PhRegularRule",
+      "source_count": 39,
+      "destination_count_total": 39,
+      "difference": 0,
+      "engine_can_create": true,
+      "destination_count_net": 39,
+      "difference_raw": 0,
+      "verdict_class": "MATCHED",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report",
+        "enriched": 0
+      }
+    },
+    {
+      "class": "PhSegRuleRHS",
+      "source_count": 39,
+      "destination_count_total": 28,
+      "difference": -11,
+      "engine_can_create": true,
+      "destination_count_net": 28,
+      "difference_raw": -11,
+      "verdict_class": "SHORTFALL",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 11,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report",
+        "enriched": 0
+      }
+    },
+    {
+      "class": "PhSegmentRule",
+      "source_count": 0,
+      "destination_count_total": 0,
+      "difference": 0,
+      "engine_can_create": true,
+      "destination_count_net": 0,
+      "difference_raw": 0,
+      "verdict_class": "MATCHED",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report",
+        "enriched": 0
+      }
+    },
+    {
+      "class": "PhSequenceContext",
+      "source_count": 37,
+      "destination_count_total": 20,
+      "difference": -17,
+      "engine_can_create": true,
+      "destination_count_net": 20,
+      "difference_raw": -17,
+      "verdict_class": "SHORTFALL",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 17,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report",
+        "enriched": 0
+      }
+    },
+    {
+      "class": "PhSimpleContextBdry",
+      "source_count": 24,
+      "destination_count_total": 9,
+      "difference": -15,
+      "engine_can_create": true,
+      "destination_count_net": 9,
+      "difference_raw": -15,
+      "verdict_class": "SHORTFALL",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 15,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report",
+        "enriched": 0
+      }
+    },
+    {
+      "class": "PhSimpleContextNC",
+      "source_count": 83,
+      "destination_count_total": 55,
+      "difference": -28,
+      "engine_can_create": true,
+      "destination_count_net": 55,
+      "difference_raw": -28,
+      "verdict_class": "SHORTFALL",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 28,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report",
+        "enriched": 0
+      }
+    },
+    {
+      "class": "PhSimpleContextSeg",
+      "source_count": 79,
+      "destination_count_total": 56,
+      "difference": -23,
+      "engine_can_create": true,
+      "destination_count_net": 56,
+      "difference_raw": -23,
+      "verdict_class": "SHORTFALL",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 23,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report",
+        "enriched": 0
+      }
+    },
+    {
+      "class": "PunctuationForm",
+      "source_count": 1126,
+      "destination_count_total": 0,
+      "difference": -1126,
+      "engine_can_create": true,
+      "destination_count_net": 0,
+      "difference_raw": -1126,
+      "verdict_class": "SHORTFALL",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_2"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 1126,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report",
+        "enriched": 0
+      }
+    },
+    {
+      "class": "ReversalIndex",
+      "source_count": 2,
+      "destination_count_total": 1,
+      "difference": -2,
+      "engine_can_create": true,
+      "destination_count_net": 0,
+      "difference_raw": -1,
+      "verdict_class": "SHORTFALL",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 2,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 1,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report",
+        "enriched": 0
+      },
+      "notes": [
+        "the T048d IDENTITY AUDIT narrows this row's shortfall to AT MOST 2 (starter_matched_to_source >= 0 by GUID), against the 2 the gross basis reports. The row KEEPS the gross basis and its shortfall stays advisory: the audit supplies a lower bound on the matched count, so the narrowed figure is an UPPER bound on the loss and not the loss itself, and 5.2's cap exists for exactly the arithmetic that can over-report a shortfall."
+      ]
+    },
+    {
+      "class": "ReversalIndexEntry",
+      "source_count": 0,
+      "destination_count_total": 0,
+      "difference": 0,
+      "engine_can_create": true,
+      "destination_count_net": 0,
+      "difference_raw": 0,
+      "verdict_class": "MATCHED",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report",
+        "enriched": 0
+      }
+    },
+    {
+      "class": "Segment",
+      "source_count": 186,
+      "destination_count_total": 184,
+      "difference": -2,
+      "engine_can_create": true,
+      "destination_count_net": 184,
+      "difference_raw": -2,
+      "verdict_class": "SHORTFALL",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 2,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report",
+        "enriched": 0
+      }
+    },
+    {
+      "class": "StText",
+      "source_count": 33,
+      "destination_count_total": 30,
+      "difference": -15,
+      "engine_can_create": true,
+      "destination_count_net": 18,
+      "difference_raw": -3,
+      "verdict_class": "SHORTFALL",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 15,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 12,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report",
+        "enriched": 0
+      },
+      "notes": [
+        "the T048d IDENTITY AUDIT narrows this row's shortfall to AT MOST 3 (starter_matched_to_source >= 12 by GUID), against the 15 the gross basis reports. The row KEEPS the gross basis and its shortfall stays advisory: the audit supplies a lower bound on the matched count, so the narrowed figure is an UPPER bound on the loss and not the loss itself, and 5.2's cap exists for exactly the arithmetic that can over-report a shortfall."
+      ]
+    },
+    {
+      "class": "StTxtPara",
+      "source_count": 247,
+      "destination_count_total": 244,
+      "difference": -89,
+      "engine_can_create": true,
+      "destination_count_net": 158,
+      "difference_raw": -3,
+      "verdict_class": "SHORTFALL",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 89,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 86,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report",
+        "enriched": 0
+      },
+      "notes": [
+        "the T048d IDENTITY AUDIT narrows this row's shortfall to AT MOST 3 (starter_matched_to_source >= 86 by GUID), against the 89 the gross basis reports. The row KEEPS the gross basis and its shortfall stays advisory: the audit supplies a lower bound on the matched count, so the narrowed figure is an UPPER bound on the loss and not the loss itself, and 5.2's cap exists for exactly the arithmetic that can over-report a shortfall."
+      ]
+    },
+    {
+      "class": "Text",
+      "source_count": 18,
+      "destination_count_total": 18,
+      "difference": 0,
+      "engine_can_create": true,
+      "destination_count_net": 18,
+      "difference_raw": 0,
+      "verdict_class": "MATCHED",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report",
+        "enriched": 0
+      }
+    },
+    {
+      "class": "TextTag",
+      "source_count": 0,
+      "destination_count_total": 0,
+      "difference": 0,
+      "engine_can_create": true,
+      "destination_count_net": 0,
+      "difference_raw": 0,
+      "verdict_class": "MATCHED",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report",
+        "enriched": 0
+      }
+    },
+    {
+      "class": "WfiAnalysis",
+      "source_count": 822,
+      "destination_count_total": 0,
+      "difference": -822,
+      "engine_can_create": true,
+      "destination_count_net": 0,
+      "difference_raw": -822,
+      "verdict_class": "SHORTFALL",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1",
+        "TABLE_2"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 822,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report",
+        "enriched": 0
+      }
+    },
+    {
+      "class": "WfiGloss",
+      "source_count": 683,
+      "destination_count_total": 0,
+      "difference": -683,
+      "engine_can_create": true,
+      "destination_count_net": 0,
+      "difference_raw": -683,
+      "verdict_class": "SHORTFALL",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1",
+        "TABLE_2"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 683,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report",
+        "enriched": 0
+      }
+    },
+    {
+      "class": "WfiMorphBundle",
+      "source_count": 1915,
+      "destination_count_total": 0,
+      "difference": -1915,
+      "engine_can_create": true,
+      "destination_count_net": 0,
+      "difference_raw": -1915,
+      "verdict_class": "SHORTFALL",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 1915,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report",
+        "enriched": 0
+      }
+    },
+    {
+      "class": "WfiWordform",
+      "source_count": 1187,
+      "destination_count_total": 0,
+      "difference": -1187,
+      "engine_can_create": true,
+      "destination_count_net": 0,
+      "difference_raw": -1187,
+      "verdict_class": "SHORTFALL",
+      "gate_scope": "required",
+      "in_class_list_via": "coverage_floor",
+      "inventory_tables": [
+        "TABLE_1",
+        "TABLE_2"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 1187,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report",
+        "enriched": 0
+      },
+      "duplicates": {
+        "roster_admitted": true,
+        "key_definition": "Form (default vernacular alt), exact and case-sensitive",
+        "groups": 0,
+        "extra_objects": 0,
+        "examples": []
+      }
+    },
+    {
+      "class": "MoAffixProcess",
+      "source_count": 18,
+      "destination_count_total": 12,
+      "difference": -6,
+      "engine_can_create": true,
+      "destination_count_net": 12,
+      "difference_raw": -6,
+      "verdict_class": "SHORTFALL",
+      "gate_scope": "required",
+      "in_class_list_via": "census_additions",
+      "inventory_tables": [
+        "NONE"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 6,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report",
+        "enriched": 0
+      }
+    },
+    {
+      "class": "PhCode",
+      "source_count": 79,
+      "destination_count_total": 25,
+      "difference": -79,
+      "engine_can_create": true,
+      "destination_count_net": 0,
+      "difference_raw": -54,
+      "verdict_class": "SHORTFALL",
+      "gate_scope": "required",
+      "in_class_list_via": "census_additions",
+      "inventory_tables": [
+        "NONE"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 79,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 25,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report",
+        "enriched": 0
+      },
+      "notes": [
+        "the T048d IDENTITY AUDIT narrows this row's shortfall to AT MOST 77 (starter_matched_to_source >= 2 by GUID), against the 79 the gross basis reports. The row KEEPS the gross basis and its shortfall stays advisory: the audit supplies a lower bound on the matched count, so the narrowed figure is an UPPER bound on the loss and not the loss itself, and 5.2's cap exists for exactly the arithmetic that can over-report a shortfall."
+      ]
+    },
+    {
+      "class": "CmTranslation",
+      "source_count": 0,
+      "destination_count_total": 0,
+      "difference": 0,
+      "engine_can_create": true,
+      "destination_count_net": 0,
+      "difference_raw": 0,
+      "verdict_class": "MATCHED",
+      "gate_scope": "required",
+      "in_class_list_via": "census_additions",
+      "inventory_tables": [
+        "NONE"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_baseline_count": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "baseline_document",
+      "match_basis": {
+        "basis_source": "run_report",
+        "enriched": 0
+      }
+    },
+    {
+      "class": "MoForm",
+      "source_count": 0,
+      "destination_count_total": 0,
+      "difference": 0,
+      "engine_can_create": false,
+      "destination_count_net": 0,
+      "difference_raw": 0,
+      "verdict_class": "NOT_EVALUATED",
+      "not_evaluated_reason": "ABSENT_BY_CONSTRUCTION",
+      "gate_scope": "advisory",
+      "in_class_list_via": "excluded_not_measurable",
+      "inventory_tables": [
+        "TABLE_2"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "absent_from_baseline",
+      "match_basis": {
+        "basis_source": "run_report",
+        "enriched": 0
+      },
+      "notes": [
+        "not measured: in_class_list_via 'excluded_not_measurable' (an abstract LCM base with no factory). The 0 counts are placeholders -- the schema's honest value is null, which models.ClassCensusRow cannot carry."
+      ]
+    },
+    {
+      "class": "MoMorphSynAnalysis",
+      "source_count": 0,
+      "destination_count_total": 0,
+      "difference": 0,
+      "engine_can_create": false,
+      "destination_count_net": 0,
+      "difference_raw": 0,
+      "verdict_class": "NOT_EVALUATED",
+      "not_evaluated_reason": "ABSENT_BY_CONSTRUCTION",
+      "gate_scope": "advisory",
+      "in_class_list_via": "excluded_not_measurable",
+      "inventory_tables": [
+        "TABLE_2"
+      ],
+      "accounted_for": [],
+      "unexplained_shortfall": 0,
+      "unexplained_surplus": 0,
+      "starter_subtraction_basis": "baseline_gross",
+      "starter_baseline_source": "absent_from_baseline",
+      "match_basis": {
+        "basis_source": "run_report",
+        "enriched": 0
+      },
+      "notes": [
+        "not measured: in_class_list_via 'excluded_not_measurable' (an abstract LCM base with no factory). The 0 counts are placeholders -- the schema's honest value is null, which models.ClassCensusRow cannot carry."
+      ]
+    }
+  ],
+  "totals": {
+    "classes_reported": 75,
+    "classes_matched": 49,
+    "classes_shortfall": 23,
+    "classes_surplus": 0,
+    "classes_not_evaluated": 3,
+    "total_shortfall": 10262,
+    "total_surplus": 0,
+    "unexplained_shortfall": 9403,
+    "unexplained_surplus": 0,
+    "duplicate_extra_objects": 66,
+    "accounted_shortfall": 0,
+    "accounted_surplus": 0,
+    "advisory_shortfall": 0
+  },
+  "transfer_run": {
+    "run_id": "GT-20260821-153544",
+    "report_path": "D:\\Github\\_Projects\\_LEX\\GramTrans-038-transfer-fidelity-gaps\\_run_reports\\038-t069-census-report.json",
+    "mode": "MOVE",
+    "started_at": "2026-08-21T15:35:44",
+    "selected_categories": [
+      "GRAM_CATEGORIES",
+      "INFLECTION_FEATURES",
+      "CUSTOM_FIELDS",
+      "FEATURE_STRUCT_TYPES",
+      "POS_INFLECTABLE_FEATS",
+      "PHON_FEAT_TYPES",
+      "VARIANT_TYPES",
+      "COMPLEX_FORM_TYPES",
+      "ADHOC_COMPOUND_RULES",
+      "AFFIXES",
+      "SLOTS",
+      "AFFIX_TEMPLATES",
+      "STEMS",
+      "PH_ENVIRONMENT",
+      "PHONOLOGICAL_FEATURES",
+      "PHONEMES",
+      "NATURAL_CLASSES",
+      "PHONOLOGICAL_RULES",
+      "SEMANTIC_DOMAINS"
+    ]
+  },
+  "verdict": "DUPLICATE_IDENTITY",
+  "exit_code": 3,
+  "verdict_human_label": "Duplicate identity",
+  "notes": [
+    "[WARN] verdict CAPPED at CENSUS_ACCOUNTED by fidelity-census.md 5.2: 23 unexplained tallies on rows whose starter_subtraction_basis is baseline_gross are ADVISORY, not evidence -- gross subtraction also subtracts the starter objects the transfer correctly matched, so it reports a shortfall on a correct run. This is NOT a statement that nothing was lost; supply the run report to get a baseline_matched basis and a trustworthy answer.",
+    "[WARN]   CmFile: unexplained_shortfall 2173 suppressed (basis baseline_gross)",
+    "[WARN]   CmFolder: unexplained_shortfall 3 suppressed (basis baseline_gross)",
+    "[WARN]   CmPossibility: unexplained_shortfall 335 suppressed (basis baseline_gross)",
+    "[WARN]   FsClosedValue: unexplained_shortfall 630 suppressed (basis baseline_gross)",
+    "[WARN]   FsFeatStruc: unexplained_shortfall 198 suppressed (basis baseline_gross)",
+    "[WARN]   LexEntryType: unexplained_shortfall 12 suppressed (basis baseline_gross)",
+    "[WARN]   PhFeatureConstraint: unexplained_shortfall 32 suppressed (basis baseline_gross)",
+    "[WARN]   PhSegRuleRHS: unexplained_shortfall 11 suppressed (basis baseline_gross)",
+    "[WARN]   PhSequenceContext: unexplained_shortfall 17 suppressed (basis baseline_gross)",
+    "[WARN]   PhSimpleContextBdry: unexplained_shortfall 15 suppressed (basis baseline_gross)",
+    "[WARN]   PhSimpleContextNC: unexplained_shortfall 28 suppressed (basis baseline_gross)",
+    "[WARN]   PhSimpleContextSeg: unexplained_shortfall 23 suppressed (basis baseline_gross)",
+    "[WARN]   PunctuationForm: unexplained_shortfall 1126 suppressed (basis baseline_gross)",
+    "[WARN]   ReversalIndex: unexplained_shortfall 2 suppressed (basis baseline_gross)",
+    "[WARN]   Segment: unexplained_shortfall 2 suppressed (basis baseline_gross)",
+    "[WARN]   StText: unexplained_shortfall 15 suppressed (basis baseline_gross)",
+    "[WARN]   StTxtPara: unexplained_shortfall 89 suppressed (basis baseline_gross)",
+    "[WARN]   WfiAnalysis: unexplained_shortfall 822 suppressed (basis baseline_gross)",
+    "[WARN]   WfiGloss: unexplained_shortfall 683 suppressed (basis baseline_gross)",
+    "[WARN]   WfiMorphBundle: unexplained_shortfall 1915 suppressed (basis baseline_gross)",
+    "[WARN]   WfiWordform: unexplained_shortfall 1187 suppressed (basis baseline_gross)",
+    "[WARN]   MoAffixProcess: unexplained_shortfall 6 suppressed (basis baseline_gross)",
+    "[WARN]   PhCode: unexplained_shortfall 79 suppressed (basis baseline_gross)"
+  ]
+}
