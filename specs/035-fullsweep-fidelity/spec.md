@@ -707,12 +707,32 @@ into modules — that division is a `plan.md` concern, not a `spec.md` concern.
   across every field obtainable from an in-scope object's own class, rather
   than a hand-listed set of domains or fields chosen per class.
 - **FR-052**: A field is excluded from comparison only if it appears on the
-  EXPECTED_DIVERGENT roster (E.2) or is a field the transfer engine's own
-  syncable-properties surface deliberately omits for that class; no other
-  exclusion mechanism is permitted. The set of fields the transfer engine's
-  own syncable-properties surface omits for a given class MUST be
-  enumerated in every artifact, and any growth of that omitted set between
-  runs MUST be reported as reduced coverage, never silently absorbed.
+  EXPECTED_DIVERGENT roster (E.2); no other exclusion mechanism is
+  permitted. A field the transfer engine is measured not to carry is
+  reported as a per-field loss, and may be dispositioned as a known engine
+  gap only by an exact-match entry on the git-tracked engine-gap ledger
+  (FR-190), which never removes the field from comparison. The per-class
+  set of fields measured as lost, and the subset of it covered by ledger
+  entries, MUST be enumerated in every artifact, and any growth of either
+  between runs MUST be reported as reduced coverage, never silently
+  absorbed. *(Amended 2026-09-24, cycle 6: previously keyed on "the transfer
+  engine's own syncable-properties surface"; see research.md D-02a.)*
+- **FR-190 (engine-gap ledger)**: A measured per-field loss MAY be
+  dispositioned as a known engine gap only by an entry on a git-tracked
+  engine-gap ledger, distinct from both the EXPECTED_DIVERGENT roster and
+  the loss allowlist. Each entry MUST match exactly one (class, field) pair,
+  with no pattern, prefix, or naming heuristic; MUST cite as evidence the
+  run artifact in which the loss was first measured; and MUST reference an
+  open tracking issue, verified open at run time on the terms of FR-119. A
+  measured loss with no matching entry MUST be reported as an unexplained
+  loss. An entry that matches zero measured losses in a run MUST be flagged
+  as stale and MUST invalidate that run until the entry is removed, so that
+  a gap the engine has since closed cannot go on being honored. A loss
+  matching the recognized engine-bug signature set MUST NOT be dispositioned
+  by the ledger (FR-121). A run in which any ledger entry is consumed MUST
+  NOT report a clean pass; its best available verdict is pass-with-allowlist
+  (exit code 0). The ledger never removes a field from comparison, and
+  adding an entry MUST be a recorded, reviewable act.
 
 **E.2 — EXPECTED_DIVERGENT roster**
 
@@ -740,11 +760,11 @@ into modules — that division is a `plan.md` concern, not a `spec.md` concern.
   suggests modification is also a content word: a modification rule, a
   modified stem, or a modification-valued boolean would be silently excluded
   and any distortion in it made invisible. Any newly encountered field whose
-  name merely suggests modification MUST instead be classified by the
-  transfer engine's own syncable-properties surface, on the same terms
-  FR-065 already sets for booleans, and never by its name; a field not yet
-  on the roster MUST be compared, and promoting it onto the roster MUST be a
-  recorded, reviewable act.
+    suggests modification MUST instead be compared and classified by
+  measurement, on the same terms FR-065 already sets for booleans, and
+  never by its name; a field not yet on the roster MUST be compared, and
+  promoting it onto the roster MUST be a recorded, reviewable act.
+  *(Amended 2026-09-24, cycle 6.)*
 - **FR-057**: Any future in-scope field equivalent to a "resolved" timestamp
   MUST be treated by the same rule as FR-056 the moment any transferred
   category exposes it, even though no currently transferred category does
@@ -777,19 +797,19 @@ into modules — that division is a `plan.md` concern, not a `spec.md` concern.
   class, because such values are recomputed by the target, never copied,
   even though no currently transferred class exposes one today.
 - **FR-065**: A boolean or flag field MUST be judged EXPECTED_DIVERGENT only
-  when the transfer engine's own syncable-properties surface omits it by
-  design for that class; if the engine treats it as data to be synced, the
-  comparator MUST treat it as ordinary content subject to the
-  DISTORTED/LOST verdicts, never waved through by a blanket naming
-  heuristic.
+  when it is enumerated on the EXPECTED_DIVERGENT roster for that class
+  under one of the grounds of FR-054..FR-064; otherwise the comparator MUST
+  treat it as ordinary content subject to the DISTORTED/LOST verdicts,
+  never waved through by a blanket naming heuristic. *(Amended 2026-09-24,
+  cycle 6.)*
 - **FR-066**: The complete EXPECTED_DIVERGENT roster for a given class MUST
-  be exactly this document's enumerated exclusions plus whatever the
-  transfer engine's own syncable-properties surface omits for that class; a
-  comparator implementation MUST NOT substitute, in whole or in part, the
-  interactive merge-preview UI's exclusion set for this roster. The
-  omitted-for-that-class set MUST be enumerated per class in every
-  artifact, and any growth of that set between runs MUST be reported as
-  reduced coverage, never silently absorbed.
+  be exactly this document's enumerated exclusions; a comparator
+  implementation MUST NOT substitute, in whole or in part, the interactive
+  merge-preview UI's exclusion set, the engine-gap ledger (FR-190), or any
+  flexicon property surface for this roster. The per-class measured-lost
+  set and its ledger-covered subset (FR-052) MUST be enumerated per class in
+  every artifact, and any growth of either between runs MUST be reported as
+  reduced coverage, never silently absorbed. *(Amended 2026-09-24, cycle 6.)*
 - **FR-067**: A phonological rule's direction-of-application field MUST be
   fidelity-checked by the comparator (by decoding both sides to the same
   semantic value, defensively against any cross-version ordinal drift), even

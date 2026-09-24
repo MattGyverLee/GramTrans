@@ -68,6 +68,9 @@ sweep` working unchanged.
 
 ## D-02: How fields are enumerated generically (the field census)
 
+> **SUPERSEDED 2026-09-24 by D-02a** (cycle 6, user-ratified). Kept verbatim
+> below as the record of what was decided and why it did not hold.
+
 **Decision.** The per-object field census is driven by flexicon's
 `GetSyncableProperties` surface, per class, reading through the operations
 classes the module already uses. The set of properties that surface omits for a
@@ -92,6 +95,58 @@ open and transfer.
   Principle II forbids in this repo.
 - A hand-maintained per-class field list -- rejected outright: it is exactly the
   "hand-picked set" the spec bans (SC-004, FR-045, S-05, S-33, S-52).
+
+## D-02a: The field census reads LCM metadata directly (supersedes D-02)
+
+**Decision (ratified by the user 2026-09-24, cycle 6).** The plane-2 per-object
+field census reads **every stored (non-virtual) LCM model field** of each
+in-scope class through one generic, class-agnostic metadata reader in the
+`debug/` harness: `IFwMetaDataCacheManaged.GetFields(clsid, True, All)` filtered
+by `get_IsVirtual`, values read by hvo + flid through `DomainDataByFlid`,
+dispatched on `CellarPropertyType`. flexicon `GetSyncableProperties` is removed
+from the census path entirely. The only exclusion is the EXPECTED_DIVERGENT
+roster (FR-052/FR-066). Fields the engine is measured not to carry are reported
+as per-field losses and may be dispositioned only by the engine-gap ledger
+(FR-190), which labels a loss and never removes a field from comparison.
+
+**Why D-02 did not hold** (live measurements, Ejagham Mini, ops
+`op-133436809-002`, `op-133459014-003`; reviews/cycle6-*.md):
+1. *"The census measures exactly the surface the transfer moves"* is false both
+   ways. The engine reaches `Get`/`ApplySyncableProperties` through only 12
+   accessors; the other 57 of 69 classes are copied by other code paths, and
+   even the 12 copy fields outside that surface. `model - syncable` therefore
+   measures flexicon's merge API, not GramTrans.
+2. `GetSyncableProperties` keys are not model field names (`MorphTypeRA`,
+   `DoNotPublishInRC`, synthetic `InflFeatsGuid`/`PhonemeGuids`, computed
+   `BaselineText`), and the surface is sparse per object (empty fields omitted:
+   POS shows 4 key sets over 20 objects).
+3. On base `ICmObject` proxies from `ICmObjectRepository` it silently returns
+   `{}` for six classes -- a fidelity oracle cannot be one that quietly measures
+   nothing. Accessors are duck-typed, so class dispatch is not discoverable.
+4. *"Principle II forbids reading LibLCM directly"* -- Principle II governs
+   module code; the `debug/` harness already reads LCM directly.
+5. *"Every unwritable field reports as loss forever"* -- that is the true cost,
+   and the answer is an explicit, self-checking ledger (FR-190), not borrowing a
+   merge API's key list as a proxy.
+
+**Feasibility (live, reviews/cycle6-domain.md).** 6,880 in-scope objects,
+126,064 field reads, 1.42 s, 0 errors, no casting required.
+
+**How the "declared list" objection is answered.** lex-author
+(reviews/cycle6-author.md) objected that a declared list cannot detect
+regressions. The ledger is checked against measurement every run: an undeclared
+loss is UNEXPLAINED_LOSS (the regression detector -- stronger than the old
+surface diff, since it compares values in all in-scope classes on every code
+path), and a ledger entry matching zero losses is stale and invalidates the run.
+The FR-051 ban on hand-picking which fields to *measure* is untouched: every
+stored field is measured.
+
+**Rejected alternatives.** `GetSyncableProperties` as a labelled proxy where it
+exists -- two field vocabularies in one artifact, and "omitted" still undefined
+for 57 classes. Engine accessors for the 12 plus metadata elsewhere -- still
+treats flexicon's keys as a statement of what the engine carries. Carrying
+engine gaps on `loss-allowlist.json` -- FR-122's 25-entry / 1% caps would be
+exceeded on the first run.
 
 ## D-03: Guard evaluation shape
 

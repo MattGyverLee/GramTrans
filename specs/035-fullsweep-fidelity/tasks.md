@@ -400,6 +400,9 @@ the comparator's verdict for each -- no corpus-wide run needed.
 > to T045a's wiring. **SUPERSEDED 2026-08-19** -- the reconnaissance recorded under
 > "Wave 3b-bis" below found four further prerequisites, and the chain is now
 > **T044 → T045d → T045e → T045f → T045a(c) → T045b → T045c → T045 → T035**.
+> **SUPERSEDED AGAIN 2026-09-24** by the cycle-6 ruling (see T045d's note): the chain is
+> now **T044 → T045d → T045h → T045e → T045f → T045g → T045a(c) → T045b → T045 → T035**
+> (T045c already done).
 > T045c is last of the wiring tasks on purpose: it is unreachable until the answering
 > set is complete, and it is the thing that fires when it is.
 
@@ -564,6 +567,73 @@ points, then the corrections to claims already written in this file.
       reinvent, but note it carries a `^Target([0-9]+)?$` refusal that the sweep's
       target-side read must NOT inherit, since reading `Target<N>` is the sweep's whole job.
       · `debug/fullsweep/census.py`, new dispatch module, `debug/probe_field_census_api.py`
+
+  > **RE-SCOPED 2026-09-24 -- cycle 6, user-ratified. The task text above is
+  > superseded in its approach; its goal (a working `field_source`) stands.**
+  > Live probes (Ejagham Mini, `op-133436809-002`, `op-133459014-003`) found the
+  > accessor-dispatch design unworkable: accessors are duck-typed (~45 accept any
+  > object), uncast `ICmObject` proxies make `GetSyncableProperties` return `{}`
+  > **silently** for six classes, its keys are not model field names, its surface is
+  > sparse per object, and the engine uses it for only 12 of 69 classes. Ruling
+  > (research.md **D-02a**, spec **FR-052/FR-056/FR-065/FR-066 amended, FR-190 new**;
+  > reviews/cycle6-domain.md, cycle6-author.md, cycle6-lead-synthesis.md):
+  > the census reads **every stored, non-virtual model field** through one
+  > class-agnostic metadata reader; `GetSyncableProperties` leaves the census path.
+  > Feasibility measured live: 6,880 objects, 126,064 reads, 1.42 s, 0 errors, no casts.
+  > **Scope now:**
+  > (a) new `debug/fullsweep/field_reader.py` -- `GetFields(clsid, True, All)` minus
+  > `get_IsVirtual` (the `flid<200` heuristic is dropped), cached per class; typed read
+  > by hvo+flid via `DomainDataByFlid`; Binary via `get_UnknownProp`; **any unknown
+  > type raises** (the probe's `_SKIP` is NOT inherited -- it silently dropped
+  > `StPara.StyleRules`); hvo -> GUID with 0 -> None; ws handle -> language tag
+  > (including inside run props); collections compared as sets, sequences in order;
+  > custom fields keyed by **(class, name)**, never flid (flids differ per project);
+  > owner placement derived as owner GUID + owning field name (FR-060); base flids
+  > Guid 101 (join key), ClassID 102, OwningFlid 104, OwnOrd 105 not compared as raw
+  > values. The probe's `^Target([0-9]+)?$` refusal is NOT inherited.
+  > (b) `census.py` -- drop `syncable_fields`/`engine_omitted`;
+  > `compared = model - roster_excluded`; a roster entry naming a non-model field
+  > raises; an object whose keys differ from the class field set raises (reader bug);
+  > emit a per-field lost / ledger-covered block; `omitted_growth` reused on both.
+  > (c) `expected-divergent.json` -- entries for FR-059/FR-060 and all Time fields
+  > across all in-scope classes (roster was measured over 66); **add
+  > `StTxtPara.ParseIsCurrent`** (recomputed parser bookkeeping, FR-061 analogue);
+  > `WfiWordform.SpellingStatus` stays compared; `governs` lines rewritten.
+  > (d) hyperlink / object-data run properties that embed the source project name are
+  > **compared verbatim** -- a link still pointing at the source is a real defect.
+  > (e) rework `tests/unit/test_035_compare.py` (~14 `engine_omitted`/syncable
+  > references) + new tests: sparse objects don't raise, non-model roster entry
+  > raises, virtual excluded, unknown type raises, GUID/ws-tag/set-vs-sequence
+  > canonicalisation, custom (class, name) keying, loss-set growth reported.
+  > (f) live checks (read-only; `Target<N>` only after restore): full read of Ejagham
+  > Mini + timing on Mbugwe LizzieHC practice; one `Target<N>` read; a pilot pair
+  > where a carried field matches and an uncarried custom field shows LOST; the
+  > unverified points (Time epoch/UTC, magic ws ids -1..-4, empty alternatives).
+  > · `debug/fullsweep/field_reader.py` (new), `debug/fullsweep/census.py`,
+  > `contracts/expected-divergent.json`, `tests/unit/test_035_compare.py`,
+  > `debug/run_fullcopy_sweep.py` (comments at :28, :353)
+
+- [ ] **T045g** [US2] **NEW 2026-09-24 (cycle 6).** The engine-gap ledger (FR-190):
+      new tracked contract `contracts/engine-gap-ledger.json`, loader, exact
+      (class, field) match with no patterns, evidence + open-issue checks (FR-119
+      terms), stale entry (zero matches in a run) invalidates the run, engine-bug
+      signatures refused (FR-121), and wiring into
+      `verdict_for_guard_results(allowlist_consumed=...)` so any consumed entry caps the
+      verdict at `PASS_WITH_ALLOWLIST` (exit 0). Built **empty**; seeded only from the
+      first pilot's measured lost-field list after human review. Distinct from
+      `loss-allowlist.json` (FR-122's caps would be exceeded on the first run).
+      · `contracts/engine-gap-ledger.json` (new), `debug/fullsweep/allowlist.py` or a new
+      module, `debug/fullsweep/verdict.py`, `debug/run_fullcopy_sweep.py`
+
+- [ ] **T045h** [US2] **NEW 2026-09-24 (cycle 6).** Owned-class coverage. Classes owned
+      by in-scope objects but outside the 69 are GUID-recorded and never field-read
+      (cycle6-domain.md). Ruling: **add at minimum `PhCode` (phoneme graphemes) and
+      `CmTranslation` (example translations) to `in_scope_classes`, and record an
+      explicit, reasoned exclusion for every other one** (CmDomainQ, the Fs*Value
+      family, MoAffixProcess, MoDerivStepMsa, Note, CmMedia, ...). Contract-only: T045d's
+      reader is class-agnostic, so no code change should be needed. Must precede T045e,
+      whose category map needs the final class list.
+      · `contracts/coverage-floor.json`, `object-inventory.md`
 
 - [ ] **T045e** [US2] The class -> `GrammarCategory` mapping, as a tracked contract.
       `guard_comparisons_performed` keys its counters on **category**
