@@ -41,7 +41,9 @@ engineered from the XML alone):
     when `isCustomField="true"` is present (`ShouldSerializeIsCustomField`
     omits the attribute entirely when false) -- the `field` value alone
     does NOT distinguish a custom field from a built-in LCM property name.
-  - `<Option id="…">` under a `<WritingSystemOptions>` parent carries either
+  - `<Option id="…">` under a `<WritingSystemOptions>` OR
+    `<WritingSystemAndParaOptions>` parent (the latter carries the analysis
+    WS lists, with `writingSystemType="analysis"`) carries either
     a real writing-system tag (e.g. "en") OR one of a small set of "magic"
     default-WS-group tokens (`analysis`, `vernacular`, `pronunciation`,
     `reversal`, `all analysis`, `all vernacular`, `best vernoranal`,
@@ -297,24 +299,187 @@ def _plan_action(src_path: str, tgt_path: str,
     return ConfigViewAction.OVERWRITE
 
 
-def _rewritten_bytes(src_path: str, ws_renames: Dict[str, str]) -> bytes:
-    """Issue #53: the source file's bytes with every WS id in `ws_renames`
-    replaced by its target id -- in exactly the two places `_scan_missing_
-    refs` reads WS ids (the root `<DictionaryConfiguration writingSystem=>`
-    and `<Option id=>`), so a `field=`/`style=` value that happens to spell a
-    WS tag is never touched. A targeted text substitution rather than an
-    ElementTree round-trip, so everything else in the file (namespace
-    declarations, attribute order, whitespace) stays byte-identical."""
+# One markup token: comment / CDATA / PI / declaration, or a start / end /
+# empty-element tag. Quoted attribute values are consumed whole, so a `>`
+# inside a value never ends a tag early (single or double quotes).
+_TOKEN_RE = re.compile(
+    rb"<!--.*?-->|<!\[CDATA\[.*?\]\]>|<\?.*?\?>|<![^>\[]*(?:\[[^\]]*\])?[^>]*>"
+    rb"|<(/?)([^\s/>]+)((?:\"[^\"]*\"|'[^']*'|[^>\"'])*)>",
+    re.S,
+)
+_ATTR_RE = re.compile(rb"([^\s=/>\"']+)(\s*=\s*)(\"[^\"]*\"|'[^']*')")
+
+
+def _attr_span(attrs: bytes, name: bytes):
+    """(value_start, value_end, quote, raw_value) of attribute `name` within a
+    tag's attribute string (value excludes the quotes), or None. Walks the
+    attributes as tokens, so text inside another attribute's value is never
+    mistaken for an attribute."""
+    for m in _ATTR_RE.finditer(attrs):
+        if m.group(1) == name:
+            return m.start(3) + 1, m.end(3) - 1, m.group(3)[:1], m.group(3)[1:-1]
+    return None
+
+
+def _xml_unesc(raw: bytes) -> str:
+    from xml.sax.saxutils import unescape
+    return unescape(raw.decode("utf-8"), {"&quot;": '"', "&apos;": "'"})
+
+
+def _xml_esc(text: str, quote: bytes) -> bytes:
+    from xml.sax.saxutils import escape
+    ent = {'"': "&quot;"} if quote == b'"' else {"'": "&apos;"}
+    return escape(text, ent).encode("utf-8")
+
+
+_WS_OPTION_PARENTS = frozenset({"WritingSystemOptions", "WritingSystemAndParaOptions"})
+
+
+class _Opt:
+    """One `<Option>` that is a direct child of a `<WritingSystemOptions>` or
+    `<WritingSystemAndParaOptions>`."""
+    __slots__ = ("start", "end", "old", "new", "id_edit", "enabled", "enabled_edit")
+
+    def __init__(self, start, end):
+        self.start, self.end = start, end
+        self.old = self.new = ""
+        self.id_edit = None        # (start, end, replacement) or None
+        self.enabled = False
+        self.enabled_edit = None   # (start, end, quote) of isEnabled's value
+
+
+def _rewrite_config(src_path: str, ws_renames: Dict[str, str]):
+    """Issue #53 / PR #73 follow-up. Rewrite the source file's WS ids in ONE
+    simultaneous pass driven by `ws_renames` (so a swap a->b, b->a or a chain
+    a->b, b->c is applied once per id, never cascaded), in exactly the places
+    `_scan_missing_refs` reads WS ids: the root element's `writingSystem=`
+    and `<Option id=>` that are DIRECT children of `<WritingSystemOptions>` or
+    `<WritingSystemAndParaOptions>`.
+    `field=`/`style=` values, `<Option>`s elsewhere, and magic tokens are
+    never touched.
+
+    The file is edited as text (tag-tokenised, quote-aware) rather than via
+    an ElementTree round-trip, so everything outside the edited attribute
+    values -- declarations, attribute order, quoting, whitespace -- stays
+    byte-identical.
+
+    Collisions: if a renamed id lands on an id already in the same options
+    list, the duplicates collapse to one `<Option>` (the first), enabled if
+    any of them was.
+
+    Returns `(data, applied, notes)`: the new bytes, the set of source ids
+    actually rewritten somewhere, and human-readable notes."""
     with open(src_path, "rb") as fh:
         data = fh.read()
-    for src_id, tgt_id in ws_renames.items():
-        src_b = re.escape(src_id.encode("utf-8"))
-        tgt_b = tgt_id.encode("utf-8")
-        for elem, attr in ((b"DictionaryConfiguration", b"writingSystem"),
-                           (b"Option", b"id")):
-            pattern = b"(<" + elem + rb"\b[^>]*?\s" + attr + b'=")' + src_b + b'(")'
-            data = re.sub(pattern, lambda m: m.group(1) + tgt_b + m.group(2), data)
-    return data
+    edits: list = []            # (start, end, replacement), non-overlapping
+    applied: Set[str] = set()
+    notes: List[str] = []
+    stack: list = []            # [name, _Opt|None, [_Opt]|None]
+    root_seen = False
+
+    def _local(raw: bytes) -> str:
+        return _local_tag(raw.decode("utf-8", "replace"))
+
+    def _resolve(options: list) -> None:
+        by_new: Dict[str, list] = {}
+        for o in options:
+            if o.new:
+                by_new.setdefault(o.new, []).append(o)
+        removed = set()
+        for new_id, group in by_new.items():
+            if len(group) > 1 and any(o.new != o.old for o in group):
+                keep = group[0]
+                if any(o.enabled for o in group) and not keep.enabled and keep.enabled_edit:
+                    s0, e0, q = keep.enabled_edit
+                    edits.append((s0, e0, b"true"))
+                for o in group[1:]:
+                    start = o.start
+                    while start > 0 and data[start - 1:start] in (b" ", b"\t"):
+                        start -= 1
+                    if start > 0 and data[start - 1:start] == b"\n":
+                        start -= 1
+                        if start > 0 and data[start - 1:start] == b"\r":
+                            start -= 1
+                    edits.append((start, o.end, b""))
+                    removed.add(id(o))
+                notes.append(f"duplicate writing-system option '{new_id}' merged "
+                             f"({len(group)} -> 1) after renaming")
+        for o in options:
+            if o.id_edit and id(o) not in removed:
+                edits.append(o.id_edit)
+                applied.add(o.old)
+            elif o.id_edit:
+                applied.add(o.old)  # renamed, then merged into its twin
+
+    for m in _TOKEN_RE.finditer(data):
+        if m.group(2) is None:
+            continue  # comment / CDATA / PI / declaration
+        closing, name, attrs = m.group(1), m.group(2), m.group(3)
+        if closing:
+            while stack:  # tolerate sloppy nesting: pop to the matching open
+                top = stack.pop()
+                if top[0] == name:
+                    if top[1] is not None:
+                        top[1].end = m.end()
+                    if top[2] is not None:
+                        _resolve(top[2])
+                    break
+            continue
+        empty = attrs.rstrip().endswith(b"/")
+        base = m.start(3)
+        opt = options = None
+        if not root_seen:
+            root_seen = True
+            span = _attr_span(attrs, b"writingSystem")
+            if span:
+                old = _xml_unesc(span[3])
+                new = ws_renames.get(old, old)
+                if new != old:
+                    edits.append((base + span[0], base + span[1], _xml_esc(new, span[2])))
+                    applied.add(old)
+        elif _local(name) == "Option" and stack and _local(stack[-1][0]) in _WS_OPTION_PARENTS:
+            opt = _Opt(m.start(), m.end())
+            en = _attr_span(attrs, b"isEnabled")
+            if en:
+                opt.enabled = en[3].strip().lower() == b"true"
+                opt.enabled_edit = (base + en[0], base + en[1], en[2])
+            span = _attr_span(attrs, b"id")
+            if span:
+                old = _xml_unesc(span[3])
+                opt.old = opt.new = old
+                if old not in _WS_MAGIC_TOKENS:
+                    new = ws_renames.get(old, old)
+                    if new != old:
+                        opt.new = new
+                        opt.id_edit = (base + span[0], base + span[1],
+                                       _xml_esc(new, span[2]))
+            if stack[-1][2] is not None:
+                stack[-1][2].append(opt)
+        if _local(name) in _WS_OPTION_PARENTS and not empty:
+            options = []
+        if not empty:
+            stack.append([name, opt, options])
+
+    for top in stack:  # unterminated (malformed) elements: resolve what we saw
+        if top[2] is not None:
+            _resolve(top[2])
+
+    out = []
+    pos = 0
+    for start, end, repl in sorted(edits, key=lambda e: (e[0], e[1])):
+        if start < pos:
+            continue
+        out.append(data[pos:start])
+        out.append(repl)
+        pos = end
+    out.append(data[pos:])
+    return b"".join(out), applied, notes
+
+
+def _rewritten_bytes(src_path: str, ws_renames: Dict[str, str]) -> bytes:
+    """The bytes that would land in the target for `src_path` (see
+    `_rewrite_config`)."""
+    return _rewrite_config(src_path, ws_renames)[0]
 
 
 def _scan_missing_refs(
@@ -387,7 +552,7 @@ def _scan_missing_refs(
                     seen_fields.add(fname)
                     if tgt_field_names is not None and fname not in tgt_field_names:
                         _add("field", fname, f"custom field '{fname}' absent in target")
-        elif tag == "WritingSystemOptions":
+        elif tag in _WS_OPTION_PARENTS:
             for opt in elem:
                 if _local_tag(opt.tag) != "Option":
                     continue
@@ -398,6 +563,44 @@ def _scan_missing_refs(
                 _check_ws(ws_id)
 
     return missing
+
+
+def _rewrite_notes(src_path: str, filename: str,
+                   ws_renames: Dict[str, str]) -> List[DroppedItemRecord]:
+    """Never-silent check on the planned rewrite: a rename the scanner
+    recorded that the rewrite pass did NOT apply anywhere (the file would
+    land still naming the source-side id), and any option merges the rewrite
+    performed, are reported as ConfigView records instead of success."""
+    def _rec(item: str, reason: str) -> DroppedItemRecord:
+        return DroppedItemRecord(
+            owner_kind="ConfigView", owner_guid="", owner_label=filename,
+            field_name="writingSystem", item_name=item, item_guid="", reason=reason,
+        )
+    try:
+        _data, applied, notes = _rewrite_config(src_path, ws_renames)
+    except OSError as exc:
+        return [_rec(src, f"writing system rename '{src}' -> '{tgt}' could not be "
+                          f"applied ({type(exc).__name__}: {exc})")
+                for src, tgt in ws_renames.items()]
+    out = [_rec(src, f"writing system rename '{src}' -> '{tgt}' could not be applied "
+                     f"to this file; it will still reference '{src}'")
+           for src, tgt in ws_renames.items() if src not in applied]
+    out.extend(_rec(note, note) for note in notes)
+    return out
+
+
+def _reversal_target_filename(src_path: str, filename: str,
+                              ws_renames: Dict[str, str]) -> str:
+    """`ReversalIndex/<ws>.fwdictconfig` is named for the index's own WS; when
+    that root WS is renamed the target file takes the new name."""
+    try:
+        root_ws = ET.parse(src_path).getroot().attrib.get("writingSystem")
+    except (ET.ParseError, OSError):
+        return filename
+    stem = filename[: -len(".fwdictconfig")]
+    if root_ws and root_ws == stem and root_ws in ws_renames:
+        return ws_renames[root_ws] + ".fwdictconfig"
+    return filename
 
 
 def plan_config_views(src_project, tgt_project,
@@ -439,12 +642,17 @@ def plan_config_views(src_project, tgt_project,
     ):
         for filename in _list_fwdictconfig(src_dir):
             src_path = os.path.join(src_dir, filename)
-            tgt_path = os.path.join(tgt_dir, filename)
             ws_renames: Dict[str, str] = {}
             missing_refs = _scan_missing_refs(
                 src_path, filename, tgt_ws_ids, tgt_field_names, tgt_style_names,
                 ws_map=ws_map, ws_renames=ws_renames,
             )
+            tgt_name = filename
+            if ws_renames:
+                missing_refs.extend(_rewrite_notes(src_path, filename, ws_renames))
+                if kind == "ReversalIndex":
+                    tgt_name = _reversal_target_filename(src_path, filename, ws_renames)
+            tgt_path = os.path.join(tgt_dir, tgt_name)
             action = _plan_action(src_path, tgt_path, ws_renames)
             records.append(ConfigViewRecord(
                 kind=kind,

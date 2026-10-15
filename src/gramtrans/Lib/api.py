@@ -803,6 +803,17 @@ def _ensure_custom_fields(proj, create_actions: list) -> list:
     return created
 
 
+# Programming errors are never converted into report drops: a drop would hide
+# a defect in GramTrans behind a "could not be created" line.
+_PROGRAMMING_ERRORS = (AttributeError, TypeError, NameError)
+
+
+def _is_dotnet_overload_error(exc: BaseException) -> bool:
+    """True for pythonnet's .NET overload-resolution failure, which is raised
+    as a plain TypeError ("No method matches given arguments ...")."""
+    return isinstance(exc, TypeError) and "no method matches" in str(exc).lower()
+
+
 def _ws_create_failure(tag: str, cause: str) -> "DroppedItemRecord":
     """Issue #44: the never-silent record for a target writing system that
     `_ensure_writing_systems` was asked to create and could not. The run
@@ -876,11 +887,13 @@ def _ensure_writing_systems(proj, source, plan, failures=None) -> list:
         from models import WSKind  # type: ignore
     try:
         from flexicon import WritingSystemOperations
+    except _PROGRAMMING_ERRORS:
+        raise  # a bug in our code/import surface, not a creatable failure
     except Exception as exc:  # noqa: BLE001
         _log.warning(
             "_ensure_writing_systems: WritingSystemOperations unavailable (%s); "
             "cannot create %d target WS(s) -- their content will be dropped",
-            exc, len(to_create),
+            exc, len(to_create), exc_info=True,
         )
         cause = f"WritingSystemOperations unavailable: {type(exc).__name__}: {exc}"
         failures.extend(_ws_create_failure(str(e.target_ws_id), cause) for e in to_create)
@@ -890,6 +903,8 @@ def _ensure_writing_systems(proj, source, plan, failures=None) -> list:
     try:
         src_ops = WritingSystemOperations(source) if source is not None else None
     except Exception:  # noqa: BLE001
+        _log.debug("_ensure_writing_systems: source WS ops unavailable; "
+                   "using tag as display name", exc_info=True)
         src_ops = None
 
     def _src_display_name(source_ws_id: str, fallback: str) -> str:
@@ -901,7 +916,8 @@ def _ensure_writing_systems(proj, source, plan, failures=None) -> list:
                     dn = src_ops.GetDisplayName(w)
                     return dn or fallback
         except Exception:  # noqa: BLE001
-            pass
+            _log.debug("_ensure_writing_systems: display-name lookup failed for %r",
+                       source_ws_id, exc_info=True)
         return fallback
 
     # "Present" means ACTIVE (`GetAll()`, CurVernWss/CurAnalysisWss) -- the
@@ -913,6 +929,8 @@ def _ensure_writing_systems(proj, source, plan, failures=None) -> list:
     try:
         active = {str(getattr(w, "Id", "")).lower() for w in tgt_ops.GetAll()}
     except Exception:  # noqa: BLE001
+        _log.debug("_ensure_writing_systems: active WS list unreadable; "
+                   "falling back to Exists()", exc_info=True)
         active = None
 
     created: list = []
@@ -924,18 +942,28 @@ def _ensure_writing_systems(proj, source, plan, failures=None) -> list:
         try:
             in_store = bool(tgt_ops.Exists(tag))
         except Exception:  # noqa: BLE001
+            _log.debug("_ensure_writing_systems: Exists(%r) failed; will attempt Create",
+                       tag, exc_info=True)
             in_store = False  # Exists() failure -> attempt Create and let it guard
         if in_store:
             if active is None:
-                _log.debug("_ensure_writing_systems: WS %r already present; skip", tag)
+                # Activity could not be read, so a stored-but-inactive WS is
+                # indistinguishable from an active one here. Never silent:
+                # surface it in the report rather than only the log.
+                _log.warning(
+                    "_ensure_writing_systems: WS %r is in the target store but its "
+                    "active state could not be verified; skipping create", tag,
+                )
+                failures.append(_ws_create_failure(
+                    tag, "stored but not verifiably active -- if it is not active, "
+                         "activate in FLEx and re-run"))
                 continue
             _log.warning(
                 "_ensure_writing_systems: WS %r is in the target's writing-system "
                 "store but not active; cannot create it", tag,
             )
             failures.append(_ws_create_failure(
-                tag, "it is in the target's writing-system store but not active; "
-                     "activate it in FLEx and re-run"))
+                tag, "stored but not active -- activate in FLEx and re-run"))
             continue
         is_vern = getattr(e, "source_ws_kind", WSKind.VERNACULAR) == WSKind.VERNACULAR
         name = _src_display_name(getattr(e, "source_ws_id", ""), tag)
@@ -948,10 +976,22 @@ def _ensure_writing_systems(proj, source, plan, failures=None) -> list:
                 "_ensure_writing_systems: created target WS %r (name=%r, vernacular=%s)",
                 tag, name, is_vern,
             )
+        except _PROGRAMMING_ERRORS as exc:
+            # pythonnet surfaces a .NET overload-resolution failure ("No method
+            # matches given arguments for Create") as TypeError. That is a
+            # per-WS LCM refusal (e.g. an unparseable tag), not a bug in our
+            # code: record it and keep going instead of aborting the Move.
+            if not _is_dotnet_overload_error(exc):
+                raise  # a bug in our code, not a genuine LCM failure: fail loudly
+            _log.warning(
+                "_ensure_writing_systems: could not create WS %r: %s: %s",
+                tag, type(exc).__name__, exc, exc_info=True,
+            )
+            failures.append(_ws_create_failure(tag, f"{type(exc).__name__}: {exc}"))
         except Exception as exc:  # noqa: BLE001 -- one bad tag must not abort the Move
             _log.warning(
                 "_ensure_writing_systems: could not create WS %r: %s: %s",
-                tag, type(exc).__name__, exc,
+                tag, type(exc).__name__, exc, exc_info=True,
             )
             failures.append(_ws_create_failure(tag, f"{type(exc).__name__}: {exc}"))
     if created:

@@ -160,3 +160,38 @@ def test_execute_move_runs_ws_prepass_before_execute(monkeypatch):
     assert isinstance(report, RunReport)
     assert "ws" in calls and "execute" in calls
     assert calls.index("ws") < calls.index("execute"), "WS pre-pass must run before execute"
+
+
+def _raising_ops(exc):
+    class _Ops(_FakeWSOps):
+        def Create(self, tag, name, is_vernacular=True):  # noqa: N802
+            raise exc
+    return _Ops
+
+
+def test_dotnet_overload_typeerror_recorded_as_failure(monkeypatch, stub_ws_ops):
+    monkeypatch.setattr(
+        "flexicon.WritingSystemOperations",
+        _raising_ops(TypeError("No method matches given arguments for Create")),
+        raising=False)
+    ctx, plan = _plan([
+        WSMappingEntry(source_ws_id="bad", source_ws_kind=WSKind.VERNACULAR,
+                       target_ws_id="bad", create_in_target=True),
+    ])
+    failures = []
+    created = api_mod._ensure_writing_systems(
+        ctx.target_handle, ctx.source_handle, plan, failures)
+    assert created == []  # Move not aborted
+    assert len(failures) == 1 and "No method matches" in failures[0].reason
+
+
+def test_genuine_typeerror_still_raises(monkeypatch, stub_ws_ops):
+    monkeypatch.setattr(
+        "flexicon.WritingSystemOperations",
+        _raising_ops(TypeError("unsupported operand type(s)")), raising=False)
+    ctx, plan = _plan([
+        WSMappingEntry(source_ws_id="bad", source_ws_kind=WSKind.VERNACULAR,
+                       target_ws_id="bad", create_in_target=True),
+    ])
+    with pytest.raises(TypeError):
+        api_mod._ensure_writing_systems(ctx.target_handle, ctx.source_handle, plan)

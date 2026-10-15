@@ -26,6 +26,7 @@ import pytest
 from gramtrans.Lib import api as api_mod
 from gramtrans.Lib import config_views
 from gramtrans.Lib import debuglog
+from gramtrans.Lib import flexinit
 from gramtrans.Lib import reversals
 from gramtrans.Lib import transfer as transfer_mod
 from gramtrans.Lib.models import (
@@ -39,6 +40,17 @@ from gramtrans.Lib.models import (
     WSMapping,
     WSMappingEntry,
 )
+
+# Imported at collection time (not inside the test) so a broken host import
+# surfaces as a collection error/skip, not a mid-test failure.
+try:
+    from gramtrans import gramtrans as _gt
+    import api as _flat_api  # the flat module gramtrans.py imports lazily
+except ImportError as _exc:  # pragma: no cover - host-only modules
+    _gt = _flat_api = None
+    _GT_IMPORT_ERROR = str(_exc)
+else:
+    _GT_IMPORT_ERROR = ""
 
 
 # ============================================================================
@@ -406,11 +418,10 @@ def test_copied_config_carries_the_target_ws_id(tmp_path):
 # #69 -- phase2_interactive_move runs the WS pre-pass
 # ============================================================================
 
+@pytest.mark.skipif(_gt is None, reason=f"gramtrans host imports unavailable: {_GT_IMPORT_ERROR}")
 def test_phase2_interactive_move_runs_ws_prepass(monkeypatch):
-    from gramtrans import gramtrans as gt
-    import api as flat_api  # the flat module gramtrans.py imports lazily
-    from gramtrans.Lib import flexinit
-
+    gt = _gt
+    flat_api = _flat_api
     calls = []
 
     class _Src:
