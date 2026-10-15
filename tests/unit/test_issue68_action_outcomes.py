@@ -236,3 +236,77 @@ def test_stems_declined_closure_is_skipped(monkeypatch):
     assert isinstance(result, ActionOutcome)
     assert result.status == "skipped"
     assert "declined" in result.reason
+
+
+# ---------------------------------------------------------------------------
+# Cycle 3 P2-a: `recorded` reflects whether a Skip was really appended.
+# ---------------------------------------------------------------------------
+
+def _pos_decline_setup(monkeypatch, exec_skips):
+    """inflection_classes_execute_action with an owner POS absent in the
+    destination (`_resolve_target_pos` -> None) -- one of the five sites that
+    used to hard-code recorded=True."""
+    ident = lambda o: o  # noqa: E731
+    fake_lcm = types.ModuleType("SIL.LCModel")
+    for n in ("IMoInflClassFactory", "IMoInflClass", "ICmObject"):
+        setattr(fake_lcm, n, ident)
+    fake_system = types.ModuleType("System")
+    fake_system.Guid = type("G", (), {"Parse": staticmethod(lambda s: s)})
+    sys.modules.setdefault("SIL", types.ModuleType("SIL"))
+    monkeypatch.setitem(sys.modules, "SIL.LCModel", fake_lcm)
+    monkeypatch.setitem(sys.modules, "System", fake_system)
+    ic = types.SimpleNamespace(guid="ic-1")
+    pos = types.SimpleNamespace(guid="pos-a")
+    monkeypatch.setattr(categories, "_guid_str_from",
+                        lambda o: str(getattr(o, "guid", "")).lower())
+    monkeypatch.setattr(categories, "_iter_pos", lambda h: [pos])
+    monkeypatch.setattr(categories, "_as_pos", lambda p: p)
+    monkeypatch.setattr(categories, "_inflection_classes_from_pos",
+                        lambda p: [ic])
+    monkeypatch.setattr(categories, "_resolve_target_pos",
+                        lambda *a, **k: None)
+    ctx = RunContext(
+        source_handle=object(), source_project_name="S",
+        source_project_path="/s", target_handle=object(),
+        target_project_name="T", target_project_path="/t",
+        run_id="GT-20261015-120000", started_at="2026-10-15T12:00:00")
+    if exec_skips is not None:
+        object.__setattr__(ctx, "_exec_skips", exec_skips)
+    action = PlannedAction(category=GrammarCategory.INFLECTION_CLASSES,
+                           source_guid="ic-1", intended_target_guid="ic-1",
+                           summary="x")
+    return ctx, action
+
+
+def test_pos_decline_without_exec_skips_is_not_marked_recorded(monkeypatch):
+    ctx, action = _pos_decline_setup(monkeypatch, None)
+    res = categories.inflection_classes_execute_action(action, ctx, WSMapping(), None)
+    assert res.status == "skipped"
+    # No Skip was appended anywhere, so the engine must still record one.
+    assert res.recorded is False
+
+
+def test_pos_decline_with_exec_skips_is_marked_recorded(monkeypatch):
+    skips = []
+    ctx, action = _pos_decline_setup(monkeypatch, skips)
+    res = categories.inflection_classes_execute_action(
+        action, ctx, WSMapping(), None)
+    assert res.recorded is True and len(skips) == 1
+
+
+def test_pos_decline_engine_records_exactly_one_skip(monkeypatch, _quiet_tail):
+    """End to end through transfer.execute: exactly one Skip, never zero (lost)
+    and never two (double-counted), and nothing counted as added."""
+    ctx, action = _pos_decline_setup(monkeypatch, None)
+    monkeypatch.setattr(
+        categories, "for_category",
+        lambda cat: {"execute_action":
+                     categories.inflection_classes_execute_action})
+    plan = RunPlan(context=ctx, selection=Selection(),
+                   ws_mapping=WSMapping(entries=()), actions=(action,))
+    rep = transfer.execute(plan, ctx.source_handle, ctx.target_handle,
+                           _Sink(), tag=None)
+    ic_skips = [s for s in rep.skips
+                if s.category == GrammarCategory.INFLECTION_CLASSES]
+    assert len(ic_skips) == 1
+    assert rep.per_category[GrammarCategory.INFLECTION_CLASSES].added == 0

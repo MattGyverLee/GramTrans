@@ -1441,7 +1441,7 @@ def gram_categories_execute_action(action: PlannedAction, context: RunContext, w
                 context, action.category, src_guid, src_owner_guid,
                 "part of speech",
             )
-            return ActionOutcome.skipped("owner part of speech not present in the destination (reported via exec_skips)", recorded=True)
+            return ActionOutcome.skipped("owner part of speech not present in the destination (reported via exec_skips)", recorded=getattr(context, "_exec_skips", None) is not None)
         try:
             new_pos = factory.Create(parsed_guid, target_parent)
         except Exception as e:
@@ -2492,7 +2492,7 @@ def inflection_classes_execute_action(action: PlannedAction, context: RunContext
             context, GrammarCategory.INFLECTION_CLASSES, src_guid,
             src_owner_pos_guid, "inflection class",
         )
-        return ActionOutcome.skipped("owner part of speech not present in the destination (reported via exec_skips)", recorded=True)
+        return ActionOutcome.skipped("owner part of speech not present in the destination (reported via exec_skips)", recorded=getattr(context, "_exec_skips", None) is not None)
 
     cache = getattr(target, "Cache")
     ws = cache.DefaultAnalWs
@@ -3142,7 +3142,7 @@ def pos_inflectable_feats_execute_action(action: PlannedAction, context: RunCont
             context, GrammarCategory.POS_INFLECTABLE_FEATS, src_compound,
             pos_guid, "inflectable-feature link",
         )
-        return ActionOutcome.skipped("owner part of speech not present in the destination (reported via exec_skips)", recorded=True)
+        return ActionOutcome.skipped("owner part of speech not present in the destination (reported via exec_skips)", recorded=getattr(context, "_exec_skips", None) is not None)
 
     # Resolve the target feature defn by GUID in MsFeatureSystemOA.FeaturesOC.
     cache = getattr(target, "Cache")
@@ -12424,7 +12424,7 @@ def slots_execute_action(action, context, ws_mapping, tag):
             context, GrammarCategory.SLOTS, src_guid, src_owner_pos_guid,
             "affix slot",
         )
-        return ActionOutcome.skipped("owner part of speech not present in the destination (reported via exec_skips)", recorded=True)
+        return ActionOutcome.skipped("owner part of speech not present in the destination (reported via exec_skips)", recorded=getattr(context, "_exec_skips", None) is not None)
 
     cache = getattr(target, "Cache")
     ws = cache.DefaultAnalWs
@@ -12648,7 +12648,7 @@ def affix_templates_execute_action(action, context, ws_mapping, tag):
             )
             _outcome = ActionOutcome.skipped(
                 "owner part of speech not present in the destination "
-                "(reported via exec_skips)", recorded=True)
+                "(reported via exec_skips)", recorded=getattr(context, "_exec_skips", None) is not None)
         if target_pos is not None:
             cache = getattr(target, "Cache")
             ws = cache.DefaultAnalWs
