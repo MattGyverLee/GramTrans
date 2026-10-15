@@ -18,30 +18,9 @@
 # always welcome; growing it needs a reason in the commit message.
 #
 # One pytest node ID per line. Blank lines and `#` comments ignored.
-tests/unit/test_029_picture_asset_copy.py::test_us2_shared_image_copied_once_and_cmfile_reused
-tests/unit/test_029_picture_asset_copy.py::test_us3_identical_target_file_reused_no_recopy
-tests/unit/test_029_picture_asset_copy.py::test_us4_missing_source_binary_wires_cmfile_and_reports
-tests/unit/test_029_sense_picture_reproduction.py::test_us1_caption_description_ws_mapped_and_layout_scalars_copied
-tests/unit/test_029_sense_picture_reproduction.py::test_us1_multi_picture_order_preserved
-tests/unit/test_adjacent_data.py::test_absent_spelling_status_not_written
-tests/unit/test_adjacent_data.py::test_category_absent_left_unset_and_reported_never_created
-tests/unit/test_adjacent_data.py::test_category_present_resolved_and_set
-tests/unit/test_adjacent_data.py::test_human_gloss_reproduced_parser_gloss_excluded
-tests/unit/test_adjacent_data.py::test_spelling_status_reproduced_onto_target_wordform
-tests/unit/test_adjacent_data.py::test_zero_human_glosses_reproduces_no_gloss
-tests/unit/test_analysis_idempotency.py::test_distinct_analysis_is_still_created_on_reapply
-tests/unit/test_analysis_idempotency.py::test_reapply_analyses_is_idempotent
-tests/unit/test_analysis_idempotency.py::test_same_analysis_across_two_segments_created_once_within_run
-tests/unit/test_analysis_verdict.py::test_approve_and_deny_verdicts_reproduced
-tests/unit/test_human_eval_gate.py::test_gloss_gate_reads_owning_analysis_approval_live_shape
-tests/unit/test_human_eval_gate.py::test_gloss_tokens_reproduce_owning_analysis_deduped
-tests/unit/test_human_eval_gate.py::test_normalize_token_maps_gloss_and_skips_non_analysis
-tests/unit/test_human_eval_gate.py::test_only_human_evaluated_analyses_kept
-tests/unit/test_human_eval_gate.py::test_verdicts_read_from_evaluation
-tests/unit/test_morph_bundle_wiring.py::test_approve_with_unresolved_ref_downgrades_to_needs_review
-tests/unit/test_morph_bundle_wiring.py::test_deny_with_unresolved_ref_keeps_deny
-tests/unit/test_morph_bundle_wiring.py::test_needs_review_downgrade_is_reported
-tests/unit/test_morph_bundle_wiring.py::test_unresolved_ref_report_carries_locate_context
-tests/unit/test_residue_tagging_026.py::test_residue_applied_to_every_added_object_kind
-tests/unit/test_segment_alignment.py::test_gloss_token_alignment_keyed_by_owning_analysis_and_wires
-tests/unit/test_wizard_pos_grammar_wiring.py::TestPosClosureWalksPickedPos::test_plan_emits_pos_action_for_picked_pos
+
+# 2026-10-15 (#72): all 27 entries above this note were removed -- the CI run on
+# fix-batch-67-72 showed every one of them now PASSES, so the baseline was stale.
+# The list is intentionally empty. Tests that cannot run on a FieldWorks-less
+# hosted runner are SKIPPED by the root conftest.py (not baselined here), and
+# the test_035_* capability pins are among them (see conftest.py for why).
