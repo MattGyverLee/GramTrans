@@ -44,6 +44,7 @@ if __package__:
         Skip,
         SkipReason,
         dropped_identity,
+        merge_dropped_records,
     )
 else:
     from models import (
@@ -69,6 +70,7 @@ else:
         Skip,
         SkipReason,
         dropped_identity,
+        merge_dropped_records,
     )
 
 
@@ -336,14 +338,8 @@ def _build_from_plan(cls, plan: RunPlan, mode: RunMode,
     # on the published `(owner_guid, field_name, item_guid)` identity so a
     # record the executor already appended to `extra_dropped_items` is not
     # reported twice.
-    dropped_items_all = list(extra_dropped_items)
-    _dropped_seen = {dropped_identity(d) for d in dropped_items_all}
-    for _rec in _enrichment_dropped_records(enrichments_all):
-        _key = dropped_identity(_rec)
-        if _key in _dropped_seen:
-            continue
-        _dropped_seen.add(_key)
-        dropped_items_all.append(_rec)
+    dropped_items_all = merge_dropped_records(
+        extra_dropped_items, _enrichment_dropped_records(enrichments_all))
 
     per_category_final = {
         cat: CategoryReport(

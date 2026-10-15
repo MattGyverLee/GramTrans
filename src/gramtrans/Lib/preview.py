@@ -1398,9 +1398,9 @@ def build_run_plan(
     object.__setattr__(context, '_ws_map', to_ws_map_dict(ws_mapping))
 
     # Issue #78: a `create_in_target` writing system the target already holds
-    # in its store but not active cannot be created at Move -- predict that
-    # here (read-only) as a warning-severity drop so Preview shows it BEFORE
-    # Move, instead of the user first learning of it in the post-run report.
+    # in its store but not active will be ACTIVATED (not created) at Move --
+    # announce that here (read-only) as an INFO notice so Preview shows it
+    # BEFORE Move. Only an undeterminable tag yields a warning.
     if __package__:
         from .ws_mapping import preflight_ws_creates
     else:

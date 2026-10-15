@@ -44,8 +44,8 @@ if __package__:
     from .preview import build_run_plan
     from .ws_mapping import (
         WS_ACTIVATE, WS_ACTIVE, WS_CREATE, WSMappingIncomplete, active_ws_ids,
-        is_complete, required_ws_set, ws_create_failure, ws_create_state,
-        ws_entries_to_create, ws_is_active,
+        is_complete, require_ws_store_support, required_ws_set, ws_create_failure,
+        ws_create_state,        ws_entries_to_create, ws_is_active,
     )
     from .debuglog import enable_from_env as _enable_debug_logging
 else:
@@ -67,7 +67,8 @@ else:
     from preview import build_run_plan  # type: ignore
     from ws_mapping import (  # type: ignore
         WS_ACTIVATE, WS_ACTIVE, WS_CREATE, WSMappingIncomplete, active_ws_ids,
-        is_complete, required_ws_set, ws_create_failure, ws_create_state,
+        is_complete, require_ws_store_support, required_ws_set, ws_create_failure,
+        ws_create_state,
         ws_entries_to_create, ws_is_active,
     )
     from debuglog import enable_from_env as _enable_debug_logging  # type: ignore
@@ -938,6 +939,7 @@ def _ensure_writing_systems(proj, source, plan, failures=None) -> list:
     # "present" means ACTIVE (flexicon >= 4.8.0, issue #250: `Exists` is
     # active-only). A tag stored but not active is WS_ACTIVATE: `Create`
     # reuses the stored LDML and only activates it.
+    require_ws_store_support(tgt_ops)
     active = active_ws_ids(tgt_ops)
 
     created: list = []

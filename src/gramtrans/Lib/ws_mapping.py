@@ -691,6 +691,15 @@ def ws_is_active(tgt_ops, tag: str) -> bool:
         return False
 
 
+def require_ws_store_support(tgt_ops) -> None:
+    """One-time up-front floor check: raise RuntimeError (naming pyflexicon
+    >= 4.8.0) when `tgt_ops` lacks `ExistsInStore`, so a too-old flexicon fails
+    loudly even when every tag is already active (and `ws_create_state` would
+    never reach its per-tag probe). Called by both Preview and Move."""
+    if not hasattr(tgt_ops, "ExistsInStore"):
+        raise RuntimeError(_FLOOR_MSG % _flexicon_version())
+
+
 def ws_create_state(tgt_ops, tag: str, active: Optional[Set[str]]) -> Tuple[str, str]:
     """Classify one `create_in_target` tag as `(state, reason)`; `reason` is
     non-empty only for `WS_UNDETERMINED`. Shared by Move's `api._ensure_writing_
@@ -772,6 +781,7 @@ def preflight_ws_creates(target, ws_mapping) -> list:
         _log.debug("preflight_ws_creates: WritingSystemOperations unavailable (%s)",
                    exc, exc_info=True)
         return []
+    require_ws_store_support(tgt_ops)
     active = active_ws_ids(tgt_ops)
     seen: Set[str] = set()
     out = []

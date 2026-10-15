@@ -412,6 +412,17 @@ def test_move_missing_exists_in_store_fails_loudly(monkeypatch):
         _move(make_project(["etu"]), ["pt"], [])
 
 
+def test_floor_check_fires_even_when_every_tag_is_active(monkeypatch):
+    """Pre-4.8.0 flexicon must fail loudly in Preview AND Move even when each
+    tag is already active (the per-tag ExistsInStore probe is never reached)."""
+    monkeypatch.setattr("flexicon.WritingSystemOperations", FakeWSOpsNoStore, raising=False)
+    target = make_project(["etu"])
+    with pytest.raises(RuntimeError, match=r"pyflexicon>=4\.8\.0"):
+        pkg_ws_mapping.preflight_ws_creates(target, _create_mapping("etu"))
+    with pytest.raises(RuntimeError, match=r"pyflexicon>=4\.8\.0"):
+        _move(target, ["etu"], [])
+
+
 def test_preview_and_move_agree_for_stored_ws(preflight_ops, monkeypatch):
     """Preview announces the activation; Move performs it with no failure."""
     target = make_project(["etu"], store=["etu", "mgz-fonipa"])

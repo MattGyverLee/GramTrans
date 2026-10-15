@@ -10,17 +10,16 @@ real project:
   already-active tag;
 * Move creates an absent tag (and makes it ACTIVE), skips an active one, and
   reports nothing for either;
-* a tag STORED but INACTIVE -- staged on every run by copying a real `es.ldml`
-  from a read-only project into the restored Target's WritingSystemStore before
-  it is opened, so this scenario always RUNS and never skips -- is announced by
+* a tag STORED but INACTIVE -- set up on every run through LCM exactly as FLEx
+  leaves a user-unchecked writing system (on AnalysisWss, off CurAnalysisWss;
+  project closed and reopened), so this scenario always RUNS -- is announced by
   Preview as exactly ONE info record ("will activate stored writing system"),
   and Move then ACTIVATES it: re-queried (not cached) it is in `GetAll()`,
   there is exactly one definition for the tag (no duplicate LDML), and no
   failure record is emitted.
 
 Skips unless FLEXLIBS_REQUIRE_LIVE=1.  Writes only to the throwaway `Target`,
-restored from backup before and after (the LDML is staged in Target only; the
-donor project is only read):
+restored from backup before and after:
 
     set FLEXLIBS_REQUIRE_LIVE=1 && python -m pytest tests/integration/test_ws_followups_live.py -v
 """
@@ -41,11 +40,9 @@ if not _LIVE:
 TARGET_NAME = "Target"  # the ONLY project this module may open for writing
 BACKUP_NAME = "Target 2026-07-06 0218.fwbackup"
 NEW_TAG = "qaa-x-gtlive"
-STORED_TAG = "es"  # staged as stored-but-inactive in Target (see _stage_inactive_ldml)
+STORED_TAG = "es"  # staged as stored-but-inactive in Target (see _make_stored_but_inactive)
 _PROJECTS_ROOT = Path(os.environ.get("GRAMTRANS_PROJECTS_ROOT",
                                      r"C:\ProgramData\SIL\FieldWorks\Projects"))
-# Read-only donors for a real LDML (read, never written).
-_LDML_DONORS = ("Ejagham Mini", "Esperanto")
 _REPO = Path(__file__).resolve().parents[2]
 _BACKUP_DIRS = (
     _REPO / "backups",
@@ -70,37 +67,46 @@ def _restore() -> None:
     restore_target(TARGET_NAME, backup_path=_backup_path())
 
 
-def _stage_inactive_ldml() -> Path:
-    """Copy a real `es.ldml` into the (just restored) Target's WritingSystemStore
-    so `es` is stored but not in any active list. Returns the staged path."""
-    import shutil
-    dest_dir = _PROJECTS_ROOT / TARGET_NAME / "WritingSystemStore"
-    dest_dir.mkdir(parents=True, exist_ok=True)
-    dest = dest_dir / ("%s.ldml" % STORED_TAG)
-    assert not dest.exists(), "[SETUP] restored Target already stores %r" % STORED_TAG
-    for donor in _LDML_DONORS:
-        src = _PROJECTS_ROOT / donor / "WritingSystemStore" / ("%s.ldml" % STORED_TAG)
-        if src.is_file():
-            shutil.copyfile(src, dest)  # donor is only READ
-            return dest
-    pytest.fail("[FAIL] no %s.ldml under any donor project %s" % (STORED_TAG, _LDML_DONORS))
+def _open_target():
+    from flexicon import FLExProject
+    from gramtrans.Lib.flexinit import ensure_flex_initialized
+    ensure_flex_initialized()
+    proj = FLExProject()
+    proj.OpenProject(projectName=TARGET_NAME, writeEnabled=True, undoable=False)
+    return proj
+
+
+def _make_stored_but_inactive(proj) -> None:
+    """Put STORED_TAG in the state FLEx holds after a user unchecks a writing
+    system: still on the analysis "all" list (AnalysisWss) and in the LDML store,
+    but absent from the CURRENT analysis list (CurAnalysisWss). Done through LCM
+    in a write transaction, then the project is closed and reopened by the caller
+    so the state is persisted the way a real project holds it."""
+    from flexicon import WritingSystemOperations
+    ops = WritingSystemOperations(proj)
+    assert not ops.ExistsInStore(STORED_TAG), "[SETUP] restored Target already has %r" % STORED_TAG
+    ops.Create(STORED_TAG, "Spanish", is_vernacular=False)  # store + all + current
+    lp = proj.lp
+    with ops._TransactionCM("test: deactivate %s" % STORED_TAG):
+        lp.CurAnalysisWss = " ".join(
+            t for t in str(lp.CurAnalysisWss).split() if t.lower() != STORED_TAG)
+    assert STORED_TAG in str(lp.AnalysisWss).split(), "[SETUP] %r left the all-list" % STORED_TAG
 
 
 @pytest.fixture(scope="module")
 def target():
     try:
-        from flexicon import FLExProject
+        import flexicon  # noqa: F401
     except Exception as exc:  # noqa: BLE001
         pytest.fail("[FAIL] FLEXLIBS_REQUIRE_LIVE=1 but flexicon is unavailable: %s" % exc)
     _restore()
-    _stage_inactive_ldml()
-    from gramtrans.Lib.flexinit import ensure_flex_initialized
-    ensure_flex_initialized()
-    proj = FLExProject()
     try:
-        proj.OpenProject(projectName=TARGET_NAME, writeEnabled=True, undoable=False)
+        proj = _open_target()
+        _make_stored_but_inactive(proj)
+        proj.CloseProject()
+        proj = _open_target()  # reopen: state is what a saved project holds
     except Exception as exc:  # noqa: BLE001
-        pytest.fail("[FAIL] FLEXLIBS_REQUIRE_LIVE=1 but cannot open %r: %s"
+        pytest.fail("[FAIL] FLEXLIBS_REQUIRE_LIVE=1 but cannot set up/open %r: %s"
                     % (TARGET_NAME, exc))
     try:
         yield proj
@@ -171,7 +177,7 @@ def test_stored_but_inactive_ws_is_activated_live(target):
     ops = _ops(target)
     # --- before Move: really stored-but-inactive ---------------------------
     assert ops.Exists(STORED_TAG) is False, "[FAIL] Exists() must be active-only"
-    assert ops.ExistsInStore(STORED_TAG) is True, "[SETUP] staged LDML not in the store"
+    assert ops.ExistsInStore(STORED_TAG) is True, "[SETUP] es not in the store"
     assert STORED_TAG not in _active(target)
     files_before = _store_files()
     active_before = _active(target)
