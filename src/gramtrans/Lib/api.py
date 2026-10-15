@@ -22,13 +22,14 @@ import enum
 import logging
 import os
 import threading
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields as _dc_fields, is_dataclass, replace as _dc_replace
 from typing import List, Optional, Tuple
 
 if __package__:
     from .models import (
         CreateDefinitionAction,
         GrammarCategory,
+        LeafSinkMessage,
         RunContext,
         RunMode,
         RunPlan,
@@ -44,6 +45,7 @@ else:
     from models import (  # type: ignore
         CreateDefinitionAction,
         GrammarCategory,
+        LeafSinkMessage,
         RunContext,
         RunMode,
         RunPlan,
@@ -887,7 +889,8 @@ def _ensure_writing_systems(proj, source, plan) -> list:
     return created
 
 
-def execute_move(context: RunContext, plan: RunPlan) -> RunReport:
+def execute_move(context: RunContext, plan: RunPlan,
+                 report_sink=None) -> RunReport:
     """Execute the plan against the target. PRECONDITION: caller has verified
     the plan was produced from the current Selection/WSMapping (UI
     state-machine gate, contracts/module-ui.md).
@@ -911,6 +914,11 @@ def execute_move(context: RunContext, plan: RunPlan) -> RunReport:
          disk even if the caller's final CloseProject later wedges on a
          co-held target.
     transfer.execute internals are unchanged (Principle: zero edits to transfer).
+
+    `report_sink` (optional, issue #50): a FlexTools-style report object. Every
+    per-item .Warning/.Error a leaf handler emits is collected onto the
+    returned `RunReport.leaf_warnings` and logged regardless; when a sink is
+    supplied, every call is also forwarded to it.
     """
     # Honor GRAMTRANS_DEBUG on the export path (idempotent, no-op when off).
     _enable_debug_logging()
@@ -967,17 +975,15 @@ def execute_move(context: RunContext, plan: RunPlan) -> RunReport:
         _log.info("execute_move: created %d target writing system(s): %s",
                   len(created_ws), ", ".join(created_ws))
 
-    # We need a `report_sink` with .Info / .Warning / .Error / .Blank — the
-    # UI passes the FlexTools report object through. For programmatic API
-    # calls (e.g. from a test), a tiny null sink is the safe default.
-    sink = _NullReportSink()
-    _log.debug(
-        "execute_move: calling execute() with a _NullReportSink — per-item "
-        ".Warning() reports are DISCARDED (target_handle id=%s)",
-        id(getattr(context, "target_handle", None)),
-    )
+    # Issue #50: per-item `report_sink.Warning(...)` explanations from leaf
+    # handlers must NOT be discarded. A collecting sink records every Warning
+    # / Error onto the returned RunReport (`leaf_warnings`) and logs it at
+    # WARNING/ERROR so it reaches the debug log; when the caller supplies a
+    # real FlexTools report object, every call is teed through to it too.
+    sink = _CollectingReportSink(report_sink)
     try:
-        return execute(plan, context.source_handle, context.target_handle, sink, tag)
+        report = execute(plan, context.source_handle, context.target_handle, sink, tag)
+        return _attach_leaf_warnings(report, sink.messages)
     finally:
         if create_actions:
             # Persist the value writes NOW, decoupled from the caller's final
@@ -994,18 +1000,61 @@ def execute_move(context: RunContext, plan: RunPlan) -> RunReport:
                 )
 
 
-class _NullReportSink:
-    """Drop-in for the FlexTools report object when the UI hasn't supplied
-    one (programmatic / test contexts). Accepts the same four methods and
-    discards everything."""
-    def Info(self, msg: str) -> None:  # noqa: N802
-        pass
+class _CollectingReportSink:
+    """The `report_sink` handed to `transfer.execute` by `execute_move`
+    (issue #50). Exposes the FlexTools report-object methods the handlers
+    call (.Info / .Warning / .Error / .Blank).
 
-    def Warning(self, msg: str) -> None:  # noqa: N802
-        pass
+    - Warning / Error: recorded as `LeafSinkMessage`s (surfaced on
+      `RunReport.leaf_warnings`) AND logged at WARNING / ERROR.
+    - Info: progress chatter, logged at INFO only (not recorded).
+    - Every call is forwarded to `inner` when the caller supplied a real
+      report object; a failing inner sink never aborts the Move.
 
-    def Error(self, msg: str) -> None:  # noqa: N802
-        pass
+    Extra positional/keyword args (FlexTools' optional `ref` URL) are
+    accepted and passed through.
+    """
 
-    def Blank(self) -> None:  # noqa: N802
-        pass
+    def __init__(self, inner=None) -> None:
+        self._inner = inner
+        self.messages: List[LeafSinkMessage] = []
+
+    def _forward(self, method: str, *args, **kwargs) -> None:
+        if self._inner is None:
+            return
+        try:
+            getattr(self._inner, method)(*args, **kwargs)
+        except Exception as exc:  # noqa: BLE001 -- a report UI must not abort a write pass
+            _log.warning("execute_move: caller report sink .%s failed: %s: %s",
+                         method, type(exc).__name__, exc)
+
+    def Info(self, msg, *args, **kwargs) -> None:  # noqa: N802
+        _log.info("execute_move [report] %s", msg)
+        self._forward("Info", msg, *args, **kwargs)
+
+    def Warning(self, msg, *args, **kwargs) -> None:  # noqa: N802
+        self.messages.append(LeafSinkMessage(level="WARNING", message=str(msg)))
+        _log.warning("execute_move [report] %s", msg)
+        self._forward("Warning", msg, *args, **kwargs)
+
+    def Error(self, msg, *args, **kwargs) -> None:  # noqa: N802
+        self.messages.append(LeafSinkMessage(level="ERROR", message=str(msg)))
+        _log.error("execute_move [report] %s", msg)
+        self._forward("Error", msg, *args, **kwargs)
+
+    def Blank(self, *args, **kwargs) -> None:  # noqa: N802
+        self._forward("Blank", *args, **kwargs)
+
+
+def _attach_leaf_warnings(report, messages):
+    """Return `report` with the collected sink messages appended to its
+    `leaf_warnings` (RunReport is frozen, so via dataclasses.replace).
+    Duck-typed results without that field (test stubs) pass through."""
+    if not messages or not is_dataclass(report):
+        return report
+    if "leaf_warnings" not in {f.name for f in _dc_fields(report)}:
+        return report
+    return _dc_replace(
+        report,
+        leaf_warnings=tuple(report.leaf_warnings) + tuple(messages),
+    )
