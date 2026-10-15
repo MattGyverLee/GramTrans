@@ -174,3 +174,48 @@ def test_genuine_lcm_failure_is_still_a_drop(base_store_ops):
     failures = []
     api_mod._ensure_writing_systems(target, None, plan, failures)
     assert [f.item_name for f in failures] == ["fr"]
+
+
+_PARA_BODY = (
+    '<DictionaryConfiguration name="Root" writingSystem="en">'
+    '<ConfigurationItem name="Lexeme Form" field="LexemeForm">'
+    '<WritingSystemOptions writingSystemType="vernacular">'
+    '<Option id="etu" isEnabled="true" /></WritingSystemOptions>'
+    '</ConfigurationItem>'
+    '<ConfigurationItem name="Note" field="AnthroNote">'
+    '<WritingSystemAndParaOptions writingSystemType="analysis" '
+    'displayWSAbreviation="false" displayInParagraph="false">'
+    '<Option id="all analysis" isEnabled="true" />'
+    '<Option id="swh" isEnabled="false" />'
+    '</WritingSystemAndParaOptions></ConfigurationItem>'
+    '</DictionaryConfiguration>')
+
+
+def test_rewrite_renames_ids_inside_ws_and_para_options(tmp_path):
+    p = _write(tmp_path, _PARA_BODY)
+    data, applied, _ = config_views._rewrite_config(p, {"swh": "sw", "etu": "etu2"})
+    out = data.decode()
+    assert 'id="sw" isEnabled="false"' in out
+    assert 'id="swh"' not in out
+    assert 'id="all analysis"' in out  # magic token untouched
+    assert 'id="etu2"' in out  # WritingSystemOptions still handled
+    assert applied == {"swh", "etu"}
+
+
+def test_scan_reports_missing_id_only_in_ws_and_para_options(tmp_path):
+    p = _write(tmp_path, _PARA_BODY)
+    recs = config_views._scan_missing_refs(
+        p, "Root.fwdictconfig", {"en", "etu"}, None, None)
+    assert [(r.field_name, r.item_name) for r in recs] == [("writingSystem", "swh")]
+
+
+def test_dictionary_fixture_with_both_block_types_end_to_end(tmp_path):
+    _write(tmp_path / "Src", _PARA_BODY)
+    src = base._CVProject(tmp_path / "Src", ["en", "etu", "swh"])
+    tgt = base._CVProject(tmp_path / "Tgt", ["en", "etu", "sw"])
+    recs = config_views.plan_config_views(src, tgt, ws_map={"swh": "sw"})
+    assert not recs[0].missing_refs  # mapped swh->sw is present in target
+    out = config_views._rewritten_bytes(
+        str(tmp_path / "Src" / "ConfigurationSettings" / "Dictionary" / "Lexeme.fwdictconfig"),
+        {"swh": "sw"}).decode()
+    assert 'id="swh"' not in out and 'id="sw"' in out

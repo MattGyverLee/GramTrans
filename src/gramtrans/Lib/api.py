@@ -808,6 +808,12 @@ def _ensure_custom_fields(proj, create_actions: list) -> list:
 _PROGRAMMING_ERRORS = (AttributeError, TypeError, NameError)
 
 
+def _is_dotnet_overload_error(exc: BaseException) -> bool:
+    """True for pythonnet's .NET overload-resolution failure, which is raised
+    as a plain TypeError ("No method matches given arguments ...")."""
+    return isinstance(exc, TypeError) and "no method matches" in str(exc).lower()
+
+
 def _ws_create_failure(tag: str, cause: str) -> "DroppedItemRecord":
     """Issue #44: the never-silent record for a target writing system that
     `_ensure_writing_systems` was asked to create and could not. The run
@@ -970,8 +976,18 @@ def _ensure_writing_systems(proj, source, plan, failures=None) -> list:
                 "_ensure_writing_systems: created target WS %r (name=%r, vernacular=%s)",
                 tag, name, is_vern,
             )
-        except _PROGRAMMING_ERRORS:
-            raise  # a bug in our code, not a genuine LCM failure: fail loudly
+        except _PROGRAMMING_ERRORS as exc:
+            # pythonnet surfaces a .NET overload-resolution failure ("No method
+            # matches given arguments for Create") as TypeError. That is a
+            # per-WS LCM refusal (e.g. an unparseable tag), not a bug in our
+            # code: record it and keep going instead of aborting the Move.
+            if not _is_dotnet_overload_error(exc):
+                raise  # a bug in our code, not a genuine LCM failure: fail loudly
+            _log.warning(
+                "_ensure_writing_systems: could not create WS %r: %s: %s",
+                tag, type(exc).__name__, exc, exc_info=True,
+            )
+            failures.append(_ws_create_failure(tag, f"{type(exc).__name__}: {exc}"))
         except Exception as exc:  # noqa: BLE001 -- one bad tag must not abort the Move
             _log.warning(
                 "_ensure_writing_systems: could not create WS %r: %s: %s",

@@ -41,7 +41,9 @@ engineered from the XML alone):
     when `isCustomField="true"` is present (`ShouldSerializeIsCustomField`
     omits the attribute entirely when false) -- the `field` value alone
     does NOT distinguish a custom field from a built-in LCM property name.
-  - `<Option id="…">` under a `<WritingSystemOptions>` parent carries either
+  - `<Option id="…">` under a `<WritingSystemOptions>` OR
+    `<WritingSystemAndParaOptions>` parent (the latter carries the analysis
+    WS lists, with `writingSystemType="analysis"`) carries either
     a real writing-system tag (e.g. "en") OR one of a small set of "magic"
     default-WS-group tokens (`analysis`, `vernacular`, `pronunciation`,
     `reversal`, `all analysis`, `all vernacular`, `best vernoranal`,
@@ -330,8 +332,12 @@ def _xml_esc(text: str, quote: bytes) -> bytes:
     return escape(text, ent).encode("utf-8")
 
 
+_WS_OPTION_PARENTS = frozenset({"WritingSystemOptions", "WritingSystemAndParaOptions"})
+
+
 class _Opt:
-    """One `<Option>` that is a direct child of a `<WritingSystemOptions>`."""
+    """One `<Option>` that is a direct child of a `<WritingSystemOptions>` or
+    `<WritingSystemAndParaOptions>`."""
     __slots__ = ("start", "end", "old", "new", "id_edit", "enabled", "enabled_edit")
 
     def __init__(self, start, end):
@@ -347,7 +353,8 @@ def _rewrite_config(src_path: str, ws_renames: Dict[str, str]):
     simultaneous pass driven by `ws_renames` (so a swap a->b, b->a or a chain
     a->b, b->c is applied once per id, never cascaded), in exactly the places
     `_scan_missing_refs` reads WS ids: the root element's `writingSystem=`
-    and `<Option id=>` that are DIRECT children of `<WritingSystemOptions>`.
+    and `<Option id=>` that are DIRECT children of `<WritingSystemOptions>` or
+    `<WritingSystemAndParaOptions>`.
     `field=`/`style=` values, `<Option>`s elsewhere, and magic tokens are
     never touched.
 
@@ -430,7 +437,7 @@ def _rewrite_config(src_path: str, ws_renames: Dict[str, str]):
                 if new != old:
                     edits.append((base + span[0], base + span[1], _xml_esc(new, span[2])))
                     applied.add(old)
-        elif _local(name) == "Option" and stack and _local(stack[-1][0]) == "WritingSystemOptions":
+        elif _local(name) == "Option" and stack and _local(stack[-1][0]) in _WS_OPTION_PARENTS:
             opt = _Opt(m.start(), m.end())
             en = _attr_span(attrs, b"isEnabled")
             if en:
@@ -448,7 +455,7 @@ def _rewrite_config(src_path: str, ws_renames: Dict[str, str]):
                                        _xml_esc(new, span[2]))
             if stack[-1][2] is not None:
                 stack[-1][2].append(opt)
-        if _local(name) == "WritingSystemOptions" and not empty:
+        if _local(name) in _WS_OPTION_PARENTS and not empty:
             options = []
         if not empty:
             stack.append([name, opt, options])
@@ -545,7 +552,7 @@ def _scan_missing_refs(
                     seen_fields.add(fname)
                     if tgt_field_names is not None and fname not in tgt_field_names:
                         _add("field", fname, f"custom field '{fname}' absent in target")
-        elif tag == "WritingSystemOptions":
+        elif tag in _WS_OPTION_PARENTS:
             for opt in elem:
                 if _local_tag(opt.tag) != "Option":
                     continue
