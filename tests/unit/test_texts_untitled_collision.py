@@ -65,7 +65,8 @@ def test_name_only_in_non_default_ws_does_not_raise_and_is_reported():
     target = FakeProject(ws_list=[WS_VERN, WS_EN], texts=[other])
     # Premise: the fake diverges like flexicon.
     assert target.Texts.Exists("Story") and target.Texts.Find("Story") is None
-    (r, created), dropped = _run([_plan("src-X", "Story")], target)
+    out, dropped = _run([_plan("src-X", "Story")], target)
+    (r, created), = out
     assert (r, created) == (None, False)          # no exception escapes
     assert len(dropped) == 1                      # never silent
     assert dropped[0].reason.startswith("text create failed")
