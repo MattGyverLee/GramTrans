@@ -2100,31 +2100,116 @@ def _enrich_natural_class(nc: Any, raw: dict[str, Any]) -> None:
         logging.debug("_enrich_natural_class: features failed: %s", _e)
 
 
-def _closed_value_label(spec: Any) -> str:
-    """Human ``"feature:value"`` label for one ``IFsClosedValue`` feature spec.
+_MAX_FS_LABEL_DEPTH = 8  # guard against pathological / cyclic nesting
 
-    Prefers FieldWorks' own ``LongName`` (e.g. ``"high:+"``) — the exact string
-    FLEx shows for a spec in a phoneme's feature structure.  Falls back to
-    reconstructing ``<feat-abbr>:<value-abbr>`` (or names) from
-    ``FeatureRA``/``ValueRA`` when ``LongName`` is unreadable (headless fakes /
-    edge objects).  Returns ``""`` when nothing is readable.
+
+def _feature_defn_label(feat: Any) -> str:
+    """Abbreviation (else Name) of a feature / symbolic value definition."""
+    try:
+        return (_best_analysis_text(getattr(feat, "Abbreviation", None))
+                or _best_analysis_text(getattr(feat, "Name", None)))
+    except Exception:
+        return ""
+
+
+def _is_complex_value(spec: Any) -> bool:
+    """True when ``spec`` is an ``FsComplexValue`` (live or duck-typed).
+
+    Live specs come out of ``FeatureSpecsOC`` as base
+    ``IFsFeatureSpecification`` proxies, so the derived-only ``ValueOA`` is
+    invisible until cast -- discriminate on ``ClassName`` first.  Duck-typed
+    fakes without ``ClassName`` are recognised by carrying ``ValueOA`` (an
+    owned nested feature structure) rather than ``ValueRA``.
     """
-    cv = _lcm_cast(spec, "IFsClosedValue")
+    try:
+        cls = getattr(spec, "ClassName", None)
+    except Exception:
+        cls = None
+    if isinstance(cls, str) and cls:
+        return cls == "FsComplexValue"
+    try:
+        return hasattr(spec, "ValueOA") and not hasattr(spec, "ValueRA")
+    except Exception:
+        return False
+
+
+def _complex_value_label(spec: Any, depth: int) -> str:
+    """Human ``"feature:[sub:val ...]"`` label for one ``IFsComplexValue``.
+
+    Prefers FieldWorks' own ``LongName`` (e.g. ``"nagr:[BantuSG:3 BantuPl:4]"``)
+    once the spec is cast to ``IFsComplexValue``.  Falls back to the
+    ``FeatureRA`` abbreviation plus the nested ``ValueOA`` feature structure
+    (its own ``LongName``, else its ``FeatureSpecsOC`` labelled recursively and
+    sorted -- the collection is unordered).  Returns ``""`` when nothing is
+    readable.
+    """
+    cv = _lcm_cast(spec, "IFsComplexValue")
     try:
         ln = getattr(cv, "LongName", None)
         if isinstance(ln, str) and ln.strip():
             return ln.strip()
     except Exception:
         pass
-    feat = getattr(cv, "FeatureRA", None)
-    val = getattr(cv, "ValueRA", None)
-    fname = (_best_analysis_text(getattr(feat, "Abbreviation", None))
-             or _best_analysis_text(getattr(feat, "Name", None)))
-    vname = (_best_analysis_text(getattr(val, "Abbreviation", None))
-             or _best_analysis_text(getattr(val, "Name", None)))
-    if fname and vname:
-        return f"{fname}:{vname}"
-    return fname or vname
+    fname = _feature_defn_label(getattr(cv, "FeatureRA", None))
+    inner = ""
+    try:
+        fs = _lcm_cast(getattr(cv, "ValueOA", None), "IFsFeatStruc")
+        if fs is not None:
+            fs_ln = getattr(fs, "LongName", None)
+            if isinstance(fs_ln, str) and fs_ln.strip():
+                inner = fs_ln.strip()
+            elif depth < _MAX_FS_LABEL_DEPTH:
+                parts = sorted(
+                    lbl for lbl in (
+                        _closed_value_label(s, _depth=depth + 1)
+                        for s in (getattr(fs, "FeatureSpecsOC", None) or [])
+                    ) if lbl
+                )
+                if parts:
+                    inner = "[" + " ".join(parts) + "]"
+    except Exception as _e:
+        logging.debug("_complex_value_label: nested read failed: %s", _e)
+    if fname and inner:
+        return f"{fname}:{inner}"
+    return fname or inner
+
+
+def _closed_value_label(spec: Any, _depth: int = 0) -> str:
+    """Human label for one feature spec (``IFsClosedValue`` / ``IFsComplexValue``).
+
+    Closed values: prefers FieldWorks' own ``LongName`` (e.g. ``"high:+"``) —
+    the exact string FLEx shows for a spec in a phoneme's feature structure.
+    Falls back to reconstructing ``<feat-abbr>:<value-abbr>`` (or names) from
+    ``FeatureRA``/``ValueRA`` when ``LongName`` is unreadable (headless fakes /
+    edge objects).
+
+    Complex values (issue #38): rendered as ``"feature:[sub:val ...]"`` via
+    ``_complex_value_label`` -- previously the blind ``IFsClosedValue`` cast
+    failed on them and the label degraded to the bare feature name (live) or
+    ``""`` (fakes).
+
+    Display-only; never raises.  Returns ``""`` when nothing is readable.
+    """
+    if spec is None:
+        return ""
+    try:
+        if _is_complex_value(spec):
+            return _complex_value_label(spec, _depth)
+        cv = _lcm_cast(spec, "IFsClosedValue")
+        try:
+            ln = getattr(cv, "LongName", None)
+            if isinstance(ln, str) and ln.strip():
+                return ln.strip()
+        except Exception:
+            pass
+        fname = _feature_defn_label(getattr(cv, "FeatureRA", None))
+        vname = _feature_defn_label(getattr(cv, "ValueRA", None))
+        if fname and vname:
+            return f"{fname}:{vname}"
+        return fname or vname
+    except Exception as _e:
+        logging.debug("_closed_value_label: read failed: %s", _e)
+        return ""
 
 
 def _phoneme_feature_labels(ph: Any) -> list[str]:
