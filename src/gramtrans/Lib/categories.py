@@ -2396,7 +2396,8 @@ def inflection_classes_dependencies(piece):
     so the owning POS must be created in the target before this piece is
     executed. Yield a (GRAM_CATEGORIES, owner_pos_guid) edge so the closure
     walker orders POS creation ahead of its inflection classes; empty when
-    the owner cannot be determined (duck-typed piece with no Owner)."""
+    the owner cannot be determined (duck-typed piece with no Owner).
+    Registered as `DependencyKind.INFLECTION_CLASS_TO_POS` (issue #67)."""
     owner = getattr(piece, "Owner", None)
     if owner is None:
         return ()
@@ -3042,10 +3043,8 @@ def pos_inflectable_feats_dependencies(piece):
     earlier in the same pass. Empty when the piece is not such a tuple or has
     no owner guid.
 
-    This edge is correct but NOT registered in `CLOSURE_EDGES_VERIFIED`, so
-    `closure_dependencies_for` does not consult it today. Registering it needs
-    FR-018 audit evidence from a corpus that contains these objects; that is a
-    follow-up. Nothing here guarantees ordering until then."""
+    Registered as `DependencyKind.POS_INFLECTABLE_FEAT_TO_POS` via
+    `pos_inflectable_feats_pos_dependencies` (issue #67)."""
     if not (isinstance(piece, tuple) and len(piece) == 2):
         return ()
     pos_guid = piece[0]
@@ -3200,10 +3199,8 @@ def stem_names_dependencies(piece):
     cannot be determined (duck-typed piece with no Owner, or an owner with no
     GUID). Same shape as `inflection_classes_dependencies` (issue #36).
 
-    This edge is correct but NOT registered in `CLOSURE_EDGES_VERIFIED`, so
-    `closure_dependencies_for` does not consult it today. Registering it needs
-    FR-018 audit evidence from a corpus that contains stem names; that is a
-    follow-up. Nothing here guarantees ordering until then."""
+    Registered as `DependencyKind.STEM_NAME_TO_POS` via
+    `stem_names_pos_dependencies` (issue #67), so the walker consults it."""
     owner = getattr(piece, "Owner", None)
     if owner is None:
         return ()
@@ -3372,10 +3369,9 @@ def exception_features_dependencies(piece):
     piece is not such a tuple or has no owner guid. The execute step still does
     a live GUID lookup to wire the value's own reference.
 
-    This edge is correct but NOT registered in `CLOSURE_EDGES_VERIFIED`, so
-    `closure_dependencies_for` does not consult it today. Registering it needs
-    FR-018 audit evidence from a corpus that contains these objects; that is a
-    follow-up. Nothing here guarantees ordering until then.
+    NOT registered (issue #67): no audited corpus holds an exception-feature
+    value (NO_DATA everywhere), so FR-018 forbids it. Still latent; ordering is
+    NOT guaranteed by the walker for this category.
     """
     if not (isinstance(piece, tuple) and len(piece) == 2):
         return ()
@@ -16507,6 +16503,61 @@ def for_category(category: GrammarCategory) -> dict:
 # GUID resolves to a piece that far category's own `enumerate_source` yields
 # (`unresolved == 0`, `resolved_as_owned_value == 0`), on BOTH corpora.
 
+# ---------------------------------------------------------------------------
+# Issue #67 -- the owner-POS rows for STEM_NAMES, INFLECTION_CLASSES,
+# EXCEPTION_FEATURES and POS_INFLECTABLE_FEATS
+# ---------------------------------------------------------------------------
+#
+# `closure_dependencies_for` reads ONLY `CLOSURE_EDGES_VERIFIED`, so the
+# `(GRAM_CATEGORIES, owner_pos_guid)` edges these four producers have emitted
+# since #36 were latent: a STEM_NAMES-only selection planned the stem name with
+# `closure_pulled_in == 0` and no owner POS, and the execute step then declined
+# for want of an owner. Each row below follows the `SLOT_TO_POS` precedent: a
+# `DependencyKind` member of its own, a narrow wrapper that can emit ONLY
+# `(GRAM_CATEGORIES, guid)`, an EXPLICIT `dependency_category`, and a
+# `verified_by` naming the audit that earned it.
+#
+# CYCLE CHECK. The registered graph stays acyclic because no registered source
+# category is GRAM_CATEGORIES: `gram_categories_dependencies` (which points at
+# FEATURE_STRUCT_TYPES / INFLECTION_FEATURES) is never consulted by the walker,
+# so POS has no outgoing walk edges and every new row is a sink-bound arrow.
+# `tests/unit/test_038_closure.py` asserts this over the registry itself.
+
+
+def stem_names_pos_dependencies(piece):
+    """NARROW producer for `DependencyKind.STEM_NAME_TO_POS`: only
+    `(GRAM_CATEGORIES, owning_pos_guid)` (`IPartOfSpeech.StemNamesOC`)."""
+    return _narrow_deps(stem_names_dependencies(piece),
+                        GrammarCategory.GRAM_CATEGORIES)
+
+
+def inflection_classes_pos_dependencies(piece):
+    """NARROW producer for `DependencyKind.INFLECTION_CLASS_TO_POS`: only
+    `(GRAM_CATEGORIES, owning_pos_guid)` (`IPartOfSpeech.InflectionClassesOC`)."""
+    return _narrow_deps(inflection_classes_dependencies(piece),
+                        GrammarCategory.GRAM_CATEGORIES)
+
+
+def exception_features_pos_dependencies(piece):
+    """NARROW producer for the (UNREGISTERED) EXCEPTION_FEATURES -> POS edge:
+    only `(GRAM_CATEGORIES, owning_pos_guid)` for a `(pos_guid, val)` piece.
+
+    NOT in `CLOSURE_EDGES_VERIFIED`: the #67 audit read NO_DATA on every
+    corpus (`Mbugwe Lizzie`, `Mbugwe LizzieHC practice`, `Ejagham Mini`,
+    Esperanto, `Ejagham Full` hold no `ExceptionFeaturesOC` value), so FR-018
+    forbids registering it. The audit driver keeps measuring it so a corpus
+    that does hold one will flip it to CONFIRMED."""
+    return _narrow_deps(exception_features_dependencies(piece),
+                        GrammarCategory.GRAM_CATEGORIES)
+
+
+def pos_inflectable_feats_pos_dependencies(piece):
+    """NARROW producer for `DependencyKind.POS_INFLECTABLE_FEAT_TO_POS`: only
+    `(GRAM_CATEGORIES, owning_pos_guid)` for a `(pos_guid, feat)` piece."""
+    return _narrow_deps(pos_inflectable_feats_dependencies(piece),
+                        GrammarCategory.GRAM_CATEGORIES)
+
+
 CLOSURE_EDGES_VERIFIED: dict = {
     DependencyKind.AFFIX_TO_POS: {
         "category": GrammarCategory.AFFIXES,
@@ -16731,7 +16782,84 @@ CLOSURE_EDGES_VERIFIED: dict = {
             "::test_an_affixes_only_plan_carries_the_infl_feature_edges"
         ),
     },
+    # -----------------------------------------------------------------------
+    # Issue #67 (2026-10-15) -- owner-POS rows. Evidence is SINGLE-CORPUS for
+    # STEM_NAME_TO_POS and INFLECTION_CLASS_TO_POS (the other corpora hold none
+    # of the objects, so read NO_DATA), stated rather than rounded up.
+    # EXCEPTION_FEATURES is NOT registered: NO_DATA on every corpus.
+    # -----------------------------------------------------------------------
+    DependencyKind.STEM_NAME_TO_POS: {
+        "category": GrammarCategory.STEM_NAMES,
+        "producer": stem_names_pos_dependencies,
+        "dependency_category": GrammarCategory.GRAM_CATEGORIES,
+        "verified_by": (
+            "debug/audit038_closure_edges.py (read-only, 2026-10-15): "
+            "relationships.STEM_NAME_TO_POS = CONFIRMED on 'Mbugwe Lizzie' "
+            "(1 edge over 1 distinct POS, foreign_edges 0, unresolved 0, "
+            "resolved_as_owned_value 0, unkeyed_pieces 0) and NO_DATA on "
+            "'Mbugwe LizzieHC practice' and 'Ejagham Mini', which hold no "
+            "stem names -- SINGLE-CORPUS evidence, stated rather than "
+            "rounded up. Snapshots tests/integration/_snapshots/"
+            "closure-edge-audit-038-*.json, asserted by "
+            "tests/integration/test_038_closure_edge_audit.py::"
+            "test_only_the_confirmed_relationships_are_registered; live "
+            "walk proof in tests/integration/test_issue67_owner_pos_live.py"
+        ),
+    },
+    DependencyKind.INFLECTION_CLASS_TO_POS: {
+        "category": GrammarCategory.INFLECTION_CLASSES,
+        "producer": inflection_classes_pos_dependencies,
+        "dependency_category": GrammarCategory.GRAM_CATEGORIES,
+        "verified_by": (
+            "debug/audit038_closure_edges.py (read-only, 2026-10-15): "
+            "relationships.INFLECTION_CLASS_TO_POS = CONFIRMED on 'Mbugwe "
+            "LizzieHC practice' (5 edges over 2 distinct POSes, foreign_edges "
+            "0, unresolved 0, resolved_as_owned_value 0, unkeyed_pieces 0) "
+            "and NO_DATA on 'Mbugwe Lizzie' and 'Ejagham Mini', which hold "
+            "no inflection classes -- SINGLE-CORPUS evidence, stated rather "
+            "than rounded up. Snapshots tests/integration/_snapshots/"
+            "closure-edge-audit-038-*.json, asserted by "
+            "tests/integration/test_038_closure_edge_audit.py::"
+            "test_only_the_confirmed_relationships_are_registered"
+        ),
+    },
+    DependencyKind.POS_INFLECTABLE_FEAT_TO_POS: {
+        "category": GrammarCategory.POS_INFLECTABLE_FEATS,
+        "producer": pos_inflectable_feats_pos_dependencies,
+        "dependency_category": GrammarCategory.GRAM_CATEGORIES,
+        "verified_by": (
+            "debug/audit038_closure_edges.py (read-only, 2026-10-15): "
+            "relationships.POS_INFLECTABLE_FEAT_TO_POS = CONFIRMED on ALL "
+            "THREE corpora ('Mbugwe LizzieHC practice' 14 edges over 7 POSes, "
+            "'Ejagham Mini' 13 over 6, 'Mbugwe Lizzie' 6 over 3; "
+            "foreign_edges 0, unresolved 0, resolved_as_owned_value 0, "
+            "unkeyed_pieces 0). Pieces are (pos_guid, feat) tuples keyed by "
+            "the compound plan guid via categories._closure_piece_key. "
+            "Snapshots tests/integration/_snapshots/"
+            "closure-edge-audit-038-*.json, asserted by "
+            "tests/integration/test_038_closure_edge_audit.py::"
+            "test_only_the_confirmed_relationships_are_registered"
+        ),
+    },
 }
+
+
+def _closure_piece_key(piece) -> str:
+    """The `source_guid` a plan uses for `piece`, lower-cased.
+
+    Most pieces are single LCM objects keyed by their GUID. The POS-scoped
+    ref-wiring categories (POS_INFLECTABLE_FEATS, EXCEPTION_FEATURES) yield
+    `(pos_guid, obj)` tuples whose plan `source_guid` is the compound
+    `"pos_guid::obj_guid"`; `_guid_str_from(tuple)` is "" so without this the
+    walker could never find such a piece (issue #67).
+    """
+    if isinstance(piece, tuple) and len(piece) == 2:
+        pos_guid, obj = piece
+        og = _guid_str_from(obj)
+        if pos_guid and og:
+            return ("%s::%s" % (pos_guid, og)).lower()
+        return ""
+    return _guid_str_from(piece)
 
 
 def _closure_registry_by_category(registry: dict) -> dict:
@@ -16814,7 +16942,7 @@ def closure_dependencies_for(context, selection=None, registry=None):
         try:
             bundle = LEAF_CATEGORIES[category]
             for piece in bundle["enumerate_source"](context, selection) or ():
-                g = _guid_str_from(piece)
+                g = _closure_piece_key(piece)
                 if g and g not in index:
                     index[g] = piece
         except Exception as exc:  # enumeration is best-effort, never fatal

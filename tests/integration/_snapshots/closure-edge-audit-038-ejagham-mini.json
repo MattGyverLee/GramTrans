@@ -115,9 +115,42 @@
       "resolved_as_piece": 6,
       "source_category": "affixes",
       "task": "T067",
+      "unkeyed_pieces": 0,
       "unresolved": 0,
       "unresolved_sample": [],
       "verdict": "CONFIRMED"
+    },
+    "EXCEPTION_FEATURE_TO_POS": {
+      "dependency_category": "gram_categories",
+      "distinct_far_guids": 0,
+      "edges": 0,
+      "foreign_edges": 0,
+      "population": 0,
+      "producer": "categories.exception_features_pos_dependencies",
+      "resolved_as_owned_value": 0,
+      "resolved_as_piece": 0,
+      "source_category": "exception_features",
+      "task": "#67",
+      "unkeyed_pieces": 0,
+      "unresolved": 0,
+      "unresolved_sample": [],
+      "verdict": "NO_DATA"
+    },
+    "INFLECTION_CLASS_TO_POS": {
+      "dependency_category": "gram_categories",
+      "distinct_far_guids": 0,
+      "edges": 0,
+      "foreign_edges": 0,
+      "population": 0,
+      "producer": "categories.inflection_classes_pos_dependencies",
+      "resolved_as_owned_value": 0,
+      "resolved_as_piece": 0,
+      "source_category": "inflection_classes",
+      "task": "#67",
+      "unkeyed_pieces": 0,
+      "unresolved": 0,
+      "unresolved_sample": [],
+      "verdict": "NO_DATA"
     },
     "MSA_TO_FEAT_STRUC_TYPE": {
       "dependency_category": "feature_struct_types",
@@ -130,6 +163,7 @@
       "resolved_as_piece": 2,
       "source_category": "affixes",
       "task": "T067",
+      "unkeyed_pieces": 0,
       "unresolved": 0,
       "unresolved_sample": [],
       "verdict": "CONFIRMED"
@@ -145,6 +179,23 @@
       "resolved_as_piece": 2,
       "source_category": "affixes",
       "task": "T067",
+      "unkeyed_pieces": 0,
+      "unresolved": 0,
+      "unresolved_sample": [],
+      "verdict": "CONFIRMED"
+    },
+    "POS_INFLECTABLE_FEAT_TO_POS": {
+      "dependency_category": "gram_categories",
+      "distinct_far_guids": 6,
+      "edges": 13,
+      "foreign_edges": 0,
+      "population": 13,
+      "producer": "categories.pos_inflectable_feats_pos_dependencies",
+      "resolved_as_owned_value": 0,
+      "resolved_as_piece": 6,
+      "source_category": "pos_inflectable_feats",
+      "task": "#67",
+      "unkeyed_pieces": 0,
       "unresolved": 0,
       "unresolved_sample": [],
       "verdict": "CONFIRMED"
@@ -160,6 +211,7 @@
       "resolved_as_piece": 0,
       "source_category": "affixes",
       "task": "T076",
+      "unkeyed_pieces": 0,
       "unresolved": 0,
       "unresolved_sample": [],
       "verdict": "NO_DATA"
@@ -175,6 +227,7 @@
       "resolved_as_piece": 0,
       "source_category": "affixes",
       "task": "T076",
+      "unkeyed_pieces": 0,
       "unresolved": 0,
       "unresolved_sample": [],
       "verdict": "NO_DATA"
@@ -190,9 +243,26 @@
       "resolved_as_piece": 6,
       "source_category": "slots",
       "task": "T068",
+      "unkeyed_pieces": 0,
       "unresolved": 0,
       "unresolved_sample": [],
       "verdict": "CONFIRMED"
+    },
+    "STEM_NAME_TO_POS": {
+      "dependency_category": "gram_categories",
+      "distinct_far_guids": 0,
+      "edges": 0,
+      "foreign_edges": 0,
+      "population": 0,
+      "producer": "categories.stem_names_pos_dependencies",
+      "resolved_as_owned_value": 0,
+      "resolved_as_piece": 0,
+      "source_category": "stem_names",
+      "task": "#67",
+      "unkeyed_pieces": 0,
+      "unresolved": 0,
+      "unresolved_sample": [],
+      "verdict": "NO_DATA"
     },
     "TEMPLATE_TO_POS": {
       "dependency_category": "gram_categories",
@@ -205,6 +275,7 @@
       "resolved_as_piece": 6,
       "source_category": "affix_templates",
       "task": "T069",
+      "unkeyed_pieces": 0,
       "unresolved": 0,
       "unresolved_sample": [],
       "verdict": "CONFIRMED"
@@ -220,6 +291,7 @@
       "resolved_as_piece": 9,
       "source_category": "affix_templates",
       "task": "T069",
+      "unkeyed_pieces": 0,
       "unresolved": 0,
       "unresolved_sample": [],
       "verdict": "CONFIRMED"

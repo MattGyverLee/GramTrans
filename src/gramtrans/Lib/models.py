@@ -2724,6 +2724,19 @@ class DependencyKind(enum.Enum):
     MSA_TO_FEAT_STRUC_TYPE = "msa_to_feat_struc_type"
     PROCESS_RULE_TO_PHONEME = "process_rule_to_phoneme"
     PROCESS_RULE_TO_NATURAL_CLASS = "process_rule_to_natural_class"
+    #: Issue #67. Per-POS owned objects -- `IMoStemName` (`StemNamesOC`),
+    #: `IMoInflClass` (`InflectionClassesOC`) and the POS-scoped ref-wiring
+    #: `InflectableFeatsRC` -- depend on their owning `IPartOfSpeech` existing
+    #: first. The producers have emitted `(GRAM_CATEGORIES, owner_pos_guid)`
+    #: since #36 but the walker only reads the registry, so the edges were
+    #: latent. One member per source category (the `_closure_kind_lookup` key
+    #: is `(source, far)`), mirroring `SLOT_TO_POS`. `ExceptionFeaturesOC` has
+    #: deliberately NO member: the audit found no corpus holding one (NO_DATA
+    #: everywhere), so FR-018 forbids registering it; add the member together
+    #: with the evidence.
+    STEM_NAME_TO_POS = "stem_name_to_pos"
+    INFLECTION_CLASS_TO_POS = "inflection_class_to_pos"
+    POS_INFLECTABLE_FEAT_TO_POS = "pos_inflectable_feat_to_pos"
 
 
 @dataclass(frozen=True)

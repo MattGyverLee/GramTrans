@@ -272,7 +272,11 @@ def test_a_cast_is_still_mandatory_at_the_msa_sites(snap) -> None:
 _REGISTERED = ("AFFIX_TO_POS", "MSA_TO_FEAT_STRUC_TYPE", "SLOT_TO_POS",
                "TEMPLATE_TO_POS", "TEMPLATE_TO_SLOT",
                "PROCESS_RULE_TO_PHONEME", "PROCESS_RULE_TO_NATURAL_CLASS",
-               "MSA_TO_INFL_FEATURE")
+               "MSA_TO_INFL_FEATURE",
+               # Issue #67. EXCEPTION_FEATURE_TO_POS is measured but NOT here:
+               # NO_DATA on every corpus, so FR-018 forbids registering it.
+               "STEM_NAME_TO_POS", "INFLECTION_CLASS_TO_POS",
+               "POS_INFLECTABLE_FEAT_TO_POS")
 #: Relationships the audit REFUSES. Empty since T089, and deliberately kept
 #: as a name rather than deleted: it is the list a future refusal goes on, and
 #: the tests below still enforce that everything on it stays out of the
@@ -339,7 +343,22 @@ _MIN_CONFIRMING_CORPORA = {
     # would be a weaker claim than the evidence supports and would let a
     # future regression on one corpus pass unnoticed.
     "MSA_TO_INFL_FEATURE": 2,
+    # Issue #67. SINGLE-CORPUS, like the two process-rule rows: only
+    # `Mbugwe Lizzie` holds stem names and only `Mbugwe LizzieHC practice`
+    # holds inflection classes; the others read NO_DATA.
+    "STEM_NAME_TO_POS": 1,
+    "INFLECTION_CLASS_TO_POS": 1,
+    # All three corpora hold InflectableFeatsRC entries.
+    "POS_INFLECTABLE_FEAT_TO_POS": 3,
 }
+
+#: Measured and deliberately NOT registered (issue #67): NO_DATA on every
+#: corpus. FR-018 forbids a row without CONFIRMED evidence.
+_AUDITED_NO_DATA_EVERYWHERE = ("EXCEPTION_FEATURE_TO_POS",)
+
+#: The issue-#67 owner-POS candidates (registered or not).
+_OWNER_POS_NAMES = ("STEM_NAME_TO_POS", "INFLECTION_CLASS_TO_POS",
+                    "EXCEPTION_FEATURE_TO_POS", "POS_INFLECTABLE_FEAT_TO_POS")
 
 
 def test_only_the_confirmed_relationships_are_registered() -> None:
@@ -591,6 +610,12 @@ def test_each_relationship_was_measured_over_its_own_source_category(snap) -> No
         # producer had been handed the wrong pieces.
         "PROCESS_RULE_TO_PHONEME": ("affixes", None),
         "PROCESS_RULE_TO_NATURAL_CLASS": ("affixes", None),
+        # Issue #67. Population is the corpus's business (0 where it holds
+        # none of the objects -> NO_DATA), but the source category is pinned.
+        "STEM_NAME_TO_POS": ("stem_names", None),
+        "INFLECTION_CLASS_TO_POS": ("inflection_classes", None),
+        "EXCEPTION_FEATURE_TO_POS": ("exception_features", None),
+        "POS_INFLECTABLE_FEAT_TO_POS": ("pos_inflectable_feats", None),
     }
     assert set(expected) == set(snap["relationships"]), (
         "a relationship was added to or removed from the audit without this "
@@ -599,8 +624,13 @@ def test_each_relationship_was_measured_over_its_own_source_category(snap) -> No
     )
     for name, (src_cat, want) in expected.items():
         row = snap["relationships"][name]
-        assert row["population"] > 0, name
         assert row["source_category"] == src_cat, (name, row["source_category"])
+        if name in _OWNER_POS_NAMES:
+            # Not bounded by the lexicon, and legitimately 0 on a corpus
+            # that holds none (the verdict is then NO_DATA).
+            assert (row["population"] > 0) == (row["verdict"] != "NO_DATA"), name
+            continue
+        assert row["population"] > 0, name
         if want is None:
             assert row["population"] <= pop["lex_entries"], name
         else:
@@ -645,6 +675,22 @@ def test_the_affix_producer_returns_all_three_far_categories(snap) -> None:
         )
 
 
+def test_an_unregistered_no_data_relationship_stays_unregistered() -> None:
+    """Issue #67 / FR-018: EXCEPTION_FEATURE_TO_POS reads NO_DATA on every
+    audited corpus, so it must not be registered until one reads CONFIRMED."""
+    from gramtrans.Lib import categories
+    from gramtrans.Lib.models import DependencyKind
+
+    snaps = _snapshots()
+    for name in _AUDITED_NO_DATA_EVERYWHERE:
+        assert all(s["relationships"][name]["verdict"] == "NO_DATA"
+                   for s in snaps), (
+            name + " now has data on some corpus -- revisit registering it "
+            "deliberately, with its own DependencyKind member")
+        assert not hasattr(DependencyKind, name)
+        assert name not in {k.name for k in categories.CLOSURE_EDGES_VERIFIED}
+
+
 def test_the_producer_counts_are_recorded_per_corpus() -> None:
     """The measured figures, pinned so a change is visible rather than
     inferred. These are the numbers that were 0 before T088."""
@@ -659,6 +705,8 @@ def test_the_producer_counts_are_recorded_per_corpus() -> None:
         # the suspicious outcome.
         "Mbugwe LizzieHC practice": 756,
         "Ejagham Mini": 345,
+        # Issue #67's third corpus (the only one holding stem names).
+        "Mbugwe Lizzie": 5834,
     }
     got = {
         snap["source_project"]:
@@ -1865,9 +1913,12 @@ def test_t089_was_measured_with_the_row_still_unregistered() -> None:
     # row appearing in `_REGISTERED` for some other relationship would make
     # this fail again, correctly, because T089's artifact would then no longer
     # describe the registry it was measured against.
+    # Issue #67 (2026-10-15) added three owner-POS rows after T089's run, so
+    # they are subtracted for the same reason T104's row is.
     assert set(prod["registered"]) == set(_REGISTERED) - {
-        "MSA_TO_INFL_FEATURE"}
-    assert len(prod["registered"]) == len(_REGISTERED) - 1
+        "MSA_TO_INFL_FEATURE", "STEM_NAME_TO_POS", "INFLECTION_CLASS_TO_POS",
+        "POS_INFLECTABLE_FEAT_TO_POS"}
+    assert len(prod["registered"]) == len(_REGISTERED) - 4  # T104 + #67 rows
     assert prod["axis"].startswith("categories._value_defn_ref")
 
 
