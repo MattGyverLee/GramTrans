@@ -104,6 +104,10 @@ class FakeText:
         self.genres = list(genres)
         self.paragraphs = list(paragraphs)
         self.source_text = source_text
+        # Per-WS names {handle: str}. Empty -> `name` is the default-WS name.
+        # A text named ONLY here (name == "") models "named only in a
+        # non-default analysis WS" (issue #45).
+        self.alt_names = {}
         # Feature 026 US5: per-text ITextTag objects (text-markup tags).
         self.tags = list(tags)
 
@@ -251,15 +255,26 @@ class FakeTextOps:
     def GetParagraphs(self, t):
         return list(t.paragraphs)
 
+    # Mirrors flexicon: Find reads ONLY the DefaultAnalWs name (`t.name`);
+    # Exists reads BestAnalysisAlternative, which falls back to any
+    # non-default analysis WS name (`t.alt_names`). So they can diverge.
     def Find(self, title, wsHandle=None):
         for t in self._texts:
             if t.name == title:
                 return t
         return None
 
+    def _best_analysis_name(self, t):
+        if t.name:
+            return t.name
+        for v in t.alt_names.values():
+            if v:
+                return v
+        return ""
+
     def Exists(self, name):
         target = (name or "").strip()
-        return any(t.name == target for t in self._texts)
+        return any(self._best_analysis_name(t) == target for t in self._texts)
 
     def Create(self, name, genre=None, guid=None, contents_guid=None):
         # Mirrors the real TextOperations.Create: raises when a text with

@@ -776,13 +776,14 @@ def apply_texts(plans, source, target, ctx, tag, report_sink,
 
     _added = _updated = _already = 0
     for plan in plans:
-        target_text = _resolve_or_create_text(plan, text_ops, ws_map, tgt_id2h, dropped)
+        target_text, _created = _resolve_or_create_text_ex(
+            plan, text_ops, ws_map, tgt_id2h, dropped)
         if target_text is None:
             continue
-        if plan.disposition == ReferenceAction.UPDATE:
-            _updated += 1
-        else:
+        if _created:
             _added += 1
+        else:
+            _updated += 1
         # Non-string container props (FR-002).
         _set_if(text_ops, "SetAbbreviation", target_text, plan.abbreviation)
         if plan.is_translated is not None:
@@ -812,49 +813,69 @@ def _default_vern_handle(project):
         return None
 
 
+# Display wording for a source text that has no name in its default analysis
+# WS. Matches the selection inventory label (Lib/selection.py `_text_title`).
+# NEVER a lookup key: a nameless text has no name-based identity.
+UNTITLED_LABEL = "(untitled text)"
+
+
+def _untitled_create_name(plan):
+    """Unique, non-empty Create() name for a nameless source text.
+
+    `TextOperations.Create` demands a unique non-empty name, so an untitled
+    text needs *some* string; suffixing the source GUID keeps every untitled
+    text distinct (issue #45). The result is only ever passed to Create --
+    never to Exists/Find.
+    """
+    return f"{UNTITLED_LABEL} {plan.source_guid or ''}".rstrip()
+
+
 def _resolve_or_create_text(plan, text_ops, ws_map, tgt_id2h, dropped):
     """UPDATE (by GUID/title) or ADD a target text; returns the target object."""
+    return _resolve_or_create_text_ex(plan, text_ops, ws_map, tgt_id2h, dropped)[0]
+
+
+def _resolve_or_create_text_ex(plan, text_ops, ws_map, tgt_id2h, dropped):
+    """As `_resolve_or_create_text` but returns `(text, created)`.
+
+    `created` is True only when a new target text was really created, so the
+    caller counts `_added` once per source text and only on a real create.
+    """
     if plan.disposition == ReferenceAction.UPDATE and plan.target_guid:
         try:
             for t in (text_ops.GetAll() or []):
                 if _guid_str(t) == plan.target_guid:
-                    return t
+                    return t, False
         except Exception:
             pass
-    # ADD: create by name. Genre attached separately (create with None genre).
-    name = plan.title or "(untitled)"
-    # Site-1 duplicate-name collision (finding #1): `TextOperations.Create`
-    # requires a UNIQUE name and raises the generic `FP_ParameterError("A
-    # text with the name '...' already exists.")` otherwise -- e.g. two
-    # distinct source texts sharing a title, or a name-normalization gap
-    # between this Create and the disposition-time `Find` (:_text_disposition)
-    # that missed the match. That generic exception used to surface as a
-    # misleading "text create failed" drop, silently discarding the whole
-    # text. Check `Exists(name)` first; on a hit, reuse the existing text
-    # (treat it as an UPDATE-by-name) instead of letting Create blow up.
-    exists = getattr(text_ops, "Exists", None)
-    if exists is not None:
-        try:
-            already_exists = exists(name)
-        except Exception:
-            already_exists = False
-        if already_exists:
-            find = getattr(text_ops, "Find", None)
-            existing = None
-            if find is not None:
-                try:
-                    existing = find(name)
-                except Exception:
-                    existing = None
+    if not plan.title:
+        # Untitled ADD (issue #45): identity was already decided by
+        # `_text_disposition` (GUID / fingerprint). Skip the name path
+        # entirely -- no Exists/Find -- and create under the source GUID.
+        name = _untitled_create_name(plan)
+    else:
+        name = plan.title
+        # Site-1 duplicate-name collision (finding #1): reuse an existing
+        # same-named text instead of letting Create raise. The guard and the
+        # write use ONE key function: `Find(name)` (target DefaultAnalWs).
+        # `Exists` is deliberately NOT used -- it reads BestAnalysisAlternative
+        # and can say True for a text `Find` cannot see (name only in a
+        # non-default analysis WS), which defeated the guard (issue #45).
+        find = getattr(text_ops, "Find", None)
+        if find is not None:
+            try:
+                existing = find(name)
+            except Exception:
+                existing = None
             if existing is not None:
-                return existing
+                return existing, False
     try:
         # GUID-preserved (033): the Text and its owned StText contents both
         # carry their source identity, so a re-run resolves them instead of
         # minting a second copy.
         return text_ops.Create(name, None,
                                guid=plan.source_guid or None,
-                               contents_guid=getattr(plan, "contents_guid", None) or None)
+                               contents_guid=getattr(plan, "contents_guid", None) or None), True
     except Exception as e:  # never silent
         dropped.append(DroppedItemRecord(
             owner_kind="Text", owner_guid=plan.source_guid or "?",
@@ -862,7 +883,7 @@ def _resolve_or_create_text(plan, text_ops, ws_map, tgt_id2h, dropped):
             item_name=plan.title, item_guid="",
             reason=f"text create failed: {type(e).__name__}",
         ))
-        return None
+        return None, False
 
 
 def _apply_genres(plan, target, target_text, resolver_cache, tag, source, ws_map, dropped):
