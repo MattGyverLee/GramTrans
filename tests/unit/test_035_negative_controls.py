@@ -92,6 +92,20 @@ MANDATED_VERDICT = {
     "CLEAN-CLOSE": "HARNESS_ERROR",
 }
 
+#: T045 (FR-178): the Section E field-plane detectors share this artifact.
+#: They are DETECTORS, not registry guards -- FR-109's completeness rule is
+#: over CONTRACT_GUARD_NAMES alone -- but FR-178 requires a demonstration for
+#: "every distortion or loss detector (Section E)" just as much as for the
+#: fifteen, so they are recorded in the same tracked file under the same
+#: record shape. ``compare_structural_depth`` is deliberately absent: see
+#: ``guards.FIELD_PLANE_DETECTOR_WITHOUT_A_CONTROL`` and T071.
+CONTRACT_FIELD_PLANE_CONTROL_NAMES = (
+    "FIELD-PLANE:ws-alternatives",
+    "FIELD-PLANE:text",
+    "FIELD-PLANE:order",
+    "FIELD-PLANE:link",
+)
+
 CONTRACT_VACUOUS_TOKEN = "VACUOUS"
 CONTRACT_NOT_EVALUATED = "not-evaluated"
 FORBIDDEN_DEGRADATION = "pass"
@@ -180,9 +194,12 @@ def test_the_durable_control_artifact_is_the_only_admissible_demonstration():
         for key in CONTRACT_CONTROLS_TOP_LEVEL_KEYS:
             assert key in payload, key
         recorded = {c["guard"] for c in payload["controls"]}
-        assert recorded == set(CONTRACT_GUARD_NAMES), sorted(
-            set(CONTRACT_GUARD_NAMES) - recorded
-        )
+        # Set equality, not a superset check: a record for something that is
+        # neither a registry guard nor a named Section E detector would mean
+        # the file had grown a demonstration nobody can trace to a
+        # requirement.
+        expected = set(CONTRACT_GUARD_NAMES) | set(CONTRACT_FIELD_PLANE_CONTROL_NAMES)
+        assert recorded == expected, sorted(expected ^ recorded)
 
 
 def test_a_control_record_carries_every_contract_field():
