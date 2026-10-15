@@ -1174,9 +1174,16 @@ def lookup_target(
 
     2. identity_remap lookup (FR-103):
        Looks up source_guid in identity_remap (dict[str, str] from a prior
-       Phase 0 RunReport: source_guid -> target_guid). Used for IMoInflAffMsa
-       and IMoAffixAllomorph, whose LCM factories do not accept a GUID override
-       so Phase 0 recorded the remapping explicitly.
+       Phase 0 RunReport: source_guid -> target_guid). Covers any object whose
+       identity was regenerated on create for whatever reason -- a GUID
+       collision, an unparseable source GUID, a factory without the overload,
+       or any other logged `Create()` fallback -- so Phase 0 recorded the
+       remapping explicitly. It is NOT tied to particular classes: the
+       concrete IMoInflAffMsa and IMoAffixAllomorph factories both expose
+       Create(Guid) (verified by .NET reflection on the concrete DomainImpl
+       types, LCM 11.0.0; reflection on the interface type misses it), and
+       the transfer engine creates both GUID-preserved (feature 033), so in
+       the normal case they resolve at step 1.
 
     3. Fingerprint match (FR-104):
        Computes source_obj's fingerprint via fingerprint_fn (or the registry
