@@ -13,7 +13,9 @@ import pytest
 try:
     from flexicon.code.BaseOperations import _apply_props_loop
     _IMPORT_OK = True
-except ImportError as _import_err:
+except Exception as _import_err:  # noqa: BLE001 -- not just ImportError:
+    # without FieldWorks, `import flexicon` raises a bare
+    # Exception("64bit FieldWorks 9 not found"), which must skip, not error.
     _IMPORT_OK = False
     _import_err_msg = str(_import_err)
 

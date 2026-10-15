@@ -445,6 +445,11 @@ class _PagePreview(QtWidgets.QWizardPage):
     of (T015, FR-011).
 
     Re-hosts the existing StatsPanel widget verbatim.
+
+    It keeps no plan of its own: `_PageFinish` computes and caches the plan it
+    moves (feature 015), and since this page is never registered, Qt never asks
+    it `isComplete()` -- the old `_cached_plan` / `cached_plan()` /
+    `isComplete()` trio was dead and was removed (issue #9).
     """
 
     def __init__(self, parent=None):
@@ -454,7 +459,6 @@ class _PagePreview(QtWidgets.QWizardPage):
             "Review the planned transfer before committing. "
             "Warnings (entries with missing references) are highlighted."
         )
-        self._cached_plan = None
         self._build_ui()
 
     def _build_ui(self) -> None:
@@ -485,15 +489,7 @@ class _PagePreview(QtWidgets.QWizardPage):
                     or "Plan assembly failed. Check project state.",
                 )
             return
-        self._cached_plan = plan
         self._stats.set_report(report)
-        self.completeChanged.emit()
-
-    def cached_plan(self):
-        return self._cached_plan
-
-    def isComplete(self) -> bool:
-        return self._cached_plan is not None
 
 
 # ---------------------------------------------------------------------------
@@ -569,7 +565,8 @@ def _compute_wizard_plan(wizard) -> tuple:
     2. affix_selection = page_items.collect_selection().
     3. build_selection + _replace_conflict_modes.
     4. dataclasses.replace stamp with similar_resolutions (single call -- SC-005).
-    5. similar_resolutions stamp BEFORE phonology merge block (P1 ordering).
+    5. similar_resolutions stamp BEFORE phonology merge block (P1 ordering);
+       the page-pick merges that follow are sub-steps 5a-5h.
     6. ws_mapping from page0.
     7. gt_api.compute_preview; return (None, None) on payload-None or failure.
     8. RunReport.build_from_plan; return (payload, report).
@@ -599,7 +596,7 @@ def _compute_wizard_plan(wizard) -> tuple:
         category_scopes={},
     )._replace_conflict_modes(dict(_DEFAULT_CONFLICT_MODES))
 
-    # Step 4: stamp similar_resolutions BEFORE phonology merge (DR-4 step 5, P1).
+    # Steps 4-5: stamp similar_resolutions BEFORE the phonology merge (P1 ordering).
     # Uses the already-collected affix_selection -- no second collect_selection call.
     selection = dataclasses.replace(
         selection,
