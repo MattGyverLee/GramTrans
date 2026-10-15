@@ -195,3 +195,17 @@ def test_genuine_typeerror_still_raises(monkeypatch, stub_ws_ops):
     ])
     with pytest.raises(TypeError):
         api_mod._ensure_writing_systems(ctx.target_handle, ctx.source_handle, plan)
+
+
+def test_pythonnet_overload_wording_is_still_matched():
+    """Pins `_is_dotnet_overload_error` to the wording the installed
+    pythonnet actually uses: a real .NET method called with arguments no
+    overload accepts. If a pythonnet upgrade rewords the message, this fails
+    here instead of the Move aborting on a per-WS create failure."""
+    pytest.importorskip("clr")
+    import System  # noqa: PLC0415 -- host-only, after importorskip
+
+    with pytest.raises(TypeError) as info:
+        System.Math.Abs("not a number")
+    assert api_mod._is_dotnet_overload_error(info.value)
+    assert not api_mod._is_dotnet_overload_error(TypeError("unsupported operand type(s)"))

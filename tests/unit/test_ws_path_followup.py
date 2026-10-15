@@ -219,3 +219,20 @@ def test_dictionary_fixture_with_both_block_types_end_to_end(tmp_path):
         str(tmp_path / "Src" / "ConfigurationSettings" / "Dictionary" / "Lexeme.fwdictconfig"),
         {"swh": "sw"}).decode()
     assert 'id="swh"' not in out and 'id="sw"' in out
+
+
+def test_ws_and_para_options_collision_is_deduped(tmp_path):
+    """Same collision rule as WritingSystemOptions: renaming into an id the
+    block already lists keeps ONE Option, enabled if either was."""
+    body = ('<DictionaryConfiguration name="x">'
+            '<WritingSystemAndParaOptions writingSystemType="analysis">'
+            '<Option id="swh" isEnabled="true" />'
+            '<Option id="sw" isEnabled="false" />'
+            '</WritingSystemAndParaOptions></DictionaryConfiguration>')
+    p = _write(tmp_path, body)
+    data, applied, notes = config_views._rewrite_config(p, {"swh": "sw"})
+    out = data.decode()
+    assert out.count("<Option") == 1
+    assert 'id="sw" isEnabled="true"' in out
+    assert applied == {"swh"}
+    assert len(notes) == 1 and "'sw'" in notes[0]
