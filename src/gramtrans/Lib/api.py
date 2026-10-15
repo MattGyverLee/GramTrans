@@ -810,7 +810,15 @@ _PROGRAMMING_ERRORS = (AttributeError, TypeError, NameError)
 
 def _is_dotnet_overload_error(exc: BaseException) -> bool:
     """True for pythonnet's .NET overload-resolution failure, which is raised
-    as a plain TypeError ("No method matches given arguments ...")."""
+    as a plain TypeError ("No method matches given arguments ...").
+
+    pythonnet (3.0.5, pinned in build/requirements.lock) gives this failure no
+    type of its own -- its MRO is TypeError -> Exception -- so the message is
+    the only discriminator. `test_pythonnet_overload_wording_is_still_matched`
+    calls a real .NET method with bad arguments and fails if a pythonnet
+    upgrade changes the wording. If it ever does change unnoticed, the error
+    re-raises as a programming error and aborts the Move loudly; it never
+    turns into a silent drop."""
     return isinstance(exc, TypeError) and "no method matches" in str(exc).lower()
 
 
