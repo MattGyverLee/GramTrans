@@ -29,6 +29,25 @@ _LIB = _SRC / "Lib"
 # The import + metadata contract
 # ---------------------------------------------------------------------------
 
+_APP = None
+
+
+def _qapp():
+    """One QApplication for the whole module, held at module scope.
+
+    A function-local QApplication is destroyed when the test returns, and with
+    it the process-wide ThemeManager QObject that `Lib/ui/theme.py` caches; the
+    next test then hits "wrapped C/C++ object of type ThemeManager has been
+    deleted". That made this file fail when run alone (the CI contract step,
+    #72) while passing inside the full suite, where other tests keep one alive.
+    """
+    global _APP
+    from PyQt6 import QtWidgets
+
+    _APP = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    return _APP
+
+
 def _entry_module():
     """Import the FlexTools entry module, failing loudly rather than skipping.
 
@@ -188,7 +207,7 @@ def test_the_finish_page_subtitle_is_unchanged_for_flextools():
 
     from gramtrans.Lib.ui import selection_wizard as sw
 
-    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    app = _qapp()
     _ = app
 
     page = sw._PageFinish(report_sink=None, modify_allowed=True)
@@ -208,7 +227,7 @@ def test_the_finish_page_takes_its_subtitle_from_the_gate():
 
     from gramtrans.Lib.ui import selection_wizard as sw
 
-    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    app = _qapp()
     _ = app
 
     class _Gate:
@@ -256,7 +275,7 @@ def _projects_page(source_binder=None):
     from gramtrans.Lib import api as gt_api
     from gramtrans.Lib.ui import selection_wizard as sw
 
-    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    app = _qapp()
     _ = app
 
     # Resolved, not hard-coded: `_PageProjectWS` becomes `_PageProjects` when
