@@ -1764,10 +1764,9 @@ def inflection_features_execute_action(action: PlannedAction, context: RunContex
             try:
                 new_feat_raw = complex_factory.Create(parsed_guid)
             except Exception as e:
-                raise RuntimeError(
-                    f"IFsComplexFeatureFactory does not support "
-                    f"Create(Guid); cannot align complex feature GUID "
-                    f"{src_guid}"
+                raise _create_guid_failure(
+                    "IFsComplexFeatureFactory", src_guid, e,
+                    detail="(complex feature)",
                 ) from e
             _safe_add_to_owner(new_feat_raw, feature_system.FeaturesOC,
                                "IFsComplexFeatureFactory", src_guid)
@@ -1879,10 +1878,10 @@ def inflection_features_execute_action(action: PlannedAction, context: RunContex
         try:
             new_feat = factory.Create(parsed_guid)
         except Exception as e:
-            raise RuntimeError(
-                f"IFsClosedFeatureFactory does not support Create(Guid); "
-                f"cannot align feature GUID {src_guid} (a no-GUID create "
-                f"would produce a duplicate feature on re-run)"
+            raise _create_guid_failure(
+                "IFsClosedFeatureFactory", src_guid, e,
+                detail="(a no-GUID create would produce a duplicate "
+                       "feature on re-run)",
             ) from e
         _safe_add_to_owner(new_feat, feature_system.FeaturesOC,
                            "IFsClosedFeatureFactory", src_guid)
@@ -1920,9 +1919,9 @@ def inflection_features_execute_action(action: PlannedAction, context: RunContex
                 try:
                     new_val = val_factory.Create(parsed_val_guid)
                 except Exception as e:
-                    raise RuntimeError(
-                        f"IFsSymFeatValFactory does not support Create(Guid); "
-                        f"cannot align value GUID {val_guid} on feature {src_guid}"
+                    raise _create_guid_failure(
+                        "IFsSymFeatValFactory", val_guid, e,
+                        detail=f"(value GUID on feature {src_guid})",
                     ) from e
                 _safe_add_to_owner(new_val, new_feat.ValuesOC,
                                    "IFsSymFeatValFactory", val_guid)
@@ -2499,10 +2498,7 @@ def inflection_classes_execute_action(action: PlannedAction, context: RunContext
     try:
         new_ic = factory.Create(parsed_guid)
     except Exception as e:
-        raise RuntimeError(
-            f"IMoInflClassFactory does not support Create(Guid); "
-            f"cannot align GUID {src_guid}"
-        ) from e
+        raise _create_guid_failure("IMoInflClassFactory", src_guid, e) from e
     _safe_add_to_owner(new_ic, target_pos.InflectionClassesOC,
                        "IMoInflClassFactory", src_guid)
     new_ic = IMoInflClass(new_ic)
@@ -3279,10 +3275,7 @@ def stem_names_execute_action(action: PlannedAction, context: RunContext, ws_map
     try:
         new_sn = factory.Create(parsed_guid)
     except Exception as e:
-        raise RuntimeError(
-            f"IMoStemNameFactory does not support Create(Guid); "
-            f"cannot align GUID {src_guid}"
-        ) from e
+        raise _create_guid_failure("IMoStemNameFactory", src_guid, e) from e
     _safe_add_to_owner(new_sn, target_pos.StemNamesOC,
                        "IMoStemNameFactory", src_guid)
     new_sn = IMoStemName(new_sn)
@@ -13243,6 +13236,43 @@ def _log_possibility_demoted(factory_label, src_guid, parent_guid):
         factory_label, src_guid, parent_guid)
 
 
+def _create_guid_failure(factory_name, guid_str, exc, detail=""):
+    """Build (do not raise) the RuntimeError for a failed factory.Create(Guid).
+
+    AttributeError / TypeError is the pythonnet shape for "no such method /
+    no matching overload", so it keeps the "does not support Create(Guid)"
+    wording.  Any other exception is a real failure (typically
+    System.InvalidOperationException for a duplicate GUID) and is reported
+    with its true type name and message, never as a missing API.
+
+    Call as ``raise _create_guid_failure(...) from e`` to keep the chain.
+    """
+    suffix = f" {detail}" if detail else ""
+    if isinstance(exc, (AttributeError, TypeError)):
+        return RuntimeError(
+            f"Factory {factory_name} does not support Create(Guid); "
+            f"cannot align GUID {guid_str}{suffix}"
+        )
+    type_name = None
+    get_type = getattr(exc, "GetType", None)
+    if callable(get_type):
+        try:
+            type_name = get_type().FullName
+        except Exception:
+            type_name = None
+    if not type_name:
+        type_name = type(exc).__name__
+    text = str(exc)
+    msg = (
+        f"Factory {factory_name} Create(Guid) failed for GUID {guid_str}: "
+        f"{type_name}: {text}"
+    )
+    lowered = text.lower()
+    if "identical guid" in lowered or "duplicate guid" in lowered:
+        msg += " (hint: this GUID already exists in the target)"
+    return RuntimeError(msg + suffix)
+
+
 def _safe_add_to_owner(new_obj, owner_collection, factory_label, src_guid):
     """Add `new_obj` to `owner_collection`; raise RuntimeError on failure
     with an orphan-risk message so partial-allocation events are visible
@@ -13274,6 +13304,12 @@ def _create_with_guid(factory_iface, owner_collection, guid_str, target):
 
     If Create(Guid) raises, re-raises as RuntimeError to fail loud rather
     than silently produce an object whose GUID does not match the source.
+    An AttributeError/TypeError (no such method / no matching overload) means
+    "API missing" and is reported as "does not support Create(Guid)".  Any
+    other failure (e.g. System.InvalidOperationException "Can not create more
+    than one object with identical GUIDs" when the GUID already exists in the
+    target) passes the real exception type and text through.  See
+    _create_guid_failure.
 
     If Create(Guid) succeeds but Add-to-owner-collection raises, re-raises
     as RuntimeError describing the orphan risk.  The created object is NOT
@@ -13293,10 +13329,7 @@ def _create_with_guid(factory_iface, owner_collection, guid_str, target):
     try:
         new_obj = factory.Create(parsed_guid)
     except Exception as e:
-        raise RuntimeError(
-            f"Factory {factory_name} does not support Create(Guid); "
-            f"cannot align GUID {guid_str}"
-        ) from e
+        raise _create_guid_failure(factory_name, guid_str, e) from e
     try:
         owner_collection.Add(new_obj)
     except Exception as e:
@@ -14864,8 +14897,11 @@ def _create_with_guid_oa(factory_iface, guid_str, target):
     than .Add() -- specifically LeftContextOA, RightContextOA, and
     PhSequenceContext when it acts as the OA value of those fields.
 
-    Returns new_obj.  Raises RuntimeError if the factory does not support
-    Create(Guid) (same contract as _create_with_guid).
+    Returns new_obj.  Raises RuntimeError on any Create(Guid) failure (same
+    contract as _create_with_guid): AttributeError/TypeError mean "API
+    missing" ("does not support Create(Guid)"); any other failure (e.g. the
+    .NET InvalidOperationException for a GUID already in the target) passes
+    the real exception type and text through.  See _create_guid_failure.
     """
     from System import Guid as DotNetGuid
     cache = getattr(target, "Cache")
@@ -14876,10 +14912,7 @@ def _create_with_guid_oa(factory_iface, guid_str, target):
     try:
         new_obj = factory.Create(parsed_guid)
     except Exception as e:
-        raise RuntimeError(
-            f"Factory {factory_name} does not support Create(Guid); "
-            f"cannot align GUID {guid_str}"
-        ) from e
+        raise _create_guid_failure(factory_name, guid_str, e) from e
     return new_obj
 
 

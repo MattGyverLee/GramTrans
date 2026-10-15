@@ -5,14 +5,16 @@ Per [contracts/ws-wizard.md], the wizard:
 - Receives `tuple[WSMismatch, ...]`.
 - Returns `tuple[WSMappingChoice, ...]` of the same length and order.
 - Raises `UserCancelled` on dismiss.
-- Per FR-212, CREATE choices create the new WS in the target BEFORE
-  returning.  The caller passes a `target` flexicon project handle so
-  the wizard can do this in its Finish step.
+- Per FR-212, a CREATE choice is RECORDED only.  The wizard never
+  mutates the target project; the writing system is materialized later
+  by `Lib/api.py::_ensure_writing_systems`, which honours every
+  `WSMappingEntry(create_in_target=True)` before `transfer.execute`
+  runs (issue #43).
 
 Layout (single window for simplicity; one row per mismatch):
 - A QTreeWidget with columns: source WS, choice (MAP/CREATE/SKIP),
   target WS (drop-down for MAP, identity for CREATE, blank for SKIP).
-- Bottom: Apply (validates + creates WSes when CREATE chosen) / Cancel.
+- Bottom: Apply (validates + records choices) / Cancel.
 
 Per research R8 this widget is NOT exercised by pytest -- the
 FakeWSResolver test double satisfies the same Protocol.  Live
@@ -44,10 +46,10 @@ class WSWizard(QtWidgets.QDialog):
 
     Args:
         mismatches: tuple[WSMismatch, ...].
-        target_project: optional flexicon project handle.  When CREATE
-            is chosen, the wizard creates the new WS in target on Apply
-            (FR-212).  Pass None in unit tests; production callers MUST
-            supply it.
+        target_project: optional flexicon project handle.  Kept for API
+            compatibility only: the wizard no longer touches it (it does
+            not create writing systems -- see issue #43).  CREATE choices
+            are created by `Lib/api.py::_ensure_writing_systems`.
     """
 
     def __init__(self, mismatches, target_project=None, parent=None):
@@ -140,14 +142,11 @@ class WSWizard(QtWidgets.QDialog):
                     target_ws_id=tgt,
                 )
             elif choice == WSChoice.CREATE:
-                # Apply the CREATE side-effect (FR-212) if target was supplied.
-                if self._target is not None:
-                    try:
-                        self._target.WritingSystems.Add(m.source_ws_id)
-                    except (AttributeError, TypeError, Exception):
-                        # Best-effort; the new WS may already exist from a
-                        # prior wizard run on the same session.
-                        pass
+                # Record only.  The WS is created later by
+                # Lib/api.py::_ensure_writing_systems (create_in_target=True
+                # pre-pass before transfer.execute).  The former immediate
+                # `WritingSystems.Add` side-effect called a method flexicon
+                # does not have and never worked (issue #43).
                 self._choices[i] = WSMappingChoice(
                     source_ws_id=m.source_ws_id,
                     source_ws_kind=m.source_ws_kind,

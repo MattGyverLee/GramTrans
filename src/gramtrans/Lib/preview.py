@@ -1991,79 +1991,17 @@ def _populate_msa_slot_bindings(source, msa_slot_bindings: dict) -> None:
     """
     if source is None:
         return
-    # Iterate source LexEntries via the two paths _iter_lex_entries uses:
-    # live LCM (Cache.LangProject.LexDbOA) and flexicon/duck-typed handle
-    # (LangProject.LexDbOA or direct Cache.LangProject.LexDbOA).
-    lexdb = None
-    for nav in (
-        lambda h: h.Cache.LangProject.LexDbOA,
-        lambda h: h.LangProject.LexDbOA,
-    ):
-        try:
-            lexdb = nav(source)
-        except (AttributeError, TypeError):
-            lexdb = None
-        if lexdb is not None:
-            break
-    if lexdb is None:
+    # Navigation (Cache.LangProject.LexDbOA, then LangProject.LexDbOA) is
+    # shared with the sibling passes via `_iter_source_entries`.
+    entry_list = _iter_source_entries(source)
+    if not entry_list:
         return
 
-    entries = None
-    for attr in ("EntriesOC", "Entries"):
-        coll = getattr(lexdb, attr, None)
-        if coll is not None:
-            entries = coll
-            break
-    if entries is None:
+    casts = _resolve_slot_binding_casts(entry_list)
+    if casts is None:
+        _populate_msa_slot_bindings_duck(entry_list, msa_slot_bindings)
         return
-
-    # Determine whether to use LCM interface casts (live FLEx) or duck-typed
-    # attribute access (unit-test fakes).
-    #
-    # Strategy: try to import the three cast helpers.  If they are importable
-    # AND callable (not None stubs injected by test_entry_types_*.py), probe
-    # the first entry with ILexEntry().  If that cast raises TypeError it means
-    # the entries are duck-typed fakes (e.g. from flexicon's own test helpers
-    # that are available but cannot wrap plain Python objects), so we fall back
-    # to duck-typed access for all entries.  If the cast succeeds we are in
-    # live LCM mode and use interface casts throughout.
-    #
-    # This covers three scenarios:
-    #   A. No SIL.LCModel in sys.modules (ImportError) -> duck-typed.
-    #   B. SIL.LCModel stub with None types (unit tests) -> duck-typed.
-    #   C. flexicon loaded SIL.LCModel with real types but entries are fakes
-    #      (test_013_fill_gaps.py imports flexicon) -> probe fails -> duck-typed.
-    #   D. Live FlexTools session with real LCM objects -> LCM cast path.
-    _ILexEntry = None
-    _IMoInflAffMsa = None
-    _ICmObject = None
-    try:
-        from SIL.LCModel import ILexEntry as _ILE, IMoInflAffMsa as _IMIA, ICmObject as _ICO  # noqa: N813
-        if callable(_ILE) and callable(_IMIA) and callable(_ICO):
-            _ILexEntry, _IMoInflAffMsa, _ICmObject = _ILE, _IMIA, _ICO
-    except (ImportError, Exception):  # noqa: BLE001
-        pass
-
-    # If cast helpers are unavailable, go straight to duck-typed path.
-    if _ILexEntry is None:
-        _populate_msa_slot_bindings_duck(entries, msa_slot_bindings)
-        return
-
-    # Probe the first entry to distinguish live LCM from duck-typed fakes
-    # (scenario C above).  Convert to list once so we can iterate twice if
-    # needed without exhausting a generator.
-    entry_list = list(entries)
-    if entry_list:
-        try:
-            _ILexEntry(entry_list[0])
-        except TypeError:
-            # First entry is a duck-typed fake — treat all as duck-typed.
-            _populate_msa_slot_bindings_duck(entry_list, msa_slot_bindings)
-            return
-        except Exception:  # noqa: BLE001
-            # Some other error on the first entry; try LCM path anyway and let
-            # per-entry exception handling skip problem entries.
-            pass
+    _ILexEntry, _IMoInflAffMsa, _ICmObject = casts
 
     for raw_entry in entry_list:
         try:
@@ -2086,9 +2024,49 @@ def _populate_msa_slot_bindings(source, msa_slot_bindings: dict) -> None:
                 msa_slot_bindings[msa_guid] = slot_guids
 
 
+def _resolve_slot_binding_casts(entry_list):
+    """Decide live-LCM vs duck-typed mode for `_populate_msa_slot_bindings`.
+
+    Returns `(ILexEntry, IMoInflAffMsa, ICmObject)` when the entries should
+    be read through LCM interface casts, or None when the caller must fall
+    back to `_populate_msa_slot_bindings_duck`.
+
+    Strategy: import the three cast helpers.  If they are importable AND
+    callable (not None stubs injected by test_entry_types_*.py), probe the
+    first entry with ILexEntry().  A TypeError from that probe means the
+    entries are duck-typed fakes (e.g. flexicon's own test helpers loaded the
+    real types but cannot wrap plain Python objects).  Any other probe error
+    still selects the LCM path; per-entry handling skips problem entries.
+
+    Scenarios:
+      A. No SIL.LCModel in sys.modules (ImportError) -> duck-typed.
+      B. SIL.LCModel stub with None types (unit tests) -> duck-typed.
+      C. flexicon loaded SIL.LCModel with real types but entries are fakes
+         (test_013_fill_gaps.py imports flexicon) -> probe fails -> duck-typed.
+      D. Live FlexTools session with real LCM objects -> LCM cast path.
+    """
+    try:
+        from SIL.LCModel import ILexEntry as _ILE, IMoInflAffMsa as _IMIA, ICmObject as _ICO  # noqa: N813
+    except Exception as exc:  # noqa: BLE001 -- pythonnet can raise non-ImportError (.NET load errors)
+        _log.debug("msa slot bindings: SIL.LCModel casts unavailable (%s); duck-typed mode", exc)
+        return None
+    if not (callable(_ILE) and callable(_IMIA) and callable(_ICO)):
+        return None
+    if entry_list:
+        try:
+            _ILE(entry_list[0])
+        except TypeError:
+            # First entry is a duck-typed fake -- treat all as duck-typed.
+            return None
+        except Exception:  # noqa: BLE001
+            # Some other error on the first entry; try the LCM path anyway.
+            pass
+    return _ILE, _IMIA, _ICO
+
+
 def _iter_source_entries(source):
-    """Yield source LexEntries via the same two navigations
-    `_populate_msa_slot_bindings` uses (live LCM vs duck-typed handle).
+    """Return source LexEntries as a list, trying the live-LCM navigation
+    (Cache.LangProject.LexDbOA) then the duck-typed handle (LangProject.LexDbOA).
     Returns an empty list when the lexicon is unreachable."""
     if source is None:
         return []
@@ -2335,7 +2313,7 @@ def _populate_msa_infl_feat_bindings(source, bindings: dict) -> None:
             _ILexEntry, _IMoInflAffMsa, _ICmObject = _ILE, _IMIA, _ICO
             _IFsFeatStruc, _IFsClosedValue = _IFS, _IFCV
             _IFsComplexValue = _IFXV
-    except (ImportError, Exception):  # noqa: BLE001
+    except Exception:  # noqa: BLE001 -- pythonnet can raise non-ImportError (.NET load errors)
         pass
 
     if _ILexEntry is None:
@@ -2361,7 +2339,7 @@ def _populate_msa_infl_feat_bindings(source, bindings: dict) -> None:
         try:
             entry = _ILexEntry(raw_entry)
             msas = entry.MorphoSyntaxAnalysesOC
-        except (AttributeError, TypeError, Exception):  # noqa: BLE001
+        except Exception:  # noqa: BLE001
             continue
         for raw_msa in msas:
             try:
@@ -2530,7 +2508,7 @@ def _populate_msa_feat_struc_bindings(source, bindings: dict) -> None:
             _ILexEntry, _ICmObject = _ILE, _ICO
             _IFsFeatStruc, _IFsClosedValue = _IFS, _IFCV
             _IFsComplexValue = _IFXV
-    except (ImportError, Exception):  # noqa: BLE001
+    except Exception:  # noqa: BLE001 -- pythonnet can raise non-ImportError (.NET load errors)
         pass
 
     if _ILexEntry is None:

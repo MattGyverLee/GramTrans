@@ -562,10 +562,11 @@ def fold_choices_into_ws_mapping(choices, base_mapping):
     through Selection.ws_mapping_choices so the planner can detect SKIP
     and emit Skip(UNMAPPED_WS_USER_CHOSE_SKIP).
 
-    Per FR-212, CREATE choices assume the new WS has ALREADY been created
-    in the target before this function is called.  An identity mapping
-    (source_id -> source_id) is registered with create_in_target=True
-    for audit.
+    Per FR-212, CREATE choices are NOT created here, and the WS wizard
+    does not create them either (#43).  An identity mapping
+    (source_id -> source_id) is registered with create_in_target=True;
+    `api.py::_ensure_writing_systems` (run by `execute_move`) consumes
+    that flag and materializes the WS before `transfer.execute`.
     """
     if __package__:
         from .models import WSMappingEntry, WSChoice
