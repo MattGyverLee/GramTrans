@@ -1,18 +1,18 @@
 {
   "schema_version": 1,
-  "captured_by": "T023 (2026-08-18 original capture) -- RE-PINNED 2026-09-20 under specs/035-fullsweep-fidelity/tasks.md T035 (batch-1 re-run), by measurement",
-  "captured_at": "2026-09-20",
+  "captured_by": "T023 (2026-08-18 original capture) -- RE-PINNED 2026-09-20 under specs/035-fullsweep-fidelity/tasks.md T035 (batch-1 re-run), by measurement -- RE-PINNED AGAIN 2026-10-15 (OpenProject signature drift), by measurement",
+  "captured_at": "2026-10-15",
   "reported_version": "4.3.1",
   "version_note": "RECORDED ONLY (FR-126); NEVER the basis of the preflight decision (FR-125). This installation is a LIVE INSTANCE of the exact hazard FR-125 names: the editable install's distribution metadata reports 4.3.1, FLExToolsMCP health reports installed=4.4.0 / index=4.4.0, and the working tree's own git log is post-4.4.0 (5994acc, 'before 4.4.1'). Three sources, three answers. flexicon.__version__ is None. Only the introspected block below is decisive.",
   "provenance": {
     "resolved_path": "D:\\Github\\_Projects\\_LEX\\flexicon\\flexicon\\__init__.py",
     "from_site_packages": false,
     "revision": {
-      "sha": "ef94601c70570e4fe9ad34f051a3f7cd02c55c53",
+      "sha": "1477cea064bcb1bde712f528dff0b41b98c520c3",
       "dirty": false,
       "error": ""
     },
-    "note": "FR-126: a dependency resolved from a stale packaged copy rather than the tracked working installation MUST fail the preflight. This capture resolved to the working tree, not site-packages. Revision advanced 5994acc -> ef94601 since the original capture; the revision is RECORDED, never the basis of the decision (FR-125) -- the single capability difference across that span is the GramCat override retired by 4b911d3."
+    "note": "FR-126: a dependency resolved from a stale packaged copy rather than the tracked working installation MUST fail the preflight. This capture resolved to the working tree, not site-packages. Revision advanced 5994acc -> ef94601 since the original capture; the revision is RECORDED, never the basis of the decision (FR-125) -- the single capability difference across that span is the GramCat override retired by 4b911d3. Revision advanced again ef94601 -> 1477cea (distribution metadata pyflexicon 4.13.0); RECORDED, never the basis of the decision (FR-125) -- the capability differences across that span are the two optional OpenProject parameters added by flexicon 8594a6e (#289, progress=) and 67d5e6f (#210, strict_transactions=)."
   },
   "accessors_verified_live": {
     "verified_via": "FLExToolsMCP flextools_run_module, read-only, project 'Ejagham Mini', op-101942581-001, 2026-08-18",
@@ -36,14 +36,18 @@
           "projectName": "<required>",
           "writeEnabled": "False",
           "undoable": "True",
-          "ui": "None"
+          "strict_transactions": "False",
+          "ui": "None",
+          "progress": "None"
         },
         "order": [
           "self",
           "projectName",
           "writeEnabled",
           "undoable",
-          "ui"
+          "strict_transactions",
+          "ui",
+          "progress"
         ]
       },
       "flexicon.FLExProject.CloseProject": {
@@ -239,7 +243,7 @@
       }
     }
   },
-  "summary_hash": "7c61f3632b8cf197b50a8e9e8a15df616c589c45a5d6a659d2bb634b4215e16b",
+  "summary_hash": "3f1afabf1c993709aa99c8c7f7e4e6c462ca876780492c5054724936e6d1bc37",
   "drift_observed_at_capture": [
     {
       "symbol": "flexicon.code.BaseOperations.BaseOperations.ApplySyncableProperties",
@@ -272,11 +276,56 @@
       "rationale": "flexicon 4b911d3 (issue #276) retired the GramCat surface on a domain ruling; GramCatOperations is a deprecated alias of POSOperations scheduled for removal at v5.0.0. The pin followed upstream rather than requiring upstream to re-add a retired surface.",
       "method": "Re-measured with preflight.introspect_capabilities() and diffed field-by-field against the previous pin via preflight.diff_capabilities(); exactly 1 difference, applied. No field was hand-edited except as that diff directed.",
       "consequence": "GramTrans CLAUDE.md's 'the 8 Grammar Operations subclasses each declare an override' rule is now stale for GramCatOperations; 7 of 8 still hold."
+    },
+    {
+      "at": "2026-10-15",
+      "from_revision": "ef94601c70570e4fe9ad34f051a3f7cd02c55c53",
+      "to_revision": "1477cea064bcb1bde712f528dff0b41b98c520c3",
+      "differences_measured": 3,
+      "differences": [
+        {
+          "symbol": "signatures.flexicon.FLExProject.OpenProject.parameters.progress",
+          "was": null,
+          "now": "None",
+          "kind": "added"
+        },
+        {
+          "symbol": "signatures.flexicon.FLExProject.OpenProject.parameters.strict_transactions",
+          "was": null,
+          "now": "False",
+          "kind": "added"
+        },
+        {
+          "symbol": "signatures.flexicon.FLExProject.OpenProject.order",
+          "was": [
+            "self",
+            "projectName",
+            "writeEnabled",
+            "undoable",
+            "ui"
+          ],
+          "now": [
+            "self",
+            "projectName",
+            "writeEnabled",
+            "undoable",
+            "strict_transactions",
+            "ui",
+            "progress"
+          ],
+          "kind": "changed"
+        }
+      ],
+      "decision": "DELIBERATE RE-PIN (FR-125/FR-132), authorized by the maintainer 2026-10-15 (request: resolve the failing test_035 unit tests on main).",
+      "rationale": "flexicon added two OPTIONAL parameters to FLExProject.OpenProject: strict_transactions=False (67d5e6f, #210 -- opt-in Phase-1 rollback guard; the False default keeps the historical degraded Phase-1 behaviour) and progress=None (8594a6e, #289 -- None now means a HeadlessThreadedProgress instead of constructing a ProgressDialogWithTask per open). strict_transactions was inserted BEFORE ui, so a caller passing ui POSITIONALLY (5th argument) would now bind it to strict_transactions. Audited: every GramTrans OpenProject call in src/, tests/ and debug/ passes at most projectName positionally and everything else by keyword (Lib/api.py passes writeEnabled=True, undoable=False by keyword), so no call site rebinds. The undoable=True default pinned in drift_observed_at_capture is unchanged.",
+      "method": "Re-measured with preflight.introspect_capabilities() and diffed field-by-field against the previous pin via preflight.diff_capabilities(); exactly 3 differences, all on the OpenProject signature; only that entry was replaced with its measured value. Post-apply diff is empty.",
+      "consequence": "progress=None changes the DEFAULT progress object at open time (headless, no WinForms handle). Not live-verified by upstream at 8594a6e; GramTrans never passes progress= so it rides the new default."
     }
   ],
   "summary_hash_recipe": "sha256(json.dumps(introspected, sort_keys=True, separators=(',',':'))) -- RECORDED 2026-09-20. Nothing in debug/fullsweep consumes this field; the preflight decision is the field-by-field diff of 'introspected'. The 2026-08-18 value (5c4df800...) was produced by an UNDOCUMENTED recipe this one does not reproduce, so the two are not comparable -- treat this entry as the first hash with a stated recipe, not as a continuation.",
   "introspected_annotations": {
     "_why_not_inline": "FR-125: 'introspected' is diffed key-for-key against what introspect_capabilities() measures. A commentary key added inside it has no measured counterpart and is reported as [missing], failing the preflight. Verified by doing exactly that on 2026-09-20 and watching it exit 6. Annotations therefore live in this sibling block, which nothing diffs.",
-    "grammar_overrides.flexicon.GramCatOperations.ApplySyncableProperties.declared": "RE-PINNED 2026-09-20 as FALSE, deliberately (FR-125/FR-132). flexicon commit 4b911d3 'fix(276): retire the GramCat TypesOC surface' DELETED this override along with the whole GramCat CRUD surface, on a recorded domain ruling: a list-level grammatical category IS a Part of Speech, so GramCatOperations is now a DEPRECATED ALIAS of POSOperations (removal scheduled for the v5.0.0 boundary) and inherits ApplySyncableProperties from it. This is upstream design, not an indexer-visibility regression -- the other 7 of 8 Grammar Operations subclasses still DECLARE the override and are pinned True. Restoring a declared override on a class upstream has retired was the rejected alternative."
+    "grammar_overrides.flexicon.GramCatOperations.ApplySyncableProperties.declared": "RE-PINNED 2026-09-20 as FALSE, deliberately (FR-125/FR-132). flexicon commit 4b911d3 'fix(276): retire the GramCat TypesOC surface' DELETED this override along with the whole GramCat CRUD surface, on a recorded domain ruling: a list-level grammatical category IS a Part of Speech, so GramCatOperations is now a DEPRECATED ALIAS of POSOperations (removal scheduled for the v5.0.0 boundary) and inherits ApplySyncableProperties from it. This is upstream design, not an indexer-visibility regression -- the other 7 of 8 Grammar Operations subclasses still DECLARE the override and are pinned True. Restoring a declared override on a class upstream has retired was the rejected alternative.",
+    "signatures.flexicon.FLExProject.OpenProject": "RE-PINNED 2026-10-15, deliberately (FR-125/FR-132): strict_transactions (default False, #210) and progress (default None -> HeadlessThreadedProgress, #289) added; strict_transactions sits BEFORE ui, so ui must be passed by keyword. GramTrans call sites audited: none pass ui positionally."
   }
 }
