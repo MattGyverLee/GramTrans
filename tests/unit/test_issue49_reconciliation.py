@@ -107,8 +107,15 @@ def test_template_handler_declines_when_owner_pos_missing(monkeypatch, _fake_lcm
     monkeypatch.setattr(categories, "_resolve_target_pos", lambda *a, **k: None)
     monkeypatch.setattr(categories, "_report_owner_pos_unresolved", lambda *a, **k: None)
     monkeypatch.setattr(categories, "_run_tail_once", lambda *a, **k: None)
+    ctx = _ctx()
     out = categories.affix_templates_execute_action(
-        _act("zz", GrammarCategory.AFFIX_TEMPLATES), _ctx(), None, None)
+        _act("zz", GrammarCategory.AFFIX_TEMPLATES), ctx, None, None)
+    # Cycle 3 P2-a: no _exec_skips on this bare context, so nothing was
+    # recorded and the engine must record the skip itself.
+    assert out.status == "skipped" and out.recorded is False
+    object.__setattr__(ctx, "_exec_skips", [])
+    out = categories.affix_templates_execute_action(
+        _act("zz", GrammarCategory.AFFIX_TEMPLATES), ctx, None, None)
     assert out.status == "skipped" and out.recorded is True
 
 
@@ -225,3 +232,24 @@ def test_reconcile_collects_unverified_list():
     assert transfer.reconcile_added_actions(
         _Boom(), [(_act("a"), "a")], unverified=out) == []
     assert [(c, g) for c, g, _ in out] == [(GrammarCategory.SLOTS, "a")]
+
+
+def test_plan_action_exception_becomes_a_skip_not_an_add(monkeypatch):
+    """Cycle 3 P2-b: a raising planner yields a Skip with the reason; it must
+    not leave a PlannedAction with an empty intended_target_guid."""
+    piece = types.SimpleNamespace(Guid="g-boom")
+
+    def _boom(piece, context, ws):
+        raise RuntimeError("planner exploded")
+
+    bundle = {"enumerate_source": lambda c, s: [piece], "plan_action": _boom}
+    monkeypatch.setattr(categories, "for_category", lambda cat: bundle)
+    sel = Selection(categories={GrammarCategory.SLOTS: True},
+                    include_closure=False)
+    plan = preview.build_run_plan(_ctx_with_src(), sel, WSMapping(entries=()),
+                                  _FakeProj(), _FakeProj())
+    assert not [a for a in plan.actions if a.category == GrammarCategory.SLOTS]
+    boom = [s for s in plan.skips if s.source_guid == "g-boom"]
+    assert len(boom) == 1
+    assert "planner exploded" in boom[0].detail
+    assert "RuntimeError" in boom[0].detail

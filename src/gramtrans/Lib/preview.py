@@ -1370,12 +1370,15 @@ def build_run_plan(
             try:
                 result = bundle["plan_action"](piece, context, ws_mapping)
             except Exception as exc:  # planner-level failures become skips
-                from .models import SkipReason as _SR  # noqa
-                actions.append(PlannedAction(
+                # Cycle 3 P2-b: a planner failure is a SKIP with the reason,
+                # never a PlannedAction with no intended target (which Preview
+                # would show as an add and Move would try to write).
+                skips.append(Skip(
                     category=cat,
                     source_guid=str(getattr(piece, "Guid", "?")),
-                    intended_target_guid="",
-                    summary=f"plan_action raised {type(exc).__name__}: {exc}",
+                    reason=SkipReason.UNSUPPORTED_LCM_TYPE,
+                    detail=(f"plan_action raised {type(exc).__name__}: {exc}; "
+                            f"item not planned"),
                 ))
                 continue
             if isinstance(result, Skip):
