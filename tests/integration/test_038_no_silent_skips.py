@@ -195,6 +195,9 @@ REPORT_FIELD_ROLES = {
     "census": NOT_AN_ITEM,
     "matched_by_class": NOT_AN_ITEM,
     "matches_unattributed": NOT_AN_ITEM,
+    # Issue #68: a flag saying `added` was built from dispatch outcomes rather
+    # than the plan's count. It is a provenance bit on a counter, not an item.
+    "outcome_counted": NOT_AN_ITEM,
 }
 
 #: The four, by the key each is counted under in `disposition_totals`.
