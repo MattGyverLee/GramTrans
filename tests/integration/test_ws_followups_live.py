@@ -18,6 +18,11 @@ real project:
   there is exactly one definition for the tag (no duplicate LDML), and no
   failure record is emitted.
 
+A "Windows fatal exception: access violation" stack dump printed while the
+fixture runs `FLExInitialize` is pythonnet's first-chance fault during CLR
+start-up, printed by pytest's faulthandler; it is benign (the same dump appears
+in test_issue48_create_guid_live.py) and the tests pass after it.
+
 Skips unless FLEXLIBS_REQUIRE_LIVE=1.  Writes only to the throwaway `Target`,
 restored from backup before and after:
 
@@ -202,6 +207,7 @@ def test_stored_but_inactive_ws_is_activated_live(target):
     assert STORED_TAG in _active(target), "[FAIL] stored WS was not activated"
     assert _ops(target).Exists(STORED_TAG) is True
     assert _definition_count(target, STORED_TAG) == 1, "[FAIL] duplicate definition"
-    assert [f for f in _store_files() if f.lower().startswith(STORED_TAG)]         == ["%s.ldml" % STORED_TAG], "[FAIL] duplicate LDML written"
+    assert ([f for f in _store_files() if f.lower().startswith(STORED_TAG)]
+            == ["%s.ldml" % STORED_TAG]), "[FAIL] duplicate LDML written"
     print("[PASS] stored-inactive %r: Preview info x1, Move activated, no failure"
           % STORED_TAG)
