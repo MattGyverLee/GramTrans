@@ -335,6 +335,10 @@ def execute(plan: RunPlan, source, target, report_sink, tag: ImportResidueTag,
     # so the report counts OUTCOMES, not the plan.
     _not_added: list = []
     _declined_skips: list = []
+    # Issue #49 (defect 1): (action, expected target GUID) for every leaf action
+    # the handler reported as written; checked against the target after the
+    # dispatch loop by `reconcile_added_actions`.
+    _verify_candidates: list = []
 
     # Build index of source actions for quick lookup of pulled-in flag.
     # plan.actions is heterogeneous: CreateDefinitionAction has no
@@ -695,6 +699,11 @@ def execute(plan: RunPlan, source, target, report_sink, tag: ImportResidueTag,
                 continue
             leaf_count += 1
             leaf_succeeded += 1
+            _verify_candidates.append((
+                action,
+                _dest.target_guid if _dest.outcome == DESTINATION_RESOLVED
+                else action.source_guid,
+            ))
         except Exception as exc:
             leaf_failed += 1
             _not_added.append((action.category, action.source_guid))
@@ -749,6 +758,18 @@ def execute(plan: RunPlan, source, target, report_sink, tag: ImportResidueTag,
     # Every one of them resolved to a non-existent owner and was discarded
     # silently. See `_ensure_owner_feat_strucs` for the measurement.
     _ensure_owner_feat_strucs(exec_ctx, target, tag, _exec_skips)
+
+    # Issue #49 (defect 1): handler exit proves nothing -- a handler that
+    # returns normally while writing nothing used to be counted as added. Check
+    # every reported-added action against the actual target, by GUID.
+    for _cat, _guid, _why in reconcile_added_actions(target, _verify_candidates):
+        leaf_failed += 1
+        _not_added.append((_cat, _guid))
+        _log.warning("execute reconcile: %s %s: %s", _cat.value, _guid, _why)
+        _leaf_execution_failures.append(LeafExecutionFailure(
+            category=_cat, source_guid=_guid,
+            exception_type="UnverifiedWrite", message=_why,
+        ))
 
     # Feature 024 (T031, US3, FR-008 -- single-final-pass redesign):
     # `reproduce_all_lexical_relations` is the SOLE lexical-relation
@@ -1399,6 +1420,61 @@ def resolve_planned_destination(match_basis: Optional[MatchBasisRecord], target,
         + " carries an unknown basis " + repr(basis) + "; the executor "
         "refuses to guess whether that means resolve or create"
     )
+
+
+#: Categories whose actions have no one-object-per-GUID target counterpart
+#: (a custom field is a schema entry keyed by (class, name), not an ICmObject).
+_RECONCILE_EXEMPT = frozenset({GrammarCategory.CUSTOM_FIELDS})
+
+
+_UNVERIFIABLE = object()
+
+
+def _lookup_target_guid(target, guid):
+    """Return the target object for `guid`, None if absent, or `_UNVERIFIABLE`
+    when `target` offers no GUID lookup at all (offline fakes)."""
+    getter = getattr(target, "get_object_by_guid", None)
+    if callable(getter):
+        return getter(guid)
+    if not callable(getattr(target, "ObjectRepository", None)):
+        return _UNVERIFIABLE
+    from SIL.LCModel import ICmObjectRepository
+    from System import Guid as _G
+    repo = target.ObjectRepository(ICmObjectRepository)
+    parsed = _G.Parse(str(guid))
+    return repo.GetObject(parsed) if repo.IsValidObjectId(parsed) else None
+
+
+def reconcile_added_actions(target, candidates, *, resolve=None):
+    """Post-execute truth pass (issue #49).
+
+    `candidates` is an iterable of ``(action, expected_target_guid)`` for every
+    action whose handler reported it written. Returns a list of
+    ``(category, source_guid, reason)`` for each one whose object is NOT
+    present in the target by GUID, so the caller can downgrade it from added to
+    failed. Pure read: one dictionary-backed repository lookup per action.
+    `resolve(target, guid)` defaults to `categories._resolve_target_by_guid`.
+    """
+    if resolve is None:
+        resolve = _lookup_target_guid
+    missing = []
+    for action, guid in candidates:
+        cat = getattr(action, "category", None)
+        if cat in _RECONCILE_EXEMPT or not guid:
+            continue
+        try:
+            found = resolve(target, guid)
+        except Exception:  # noqa: BLE001 -- a lookup error is not proof of absence
+            continue
+        if found is _UNVERIFIABLE:
+            continue
+        if found is None:
+            missing.append((
+                cat, getattr(action, "source_guid", guid),
+                "reported added but object %s not found in the target after "
+                "execute" % guid,
+            ))
+    return missing
 
 
 def planned_destination_for(plan_item, target, *,

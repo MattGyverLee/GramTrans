@@ -189,7 +189,9 @@ def test_empty_source_yields_empty_plan_and_no_writes(_patch_preview_lcm_helpers
     tgt = _FakeProject("tgt", verb=None)
     plan = build_run_plan(_ctx(src, tgt), _selection(), WSMapping(entries=()), src, tgt)
     assert plan.actions == ()
-    assert plan.skips == ()
+    # Issue #49: the only record is the explicit "POS selected, no picks" skip,
+    # which used to be a silent zero.
+    assert [(s.category.value, "pos_picks is empty" in s.detail) for s in plan.skips]         == [("pos", True)]
     assert rec.writes == []
 
 

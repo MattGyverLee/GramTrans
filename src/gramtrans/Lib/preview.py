@@ -1310,17 +1310,59 @@ def build_run_plan(
         from .categories import for_category
     else:
         from categories import for_category  # type: ignore
+    # Issue #49 (defect 2): a category the caller switched ON that no planner
+    # owns must be REPORTED, never silently dropped. ENTRY/SENSE/MSA/ALLOMORPH
+    # were owned by the legacy verb-vertical path (gated off 2026-07-06, see
+    # _VERB_VERTICAL_ENABLED above); their entries now ride inside
+    # AFFIXES/STEMS. Selecting them alone therefore plans nothing -- say so.
+    _NON_LEAF_HANDLED = (GrammarCategory.TEXTS, GrammarCategory.WRITING_SYSTEMS_CHECK)
+    for _cat in GrammarCategory:
+        if (_cat in _LEAF_DISPATCH_CATEGORIES or _cat in _NON_LEAF_HANDLED
+                or not selection.is_on(_cat)):
+            continue
+        skips.append(Skip(
+            category=_cat,
+            source_guid=_cat.value,
+            reason=SkipReason.UNSUPPORTED_LCM_TYPE,
+            detail=(
+                f"not dispatched: {_cat.value} has no planner in the default "
+                "path (the verb-vertical closure that owned it is retired); "
+                "select AFFIXES and/or STEMS to transfer lexicon entries, "
+                "senses, MSAs and allomorphs"
+            ),
+        ))
     for cat in _LEAF_DISPATCH_CATEGORIES:
         if not selection.is_on(cat):
             continue
         try:
             bundle = for_category(cat)
         except KeyError:
+            skips.append(Skip(
+                category=cat, source_guid=cat.value,
+                reason=SkipReason.UNSUPPORTED_LCM_TYPE,
+                detail=f"not dispatched: no handler registered for {cat.value}",
+            ))
             continue
         try:
             pieces = list(bundle["enumerate_source"](context, selection))
-        except Exception:
+        except Exception as _exc:
             pieces = []
+            skips.append(Skip(
+                category=cat, source_guid=cat.value,
+                reason=SkipReason.UNSUPPORTED_LCM_TYPE,
+                detail=(f"enumeration failed, category planned nothing: "
+                        f"{type(_exc).__name__}: {_exc}"),
+            ))
+        if (cat == GrammarCategory.POS and not pieces
+                and not (getattr(selection, "pos_picks", None) or ())
+                and not selection.is_on(GrammarCategory.GRAM_CATEGORIES)):
+            skips.append(Skip(
+                category=cat, source_guid=cat.value,
+                reason=SkipReason.DEPENDENCY_UNRESOLVED,
+                detail=("POS selected but pos_picks is empty: POS is pick-driven "
+                        "and planned nothing; supply pos_picks or select "
+                        "GRAM_CATEGORIES"),
+            ))
         # Persist/over-transfer diagnostics: how many items this category
         # enumerated and how many actions it contributes to the plan.
         _cat_actions_before = len(actions)

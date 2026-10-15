@@ -12613,6 +12613,10 @@ def affix_templates_execute_action(action, context, ws_mapping, tag):
     target = context.target_handle
     src_guid = action.source_guid
 
+    # Issue #49 defect 1: this handler used to fall through to `return None`
+    # (== "added") on every no-write path. `_outcome` now carries an explicit
+    # skipped/failed result for each of them.
+    _outcome = None
     src_tpl = None
     src_owner_pos = None
     src_owner_pos_guid = None
@@ -12642,6 +12646,9 @@ def affix_templates_execute_action(action, context, ws_mapping, tag):
                 context, GrammarCategory.AFFIX_TEMPLATES, src_guid,
                 src_owner_pos_guid, "affix template",
             )
+            _outcome = ActionOutcome.skipped(
+                "owner part of speech not present in the destination "
+                "(reported via exec_skips)", recorded=True)
         if target_pos is not None:
             cache = getattr(target, "Cache")
             ws = cache.DefaultAnalWs
@@ -12691,11 +12698,14 @@ def affix_templates_execute_action(action, context, ws_mapping, tag):
                 apply_carrier_b(new_typed, ws, tag, strict=False)
             except Exception:
                 pass
+    else:
+        _outcome = ActionOutcome.skipped(
+            "source affix template %s not found in the source project" % src_guid)
 
     # Tail block (17.1 sub-pass) — run once after all templates complete.
     _run_tail_once(context, target, tag, "_did_171_subpass",
                    GrammarCategory.AFFIX_TEMPLATES, _run_171_subpass)
-    return None
+    return _outcome
 
 
 # ----- stems (Phase 3c US3, memo step 18) ----------------------------------
