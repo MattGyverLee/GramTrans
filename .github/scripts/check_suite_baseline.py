@@ -39,8 +39,11 @@ _SUMMARY = re.compile(r"^(?:FAILED|ERROR)\s+(\S+?)(?:\s+-\s+.*)?$")
 # covers setup/call/teardown. This launcher dumps all thread stacks every 300 s
 # for the whole process, so a hang at import time is diagnosable too (#72).
 _LAUNCHER = (
-    "import faulthandler, sys; "
-    "faulthandler.dump_traceback_later(300, repeat=True); "
+    "import faulthandler, os, sys; "
+    # dup fd 2 first: pytest's capture redirects fd 2 during collection and a
+    # dump written to the redirected fd would vanish into the capture buffer.
+    "_f = os.fdopen(os.dup(2), 'w'); "
+    "faulthandler.dump_traceback_later(120, repeat=True, file=_f); "
     "import pytest; sys.exit(pytest.main(sys.argv[1:]))"
 )
 
