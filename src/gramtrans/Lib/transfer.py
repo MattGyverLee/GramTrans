@@ -822,13 +822,15 @@ def execute(plan: RunPlan, source, target, report_sink, tag: ImportResidueTag,
     # dropped texts/segments/references land in the unified report (FR-023).
     # Inert when no text was selected (empty plan.text_plans).
     _text_plans = getattr(plan, "text_plans", ()) or ()
+    _text_outcome = None
     if _text_plans:
         if __package__:
             from .texts import apply_texts as _apply_texts
         else:
             from texts import apply_texts as _apply_texts  # type: ignore
-        _apply_texts(_text_plans, source, target, exec_ctx, tag, report_sink,
-                     _resolver_cache, _dropped)
+        _text_outcome = _apply_texts(
+            _text_plans, source, target, exec_ctx, tag, report_sink,
+            _resolver_cache, _dropped)
         report_sink.Info(f"[Move] Texts walk applied {len(_text_plans)} text plan(s).")
 
     # Feature 025 (full reversals, US1 T018/T020): the reversal closure
@@ -872,6 +874,12 @@ def execute(plan: RunPlan, source, target, report_sink, tag: ImportResidueTag,
     # Issue #68: skips the engine recorded for handlers that declined.
     if _declined_skips:
         extra_skips.extend(_declined_skips)
+    # Issue #45: text adds/updates/skips reach per_category[TEXTS].
+    _texts_added = _texts_updated = 0
+    if isinstance(_text_outcome, dict):
+        _texts_added = int(_text_outcome.get("added", 0) or 0)
+        _texts_updated = int(_text_outcome.get("updated", 0) or 0)
+        extra_skips.extend(_text_outcome.get("skips") or ())
 
     elapsed = time.time() - start
     # Persist diagnostics. Issue #68: the report's `added` counts are built
@@ -934,6 +942,8 @@ def execute(plan: RunPlan, source, target, report_sink, tag: ImportResidueTag,
         # PLAN, not actual write outcomes).
         extra_leaf_execution_failures=tuple(_leaf_execution_failures),
         not_added=tuple(_not_added),
+        text_added=_texts_added,
+        text_updated=_texts_updated,
         # Feature 038 (T060, US5): what the entry closure's process-rule
         # executor did with each MoAffixProcess it met -- rebuilt, with its
         # input and output content recorded, or skipped with the reason

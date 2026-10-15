@@ -35,11 +35,14 @@ from typing import List, Optional
 if __package__:
     from .models import (
         DroppedItemRecord,
+        GrammarCategory,
         ParagraphPlan,
         ReferenceAction,
         ReferenceCardinality,
         ReferenceFieldSpec,
         SegmentPlan,
+        Skip,
+        SkipReason,
         TextTransferPlan,
     )
     from . import references as _references
@@ -47,11 +50,14 @@ if __package__:
 else:  # pragma: no cover - executed only when run as a bare script
     from models import (  # type: ignore
         DroppedItemRecord,
+        GrammarCategory,
         ParagraphPlan,
         ReferenceAction,
         ReferenceCardinality,
         ReferenceFieldSpec,
         SegmentPlan,
+        Skip,
+        SkipReason,
         TextTransferPlan,
     )
     import references as _references  # type: ignore
@@ -738,7 +744,7 @@ def _best_str(ops, obj, method: str) -> str:
 
 
 def apply_texts(plans, source, target, ctx, tag, report_sink,
-                resolver_cache, dropped) -> None:
+                resolver_cache, dropped) -> dict:
     """US1 Move-mode apply — execute the TextTransferPlans.
 
     See contracts/text-structure-walk.md. Creates/updates each text, its
@@ -749,9 +755,17 @@ def apply_texts(plans, source, target, ctx, tag, report_sink,
     Segment notes are captured in the plan but currently reported rather than
     reproduced — no confirmed note write path (see `_apply_segment_notes`,
     deferred to the R5-class live probe, T039).
+
+    Returns ``{"added": int, "updated": int, "already": int, "skips": [Skip]}``
+    (issue #45): `execute` folds it into `RunReport.per_category[TEXTS]` so
+    text adds and skips are visible in the report. `added` counts only real
+    creates; `updated` counts texts resolved to an existing target text; one
+    `Skip` is returned per source text that could be neither created nor
+    resolved.
     """
+    _empty = {"added": 0, "updated": 0, "already": 0, "skips": []}
     if not plans:
-        return None
+        return _empty
     if __package__:
         from . import wordforms as _wordforms
         from .residue import apply_residue
@@ -763,7 +777,7 @@ def apply_texts(plans, source, target, ctx, tag, report_sink,
     para_ops = getattr(target, "Paragraphs", None)
     seg_ops = getattr(target, "Segments", None)
     if text_ops is None:
-        return None
+        return _empty
 
     ws_map = dict(getattr(ctx, "_ws_map", None) or {})
     tgt_id2h = id_to_handle(target)
@@ -775,10 +789,19 @@ def apply_texts(plans, source, target, ctx, tag, report_sink,
     _wordforms.apply_agent(agent_decision, target, ctx)
 
     _added = _updated = _already = 0
+    _skips: list = []
     for plan in plans:
         target_text, _created = _resolve_or_create_text_ex(
             plan, text_ops, ws_map, tgt_id2h, dropped)
         if target_text is None:
+            _skips.append(Skip(
+                category=GrammarCategory.TEXTS,
+                source_guid=plan.source_guid or "?",
+                reason=SkipReason.DEPENDENCY_UNRESOLVED,
+                detail=("text %r could not be created or resolved in the "
+                        "target (see dropped items)"
+                        % (plan.title or UNTITLED_LABEL)),
+            ))
             continue
         if _created:
             _added += 1
@@ -803,7 +826,8 @@ def apply_texts(plans, source, target, ctx, tag, report_sink,
             f"[Move] Texts: {_added} added, {_updated} updated, "
             f"{_already} already reproduced (structure left as-is) "
             f"(dropped items so far: {len(dropped)})."))
-    return None
+    return {"added": _added, "updated": _updated, "already": _already,
+            "skips": _skips}
 
 
 def _default_vern_handle(project):
@@ -822,12 +846,17 @@ UNTITLED_LABEL = "(untitled text)"
 def _untitled_create_name(plan):
     """Unique, non-empty Create() name for a nameless source text.
 
-    `TextOperations.Create` demands a unique non-empty name, so an untitled
-    text needs *some* string; suffixing the source GUID keeps every untitled
-    text distinct (issue #45). The result is only ever passed to Create --
-    never to Exists/Find.
+    `TextOperations.Create` requires a unique, non-empty name (it raises
+    FP_ParameterError on a duplicate -- verified against flexicon
+    TextsWords/TextOperations.py), so an untitled text needs *some* distinct
+    string. The first 8 hex digits of the source GUID keep every untitled
+    text distinct while staying readable in the FLEx Texts list (issue #45;
+    the full 36-character GUID was user-visible noise). Identity is the
+    GUID, not this string. The result is only ever passed to Create -- never
+    to Exists/Find.
     """
-    return f"{UNTITLED_LABEL} {plan.source_guid or ''}".rstrip()
+    short = (plan.source_guid or "").replace("-", "").replace("{", "")[:8]
+    return f"{UNTITLED_LABEL} {short}".rstrip()
 
 
 def _resolve_or_create_text(plan, text_ops, ws_map, tgt_id2h, dropped):

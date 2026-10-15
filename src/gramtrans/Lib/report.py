@@ -93,6 +93,8 @@ def _build_from_plan(cls, plan: RunPlan, mode: RunMode,
                      extra_process_rules=(),
                      extra_affix_slot_links=(),
                      not_added=None,
+                     text_added: int = 0,
+                     text_updated: int = 0,
                      census=None) -> RunReport:
     """Build a finalized RunReport from a RunPlan.
 
@@ -130,6 +132,12 @@ def _build_from_plan(cls, plan: RunPlan, mode: RunMode,
     bucketed under its category but NOT counted as ``added`` -- the report
     counts dispatch outcomes, not the plan. (Declined items surface as
     skips via `extra_skips`; raised ones via `extra_leaf_execution_failures`.)
+
+    `text_added` / `text_updated` (issue #45): texts the TEXTS apply hook
+    really created / resolved to an existing target text. Texts are not in
+    `plan.actions` (they travel on `plan.text_plans`), so without these the
+    report had no TEXTS entry at all. Added to `per_category[TEXTS]`
+    `added` / `overwritten`; text skips arrive through `extra_skips`.
 
     `extra_closure_edges` / `extra_incompleteness` / `extra_enrichments` /
     `extra_process_rules` / `census` (feature 038): the four fidelity buckets
@@ -271,6 +279,11 @@ def _build_from_plan(cls, plan: RunPlan, mode: RunMode,
         # not.  Tolerate its absence the same way the overwrites loop below does.
         if getattr(action, "pulled_in_by", ()):
             b["closure_pulled_in"] += 1
+
+    if text_added or text_updated:
+        _tb = _bucket(GrammarCategory.TEXTS)
+        _tb["added"] += int(text_added)
+        _tb["overwritten"] += int(text_updated)
 
     skips_list: list = []
     for skip in plan.skips:

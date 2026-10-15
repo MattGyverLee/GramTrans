@@ -150,6 +150,16 @@ def test_untitled_texts_transfer_without_collision_and_idempotent():
     assert len(new1) == len(picks)
     names = [after1[g][0] for g in picks]
     assert len(set(names)) == len(names), "target names collide: %r" % names
+    # Placeholder name: fixed label + first 8 hex of the source GUID (Texts.Create
+    # needs a unique non-empty name); never the full 36-char GUID.
+    for g in picks:
+        assert after1[g][0] == "(untitled text) " + g.replace("-", "")[:8], (
+            "unexpected placeholder name for %s: %r" % (g, after1[g][0]))
+        assert g not in after1[g][0]
+    # Report truthfulness (#45-b): per_category[TEXTS] counts the real adds.
+    assert getattr(rep1.per_category.get(GC.TEXTS), "added", None) == len(picks), (
+        "report.per_category[TEXTS].added != transferred texts: %r" % (
+            rep1.per_category.get(GC.TEXTS),))
 
     # No paragraph interleaving: each target text's paragraph count equals the
     # source text's own count (read-only).
