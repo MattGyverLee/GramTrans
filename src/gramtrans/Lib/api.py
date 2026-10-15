@@ -28,6 +28,7 @@ from typing import List, Optional, Tuple
 if __package__:
     from .models import (
         CreateDefinitionAction,
+        DroppedItemRecord,
         GrammarCategory,
         LeafSinkMessage,
         RunContext,
@@ -44,6 +45,7 @@ if __package__:
 else:
     from models import (  # type: ignore
         CreateDefinitionAction,
+        DroppedItemRecord,
         GrammarCategory,
         LeafSinkMessage,
         RunContext,
@@ -801,7 +803,39 @@ def _ensure_custom_fields(proj, create_actions: list) -> list:
     return created
 
 
-def _ensure_writing_systems(proj, source, plan) -> list:
+def _ws_create_failure(tag: str, cause: str) -> "DroppedItemRecord":
+    """Issue #44: the never-silent record for a target writing system that
+    `_ensure_writing_systems` was asked to create and could not. The run
+    continues (one bad tag must not abort the Move), but every alt in that
+    WS is then dropped by `ApplySyncableProperties`, so the failure must
+    reach the report the user reads, not only the log."""
+    return DroppedItemRecord(
+        owner_kind="WritingSystem",
+        owner_guid="",
+        owner_label=tag,
+        field_name="create_in_target",
+        item_name=tag,
+        item_guid=tag,
+        reason=(f"target writing system '{tag}' could not be created ({cause}); "
+                "content in this writing system is not transferred"),
+    )
+
+
+def _attach_dropped_items(report, records):
+    """Return `report` with `records` appended to its `dropped_items`
+    (RunReport is frozen, so via dataclasses.replace). Duck-typed results
+    without that field (test stubs) pass through, like
+    `_attach_leaf_warnings`."""
+    if not records or not is_dataclass(report):
+        return report
+    if "dropped_items" not in {f.name for f in _dc_fields(report)}:
+        return report
+    return _dc_replace(
+        report, dropped_items=tuple(report.dropped_items) + tuple(records),
+    )
+
+
+def _ensure_writing_systems(proj, source, plan, failures=None) -> list:
     """Create target writing systems flagged ``create_in_target=True`` in the
     plan's WSMapping, BEFORE any value write.
 
@@ -820,7 +854,14 @@ def _ensure_writing_systems(proj, source, plan) -> list:
     AddCustomField needs. Idempotent (skips a tag that already ``Exists``) and
     fail-soft per WS (one bad tag never aborts the others or the Move). Returns
     the list of created language tags.
+
+    Fail-soft is not fail-silent (issue #44): every tag that could not be
+    created appends a `DroppedItemRecord` to `failures` (when given), which
+    the caller folds into `RunReport.dropped_items`. A Move entry point that
+    passes no `failures` list only gets the log line.
     """
+    if failures is None:
+        failures = []
     ws_mapping = getattr(plan, "ws_mapping", None)
     entries = getattr(ws_mapping, "entries", None) or ()
     to_create = [
@@ -841,6 +882,8 @@ def _ensure_writing_systems(proj, source, plan) -> list:
             "cannot create %d target WS(s) -- their content will be dropped",
             exc, len(to_create),
         )
+        cause = f"WritingSystemOperations unavailable: {type(exc).__name__}: {exc}"
+        failures.extend(_ws_create_failure(str(e.target_ws_id), cause) for e in to_create)
         return []
 
     tgt_ops = WritingSystemOperations(proj)
@@ -861,20 +904,46 @@ def _ensure_writing_systems(proj, source, plan) -> list:
             pass
         return fallback
 
+    # "Present" means ACTIVE (`GetAll()`, CurVernWss/CurAnalysisWss) -- the
+    # view `ApplySyncableProperties` writes through. `Exists()` scans the
+    # whole LDML store, so a tag stored but not active used to read as
+    # "already present", be skipped, and have its content dropped anyway
+    # (issue #44). None = the active list could not be read; fall back to
+    # trusting `Exists()` as before.
+    try:
+        active = {str(getattr(w, "Id", "")).lower() for w in tgt_ops.GetAll()}
+    except Exception:  # noqa: BLE001
+        active = None
+
     created: list = []
     for e in to_create:
         tag = str(e.target_ws_id)
+        if active is not None and tag.lower() in active:
+            _log.debug("_ensure_writing_systems: WS %r already active; skip", tag)
+            continue
         try:
-            if tgt_ops.Exists(tag):
+            in_store = bool(tgt_ops.Exists(tag))
+        except Exception:  # noqa: BLE001
+            in_store = False  # Exists() failure -> attempt Create and let it guard
+        if in_store:
+            if active is None:
                 _log.debug("_ensure_writing_systems: WS %r already present; skip", tag)
                 continue
-        except Exception:  # noqa: BLE001
-            pass  # Exists() failure -> attempt Create and let it guard
+            _log.warning(
+                "_ensure_writing_systems: WS %r is in the target's writing-system "
+                "store but not active; cannot create it", tag,
+            )
+            failures.append(_ws_create_failure(
+                tag, "it is in the target's writing-system store but not active; "
+                     "activate it in FLEx and re-run"))
+            continue
         is_vern = getattr(e, "source_ws_kind", WSKind.VERNACULAR) == WSKind.VERNACULAR
         name = _src_display_name(getattr(e, "source_ws_id", ""), tag)
         try:
             tgt_ops.Create(tag, name, is_vernacular=is_vern)
             created.append(tag)
+            if active is not None:
+                active.add(tag.lower())
             _log.info(
                 "_ensure_writing_systems: created target WS %r (name=%r, vernacular=%s)",
                 tag, name, is_vern,
@@ -884,6 +953,7 @@ def _ensure_writing_systems(proj, source, plan) -> list:
                 "_ensure_writing_systems: could not create WS %r: %s: %s",
                 tag, type(exc).__name__, exc,
             )
+            failures.append(_ws_create_failure(tag, f"{type(exc).__name__}: {exc}"))
     if created:
         _persist_without_close(proj, "writing-system store write")
     return created
@@ -968,8 +1038,9 @@ def execute_move(context: RunContext, plan: RunPlan,
     # flagged create_in_target=True BEFORE transfer.execute runs, so source
     # WS-tagged content (audio / IPA / related-language variants) routes into a
     # real target WS instead of being silently dropped by ApplySyncableProperties.
+    ws_failures: list = []
     created_ws = _ensure_writing_systems(
-        context.target_handle, context.source_handle, plan
+        context.target_handle, context.source_handle, plan, ws_failures
     )
     if created_ws:
         _log.info("execute_move: created %d target writing system(s): %s",
@@ -983,6 +1054,7 @@ def execute_move(context: RunContext, plan: RunPlan,
     sink = _CollectingReportSink(report_sink)
     try:
         report = execute(plan, context.source_handle, context.target_handle, sink, tag)
+        report = _attach_dropped_items(report, ws_failures)
         return _attach_leaf_warnings(report, sink.messages)
     finally:
         if create_actions:

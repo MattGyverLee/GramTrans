@@ -133,9 +133,9 @@ pycparser==3.0 \
     --hash=sha256:600f49d217304a5902ac3c37e1281c9fe94e4d0489de643a9504c5cdfdfc6b29 \
     --hash=sha256:b727414169a36b7d524c1c3e31839a521725078d7b2ff038656844266160a992
     # via cffi
-pyflexicon==4.4.1 \
-    --hash=sha256:8e0be6905c3a62e831d99ce84d01da4add2202ee0ad119b47b426ae91416d7cd \
-    --hash=sha256:92160939942cf98154c98ffdfed6dbfea1566f0bc24577372f467c934a09b2d2
+pyflexicon==4.13.0 \
+    --hash=sha256:9dbe0576ccaeec588281de697c81f8223ec0bac97aad3a01a60afaa2dc735c5f \
+    --hash=sha256:ee0f007f5ee318b04f9b37c2d103d60e7f27f3e55627a10390bfcaba1068f250
     # via -r build/requirements.in
 pyinstaller==6.22.1 \
     --hash=sha256:0f257d6329d90def6b96f3ad9b601f4e10e549017d2ad09e730f4a9741b42138 \

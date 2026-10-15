@@ -578,7 +578,21 @@ def phase2_interactive_move(
             timestamp=started_at,
         )
         t0 = time.time()
+        # Issue #69: this path calls transfer.execute directly (it needs the
+        # interactive session), so it must run the writing-system pre-pass
+        # api.execute_move runs -- transfer.py creates no writing systems, and
+        # without it every WS-wizard CREATE choice above was recorded but
+        # never carried out.
+        from api import _attach_dropped_items, _ensure_writing_systems
+        ws_failures = []
+        created_ws = _ensure_writing_systems(project, source, plan, ws_failures)
+        if created_ws:
+            report.Info(f"[Phase 2] Created {len(created_ws)} target writing "
+                        f"system(s): {', '.join(created_ws)}")
+        for rec in ws_failures:
+            report.Warning(f"[Phase 2] {rec.reason}")
         run_report = execute(plan, source, project, report, tag, interactive_session=session)
+        run_report = _attach_dropped_items(run_report, ws_failures)
         elapsed = time.time() - t0
         report.Blank()
         report.Info(f"[Phase 2] Move done in {elapsed:.3f}s")

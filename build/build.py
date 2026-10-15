@@ -34,6 +34,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -122,6 +123,37 @@ def install_from_lock() -> None:
         str(venv_python()), "-m", "pip", "install",
         "--require-hashes", "--no-cache-dir", "-r", str(LOCK),
     ])
+
+
+def _version_tuple(version: str) -> tuple:
+    return tuple(int(p) for p in re.findall(r"\d+", version)[:3])
+
+
+def assert_flexicon_floor() -> str:
+    """Fail the build when the venv's pyflexicon is below `pyproject.toml`'s
+    declared floor (issue #44). An under-floor build is not merely old, it is
+    silently lossy: below 4.5.2 every `guid=` create kwarg raises a TypeError
+    the engine swallows (GUIDs regenerated), and natural-class feature
+    structures transfer as empty shells (see CLAUDE.md, "flexicon
+    dependency"). A lock pinned under the floor must stop the build, not
+    produce a lossy .exe. Returns the installed version."""
+    text = (REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    m = re.search(r'"pyflexicon\s*>=\s*([0-9.]+)"', text)
+    if m is None:
+        raise SystemExit("[FAIL] no `pyflexicon>=` floor found in pyproject.toml")
+    floor = m.group(1)
+    installed = capture([
+        str(venv_python()), "-c",
+        "import importlib.metadata as m; print(m.version('pyflexicon'))",
+    ]).strip()
+    if _version_tuple(installed) < _version_tuple(floor):
+        raise SystemExit(
+            f"[FAIL] build venv has pyflexicon {installed or '<not installed>'}, below the "
+            f"pyproject.toml floor {floor}. Regenerate the lock with "
+            "`python build/build.py --lock`."
+        )
+    print(f"[PASS] pyflexicon {installed} meets the floor {floor}")
+    return installed
 
 
 def regenerate_lock() -> int:
@@ -373,6 +405,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     print(f"[INFO] building: {', '.join(targets)}")
     make_fresh_venv()                       # 1
     install_from_lock()                     # 2, 3
+    assert_flexicon_floor()
     info = describe_version()
     stamp_buildinfo(info)                   # 4
     freeze(targets)                         # 5

@@ -142,7 +142,7 @@ def test_execute_move_runs_ws_prepass_before_execute(monkeypatch):
     monkeypatch.setattr(api_mod, "_ensure_custom_fields",
                         lambda proj, actions: calls.append("custom_fields"))
     monkeypatch.setattr(api_mod, "_ensure_writing_systems",
-                        lambda proj, source, plan: (calls.append("ws"), ["fr-Zxxx-x-audio"])[1])
+                        lambda proj, source, plan, failures=None: (calls.append("ws"), ["fr-Zxxx-x-audio"])[1])
     monkeypatch.setattr(api_mod, "_persist_without_close", lambda proj, what: None)
 
     def _fake_execute(plan, source, target, sink, tag):

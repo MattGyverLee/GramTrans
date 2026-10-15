@@ -66,6 +66,12 @@ LOGGER_NAMES = (
     "wizard_pages_blocks",
     "wizard_page_texts",
     "wizard_pages_deferred",
+    # Issue #44: flexicon logs under ``flexicon.*`` (e.g.
+    # ``flexicon.code.FLExInit``), which is neither in this tuple nor a child
+    # of anything in it, so every flexicon warning -- including the
+    # ``Sldr.Initialize failed`` one that precedes LDML quarantine -- was
+    # emitted and discarded.
+    "flexicon",
 )
 
 # Module state (guards idempotency of enable_from_env).
