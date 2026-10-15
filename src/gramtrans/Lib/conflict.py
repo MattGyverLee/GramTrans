@@ -288,6 +288,23 @@ def _find_target_pos_by_guid(target, guid):
     return None
 
 
+def _is_live_project(project) -> bool:
+    """True iff `project` is a live flexicon `FLExProject`, judged by its
+    `lp` (the LCM LangProject) being a real .NET object.
+
+    Delegates to the single `_is_dotnet_object` definition in `Lib/texts.py`
+    (imported lazily, as categories.py/reversals.py do). Never raises."""
+    if __package__:
+        from . import texts as _texts
+    else:
+        import texts as _texts  # type: ignore
+    try:
+        lp = getattr(project, "lp", None)
+    except Exception:  # noqa: BLE001 -- a fake may raise on attribute access
+        return False
+    return _texts._is_dotnet_object(lp)
+
+
 def collect_overwrite_conflicts(plan, source, target, prior_logs_by_guid=None):
     """Walk plan.overwrites; for every category whose ops surface supports
     GetSyncableProperties, capture src_props + tgt_pre_props and call
@@ -303,18 +320,23 @@ def collect_overwrite_conflicts(plan, source, target, prior_logs_by_guid=None):
     this call and execute()).
     """
     prior_logs_by_guid = prior_logs_by_guid or {}
+    # Liveness test asks the OBJECT, not the process (#57; the bug class of
+    # f9676ad / 201d9cd). This used to bail only on `ImportError` from
+    # `from SIL.LCModel import ICmObject` -- a fact about the PROCESS. Once
+    # anything has imported flexicon the import succeeds, the bail is dead,
+    # and a mocked source/target reaches `ICmObject(fake)`, which raises
+    # `TypeError` out of this function instead of returning ().
+    if not (_is_live_project(source) and _is_live_project(target)):
+        # Not a live LCM project pair -- caller is presumably running unit
+        # tests with mocked source/target.  Bail.
+        return ()
+    from SIL.LCModel import ICmObject  # lazy; both projects are live
     prompts = []
     # Build source-entry index once for entry/sense/allomorph lookups.
     src_entry_by_guid = {}
-    try:
-        from SIL.LCModel import ICmObject
-        for se in source.LexEntry.GetAll():
-            concrete = _unwrap(se)
-            src_entry_by_guid[str(ICmObject(concrete).Guid).lower()] = concrete
-    except (AttributeError, ImportError):
-        # Outside FlexTools host -- caller is presumably running unit tests
-        # with mocked source/target.  Bail.
-        return ()
+    for se in source.LexEntry.GetAll():
+        concrete = _unwrap(se)
+        src_entry_by_guid[str(ICmObject(concrete).Guid).lower()] = concrete
     for ow in getattr(plan, "overwrites", ()):
         cat = ow.category.value
         ops_info = _OW_OPS.get(cat)
@@ -329,10 +351,6 @@ def collect_overwrite_conflicts(plan, source, target, prior_logs_by_guid=None):
         if finder is None:
             continue
         # Look up source object.
-        try:
-            from SIL.LCModel import ICmObject
-        except ImportError:
-            continue
         if cat == "pos":
             # T106: identity-only, and DELIBERATELY so. `ow.target_guid` is
             # already a DESTINATION GUID -- the same value this function uses a
