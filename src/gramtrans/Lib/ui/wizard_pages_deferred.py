@@ -64,10 +64,18 @@ _CONFLICT_LABELS = {
 }
 
 # Schema categories for the per-category scope selectors on page 3.
+# `main_window._SCHEMA_CATEGORIES` must stay equal to this list (issue #39 --
+# both copies drifted when coverage Part B added FEATURE_STRUCT_TYPES /
+# POS_INFLECTABLE_FEATS / PHON_FEAT_TYPES to the engine, registry and
+# conflict-mode sets but not to the UI).
+# `tests/unit/test_wizard_category_sync.py` pins both against models.py.
 _SCHEMA_CATEGORIES = [
     GrammarCategory.POS,
     GrammarCategory.GRAM_CATEGORIES,
     GrammarCategory.INFLECTION_FEATURES,
+    GrammarCategory.FEATURE_STRUCT_TYPES,
+    GrammarCategory.POS_INFLECTABLE_FEATS,
+    GrammarCategory.PHON_FEAT_TYPES,
     GrammarCategory.INFLECTION_CLASSES,
     GrammarCategory.STEM_NAMES,
     GrammarCategory.EXCEPTION_FEATURES,
@@ -76,6 +84,10 @@ _SCHEMA_CATEGORIES = [
 ]
 
 # Categories that are GOLD_RESERVED at Layer 1 (ADD_NEW hidden, OVERWRITE forbidden).
+# Mirrors the `gold_reserved` set in models.py `_build_default_conflict_modes`
+# (authoritative). FEATURE_STRUCT_TYPES / POS_INFLECTABLE_FEATS /
+# PHON_FEAT_TYPES are MULTI_INSTANCE there and are deliberately absent here;
+# `tests/unit/test_wizard_category_sync.py` fails if the two drift.
 _GOLD_RESERVED = {
     GrammarCategory.GRAM_CATEGORIES,
     GrammarCategory.INFLECTION_FEATURES,

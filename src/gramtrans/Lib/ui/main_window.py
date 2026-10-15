@@ -38,10 +38,19 @@ else:
 # Schema categories that participate in per-category three-scope selection.
 # These are the dependency categories the item-picker (affixes/stems/templates)
 # can reference; the main window exposes a three-scope selector for each.
+# Must equal `wizard_pages_deferred._SCHEMA_CATEGORIES` (issue #39: the two
+# copies drifted when coverage Part B added three categories).
+# `tests/unit/test_wizard_category_sync.py` enforces equality. It is a copy, not
+# an import, on purpose: importing wizard_pages_deferred here would build its
+# QWizardPage subclass against whatever PyQt6 is in sys.modules, and
+# test_ui_gating imports this module under a stubbed PyQt6.
 _SCHEMA_CATEGORIES = [
     GrammarCategory.POS,
     GrammarCategory.GRAM_CATEGORIES,
     GrammarCategory.INFLECTION_FEATURES,
+    GrammarCategory.FEATURE_STRUCT_TYPES,
+    GrammarCategory.POS_INFLECTABLE_FEATS,
+    GrammarCategory.PHON_FEAT_TYPES,
     GrammarCategory.INFLECTION_CLASSES,
     GrammarCategory.STEM_NAMES,
     GrammarCategory.EXCEPTION_FEATURES,
