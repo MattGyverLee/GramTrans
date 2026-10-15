@@ -193,3 +193,46 @@ def test_stem_names_missing_owner_pos_is_skipped(monkeypatch):
     assert isinstance(result, ActionOutcome)
     assert result.status == "skipped"
     assert "owner part of speech" in result.reason
+
+
+# ---------------------------------------------------------------------------
+# #45/#49/#68 (cycle 3 P1-a): stems_execute_action mirrors the affixes sibling.
+# ---------------------------------------------------------------------------
+
+def _stem_ctx():
+    return RunContext(
+        source_handle=object(), source_project_name="S", source_project_path="/s",
+        target_handle=object(), target_project_name="T", target_project_path="/t",
+        run_id="GT-20261015-120000", started_at="2026-10-15T12:00:00")
+
+
+def _stem_action():
+    return PlannedAction(category=GrammarCategory.STEMS, source_guid="g-1",
+                         intended_target_guid="g-1", summary="x")
+
+
+def test_stems_missing_source_entry_is_skipped(monkeypatch):
+    monkeypatch.setattr(categories, "_iter_lex_entries", lambda s: ())
+    tails = []
+    monkeypatch.setattr(categories, "_run_tail_once",
+                        lambda *a, **k: tails.append(a))
+    result = categories.stems_execute_action(
+        _stem_action(), _stem_ctx(), WSMapping(), None)
+    assert isinstance(result, ActionOutcome)
+    assert result.status == "skipped"
+    assert "not found" in result.reason
+
+
+def test_stems_declined_closure_is_skipped(monkeypatch):
+    entry = types.SimpleNamespace(guid="g-1")
+    monkeypatch.setattr(categories, "_iter_lex_entries", lambda s: [entry])
+    monkeypatch.setattr(categories, "_find_target_obj_by_guid",
+                        lambda it, g: entry)
+    monkeypatch.setattr(categories, "_walk_lex_entry_closure",
+                        lambda *a, **k: None)
+    monkeypatch.setattr(categories, "_run_tail_once", lambda *a, **k: None)
+    result = categories.stems_execute_action(
+        _stem_action(), _stem_ctx(), WSMapping(), None)
+    assert isinstance(result, ActionOutcome)
+    assert result.status == "skipped"
+    assert "declined" in result.reason

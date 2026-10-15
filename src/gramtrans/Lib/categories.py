@@ -12815,10 +12815,21 @@ def stems_execute_action(action, context, ws_mapping, tag):
     target = context.target_handle
     src_guid = action.source_guid
     src_entry = _find_target_obj_by_guid(_iter_lex_entries(source), src_guid)
+    # Issue #45/#49/#68: a missing source entry (or a closure walk that
+    # declines) must be an explicit skip, not a silent None that the engine
+    # would count as "added". Mirrors affixes_execute_action. The tail passes
+    # below still run (they key off the LAST stem action, which may be a skip).
+    outcome = None
     new_entry = None
-    if src_entry is not None:
+    if src_entry is None:
+        outcome = ActionOutcome.skipped(
+            "source object %s not found in the source project" % src_guid)
+    else:
         new_entry = _walk_lex_entry_closure(
             src_entry, context, tag, GrammarCategory.STEMS)
+        if new_entry is None:
+            outcome = ActionOutcome.skipped(
+                "entry closure for %s declined (nothing written)" % src_guid)
 
     # Tail block (front: entry-ref container creation, 027 US1/US3 contract
     # C1) -- MUST run before _run_post_pass_a's wiring (C2): a ref's
@@ -12829,7 +12840,7 @@ def stems_execute_action(action, context, ws_mapping, tag):
     # Tail block (post-pass A, C2) — run once after all stems complete.
     _run_tail_once(context, target, tag, "_did_post_pass_a",
                    GrammarCategory.STEMS, _run_post_pass_a)
-    return new_entry
+    return outcome if outcome is not None else new_entry
 
 
 # ============================================================================
