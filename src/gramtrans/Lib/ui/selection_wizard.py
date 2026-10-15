@@ -477,17 +477,7 @@ class _PagePreview(QtWidgets.QWizardPage):
         plan, report = _safe_compute_wizard_plan(wizard)
         if plan is None:
             # DR-5: wrapper owns QMessageBox dialogs.
-            context = wizard.page_project_ws().context()
-            if context is None:
-                QtWidgets.QMessageBox.warning(
-                    self, "GramTrans", "No target project bound. Go back to page 1."
-                )
-            else:
-                QtWidgets.QMessageBox.warning(
-                    self, "GramTrans",
-                    _take_plan_failure_reason(wizard)
-                    or "Plan assembly failed. Check project state.",
-                )
+            _warn_plan_failure(self, wizard)
             return
         self._stats.set_report(report)
 
@@ -552,6 +542,29 @@ def _take_plan_failure_reason(wizard) -> str:
     except Exception:  # noqa: BLE001
         pass
     return reason
+
+
+def _warn_plan_failure(parent, wizard) -> None:
+    """Pop the dialog for a dry run / preview that produced no plan (DR-5).
+
+    Shared by `_PagePreview._on_preview` and `_PageFinish._on_dry_run` so the
+    two cannot drift apart (issue #8). Two failures, two messages, because "no
+    target bound" and "plan assembly failed" send the operator to different
+    places (FR-042). Dialog only: any state the caller drops on failure stays
+    in the caller.
+    """
+    context = wizard.page_project_ws().context()
+    if context is None:
+        QtWidgets.QMessageBox.warning(
+            parent, "GramTrans", "No target project bound. Go back to page 1."
+        )
+    else:
+        # G1: assembly failure -- Move stays disabled, no partial state.
+        QtWidgets.QMessageBox.warning(
+            parent, "GramTrans",
+            _take_plan_failure_reason(wizard)
+            or "Plan assembly failed. Check project state.",
+        )
 
 
 def _compute_wizard_plan(wizard) -> tuple:
@@ -862,6 +875,11 @@ class _PageFinish(_FlowPage):
     4. Shows the RunReport (MOVE) in the StatsPanel.
     """
 
+    # Issue #11: the dry-run button's label, and its hint once re-entry has
+    # discarded a previously computed plan. ASCII only.
+    _DRY_RUN_TEXT = "Dry run (preview plan)"
+    _DRY_RUN_CLEARED_TEXT = "Dry run (plan cleared - re-run)"
+
     def __init__(self, report_sink, modify_allowed: bool, parent=None,
                  confirmation_gate=None):
         super().__init__(parent)
@@ -904,7 +922,13 @@ class _PageFinish(_FlowPage):
         full of that run's numbers presents it as current. The cached plan and the
         displayed report are two halves of one authorisation and are dropped
         together.
+
+        Issue #11: when this entry discards a plan that actually existed, the
+        dry-run button says so, so the operator can see the earlier result was
+        invalidated. First entry (no plan yet) keeps the plain label.
         """
+        if self._cached_plan is not None:
+            self._dry_run_btn.setText(self._DRY_RUN_CLEARED_TEXT)
         self._cached_plan = None
         self._stats.clear()
         self._set_execute_enabled(False)
@@ -919,7 +943,7 @@ class _PageFinish(_FlowPage):
             )
             warn.setWordWrap(True)
             layout.addWidget(warn)
-        self._dry_run_btn = QtWidgets.QPushButton("Dry run (preview plan)", self)
+        self._dry_run_btn = QtWidgets.QPushButton(self._DRY_RUN_TEXT, self)
         self._dry_run_btn.clicked.connect(self._on_dry_run)
         layout.addWidget(self._dry_run_btn)
         self._move_btn = QtWidgets.QPushButton("Execute Move", self)
@@ -973,7 +997,7 @@ class _PageFinish(_FlowPage):
         if self._cached_plan is None:
             return (
                 "Execute is unavailable: a successful dry run of the current "
-                "selections is required first. Click \"Dry run (preview plan)\"."
+                "selections is required first. Click the Dry run button."
             )
         return ""
 
@@ -1028,21 +1052,12 @@ class _PageFinish(_FlowPage):
             self._stats.clear()
             self._refresh_execute_state()
             # DR-5: caller owns QMessageBox.
-            context = wizard.page_project_ws().context()
-            if context is None:
-                QtWidgets.QMessageBox.warning(
-                    self, "GramTrans", "No target project bound. Go back to page 1."
-                )
-            else:
-                # G1: assembly failure -- Move stays disabled, no partial state.
-                QtWidgets.QMessageBox.warning(
-                    self, "GramTrans",
-                    _take_plan_failure_reason(wizard)
-                    or "Plan assembly failed. Check project state.",
-                )
+            _warn_plan_failure(self, wizard)
             return
         self._cached_plan = plan
         self._stats.set_report(report)
+        # Issue #11: a fresh plan exists again, so the "cleared" hint is over.
+        self._dry_run_btn.setText(self._DRY_RUN_TEXT)
         # FR-043/FR-044 live here too: a successful dry run is necessary for
         # Execute, never sufficient. `_refresh_execute_state` re-derives the whole
         # conjunction, so read-only mode and an already-completed move both keep
