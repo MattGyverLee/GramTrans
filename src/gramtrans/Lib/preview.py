@@ -1427,7 +1427,8 @@ def build_run_plan(
     else:
         from config_views import plan_config_views  # type: ignore
     try:
-        _config_view_records = plan_config_views(source, target)
+        _config_view_records = plan_config_views(
+            source, target, ws_map=getattr(context, "_ws_map", None))
     except Exception:  # noqa: BLE001 -- fail-soft, see docstring above
         _config_view_records = []
     for _cv_record in _config_view_records:

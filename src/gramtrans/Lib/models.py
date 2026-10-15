@@ -4078,6 +4078,11 @@ class ConfigViewRecord:
                    references in the file that are absent in the target
                    (R9); owner_kind "ConfigView", `field_name` carries the
                    reference kind, `item_name` the referenced label.
+    ws_renames   : dict[str, str] -- issue #53: source WS id -> target WS id
+                   for every WS reference in the file that the run's
+                   WSMapping renames. `apply_config_views` rewrites those
+                   ids in the copied file so it never references the
+                   source-side id. Empty -> the file is copied byte-for-byte.
     """
     kind: str
     filename: str
@@ -4085,6 +4090,7 @@ class ConfigViewRecord:
     tgt_path: str
     action: ConfigViewAction
     missing_refs: list = field(default_factory=list)
+    ws_renames: dict = field(default_factory=dict)
 
 
 class OwnedCreateKind(enum.Enum):

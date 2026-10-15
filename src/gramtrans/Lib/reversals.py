@@ -352,8 +352,46 @@ def _decide_reversal_category(src_entry, entry_guid: str, target_index_ref, form
     return decision
 
 
+def _gate_form_alts(form_alts: dict, target_ws_ids, entry_guid: str, dropped) -> dict:
+    """Issue #46: apply the SAME target-WS membership test the index's own
+    writing system gets (`plan_reversals`) to every `ReversalForm` alt.
+
+    `_reversal_form_alts` maps each source alt through `ctx._ws_map`, but an
+    UNMAPPED source id passes straight through as if it were a target id, so
+    an alt in a writing system the target lacks used to reach the write path,
+    where `WSHandle` returns `None` and `TsStringUtils.MakeString` raised a
+    .NET `ArgumentNullException` that aborted the Move mid-write. Each alt
+    discarded here is reported as a `DroppedItemRecord` at decision time,
+    where the rest of the machinery reports its losses.
+
+    An empty `target_ws_ids` means the target's writing systems could not be
+    enumerated at all (a duck-typing gap, not an empty target); the alts pass
+    through ungated and the write path's own guard reports any miss."""
+    if not target_ws_ids:
+        return form_alts
+    kept: dict = {}
+    for ws_id, text in form_alts.items():
+        if ws_id in target_ws_ids:
+            kept[ws_id] = text
+            continue
+        # An alt has no GUID of its own; its WS id stands in for the item
+        # identity so two discarded alts on one entry stay two records
+        # under the `(owner_guid, field_name, item_guid)` dedup key.
+        dropped.append(DroppedItemRecord(
+            owner_kind="ReversalIndexEntry",
+            owner_guid=entry_guid,
+            owner_label=text,
+            field_name="ReversalForm",
+            item_name=ws_id,
+            item_guid=ws_id,
+            reason=f"writing system '{ws_id}' absent in target",
+        ))
+    return kept
+
+
 def _build_entry_decision(src_entry, target_ws_id: str, target_index_ref, src_project,
-                           ctx, copied_senses, resolver_cache, dropped) -> ReversalDecision:
+                           ctx, copied_senses, resolver_cache, dropped,
+                           target_ws_ids=frozenset()) -> ReversalDecision:
     """Build one `ReversalDecision` for `src_entry` (top-level or a
     sub-entry -- the shape is identical at every depth), recursing
     `SubentriesOS` UNCONDITIONALLY (R6: owned hierarchical collection,
@@ -363,7 +401,9 @@ def _build_entry_decision(src_entry, target_ws_id: str, target_index_ref, src_pr
     entry_guid = references._guid_str(src_entry)
     linked, dropped_members = _resolve_sense_links(
         src_entry, copied_senses, entry_guid, dropped)
-    form_alts = _reversal_form_alts(src_entry, src_project, ctx)
+    form_alts = _gate_form_alts(
+        _reversal_form_alts(src_entry, src_project, ctx), target_ws_ids,
+        entry_guid, dropped)
     # US2 (T025): `_decide_reversal_category` deliberately does NOT thread a
     # `source` project handle into `decide_reference` -- see its own
     # docstring's "DEVIATION" note for why (an index-shaped `target` has no
@@ -376,7 +416,7 @@ def _build_entry_decision(src_entry, target_ws_id: str, target_index_ref, src_pr
     sub_decisions = tuple(
         _build_entry_decision(
             sub, target_ws_id, target_index_ref, src_project, ctx, copied_senses,
-            resolver_cache, dropped)
+            resolver_cache, dropped, target_ws_ids)
         for sub in (getattr(src_entry, "SubentriesOS", None) or [])
     )
     return ReversalDecision(
@@ -476,7 +516,7 @@ def plan_reversals(copied_senses, src_project, target, ctx, resolver_cache, drop
         for src_entry in in_scope_entries:
             decisions.append(_build_entry_decision(
                 src_entry, target_ws_id, target_index_ref, src_project, ctx,
-                copied_senses, resolver_cache, dropped,
+                copied_senses, resolver_cache, dropped, target_ws_ids,
             ))
 
     return decisions
@@ -501,8 +541,15 @@ def plan_reversals(copied_senses, src_project, target, ctx, resolver_cache, drop
 _INDEX_CREATED_KEY = "__reversals_index_created__"
 
 
-def _set_reversal_form_alt(entry, target, ws_id: str, text: str) -> None:
+def _set_reversal_form_alt(entry, target, ws_id: str, text: str,
+                           dropped=None, entry_guid: str = "") -> None:
     """Best-effort per-WS `ReversalForm` write. Never raises.
+
+    Issue #46: a live write whose `WSHandle` lookup misses (returns `None`)
+    or that raises anything -- including the .NET `ArgumentNullException`
+    `TsStringUtils.MakeString(text, None)` throws, which is NOT a Python
+    `TypeError` -- is reported to `dropped` (when given) instead of
+    escaping or vanishing.
 
     Branches on WHAT `ReversalForm` IS, not on what this process happens to
     have loaded. The previous version reached for the live path whenever
@@ -546,9 +593,24 @@ def _set_reversal_form_alt(entry, target, ws_id: str, text: str) -> None:
         return
     try:
         ws_handle = target.WSHandle(ws_id)
-        ms.set_String(ws_handle, TsStringUtils.MakeString(text, ws_handle))
-    except (AttributeError, TypeError):
-        pass
+        if ws_handle is None:
+            reason = f"writing system '{ws_id}' absent in target"
+        else:
+            ms.set_String(ws_handle, TsStringUtils.MakeString(text, ws_handle))
+            return
+    except Exception as exc:  # noqa: BLE001 -- .NET exceptions are not TypeError
+        reason = f"ReversalForm write failed: {type(exc).__name__}: {exc}"
+    _log.warning("_set_reversal_form_alt: %s (entry %s)", reason, entry_guid)
+    if dropped is not None:
+        dropped.append(DroppedItemRecord(
+            owner_kind="ReversalIndexEntry",
+            owner_guid=entry_guid,
+            owner_label=text,
+            field_name="ReversalForm",
+            item_name=ws_id,
+            item_guid=ws_id,
+            reason=reason,
+        ))
 
 
 def _primary_form(decision: "ReversalDecision"):
@@ -948,7 +1010,8 @@ def _apply_one_entry(decision: "ReversalDecision", target, ctx, tag, resolver_ca
     for ws_id, text in decision.reversal_form_alts.items():
         if ws_id == primary_ws_id:
             continue  # already written via Create()'s single-WS form param
-        _set_reversal_form_alt(new_entry, target, ws_id, text)
+        _set_reversal_form_alt(new_entry, target, ws_id, text,
+                               dropped, decision.source_entry_guid)
 
     remaining_senses = target_senses[1:] if first_sense is not None else target_senses
     _link_remaining_senses(new_entry, remaining_senses)
@@ -980,9 +1043,27 @@ def apply_reversals(decisions, target, ctx, tag, resolver_cache, dropped) -> Non
     banner above for the `tag` signature extension rationale). Never
     raises: every per-entry/per-index failure is caught and reported
     (`_ensure_target_index`/`_create_top_level_entry`/`_create_sub_entry`)
-    rather than aborting the rest of the run."""
+    rather than aborting the rest of the run; anything those helpers do not
+    anticipate is caught here per top-level entry and recorded as a
+    `DroppedItemRecord` (issue #46 -- this docstring used to promise more
+    than the code delivered)."""
     for decision in decisions:
-        _apply_one_entry(
-            decision, target, ctx, tag, resolver_cache, dropped,
-            parent_target_entry=None,
-        )
+        try:
+            _apply_one_entry(
+                decision, target, ctx, tag, resolver_cache, dropped,
+                parent_target_entry=None,
+            )
+        except Exception as exc:  # noqa: BLE001 -- issue #46: one entry must not abort the Move
+            _log.warning(
+                "apply_reversals: entry %s failed: %s: %s",
+                decision.source_entry_guid, type(exc).__name__, exc,
+            )
+            dropped.append(DroppedItemRecord(
+                owner_kind="ReversalIndexEntry",
+                owner_guid=decision.source_entry_guid,
+                owner_label=_entry_label_from_form_alts(decision.reversal_form_alts),
+                field_name="ReversalIndexEntry",
+                item_name=_entry_label_from_form_alts(decision.reversal_form_alts),
+                item_guid=decision.source_entry_guid,
+                reason=f"reversal entry apply failed: {type(exc).__name__}: {exc}",
+            ))
