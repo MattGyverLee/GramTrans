@@ -699,10 +699,14 @@ def execute(plan: RunPlan, source, target, report_sink, tag: ImportResidueTag,
                 continue
             leaf_count += 1
             leaf_succeeded += 1
+            # Issue #49/#68: with no planned destination the expected GUID is
+            # decided AFTER dispatch (None here), because a handler that
+            # creates under a remapped GUID records it in identity_remap
+            # while it runs -- see `reconcile_added_actions`.
             _verify_candidates.append((
                 action,
                 _dest.target_guid if _dest.outcome == DESTINATION_RESOLVED
-                else action.source_guid,
+                else None,
             ))
         except Exception as exc:
             leaf_failed += 1
@@ -762,13 +766,28 @@ def execute(plan: RunPlan, source, target, report_sink, tag: ImportResidueTag,
     # Issue #49 (defect 1): handler exit proves nothing -- a handler that
     # returns normally while writing nothing used to be counted as added. Check
     # every reported-added action against the actual target, by GUID.
-    for _cat, _guid, _why in reconcile_added_actions(target, _verify_candidates):
+    _unverified: list = []
+    for _cat, _guid, _why in reconcile_added_actions(
+            target, _verify_candidates,
+            identity_remap=getattr(plan, "identity_remap", None),
+            unverified=_unverified):
         leaf_failed += 1
         _not_added.append((_cat, _guid))
         _log.warning("execute reconcile: %s %s: %s", _cat.value, _guid, _why)
         _leaf_execution_failures.append(LeafExecutionFailure(
             category=_cat, source_guid=_guid,
             exception_type="UnverifiedWrite", message=_why,
+        ))
+
+    # Issue #49/#68 (cycle 3 P1-c): an action whose GUID lookup RAISED could
+    # not be verified. It must not read as "added-verified": record each as a
+    # failure-style entry (type LookupUnverified) and take it out of `added`.
+    for _cat, _guid, _why in _unverified:
+        leaf_failed += 1
+        _not_added.append((_cat, _guid))
+        _leaf_execution_failures.append(LeafExecutionFailure(
+            category=_cat, source_guid=_guid,
+            exception_type="LookupUnverified", message=_why,
         ))
 
     # Feature 024 (T031, US3, FR-008 -- single-final-pass redesign):
@@ -1445,26 +1464,49 @@ def _lookup_target_guid(target, guid):
     return repo.GetObject(parsed) if repo.IsValidObjectId(parsed) else None
 
 
-def reconcile_added_actions(target, candidates, *, resolve=None):
+def reconcile_added_actions(target, candidates, *, resolve=None,
+                            identity_remap=None, unverified=None):
     """Post-execute truth pass (issue #49).
 
     `candidates` is an iterable of ``(action, expected_target_guid)`` for every
-    action whose handler reported it written. Returns a list of
+    action whose handler reported it written. When `expected_target_guid` is
+    falsy (no planned destination), the expected GUID is
+    ``identity_remap.get(source_guid, source_guid)`` -- a handler that created
+    under a remapped GUID counts as landed. Returns a list of
     ``(category, source_guid, reason)`` for each one whose object is NOT
     present in the target by GUID, so the caller can downgrade it from added to
     failed. Pure read: one dictionary-backed repository lookup per action.
-    `resolve(target, guid)` defaults to `categories._resolve_target_by_guid`.
+
+    A lookup that RAISES is not proof of absence, but it is not verification
+    either: it is logged at WARNING and, when the caller passes a list as
+    `unverified`, appended there as ``(category, source_guid, reason)`` so the
+    run report can show the action as unverified rather than verified-added.
+    `resolve(target, guid)` defaults to `_lookup_target_guid`.
     """
     if resolve is None:
         resolve = _lookup_target_guid
+    remap = identity_remap or {}
     missing = []
     for action, guid in candidates:
         cat = getattr(action, "category", None)
+        if not guid:
+            src = getattr(action, "source_guid", None)
+            guid = remap.get(src, src) if src else None
         if cat in _RECONCILE_EXEMPT or not guid:
             continue
         try:
             found = resolve(target, guid)
-        except Exception:  # noqa: BLE001 -- a lookup error is not proof of absence
+        except Exception as exc:  # noqa: BLE001 -- a lookup error is not proof of absence
+            src = getattr(action, "source_guid", guid)
+            _log.warning(
+                "execute reconcile: lookup of %s %s FAILED (%s: %s); the "
+                "write is UNVERIFIED", getattr(cat, "value", cat), guid,
+                type(exc).__name__, exc)
+            if unverified is not None:
+                unverified.append((
+                    cat, src,
+                    "target lookup for %s raised %s: %s; write could not be "
+                    "verified" % (guid, type(exc).__name__, exc)))
             continue
         if found is _UNVERIFIABLE:
             continue

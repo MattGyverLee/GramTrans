@@ -133,3 +133,95 @@ class _FakeProj:
 
 def _ctx_with_src():
     return _ctx()
+
+
+# ---------------------------------------------------------------------------
+# Cycle 3 (P1-b / P1-c): expected-GUID derivation and lookup failures.
+# ---------------------------------------------------------------------------
+
+def test_remapped_create_is_not_flagged_unverified(monkeypatch, _quiet_tail):
+    """A handler that created under a remapped GUID wrote; the remapped GUID
+    (not the source GUID) is what must exist in the target."""
+    plan = RunPlan(context=_ctx(), selection=Selection(),
+                   ws_mapping=WSMapping(entries=()),
+                   actions=(_act("src-1"),), identity_remap={})
+
+    def _handler(action, ctx, ws, tag):
+        plan.identity_remap["src-1"] = "new-1"   # create-under-new-GUID
+        return None
+
+    monkeypatch.setattr(categories, "for_category",
+                        lambda cat: {"execute_action": _handler})
+    rep = transfer.execute(plan, object(), _Target({"new-1"}), _Sink(), tag=None)
+    assert rep.leaf_failed == 0
+    assert rep.per_category[GrammarCategory.SLOTS].added == 1
+
+
+def test_reconcile_uses_remapped_guid_and_still_flags_absent():
+    t = _Target({"new-1"})
+    assert transfer.reconcile_added_actions(
+        t, [(_act("src-1"), None)], identity_remap={"src-1": "new-1"}) == []
+    miss = transfer.reconcile_added_actions(
+        t, [(_act("src-2"), None)], identity_remap={"src-1": "new-1"})
+    assert [g for _, g, _ in miss] == ["src-2"]
+
+
+def test_reconcile_resolved_destination_guid_wins_over_source_guid():
+    """The planned (resolved) destination GUID is the expected one, even when
+    the source GUID happens to be absent from the target."""
+    t = _Target({"dest-9"})
+    assert transfer.reconcile_added_actions(
+        t, [(_act("src-1"), "dest-9")]) == []
+    miss = transfer.reconcile_added_actions(
+        _Target({"src-1"}), [(_act("src-1"), "dest-9")])
+    assert [g for _, g, _ in miss] == ["src-1"]
+    assert "dest-9" in miss[0][2]
+
+
+def test_execute_uses_resolved_destination_guid(monkeypatch, _quiet_tail):
+    dest = transfer.PlannedDestination(
+        outcome=transfer.DESTINATION_RESOLVED, obj=object(),
+        target_guid="dest-9", object_class="X", basis=None, detail="")
+    monkeypatch.setattr(transfer, "planned_destination_for",
+                        lambda item, target, **k: dest)
+    monkeypatch.setattr(categories, "for_category",
+                        lambda cat: {"execute_action": lambda *a: None})
+    plan = RunPlan(context=_ctx(), selection=Selection(),
+                   ws_mapping=WSMapping(entries=()), actions=(_act("src-1"),))
+    rep = transfer.execute(plan, object(), _Target({"dest-9"}), _Sink(), tag=None)
+    assert rep.leaf_failed == 0
+
+
+def test_lookup_exception_is_logged_and_reported_unverified(
+        monkeypatch, _quiet_tail, caplog):
+    class _Boom(_Target):
+        def get_object_by_guid(self, guid):
+            if guid == "bad":
+                raise RuntimeError("repo exploded")
+            return super().get_object_by_guid(guid)
+
+    monkeypatch.setattr(categories, "for_category",
+                        lambda cat: {"execute_action": lambda *a: None})
+    plan = RunPlan(context=_ctx(), selection=Selection(),
+                   ws_mapping=WSMapping(entries=()),
+                   actions=(_act("ok"), _act("bad")))
+    with caplog.at_level("WARNING", logger=transfer.__name__):
+        rep = transfer.execute(plan, object(), _Boom({"ok"}), _Sink(), tag=None)
+    assert any("UNVERIFIED" in r.getMessage() and r.levelname == "WARNING"
+               for r in caplog.records)
+    # Not counted as verified-added; surfaced in the report instead.
+    assert rep.per_category[GrammarCategory.SLOTS].added == 1
+    assert rep.leaf_failed == 1
+    f = rep.leaf_execution_failures[0]
+    assert f.source_guid == "bad" and f.exception_type == "LookupUnverified"
+    assert "repo exploded" in f.message
+
+
+def test_reconcile_collects_unverified_list():
+    class _Boom:
+        def get_object_by_guid(self, guid):
+            raise ValueError("nope")
+    out = []
+    assert transfer.reconcile_added_actions(
+        _Boom(), [(_act("a"), "a")], unverified=out) == []
+    assert [(c, g) for c, g, _ in out] == [(GrammarCategory.SLOTS, "a")]
