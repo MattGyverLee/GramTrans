@@ -1133,7 +1133,10 @@ def gram_categories_enumerate_source(context: RunContext, selection: Selection):
 
 def gram_categories_dependencies(piece):
     """POS is a leaf for OWNERSHIP -- it owns its inflection classes, stem
-    names and exception features outright, so none of those is a closure edge.
+    names and exception features outright, so the POS has no edge TO its owned
+    items. The owned items carry the edge the other way, to the POS (see
+    `inflection_classes_dependencies`, `stem_names_dependencies`,
+    `pos_inflectable_feats_dependencies`, `exception_features_dependencies`).
 
     It is NOT a leaf for REFERENCE (feature 038, T034). `IPartOfSpeech`
     carries `DefaultFeaturesOA`, an `IFsFeatStruc` whose `TypeRA` REFERENCES an
@@ -3032,10 +3035,21 @@ def pos_inflectable_feats_enumerate_source(context: RunContext, selection: Selec
 
 
 def pos_inflectable_feats_dependencies(piece):
-    """No additional closure deps -- inflection_features (Part B.1) already
-    runs earlier in the same pass and lands the feature defns this category
-    resolves against."""
-    return ()
+    """Yield (GRAM_CATEGORIES, owning_pos_guid): the executor wires the feature
+    onto the target POS, so that POS must exist first. `piece` is the
+    (pos_guid, feat_obj) tuple from enumerate_source. The feature defns
+    themselves need no edge -- inflection_features (Part B.1) already runs
+    earlier in the same pass. Empty when the piece is not such a tuple or has
+    no owner guid.
+
+    This edge is correct but NOT registered in `CLOSURE_EDGES_VERIFIED`, so
+    `closure_dependencies_for` does not consult it today. Registering it needs
+    FR-018 audit evidence from a corpus that contains these objects; that is a
+    follow-up. Nothing here guarantees ordering until then."""
+    if not (isinstance(piece, tuple) and len(piece) == 2):
+        return ()
+    pos_guid = piece[0]
+    return ((GrammarCategory.GRAM_CATEGORIES, pos_guid),) if pos_guid else ()
 
 
 def pos_inflectable_feats_required_writing_systems(piece) -> Iterable[Tuple[str, WSKind]]:
@@ -3179,7 +3193,22 @@ def stem_names_enumerate_source(context: RunContext, selection: Selection):
 
 
 def stem_names_dependencies(piece):
-    return ()  # leaf
+    """Stem names are owned by a POS (IPartOfSpeech.StemNamesOC), so the
+    owning POS must be created in the target before this piece is executed.
+    Yield a (GRAM_CATEGORIES, owner_pos_guid) edge so the closure walker pulls
+    in and orders POS creation ahead of its stem names; empty when the owner
+    cannot be determined (duck-typed piece with no Owner, or an owner with no
+    GUID). Same shape as `inflection_classes_dependencies` (issue #36).
+
+    This edge is correct but NOT registered in `CLOSURE_EDGES_VERIFIED`, so
+    `closure_dependencies_for` does not consult it today. Registering it needs
+    FR-018 audit evidence from a corpus that contains stem names; that is a
+    follow-up. Nothing here guarantees ordering until then."""
+    owner = getattr(piece, "Owner", None)
+    if owner is None:
+        return ()
+    g = _guid_str_from(owner)
+    return ((GrammarCategory.GRAM_CATEGORIES, g),) if g else ()
 
 
 def stem_names_required_writing_systems(piece) -> Iterable[Tuple[str, WSKind]]:
@@ -3337,11 +3366,21 @@ def exception_features_enumerate_source(context: RunContext, selection: Selectio
 
 
 def exception_features_dependencies(piece):
-    """An exception feature depends on the owning POS and the value's parent
-    inflection feature.  Return empty for the Phase 0 leaf treatment;
-    the execute step does a live GUID lookup to wire the ref.
+    """Yield (GRAM_CATEGORIES, owning_pos_guid): the value is owned by
+    `IPartOfSpeech.ExceptionFeaturesOC`, so the POS must exist first. `piece`
+    is the (pos_guid, val_obj) tuple from enumerate_source. Empty when the
+    piece is not such a tuple or has no owner guid. The execute step still does
+    a live GUID lookup to wire the value's own reference.
+
+    This edge is correct but NOT registered in `CLOSURE_EDGES_VERIFIED`, so
+    `closure_dependencies_for` does not consult it today. Registering it needs
+    FR-018 audit evidence from a corpus that contains these objects; that is a
+    follow-up. Nothing here guarantees ordering until then.
     """
-    return ()
+    if not (isinstance(piece, tuple) and len(piece) == 2):
+        return ()
+    pos_guid = piece[0]
+    return ((GrammarCategory.GRAM_CATEGORIES, pos_guid),) if pos_guid else ()
 
 
 def exception_features_required_writing_systems(piece) -> Iterable[Tuple[str, WSKind]]:
