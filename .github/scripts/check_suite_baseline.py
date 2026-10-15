@@ -35,6 +35,16 @@ BASELINE = REPO_ROOT / ".github" / "known-failures.txt"
 _SUMMARY = re.compile(r"^(?:FAILED|ERROR)\s+(\S+?)(?:\s+-\s+.*)?$")
 
 
+# Collection (imports) is outside pytest's faulthandler_timeout, which only
+# covers setup/call/teardown. This launcher dumps all thread stacks every 300 s
+# for the whole process, so a hang at import time is diagnosable too (#72).
+_LAUNCHER = (
+    "import faulthandler, sys; "
+    "faulthandler.dump_traceback_later(300, repeat=True); "
+    "import pytest; sys.exit(pytest.main(sys.argv[1:]))"
+)
+
+
 def load_baseline() -> set[str]:
     if not BASELINE.is_file():
         raise RuntimeError(f"baseline not found: {BASELINE}")
@@ -48,9 +58,10 @@ def load_baseline() -> set[str]:
 
 def run_suite(extra: list[str]) -> tuple[set[str], int, str]:
     cmd = [
-        sys.executable, "-u", "-m", "pytest",
+        sys.executable, "-u", "-X", "faulthandler", "-c", _LAUNCHER,
         "-m", "not integration",
-        "-q", "--tb=short", "-p", "no:cacheprovider",
+        # -v: one line per test, so a stall names the test it is stuck in.
+        "-v", "--tb=short", "-p", "no:cacheprovider",
         # Issue #72: dump every thread's stack if a single test stalls 5 min.
         "-o", "faulthandler_timeout=300",
         *extra,
