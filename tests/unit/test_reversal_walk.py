@@ -172,7 +172,7 @@ def test_ws_gate_unmapped_index_dropped():
     assert decisions == []
     ws_drops = [r for r in dropped if r.owner_kind == "ReversalIndex"]
     assert len(ws_drops) == 1
-    assert ws_drops[0].reason == "writing system not mapped"
+    assert ws_drops[0].reason == "writing system 'koh' absent in target"
 
 
 # ============================================================================

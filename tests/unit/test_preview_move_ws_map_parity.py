@@ -225,7 +225,7 @@ def test_build_run_plan_populates_ws_map_and_reversal_walk_resolves_mapped_ws():
     # resolved successfully.
     ws_drops = [
         r for r in plan.dropped_items
-        if r.owner_kind == "ReversalIndex" and r.reason == "writing system not mapped"
+        if r.owner_kind == "ReversalIndex" and r.reason.startswith("writing system")
     ]
     assert ws_drops == []
 

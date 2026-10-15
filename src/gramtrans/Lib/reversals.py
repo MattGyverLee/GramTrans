@@ -508,7 +508,8 @@ def plan_reversals(copied_senses, src_project, target, ctx, resolver_cache, drop
                 field_name="WritingSystem",
                 item_name=src_ws_id,
                 item_guid=references._guid_str(src_index),
-                reason="writing system not mapped",
+                reason=(f"writing system '{target_ws_id}' absent in target"
+                        if target_ws_id else "writing system not mapped"),
             ))
             continue  # R4 -- never guess; whole index skipped.
 

@@ -266,7 +266,8 @@ def test_reversal_and_config_view_drops_share_one_dropped_collection(tmp_path):
 
     rev_index_drops = [d for d in dropped if d.owner_kind == "ReversalIndex"]
     assert len(rev_index_drops) == 1
-    assert rev_index_drops[0].reason == "writing system not mapped"
+    assert rev_index_drops[0].reason.startswith("writing system '")
+    assert rev_index_drops[0].reason.endswith("' absent in target")
 
     config_drops = [d for d in dropped if d.owner_kind == "ConfigView"]
     # fr.fwdictconfig: WS 'fr' (root) + WS 'de' (option) + custom field +
