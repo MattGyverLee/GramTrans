@@ -592,7 +592,9 @@ def phase2_interactive_move(
         # never carried out.
         try:
             from api import _attach_dropped_items, _ensure_writing_systems  # flat (Lib/ on sys.path)
-        except ImportError:  # package-import fallback (issue #77), like the others
+        except ImportError as _flat_exc:  # package-import fallback (issue #77), like the others
+            logging.getLogger(__name__).debug(
+                "flat `from api import` failed (%s); using gramtrans.Lib.api", _flat_exc)
             from gramtrans.Lib.api import _attach_dropped_items, _ensure_writing_systems
         ws_failures = []
         created_ws = _ensure_writing_systems(project, source, plan, ws_failures)

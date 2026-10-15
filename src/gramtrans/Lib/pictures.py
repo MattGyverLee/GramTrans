@@ -46,12 +46,14 @@ import tempfile
 
 if __package__:
     from .models import (
+        dropped_identity as _dropped_identity,
         DroppedItemRecord, ReferenceAction, ReferenceDecisionRecord,
     )
     from . import references as _references
     from . import owned as _owned
 else:  # pragma: no cover - exercised only under the FlexTools sys.path convention
     from models import (  # type: ignore
+        dropped_identity as _dropped_identity,
         DroppedItemRecord, ReferenceAction, ReferenceDecisionRecord,
     )
     import references as _references  # type: ignore
@@ -98,7 +100,7 @@ def _cast_file(obj):
 # ============================================================================
 
 def _dropped_key(record) -> tuple:
-    return (record.owner_guid, record.field_name, record.item_guid)
+    return _dropped_identity(record)
 
 
 def _append_dropped(dropped, record) -> None:

@@ -59,7 +59,7 @@ for MCP-indexer visibility (the indexer's static analysis doesn't follow inherit
 
 ### Install
 
-`pyproject.toml` declares `pyflexicon>=4.5.2` — the floor carrying both:
+`pyproject.toml` declares `pyflexicon>=4.8.0` — the floor carrying all three:
 
 - the GUID-preserving create surface feature 033 depends on
   (`BaseOperations._CreateWithGuid` plus the optional `guid=` kwarg on
@@ -72,9 +72,17 @@ for MCP-indexer visibility (the indexer's static analysis doesn't follow inherit
   `FeaturesGuid` + `Features` (a list of `{"FeatureGuid", "ValueGuid"}`
   specs) and `ApplySyncableProperties` rewires them against the target's
   `PhFeatureSystemOA` by GUID, mirroring what `PhonemeOperations` already
-  does for phonemes (flexicon issue #222).
+  does for phonemes (flexicon issue #222), and
+- (flexicon issue #250, current floor 4.8.0) the writing-system store
+  semantics GramTrans's `ws_create_state` depends on:
+  `WritingSystemOperations.Exists(tag)` is ACTIVE-ONLY, `Create(tag)` REUSES a
+  stored-but-inactive LDML and only activates it (`name` is ignored on that
+  path), and `ExistsInStore(tag)` checks the whole LDML store. Below 4.8.0
+  `Exists()` scanned the whole store and a stored-inactive tag could not be
+  created, so GramTrans fails loudly rather than guessing.
 
-> **The floor is 4.5.2, not 4.5.0 or 4.5.1 -- do not lower it.** Each of the
+> **The 4.5.x floor history (4.8.0 now supersedes it, but never go below 4.5.2):**
+> **The floor was 4.5.2, not 4.5.0 or 4.5.1 -- do not lower it.** Each of the
 > three releases looks equivalent by changelog and is not:
 >
 > - **4.5.0** wired FeaturesOA behind `hasattr(nc, "FeaturesOA")`, which is

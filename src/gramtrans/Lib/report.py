@@ -337,9 +337,9 @@ def _build_from_plan(cls, plan: RunPlan, mode: RunMode,
     # record the executor already appended to `extra_dropped_items` is not
     # reported twice.
     dropped_items_all = list(extra_dropped_items)
-    _dropped_seen = {_dropped_dedup_key(d) for d in dropped_items_all}
+    _dropped_seen = {dropped_identity(d) for d in dropped_items_all}
     for _rec in _enrichment_dropped_records(enrichments_all):
-        _key = _dropped_dedup_key(_rec)
+        _key = dropped_identity(_rec)
         if _key in _dropped_seen:
             continue
         _dropped_seen.add(_key)
@@ -819,17 +819,6 @@ def _enrichment_dropped_records(enrichments) -> tuple:
         for c in getattr(r, "collections", ())
         for rec in getattr(c, "dropped_records", ())
     )
-
-
-def _dropped_dedup_key(record):
-    """`(owner_guid, field_name, item_guid)` -- the dedup identity
-    `DroppedItemRecord`'s own docstring publishes and
-    `categories._dropped_key` enforces, via `models.dropped_identity` (issue
-    #76), which keys a GUID-less record by its labels instead of collapsing
-    every one onto `("", field_name, "")`. Folding the enrichment drops into
-    `dropped_items` therefore cannot double-report a drop the executor
-    already appended."""
-    return dropped_identity(record)
 
 
 def _closure_edge_json(e) -> dict:

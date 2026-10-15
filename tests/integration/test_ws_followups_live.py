@@ -1,20 +1,28 @@
-"""Live LCM gate for the issue #78 refactor of `_ensure_writing_systems`.
+"""Live LCM gate for the issue #78 refactor of `_ensure_writing_systems`
+(flexicon >= 4.8.0, issue #250 store semantics).
 
-`_ensure_writing_systems` now classifies each `create_in_target` tag through
-`ws_mapping.ws_create_state`, the same classifier Preview's read-only
-`preflight_ws_creates` uses. This proves against a real project that:
+`_ensure_writing_systems` classifies each `create_in_target` tag through
+`ws_mapping.ws_create_state` (WS_ACTIVE / WS_ACTIVATE / WS_CREATE), the same
+classifier Preview's read-only `preflight_ws_creates` uses. Proved against a
+real project:
 
-* Preview's preflight writes nothing and predicts no block for a creatable tag;
-* Move still creates an absent tag (and makes it ACTIVE), skips an active one,
-  and reports nothing for either;
-* a tag stored but not active (when the restored Target has one) is predicted
-  by Preview and then reported by Move as the SAME warning record.
+* Preview's preflight writes nothing and says nothing for a creatable or an
+  already-active tag;
+* Move creates an absent tag (and makes it ACTIVE), skips an active one, and
+  reports nothing for either;
+* a tag STORED but INACTIVE -- staged on every run by copying a real `es.ldml`
+  from a read-only project into the restored Target's WritingSystemStore before
+  it is opened, so this scenario always RUNS and never skips -- is announced by
+  Preview as exactly ONE info record ("will activate stored writing system"),
+  and Move then ACTIVATES it: re-queried (not cached) it is in `GetAll()`,
+  there is exactly one definition for the tag (no duplicate LDML), and no
+  failure record is emitted.
 
 Skips unless FLEXLIBS_REQUIRE_LIVE=1.  Writes only to the throwaway `Target`,
-restored from backup before and after:
+restored from backup before and after (the LDML is staged in Target only; the
+donor project is only read):
 
-    set FLEXLIBS_REQUIRE_LIVE=1 && python -m pytest \
-        tests/integration/test_ws_followups_live.py -v
+    set FLEXLIBS_REQUIRE_LIVE=1 && python -m pytest tests/integration/test_ws_followups_live.py -v
 """
 from __future__ import annotations
 
@@ -33,6 +41,11 @@ if not _LIVE:
 TARGET_NAME = "Target"  # the ONLY project this module may open for writing
 BACKUP_NAME = "Target 2026-07-06 0218.fwbackup"
 NEW_TAG = "qaa-x-gtlive"
+STORED_TAG = "es"  # staged as stored-but-inactive in Target (see _stage_inactive_ldml)
+_PROJECTS_ROOT = Path(os.environ.get("GRAMTRANS_PROJECTS_ROOT",
+                                     r"C:\ProgramData\SIL\FieldWorks\Projects"))
+# Read-only donors for a real LDML (read, never written).
+_LDML_DONORS = ("Ejagham Mini", "Esperanto")
 _REPO = Path(__file__).resolve().parents[2]
 _BACKUP_DIRS = (
     _REPO / "backups",
@@ -57,6 +70,22 @@ def _restore() -> None:
     restore_target(TARGET_NAME, backup_path=_backup_path())
 
 
+def _stage_inactive_ldml() -> Path:
+    """Copy a real `es.ldml` into the (just restored) Target's WritingSystemStore
+    so `es` is stored but not in any active list. Returns the staged path."""
+    import shutil
+    dest_dir = _PROJECTS_ROOT / TARGET_NAME / "WritingSystemStore"
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    dest = dest_dir / ("%s.ldml" % STORED_TAG)
+    assert not dest.exists(), "[SETUP] restored Target already stores %r" % STORED_TAG
+    for donor in _LDML_DONORS:
+        src = _PROJECTS_ROOT / donor / "WritingSystemStore" / ("%s.ldml" % STORED_TAG)
+        if src.is_file():
+            shutil.copyfile(src, dest)  # donor is only READ
+            return dest
+    pytest.fail("[FAIL] no %s.ldml under any donor project %s" % (STORED_TAG, _LDML_DONORS))
+
+
 @pytest.fixture(scope="module")
 def target():
     try:
@@ -64,6 +93,7 @@ def target():
     except Exception as exc:  # noqa: BLE001
         pytest.fail("[FAIL] FLEXLIBS_REQUIRE_LIVE=1 but flexicon is unavailable: %s" % exc)
     _restore()
+    _stage_inactive_ldml()
     from gramtrans.Lib.flexinit import ensure_flex_initialized
     ensure_flex_initialized()
     proj = FLExProject()
@@ -87,15 +117,21 @@ def _active(proj) -> set:
     return {str(w.Id).lower() for w in WritingSystemOperations(proj).GetAll()}
 
 
-def _stored_inactive(proj) -> list:
-    """Tags in the LDML store that are not active, if the store is enumerable."""
-    try:
-        wsm = proj.project.ServiceLocator.WritingSystemManager
-        stored = {str(ws.Id) for ws in wsm.WritingSystems}
-    except Exception:  # noqa: BLE001
-        return []
-    active = _active(proj)
-    return sorted(t for t in stored if t.lower() not in active)
+def _ops(proj):
+    from flexicon import WritingSystemOperations
+    return WritingSystemOperations(proj)
+
+
+def _store_files() -> list:
+    d = _PROJECTS_ROOT / TARGET_NAME / "WritingSystemStore"
+    return sorted(p.name for p in d.glob("*.ldml"))
+
+
+def _definition_count(proj, tag) -> int:
+    """How many WritingSystemDefinitions the live manager holds for `tag`,
+    re-queried every call (never cached)."""
+    wsm = proj.project.ServiceLocator.WritingSystemManager
+    return sum(1 for ws in wsm.WritingSystems if str(ws.Id).lower() == tag.lower())
 
 
 def _plan(*tags):
@@ -106,26 +142,60 @@ def _plan(*tags):
     return type("P", (), {"ws_mapping": mapping})()
 
 
-def test_preflight_and_move_agree_live(target):
+def test_preflight_and_move_create_and_skip_live(target):
     from gramtrans.Lib import api
     from gramtrans.Lib.ws_mapping import preflight_ws_creates
 
     active_before = _active(target)
     assert NEW_TAG not in active_before, "[SETUP] restored Target already has the tag"
     existing = sorted(active_before)[0]
-    inactive = _stored_inactive(target)[:1]
-    plan = _plan(NEW_TAG, existing, *inactive)
+    plan = _plan(NEW_TAG, existing)
 
     predicted = preflight_ws_creates(target, plan.ws_mapping)
     assert _active(target) == active_before, "[FAIL] Preview preflight changed the target"
-    assert [r.item_name for r in predicted] == inactive
-    assert all(r.severity == "warning" for r in predicted)
+    assert predicted == [], "[FAIL] Preview must say nothing for CREATE / ACTIVE tags"
 
     failures = []
     created = api._ensure_writing_systems(target, None, plan, failures)
 
     assert created == [NEW_TAG]
     assert NEW_TAG in _active(target), "[FAIL] created WS is not active"
-    assert failures == predicted, "[FAIL] Move's failures differ from Preview's prediction"
-    print("[PASS] created=%s existing-skipped=%s stored-inactive=%s"
-          % (created, existing, inactive or "(none in this Target)"))
+    assert failures == []
+    print("[PASS] created=%s existing-skipped=%s" % (created, existing))
+
+
+def test_stored_but_inactive_ws_is_activated_live(target):
+    from gramtrans.Lib import api
+    from gramtrans.Lib.ws_mapping import preflight_ws_creates
+
+    ops = _ops(target)
+    # --- before Move: really stored-but-inactive ---------------------------
+    assert ops.Exists(STORED_TAG) is False, "[FAIL] Exists() must be active-only"
+    assert ops.ExistsInStore(STORED_TAG) is True, "[SETUP] staged LDML not in the store"
+    assert STORED_TAG not in _active(target)
+    files_before = _store_files()
+    active_before = _active(target)
+    defs_before = _definition_count(target, STORED_TAG)
+    assert defs_before == 1
+
+    plan = _plan(STORED_TAG)
+    predicted = preflight_ws_creates(target, plan.ws_mapping)
+    assert [(r.item_name, r.severity) for r in predicted] == [(STORED_TAG, "info")]
+    assert "will activate stored writing system" in predicted[0].reason
+    assert _active(target) == active_before, "[FAIL] Preview changed the active set"
+    assert _store_files() == files_before, "[FAIL] Preview wrote to the store"
+    assert _definition_count(target, STORED_TAG) == defs_before
+
+    # --- Move --------------------------------------------------------------
+    failures = []
+    created = api._ensure_writing_systems(target, None, plan, failures)
+
+    # --- after Move: re-queried, not cached --------------------------------
+    assert created == [STORED_TAG]
+    assert failures == [], "[FAIL] activation emitted a failure record: %s" % failures
+    assert STORED_TAG in _active(target), "[FAIL] stored WS was not activated"
+    assert _ops(target).Exists(STORED_TAG) is True
+    assert _definition_count(target, STORED_TAG) == 1, "[FAIL] duplicate definition"
+    assert [f for f in _store_files() if f.lower().startswith(STORED_TAG)]         == ["%s.ldml" % STORED_TAG], "[FAIL] duplicate LDML written"
+    print("[PASS] stored-inactive %r: Preview info x1, Move activated, no failure"
+          % STORED_TAG)

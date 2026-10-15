@@ -15,7 +15,8 @@ from __future__ import annotations
 import enum
 import logging as _logging
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, is_dataclass
+from dataclasses import replace as _dc_replace
 from typing import Any, Callable, Optional
 
 
@@ -3745,6 +3746,10 @@ class ReferenceCardinality(enum.Enum):
     SEQUENCE = "sequence"    # ordered list, e.g. DialectLabelsRS
 
 
+#: Valid `DroppedItemRecord.severity` values (issue #78).
+DROP_SEVERITIES = ("info", "warning")
+
+
 @dataclass(frozen=True)
 class DroppedItemRecord:
     """FR-010 — the never-silent report unit.
@@ -3837,8 +3842,6 @@ class DroppedItemRecord:
                 f"got {self.severity!r}")
 
 
-DROP_SEVERITIES = ("info", "warning")
-
 
 def dropped_identity(record) -> tuple:
     """Issue #76: the "emitted exactly once" identity of a `DroppedItemRecord`.
@@ -3853,6 +3856,31 @@ def dropped_identity(record) -> tuple:
         f"{getattr(record, 'owner_kind', '')}:{getattr(record, 'owner_label', '')}")
     item = getattr(record, "item_guid", "") or getattr(record, "item_name", "")
     return (owner, getattr(record, "field_name", ""), item)
+
+
+def merge_dropped_records(existing, incoming) -> list:
+    """Append `incoming` to `existing` (both iterables of `DroppedItemRecord`),
+    de-duplicated on `dropped_identity`. On a collision the FIRST record is
+    kept, except that an "info" record is upgraded to "warning" when a later
+    colliding record is a warning -- severity must never be lost to ordering.
+    Returns a new list; inputs are not mutated."""
+    merged = list(existing)
+    index = {}
+    for i, d in enumerate(merged):
+        index.setdefault(dropped_identity(d), i)
+    for rec in incoming:
+        key = dropped_identity(rec)
+        if key not in index:
+            index[key] = len(merged)
+            merged.append(rec)
+            continue
+        i = index[key]
+        cur = merged[i]
+        if (getattr(cur, "severity", "info") != "warning"
+                and getattr(rec, "severity", "info") == "warning"
+                and is_dataclass(cur)):
+            merged[i] = _dc_replace(cur, severity="warning")
+    return merged
 
 
 @dataclass(frozen=True)

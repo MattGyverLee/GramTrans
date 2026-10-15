@@ -656,49 +656,112 @@ def active_ws_ids(tgt_ops) -> Optional[Set[str]]:
         return None
 
 
-#: `ws_create_state` outcomes.
-WS_ACTIVE = "active"      # already active in the target -- nothing to do
-WS_CREATE = "create"      # absent -- `Create` will be attempted
-WS_BLOCKED = "blocked"    # stored but not (verifiably) active -- cannot create
+#: `ws_create_state` outcomes (flexicon >= 4.8.0, issue #250).
+WS_ACTIVE = "active"            # already active in the target -- nothing to do
+WS_ACTIVATE = "activate"        # stored (LDML) but inactive -- `Create` activates it
+WS_CREATE = "create"            # absent everywhere -- `Create` makes a new one
+WS_UNDETERMINED = "undetermined"  # active set AND `Exists()` both failed
+
+_FLOOR_MSG = ("flexicon %s is too old: WritingSystemOperations.ExistsInStore is "
+              "missing. GramTrans requires pyflexicon>=4.8.0 (flexicon issue "
+              "#250: Exists() is active-only, Create() activates a stored "
+              "writing system, ExistsInStore() checks the LDML store). "
+              "Upgrade with: pip install -U \"pyflexicon>=4.8.0\"")
+
+
+def _flexicon_version() -> str:
+    try:
+        import flexicon
+        return str(getattr(flexicon, "__version__", "") or "(unknown version)")
+    except Exception:  # noqa: BLE001
+        return "(unknown version)"
+
+
+def ws_is_active(tgt_ops, tag: str) -> bool:
+    """True when `tag` is NOW active in the target: re-reads `GetAll()`
+    (never a cached set), falling back to `Exists()` when the list is
+    unreadable. False when neither can say."""
+    active = active_ws_ids(tgt_ops)
+    if active is not None:
+        return tag.lower() in active
+    try:
+        return bool(tgt_ops.Exists(tag))
+    except Exception:  # noqa: BLE001
+        _log.debug("ws_is_active: Exists(%r) failed", tag, exc_info=True)
+        return False
 
 
 def ws_create_state(tgt_ops, tag: str, active: Optional[Set[str]]) -> Tuple[str, str]:
     """Classify one `create_in_target` tag as `(state, reason)`; `reason` is
-    non-empty only for `WS_BLOCKED`. Shared by Move's `api._ensure_writing_
-    systems` and Preview's `preflight_ws_creates`, so Preview predicts exactly
-    the blocks Move then hits.
+    non-empty only for `WS_UNDETERMINED`. Shared by Move's `api._ensure_writing_
+    systems` and Preview's `preflight_ws_creates`.
 
-    "Present" means ACTIVE. `Exists()` scans the whole LDML store, so a tag
-    stored but not active is NOT present -- yet `Create` cannot add it either
-    (issue #44). When `active` is None the active list was unreadable, and a
-    stored tag is reported as unverifiable rather than trusted. An `Exists()`
-    failure classifies as `WS_CREATE`: `Create` is attempted and guards
-    itself."""
-    if active is not None and tag.lower() in active:
-        return WS_ACTIVE, ""
+    flexicon >= 4.8.0 semantics (issue #250): `Exists()` is ACTIVE-only,
+    `ExistsInStore()` checks the whole LDML store, and `Create()` REUSES a
+    stored-but-inactive LDML and only activates it.
+
+    * `WS_ACTIVE`   -- tag is in `active` (the `GetAll()` set), or, when
+      `active` is None, `Exists()` is True.
+    * `WS_ACTIVATE` -- not active but `ExistsInStore()` is True.
+    * `WS_CREATE`   -- absent everywhere.
+    * `WS_UNDETERMINED` -- `active` is None AND `Exists()` raised.
+
+    Raises RuntimeError (naming the floor) when flexicon lacks
+    `ExistsInStore`; there is deliberately no fallback to old behaviour."""
+    if active is not None:
+        if tag.lower() in active:
+            return WS_ACTIVE, ""
+    else:
+        try:
+            if tgt_ops.Exists(tag):
+                return WS_ACTIVE, ""
+        except Exception as exc:  # noqa: BLE001
+            _log.debug("ws_create_state: Exists(%r) failed with the active list "
+                       "unreadable", tag, exc_info=True)
+            return WS_UNDETERMINED, (f"could not determine whether '{tag}' is "
+                                     f"active ({type(exc).__name__}: {exc})")
+    probe = getattr(tgt_ops, "ExistsInStore", None)
+    if probe is None:
+        raise RuntimeError(_FLOOR_MSG % _flexicon_version())
     try:
-        in_store = bool(tgt_ops.Exists(tag))
+        in_store = bool(probe(tag))
     except Exception:  # noqa: BLE001
-        _log.debug("ws_create_state: Exists(%r) failed; will attempt Create",
+        _log.debug("ws_create_state: ExistsInStore(%r) failed; will attempt Create",
                    tag, exc_info=True)
         return WS_CREATE, ""
-    if not in_store:
-        return WS_CREATE, ""
-    if active is None:
-        return WS_BLOCKED, ("stored but not verifiably active -- if it is not "
-                            "active, activate in FLEx and re-run")
-    return WS_BLOCKED, "stored but not active -- activate in FLEx and re-run"
+    return (WS_ACTIVATE, "") if in_store else (WS_CREATE, "")
+
+
+def ws_activate_notice(tag: str) -> DroppedItemRecord:
+    """Preview's INFO record: `tag` is stored but inactive in the target and
+    Move will activate it (not create it). Not a loss, hence severity info."""
+    return DroppedItemRecord(
+        owner_kind="WritingSystem",
+        owner_guid="",
+        owner_label=tag,
+        field_name="activate_in_target",
+        item_name=tag,
+        item_guid="",
+        reason=f"will activate stored writing system '{tag}'",
+        severity="info",
+    )
 
 
 def preflight_ws_creates(target, ws_mapping) -> list:
-    """Issue #78: Preview's read-only prediction of the writing-system creates
-    `api._ensure_writing_systems` will fail at Move time, as warning-severity
-    `DroppedItemRecord`s -- so the user sees them BEFORE Move, not only in the
-    post-run report. Never writes (Principle III): it reads the active list
-    and `Exists()` only. A create LCM itself refuses (e.g. an unparseable tag)
-    cannot be predicted here and still surfaces at Move.
+    """Issue #78: Preview's read-only prediction of what
+    `api._ensure_writing_systems` will do, as `DroppedItemRecord`s:
 
-    Never raises; a target that cannot answer contributes nothing."""
+    * `WS_ACTIVATE`     -> INFO "will activate stored writing system 'x'"
+    * `WS_UNDETERMINED` -> WARNING (via `ws_create_failure`)
+    * `WS_ACTIVE` / `WS_CREATE` -> nothing.
+
+    Never writes (Principle III): it reads the active list, `Exists()` and
+    `ExistsInStore()` only. One record per tag, like Move (a tag repeated in
+    the mapping is simulated as active after its first pass). A create LCM
+    itself refuses cannot be predicted here and still surfaces at Move.
+
+    Fail-soft when flexicon cannot be constructed, but a flexicon below the
+    4.8.0 floor raises RuntimeError (loud)."""
     to_create = ws_entries_to_create(ws_mapping)
     if not to_create or target is None:
         return []
@@ -710,10 +773,18 @@ def preflight_ws_creates(target, ws_mapping) -> list:
                    exc, exc_info=True)
         return []
     active = active_ws_ids(tgt_ops)
+    seen: Set[str] = set()
     out = []
     for e in to_create:
         tag = str(e.target_ws_id)
+        if tag.lower() in seen:
+            continue
+        seen.add(tag.lower())
         state, reason = ws_create_state(tgt_ops, tag, active)
-        if state == WS_BLOCKED:
+        if state == WS_ACTIVATE:
+            out.append(ws_activate_notice(tag))
+        elif state == WS_UNDETERMINED:
             out.append(ws_create_failure(tag, reason))
+        if active is not None:
+            active.add(tag.lower())  # Move's Create/skip leaves it active
     return out

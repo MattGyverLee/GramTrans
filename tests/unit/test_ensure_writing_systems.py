@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import pytest
 
+from _fakes_ws import FakeWSOps, make_project
 from gramtrans.Lib import api as api_mod
 from gramtrans.Lib import transfer as transfer_mod
 from gramtrans.Lib.models import (
@@ -31,35 +32,7 @@ from gramtrans.Lib.models import (
 )
 
 
-class _FakeWS:
-    def __init__(self, ws_id: str) -> None:
-        self.Id = ws_id
-
-
-class _FakeWSOps:
-    """Stand-in for flexicon.WritingSystemOperations over a dict "project".
-
-    The project dict carries ``existing`` (list of WS Ids), ``created`` (list of
-    (tag, name, is_vernacular) tuples the pre-pass appends), and ``names``
-    (Id -> display name) for the source display-name lookup.
-    """
-
-    def __init__(self, proj: dict) -> None:
-        self.proj = proj
-
-    def GetAll(self):  # noqa: N802
-        return [_FakeWS(i) for i in self.proj["existing"]]
-
-    def Exists(self, tag):  # noqa: N802
-        return tag in self.proj["existing"]
-
-    def GetDisplayName(self, ws):  # noqa: N802
-        return self.proj.get("names", {}).get(ws.Id, "")
-
-    def Create(self, tag, name, is_vernacular=True):  # noqa: N802
-        self.proj["created"].append((tag, name, is_vernacular))
-        self.proj["existing"].append(tag)
-        return _FakeWS(tag)
+_FakeWSOps = FakeWSOps
 
 
 @pytest.fixture()
@@ -76,9 +49,9 @@ def stub_ws_ops(monkeypatch):
 
 def _plan(entries):
     ctx = RunContext(
-        source_handle={"existing": [], "created": [], "names": {}},
+        source_handle=make_project(names={}),
         source_project_name="S", source_project_path="",
-        target_handle={"existing": ["etu"], "created": [], "names": {}},
+        target_handle=make_project(["etu"], names={}),
         target_project_name="T", target_project_path="",
         run_id="GT-20260706-120000", started_at="2026-07-06T12:00:00",
     )
@@ -93,7 +66,7 @@ def test_creates_missing_audio_ws(stub_ws_ops):
         WSMappingEntry(source_ws_id="fr-Zxxx-x-audio", source_ws_kind=WSKind.VERNACULAR,
                        target_ws_id="fr-Zxxx-x-audio", create_in_target=True),
     ])
-    ctx.source_handle["existing"] = ["fr", "fr-Zxxx-x-audio"]
+    ctx.source_handle.update(make_project(["fr", "fr-Zxxx-x-audio"]))
     ctx.source_handle["names"] = {"fr-Zxxx-x-audio": "French (Audio)"}
 
     created = api_mod._ensure_writing_systems(ctx.target_handle, ctx.source_handle, plan)
@@ -108,7 +81,7 @@ def test_idempotent_skips_existing(stub_ws_ops):
         WSMappingEntry(source_ws_id="fr-Zxxx-x-audio", source_ws_kind=WSKind.VERNACULAR,
                        target_ws_id="fr-Zxxx-x-audio", create_in_target=True),
     ])
-    ctx.target_handle["existing"] = ["etu", "fr-Zxxx-x-audio"]  # already present
+    ctx.target_handle.update(make_project(["etu", "fr-Zxxx-x-audio"]))  # already active
 
     created = api_mod._ensure_writing_systems(ctx.target_handle, ctx.source_handle, plan)
 

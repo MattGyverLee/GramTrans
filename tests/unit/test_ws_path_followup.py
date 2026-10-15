@@ -153,7 +153,7 @@ def test_programming_error_in_create_propagates(base_store_ops, monkeypatch, exc
             raise exc("bug")
 
     monkeypatch.setattr("flexicon.WritingSystemOperations", _Ops, raising=False)
-    target = {"store": ["etu"], "active": ["etu"], "created": []}
+    target = base.make_project(["etu"])
     _, plan = base._ctx_plan(target, ["fr"])
     failures = []
     with pytest.raises(exc):
@@ -169,7 +169,7 @@ def base_store_ops(monkeypatch):
 
 
 def test_genuine_lcm_failure_is_still_a_drop(base_store_ops):
-    target = {"store": ["etu"], "active": ["etu"], "created": [], "refuse": ["fr"]}
+    target = base.make_project(["etu"], refuse=["fr"])
     _, plan = base._ctx_plan(target, ["fr"])
     failures = []
     api_mod._ensure_writing_systems(target, None, plan, failures)

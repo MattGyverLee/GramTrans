@@ -39,11 +39,13 @@ if __package__:
         WSKind,
         WSMapping,
         dropped_identity,
+        merge_dropped_records,
     )
     from .preview import build_run_plan
     from .ws_mapping import (
-        WS_ACTIVE, WS_BLOCKED, WSMappingIncomplete, active_ws_ids, is_complete,
-        required_ws_set, ws_create_failure, ws_create_state, ws_entries_to_create,
+        WS_ACTIVATE, WS_ACTIVE, WS_CREATE, WSMappingIncomplete, active_ws_ids,
+        is_complete, required_ws_set, ws_create_failure, ws_create_state,
+        ws_entries_to_create, ws_is_active,
     )
     from .debuglog import enable_from_env as _enable_debug_logging
 else:
@@ -60,11 +62,13 @@ else:
         WSKind,
         WSMapping,
         dropped_identity,
+        merge_dropped_records,
     )
     from preview import build_run_plan  # type: ignore
     from ws_mapping import (  # type: ignore
-        WS_ACTIVE, WS_BLOCKED, WSMappingIncomplete, active_ws_ids, is_complete,
-        required_ws_set, ws_create_failure, ws_create_state, ws_entries_to_create,
+        WS_ACTIVATE, WS_ACTIVE, WS_CREATE, WSMappingIncomplete, active_ws_ids,
+        is_complete, required_ws_set, ws_create_failure, ws_create_state,
+        ws_entries_to_create, ws_is_active,
     )
     from debuglog import enable_from_env as _enable_debug_logging  # type: ignore
 
@@ -850,18 +854,14 @@ def _attach_dropped_items(report, records):
     `_attach_leaf_warnings`.
 
     Issue #76: deduped on `models.dropped_identity` -- a record already in
-    the report, or repeated within `records`, is not appended again."""
+    the report, or repeated within `records`, is not appended again. On a
+    collision an "info" record is upgraded to "warning" when the later one is
+    a warning (`models.merge_dropped_records`)."""
     if not records or not is_dataclass(report):
         return report
     if "dropped_items" not in {f.name for f in _dc_fields(report)}:
         return report
-    merged = list(report.dropped_items)
-    seen = {dropped_identity(d) for d in merged}
-    for rec in records:
-        key = dropped_identity(rec)
-        if key not in seen:
-            seen.add(key)
-            merged.append(rec)
+    merged = merge_dropped_records(report.dropped_items, records)
     return _dc_replace(report, dropped_items=tuple(merged))
 
 
@@ -935,8 +935,9 @@ def _ensure_writing_systems(proj, source, plan, failures=None) -> list:
         return fallback
 
     # Shared with Preview's `ws_mapping.preflight_ws_creates` (issue #78):
-    # "present" means ACTIVE; a tag stored but not active cannot be created
-    # and is reported, never skipped silently (issue #44).
+    # "present" means ACTIVE (flexicon >= 4.8.0, issue #250: `Exists` is
+    # active-only). A tag stored but not active is WS_ACTIVATE: `Create`
+    # reuses the stored LDML and only activates it.
     active = active_ws_ids(tgt_ops)
 
     created: list = []
@@ -946,16 +947,26 @@ def _ensure_writing_systems(proj, source, plan, failures=None) -> list:
         if state == WS_ACTIVE:
             _log.debug("_ensure_writing_systems: WS %r already active; skip", tag)
             continue
-        if state == WS_BLOCKED:
-            _log.warning("_ensure_writing_systems: cannot create WS %r: %s", tag, why)
-            failures.append(_ws_create_failure(tag, why))
-            continue
+        if state == WS_ACTIVATE:
+            _log.info("_ensure_writing_systems: WS %r is stored but inactive; "
+                      "Create will activate it", tag)
+        elif state != WS_CREATE:  # WS_UNDETERMINED: still attempt, Create guards itself
+            _log.warning("_ensure_writing_systems: cannot determine state of WS %r: "
+                         "%s; attempting Create", tag, why)
         # By value (issue #75): the entry may carry the other import path's WSKind.
         kind = getattr(e, "source_ws_kind", WSKind.VERNACULAR)
         is_vern = getattr(kind, "value", kind) == WSKind.VERNACULAR.value
         name = _src_display_name(getattr(e, "source_ws_id", ""), tag)
         try:
             tgt_ops.Create(tag, name, is_vernacular=is_vern)
+            # Re-check: Create returning is not proof the tag is now active.
+            if not ws_is_active(tgt_ops, tag):
+                _log.warning("_ensure_writing_systems: WS %r is not active after "
+                             "Create (state=%s)", tag, state)
+                failures.append(_ws_create_failure(
+                    tag, "not active after Create (writing system could not be "
+                         "created or activated)"))
+                continue
             created.append(tag)
             if active is not None:
                 active.add(tag.lower())

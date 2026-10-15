@@ -21,6 +21,8 @@ from pathlib import Path
 
 import pytest
 
+import test_ws_path_fidelity as fidelity
+from _fakes_ws import FakeWS, FakeWSOps, FakeWSOpsNoStore, make_project
 from gramtrans.Lib import api as api_mod
 from gramtrans.Lib import config_views
 from gramtrans.Lib import ws_mapping as pkg_ws_mapping
@@ -36,6 +38,7 @@ from gramtrans.Lib.models import (
     WSMapping,
     WSMappingEntry,
     dropped_identity,
+    merge_dropped_records,
 )
 from gramtrans.Lib.report import render_text_summary, to_snapshot_json
 
@@ -123,29 +126,15 @@ def test_mapping_choice_validates_raw_values():
 
 @needs_flat
 def test_ensure_writing_systems_honours_flat_vernacular_kind(monkeypatch):
-    calls = []
-
-    class _Ops:
-        def __init__(self, proj):
-            pass
-
-        def GetAll(self):  # noqa: N802
-            return []
-
-        def Exists(self, tag):  # noqa: N802
-            return False
-
-        def Create(self, tag, name, is_vernacular=True):  # noqa: N802
-            calls.append((tag, is_vernacular))
-
-    monkeypatch.setattr("flexicon.WritingSystemOperations", _Ops, raising=False)
+    monkeypatch.setattr("flexicon.WritingSystemOperations", FakeWSOps, raising=False)
     monkeypatch.setattr(api_mod, "_persist_without_close", lambda proj, what: None)
+    target = make_project()
     entry = flat_models.WSMappingEntry(
         source_ws_id="mgz-fonipa", source_ws_kind=flat_models.WSKind.VERNACULAR,
         target_ws_id="mgz-fonipa", create_in_target=True)
     plan = type("P", (), {"ws_mapping": flat_models.WSMapping(entries=(entry,))})()
-    api_mod._ensure_writing_systems(object(), None, plan, [])
-    assert calls == [("mgz-fonipa", True)]
+    api_mod._ensure_writing_systems(target, None, plan, [])
+    assert target["created"] == [("mgz-fonipa", "mgz-fonipa", True)]
 
 
 # ============================================================================
@@ -195,40 +184,42 @@ def test_attach_dropped_items_dedupes():
         "a.fwdictconfig", "pt", "b.fwdictconfig"]
 
 
+def test_attach_upgrades_info_to_warning_on_collision():
+    info = DroppedItemRecord(owner_kind="WritingSystem", owner_guid="", owner_label="pt",
+                             field_name="create_in_target", item_name="pt", item_guid="",
+                             reason="meh", severity="info")
+    warn = pkg_ws_mapping.ws_create_failure("pt", "boom")
+    assert dropped_identity(info) == dropped_identity(warn)
+    out = api_mod._attach_dropped_items(_report(dropped=(info,)), [warn])
+    assert [(d.item_name, d.severity) for d in out.dropped_items] == [("pt", "warning")]
+    # Order must not matter, and the reverse never downgrades.
+    out2 = api_mod._attach_dropped_items(_report(dropped=(warn,)), [info])
+    assert [d.severity for d in out2.dropped_items] == ["warning"]
+    merged = merge_dropped_records([info], [warn, info])
+    assert [d.severity for d in merged] == ["warning"]
+
+
 # ============================================================================
 # #77 -- lazy api import in gramtrans.py has a package fallback
 # ============================================================================
 
-def test_lazy_api_import_has_package_fallback():
-    tree = ast.parse(_GRAMTRANS_PY.read_text(encoding="utf-8"))
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Try):
-            continue
-        body_mods = {n.module for n in node.body if isinstance(n, ast.ImportFrom)}
-        if "api" not in body_mods:
-            continue
-        handler_mods = {
-            n.module for h in node.handlers
-            if isinstance(h.type, ast.Name) and h.type.id == "ImportError"
-            for n in h.body if isinstance(n, ast.ImportFrom)
-        }
-        assert "gramtrans.Lib.api" in handler_mods
-        return
-    pytest.fail("no try/except ImportError around the lazy `from api import`")
-
-
-def test_no_bare_lazy_flat_api_import():
-    """Every `from api import` in gramtrans.py sits inside a try block."""
-    tree = ast.parse(_GRAMTRANS_PY.read_text(encoding="utf-8"))
-    guarded = set()
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Try):
-            for n in node.body:
-                if isinstance(n, ast.ImportFrom) and n.module == "api":
-                    guarded.add(id(n))
-    for node in ast.walk(tree):
-        if isinstance(node, ast.ImportFrom) and node.module == "api":
-            assert id(node) in guarded, f"unguarded `from api import` at line {node.lineno}"
+@pytest.mark.skipif(fidelity._gt is None,
+                    reason=f"gramtrans host imports unavailable: {fidelity._GT_IMPORT_ERROR}")
+def test_lazy_api_import_falls_back_to_package_path(monkeypatch, caplog):
+    """Force the flat `from api import ...` to raise ImportError (the host's
+    `Lib/` is not on sys.path) and prove the package path is used instead,
+    and that the first ImportError is logged rather than swallowed."""
+    import logging
+    monkeypatch.setitem(sys.modules, "api", None)  # `from api import x` -> ImportError
+    with pytest.raises(ImportError):
+        __import__("api")
+    with caplog.at_level(logging.DEBUG):
+        calls, result, report = fidelity.run_phase2_with_ws_failure(monkeypatch, api_mod)
+    # The fake was installed on the PACKAGE module, so it only runs if the
+    # fallback import supplied `_ensure_writing_systems` from there.
+    assert calls == ["ws", "execute"]
+    assert [d.item_name for d in result.dropped_items] == ["fr-Zxxx-x-audio"]
+    assert any("flat `from api import` failed" in r.getMessage() for r in caplog.records)
 
 
 # ============================================================================
@@ -242,27 +233,27 @@ def test_severity_defaults_to_info_and_is_validated():
                           item_name="", item_guid="", reason="r", severity="fatal")
 
 
-class _FakeWS:
-    def __init__(self, ws_id):
-        self.Id = ws_id
+_FakeWS = FakeWS
 
 
-class _PreflightOps:
-    """Read-only surface only: Create must never be called from Preview."""
-
-    def __init__(self, proj):
-        self.proj = proj
+class _PreflightOps(FakeWSOps):
+    """Real-flexicon semantics; Preview must stay read-only, so any write
+    (Create) fails the test. `proj["active"] is None` makes GetAll raise."""
 
     def GetAll(self):  # noqa: N802
-        if self.proj.get("active") is None:
+        if self.proj["active"] is None:
             raise RuntimeError("unreadable")
-        return [_FakeWS(i) for i in self.proj["active"]]
+        return super().GetAll()
 
     def Exists(self, tag):  # noqa: N802
-        return tag in self.proj["store"]
+        if self.proj.get("exists_raises"):
+            raise RuntimeError("Exists unreadable")
+        if self.proj["active"] is None:
+            return tag in self.proj["store"] and tag in self.proj.get("really_active", ())
+        return super().Exists(tag)
 
     def Create(self, *a, **k):  # noqa: N802
-        raise AssertionError("Preview must not create writing systems")
+        raise AssertionError("Preview must not create or activate writing systems")
 
 
 def _create_mapping(*tags):
@@ -274,32 +265,161 @@ def _create_mapping(*tags):
 @pytest.fixture()
 def preflight_ops(monkeypatch):
     monkeypatch.setattr("flexicon.WritingSystemOperations", _PreflightOps, raising=False)
+    monkeypatch.setattr(api_mod, "_persist_without_close", lambda proj, what: None)
 
 
-def test_preflight_predicts_stored_but_inactive(preflight_ops):
-    target = {"store": ["etu", "mgz-fonipa"], "active": ["etu"]}
+@pytest.fixture()
+def move_ops(monkeypatch):
+    monkeypatch.setattr("flexicon.WritingSystemOperations", FakeWSOps, raising=False)
+    monkeypatch.setattr(api_mod, "_persist_without_close", lambda proj, what: None)
+
+
+def test_preflight_activate_is_info_only(preflight_ops):
+    """ACTIVE and CREATE tags yield nothing; the stored-inactive one yields
+    exactly one INFO 'will activate' record."""
+    target = make_project(["etu"], store=["etu", "mgz-fonipa"])
+    before = {k: list(v) for k, v in target.items()}
     recs = pkg_ws_mapping.preflight_ws_creates(
         target, _create_mapping("etu", "mgz-fonipa", "pt"))
-    assert [(r.item_name, r.severity) for r in recs] == [("mgz-fonipa", "warning")]
-    assert "not active" in recs[0].reason
+    assert [(r.item_name, r.severity) for r in recs] == [("mgz-fonipa", "info")]
+    assert recs[0].reason == "will activate stored writing system 'mgz-fonipa'"
+    assert {k: list(v) for k, v in target.items()} == before, "Preview wrote"
 
 
-def test_preflight_unverifiable_active_list(preflight_ops):
-    target = {"store": ["mgz-fonipa"], "active": None}
+def test_preflight_dedupes_a_repeated_tag(preflight_ops):
+    target = make_project(["etu"], store=["etu", "mgz-fonipa"])
+    mapping = WSMapping(entries=(
+        WSMappingEntry("mgz-fonipa", WSKind.VERNACULAR, "mgz-fonipa", create_in_target=True),
+        WSMappingEntry("mgz-fonipa", WSKind.ANALYSIS, "mgz-fonipa", create_in_target=True),
+    ))
+    recs = pkg_ws_mapping.preflight_ws_creates(target, mapping)
+    assert len(recs) == 1
+
+
+def test_preflight_cannot_determine_is_a_warning(preflight_ops):
+    target = make_project(["x"], store=["mgz-fonipa"], exists_raises=True)
+    target["active"] = None  # GetAll raises AND Exists raises
     recs = pkg_ws_mapping.preflight_ws_creates(target, _create_mapping("mgz-fonipa"))
-    assert len(recs) == 1 and "not verifiably active" in recs[0].reason
+    assert [(r.item_name, r.severity) for r in recs] == [("mgz-fonipa", "warning")]
+    assert "could not determine" in recs[0].reason
 
 
-def test_preflight_matches_move_failure(preflight_ops, monkeypatch):
-    """Preview predicts exactly the record Move then emits."""
-    monkeypatch.setattr(api_mod, "_persist_without_close", lambda proj, what: None)
-    target = {"store": ["mgz-fonipa"], "active": []}
-    mapping = _create_mapping("mgz-fonipa")
-    predicted = pkg_ws_mapping.preflight_ws_creates(target, mapping)
-    failures = []
+def test_preflight_unreadable_active_list_falls_back_to_exists(preflight_ops):
+    target = make_project(store=["mgz-fonipa", "es"], really_active=["es"])
+    target["active"] = None
+    recs = pkg_ws_mapping.preflight_ws_creates(
+        target, _create_mapping("es", "mgz-fonipa", "pt"))
+    assert [(r.item_name, r.severity) for r in recs] == [("mgz-fonipa", "info")]
+
+
+def test_preflight_missing_exists_in_store_fails_loudly(monkeypatch):
+    monkeypatch.setattr("flexicon.WritingSystemOperations", FakeWSOpsNoStore, raising=False)
+    target = make_project(["etu"])
+    with pytest.raises(RuntimeError, match=r"pyflexicon>=4\.8\.0"):
+        pkg_ws_mapping.preflight_ws_creates(target, _create_mapping("pt"))
+
+
+@pytest.mark.parametrize("tag, store, expected", [
+    ("etu", ["etu"], pkg_ws_mapping.WS_ACTIVE),
+    ("mgz", ["etu", "mgz"], pkg_ws_mapping.WS_ACTIVATE),
+    ("pt", ["etu"], pkg_ws_mapping.WS_CREATE),
+])
+def test_ws_create_state_outcomes(tag, store, expected):
+    proj = make_project(["etu"], store=store)
+    ops = FakeWSOps(proj)
+    active = pkg_ws_mapping.active_ws_ids(ops)
+    assert pkg_ws_mapping.ws_create_state(ops, tag, active) == (expected, "")
+
+
+def test_ws_create_state_active_set_none_uses_exists():
+    proj = make_project(["etu"], store=["etu", "mgz"])
+    ops = FakeWSOps(proj)
+    assert pkg_ws_mapping.ws_create_state(ops, "etu", None)[0] == pkg_ws_mapping.WS_ACTIVE
+    assert pkg_ws_mapping.ws_create_state(ops, "mgz", None)[0] == pkg_ws_mapping.WS_ACTIVATE
+
+
+def test_ws_create_state_undetermined_only_when_both_fail():
+    class _Ops(FakeWSOps):
+        def GetAll(self):  # noqa: N802
+            raise RuntimeError("x")
+
+        def Exists(self, tag):  # noqa: N802
+            raise RuntimeError("y")
+
+    state, why = pkg_ws_mapping.ws_create_state(_Ops(make_project()), "pt", None)
+    assert state == pkg_ws_mapping.WS_UNDETERMINED and "could not determine" in why
+
+
+def test_ws_create_state_missing_exists_in_store_names_the_floor():
+    ops = FakeWSOpsNoStore(make_project(["etu"]))
+    with pytest.raises(RuntimeError, match=r"4\.8\.0"):
+        pkg_ws_mapping.ws_create_state(ops, "pt", {"etu"})
+
+
+def test_ws_blocked_is_gone():
+    assert not hasattr(pkg_ws_mapping, "WS_BLOCKED")
+    assert not hasattr(api_mod, "WS_BLOCKED")
+
+
+def _move(target, tags, failures):
+    mapping = _create_mapping(*tags)
     plan = type("P", (), {"ws_mapping": mapping})()
-    api_mod._ensure_writing_systems(target, None, plan, failures)
-    assert predicted == failures
+    return api_mod._ensure_writing_systems(target, None, plan, failures)
+
+
+def test_move_activates_stored_ws_without_failure(move_ops):
+    target = make_project(["etu"], store=["etu", "mgz-fonipa"])
+    failures = []
+    created = _move(target, ["mgz-fonipa"], failures)
+    assert created == ["mgz-fonipa"]
+    assert failures == []
+    assert target["activated"] == ["mgz-fonipa"] and target["created"] == []
+    assert target["active"].count("mgz-fonipa") == 1
+
+
+def test_move_creates_absent_ws(move_ops):
+    target = make_project(["etu"])
+    failures = []
+    assert _move(target, ["pt"], failures) == ["pt"]
+    assert failures == [] and [c[0] for c in target["created"]] == ["pt"]
+
+
+def test_move_skips_active_ws(move_ops):
+    target = make_project(["etu"])
+    failures = []
+    assert _move(target, ["etu"], failures) == []
+    assert failures == [] and target["created"] == [] and target["activated"] == []
+
+
+def test_move_reports_when_still_inactive_after_create(move_ops):
+    target = make_project(["etu"], store=["etu", "mgz"], no_activate=["mgz"])
+    failures = []
+    assert _move(target, ["mgz"], failures) == []
+    assert [(f.item_name, f.severity) for f in failures] == [("mgz", "warning")]
+    assert "not active after Create" in failures[0].reason
+
+
+def test_move_duplicate_tag_is_created_once(move_ops):
+    target = make_project(["etu"], store=["etu", "mgz"])
+    failures = []
+    assert _move(target, ["mgz", "mgz"], failures) == ["mgz"]
+    assert target["activated"] == ["mgz"] and failures == []
+
+
+def test_move_missing_exists_in_store_fails_loudly(monkeypatch):
+    monkeypatch.setattr("flexicon.WritingSystemOperations", FakeWSOpsNoStore, raising=False)
+    with pytest.raises(RuntimeError, match=r"pyflexicon>=4\.8\.0"):
+        _move(make_project(["etu"]), ["pt"], [])
+
+
+def test_preview_and_move_agree_for_stored_ws(preflight_ops, monkeypatch):
+    """Preview announces the activation; Move performs it with no failure."""
+    target = make_project(["etu"], store=["etu", "mgz-fonipa"])
+    recs = pkg_ws_mapping.preflight_ws_creates(target, _create_mapping("mgz-fonipa"))
+    failures = []
+    monkeypatch.setattr("flexicon.WritingSystemOperations", FakeWSOps, raising=False)
+    _move(target, ["mgz-fonipa"], failures)
+    assert len(recs) == 1 and recs[0].severity == "info" and failures == []
 
 
 def test_preflight_is_fail_soft(monkeypatch):
@@ -315,7 +435,7 @@ def test_preflight_is_fail_soft(monkeypatch):
 
 def test_build_run_plan_carries_preflight_warnings(monkeypatch):
     from gramtrans.Lib import preview
-    sentinel = pkg_ws_mapping.ws_create_failure("mgz-fonipa", "stored but not active")
+    sentinel = pkg_ws_mapping.ws_activate_notice("mgz-fonipa")
     seen = {}
 
     def _fake_preflight(target, ws_mapping):
@@ -451,3 +571,46 @@ def test_no_collision_leaves_plan_untouched(tmp_path):
     records = config_views.plan_config_views(src, tgt)
     assert sorted(r.filename for r in records) == ["en.fwdictconfig", "fr.fwdictconfig"]
     assert all(not r.missing_refs for r in records)
+
+
+def test_three_way_collision_name_match_wins(tmp_path):
+    # Sorted listing is en-x-a, en-x-b, en -- the name match is LAST, so
+    # winning proves it beats "first in order".
+    for ws in ("en", "en-x-a", "en-x-b"):
+        _rev_file(tmp_path / "Src", ws)
+    src = _CVProject(tmp_path / "Src", ["en", "en-x-a", "en-x-b"])
+    tgt = _CVProject(tmp_path / "Tgt", ["en"])
+    assert config_views._list_fwdictconfig(
+        str(tmp_path / "Src" / "ConfigurationSettings" / "ReversalIndex")
+    ) == ["en-x-a.fwdictconfig", "en-x-b.fwdictconfig", "en.fwdictconfig"]
+
+    records = config_views.plan_config_views(
+        src, tgt, ws_map={"en-x-a": "en", "en-x-b": "en"})
+
+    rev = [r for r in records if r.kind == "ReversalIndex"]
+    assert [r.filename for r in rev] == ["en.fwdictconfig"]
+    losers = [d for d in rev[0].missing_refs if d.field_name == "filename"]
+    assert sorted(d.owner_label for d in losers) == [
+        "en-x-a.fwdictconfig", "en-x-b.fwdictconfig"]
+    assert all(d.severity == "warning" for d in losers)
+
+
+def test_three_way_collision_without_name_match_first_sorted_wins(tmp_path):
+    for ws in ("en-x-c", "en-x-a", "en-x-b"):
+        _rev_file(tmp_path / "Src", ws)
+    src = _CVProject(tmp_path / "Src", ["en-x-a", "en-x-b", "en-x-c"])
+    tgt = _CVProject(tmp_path / "Tgt", ["fr"])
+
+    records = config_views.plan_config_views(
+        src, tgt, ws_map={"en-x-a": "fr", "en-x-b": "fr", "en-x-c": "fr"})
+
+    rev = [r for r in records if r.kind == "ReversalIndex"]
+    assert [r.filename for r in rev] == ["en-x-a.fwdictconfig"]
+    losers = [d for d in rev[0].missing_refs if d.field_name == "filename"]
+    assert sorted(d.owner_label for d in losers) == [
+        "en-x-b.fwdictconfig", "en-x-c.fwdictconfig"]
+    assert all(d.severity == "warning" for d in losers)
+    landed = []
+    config_views.apply_config_views(records, landed)
+    assert os.listdir(tmp_path / "Tgt" / "ConfigurationSettings" / "ReversalIndex") \
+        == ["fr.fwdictconfig"]
