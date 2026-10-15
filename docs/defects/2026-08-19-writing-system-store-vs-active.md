@@ -521,6 +521,15 @@ create. Correction posted to GramTrans
 [#43](https://github.com/MattGyverLee/GramTrans/issues/43#issuecomment-5338263276); title
 amended to drop "100% dead"; issue deliberately left OPEN.
 
+**Resolution (2026-10-15, closes #43):** the dead `WritingSystems.Add` block and its
+catch-all `except` were deleted from `ws_wizard.py`; the wizard now only records the
+CREATE choice and never touches the target (pinned by
+`tests/unit/test_ws_wizard_create_records_only.py`). Creation stays solely with
+`_ensure_writing_systems`. The latent gap is unchanged: `phase2_interactive_move` still
+calls `transfer.execute` directly (`gramtrans.py:581`), so if it is ever revived its
+CREATE choices would not be created -- route it through `api.execute_move` (or call
+`_ensure_writing_systems`) first.
+
 ## #2 — store-vs-active — confirmed FIRING, with a named reproduction
 
 Section (C) filed this as LATENT / never-fired. It is not latent.
