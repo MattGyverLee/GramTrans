@@ -150,9 +150,19 @@ def test_duplicate_guid_complex_feature_site(target):
     import types
     from gramtrans.Lib import categories
 
-    # Target has no feature defs; ANY live object's GUID collides in the
-    # cache-wide identity map, so reuse an existing phoneme's.
-    dup = _existing_phoneme_guid(_phoneme_set(target)).lower()
+    # Issue #71: a TRUE feature-on-feature collision. The restored Target
+    # backup has no feature definitions (and the backup file is deliberately
+    # left untouched), so the setup creates one on the restored Target here and
+    # then asks the production path to create a source complex feature carrying
+    # that very GUID.
+    from System import Guid as DotNetGuid
+    from SIL.LCModel import IFsComplexFeatureFactory
+    cache = target.Cache
+    feature_system = cache.LangProject.MsFeatureSystemOA
+    existing = cache.ServiceLocator.GetService(IFsComplexFeatureFactory).Create(
+        DotNetGuid.NewGuid())
+    feature_system.FeaturesOC.Add(existing)
+    dup = str(existing.Guid).lower()
     src_feat = types.SimpleNamespace(guid=dup, ClassName="FsComplexFeature")
     source = types.SimpleNamespace(InflectionFeatures=types.SimpleNamespace(
         FeatureGetAll=lambda: [src_feat]))
@@ -166,4 +176,8 @@ def test_duplicate_guid_complex_feature_site(target):
     assert "identical GUID" in msg
     assert "does not support" not in msg
     assert dup in msg
+    # Issue #71: only the first line of the .NET message is surfaced (no
+    # stack-trace line), with the exception type kept.
+    assert "\n" not in msg
+    assert "   at " not in msg
     assert ei.value.__cause__ is not None

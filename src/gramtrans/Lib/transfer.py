@@ -22,6 +22,9 @@ _log = logging.getLogger(__name__)
 
 if __package__:
     from .models import (
+        ActionOutcome,
+        OUTCOME_FAILED,
+        OUTCOME_SKIPPED,
         DroppedItemRecord,
         GrammarCategory,
         LeafExecutionFailure,
@@ -50,6 +53,9 @@ if __package__:
     from . import report as _report_module  # registers RunReport.build_from_plan
 else:
     from models import (
+        ActionOutcome,
+        OUTCOME_FAILED,
+        OUTCOME_SKIPPED,
         DroppedItemRecord,
         GrammarCategory,
         LeafExecutionFailure,
@@ -323,6 +329,12 @@ def execute(plan: RunPlan, source, target, report_sink, tag: ImportResidueTag,
     # "139 planned, 98 written, 41 swallowed" -- the swallow-and-continue
     # policy itself is unchanged, only the report's truthfulness.
     _leaf_execution_failures: list = []
+    # Issue #68: (category, source_guid) of every leaf action that did NOT
+    # end in a write (raised, or explicitly declined via `ActionOutcome`).
+    # `RunReport.build_from_plan(not_added=...)` subtracts them from `added`
+    # so the report counts OUTCOMES, not the plan.
+    _not_added: list = []
+    _declined_skips: list = []
 
     # Build index of source actions for quick lookup of pulled-in flag.
     # plan.actions is heterogeneous: CreateDefinitionAction has no
@@ -652,11 +664,40 @@ def execute(plan: RunPlan, source, target, report_sink, tag: ImportResidueTag,
                     "creation is not permitted: " + _dest.detail
                 )
             object.__setattr__(exec_ctx, '_planned_destination', _dest)
-            bundle["execute_action"](action, exec_ctx, ws_map, tag)
+            _result = bundle["execute_action"](action, exec_ctx, ws_map, tag)
+            # Issue #68: an explicit ActionOutcome decline is honoured; any
+            # other return (None, the created object) counts as added, as it
+            # always did.
+            if (isinstance(_result, ActionOutcome)
+                    and _result.status in (OUTCOME_SKIPPED, OUTCOME_FAILED)):
+                _not_added.append((action.category, action.source_guid))
+                _log.warning(
+                    "execute leaf-dispatch: action %s category=%s guid=%s: %s",
+                    _result.status, action.category.value,
+                    action.source_guid, _result.reason,
+                )
+                if _result.status == OUTCOME_FAILED:
+                    leaf_failed += 1
+                    _leaf_execution_failures.append(LeafExecutionFailure(
+                        category=action.category,
+                        source_guid=action.source_guid,
+                        exception_type="ActionFailed",
+                        message=_result.reason,
+                    ))
+                elif not _result.recorded:
+                    _declined_skips.append(Skip(
+                        category=action.category,
+                        source_guid=action.source_guid,
+                        reason=_result.skip_reason
+                        or SkipReason.DEPENDENCY_UNRESOLVED,
+                        detail=_result.reason,
+                    ))
+                continue
             leaf_count += 1
             leaf_succeeded += 1
         except Exception as exc:
             leaf_failed += 1
+            _not_added.append((action.category, action.source_guid))
             # Persist diagnostics: the original code only funneled this into a
             # report_sink.Warning, which the export path discards via a
             # _NullReportSink. Emit the full traceback so the swallowed failure
@@ -788,20 +829,22 @@ def execute(plan: RunPlan, source, target, report_sink, tag: ImportResidueTag,
     # Fold any tail-block skips (17.1 / post-pass A) into the report.
     if _exec_skips:
         extra_skips.extend(_exec_skips)
+    # Issue #68: skips the engine recorded for handlers that declined.
+    if _declined_skips:
+        extra_skips.extend(_declined_skips)
 
     elapsed = time.time() - start
-    # Persist diagnostics: the report is built from the PLAN, not from what was
-    # actually written. If attempted != succeeded (or failures > 0) the report
-    # will still count the full plan as "added" — surface that discrepancy.
+    # Persist diagnostics. Issue #68: the report's `added` counts are built
+    # from dispatch OUTCOMES (`not_added=` below), not from the plan.
     _log.debug(
         "execute: leaf-dispatch counts  attempted=%d succeeded=%d failed=%d "
-        "vs len(plan.actions)=%d  (RunReport is built from the PLAN, so "
-        "swallowed write failures do NOT reduce the reported 'added' count)",
-        leaf_attempted, leaf_succeeded, leaf_failed, len(plan.actions),
+        "not_added=%d vs len(plan.actions)=%d",
+        leaf_attempted, leaf_succeeded, leaf_failed, len(_not_added),
+        len(plan.actions),
     )
-    # Build the report from the plan. If every action ran without raising,
-    # the FR-018 invariant on RunReport.__post_init__ passes by construction
-    # (every PlannedAction → +1 added, every plan.Skip → +1 skipped).
+    # Build the report from the plan, minus the leaf actions that raised or
+    # declined (#68). Every plan.Skip → +1 skipped; every declined action
+    # contributes its own Skip, so FR-018 still holds by construction.
     # Feature 024 (T023, FR-013): per-object FidelityStatus (FULL/PARTIAL)
     # computed from the same `_dropped` collector -- see
     # `categories.compute_fidelity_by_guid`'s docstring for the FULL-by-
@@ -850,6 +893,7 @@ def execute(plan: RunPlan, source, target, report_sink, tag: ImportResidueTag,
         # the report at all (per_category[*].added is computed from the
         # PLAN, not actual write outcomes).
         extra_leaf_execution_failures=tuple(_leaf_execution_failures),
+        not_added=tuple(_not_added),
         # Feature 038 (T060, US5): what the entry closure's process-rule
         # executor did with each MoAffixProcess it met -- rebuilt, with its
         # input and output content recorded, or skipped with the reason

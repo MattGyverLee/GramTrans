@@ -57,6 +57,7 @@ from typing import Iterable, Tuple
 if __package__:
     from .models import (
         dropped_identity as _dropped_identity,
+        ActionOutcome,
         AffixSlotLinkOutcome,
         AffixSlotLinkRecord,
         CreateDefinitionAction,
@@ -89,6 +90,7 @@ if __package__:
 else:
     from models import (  # type: ignore
         dropped_identity as _dropped_identity,
+        ActionOutcome,
         AffixSlotLinkOutcome,
         AffixSlotLinkRecord,
         CreateDefinitionAction,
@@ -1357,7 +1359,7 @@ def gram_categories_execute_action(action: PlannedAction, context: RunContext, w
             src_obj = pos
             break
     if src_obj is None:
-        return None
+        return ActionOutcome.skipped("source object %s not found in the source project" % src_guid)
 
     cache = getattr(target, "Cache")
     ws = cache.DefaultAnalWs
@@ -1439,7 +1441,7 @@ def gram_categories_execute_action(action: PlannedAction, context: RunContext, w
                 context, action.category, src_guid, src_owner_guid,
                 "part of speech",
             )
-            return None
+            return ActionOutcome.skipped("owner part of speech not present in the destination (reported via exec_skips)", recorded=True)
         try:
             new_pos = factory.Create(parsed_guid, target_parent)
         except Exception as e:
@@ -1720,7 +1722,7 @@ def inflection_features_execute_action(action: PlannedAction, context: RunContex
                 src_feat = f
                 break
         if src_feat is None:
-            return None
+            return ActionOutcome.skipped("source object %s not found in the source project" % src_guid)
 
         cache = getattr(target, "Cache")
         ws = cache.DefaultAnalWs
@@ -1753,7 +1755,7 @@ def inflection_features_execute_action(action: PlannedAction, context: RunContex
                         detail=(f"IFsComplexFeatureFactory not importable on this "
                                 f"LCM build; cannot create complex feature {src_guid}"),
                     ))
-                return None
+                return ActionOutcome.skipped("IFsComplexFeatureFactory not importable on this LCM build", skip_reason=SkipReason.UNSUPPORTED_LCM_TYPE, recorded=exec_skips is not None)
 
             complex_factory = sl.GetService(IFsComplexFeatureFactory)
 
@@ -1838,7 +1840,7 @@ def inflection_features_execute_action(action: PlannedAction, context: RunContex
                             "inflection features have no closed value set and "
                             "are not supported by this transfer path"),
                 ))
-            return None
+            return ActionOutcome.skipped("open/complex feature not supported on this path (reported via exec_skips)", skip_reason=SkipReason.NEEDS_MANUAL, recorded=exec_skips is not None)
 
         # ------------------------------------------------------------
         # CLOSED FEATURE branch (default / existing GOLD working path).
@@ -1869,7 +1871,7 @@ def inflection_features_execute_action(action: PlannedAction, context: RunContex
                             "IFsClosedFeature; complex/open feature transfer is "
                             "not supported by this path"),
                 ))
-            return None
+            return ActionOutcome.skipped("feature type not supported on this path (reported via exec_skips)", skip_reason=SkipReason.UNSUPPORTED_LCM_TYPE, recorded=exec_skips is not None)
 
         factory = sl.GetService(IFsClosedFeatureFactory)
 
@@ -2475,7 +2477,7 @@ def inflection_classes_execute_action(action: PlannedAction, context: RunContext
         if src_obj is not None:
             break
     if src_obj is None:
-        return None
+        return ActionOutcome.skipped("source object %s not found in the source project" % src_guid)
 
     # Resolve the same POS on the target side: identity first, then the
     # roster-admitted natural key (T032). The source OBJECT is passed because
@@ -2489,7 +2491,7 @@ def inflection_classes_execute_action(action: PlannedAction, context: RunContext
             context, GrammarCategory.INFLECTION_CLASSES, src_guid,
             src_owner_pos_guid, "inflection class",
         )
-        return None
+        return ActionOutcome.skipped("owner part of speech not present in the destination (reported via exec_skips)", recorded=True)
 
     cache = getattr(target, "Cache")
     ws = cache.DefaultAnalWs
@@ -2665,7 +2667,7 @@ def feature_struct_types_execute_action(
         log.warning(
             "feature_struct_types_execute_action: source type GUID %s not found.", src_guid
         )
-        return None
+        return ActionOutcome.skipped("source object %s not found in the source project" % src_guid)
 
     # Target feature system.
     try:
@@ -2675,7 +2677,7 @@ def feature_struct_types_execute_action(
         log.warning(
             "feature_struct_types_execute_action: LCM import failed: %s", e
         )
-        return None
+        return ActionOutcome.failed("LCM import failed; feature structure type %s not created" % src_guid)
 
     try:
         tgt_cache = getattr(target, "Cache")
@@ -2693,7 +2695,7 @@ def feature_struct_types_execute_action(
         log.error(
             "feature_struct_types_execute_action: failed to create type %s: %r", src_guid, e
         )
-        return None
+        return ActionOutcome.failed("failed to create feature structure type %s: %r" % (src_guid, e))
 
     # Copy Name / Abbreviation / Description multistrings (WS-mapped).
     ws_map = _ws_map_dict(ws_mapping)
@@ -2905,7 +2907,7 @@ def phon_feat_types_execute_action(
         log.warning(
             "phon_feat_types_execute_action: source type GUID %s not found.", src_guid
         )
-        return None
+        return ActionOutcome.skipped("source object %s not found in the source project" % src_guid)
 
     # Target feature system.
     try:
@@ -2915,7 +2917,7 @@ def phon_feat_types_execute_action(
         log.warning(
             "phon_feat_types_execute_action: LCM import failed: %s", e
         )
-        return None
+        return ActionOutcome.failed("LCM import failed; feature structure type %s not created" % src_guid)
 
     try:
         tgt_cache = getattr(target, "Cache")
@@ -2933,7 +2935,7 @@ def phon_feat_types_execute_action(
         log.error(
             "phon_feat_types_execute_action: failed to create type %s: %r", src_guid, e
         )
-        return None
+        return ActionOutcome.failed("failed to create feature structure type %s: %r" % (src_guid, e))
 
     # Copy Name / Abbreviation / Description multistrings (WS-mapped).
     ws_map = _ws_map_dict(ws_mapping)
@@ -3124,7 +3126,7 @@ def pos_inflectable_feats_execute_action(action: PlannedAction, context: RunCont
     target = context.target_handle
     src_compound = action.source_guid
     if "::" not in src_compound:
-        return None
+        return ActionOutcome.skipped("malformed compound GUID %r (expected pos::feat)" % (src_compound,))
     pos_guid, feat_guid = src_compound.split("::", 1)
 
     # Resolve the target POS: identity first, then the natural key (T032).
@@ -3141,7 +3143,7 @@ def pos_inflectable_feats_execute_action(action: PlannedAction, context: RunCont
             context, GrammarCategory.POS_INFLECTABLE_FEATS, src_compound,
             pos_guid, "inflectable-feature link",
         )
-        return None
+        return ActionOutcome.skipped("owner part of speech not present in the destination (reported via exec_skips)", recorded=True)
 
     # Resolve the target feature defn by GUID in MsFeatureSystemOA.FeaturesOC.
     cache = getattr(target, "Cache")
@@ -3158,7 +3160,7 @@ def pos_inflectable_feats_execute_action(action: PlannedAction, context: RunCont
             "matching target defn by GUID -- skipping (run inflection_features first).",
             feat_guid,
         )
-        return None
+        return ActionOutcome.skipped("source feature definition %s has no matching target definition by GUID (run inflection_features first)" % feat_guid)
 
     target_pos_obj = IPartOfSpeech(target_pos)
     target_pos_obj.InflectableFeatsRC.Add(target_feat)
@@ -3287,13 +3289,16 @@ def stem_names_execute_action(action: PlannedAction, context: RunContext, ws_map
         if src_obj is not None:
             break
     if src_obj is None:
-        return None
+        return ActionOutcome.skipped("source object %s not found in the source project" % src_guid)
 
     # Find target owner POS -- identity first, then the natural key (T095).
     target_pos = _target_pos_for_source_guid(
         context, target, src_owner_pos_guid, src_pos=src_owner_pos)
     if target_pos is None:
-        return None  # Owner POS not in target; dependency unresolved.
+        return ActionOutcome.skipped(
+            "stem name %s was not transferred: its owner part of speech %s is "
+            "not present in the destination and could not be matched"
+            % (src_guid, src_owner_pos_guid))
 
     cache = getattr(target, "Cache")
     ws = cache.DefaultAnalWs
@@ -3449,14 +3454,14 @@ def exception_features_execute_action(action: PlannedAction, context: RunContext
     target = context.target_handle
     src_compound = action.source_guid
     if "::" not in src_compound:
-        return None
+        return ActionOutcome.skipped("malformed compound GUID %r (expected pos::value)" % (src_compound,))
     pos_guid, val_guid = src_compound.split("::", 1)
 
     # Find target POS -- identity first, then the natural key (T095), the
     # same resolution its plan-time twin above makes.
     target_pos = _target_pos_for_source_guid(context, target, pos_guid)
     if target_pos is None:
-        return None  # POS not yet in target.
+        return ActionOutcome.skipped("owner part of speech %s not present in the destination" % pos_guid)
 
     # Find target IFsSymFeatVal by GUID in the feature system.
     cache = getattr(target, "Cache")
@@ -3475,7 +3480,7 @@ def exception_features_execute_action(action: PlannedAction, context: RunContext
         if target_val is not None:
             break
     if target_val is None:
-        return None  # Value not in target; inflection_features must run first.
+        return ActionOutcome.skipped("feature value %s not present in the destination (inflection_features must run first)" % val_guid)
 
     target_pos.ExceptionFeaturesOC.Add(target_val)
     return target_val
@@ -3721,7 +3726,7 @@ def variant_types_execute_action(action, context, ws_mapping, tag):
             src_obj = vt
             break
     if src_obj is None:
-        return None
+        return ActionOutcome.skipped("source object %s not found in the source project" % src_guid)
 
     cache = getattr(target, "Cache")
     ws = cache.DefaultAnalWs
@@ -3767,10 +3772,7 @@ def variant_types_execute_action(action, context, ws_mapping, tag):
     try:
         new_vt = factory.Create(parsed_guid)
     except Exception as e:
-        raise RuntimeError(
-            f"{factory_label}.Create(Guid) failed for "
-            f"{src_guid}: {e!r}"
-        ) from e
+        raise _create_guid_failure(factory_label, src_guid, e) from e
 
     if src_owner_guid:
         target_parent_raw = None
@@ -3902,7 +3904,7 @@ def complex_form_types_execute_action(action, context, ws_mapping, tag):
             src_obj = cft
             break
     if src_obj is None:
-        return None
+        return ActionOutcome.skipped("source object %s not found in the source project" % src_guid)
 
     cache = getattr(target, "Cache")
     ws = cache.DefaultAnalWs
@@ -3942,9 +3944,7 @@ def complex_form_types_execute_action(action, context, ws_mapping, tag):
     try:
         new_cft = factory.Create(parsed_guid)
     except Exception as e:
-        raise RuntimeError(
-            f"{factory_label}.Create(Guid) failed for {src_guid}: {e!r}"
-        ) from e
+        raise _create_guid_failure(factory_label, src_guid, e) from e
 
     if src_owner_guid:
         target_parent_raw = None
@@ -4059,7 +4059,7 @@ def semantic_domains_execute_action(action, context, ws_mapping, tag):
             src_obj = sd
             break
     if src_obj is None:
-        return None
+        return ActionOutcome.skipped("source object %s not found in the source project" % src_guid)
 
     cache = getattr(target, "Cache")
     ws = cache.DefaultAnalWs
@@ -4100,9 +4100,7 @@ def semantic_domains_execute_action(action, context, ws_mapping, tag):
     try:
         new_sd = factory.Create(parsed_guid)
     except Exception as e:
-        raise RuntimeError(
-            f"ICmSemanticDomainFactory.Create(Guid) failed for {src_guid}: {e!r}"
-        ) from e
+        raise _create_guid_failure("ICmSemanticDomainFactory", src_guid, e) from e
 
     if src_owner_guid:
         target_parent_raw = None
@@ -11528,9 +11526,16 @@ def _create_entryref_container(target, ref_guid):
     same shape as this file's `ILexEntryTypeFactory`/`ILexEntryInflTypeFactory`
     raw-factory call sites).
 
-    Returns `None` (never raises) when the interface/factory is unavailable
-    or `Create` fails, so the caller can degrade to report-only (contract C1
-    "Errors": Principle II graceful degrade, never crash the transfer)."""
+    Returns `None` ONLY when the interface/factory is unavailable (the
+    expected "no pythonnet / no such factory" shape), so the caller can
+    degrade to report-only (contract C1 "Errors": Principle II graceful
+    degrade, never crash the transfer).
+
+    Issue #70: a `Create(Guid)` FAILURE is no longer swallowed into `None`
+    (indistinguishable from "factory unavailable"). It raises the
+    `_create_guid_failure` RuntimeError carrying the true exception type and
+    first-line text; `_run_entryref_create_pass` converts that into a
+    `DroppedItemRecord` so the loss is visible."""
     try:
         from SIL.LCModel import ILexEntryRefFactory
         from System import Guid as DotNetGuid
@@ -11543,8 +11548,8 @@ def _create_entryref_container(target, ref_guid):
     try:
         parsed_guid = DotNetGuid.Parse(str(ref_guid))
         return factory.Create(parsed_guid)
-    except Exception:  # noqa: BLE001 -- Create(Guid) unsupported/failed
-        return None
+    except Exception as e:  # noqa: BLE001 -- classified, never dropped (#70)
+        raise _create_guid_failure("ILexEntryRefFactory", ref_guid, e) from e
 
 
 def _run_entryref_create_pass(context, target, tag=None):
@@ -11643,9 +11648,26 @@ def _run_entryref_create_pass(context, target, tag=None):
                 continue
             if ref_guid in existing_guids:
                 continue  # INV-1 idempotency guard -- already reproduced
-            new_ref = _create_entryref_container(target, ref_guid)
+            _create_error = None
+            try:
+                new_ref = _create_entryref_container(target, ref_guid)
+            except Exception as _exc:  # noqa: BLE001 -- recorded below (#70)
+                new_ref = None
+                _create_error = _exc
             if new_ref is None:
                 ref_type = rec.get("ref_type")
+                if _create_error is not None:
+                    _reason = (
+                        "LexEntryRef could not be created (degraded, not "
+                        f"crashed -- Principle II): "
+                        f"{type(_create_error).__name__}: {_create_error}"
+                    )
+                else:
+                    _reason = (
+                        "ILexEntryRefFactory/interface unavailable -- "
+                        "LexEntryRef could not be created (degraded, "
+                        "not crashed -- Principle II)"
+                    )
                 _append_dropped_once(dropped, DroppedItemRecord(
                     owner_kind="LexEntry",
                     owner_guid=src_entry_guid,
@@ -11654,11 +11676,7 @@ def _run_entryref_create_pass(context, target, tag=None):
                     item_name=_LEX_ENTRY_REF_KIND_BY_TYPE.get(
                         ref_type, f"RefType={ref_type!r}"),
                     item_guid=ref_guid,
-                    reason=(
-                        "ILexEntryRefFactory/interface unavailable -- "
-                        "LexEntryRef could not be created (degraded, "
-                        "not crashed -- Principle II)"
-                    ),
+                    reason=_reason,
                 ))
                 continue
             _safe_add_to_owner(new_ref, entry_refs, "ILexEntryRefFactory", ref_guid)
@@ -12257,7 +12275,7 @@ def affixes_execute_action(action, context, ws_mapping, tag):
     src_guid = action.source_guid
     src_entry = _find_target_obj_by_guid(_iter_lex_entries(source), src_guid)
     if src_entry is None:
-        return None
+        return ActionOutcome.skipped("source object %s not found in the source project" % src_guid)
     return _walk_lex_entry_closure(
         src_entry, context, tag, GrammarCategory.AFFIXES)
 
@@ -12399,7 +12417,7 @@ def slots_execute_action(action, context, ws_mapping, tag):
         if src_slot is not None:
             break
     if src_slot is None:
-        return None
+        return ActionOutcome.skipped("source object %s not found in the source project" % src_guid)
 
     target_pos = _resolve_target_pos(
         target, src_owner_pos_guid,
@@ -12410,7 +12428,7 @@ def slots_execute_action(action, context, ws_mapping, tag):
             context, GrammarCategory.SLOTS, src_guid, src_owner_pos_guid,
             "affix slot",
         )
-        return None
+        return ActionOutcome.skipped("owner part of speech not present in the destination (reported via exec_skips)", recorded=True)
 
     cache = getattr(target, "Cache")
     ws = cache.DefaultAnalWs
@@ -13303,7 +13321,9 @@ def _create_guid_failure(factory_name, guid_str, exc, detail=""):
             type_name = None
     if not type_name:
         type_name = type(exc).__name__
-    text = str(exc)
+    # Issue #71: a .NET exception's str() carries the stack trace after the
+    # first line; surface only the message line (the type is kept above).
+    text = (str(exc).strip().splitlines() or [""])[0].strip()
     msg = (
         f"Factory {factory_name} Create(Guid) failed for GUID {guid_str}: "
         f"{type_name}: {text}"
@@ -13419,7 +13439,7 @@ def phonological_features_execute_action(action, context, ws_mapping, tag):
             src_feat = f
             break
     if src_feat is None:
-        return None
+        return ActionOutcome.skipped("source object %s not found in the source project" % src_guid)
     cache = getattr(target, "Cache")
     owner = cache.LangProject.PhFeatureSystemOA.FeaturesOC
     new_feat, _preserved = _create_with_guid(
@@ -13492,12 +13512,12 @@ def phonemes_execute_action(action, context, ws_mapping, tag):
             src_phon = p
             break
     if src_phon is None:
-        return None
+        return ActionOutcome.skipped("source object %s not found in the source project" % src_guid)
     cache = getattr(target, "Cache")
     phoneme_sets = cache.LangProject.PhonologicalDataOA.PhonemeSetsOS
     if len(phoneme_sets) == 0:
         # No phoneme set exists in target -- defer to runtime error.
-        return None
+        return ActionOutcome.skipped("destination has no phoneme set to own the phoneme")
     owner = phoneme_sets[0].PhonemesOC
     new_phon, _preserved = _create_with_guid(
         IPhPhonemeFactory, owner, src_guid, target,
@@ -14134,7 +14154,7 @@ def natural_classes_execute_action(action, context, ws_mapping, tag):
             src_nc = nc
             break
     if src_nc is None:
-        return None
+        return ActionOutcome.skipped("source object %s not found in the source project" % src_guid)
     cache = getattr(target, "Cache")
     owner = cache.LangProject.PhonologicalDataOA.NaturalClassesOS
     # Branch on subtype via ClassName.
@@ -14350,7 +14370,7 @@ def ph_environment_execute_action(action, context, ws_mapping, tag):
             src_env = e
             break
     if src_env is None:
-        return None
+        return ActionOutcome.skipped("source object %s not found in the source project" % src_guid)
     cache = getattr(target, "Cache")
     owner = cache.LangProject.PhonologicalDataOA.EnvironmentsOS
     new_env, _preserved = _create_with_guid(
@@ -14408,7 +14428,7 @@ def strata_execute_action(action, context, ws_mapping, tag):
             src_stratum = s
             break
     if src_stratum is None:
-        return None
+        return ActionOutcome.skipped("source object %s not found in the source project" % src_guid)
     cache = getattr(target, "Cache")
     owner = cache.LangProject.MorphologicalDataOA.StrataOS
     new_stratum, _preserved = _create_with_guid(
@@ -14975,7 +14995,7 @@ def phonological_rules_execute_action(action, context, ws_mapping, tag):
             src_rule = getattr(r, "_obj", r)
             break
     if src_rule is None:
-        return None
+        return ActionOutcome.skipped("source object %s not found in the source project" % src_guid)
     try:
         class_name = ICmObject(src_rule).ClassName
     except (AttributeError, TypeError):

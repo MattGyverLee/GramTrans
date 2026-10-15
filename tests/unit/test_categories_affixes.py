@@ -461,7 +461,9 @@ def test_execute_action_returns_none_when_source_entry_missing() -> None:
         summary="x",
     )
     ctx = _ctx(_handle([]), _handle([]))
-    assert _BUNDLE["execute_action"](action, ctx, WSMapping(), tag=None) is None
+    outcome = _BUNDLE["execute_action"](action, ctx, WSMapping(), tag=None)
+    # Issue #68: a decline is an explicit skipped outcome, not a bare None.
+    assert outcome.status == "skipped"
 
 
 @pytest.mark.integration

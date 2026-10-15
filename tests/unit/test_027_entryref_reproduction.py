@@ -545,3 +545,37 @@ def test_entryref_create_pass_add_failure_raises_orphan_risk_runtimeerror(
     # Create() DID succeed (the orphan risk is real -- an object exists
     # somewhere that never got owned) before the Add failure surfaced.
     assert factory.create_log == ["ref-1"]
+
+
+# ============================================================================
+# Issue #70 -- a FAILING Create(Guid) must leave a visible record carrying the
+# real exception type and text, not a bare None / misleading "unavailable".
+# ============================================================================
+
+def test_entryref_create_failure_is_recorded_with_exception_type_and_text(
+        _stub_lcm_factory_only) -> None:
+    entry = _FakeTargetEntry("entry-1")
+    target = _FakeTarget({"entry-1": entry}, factory=_FailingEntryRefFactory())
+    dropped = []
+    ctx = _ctx_create({"entry-1": [_ref_record("ref-1", ref_type=0)]}, dropped=dropped)
+
+    skips = categories._run_entryref_create_pass(ctx, target, tag=None)
+
+    assert skips == []
+    assert len(entry.EntryRefsOS) == 0
+    assert len(dropped) == 1
+    rec = dropped[0]
+    assert rec.item_guid == "ref-1"
+    # The true failure is surfaced (not the "interface unavailable" claim).
+    assert "ILexEntryRefFactory" in rec.reason
+    assert "RuntimeError" in rec.reason
+    assert "factory unavailable" in rec.reason
+    assert "interface unavailable" not in rec.reason
+
+
+def test_create_entryref_container_raises_classified_failure(
+        _stub_lcm_factory_only) -> None:
+    target = _FakeTarget({}, factory=_FailingEntryRefFactory())
+    with pytest.raises(RuntimeError) as ei:
+        categories._create_entryref_container(target, "ref-x")
+    assert "Create(Guid) failed for GUID ref-x" in str(ei.value)

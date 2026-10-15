@@ -407,7 +407,8 @@ def test_execute_action_source_type_absent_returns_none(_patch_lcm) -> None:
         _action(_TYPE_GUID), ctx, WSMapping(), tag=None,
     )
 
-    assert result is None
+    # Issue #68: a decline is an explicit skipped outcome, not None.
+    assert result is not None and result.status == "skipped"
 
 
 def test_execute_action_features_rs_member_resolved_is_wired(_patch_lcm) -> None:

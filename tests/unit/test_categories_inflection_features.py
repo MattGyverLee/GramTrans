@@ -682,7 +682,8 @@ def test_execute_action_open_feature_clean_skip(_patch_lcm_b1) -> None:
         _action_b1(_FEAT_GUID_B1), ctx, WSMapping(), tag=None,
     )
 
-    assert result is None, "FsOpenFeature should return None (clean skip)"
+    # Issue #68: a decline is an explicit skipped outcome, not None.
+    assert result is not None and result.status == "skipped"
     assert len(feat_sys.FeaturesOC) == 0, "FsOpenFeature must not attach anything to FeaturesOC"
     assert len(ctx._exec_skips) == 1
     skip = ctx._exec_skips[0]

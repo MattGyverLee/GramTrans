@@ -92,6 +92,7 @@ def _build_from_plan(cls, plan: RunPlan, mode: RunMode,
                      extra_enrichments=(),
                      extra_process_rules=(),
                      extra_affix_slot_links=(),
+                     not_added=None,
                      census=None) -> RunReport:
     """Build a finalized RunReport from a RunPlan.
 
@@ -123,6 +124,12 @@ def _build_from_plan(cls, plan: RunPlan, mode: RunMode,
     record per source affix MSA that occupied a template column, so SC-003's
     numerator and denominator are both on the report. Empty in Preview mode by
     construction -- the sub-pass runs after the writes.
+
+    `not_added` (issue #68): ``(category, source_guid)`` pairs for plan
+    actions whose execution raised or declined to write. Each is still
+    bucketed under its category but NOT counted as ``added`` -- the report
+    counts dispatch outcomes, not the plan. (Declined items surface as
+    skips via `extra_skips`; raised ones via `extra_leaf_execution_failures`.)
 
     `extra_closure_edges` / `extra_incompleteness` / `extra_enrichments` /
     `extra_process_rules` / `census` (feature 038): the four fidelity buckets
@@ -240,8 +247,18 @@ def _build_from_plan(cls, plan: RunPlan, mode: RunMode,
         if always_matched and getattr(obj, "match_via", "") == "natural_key":
             bucket["identity_substitution"] += 1
 
+    _not_added_left: dict = {}
+    for _key in (not_added or ()):
+        _not_added_left[_key] = _not_added_left.get(_key, 0) + 1
     for action in plan.actions:
         b = _bucket(action.category)
+        _na_key = (action.category, action.source_guid)
+        if _not_added_left.get(_na_key, 0) > 0:
+            # Issue #68: raised or declined -- no write happened, so it is
+            # neither added nor matched; keep the bucket so the category is
+            # not mistaken for "no items in source".
+            _not_added_left[_na_key] -= 1
+            continue
         b["added"] += 1
         _count_substitution(b, action)
         # T024d-a: an ADD is normally a create and contributes nothing to the
@@ -383,6 +400,7 @@ def _build_from_plan(cls, plan: RunPlan, mode: RunMode,
         dropped_items=tuple(dropped_items_all),
         fidelity_by_guid=dict(fidelity_by_guid) if fidelity_by_guid else {},
         leaf_execution_failures=tuple(extra_leaf_execution_failures),
+        outcome_counted=not_added is not None,
         # Feature 038: the four plan-side buckets flow straight through, so
         # the report surfaces below have something to render. All four are
         # empty on a plan built before 038's producers exist, which is why
@@ -641,6 +659,12 @@ def disposition_totals(report) -> dict:
       ``add_write_failed``    one per `LeafExecutionFailure`
                                                          -> `leaf_execution_failures`
 
+    (Issue #68 update: when `report.outcome_counted` is True -- every Move
+    report -- `per_category[*].added` already excludes raised/declined
+    actions, so it is the WRITTEN count and ``add_created`` is rebuilt as
+    written + failed. The paragraph below describes the legacy plan-counted
+    shape, still used by Preview and by reports built without `not_added`.)
+
     ``add_created`` IS COUNTED FROM THE PLAN, AND T048c IS WHY THAT MATTERS.
     `per_category[*].added` is one per `PlannedAction`, so it says what the run
     INTENDED to write, not what it wrote. The leaf-dispatch loop swallows a
@@ -698,6 +722,15 @@ def disposition_totals(report) -> dict:
     # property over this same tuple for exactly that reason.
     write_failed = len(getattr(report, "leaf_execution_failures", ()))
     create_reconciles = write_failed <= created
+    if getattr(report, "outcome_counted", False):
+        # Issue #68: `added` already EXCLUDES raised/declined actions, so it
+        # IS the written count. `add_created` keeps its T048c meaning (the
+        # creates the run attempted and did not decline) = written + failed;
+        # nothing is subtracted twice.
+        created, written = created + write_failed, created
+        create_reconciles = True
+    else:
+        written = created - write_failed if create_reconciles else None
     # FidelityStatus is REUSED here, never re-derived: `EnrichmentRecord.
     # fidelity` already applies the same FULL/PARTIAL rule
     # `categories.compute_fidelity_by_guid` applies to a created object.
@@ -713,9 +746,7 @@ def disposition_totals(report) -> dict:
         # T048c: planned versus written. `add_created` is the plan's number;
         # these two are the outcome's.
         "add_write_failed": write_failed,
-        "add_created_written": (
-            created - write_failed if create_reconciles else None
-        ),
+        "add_created_written": written,
         "create_split_reconciles": create_reconciles,
         "update_enriched": enriched,
         "update_overwritten": overwritten,
