@@ -13,12 +13,15 @@ pythonnet.
 """
 from __future__ import annotations
 
-from typing import FrozenSet, Iterable, Tuple
+import logging
+from typing import FrozenSet, Iterable, Optional, Set, Tuple
 
 if __package__:
-    from .models import WSKind, WSMapping
+    from .models import DroppedItemRecord, WSKind, WSMapping
 else:
-    from models import WSKind, WSMapping
+    from models import DroppedItemRecord, WSKind, WSMapping
+
+_log = logging.getLogger(__name__)
 
 
 # ============================================================================
@@ -569,16 +572,24 @@ def fold_choices_into_ws_mapping(choices, base_mapping):
     that flag and materializes the WS before `transfer.execute`.
     """
     if __package__:
-        from .models import WSMappingEntry, WSChoice
+        from .models import WSMappingEntry, WSChoice, coerce_enum
     else:
-        from models import WSMappingEntry, WSChoice
+        from models import WSMappingEntry, WSChoice, coerce_enum
+
+    # Issue #75: `choices` may come from the other import path of `models`
+    # (flat vs `gramtrans.Lib.models`), whose enum members compare unequal to
+    # the ones imported here. Compare and key by value, never by identity.
+    def _kind_key(kind):
+        return getattr(kind, "value", kind)
+
     existing = list(base_mapping.entries) if base_mapping is not None else []
-    seen = {(e.source_ws_id, e.source_ws_kind) for e in existing}
+    seen = {(e.source_ws_id, _kind_key(e.source_ws_kind)) for e in existing}
     for c in choices:
-        key = (c.source_ws_id, c.source_ws_kind)
+        key = (c.source_ws_id, _kind_key(c.source_ws_kind))
         if key in seen:
             continue
-        if c.choice == WSChoice.MAP:
+        choice = coerce_enum(WSChoice, c.choice)
+        if choice == WSChoice.MAP:
             existing.append(WSMappingEntry(
                 source_ws_id=c.source_ws_id,
                 source_ws_kind=c.source_ws_kind,
@@ -586,7 +597,7 @@ def fold_choices_into_ws_mapping(choices, base_mapping):
                 create_in_target=False,
             ))
             seen.add(key)
-        elif c.choice == WSChoice.CREATE:
+        elif choice == WSChoice.CREATE:
             existing.append(WSMappingEntry(
                 source_ws_id=c.source_ws_id,
                 source_ws_kind=c.source_ws_kind,
@@ -596,3 +607,113 @@ def fold_choices_into_ws_mapping(choices, base_mapping):
             seen.add(key)
         # WSChoice.SKIP intentionally not folded.
     return WSMapping(entries=tuple(existing))
+
+
+# ============================================================================
+# Target writing-system creation: shared failure record + Preview preflight
+# ============================================================================
+
+def ws_create_failure(tag: str, cause: str) -> DroppedItemRecord:
+    """Issue #44: the never-silent record for a target writing system that
+    could not be (or, at Preview, will not be) created. Every alt in that WS
+    is then dropped by `ApplySyncableProperties`.
+
+    Issue #76: a writing system has no LCM GUID, so both GUID fields stay
+    empty and the tag identifies it via `owner_label` / `item_name` -- the
+    same convention as the GUID-less "ConfigView" records.
+    Issue #78: severity "warning" -- a whole writing system's content is lost.
+    """
+    return DroppedItemRecord(
+        owner_kind="WritingSystem",
+        owner_guid="",
+        owner_label=tag,
+        field_name="create_in_target",
+        item_name=tag,
+        item_guid="",
+        reason=(f"target writing system '{tag}' could not be created ({cause}); "
+                "content in this writing system is not transferred"),
+        severity="warning",
+    )
+
+
+def ws_entries_to_create(ws_mapping) -> list:
+    """The `WSMappingEntry` rows flagged `create_in_target` (with a tag)."""
+    entries = getattr(ws_mapping, "entries", None) or ()
+    return [
+        e for e in entries
+        if getattr(e, "create_in_target", False) and getattr(e, "target_ws_id", "")
+    ]
+
+
+def active_ws_ids(tgt_ops) -> Optional[Set[str]]:
+    """Lower-cased Ids of the target's ACTIVE writing systems (`GetAll()`,
+    CurVernWss/CurAnalysisWss -- the view `ApplySyncableProperties` writes
+    through), or None when the list cannot be read."""
+    try:
+        return {str(getattr(w, "Id", "")).lower() for w in tgt_ops.GetAll()}
+    except Exception:  # noqa: BLE001
+        _log.debug("active_ws_ids: active WS list unreadable", exc_info=True)
+        return None
+
+
+#: `ws_create_state` outcomes.
+WS_ACTIVE = "active"      # already active in the target -- nothing to do
+WS_CREATE = "create"      # absent -- `Create` will be attempted
+WS_BLOCKED = "blocked"    # stored but not (verifiably) active -- cannot create
+
+
+def ws_create_state(tgt_ops, tag: str, active: Optional[Set[str]]) -> Tuple[str, str]:
+    """Classify one `create_in_target` tag as `(state, reason)`; `reason` is
+    non-empty only for `WS_BLOCKED`. Shared by Move's `api._ensure_writing_
+    systems` and Preview's `preflight_ws_creates`, so Preview predicts exactly
+    the blocks Move then hits.
+
+    "Present" means ACTIVE. `Exists()` scans the whole LDML store, so a tag
+    stored but not active is NOT present -- yet `Create` cannot add it either
+    (issue #44). When `active` is None the active list was unreadable, and a
+    stored tag is reported as unverifiable rather than trusted. An `Exists()`
+    failure classifies as `WS_CREATE`: `Create` is attempted and guards
+    itself."""
+    if active is not None and tag.lower() in active:
+        return WS_ACTIVE, ""
+    try:
+        in_store = bool(tgt_ops.Exists(tag))
+    except Exception:  # noqa: BLE001
+        _log.debug("ws_create_state: Exists(%r) failed; will attempt Create",
+                   tag, exc_info=True)
+        return WS_CREATE, ""
+    if not in_store:
+        return WS_CREATE, ""
+    if active is None:
+        return WS_BLOCKED, ("stored but not verifiably active -- if it is not "
+                            "active, activate in FLEx and re-run")
+    return WS_BLOCKED, "stored but not active -- activate in FLEx and re-run"
+
+
+def preflight_ws_creates(target, ws_mapping) -> list:
+    """Issue #78: Preview's read-only prediction of the writing-system creates
+    `api._ensure_writing_systems` will fail at Move time, as warning-severity
+    `DroppedItemRecord`s -- so the user sees them BEFORE Move, not only in the
+    post-run report. Never writes (Principle III): it reads the active list
+    and `Exists()` only. A create LCM itself refuses (e.g. an unparseable tag)
+    cannot be predicted here and still surfaces at Move.
+
+    Never raises; a target that cannot answer contributes nothing."""
+    to_create = ws_entries_to_create(ws_mapping)
+    if not to_create or target is None:
+        return []
+    try:
+        from flexicon import WritingSystemOperations
+        tgt_ops = WritingSystemOperations(target)
+    except Exception as exc:  # noqa: BLE001 -- Preview is fail-soft
+        _log.debug("preflight_ws_creates: WritingSystemOperations unavailable (%s)",
+                   exc, exc_info=True)
+        return []
+    active = active_ws_ids(tgt_ops)
+    out = []
+    for e in to_create:
+        tag = str(e.target_ws_id)
+        state, reason = ws_create_state(tgt_ops, tag, active)
+        if state == WS_BLOCKED:
+            out.append(ws_create_failure(tag, reason))
+    return out

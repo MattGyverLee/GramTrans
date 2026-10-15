@@ -38,9 +38,13 @@ if __package__:
         Selection,
         WSKind,
         WSMapping,
+        dropped_identity,
     )
     from .preview import build_run_plan
-    from .ws_mapping import WSMappingIncomplete, is_complete, required_ws_set
+    from .ws_mapping import (
+        WS_ACTIVE, WS_BLOCKED, WSMappingIncomplete, active_ws_ids, is_complete,
+        required_ws_set, ws_create_failure, ws_create_state, ws_entries_to_create,
+    )
     from .debuglog import enable_from_env as _enable_debug_logging
 else:
     from models import (  # type: ignore
@@ -55,9 +59,13 @@ else:
         Selection,
         WSKind,
         WSMapping,
+        dropped_identity,
     )
     from preview import build_run_plan  # type: ignore
-    from ws_mapping import WSMappingIncomplete, is_complete, required_ws_set  # type: ignore
+    from ws_mapping import (  # type: ignore
+        WS_ACTIVE, WS_BLOCKED, WSMappingIncomplete, active_ws_ids, is_complete,
+        required_ws_set, ws_create_failure, ws_create_state, ws_entries_to_create,
+    )
     from debuglog import enable_from_env as _enable_debug_logging  # type: ignore
 
 _log = logging.getLogger(__name__)
@@ -827,31 +835,34 @@ def _ws_create_failure(tag: str, cause: str) -> "DroppedItemRecord":
     `_ensure_writing_systems` was asked to create and could not. The run
     continues (one bad tag must not abort the Move), but every alt in that
     WS is then dropped by `ApplySyncableProperties`, so the failure must
-    reach the report the user reads, not only the log."""
-    return DroppedItemRecord(
-        owner_kind="WritingSystem",
-        owner_guid="",
-        owner_label=tag,
-        field_name="create_in_target",
-        item_name=tag,
-        item_guid=tag,
-        reason=(f"target writing system '{tag}' could not be created ({cause}); "
-                "content in this writing system is not transferred"),
-    )
+    reach the report the user reads, not only the log.
+
+    Built by `ws_mapping.ws_create_failure`, which Preview's read-only
+    pre-Move check (`ws_mapping.preflight_ws_creates`, issue #78) shares, so
+    the failure Preview predicts and the one Move hits are the same record."""
+    return ws_create_failure(tag, cause)
 
 
 def _attach_dropped_items(report, records):
     """Return `report` with `records` appended to its `dropped_items`
     (RunReport is frozen, so via dataclasses.replace). Duck-typed results
     without that field (test stubs) pass through, like
-    `_attach_leaf_warnings`."""
+    `_attach_leaf_warnings`.
+
+    Issue #76: deduped on `models.dropped_identity` -- a record already in
+    the report, or repeated within `records`, is not appended again."""
     if not records or not is_dataclass(report):
         return report
     if "dropped_items" not in {f.name for f in _dc_fields(report)}:
         return report
-    return _dc_replace(
-        report, dropped_items=tuple(report.dropped_items) + tuple(records),
-    )
+    merged = list(report.dropped_items)
+    seen = {dropped_identity(d) for d in merged}
+    for rec in records:
+        key = dropped_identity(rec)
+        if key not in seen:
+            seen.add(key)
+            merged.append(rec)
+    return _dc_replace(report, dropped_items=tuple(merged))
 
 
 def _ensure_writing_systems(proj, source, plan, failures=None) -> list:
@@ -881,12 +892,7 @@ def _ensure_writing_systems(proj, source, plan, failures=None) -> list:
     """
     if failures is None:
         failures = []
-    ws_mapping = getattr(plan, "ws_mapping", None)
-    entries = getattr(ws_mapping, "entries", None) or ()
-    to_create = [
-        e for e in entries
-        if getattr(e, "create_in_target", False) and getattr(e, "target_ws_id", "")
-    ]
+    to_create = ws_entries_to_create(getattr(plan, "ws_mapping", None))
     if not to_create:
         return []
     if __package__:
@@ -928,52 +934,25 @@ def _ensure_writing_systems(proj, source, plan, failures=None) -> list:
                        source_ws_id, exc_info=True)
         return fallback
 
-    # "Present" means ACTIVE (`GetAll()`, CurVernWss/CurAnalysisWss) -- the
-    # view `ApplySyncableProperties` writes through. `Exists()` scans the
-    # whole LDML store, so a tag stored but not active used to read as
-    # "already present", be skipped, and have its content dropped anyway
-    # (issue #44). None = the active list could not be read; fall back to
-    # trusting `Exists()` as before.
-    try:
-        active = {str(getattr(w, "Id", "")).lower() for w in tgt_ops.GetAll()}
-    except Exception:  # noqa: BLE001
-        _log.debug("_ensure_writing_systems: active WS list unreadable; "
-                   "falling back to Exists()", exc_info=True)
-        active = None
+    # Shared with Preview's `ws_mapping.preflight_ws_creates` (issue #78):
+    # "present" means ACTIVE; a tag stored but not active cannot be created
+    # and is reported, never skipped silently (issue #44).
+    active = active_ws_ids(tgt_ops)
 
     created: list = []
     for e in to_create:
         tag = str(e.target_ws_id)
-        if active is not None and tag.lower() in active:
+        state, why = ws_create_state(tgt_ops, tag, active)
+        if state == WS_ACTIVE:
             _log.debug("_ensure_writing_systems: WS %r already active; skip", tag)
             continue
-        try:
-            in_store = bool(tgt_ops.Exists(tag))
-        except Exception:  # noqa: BLE001
-            _log.debug("_ensure_writing_systems: Exists(%r) failed; will attempt Create",
-                       tag, exc_info=True)
-            in_store = False  # Exists() failure -> attempt Create and let it guard
-        if in_store:
-            if active is None:
-                # Activity could not be read, so a stored-but-inactive WS is
-                # indistinguishable from an active one here. Never silent:
-                # surface it in the report rather than only the log.
-                _log.warning(
-                    "_ensure_writing_systems: WS %r is in the target store but its "
-                    "active state could not be verified; skipping create", tag,
-                )
-                failures.append(_ws_create_failure(
-                    tag, "stored but not verifiably active -- if it is not active, "
-                         "activate in FLEx and re-run"))
-                continue
-            _log.warning(
-                "_ensure_writing_systems: WS %r is in the target's writing-system "
-                "store but not active; cannot create it", tag,
-            )
-            failures.append(_ws_create_failure(
-                tag, "stored but not active -- activate in FLEx and re-run"))
+        if state == WS_BLOCKED:
+            _log.warning("_ensure_writing_systems: cannot create WS %r: %s", tag, why)
+            failures.append(_ws_create_failure(tag, why))
             continue
-        is_vern = getattr(e, "source_ws_kind", WSKind.VERNACULAR) == WSKind.VERNACULAR
+        # By value (issue #75): the entry may carry the other import path's WSKind.
+        kind = getattr(e, "source_ws_kind", WSKind.VERNACULAR)
+        is_vern = getattr(kind, "value", kind) == WSKind.VERNACULAR.value
         name = _src_display_name(getattr(e, "source_ws_id", ""), tag)
         try:
             tgt_ops.Create(tag, name, is_vernacular=is_vern)

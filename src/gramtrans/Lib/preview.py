@@ -1397,6 +1397,16 @@ def build_run_plan(
     # real mapping.
     object.__setattr__(context, '_ws_map', to_ws_map_dict(ws_mapping))
 
+    # Issue #78: a `create_in_target` writing system the target already holds
+    # in its store but not active cannot be created at Move -- predict that
+    # here (read-only) as a warning-severity drop so Preview shows it BEFORE
+    # Move, instead of the user first learning of it in the post-run report.
+    if __package__:
+        from .ws_mapping import preflight_ws_creates
+    else:
+        from ws_mapping import preflight_ws_creates  # type: ignore
+    _dropped.extend(preflight_ws_creates(target, ws_mapping))
+
     if __package__:
         from .categories import plan_reversal_decisions
     else:

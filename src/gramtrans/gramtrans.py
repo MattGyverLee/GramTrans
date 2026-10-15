@@ -543,6 +543,13 @@ def phase2_interactive_move(
             f"[Phase 2] Plan: actions={len(plan.actions)} "
             f"overwrites={len(plan.overwrites)} skips={len(plan.skips)}"
         )
+        # Issue #78: plan-time warnings (a target WS the Move cannot create, a
+        # whole reversal index skipped) are shown BEFORE the conflict dialog
+        # and the Move, not only in the post-run report.
+        for d in getattr(plan, "dropped_items", ()):
+            if getattr(d, "severity", "info") == "warning":
+                report.Warning(f"[Phase 2] [Preview] {d.owner_kind} "
+                               f"'{d.owner_label}': {d.reason}")
 
         # 3. Conflict detection + resolver
         prompts = collect_overwrite_conflicts(plan, source, project)
@@ -583,7 +590,10 @@ def phase2_interactive_move(
         # api.execute_move runs -- transfer.py creates no writing systems, and
         # without it every WS-wizard CREATE choice above was recorded but
         # never carried out.
-        from api import _attach_dropped_items, _ensure_writing_systems
+        try:
+            from api import _attach_dropped_items, _ensure_writing_systems  # flat (Lib/ on sys.path)
+        except ImportError:  # package-import fallback (issue #77), like the others
+            from gramtrans.Lib.api import _attach_dropped_items, _ensure_writing_systems
         ws_failures = []
         created_ws = _ensure_writing_systems(project, source, plan, ws_failures)
         if created_ws:
