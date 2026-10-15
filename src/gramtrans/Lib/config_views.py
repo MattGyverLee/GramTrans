@@ -663,7 +663,49 @@ def plan_config_views(src_project, tgt_project,
                 missing_refs=missing_refs,
                 ws_renames=ws_renames,
             ))
-    return records
+    return _resolve_target_collisions(records)
+
+
+def _resolve_target_collisions(records: List[ConfigViewRecord]) -> List[ConfigViewRecord]:
+    """Issue #80: two source files can land on ONE target path -- e.g.
+    `ReversalIndex/etu-x-Tone.fwdictconfig` renamed (WS map etu-x-Tone ->
+    etu) to `etu.fwdictconfig` alongside a source `etu.fwdictconfig`. Copying
+    both would let the second silently overwrite the first.
+
+    Policy: keep one, report the rest. The kept file is the one whose source
+    name already IS the target name (that view belongs to the target WS);
+    failing that, the first in listing order. Every other file is removed
+    from the plan (nothing copies it, Preview does not list it as Add) and a
+    warning-severity `DroppedItemRecord` on the kept record names it, so the
+    loss reaches the dropped-items report. The losers' own missing_refs are
+    discarded with them -- they describe a file that is not copied."""
+    by_target: Dict[str, List[ConfigViewRecord]] = {}
+    for rec in records:
+        by_target.setdefault(os.path.normcase(rec.tgt_path), []).append(rec)
+    losers = set()
+    for group in by_target.values():
+        if len(group) < 2:
+            continue
+        tgt_name = os.path.basename(group[0].tgt_path)
+        keep = next((r for r in group
+                     if os.path.normcase(r.filename) == os.path.normcase(tgt_name)),
+                    group[0])
+        for rec in group:
+            if rec is keep:
+                continue
+            losers.add(id(rec))
+            keep.missing_refs.append(DroppedItemRecord(
+                owner_kind="ConfigView",
+                owner_guid="",
+                owner_label=rec.filename,
+                field_name="filename",
+                item_name=tgt_name,
+                item_guid="",
+                reason=(f"maps to the same target file '{tgt_name}' as "
+                        f"'{keep.filename}'; not copied ('{keep.filename}' kept)"),
+                severity="warning",
+            ))
+    return [r for r in records if id(r) not in losers]
 
 
 # ============================================================================

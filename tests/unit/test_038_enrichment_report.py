@@ -475,6 +475,37 @@ def test_a_drop_the_executor_already_reported_is_not_counted_twice():
     assert len(report.dropped_items) == 1
 
 
+def test_enrichment_dedupe_upgrades_info_to_warning():
+    """The enrichment fold goes through `merge_dropped_records`, so a warning
+    enrichment record colliding with an executor-reported INFO record upgrades
+    it instead of being discarded."""
+    import dataclasses
+    info = dataclasses.replace(_dropped(), severity="info")
+    warn = dataclasses.replace(_dropped(), severity="warning")
+    record = _enrichment(added=1, already_present=0, dropped_records=(warn,))
+    report = _build(
+        _plan(overwrites=(_overwrite(record),), enrichments=(record,)),
+        extra_dropped_items=(info,),
+    )
+    assert len(report.dropped_items) == 1
+    assert report.dropped_items[0].severity == "warning"
+
+
+def test_enrichment_dedupe_keeps_executor_warning_over_enrichment_info():
+    """Reverse order: an executor WARNING is not downgraded by a colliding
+    enrichment INFO record."""
+    import dataclasses
+    info = dataclasses.replace(_dropped(), severity="info")
+    warn = dataclasses.replace(_dropped(), severity="warning")
+    record = _enrichment(added=1, already_present=0, dropped_records=(info,))
+    report = _build(
+        _plan(overwrites=(_overwrite(record),), enrichments=(record,)),
+        extra_dropped_items=(warn,),
+    )
+    assert len(report.dropped_items) == 1
+    assert report.dropped_items[0].severity == "warning"
+
+
 def test_a_dropped_child_carries_its_reason_into_the_artifact():
     dropped = _dropped()
     record = _enrichment(added=1, already_present=0, dropped_records=(dropped,))

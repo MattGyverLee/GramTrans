@@ -510,6 +510,8 @@ def plan_reversals(copied_senses, src_project, target, ctx, resolver_cache, drop
                 item_guid=references._guid_str(src_index),
                 reason=(f"writing system '{target_ws_id}' absent in target"
                         if target_ws_id else "writing system not mapped"),
+                # Issue #78: the WHOLE index is skipped, not one alt.
+                severity="warning",
             ))
             continue  # R4 -- never guess; whole index skipped.
 
@@ -662,6 +664,7 @@ def _ensure_target_index(decision: "ReversalDecision", target, tag, resolver_cac
             item_name=decision.target_ws_id,
             item_guid="",
             reason=f"create failed: {exc}",
+            severity="warning",  # issue #78: the whole index is lost
         ))
         return None
 

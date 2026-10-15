@@ -44,7 +44,13 @@ dependencies = [
     # Lib/categories.py's natural_classes_execute_action now fails loudly on
     # (RuntimeError, not a silent drop) rather than the previous behaviour
     # of reporting the transfer as fully successful.
-    "pyflexicon>=4.5.2",
+    # >=4.8.0 (current floor, flexicon issue #250): WritingSystemOperations.
+    # Exists(tag) became ACTIVE-ONLY, Create(tag) now REUSES a stored-but-
+    # inactive LDML and merely activates it, and ExistsInStore(tag) was added
+    # for whole-LDML-store membership. GramTrans's ws_create_state relies on
+    # all three (WS_ACTIVE / WS_ACTIVATE / WS_CREATE); below 4.8.0 it fails
+    # loudly rather than guessing.
+    "pyflexicon>=4.8.0",
     "PyQt6>=6.4",
 ]
 

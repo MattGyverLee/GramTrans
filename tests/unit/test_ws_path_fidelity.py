@@ -23,6 +23,7 @@ import os
 
 import pytest
 
+from _fakes_ws import FakeWS, FakeWSOps, make_project
 from gramtrans.Lib import api as api_mod
 from gramtrans.Lib import config_views
 from gramtrans.Lib import debuglog
@@ -57,39 +58,8 @@ else:
 # #44 -- _ensure_writing_systems: store vs active, and failures are reported
 # ============================================================================
 
-class _FakeWS:
-    def __init__(self, ws_id):
-        self.Id = ws_id
-
-
-class _StoreVsActiveWSOps:
-    """flexicon.WritingSystemOperations with the store and the active list
-    kept SEPARATE -- the distinction the old fixture made unrepresentable by
-    reading one list for both. Mirrors flexicon: `GetAll()` is active-only,
-    `Exists()` scans the whole store, and `Create()` raises for a tag already
-    in the store."""
-
-    def __init__(self, proj):
-        self.proj = proj
-
-    def GetAll(self):  # noqa: N802
-        return [_FakeWS(i) for i in self.proj["active"]]
-
-    def Exists(self, tag):  # noqa: N802
-        return tag in self.proj["store"]
-
-    def GetDisplayName(self, ws):  # noqa: N802
-        return ""
-
-    def Create(self, tag, name, is_vernacular=True):  # noqa: N802
-        if tag in self.proj.get("refuse", ()):
-            raise RuntimeError(f"cannot create {tag}")
-        if tag in self.proj["store"]:
-            raise ValueError(f"Writing system '{tag}' already exists")
-        self.proj["store"].append(tag)
-        self.proj["active"].append(tag)
-        self.proj["created"].append(tag)
-        return _FakeWS(tag)
+_FakeWS = FakeWS
+_StoreVsActiveWSOps = FakeWSOps  # flexicon >= 4.8.0 semantics
 
 
 @pytest.fixture()
@@ -114,24 +84,21 @@ def _ctx_plan(target, tags):
                         ws_mapping=WSMapping(entries=entries), actions=())
 
 
-def test_stored_but_inactive_ws_is_reported_not_skipped(store_ops):
-    target = {"store": ["etu", "mgz-fonipa"], "active": ["etu"], "created": []}
+def test_stored_but_inactive_ws_is_activated_not_reported(store_ops):
+    target = make_project(["etu"], store=["etu", "mgz-fonipa"])
     _, plan = _ctx_plan(target, ["mgz-fonipa"])
     failures = []
 
     created = api_mod._ensure_writing_systems(target, None, plan, failures)
 
-    assert created == []
-    assert len(failures) == 1
-    rec = failures[0]
-    assert rec.owner_kind == "WritingSystem"
-    assert rec.item_name == "mgz-fonipa"
-    assert "not active" in rec.reason
+    assert created == ["mgz-fonipa"]
+    assert failures == []
+    assert target["activated"] == ["mgz-fonipa"] and target["created"] == []
+    assert "mgz-fonipa" in target["active"]
 
 
 def test_failed_create_is_reported(store_ops):
-    target = {"store": ["etu"], "active": ["etu"], "created": [],
-              "refuse": ["fr-Zxxx-x-audio"]}
+    target = make_project(["etu"], refuse=["fr-Zxxx-x-audio"])
     _, plan = _ctx_plan(target, ["fr-Zxxx-x-audio", "pt"])
     failures = []
 
@@ -143,7 +110,7 @@ def test_failed_create_is_reported(store_ops):
 
 
 def test_active_ws_is_still_skipped_silently(store_ops):
-    target = {"store": ["etu"], "active": ["etu"], "created": []}
+    target = make_project(["etu"])
     _, plan = _ctx_plan(target, ["etu"])
     failures = []
     assert api_mod._ensure_writing_systems(target, None, plan, failures) == []
@@ -152,8 +119,7 @@ def test_active_ws_is_still_skipped_silently(store_ops):
 
 
 def test_execute_move_puts_ws_failures_on_the_report(store_ops, monkeypatch):
-    target = {"store": ["etu"], "active": ["etu"], "created": [],
-              "refuse": ["fr-Zxxx-x-audio"]}
+    target = make_project(["etu"], refuse=["fr-Zxxx-x-audio"])
     ctx, plan = _ctx_plan(target, ["fr-Zxxx-x-audio"])
     monkeypatch.setattr(
         transfer_mod, "execute",
@@ -418,10 +384,10 @@ def test_copied_config_carries_the_target_ws_id(tmp_path):
 # #69 -- phase2_interactive_move runs the WS pre-pass
 # ============================================================================
 
-@pytest.mark.skipif(_gt is None, reason=f"gramtrans host imports unavailable: {_GT_IMPORT_ERROR}")
-def test_phase2_interactive_move_runs_ws_prepass(monkeypatch):
+def run_phase2_with_ws_failure(monkeypatch, patched_api):
+    """Drive `phase2_interactive_move` with `patched_api._ensure_writing_systems`
+    faked to report one WS failure. Returns `(calls, result, report)`."""
     gt = _gt
-    flat_api = _flat_api
     calls = []
 
     class _Src:
@@ -471,10 +437,16 @@ def test_phase2_interactive_move_runs_ws_prepass(monkeypatch):
     monkeypatch.setattr(gt, "collect_overwrite_conflicts", lambda *a: [])
     monkeypatch.setattr(gt, "execute", _fake_execute)
     monkeypatch.setattr(gt, "render_text_summary", lambda r: [])
-    monkeypatch.setattr(flat_api, "_ensure_writing_systems", _fake_ensure)
+    monkeypatch.setattr(patched_api, "_ensure_writing_systems", _fake_ensure)
 
     report = _Report()
     result = gt.phase2_interactive_move(_Tgt(), report, True, source_project_name="S")
+    return calls, result, report
+
+
+@pytest.mark.skipif(_gt is None, reason=f"gramtrans host imports unavailable: {_GT_IMPORT_ERROR}")
+def test_phase2_interactive_move_runs_ws_prepass(monkeypatch):
+    calls, result, report = run_phase2_with_ws_failure(monkeypatch, _flat_api)
 
     assert calls == ["ws", "execute"], "WS pre-pass must run before execute"
     assert [d.item_name for d in result.dropped_items] == ["fr-Zxxx-x-audio"]

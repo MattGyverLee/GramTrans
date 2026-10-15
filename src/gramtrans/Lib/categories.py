@@ -56,6 +56,7 @@ from typing import Iterable, Tuple
 
 if __package__:
     from .models import (
+        dropped_identity as _dropped_identity,
         AffixSlotLinkOutcome,
         AffixSlotLinkRecord,
         CreateDefinitionAction,
@@ -87,6 +88,7 @@ if __package__:
     from .models import MatchBasis as _MatchBasis
 else:
     from models import (  # type: ignore
+        dropped_identity as _dropped_identity,
         AffixSlotLinkOutcome,
         AffixSlotLinkRecord,
         CreateDefinitionAction,
@@ -6046,7 +6048,7 @@ def _dropped_key(record) -> tuple:
     (contracts/dropped-item-report.md: "emitted exactly once per (owner,
     field, item) triple") -- deliberately excludes `reason` so two records
     for the same triple with different reason text still collapse to one."""
-    return (record.owner_guid, record.field_name, record.item_guid)
+    return _dropped_identity(record)
 
 
 def _append_dropped_once(dropped: list, record) -> None:

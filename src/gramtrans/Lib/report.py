@@ -43,6 +43,8 @@ if __package__:
         RunReport,
         Skip,
         SkipReason,
+        dropped_identity,
+        merge_dropped_records,
     )
 else:
     from models import (
@@ -67,6 +69,8 @@ else:
         RunReport,
         Skip,
         SkipReason,
+        dropped_identity,
+        merge_dropped_records,
     )
 
 
@@ -334,14 +338,8 @@ def _build_from_plan(cls, plan: RunPlan, mode: RunMode,
     # on the published `(owner_guid, field_name, item_guid)` identity so a
     # record the executor already appended to `extra_dropped_items` is not
     # reported twice.
-    dropped_items_all = list(extra_dropped_items)
-    _dropped_seen = {_dropped_dedup_key(d) for d in dropped_items_all}
-    for _rec in _enrichment_dropped_records(enrichments_all):
-        _key = _dropped_dedup_key(_rec)
-        if _key in _dropped_seen:
-            continue
-        _dropped_seen.add(_key)
-        dropped_items_all.append(_rec)
+    dropped_items_all = merge_dropped_records(
+        extra_dropped_items, _enrichment_dropped_records(enrichments_all))
 
     per_category_final = {
         cat: CategoryReport(
@@ -819,19 +817,6 @@ def _enrichment_dropped_records(enrichments) -> tuple:
     )
 
 
-def _dropped_dedup_key(record):
-    """`(owner_guid, field_name, item_guid)` -- the dedup identity
-    `DroppedItemRecord`'s own docstring publishes and
-    `categories._dropped_key` enforces. Reused verbatim so folding the
-    enrichment drops into `dropped_items` cannot double-report a drop the
-    executor already appended."""
-    return (
-        getattr(record, "owner_guid", ""),
-        getattr(record, "field_name", ""),
-        getattr(record, "item_guid", ""),
-    )
-
-
 def _closure_edge_json(e) -> dict:
     return {
         "dependent": _pair_json(e.dependent),
@@ -912,6 +897,10 @@ def _dropped_item_json(d) -> dict:
         "item_name": d.item_name,
         "item_guid": d.item_guid,
         "reason": d.reason,
+        # Issue #78: additive and omit-when-default, so an ordinary drop
+        # serialises exactly as it did before severity existed.
+        **({"severity": d.severity}
+           if getattr(d, "severity", "info") != "info" else {}),
     }
 
 
@@ -1998,10 +1987,21 @@ def render_text_summary(report: RunReport) -> Iterable[str]:
     # format (`->`/`-`, never unicode arrows/dashes) per Windows console
     # rules. An empty `dropped_items` renders no section at all.
     if report.dropped_items:
-        yield f"  Dropped references / owned items -- {len(report.dropped_items)} total:"
-        for d in report.dropped_items:
+        # Issue #78: warning-severity drops (a whole writing system or reversal
+        # index lost) are counted in the header and listed first, flagged
+        # [WARN], so they are not buried among per-field drops.
+        _warns = [d for d in report.dropped_items
+                  if getattr(d, "severity", "info") == "warning"]
+        _header = f"  Dropped references / owned items -- {len(report.dropped_items)} total"
+        if _warns:
+            _header += f", {len(_warns)} warning(s)"
+        yield _header + ":"
+        _rest = [d for d in report.dropped_items
+                 if getattr(d, "severity", "info") != "warning"]
+        for d in _warns + _rest:
+            _flag = "[WARN] " if getattr(d, "severity", "info") == "warning" else ""
             yield (
-                f"    - {d.owner_label} [{d.owner_kind} {d.owner_guid[:8]}] . "
+                f"    - {_flag}{d.owner_label} [{d.owner_kind} {d.owner_guid[:8]}] . "
                 f"{d.field_name} -> \"{d.item_name}\" ({d.item_guid[:8]}) - {d.reason}"
             )
     if report.identity_remap:

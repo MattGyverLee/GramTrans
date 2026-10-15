@@ -56,6 +56,7 @@ import logging
 
 if __package__:
     from .models import (
+        dropped_identity as _dropped_identity,
         DroppedItemRecord,
         OwnedCreateKind,
         OwnedObjectSpec,
@@ -67,6 +68,7 @@ if __package__:
     from . import references as _references
 else:
     from models import (  # type: ignore
+        dropped_identity as _dropped_identity,
         DroppedItemRecord,
         OwnedCreateKind,
         OwnedObjectSpec,
@@ -352,7 +354,7 @@ def _matches_owner_class(spec, src_owner) -> bool:
 def _dropped_key(record) -> tuple:
     """Same dedup identity key as `categories._dropped_key` (contract:
     "emitted exactly once per (owner, field, item) triple")."""
-    return (record.owner_guid, record.field_name, record.item_guid)
+    return _dropped_identity(record)
 
 
 def _append_dropped(dropped: list, record) -> None:

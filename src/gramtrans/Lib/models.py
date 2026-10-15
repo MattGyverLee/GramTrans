@@ -15,7 +15,8 @@ from __future__ import annotations
 import enum
 import logging as _logging
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, is_dataclass
+from dataclasses import replace as _dc_replace
 from typing import Any, Callable, Optional
 
 
@@ -290,6 +291,23 @@ class WSChoice(enum.Enum):
     MAP = "map"
     CREATE = "create"
     SKIP = "skip"
+
+
+def coerce_enum(enum_cls, value):
+    """Return `value` as a member of `enum_cls`, matching by `.value`.
+
+    Issue #75: this module loads under two names (flat `models` and
+    `gramtrans.Lib.models`), so an enum member from the other copy is a
+    different object and `==` against this copy's member is False. Values
+    that are not enum members (a raw "map" string) are accepted too; a
+    value that matches no member is returned unchanged so the caller's own
+    validation reports it."""
+    if isinstance(value, enum_cls):
+        return value
+    try:
+        return enum_cls(getattr(value, "value", value))
+    except ValueError:
+        return value
 
 
 # ============================================================================
@@ -583,6 +601,12 @@ class WSMappingEntry:
     source_ws_kind: WSKind
     target_ws_id: str
     create_in_target: bool = False
+
+    def __post_init__(self) -> None:
+        # Issue #75: normalize a `WSKind` from the other import path of this
+        # module, so `source_ws_kind == WSKind.VERNACULAR` holds for it.
+        object.__setattr__(self, "source_ws_kind",
+                           coerce_enum(WSKind, self.source_ws_kind))
 
 
 @dataclass(frozen=True)
@@ -3645,6 +3669,14 @@ class WSMappingChoice:
     target_ws_id: str = ""
 
     def __post_init__(self) -> None:
+        # Issue #75: `models` is importable both flat and as
+        # `gramtrans.Lib.models`, and each import path builds its OWN
+        # `WSChoice`/`WSKind` classes, whose members compare unequal across
+        # the two. Coerce by value to THIS module's enums so a choice built
+        # from either path folds, validates and keys the same way.
+        object.__setattr__(self, "choice", coerce_enum(WSChoice, self.choice))
+        object.__setattr__(self, "source_ws_kind",
+                           coerce_enum(WSKind, self.source_ws_kind))
         if self.choice == WSChoice.MAP:
             if not self.target_ws_id:
                 raise ValueError("WSChoice.MAP requires target_ws_id")
@@ -3714,6 +3746,10 @@ class ReferenceCardinality(enum.Enum):
     SEQUENCE = "sequence"    # ordered list, e.g. DialectLabelsRS
 
 
+#: Valid `DroppedItemRecord.severity` values (issue #78).
+DROP_SEVERITIES = ("info", "warning")
+
+
 @dataclass(frozen=True)
 class DroppedItemRecord:
     """FR-010 — the never-silent report unit.
@@ -3770,6 +3806,19 @@ class DroppedItemRecord:
           rule is the OWNER of the thing lost.
         - "MoInflAffixSlot"     — an affix slot's own contents.
         - "MoInflAffixTemplate" — a template's slot sequence.
+
+    GUID-less owners/items (issue #76): a writing system (owner_kind
+    "WritingSystem") or a `.fwdictconfig` file ("ConfigView") has no LCM GUID.
+    Such records leave `owner_guid` / `item_guid` EMPTY -- never a tag or file
+    name standing in for a GUID -- and carry the identity in `owner_label` /
+    `item_name`. `dropped_identity` falls back to those labels when a GUID is
+    empty, so two GUID-less records for different files or tags never
+    collapse into one.
+
+    severity (issue #78): "info" (the default -- an ordinary dropped item) or
+    "warning" -- a drop that loses a whole class of content (a target
+    writing system that cannot be created, a whole reversal index skipped).
+    Renderers flag warnings so they stand out in Preview and the run report.
     """
     owner_kind: str
     owner_guid: str
@@ -3778,6 +3827,7 @@ class DroppedItemRecord:
     item_name: str
     item_guid: str
     reason: str
+    severity: str = "info"
 
     def __post_init__(self) -> None:
         if not self.owner_kind:
@@ -3786,6 +3836,51 @@ class DroppedItemRecord:
             raise ValueError("DroppedItemRecord.field_name must be non-empty")
         if not self.reason:
             raise ValueError("DroppedItemRecord.reason must be non-empty")
+        if self.severity not in DROP_SEVERITIES:
+            raise ValueError(
+                f"DroppedItemRecord.severity must be one of {DROP_SEVERITIES}, "
+                f"got {self.severity!r}")
+
+
+
+def dropped_identity(record) -> tuple:
+    """Issue #76: the "emitted exactly once" identity of a `DroppedItemRecord`.
+
+    `(owner_guid, field_name, item_guid)` as the dedup contract publishes,
+    with each EMPTY GUID replaced by the label that identifies a GUID-less
+    owner/item (`owner_kind:owner_label`, `item_name`). For any record that
+    carries both GUIDs the key is unchanged; GUID-less records (writing
+    systems, config-view files) are keyed by what they are instead of all
+    collapsing onto `("", field_name, "")`."""
+    owner = getattr(record, "owner_guid", "") or (
+        f"{getattr(record, 'owner_kind', '')}:{getattr(record, 'owner_label', '')}")
+    item = getattr(record, "item_guid", "") or getattr(record, "item_name", "")
+    return (owner, getattr(record, "field_name", ""), item)
+
+
+def merge_dropped_records(existing, incoming) -> list:
+    """Append `incoming` to `existing` (both iterables of `DroppedItemRecord`),
+    de-duplicated on `dropped_identity`. On a collision the FIRST record is
+    kept, except that an "info" record is upgraded to "warning" when a later
+    colliding record is a warning -- severity must never be lost to ordering.
+    Returns a new list; inputs are not mutated."""
+    merged = list(existing)
+    index = {}
+    for i, d in enumerate(merged):
+        index.setdefault(dropped_identity(d), i)
+    for rec in incoming:
+        key = dropped_identity(rec)
+        if key not in index:
+            index[key] = len(merged)
+            merged.append(rec)
+            continue
+        i = index[key]
+        cur = merged[i]
+        if (getattr(cur, "severity", "info") != "warning"
+                and getattr(rec, "severity", "info") == "warning"
+                and is_dataclass(cur)):
+            merged[i] = _dc_replace(cur, severity="warning")
+    return merged
 
 
 @dataclass(frozen=True)
