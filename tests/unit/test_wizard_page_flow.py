@@ -13,7 +13,7 @@ Covers:
 - _PageItemPicker.picker_state() returns empty PickerState on empty tree
 - _PageScopeConflict.collect_selection() translates combos to Selection
   (scopes + conflict modes)
-- _PagePreview.cached_plan() returns None before preview
+- _PagePreview carries no dead plan accessor (issue #9)
 - _PageFinish move-button disabled-in-preview-only mode
 - _enumerate_active_ws_ids falls back gracefully
 - _selection_replace_conflict_modes monkey-patch works
@@ -310,20 +310,15 @@ class TestPageScopeConflictCollectSelection:
 # ===========================================================================
 
 class TestPagePreview:
-    def test_cached_plan_none_before_preview(self):
-        page = _bypass(_PagePreview)
-        page._cached_plan = None
-        assert page.cached_plan() is None
+    def test_no_dead_cached_plan_accessor(self):
+        """Issue #9: after feature 015, _PageFinish owns the cached plan.
 
-    def test_is_complete_false_before_preview(self):
-        page = _bypass(_PagePreview)
-        page._cached_plan = None
-        assert page.isComplete() is False
-
-    def test_is_complete_true_after_plan_cached(self):
-        page = _bypass(_PagePreview)
-        page._cached_plan = object()  # any non-None
-        assert page.isComplete() is True
+        _PagePreview is never registered with the wizard, so Qt never consults
+        an isComplete() override on it; the cached_plan()/isComplete() pair was
+        dead and must not come back implying a contract no longer in force.
+        """
+        assert "cached_plan" not in vars(_PagePreview)
+        assert "isComplete" not in vars(_PagePreview)
 
 
 # ===========================================================================
