@@ -63,7 +63,16 @@ os.environ.setdefault("GRAMTRANS_NO_THEME", "1")
 # ---------------------------------------------------------------------------
 import pytest as _pytest
 
-from _host_stub_guard import host_entries as _host_entries, restore_host_stubs as _restore_host_stubs  # noqa: E402
+from _host_stub_guard import (  # noqa: E402
+    block_flextoolslib_without_fieldworks as _block_flextoolslib,
+    host_entries as _host_entries,
+    restore_host_stubs as _restore_host_stubs,
+)
+
+# Runs at conftest import, i.e. before any test module is collected. See the
+# helper's docstring: without FieldWorks, importing flextoolslib raises a modal
+# MessageBox that hangs a headless runner forever (#72).
+FLEXTOOLSLIB_BLOCKED = _block_flextoolslib()
 
 
 @_pytest.fixture(autouse=True)

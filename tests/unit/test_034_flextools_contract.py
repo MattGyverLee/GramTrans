@@ -37,6 +37,16 @@ def _entry_module():
     catch. `flextoolslib` and `pyflexicon` are therefore hard requirements of
     the gate environment, not optional extras.
     """
+    import sys
+
+    if sys.modules.get("flextoolslib", True) is None:
+        # The root conftest blocked flextoolslib because this machine has no
+        # FieldWorks (a hosted CI runner). Importing it there would raise a
+        # modal MessageBox and hang the run (#72), so the contract cannot be
+        # checked here -- it IS checked on every FieldWorks machine, where the
+        # "fail loudly, never skip" rule above still applies in full.
+        pytest.skip("no FieldWorks on this machine: flextoolslib cannot import (#72)")
+
     import gramtrans.gramtrans as entry
 
     return entry
