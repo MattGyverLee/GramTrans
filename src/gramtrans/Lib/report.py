@@ -1808,6 +1808,15 @@ def _to_snapshot_json(self) -> str:
             "reflect them -- disposition.add_created_written does"
         )
 
+    # Issue #50: per-item report_sink.Warning/.Error explanations from leaf
+    # handlers, collected by api.execute_move. Emitted when non-empty only,
+    # preserving the byte-identical snapshot for a clean run.
+    leaf_warnings = getattr(self, "leaf_warnings", ())
+    if leaf_warnings:
+        payload["leaf_warnings"] = [
+            {"level": w.level, "message": w.message} for w in leaf_warnings
+        ]
+
     # ---- FR-022 / SC-010: the four-outcome disposition block -----------
     # The machine-readable half of the console panel, rendered from the SAME
     # `disposition_totals` call so the two can never disagree. Gated on the
@@ -2016,6 +2025,12 @@ def render_text_summary(report: RunReport) -> Iterable[str]:
                 f"    - [{f.category.value}] {f.source_guid} - "
                 f"{f.exception_type}: {f.message}"
             )
+    # Issue #50: leaf-handler sink warnings (no section when empty).
+    leaf_warnings = getattr(report, "leaf_warnings", ())
+    if leaf_warnings:
+        yield f"  Leaf warnings -- {len(leaf_warnings)} total:"
+        for w in leaf_warnings:
+            yield f"    - [{w.level}] {w.message}"
     # Feature 038 (transfer fidelity gaps): the new buckets. Every section is
     # conditional on its bucket being non-empty, so a pre-038 run renders
     # byte-identically to before this feature landed.

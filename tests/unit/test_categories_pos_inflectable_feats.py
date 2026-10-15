@@ -158,9 +158,20 @@ def test_enumerate_source_empty_when_no_pos() -> None:
     assert list(_BUNDLE["enumerate_source"](context=ctx, selection=sel)) == []
 
 
-def test_dependencies_returns_empty_tuple() -> None:
+def test_dependencies_returns_owner_pos_edge() -> None:
     piece = ("pos-a", _FakeFeatDefn("feat-1"))
+    assert tuple(_BUNDLE["dependencies"](piece=piece)) == (
+        (GrammarCategory.GRAM_CATEGORIES, "pos-a"),
+    )
+
+
+def test_dependencies_none_owner_returns_empty_tuple() -> None:
+    piece = (None, _FakeFeatDefn("feat-1"))
     assert tuple(_BUNDLE["dependencies"](piece=piece)) == ()
+
+
+def test_dependencies_non_tuple_piece_returns_empty_tuple() -> None:
+    assert tuple(_BUNDLE["dependencies"](piece="not-a-tuple")) == ()
 
 
 def test_required_writing_systems_returns_empty_tuple() -> None:

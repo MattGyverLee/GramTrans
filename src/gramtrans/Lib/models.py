@@ -3829,6 +3829,26 @@ class LeafExecutionFailure:
 
 
 @dataclass(frozen=True)
+class LeafSinkMessage:
+    """Issue #50: one per-item explanation a leaf handler reported through
+    ``report_sink.Warning(...)`` / ``report_sink.Error(...)`` during Move.
+
+    Before this existed, ``api.execute_move`` handed ``transfer.execute`` a
+    ``_NullReportSink`` and every such explanation was discarded -- the same
+    invisible-failure shape feature 037 fixed for RAISED exceptions with
+    ``LeafExecutionFailure``. ``execute_move`` now collects them onto
+    ``RunReport.leaf_warnings``.
+
+    Fields
+    ------
+    level   : "WARNING" or "ERROR" -- the sink method the handler called.
+    message : the text, exactly as passed to the sink.
+    """
+    level: str
+    message: str
+
+
+@dataclass(frozen=True)
 class ReferenceFieldSpec:
     """One row of the hand-curated dispatch table that drives the referenced-
     possibility resolver (data-model.md; contracts/reference-resolver.md).
@@ -4308,6 +4328,10 @@ class RunReport:
     # field -- old callers that never pass this get the empty default
     # (snapshot compatibility), same pattern as dropped_items above.
     leaf_execution_failures: tuple = ()  # tuple[LeafExecutionFailure, ...]
+    # Issue #50: per-item report_sink.Warning/.Error explanations from leaf
+    # handlers, collected by api.execute_move instead of discarded by a null
+    # sink. Additive field with an empty default (snapshot compatibility).
+    leaf_warnings: tuple = ()  # tuple[LeafSinkMessage, ...]
     # ---- Feature 038 (transfer fidelity gaps) ---------------------------
     # The same four tuples RunPlan carries, plus the census. Additive with
     # empty defaults, so pre-038 callers and snapshots are unaffected.

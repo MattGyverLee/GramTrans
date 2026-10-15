@@ -180,6 +180,9 @@ REPORT_FIELD_ROLES = {
     # the ADD bucket's outcome (`add_created_written`); it does not sit outside
     # the four.
     "leaf_execution_failures": ANNOTATION,
+    # Issue #50: per-item explanations a leaf handler gave via its report
+    # sink. Diagnostic text about items already counted elsewhere.
+    "leaf_warnings": ANNOTATION,
     "closure_edges": PROVENANCE,
     # The item ADDED, knowingly incomplete, and said so -- an outcome with a
     # caveat, not a fifth outcome.

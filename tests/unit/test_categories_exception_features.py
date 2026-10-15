@@ -118,9 +118,19 @@ def _patch_lcm_cast(monkeypatch):
 # Tests
 # ============================================================================
 
-def test_dependencies_returns_empty_tuple() -> None:
+def test_dependencies_returns_owner_pos_edge() -> None:
     piece = ("pos-aaa", _FakeVal("val-bbb"))
-    assert tuple(_BUNDLE["dependencies"](piece=piece)) == ()
+    assert tuple(_BUNDLE["dependencies"](piece=piece)) == (
+        (GrammarCategory.GRAM_CATEGORIES, "pos-aaa"),
+    )
+
+
+def test_dependencies_none_owner_returns_empty_tuple() -> None:
+    assert tuple(_BUNDLE["dependencies"](piece=(None, _FakeVal("v")))) == ()
+
+
+def test_dependencies_non_tuple_piece_returns_empty_tuple() -> None:
+    assert tuple(_BUNDLE["dependencies"](piece="not-a-tuple")) == ()
 
 
 def test_plan_action_malformed_piece_yields_unsupported_lcm_type_skip() -> None:
