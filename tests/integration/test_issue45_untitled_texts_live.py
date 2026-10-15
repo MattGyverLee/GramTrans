@@ -52,6 +52,15 @@ def _sha() -> str:
     return hashlib.sha256(Path(TARGET_PATH).read_bytes()).hexdigest()
 
 
+def _snapshot(tag):
+    """Optional: copy Target.fwdata to $GT_SNAP_DIR/<tag>.fwdata for diffing."""
+    d = os.environ.get("GT_SNAP_DIR")
+    if d:
+        import shutil
+        Path(d).mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(TARGET_PATH, str(Path(d) / (tag + ".fwdata")))
+
+
 def _open(name):
     from gramtrans.Lib.flexinit import ensure_flex_initialized
     ensure_flex_initialized()
@@ -133,6 +142,7 @@ def test_untitled_texts_transfer_without_collision_and_idempotent():
     before = _target_texts()
     _plan1, rep1 = _run(picks)
     h1 = _sha()
+    _snapshot("run1")
     after1 = _target_texts()
     new1 = set(after1) - set(before)
     print("[LIVE] sha256 before=%s after-run1=%s" % (h0, h1))
@@ -181,6 +191,7 @@ def test_untitled_texts_transfer_without_collision_and_idempotent():
     # SECOND run: adds 0, names untouched.
     _plan2, rep2 = _run(picks)
     h2 = _sha()
+    _snapshot("run2")
     after2 = _target_texts()
     print("[LIVE] sha256 after-run2=%s" % h2)
     print("[LIVE] run2 added=%s target total %d -> %d; names run1=%r run2=%r" % (
