@@ -300,7 +300,8 @@ def test_execute_action_unresolved_feat_returns_none_no_crash(caplog) -> None:
             _action("pos-a", "feat-missing"), ctx, WSMapping(), tag=None,
         )
 
-    assert result is None
+    # Issue #68: a decline is an explicit skipped outcome, not None.
+    assert result is not None and result.status == "skipped"
     assert list(tgt_pos.InflectableFeatsRC) == []
     assert any("feat" in rec.message.lower() for rec in caplog.records)
 
@@ -315,7 +316,8 @@ def test_execute_action_target_pos_absent_returns_none() -> None:
         _action("pos-missing", "feat-300"), ctx, WSMapping(), tag=None,
     )
 
-    assert result is None
+    # Issue #68: a decline is an explicit skipped outcome, not None.
+    assert result is not None and result.status == "skipped"
 
 
 def test_execute_action_malformed_compound_guid_returns_none() -> None:
@@ -329,7 +331,8 @@ def test_execute_action_malformed_compound_guid_returns_none() -> None:
     )
 
     result = _BUNDLE["execute_action"](action, ctx, WSMapping(), tag=None)
-    assert result is None
+    # Issue #68: a decline is an explicit skipped outcome, not None.
+    assert result is not None and result.status == "skipped"
 
 
 # ============================================================================

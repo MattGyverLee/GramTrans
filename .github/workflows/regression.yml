@@ -23,6 +23,9 @@ on:
 
 jobs:
   gate:
+    # Issue #72: a hang on the hosted runner once sat until GitHub's 6h limit.
+    # The suite takes minutes locally; 20 is generous and bounds any recurrence.
+    timeout-minutes: 20
     # Windows because the feature is Windows-only (FR-050) and because
     # pyflexicon's pythonnet backend expects a .NET runtime.
     runs-on: windows-latest
@@ -68,7 +71,15 @@ jobs:
         run: python -m pytest tests/unit/test_034_flextools_contract.py -q
 
       # 3. FR-020 / SC-014 — no unlisted shared-code change.
+      #    Scoped to the feature branches that opted in. The table in 034's
+      #    plan.md is a per-feature allow-list (034 itself, then 039 whose
+      #    spec SC-003 invokes the script and which appended rows 11-21);
+      #    features 035-038 and later fixes changed Lib/ without rows and are
+      #    not governed by it. 034's FlexTools-path argument is unaffected:
+      #    it is enforced on 034-* branches, and a branch that wants the same
+      #    guard adds its prefix here. head_ref is set on PRs, ref_name on pushes.
       - name: Shared-code exception check
+        if: ${{ startsWith(github.head_ref || github.ref_name, '034-') || startsWith(github.head_ref || github.ref_name, '039-') }}
         run: python .github/scripts/check_shared_exceptions.py
 
       # 4. Research R1 containment — one module may name the FieldWorks

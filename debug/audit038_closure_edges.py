@@ -135,6 +135,10 @@ _CANDIDATE_TASK = {
     "TEMPLATE_TO_SLOT": "T069",
     "PROCESS_RULE_TO_PHONEME": "T076",
     "PROCESS_RULE_TO_NATURAL_CLASS": "T076",
+    "STEM_NAME_TO_POS": "#67",
+    "INFLECTION_CLASS_TO_POS": "#67",
+    "EXCEPTION_FEATURE_TO_POS": "#67",
+    "POS_INFLECTABLE_FEAT_TO_POS": "#67",
 }
 
 
@@ -500,6 +504,24 @@ def _audit(proj) -> int:
          "affixes_process_rule_natural_class_dependencies",
          _cats.affixes_process_rule_natural_class_dependencies, _GC.AFFIXES,
          _GC.NATURAL_CLASSES),
+        # Issue #67. The four owner-POS edges that were latent because the
+        # walker reads only the registry. Source categories whose pieces are
+        # `(pos_guid, obj)` tuples (POS_INFLECTABLE_FEATS, EXCEPTION_FEATURES)
+        # are keyed by the compound guid the plan uses -- see
+        # `categories._closure_piece_key` and `unkeyed_pieces` below.
+        ("STEM_NAME_TO_POS", "stem_names_pos_dependencies",
+         _cats.stem_names_pos_dependencies, _GC.STEM_NAMES,
+         _GC.GRAM_CATEGORIES),
+        ("INFLECTION_CLASS_TO_POS", "inflection_classes_pos_dependencies",
+         _cats.inflection_classes_pos_dependencies, _GC.INFLECTION_CLASSES,
+         _GC.GRAM_CATEGORIES),
+        ("EXCEPTION_FEATURE_TO_POS", "exception_features_pos_dependencies",
+         _cats.exception_features_pos_dependencies, _GC.EXCEPTION_FEATURES,
+         _GC.GRAM_CATEGORIES),
+        ("POS_INFLECTABLE_FEAT_TO_POS",
+         "pos_inflectable_feats_pos_dependencies",
+         _cats.pos_inflectable_feats_pos_dependencies,
+         _GC.POS_INFLECTABLE_FEATS, _GC.GRAM_CATEGORIES),
     )
 
     relationships: dict = {}
@@ -512,6 +534,10 @@ def _audit(proj) -> int:
         resolved = 0
         owned = 0
         unresolved_guids: list = []
+        # Walker findability: `closure_dependencies_for` indexes pieces by
+        # `_closure_piece_key`; a piece with no key can never be reached.
+        unkeyed = sum(1 for piece in src_pieces
+                      if not _cats._closure_piece_key(piece))
         for piece in src_pieces:
             for ref in producer(piece) or ():
                 if not (isinstance(ref, tuple) and len(ref) == 2):
@@ -533,6 +559,8 @@ def _audit(proj) -> int:
             verdict = "NO_DATA"
         elif foreign:
             verdict = "REFUSED_NOT_NARROW"
+        elif unkeyed:
+            verdict = "REFUSED_PIECE_NOT_WALKABLE"
         elif unresolved_guids:
             verdict = "REFUSED_UNRESOLVED_FAR_ENDPOINT"
         elif owned:
@@ -548,6 +576,7 @@ def _audit(proj) -> int:
             "edges": edge_count,
             "distinct_far_guids": len(distinct),
             "foreign_edges": foreign,
+            "unkeyed_pieces": unkeyed,
             "resolved_as_piece": resolved,
             "resolved_as_owned_value": owned,
             "unresolved": len(unresolved_guids),

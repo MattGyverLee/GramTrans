@@ -291,3 +291,35 @@ def test_stem_name_site(lcm, monkeypatch, kind):
             types.SimpleNamespace(source_guid=GUID), ctx, {}, None)
 
     _check(_classify(call, kind), "IMoStemNameFactory", kind)
+
+
+# ---------------------------------------------------------------------------
+# Issue #71: first-line trim of the surfaced .NET message, and the variant-
+# type / complex-form-type / semantic-domain sites routed through the helper.
+# ---------------------------------------------------------------------------
+
+def test_helper_trims_stack_trace_line_keeps_type():
+    exc = _DotNetLike(DUP_TEXT + "\n   at SIL.LCModel.Foo.Create()\n   at Bar")
+    msg = str(categories._create_guid_failure("F", GUID, exc))
+    assert "System.InvalidOperationException: " + DUP_TEXT in msg
+    assert "\n" not in msg
+    assert "   at " not in msg
+    assert "already exists in the target" in msg
+
+
+def test_helper_trims_plain_exception_multiline():
+    msg = str(categories._create_guid_failure(
+        "F", GUID, ValueError("first line\nsecond line")))
+    assert "ValueError: first line" in msg
+    assert "second line" not in msg
+
+
+def test_create_guid_sites_use_the_helper():
+    """The three hand-rolled `Create(Guid) failed ... {e!r}` strings are gone."""
+    import inspect
+    for fn in (categories.variant_types_execute_action,
+               categories.complex_form_types_execute_action,
+               categories.semantic_domains_execute_action):
+        src = inspect.getsource(fn)
+        assert "_create_guid_failure(" in src, fn.__name__
+        assert "Create(Guid) failed for" not in src, fn.__name__

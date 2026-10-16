@@ -35,6 +35,19 @@ BASELINE = REPO_ROOT / ".github" / "known-failures.txt"
 _SUMMARY = re.compile(r"^(?:FAILED|ERROR)\s+(\S+?)(?:\s+-\s+.*)?$")
 
 
+# Collection (imports) is outside pytest's faulthandler_timeout, which only
+# covers setup/call/teardown. This launcher dumps all thread stacks every 300 s
+# for the whole process, so a hang at import time is diagnosable too (#72).
+_LAUNCHER = (
+    "import faulthandler, os, sys; "
+    # dup fd 2 first: pytest's capture redirects fd 2 during collection and a
+    # dump written to the redirected fd would vanish into the capture buffer.
+    "_f = os.fdopen(os.dup(2), 'w'); "
+    "faulthandler.dump_traceback_later(120, repeat=True, file=_f); "
+    "import pytest; sys.exit(pytest.main(sys.argv[1:]))"
+)
+
+
 def load_baseline() -> set[str]:
     if not BASELINE.is_file():
         raise RuntimeError(f"baseline not found: {BASELINE}")
@@ -48,13 +61,28 @@ def load_baseline() -> set[str]:
 
 def run_suite(extra: list[str]) -> tuple[set[str], int, str]:
     cmd = [
-        sys.executable, "-m", "pytest",
+        sys.executable, "-u", "-X", "faulthandler", "-c", _LAUNCHER,
         "-m", "not integration",
-        "-q", "--tb=no", "-p", "no:cacheprovider",
+        # -v: one line per test, so a stall names the test it is stuck in.
+        "-v", "--tb=short", "-p", "no:cacheprovider",
+        # Issue #72: dump every thread's stack if a single test stalls 5 min.
+        "-o", "faulthandler_timeout=300",
         *extra,
     ]
-    proc = subprocess.run(cmd, cwd=str(REPO_ROOT), capture_output=True, text=True)
-    output = proc.stdout + proc.stderr
+    # Stream live (tee) so a hang is visible in the CI log, while keeping the
+    # text for the baseline comparison below.
+    proc = subprocess.Popen(
+        cmd, cwd=str(REPO_ROOT), stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace",
+    )
+    lines: list[str] = []
+    assert proc.stdout is not None
+    for line in proc.stdout:
+        sys.stdout.write(line)
+        sys.stdout.flush()
+        lines.append(line)
+    proc.wait()
+    output = "".join(lines)
     failing = set()
     for line in output.splitlines():
         m = _SUMMARY.match(line.strip())

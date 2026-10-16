@@ -420,6 +420,10 @@ def test_the_shipped_registry_holds_only_what_was_audited() -> None:
         # T104. The only row here whose CONFIRMING audit was committed by an
         # earlier task (T089); what T104 added is the registration census.
         DependencyKind.MSA_TO_INFL_FEATURE,
+        # Issue #67. EXCEPTION_FEATURES is deliberately absent (NO_DATA).
+        DependencyKind.STEM_NAME_TO_POS,
+        DependencyKind.INFLECTION_CLASS_TO_POS,
+        DependencyKind.POS_INFLECTABLE_FEAT_TO_POS,
     }
     # The single-corpus caveat is part of what these two rows CLAIM, so it is
     # asserted rather than left to prose that can drift away from the code.
@@ -553,5 +557,8 @@ def test_the_registered_rows_do_not_collide_in_the_kind_lookup() -> None:
         (GrammarCategory.AFFIXES, GrammarCategory.PHONEMES),
         (GrammarCategory.AFFIXES, GrammarCategory.NATURAL_CLASSES),
         (GrammarCategory.AFFIXES, GrammarCategory.INFLECTION_FEATURES),
+        (GrammarCategory.STEM_NAMES, GrammarCategory.GRAM_CATEGORIES),
+        (GrammarCategory.INFLECTION_CLASSES, GrammarCategory.GRAM_CATEGORIES),
+        (GrammarCategory.POS_INFLECTABLE_FEATS, GrammarCategory.GRAM_CATEGORIES),
     }
-    assert len(lookup) == len(categories_mod.CLOSURE_EDGES_VERIFIED) == 8
+    assert len(lookup) == len(categories_mod.CLOSURE_EDGES_VERIFIED) == 11

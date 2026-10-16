@@ -57,6 +57,7 @@ from typing import Iterable, Tuple
 if __package__:
     from .models import (
         dropped_identity as _dropped_identity,
+        ActionOutcome,
         AffixSlotLinkOutcome,
         AffixSlotLinkRecord,
         CreateDefinitionAction,
@@ -89,6 +90,7 @@ if __package__:
 else:
     from models import (  # type: ignore
         dropped_identity as _dropped_identity,
+        ActionOutcome,
         AffixSlotLinkOutcome,
         AffixSlotLinkRecord,
         CreateDefinitionAction,
@@ -1357,7 +1359,7 @@ def gram_categories_execute_action(action: PlannedAction, context: RunContext, w
             src_obj = pos
             break
     if src_obj is None:
-        return None
+        return ActionOutcome.skipped("source object %s not found in the source project" % src_guid)
 
     cache = getattr(target, "Cache")
     ws = cache.DefaultAnalWs
@@ -1439,7 +1441,7 @@ def gram_categories_execute_action(action: PlannedAction, context: RunContext, w
                 context, action.category, src_guid, src_owner_guid,
                 "part of speech",
             )
-            return None
+            return ActionOutcome.skipped("owner part of speech not present in the destination (reported via exec_skips)", recorded=getattr(context, "_exec_skips", None) is not None)
         try:
             new_pos = factory.Create(parsed_guid, target_parent)
         except Exception as e:
@@ -1720,7 +1722,7 @@ def inflection_features_execute_action(action: PlannedAction, context: RunContex
                 src_feat = f
                 break
         if src_feat is None:
-            return None
+            return ActionOutcome.skipped("source object %s not found in the source project" % src_guid)
 
         cache = getattr(target, "Cache")
         ws = cache.DefaultAnalWs
@@ -1753,7 +1755,7 @@ def inflection_features_execute_action(action: PlannedAction, context: RunContex
                         detail=(f"IFsComplexFeatureFactory not importable on this "
                                 f"LCM build; cannot create complex feature {src_guid}"),
                     ))
-                return None
+                return ActionOutcome.skipped("IFsComplexFeatureFactory not importable on this LCM build", skip_reason=SkipReason.UNSUPPORTED_LCM_TYPE, recorded=exec_skips is not None)
 
             complex_factory = sl.GetService(IFsComplexFeatureFactory)
 
@@ -1838,7 +1840,7 @@ def inflection_features_execute_action(action: PlannedAction, context: RunContex
                             "inflection features have no closed value set and "
                             "are not supported by this transfer path"),
                 ))
-            return None
+            return ActionOutcome.skipped("open/complex feature not supported on this path (reported via exec_skips)", skip_reason=SkipReason.NEEDS_MANUAL, recorded=exec_skips is not None)
 
         # ------------------------------------------------------------
         # CLOSED FEATURE branch (default / existing GOLD working path).
@@ -1869,7 +1871,7 @@ def inflection_features_execute_action(action: PlannedAction, context: RunContex
                             "IFsClosedFeature; complex/open feature transfer is "
                             "not supported by this path"),
                 ))
-            return None
+            return ActionOutcome.skipped("feature type not supported on this path (reported via exec_skips)", skip_reason=SkipReason.UNSUPPORTED_LCM_TYPE, recorded=exec_skips is not None)
 
         factory = sl.GetService(IFsClosedFeatureFactory)
 
@@ -2394,7 +2396,8 @@ def inflection_classes_dependencies(piece):
     so the owning POS must be created in the target before this piece is
     executed. Yield a (GRAM_CATEGORIES, owner_pos_guid) edge so the closure
     walker orders POS creation ahead of its inflection classes; empty when
-    the owner cannot be determined (duck-typed piece with no Owner)."""
+    the owner cannot be determined (duck-typed piece with no Owner).
+    Registered as `DependencyKind.INFLECTION_CLASS_TO_POS` (issue #67)."""
     owner = getattr(piece, "Owner", None)
     if owner is None:
         return ()
@@ -2475,7 +2478,7 @@ def inflection_classes_execute_action(action: PlannedAction, context: RunContext
         if src_obj is not None:
             break
     if src_obj is None:
-        return None
+        return ActionOutcome.skipped("source object %s not found in the source project" % src_guid)
 
     # Resolve the same POS on the target side: identity first, then the
     # roster-admitted natural key (T032). The source OBJECT is passed because
@@ -2489,7 +2492,7 @@ def inflection_classes_execute_action(action: PlannedAction, context: RunContext
             context, GrammarCategory.INFLECTION_CLASSES, src_guid,
             src_owner_pos_guid, "inflection class",
         )
-        return None
+        return ActionOutcome.skipped("owner part of speech not present in the destination (reported via exec_skips)", recorded=getattr(context, "_exec_skips", None) is not None)
 
     cache = getattr(target, "Cache")
     ws = cache.DefaultAnalWs
@@ -2665,7 +2668,7 @@ def feature_struct_types_execute_action(
         log.warning(
             "feature_struct_types_execute_action: source type GUID %s not found.", src_guid
         )
-        return None
+        return ActionOutcome.skipped("source object %s not found in the source project" % src_guid)
 
     # Target feature system.
     try:
@@ -2675,7 +2678,7 @@ def feature_struct_types_execute_action(
         log.warning(
             "feature_struct_types_execute_action: LCM import failed: %s", e
         )
-        return None
+        return ActionOutcome.failed("LCM import failed; feature structure type %s not created" % src_guid)
 
     try:
         tgt_cache = getattr(target, "Cache")
@@ -2693,7 +2696,7 @@ def feature_struct_types_execute_action(
         log.error(
             "feature_struct_types_execute_action: failed to create type %s: %r", src_guid, e
         )
-        return None
+        return ActionOutcome.failed("failed to create feature structure type %s: %r" % (src_guid, e))
 
     # Copy Name / Abbreviation / Description multistrings (WS-mapped).
     ws_map = _ws_map_dict(ws_mapping)
@@ -2905,7 +2908,7 @@ def phon_feat_types_execute_action(
         log.warning(
             "phon_feat_types_execute_action: source type GUID %s not found.", src_guid
         )
-        return None
+        return ActionOutcome.skipped("source object %s not found in the source project" % src_guid)
 
     # Target feature system.
     try:
@@ -2915,7 +2918,7 @@ def phon_feat_types_execute_action(
         log.warning(
             "phon_feat_types_execute_action: LCM import failed: %s", e
         )
-        return None
+        return ActionOutcome.failed("LCM import failed; feature structure type %s not created" % src_guid)
 
     try:
         tgt_cache = getattr(target, "Cache")
@@ -2933,7 +2936,7 @@ def phon_feat_types_execute_action(
         log.error(
             "phon_feat_types_execute_action: failed to create type %s: %r", src_guid, e
         )
-        return None
+        return ActionOutcome.failed("failed to create feature structure type %s: %r" % (src_guid, e))
 
     # Copy Name / Abbreviation / Description multistrings (WS-mapped).
     ws_map = _ws_map_dict(ws_mapping)
@@ -3040,10 +3043,8 @@ def pos_inflectable_feats_dependencies(piece):
     earlier in the same pass. Empty when the piece is not such a tuple or has
     no owner guid.
 
-    This edge is correct but NOT registered in `CLOSURE_EDGES_VERIFIED`, so
-    `closure_dependencies_for` does not consult it today. Registering it needs
-    FR-018 audit evidence from a corpus that contains these objects; that is a
-    follow-up. Nothing here guarantees ordering until then."""
+    Registered as `DependencyKind.POS_INFLECTABLE_FEAT_TO_POS` via
+    `pos_inflectable_feats_pos_dependencies` (issue #67)."""
     if not (isinstance(piece, tuple) and len(piece) == 2):
         return ()
     pos_guid = piece[0]
@@ -3124,7 +3125,7 @@ def pos_inflectable_feats_execute_action(action: PlannedAction, context: RunCont
     target = context.target_handle
     src_compound = action.source_guid
     if "::" not in src_compound:
-        return None
+        return ActionOutcome.skipped("malformed compound GUID %r (expected pos::feat)" % (src_compound,))
     pos_guid, feat_guid = src_compound.split("::", 1)
 
     # Resolve the target POS: identity first, then the natural key (T032).
@@ -3141,7 +3142,7 @@ def pos_inflectable_feats_execute_action(action: PlannedAction, context: RunCont
             context, GrammarCategory.POS_INFLECTABLE_FEATS, src_compound,
             pos_guid, "inflectable-feature link",
         )
-        return None
+        return ActionOutcome.skipped("owner part of speech not present in the destination (reported via exec_skips)", recorded=getattr(context, "_exec_skips", None) is not None)
 
     # Resolve the target feature defn by GUID in MsFeatureSystemOA.FeaturesOC.
     cache = getattr(target, "Cache")
@@ -3158,7 +3159,7 @@ def pos_inflectable_feats_execute_action(action: PlannedAction, context: RunCont
             "matching target defn by GUID -- skipping (run inflection_features first).",
             feat_guid,
         )
-        return None
+        return ActionOutcome.skipped("source feature definition %s has no matching target definition by GUID (run inflection_features first)" % feat_guid)
 
     target_pos_obj = IPartOfSpeech(target_pos)
     target_pos_obj.InflectableFeatsRC.Add(target_feat)
@@ -3198,10 +3199,8 @@ def stem_names_dependencies(piece):
     cannot be determined (duck-typed piece with no Owner, or an owner with no
     GUID). Same shape as `inflection_classes_dependencies` (issue #36).
 
-    This edge is correct but NOT registered in `CLOSURE_EDGES_VERIFIED`, so
-    `closure_dependencies_for` does not consult it today. Registering it needs
-    FR-018 audit evidence from a corpus that contains stem names; that is a
-    follow-up. Nothing here guarantees ordering until then."""
+    Registered as `DependencyKind.STEM_NAME_TO_POS` via
+    `stem_names_pos_dependencies` (issue #67), so the walker consults it."""
     owner = getattr(piece, "Owner", None)
     if owner is None:
         return ()
@@ -3287,13 +3286,16 @@ def stem_names_execute_action(action: PlannedAction, context: RunContext, ws_map
         if src_obj is not None:
             break
     if src_obj is None:
-        return None
+        return ActionOutcome.skipped("source object %s not found in the source project" % src_guid)
 
     # Find target owner POS -- identity first, then the natural key (T095).
     target_pos = _target_pos_for_source_guid(
         context, target, src_owner_pos_guid, src_pos=src_owner_pos)
     if target_pos is None:
-        return None  # Owner POS not in target; dependency unresolved.
+        return ActionOutcome.skipped(
+            "stem name %s was not transferred: its owner part of speech %s is "
+            "not present in the destination and could not be matched"
+            % (src_guid, src_owner_pos_guid))
 
     cache = getattr(target, "Cache")
     ws = cache.DefaultAnalWs
@@ -3367,10 +3369,9 @@ def exception_features_dependencies(piece):
     piece is not such a tuple or has no owner guid. The execute step still does
     a live GUID lookup to wire the value's own reference.
 
-    This edge is correct but NOT registered in `CLOSURE_EDGES_VERIFIED`, so
-    `closure_dependencies_for` does not consult it today. Registering it needs
-    FR-018 audit evidence from a corpus that contains these objects; that is a
-    follow-up. Nothing here guarantees ordering until then.
+    NOT registered (issue #67): no audited corpus holds an exception-feature
+    value (NO_DATA everywhere), so FR-018 forbids it. Still latent; ordering is
+    NOT guaranteed by the walker for this category.
     """
     if not (isinstance(piece, tuple) and len(piece) == 2):
         return ()
@@ -3449,14 +3450,14 @@ def exception_features_execute_action(action: PlannedAction, context: RunContext
     target = context.target_handle
     src_compound = action.source_guid
     if "::" not in src_compound:
-        return None
+        return ActionOutcome.skipped("malformed compound GUID %r (expected pos::value)" % (src_compound,))
     pos_guid, val_guid = src_compound.split("::", 1)
 
     # Find target POS -- identity first, then the natural key (T095), the
     # same resolution its plan-time twin above makes.
     target_pos = _target_pos_for_source_guid(context, target, pos_guid)
     if target_pos is None:
-        return None  # POS not yet in target.
+        return ActionOutcome.skipped("owner part of speech %s not present in the destination" % pos_guid)
 
     # Find target IFsSymFeatVal by GUID in the feature system.
     cache = getattr(target, "Cache")
@@ -3475,7 +3476,7 @@ def exception_features_execute_action(action: PlannedAction, context: RunContext
         if target_val is not None:
             break
     if target_val is None:
-        return None  # Value not in target; inflection_features must run first.
+        return ActionOutcome.skipped("feature value %s not present in the destination (inflection_features must run first)" % val_guid)
 
     target_pos.ExceptionFeaturesOC.Add(target_val)
     return target_val
@@ -3721,7 +3722,7 @@ def variant_types_execute_action(action, context, ws_mapping, tag):
             src_obj = vt
             break
     if src_obj is None:
-        return None
+        return ActionOutcome.skipped("source object %s not found in the source project" % src_guid)
 
     cache = getattr(target, "Cache")
     ws = cache.DefaultAnalWs
@@ -3767,10 +3768,7 @@ def variant_types_execute_action(action, context, ws_mapping, tag):
     try:
         new_vt = factory.Create(parsed_guid)
     except Exception as e:
-        raise RuntimeError(
-            f"{factory_label}.Create(Guid) failed for "
-            f"{src_guid}: {e!r}"
-        ) from e
+        raise _create_guid_failure(factory_label, src_guid, e) from e
 
     if src_owner_guid:
         target_parent_raw = None
@@ -3902,7 +3900,7 @@ def complex_form_types_execute_action(action, context, ws_mapping, tag):
             src_obj = cft
             break
     if src_obj is None:
-        return None
+        return ActionOutcome.skipped("source object %s not found in the source project" % src_guid)
 
     cache = getattr(target, "Cache")
     ws = cache.DefaultAnalWs
@@ -3942,9 +3940,7 @@ def complex_form_types_execute_action(action, context, ws_mapping, tag):
     try:
         new_cft = factory.Create(parsed_guid)
     except Exception as e:
-        raise RuntimeError(
-            f"{factory_label}.Create(Guid) failed for {src_guid}: {e!r}"
-        ) from e
+        raise _create_guid_failure(factory_label, src_guid, e) from e
 
     if src_owner_guid:
         target_parent_raw = None
@@ -4059,7 +4055,7 @@ def semantic_domains_execute_action(action, context, ws_mapping, tag):
             src_obj = sd
             break
     if src_obj is None:
-        return None
+        return ActionOutcome.skipped("source object %s not found in the source project" % src_guid)
 
     cache = getattr(target, "Cache")
     ws = cache.DefaultAnalWs
@@ -4100,9 +4096,7 @@ def semantic_domains_execute_action(action, context, ws_mapping, tag):
     try:
         new_sd = factory.Create(parsed_guid)
     except Exception as e:
-        raise RuntimeError(
-            f"ICmSemanticDomainFactory.Create(Guid) failed for {src_guid}: {e!r}"
-        ) from e
+        raise _create_guid_failure("ICmSemanticDomainFactory", src_guid, e) from e
 
     if src_owner_guid:
         target_parent_raw = None
@@ -11528,9 +11522,16 @@ def _create_entryref_container(target, ref_guid):
     same shape as this file's `ILexEntryTypeFactory`/`ILexEntryInflTypeFactory`
     raw-factory call sites).
 
-    Returns `None` (never raises) when the interface/factory is unavailable
-    or `Create` fails, so the caller can degrade to report-only (contract C1
-    "Errors": Principle II graceful degrade, never crash the transfer)."""
+    Returns `None` ONLY when the interface/factory is unavailable (the
+    expected "no pythonnet / no such factory" shape), so the caller can
+    degrade to report-only (contract C1 "Errors": Principle II graceful
+    degrade, never crash the transfer).
+
+    Issue #70: a `Create(Guid)` FAILURE is no longer swallowed into `None`
+    (indistinguishable from "factory unavailable"). It raises the
+    `_create_guid_failure` RuntimeError carrying the true exception type and
+    first-line text; `_run_entryref_create_pass` converts that into a
+    `DroppedItemRecord` so the loss is visible."""
     try:
         from SIL.LCModel import ILexEntryRefFactory
         from System import Guid as DotNetGuid
@@ -11543,8 +11544,8 @@ def _create_entryref_container(target, ref_guid):
     try:
         parsed_guid = DotNetGuid.Parse(str(ref_guid))
         return factory.Create(parsed_guid)
-    except Exception:  # noqa: BLE001 -- Create(Guid) unsupported/failed
-        return None
+    except Exception as e:  # noqa: BLE001 -- classified, never dropped (#70)
+        raise _create_guid_failure("ILexEntryRefFactory", ref_guid, e) from e
 
 
 def _run_entryref_create_pass(context, target, tag=None):
@@ -11643,9 +11644,26 @@ def _run_entryref_create_pass(context, target, tag=None):
                 continue
             if ref_guid in existing_guids:
                 continue  # INV-1 idempotency guard -- already reproduced
-            new_ref = _create_entryref_container(target, ref_guid)
+            _create_error = None
+            try:
+                new_ref = _create_entryref_container(target, ref_guid)
+            except Exception as _exc:  # noqa: BLE001 -- recorded below (#70)
+                new_ref = None
+                _create_error = _exc
             if new_ref is None:
                 ref_type = rec.get("ref_type")
+                if _create_error is not None:
+                    _reason = (
+                        "LexEntryRef could not be created (degraded, not "
+                        f"crashed -- Principle II): "
+                        f"{type(_create_error).__name__}: {_create_error}"
+                    )
+                else:
+                    _reason = (
+                        "ILexEntryRefFactory/interface unavailable -- "
+                        "LexEntryRef could not be created (degraded, "
+                        "not crashed -- Principle II)"
+                    )
                 _append_dropped_once(dropped, DroppedItemRecord(
                     owner_kind="LexEntry",
                     owner_guid=src_entry_guid,
@@ -11654,11 +11672,7 @@ def _run_entryref_create_pass(context, target, tag=None):
                     item_name=_LEX_ENTRY_REF_KIND_BY_TYPE.get(
                         ref_type, f"RefType={ref_type!r}"),
                     item_guid=ref_guid,
-                    reason=(
-                        "ILexEntryRefFactory/interface unavailable -- "
-                        "LexEntryRef could not be created (degraded, "
-                        "not crashed -- Principle II)"
-                    ),
+                    reason=_reason,
                 ))
                 continue
             _safe_add_to_owner(new_ref, entry_refs, "ILexEntryRefFactory", ref_guid)
@@ -12257,7 +12271,7 @@ def affixes_execute_action(action, context, ws_mapping, tag):
     src_guid = action.source_guid
     src_entry = _find_target_obj_by_guid(_iter_lex_entries(source), src_guid)
     if src_entry is None:
-        return None
+        return ActionOutcome.skipped("source object %s not found in the source project" % src_guid)
     return _walk_lex_entry_closure(
         src_entry, context, tag, GrammarCategory.AFFIXES)
 
@@ -12399,7 +12413,7 @@ def slots_execute_action(action, context, ws_mapping, tag):
         if src_slot is not None:
             break
     if src_slot is None:
-        return None
+        return ActionOutcome.skipped("source object %s not found in the source project" % src_guid)
 
     target_pos = _resolve_target_pos(
         target, src_owner_pos_guid,
@@ -12410,7 +12424,7 @@ def slots_execute_action(action, context, ws_mapping, tag):
             context, GrammarCategory.SLOTS, src_guid, src_owner_pos_guid,
             "affix slot",
         )
-        return None
+        return ActionOutcome.skipped("owner part of speech not present in the destination (reported via exec_skips)", recorded=getattr(context, "_exec_skips", None) is not None)
 
     cache = getattr(target, "Cache")
     ws = cache.DefaultAnalWs
@@ -12599,6 +12613,10 @@ def affix_templates_execute_action(action, context, ws_mapping, tag):
     target = context.target_handle
     src_guid = action.source_guid
 
+    # Issue #49 defect 1: this handler used to fall through to `return None`
+    # (== "added") on every no-write path. `_outcome` now carries an explicit
+    # skipped/failed result for each of them.
+    _outcome = None
     src_tpl = None
     src_owner_pos = None
     src_owner_pos_guid = None
@@ -12628,6 +12646,9 @@ def affix_templates_execute_action(action, context, ws_mapping, tag):
                 context, GrammarCategory.AFFIX_TEMPLATES, src_guid,
                 src_owner_pos_guid, "affix template",
             )
+            _outcome = ActionOutcome.skipped(
+                "owner part of speech not present in the destination "
+                "(reported via exec_skips)", recorded=getattr(context, "_exec_skips", None) is not None)
         if target_pos is not None:
             cache = getattr(target, "Cache")
             ws = cache.DefaultAnalWs
@@ -12677,11 +12698,14 @@ def affix_templates_execute_action(action, context, ws_mapping, tag):
                 apply_carrier_b(new_typed, ws, tag, strict=False)
             except Exception:
                 pass
+    else:
+        _outcome = ActionOutcome.skipped(
+            "source affix template %s not found in the source project" % src_guid)
 
     # Tail block (17.1 sub-pass) — run once after all templates complete.
     _run_tail_once(context, target, tag, "_did_171_subpass",
                    GrammarCategory.AFFIX_TEMPLATES, _run_171_subpass)
-    return None
+    return _outcome
 
 
 # ----- stems (Phase 3c US3, memo step 18) ----------------------------------
@@ -12791,10 +12815,21 @@ def stems_execute_action(action, context, ws_mapping, tag):
     target = context.target_handle
     src_guid = action.source_guid
     src_entry = _find_target_obj_by_guid(_iter_lex_entries(source), src_guid)
+    # Issue #45/#49/#68: a missing source entry (or a closure walk that
+    # declines) must be an explicit skip, not a silent None that the engine
+    # would count as "added". Mirrors affixes_execute_action. The tail passes
+    # below still run (they key off the LAST stem action, which may be a skip).
+    outcome = None
     new_entry = None
-    if src_entry is not None:
+    if src_entry is None:
+        outcome = ActionOutcome.skipped(
+            "source object %s not found in the source project" % src_guid)
+    else:
         new_entry = _walk_lex_entry_closure(
             src_entry, context, tag, GrammarCategory.STEMS)
+        if new_entry is None:
+            outcome = ActionOutcome.skipped(
+                "entry closure for %s declined (nothing written)" % src_guid)
 
     # Tail block (front: entry-ref container creation, 027 US1/US3 contract
     # C1) -- MUST run before _run_post_pass_a's wiring (C2): a ref's
@@ -12805,7 +12840,7 @@ def stems_execute_action(action, context, ws_mapping, tag):
     # Tail block (post-pass A, C2) — run once after all stems complete.
     _run_tail_once(context, target, tag, "_did_post_pass_a",
                    GrammarCategory.STEMS, _run_post_pass_a)
-    return new_entry
+    return outcome if outcome is not None else new_entry
 
 
 # ============================================================================
@@ -13303,7 +13338,9 @@ def _create_guid_failure(factory_name, guid_str, exc, detail=""):
             type_name = None
     if not type_name:
         type_name = type(exc).__name__
-    text = str(exc)
+    # Issue #71: a .NET exception's str() carries the stack trace after the
+    # first line; surface only the message line (the type is kept above).
+    text = (str(exc).strip().splitlines() or [""])[0].strip()
     msg = (
         f"Factory {factory_name} Create(Guid) failed for GUID {guid_str}: "
         f"{type_name}: {text}"
@@ -13419,7 +13456,7 @@ def phonological_features_execute_action(action, context, ws_mapping, tag):
             src_feat = f
             break
     if src_feat is None:
-        return None
+        return ActionOutcome.skipped("source object %s not found in the source project" % src_guid)
     cache = getattr(target, "Cache")
     owner = cache.LangProject.PhFeatureSystemOA.FeaturesOC
     new_feat, _preserved = _create_with_guid(
@@ -13492,12 +13529,12 @@ def phonemes_execute_action(action, context, ws_mapping, tag):
             src_phon = p
             break
     if src_phon is None:
-        return None
+        return ActionOutcome.skipped("source object %s not found in the source project" % src_guid)
     cache = getattr(target, "Cache")
     phoneme_sets = cache.LangProject.PhonologicalDataOA.PhonemeSetsOS
     if len(phoneme_sets) == 0:
         # No phoneme set exists in target -- defer to runtime error.
-        return None
+        return ActionOutcome.skipped("destination has no phoneme set to own the phoneme")
     owner = phoneme_sets[0].PhonemesOC
     new_phon, _preserved = _create_with_guid(
         IPhPhonemeFactory, owner, src_guid, target,
@@ -14134,7 +14171,7 @@ def natural_classes_execute_action(action, context, ws_mapping, tag):
             src_nc = nc
             break
     if src_nc is None:
-        return None
+        return ActionOutcome.skipped("source object %s not found in the source project" % src_guid)
     cache = getattr(target, "Cache")
     owner = cache.LangProject.PhonologicalDataOA.NaturalClassesOS
     # Branch on subtype via ClassName.
@@ -14350,7 +14387,7 @@ def ph_environment_execute_action(action, context, ws_mapping, tag):
             src_env = e
             break
     if src_env is None:
-        return None
+        return ActionOutcome.skipped("source object %s not found in the source project" % src_guid)
     cache = getattr(target, "Cache")
     owner = cache.LangProject.PhonologicalDataOA.EnvironmentsOS
     new_env, _preserved = _create_with_guid(
@@ -14408,7 +14445,7 @@ def strata_execute_action(action, context, ws_mapping, tag):
             src_stratum = s
             break
     if src_stratum is None:
-        return None
+        return ActionOutcome.skipped("source object %s not found in the source project" % src_guid)
     cache = getattr(target, "Cache")
     owner = cache.LangProject.MorphologicalDataOA.StrataOS
     new_stratum, _preserved = _create_with_guid(
@@ -14975,7 +15012,7 @@ def phonological_rules_execute_action(action, context, ws_mapping, tag):
             src_rule = getattr(r, "_obj", r)
             break
     if src_rule is None:
-        return None
+        return ActionOutcome.skipped("source object %s not found in the source project" % src_guid)
     try:
         class_name = ICmObject(src_rule).ClassName
     except (AttributeError, TypeError):
@@ -16487,6 +16524,61 @@ def for_category(category: GrammarCategory) -> dict:
 # GUID resolves to a piece that far category's own `enumerate_source` yields
 # (`unresolved == 0`, `resolved_as_owned_value == 0`), on BOTH corpora.
 
+# ---------------------------------------------------------------------------
+# Issue #67 -- the owner-POS rows for STEM_NAMES, INFLECTION_CLASSES,
+# EXCEPTION_FEATURES and POS_INFLECTABLE_FEATS
+# ---------------------------------------------------------------------------
+#
+# `closure_dependencies_for` reads ONLY `CLOSURE_EDGES_VERIFIED`, so the
+# `(GRAM_CATEGORIES, owner_pos_guid)` edges these four producers have emitted
+# since #36 were latent: a STEM_NAMES-only selection planned the stem name with
+# `closure_pulled_in == 0` and no owner POS, and the execute step then declined
+# for want of an owner. Each row below follows the `SLOT_TO_POS` precedent: a
+# `DependencyKind` member of its own, a narrow wrapper that can emit ONLY
+# `(GRAM_CATEGORIES, guid)`, an EXPLICIT `dependency_category`, and a
+# `verified_by` naming the audit that earned it.
+#
+# CYCLE CHECK. The registered graph stays acyclic because no registered source
+# category is GRAM_CATEGORIES: `gram_categories_dependencies` (which points at
+# FEATURE_STRUCT_TYPES / INFLECTION_FEATURES) is never consulted by the walker,
+# so POS has no outgoing walk edges and every new row is a sink-bound arrow.
+# `tests/unit/test_038_closure.py` asserts this over the registry itself.
+
+
+def stem_names_pos_dependencies(piece):
+    """NARROW producer for `DependencyKind.STEM_NAME_TO_POS`: only
+    `(GRAM_CATEGORIES, owning_pos_guid)` (`IPartOfSpeech.StemNamesOC`)."""
+    return _narrow_deps(stem_names_dependencies(piece),
+                        GrammarCategory.GRAM_CATEGORIES)
+
+
+def inflection_classes_pos_dependencies(piece):
+    """NARROW producer for `DependencyKind.INFLECTION_CLASS_TO_POS`: only
+    `(GRAM_CATEGORIES, owning_pos_guid)` (`IPartOfSpeech.InflectionClassesOC`)."""
+    return _narrow_deps(inflection_classes_dependencies(piece),
+                        GrammarCategory.GRAM_CATEGORIES)
+
+
+def exception_features_pos_dependencies(piece):
+    """NARROW producer for the (UNREGISTERED) EXCEPTION_FEATURES -> POS edge:
+    only `(GRAM_CATEGORIES, owning_pos_guid)` for a `(pos_guid, val)` piece.
+
+    NOT in `CLOSURE_EDGES_VERIFIED`: the #67 audit read NO_DATA on every
+    corpus (`Mbugwe Lizzie`, `Mbugwe LizzieHC practice`, `Ejagham Mini`,
+    Esperanto, `Ejagham Full` hold no `ExceptionFeaturesOC` value), so FR-018
+    forbids registering it. The audit driver keeps measuring it so a corpus
+    that does hold one will flip it to CONFIRMED."""
+    return _narrow_deps(exception_features_dependencies(piece),
+                        GrammarCategory.GRAM_CATEGORIES)
+
+
+def pos_inflectable_feats_pos_dependencies(piece):
+    """NARROW producer for `DependencyKind.POS_INFLECTABLE_FEAT_TO_POS`: only
+    `(GRAM_CATEGORIES, owning_pos_guid)` for a `(pos_guid, feat)` piece."""
+    return _narrow_deps(pos_inflectable_feats_dependencies(piece),
+                        GrammarCategory.GRAM_CATEGORIES)
+
+
 CLOSURE_EDGES_VERIFIED: dict = {
     DependencyKind.AFFIX_TO_POS: {
         "category": GrammarCategory.AFFIXES,
@@ -16711,7 +16803,84 @@ CLOSURE_EDGES_VERIFIED: dict = {
             "::test_an_affixes_only_plan_carries_the_infl_feature_edges"
         ),
     },
+    # -----------------------------------------------------------------------
+    # Issue #67 (2026-10-15) -- owner-POS rows. Evidence is SINGLE-CORPUS for
+    # STEM_NAME_TO_POS and INFLECTION_CLASS_TO_POS (the other corpora hold none
+    # of the objects, so read NO_DATA), stated rather than rounded up.
+    # EXCEPTION_FEATURES is NOT registered: NO_DATA on every corpus.
+    # -----------------------------------------------------------------------
+    DependencyKind.STEM_NAME_TO_POS: {
+        "category": GrammarCategory.STEM_NAMES,
+        "producer": stem_names_pos_dependencies,
+        "dependency_category": GrammarCategory.GRAM_CATEGORIES,
+        "verified_by": (
+            "debug/audit038_closure_edges.py (read-only, 2026-10-15): "
+            "relationships.STEM_NAME_TO_POS = CONFIRMED on 'Mbugwe Lizzie' "
+            "(1 edge over 1 distinct POS, foreign_edges 0, unresolved 0, "
+            "resolved_as_owned_value 0, unkeyed_pieces 0) and NO_DATA on "
+            "'Mbugwe LizzieHC practice' and 'Ejagham Mini', which hold no "
+            "stem names -- SINGLE-CORPUS evidence, stated rather than "
+            "rounded up. Snapshots tests/integration/_snapshots/"
+            "closure-edge-audit-038-*.json, asserted by "
+            "tests/integration/test_038_closure_edge_audit.py::"
+            "test_only_the_confirmed_relationships_are_registered; live "
+            "walk proof in tests/integration/test_issue67_owner_pos_live.py"
+        ),
+    },
+    DependencyKind.INFLECTION_CLASS_TO_POS: {
+        "category": GrammarCategory.INFLECTION_CLASSES,
+        "producer": inflection_classes_pos_dependencies,
+        "dependency_category": GrammarCategory.GRAM_CATEGORIES,
+        "verified_by": (
+            "debug/audit038_closure_edges.py (read-only, 2026-10-15): "
+            "relationships.INFLECTION_CLASS_TO_POS = CONFIRMED on 'Mbugwe "
+            "LizzieHC practice' (5 edges over 2 distinct POSes, foreign_edges "
+            "0, unresolved 0, resolved_as_owned_value 0, unkeyed_pieces 0) "
+            "and NO_DATA on 'Mbugwe Lizzie' and 'Ejagham Mini', which hold "
+            "no inflection classes -- SINGLE-CORPUS evidence, stated rather "
+            "than rounded up. Snapshots tests/integration/_snapshots/"
+            "closure-edge-audit-038-*.json, asserted by "
+            "tests/integration/test_038_closure_edge_audit.py::"
+            "test_only_the_confirmed_relationships_are_registered"
+        ),
+    },
+    DependencyKind.POS_INFLECTABLE_FEAT_TO_POS: {
+        "category": GrammarCategory.POS_INFLECTABLE_FEATS,
+        "producer": pos_inflectable_feats_pos_dependencies,
+        "dependency_category": GrammarCategory.GRAM_CATEGORIES,
+        "verified_by": (
+            "debug/audit038_closure_edges.py (read-only, 2026-10-15): "
+            "relationships.POS_INFLECTABLE_FEAT_TO_POS = CONFIRMED on ALL "
+            "THREE corpora ('Mbugwe LizzieHC practice' 14 edges over 7 POSes, "
+            "'Ejagham Mini' 13 over 6, 'Mbugwe Lizzie' 6 over 3; "
+            "foreign_edges 0, unresolved 0, resolved_as_owned_value 0, "
+            "unkeyed_pieces 0). Pieces are (pos_guid, feat) tuples keyed by "
+            "the compound plan guid via categories._closure_piece_key. "
+            "Snapshots tests/integration/_snapshots/"
+            "closure-edge-audit-038-*.json, asserted by "
+            "tests/integration/test_038_closure_edge_audit.py::"
+            "test_only_the_confirmed_relationships_are_registered"
+        ),
+    },
 }
+
+
+def _closure_piece_key(piece) -> str:
+    """The `source_guid` a plan uses for `piece`, lower-cased.
+
+    Most pieces are single LCM objects keyed by their GUID. The POS-scoped
+    ref-wiring categories (POS_INFLECTABLE_FEATS, EXCEPTION_FEATURES) yield
+    `(pos_guid, obj)` tuples whose plan `source_guid` is the compound
+    `"pos_guid::obj_guid"`; `_guid_str_from(tuple)` is "" so without this the
+    walker could never find such a piece (issue #67).
+    """
+    if isinstance(piece, tuple) and len(piece) == 2:
+        pos_guid, obj = piece
+        og = _guid_str_from(obj)
+        if pos_guid and og:
+            return ("%s::%s" % (pos_guid, og)).lower()
+        return ""
+    return _guid_str_from(piece)
 
 
 def _closure_registry_by_category(registry: dict) -> dict:
@@ -16794,7 +16963,7 @@ def closure_dependencies_for(context, selection=None, registry=None):
         try:
             bundle = LEAF_CATEGORIES[category]
             for piece in bundle["enumerate_source"](context, selection) or ():
-                g = _guid_str_from(piece)
+                g = _closure_piece_key(piece)
                 if g and g not in index:
                     index[g] = piece
         except Exception as exc:  # enumeration is best-effort, never fatal

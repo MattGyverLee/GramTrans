@@ -390,5 +390,6 @@ def test_execute_action_returns_none_when_owner_pos_unresolved() -> None:
     finally:
         _restore_sys_guid(orig_sys)
 
-    assert result is None
+    # Issue #68: a decline is an explicit skipped outcome, not None.
+    assert result is not None and result.status == "skipped"
     assert len(wrong_collection._items) == 0

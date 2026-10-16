@@ -29,3 +29,37 @@ def restore_host_stubs(before: dict) -> list:
             del sys.modules[name]
         touched.append(name)
     return touched
+
+
+def fieldworks_installed() -> bool:
+    """True when the FieldWorks registry entry flexicon looks for exists."""
+    try:
+        import winreg
+    except ImportError:  # not Windows
+        return False
+    key = r"SOFTWARE\SIL\FieldWorks\9"
+    for hive in (winreg.HKEY_CURRENT_USER, winreg.HKEY_LOCAL_MACHINE):
+        try:
+            with winreg.OpenKey(hive, key) as k:
+                if winreg.QueryValueEx(k, "RootCodeDir")[0]:
+                    return True
+        except OSError:
+            continue
+    return False
+
+
+def block_flextoolslib_without_fieldworks() -> bool:
+    """Make `import flextoolslib` raise ImportError when FieldWorks is absent.
+
+    flextoolslib's import runs `from flexlibs import ...`; with no FieldWorks
+    that fails, and flextoolslib reports the failure through a MODAL
+    `MessageBox.Show`, which blocks forever on a headless runner (#72: the CI
+    gate hung in collection at flextoolslib/code/FLExTools.py line 94, reached
+    from tests/unit/test_ws_path_fidelity.py importing gramtrans.gramtrans).
+    A `None` entry in sys.modules turns that into a plain ImportError, which
+    the tests that guard the import already handle. Returns True if blocked.
+    """
+    if fieldworks_installed() or "flextoolslib" in sys.modules:
+        return False
+    sys.modules["flextoolslib"] = None
+    return True

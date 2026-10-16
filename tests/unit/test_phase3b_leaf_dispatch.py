@@ -40,6 +40,9 @@ class _EmptyOps:
     def GetAll(self, recursive=True):
         return []
 
+    def FeatureGetAll(self, *a, **k):  # InflectionFeatures enumerate (#49: errors are now visible)
+        return []
+
 
 class _EmptyProject:
     """FakeProject whose every flexicon Operations accessor returns []."""

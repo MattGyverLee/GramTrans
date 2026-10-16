@@ -2724,6 +2724,19 @@ class DependencyKind(enum.Enum):
     MSA_TO_FEAT_STRUC_TYPE = "msa_to_feat_struc_type"
     PROCESS_RULE_TO_PHONEME = "process_rule_to_phoneme"
     PROCESS_RULE_TO_NATURAL_CLASS = "process_rule_to_natural_class"
+    #: Issue #67. Per-POS owned objects -- `IMoStemName` (`StemNamesOC`),
+    #: `IMoInflClass` (`InflectionClassesOC`) and the POS-scoped ref-wiring
+    #: `InflectableFeatsRC` -- depend on their owning `IPartOfSpeech` existing
+    #: first. The producers have emitted `(GRAM_CATEGORIES, owner_pos_guid)`
+    #: since #36 but the walker only reads the registry, so the edges were
+    #: latent. One member per source category (the `_closure_kind_lookup` key
+    #: is `(source, far)`), mirroring `SLOT_TO_POS`. `ExceptionFeaturesOC` has
+    #: deliberately NO member: the audit found no corpus holding one (NO_DATA
+    #: everywhere), so FR-018 forbids registering it; add the member together
+    #: with the evidence.
+    STEM_NAME_TO_POS = "stem_name_to_pos"
+    INFLECTION_CLASS_TO_POS = "inflection_class_to_pos"
+    POS_INFLECTABLE_FEAT_TO_POS = "pos_inflectable_feat_to_pos"
 
 
 @dataclass(frozen=True)
@@ -3883,6 +3896,65 @@ def merge_dropped_records(existing, incoming) -> list:
     return merged
 
 
+#: Issue #68: the three dispositions a leaf `execute_action` can report.
+OUTCOME_ADDED = "added"
+OUTCOME_SKIPPED = "skipped"
+OUTCOME_FAILED = "failed"
+
+
+@dataclass(frozen=True)
+class ActionOutcome:
+    """Issue #68: an explicit per-action result for a leaf `execute_action`.
+
+    Before this existed `transfer.execute` discarded every handler's return
+    value and `RunReport` counted the PLAN, so a handler that declined to
+    write (`return None` on an unresolved owner POS) was still reported as
+    "added". Handlers now return one of these when they decline.
+
+    Backward-compatible contract (what `transfer.execute` does with a return
+    value): an `ActionOutcome` whose `status` is skipped/failed is honoured;
+    ANYTHING else (None, the created object, a legacy sentinel) counts as
+    added, exactly as before. A raised exception is a failure (existing
+    `LeafExecutionFailure` path) and, as of #68, is also removed from `added`.
+
+    Fields
+    ------
+    status      : OUTCOME_ADDED | OUTCOME_SKIPPED | OUTCOME_FAILED.
+    reason      : human-readable explanation; required for skipped/failed.
+    skip_reason : the `SkipReason` used when the engine records the skip
+                  (skipped only; default DEPENDENCY_UNRESOLVED).
+    recorded    : True when the handler already appended a `Skip` to
+                  `context._exec_skips` itself (e.g. via
+                  `_report_owner_pos_unresolved`), so the engine must not
+                  record a second one -- it only removes the item from
+                  `added`.
+    """
+    status: str = OUTCOME_ADDED
+    reason: str = ""
+    skip_reason: Optional["SkipReason"] = None
+    recorded: bool = False
+
+    def __post_init__(self) -> None:
+        if self.status not in (OUTCOME_ADDED, OUTCOME_SKIPPED, OUTCOME_FAILED):
+            raise ValueError(f"ActionOutcome.status invalid: {self.status!r}")
+        if self.status != OUTCOME_ADDED and not self.reason:
+            raise ValueError("ActionOutcome skipped/failed requires a reason")
+
+    @classmethod
+    def added(cls) -> "ActionOutcome":
+        return cls(OUTCOME_ADDED)
+
+    @classmethod
+    def skipped(cls, reason: str, skip_reason: Optional["SkipReason"] = None,
+                recorded: bool = False) -> "ActionOutcome":
+        return cls(OUTCOME_SKIPPED, reason,
+                   skip_reason or SkipReason.DEPENDENCY_UNRESOLVED, recorded)
+
+    @classmethod
+    def failed(cls, reason: str) -> "ActionOutcome":
+        return cls(OUTCOME_FAILED, reason)
+
+
 @dataclass(frozen=True)
 class LeafExecutionFailure:
     """Feature 037 (defect C, coordinator live-run finding): a leaf-dispatch
@@ -4472,6 +4544,12 @@ class RunReport:
     # not claim the `baseline_matched` basis while its category carries
     # unattributed matches -- see `matched_class_is_complete`.
     matches_unattributed: dict = field(default_factory=dict)  # category -> count
+    # Issue #68: True when `per_category[*].added` was built from dispatch
+    # OUTCOMES (raised/declined leaf actions already excluded), False when it
+    # is the plan's count (Preview, or a caller that never passed
+    # `not_added`). `disposition_totals` reads it so a swallowed failure is
+    # not subtracted from `added` twice.
+    outcome_counted: bool = False
 
     def __post_init__(self) -> None:
         # ---- T080 (SC-010 audit): the ADD bucket's first invariant.

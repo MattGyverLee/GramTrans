@@ -22,6 +22,9 @@ _log = logging.getLogger(__name__)
 
 if __package__:
     from .models import (
+        ActionOutcome,
+        OUTCOME_FAILED,
+        OUTCOME_SKIPPED,
         DroppedItemRecord,
         GrammarCategory,
         LeafExecutionFailure,
@@ -50,6 +53,9 @@ if __package__:
     from . import report as _report_module  # registers RunReport.build_from_plan
 else:
     from models import (
+        ActionOutcome,
+        OUTCOME_FAILED,
+        OUTCOME_SKIPPED,
         DroppedItemRecord,
         GrammarCategory,
         LeafExecutionFailure,
@@ -323,6 +329,16 @@ def execute(plan: RunPlan, source, target, report_sink, tag: ImportResidueTag,
     # "139 planned, 98 written, 41 swallowed" -- the swallow-and-continue
     # policy itself is unchanged, only the report's truthfulness.
     _leaf_execution_failures: list = []
+    # Issue #68: (category, source_guid) of every leaf action that did NOT
+    # end in a write (raised, or explicitly declined via `ActionOutcome`).
+    # `RunReport.build_from_plan(not_added=...)` subtracts them from `added`
+    # so the report counts OUTCOMES, not the plan.
+    _not_added: list = []
+    _declined_skips: list = []
+    # Issue #49 (defect 1): (action, expected target GUID) for every leaf action
+    # the handler reported as written; checked against the target after the
+    # dispatch loop by `reconcile_added_actions`.
+    _verify_candidates: list = []
 
     # Build index of source actions for quick lookup of pulled-in flag.
     # plan.actions is heterogeneous: CreateDefinitionAction has no
@@ -652,11 +668,49 @@ def execute(plan: RunPlan, source, target, report_sink, tag: ImportResidueTag,
                     "creation is not permitted: " + _dest.detail
                 )
             object.__setattr__(exec_ctx, '_planned_destination', _dest)
-            bundle["execute_action"](action, exec_ctx, ws_map, tag)
+            _result = bundle["execute_action"](action, exec_ctx, ws_map, tag)
+            # Issue #68: an explicit ActionOutcome decline is honoured; any
+            # other return (None, the created object) counts as added, as it
+            # always did.
+            if (isinstance(_result, ActionOutcome)
+                    and _result.status in (OUTCOME_SKIPPED, OUTCOME_FAILED)):
+                _not_added.append((action.category, action.source_guid))
+                _log.warning(
+                    "execute leaf-dispatch: action %s category=%s guid=%s: %s",
+                    _result.status, action.category.value,
+                    action.source_guid, _result.reason,
+                )
+                if _result.status == OUTCOME_FAILED:
+                    leaf_failed += 1
+                    _leaf_execution_failures.append(LeafExecutionFailure(
+                        category=action.category,
+                        source_guid=action.source_guid,
+                        exception_type="ActionFailed",
+                        message=_result.reason,
+                    ))
+                elif not _result.recorded:
+                    _declined_skips.append(Skip(
+                        category=action.category,
+                        source_guid=action.source_guid,
+                        reason=_result.skip_reason
+                        or SkipReason.DEPENDENCY_UNRESOLVED,
+                        detail=_result.reason,
+                    ))
+                continue
             leaf_count += 1
             leaf_succeeded += 1
+            # Issue #49/#68: with no planned destination the expected GUID is
+            # decided AFTER dispatch (None here), because a handler that
+            # creates under a remapped GUID records it in identity_remap
+            # while it runs -- see `reconcile_added_actions`.
+            _verify_candidates.append((
+                action,
+                _dest.target_guid if _dest.outcome == DESTINATION_RESOLVED
+                else None,
+            ))
         except Exception as exc:
             leaf_failed += 1
+            _not_added.append((action.category, action.source_guid))
             # Persist diagnostics: the original code only funneled this into a
             # report_sink.Warning, which the export path discards via a
             # _NullReportSink. Emit the full traceback so the swallowed failure
@@ -709,6 +763,33 @@ def execute(plan: RunPlan, source, target, report_sink, tag: ImportResidueTag,
     # silently. See `_ensure_owner_feat_strucs` for the measurement.
     _ensure_owner_feat_strucs(exec_ctx, target, tag, _exec_skips)
 
+    # Issue #49 (defect 1): handler exit proves nothing -- a handler that
+    # returns normally while writing nothing used to be counted as added. Check
+    # every reported-added action against the actual target, by GUID.
+    _unverified: list = []
+    for _cat, _guid, _why in reconcile_added_actions(
+            target, _verify_candidates,
+            identity_remap=getattr(plan, "identity_remap", None),
+            unverified=_unverified):
+        leaf_failed += 1
+        _not_added.append((_cat, _guid))
+        _log.warning("execute reconcile: %s %s: %s", _cat.value, _guid, _why)
+        _leaf_execution_failures.append(LeafExecutionFailure(
+            category=_cat, source_guid=_guid,
+            exception_type="UnverifiedWrite", message=_why,
+        ))
+
+    # Issue #49/#68 (cycle 3 P1-c): an action whose GUID lookup RAISED could
+    # not be verified. It must not read as "added-verified": record each as a
+    # failure-style entry (type LookupUnverified) and take it out of `added`.
+    for _cat, _guid, _why in _unverified:
+        leaf_failed += 1
+        _not_added.append((_cat, _guid))
+        _leaf_execution_failures.append(LeafExecutionFailure(
+            category=_cat, source_guid=_guid,
+            exception_type="LookupUnverified", message=_why,
+        ))
+
     # Feature 024 (T031, US3, FR-008 -- single-final-pass redesign):
     # `reproduce_all_lexical_relations` is the SOLE lexical-relation
     # discovery + reproduction path (see its own module banner at
@@ -741,13 +822,15 @@ def execute(plan: RunPlan, source, target, report_sink, tag: ImportResidueTag,
     # dropped texts/segments/references land in the unified report (FR-023).
     # Inert when no text was selected (empty plan.text_plans).
     _text_plans = getattr(plan, "text_plans", ()) or ()
+    _text_outcome = None
     if _text_plans:
         if __package__:
             from .texts import apply_texts as _apply_texts
         else:
             from texts import apply_texts as _apply_texts  # type: ignore
-        _apply_texts(_text_plans, source, target, exec_ctx, tag, report_sink,
-                     _resolver_cache, _dropped)
+        _text_outcome = _apply_texts(
+            _text_plans, source, target, exec_ctx, tag, report_sink,
+            _resolver_cache, _dropped)
         report_sink.Info(f"[Move] Texts walk applied {len(_text_plans)} text plan(s).")
 
     # Feature 025 (full reversals, US1 T018/T020): the reversal closure
@@ -788,20 +871,28 @@ def execute(plan: RunPlan, source, target, report_sink, tag: ImportResidueTag,
     # Fold any tail-block skips (17.1 / post-pass A) into the report.
     if _exec_skips:
         extra_skips.extend(_exec_skips)
+    # Issue #68: skips the engine recorded for handlers that declined.
+    if _declined_skips:
+        extra_skips.extend(_declined_skips)
+    # Issue #45: text adds/updates/skips reach per_category[TEXTS].
+    _texts_added = _texts_updated = 0
+    if isinstance(_text_outcome, dict):
+        _texts_added = int(_text_outcome.get("added", 0) or 0)
+        _texts_updated = int(_text_outcome.get("updated", 0) or 0)
+        extra_skips.extend(_text_outcome.get("skips") or ())
 
     elapsed = time.time() - start
-    # Persist diagnostics: the report is built from the PLAN, not from what was
-    # actually written. If attempted != succeeded (or failures > 0) the report
-    # will still count the full plan as "added" — surface that discrepancy.
+    # Persist diagnostics. Issue #68: the report's `added` counts are built
+    # from dispatch OUTCOMES (`not_added=` below), not from the plan.
     _log.debug(
         "execute: leaf-dispatch counts  attempted=%d succeeded=%d failed=%d "
-        "vs len(plan.actions)=%d  (RunReport is built from the PLAN, so "
-        "swallowed write failures do NOT reduce the reported 'added' count)",
-        leaf_attempted, leaf_succeeded, leaf_failed, len(plan.actions),
+        "not_added=%d vs len(plan.actions)=%d",
+        leaf_attempted, leaf_succeeded, leaf_failed, len(_not_added),
+        len(plan.actions),
     )
-    # Build the report from the plan. If every action ran without raising,
-    # the FR-018 invariant on RunReport.__post_init__ passes by construction
-    # (every PlannedAction → +1 added, every plan.Skip → +1 skipped).
+    # Build the report from the plan, minus the leaf actions that raised or
+    # declined (#68). Every plan.Skip → +1 skipped; every declined action
+    # contributes its own Skip, so FR-018 still holds by construction.
     # Feature 024 (T023, FR-013): per-object FidelityStatus (FULL/PARTIAL)
     # computed from the same `_dropped` collector -- see
     # `categories.compute_fidelity_by_guid`'s docstring for the FULL-by-
@@ -850,6 +941,9 @@ def execute(plan: RunPlan, source, target, report_sink, tag: ImportResidueTag,
         # the report at all (per_category[*].added is computed from the
         # PLAN, not actual write outcomes).
         extra_leaf_execution_failures=tuple(_leaf_execution_failures),
+        not_added=tuple(_not_added),
+        text_added=_texts_added,
+        text_updated=_texts_updated,
         # Feature 038 (T060, US5): what the entry closure's process-rule
         # executor did with each MoAffixProcess it met -- rebuilt, with its
         # input and output content recorded, or skipped with the reason
@@ -1355,6 +1449,84 @@ def resolve_planned_destination(match_basis: Optional[MatchBasisRecord], target,
         + " carries an unknown basis " + repr(basis) + "; the executor "
         "refuses to guess whether that means resolve or create"
     )
+
+
+#: Categories whose actions have no one-object-per-GUID target counterpart
+#: (a custom field is a schema entry keyed by (class, name), not an ICmObject).
+_RECONCILE_EXEMPT = frozenset({GrammarCategory.CUSTOM_FIELDS})
+
+
+_UNVERIFIABLE = object()
+
+
+def _lookup_target_guid(target, guid):
+    """Return the target object for `guid`, None if absent, or `_UNVERIFIABLE`
+    when `target` offers no GUID lookup at all (offline fakes)."""
+    getter = getattr(target, "get_object_by_guid", None)
+    if callable(getter):
+        return getter(guid)
+    if not callable(getattr(target, "ObjectRepository", None)):
+        return _UNVERIFIABLE
+    from SIL.LCModel import ICmObjectRepository
+    from System import Guid as _G
+    repo = target.ObjectRepository(ICmObjectRepository)
+    parsed = _G.Parse(str(guid))
+    return repo.GetObject(parsed) if repo.IsValidObjectId(parsed) else None
+
+
+def reconcile_added_actions(target, candidates, *, resolve=None,
+                            identity_remap=None, unverified=None):
+    """Post-execute truth pass (issue #49).
+
+    `candidates` is an iterable of ``(action, expected_target_guid)`` for every
+    action whose handler reported it written. When `expected_target_guid` is
+    falsy (no planned destination), the expected GUID is
+    ``identity_remap.get(source_guid, source_guid)`` -- a handler that created
+    under a remapped GUID counts as landed. Returns a list of
+    ``(category, source_guid, reason)`` for each one whose object is NOT
+    present in the target by GUID, so the caller can downgrade it from added to
+    failed. Pure read: one dictionary-backed repository lookup per action.
+
+    A lookup that RAISES is not proof of absence, but it is not verification
+    either: it is logged at WARNING and, when the caller passes a list as
+    `unverified`, appended there as ``(category, source_guid, reason)`` so the
+    run report can show the action as unverified rather than verified-added.
+    `resolve(target, guid)` defaults to `_lookup_target_guid`.
+    """
+    if resolve is None:
+        resolve = _lookup_target_guid
+    remap = identity_remap or {}
+    missing = []
+    for action, guid in candidates:
+        cat = getattr(action, "category", None)
+        if not guid:
+            src = getattr(action, "source_guid", None)
+            guid = remap.get(src, src) if src else None
+        if cat in _RECONCILE_EXEMPT or not guid:
+            continue
+        try:
+            found = resolve(target, guid)
+        except Exception as exc:  # noqa: BLE001 -- a lookup error is not proof of absence
+            src = getattr(action, "source_guid", guid)
+            _log.warning(
+                "execute reconcile: lookup of %s %s FAILED (%s: %s); the "
+                "write is UNVERIFIED", getattr(cat, "value", cat), guid,
+                type(exc).__name__, exc)
+            if unverified is not None:
+                unverified.append((
+                    cat, src,
+                    "target lookup for %s raised %s: %s; write could not be "
+                    "verified" % (guid, type(exc).__name__, exc)))
+            continue
+        if found is _UNVERIFIABLE:
+            continue
+        if found is None:
+            missing.append((
+                cat, getattr(action, "source_guid", guid),
+                "reported added but object %s not found in the target after "
+                "execute" % guid,
+            ))
+    return missing
 
 
 def planned_destination_for(plan_item, target, *,
