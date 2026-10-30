@@ -215,6 +215,56 @@ def _ensure_171_subpass(exec_ctx, target, tag, exec_skips):
             pass
 
 
+#: Issue #54: syncable keys `_execute_update_semantic` must not hand to the
+#: per-field `ApplySyncableProperties` write. `PhonemeGuids` is a list of
+#: SOURCE phoneme GUIDs; flexicon's base loop writes only multistring dicts
+#: and plain strings, so the "write" was a silent no-op that still counted as
+#: one field written on every run (measured live: `Vowels` reported
+#: "UPDATE applied (1 field(s) written)" on run 2 and never changed). Even a
+#: working write would be wrong here: a source GUID does not name a starter
+#: phoneme matched by natural key. Membership is wired by
+#: `_ensure_matched_nc_segments`, which resolves each member properly.
+_UPDATE_UNWRITABLE_KEYS: dict = {
+    GrammarCategory.NATURAL_CLASSES: ("PhonemeGuids",),
+}
+
+
+def _ensure_matched_nc_segments(exec_ctx, target, exec_skips):
+    """Issue #54: run `categories._wire_matched_nc_segments` once, AFTER the
+    leaf-dispatch loop.
+
+    The natural-key UPDATE of a starter `PhNCSegments` runs in the overwrite
+    loop, BEFORE this run's phonemes are created, so it cannot reference
+    them; and its only membership carrier (`PhonemeGuids`) is not written by
+    the base `ApplySyncableProperties`. Placed here, every phoneme this run
+    creates already exists. Own latch; never raises.
+    """
+    if getattr(exec_ctx, "_did_matched_nc_segments", False):
+        return
+    plan = getattr(exec_ctx, "_run_plan", None)
+    if plan is None:
+        return
+    if __package__:
+        from .categories import _wire_matched_nc_segments
+    else:
+        from categories import _wire_matched_nc_segments  # type: ignore
+    try:
+        object.__setattr__(exec_ctx, "_did_matched_nc_segments", True)
+    except (AttributeError, TypeError):
+        pass
+    try:
+        late_skips = _wire_matched_nc_segments(exec_ctx, target, plan)
+    except Exception:
+        _log.exception(
+            "execute: key-matched natural-class member pass FAILED (swallowed)")
+        return
+    if late_skips and exec_skips is not None:
+        try:
+            exec_skips.extend(late_skips)
+        except (AttributeError, TypeError):
+            pass
+
+
 def _ensure_owner_feat_strucs(exec_ctx, target, tag, exec_skips):
     """Run T119's feature-structure owner pass AFTER every category (038,
     2026-08-28).
@@ -775,6 +825,10 @@ def execute(plan: RunPlan, source, target, report_sink, tag: ImportResidueTag,
     # Every one of them resolved to a non-existent owner and was discarded
     # silently. See `_ensure_owner_feat_strucs` for the measurement.
     _ensure_owner_feat_strucs(exec_ctx, target, tag, _exec_skips)
+
+    # Issue #54: a starter `PhNCSegments` the plan matched by natural key gets
+    # its source class's members, after every create (see the helper).
+    _ensure_matched_nc_segments(exec_ctx, target, _exec_skips)
 
     # Issue #49 (defect 1): handler exit proves nothing -- a handler that
     # returns normally while writing nothing used to be counted as added. Check
@@ -3396,6 +3450,15 @@ def _execute_update_semantic(overwrite, source, target, report_sink, tag: Import
         # Issue #16: the snapshot keeps the target's props as read; only the
         # compare/write below sees the target-WS-space projection.
         _snapshot_props = tgt_props
+        # Issue #54: drop keys the per-field write cannot carry, so they
+        # neither force an UPDATE nor count as "written" on every run. Copy,
+        # not pop: the snapshot above must keep them.
+        _unwritable = _UPDATE_UNWRITABLE_KEYS.get(cat, ())
+        if _unwritable:
+            src_props = {k: v for k, v in src_props.items()
+                         if k not in _unwritable}
+            tgt_props = {k: v for k, v in tgt_props.items()
+                         if k not in _unwritable}
         _delta_ws_map = ws_map
         if cat in _UPDATE_TARGET_SPACE_CATEGORIES:
             src_props, tgt_props = _to_update_target_space(
