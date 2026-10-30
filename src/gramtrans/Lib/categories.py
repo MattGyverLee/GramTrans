@@ -14748,9 +14748,353 @@ def phonological_rules_dependencies(piece):
     return tuple(refs)
 
 
-def _phon_rule_fingerprint(raw_rule):
+# ---------------------------------------------------------------------------
+# Issue #52: rule-RHS reference collections (InputPOSesRC / ReqRuleFeatsRC /
+# ExclRuleFeatsRC) -- ONE resolver shared by the write path
+# (`_phon_rule_apply_body`) and the same-vs-different comparison
+# (`phonological_rules_plan_action`), so the two cannot disagree about which
+# references the target can hold.
+# ---------------------------------------------------------------------------
+
+_RULE_RC_ATTRS = ("InputPOSesRC", "ReqRuleFeatsRC", "ExclRuleFeatsRC")
+
+
+def _phon_rule_feats_in(phon_data):
+    """Every `PhPhonRuleFeat` in ``phon_data.PhonRuleFeatsOA``.
+
+    ``PhonRuleFeatsOA`` is an OA -- ONE owned ``CmPossibilityList`` -- not a
+    sequence. The rule features are that list's ``PossibilitiesOS``.
+
+    Issue #52: the previous code iterated the OA itself. Under pythonnet that
+    raises ``TypeError: 'ICmPossibilityList' object is not iterable``
+    (measured live, read-only, on ``Ngoreme FLEx``, whose list holds 6
+    rule features), and the surrounding ``except (AttributeError,
+    TypeError): pass`` swallowed it. The lookup was therefore ALWAYS empty
+    and every Req/ExclRuleFeatsRC reference reported as "absent from target"
+    whether or not the target held it.
+    """
+    lst = getattr(phon_data, "PhonRuleFeatsOA", None)
+    if lst is None:
+        return []
+    poss = getattr(lst, "PossibilitiesOS", None)
+    if poss is None:
+        try:
+            from SIL.LCModel import ICmPossibilityList
+            poss = ICmPossibilityList(lst).PossibilitiesOS
+        except Exception:  # noqa: BLE001 -- no list => no rule features
+            return []
+    return list(poss)
+
+
+def _as_rule_feat(obj):
+    """``obj`` cast to `IPhPhonRuleFeat` when LCM is present.
+
+    ``PossibilitiesOS`` yields its members typed as the BASE `ICmPossibility`
+    (measured live), and ``ReqRuleFeatsRC.Add`` will not take that: the
+    reference collection is typed ``ILcmReferenceCollection[IPhPhonRuleFeat]``
+    and an uncast add fails while the cast one succeeds (issue #52 probe on
+    the throwaway GT052 target).
+    """
+    try:
+        from SIL.LCModel import IPhPhonRuleFeat
+        return IPhPhonRuleFeat(obj)
+    except Exception:  # noqa: BLE001 -- no LCM (fakes) or not a rule feature
+        return obj
+
+
+def _named_view(obj):
+    """``obj`` cast to an interface that exposes ``Name``/``Abbreviation``
+    (a rule feature's item is an `MoInflClass`, `MoStemName` or a
+    `CmPossibility`; flexicon's ``Object()`` hands it back as a bare
+    `ICmObject`, which exposes neither)."""
+    if hasattr(obj, "Name"):
+        return obj
+    try:
+        import SIL.LCModel as _lcm
+        cls = _class_name_of(obj)
+        iface_name = {"MoInflClass": "IMoInflClass",
+                      "MoStemName": "IMoStemName"}.get(cls, "ICmPossibility")
+        return getattr(_lcm, iface_name)(obj)
+    except Exception:  # noqa: BLE001
+        return obj
+
+
+def _phon_rule_feat_item(prf):
+    """The object a `PhPhonRuleFeat` stands for (its ``ItemRA``: an
+    `MoInflClass`, an exception-feature `CmPossibility`, ...), or None."""
+    try:
+        item = getattr(prf, "ItemRA", None)
+    except Exception:  # noqa: BLE001
+        item = None
+    if item is None:
+        try:
+            from SIL.LCModel import IPhPhonRuleFeat
+            item = IPhPhonRuleFeat(prf).ItemRA
+        except Exception:  # noqa: BLE001
+            item = None
+    return item
+
+
+def _build_rule_rc_index(target, phon_data):
+    """Target-side lookups for the three RHS reference collections.
+
+    - ``prf_by_guid``: target `PhPhonRuleFeat` by its own GUID.
+    - ``prf_by_item``: target `PhPhonRuleFeat` by the GUID of its ``ItemRA``.
+      A rule feature is a thin wrapper LCM keeps in ``PhonRuleFeatsOA`` for an
+      inflection class / exception feature; two projects that share the
+      inflection class need not share the wrapper's GUID, so the wrapped
+      item is the identity that actually matters.
+    - ``pos_by_guid``: target parts of speech (``InputPOSesRC`` holds
+      `PartOfSpeech` objects, which are never rule features -- the previous
+      code looked them up in the rule-feature dict, so an InputPOS could
+      never be wired).
+    """
+    prf_by_guid, prf_by_item = {}, {}
+    for prf in (_as_rule_feat(x) for x in _phon_rule_feats_in(phon_data)):
+        g = _guid_str_from(prf)
+        if g:
+            prf_by_guid[g] = prf
+        item = _phon_rule_feat_item(prf)
+        ig = _guid_str_from(item) if item is not None else ""
+        if ig:
+            prf_by_item.setdefault(ig, prf)
+    pos_by_guid = {}
+    pos_ops = getattr(target, "POS", None)
+    if pos_ops is not None:
+        try:
+            for pos in pos_ops.GetAll():
+                pg = _guid_str_from(pos)
+                if pg:
+                    pos_by_guid[pg] = getattr(pos, "_obj", pos)
+        except (AttributeError, TypeError):
+            pass
+    prf_list = getattr(phon_data, "PhonRuleFeatsOA", None) if phon_data is not None else None
+    prf_owner = getattr(prf_list, "PossibilitiesOS", None) if prf_list is not None else None
+    if prf_list is not None and prf_owner is None:
+        try:
+            from SIL.LCModel import ICmPossibilityList
+            prf_owner = ICmPossibilityList(prf_list).PossibilitiesOS
+        except Exception:  # noqa: BLE001
+            prf_owner = None
+    return {
+        "prf_by_guid": prf_by_guid,
+        "prf_by_item": prf_by_item,
+        "pos_by_guid": pos_by_guid,
+        "target": target,
+        "prf_owner": prf_owner,
+    }
+
+
+def _target_object_by_guid(target, guid_str):
+    """The target object with GUID ``guid_str`` (flexicon ``Object()``), or
+    None when the target has no such object."""
+    if not guid_str or target is None:
+        return None
+    lookup = getattr(target, "Object", None)
+    if lookup is None:
+        return None
+    try:
+        return lookup(guid_str)
+    except Exception:  # noqa: BLE001 -- FP_ParameterError: no such object
+        return None
+
+
+def _rule_feat_resolution(src_prf, index):
+    """``(existing_target_prf, target_item)`` for a source `PhPhonRuleFeat`.
+
+    ``existing_target_prf`` is the target rule feature found by the source
+    rule feature's GUID or, failing that, by the GUID of the item it wraps.
+    When there is none, ``target_item`` is the target object with the same
+    GUID as the source's ``ItemRA`` (the inflection class / exception feature
+    itself), or None when the target lacks that too.
+    """
+    hit = index["prf_by_guid"].get(_guid_str_from(src_prf))
+    if hit is not None:
+        return hit, None
+    item = _phon_rule_feat_item(src_prf)
+    ig = _guid_str_from(item) if item is not None else ""
+    if not ig:
+        return None, None
+    hit = index["prf_by_item"].get(ig)
+    if hit is not None:
+        return hit, None
+    return None, _target_object_by_guid(index.get("target"), ig)
+
+
+def _create_rule_feat(src_prf, target_item, index):
+    """Create the target `PhPhonRuleFeat` wrapping ``target_item``,
+    GUID-preserving, in the target's ``PhonRuleFeatsOA.PossibilitiesOS``.
+
+    Measured (issue #52, live): creating an `MoInflClass` through its factory
+    does NOT add a rule feature for it -- the target held Class 9 and Class 10
+    under their source GUIDs and its ``PhonRuleFeatsOA`` was still empty. FLEx
+    adds the wrapper when a user picks the class in the rule editor; a
+    transfer has to do the same or the reference can never be wired.
+
+    The name is copied from ``target_item`` (a TARGET object, so its writing
+    system handles are the target's own -- never copy a multistring across
+    projects). Raises RuntimeError on any create/wire failure.
+    """
+    owner = index.get("prf_owner")
+    if owner is None:
+        raise RuntimeError(
+            "target PhPhonData.PhonRuleFeatsOA is null; cannot add a rule "
+            "feature for the referenced item")
+    from SIL.LCModel import IPhPhonRuleFeatFactory
+    new_prf, _ = _create_with_guid(
+        IPhPhonRuleFeatFactory, owner, _guid_str_from(src_prf),
+        index["target"])
+    new_prf = _as_rule_feat(new_prf)
+    try:
+        new_prf.ItemRA = target_item
+    except Exception as exc:  # noqa: BLE001
+        raise RuntimeError(
+            f"created rule feature {_guid_str_from(src_prf)} but could not "
+            f"set ItemRA: {exc!r}") from exc
+    named_item = _named_view(target_item)
+    for attr in ("Name", "Abbreviation"):
+        try:
+            getattr(new_prf, attr).CopyAlternatives(getattr(named_item, attr))
+        except Exception:  # noqa: BLE001 -- cosmetic; ItemRA is the identity
+            pass
+    index["prf_by_guid"][_guid_str_from(new_prf) or _guid_str_from(src_prf)] = new_prf
+    ig = _guid_str_from(target_item)
+    if ig:
+        index["prf_by_item"].setdefault(ig, new_prf)
+    return new_prf
+
+
+def _resolve_rule_rc_item(context, rc_attr, src_item, index):
+    """WRITE PATH: the target object a source RHS reference-collection item
+    is wired to, or None when the target cannot hold it.
+
+    ``InputPOSesRC`` -> a target part of speech via `_resolve_scoped_referent`
+    (GUID first; identity remap / roster-admitted name only when ``context``
+    is live, exactly as the context cells resolve). ``Req/ExclRuleFeatsRC``
+    -> the target `PhPhonRuleFeat` (see `_rule_feat_resolution`); when the
+    target holds the wrapped item but no rule feature for it, one is created
+    (`_create_rule_feat`). Raises RuntimeError only if that create fails.
+    """
+    if src_item is None:
+        return None
+    if rc_attr == "InputPOSesRC":
+        found, _basis = _resolve_scoped_referent(
+            context, src_item, index["pos_by_guid"], "PartOfSpeech")
+        return found
+    existing, target_item = _rule_feat_resolution(src_item, index)
+    if existing is not None:
+        return existing
+    if target_item is None:
+        return None
+    return _create_rule_feat(src_item, target_item, index)
+
+
+def _rule_rc_target_key(context, rc_attr, src_item, index):
+    """COMPARISON PATH: the GUID of the target object this source item is
+    wired to when the target ALREADY holds it, or None (the item is then left
+    out of the comparison).
+
+    A rule feature the write path would have to CREATE (target holds the
+    inflection class but no `PhPhonRuleFeat` for it) is deliberately None
+    here, not "different". The only way to act on "different" for a rule
+    already present is the structural rebuild
+    (`_execute_phon_rule_structural_update`), and measured live on the
+    throwaway GT052 target that rebuild does NOT persist reference-collection
+    adds on a re-created right-hand side (and can leave a dangling
+    ``RightContextOA``) -- so keying a would-be-created feature as
+    "different" re-plans the same rebuild on every run without ever wiring
+    it. That is exactly issue #52's churn. Such a reference is wired by the
+    ADD path whenever the wrapped item already exists when the rule is
+    written, and is otherwise reported dropped on that run."""
+    if src_item is None:
+        return None
+    if rc_attr == "InputPOSesRC":
+        found, _basis = _resolve_scoped_referent(
+            context, src_item, index["pos_by_guid"], "PartOfSpeech")
+        return (_guid_str_from(found) or None) if found is not None else None
+    existing, _target_item = _rule_feat_resolution(src_item, index)
+    if existing is not None:
+        return _guid_str_from(existing) or None
+    return None
+
+
+def _phon_rule_source_projection(context, target):
+    """Mappers that project a SOURCE rule's references into TARGET identity,
+    for `_phon_rule_fingerprint` (issue #52).
+
+    Comparing a source rule with its target copy by raw GUIDs is wrong twice
+    over, and both made `phonological_rules_plan_action` re-plan a rebuild of
+    an unchanged rule on every run (measured live, Ngoreme FLEx -> a restored
+    Ngoreme Target, second identical phonology run: 8 of 21 rules
+    "overwritten"):
+
+    1. A context cell's phoneme / natural class may live in the target under
+       a DIFFERENT GUID -- matched by this run's identity remap or by
+       roster-admitted name (the starter-inventory case). The write path
+       wires the target's own object, so the target fingerprint carries the
+       target GUID and the source fingerprint never equals it (5 rules).
+    2. A Req/Excl/InputPOS reference the target genuinely cannot hold is
+       reported as a `DroppedItemRecord` and left out, so the target never
+       carries it either (3 rules).
+
+    The cell mapper resolves through the SAME `_resolve_scoped_referent` the
+    write path uses and falls back to the source GUID when it cannot resolve
+    (an unresolvable cell still compares different, as before -- this
+    function hides nothing the write path would not also fail to write). The
+    RC mapper returns None for an unresolvable item, which drops it from the
+    comparison; ``omitted`` counts those so the Skip can say so.
+    """
+    def _by_guid(accessor_name):
+        out = {}
+        accessor = getattr(target, accessor_name, None)
+        if accessor is None:
+            return out
+        try:
+            for obj in accessor.GetAll():
+                g = _guid_str_from(obj)
+                if g:
+                    out[g] = getattr(obj, "_obj", obj)
+        except (AttributeError, TypeError):
+            pass
+        return out
+
+    phonemes = _by_guid("Phonemes")
+    ncs = _by_guid("NaturalClasses")
+    try:
+        phon_data = target.Cache.LangProject.PhonologicalDataOA
+    except (AttributeError, TypeError):
+        phon_data = None
+    index = _build_rule_rc_index(target, phon_data)
+    omitted = []
+
+    def map_cell_ref(obj, kind):
+        by_guid, expect = ((phonemes, "PhPhoneme") if kind == "Seg"
+                           else (ncs, _class_name_of(obj)))
+        found, _basis = _resolve_scoped_referent(context, obj, by_guid, expect)
+        if found is not None:
+            return _guid_str_from(found) or None
+        return _guid_str_from(obj) or None
+
+    def map_rc_ref(rc_attr, obj):
+        key = _rule_rc_target_key(context, rc_attr, obj, index)
+        if key is None:
+            omitted.append((rc_attr, _guid_str_from(obj)))
+        return key
+
+    return map_cell_ref, map_rc_ref, omitted
+
+
+def _phon_rule_fingerprint(raw_rule, map_cell_ref=None, map_rc_ref=None):
     """Build a GUID-keyed STRUCTURAL fingerprint of a phonological rule for
     same-vs-different comparison (task 7, feature 037).
+
+    ``map_cell_ref(obj, kind)`` / ``map_rc_ref(rc_attr, obj)`` (issue #52):
+    optional. When given, they replace the raw GUID of a context cell's
+    phoneme ("Seg") / natural class ("NC") referent and of an RHS
+    reference-collection item respectively; a ``map_rc_ref`` result of None
+    leaves that item out. `phonological_rules_plan_action` passes the
+    `_phon_rule_source_projection` mappers for the SOURCE rule so it is
+    compared in the target's identity space. Omitted -> raw GUIDs, as before.
 
     Why this exists: flexicon's `PhonologicalRuleOperations.
     GetSyncableProperties`/`CompareTo` only look at Name/Description/
@@ -14803,6 +15147,20 @@ def _phon_rule_fingerprint(raw_rule):
         except (TypeError, AttributeError):
             return _guid_str_from(obj) or None
 
+    def _ref(obj, kind):
+        if obj is None:
+            return None
+        if map_cell_ref is not None:
+            return map_cell_ref(obj, kind)
+        return _g(obj)
+
+    def _rc_key(rc_attr, obj):
+        if obj is None:
+            return None
+        if map_rc_ref is not None:
+            return map_rc_ref(rc_attr, obj)
+        return _g(obj)
+
     def _cell_fp(cell):
         if cell is None:
             return None
@@ -14812,7 +15170,7 @@ def _phon_rule_fingerprint(raw_rule):
             return ("unknown", None)
         if cn == "PhSimpleContextSeg":
             try:
-                return ("Seg", _g(IPhSimpleContextSeg(cell).FeatureStructureRA))
+                return ("Seg", _ref(IPhSimpleContextSeg(cell).FeatureStructureRA, "Seg"))
             except (AttributeError, TypeError):
                 return ("Seg", None)
         if cn == "PhSimpleContextNC":
@@ -14827,7 +15185,7 @@ def _phon_rule_fingerprint(raw_rule):
             except (AttributeError, TypeError):
                 nc = cell
             try:
-                fsra = _g(getattr(nc, "FeatureStructureRA", None))
+                fsra = _ref(getattr(nc, "FeatureStructureRA", None), "NC")
             except (AttributeError, TypeError):
                 fsra = None
             try:
@@ -14895,11 +15253,13 @@ def _phon_rule_fingerprint(raw_rule):
                 left_fp = _cell_fp(getattr(rhs, "LeftContextOA", None))
                 right_fp = _cell_fp(getattr(rhs, "RightContextOA", None))
                 rc_fps = []
-                for rc_attr in ("InputPOSesRC", "ReqRuleFeatsRC", "ExclRuleFeatsRC"):
+                for rc_attr in _RULE_RC_ATTRS:
                     try:
                         rc = getattr(rhs, rc_attr, None)
                         rc_fps.append(
-                            tuple(sorted(g for g in (_g(x) for x in rc) if g))
+                            tuple(sorted(
+                                g for g in (_rc_key(rc_attr, x) for x in rc) if g
+                            ))
                             if rc is not None else ()
                         )
                     except (AttributeError, TypeError):
@@ -14956,9 +15316,27 @@ def phonological_rules_plan_action(piece, context, ws_mapping):
         if tgt_wrapped is not None:
             raw_src = getattr(piece, "_obj", piece)
             raw_tgt = getattr(tgt_wrapped, "_obj", tgt_wrapped)
-            src_fp = _phon_rule_fingerprint(raw_src)
+            # Issue #52: compare the source rule PROJECTED into the target's
+            # identity space (see `_phon_rule_source_projection`), not by raw
+            # source GUIDs -- otherwise a rule whose references were wired to
+            # name-matched target objects, or whose unresolvable Req/Excl/
+            # InputPOS references were reported dropped, compares "different"
+            # forever and is rebuilt on every run.
+            map_cell_ref, map_rc_ref, omitted = _phon_rule_source_projection(
+                context, target)
+            src_fp = _phon_rule_fingerprint(
+                raw_src, map_cell_ref=map_cell_ref, map_rc_ref=map_rc_ref)
             tgt_fp = _phon_rule_fingerprint(raw_tgt)
             if src_fp == tgt_fp:
+                omitted_note = ""
+                if omitted:
+                    fields = ", ".join(sorted({f for f, _g in omitted}))
+                    omitted_note = (
+                        f" {len(omitted)} source reference(s) ({fields}) the "
+                        f"target cannot hold were excluded from the comparison; "
+                        f"they were reported as dropped when the rule was "
+                        f"written and are still missing from the target."
+                    )
                 return Skip(
                     category=GrammarCategory.PHONOLOGICAL_RULES,
                     source_guid=src_guid,
@@ -14967,6 +15345,7 @@ def phonological_rules_plan_action(piece, context, ws_mapping):
                         f"PhonologicalRule GUID {src_guid[:8]}... already present "
                         f"in target with an identical structural fingerprint "
                         f"(Direction/Disabled/strata/StrucDesc/RHS)."
+                        f"{omitted_note}"
                     ),
                 )
             return PlannedOverwrite(
@@ -15511,7 +15890,31 @@ def _report_dropped_struc_desc_cell(dropped, rule_guid, cell_guid, exc):
     ))
 
 
-def _report_dropped_rule_ref(dropped, rule_guid, rhs_guid, field_name, item_guid, src_item):
+def _rule_ref_display_name(src_item):
+    """Readable name of a rule-RHS reference item, or "".
+
+    ``Name`` on a `PhPhonRuleFeat` / `PartOfSpeech` is an IMultiUnicode;
+    ``str()`` of it is the accessor's .NET type name
+    ("SIL.LCModel.DomainImpl.MultiUnicodeAccessor" -- what every one of these
+    records carried, measured live for issue #52). Read the best analysis
+    alternative instead; a plain-string ``Name`` (fakes) passes through.
+    """
+    name = getattr(src_item, "Name", None)
+    if name is None:
+        return ""
+    if isinstance(name, str):
+        return name
+    try:
+        text = name.BestAnalysisAlternative.Text
+    except Exception:  # noqa: BLE001
+        text = None
+    if text and text != "***":
+        return str(text)
+    return ""
+
+
+def _report_dropped_rule_ref(dropped, rule_guid, rhs_guid, field_name, item_guid, src_item,
+                             reason=None):
     """DroppedItemRecord for an RHS reference-collection item
     (InputPOSesRC/ReqRuleFeatsRC/ExclRuleFeatsRC) absent from the target
     (coordinator live-run defect B, feature 037). Replaces the previous bare
@@ -15520,11 +15923,7 @@ def _report_dropped_rule_ref(dropped, rule_guid, rhs_guid, field_name, item_guid
     conditioning feature/POS restriction with no trace in the run report."""
     if dropped is None:
         return
-    item_name = ""
-    try:
-        item_name = str(getattr(src_item, "Name", "")) or ""
-    except Exception:
-        pass
+    item_name = _rule_ref_display_name(src_item)
     label = item_name or f"guid={_short_guid(item_guid)}"
     _append_dropped_once(dropped, DroppedItemRecord(
         owner_kind="PhSegRuleRHS",
@@ -15533,7 +15932,7 @@ def _report_dropped_rule_ref(dropped, rule_guid, rhs_guid, field_name, item_guid
         field_name=field_name,
         item_name=label,
         item_guid=item_guid or "",
-        reason=(
+        reason=reason or (
             f"{field_name} item absent from target -- rule silently lost "
             f"this conditioning feature/POS restriction"
         ),
@@ -15718,13 +16117,13 @@ def _phon_rule_apply_body(src_rule, new_rule, class_name, source, target,
         # Only suppress genuine absence of PhonemeSetsOS (null phon data),
         # not an OC/OS attribute typo (already logged above).
         pass
-    # PhonRuleFeats (for Req/ExclRuleFeatsRC)
-    tgt_phon_rule_feat_by_guid = {}
-    try:
-        for prf in tgt_phon_data.PhonRuleFeatsOA:
-            tgt_phon_rule_feat_by_guid[_guid_str_from(prf)] = prf
-    except (AttributeError, TypeError):
-        pass
+    # InputPOSesRC / ReqRuleFeatsRC / ExclRuleFeatsRC lookups. Issue #52:
+    # this used to iterate `PhonRuleFeatsOA` -- an OA (one owned
+    # CmPossibilityList), which raises TypeError under pythonnet and was
+    # swallowed, so the dict was always empty -- and resolved InputPOSesRC
+    # (parts of speech) in that same rule-feature dict. See
+    # `_build_rule_rc_index` / `_resolve_rule_rc_item`.
+    rule_rc_index = _build_rule_rc_index(target, tgt_phon_data)
 
     # -----------------------------------------------------------------------
     # CONSTRAINT PRE-PASS
@@ -16208,7 +16607,7 @@ def _phon_rule_apply_body(src_rule, new_rule, class_name, source, target,
             # reference now reports a DroppedItemRecord instead of a bare
             # [WARN] print, so it lands in the run report rather than
             # vanishing on a discarded/export-mode report sink.
-            for rc_attr in ("InputPOSesRC", "ReqRuleFeatsRC", "ExclRuleFeatsRC"):
+            for rc_attr in _RULE_RC_ATTRS:
                 try:
                     src_rc = getattr(src_rhs, rc_attr, None)
                     new_rc = getattr(new_rhs, rc_attr, None)
@@ -16216,13 +16615,47 @@ def _phon_rule_apply_body(src_rule, new_rule, class_name, source, target,
                         continue
                     for src_item in src_rc:
                         ig = _guid_str_from(src_item)
-                        tgt_item = tgt_phon_rule_feat_by_guid.get(ig)
-                        if tgt_item is not None:
-                            new_rc.Add(tgt_item)
-                        else:
+                        try:
+                            tgt_item = _resolve_rule_rc_item(
+                                context, rc_attr, src_item, rule_rc_index)
+                        except RuntimeError as rf_exc:
+                            # The target holds the wrapped item but adding
+                            # its rule feature failed: report THAT, not
+                            # "absent from target".
                             _report_dropped_rule_ref(
                                 _dropped_list, src_guid, rhs_guid, rc_attr,
                                 ig, src_item,
+                                reason=(
+                                    f"{rc_attr} item could not be wired: "
+                                    f"creating its target rule feature "
+                                    f"failed ({rf_exc}) -- rule lost this "
+                                    f"conditioning feature/POS restriction"
+                                ),
+                            )
+                            continue
+                        if tgt_item is None:
+                            _report_dropped_rule_ref(
+                                _dropped_list, src_guid, rhs_guid, rc_attr,
+                                ig, src_item,
+                            )
+                            continue
+                        try:
+                            new_rc.Add(tgt_item)
+                        except Exception as add_exc:  # noqa: BLE001
+                            # Issue #52: this used to fall into the
+                            # loop-wide `except (AttributeError, TypeError):
+                            # pass` below and vanish -- the reference was
+                            # resolved and still never wired, with no trace.
+                            _report_dropped_rule_ref(
+                                _dropped_list, src_guid, rhs_guid, rc_attr,
+                                ig, src_item,
+                                reason=(
+                                    f"{rc_attr} item resolved in target but "
+                                    f"could not be added "
+                                    f"({type(add_exc).__name__}: {add_exc}) "
+                                    f"-- rule lost this conditioning "
+                                    f"feature/POS restriction"
+                                ),
                             )
                 except (AttributeError, TypeError):
                     pass

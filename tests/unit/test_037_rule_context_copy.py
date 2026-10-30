@@ -52,6 +52,24 @@ class _Coll:
         return len(self._items)
 
 
+class _PossibilityList:
+    """`PhPhonData.PhonRuleFeatsOA` stand-in: ONE owned CmPossibilityList (an
+    OA), not a sequence. Its rule features are ``PossibilitiesOS``.
+
+    Issue #52: these fakes used to model the OA as a plain ``list``, so the
+    production code's ``for prf in PhonRuleFeatsOA`` worked here and failed
+    on every live project. The real pythonnet ``ICmPossibilityList`` is NOT
+    iterable (``TypeError: 'ICmPossibilityList' object is not iterable``,
+    measured on Ngoreme FLEx); this fake raises the same way so that
+    regression cannot hide again."""
+
+    def __init__(self, items=()):
+        self.PossibilitiesOS = _Coll(items)
+
+    def __iter__(self):
+        raise TypeError("'ICmPossibilityList' object is not iterable")
+
+
 class _Ref:
     """A referenced object (phoneme, POS, rule feature) with a GUID."""
 
@@ -126,7 +144,7 @@ class _Project:
             ContextsOS=_Coll(),
             FeatConstraintsOS=_Coll(),
             PhonemeSetsOS=[],
-            PhonRuleFeatsOA=list(rule_feats),
+            PhonRuleFeatsOA=_PossibilityList(rule_feats),
         )
         self.Cache = types.SimpleNamespace(
             LangProject=types.SimpleNamespace(PhonologicalDataOA=phon_data),
