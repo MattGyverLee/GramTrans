@@ -3568,6 +3568,11 @@ class RunPlan:
     # Ephemeral per run; not serialised into the run snapshot. See
     # specs/031-fix-inflection-feature-linking/data-model.md (FeatureCategoryLink).
     feature_category_links: dict = field(default_factory=dict)  # str -> list[str]
+    # Issue #84: how build_run_plan reinterpreted the caller's selection
+    # before dispatch (ENTRY/SENSE/MSA/ALLOMORPH -> AFFIXES/STEMS, see
+    # `preview.expand_lexicon_categories`). One plain sentence per note;
+    # rendered as [INFO] lines so the substitution is never silent.
+    category_notes: tuple = ()  # tuple[str, ...]
 
     def category_count(self, category: GrammarCategory) -> int:
         return sum(1 for a in self.actions if a.category == category)
@@ -4572,6 +4577,9 @@ class RunReport:
     # `not_added`). `disposition_totals` reads it so a swallowed failure is
     # not subtracted from `added` twice.
     outcome_counted: bool = False
+    # Issue #84: `RunPlan.category_notes`, carried through so Preview and
+    # Move reports both say how the selection was dispatched.
+    category_notes: tuple = ()  # tuple[str, ...]
 
     def __post_init__(self) -> None:
         # ---- T080 (SC-010 audit): the ADD bucket's first invariant.

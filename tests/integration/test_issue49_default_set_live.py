@@ -1,13 +1,15 @@
 """Issue #49 live gate -- the default category set reports what it wrote.
 
 WRITE PATH: writes ONLY the throwaway project ``Target`` (restored headlessly
-from a known backup before and after).  The source ``Ngoreme FLEx`` is opened
+from a known backup before and after), or the throwaway named by
+``GT_LIVE_TARGET`` when set (a parallel worktree's own copy, e.g. "GT084 Target").  The source ``Ngoreme FLEx`` is opened
 READ-ONLY.  Skips unless FLEXLIBS_REQUIRE_LIVE=1.
 
 Asserts: the target .fwdata changes; template/slot/POS added counts equal the
 objects found in Target by GUID; every reported added is a verified-present
-object; the four lexicon categories are reported as not dispatched (the legacy
-verb-vertical path that owned them is retired, see preview.build_run_plan).
+object; the four lexicon categories (no planner of their own since the legacy
+verb-vertical path was retired) are dispatched as AFFIXES + STEMS, so entries,
+senses, MSAs and allomorphs actually land (issue #84).
 """
 from __future__ import annotations
 
@@ -25,9 +27,10 @@ if os.environ.get("FLEXLIBS_REQUIRE_LIVE") != "1":
                 allow_module_level=True)
 
 SOURCE_NAME = "Ngoreme FLEx"   # READ-ONLY
-TARGET_NAME = "Target"         # the ONLY project this module writes
-TARGET_DIR = Path("C:/ProgramData/SIL/FieldWorks/Projects/Target")
-TARGET_PATH = str(TARGET_DIR / "Target.fwdata")
+# The ONLY project this module writes (a throwaway, restored before/after).
+TARGET_NAME = os.environ.get("GT_LIVE_TARGET", "Target")
+TARGET_DIR = Path("C:/ProgramData/SIL/FieldWorks/Projects") / TARGET_NAME
+TARGET_PATH = str(TARGET_DIR / (TARGET_NAME + ".fwdata"))
 BACKUP_NAME = "Target 2026-07-06 0218.fwbackup"
 _REPO = Path(__file__).resolve().parents[2]
 _BACKUP_DIRS = (_REPO / "backups", Path("D:/Github/_Projects/_LEX/GramTrans/backups"))
@@ -99,7 +102,7 @@ def test_default_set_added_counts_match_target_state():
     assert picks, "[SETUP] source has no POS"
     classes = ("MoInflAffixTemplate", "MoInflAffixSlot", "PartOfSpeech",
                "LexEntry", "LexSense", "MoStemMsa", "MoStemAllomorph",
-               "PhEnvironment")
+               "PhEnvironment", "MoInflAffMsa", "MoAffixAllomorph")
     before_hash = _sha(TARGET_PATH)
     before = _guids_by_class(TARGET_NAME, classes)
 
@@ -151,11 +154,22 @@ def test_default_set_added_counts_match_target_state():
     assert len(after["MoInflAffixTemplate"] - before["MoInflAffixTemplate"]) > 0, (
         "no templates transferred")
 
-    # Lexicon categories: visibly not dispatched, nothing added.
-    for cat in (GC.ENTRY, GC.SENSE, GC.MSA, GC.ALLOMORPH):
-        assert any(s.category == cat and "not dispatched" in s.detail
-                   for s in report.skips), "%s dropped silently" % cat.value
-        rep = report.per_category.get(cat)
-        assert rep is None or rep.added == 0
-        assert not (after[cls_of[cat]] - before[cls_of[cat]]), (
-            "%s objects appeared though not dispatched" % cat.value)
+    # Issue #84: the lexicon categories are dispatched as AFFIXES + STEMS,
+    # visibly (an [INFO] note), and their objects actually land.
+    assert not any("not dispatched" in s.detail for s in report.skips)
+    assert any("affixes + stems" in n for n in report.category_notes)
+    assert plan.selection.is_on(GC.AFFIXES) and plan.selection.is_on(GC.STEMS)
+    for cn in ("LexEntry", "LexSense", "MoStemMsa", "MoStemAllomorph",
+               "MoInflAffMsa", "MoAffixAllomorph"):
+        print("[LIVE] %-16s target new=%d" % (cn, len(after[cn] - before[cn])))
+    for cn in ("LexEntry", "LexSense", "MoStemAllomorph"):
+        assert after[cn] - before[cn], "no %s transferred" % cn
+
+    # Idempotent: an identical second run adds no lexicon object.
+    plan2, report2 = full_run.run_full_transfer(
+        SOURCE_NAME, TARGET_NAME, TARGET_PATH, selection_transform=_sel)
+    again = _guids_by_class(TARGET_NAME, classes)
+    for cn in classes:
+        assert again[cn] == after[cn], "%s changed on an identical rerun" % cn
+    assert not [a for a in plan2.actions
+                if a.category in (GC.AFFIXES, GC.STEMS)], "rerun re-adds entries"

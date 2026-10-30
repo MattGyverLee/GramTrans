@@ -423,6 +423,8 @@ def _build_from_plan(cls, plan: RunPlan, mode: RunMode,
         fidelity_by_guid=dict(fidelity_by_guid) if fidelity_by_guid else {},
         leaf_execution_failures=tuple(extra_leaf_execution_failures),
         outcome_counted=not_added is not None,
+        # Issue #84: how the selection was dispatched (lexicon expansion).
+        category_notes=tuple(getattr(plan, "category_notes", ())),
         # Feature 038: the four plan-side buckets flow straight through, so
         # the report surfaces below have something to render. All four are
         # empty on a plan built before 038's producers exist, which is why
@@ -1979,7 +1981,9 @@ def to_snapshot_json(r: RunReport) -> str:
 
 #: Issue #85: lexicon categories a FLEx user selects expecting entries to
 #: transfer, and which the default path does not dispatch (preview.py
-#: build_run_plan reports each as a "not dispatched" skip).
+#: build_run_plan reports each as a "not dispatched" skip). Since issue #84
+#: build_run_plan dispatches them as AFFIXES/STEMS instead, so this warning
+#: only fires for a hand-built report that still carries such a skip.
 _LEXICON_CATEGORIES = frozenset({
     GrammarCategory.ENTRY, GrammarCategory.SENSE,
     GrammarCategory.MSA, GrammarCategory.ALLOMORPH,
@@ -2013,6 +2017,10 @@ def render_text_summary(report: RunReport) -> Iterable[str]:
     yield f"[GramTrans] Run report  mode={report.mode.value}  run_id={report.context.run_id}"
     yield f"  Source: {report.context.source_project_name!r}"
     yield f"  Target: {report.context.target_project_name!r}"
+    # Issue #84: say how the selection was dispatched (e.g. ENTRY expanded to
+    # AFFIXES + STEMS) before any count, so the counts read in that light.
+    for _note in getattr(report, "category_notes", ()):
+        yield f"  [INFO] {_note}"
     # Issue #85: up front, so a run whose table reads all zeros or all green is
     # not taken to mean "entries transferred" when no planner ever ran.
     _undispatched = not_dispatched_categories(report)

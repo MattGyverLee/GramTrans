@@ -157,12 +157,15 @@ class StatsPanel(QtWidgets.QWidget):
         el_list = getattr(report, "excluded_lossy", ())
         # Issue #85: a selected category no planner ran for is a warning too.
         undispatched = not_dispatched_categories(report)
-        if el_list or undispatched:
+        # Issue #84: how the selection was dispatched (ENTRY -> AFFIXES+STEMS).
+        notes = tuple(getattr(report, "category_notes", ()))
+        if el_list or undispatched or notes:
             lines = [f"[WARN] {el.message}" for el in el_list]
             if undispatched:
                 lines.insert(0, "[WARN] NOT DISPATCHED -- selected, but nothing "
                              "was planned or written for: "
                              + ", ".join(c.value for c in undispatched))
+            lines[:0] = [f"[INFO] {n}" for n in notes]
             self._warn_view.setPlainText("\n".join(lines))
             self._warn_view.setVisible(True)
         else:

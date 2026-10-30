@@ -126,9 +126,15 @@ def test_planner_reports_undispatched_and_empty_pick_categories():
     plan = preview.build_run_plan(_ctx_with_src(), sel, WSMapping(entries=()),
                                   _FakeProj(), _FakeProj())
     by_cat = {s.category: s for s in plan.skips}
+    # Issue #84: the four lexicon categories are no longer "not dispatched";
+    # they are planned as AFFIXES + STEMS and the plan says so.
     for c in (GrammarCategory.ENTRY, GrammarCategory.SENSE,
               GrammarCategory.MSA, GrammarCategory.ALLOMORPH):
-        assert "not dispatched" in by_cat[c].detail
+        assert c not in by_cat
+    assert not any("not dispatched" in s.detail for s in plan.skips)
+    assert plan.selection.is_on(GrammarCategory.AFFIXES)
+    assert plan.selection.is_on(GrammarCategory.STEMS)
+    assert any("affixes + stems" in n for n in plan.category_notes)
     assert "pos_picks is empty" in by_cat[GrammarCategory.POS].detail
     assert not any(a.category in (GrammarCategory.ENTRY,) for a in plan.actions)
 
