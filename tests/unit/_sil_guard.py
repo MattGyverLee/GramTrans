@@ -27,8 +27,10 @@ def force_sil_loaded() -> bool:
 
     Returns True when the real `SIL.LCModel` is importable in-process, False
     when the host is absent. Fails the calling test outright if `SIL.LCModel`
-    resolves to a plain-module stub: a leaked stub would silently re-mask the
-    defect this guard exists to expose.
+    resolves to a plain-module stub that SUPPLIES `IPartOfSpeech` -- the
+    identity-cast masking shape #58 deleted. A leaked stub WITHOUT it (e.g. the
+    collection-time `ICmObject=None` stubs) just makes this return False; the
+    callers' assertions must hold then too, via the production duck fallback.
     """
     try:
         import flexicon.code.BaseOperations  # noqa: F401

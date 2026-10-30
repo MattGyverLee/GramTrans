@@ -11,6 +11,12 @@ Covers:
 Exception features in FLEx are IFsSymFeatVal references wired into
 IPartOfSpeech.ExceptionFeaturesOC.  The piece here is a
 (pos_guid_str, sym_feat_val_obj) tuple.
+
+CAVEAT (#58, verified live): IPartOfSpeech has NO `ExceptionFeaturesOC` on
+LCM 9 (FLExToolsMCP lists no such property; a live read raises
+AttributeError). These are FAKE-CONTRACT tests of the category's code paths
+only -- they do not prove the category transfers anything live. Follow-up
+pending to re-model the category on the real LCM surface.
 """
 from __future__ import annotations
 
