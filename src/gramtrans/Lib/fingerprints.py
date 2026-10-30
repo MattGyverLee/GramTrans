@@ -34,6 +34,7 @@ MSA token
 from __future__ import annotations
 
 import hashlib
+import logging
 from typing import Any, Tuple
 
 # ---------------------------------------------------------------------------
@@ -171,31 +172,83 @@ def sense_token_from_gloss(gloss_text: str, ordinal_suffix: str = "") -> Tuple[s
     return sense_token(gloss_text, ordinal_suffix)
 
 
+_CAST_IMPORT_WARNED = False
+
+
+def _cast_msa_to_concrete(msa: Any) -> Any:
+    """``categories._cast_to_concrete`` (ClassName-driven interface cast), or
+    ``msa`` unchanged if categories cannot be imported. Lazy import:
+    categories is heavy and imports this package's siblings.
+
+    Only ``ImportError`` is swallowed, and it is logged ONCE (module flag) so a
+    broken import is visible rather than silently reverting every label to "".
+    ``_cast_to_concrete`` itself is fail-soft for duck-typed objects (missing
+    ClassName / absent interface / refused cast all return the object), so no
+    broad guard is kept around the call.
+    """
+    global _CAST_IMPORT_WARNED
+    try:
+        if __package__:
+            from .categories import _cast_to_concrete
+        else:
+            from categories import _cast_to_concrete  # type: ignore
+    except ImportError as exc:
+        if not _CAST_IMPORT_WARNED:
+            _CAST_IMPORT_WARNED = True
+            logging.getLogger(__name__).warning(
+                "msa_label_from_obj: cannot import categories._cast_to_concrete "
+                "(%s); MSA labels will be read uncast and may be empty", exc)
+        return msa
+    return _cast_to_concrete(msa)
+
+
 def msa_label_from_obj(msa: Any) -> str:
     """Best-effort MSA label string (e.g. ``"n:NC"``) from a live LCM MSA.
 
-    Mirrors the content portion of ``preview._msa_fingerprint``:
-    POS abbreviation + sorted slot abbreviations joined by ``":"``.
-    Never raises; returns "" on any failure.
+    Stem/infl MSAs: POS abbreviation + sorted slot names joined by ``":"``
+    (the content portion of ``preview._msa_fingerprint``). Derivational MSAs
+    (``MoDerivAffMsa``) do NOT mirror that: they are labelled ``"From>To"``
+    from From-/ToPartOfSpeechRA, with an unset side left blank (``">v"``,
+    ``"Root>"``); both unset yields no POS part. Never raises; returns "" on
+    any failure.
     """
     parts: list[str] = []
+    # Cast before reading (same trap as categories._cast_to_concrete / T088):
+    # a sense's MorphoSyntaxAnalysisRA is statically typed
+    # IMoMorphSynAnalysis, on which PartOfSpeechRA / SlotsRC /
+    # From-/ToPartOfSpeechRA are NOT declared, so an uncast read yields None
+    # for every MSA subclass.
+    msa = _cast_msa_to_concrete(msa)
+
+    def _abbr_text(pos: Any) -> str:
+        abbr_prop = getattr(pos, "Abbreviation", None)
+        if abbr_prop is None:
+            return ""
+        try:
+            best = getattr(abbr_prop, "BestAnalysisAlternative", None)
+            if best is not None:
+                return getattr(best, "Text", None) or ""
+            if hasattr(abbr_prop, "Text"):
+                return abbr_prop.Text or ""
+        except Exception:
+            pass
+        return ""
+
     try:
         pos = getattr(msa, "PartOfSpeechRA", None)
         if pos is not None:
-            abbr_prop = getattr(pos, "Abbreviation", None)
-            if abbr_prop is not None:
-                try:
-                    best = getattr(abbr_prop, "BestAnalysisAlternative", None)
-                    if best is not None:
-                        text = getattr(best, "Text", None)
-                        if text:
-                            parts.append(text)
-                    elif hasattr(abbr_prop, "Text"):
-                        text = abbr_prop.Text
-                        if text:
-                            parts.append(text)
-                except Exception:
-                    pass
+            text = _abbr_text(pos)
+            if text:
+                parts.append(text)
+        else:
+            # Derivational affix: label as "From>To" (either side may be unset).
+            frm = getattr(msa, "FromPartOfSpeechRA", None)
+            to = getattr(msa, "ToPartOfSpeechRA", None)
+            if frm is not None or to is not None:
+                f_txt = _abbr_text(frm) if frm is not None else ""
+                t_txt = _abbr_text(to) if to is not None else ""
+                if f_txt or t_txt:
+                    parts.append("%s>%s" % (f_txt, t_txt))
     except Exception:
         pass
     try:
