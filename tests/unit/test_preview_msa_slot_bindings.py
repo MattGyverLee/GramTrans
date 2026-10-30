@@ -219,7 +219,10 @@ def _all_off_selection() -> Selection:
 
 def test_build_run_plan_populates_bindings_for_affix_with_slots() -> None:
     """End-to-end: build_run_plan leaves plan.msa_slot_bindings non-empty for
-    a source that contains one affix entry with a slotted MSA."""
+    a source that contains one affix entry with a slotted MSA.
+
+    Issue #33: the affix must be IN the selection -- an all-off selection now
+    yields no bindings (test_033_scope_msa_slot_bindings.py)."""
     slot = _Slot("slot-guid-1")
     msa = _MSA("msa-guid-1", slots=[slot])
     entry = _Entry("entry-guid-1", is_affix=True, msas=[msa])
@@ -228,7 +231,8 @@ def test_build_run_plan_populates_bindings_for_affix_with_slots() -> None:
     tgt = _FakeProject("tgt", entries=[])
 
     plan = build_run_plan(
-        _ctx(src, tgt), _all_off_selection(), WSMapping(entries=()), src, tgt
+        _ctx(src, tgt), Selection(categories={GrammarCategory.AFFIXES: True}),
+        WSMapping(entries=()), src, tgt
     )
 
     assert plan.msa_slot_bindings == {"msa-guid-1": ["slot-guid-1"]}, (

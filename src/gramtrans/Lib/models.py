@@ -3136,9 +3136,10 @@ class AffixSlotLinkOutcome(enum.Enum):
 
     `NOT_IN_RUN` is the member that makes the other three trustworthy. The
     producer (`preview._populate_msa_slot_bindings`) walks the WHOLE SOURCE
-    LEXICON on purpose -- it must, or the selection-independent safety net in
-    `transfer._ensure_171_subpass` would have nothing to work from -- so the
-    binding set is a claim about the SOURCE, not about the run. Measured on
+    LEXICON, so the raw binding set is a claim about the SOURCE, not about the
+    run. Issue #33 narrows it at plan time (`preview._scope_msa_slot_bindings`)
+    to links with an end in this run's scope; `NOT_IN_RUN` still covers a kept
+    link whose affix is not in the destination. Measured on
     `Mbugwe LizzieHC practice` under an AFFIX_TEMPLATES-only selection, reading
     it as a claim about the run produced 203 reported failures of which 0 were
     real. A run that transfers no affixes has not failed to link any.

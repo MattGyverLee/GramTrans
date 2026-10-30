@@ -1495,9 +1495,9 @@ def build_run_plan(
     # silently returns None for base-typed IMoMorphSynAnalysis refs from live
     # LCM (pythonnet hides SlotsRC on the base interface). This explicit pass
     # uses IMoInflAffMsa casting — the same approach as _msa_fingerprint — so
-    # it works for both live LCM and duck-typed fakes. It runs unconditionally
-    # after the leaf dispatch so all enumerated affix entries are covered,
-    # regardless of whether they were newly added or already present in target.
+    # it works for both live LCM and duck-typed fakes. It walks the whole
+    # source lexicon; the result is narrowed to this run's scope by
+    # `_scope_msa_slot_bindings` after the closure pull-in below (issue #33).
     _populate_msa_slot_bindings(source, _msa_slot_bindings)
 
     # T074 (FR-019): the owner map for both binding dicts. Runs beside them,
@@ -1566,6 +1566,19 @@ def build_run_plan(
         context, selection, ws_mapping, _closure_edges,
         actions, overwrites, skips, _LEAF_DISPATCH_CATEGORIES,
         _pull_in_pieces, _deselected_but_present,
+    )
+
+    # Issue #33: narrow `msa_slot_bindings` from "every bound MSA in the
+    # source" to "the bindings THIS RUN touches". Runs here, after the
+    # pull-in, because the run's scope is only settled once closure pull-ins
+    # are in the plan. In place: the dict is the one already attached to the
+    # context. A full selection dispatches every slot, so it keeps every
+    # binding (see `_scope_msa_slot_bindings`).
+    _scope_msa_slot_bindings(
+        _msa_slot_bindings,
+        _msa_owner_entry,
+        _run_scope_guids(_MSA_OWNER_ENTRY_CATEGORIES, actions, overwrites, skips),
+        _run_scope_guids((GrammarCategory.SLOTS,), actions, overwrites, skips),
     )
 
     # Feature 038 (T073, FR-017, SC-010): the edges now say what was refused
@@ -2080,6 +2093,84 @@ def _populate_msa_slot_bindings(source, msa_slot_bindings: dict) -> None:
                 msa_slot_bindings[msa_guid] = slot_guids
 
 
+#: Leaf categories whose pieces are the LexEntries that own MSAs -- the same
+#: two whose `plan_action` calls `categories._stash_entry_bindings`.
+_MSA_OWNER_ENTRY_CATEGORIES = (GrammarCategory.AFFIXES, GrammarCategory.STEMS)
+
+
+def _norm_guid(guid) -> str:
+    """Lowercase, brace-free GUID text ("" for None), so plan GUIDs and the
+    binding producers' GUIDs compare equal whatever shape they arrived in."""
+    return str(guid or "").strip().strip("{}").lower()
+
+
+def _run_scope_guids(categories, actions, overwrites, skips) -> frozenset:
+    """Source GUIDs of the `categories` items this run dispatched (issue #33).
+
+    Read off the PLAN, not off a plan_action side effect: T093's presence
+    probe (`_deselected_dependency_is_in_the_destination`) calls plan_action
+    on deselected pieces and throws the result away, so a stash would count
+    those as in scope.
+
+    An item is in scope if it came back as an action, an overwrite, or any
+    skip except `DEPENDENCY_DESELECTED` -- an already-present affix is still
+    one the user chose, and its column may legitimately need wiring (FR-020).
+    """
+    cats = set(categories)
+    scope = set()
+    for item in list(actions) + list(overwrites):
+        if getattr(item, "category", None) in cats:
+            guid = _norm_guid(getattr(item, "source_guid", ""))
+            if guid:
+                scope.add(guid)
+    for skip in skips:
+        if getattr(skip, "category", None) not in cats:
+            continue
+        if getattr(skip, "reason", None) is SkipReason.DEPENDENCY_DESELECTED:
+            continue
+        guid = _norm_guid(getattr(skip, "source_guid", ""))
+        if guid:
+            scope.add(guid)
+    return frozenset(scope)
+
+
+def _scope_msa_slot_bindings(msa_slot_bindings: dict, msa_owner_entry: dict,
+                             entry_scope, slot_scope) -> None:
+    """Narrow `msa_slot_bindings` in place to the links this run touches
+    (issue #33).
+
+    `_populate_msa_slot_bindings` reports every bound MSA in the SOURCE. On a
+    partial selection that included affixes the user never picked, and any
+    of them already sitting in the destination (an earlier run, a shared
+    ancestor) reached the 17.1 sub-pass as an MSA whose slot was missing --
+    a `DEPENDENCY_UNRESOLVED` for an affix this run never touched.
+
+    A link has two ends; it is this run's business if either end is:
+
+      * owning entry in `entry_scope` -> kept whole. Every column that
+        affix occupied is this run's promise, so a missing slot is a real
+        loss and must still be reported (FR-019).
+      * otherwise, slots in `slot_scope` -> kept, trimmed to those slots.
+        Linking an affix the destination already holds to a slot this run
+        is transferring is FR-020 enrichment; `_run_171_subpass` still
+        records an absent affix as `NOT_IN_RUN`, not as a failure.
+      * neither -> dropped.
+
+    A full selection dispatches every slot, so every binding passes the
+    second test and the dict is unchanged.
+    """
+    for msa_guid in list(msa_slot_bindings):
+        owner = _norm_guid(msa_owner_entry.get(_norm_guid(msa_guid)))
+        if owner and owner in entry_scope:
+            continue
+        kept = [g for g in msa_slot_bindings[msa_guid]
+                if _norm_guid(g) in slot_scope]
+        if kept:
+            msa_slot_bindings[msa_guid] = kept
+        else:
+            del msa_slot_bindings[msa_guid]
+
+
 def _resolve_slot_binding_casts(entry_list):
     """Decide live-LCM vs duck-typed mode for `_populate_msa_slot_bindings`.
 
@@ -2151,7 +2242,8 @@ def _populate_msa_owner_entry(source, msa_owner_entry: dict) -> None:
 
     WHAT THIS IS FOR. `_populate_msa_slot_bindings` and
     `_populate_msa_infl_feat_bindings` both walk the whole source lexicon
-    regardless of the selection, on purpose. That makes their output a claim
+    regardless of the selection (the slot bindings are narrowed afterwards,
+    issue #33, using this very map). That makes their output a claim
     about the SOURCE; the 17.1 sub-pass in categories.py has to turn each
     binding into a claim about THIS RUN, and the question that does so is "is
     this MSA's affix in the destination at all". The sub-pass has a target

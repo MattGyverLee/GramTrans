@@ -10623,7 +10623,13 @@ def _run_171_subpass(context, target, tag=None):
     practice` under an AFFIX_TEMPLATES-only selection, 203 reported link
     failures of which 0 were real -- the entire run report. A binding whose
     affix is not in the destination at all is now `NOT_IN_RUN`: recorded, not
-    skipped. See `_affix_is_in_destination`."""
+    skipped. See `_affix_is_in_destination`.
+
+    Issue #33: on a partial selection an affix the run never touched could
+    still be IN the destination (an earlier run), and its missing slot was
+    then reported here. `preview._scope_msa_slot_bindings` now drops such
+    bindings before the plan is built, so this pass only sees links with an
+    end in the run's scope."""
     skips = []
     plan = getattr(context, "_run_plan", None)
     if plan is not None:
