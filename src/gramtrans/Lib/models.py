@@ -91,12 +91,15 @@ class ConflictMode(enum.Enum):
 
     ADD_NEW   : always create a new copy, even if a matching object exists.
     LINK      : link-if-present-by-GUID else ADD.  No field-level update is
-                performed (formerly MERGE; renamed 022-disposition-model).
-                The persisted value "merge" is shimmed to LINK at read time
-                in `conflict_mode_for` for one release of backward compat.
-    UPDATE    : non-destructive field update for existing items.  Source wins
-                on diverged fields; a target field is NEVER blanked from an
-                empty source (FR-003).  New items are always added regardless.
+                performed.
+    UPDATE    : the real Merge write semantic (issue #22 Part 1): for existing
+                items, source wins on diverged fields AND fills empty / absent
+                target fields; a target field is NEVER blanked from an empty
+                source and a target-only writing-system alternative is never
+                removed (FR-003).  New items are always added regardless.
+                The legacy persisted value "merge" (pre-022 configs) resolves
+                to UPDATE through `_missing_` below, so `ConflictMode("merge")`
+                is UPDATE wherever a persisted string is parsed.
     OVERWRITE : overwrite the target's existing object with source values,
                 including blanking a target field from an empty source (offered
                 when structurally possible per the Layer-1 kind; v7.0.0 GOLD
@@ -106,6 +109,46 @@ class ConflictMode(enum.Enum):
     LINK = "link"
     UPDATE = "update"
     OVERWRITE = "overwrite"
+
+    @classmethod
+    def _missing_(cls, value):
+        """Parse a persisted mode string (issue #22 Part 1).
+
+        Accepts the enum values case-insensitively, and the legacy value
+        "merge" (written by pre-022 code), which IS the non-destructive Merge
+        semantic -- UPDATE, never LINK (LINK writes no fields at all).
+        Anything else stays a ValueError: an unknown mode must fail loudly,
+        not fall through to a destructive executor branch.
+        """
+        if not isinstance(value, str):
+            return None
+        key = value.strip().lower()
+        if key == "merge":
+            _logging.getLogger(__name__).warning(
+                "Deprecated persisted ConflictMode value 'merge'; resolving "
+                "to UPDATE (real Merge). Re-save the selection to update.",
+            )
+            return cls.UPDATE
+        for member in cls:
+            if member.value == key:
+                return member
+        return None
+
+
+def _coerce_conflict_modes(modes: dict) -> dict:
+    """Normalise a `category_conflict_modes` mapping to enum keys/values.
+
+    Persisted configs carry plain strings ("pos" -> "merge"); every reader
+    (`Selection.conflict_mode_for`, the Move dispatch in `Lib/transfer.py`)
+    compares against `ConflictMode` members, so a raw string would silently
+    miss every branch. Coercing once, at construction, means Preview and Move
+    see the same member by construction. Raises ValueError on an unknown
+    category or mode.
+    """
+    out = {}
+    for cat, mode in modes.items():
+        out[GrammarCategory(cat)] = ConflictMode(mode)
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -496,6 +539,13 @@ class Selection:
     similar_resolutions: dict = field(default_factory=dict)  # dict[str, SimilarResolution]
 
     def __post_init__(self) -> None:
+        # Issue #22 Part 1: legacy/persisted string modes ("merge", "update",
+        # ...) become ConflictMode members here, once, for every consumer.
+        if self.category_conflict_modes:
+            object.__setattr__(
+                self, "category_conflict_modes",
+                _coerce_conflict_modes(self.category_conflict_modes),
+            )
         if self.affix_picks and self.categories.get(GrammarCategory.AFFIXES) is not True:
             raise ValueError(
                 "affix_picks non-empty requires categories[AFFIXES] to be True"
@@ -573,25 +623,15 @@ class Selection:
         2. Layer-1 default from `_DEFAULT_CONFLICT_MODES`.
         3. LINK as ultimate fallback (safest, non-destructive).
 
-        Backward-compat shim (022-disposition-model, T004):
-        A persisted value of "merge" (written by pre-022 code) is remapped to
-        UPDATE at this single read point.  Log a deprecation notice so operators
-        can identify and re-save stale selections.  (Under constitution v7.0.0
-        the "merge" semantic is the non-destructive UPDATE, not LINK.)
+        Persisted strings (including the legacy "merge" -> UPDATE) are
+        normalised once in `__post_init__` via `ConflictMode._missing_`; the
+        `ConflictMode(...)` call here only guards a dict mutated after
+        construction. (The residue.py "merge=" wire format is a DISTINCT
+        MergeDecisionLog encoding and is unrelated.)
         """
         explicit = self.category_conflict_modes.get(category)
         if explicit is not None:
-            # Backward-compat shim: persisted "merge" -> UPDATE (one shim point only).
-            # The residue.py "merge=" wire format is a DISTINCT MergeDecisionLog
-            # encoding and is NOT touched here -- see residue.py:27,96,179.
-            if isinstance(explicit, str) and explicit == "merge":
-                _logging.getLogger(__name__).warning(
-                    "Deprecated persisted ConflictMode value 'merge' for %s; "
-                    "resolving to UPDATE.  Re-save the selection to update.",
-                    category,
-                )
-                return ConflictMode.UPDATE
-            return explicit
+            return ConflictMode(explicit)
         return _DEFAULT_CONFLICT_MODES.get(category, ConflictMode.LINK)
 
     def _replace_conflict_modes(self, category_conflict_modes: dict) -> "Selection":
