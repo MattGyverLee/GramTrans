@@ -4100,7 +4100,14 @@ def semantic_domains_execute_action(action, context, ws_mapping, tag):
         pass
 
     parsed_guid = DotNetGuid.Parse(src_guid)
-    factory = ICmSemanticDomainFactory(target.GetFactory(ICmSemanticDomainFactory))
+    # UNCAST (issue #42): ICmSemanticDomainFactory declares its own
+    # owner-taking `Create` overloads, which hide the inherited
+    # `ILcmFactory<T>.Create(Guid)` from pythonnet's binder on the
+    # interface-cast wrapper (live: `TypeError: No method matches ...
+    # ICmSemanticDomainFactory.Create: (<class 'System.Guid'>)`). The concrete
+    # factory `GetFactory` returns exposes `Create(Guid)` publicly. See
+    # `references.apply_reference`'s CREATE arm for the full probe.
+    factory = target.GetFactory(ICmSemanticDomainFactory)
 
     # 1-arg Create(Guid) + manual Add (see variant_types for rationale).
     try:
@@ -6170,7 +6177,32 @@ def _call_apply_reference(_references, decision, target, owner_target, spec,
             reason=f"apply_reference failed: {exc}",
         ))
         ok = False
-    except (AttributeError, TypeError):
+    except (AttributeError, TypeError) as exc:
+        # Issue #42: this used to be a bare `ok = False` -- NO log, NO record.
+        # Live, every thesaurus/possibility CREATE raised a TypeError here
+        # (pythonnet could not bind `Create(Guid)` on the interface-cast
+        # factory) and the reference vanished without a trace: the copied
+        # sense simply lacked the item and the report said nothing. A
+        # reference the decision said to reproduce that is NOT reproduced is a
+        # loss, whatever exception caused it (Principle I, 030 SC-004), so it
+        # is logged and recorded exactly like the RuntimeError arm above.
+        import logging as _logging
+        item = getattr(decision, "source_item", None)
+        item_guid = _guid_str_from(item) if item is not None else ""
+        _logging.getLogger("gramtrans.Lib.categories").warning(
+            "_call_apply_reference: %s applying %s.%s (item=%s, action=%s): %s",
+            type(exc).__name__, owner_class, spec.field_name, item_guid,
+            getattr(decision, "action", None), exc, exc_info=True,
+        )
+        dropped.append(DroppedItemRecord(
+            owner_kind=owner_class,
+            owner_guid="",
+            owner_label="",
+            field_name=spec.field_name,
+            item_name=_references_item_label(item) if item is not None else "",
+            item_guid=item_guid,
+            reason=f"apply_reference failed: {type(exc).__name__}: {exc}",
+        ))
         ok = False
     if len(dropped) > before:
         raw = dropped[before:]
