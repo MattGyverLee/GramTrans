@@ -6140,6 +6140,12 @@ def _call_apply_reference(_references, decision, target, owner_target, spec,
     without a trace. It is now logged AND surfaced as a `DroppedItemRecord`
     (enriched with the real owner identity below, same as every other
     record this function produces).
+
+    Issue #42: the `AttributeError`/`TypeError` arm is NO LONGER a silent
+    "benign duck-typing gap". Live, it was where every possibility CREATE
+    vanished (pythonnet could not bind `Create(Guid)` on the interface-cast
+    factory), so it now logs and records a `DroppedItemRecord` too. All three
+    arms still return `ok=False` and never raise.
     """
     before = len(dropped)
     resolved = None

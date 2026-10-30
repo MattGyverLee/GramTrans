@@ -1088,7 +1088,9 @@ def apply_reference(decision, target, owner_obj, spec: "ReferenceFieldSpec", cac
         # therefore failed (and the caller's fail-soft swallow hid it). The
         # UNCAST factory object `GetFactory` returns is the concrete
         # `CmPossibilityFactory` etc., whose public `Create(Guid)` binds
-        # (probed live for all six interfaces in the map). Interfaces that
+        # (probed live: raw and ServiceLocator factories bind it for the four
+        # interfaces above; the cast wrapper fails for all four and binds
+        # for ILexEntryTypeFactory / IMoInflAffixSlotFactory). Interfaces that
         # declare no `Create` of their own (ILexEntryTypeFactory) bind either
         # way. The interface-cast wrapper is kept for the 5049 branch, whose
         # owner-taking overloads are explicit interface members that the
