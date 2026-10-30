@@ -13677,6 +13677,9 @@ def _wire_phoneme_codes(context, target, tag):
     # discards the ENTIRE unit of work). `_copy_multistrings_ws_mapped` maps by
     # WS *Id* and skips a source WS with no target counterpart.
     ws_map = _ws_map_dict(getattr(plan, "ws_mapping", None))
+    _vern_scope = _matcher._census.WS_SCOPE_VERNACULAR
+    src_vern = _matcher.ws_handles_for(source).get(_vern_scope)
+    tgt_vern = _matcher.ws_handles_for(target).get(_vern_scope)
 
     created = 0
     for src_phon in src_phonemes:
@@ -13706,10 +13709,25 @@ def _wire_phoneme_codes(context, target, tag):
             continue
         if tgt_codes is None:
             continue
+        # Issue #54: a phoneme matched to a STARTER already owns the starter's
+        # code (`a` carries code `a`). Adding the source's identically-spelled
+        # code under its own GUID doubled every matched phoneme's code list --
+        # measured live, 21 of 21 on `Ejagham W Mini` -> fresh target. Same
+        # key as the phoneme match itself: the text in each project's default
+        # vernacular. Without a handle (host-free fakes) nothing is skipped.
+        starter_reps = set()
+        if src_guid in matched and src_vern is not None \
+                and tgt_vern is not None:
+            starter_reps = {
+                r for r in (_code_rep_text(c, tgt_vern) for c in tgt_codes)
+                if r}
         for src_code in src_codes:
             code_guid = _guid_str_from(src_code)
             if not code_guid or code_guid in existing:
                 continue          # idempotent: same GUID, already there
+            if starter_reps and _code_rep_text(
+                    src_code, src_vern) in starter_reps:
+                continue          # the starter already has this code
             try:
                 new_code, _ = _create_with_guid(
                     IPhCodeFactory_ref(), tgt_codes, code_guid, target)
@@ -13737,6 +13755,19 @@ def _wire_phoneme_codes(context, target, tag):
     if created:
         _log_phoneme_codes(created)
     return skips
+
+
+def _code_rep_text(code, ws_handle):
+    """A `PhCode`'s `Representation` text in ONE writing system, or "".
+
+    Exact text, no normalisation -- the same rule as the phoneme natural key
+    (`matcher._natural_key_fn`). Never raises."""
+    try:
+        value = _cast_lcm(code, "IPhCode").Representation.get_String(ws_handle)
+    except Exception:  # noqa: BLE001 -- unreadable code: treat as no key
+        return ""
+    text = getattr(value, "Text", value)
+    return text if isinstance(text, str) else ""
 
 
 def IPhCodeFactory_ref():  # noqa: N802 -- named for the interface it returns
@@ -14372,6 +14403,105 @@ def natural_classes_execute_action(action, context, ws_mapping, tag):
             context, target, tag, "_did_nc_features_guard",
             GrammarCategory.NATURAL_CLASSES, _guard_nc_features_transferred,
         )
+
+
+def _wire_matched_nc_segments(context, target, plan):
+    """Union a key-matched starter `PhNCSegments`' members with its source
+    class's members (issue #54). Add-only; never removes a member.
+
+    WHY. A fresh FLEx project ships two segment-based classes, `Consonants`
+    and `Vowels`. When the source has a class of the same name, 038's
+    natural-key match REUSES the starter class instead of creating a
+    duplicate (correct), and plans a `PlannedOverwrite`. That overwrite runs
+    through `_execute_update_semantic`, whose only membership carrier is the
+    `PhonemeGuids` syncable key -- a list of SOURCE GUIDs that flexicon's base
+    `ApplySyncableProperties` loop does not write. So the starter class kept
+    its own 5 vowels and never gained the source's extras. Measured live on
+    fresh-project targets: `Ejagham W Mini` `Vowels` (7 members) arrived with
+    5, losing `<U+0259>` and `<U+0289>`; `Ngoreme FLEx` `Vowels` the same
+    shape. A rule using [Vowels] then silently fails to match those segments.
+
+    WHY HERE, AFTER EVERY CATEGORY. The overwrite loop runs BEFORE the leaf
+    creates, so a member this run CREATES (`<U+0259>` above) does not exist yet
+    when the UPDATE runs. Wiring there would only converge on a second run.
+    `transfer._ensure_matched_nc_segments` calls this after the leaf loop.
+
+    Each source member is resolved with `_resolve_scoped_referent` -- GUID,
+    then this run's identity remap, then the roster natural key -- the SAME
+    helper the create path (`natural_classes_execute_action`) uses, so a
+    source `a` lands on the starter `a`, never on a would-be duplicate. A
+    member that cannot be resolved is reported as a dropped item, not raised:
+    the class already exists, and the remaining members are still worth
+    wiring.
+
+    Returns a list of Skip (always empty; unresolved members are reported via
+    `context._dropped`).
+    """
+    skips = []
+    if plan is None or target is None:
+        return skips
+    source = getattr(context, "source_handle", None)
+    if source is None:
+        return skips
+    matched = [
+        ov for ov in (getattr(plan, "overwrites", None) or ())
+        if getattr(ov, "category", None) is GrammarCategory.NATURAL_CLASSES
+        and getattr(getattr(ov, "match_basis", None), "basis", None)
+        is _MatchBasis.NATURAL_KEY
+        and getattr(ov.match_basis, "object_class", "") == "PhNCSegments"
+        and getattr(ov, "target_guid", "")
+    ]
+    if not matched:
+        return skips
+
+    src_by_guid = {_guid_str_from(nc): nc for nc in source.NaturalClasses.GetAll()}
+    tgt_phoneme_by_guid = {
+        _guid_str_from(p): p for p in target.Phonemes.GetAll()
+    }
+    dropped = getattr(context, "_dropped", None)
+    added_total = 0
+    for ov in matched:
+        src_nc = src_by_guid.get(ov.source_guid)
+        tgt_nc = _resolve_target_by_guid(target, ov.target_guid)
+        if src_nc is None or tgt_nc is None:
+            continue
+        src_segs = _cast_lcm(src_nc, "IPhNCSegments").SegmentsRC
+        tgt_segs = _cast_lcm(tgt_nc, "IPhNCSegments").SegmentsRC
+        present = {_guid_str_from(p) for p in tgt_segs}
+        for src_phon in list(src_segs):
+            tgt_phon, _basis = _resolve_scoped_referent(
+                context, src_phon, tgt_phoneme_by_guid, "PhPhoneme")
+            if tgt_phon is None:
+                if dropped is not None:
+                    _append_dropped_once(dropped, DroppedItemRecord(
+                        owner_kind="PhNCSegments",
+                        owner_guid=ov.target_guid,
+                        owner_label="guid=%s" % _short_guid(ov.target_guid),
+                        field_name="SegmentsRC",
+                        item_name="guid=%s" % _short_guid(
+                            _guid_str_from(src_phon)),
+                        item_guid=_guid_str_from(src_phon),
+                        reason=(
+                            "source natural class member has no counterpart "
+                            "phoneme on the target (not by GUID, identity "
+                            "remap, or roster name); not added to the "
+                            "key-matched class"
+                        ),
+                    ))
+                continue
+            tgt_guid = _guid_str_from(tgt_phon)
+            if tgt_guid in present:
+                continue
+            tgt_segs.Add(tgt_phon)
+            present.add(tgt_guid)
+            added_total += 1
+    if added_total:
+        import logging as _logging
+        _logging.getLogger("gramtrans.Lib.categories").info(
+            "_wire_matched_nc_segments: added %d member(s) to %d key-matched "
+            "PhNCSegments", added_total, len(matched),
+        )
+    return skips
 
 
 # ----- ph_environment (memo step 4b -- project-wide, not allomorph-bundled) -

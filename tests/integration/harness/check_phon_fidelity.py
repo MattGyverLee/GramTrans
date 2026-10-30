@@ -12,6 +12,11 @@ Checks:
   DEFECT 3  rule Disabled flag not carried across
   DEFECT 4  GUID-matched PhNCFeatures whose feature-spec count differs
             (either direction -- loss OR gain)
+  DEFECT 5  a phoneme name (default vernacular) held by more target phonemes
+            than source phonemes -- the doubled starter inventory of issue
+            #54. Reported as a [NOTE] only for the two frozen PRE-FIX evidence
+            targets in PAIRS, which are never re-transferred and will always
+            show it.
 
 Exit 0 = clean, 1 = defects.
 """
@@ -24,6 +29,11 @@ import xml.etree.ElementTree as ET
 ROOT = r"C:\ProgramData\SIL\FieldWorks\Projects"
 PAIRS = [("Ngoreme FLEx", "Ngoreme Target"), ("Ejagham W Mini", "Ejagham W Target")]
 RULE_CLASSES = ("PhRegularRule", "PhMetathesisRule")
+
+#: Pre-fix evidence (issue #54 / feature 038 census-evidence): these targets
+#: hold the 20-21 duplicate phoneme names that motivated natural-key matching
+#: and must never be rewritten, so DEFECT 5 is downgraded to a NOTE for them.
+FROZEN_PRE_FIX_TARGETS = frozenset({"Ngoreme Target", "Ejagham W Target"})
 
 
 def _ascii(text):
@@ -44,6 +54,17 @@ def _objsur_guids(elem, child_tag):
     return out
 
 
+def _alt(elem, tag, ws):
+    """The text of one writing-system alternative, or None."""
+    holder = elem.find(tag)
+    if holder is None:
+        return None
+    for t in holder.findall("AUni"):
+        if t.get("ws") == ws:
+            return t.text or None
+    return None
+
+
 def _multistring(elem, tag):
     holder = elem.find(tag)
     if holder is None:
@@ -62,6 +83,7 @@ def parse(project):
     if not os.path.isfile(path):
         raise SystemExit("[ERROR] no .fwdata for %r at %s" % (project, path))
     objs = {}
+    default_vern = None
     for _, elem in ET.iterparse(path, events=("end",)):
         if elem.tag != "rt":
             continue
@@ -85,6 +107,17 @@ def parse(project):
             rec["name"] = _multistring(elem, "Name") or "(unnamed)"
         elif cls == "PhPhoneme":
             rec["name"] = _multistring(elem, "Name") or "(unnamed)"
+            # Keep every alternative: the duplicate key is the DEFAULT
+            # vernacular (the 038 roster key), known only once LangProject
+            # has been read, and it may come after the phonemes.
+            holder = elem.find("Name")
+            rec["names"] = ({t.get("ws"): t.text for t in holder.findall("AUni")}
+                            if holder is not None else {})
+        elif cls == "LangProject":
+            vern = elem.find("CurVernWss")
+            uni = vern.find("Uni") if vern is not None else None
+            if uni is not None and uni.text:
+                default_vern = uni.text.split()[0]
         objs[guid] = rec
         elem.clear()
 
@@ -92,6 +125,9 @@ def parse(project):
     for g, o in objs.items():
         if o["owner"]:
             kids[o["owner"]].append(g)
+    for o in objs.values():
+        if o["cls"] == "PhPhoneme":
+            o["vern_name"] = o["names"].get(default_vern) or o["name"]
     return objs, kids
 
 
@@ -133,7 +169,7 @@ def audit(project):
         rules[g] = {"name": o["name"], "disabled": o["disabled"],
                     "hollow_cells": bad}
 
-    phon = [o["name"] for o in objs.values() if o["cls"] == "PhPhoneme"]
+    phon = [o["vern_name"] for o in objs.values() if o["cls"] == "PhPhoneme"]
     return {
         "ncf": ncf, "hollow": hollow, "spec_count": spec_count,
         "ncs_total": len(ncs),
@@ -207,14 +243,26 @@ def compare(src_name, tgt_name):
         problems.append("MISSING: rule %r absent from target"
                         % _ascii(src_r[g]["name"]))
 
-    dup = {k: v for k, v in collections.Counter(t["phonemes"]).items() if v > 1}
+    # Issue #54: a name the source holds once must not be held twice in the
+    # target. Source duplicates are subtracted (SC-002: "where the source
+    # contained one").
+    src_count = collections.Counter(s["phonemes"])
+    dup = {k: v for k, v in collections.Counter(t["phonemes"]).items()
+           if v > max(1, src_count.get(k, 0))}
+    print("\n  phoneme names held more often in target than in source: %d"
+          % len(dup))
     if dup:
-        print("\n  [NOTE] %d duplicate phoneme name(s) in target -- feature 038 "
-              "scope, NOT counted as a 037 defect:" % len(dup))
         # Phoneme names are IPA; a cp1252 console cannot encode them and would
         # raise UnicodeEncodeError mid-report, losing the RESULT line.
-        print("         %s" % _ascii(
-            ", ".join("%s x%d" % (k, v) for k, v in sorted(dup.items()))))
+        listing = _ascii(
+            ", ".join("%s x%d" % (k, v) for k, v in sorted(dup.items())))
+        if tgt_name in FROZEN_PRE_FIX_TARGETS:
+            print("  [NOTE] frozen pre-fix evidence target -- not counted: %s"
+                  % listing)
+        else:
+            print("    [ERROR] %s" % listing)
+            problems.append("DEFECT 5: %d phoneme name(s) duplicated in target "
+                            "(doubled starter inventory, issue #54)" % len(dup))
 
     print()
     for p in problems:
