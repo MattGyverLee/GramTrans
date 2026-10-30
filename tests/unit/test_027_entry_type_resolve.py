@@ -32,6 +32,11 @@ import pytest
 
 from gramtrans.Lib import categories
 from gramtrans.Lib.models import RunContext
+from _fakes_entryref import (  # issue #32 P2: shared 027 fixtures
+    FakeRefSeq as _FakeRefSeq,
+    ctx_create_and_wire as _ctx_create_and_wire,
+    ref_record as _ref_record,
+)
 from gramtrans.Lib.residue import ImportResidueTag
 
 
@@ -91,22 +96,6 @@ class _FakePublicationType(_FakeEntryType):
     def __init__(self, guid: str, name: str = "", is_protected: bool = False) -> None:
         super().__init__(guid, name, is_protected)
         self.ClassName = "CmPossibility"
-
-
-class _FakeRefSeq:
-    """Owning/reference sequence stand-in: records Add calls, iterable."""
-
-    def __init__(self, initial=()) -> None:
-        self._items = list(initial)
-
-    def Add(self, obj) -> None:
-        self._items.append(obj)
-
-    def __iter__(self):
-        return iter(self._items)
-
-    def __len__(self) -> int:
-        return len(self._items)
 
 
 class _FakePossibilityList:
@@ -205,43 +194,8 @@ class _FakeTarget:
         raise AssertionError(f"unexpected GetFactory token: {iface_token!r}")
 
 
-def _make_ctx() -> RunContext:
-    return RunContext(
-        source_handle=object(),
-        source_project_name="Src",
-        source_project_path="/src",
-        target_handle=object(),
-        target_project_name="Tgt",
-        target_project_path="/tgt",
-        run_id="GT-20260713-000000",
-        started_at="2026-07-13T00:00:00",
-    )
-
-
-def _ref_record(ref_guid, ref_type=0, variant_entry_types=(), complex_entry_types=(),
-                show_complex_forms_in=()):
-    return {
-        "ref_guid": ref_guid,
-        "ref_type": ref_type,
-        "components": [],
-        "primaries": [],
-        "variant_entry_types": list(variant_entry_types),
-        "complex_entry_types": list(complex_entry_types),
-        "show_complex_forms_in": list(show_complex_forms_in),
-    }
-
-
 def _ctx_create(entryref_create_bindings) -> RunContext:
-    ctx = _make_ctx()
-    plan = types.SimpleNamespace(
-        entryref_create_bindings={
-            k: list(v) for k, v in entryref_create_bindings.items()
-        },
-        identity_remap={},
-    )
-    object.__setattr__(ctx, "_run_plan", plan)
-    object.__setattr__(ctx, "_dropped", [])
-    return ctx
+    return _ctx_create_and_wire(entryref_create_bindings)
 
 
 # ============================================================================
@@ -529,31 +483,31 @@ def test_complex_form_ref_resolves_complex_types_not_variant_types(_stub_lcm_ful
     assert len(lexdb.VariantEntryTypesOA.PossibilitiesOS) == 0  # never touched
 
 
-def test_show_complex_forms_in_always_resolves_regardless_of_ref_type(_stub_lcm_full) -> None:
-    """ShowComplexFormsInRS (publication types) resolves for a VARIANT ref
-    (RefType==0) too -- "always", not gated on RefType."""
+def test_show_complex_forms_in_is_not_a_c3_publication_field(_stub_lcm_full) -> None:
+    """Issue #32: ShowComplexFormsInRS holds LEXEMES (live Korean-GIAL: the
+    LexEntry/LexSense components the complex form shows under), not
+    publication possibilities. C3 must NOT route it through the possibility
+    resolver -- pre-fix it decided CREATE against `PublicationTypesOA` for
+    each lexeme, the factory refused the lexeme's GUID and the fail-soft
+    apply swallowed it (silent loss). C1 now leaves the field to C2 and
+    never touches the publication list."""
+    from gramtrans.Lib import references
+    assert "ShowComplexFormsInRS" not in {
+        spec.field_name for spec in references.field_specs_for("LexEntryRef")}
+
     entry = _FakeTargetEntry("entry-6")
     lexdb = _FakeLexDb(publication_types=[])
     target = _FakeTarget({"entry-6": entry}, lexdb)
-    src_pub = _FakePublicationType("src-pub-6", name="Main Dictionary")
     ctx = _ctx_create({"entry-6": [_ref_record(
-        "ref-6", ref_type=0, show_complex_forms_in=[src_pub])]})
+        "ref-6", ref_type=1, show_complex_forms_in=["lex-show-1"])]})
 
     categories._run_entryref_create_pass(ctx, target, tag=_TAG)
 
     new_ref = list(entry.EntryRefsOS)[0]
-    linked = list(new_ref.ShowComplexFormsInRS)
-    assert len(linked) == 1
-    assert linked[0].guid == "src-pub-6"
-    assert len(lexdb.PublicationTypesOA.PossibilitiesOS) == 1
+    assert list(new_ref.ShowComplexFormsInRS) == []  # C2 wires it, not C1
+    assert len(lexdb.PublicationTypesOA.PossibilitiesOS) == 0  # never touched
+    assert ctx._dropped == []
 
-
-# ============================================================================
-# T014 -- Principle-I GUID-preserved-at-create (not reassigned); existing
-# GOLD item linked never overwritten (the same divergent-GOLD shape as
-# above, restated to name the invariant explicitly per the task's own
-# wording).
-# ============================================================================
 
 def test_gold_reserved_entry_type_guid_remapped_at_creation(_stub_lcm_full) -> None:
     """A GOLD/reserved-flagged source entry-type absent from the target is
@@ -601,3 +555,94 @@ def test_gold_reserved_existing_target_item_linked_never_overwritten(_stub_lcm_f
     assert existing_gold.Name._data.get(WS_EN) == "Canonical GOLD Name"
     new_ref = list(entry.EntryRefsOS)[0]
     assert list(new_ref.VariantEntryTypesRS)[0] is existing_gold
+
+
+# ============================================================================
+# Issue #32 -- C3 Preview decide-only twin (`_plan_entryref_type_decisions`):
+# Preview must surface the entry-type decisions Move's
+# `_run_entryref_create_pass` will apply, read-only, before Move writes.
+# ============================================================================
+
+class _FakeSrcRef:
+    def __init__(self, guid, ref_type, variant_types=(), complex_types=()) -> None:
+        self.guid = guid
+        self.RefType = ref_type
+        self.VariantEntryTypesRS = list(variant_types)
+        self.ComplexEntryTypesRS = list(complex_types)
+
+
+class _FakeSrcEntry:
+    def __init__(self, guid, entry_refs=()) -> None:
+        self.guid = guid
+        self.EntryRefsOS = list(entry_refs)
+
+
+def _decision_rows(records):
+    return [(r.owner_kind, r.owner_guid, r.field_name, r.action, r.item_guid)
+            for r in records]
+
+
+def test_preview_twin_surfaces_complex_type_create_without_writing(_stub_lcm_full) -> None:
+    """A complex-form ref Move would create, whose complex type is absent
+    from the target: Preview reports the CREATE decision Move will take, on
+    the RefType-correct field only, and writes nothing."""
+    from gramtrans.Lib.models import ReferenceAction
+    lexdb = _FakeLexDb(complex_types=[])
+    target = _FakeTarget({}, lexdb)
+    src_ctype = _FakeEntryType("src-ctype-p", name="Compound")
+    src_vtype = _FakeEntryType("src-vtype-p", name="Spelling Variant")
+    src_entry = _FakeSrcEntry("entry-p", [_FakeSrcRef(
+        "ref-p", 1, variant_types=[src_vtype], complex_types=[src_ctype])])
+    dropped: list = []
+
+    records = categories._plan_entryref_type_decisions(src_entry, target, {}, dropped)
+
+    assert _decision_rows(records) == [(
+        "LexEntryRef", "ref-p", "ComplexEntryTypesRS", ReferenceAction.CREATE,
+        "src-ctype-p")]
+    assert dropped == []
+    assert len(lexdb.ComplexEntryTypesOA.PossibilitiesOS) == 0  # read-only
+    assert len(lexdb.VariantEntryTypesOA.PossibilitiesOS) == 0
+
+
+def test_preview_twin_reports_the_same_gold_divergence_move_reports(_stub_lcm_full) -> None:
+    """Diverged shared/GOLD complex type: Move LINKs and reports it; the
+    Preview twin must project that SAME drop record (pre-#32 Preview showed
+    nothing, so the Move drop set was larger than Preview's)."""
+    from gramtrans.Lib.models import ReferenceAction
+    tgt_ctype = _FakeEntryType("ctype-gold", name="Compound", is_protected=True)
+    lexdb = _FakeLexDb(complex_types=[tgt_ctype])
+    target = _FakeTarget({}, lexdb)
+    src_ctype = _FakeEntryType("ctype-gold", name="Compound (edited)")
+    src_entry = _FakeSrcEntry("entry-g", [_FakeSrcRef(
+        "ref-g", 1, complex_types=[src_ctype])])
+    preview_dropped: list = []
+
+    records = categories._plan_entryref_type_decisions(
+        src_entry, target, {}, preview_dropped)
+
+    assert [r.action for r in records] == [ReferenceAction.REPORT_DROPPED]
+    assert [(d.field_name, d.item_guid) for d in preview_dropped] == [
+        ("ComplexEntryTypesRS", "ctype-gold")]
+
+    # Move over the same input reports the identical (field, item) drop.
+    entry = _FakeTargetEntry("entry-g")
+    move_target = _FakeTarget({"entry-g": entry}, lexdb)
+    ctx = _ctx_create({"entry-g": [_ref_record(
+        "ref-g", ref_type=1, complex_entry_types=[src_ctype])]})
+    categories._run_entryref_create_pass(ctx, move_target, tag=_TAG)
+    assert [(d.field_name, d.item_guid) for d in ctx._dropped] == [
+        ("ComplexEntryTypesRS", "ctype-gold")]
+
+
+def test_preview_twin_skips_a_ref_already_on_the_target(_stub_lcm_full) -> None:
+    """Move's INV-1 GUID guard skips C3 for a ref that already exists on the
+    target, so Preview must not project decisions for it either."""
+    lexdb = _FakeLexDb(complex_types=[])
+    target = _FakeTarget({"ref-x": object()}, lexdb)
+    src_entry = _FakeSrcEntry("entry-x", [_FakeSrcRef(
+        "ref-x", 1, complex_types=[_FakeEntryType("ctype-x", name="Compound")])])
+    dropped: list = []
+
+    assert categories._plan_entryref_type_decisions(src_entry, target, {}, dropped) == []
+    assert dropped == []

@@ -36,32 +36,22 @@ from gramtrans.Lib.models import (
     SkipReason,
 )
 
+from _fakes_entryref import (  # issue #32 P2: shared 027 fixtures
+    FakeLexeme as _FakeLexeme,
+    FakeRefSeq as _FakeRefSeq,
+    ctx_create_and_wire as _ctx_create_and_wire,
+    ref_record as _ref_record,
+)
+
+
+def _ctx_create(entryref_create_bindings, identity_remap=None, dropped=None) -> RunContext:
+    return _ctx_create_and_wire(entryref_create_bindings,
+                                identity_remap=identity_remap, dropped=dropped)
+
 
 # ============================================================================
 # Fakes (inline, lowercase .guid so _guid_str_from resolves host-free)
 # ============================================================================
-
-class _FakeRefSeq:
-    """LCM owning/reference sequence stand-in: records Add calls in order."""
-
-    def __init__(self, initial=()) -> None:
-        self._items = list(initial)
-        self.add_log = []
-
-    def Add(self, obj):
-        self._items.append(obj)
-        self.add_log.append(obj)
-
-    def __iter__(self):
-        return iter(self._items)
-
-    def __len__(self):
-        return len(self._items)
-
-    @property
-    def Count(self):
-        return len(self._items)
-
 
 class _FakeCreatedRef:
     """What `factory.Create(guid)` returns: a fresh, unowned LexEntryRef."""
@@ -110,48 +100,6 @@ class _FakeTarget:
 
     def GetFactory(self, iface_token):
         return self._factory
-
-
-def _make_ctx() -> RunContext:
-    return RunContext(
-        source_handle=object(),
-        source_project_name="Src",
-        source_project_path="/src",
-        target_handle=object(),
-        target_project_name="Tgt",
-        target_project_path="/tgt",
-        run_id="GT-20260713-000000",
-        started_at="2026-07-13T00:00:00",
-    )
-
-
-def _ref_record(ref_guid, ref_type=0, components=(), primaries=(),
-                variant_entry_types=(), complex_entry_types=(),
-                show_complex_forms_in=()):
-    return {
-        "ref_guid": ref_guid,
-        "ref_type": ref_type,
-        "components": list(components),
-        "primaries": list(primaries),
-        "variant_entry_types": list(variant_entry_types),
-        "complex_entry_types": list(complex_entry_types),
-        "show_complex_forms_in": list(show_complex_forms_in),
-    }
-
-
-def _ctx_create(entryref_create_bindings, identity_remap=None, dropped=None) -> RunContext:
-    ctx = _make_ctx()
-    plan = types.SimpleNamespace(
-        entryref_create_bindings={
-            k: list(v) for k, v in entryref_create_bindings.items()
-        },
-        identity_remap=dict(identity_remap or {}),
-    )
-    object.__setattr__(ctx, "_run_plan", plan)
-    if dropped is None:
-        dropped = []
-    object.__setattr__(ctx, "_dropped", dropped)
-    return ctx
 
 
 # ============================================================================
@@ -328,34 +276,6 @@ def test_entryref_create_pass_multi_component_complex_form(_stub_lcm_full) -> No
 # create-then-wire order, but for a complex-form ref whose PrimaryLexemesRS
 # is a STRICT SUBSET of ComponentLexemesRS in a DIFFERENT relative order.
 # ============================================================================
-
-class _FakeLexeme:
-    """Anything addressed by GUID and owned as a component/primary lexeme
-    (lowercase `.guid` so `_guid_str_from` resolves host-free)."""
-
-    def __init__(self, guid: str) -> None:
-        self.guid = guid
-
-
-def _ctx_create_and_wire(entryref_create_bindings, lexentry_ref_bindings,
-                          identity_remap=None) -> RunContext:
-    """Like `_ctx_create` above, but also carries `plan.lexentry_ref_bindings`
-    (+ an empty `plan.in_plan_entries`) so `_run_post_pass_a` (C2) can run
-    immediately after `_run_entryref_create_pass` (C1) over the SAME ctx --
-    the create-then-wire order `stems_execute_action` actually uses."""
-    ctx = _make_ctx()
-    plan = types.SimpleNamespace(
-        entryref_create_bindings={
-            k: list(v) for k, v in entryref_create_bindings.items()
-        },
-        lexentry_ref_bindings=dict(lexentry_ref_bindings),
-        in_plan_entries={},
-        identity_remap=dict(identity_remap or {}),
-    )
-    object.__setattr__(ctx, "_run_plan", plan)
-    object.__setattr__(ctx, "_dropped", [])
-    return ctx
-
 
 def test_entryref_create_pass_complex_form_primary_subset_order_preserved(
         _stub_lcm_full) -> None:

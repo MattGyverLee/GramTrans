@@ -87,5 +87,7 @@ def test_variant_entry_refs_reproduce_0_to_6(source, target):
     pytest.skip(
         "T025 (attended live 0->N proof) is run manually via "
         "debug/run27_live.py, never under an automated/unattended loop; "
-        "see specs/027-complex-forms-variants/verification-log.md."
+        "see specs/027-complex-forms-variants/verification-log.md. The "
+        "complex-form (RefType=1) live gate is "
+        "tests/integration/test_issue32_complex_form_live.py (issue #32)."
     )

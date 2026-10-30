@@ -1,5 +1,66 @@
 # 027 — T025 Live Validation Log (attended)
 
+## Issue #32 — complex-form (`RefType=1`) live `0 -> N` proof: PASS (2026-10-30)
+
+**Source:** `Korean-GIAL` (read-only). None of the candidate projects carried a
+multi-component complex form: Ejagham Mini 0, French-FLExTrans 0,
+German-/Swedish-FLExTrans-Sample 0, Spanish-FLExTrans-Demo2025 0 (2 variants),
+Lex Training Sample Project 1 4 (all single-component), TestLangProj not
+installed. A read-only text scan of every local `.fwdata` found Korean-GIAL
+(383 entries, 38 complex forms, 34 multi-component, all with a primary subset
+and `ComplexEntryTypesRS`) -- the smallest real project with the shape. No
+constructed fixture was needed.
+
+**Target:** private sandbox `GT-Sandbox-32`, restored headlessly
+(`harness/restore.py`) from `Target 2026-07-06 0218.fwbackup` before/after.
+**Scope:** STEMS+AFFIXES leaf picks = 4 complex-form entries + every
+component's owning entry (14 entries). **Durable gate:**
+`tests/integration/test_issue32_complex_form_live.py` (`FLEXLIBS_REQUIRE_LIVE=1`).
+
+| Ref (owner) | Components | Primary | ShowComplexFormsIn | Type |
+|---|---|---|---|---|
+| `38751f5b` (poita) | 3 | middle affix | 1 (= primary) | Derivative |
+| `ff749d17` (twetsikoki) | 2 | first | 2 | Compound |
+| `1c7a4f20` (khalkojsimnita) | 4 | first | 4 | Unspecified Complex Form |
+| `5faa892d` (mokotsimnita) | 4, first is a **LexSense** | the sense | 4 | Unspecified Complex Form |
+
+**Pre-fix run (main `21e153e`)** -- containers `0 -> 4`, GUIDs, RefType,
+ComponentLexemesRS order, PrimaryLexemesRS and ComplexEntryTypesRS all correct,
+but three live defects:
+
+1. **ShowComplexFormsInRS silently lost** on 3 of 4 refs (only the primary,
+   added by LCM's own PrimaryLexemesRS side effect, survived). The field holds
+   LEXEMES (`ICmObject` -> LexEntry/LexSense), but cycle 3 registered it as a
+   `PublicationTypesOA` possibility field; each member decided CREATE, the
+   publication factory refused the lexeme's GUID, and the fail-soft apply
+   swallowed it -- no drop record (Principle V violation). PublicationTypes
+   list unchanged (1 item before and after) -- no junk created.
+2. **False-positive C4 drop** for `5faa892d`: its LexSense component was cast to
+   `ILexEntry` and tested for `LexemeFormOA`; the ref was fully reproduced yet
+   reported dropped (Preview and Move).
+3. **Preview/Move drop-set gap**: Preview surfaced no C3 decision, so Move's 2
+   `ComplexEntryTypesRS` "shared-default diverged" records had no Preview twin.
+
+**Post-fix run:** Preview surfaces 4 C3 decisions (2 LINK, 2 REPORT_DROPPED
+GOLD-diverged); Preview LexEntryRef drop set == Move's (the 2 GOLD-divergence
+records only; 0 `EntryRefsOS` drops). Re-read via the `.fwdata` XML AND a fresh
+read-only LCM open with casts: all 4 refs equal the source in owner, RefType,
+ComponentLexemesRS / PrimaryLexemesRS / ShowComplexFormsInRS /
+ComplexEntryTypesRS (GUIDs, order). LexEntryRef total `0 -> 4`. Re-Move: 0
+actions, refs byte-identical. Narrowed run (`-lkoj` un-picked): Preview and
+Move both report exactly `1c7a4f20` (pre-fix: reported `5faa892d` instead).
+
+**C3 list-shape MCP re-confirmation (FLExToolsMCP, Korean-GIAL, read-only):**
+`VariantEntryTypesOA` ItemClsid=5118 Depth=127; `ComplexEntryTypesOA`
+ItemClsid=5118 Depth=127; `PublicationTypesOA` ItemClsid=7 Depth=1 -- the
+recorded shapes hold. The cycle-3 claim that `ShowComplexFormsInRS` "shares"
+the PublicationTypes list is WRONG (MCP: `ShowComplexFormsInRS` target type
+`ICmObject`; live members are LexEntry/LexSense) -- corrected in
+`Lib/references.py`.
+
+---
+
+
 ## FINAL STATUS: PASS (after cycle-8 fix)
 
 The first T025 run (HEAD `f1917fa`) proved `0 → 6` reproduction but surfaced a C4
@@ -28,7 +89,7 @@ correctness (containers + components + types) is unchanged from run #1. (Note: t
 `probe27_components.py` VERDICT text still says "despite the 6 C4 drop reports" — that string
 is hardcoded from run #1 and is stale; the current live drop count is 0.)
 
-**C3 list-shape MCP re-confirmation:** still PENDING (domain `mcp_deviation`) — optional
+**C3 list-shape MCP re-confirmation:** DONE under issue #32 (see section below); was PENDING (domain `mcp_deviation`) — optional
 belt-and-suspenders; the live CREATE-arm succeeded (6/6 types wired), which exercises the
 same factory dispatch the shapes underpin.
 
@@ -99,7 +160,7 @@ run shows the heuristic is unsound on the **full, un-narrowed** Ejagham Mini cor
 refs mis-reported) — a genuine bug, not a corner case. The doc-note (cycle-7) does not
 cover this.
 
-## Follow-up MCP re-confirmation (C3 list shapes) — PENDING
+## Follow-up MCP re-confirmation (C3 list shapes) — DONE (issue #32, see top section)
 
 Domain's `mcp_deviation` (VariantEntryTypesOA/ComplexEntryTypesOA=5118/Depth=127;
 PublicationTypesOA=7/Depth=1) not yet re-confirmed via FLExToolsMCP.

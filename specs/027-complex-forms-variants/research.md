@@ -90,6 +90,14 @@ FLExToolsMCP instead of direct code inspection" for flexicon/liblcm.
   when it will not actually exist on the target for this run. Threading run-scoped
   selection state into `_entry_ref_is_reproducible` is explicitly deferred — it is a
   post-merge refactor, not part of this feature's merge-blocking scope.
+- **Resolved (issue #32)**: `_report_dropped_entry_refs` now takes the run
+  context; `_entry_ref_is_reproducible(ref, selection, target)` checks each
+  member's OWNING entry (a LexSense member rides on `ILexSense.Entry`) for
+  category-on + leaf-pick membership, and accepts an out-of-scope member that
+  already exists on the target by GUID. Live-proven on Korean-GIAL (see
+  verification-log.md, issue #32 section). Residual: C1 still creates the
+  container for a reported ref, so a narrowed run leaves a partially wired ref
+  on the target alongside its drop record.
 
 ## Decision 6 — creation runs as a post-pass after all closure entries exist
 
