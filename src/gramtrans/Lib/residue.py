@@ -236,13 +236,25 @@ def apply_carrier_a(obj, ws, tag: ImportResidueTag) -> bool:
     - attribute is None            -> returns False (let Carrier B handle)
     - attribute is str (empty)     -> setattr path, returns True
     - attribute is str (populated) -> setattr overwrites, returns True
-    - attribute is ITsMultiString  -> set_String path, returns True
+    - attribute is a multistring   -> set_String path, returns True
+      (a genuine .NET multistring gets an ITsString; a duck-typed one
+      gets the plain serialized text)
 
-    In LCM 9.x, ILexEntry / IMoAffixAllomorph / IMoInflAffMsa expose
+    In LCM 9.x, every Carrier-A class (ILexEntry, ILexSense,
+    ILexExampleSentence, ILexReference, IMoForm, IMo*Msa, ...) exposes
     LiftResidue as a plain Unicode single-string, not an ITsMultiString.
     The old code called lift.set_String() unconditionally, which silently
     failed (AttributeError swallowed) on those types.  The fix checks for
     set_String before calling it, and falls back to setattr otherwise.
+
+    Issue #56: the multistring branch decides between an ITsString write
+    and a plain-text write on WHAT `LiftResidue` IS (`_is_dotnet_object`),
+    never on whether `SIL.LCModel.Core.Text` happens to be importable in
+    this process. `TsStringUtils.MakeString` succeeds for a plain `str`, so
+    keying on the import silently handed a real .NET ITsString to any
+    duck-typed fake once flexicon had loaded the SIL assemblies. Same shape
+    as `reversals._set_reversal_form_alt`; `apply_carrier_b` already writes
+    plain text to duck-typed multistrings.
 
     Returns True if the write succeeded, False if LiftResidue was absent
     or None (uninitialized) -- callers can fall through to Carrier B in that
@@ -252,9 +264,18 @@ def apply_carrier_a(obj, ws, tag: ImportResidueTag) -> bool:
     lift = getattr(obj, "LiftResidue", _MISSING)
     if lift is _MISSING:
         return False  # attribute absent entirely
-    if hasattr(lift, "set_String"):
-        from SIL.LCModel.Core.Text import TsStringUtils  # lazy -- only when needed
-        lift.set_String(ws, TsStringUtils.MakeString(tag.serialize(), ws))
+    setter = getattr(lift, "set_String", None)
+    if callable(setter):
+        if __package__:
+            from .texts import _is_dotnet_object
+        else:
+            from texts import _is_dotnet_object  # type: ignore
+        text = tag.serialize()
+        if _is_dotnet_object(lift):
+            from SIL.LCModel.Core.Text import TsStringUtils  # lazy -- host-only
+            setter(ws, TsStringUtils.MakeString(text, ws))
+        else:
+            setter(ws, text)  # duck-typed multistring: plain text
         return True
     # lift is None, str (empty or populated), or some other non-multistring
     # value.  For Unicode single-string properties (ILexEntry /
