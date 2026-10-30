@@ -3609,6 +3609,13 @@ class RunPlan:
     # Ephemeral per run; not serialised into the run snapshot. See
     # specs/031-fix-inflection-feature-linking/data-model.md (FeatureCategoryLink).
     feature_category_links: dict = field(default_factory=dict)  # str -> list[str]
+    # Issue #37: `{complex_feature_guid: struct_type_guid}` -- the source
+    # `IFsComplexFeature.TypeRA` edge of every in-scope complex feature,
+    # recorded by `categories.inflection_features_plan_action` whether the
+    # feature is planned as an add, a merge or a skip. Consumed by the
+    # post-loop Move tail `categories._run_complex_feature_type_ra_pass` and
+    # rendered by `preview.render_complex_feature_type_refs`. Ephemeral per run.
+    complex_feature_type_refs: dict = field(default_factory=dict)  # str -> str
     # Issue #84: how build_run_plan reinterpreted the caller's selection
     # before dispatch (ENTRY/SENSE/MSA/ALLOMORPH -> AFFIXES/STEMS, see
     # `preview.expand_lexicon_categories`). One plain sentence per note;

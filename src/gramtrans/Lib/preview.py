@@ -1260,6 +1260,12 @@ def build_run_plan(
     # tail block on the last INFLECTION_FEATURES execute_action).
     _feature_category_links: dict = {}
     object.__setattr__(context, '_feature_category_links', _feature_category_links)
+    # Issue #37: complex-feature TypeRA edges, written by
+    # `categories.inflection_features_plan_action` and consumed by the
+    # post-loop Move tail `_run_complex_feature_type_ra_pass`.
+    _complex_feature_type_refs: dict = {}
+    object.__setattr__(context, '_complex_feature_type_refs',
+                       _complex_feature_type_refs)
     # Phase 3c FR-338: thread the live Selection so entry-shaped leaf
     # plan_actions (AFFIXES/STEMS) can honor enable_overwrite by emitting a
     # PlannedOverwrite instead of a Skip when the target already has the GUID.
@@ -1705,6 +1711,8 @@ def build_run_plan(
         entryref_create_bindings=_entryref_create_bindings,
         # Feature 031 (US1, T009): gathered feature->category link bindings.
         feature_category_links=_feature_category_links,
+        # Issue #37: gathered complex-feature TypeRA edges.
+        complex_feature_type_refs=_complex_feature_type_refs,
         excluded_lossy=tuple(excluded_lossy),
         # QC P1 (cycle-1 review, feature 024): carry the read-only resolver's
         # projected drops into the plan so Preview is symmetric with Move
@@ -1904,6 +1912,52 @@ def render_feature_category_links(plan: RunPlan) -> Tuple[str, ...]:
     return tuple(lines)
 
 
+def render_complex_feature_type_refs(plan: RunPlan) -> Tuple[str, ...]:
+    """Issue #37 (Principle III): render `plan.complex_feature_type_refs` --
+    one row per complex feature whose `TypeRA` Move's post-loop tail will
+    consider. Each row is classified by the SAME
+    `categories._classify_complex_type_ra` the Move tail runs, with this
+    run's planned creates counted as present, so the number of **Wire** rows
+    equals the number of `TypeRA` writes Move makes. Returns `()` for a plan
+    with no complex features."""
+    refs = getattr(plan, "complex_feature_type_refs", None) or {}
+    if not refs:
+        return ()
+    if __package__:
+        from . import categories as _cats
+    else:
+        import categories as _cats  # type: ignore
+    target = getattr(getattr(plan, "context", None), "target_handle", None)
+    actions = getattr(plan, "actions", ()) or ()
+    planned_feats = frozenset(
+        a.source_guid for a in actions
+        if a.category == GrammarCategory.INFLECTION_FEATURES)
+    planned_types = frozenset(
+        a.source_guid for a in actions
+        if a.category == GrammarCategory.FEATURE_STRUCT_TYPES)
+    labels = {
+        _cats.TYPE_RA_WIRE: "Wire",
+        _cats.TYPE_RA_ALREADY_WIRED: "SKIP (already wired)",
+        _cats.TYPE_RA_CONFLICT: "REPORT (not overwritten)",
+        _cats.TYPE_RA_TYPE_MISSING: "REPORT (struct-type unavailable)",
+        _cats.TYPE_RA_FEATURE_MISSING: "REPORT (feature unavailable)",
+    }
+    lines: List[str] = ["  Complex feature -> struct-type (TypeRA) wiring:"]
+    for feat_guid in sorted(refs):
+        type_guid = refs[feat_guid]
+        try:
+            outcome = _cats._classify_complex_type_ra(
+                target, feat_guid, type_guid,
+                planned_feat_guids=planned_feats,
+                planned_type_guids=planned_types)[0]
+        except Exception:  # noqa: BLE001 -- render must never break Preview
+            outcome = None
+        label = labels.get(outcome, "REPORT (could not classify)")
+        lines.append(f"    {label}  feature {feat_guid}"
+                     f" -> type {type_guid}")
+    return tuple(lines)
+
+
 def render_preview_extra_lines(plan: RunPlan) -> Tuple[str, ...]:
     """Compose the Preview-only extra lines -- the reversal Add/Link plan
     (`render_reversal_decisions`), the config-view Add/Overwrite/Skip
@@ -1925,6 +1979,7 @@ def render_preview_extra_lines(plan: RunPlan) -> Tuple[str, ...]:
         tuple(render_reversal_decisions(plan))
         + tuple(render_config_view_records(plan))
         + tuple(render_feature_category_links(plan))
+        + tuple(render_complex_feature_type_refs(plan))
     )
 
 

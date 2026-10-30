@@ -325,6 +325,45 @@ def _ensure_owner_feat_strucs(exec_ctx, target, tag, exec_skips):
             pass
 
 
+def _ensure_complex_feature_type_ra(exec_ctx, target, exec_skips):
+    """Issue #37: wire `IFsComplexFeature.TypeRA` AFTER the leaf-dispatch
+    loop, via `categories._run_complex_feature_type_ra_pass`.
+
+    INFLECTION_FEATURES creates the complex feature one category BEFORE
+    FEATURE_STRUCT_TYPES creates the type it points at, so the create path
+    cannot wire it. Anchoring this to the last action of either category (the
+    `_run_tail_once` idiom) is not enough: a re-run in which both objects
+    already exist plans no action in either category, and that is exactly the
+    run that must repair a `TypeRA` an earlier run left null. Here, after
+    every category, both endpoints exist whatever the selection planned.
+
+    Own latch; never raises (a failure must not lose the run's writes).
+    """
+    if getattr(exec_ctx, "_did_complex_type_ra", False):
+        return
+    if getattr(exec_ctx, "_run_plan", None) is None:
+        return
+    if __package__:
+        from .categories import _run_complex_feature_type_ra_pass
+    else:
+        from categories import _run_complex_feature_type_ra_pass  # type: ignore
+    try:
+        object.__setattr__(exec_ctx, "_did_complex_type_ra", True)
+    except (AttributeError, TypeError):
+        pass
+    try:
+        late_skips = _run_complex_feature_type_ra_pass(exec_ctx, target)
+    except Exception:
+        _log.exception(
+            "execute: complex-feature TypeRA pass FAILED (swallowed)")
+        return
+    if late_skips and exec_skips is not None:
+        try:
+            exec_skips.extend(late_skips)
+        except (AttributeError, TypeError):
+            pass
+
+
 def execute(plan: RunPlan, source, target, report_sink, tag: ImportResidueTag,
             interactive_session=None) -> RunReport:
     """Apply `plan.actions` to `target` and return a finalized RunReport.
@@ -829,6 +868,10 @@ def execute(plan: RunPlan, source, target, report_sink, tag: ImportResidueTag,
     # Issue #54: a starter `PhNCSegments` the plan matched by natural key gets
     # its source class's members, after every create (see the helper).
     _ensure_matched_nc_segments(exec_ctx, target, _exec_skips)
+
+    # Issue #37: complex-feature TypeRA, after every feature and struct-type
+    # of the run exists -- and on a re-run that planned neither.
+    _ensure_complex_feature_type_ra(exec_ctx, target, _exec_skips)
 
     # Issue #49 (defect 1): handler exit proves nothing -- a handler that
     # returns normally while writing nothing used to be counted as added. Check
