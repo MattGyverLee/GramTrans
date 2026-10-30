@@ -59,7 +59,7 @@ _SCOPE_LABELS = {
 _CONFLICT_LABELS = {
     ConflictMode.ADD_NEW: "Add new (always create a copy)",
     ConflictMode.LINK: "Link (link existing by ID, else add; no field update)",
-    ConflictMode.UPDATE: "Update (non-destructive: source wins on diverged fields; never blanks target)",
+    ConflictMode.UPDATE: "Merge (update diverged + fill empty fields; never blanks target)",
     ConflictMode.OVERWRITE: "Overwrite (replace target values with source)",
 }
 

@@ -29,9 +29,6 @@ Covers:
 """
 from __future__ import annotations
 
-import sys
-import types
-
 import pytest
 
 from gramtrans.Lib import categories
@@ -44,6 +41,7 @@ from gramtrans.Lib.models import (
     SkipReason,
     WSMapping,
 )
+from _sil_guard import force_sil_loaded
 
 
 # ============================================================================
@@ -104,28 +102,15 @@ _BUNDLE = categories.for_category(GrammarCategory.POS_INFLECTABLE_FEATS)
 
 
 @pytest.fixture(autouse=True)
-def _patch_lcm_cast(monkeypatch):
-    """Fake SIL.LCModel.IPartOfSpeech as an identity cast (no live LCM host
-    required), mirroring test_categories_inflection_classes.py."""
-    monkeypatch.setattr(
-        categories, "_guid_str_from",
-        lambda obj: str(getattr(obj, "guid", "")).lower(),
-    )
-
-    class _FakeIPartOfSpeech:
-        def __new__(cls, obj):
-            return obj
-
-    fake_lcm = types.ModuleType("SIL.LCModel")
-    fake_lcm.IPartOfSpeech = _FakeIPartOfSpeech
-    sys.modules.setdefault("SIL", types.ModuleType("SIL"))
-    original = sys.modules.get("SIL.LCModel")
-    sys.modules["SIL.LCModel"] = fake_lcm
+def _real_sil_loaded():
+    """Issue #58: no `sys.modules` stub. FORCE-LOAD the real SIL assemblies
+    (when this machine has them) so every test below drives the duck-typed
+    fakes through production code with a live `SIL.LCModel` in-process --
+    the condition under which a cast-inside-try with no duck fallback used to
+    silently drop the fake. Host-free, the same assertions must hold.
+    (Guard shape: tests/unit/test_reversal_walk.py, 201d9cd.)"""
+    force_sil_loaded()
     yield
-    if original is None:
-        sys.modules.pop("SIL.LCModel", None)
-    else:
-        sys.modules["SIL.LCModel"] = original
 
 
 # ============================================================================

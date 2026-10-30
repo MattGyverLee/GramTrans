@@ -378,7 +378,8 @@ def execute(plan: RunPlan, source, target, report_sink, tag: ImportResidueTag,
     # looks up the existing target object by GUID and applies the source's
     # syncable properties.  The conflict mode for the category governs which
     # write semantic is used:
-    #   ConflictMode.UPDATE    -> apply_update_semantic (non-destructive, T012)
+    #   ConflictMode.UPDATE    -> apply_update_semantic (real Merge, T012; the
+    #                             legacy persisted "merge" resolves here, #22)
     #   ConflictMode.LINK      -> no field writes (LINK = link by GUID only)
     #   ConflictMode.OVERWRITE -> _execute_overwrite (destructive, Phase 1)
     # Pre-overwrite snapshots in the residue carrier (FR-106) are TODO Phase 1.1.
@@ -402,6 +403,25 @@ def execute(plan: RunPlan, source, target, report_sink, tag: ImportResidueTag,
         a.source_guid for a in getattr(plan, "actions", ())
         if getattr(a, "source_guid", None)
     )
+    # Issue #22 Part 1 (audit blind spot 5): a merge the plan promised for a
+    # category whose UPDATE executor has no ops accessor writes nothing. Say so
+    # once per category, as a Warning, instead of only in per-item Info lines
+    # (measured live: 1730 SEMANTIC_DOMAINS merges, every one a no-op).
+    _unwired = {}
+    for ow in getattr(plan, "overwrites", ()):
+        if (plan.selection.conflict_mode_for(ow.category) == _ConflictMode.UPDATE
+                and ow.category not in _OPS_ACCESSOR_FOR_CATEGORY
+                and getattr(ow, "write_mode", "") != "structural_rebuild"
+                and not (ow.category in (GrammarCategory.ENTRY,
+                                         GrammarCategory.AFFIXES,
+                                         GrammarCategory.STEMS)
+                         and getattr(ow, "match_via", "guid") == "identity_remap")):
+            _unwired[ow.category] = _unwired.get(ow.category, 0) + 1
+    for _cat, _n in sorted(_unwired.items(), key=lambda kv: kv[0].value):
+        report_sink.Warning(
+            f"  [{_cat.value}] {_n} planned merge(s) NOT applied: the UPDATE"
+            " (Merge) executor is not wired for this category"
+        )
     for ow in getattr(plan, "overwrites", ()):
         # identity_remap ENTRY overwrites are handled inside _execute_layer3
         # (where identity_remap, target_verb, target_slot_by_guid, env_guid_to_target
@@ -3319,7 +3339,9 @@ def _execute_update_semantic(overwrite, source, target, report_sink, tag: Import
     # ApplySyncableProperties.
     ops_key = _OPS_ACCESSOR_FOR_CATEGORY.get(cat)
     if ops_key is None:
-        # Category not in the UPDATE-capable set; log and skip.
+        # Category not in the UPDATE-capable set. Per-item line stays Info;
+        # `execute` emits ONE Warning per such category with the count, since
+        # the plan promised these merges (issue #22 Part 1, blind spot 5).
         report_sink.Info(
             f"  [{cat.value}] UPDATE mode not wired for this category; no-op"
             f"  guid={src_guid[:8]}"
@@ -3387,6 +3409,7 @@ def _execute_update_semantic(overwrite, source, target, report_sink, tag: Import
             src_props=src_props,
             tgt_props=tgt_props,
             intent=_ConflictMode.UPDATE,
+            ws_map=_write_ws_map,
         )
 
         if disposition == ItemDisposition.SKIP:
@@ -3413,8 +3436,14 @@ def _execute_update_semantic(overwrite, source, target, report_sink, tag: Import
                 _prior_lines = residue_lines(
                     _prior_desc.get_String(cache.DefaultAnalWs).Text
                 )
-            written = apply_update_semantic(src_props, tgt_props, tgt_ops, tgt_obj,
-                                            ws_map=_write_ws_map)
+            # Issue #22 Part 1: per-field failures AND flexicon's silent skips
+            # (detected by read-back inside apply_update_semantic, BEFORE the
+            # residue lines below touch Description) reach the report sink.
+            written = apply_update_semantic(
+                src_props, tgt_props, tgt_ops, tgt_obj, ws_map=_write_ws_map,
+                report_sink=report_sink,
+                label=f"[{cat.value}] guid={src_guid[:8]}",
+            )
             restore_residue_history(tgt_obj, cache.DefaultAnalWs, _prior_lines)
             apply_residue(tgt_obj, cache.DefaultAnalWs, tag.with_snapshot(_snapshot_props))
             report_sink.Info(
@@ -3567,6 +3596,11 @@ def _to_update_target_space(cat, src_props, tgt_props, ws_map, target):
 # are already handled by _execute_layer3 / the main overwrite loop.
 _OPS_ACCESSOR_FOR_CATEGORY: dict = {
     GrammarCategory.GRAM_CATEGORIES:        "POS",
+    # Issue #22 Part 1: `pos_plan_action` stamps pick-driven POS merges with
+    # GrammarCategory.POS (the GRAM_CATEGORIES alias). Without this entry every
+    # such PlannedOverwrite(write_mode="merge") hit the "not wired" no-op, so
+    # a POS the Preview said it would merge received zero field writes.
+    GrammarCategory.POS:                    "POS",
     GrammarCategory.INFLECTION_FEATURES:    "InflectionFeatures",
     GrammarCategory.INFLECTION_CLASSES:     "InflectionClasses",
     GrammarCategory.FEATURE_STRUCT_TYPES:   "FeatureStructTypes",

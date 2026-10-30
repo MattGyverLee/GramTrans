@@ -96,6 +96,10 @@ class _Ops:
 
     def ApplySyncableProperties(self, obj, props, ws_map=None, fill_gaps=False):
         self.applied.append((dict(props), ws_map))
+        for key, value in props.items():
+            if isinstance(value, dict) and ws_map:
+                value = {ws_map.get(ws, ws): text for ws, text in value.items()}
+            self._props[key] = value
 
 
 class _Sink:
@@ -202,6 +206,24 @@ def test_gate_open_phoneme_rerun_is_a_skip(monkeypatch, _no_residue):
     sink = _Sink()
     transfer._execute_update_semantic(_ow(GrammarCategory.PHONEMES), source,
                                       target, sink, _tag(), ws_map={"mgz": "etu"})
+    assert tgt_ops.applied == []
+    assert any("UPDATE-SKIP" in m for m in sink.info)
+
+
+def test_target_space_projection_does_not_apply_swapped_ws_map_twice(
+    monkeypatch, _no_residue,
+):
+    monkeypatch.setattr(transfer, "_phoneme_env_field_diff_enabled", lambda: True)
+    source, target, _s, tgt_ops = _projects(
+        "Phonemes",
+        {"Name": {"mgz": "j"}, "BasicIPASymbol": {"mgz": "j"}},
+        {"Name": {"etu": "j"}, "BasicIPASymbol": {"etu": "j"}},
+    )
+    sink = _Sink()
+    transfer._execute_update_semantic(
+        _ow(GrammarCategory.PHONEMES), source, target, sink, _tag(),
+        ws_map={"mgz": "etu", "etu": "mgz"},
+    )
     assert tgt_ops.applied == []
     assert any("UPDATE-SKIP" in m for m in sink.info)
 
