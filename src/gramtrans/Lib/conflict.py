@@ -594,31 +594,81 @@ def compute_field_diff(src_props: dict, tgt_props: dict) -> dict:
     return diff
 
 
-def compute_merge_fillable(src_props: dict, tgt_props: dict) -> dict:
-    """Return {field: (src_value, tgt_value)} for fields the UPDATE (real Merge)
-    write semantic would fill.
+def _is_multistring(value) -> bool:
+    """True for a {ws_id: text} multistring dict as GetSyncableProperties emits
+    it (every value a str or None). Nested-structure dicts (feature specs etc.)
+    are NOT multistrings and are compared whole."""
+    return isinstance(value, dict) and all(
+        v is None or isinstance(v, str) for v in value.values()
+    )
 
-    Unlike :func:`compute_field_diff` (which only compares the INTERSECTION of
-    keys and thus never sees a source-only field), this iterates the SOURCE keys
-    and treats a missing target field as empty (``tgt_props.get(key)``).  A field
-    is fillable when the non-empty source value differs from the target value.
-    This mirrors :func:`apply_update_semantic`'s write decision exactly, so the
-    disposition and the writer agree on what counts as a divergence.
 
-    It is used ONLY on the UPDATE disposition path; the OVERWRITE path continues
-    to rely on :func:`compute_field_diff` and is unaffected.
+def _text_eq(a, b) -> bool:
+    """Exact equality, deliberately: the Preview planner's per-WS comparison
+    (`categories._compare_multistring_per_ws`) compares text exactly, and the
+    Merge writer must not disagree with what Preview promised. Unicode
+    normalisation, if adopted, belongs in both places at once."""
+    return a == b
+
+
+def _merge_delta(src_val, tgt_val, ws_map=None):
+    """The ONE real-Merge write decision for a single field (issue #22 Part 1).
+
+    Returns the value to hand to ``ApplySyncableProperties`` for this field,
+    or None when Merge must not write it:
+
+    - empty source (None / "" / "***" / {} / [] / all-empty multistring)
+      -> None: never blank a target from an empty source;
+    - multistring -> only the NON-EMPTY source alternatives whose text differs
+      from the target's alternative at the (``ws_map``-translated) target WS.
+      Target-only alternatives are never in the delta, and an alternative that
+      already matches is not re-written, so a source ``{"en": "x"}`` against a
+      target ``{"en": "x", "fr": "z"}`` is NOT a divergence (it used to be:
+      the whole-dict compare made every re-run an UPDATE);
+    - anything else -> the source value when it differs from the target.
+
+    A target key that is absent (flexicon omits empty fields from
+    GetSyncableProperties) is treated as empty, so a source-only key is filled.
+    """
+    if _is_empty(src_val):
+        return None
+    if _is_multistring(src_val):
+        tgt_alts = tgt_val if isinstance(tgt_val, dict) else {}
+        delta = {}
+        for ws_id, text in src_val.items():
+            if _is_empty(text):
+                continue
+            tgt_ws = ws_map.get(ws_id, ws_id) if ws_map else ws_id
+            if _text_eq(text, tgt_alts.get(tgt_ws)):
+                continue
+            delta[ws_id] = text
+        return delta or None
+    if _text_eq(src_val, tgt_val):
+        return None
+    return src_val
+
+
+def compute_merge_fillable(src_props: dict, tgt_props: dict, ws_map=None) -> dict:
+    """Return {field: (value_to_write, tgt_value)} for every field the UPDATE
+    (real Merge) write semantic writes.
+
+    Iterates the SOURCE keys (a key absent from the target is an empty target
+    field -- audit blind spot 6) and applies :func:`_merge_delta` per field.
+    :func:`apply_update_semantic` writes exactly this dict, and
+    :func:`compute_disposition` resolves UPDATE vs SKIP from it, so disposition
+    and writer agree by construction.
+
+    It is used ONLY on the UPDATE path; the OVERWRITE path continues to rely on
+    :func:`compute_field_diff` and is unaffected (Part 2 of issue #22).
     """
     if not isinstance(src_props, dict) or not isinstance(tgt_props, dict):
         return {}
     fillable = {}
     for key in sorted(src_props):
-        src_val = src_props[key]
         tgt_val = tgt_props.get(key)
-        if src_val == tgt_val:
-            continue  # identical -> nothing to fill
-        if _is_empty(src_val):
-            continue  # non-destructive: an empty source never fills/blanks
-        fillable[key] = (src_val, tgt_val)
+        delta = _merge_delta(src_props[key], tgt_val, ws_map=ws_map)
+        if delta is not None:
+            fillable[key] = (delta, tgt_val)
     return fillable
 
 
@@ -627,6 +677,7 @@ def compute_disposition(
     tgt_props,
     intent,
     prior_baseline=None,
+    ws_map=None,
 ) -> "ItemDisposition":
     """Compute the per-item ItemDisposition (022 FR-005, T015, T020, T022).
 
@@ -642,6 +693,9 @@ def compute_disposition(
             comparison: a field that matches *both* the baseline and the current
             target is "untouched" and contributes no divergence (auto-SKIP).
             When absent, 2-way comparison only (first-run behaviour, T022).
+        ws_map: optional {source_ws_id: target_ws_id}; the same mapping the
+            UPDATE writer receives, so the per-alternative comparison here
+            matches the one :func:`apply_update_semantic` performs.
 
     Returns:
         ItemDisposition.
@@ -659,6 +713,17 @@ def compute_disposition(
     # Item not present in target -> ADD (regardless of intent).
     if tgt_props is None or src_props is None:
         return ItemDisposition.ADD
+
+    # UPDATE (real Merge, issue #22 Part 1) without a baseline: the disposition
+    # is decided by the SAME per-field delta the writer applies, so UPDATE
+    # means "apply_update_semantic will write >= 1 field" and SKIP means it
+    # would write nothing (identical, empty-source-only, or target-only-alt
+    # differences). The intersection diff below is not consulted -- it can
+    # neither see a source-only key nor tell an empty source from a change.
+    if intent == _ConflictMode.UPDATE and prior_baseline is None:
+        if compute_merge_fillable(src_props, tgt_props, ws_map=ws_map):
+            return ItemDisposition.UPDATE
+        return ItemDisposition.SKIP
 
     # Compute effective diff.
     if prior_baseline is not None:
@@ -686,7 +751,7 @@ def compute_disposition(
         # (OVERWRITE and LINK/ADD_NEW keep SKIP here -- their behaviour is
         # unchanged.)
         if intent == _ConflictMode.UPDATE and compute_merge_fillable(
-            src_props, tgt_props
+            src_props, tgt_props, ws_map=ws_map
         ):
             return ItemDisposition.UPDATE
         # Zero diverged fields -> SKIP (no write needed).
@@ -705,19 +770,55 @@ def compute_disposition(
     return ItemDisposition.SKIP
 
 
-def apply_update_semantic(src_props: dict, tgt_props: dict, ops, tgt_obj,
-                          ws_map=None) -> int:
-    """Apply the non-destructive UPDATE write semantic (022 FR-003, T011).
+def _unapplied_parts(key, written, readback, ws_map=None):
+    """Return a description of what of `written` is NOT on the read-back, or
+    "" when everything requested landed.
 
-    Iterates the syncable-property keys present in src_props (a missing target
-    field is treated as empty via ``tgt_props.get(key)``, so a non-empty source
-    fills an empty/absent target -- real Merge).  For each key:
-    - If the source value equals the (possibly empty) target value -> SKIP.
-    - If the source value is empty (None / "" / "***" / {} / []) -> SKIP write
-      (never blank a target field from an empty source).
-    - Otherwise write the source value to the target field via
-      ``ops.ApplySyncableProperties(tgt_obj, {key: src_value})``.  A per-field
-      write that raises AttributeError/TypeError is logged and NOT counted.
+    `readback` is a fresh ``GetSyncableProperties`` of the target taken after
+    the writes. flexicon omits empty fields from that dict, so a key we wrote
+    with a non-empty value that is still absent did not land. For a
+    multistring only the alternatives we wrote are checked (at their
+    ``ws_map``-translated target WS); a list is checked for containment.
+    """
+    if key not in readback:
+        return "field absent on read-back"
+    got = readback[key]
+    if _is_multistring(written):
+        got_alts = got if isinstance(got, dict) else {}
+        missing = []
+        for ws_id, text in written.items():
+            tgt_ws = ws_map.get(ws_id, ws_id) if ws_map else ws_id
+            if not _text_eq(text, got_alts.get(tgt_ws)):
+                missing.append(tgt_ws)
+        return ("writing system(s) %s not applied" % ", ".join(missing)) if missing else ""
+    if isinstance(written, (list, tuple)) and isinstance(got, (list, tuple)):
+        absent = [v for v in written if v not in got]
+        return ("%d of %d value(s) not applied" % (len(absent), len(written))) if absent else ""
+    return "" if _text_eq(written, got) else "read-back value differs"
+
+
+def apply_update_semantic(src_props: dict, tgt_props: dict, ops, tgt_obj,
+                          ws_map=None, report_sink=None, label: str = "") -> int:
+    """Apply the real Merge (UPDATE) write semantic (022 FR-003, issue #22).
+
+    Writes exactly :func:`compute_merge_fillable`'s delta, field by field:
+    the SOURCE keys drive (a key the target dict omits is an empty target
+    field and is filled); an empty source never blanks the target; for a
+    multistring only the non-empty, differing source alternatives are written,
+    so a target-only writing-system alternative is never touched.
+
+    Partial applies are auditable (audit blind spot 5). Two failure kinds are
+    surfaced on `report_sink.Warning` (and the module log), and neither is
+    counted as written:
+
+    - a per-field ``ApplySyncableProperties`` raising AttributeError/TypeError;
+    - a write flexicon accepted but silently skipped (its ``_apply_props_loop``
+      drops object-reference values, unresolvable writing systems and other
+      shapes it does not handle without raising). These are detected by
+      reading the target back with ``ops.GetSyncableProperties`` after the
+      writes and checking that every requested value is present. When `ops`
+      has no getter, or the read-back raises, the writes are reported as
+      unverified rather than assumed good.
 
     Args:
         src_props: dict returned by GetSyncableProperties on the source object.
@@ -727,31 +828,55 @@ def apply_update_semantic(src_props: dict, tgt_props: dict, ops, tgt_obj,
         ws_map: optional {source_ws_id: target_ws_id} dict forwarded to
             ApplySyncableProperties so multilingual values under a source WS Id
             the target lacks are remapped instead of silently dropped.
+        report_sink: optional sink with ``Warning(str)``; when None the
+            warnings go to the module log only.
+        label: prefix for the warning lines (e.g. ``"[pos] guid=1234abcd"``).
 
     Returns:
-        int: number of fields written (0 if all-identical or all-empty-source).
+        int: number of fields written AND confirmed on read-back (or written
+        and unverifiable). 0 if nothing needed writing.
     """
-    written = 0
-    for key in sorted(src_props):
-        src_val = src_props[key]
-        # A key absent from the target is treated as empty: real Merge fills it
-        # from a non-empty source (022 Part 1 -- the intersection iteration used
-        # to drop source-only keys, so empty target fields were never filled).
-        tgt_val = tgt_props.get(key)
-        if src_val == tgt_val:
-            continue  # identical -> skip
-        if _is_empty(src_val):
-            continue  # non-destructive: never blank from empty source
-        # Source differs and is non-empty -> write.
+    def _warn(msg):
+        line = ("  %s %s" % (label, msg)) if label else ("  " + msg)
+        _log.warning("apply_update_semantic: %s", line.strip())
+        if report_sink is not None:
+            report_sink.Warning(line)
+
+    attempted = {}
+    for key, (value, _tgt_val) in compute_merge_fillable(
+        src_props, tgt_props, ws_map=ws_map
+    ).items():
         try:
-            ops.ApplySyncableProperties(tgt_obj, {key: src_val}, ws_map=ws_map)
-            written += 1
+            ops.ApplySyncableProperties(tgt_obj, {key: value}, ws_map=ws_map)
         except (AttributeError, TypeError) as exc:
-            # Best-effort per field: log and skip; do NOT count a failed write.
-            _log.warning(
-                "apply_update_semantic: failed to write field %r: %s: %s",
-                key, type(exc).__name__, exc,
-            )
+            _warn("MERGE partial apply: field %r NOT written (%s: %s)"
+                  % (key, type(exc).__name__, exc))
+            continue
+        attempted[key] = value
+    if not attempted:
+        return 0
+
+    getter = getattr(ops, "GetSyncableProperties", None)
+    if getter is None:
+        return len(attempted)  # nothing to verify against (test doubles)
+    try:
+        readback = getter(tgt_obj)
+    except Exception as exc:  # noqa: BLE001 -- LCM/COM failures are wide
+        _warn("MERGE read-back failed (%s: %s); %d field write(s) unverified"
+              % (type(exc).__name__, exc, len(attempted)))
+        return len(attempted)
+    if not isinstance(readback, dict):
+        return len(attempted)
+
+    written = 0
+    for key, value in attempted.items():
+        problem = _unapplied_parts(key, value, readback, ws_map=ws_map)
+        if problem:
+            _warn("MERGE partial apply: field %r not applied -- requested "
+                  "value not present on read-back after ApplySyncableProperties"
+                  " (%s)" % (key, problem))
+        else:
+            written += 1
     return written
 
 

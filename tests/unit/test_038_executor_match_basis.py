@@ -693,7 +693,7 @@ def test_update_semantic_falls_back_to_the_plans_object_when_the_scan_misses(mon
         lambda **kwargs: transfer.ItemDisposition.UPDATE,
     )
 
-    def _apply(src_props, tgt_props, tgt_ops, tgt_obj, ws_map=None):
+    def _apply(src_props, tgt_props, tgt_ops, tgt_obj, ws_map=None, **_kw):
         written["obj"] = tgt_obj
         return 1
 
